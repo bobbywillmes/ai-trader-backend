@@ -1,12 +1,12 @@
-import { getAlpacaAccount } from '../integrations/alpaca/account.adapter.js';
-import { getOpenAlpacaOrders } from '../integrations/alpaca/orders.adapter.js';
-import { getAlpacaPositions } from '../integrations/alpaca/positions.adapter.js';
+import { getNormalizedAccount } from './account.service.js';
+import { getNormalizedPositions } from './positions.service.js';
+import { getNormalizedOpenOrders } from './orders.service.js';
 
 export async function getBootstrapData() {
   const [account, positions, openOrders] = await Promise.all([
-    getAlpacaAccount(),
-    getAlpacaPositions(),
-    getOpenAlpacaOrders()
+    getNormalizedAccount(),
+    getNormalizedPositions(),
+    getNormalizedOpenOrders()
   ]);
 
   return {
@@ -16,11 +16,22 @@ export async function getBootstrapData() {
     config: {
       tradingEnabled: true,
       paperMode: true,
-      allowedTickers: ['SPY', 'QQQ', 'DIA', 'IWM', 'RSP', 'AAPL', 'AMZN', 'GOOG', 'META', 'MSFT']
+      allowedTickers: [
+        'SPY',
+        'QQQ',
+        'DIA',
+        'IWM',
+        'RSP',
+        'AAPL',
+        'AMZN',
+        'GOOG',
+        'META',
+        'MSFT'
+      ]
     },
     risk: {
       canTrade: true,
-      reason: null
+      reason: null as string | null
     }
   };
 }

@@ -17,6 +17,7 @@ export type AlpacaPosition = {
   qty: string;
   avg_entry_price: string;
   market_value: string;
+  cost_basis: string;
   unrealized_pl: string;
   unrealized_plpc: string;
   current_price: string;
@@ -32,8 +33,10 @@ export type AlpacaOrder = {
   time_in_force: string;
   qty?: string;
   notional?: string;
-  limit_price?: string;
-  stop_price?: string;
+  limit_price?: string | null;
+  stop_price?: string | null;
   status: string;
   submitted_at: string;
+  filled_qty?: string;
+  filled_avg_price?: string | null;
 };

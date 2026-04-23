@@ -6,6 +6,9 @@ import { pinoHttp } from 'pino-http';
 import { logger } from '../config/logger.js';
 import healthRoutes from '../routes/health.routes.js';
 import bootstrapRoutes from '../routes/bootstrap.routes.js';
+import accountRoutes from '../routes/account.routes.js';
+import positionsRoutes from '../routes/positions.routes.js';
+import ordersRoutes from '../routes/orders.routes.js';
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
 
@@ -31,6 +34,9 @@ export function createApp() {
 
   app.use('/health', healthRoutes);
   app.use('/api/bootstrap', bootstrapRoutes);
+  app.use('/api/account', accountRoutes);
+  app.use('/api/positions', positionsRoutes);
+  app.use('/api/orders', ordersRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
