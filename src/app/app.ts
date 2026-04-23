@@ -1,0 +1,39 @@
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import { pinoHttp } from 'pino-http';
+
+import { logger } from '../config/logger.js';
+import healthRoutes from '../routes/health.routes.js';
+import bootstrapRoutes from '../routes/bootstrap.routes.js';
+import { notFoundHandler } from '../middleware/not-found.js';
+import { errorHandler } from '../middleware/error-handler.js';
+
+export function createApp() {
+  const app = express();
+
+  app.use(helmet());
+  app.use(cors());
+  app.use(express.json());
+
+  app.use(
+    pinoHttp({
+      logger
+    })
+  );
+
+  app.get('/', (_req, res) => {
+    res.json({
+      ok: true,
+      service: 'ai-trader-backend'
+    });
+  });
+
+  app.use('/health', healthRoutes);
+  app.use('/api/bootstrap', bootstrapRoutes);
+
+  app.use(notFoundHandler);
+  app.use(errorHandler);
+
+  return app;
+}
