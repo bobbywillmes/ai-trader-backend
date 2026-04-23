@@ -1,4 +1,5 @@
 import { env } from '../../config/env.js';
+import { AlpacaApiError } from '../../errors/alpaca-api-error.js';
 
 type RequestOptions = {
   method?: 'GET' | 'POST' | 'DELETE' | 'PATCH';
@@ -37,7 +38,7 @@ export async function alpacaRequest<T>(
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`Alpaca request failed (${response.status}): ${text}`);
+    throw new AlpacaApiError(response.status, text);
   }
 
   const contentType = response.headers.get('content-type') ?? '';

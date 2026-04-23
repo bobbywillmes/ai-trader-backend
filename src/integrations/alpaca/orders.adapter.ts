@@ -34,3 +34,9 @@ export async function placeAlpacaOrder(
     body: payload
   });
 }
+
+export async function cancelAlpacaOrder(orderId: string): Promise<void> {
+  await alpacaRequest<void>(`/v2/orders/${orderId}`, {
+    method: 'DELETE'
+  });
+}
