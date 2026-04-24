@@ -4,6 +4,7 @@ import { ZodError } from 'zod';
 import { getNormalizedOpenOrders } from '../services/orders.service.js';
 import { submitOrder } from '../services/place-order.service.js';
 import { cancelOrderById } from '../services/cancel-order.service.js';
+import { cancelAllOpenOrders } from '../services/cancel-all-orders.service.js';
 import { placeOrderSchema } from '../validators/place-order.schema.js';
 import { cancelOrderParamsSchema } from '../validators/cancel-order.schema.js';
 
@@ -64,6 +65,19 @@ export async function cancelOrderController(
       return;
     }
 
+    next(error);
+  }
+}
+
+export async function cancelAllOrdersController(
+  _req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const result = await cancelAllOpenOrders();
+    res.status(200).json(result);
+  } catch (error) {
     next(error);
   }
 }

@@ -40,3 +40,15 @@ export async function cancelAlpacaOrder(orderId: string): Promise<void> {
     method: 'DELETE'
   });
 }
+
+export type AlpacaCancelAllOrderResult = {
+  id: string;
+  status: number;
+  body?: unknown;
+};
+
+export async function cancelAllAlpacaOrders(): Promise<AlpacaCancelAllOrderResult[]> {
+  return alpacaRequest<AlpacaCancelAllOrderResult[]>('/v2/orders', {
+    method: 'DELETE'
+  });
+}
