@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-import { tradingConfig } from '../config/trading.js';
+import { getRuntimeTradingConfig } from './config.service.js';
 import { HttpError } from '../errors/http-error.js';
 import { normalizeOpenOrder } from '../integrations/alpaca/normalizers.js';
 import {
@@ -9,6 +9,7 @@ import {
 } from '../integrations/alpaca/orders.adapter.js';
 import { getNormalizedAccount } from './account.service.js';
 import type { PlaceOrderInput } from '../validators/place-order.schema.js';
+import { getAllowedTickers } from './config.service.js';
 
 function buildClientOrderId(input: PlaceOrderInput): string {
   const base = [
@@ -23,12 +24,16 @@ function buildClientOrderId(input: PlaceOrderInput): string {
   return base.slice(0, 128);
 }
 
+const allowedTickers = await getAllowedTickers();
+
 export async function submitOrder(input: PlaceOrderInput) {
-  if (!tradingConfig.tradingEnabled) {
+  const runtimeConfig = await getRuntimeTradingConfig();
+  
+  if (!runtimeConfig.tradingEnabled) {
     throw new HttpError(403, 'Trading is disabled.');
   }
 
-  if (!tradingConfig.allowedTickers.includes(input.symbol)) {
+  if (!allowedTickers.includes(input.symbol)) {
     throw new HttpError(403, `Ticker ${input.symbol} is not allowed.`);
   }
 

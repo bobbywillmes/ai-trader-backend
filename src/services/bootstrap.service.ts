@@ -1,27 +1,24 @@
-import { tradingConfig } from '../config/trading.js';
+import { getRuntimeTradingConfig } from './config.service.js';
 import { getNormalizedAccount } from './account.service.js';
 import { getNormalizedPositions } from './positions.service.js';
 import { getNormalizedOpenOrders } from './orders.service.js';
 
 export async function getBootstrapData() {
-  const [account, positions, openOrders] = await Promise.all([
+  const [account, positions, openOrders, runtimeConfig] = await Promise.all([
     getNormalizedAccount(),
     getNormalizedPositions(),
-    getNormalizedOpenOrders()
+    getNormalizedOpenOrders(),
+    getRuntimeTradingConfig()
   ]);
 
   return {
     account,
     positions,
     openOrders,
-    config: {
-      tradingEnabled: tradingConfig.tradingEnabled,
-      paperMode: tradingConfig.paperMode,
-      allowedTickers: [...tradingConfig.allowedTickers]
-    },
+    config: runtimeConfig,
     risk: {
-      canTrade: tradingConfig.tradingEnabled && !account.tradingBlocked,
-      reason: tradingConfig.tradingEnabled
+      canTrade: runtimeConfig.tradingEnabled && !account.tradingBlocked,
+      reason: runtimeConfig.tradingEnabled
         ? account.tradingBlocked
           ? 'Broker account is trading blocked.'
           : null
