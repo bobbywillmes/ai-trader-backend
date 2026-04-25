@@ -33,3 +33,56 @@ export async function getRuntimeTradingConfig(): Promise<RuntimeTradingConfig> {
     allowedTickers
   };
 }
+
+export async function updateRuntimeSettings(input: {
+  tradingEnabled?: boolean | undefined;
+  paperMode?: boolean | undefined;
+}) {
+  const updates = [];
+
+  if (input.tradingEnabled !== undefined) {
+    updates.push(
+      prisma.setting.upsert({
+        where: { key: 'tradingEnabled' },
+        update: { value: String(input.tradingEnabled) },
+        create: { key: 'tradingEnabled', value: String(input.tradingEnabled) }
+      })
+    );
+  }
+
+  if (input.paperMode !== undefined) {
+    updates.push(
+      prisma.setting.upsert({
+        where: { key: 'paperMode' },
+        update: { value: String(input.paperMode) },
+        create: { key: 'paperMode', value: String(input.paperMode) }
+      })
+    );
+  }
+
+  await Promise.all(updates);
+
+  return getRuntimeTradingConfig();
+}
+
+export async function addAllowedTicker(symbol: string) {
+  const normalized = symbol.trim().toUpperCase();
+
+  await prisma.allowedTicker.upsert({
+    where: { symbol: normalized },
+    update: {},
+    create: { symbol: normalized }
+  });
+
+  return getAllowedTickers();
+}
+
+export async function removeAllowedTicker(symbol: string) {
+  const normalized = symbol.trim().toUpperCase();
+
+  await prisma.allowedTicker.deleteMany({
+    where: { symbol: normalized }
+  });
+
+  return getAllowedTickers();
+}

@@ -4,12 +4,15 @@ import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
 
 import { logger } from '../config/logger.js';
+
 import healthRoutes from '../routes/health.routes.js';
 import bootstrapRoutes from '../routes/bootstrap.routes.js';
 import accountRoutes from '../routes/account.routes.js';
 import positionsRoutes from '../routes/positions.routes.js';
 import ordersRoutes from '../routes/orders.routes.js';
 import orderIntentsRoutes from '../routes/order-intents.routes.js';
+import configRoutes from '../routes/config.routes.js';
+
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
 import { apiKeyAuth } from '../middleware/api-key-auth.js';
@@ -37,12 +40,13 @@ export function createApp() {
   app.use('/health', healthRoutes);
 
   app.use('/api', apiKeyAuth);
-  
+
   app.use('/api/bootstrap', bootstrapRoutes);
   app.use('/api/account', accountRoutes);
   app.use('/api/positions', positionsRoutes);
   app.use('/api/orders', ordersRoutes);
   app.use('/api/order-intents', orderIntentsRoutes);
+  app.use('/api/config', configRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
