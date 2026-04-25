@@ -7,7 +7,9 @@ const envSchema = z.object({
 
   ALPACA_API_KEY: z.string().min(1, 'ALPACA_API_KEY is required'),
   ALPACA_API_SECRET: z.string().min(1, 'ALPACA_API_SECRET is required'),
-  ALPACA_BASE_URL: z.url().default('https://paper-api.alpaca.markets')
+  ALPACA_BASE_URL: z.url().default('https://paper-api.alpaca.markets'),
+
+  AI_TRADER_BACKEND_API_KEY: z.string().min(16, 'AI_TRADER_BACKEND_API_KEY must be at least 16 characters'),
 });
 
 const parsed = envSchema.safeParse(process.env);

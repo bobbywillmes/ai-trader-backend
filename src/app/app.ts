@@ -12,6 +12,7 @@ import ordersRoutes from '../routes/orders.routes.js';
 import orderIntentsRoutes from '../routes/order-intents.routes.js';
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
+import { apiKeyAuth } from '../middleware/api-key-auth.js';
 
 export function createApp() {
   const app = express();
@@ -34,6 +35,9 @@ export function createApp() {
   });
 
   app.use('/health', healthRoutes);
+
+  app.use('/api', apiKeyAuth);
+  
   app.use('/api/bootstrap', bootstrapRoutes);
   app.use('/api/account', accountRoutes);
   app.use('/api/positions', positionsRoutes);
