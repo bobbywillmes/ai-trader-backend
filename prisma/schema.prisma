@@ -18,3 +18,40 @@ model AllowedTicker {
   id     Int    @id @default(autoincrement())
   symbol String @unique
 }
+
+model OrderIntent {
+  id             Int      @id @default(autoincrement())
+  source         String
+  symbol         String
+  side           String
+  orderType      String
+  timeInForce    String
+  qty            Float?
+  notional       Float?
+  limitPrice     Float?
+  extendedHours  Boolean  @default(false)
+  clientOrderId  String?
+  status         String   @default("received")
+  blockReason    String?
+  rawRequestJson Json
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  brokerOrders   BrokerOrder[]
+}
+
+model BrokerOrder {
+  id             Int      @id @default(autoincrement())
+  orderIntentId  Int
+  broker         String
+  brokerOrderId  String
+  clientOrderId  String
+  symbol         String
+  side           String
+  status         String
+  rawBrokerJson  Json
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  orderIntent    OrderIntent @relation(fields: [orderIntentId], references: [id])
+}

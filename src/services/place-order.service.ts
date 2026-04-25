@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
+import type { Prisma } from '@prisma/client';
 
-import { getRuntimeTradingConfig } from './config.service.js';
 import { HttpError } from '../errors/http-error.js';
 import { normalizeOpenOrder } from '../integrations/alpaca/normalizers.js';
 import {
@@ -8,38 +8,51 @@ import {
   placeAlpacaOrder
 } from '../integrations/alpaca/orders.adapter.js';
 import { getNormalizedAccount } from './account.service.js';
+import { getRuntimeTradingConfig } from './config.service.js';
+import {
+  createBrokerOrder,
+  createOrderIntent,
+  updateOrderIntentStatus
+} from './order-audit.service.js';
 import type { PlaceOrderInput } from '../validators/place-order.schema.js';
-import { getAllowedTickers } from './config.service.js';
 
 function buildClientOrderId(input: PlaceOrderInput): string {
-  const base = [
+  return [
     'ai',
     input.symbol,
     input.side,
     input.orderType,
     Date.now().toString(),
     crypto.randomUUID().slice(0, 8)
-  ].join('-');
-
-  return base.slice(0, 128);
+  ]
+    .join('-')
+    .slice(0, 128);
 }
 
-const allowedTickers = await getAllowedTickers();
-
 export async function submitOrder(input: PlaceOrderInput) {
+  const intent = await createOrderIntent(input, 'api');
+
   const runtimeConfig = await getRuntimeTradingConfig();
-  
+
   if (!runtimeConfig.tradingEnabled) {
+    await updateOrderIntentStatus(intent.id, 'blocked', 'Trading is disabled.');
     throw new HttpError(403, 'Trading is disabled.');
   }
 
-  if (!allowedTickers.includes(input.symbol)) {
-    throw new HttpError(403, `Ticker ${input.symbol} is not allowed.`);
+  if (!runtimeConfig.allowedTickers.includes(input.symbol)) {
+    const reason = `Ticker ${input.symbol} is not allowed.`;
+    await updateOrderIntentStatus(intent.id, 'blocked', reason);
+    throw new HttpError(403, reason);
   }
 
   const account = await getNormalizedAccount();
 
   if (account.tradingBlocked) {
+    await updateOrderIntentStatus(
+      intent.id,
+      'blocked',
+      'Broker account is trading blocked.'
+    );
     throw new HttpError(403, 'Broker account is trading blocked.');
   }
 
@@ -48,8 +61,21 @@ export async function submitOrder(input: PlaceOrderInput) {
   const existing = await getAlpacaOrderByClientOrderId(clientOrderId);
 
   if (existing) {
+    await updateOrderIntentStatus(intent.id, 'duplicate');
+
+    await createBrokerOrder({
+      orderIntentId: intent.id,
+      brokerOrderId: existing.id,
+      clientOrderId: existing.client_order_id,
+      symbol: existing.symbol,
+      side: existing.side,
+      status: existing.status,
+      rawBrokerJson: existing as unknown as Prisma.InputJsonValue
+    });
+
     return {
       duplicate: true,
+      intentId: intent.id,
       order: normalizeOpenOrder(existing)
     };
   }
@@ -72,26 +98,38 @@ export async function submitOrder(input: PlaceOrderInput) {
     client_order_id: clientOrderId
   };
 
-  if (input.qty !== undefined) {
-    payload.qty = String(input.qty);
+  if (input.qty !== undefined) payload.qty = String(input.qty);
+  if (input.notional !== undefined) payload.notional = String(input.notional);
+  if (input.limitPrice !== undefined) payload.limit_price = String(input.limitPrice);
+  if (input.extendedHours) payload.extended_hours = true;
+
+  try {
+    const created = await placeAlpacaOrder(payload);
+
+    await updateOrderIntentStatus(intent.id, 'submitted');
+
+    await createBrokerOrder({
+      orderIntentId: intent.id,
+      brokerOrderId: created.id,
+      clientOrderId: created.client_order_id,
+      symbol: created.symbol,
+      side: created.side,
+      status: created.status,
+      rawBrokerJson: created as unknown as Prisma.InputJsonValue
+    });
+
+    return {
+      duplicate: false,
+      intentId: intent.id,
+      order: normalizeOpenOrder(created)
+    };
+  } catch (error) {
+    await updateOrderIntentStatus(
+      intent.id,
+      'rejected',
+      error instanceof Error ? error.message : 'Unknown broker rejection.'
+    );
+
+    throw error;
   }
-
-  if (input.notional !== undefined) {
-    payload.notional = String(input.notional);
-  }
-
-  if (input.limitPrice !== undefined) {
-    payload.limit_price = String(input.limitPrice);
-  }
-
-  if (input.extendedHours) {
-    payload.extended_hours = true;
-  }
-
-  const created = await placeAlpacaOrder(payload);
-
-  return {
-    duplicate: false,
-    order: normalizeOpenOrder(created)
-  };
 }

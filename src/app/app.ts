@@ -9,6 +9,7 @@ import bootstrapRoutes from '../routes/bootstrap.routes.js';
 import accountRoutes from '../routes/account.routes.js';
 import positionsRoutes from '../routes/positions.routes.js';
 import ordersRoutes from '../routes/orders.routes.js';
+import orderIntentsRoutes from '../routes/order-intents.routes.js';
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
 
@@ -37,6 +38,7 @@ export function createApp() {
   app.use('/api/account', accountRoutes);
   app.use('/api/positions', positionsRoutes);
   app.use('/api/orders', ordersRoutes);
+  app.use('/api/order-intents', orderIntentsRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
