@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import type { PlaceOrderInput } from '../validators/place-order.schema.js';
+import { HttpError } from '../errors/http-error.js';
 
 type IntentStatus =
   | 'received'
@@ -74,4 +75,19 @@ export async function getRecentOrderIntents(limit = 50) {
       brokerOrders: true
     }
   });
+}
+
+export async function getOrderIntentById(id: number) {
+  const intent = await prisma.orderIntent.findUnique({
+    where: { id },
+    include: {
+      brokerOrders: true
+    }
+  });
+
+  if (!intent) {
+    throw new HttpError(404, `Order intent ${id} was not found.`);
+  }
+
+  return intent;
 }
