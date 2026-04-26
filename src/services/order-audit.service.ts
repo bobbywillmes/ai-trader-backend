@@ -6,6 +6,7 @@ type IntentStatus =
   | 'received'
   | 'blocked'
   | 'submitted'
+  | 'pending'
   | 'duplicate'
   | 'rejected';
 
