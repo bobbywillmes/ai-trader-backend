@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
+import { getNormalizedOpenOrders } from '../services/orders.service.js';
 import { placeOrderSchema } from '../validators/place-order.schema.js';
 import { submitOrderToBroker } from '../services/place-order.service.js';
 
@@ -49,6 +50,56 @@ export async function processPendingOrders() {
             error instanceof Error ? error.message : 'Unknown worker error.'
         }
       });
+    }
+  }
+}
+
+export async function syncSubmittedOrders() {
+  const submittedIntents = await prisma.orderIntent.findMany({
+    where: {
+      status: 'submitted'
+    },
+    include: {
+      brokerOrders: true
+    },
+    take: 10
+  });
+
+  for (const intent of submittedIntents) {
+    try {
+      if (!intent.brokerOrders.length) continue;
+
+      const brokerOrder = intent.brokerOrders[0];
+
+      const openOrders = await getNormalizedOpenOrders();
+
+      const match = openOrders.find(
+        o => o.id === brokerOrder.brokerOrderId
+      );
+
+      if (!match) {
+        // Order likely filled or closed
+        await prisma.orderIntent.update({
+          where: { id: intent.id },
+          data: {
+            status: 'filled'
+          }
+        });
+
+        console.log(`Order ${intent.id} marked as filled`);
+        continue;
+      }
+
+      // Still open → update status
+      await prisma.orderIntent.update({
+        where: { id: intent.id },
+        data: {
+          status: match.status
+        }
+      });
+
+    } catch (err) {
+      console.error(`Sync error for intent ${intent.id}`, err);
     }
   }
 }

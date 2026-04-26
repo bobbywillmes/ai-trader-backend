@@ -1,7 +1,7 @@
 import { createApp } from './app.js';
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
-import { processPendingOrders } from '../workers/order.worker.js';
+import { processPendingOrders, syncSubmittedOrders } from '../workers/order.worker.js';
 
 const app = createApp();
 
@@ -14,4 +14,8 @@ setInterval(() => {
   processPendingOrders().catch((error) => {
     console.error('Order worker error:', error);
   });
+  syncSubmittedOrders().catch((error) => {
+    console.error('Sync submitted orders error:', error);
+  });
+
 }, 2000);
