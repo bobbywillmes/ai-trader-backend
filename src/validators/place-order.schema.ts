@@ -14,7 +14,6 @@ export const placeOrderSchema = z
     notional: z.coerce.number().positive().optional(),
     limitPrice: z.coerce.number().positive().optional(),
     extendedHours: z.boolean().default(false),
-    clientOrderId: z.string().trim().min(1).max(128).optional()
   })
   .superRefine((data, ctx) => {
     const hasQty = data.qty !== undefined;

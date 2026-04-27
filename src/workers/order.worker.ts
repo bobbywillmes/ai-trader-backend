@@ -4,6 +4,7 @@ import { prisma } from '../db/prisma.js';
 import { getNormalizedOpenOrders } from '../services/orders.service.js';
 import { placeOrderSchema } from '../validators/place-order.schema.js';
 import { submitOrderToBroker } from '../services/place-order.service.js';
+import { createSystemEvent } from '../services/system-event.service.js';
 
 export async function processPendingOrders() {
   const pending = await prisma.orderIntent.findMany({
@@ -67,39 +68,49 @@ export async function syncSubmittedOrders() {
 
   for (const intent of submittedIntents) {
     try {
-      if (!intent.brokerOrders.length) continue;
-
       const brokerOrder = intent.brokerOrders[0];
+
+      if (!brokerOrder) {
+        continue;
+      }
 
       const openOrders = await getNormalizedOpenOrders();
 
       const match = openOrders.find(
-        o => o.id === brokerOrder.brokerOrderId
+        (order) => order.id === brokerOrder.brokerOrderId
       );
 
-      if (!match) {
-        // Order likely filled or closed
+      const previousStatus = intent.status;
+      const nextStatus = match?.status ?? 'filled';
+
+      if (previousStatus !== nextStatus) {
         await prisma.orderIntent.update({
           where: { id: intent.id },
           data: {
-            status: 'filled'
+            status: nextStatus
           }
         });
 
-        console.log(`Order ${intent.id} marked as filled`);
-        continue;
+        await createSystemEvent({
+          type: `order.${nextStatus}`,
+          entityType: 'orderIntent',
+          entityId: intent.id,
+          payloadJson: {
+            previousStatus,
+            nextStatus,
+            orderIntentId: intent.id,
+            brokerOrderId: brokerOrder.brokerOrderId,
+            symbol: intent.symbol,
+            side: intent.side
+          } as Prisma.InputJsonValue
+        });
+
+        console.log(
+          `Order ${intent.id} changed from ${previousStatus} to ${nextStatus}`
+        );
       }
-
-      // Still open → update status
-      await prisma.orderIntent.update({
-        where: { id: intent.id },
-        data: {
-          status: match.status
-        }
-      });
-
-    } catch (err) {
-      console.error(`Sync error for intent ${intent.id}`, err);
+    } catch (error) {
+      console.error(`Sync error for intent ${intent.id}`, error);
     }
   }
 }

@@ -11,7 +11,11 @@ type IntentStatus =
   | 'duplicate'
   | 'rejected';
 
-export async function createOrderIntent(input: PlaceOrderInput, source = 'api') {
+export async function createOrderIntent(
+  input: PlaceOrderInput,
+  source = 'api',
+  clientOrderId: string
+) {
   return prisma.orderIntent.create({
     data: {
       source,
@@ -23,9 +27,12 @@ export async function createOrderIntent(input: PlaceOrderInput, source = 'api') 
       notional: input.notional ?? null,
       limitPrice: input.limitPrice ?? null,
       extendedHours: input.extendedHours ?? false,
-      clientOrderId: input.clientOrderId ?? null,
+      clientOrderId,
       status: 'received',
-      rawRequestJson: input as Prisma.InputJsonValue
+      rawRequestJson: {
+        ...input,
+        clientOrderId
+      } as Prisma.InputJsonValue
     }
   });
 }

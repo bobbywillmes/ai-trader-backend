@@ -17,12 +17,17 @@ import {
 import type { PlaceOrderInput } from '../validators/place-order.schema.js';
 
 function buildClientOrderId(input: PlaceOrderInput): string {
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[-:.]/g, '')
+    .slice(0, 15);
+
   return [
     'ai',
+    timestamp,
     input.symbol,
     input.side,
     input.orderType,
-    Date.now().toString(),
     crypto.randomUUID().slice(0, 8)
   ]
     .join('-')
@@ -30,7 +35,8 @@ function buildClientOrderId(input: PlaceOrderInput): string {
 }
 
 export async function submitOrder(input: PlaceOrderInput) {
-  const intent = await createOrderIntent(input, 'api');
+  const clientOrderId = buildClientOrderId(input);
+  const intent = await createOrderIntent(input, 'api', clientOrderId);
 
   const runtimeConfig = await getRuntimeTradingConfig();
 
@@ -62,7 +68,10 @@ export async function submitOrder(input: PlaceOrderInput) {
 }
 
 export async function submitOrderToBroker(input: PlaceOrderInput) {
-  const clientOrderId = input.clientOrderId ?? buildClientOrderId(input);
+  const clientOrderId =
+    'clientOrderId' in input && typeof input.clientOrderId === 'string'
+      ? input.clientOrderId
+      : buildClientOrderId(input);
 
   const existing = await getAlpacaOrderByClientOrderId(clientOrderId);
 
