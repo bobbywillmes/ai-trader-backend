@@ -1,5 +1,4 @@
-# AI Trader Backend  
-
+# AI Trader Backend
 Backend service for the n8n AI Trader system.
 
 This project is the broker/control layer between the AI Trader workflow and Alpaca paper trading. n8n handles strategy logic and sends trade requests. This backend handles broker communication, account/position/order retrieval, validation, order submission, cancellation, runtime trading config, allowed tickers, and audit logging.
@@ -15,11 +14,9 @@ Current stack:
 - Alpaca Trading API
 
 ---
-
-## Big Picture Architecture
+## 💡 Big Picture Architecture
 
 Original algo trading stack:
-
 ```
 TradingView strategies → TradersPost → E*TRADE
 ```
@@ -28,6 +25,7 @@ Current backend-driven AI Trader stack:
 ```
 n8n AI Trader → Node/Express AI Trader Backend → Alpaca Trading API
 ```
+
 The design goal is that n8n does **not** talk directly to Alpaca.
 
 n8n decides what it wants to do.
@@ -35,7 +33,7 @@ The backend decides whether that request is allowed, logs the intent, sends appr
 
 ----------
 
-## Core Responsibilities
+## ⚒️ Core Responsibilities
 
 The backend currently handles:
 
@@ -54,7 +52,7 @@ The backend currently handles:
 
 ----------
 
-## Project Structure
+## 📂 Project Structure
 ```
 src/
    app/
@@ -69,10 +67,12 @@ src/
    controllers/
       account.controller.ts
       bootstrap.controller.ts
+      config.controller.ts
       health.controller.ts
       order-intents.controller.ts
       orders.controller.ts
       positions.controller.ts
+      system-events.controller.ts
 
    db/
       prisma.ts
@@ -92,16 +92,19 @@ src/
          positions.adapter.ts
 
    middleware/
+      api-key-auth.ts
       error-handler.ts
       not-found.ts
 
    routes/
       account.routes.ts
       bootstrap.routes.ts
+      config.routes.ts
       health.routes.ts
       order-intents.routes.ts
       orders.routes.ts
       positions.routes.ts
+      system-events.routes.ts
 
    services/
       account.service.ts
@@ -113,6 +116,7 @@ src/
       orders.service.ts
       place-order.service.ts
       positions.service.ts
+      system-event.service.ts
 
    types/
       broker.ts
@@ -122,7 +126,7 @@ src/
       cancel-order.schema.ts
       place-order.schema.ts
 ```
-## Request Flow
+## ➡️ Request Flow
 
 The Express app follows this general pattern:
 ```
@@ -194,7 +198,7 @@ This keeps the rest of the backend from depending directly on Alpaca’s raw res
 
 The backend normalizes Alpaca responses before returning them to n8n or future UI clients.
 
-## Current API Endpoints
+## ⚙️ Current API Endpoints
 
 ### Health
 ```
@@ -220,7 +224,7 @@ Includes:
 
 Example shape:
 ```
-{  
+{
  "account": {},
  "positions": [],
  "openOrders": [],
@@ -294,12 +298,11 @@ Example market order:
  "orderType": "market",
  "timeInForce": "day",
  "qty": 1,
- "clientOrderId": "test-spy-buy-001"
 }
 ```
 Example limit order:
 ```
-{  
+{
  "symbol": "AAPL",
  "side": "buy",
  "orderType": "limit",
@@ -307,7 +310,6 @@ Example limit order:
  "qty": 1,
  "limitPrice": 150,
  "extendedHours": true,
- "clientOrderId": "test-aapl-limit-001"
 }
 ```
 Backend validation currently checks:
@@ -316,7 +318,24 @@ Backend validation currently checks:
 -   ticker is allowed
 -   account is not trading-blocked
 -   order request schema is valid
--   duplicate `clientOrderId` is detected before submitting
+
+ Note: `clientOrderId` generation is handled on the backend.
+ 
+### Response
+```
+{
+ "ok": true,
+ "intentId": 11,
+ "status": "pending"
+}
+```
+----------
+
+### Notes
+
+-   Order execution is asynchronous
+-   Use `/api/order-intents/:id` to track status
+-   Final execution status is determined by worker + broker sync
 
 ----------
 
@@ -358,11 +377,195 @@ Possible statuses:
 -   `duplicate`
 -   `rejected`
 
-A submitted order also creates a linked `BrokerOrder` record.
+### Includes
+
+- Linked `brokerOrders`
+- Current execution status
+- Generated `clientOrderId`
+
+---
+
+### Notes
+
+- `status` reflects latest known broker state
+- May update shortly after submission due to async processing
+
+## ⚙️ Order Processing Architecture (Async)
+
+Orders are processed asynchronously using a two-phase system:
+
+### 1. Intent Creation (API Layer)
+
+When a client submits an order:
+
+- A new `orderIntent` is created in the database
+- The backend generates a unique `clientOrderId`
+- The order is marked as `pending`
+- The API immediately returns a response
+
+```json
+{
+"ok": true,
+"intentId": 123,
+"status": "pending"
+}
+```
+### 2. Worker Processing (Background Loop)
+
+A background worker runs every few seconds:
+
+-   Picks up `pending` intents
+-   Submits orders to Alpaca
+-   Stores the resulting `brokerOrder`
+-   Updates status → `submitted`
 
 ----------
 
-## Database
+### 3. Status Synchronization
+
+Another loop continuously:
+
+-   Fetches open orders from Alpaca
+-   Matches them to `brokerOrders`
+-   Updates intent status (`submitted → filled`, etc.)
+-   Emits system events
+
+----------
+
+### Why this design?
+
+-   Prevents API blocking
+-   Supports retries + resilience
+-   Enables event-driven strategies
+-   Decouples trading logic from request timing
+
+---
+## 🔄Order Lifecycle
+
+An order progresses through the following states:
+
+| Status      | Description |
+|------------|------------|
+| `received`  | API received request |
+| `pending`   | Waiting for worker processing |
+| `submitted` | Sent to broker |
+| `filled`    | Fully executed |
+| `rejected`  | Broker rejected order |
+| `blocked`   | Prevented by risk/config |
+| `duplicate` | Duplicate clientOrderId detected |
+
+---
+
+### Example Flow
+ 
+received → pending → submitted → filled
+
+----------
+
+### Notes
+
+-   Status transitions are driven by the worker, not the API
+-   `filled` is determined via Alpaca sync, not immediate response
+
+
+---
+
+## 📡 System Events  (Event Log)
+
+All important state changes are logged as events.
+```
+GET /api/system-events
+```
+
+### Example Events
+
+- `order.submitted`
+- `order.filled`
+- `order.rejected`
+
+---
+
+### Event Structure
+
+```json
+{
+ "id": 1,
+ "type": "order.filled",
+ "entityType": "orderIntent",
+ "entityId": 11,
+ "payloadJson": {
+ "symbol": "QQQ",
+ "side": "buy",
+ "previousStatus": "submitted",
+ "nextStatus": "filled"
+ },
+ "processed": false,
+ "createdAt": "..."
+}
+```
+
+### Purpose
+
+-   Audit trail
+-   Debugging
+-   Future automation triggers
+-   Foundation for exit strategies
+
+----------
+
+## 🔁 Background Workers
+
+The system runs continuous polling loops:
+
+### Order Processing Worker
+
+- Runs every ~2 seconds
+- Processes `pending` intents
+- Submits orders to Alpaca
+
+---
+
+### Sync Worker
+
+- Runs every ~2 seconds
+- Fetches broker order updates
+- Updates intent statuses
+- Emits system events
+
+---
+
+### Design Notes
+
+- Simple polling (no queues yet)
+- Eventually replaceable with:
+- Redis queues
+- Webhooks
+- Streaming APIs
+
+
+## 🆔 Client Order ID Strategy
+
+The backend generates unique `clientOrderId` values:
+```
+ai-{timestamp}-{symbol}-{side}-{random}
+```
+
+### Example
+```
+ai-20260427T155054-QQQ-buy-market-1c277020
+```
+
+---
+
+### Why?
+
+- Prevents duplicate order submission
+- Survives database resets
+- Enables reliable broker matching
+
+----------
+
+## 📇 Database
 
 PostgreSQL runs locally through Docker Compose.
 
@@ -372,6 +575,7 @@ Current Prisma models:
 -   `AllowedTicker`
 -   `OrderIntent`
 -   `BrokerOrder`
+-   `SystemEvent`
 
 ### `Setting`
 
@@ -398,9 +602,13 @@ This includes blocked and rejected requests.
 
 Logs broker responses from Alpaca for submitted or duplicate orders.
 
+### `SystemEvent`
+
+All state change events are logged.
+
 ----------
 
-## Environment Variables
+## 🗝 Environment Variables
 
 Create a `.env` file in the project root.
 
@@ -419,31 +627,35 @@ Never commit `.env`.
 
 ----------
 
-## Local Setup
+## 💻 Local Setup
 
 ### 1. Install dependencies
 ```
-npm install
+   npm install
 ```
 ### 2. Start Postgres
 ```
-docker compose up -d
+   docker compose up -d
 ```
 ### 3. Run Prisma migrations
 ```
-npx prisma migrate dev
+   npx prisma migrate dev
 ```
 ### 4. Generate Prisma client
 ```
-npx prisma generate
+   npx prisma generate
 ```
-### 5. Seed default settings and tickers
+### 5. Run Prisma client
 ```
-npx tsx src/db/seed.ts
+   npx prisma studio
 ```
-### 6. Start the backend
+### 6. Seed default settings and tickers
 ```
-npm run dev
+   npx tsx src/db/seed.ts
+```
+### 7. Start the backend
+```
+   npm run dev
 ```
 Default local URL:
 
@@ -451,43 +663,43 @@ http://localhost:3000
 
 ----------
 
-## Useful Commands
+## ⌨️ Useful Commands
 
 Start backend in dev mode:
 ```
-npm run dev
+   npm run dev
 ```
 Type-check:
 ```
-npm run check
+   npm run check
 ```
 Build:
 ```
-npm run build
+   npm run build
 ```
 Start Postgres:
 ```
-docker compose up -d
+   docker compose up -d
 ```
 Stop Postgres:
 ```
-docker compose down
+   docker compose down
 ```
 Run migrations:
 ```
-npx prisma migrate dev
+   npx prisma migrate dev
 ```
 Open Prisma Studio:
 ```
-npx prisma studio
+   npx prisma studio
 ```
 Seed database:
 ```
-npx tsx src/db/seed.ts
+   npx tsx src/db/seed.ts
 ```
 ----------
 
-## Development Notes
+## 📄 Development Notes
 
 The backend intentionally uses normalized response shapes.
 
@@ -497,7 +709,7 @@ This protects the rest of the AI Trader system from depending on raw Alpaca resp
 
 ----------
 
-## Current Safety Controls
+## 🛡 Current Safety Controls
 
 The backend currently protects order submission with:
 
@@ -513,7 +725,7 @@ Before deploying publicly, the backend still needs API authentication so only tr
 
 ----------
 
-## Roadmap
+## 🧭 Roadmap
 
 Near-term:
 
