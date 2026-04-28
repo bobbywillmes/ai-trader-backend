@@ -65,3 +65,24 @@ model SystemEvent {
   processed   Boolean  @default(false)
   createdAt   DateTime @default(now())
 }
+
+model TrackedPosition {
+  id                  Int      @id @default(autoincrement())
+  broker              String
+  symbol              String   @unique
+  side                String
+  qty                 Float
+  avgEntryPrice       Float
+  currentPrice        Float
+  marketValue         Float
+  costBasis           Float
+  unrealizedPnL       Float
+  unrealizedPnLPct    Float
+  status              String    @default("open")
+  openedAt            DateTime  @default(now())
+  lastSyncedAt        DateTime  @default(now())
+  closedAt            DateTime?
+  rawPositionJson     Json
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}

@@ -13,6 +13,7 @@ import ordersRoutes from '../routes/orders.routes.js';
 import orderIntentsRoutes from '../routes/order-intents.routes.js';
 import configRoutes from '../routes/config.routes.js';
 import systemEventsRoutes from '../routes/system-events.routes.js';
+import trackedPositionsRoutes from '../routes/tracked-positions.routes.js';
 
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
@@ -49,6 +50,7 @@ export function createApp() {
   app.use('/api/order-intents', orderIntentsRoutes);
   app.use('/api/config', configRoutes);
   app.use('/api/system-events', systemEventsRoutes);
+  app.use('/api/tracked-positions', trackedPositionsRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
