@@ -14,9 +14,13 @@ import {
   createOrderIntent,
   updateOrderIntentStatus
 } from './order-audit.service.js';
-import type { PlaceOrderInput } from '../validators/place-order.schema.js';
+import { resolveSubscriptionOrderInput } from './subscription.service.js';
+import type {
+  PlaceOrderInput,
+  ResolvedPlaceOrderInput
+} from '../validators/place-order.schema.js';
 
-function buildClientOrderId(input: PlaceOrderInput): string {
+function buildClientOrderId(input: ResolvedPlaceOrderInput): string {
   const timestamp = new Date()
     .toISOString()
     .replace(/[-:.]/g, '')
@@ -35,8 +39,10 @@ function buildClientOrderId(input: PlaceOrderInput): string {
 }
 
 export async function submitOrder(input: PlaceOrderInput) {
-  const clientOrderId = buildClientOrderId(input);
-  const intent = await createOrderIntent(input, 'api', clientOrderId);
+  const resolvedInput = await resolveSubscriptionOrderInput(input);
+  const clientOrderId = buildClientOrderId(resolvedInput);
+  
+  const intent = await createOrderIntent(resolvedInput, 'api', clientOrderId);
 
   const runtimeConfig = await getRuntimeTradingConfig();
 
@@ -45,8 +51,8 @@ export async function submitOrder(input: PlaceOrderInput) {
     throw new HttpError(403, 'Trading is disabled.');
   }
 
-  if (!runtimeConfig.allowedTickers.includes(input.symbol)) {
-    const reason = `Ticker ${input.symbol} is not allowed.`;
+  if (!runtimeConfig.allowedTickers.includes(resolvedInput.symbol)) {
+    const reason = `Ticker ${resolvedInput.symbol} is not allowed.`;
     await updateOrderIntentStatus(intent.id, 'blocked', reason);
     throw new HttpError(403, reason);
   }
@@ -67,7 +73,7 @@ export async function submitOrder(input: PlaceOrderInput) {
   };
 }
 
-export async function submitOrderToBroker(input: PlaceOrderInput) {
+export async function submitOrderToBroker(input: ResolvedPlaceOrderInput) {
   const clientOrderId =
     'clientOrderId' in input && typeof input.clientOrderId === 'string'
       ? input.clientOrderId

@@ -37,6 +37,10 @@ model OrderIntent {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
+  subscriptionId    Int?
+  subscriptionKey   String?
+  subscription      Subscription? @relation(fields: [subscriptionId], references: [id])
+
   brokerOrders   BrokerOrder[]
 }
 
@@ -85,6 +89,9 @@ model TrackedPosition {
   rawPositionJson     Json
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
+
+  subscriptionId      Int?
+  subscription        Subscription?   @relation(fields: [subscriptionId], references: [id])
 }
 
 model Strategy {
@@ -136,6 +143,9 @@ model Subscription {
 
   strategy       Strategy    @relation(fields: [strategyId], references: [id])
   exitProfile    ExitProfile @relation(fields: [exitProfileId], references: [id])
+
+  trackedPositions    TrackedPosition[]
+  orderIntents        OrderIntent[]
 
   @@index([symbol])
   @@index([strategyId])

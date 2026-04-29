@@ -49,9 +49,11 @@ export async function orderIntentByIdController(
         clientOrderId: intent.clientOrderId,
         status: intent.status,
         blockReason: intent.blockReason,
+        subscriptionId: intent.subscriptionId ?? null,
+        subscriptionKey: intent.subscriptionKey ?? null,
         rawRequestJson: intent.rawRequestJson,
         createdAt: intent.createdAt,
-        updatedAt: intent.updatedAt
+        updatedAt: intent.updatedAt,
       },
       brokerOrders: intent.brokerOrders
     });

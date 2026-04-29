@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
-import type { PlaceOrderInput } from '../validators/place-order.schema.js';
+import type { ResolvedPlaceOrderInput } from '../validators/place-order.schema.js';
 import { HttpError } from '../errors/http-error.js';
 
 type IntentStatus =
@@ -12,7 +12,7 @@ type IntentStatus =
   | 'rejected';
 
 export async function createOrderIntent(
-  input: PlaceOrderInput,
+  input: ResolvedPlaceOrderInput,
   source = 'api',
   clientOrderId: string
 ) {
@@ -28,6 +28,8 @@ export async function createOrderIntent(
       limitPrice: input.limitPrice ?? null,
       extendedHours: input.extendedHours ?? false,
       clientOrderId,
+      subscriptionId: input.subscriptionId ?? null,
+      subscriptionKey: input.subscriptionKey ?? null,
       status: 'received',
       rawRequestJson: {
         ...input,
