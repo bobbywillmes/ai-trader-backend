@@ -11,6 +11,16 @@ export async function syncTrackedPositions() {
     const existing = await prisma.trackedPosition.findUnique({
       where: { symbol: position.symbol }
     });
+    const matchedIntent = await prisma.orderIntent.findFirst({
+      where: {
+        symbol: position.symbol,
+        status: 'filled',
+        subscriptionId: { not: null },
+      },
+      orderBy: {
+        updatedAt: 'desc',
+      },
+    });
 
     if (!existing) {
       const created = await prisma.trackedPosition.create({
@@ -26,6 +36,7 @@ export async function syncTrackedPositions() {
           unrealizedPnL: position.unrealizedPnL,
           unrealizedPnLPct: position.unrealizedPnLPct,
           status: 'open',
+          subscriptionId: matchedIntent?.subscriptionId ?? null,
           lastSyncedAt: new Date(),
           rawPositionJson: position as unknown as Prisma.InputJsonValue
         }
@@ -102,6 +113,14 @@ export async function syncTrackedPositions() {
 
 export async function getTrackedPositions() {
   return prisma.trackedPosition.findMany({
-    orderBy: { symbol: 'asc' }
+    orderBy: { symbol: 'asc' },
+    include: {
+      subscription: {
+        include: {
+          strategy: true,
+          exitProfile: true,
+        },
+      },
+    },
   });
 }
