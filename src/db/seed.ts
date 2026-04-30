@@ -2,7 +2,8 @@ import { prisma } from './prisma.js';
 
 const tickers = [
   'SPY', 'QQQ', 'DIA', 'IWM', 'RSP',
-  'AAPL', 'AMZN', 'GOOG', 'META', 'MSFT'
+  'AAPL', 'AMZN', 'GOOG', 'META', 'MSFT',
+  'NVDA', 'TSLA', 'AMD'
 ];
 
 const settings = [
@@ -28,6 +29,13 @@ const strategies = [
     name: 'Momentum',
     description: 'Momentum-based entry strategy.',
     allowedSymbolsJson: null
+  },
+  {
+    key: 'quick_test_momentum',
+    name: 'Quick Test Momentum',
+    description: 'Fast test strategy for backend entry/exit loop validation.',
+    allowedSymbolsJson: ['NVDA', 'TSLA', 'AMD'],
+    enabled: true,
   }
 ];
 
@@ -75,6 +83,18 @@ const exitProfiles = [
     maxHoldDays: 10,
     exitMode: 'ai_assisted',
     takeProfitBehavior: 'ai_confirm'
+  },
+  {
+    key: 'quick_test_tiny_exit',
+    name: 'Quick Test Tiny Exit',
+    description: 'Tiny profit/stop thresholds for fast backend exit testing.',
+    targetPct: 0.05,
+    stopLossPct: 0.05,
+    trailingStopPct: null,
+    maxHoldDays: null,
+    exitMode: 'fixed_bracket',
+    takeProfitBehavior: 'immediate',
+    enabled: true,
   }
 ];
 
@@ -111,6 +131,42 @@ const subscriptions = [
     exitProfileKey: 'stop_3pct_target_2pct',
     sizingType: 'fixed_qty',
     sizingValue: 1
+  },
+  {
+    key: 'quick_test_nvda_paper',
+    name: 'Quick Test - NVDA Paper',
+    symbol: 'NVDA',
+    broker: 'alpaca',
+    brokerMode: 'paper',
+    strategyKey: 'quick_test_momentum',
+    exitProfileKey: 'quick_test_tiny_exit',
+    sizingType: 'fixed_qty',
+    sizingValue: 1,
+    enabled: true,
+  },
+  {
+    key: 'quick_test_tsla_paper',
+    name: 'Quick Test - TSLA Paper',
+    symbol: 'TSLA',
+    broker: 'alpaca',
+    brokerMode: 'paper',
+    strategyKey: 'quick_test_momentum',
+    exitProfileKey: 'quick_test_tiny_exit',
+    sizingType: 'fixed_qty',
+    sizingValue: 1,
+    enabled: true,
+  },
+  {
+    key: 'quick_test_amd_paper',
+    name: 'Quick Test - AMD Paper',
+    symbol: 'AMD',
+    broker: 'alpaca',
+    brokerMode: 'paper',
+    strategyKey: 'quick_test_momentum',
+    exitProfileKey: 'quick_test_tiny_exit',
+    sizingType: 'fixed_qty',
+    sizingValue: 1,
+    enabled: true,
   }
 ];
 

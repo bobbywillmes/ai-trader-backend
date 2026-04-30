@@ -3,6 +3,7 @@ import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { processPendingOrders, syncSubmittedOrders } from '../workers/order.worker.js';
 import { syncTrackedPositions } from '../services/position-tracking.service.js';
+import { evaluateExits } from '../services/exit-evaluator.service.js';
 
 const app = createApp();
 
@@ -20,5 +21,8 @@ setInterval(() => {
   });
   syncTrackedPositions().catch((error) => {
     console.error('Position sync error:', error);
+  });
+  evaluateExits().catch((error) => {
+    console.error('Exit evaluation error:', error);
   });
 }, 2000);
