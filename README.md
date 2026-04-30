@@ -23,7 +23,9 @@ TradingView strategies → TradersPost → E*TRADE
 
 Current backend-driven AI Trader stack:
 ```
-n8n AI Trader → Node/Express AI Trader Backend → Alpaca Trading API
+n8n → Backend API → OrderIntent → Broker (Alpaca) → TrackedPosition
+                         ↓
+                  Subscription (Strategy + ExitProfile)
 ```
 
 The design goal is that n8n does **not** talk directly to Alpaca.
@@ -50,81 +52,78 @@ The backend currently handles:
 -   Logging order intents before broker submission
 -   Logging broker order responses after Alpaca accepts/rejects orders
 
+Key features:
+
+- Subscription-driven order execution (strategy + exit profile bound at entry)
+- OrderIntent stores `subscriptionId` and `subscriptionKey` for full traceability
+- Positions are linked to subscriptions, enabling strategy-aware tracking
+- Positions include embedded strategy + exit profile context
+
+
+## ⚒️ Core Data Flow
+
+The system is now structured around **subscription-driven trading**.
+
+### Entry Flow
+1. n8n sends signal:
+   - `subscriptionKey` (e.g. "dip_n_ride_spy")
+   - `signalType` (e.g. "entry")
+
+2. Backend resolves:
+   - Subscription
+   - Strategy
+   - ExitProfile
+   - Position sizing
+
+3. Backend creates `OrderIntent`:
+   - Stores:
+     - symbol
+     - side
+     - qty / notional
+     - `subscriptionId`
+     - `subscriptionKey`
+     - `clientOrderId`: A timestamped unique identifier, sent to Alpaca as primary key for order.
+
+4. Order is submitted to Alpaca
+
+---
+
+### Position Tracking Flow
+1. Positions are pulled from broker
+2. System finds matching `OrderIntent` (latest filled)
+3. Position is stored as `TrackedPosition` with:
+   - `subscriptionId`
+4. Subscription is included on reads:
+   - Strategy
+   - ExitProfile
+
+---
+
+### Result
+Every open position now has:
+- Strategy context
+- Exit rules attached
+- Full traceability from signal → execution → position
+
 ----------
 
 ## 📂 Project Structure
 ```
 src/
    app/
-      server.ts
       app.ts
-
+      server.ts
    config/
-      env.ts
-      logger.ts
-      trading.ts
-
    controllers/
-      account.controller.ts
-      bootstrap.controller.ts
-      config.controller.ts
-      health.controller.ts
-      order-intents.controller.ts
-      orders.controller.ts
-      positions.controller.ts
-      system-events.controller.ts
-
    db/
-      prisma.ts
-      seed.ts
-
    errors/
-      alpaca-api-error.ts
-      http-error.ts
-
    integrations/
       alpaca/
-         account.adapter.ts
-         alpaca.types.ts
-         client.ts
-         normalizers.ts
-         orders.adapter.ts
-         positions.adapter.ts
-
    middleware/
-      api-key-auth.ts
-      error-handler.ts
-      not-found.ts
-
    routes/
-      account.routes.ts
-      bootstrap.routes.ts
-      config.routes.ts
-      health.routes.ts
-      order-intents.routes.ts
-      orders.routes.ts
-      positions.routes.ts
-      system-events.routes.ts
-
    services/
-      account.service.ts
-      bootstrap.service.ts
-      cancel-all-orders.service.ts
-      cancel-order.service.ts
-      config.service.ts
-      order-audit.service.ts
-      orders.service.ts
-      place-order.service.ts
-      positions.service.ts
-      system-event.service.ts
-
    types/
-      broker.ts
-      express.d.ts
-
    validators/
-      cancel-order.schema.ts
-      place-order.schema.ts
 ```
 ## ➡️ Request Flow
 
@@ -276,7 +275,17 @@ Fetches normalized open Alpaca orders.
 ```
 POST /api/orders
 ```
+Using the new subscription-driven order system, all that is sent to backend is the subscription & signalType. The backend handles the everything else to build the order & connects it to a subscription (which contains the position, qty, strategy, exitProfile, etc)
+```
+{
+  "subscriptionKey": "dip_n_ride_spy_paper",
+  "signalType": "entry"
+}
+```
 Submits a paper order through Alpaca after backend validation.
+
+⚠️ Note:
+Direct order placement (symbol/qty) is still supported but will eventually be deprecated in favor of subscription-based execution. (See below.)
 
 Supported v1 order types:
 
@@ -399,7 +408,7 @@ Orders are processed asynchronously using a two-phase system:
 When a client submits an order:
 
 - A new `orderIntent` is created in the database
-- The backend generates a unique `clientOrderId`
+- The backend generates a unique `clientOrderId`  (combination of ticker, ordertype, timestamp & uuid)
 - The order is marked as `pending`
 - The API immediately returns a response
 
@@ -576,6 +585,10 @@ Current Prisma models:
 -   `OrderIntent`
 -   `BrokerOrder`
 -   `SystemEvent`
+-   `TrackedPosition`
+-   `Strategy`
+-   `ExitProfile`
+-   `Subscription`
 
 ### `Setting`
 
@@ -605,6 +618,25 @@ Logs broker responses from Alpaca for submitted or duplicate orders.
 ### `SystemEvent`
 
 All state change events are logged.
+
+### `TrackedPosition`
+
+Current state of open positions.
+
+### `Strategy`
+
+Top-level/reusable trading logic identity.
+e.g. Dip n Ride, Momentum.
+
+### `ExitProfile`
+
+Key decisions for strategy involve exit points. 
+e.g. fixed target (without stop), fixed target with stop, trailing stop after fixed target is hit
+
+### `Subscription`
+
+Symbol-specific deployment of a strategy. Contains Symbol, position size (qty: 1), broker. It is connected to its parent strategy and an exit profile.
+e.g. Dip N Ride - QQQ
 
 ----------
 
