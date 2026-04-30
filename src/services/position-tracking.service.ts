@@ -76,13 +76,17 @@ export async function syncTrackedPositions() {
     });
   }
 
-  const openTrackedPositions = await prisma.trackedPosition.findMany({
-    where: { status: 'open' }
+  const activeTrackedPositions = await prisma.trackedPosition.findMany({
+    where: {
+      status: {
+        in: ['open', 'closing'],
+      },
+    },
   });
 
   const brokerSymbols = new Set(brokerPositions.map((position) => position.symbol));
 
-  for (const tracked of openTrackedPositions) {
+  for (const tracked of activeTrackedPositions) {
     if (brokerSymbols.has(tracked.symbol)) {
       continue;
     }
@@ -113,6 +117,21 @@ export async function syncTrackedPositions() {
 
 export async function getTrackedPositions() {
   return prisma.trackedPosition.findMany({
+    orderBy: { symbol: 'asc' },
+    include: {
+      subscription: {
+        include: {
+          strategy: true,
+          exitProfile: true,
+        },
+      },
+    },
+  });
+}
+
+export async function getOpenTrackedPositions() {
+  return prisma.trackedPosition.findMany({
+    where: { status: 'open' },
     orderBy: { symbol: 'asc' },
     include: {
       subscription: {
