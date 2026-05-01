@@ -20,7 +20,7 @@ import subscriptionsRoutes from '../routes/subscriptions.routes.js';
 
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
-import { apiKeyAuth } from '../middleware/api-key-auth.js';
+import { requireSignalApiKey, requireAdminApiKey } from '../middleware/api-key-auth.js';
 
 export function createApp() {
   const app = express();
@@ -44,19 +44,22 @@ export function createApp() {
 
   app.use('/health', healthRoutes);
 
-  app.use('/api', apiKeyAuth);
+  app.use('/api', requireSignalApiKey);
 
+  // Signal-level routes
   app.use('/api/bootstrap', bootstrapRoutes);
   app.use('/api/account', accountRoutes);
   app.use('/api/positions', positionsRoutes);
   app.use('/api/orders', ordersRoutes);
   app.use('/api/order-intents', orderIntentsRoutes);
-  app.use('/api/config', configRoutes);
   app.use('/api/system-events', systemEventsRoutes);
   app.use('/api/tracked-positions', trackedPositionsRoutes);
-  app.use('/api/strategies', strategiesRoutes);
-  app.use('/api/exit-profiles', exitProfilesRoutes);
-  app.use('/api/subscriptions', subscriptionsRoutes);
+
+  // Admin routes
+  app.use('/api/config', requireAdminApiKey, configRoutes);
+  app.use('/api/strategies', requireAdminApiKey, strategiesRoutes);
+  app.use('/api/exit-profiles', requireAdminApiKey, exitProfilesRoutes);
+  app.use('/api/subscriptions', requireAdminApiKey, subscriptionsRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
