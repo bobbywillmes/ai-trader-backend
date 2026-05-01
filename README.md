@@ -3,6 +3,20 @@ Backend service for the n8n AI Trader system.
 
 This project is the broker/control layer between the AI Trader workflow and Alpaca paper trading. n8n handles strategy logic and sends trade requests. This backend handles broker communication, account/position/order retrieval, validation, order submission, cancellation, runtime trading config, allowed tickers, and audit logging.
 
+## 🔹 Overview
+
+AI Trader Backend is an event-driven trading engine that:
+
+- Accepts external trade signals (via n8n or API)
+- Executes trades through a broker (Alpaca)
+- Tracks all positions internally
+- Automatically manages exits based on configurable strategies
+
+It is designed to be:
+- Fully automated
+- State-aware
+- Extensible for advanced strategy logic
+
 Current stack:
 
 - Node.js
@@ -105,6 +119,87 @@ Every open position now has:
 - Exit rules attached
 - Full traceability from signal → execution → position
 
+### Position Lifecycle Management
+
+- **Open Positions Tracking**
+  - Internal `tracked_positions` table mirrors broker positions
+  - Sync runs continuously via background worker
+  - Includes real-time PnL, cost basis, and position metadata
+
+- **Get Open Positions**
+  - `GET /api/tracked-positions/open`
+  - Returns only active positions (filters out closed history)
+  - Includes linked `subscription`, `strategy`, and `exitProfile`
+
+- **Close Position (by Ticker)**
+  - `DELETE /api/positions/:symbol`
+  - Closes position at broker (Alpaca)
+  - Automatically updates internal state via sync loop
+  - Emits system events:
+    - `position.close_requested`
+    - `position.closed`
+
+- **Full Position History**
+  - `GET /api/tracked-positions`
+  - Returns all positions (open + closed)
+
+----------
+
+## Background Workers
+
+The system runs multiple continuous loops to maintain synchronization and automate trading behavior:
+
+- **Order Processing Worker**
+  - Handles pending order intents
+
+- **Order Sync Worker**
+  - Syncs submitted orders with broker status
+
+- **Position Sync Worker**
+  - Syncs broker positions → internal database
+
+- **Exit Evaluation Worker**
+  - Monitors open positions and triggers exits
+
+All loops run independently at short intervals (~2 seconds), enabling near real-time behavior.
+
+----------
+
+## ⚙️ Exit Evaluation Engine
+
+The backend includes a real-time exit evaluation system that continuously monitors open positions and executes exits based on configured rules.
+
+### How it Works
+
+1. Background loop runs every ~2 seconds
+2. Fetches all open tracked positions
+3. Joins each position with its:
+   - Subscription
+   - Strategy
+   - Exit Profile
+4. Evaluates exit conditions:
+   - Target profit reached
+   - Stop loss triggered
+5. If triggered:
+   - Sends close request to broker
+   - Updates position state
+   - Emits system events
+
+### Supported Exit Modes
+
+- **Fixed Target**
+- **Trailing Stop (after target)**
+- **Fixed Stop + Target**
+- **(Future) AI-assisted exits**
+
+### Example Flow
+
+```text
+Position Opened → Market Moves → Exit Condition Hit → Close Requested → Position Closed
+```
+Key File:
+`src/services/exit-evaluator.service.ts`
+
 ----------
 
 ## 📂 Project Structure
@@ -197,6 +292,43 @@ This keeps the rest of the backend from depending directly on Alpaca’s raw res
 
 The backend normalizes Alpaca responses before returning them to n8n or future UI clients.
 
+## 🔒 API Authentication
+
+All API requests require an API key via header:
+
+```
+ai-trader-api-key: <your_api_key>
+```
+
+### Roles
+
+The system supports two levels of access:
+
+#### 1. Signal-Level Access (Automation / n8n)
+
+- Submit trade signals
+- Read positions
+- Cannot modify system configuration
+
+#### 2. Admin-Level Access
+
+- Full system control:
+  - Strategies
+  - Subscriptions
+  - Exit Profiles
+  - Settings
+
+### Enforcement
+
+- Global middleware validates API key
+- Admin routes require elevated permissions
+
+### Design Principle
+
+This separation ensures:
+- Automation cannot accidentally modify system behavior
+- Manual control remains safe and intentional
+
 ## ⚙️ Current API Endpoints
 
 ### Health
@@ -258,10 +390,16 @@ Important fields include:
 ----------
 
 ### Positions
-```
-GET /api/positions
-```
-Fetches normalized open Alpaca positions.
+
+- `GET /api/tracked-positions` → All positions (history)
+- `GET /api/tracked-positions/open` → Open positions only
+- `DELETE /api/positions/:symbol` → Close position
+
+----------
+
+### Exit System
+
+- Automated via background worker (no direct endpoint)
 
 ----------
 
@@ -489,8 +627,16 @@ GET /api/system-events
 ### Example Events
 
 - `order.submitted`
-- `order.filled`
-- `order.rejected`
+- `position.opened`
+- `position.close_requested`
+- `position.closed`
+- `exit.triggered`
+
+These events form the foundation for:
+- Logging
+- Auditing
+- Future analytics
+- UI updates
 
 ---
 
@@ -763,7 +909,6 @@ Near-term:
 
 -   Add backend API authentication
 -   Add admin endpoints for settings and allowed tickers
--   Add order fill/status syncing
 -   Add account snapshot logging
 -   Add broker activity/fill endpoint
 -   Add basic dashboard UI
