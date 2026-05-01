@@ -18,6 +18,7 @@ import strategiesRoutes from '../routes/strategies.routes.js';
 import exitProfilesRoutes from '../routes/exit-profiles.routes.js';
 import subscriptionsRoutes from '../routes/subscriptions.routes.js';
 import signalsRoutes from '../routes/signals.routes.js';
+import { openTrackedPositionsController } from '../controllers/tracked-positions.controller.js';
 
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
@@ -45,23 +46,23 @@ export function createApp() {
 
   app.use('/health', healthRoutes);
 
-  app.use('/api', requireSignalApiKey);
+// Client / n8n signal routes
+app.use('/api/signals', requireSignalApiKey, signalsRoutes);
+app.get('/api/tracked-positions/open', requireSignalApiKey, openTrackedPositionsController
+);
 
-  // Signal-level routes
-  app.use('/api/signals', signalsRoutes);
-  app.use('/api/bootstrap', bootstrapRoutes);
-  app.use('/api/account', accountRoutes);
-  app.use('/api/positions', positionsRoutes);
-  app.use('/api/orders', ordersRoutes);
-  app.use('/api/order-intents', orderIntentsRoutes);
-  app.use('/api/system-events', systemEventsRoutes);
-  app.use('/api/tracked-positions', trackedPositionsRoutes);
-
-  // Admin routes
-  app.use('/api/config', requireAdminApiKey, configRoutes);
-  app.use('/api/strategies', requireAdminApiKey, strategiesRoutes);
-  app.use('/api/exit-profiles', requireAdminApiKey, exitProfilesRoutes);
-  app.use('/api/subscriptions', requireAdminApiKey, subscriptionsRoutes);
+// Admin routes
+app.use('/api/bootstrap', requireAdminApiKey, bootstrapRoutes);
+app.use('/api/account', requireAdminApiKey, accountRoutes);
+app.use('/api/positions', requireAdminApiKey, positionsRoutes);
+app.use('/api/orders', requireAdminApiKey, ordersRoutes);
+app.use('/api/order-intents', requireAdminApiKey, orderIntentsRoutes);
+app.use('/api/system-events', requireAdminApiKey, systemEventsRoutes);
+app.use('/api/tracked-positions', requireAdminApiKey, trackedPositionsRoutes);
+app.use('/api/config', requireAdminApiKey, configRoutes);
+app.use('/api/strategies', requireAdminApiKey, strategiesRoutes);
+app.use('/api/exit-profiles', requireAdminApiKey, exitProfilesRoutes);
+app.use('/api/subscriptions', requireAdminApiKey, subscriptionsRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
