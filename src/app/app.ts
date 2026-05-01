@@ -17,6 +17,7 @@ import trackedPositionsRoutes from '../routes/tracked-positions.routes.js';
 import strategiesRoutes from '../routes/strategies.routes.js';
 import exitProfilesRoutes from '../routes/exit-profiles.routes.js';
 import subscriptionsRoutes from '../routes/subscriptions.routes.js';
+import signalsRoutes from '../routes/signals.routes.js';
 
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
@@ -47,6 +48,7 @@ export function createApp() {
   app.use('/api', requireSignalApiKey);
 
   // Signal-level routes
+  app.use('/api/signals', signalsRoutes);
   app.use('/api/bootstrap', bootstrapRoutes);
   app.use('/api/account', accountRoutes);
   app.use('/api/positions', positionsRoutes);

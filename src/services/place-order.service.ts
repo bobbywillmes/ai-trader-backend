@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { Prisma } from '@prisma/client';
+import { prisma } from '../db/prisma.js';
 
 import { HttpError } from '../errors/http-error.js';
 import { normalizeOpenOrder } from '../integrations/alpaca/normalizers.js';
@@ -63,6 +64,27 @@ export async function submitOrder(input: PlaceOrderInput) {
     await updateOrderIntentStatus(intent.id, 'blocked', 'Broker account is trading blocked.');
     throw new HttpError(403, 'Broker account is trading blocked.');
   }
+
+  // Enforce only one open position per symbol for entry signals to prevent overexposure.
+  if (resolvedInput.subscriptionKey && resolvedInput.signalType === 'entry') {
+    const existingOpenPosition = await prisma.trackedPosition.findFirst({
+      where: {
+        symbol: resolvedInput.symbol,
+        status: {
+          in: ['open', 'closing'],
+        },
+      },
+    });
+    // If there's an existing open or closing position for the same symbol, block the new entry signal.
+    if (existingOpenPosition) {
+      const reason = `Entry signal blocked because ${resolvedInput.symbol} already has an open or closing tracked position.`;
+
+      await updateOrderIntentStatus(intent.id, 'blocked', reason);
+
+      throw new HttpError(409, reason);
+    }
+  }
+
 
   await updateOrderIntentStatus(intent.id, 'pending');
 

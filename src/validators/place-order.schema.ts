@@ -17,6 +17,7 @@ export const placeOrderSchema = z
     extendedHours: z.boolean().default(false),
     subscriptionKey: z.string().trim().min(1).optional(),
     signalType: z.enum(['entry', 'exit']).default('entry').optional(),
+    signalMetadata: z.record(z.string(), z.unknown()).optional(),
   })
   .superRefine((data, ctx) => {
     const usingSubscription = !!data.subscriptionKey;
