@@ -8,11 +8,13 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/app/server.ts",
+    "dev:tunnel": "tsx src/dev/ngrok.ts",
     "start": "node dist/app/server.js",
     "build": "tsc -p tsconfig.json",
     "check": "tsc --noEmit"
   },
   "devDependencies": {
+    "@ngrok/ngrok": "^1.7.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^25.6.0",

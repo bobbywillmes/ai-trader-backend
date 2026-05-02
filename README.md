@@ -382,6 +382,85 @@ This separation ensures:
 - Automation cannot accidentally modify system behavior
 - Manual control remains safe and intentional
 
+## 🔌 n8n Integration Proof of Concept
+The backend has been successfully tested with a small n8n proof-of-concept workflow that sends trading signals into the Node API and reads current open positions back from the backend.
+This confirms that n8n can communicate with the local development backend through a public ngrok tunnel, using the same API key authentication model that will later be used in production.
+
+### What was tested
+The proof-of-concept n8n workflow includes:
+1. A manual trigger node.
+2. A setup node that stores the backend URL and API key.
+3. A code node that builds a sample entry signal payload.
+4. An HTTP Request node that sends the signal to:
+```http
+POST /api/signals/entry
+```
+5. A response parser node that normalizes both successful and failed responses.
+6. A second HTTP Request node that reads open tracked positions from:
+```http
+GET /api/tracked-positions/open
+```
+7. A response parser node for open position results.
+
+### Local development tunnel
+During local development, the backend can be exposed to n8n through ngrok.
+ngrok is installed as a development dependency and needs two environment variables to be set.
+```
+NGROK_AUTHTOKEN=auto generated token from ngrok
+NGROK_DOMAIN=unique url that exposes localhost
+```
+
+The project includes a development tunnel script:
+```bash
+npm run dev:tunnel
+```
+This starts an ngrok tunnel that forwards traffic to the local backend server:
+```http
+https://<ngrok-url> -> http://localhost:3000
+```
+
+A normal local development session now typically uses two terminals:
+```bash
+npm run dev
+npm run dev:tunnel
+```
+
+The ngrok URL is then used by n8n as the backend base URL.
+
+#### Signal-level API access
+The n8n workflow uses the signal-level API key and sends it in the shared API header:
+```http
+ai-trader-api-key: <signal-api-key>
+```
+This allows n8n to perform only signal/client-level actions, such as:
+- Sending entry signals.
+- Reading current open positions.
+
+Admin-level actions remain protected by the admin API key and are not exposed to the n8n signal workflow.
+
+#### Error handling
+The n8n HTTP Request nodes are configured to continue on error so the workflow can inspect backend responses instead of failing immediately.
+This allows the workflow to handle expected backend responses such as:
+```http
+201 Created
+```
+for accepted entry signals, and:
+```http
+409 Conflict
+```
+for safely blocked signals, such as when a ticker already has an open or closing tracked position.
+
+The proof-of-concept confirmed that 409 responses from the backend can be parsed into a clean object containing:
+```json
+{
+  "ok": false,
+  "status": 409,
+  "error": "HttpError",
+  "message": "Entry signal blocked because SPY already has an open or closing tracked position.",
+  "details": null
+}
+```
+
 ## ⚙️ Current API Endpoints
 
 ### Health
