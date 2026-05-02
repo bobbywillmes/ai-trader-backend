@@ -23,7 +23,7 @@ import adminAuthRoutes from '../routes/admin-auth.routes.js';
 
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
-import { requireSignalApiKey, requireAdminApiKey } from '../middleware/api-key-auth.js';
+import { requireSignalApiKey, requireAdminAccess } from '../middleware/api-key-auth.js';
 
 export function createApp() {
   const app = express();
@@ -56,17 +56,17 @@ export function createApp() {
   );
 
   // Admin routes
-  app.use('/api/bootstrap', requireAdminApiKey, bootstrapRoutes);
-  app.use('/api/account', requireAdminApiKey, accountRoutes);
-  app.use('/api/positions', requireAdminApiKey, positionsRoutes);
-  app.use('/api/orders', requireAdminApiKey, ordersRoutes);
-  app.use('/api/order-intents', requireAdminApiKey, orderIntentsRoutes);
-  app.use('/api/system-events', requireAdminApiKey, systemEventsRoutes);
-  app.use('/api/tracked-positions', requireAdminApiKey, trackedPositionsRoutes);
-  app.use('/api/config', requireAdminApiKey, configRoutes);
-  app.use('/api/strategies', requireAdminApiKey, strategiesRoutes);
-  app.use('/api/exit-profiles', requireAdminApiKey, exitProfilesRoutes);
-  app.use('/api/subscriptions', requireAdminApiKey, subscriptionsRoutes);
+  app.use('/api/bootstrap', requireAdminAccess, bootstrapRoutes);
+  app.use('/api/account', requireAdminAccess, accountRoutes);
+  app.use('/api/positions', requireAdminAccess, positionsRoutes);
+  app.use('/api/orders', requireAdminAccess, ordersRoutes);
+  app.use('/api/order-intents', requireAdminAccess, orderIntentsRoutes);
+  app.use('/api/system-events', requireAdminAccess, systemEventsRoutes);
+  app.use('/api/tracked-positions', requireAdminAccess, trackedPositionsRoutes);
+  app.use('/api/config', requireAdminAccess, configRoutes);
+  app.use('/api/strategies', requireAdminAccess, strategiesRoutes);
+  app.use('/api/exit-profiles', requireAdminAccess, exitProfilesRoutes);
+  app.use('/api/subscriptions', requireAdminAccess, subscriptionsRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
