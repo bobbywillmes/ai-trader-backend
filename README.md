@@ -36,11 +36,17 @@ TradingView strategies → TradersPost → E*TRADE
 ```
 
 Current backend-driven AI Trader stack:
+```text
+n8n
+  → POST (to backend) /api/signals/entry
+node/express backend
+  → Subscription
+  → OrderIntent
+      → BrokerOrder / Alpaca
+  → TrackedPosition
+  → ExitProfile-driven exit evaluation
 ```
-n8n → Backend API → OrderIntent → Broker (Alpaca) → TrackedPosition
-                         ↓
-                  Subscription (Strategy + ExitProfile)
-```
+n8n sends strategy signals. The backend resolves the subscription, validates risk/config rules, determines sizing, logs the order intent, submits approved orders to Alpaca, tracks the resulting position, and manages exits.
 
 The design goal is that n8n does **not** talk directly to Alpaca.
 
@@ -292,13 +298,60 @@ This keeps the rest of the backend from depending directly on Alpaca’s raw res
 
 The backend normalizes Alpaca responses before returning them to n8n or future UI clients.
 
-## 🔒 API Authentication
+## 🔐 API Authentication
 
-All API requests require an API key via header:
+All protected API routes require an API key sent through a single shared header:
 
-```
+```http
 ai-trader-api-key: <your_api_key>
 ```
+The backend supports two API key roles:
+
+Signal API Key
+The signal key is intended for automation clients such as n8n.
+
+This key can:
+- Submit entry signals
+- Read current open tracked positions
+
+This key cannot:
+- Modify config/settings
+- Modify allowed tickers
+- Create or edit strategies
+- Create or edit subscriptions
+- Create or edit exit profiles
+- Place manual/admin orders
+- Close positions manually
+- View full admin history
+
+
+Admin API Key
+The admin key is intended for manual control, Postman, and the future web dashboard.
+
+This key can access everything the signal key can access, plus:
+- Runtime config/settings
+- Allowed ticker management
+- Strategy management
+- Exit profile management
+- Subscription management
+- Manual order placement
+- Position close actions
+- Full position history
+- Order intent history
+- System event history
+- Environment Variables
+
+API keys are configured in .env:
+```
+AI_TRADER_SIGNAL_API_KEY=your_signal_key_here
+AI_TRADER_ADMIN_API_KEY=your_admin_key_here
+```
+
+Both keys use the same request header:
+```
+ai-trader-api-key: your_key_here
+```
+The backend decides access level by comparing the provided key against the signal/admin keys configured in the environment.
 
 ### Roles
 
@@ -409,54 +462,167 @@ GET /api/orders/open
 ```
 Fetches normalized open Alpaca orders.
 
-### Place Order
+### Signals
+```http
+POST /api/signals/entry
 ```
+
+Primary endpoint for n8n-driven entry signals.
+
+This is the preferred automation entrypoint. Instead of n8n sending full order instructions, it sends a subscription key and signal metadata. The backend resolves the subscription, validates the request, determines sizing, creates an order intent, and submits the order asynchronously.
+
+Example request:
+```json
+{
+  "subscriptionKey": "dip_n_ride_spy_paper",
+  "reason": "SPY dip signal triggered",
+  "source": "n8n-ai-trader",
+  "confidence": "high",
+  "runId": "n8n-run-001",
+  "metadata": {
+    "macroRegime": "risk_on",
+    "trigger": "dip_bounce"
+  }
+}
+```
+
+Example response:
+```json
+{
+  "ok": true,
+  "signal": {
+    "subscriptionKey": "dip_n_ride_spy_paper",
+    "signalType": "entry",
+    "source": "n8n-ai-trader"
+  },
+  "order": {
+    "ok": true,
+    "intentId": 25,
+    "status": "pending"
+  }
+}
+```
+
+Entry signals are blocked if:
+- The subscription is disabled
+- The subscription strategy is disabled
+- The subscription exit profile is disabled
+- The ticker is not allowed
+- Trading is disabled
+- The Alpaca account is trading-blocked
+- The ticker already has an open or closing tracked position
+
+This route is available to the signal API key and the admin API key.
+
+
+### Admin: Strategies
+
+```http
+GET /api/strategies
+```
+
+Returns configured strategy records.
+
+Strategies are mostly used as high-level reporting and grouping categories. They describe the broad trading logic bucket, such as Dip N Ride, Momentum, or quick test strategies.
+
+Admin-only route.
+```js
+Admin: Exit Profiles
+GET   /api/exit-profiles
+POST  /api/exit-profiles
+PATCH /api/exit-profiles/:id
+```
+Exit profiles define how positions should be closed once opened.
+
+Current exit profile fields include:
+- key
+- name
+- description
+- targetPct
+- stopLossPct
+- trailingStopPct
+- maxHoldDays
+- exitMode
+- takeProfitBehavior
+- enabled
+
+Exit profiles are linked to subscriptions, allowing each subscription to define its own position exit behavior.
+
+Admin-only routes.
+
+Admin: Subscriptions
+```js
+GET   /api/subscriptions
+GET   /api/subscriptions/:key
+POST  /api/subscriptions
+PATCH /api/subscriptions/:id
+```
+
+Subscriptions are the main deployment object for strategy execution.
+
+A subscription connects:
+- Ticker
+- Broker
+- Broker mode
+- Position sizing
+- Strategy
+- Exit profile
+- Enabled/disabled state
+
+Example subscription:
+```json
+{
+  "key": "dip_n_ride_spy_paper",
+  "name": "Dip N Ride - SPY Paper",
+  "symbol": "SPY",
+  "broker": "alpaca",
+  "brokerMode": "paper",
+  "sizingType": "fixed_qty",
+  "sizingValue": 1,
+  "strategyKey": "dip_n_ride_etf",
+  "exitProfileKey": "target_2pct_trail_0_5pct",
+  "enabled": true
+}
+```
+
+The backend enforces that only one enabled subscription can exist for the same symbol/broker/brokerMode combination. This prevents duplicate active deployments for the same ticker in the same broker environment while still allowing disabled test subscriptions to exist.
+
+
+### Place Order
+```js
 POST /api/orders
 ```
-Using the new subscription-driven order system, all that is sent to backend is the subscription & signalType. The backend handles the everything else to build the order & connects it to a subscription (which contains the position, qty, strategy, exitProfile, etc)
-```
+Manual/admin order placement endpoint.
+
+This route is primarily intended for admin use, testing, and fallback manual actions. The preferred n8n automation path is:
+
+Subscription-driven example:
+```json
 {
   "subscriptionKey": "dip_n_ride_spy_paper",
   "signalType": "entry"
 }
 ```
-Submits a paper order through Alpaca after backend validation.
-
-⚠️ Note:
-Direct order placement (symbol/qty) is still supported but will eventually be deprecated in favor of subscription-based execution. (See below.)
-
-Supported v1 order types:
-
--   `market`
--   `limit`
-
-Supported v1 time-in-force values:
-
--   `day`
--   `gtc`
-
-The request must include either `qty` or `notional`, but not both.
-
-Example market order:
-```
+Direct/manual market order example:
+```json
 {
- "symbol": "SPY",
- "side": "buy",
- "orderType": "market",
- "timeInForce": "day",
- "qty": 1,
+  "symbol": "SPY",
+  "side": "buy",
+  "orderType": "market",
+  "timeInForce": "day",
+  "qty": 1
 }
 ```
-Example limit order:
-```
+Direct/manual limit order example:
+```json
 {
- "symbol": "AAPL",
- "side": "buy",
- "orderType": "limit",
- "timeInForce": "day",
- "qty": 1,
- "limitPrice": 150,
- "extendedHours": true,
+  "symbol": "AAPL",
+  "side": "buy",
+  "orderType": "limit",
+  "timeInForce": "day",
+  "qty": 1,
+  "limitPrice": 150,
+  "extendedHours": true
 }
 ```
 Backend validation currently checks:
@@ -889,17 +1055,34 @@ This protects the rest of the AI Trader system from depending on raw Alpaca resp
 
 ## 🛡 Current Safety Controls
 
-The backend currently protects order submission with:
+The backend currently protects trading and configuration changes with:
 
--   ticker allowlist
--   trading enabled setting
--   paper/live mode setting
--   Alpaca account `tradingBlocked` check
--   schema validation with Zod
--   duplicate `clientOrderId` check
--   order intent audit logging
+- API key authentication
+- Separate signal-level and admin-level access
+- Single shared API key header: `ai-trader-api-key`
+- Ticker allowlist
+- Runtime `tradingEnabled` setting
+- Paper/live mode setting
+- Alpaca account `tradingBlocked` check
+- Zod schema validation
+- Backend-generated `clientOrderId`
+- Duplicate broker order protection
+- Order intent audit logging
+- Broker order audit logging
+- System event logging
+- Open/closing position guard for entry signals
+- Subscription enabled/disabled checks
+- Strategy enabled/disabled checks
+- Exit profile enabled/disabled checks
+- One-enabled-subscription-per-symbol/broker/brokerMode guard
 
-Before deploying publicly, the backend still needs API authentication so only trusted clients, such as n8n, can call protected endpoints.
+The intended production separation is:
+
+```text
+n8n / automation → signal API key → signal routes only
+Admin dashboard / Postman → admin API key → full management routes
+```
+This prevents automation clients from accidentally changing strategy configuration, subscription sizing, exit rules, or global trading settings.
 
 ----------
 
@@ -907,22 +1090,27 @@ Before deploying publicly, the backend still needs API authentication so only tr
 
 Near-term:
 
--   Add backend API authentication
--   Add admin endpoints for settings and allowed tickers
--   Add account snapshot logging
--   Add broker activity/fill endpoint
--   Add basic dashboard UI
--   Deploy to Hostinger
--   Connect n8n AI Trader to `/api/bootstrap`
--   Connect n8n order execution to `POST /api/orders`
+- Connect n8n AI Trader to `POST /api/signals/entry`
+- Connect n8n to `GET /api/tracked-positions/open`
+- Build a basic admin web dashboard
+- Add UI controls for subscriptions
+- Add UI controls for exit profiles
+- Add UI controls for runtime settings
+- Add UI controls for allowed tickers
+- Add account snapshot logging
+- Add broker activity/fill endpoint
+- Deploy backend to Hostinger
+- Configure production API keys/secrets
+- Add production logging/monitoring checks
 
 Longer-term:
 
--   Replace more Google Sheet state with database tables
--   Add Market Diary persistence
--   Add strategy/risk configuration tables
--   Add per-ticker budget rules
--   Add max daily orders and max exposure rules
--   Add kill switch
--   Add websocket trade update listener
--   Add historical audit dashboard
+- Replace more Google Sheet state with database tables
+- Add Market Diary persistence
+- Add per-ticker budget rules
+- Add max daily orders and max exposure rules
+- Add kill switch
+- Add websocket trade update listener
+- Add historical audit dashboard
+- Add richer exit modes such as AI-assisted profit protection
+- Add performance reporting by strategy/subscription/exit profile
