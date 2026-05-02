@@ -1169,8 +1169,6 @@ This prevents automation clients from accidentally changing strategy configurati
 
 Near-term:
 
-- Connect n8n AI Trader to `POST /api/signals/entry`
-- Connect n8n to `GET /api/tracked-positions/open`
 - Build a basic admin web dashboard
 - Add UI controls for subscriptions
 - Add UI controls for exit profiles
