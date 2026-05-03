@@ -13,6 +13,7 @@ import type {
   Strategy,
   Subscription,
   TrackedPosition,
+  OpenOrder,
 } from './types/api';
 
 import { patchSubscription } from './lib/api';
@@ -22,6 +23,7 @@ type DashboardData = {
   subscriptions: Subscription[];
   exitProfiles: ExitProfile[];
   openPositions: TrackedPosition[];
+  openOrders: OpenOrder[];
 };
 
 function App() {
@@ -57,12 +59,18 @@ function App() {
       throw new Error('Admin session token is missing.');
     }
 
-    const [strategies, subscriptions, exitProfiles, trackedPositions] =
-      await Promise.all([
+    const [
+      strategies,
+      subscriptions,
+      exitProfiles,
+      trackedPositions,
+      openOrders
+    ] = await Promise.all([
         apiRequest<Strategy[]>('/api/strategies', { token: tokenToUse }),
         apiRequest<Subscription[]>('/api/subscriptions', { token: tokenToUse }),
         apiRequest<ExitProfile[]>('/api/exit-profiles', { token: tokenToUse }),
         apiRequest<TrackedPosition[]>('/api/tracked-positions', { token: tokenToUse }),
+        apiRequest<OpenOrder[]>('/api/orders/open', { token: tokenToUse }),
       ]);
 
     setData({
@@ -72,6 +80,7 @@ function App() {
       openPositions: trackedPositions.filter(
         (position) => position.status === 'open'
       ),
+      openOrders,
     });
   }
 
@@ -278,6 +287,36 @@ function App() {
     }
   }
 
+  async function handleCancelOrder(orderId: string, symbol?: string) {
+    if (!token) {
+      showMessage('Admin session token is missing.', 'error');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Cancel open order${symbol ? ` for ${symbol}` : ''}?`,
+    );
+
+    if (!confirmed) return;
+
+    try {
+      showMessage('Canceling order...', 'info');
+
+      await apiRequest(`/api/orders/${encodeURIComponent(orderId)}`, {
+        method: 'DELETE',
+        token,
+      });
+
+      showMessage(`Order canceled${symbol ? ` for ${symbol}` : ''}.`, 'success');
+      await loadDashboard(token);
+    } catch (error) {
+      showMessage(
+        error instanceof Error ? error.message : 'Failed to cancel order.',
+        'error',
+      );
+    }
+  }
+
   return (
     <main className="page">
       <section className="header">
@@ -321,7 +360,73 @@ function App() {
           label="Open Positions"
           value={data?.openPositions.length ?? 0}
         />
+        <SummaryCard
+          label="Open Orders"
+          value={data?.openOrders.length ?? 0}
+        />
       </section>
+      
+
+
+      <section className="card">
+        <h2>Open Orders</h2>
+
+        {!data?.openOrders.length ? (
+          <p className="muted">No open orders.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Side</th>
+                <th>Type</th>
+                <th>Qty</th>
+                <th>Filled</th>
+                <th>Limit</th>
+                <th>Status</th>
+                <th>Submitted</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {data?.openOrders.map((order) => {
+                const filledQty = order.filled_qty ?? order.filledQty ?? '0';
+                const limitPrice = order.limit_price ?? order.limitPrice ?? '—';
+                const submittedAt = order.submitted_at ?? order.submittedAt ?? null;
+
+                return (
+                  <tr key={order.id}>
+                    <td>{order.symbol}</td>
+                    <td>{order.side}</td>
+                    <td>{order.type}</td>
+                    <td>{order.qty ?? '—'}</td>
+                    <td>{filledQty}</td>
+                    <td>{limitPrice}</td>
+                    <td>{order.status}</td>
+                    <td>
+                      {submittedAt
+                        ? new Date(submittedAt).toLocaleString()
+                        : '—'}
+                    </td>
+                    <td>
+                      <button
+                        className="small-button danger"
+                        onClick={() => handleCancelOrder(order.id, order.symbol)}
+                      >
+                        Cancel
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+
+
 
       <section className="card">
         <h2>Open Positions</h2>

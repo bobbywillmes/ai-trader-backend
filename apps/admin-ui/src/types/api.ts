@@ -94,3 +94,22 @@ export type TrackedPosition = {
   subscriptionId: number | null;
   subscription?: Subscription | null;
 };
+
+export type OpenOrder = {
+  id: string;
+  symbol: string;
+  side: string;
+  type: string;
+  qty?: string | number | null;
+  filled_qty?: string | number | null;
+  filledQty?: string | number | null;
+  limit_price?: string | number | null;
+  limitPrice?: string | number | null;
+  stop_price?: string | number | null;
+  stopPrice?: string | number | null;
+  status: string;
+  submitted_at?: string | null;
+  submittedAt?: string | null;
+  client_order_id?: string | null;
+  clientOrderId?: string | null;
+};
