@@ -258,6 +258,32 @@ export async function updateSubscription(
     enabled: nextEnabled,
   });
 
+
+  // Prevent disabling a subscription if it has an active position
+  if (input.enabled === false) {
+    const activePosition = await prisma.trackedPosition.findFirst({
+      where: {
+        subscriptionId: current.id,
+        status: {
+          in: ['open', 'closing'],
+        },
+      },
+      select: {
+        id: true,
+        symbol: true,
+        status: true,
+      },
+    });
+
+    if (activePosition) {
+      throw new HttpError(
+        409,
+        `Cannot disable subscription ${current.key} because it has an active ${activePosition.symbol} position with status "${activePosition.status}". Close the position before disabling the subscription.`
+      );
+    }
+  }
+
+
   return prisma.subscription.update({
     where: { id },
     data: {
