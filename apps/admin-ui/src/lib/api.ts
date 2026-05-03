@@ -65,3 +65,33 @@ export async function apiRequest<T>(
 
   return data as T;
 }
+
+export async function patchSubscription(
+  subscriptionId: number,
+  payload: {
+    enabled?: boolean;
+    sizingValue?: number;
+    exitProfileKey?: string;
+  },
+  token: string
+) {
+  const res = await fetch(`${API_BASE_URL}/api/subscriptions/${subscriptionId}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await res.json().catch(() => null);
+  console.log('res', res);
+  console.log('res.status:', res.status);
+  console.log('data:', data);
+
+  if (!res.ok) {
+    throw new Error(data?.message ?? `Failed to update subscription. Status: ${res.status}`);
+  }
+
+  return data;
+}

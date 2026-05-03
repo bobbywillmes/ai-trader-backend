@@ -15,6 +15,8 @@ import type {
   TrackedPosition,
 } from './types/api';
 
+import { patchSubscription } from './lib/api';
+
 type DashboardData = {
   strategies: Strategy[];
   subscriptions: Subscription[];
@@ -26,9 +28,24 @@ function App() {
   const [email, setEmail] = useState('bobby@example.com');
   const [password, setPassword] = useState('');
   const [adminEmail, setAdminEmail] = useState<string | null>(null);
+  const [token, setToken] = useState<string>('');
   const [data, setData] = useState<DashboardData | null>(null);
   const [status, setStatus] = useState('Checking session...');
   const [loading, setLoading] = useState(false);
+
+  type MessageType = 'info' | 'success' | 'error';
+
+  const [message, setMessage] = useState<string | null>(null);
+  const [messageType, setMessageType] = useState<MessageType>('info');
+
+  function showMessage(text: string, type: MessageType = 'info') {
+    setMessage(text);
+    setMessageType(type);
+  }
+
+  function clearMessage() {
+    setMessage(null);
+  }
 
   async function loadDashboard() {
     const [strategies, subscriptions, exitProfiles, trackedPositions] =
@@ -51,6 +68,7 @@ function App() {
 
   async function checkSession() {
     const token = getAdminToken();
+    setToken(token);
 
     if (!token) {
       setStatus('Not logged in.');
@@ -186,6 +204,23 @@ function App() {
     );
   }
 
+  async function handleToggleSubscription(subscriptionId: number, enabled: boolean) {
+    try {
+      showMessage(enabled ? 'Enabling subscription...' : 'Disabling subscription...', 'info');
+
+      await patchSubscription(subscriptionId, { enabled }, token);
+
+      showMessage(enabled ? 'Subscription enabled.' : 'Subscription disabled.', 'success');
+
+      await loadDashboard();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to update subscription.';
+
+      showMessage(message, 'error');
+    }
+  }
+
   return (
     <main className="page">
       <section className="header">
@@ -199,6 +234,21 @@ function App() {
           Logout
         </button>
       </section>
+
+      {message && (
+        <div className={`status-banner status-${messageType}`} role="status">
+          <span>{message}</span>
+
+          <button
+            type="button"
+            className="status-dismiss"
+            onClick={clearMessage}
+            aria-label="Dismiss message"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       <section className="grid">
         <SummaryCard label="Strategies" value={data?.strategies.length ?? 0} />
@@ -263,6 +313,7 @@ function App() {
                 <th>Size</th>
                 <th>Enabled</th>
                 <th>Exit Profile</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -275,6 +326,23 @@ function App() {
                   </td>
                   <td>{subscription.enabled ? 'Yes' : 'No'}</td>
                   <td>{subscription.exitProfile?.key ?? subscription.exitProfileId}</td>
+                  <td>
+                    {subscription.enabled ? (
+                      <button
+                        className="small-button danger"
+                        onClick={() => handleToggleSubscription(subscription.id, false)}
+                      >
+                        Disable
+                      </button>
+                    ) : (
+                      <button
+                        className="small-button"
+                        onClick={() => handleToggleSubscription(subscription.id, true)}
+                      >
+                        Enable
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
