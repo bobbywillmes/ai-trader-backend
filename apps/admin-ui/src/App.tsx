@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react';
+import React, { FormEvent, useEffect, useState } from 'react';
 import './App.css';
 import {
   apiRequest,
@@ -32,6 +32,9 @@ function App() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [status, setStatus] = useState('Checking session...');
   const [loading, setLoading] = useState(false);
+  const [editingSubscriptionId, setEditingSubscriptionId] = useState<number | null>(null);
+  const [editSizingValue, setEditSizingValue] = useState<string>('');
+  const [editExitProfileKey, setEditExitProfileKey] = useState<string>('');
 
   type MessageType = 'info' | 'success' | 'error';
 
@@ -47,13 +50,19 @@ function App() {
     setMessage(null);
   }
 
-  async function loadDashboard() {
+  async function loadDashboard(authToken?: string) {
+    const tokenToUse = authToken || token || getAdminToken();
+
+    if (!tokenToUse) {
+      throw new Error('Admin session token is missing.');
+    }
+
     const [strategies, subscriptions, exitProfiles, trackedPositions] =
       await Promise.all([
-        apiRequest<Strategy[]>('/api/strategies'),
-        apiRequest<Subscription[]>('/api/subscriptions'),
-        apiRequest<ExitProfile[]>('/api/exit-profiles'),
-        apiRequest<TrackedPosition[]>('/api/tracked-positions'),
+        apiRequest<Strategy[]>('/api/strategies', { token: tokenToUse }),
+        apiRequest<Subscription[]>('/api/subscriptions', { token: tokenToUse }),
+        apiRequest<ExitProfile[]>('/api/exit-profiles', { token: tokenToUse }),
+        apiRequest<TrackedPosition[]>('/api/tracked-positions', { token: tokenToUse }),
       ]);
 
     setData({
@@ -61,38 +70,33 @@ function App() {
       subscriptions,
       exitProfiles,
       openPositions: trackedPositions.filter(
-        (position) => position.status === 'open',
+        (position) => position.status === 'open'
       ),
     });
   }
 
   async function checkSession() {
-    const token = getAdminToken();
-    setToken(token);
+    const savedToken = getAdminToken();
 
-    if (!token) {
+    if (!savedToken) {
       setStatus('Not logged in.');
       return;
     }
 
     try {
-      const me = await apiRequest<MeResponse>('/api/admin-auth/me');
+      const me = await apiRequest<MeResponse>('/api/admin-auth/me', {
+        token: savedToken,
+      });
+
       setAdminEmail(me.adminUser.email);
+      setToken(savedToken);
       setStatus('Logged in. Loading dashboard...');
 
-      try {
-        await loadDashboard();
-        setStatus('Logged in.');
-      } catch (error) {
-        setData(null);
-        setStatus(
-          error instanceof Error
-            ? `Logged in, but dashboard failed: ${error.message}`
-            : 'Logged in, but dashboard failed.',
-        );
-      }
+      await loadDashboard(savedToken);
+      setStatus('Logged in.');
     } catch {
       clearAdminToken();
+      setToken('');
       setAdminEmail(null);
       setData(null);
       setStatus('Session expired. Please log in again.');
@@ -118,11 +122,12 @@ function App() {
       });
 
       setAdminToken(response.token);
+      setToken(response.token);
       setAdminEmail(response.adminUser.email);
       setStatus('Logged in. Loading dashboard...');
 
       try {
-        await loadDashboard();
+        await loadDashboard(response.token);
         setStatus('Logged in.');
       } catch (error) {
         setData(null);
@@ -218,6 +223,58 @@ function App() {
         error instanceof Error ? error.message : 'Failed to update subscription.';
 
       showMessage(message, 'error');
+    }
+  }
+
+  function startEditingSubscription(subscription: Subscription) {
+    setEditingSubscriptionId(subscription.id);
+    setEditSizingValue(String(subscription.sizingValue ?? ''));
+    setEditExitProfileKey(subscription.exitProfile?.key ?? '');
+    setMessage(null);
+  }
+
+  function cancelEditingSubscription() {
+    setEditingSubscriptionId(null);
+    setEditSizingValue('');
+    setEditExitProfileKey('');
+  }
+
+  async function handleUpdateSubscription(subscriptionId: number) {
+    if (!token) {
+      setMessage('Admin session is missing. Please log in again.');
+      return;
+    }
+
+    const parsedSizingValue = Number(editSizingValue);
+
+    if (!Number.isFinite(parsedSizingValue) || parsedSizingValue <= 0) {
+      setMessage('Sizing value must be a positive number.');
+      return;
+    }
+
+    if (!editExitProfileKey) {
+      setMessage('Exit profile is required.');
+      return;
+    }
+
+    try {
+      setMessage('Updating subscription...');
+
+      await apiRequest<Subscription>(`/api/subscriptions/${subscriptionId}`, {
+        method: 'PATCH',
+        token,
+        body: {
+          sizingValue: parsedSizingValue,
+          exitProfileKey: editExitProfileKey,
+        },
+      });
+
+      setMessage('Subscription updated.');
+      cancelEditingSubscription();
+      await loadDashboard();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update subscription.';
+      setMessage(message);
     }
   }
 
@@ -317,34 +374,99 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              {data.subscriptions.map((subscription) => (
-                <tr key={subscription.id}>
-                  <td>{subscription.key}</td>
-                  <td>{subscription.symbol}</td>
-                  <td>
-                    {subscription.sizingValue} {subscription.sizingType}
-                  </td>
-                  <td>{subscription.enabled ? 'Yes' : 'No'}</td>
-                  <td>{subscription.exitProfile?.key ?? subscription.exitProfileId}</td>
-                  <td>
-                    {subscription.enabled ? (
-                      <button
-                        className="small-button danger"
-                        onClick={() => handleToggleSubscription(subscription.id, false)}
-                      >
-                        Disable
-                      </button>
-                    ) : (
-                      <button
-                        className="small-button"
-                        onClick={() => handleToggleSubscription(subscription.id, true)}
-                      >
-                        Enable
-                      </button>
+              {data.subscriptions.map((subscription) => {
+                const isEditing = editingSubscriptionId === subscription.id;
+
+                return (
+                  <React.Fragment key={subscription.id}>
+                    <tr>
+                      <td>{subscription.key}</td>
+                      <td>{subscription.symbol}</td>
+                      <td>
+                        {subscription.sizingValue} {subscription.sizingType}
+                      </td>
+                      <td>{subscription.enabled ? 'Yes' : 'No'}</td>
+                      <td>{subscription.exitProfile?.key ?? subscription.exitProfileId}</td>
+                      <td>
+                        <div className="action-row">
+                          {subscription.enabled ? (
+                            <button
+                              className="small-button danger"
+                              onClick={() => handleToggleSubscription(subscription.id, false)}
+                            >
+                              Disable
+                            </button>
+                          ) : (
+                            <button
+                              className="small-button"
+                              onClick={() => handleToggleSubscription(subscription.id, true)}
+                            >
+                              Enable
+                            </button>
+                          )}
+
+                          <button
+                            className="small-button secondary"
+                            onClick={() => startEditingSubscription(subscription)}
+                          >
+                            Edit
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+
+                    {isEditing && (
+                      <tr className="edit-row">
+                        <td colSpan={6}>
+                          <div className="edit-panel">
+                            <div>
+                              <label>Sizing Value</label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={editSizingValue}
+                                onChange={(event) => setEditSizingValue(event.target.value)}
+                              />
+                            </div>
+
+                            <div>
+                              <label>Exit Profile</label>
+                              <select
+                                value={editExitProfileKey}
+                                onChange={(event) => setEditExitProfileKey(event.target.value)}
+                              >
+                                <option value="">Select exit profile</option>
+                                {data.exitProfiles.map((exitProfile) => (
+                                  <option key={exitProfile.id} value={exitProfile.key}>
+                                    {exitProfile.key}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div className="edit-actions">
+                              <button
+                                className="small-button"
+                                onClick={() => handleUpdateSubscription(subscription.id)}
+                              >
+                                Save
+                              </button>
+
+                              <button
+                                className="small-button secondary"
+                                onClick={cancelEditingSubscription}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                </tr>
-              ))}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         )}

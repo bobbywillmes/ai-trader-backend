@@ -26,41 +26,67 @@ export function clearAdminToken() {
   localStorage.removeItem(TOKEN_STORAGE_KEY);
 }
 
-export async function apiRequest<T>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
-  const token = getAdminToken();
+type ApiRequestOptions = {
+  method?: string;
+  token?: string | null;
+  body?: unknown;
+};
 
-  const headers = new Headers(options.headers);
-
-  if (options.body && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
+function serializeBody(body: unknown): BodyInit | undefined {
+  if (body === undefined || body === null) {
+    return undefined;
   }
 
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
+  if (
+    typeof body === 'string' ||
+    body instanceof FormData ||
+    body instanceof URLSearchParams ||
+    body instanceof Blob
+  ) {
+    return body;
+  }
+
+  return JSON.stringify(body);
+}
+
+export async function apiRequest<T>(
+  path: string,
+  options: ApiRequestOptions = {}
+): Promise<T> {
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+  };
+
+  const body = serializeBody(options.body);
+
+  if (body !== undefined && !(options.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  if (options.token) {
+    headers.Authorization = `Bearer ${options.token}`;
   }
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
+    method: options.method ?? 'GET',
     headers,
+    body,
   });
 
-  const contentType = response.headers.get('content-type') ?? '';
-  const data = contentType.includes('application/json')
-    ? await response.json()
-    : await response.text();
+  const responseText = await response.text();
+
+  let data: any = null;
+
+  if (responseText) {
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      data = { message: responseText };
+    }
+  }
 
   if (!response.ok) {
-    const message =
-      typeof data === 'object' &&
-      data !== null &&
-      'message' in data
-        ? String(data.message)
-        : `Request failed with status ${response.status}`;
-
-    throw new ApiError(response.status, message, data);
+    throw new Error(data?.message ?? `Request failed with status ${response.status}`);
   }
 
   return data as T;
