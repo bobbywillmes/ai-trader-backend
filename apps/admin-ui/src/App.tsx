@@ -1,4 +1,6 @@
 import React, { FormEvent, Fragment, useEffect, useState } from 'react';
+import { ToastContainer, toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 import './App.css';
 import {
   apiRequest,
@@ -53,11 +55,6 @@ function App() {
   const [hasSellOrder, setHasSellOrder] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
 
-  type MessageType = 'info' | 'success' | 'error';
-
-  const [message, setMessage] = useState<string | null>(null);
-  const [messageType, setMessageType] = useState<MessageType>('info');
-
   const [editingExitProfileId, setEditingExitProfileId] = useState<number | null>(null);
   const [creatingExitProfile, setCreatingExitProfile] = useState(false);
 
@@ -74,14 +71,27 @@ function App() {
     enabled: true,
   });
 
+  type MessageType = 'info' | 'success' | 'error' | 'warning';
+
   function showMessage(text: string, type: MessageType = 'info') {
-    setMessage(text);
-    setMessageType(type);
+    if (type === 'success') {
+      toast.success(text);
+      return;
+    }
+
+    if (type === 'error') {
+      toast.error(text);
+      return;
+    }
+
+    if (type === 'warning') {
+      toast.warning(text);
+      return;
+    }
+
+    toast.info(text);
   }
 
-  function clearMessage() {
-    setMessage(null);
-  }
 
   async function loadDashboard(authToken?: string) {
     const tokenToUse = authToken ?? token ?? getAdminToken();
@@ -584,7 +594,7 @@ function App() {
         </button>
       </section>
 
-      {message && (
+      {/* {message && (
         <div className={`status-banner status-${messageType}`} role="status">
           <span>{message}</span>
 
@@ -597,7 +607,7 @@ function App() {
             ×
           </button>
         </div>
-      )}
+      )} */}
 
       <section className="grid">
         <SummaryCard label="Strategies" value={data?.strategies.length ?? 0} />
@@ -927,6 +937,19 @@ function App() {
       </section>
 
       <p className="status">{status}</p>
+
+      <ToastContainer
+        position="top-right"
+        autoClose={5000}
+        hideProgressBar={false}
+        newestOnTop
+        closeOnClick
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+        theme="dark"
+      />
+
     </main>
   );
 }
