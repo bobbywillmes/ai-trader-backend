@@ -265,7 +265,6 @@ function App() {
 
   async function handleToggleSubscription(subscriptionId: number, enabled: boolean) {
     try {
-      showMessage(enabled ? 'Enabling subscription...' : 'Disabling subscription...', 'info');
 
       await patchSubscription(subscriptionId, { enabled }, token);
 
@@ -284,7 +283,6 @@ function App() {
     setEditingSubscriptionId(subscription.id);
     setEditSizingValue(String(subscription.sizingValue ?? ''));
     setEditExitProfileKey(subscription.exitProfile?.key ?? '');
-    setMessage(null);
   }
 
   function cancelEditingSubscription() {
@@ -295,24 +293,23 @@ function App() {
 
   async function handleUpdateSubscription(subscriptionId: number) {
     if (!token) {
-      setMessage('Admin session is missing. Please log in again.');
+      showMessage('Admin session is missing. Please log in again.');
       return;
     }
 
     const parsedSizingValue = Number(editSizingValue);
 
     if (!Number.isFinite(parsedSizingValue) || parsedSizingValue <= 0) {
-      setMessage('Sizing value must be a positive number.');
+      showMessage('Sizing value must be a positive number.', 'error');
       return;
     }
 
     if (!editExitProfileKey) {
-      setMessage('Exit profile is required.');
+      showMessage('Exit profile is required.', 'error');
       return;
     }
 
     try {
-      setMessage('Updating subscription...');
 
       await apiRequest<Subscription>(`/api/subscriptions/${subscriptionId}`, {
         method: 'PATCH',
@@ -323,12 +320,12 @@ function App() {
         },
       });
 
-      setMessage('Subscription updated.');
+      showMessage('Subscription updated.', 'success');
       cancelEditingSubscription();
       await loadDashboard();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to update subscription.';
-      setMessage(message);
+      showMessage(message, 'error');
     }
   }
 
@@ -594,20 +591,6 @@ function App() {
         </button>
       </section>
 
-      {/* {message && (
-        <div className={`status-banner status-${messageType}`} role="status">
-          <span>{message}</span>
-
-          <button
-            type="button"
-            className="status-dismiss"
-            onClick={clearMessage}
-            aria-label="Dismiss message"
-          >
-            ×
-          </button>
-        </div>
-      )} */}
 
       <section className="grid">
         <SummaryCard label="Strategies" value={data?.strategies.length ?? 0} />
