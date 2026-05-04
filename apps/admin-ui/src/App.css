@@ -231,3 +231,62 @@ th {
   color: #ffb26b;
   border: 1px solid rgba(255, 122, 24, 0.35);
 }
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.inline-editor {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid rgba(125, 160, 210, 0.16);
+  border-radius: 0.75rem;
+  background: rgba(7, 18, 38, 0.55);
+}
+
+.inline-editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.inline-editor span {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #9fb2d1;
+}
+
+.inline-editor input,
+.inline-editor select {
+  width: 100%;
+  border: 1px solid rgba(125, 160, 210, 0.18);
+  border-radius: 0.5rem;
+  background: #071226;
+  color: #eef5ff;
+  padding: 0.65rem;
+}
+
+.wide-field {
+  grid-column: span 2;
+}
+
+.checkbox-row {
+  justify-content: end;
+}
+
+.checkbox-row input {
+  width: auto;
+}
+
+.editor-actions {
+  display: flex;
+  align-items: end;
+  gap: 0.5rem;
+}

@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useState } from 'react';
+import React, { FormEvent, Fragment, useEffect, useState } from 'react';
 import './App.css';
 import {
   apiRequest,
@@ -26,6 +26,19 @@ type DashboardData = {
   openOrders: OpenOrder[];
 };
 
+type ExitProfileForm = {
+  key: string;
+  name: string;
+  description: string;
+  targetPct: string;
+  stopLossPct: string;
+  trailingStopPct: string;
+  maxHoldDays: string;
+  exitMode: string;
+  takeProfitBehavior: string;
+  enabled: boolean;
+};
+
 function App() {
   const [email, setEmail] = useState('bobby@example.com');
   const [password, setPassword] = useState('');
@@ -44,6 +57,22 @@ function App() {
 
   const [message, setMessage] = useState<string | null>(null);
   const [messageType, setMessageType] = useState<MessageType>('info');
+
+  const [editingExitProfileId, setEditingExitProfileId] = useState<number | null>(null);
+  const [creatingExitProfile, setCreatingExitProfile] = useState(false);
+
+  const [exitProfileForm, setExitProfileForm] = useState<ExitProfileForm>({
+    key: '',
+    name: '',
+    description: '',
+    targetPct: '',
+    stopLossPct: '',
+    trailingStopPct: '',
+    maxHoldDays: '',
+    exitMode: 'fixed_bracket',
+    takeProfitBehavior: 'immediate',
+    enabled: true,
+  });
 
   function showMessage(text: string, type: MessageType = 'info') {
     setMessage(text);
@@ -359,6 +388,77 @@ function App() {
     }
   }
 
+  async function handleSaveExitProfile() {
+    if (!token) {
+      showMessage('Admin session token is missing.', 'error');
+      return;
+    }
+
+    try {
+      const payload = buildExitProfilePayload(exitProfileForm);
+
+      if (!payload.key) {
+        throw new Error('Exit profile key is required.');
+      }
+
+      if (!payload.name) {
+        throw new Error('Exit profile name is required.');
+      }
+
+      const matchingProfile = data?.exitProfiles.find(
+        (profile) => profile.id === editingExitProfileId
+      );
+
+      const usedByEnabledSubscriptions =
+        matchingProfile && data
+          ? data.subscriptions.filter(
+              (subscription) =>
+                subscription.enabled &&
+                subscription.exitProfile?.key === matchingProfile.key
+            )
+          : [];
+
+      if (editingExitProfileId && usedByEnabledSubscriptions.length > 0) {
+        const confirmed = window.confirm(
+          `This exit profile is used by ${usedByEnabledSubscriptions.length} enabled subscription(s). Saving will affect live exit behavior. Continue?`
+        );
+
+        if (!confirmed) {
+          return;
+        }
+      }
+
+      if (creatingExitProfile) {
+        await apiRequest('/api/exit-profiles', {
+          method: 'POST',
+          token,
+          body: payload,
+        });
+
+        showMessage(`Exit profile created: ${payload.key}`, 'success');
+      } else if (editingExitProfileId) {
+        const { key, ...patchPayload } = payload;
+
+        await apiRequest(`/api/exit-profiles/${editingExitProfileId}`, {
+          method: 'PATCH',
+          token,
+          body: patchPayload,
+        });
+
+        showMessage(`Exit profile updated: ${payload.key}`, 'success');
+      }
+
+      setCreatingExitProfile(false);
+      setEditingExitProfileId(null);
+      await loadDashboard(token);
+    } catch (error) {
+      showMessage(
+        error instanceof Error ? error.message : 'Failed to save exit profile.',
+        'error'
+      );
+    }
+  }
+
   function wait(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -380,6 +480,94 @@ function App() {
 
       await wait(750);
     }
+  }
+
+  function exitProfileToForm(profile: ExitProfile): ExitProfileForm {
+    return {
+      key: profile.key,
+      name: profile.name,
+      description: profile.description ?? '',
+      targetPct: profile.targetPct === null ? '' : String(profile.targetPct),
+      stopLossPct: profile.stopLossPct === null ? '' : String(profile.stopLossPct),
+      trailingStopPct: profile.trailingStopPct === null ? '' : String(profile.trailingStopPct),
+      maxHoldDays: profile.maxHoldDays === null ? '' : String(profile.maxHoldDays),
+      exitMode: profile.exitMode,
+      takeProfitBehavior: profile.takeProfitBehavior,
+      enabled: profile.enabled,
+    };
+  }
+
+  function emptyToNumberOrNull(value: string): number | null {
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      return null;
+    }
+
+    const parsed = Number(trimmed);
+
+    if (Number.isNaN(parsed)) {
+      throw new Error(`Invalid number: ${value}`);
+    }
+
+    return parsed;
+  }
+
+  function emptyToIntOrNull(value: string): number | null {
+    const parsed = emptyToNumberOrNull(value);
+
+    if (parsed === null) {
+      return null;
+    }
+
+    if (!Number.isInteger(parsed)) {
+      throw new Error(`Expected whole number: ${value}`);
+    }
+
+    return parsed;
+  }
+
+  function buildExitProfilePayload(form: ExitProfileForm) {
+    return {
+      key: form.key.trim(),
+      name: form.name.trim(),
+      description: form.description.trim() || null,
+      targetPct: emptyToNumberOrNull(form.targetPct),
+      stopLossPct: emptyToNumberOrNull(form.stopLossPct),
+      trailingStopPct: emptyToNumberOrNull(form.trailingStopPct),
+      maxHoldDays: emptyToIntOrNull(form.maxHoldDays),
+      exitMode: form.exitMode,
+      takeProfitBehavior: form.takeProfitBehavior,
+      enabled: form.enabled,
+    };
+  }
+
+  function startCreatingExitProfile() {
+    setCreatingExitProfile(true);
+    setEditingExitProfileId(null);
+    setExitProfileForm({
+      key: '',
+      name: '',
+      description: '',
+      targetPct: '',
+      stopLossPct: '',
+      trailingStopPct: '',
+      maxHoldDays: '',
+      exitMode: 'fixed_bracket',
+      takeProfitBehavior: 'immediate',
+      enabled: true,
+    });
+  }
+
+  function startEditingExitProfile(profile: ExitProfile) {
+    setCreatingExitProfile(false);
+    setEditingExitProfileId(profile.id);
+    setExitProfileForm(exitProfileToForm(profile));
+  }
+
+  function cancelExitProfileForm() {
+    setCreatingExitProfile(false);
+    setEditingExitProfileId(null);
   }
 
   return (
@@ -663,6 +851,81 @@ function App() {
         )}
       </section>
 
+      <section className="card">
+        <div className="section-header">
+          <h2>Exit Profiles</h2>
+          <button className="small-button" onClick={startCreatingExitProfile}>
+            New Exit Profile
+          </button>
+        </div>
+
+        {creatingExitProfile && (
+          <ExitProfileEditor
+            form={exitProfileForm}
+            setForm={setExitProfileForm}
+            onSave={handleSaveExitProfile}
+            onCancel={cancelExitProfileForm}
+            isCreating={true}
+          />
+        )}
+
+        {!data?.exitProfiles.length ? (
+          <p className="muted">No exit profiles.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Key</th>
+                <th>Target</th>
+                <th>Stop</th>
+                <th>Trail</th>
+                <th>Mode</th>
+                <th>Behavior</th>
+                <th>Enabled</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.exitProfiles.map((profile) => (
+                <Fragment key={profile.id}>
+                  <tr>
+                    <td>{profile.key}</td>
+                    <td>{profile.targetPct ?? '—'}</td>
+                    <td>{profile.stopLossPct ?? '—'}</td>
+                    <td>{profile.trailingStopPct ?? '—'}</td>
+                    <td>{profile.exitMode}</td>
+                    <td>{profile.takeProfitBehavior}</td>
+                    <td>{profile.enabled ? 'Yes' : 'No'}</td>
+                    <td>
+                      <button
+                        className="small-button secondary"
+                        onClick={() => startEditingExitProfile(profile)}
+                      >
+                        Edit
+                      </button>
+                    </td>
+                  </tr>
+
+                  {editingExitProfileId === profile.id && (
+                    <tr>
+                      <td colSpan={8}>
+                        <ExitProfileEditor
+                          form={exitProfileForm}
+                          setForm={setExitProfileForm}
+                          onSave={handleSaveExitProfile}
+                          onCancel={cancelExitProfileForm}
+                          isCreating={false}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
       <p className="status">{status}</p>
     </main>
   );
@@ -678,3 +941,174 @@ function SummaryCard({ label, value }: { label: string; value: number }) {
 }
 
 export default App;
+
+
+type ExitProfileEditorProps = {
+  form: ExitProfileForm;
+  setForm: React.Dispatch<React.SetStateAction<ExitProfileForm>>;
+  onSave: () => void;
+  onCancel: () => void;
+  isCreating: boolean;
+};
+
+function ExitProfileEditor({
+  form,
+  setForm,
+  onSave,
+  onCancel,
+  isCreating,
+}: ExitProfileEditorProps) {
+  return (
+    <div className="inline-editor">
+      <label>
+        <span>Key</span>
+        <input
+          value={form.key}
+          disabled={!isCreating}
+          onChange={(event) =>
+            setForm((current) => ({
+              ...current,
+              key: event.target.value,
+            }))
+          }
+        />
+      </label>
+
+      <label>
+        <span>Name</span>
+        <input
+          value={form.name}
+          onChange={(event) =>
+            setForm((current) => ({
+              ...current,
+              name: event.target.value,
+            }))
+          }
+        />
+      </label>
+
+      <label className="wide-field">
+        <span>Description</span>
+        <input
+          value={form.description}
+          onChange={(event) =>
+            setForm((current) => ({
+              ...current,
+              description: event.target.value,
+            }))
+          }
+        />
+      </label>
+
+      <label>
+        <span>Target %</span>
+        <input
+          value={form.targetPct}
+          onChange={(event) =>
+            setForm((current) => ({
+              ...current,
+              targetPct: event.target.value,
+            }))
+          }
+        />
+      </label>
+
+      <label>
+        <span>Stop %</span>
+        <input
+          value={form.stopLossPct}
+          onChange={(event) =>
+            setForm((current) => ({
+              ...current,
+              stopLossPct: event.target.value,
+            }))
+          }
+        />
+      </label>
+
+      <label>
+        <span>Trail %</span>
+        <input
+          value={form.trailingStopPct}
+          onChange={(event) =>
+            setForm((current) => ({
+              ...current,
+              trailingStopPct: event.target.value,
+            }))
+          }
+        />
+      </label>
+
+      <label>
+        <span>Max Hold Days</span>
+        <input
+          value={form.maxHoldDays}
+          onChange={(event) =>
+            setForm((current) => ({
+              ...current,
+              maxHoldDays: event.target.value,
+            }))
+          }
+        />
+      </label>
+
+      <label>
+        <span>Exit Mode</span>
+        <select
+          value={form.exitMode}
+          onChange={(event) =>
+            setForm((current) => ({
+              ...current,
+              exitMode: event.target.value,
+            }))
+          }
+        >
+          <option value="fixed_target">fixed_target</option>
+          <option value="fixed_bracket">fixed_bracket</option>
+          <option value="hybrid">hybrid</option>
+          <option value="ai_assisted">ai_assisted</option>
+        </select>
+      </label>
+
+      <label>
+        <span>Take Profit Behavior</span>
+        <select
+          value={form.takeProfitBehavior}
+          onChange={(event) =>
+            setForm((current) => ({
+              ...current,
+              takeProfitBehavior: event.target.value,
+            }))
+          }
+        >
+          <option value="immediate">immediate</option>
+          <option value="trail_after_target">trail_after_target</option>
+          <option value="ai_confirm">ai_confirm</option>
+        </select>
+      </label>
+
+      <label className="checkbox-row">
+        <input
+          type="checkbox"
+          checked={form.enabled}
+          onChange={(event) =>
+            setForm((current) => ({
+              ...current,
+              enabled: event.target.checked,
+            }))
+          }
+        />
+        <span>Enabled</span>
+      </label>
+
+      <div className="editor-actions">
+        <button className="small-button" onClick={onSave}>
+          Save
+        </button>
+        <button className="small-button secondary" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
