@@ -37,6 +37,8 @@ function App() {
   const [editingSubscriptionId, setEditingSubscriptionId] = useState<number | null>(null);
   const [editSizingValue, setEditSizingValue] = useState<string>('');
   const [editExitProfileKey, setEditExitProfileKey] = useState<string>('');
+  const [hasSellOrder, setHasSellOrder] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
 
   type MessageType = 'info' | 'success' | 'error';
 
@@ -53,7 +55,7 @@ function App() {
   }
 
   async function loadDashboard(authToken?: string) {
-    const tokenToUse = authToken || token || getAdminToken();
+    const tokenToUse = authToken ?? token ?? getAdminToken();
 
     if (!tokenToUse) {
       throw new Error('Admin session token is missing.');
@@ -73,15 +75,19 @@ function App() {
         apiRequest<OpenOrder[]>('/api/orders/open', { token: tokenToUse }),
       ]);
 
-    setData({
+    const dashboardData = {
       strategies,
       subscriptions,
       exitProfiles,
-      openPositions: trackedPositions.filter(
-        (position) => position.status === 'open'
-      ),
       openOrders,
-    });
+      openPositions: trackedPositions.filter(
+        (position) => position.status === 'open' || position.status === 'closing',
+      ),
+    };
+
+    setData(dashboardData);
+
+    return dashboardData;
   }
 
   async function checkSession() {
@@ -317,6 +323,65 @@ function App() {
     }
   }
 
+  async function handleClosePosition(symbol: string) {
+    if (!token) {
+      showMessage('Admin session token is missing.', 'error');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Submit sell order to close ${symbol}?`,
+    );
+
+    if (!confirmed) return;
+
+    try {
+      showMessage(`Submitting close order for ${symbol}...`, 'info');
+      setIsClosing(true);
+
+      await apiRequest(`/api/positions/${encodeURIComponent(symbol)}`, {
+        method: 'DELETE',
+        token,
+      });
+
+      showMessage(`Close order submitted for ${symbol}.`, 'success');
+      setHasSellOrder(true);
+
+      await wait(500);
+      await refreshDashboardUntilPositionSettles(token, symbol);
+    } catch (error) {
+      showMessage(
+        error instanceof Error
+          ? error.message
+          : `Failed to close ${symbol}.`,
+        'error',
+      );
+    }
+  }
+
+  function wait(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function refreshDashboardUntilPositionSettles(
+    authToken: string,
+    symbol: string,
+  ) {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const latestData = await loadDashboard(authToken);
+
+      const stillActive = latestData.openPositions.some(
+        (position) => position.symbol === symbol,
+      );
+
+      if (!stillActive) {
+        return;
+      }
+
+      await wait(750);
+    }
+  }
+
   return (
     <main className="page">
       <section className="header">
@@ -443,6 +508,7 @@ function App() {
                 <th>Current</th>
                 <th>P/L</th>
                 <th>Status</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -453,7 +519,27 @@ function App() {
                   <td>{position.avgEntryPrice.toFixed(2)}</td>
                   <td>{position.currentPrice.toFixed(2)}</td>
                   <td>{position.unrealizedPnL.toFixed(2)}</td>
-                  <td>{position.status}</td>
+                  <td>
+                    {isClosing || hasSellOrder ? (
+                      <span className="status-pill warning">closing</span>
+                    ) : (
+                      position.status
+                    )}
+                  </td>
+                  <td>
+                    {isClosing || hasSellOrder ? (
+                      <button className="small-button" disabled>
+                        Sell pending
+                      </button>
+                    ) : (
+                      <button
+                        className="small-button danger"
+                        onClick={() => handleClosePosition(position.symbol)}
+                      >
+                        Close
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
