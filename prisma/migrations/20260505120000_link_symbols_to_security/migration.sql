@@ -38,10 +38,22 @@ ALTER TABLE "Subscription" ALTER COLUMN "securityId" SET NOT NULL;
 ALTER TABLE "TrackedPosition" ALTER COLUMN "securityId" SET NOT NULL;
 
 ALTER TABLE "BrokerOrder"
-ADD CONSTRAINT "BrokerOrder_securityId_fkey" FOREIGN KEY ("securityId") REFERENCES "Security"("id");
+ADD CONSTRAINT "BrokerOrder_securityId_fkey"
+FOREIGN KEY ("securityId")
+REFERENCES "Security"("id")
+ON DELETE RESTRICT
+ON UPDATE CASCADE;
 
 ALTER TABLE "Subscription"
-ADD CONSTRAINT "Subscription_securityId_fkey" FOREIGN KEY ("securityId") REFERENCES "Security"("id");
+ADD CONSTRAINT "Subscription_securityId_fkey"
+FOREIGN KEY ("securityId")
+REFERENCES "Security"("id")
+ON DELETE RESTRICT
+ON UPDATE CASCADE;
 
 ALTER TABLE "TrackedPosition"
-ADD CONSTRAINT "TrackedPosition_securityId_fkey" FOREIGN KEY ("securityId") REFERENCES "Security"("id");
+ADD CONSTRAINT "TrackedPosition_securityId_fkey"
+FOREIGN KEY ("securityId")
+REFERENCES "Security"("id")
+ON DELETE RESTRICT
+ON UPDATE CASCADE;

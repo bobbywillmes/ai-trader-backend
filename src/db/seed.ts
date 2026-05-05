@@ -1,14 +1,24 @@
 import { prisma } from './prisma.js';
 
-const tickers = [
-  'SPY', 'QQQ', 'DIA', 'IWM', 'RSP',
-  'AAPL', 'AMZN', 'GOOG', 'META', 'MSFT',
-  'NVDA', 'TSLA', 'AMD'
-];
-
 const settings = [
   { key: 'tradingEnabled', value: 'true' },
   { key: 'paperMode', value: 'true' }
+];
+
+const securities = [
+  { symbol: 'SPY', name: 'SPDR S&P 500 ETF Trust', assetType: 'ETF' },
+  { symbol: 'QQQ', name: 'Invesco QQQ Trust', assetType: 'ETF' },
+  { symbol: 'DIA', name: 'SPDR Dow Jones Industrial Average ETF Trust', assetType: 'ETF' },
+  { symbol: 'IWM', name: 'iShares Russell 2000 ETF', assetType: 'ETF' },
+  { symbol: 'RSP', name: 'Invesco S&P 500 Equal Weight ETF', assetType: 'ETF' },
+  { symbol: 'AAPL', name: 'Apple Inc.', assetType: 'STOCK' },
+  { symbol: 'AMZN', name: 'Amazon.com, Inc.', assetType: 'STOCK' },
+  { symbol: 'GOOG', name: 'Alphabet Inc. Class C', assetType: 'STOCK' },
+  { symbol: 'META', name: 'Meta Platforms, Inc.', assetType: 'STOCK' },
+  { symbol: 'MSFT', name: 'Microsoft Corporation', assetType: 'STOCK' },
+  { symbol: 'NVDA', name: 'NVIDIA Corporation', assetType: 'STOCK' },
+  { symbol: 'TSLA', name: 'Tesla, Inc.', assetType: 'STOCK' },
+  { symbol: 'AMD', name: 'Advanced Micro Devices, Inc.', assetType: 'STOCK' }
 ];
 
 const strategies = [
@@ -171,11 +181,18 @@ const subscriptions = [
 ];
 
 async function main() {
-  for (const symbol of tickers) {
-    await prisma.allowedTicker.upsert({
-      where: { symbol },
-      update: {},
-      create: { symbol }
+  for (const security of securities) {
+    await prisma.security.upsert({
+      where: { symbol: security.symbol },
+      update: {
+        name: security.name,
+        assetType: security.assetType
+      },
+      create: {
+        symbol: security.symbol,
+        name: security.name,
+        assetType: security.assetType
+      }
     });
   }
 
@@ -212,11 +229,16 @@ for (const subscription of subscriptions) {
     where: { key: subscription.exitProfileKey }
   });
 
+  const security = await prisma.security.findUniqueOrThrow({
+    where: { symbol: subscription.symbol }
+  });
+
   await prisma.subscription.upsert({
     where: { key: subscription.key },
     update: {
       name: subscription.name,
       symbol: subscription.symbol,
+      securityId: security.id,
       broker: subscription.broker,
       brokerMode: subscription.brokerMode,
       sizingType: subscription.sizingType,
@@ -229,6 +251,7 @@ for (const subscription of subscriptions) {
       key: subscription.key,
       name: subscription.name,
       symbol: subscription.symbol,
+      securityId: security.id,
       broker: subscription.broker,
       brokerMode: subscription.brokerMode,
       sizingType: subscription.sizingType,

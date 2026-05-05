@@ -21,12 +21,19 @@ export async function syncTrackedPositions() {
         updatedAt: 'desc',
       },
     });
+    const security = await prisma.security.findUnique({
+      where: { symbol: position.symbol }
+    });
+    if (!security) {
+      throw new Error(`Security not found for symbol: ${position.symbol}`);
+    }
 
     if (!existing) {
       const created = await prisma.trackedPosition.create({
         data: {
           broker: position.broker,
           symbol: position.symbol,
+          securityId: security.id,
           side: position.side,
           qty: position.qty,
           avgEntryPrice: position.avgEntryPrice,

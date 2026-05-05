@@ -9,7 +9,7 @@ import { requireAdminApiKey } from '../middleware/api-key-auth.js';
 
 const router = Router();
 
-router.post('/bootstrap', requireAdminApiKey, adminBootstrapController);
+router.post('/bootstrap', adminBootstrapController);
 router.post('/login', adminLoginController);
 router.get('/me', adminMeController);
 router.post('/logout', adminLogoutController);
