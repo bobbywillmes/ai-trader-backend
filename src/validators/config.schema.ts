@@ -12,21 +12,3 @@ export const updateRuntimeSettingsSchema = z
       message: 'At least one setting is required.'
     }
   );
-
-export const allowedTickerBodySchema = z.object({
-  symbol: z
-    .string()
-    .trim()
-    .min(1)
-    .max(10)
-    .transform((value) => value.toUpperCase())
-});
-
-export const allowedTickerParamsSchema = z.object({
-  symbol: z
-    .string()
-    .trim()
-    .min(1)
-    .max(10)
-    .transform((value) => value.toUpperCase())
-});

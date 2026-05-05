@@ -52,10 +52,29 @@ export async function submitOrder(input: PlaceOrderInput) {
     throw new HttpError(403, 'Trading is disabled.');
   }
 
-  if (!runtimeConfig.allowedTickers.includes(resolvedInput.symbol)) {
-    const reason = `Ticker ${resolvedInput.symbol} is not allowed.`;
+  // Check if the security exists
+  const existingSecurity = await prisma.security.findUnique({
+    where: { symbol: resolvedInput.symbol }
+  });
+
+  // if the security doesn't exist, then refuse the order and return an error
+  if (!existingSecurity) {
+    const reason = `Ticker ${resolvedInput.symbol} is not in the securities database.`;
     await updateOrderIntentStatus(intent.id, 'blocked', reason);
     throw new HttpError(403, reason);
+  }
+
+  // Check if the subscription is disabled before allowing orders to proceed
+  if (resolvedInput.subscriptionKey) {
+    const subscription = await prisma.subscription.findUnique({
+      where: { key: resolvedInput.subscriptionKey }
+    });
+
+    if (!subscription || !subscription.enabled) {
+      const reason = `Subscription ${resolvedInput.subscriptionKey} is disabled.`;
+      await updateOrderIntentStatus(intent.id, 'blocked', reason);
+      throw new HttpError(403, reason);
+    }
   }
 
   const account = await getNormalizedAccount();

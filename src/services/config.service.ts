@@ -3,7 +3,6 @@ import { prisma } from '../db/prisma.js';
 export type RuntimeTradingConfig = {
   tradingEnabled: boolean;
   paperMode: boolean;
-  allowedTickers: string[];
 };
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -11,18 +10,10 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   return value.toLowerCase() === 'true';
 }
 
-export async function getAllowedTickers(): Promise<string[]> {
-  const rows = await prisma.allowedTicker.findMany({
-    orderBy: { symbol: 'asc' }
-  });
-
-  return rows.map((row) => row.symbol);
-}
 
 export async function getRuntimeTradingConfig(): Promise<RuntimeTradingConfig> {
-  const [settings, allowedTickers] = await Promise.all([
+  const [settings] = await Promise.all([
     prisma.setting.findMany(),
-    getAllowedTickers()
   ]);
 
   const map = new Map(settings.map((s) => [s.key, s.value]));
@@ -30,7 +21,6 @@ export async function getRuntimeTradingConfig(): Promise<RuntimeTradingConfig> {
   return {
     tradingEnabled: parseBoolean(map.get('tradingEnabled'), false),
     paperMode: parseBoolean(map.get('paperMode'), true),
-    allowedTickers
   };
 }
 
@@ -63,26 +53,4 @@ export async function updateRuntimeSettings(input: {
   await Promise.all(updates);
 
   return getRuntimeTradingConfig();
-}
-
-export async function addAllowedTicker(symbol: string) {
-  const normalized = symbol.trim().toUpperCase();
-
-  await prisma.allowedTicker.upsert({
-    where: { symbol: normalized },
-    update: {},
-    create: { symbol: normalized }
-  });
-
-  return getAllowedTickers();
-}
-
-export async function removeAllowedTicker(symbol: string) {
-  const normalized = symbol.trim().toUpperCase();
-
-  await prisma.allowedTicker.deleteMany({
-    where: { symbol: normalized }
-  });
-
-  return getAllowedTickers();
 }
