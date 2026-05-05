@@ -50,11 +50,6 @@ model AdminSession {
   @@index([revokedAt])
 }
 
-model AllowedTicker {
-  id     Int    @id @default(autoincrement())
-  symbol String @unique
-}
-
 enum AssetType {
   STOCK
   ETF
