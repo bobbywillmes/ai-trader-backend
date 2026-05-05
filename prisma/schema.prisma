@@ -75,6 +75,10 @@ model Security {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
+  subscriptions    Subscription[]
+  trackedPositions TrackedPosition[]
+  brokerOrders     BrokerOrder[]
+
   @@index([enabled])
   @@index([assetType])
 }
@@ -117,6 +121,9 @@ model BrokerOrder {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
+  securityId Int
+  security   Security @relation(fields: [securityId], references: [id])
+
   orderIntent    OrderIntent @relation(fields: [orderIntentId], references: [id])
 }
 
@@ -149,6 +156,9 @@ model TrackedPosition {
   rawPositionJson     Json
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
+
+  securityId          Int
+  security            Security @relation(fields: [securityId], references: [id])
 
   subscriptionId      Int?
   subscription        Subscription?   @relation(fields: [subscriptionId], references: [id])
@@ -200,6 +210,9 @@ model Subscription {
 
   strategyId     Int
   exitProfileId  Int
+
+  securityId     Int
+  security       Security @relation(fields: [securityId], references: [id])
 
   strategy       Strategy    @relation(fields: [strategyId], references: [id])
   exitProfile    ExitProfile @relation(fields: [exitProfileId], references: [id])
