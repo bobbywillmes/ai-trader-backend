@@ -55,6 +55,30 @@ model AllowedTicker {
   symbol String @unique
 }
 
+enum AssetType {
+  STOCK
+  ETF
+  INDEX
+  FUND
+  OTHER
+}
+
+model Security {
+  id        Int       @id @default(autoincrement())
+  symbol    String    @unique
+  name      String
+  enabled   Boolean   @default(true)
+  assetType AssetType
+  sector    String?
+  industry  String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([enabled])
+  @@index([assetType])
+}
+
 model OrderIntent {
   id             Int      @id @default(autoincrement())
   source         String
