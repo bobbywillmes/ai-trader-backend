@@ -20,6 +20,7 @@ import subscriptionsRoutes from '../routes/subscriptions.routes.js';
 import signalsRoutes from '../routes/signals.routes.js';
 import { openTrackedPositionsController } from '../controllers/tracked-positions.controller.js';
 import adminAuthRoutes from '../routes/admin-auth.routes.js';
+import securitiesRoutes from '../routes/securities.routes.js';
 
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
@@ -67,6 +68,7 @@ export function createApp() {
   app.use('/api/strategies', requireAdminAccess, strategiesRoutes);
   app.use('/api/exit-profiles', requireAdminAccess, exitProfilesRoutes);
   app.use('/api/subscriptions', requireAdminAccess, subscriptionsRoutes);
+  app.use('/api/securities', requireAdminAccess, securitiesRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
