@@ -1,7 +1,7 @@
 # AI Trader Backend
 Backend service for the n8n AI Trader system.
 
-This project is the broker/control layer between the AI Trader workflow and Alpaca paper trading. n8n handles strategy logic and sends trade requests. This backend handles broker communication, account/position/order retrieval, validation, order submission, cancellation, runtime trading config, allowed tickers, and audit logging.
+This project is the broker/control layer between the AI Trader workflow and Alpaca paper trading. n8n handles strategy logic and sends trade requests. This backend handles broker communication, account/position/order retrieval, validation, order submission, cancellation, runtime trading config, allowed securities to trade, and audit logging. Admin authentication allows this to all be viewed & configured in a single-page UI.
 
 ## 🔹 Overview
 
@@ -66,7 +66,7 @@ The backend currently handles:
 -   Submitting paper trading orders
 -   Canceling one open order
 -   Canceling all open orders
--   Validating allowed tickers
+-   Validating securities and enforcing symbol-level enable/disable controls
 -   Enforcing `tradingEnabled`
 -   Loading runtime config from PostgreSQL
 -   Logging order intents before broker submission
@@ -151,7 +151,7 @@ Every open position now has:
 
 ----------
 
-## Background Workers
+## ⚙️ Background Workers
 
 The system runs multiple continuous loops to maintain synchronization and automate trading behavior:
 
@@ -285,9 +285,9 @@ Services hold the business logic.
 
 Examples:
 
--   `place-order.service.ts` validates runtime config, checks allowed tickers, creates order intents, submits to Alpaca, and records broker orders.
+-   `place-order.service.ts` validates runtime config, checks securities, creates order intents, submits to Alpaca, and records broker orders.
 -   `bootstrap.service.ts` gathers account, positions, open orders, and runtime config into one payload.
--   `config.service.ts` loads allowed tickers and settings from PostgreSQL.
+-   `config.service.ts` loads settings from PostgreSQL.
 -   `order-audit.service.ts` handles order intent and broker order logging.
 
 ### Integrations
@@ -316,7 +316,7 @@ This key can:
 
 This key cannot:
 - Modify config/settings
-- Modify allowed tickers
+- Modify securities
 - Create or edit strategies
 - Create or edit subscriptions
 - Create or edit exit profiles
@@ -330,7 +330,7 @@ The admin key is intended for manual control, Postman, and the future web dashbo
 
 This key can access everything the signal key can access, plus:
 - Runtime config/settings
-- Allowed ticker management
+- Security / symbol management
 - Strategy management
 - Exit profile management
 - Subscription management
@@ -345,6 +345,14 @@ API keys are configured in .env:
 ```
 AI_TRADER_SIGNAL_API_KEY=your_signal_key_here
 AI_TRADER_ADMIN_API_KEY=your_admin_key_here
+
+# keys for HTTP requests as admin & signal/n8n
+AI_TRADER_SIGNAL_API_KEY=
+AI_TRADER_ADMIN_API_KEY=
+
+# Development tunnel only
+NGROK_AUTHTOKEN=your_ngrok_authtoken_here
+NGROK_DOMAIN=your_ngrok_dev_domain_here
 ```
 
 Both keys use the same request header:
@@ -352,6 +360,16 @@ Both keys use the same request header:
 ai-trader-api-key: your_key_here
 ```
 The backend decides access level by comparing the provided key against the signal/admin keys configured in the environment.
+
+For the admin UI, create:
+```
+    apps/admin-ui/.env
+```
+
+Example:
+```
+    VITE_API_BASE_URL=http://localhost:3000
+```
 
 ### Roles
 
@@ -381,6 +399,78 @@ The system supports two levels of access:
 This separation ensures:
 - Automation cannot accidentally modify system behavior
 - Manual control remains safe and intentional
+
+## 👤 Admin Authentication & Sessions
+
+The backend now supports admin login sessions for the web admin UI.
+
+Admin authentication is separate from the signal API key system:
+
+- n8n uses the signal API key.
+- Admin tools may use either the admin API key or an admin session token.
+- The web admin UI uses admin login sessions.
+
+Admin users are stored in `AdminUser`.
+
+Admin sessions are stored in `AdminSession`.
+
+Passwords are stored as hashes, not plaintext.
+
+### First Admin Bootstrap
+
+The first admin account can be created through a bootstrap endpoint:
+
+    POST /api/admin-auth/bootstrap
+
+This endpoint is intended only for first-time setup.
+
+Once an admin user exists, bootstrap is blocked.
+
+### Login
+
+    POST /api/admin-auth/login
+
+Successful login returns a bearer token that the admin UI stores locally and sends through:
+
+    Authorization: Bearer <admin_session_token>
+
+### Current Admin Session
+
+    GET /api/admin-auth/me
+
+Returns the current admin user and session when the token is valid.
+
+### Logout
+
+    POST /api/admin-auth/logout
+
+Revokes the active admin session.
+
+## 💻 Admin UI
+
+The project now includes a React/Vite admin UI under:
+
+    apps/admin-ui
+
+The admin UI provides a browser-based control panel for monitoring and managing the AI Trader backend.
+
+Current capabilities:
+
+- Admin login/logout
+- Session persistence through an admin bearer token
+- Dashboard summary cards
+- Open orders display
+- Cancel open orders
+- Open positions display
+- Submit close-position orders
+- Subscription enable/disable controls
+- Subscription edit controls for sizing value and exit profile
+- Exit profile list
+- Create exit profile
+- Edit exit profile
+- Toast notifications for success/error/status messages
+
+The UI communicates with the backend through the same admin API routes used in Postman.
 
 ## 🔌 n8n Integration Proof of Concept
 The backend has been successfully tested with a small n8n proof-of-concept workflow that sends trading signals into the Node API and reads current open positions back from the backend.
@@ -461,6 +551,29 @@ The proof-of-concept confirmed that 409 responses from the backend can be parsed
 }
 ```
 
+## 📈 Security Master / Symbol Registry
+
+The backend now uses `Security` as the canonical symbol registry.
+
+A `Security` represents a tradable symbol known to the system, such as a stock, ETF, index, fund, or other instrument. This replaces the older `AllowedTicker` model.
+
+Core fields:
+
+- `symbol` — unique trading symbol, such as SPY, QQQ, AAPL
+- `name` — display name / company or fund name
+- `enabled` — controls whether the symbol is currently allowed for trading
+- `assetType` — STOCK, ETF, INDEX, FUND, or OTHER
+- `sector` — optional sector metadata
+- `industry` — optional industry metadata
+
+`Security` is linked to:
+
+- `Subscription`
+- `TrackedPosition`
+- `BrokerOrder`
+
+This allows the backend and admin UI to treat symbols as first-class records instead of loose string values.
+
 ## ⚙️ Current API Endpoints
 
 ### Health
@@ -494,7 +607,6 @@ Example shape:
  "config": {
  "tradingEnabled": true,
  "paperMode": true,
- "allowedTickers": ["SPY", "QQQ", "DIA"]
  },
  "risk": {
  "canTrade": true,
@@ -518,6 +630,27 @@ Important fields include:
 -   portfolio value
 -   day P/L
 -   trading blocked status
+
+### Securities
+```http
+GET   /api/securities
+GET   /api/securities/:symbol
+POST  /api/securities
+PATCH /api/securities/:symbol
+```
+
+Securities are the canonical symbol records used by the trading system.
+
+They replace the older `AllowedTicker` allowlist and provide richer metadata and controls, including:
+
+- symbol
+- name
+- enabled
+- assetType
+- sector
+- industry
+
+The backend uses securities to validate whether a symbol is known and currently enabled before allowing subscription-driven entries or direct order placement.
 
 ----------
 
@@ -972,7 +1105,9 @@ PostgreSQL runs locally through Docker Compose.
 Current Prisma models:
 
 -   `Setting`
--   `AllowedTicker`
+-   `AdminUser`
+-   `AdminSession`
+-   `Security`
 -   `OrderIntent`
 -   `BrokerOrder`
 -   `SystemEvent`
@@ -990,11 +1125,19 @@ Current keys:
 tradingEnabled
 paperMode
 ```
-### `AllowedTicker`
+### `Security`
 
-Stores the ticker allowlist used by the backend.
+Canonical symbol registry for tradable instruments.
 
-The backend blocks order requests for tickers not in this table.
+A security stores the symbol, display name, enabled state, asset type, and optional classification metadata.
+
+It is linked to:
+
+- `Subscription`
+- `TrackedPosition`
+- `BrokerOrder`
+
+This makes symbol-level controls part of the data model instead of relying on a separate allowlist table.
 
 ### `OrderIntent`
 
@@ -1072,7 +1215,7 @@ Never commit `.env`.
 ```
    npx prisma studio
 ```
-### 6. Seed default settings and tickers
+### 6. Seed default settings, securities, strategies, exit profiles, and subscriptions
 ```
    npx tsx src/db/seed.ts
 ```
@@ -1084,12 +1227,32 @@ Default local URL:
 
 http://localhost:3000
 
+### 7. Install admin UI dependencies
+```
+    cd apps/admin-ui
+    npm install
+```
+### 8. Start Admin UI
+```
+    npm run dev
+```
+
+```
+Default local admin UI URL:
+
+    http://localhost:5173
+
 ----------
 
 ## ⌨️ Useful Commands
 
 Start backend in dev mode:
 ```
+   npm run dev
+```
+Start admin UI in dev mode:
+```
+   cd apps/admin-ui
    npm run dev
 ```
 Type-check:
@@ -1169,11 +1332,7 @@ This prevents automation clients from accidentally changing strategy configurati
 
 Near-term:
 
-- Build a basic admin web dashboard
-- Add UI controls for subscriptions
-- Add UI controls for exit profiles
-- Add UI controls for runtime settings
-- Add UI controls for allowed tickers
+- Expand the admin UI to a routed multi-page app
 - Add account snapshot logging
 - Add broker activity/fill endpoint
 - Deploy backend to Hostinger
