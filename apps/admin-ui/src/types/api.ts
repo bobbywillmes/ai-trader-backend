@@ -113,3 +113,16 @@ export type OpenOrder = {
   client_order_id?: string | null;
   clientOrderId?: string | null;
 };
+
+export type ExitProfileForm = {
+  key: string;
+  name: string;
+  description: string;
+  targetPct: string;
+  stopLossPct: string;
+  trailingStopPct: string;
+  maxHoldDays: string;
+  exitMode: string;
+  takeProfitBehavior: string;
+  enabled: boolean;
+};

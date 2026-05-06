@@ -111,9 +111,6 @@ export async function patchSubscription(
   });
 
   const data = await res.json().catch(() => null);
-  console.log('res', res);
-  console.log('res.status:', res.status);
-  console.log('data:', data);
 
   if (!res.ok) {
     throw new Error(data?.message ?? `Failed to update subscription. Status: ${res.status}`);

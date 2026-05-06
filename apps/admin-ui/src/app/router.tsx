@@ -5,6 +5,7 @@ import { DashboardPage } from "../pages/DashboardPage";
 import { LoginPage } from "../pages/LoginPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import LegacyAdminPage from "../features/legacy/LegacyAdminPage";
+import { SubscriptionsPage } from "../features/subscriptions/SubscriptionsPage";
 
 function PlaceholderPage({ title }: { title: string }) {
   return (
@@ -48,7 +49,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "subscriptions",
-        element: <PlaceholderPage title="Subscriptions" />,
+        element: <SubscriptionsPage />,
       },
       {
         path: "exit-profiles",
