@@ -1,49 +1,64 @@
 import { useEffect, useState, Fragment } from 'react';
 
-import type { ExitProfile, Subscription } from '../../types/api';
-import { apiRequest, patchSubscription, getAdminToken } from '../../lib/api';
+import type { ExitProfile } from '../../types/api';
+import type { Subscription } from './types';
+import { apiRequest, getAdminToken } from '../../lib/api';
 import { toast, ToastContainer } from 'react-toastify';
+import {
+  useSetSubscriptionEnabled,
+  useSubscriptions,
+  useUpdateSubscription,
+} from "./hooks";
 
 
 export function SubscriptionsPage() {
   const [token, setToken] = useState<string | null>(null);
-  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [exitProfiles, setExitProfiles] = useState<ExitProfile[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
   const [editingSubscriptionId, setEditingSubscriptionId] = useState<number | null>(null);
   const [editSizingValue, setEditSizingValue] = useState("");
   const [editExitProfileKey, setEditExitProfileKey] = useState("");
+
+  const {
+    data: subscriptions = [],
+    isLoading: subscriptionsLoading,
+    isError: subscriptionsIsError,
+    error: subscriptionsError,
+  } = useSubscriptions(token);
+
+  const updateSubscriptionMutation = useUpdateSubscription(token);
+  const setSubscriptionEnabledMutation = useSetSubscriptionEnabled(token);
   
   useEffect(() => {
-    loadData();
+    loadExitProfiles();
   }, []);
 
-  async function loadData() {
+  async function loadExitProfiles() {
     const token = getAdminToken();
     setToken(token);
-    setLoading(true);
-    const [subscriptions, exitProfiles] = await Promise.all([
-      apiRequest<Subscription[]>('/api/subscriptions', { token }),
-      apiRequest<ExitProfile[]>('/api/exit-profiles', { token }),
-    ]);
-    setLoading(false);
-    setSubscriptions(subscriptions);
+    const exitProfiles = await apiRequest<ExitProfile[]>('/api/exit-profiles', { token });
     setExitProfiles(exitProfiles);
   }
 
-  async function handleToggleSubscription(subscriptionId: number, enabled: boolean) {
-  try {
-    await patchSubscription(subscriptionId, { enabled }, token || '');
+  async function handleToggleSubscription(
+    subscriptionId: number,
+    enabled: boolean
+  ) {
+    try {
+      await setSubscriptionEnabledMutation.mutateAsync({
+        id: subscriptionId,
+        enabled,
+      });
 
-    showMessage(`Subscription ${enabled ? 'enabled' : 'disabled'}.`, 'info');
+      showMessage(
+        `Subscription ${enabled ? "enabled" : "disabled"}.`,
+        "info"
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to toggle subscription.";
 
-    await loadData();
-  } catch (error) {
-    setErrorMessage(
-      error instanceof Error ? error.message : "Failed to toggle subscription"
-    );
-  }
+      showMessage(message, "error");
+    }
   }
 
   function startEditingSubscription(subscription: Subscription) {
@@ -80,40 +95,34 @@ export function SubscriptionsPage() {
   }
 
   async function handleUpdateSubscription(subscriptionId: number) {
-    if (!token) {
-      showMessage('Admin session is missing. Please log in again.');
-      return;
-    }
-
     const parsedSizingValue = Number(editSizingValue);
 
     if (!Number.isFinite(parsedSizingValue) || parsedSizingValue <= 0) {
-      showMessage('Sizing value must be a positive number.', 'error');
+      showMessage("Sizing value must be a positive number.", "error");
       return;
     }
 
     if (!editExitProfileKey) {
-      showMessage('Exit profile is required.', 'error');
+      showMessage("Exit profile is required.", "error");
       return;
     }
 
     try {
-
-      await apiRequest<Subscription>(`/api/subscriptions/${subscriptionId}`, {
-        method: 'PATCH',
-        token,
-        body: {
+      await updateSubscriptionMutation.mutateAsync({
+        id: subscriptionId,
+        payload: {
           sizingValue: parsedSizingValue,
           exitProfileKey: editExitProfileKey,
         },
       });
 
-      showMessage('Subscription updated.', 'info');
+      showMessage("Subscription updated.", "info");
       cancelEditingSubscription();
-      await loadData();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to update subscription.';
-      showMessage(message, 'error');
+      const message =
+        error instanceof Error ? error.message : "Failed to update subscription.";
+
+      showMessage(message, "error");
     }
   }
 
@@ -130,9 +139,22 @@ export function SubscriptionsPage() {
       <section className="card">
         <h2>Subscriptions</h2>
 
-      {errorMessage && <p className="error">{errorMessage}</p>}
+      {subscriptionsIsError && (
+        <p className="error">
+          {subscriptionsError instanceof Error
+            ? subscriptionsError.message
+            : "Failed to load subscriptions."}
+        </p>
+      )}
 
-      {subscriptions.length === 0 && !loading && <p className="muted">No subscriptions.</p>}
+      {subscriptions.length === 0 && !subscriptionsLoading && (
+        <p className="muted">No subscriptions.</p>
+      )}
+
+      {subscriptions.length === 0 && subscriptionsLoading && (
+        <p className="muted">Loading subscriptions...</p>
+      )}
+
         <table>
           <thead>
             <tr>
