@@ -1,15 +1,20 @@
 import {
   AppShell,
   Burger,
+  Center,
   Divider,
   Group,
+  Loader,
   NavLink,
   ScrollArea,
   Text,
   ThemeIcon,
+  UnstyledButton,
 } from "@mantine/core";
 import { useDisclosure, useMediaQuery } from "@mantine/hooks";
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { getAdminToken } from "../lib/api";
+import { useLogout, useMe } from "../features/auth/hooks";
 
 type NavGroup = {
   label: string;
@@ -45,8 +50,29 @@ const navGroups: NavGroup[] = [
 ];
 
 export function AdminLayout() {
+  const token = getAdminToken();
+  const { isLoading, isError } = useMe(token);
+  const navigate = useNavigate();
+  const logoutMutation = useLogout(token);
   const [opened, { toggle, close }] = useDisclosure();
   const isMobile = useMediaQuery("(max-width: 48em)") ?? false;
+
+  if (!token) return <Navigate to="/login" replace />;
+
+  if (isLoading) {
+    return (
+      <Center h="100vh">
+        <Loader color="cyan" />
+      </Center>
+    );
+  }
+
+  if (isError) return <Navigate to="/login" replace />;
+
+  async function handleLogout() {
+    await logoutMutation.mutateAsync();
+    navigate("/login", { replace: true });
+  }
 
   return (
     <AppShell
@@ -66,7 +92,7 @@ export function AdminLayout() {
         </Group>
       </AppShell.Header>
 
-      <AppShell.Navbar>
+      <AppShell.Navbar style={{ display: "flex", flexDirection: "column" }}>
         <AppShell.Section p="md">
           <Group gap="sm">
             <ThemeIcon size="lg" radius="md" color="cyan" variant="filled">
@@ -106,6 +132,32 @@ export function AdminLayout() {
               ))}
             </div>
           ))}
+        </AppShell.Section>
+
+        <Divider />
+
+        <AppShell.Section p="sm">
+          <UnstyledButton
+            onClick={handleLogout}
+            disabled={logoutMutation.isPending}
+            style={{
+              display: "block",
+              width: "100%",
+              padding: "8px 12px",
+              borderRadius: "var(--mantine-radius-sm)",
+              color: "var(--mantine-color-red-4)",
+              fontSize: "var(--mantine-font-size-sm)",
+              transition: "background 150ms ease",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "var(--mantine-color-dark-6)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
+            }}
+          >
+            {logoutMutation.isPending ? "Signing out…" : "Sign out"}
+          </UnstyledButton>
         </AppShell.Section>
       </AppShell.Navbar>
 

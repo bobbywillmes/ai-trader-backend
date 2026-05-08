@@ -1,8 +1,8 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import { AdminLayout } from "../layouts/AdminLayout";
+import { HomePage } from "../pages/HomePage";
 import { DashboardPage } from "../pages/DashboardPage";
-import { LoginPage } from "../pages/LoginPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import LegacyAdminPage from "../features/legacy/LegacyAdminPage";
 import { SubscriptionsPage } from "../features/subscriptions/SubscriptionsPage";
@@ -14,10 +14,10 @@ import { SecuritiesPage } from "../features/securities/SecuritiesPage";
 function PlaceholderPage({ title }: { title: string }) {
   return (
     <section>
-      <h1 className="mb-2 text-2xl font-bold">{title}</h1>
-      <p className="text-slate-400">
-        This page will be extracted from the legacy admin app.
-      </p>
+      <div className="page-header">
+        <h1>{title}</h1>
+        <p className="muted">This page is coming soon.</p>
+      </div>
     </section>
   );
 }
@@ -25,7 +25,7 @@ function PlaceholderPage({ title }: { title: string }) {
 export const router = createBrowserRouter([
   {
     path: "/login",
-    element: <LoginPage />,
+    element: <HomePage />,
   },
   {
     path: "/",
