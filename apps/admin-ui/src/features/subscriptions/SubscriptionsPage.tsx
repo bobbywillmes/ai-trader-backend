@@ -1,274 +1,210 @@
-import { useState, Fragment } from 'react';
-
-import type { Subscription } from './types';
-import { getAdminToken } from '../../lib/api';
-import { toast, ToastContainer } from 'react-toastify';
+import { useState, Fragment } from "react";
 import {
-  useSetSubscriptionEnabled,
-  useSubscriptions,
-  useUpdateSubscription,
-} from "./hooks";
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Group,
+  Loader,
+  NumberInput,
+  ScrollArea,
+  Select,
+  Stack,
+  Table,
+  Text,
+  Title,
+} from "@mantine/core";
+import { notifications } from "@mantine/notifications";
+import type { Subscription } from "./types";
+import { getAdminToken } from "../../lib/api";
+import { useSetSubscriptionEnabled, useSubscriptions, useUpdateSubscription } from "./hooks";
 import { useExitProfiles } from "../exitProfiles/hooks";
-
 
 export function SubscriptionsPage() {
   const [token] = useState<string | null>(() => getAdminToken());
-  const [editingSubscriptionId, setEditingSubscriptionId] = useState<number | null>(null);
-  const [editSizingValue, setEditSizingValue] = useState("");
-  const [editExitProfileKey, setEditExitProfileKey] = useState("");
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editSizingValue, setEditSizingValue] = useState<string | number>("");
+  const [editExitProfileKey, setEditExitProfileKey] = useState<string | null>(null);
 
   const {
     data: subscriptions = [],
-    isLoading: subscriptionsLoading,
-    isError: subscriptionsIsError,
-    error: subscriptionsError,
+    isLoading,
+    isError,
+    error,
   } = useSubscriptions(token);
 
   const { data: exitProfiles = [] } = useExitProfiles(token);
+  const updateMutation = useUpdateSubscription(token);
+  const toggleMutation = useSetSubscriptionEnabled(token);
 
-  const updateSubscriptionMutation = useUpdateSubscription(token);
-  const setSubscriptionEnabledMutation = useSetSubscriptionEnabled(token);
+  const exitProfileOptions = exitProfiles.map((ep) => ({ value: ep.key, label: ep.key }));
 
-  async function handleToggleSubscription(
-    subscriptionId: number,
-    enabled: boolean
-  ) {
+  function startEditing(sub: Subscription) {
+    setEditingId(sub.id);
+    setEditSizingValue(sub.sizingValue ?? "");
+    setEditExitProfileKey(sub.exitProfile?.key ?? null);
+  }
+
+  function cancelEditing() {
+    setEditingId(null);
+    setEditSizingValue("");
+    setEditExitProfileKey(null);
+  }
+
+  async function handleToggle(id: number, enabled: boolean) {
     try {
-      await setSubscriptionEnabledMutation.mutateAsync({
-        id: subscriptionId,
-        enabled,
+      await toggleMutation.mutateAsync({ id, enabled });
+      notifications.show({ message: `Subscription ${enabled ? "enabled" : "disabled"}.`, color: "teal" });
+    } catch (err) {
+      notifications.show({
+        message: err instanceof Error ? err.message : "Failed to toggle subscription.",
+        color: "red",
       });
-
-      showMessage(
-        `Subscription ${enabled ? "enabled" : "disabled"}.`,
-        "info"
-      );
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to toggle subscription.";
-
-      showMessage(message, "error");
     }
   }
 
-  function startEditingSubscription(subscription: Subscription) {
-    setEditingSubscriptionId(subscription.id);
-    setEditSizingValue(String(subscription.sizingValue ?? ''));
-    setEditExitProfileKey(subscription.exitProfile?.key ?? '');
-  }
-
-  function cancelEditingSubscription() {
-    setEditingSubscriptionId(null);
-    setEditSizingValue('');
-    setEditExitProfileKey('');
-  }
-
-  type MessageType = 'success' | 'error' | 'warning' | 'info';
-
-  function showMessage(text: string, type: MessageType = 'info') {
-      if (type === 'success') {
-        toast.success(text);
-        return;
-      }
-  
-      if (type === 'error') {
-        toast.error(text);
-        return;
-      }
-  
-      if (type === 'warning') {
-        toast.warning(text);
-        return;
-      }
-  
-      toast.info(text);
-  }
-
-  async function handleUpdateSubscription(subscriptionId: number) {
-    const parsedSizingValue = Number(editSizingValue);
-
-    if (!Number.isFinite(parsedSizingValue) || parsedSizingValue <= 0) {
-      showMessage("Sizing value must be a positive number.", "error");
+  async function handleSave(id: number) {
+    const sizingValue = Number(editSizingValue);
+    if (!Number.isFinite(sizingValue) || sizingValue <= 0) {
+      notifications.show({ message: "Sizing value must be a positive number.", color: "red" });
       return;
     }
-
     if (!editExitProfileKey) {
-      showMessage("Exit profile is required.", "error");
+      notifications.show({ message: "Exit profile is required.", color: "red" });
       return;
     }
-
     try {
-      await updateSubscriptionMutation.mutateAsync({
-        id: subscriptionId,
-        payload: {
-          sizingValue: parsedSizingValue,
-          exitProfileKey: editExitProfileKey,
-        },
+      await updateMutation.mutateAsync({ id, payload: { sizingValue, exitProfileKey: editExitProfileKey } });
+      notifications.show({ message: "Subscription updated.", color: "teal" });
+      cancelEditing();
+    } catch (err) {
+      notifications.show({
+        message: err instanceof Error ? err.message : "Failed to update subscription.",
+        color: "red",
       });
-
-      showMessage("Subscription updated.", "info");
-      cancelEditingSubscription();
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to update subscription.";
-
-      showMessage(message, "error");
     }
   }
 
   return (
-    <section>
-      <div className="page-header">
-        <p className="eyebrow">AI Trader Admin</p>
-        <h1>Subscriptions</h1>
-        <p className="muted">
-          View, edit, enable, and disable strategy subscriptions.
-        </p>
+    <Stack gap="lg">
+      <div>
+        <Title order={2} size="h3">Subscriptions</Title>
+        <Text size="sm" c="dimmed">View, edit, enable, and disable strategy subscriptions.</Text>
       </div>
 
-      <section className="card">
-        <h2>Subscriptions</h2>
+      <Card withBorder radius="md" p="md">
+        {isError && (
+          <Alert color="red" mb="md">
+            {error instanceof Error ? error.message : "Failed to load subscriptions."}
+          </Alert>
+        )}
 
-      {subscriptionsIsError && (
-        <p className="error">
-          {subscriptionsError instanceof Error
-            ? subscriptionsError.message
-            : "Failed to load subscriptions."}
-        </p>
-      )}
+        {isLoading && (
+          <Group gap="sm">
+            <Loader size="sm" color="cyan" />
+            <Text size="sm" c="dimmed">Loading subscriptions…</Text>
+          </Group>
+        )}
 
-      {subscriptions.length === 0 && !subscriptionsLoading && (
-        <p className="muted">No subscriptions.</p>
-      )}
+        {!isLoading && subscriptions.length === 0 && (
+          <Text size="sm" c="dimmed">No subscriptions.</Text>
+        )}
 
-      {subscriptions.length === 0 && subscriptionsLoading && (
-        <p className="muted">Loading subscriptions...</p>
-      )}
-
-        <table>
-          <thead>
-            <tr>
-              <th>Key</th>
-              <th>Symbol</th>
-              <th>Size</th>
-              <th>Enabled</th>
-              <th>Exit Profile</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {subscriptions.map((subscription) => {
-              const isEditing = editingSubscriptionId === subscription.id;
-
-              return (
-                <Fragment key={subscription.id}>
-                  <tr>
-                    <td>{subscription.key}</td>
-                    <td>{subscription.symbol}</td>
-                    <td>
-                      {subscription.sizingValue} {subscription.sizingType}
-                    </td>
-                    <td>{subscription.enabled ? 'Yes' : 'No'}</td>
-                    <td>{subscription.exitProfile?.key ?? subscription.exitProfileId}</td>
-                    <td>
-                      <div className="action-row">
-                        {subscription.enabled ? (
-                          <button
-                            className="small-button danger"
-                            onClick={() => handleToggleSubscription(subscription.id, false)}
-                          >
-                            Disable
-                          </button>
-                        ) : (
-                          <button
-                            className="small-button"
-                            onClick={() => handleToggleSubscription(subscription.id, true)}
-                          >
-                            Enable
-                          </button>
-                        )}
-
-                        <button
-                          className="small-button secondary"
-                          onClick={() => startEditingSubscription(subscription)}
-                        >
-                          Edit
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-
-                  {isEditing && (
-                    <tr className="edit-row">
-                      <td colSpan={6}>
-                        <div className="edit-panel">
-                          <div>
-                            <label>Sizing Value</label>
-                            <input
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={editSizingValue}
-                              onChange={(event) => setEditSizingValue(event.target.value)}
-                            />
-                          </div>
-
-                          <div>
-                            <label>Exit Profile</label>
-                            <select
-                              value={editExitProfileKey}
-                              onChange={(event) => setEditExitProfileKey(event.target.value)}
+        {subscriptions.length > 0 && (
+          <ScrollArea>
+            <Table striped highlightOnHover style={{ minWidth: 560 }}>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Key</Table.Th>
+                  <Table.Th>Symbol</Table.Th>
+                  <Table.Th>Size</Table.Th>
+                  <Table.Th>Exit Profile</Table.Th>
+                  <Table.Th>Status</Table.Th>
+                  <Table.Th />
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {subscriptions.map((sub) => {
+                  const isEditing = editingId === sub.id;
+                  return (
+                    <Fragment key={sub.id}>
+                      <Table.Tr>
+                        <Table.Td fw={600}>{sub.key}</Table.Td>
+                        <Table.Td>{sub.symbol}</Table.Td>
+                        <Table.Td>
+                          {sub.sizingValue} <Text span size="xs" c="dimmed">{sub.sizingType}</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm" c="dimmed">{sub.exitProfile?.key ?? sub.exitProfileId}</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Badge size="sm" color={sub.enabled ? "teal" : "gray"} variant="light">
+                            {sub.enabled ? "Enabled" : "Disabled"}
+                          </Badge>
+                        </Table.Td>
+                        <Table.Td>
+                          <Group gap="xs" justify="flex-end">
+                            <Button
+                              size="xs"
+                              variant="subtle"
+                              color={sub.enabled ? "red" : "teal"}
+                              loading={toggleMutation.isPending && toggleMutation.variables?.id === sub.id}
+                              onClick={() => handleToggle(sub.id, !sub.enabled)}
                             >
-                              <option value="">Select exit profile</option>
-                              {exitProfiles.map((exitProfile) => (
-                                <option key={exitProfile.id} value={exitProfile.key}>
-                                  {exitProfile.key}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
-                          <div className="edit-actions">
-                            <button
-                              className="small-button"
-                              onClick={() => handleUpdateSubscription(subscription.id)}
+                              {sub.enabled ? "Disable" : "Enable"}
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="subtle"
+                              onClick={() => isEditing ? cancelEditing() : startEditing(sub)}
                             >
-                              Save
-                            </button>
+                              {isEditing ? "Cancel" : "Edit"}
+                            </Button>
+                          </Group>
+                        </Table.Td>
+                      </Table.Tr>
 
-                            <button
-                              className="small-button secondary"
-                              onClick={cancelEditingSubscription}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-      </section>
-
-      <ToastContainer
-        position="top-right"
-        autoClose={5000}
-        hideProgressBar={false}
-        newestOnTop
-        closeOnClick
-        pauseOnFocusLoss
-        draggable
-        pauseOnHover
-        theme="dark"
-      />
-
-    </section>
+                      {isEditing && (
+                        <Table.Tr>
+                          <Table.Td colSpan={6} style={{ background: "var(--mantine-color-dark-7)" }}>
+                            <Group gap="md" p="sm" align="flex-end" wrap="wrap">
+                              <NumberInput
+                                label="Sizing Value"
+                                value={editSizingValue}
+                                onChange={setEditSizingValue}
+                                min={0}
+                                step={1}
+                                style={{ width: 140 }}
+                                size="sm"
+                              />
+                              <Select
+                                label="Exit Profile"
+                                data={exitProfileOptions}
+                                value={editExitProfileKey}
+                                onChange={setEditExitProfileKey}
+                                style={{ width: 200 }}
+                                size="sm"
+                              />
+                              <Button
+                                size="sm"
+                                color="cyan"
+                                loading={updateMutation.isPending}
+                                onClick={() => handleSave(sub.id)}
+                              >
+                                Save
+                              </Button>
+                            </Group>
+                          </Table.Td>
+                        </Table.Tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea>
+        )}
+      </Card>
+    </Stack>
   );
 }
-
-
-

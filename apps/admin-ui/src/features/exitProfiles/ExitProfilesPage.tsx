@@ -1,24 +1,37 @@
-import React, { useState, Fragment } from 'react';
-import { toast, ToastContainer } from 'react-toastify';
-import { getAdminToken } from '../../lib/api';
+import React, { useState, Fragment } from "react";
 import {
-  useExitProfiles,
-  useCreateExitProfile,
-  useUpdateExitProfile,
-} from './hooks';
-import { useSubscriptions } from '../subscriptions/hooks';
-import type { ExitProfile, ExitProfileForm } from './types';
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Checkbox,
+  Group,
+  Loader,
+  ScrollArea,
+  Select,
+  SimpleGrid,
+  Stack,
+  Table,
+  Text,
+  TextInput,
+  Title,
+} from "@mantine/core";
+import { notifications } from "@mantine/notifications";
+import { getAdminToken } from "../../lib/api";
+import { useExitProfiles, useCreateExitProfile, useUpdateExitProfile } from "./hooks";
+import { useSubscriptions } from "../subscriptions/hooks";
+import type { ExitProfile, ExitProfileForm } from "./types";
 
 const EMPTY_FORM: ExitProfileForm = {
-  key: '',
-  name: '',
-  description: '',
-  targetPct: '',
-  stopLossPct: '',
-  trailingStopPct: '',
-  maxHoldDays: '',
-  exitMode: 'fixed_bracket',
-  takeProfitBehavior: 'immediate',
+  key: "",
+  name: "",
+  description: "",
+  targetPct: "",
+  stopLossPct: "",
+  trailingStopPct: "",
+  maxHoldDays: "",
+  exitMode: "fixed_bracket",
+  takeProfitBehavior: "immediate",
   enabled: true,
 };
 
@@ -26,12 +39,11 @@ function exitProfileToForm(profile: ExitProfile): ExitProfileForm {
   return {
     key: profile.key,
     name: profile.name,
-    description: profile.description ?? '',
-    targetPct: profile.targetPct === null ? '' : String(profile.targetPct),
-    stopLossPct: profile.stopLossPct === null ? '' : String(profile.stopLossPct),
-    trailingStopPct:
-      profile.trailingStopPct === null ? '' : String(profile.trailingStopPct),
-    maxHoldDays: profile.maxHoldDays === null ? '' : String(profile.maxHoldDays),
+    description: profile.description ?? "",
+    targetPct: profile.targetPct === null ? "" : String(profile.targetPct),
+    stopLossPct: profile.stopLossPct === null ? "" : String(profile.stopLossPct),
+    trailingStopPct: profile.trailingStopPct === null ? "" : String(profile.trailingStopPct),
+    maxHoldDays: profile.maxHoldDays === null ? "" : String(profile.maxHoldDays),
     exitMode: profile.exitMode,
     takeProfitBehavior: profile.takeProfitBehavior,
     enabled: profile.enabled,
@@ -53,384 +65,317 @@ function emptyToIntOrNull(value: string): number | null {
   return parsed;
 }
 
-type MessageType = 'success' | 'error' | 'warning' | 'info';
-
-function showMessage(text: string, type: MessageType = 'info') {
-  if (type === 'success') { toast.success(text); return; }
-  if (type === 'error') { toast.error(text); return; }
-  if (type === 'warning') { toast.warning(text); return; }
-  toast.info(text);
-}
-
-export function ExitProfilesPage() {
-  const [token] = useState<string | null>(() => getAdminToken());
-  const [creatingExitProfile, setCreatingExitProfile] = useState(false);
-  const [editingExitProfileId, setEditingExitProfileId] = useState<number | null>(null);
-  const [exitProfileForm, setExitProfileForm] = useState<ExitProfileForm>(EMPTY_FORM);
-
-  const {
-    data: exitProfiles = [],
-    isLoading,
-    isError,
-    error,
-  } = useExitProfiles(token);
-
-  const { data: subscriptions = [] } = useSubscriptions(token);
-
-  const createExitProfileMutation = useCreateExitProfile(token);
-  const updateExitProfileMutation = useUpdateExitProfile(token);
-
-  function startCreatingExitProfile() {
-    setCreatingExitProfile(true);
-    setEditingExitProfileId(null);
-    setExitProfileForm(EMPTY_FORM);
-  }
-
-  function startEditingExitProfile(profile: ExitProfile) {
-    setCreatingExitProfile(false);
-    setEditingExitProfileId(profile.id);
-    setExitProfileForm(exitProfileToForm(profile));
-  }
-
-  function cancelExitProfileForm() {
-    setCreatingExitProfile(false);
-    setEditingExitProfileId(null);
-  }
-
-  async function handleSaveExitProfile() {
-    const key = exitProfileForm.key.trim();
-    const name = exitProfileForm.name.trim();
-
-    if (!key) {
-      showMessage('Exit profile key is required.', 'error');
-      return;
-    }
-
-    if (!name) {
-      showMessage('Exit profile name is required.', 'error');
-      return;
-    }
-
-    const commonFields = {
-      name,
-      description: exitProfileForm.description.trim() || null,
-      targetPct: emptyToNumberOrNull(exitProfileForm.targetPct),
-      stopLossPct: emptyToNumberOrNull(exitProfileForm.stopLossPct),
-      trailingStopPct: emptyToNumberOrNull(exitProfileForm.trailingStopPct),
-      maxHoldDays: emptyToIntOrNull(exitProfileForm.maxHoldDays),
-      exitMode: exitProfileForm.exitMode,
-      takeProfitBehavior: exitProfileForm.takeProfitBehavior,
-      enabled: exitProfileForm.enabled,
-    };
-
-    try {
-      if (editingExitProfileId !== null) {
-        const matchingProfile = exitProfiles.find(
-          (p) => p.id === editingExitProfileId
-        );
-        const usedByEnabled = matchingProfile
-          ? subscriptions.filter(
-              (s) => s.enabled && s.exitProfile?.key === matchingProfile.key
-            )
-          : [];
-
-        if (usedByEnabled.length > 0) {
-          const confirmed = window.confirm(
-            `This exit profile is used by ${usedByEnabled.length} enabled subscription(s). Saving will affect live exit behavior. Continue?`
-          );
-          if (!confirmed) return;
-        }
-
-        await updateExitProfileMutation.mutateAsync({
-          id: editingExitProfileId,
-          payload: commonFields,
-        });
-
-        showMessage(`Exit profile updated: ${key}`, 'success');
-      } else {
-        await createExitProfileMutation.mutateAsync({ key, ...commonFields });
-        showMessage(`Exit profile created: ${key}`, 'success');
-      }
-
-      setCreatingExitProfile(false);
-      setEditingExitProfileId(null);
-    } catch (err) {
-      showMessage(
-        err instanceof Error ? err.message : 'Failed to save exit profile.',
-        'error'
-      );
-    }
-  }
-
-  return (
-    <section>
-      <div className="page-header">
-        <p className="eyebrow">AI Trader Admin</p>
-        <h1>Exit Profiles</h1>
-        <p className="muted">View and edit exit profiles.</p>
-      </div>
-
-      <section className="card">
-        <div className="section-header">
-          <h2>Exit Profiles</h2>
-          <button className="small-button" onClick={startCreatingExitProfile}>
-            New Exit Profile
-          </button>
-        </div>
-
-        {isError && (
-          <p className="error">
-            {error instanceof Error
-              ? error.message
-              : 'Failed to load exit profiles.'}
-          </p>
-        )}
-
-        {isLoading && <p className="muted">Loading exit profiles...</p>}
-
-        {creatingExitProfile && (
-          <ExitProfileEditor
-            form={exitProfileForm}
-            setForm={setExitProfileForm}
-            onSave={handleSaveExitProfile}
-            onCancel={cancelExitProfileForm}
-            isCreating={true}
-          />
-        )}
-
-        {!isLoading && !exitProfiles.length && (
-          <p className="muted">No exit profiles.</p>
-        )}
-
-        {exitProfiles.length > 0 && (
-          <table>
-            <thead>
-              <tr>
-                <th>Key</th>
-                <th>Target %</th>
-                <th>Stop %</th>
-                <th>Trail %</th>
-                <th>Max Days</th>
-                <th>Mode</th>
-                <th>Behavior</th>
-                <th>Enabled</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {exitProfiles.map((profile) => (
-                <Fragment key={profile.id}>
-                  <tr>
-                    <td>{profile.key}</td>
-                    <td>{profile.targetPct ?? '—'}</td>
-                    <td>{profile.stopLossPct ?? '—'}</td>
-                    <td>{profile.trailingStopPct ?? '—'}</td>
-                    <td>{profile.maxHoldDays ?? '—'}</td>
-                    <td>{profile.exitMode}</td>
-                    <td>{profile.takeProfitBehavior}</td>
-                    <td>{profile.enabled ? 'Yes' : 'No'}</td>
-                    <td>
-                      <button
-                        className="small-button secondary"
-                        onClick={() => startEditingExitProfile(profile)}
-                      >
-                        Edit
-                      </button>
-                    </td>
-                  </tr>
-
-                  {editingExitProfileId === profile.id && (
-                    <tr>
-                      <td colSpan={9}>
-                        <ExitProfileEditor
-                          form={exitProfileForm}
-                          setForm={setExitProfileForm}
-                          onSave={handleSaveExitProfile}
-                          onCancel={cancelExitProfileForm}
-                          isCreating={false}
-                        />
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-
-      <ToastContainer
-        position="top-right"
-        autoClose={5000}
-        hideProgressBar={false}
-        newestOnTop
-        closeOnClick
-        pauseOnFocusLoss
-        draggable
-        pauseOnHover
-        theme="dark"
-      />
-    </section>
-  );
-}
-
 type ExitProfileEditorProps = {
   form: ExitProfileForm;
   setForm: React.Dispatch<React.SetStateAction<ExitProfileForm>>;
   onSave: () => void;
   onCancel: () => void;
   isCreating: boolean;
+  isSaving: boolean;
 };
 
-function ExitProfileEditor({
-  form,
-  setForm,
-  onSave,
-  onCancel,
-  isCreating,
-}: ExitProfileEditorProps) {
+function ExitProfileEditor({ form, setForm, onSave, onCancel, isCreating, isSaving }: ExitProfileEditorProps) {
+  function field<K extends keyof ExitProfileForm>(key: K) {
+    return (value: ExitProfileForm[K]) => setForm((f) => ({ ...f, [key]: value }));
+  }
+
   return (
-    <div className="inline-editor">
-      <label>
-        <span>Key</span>
-        <input
+    <Stack gap="md" p="sm" style={{ background: "var(--mantine-color-dark-7)", borderRadius: "var(--mantine-radius-md)" }}>
+      <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="sm">
+        <TextInput
+          label="Key"
           value={form.key}
           disabled={!isCreating}
-          onChange={(event) =>
-            setForm((current) => ({ ...current, key: event.target.value }))
-          }
+          onChange={(e) => field("key")(e.currentTarget.value)}
+          size="sm"
         />
-      </label>
-
-      <label>
-        <span>Name</span>
-        <input
+        <TextInput
+          label="Name"
           value={form.name}
-          onChange={(event) =>
-            setForm((current) => ({ ...current, name: event.target.value }))
-          }
+          onChange={(e) => field("name")(e.currentTarget.value)}
+          size="sm"
         />
-      </label>
-
-      <label className="wide-field">
-        <span>Description</span>
-        <input
+        <TextInput
+          label="Description"
           value={form.description}
-          onChange={(event) =>
-            setForm((current) => ({
-              ...current,
-              description: event.target.value,
-            }))
-          }
+          onChange={(e) => field("description")(e.currentTarget.value)}
+          size="sm"
         />
-      </label>
-
-      <label>
-        <span>Target %</span>
-        <input
+        <TextInput
+          label="Target %"
+          placeholder="e.g. 5"
           value={form.targetPct}
-          onChange={(event) =>
-            setForm((current) => ({
-              ...current,
-              targetPct: event.target.value,
-            }))
-          }
+          onChange={(e) => field("targetPct")(e.currentTarget.value)}
+          size="sm"
         />
-      </label>
-
-      <label>
-        <span>Stop %</span>
-        <input
+        <TextInput
+          label="Stop Loss %"
+          placeholder="e.g. 3"
           value={form.stopLossPct}
-          onChange={(event) =>
-            setForm((current) => ({
-              ...current,
-              stopLossPct: event.target.value,
-            }))
-          }
+          onChange={(e) => field("stopLossPct")(e.currentTarget.value)}
+          size="sm"
         />
-      </label>
-
-      <label>
-        <span>Trail %</span>
-        <input
+        <TextInput
+          label="Trailing Stop %"
+          placeholder="e.g. 2"
           value={form.trailingStopPct}
-          onChange={(event) =>
-            setForm((current) => ({
-              ...current,
-              trailingStopPct: event.target.value,
-            }))
-          }
+          onChange={(e) => field("trailingStopPct")(e.currentTarget.value)}
+          size="sm"
         />
-      </label>
-
-      <label>
-        <span>Max Hold Days</span>
-        <input
+        <TextInput
+          label="Max Hold Days"
+          placeholder="e.g. 10"
           value={form.maxHoldDays}
-          onChange={(event) =>
-            setForm((current) => ({
-              ...current,
-              maxHoldDays: event.target.value,
-            }))
-          }
+          onChange={(e) => field("maxHoldDays")(e.currentTarget.value)}
+          size="sm"
         />
-      </label>
-
-      <label>
-        <span>Exit Mode</span>
-        <select
+        <Select
+          label="Exit Mode"
+          data={[
+            { value: "fixed_target", label: "Fixed Target" },
+            { value: "fixed_bracket", label: "Fixed Bracket" },
+            { value: "hybrid", label: "Hybrid" },
+            { value: "ai_assisted", label: "AI Assisted" },
+          ]}
           value={form.exitMode}
-          onChange={(event) =>
-            setForm((current) => ({ ...current, exitMode: event.target.value }))
-          }
-        >
-          <option value="fixed_target">fixed_target</option>
-          <option value="fixed_bracket">fixed_bracket</option>
-          <option value="hybrid">hybrid</option>
-          <option value="ai_assisted">ai_assisted</option>
-        </select>
-      </label>
-
-      <label>
-        <span>Take Profit Behavior</span>
-        <select
-          value={form.takeProfitBehavior}
-          onChange={(event) =>
-            setForm((current) => ({
-              ...current,
-              takeProfitBehavior: event.target.value,
-            }))
-          }
-        >
-          <option value="immediate">immediate</option>
-          <option value="trail_after_target">trail_after_target</option>
-          <option value="ai_confirm">ai_confirm</option>
-        </select>
-      </label>
-
-      <label className="checkbox-row">
-        <input
-          type="checkbox"
-          checked={form.enabled}
-          onChange={(event) =>
-            setForm((current) => ({
-              ...current,
-              enabled: event.target.checked,
-            }))
-          }
+          onChange={(v) => field("exitMode")(v ?? form.exitMode)}
+          size="sm"
         />
-        <span>Enabled</span>
-      </label>
+        <Select
+          label="Take Profit Behavior"
+          data={[
+            { value: "immediate", label: "Immediate" },
+            { value: "trail_after_target", label: "Trail After Target" },
+            { value: "ai_confirm", label: "AI Confirm" },
+          ]}
+          value={form.takeProfitBehavior}
+          onChange={(v) => field("takeProfitBehavior")(v ?? form.takeProfitBehavior)}
+          size="sm"
+        />
+      </SimpleGrid>
 
-      <div className="editor-actions">
-        <button className="small-button" onClick={onSave}>
+      <Group gap="sm" align="center">
+        <Checkbox
+          label="Enabled"
+          checked={form.enabled}
+          onChange={(e) => field("enabled")(e.currentTarget.checked)}
+          size="sm"
+        />
+      </Group>
+
+      <Group gap="sm">
+        <Button size="sm" color="cyan" loading={isSaving} onClick={onSave}>
           Save
-        </button>
-        <button className="small-button secondary" onClick={onCancel}>
+        </Button>
+        <Button size="sm" variant="subtle" onClick={onCancel}>
           Cancel
-        </button>
-      </div>
-    </div>
+        </Button>
+      </Group>
+    </Stack>
+  );
+}
+
+export function ExitProfilesPage() {
+  const [token] = useState<string | null>(() => getAdminToken());
+  const [creatingProfile, setCreatingProfile] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [form, setForm] = useState<ExitProfileForm>(EMPTY_FORM);
+
+  const { data: exitProfiles = [], isLoading, isError, error } = useExitProfiles(token);
+  const { data: subscriptions = [] } = useSubscriptions(token);
+  const createMutation = useCreateExitProfile(token);
+  const updateMutation = useUpdateExitProfile(token);
+
+  function startCreating() {
+    setCreatingProfile(true);
+    setEditingId(null);
+    setForm(EMPTY_FORM);
+  }
+
+  function startEditing(profile: ExitProfile) {
+    setCreatingProfile(false);
+    setEditingId(profile.id);
+    setForm(exitProfileToForm(profile));
+  }
+
+  function cancelForm() {
+    setCreatingProfile(false);
+    setEditingId(null);
+  }
+
+  async function handleSave() {
+    const key = form.key.trim();
+    const name = form.name.trim();
+
+    if (!key) { notifications.show({ message: "Key is required.", color: "red" }); return; }
+    if (!name) { notifications.show({ message: "Name is required.", color: "red" }); return; }
+
+    let targetPct, stopLossPct, trailingStopPct, maxHoldDays;
+    try {
+      targetPct = emptyToNumberOrNull(form.targetPct);
+      stopLossPct = emptyToNumberOrNull(form.stopLossPct);
+      trailingStopPct = emptyToNumberOrNull(form.trailingStopPct);
+      maxHoldDays = emptyToIntOrNull(form.maxHoldDays);
+    } catch (err) {
+      notifications.show({ message: err instanceof Error ? err.message : "Invalid value.", color: "red" });
+      return;
+    }
+
+    const commonFields = {
+      name,
+      description: form.description.trim() || null,
+      targetPct,
+      stopLossPct,
+      trailingStopPct,
+      maxHoldDays,
+      exitMode: form.exitMode,
+      takeProfitBehavior: form.takeProfitBehavior,
+      enabled: form.enabled,
+    };
+
+    try {
+      if (editingId !== null) {
+        const matchingProfile = exitProfiles.find((p) => p.id === editingId);
+        const usedByEnabled = matchingProfile
+          ? subscriptions.filter((s) => s.enabled && s.exitProfile?.key === matchingProfile.key)
+          : [];
+
+        if (usedByEnabled.length > 0) {
+          const ok = window.confirm(
+            `This exit profile is used by ${usedByEnabled.length} enabled subscription(s). Saving will affect live exit behavior. Continue?`
+          );
+          if (!ok) return;
+        }
+
+        await updateMutation.mutateAsync({ id: editingId, payload: commonFields });
+        notifications.show({ message: `Exit profile updated: ${key}`, color: "teal" });
+      } else {
+        await createMutation.mutateAsync({ key, ...commonFields });
+        notifications.show({ message: `Exit profile created: ${key}`, color: "teal" });
+      }
+      cancelForm();
+    } catch (err) {
+      notifications.show({
+        message: err instanceof Error ? err.message : "Failed to save exit profile.",
+        color: "red",
+      });
+    }
+  }
+
+  const isSaving = createMutation.isPending || updateMutation.isPending;
+
+  return (
+    <Stack gap="lg">
+      <Group justify="space-between" align="flex-end">
+        <div>
+          <Title order={2} size="h3">Exit Profiles</Title>
+          <Text size="sm" c="dimmed">View and edit exit profiles.</Text>
+        </div>
+        <Button size="sm" color="cyan" onClick={startCreating} disabled={creatingProfile}>
+          New Profile
+        </Button>
+      </Group>
+
+      {creatingProfile && (
+        <ExitProfileEditor
+          form={form}
+          setForm={setForm}
+          onSave={handleSave}
+          onCancel={cancelForm}
+          isCreating
+          isSaving={isSaving}
+        />
+      )}
+
+      <Card withBorder radius="md" p="md">
+        {isError && (
+          <Alert color="red" mb="md">
+            {error instanceof Error ? error.message : "Failed to load exit profiles."}
+          </Alert>
+        )}
+
+        {isLoading && (
+          <Group gap="sm">
+            <Loader size="sm" color="cyan" />
+            <Text size="sm" c="dimmed">Loading exit profiles…</Text>
+          </Group>
+        )}
+
+        {!isLoading && exitProfiles.length === 0 && (
+          <Text size="sm" c="dimmed">No exit profiles.</Text>
+        )}
+
+        {exitProfiles.length > 0 && (
+          <ScrollArea>
+            <Table striped highlightOnHover style={{ minWidth: 700 }}>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Key</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>Target %</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>Stop %</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>Trail %</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>Max Days</Table.Th>
+                  <Table.Th>Mode</Table.Th>
+                  <Table.Th>Status</Table.Th>
+                  <Table.Th />
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {exitProfiles.map((profile) => (
+                  <Fragment key={profile.id}>
+                    <Table.Tr>
+                      <Table.Td>
+                        <div>
+                          <Text fw={600} size="sm">{profile.key}</Text>
+                          {profile.name !== profile.key && (
+                            <Text size="xs" c="dimmed">{profile.name}</Text>
+                          )}
+                        </div>
+                      </Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>{profile.targetPct ?? "—"}</Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>{profile.stopLossPct ?? "—"}</Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>{profile.trailingStopPct ?? "—"}</Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>{profile.maxHoldDays ?? "—"}</Table.Td>
+                      <Table.Td>
+                        <Text size="sm" c="dimmed" tt="capitalize">{profile.exitMode.replace(/_/g, " ")}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Badge size="sm" color={profile.enabled ? "teal" : "gray"} variant="light">
+                          {profile.enabled ? "Enabled" : "Disabled"}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td>
+                        <Button
+                          size="xs"
+                          variant="subtle"
+                          onClick={() => editingId === profile.id ? cancelForm() : startEditing(profile)}
+                        >
+                          {editingId === profile.id ? "Cancel" : "Edit"}
+                        </Button>
+                      </Table.Td>
+                    </Table.Tr>
+
+                    {editingId === profile.id && (
+                      <Table.Tr>
+                        <Table.Td colSpan={8} style={{ padding: "8px 0" }}>
+                          <ExitProfileEditor
+                            form={form}
+                            setForm={setForm}
+                            onSave={handleSave}
+                            onCancel={cancelForm}
+                            isCreating={false}
+                            isSaving={isSaving}
+                          />
+                        </Table.Td>
+                      </Table.Tr>
+                    )}
+                  </Fragment>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea>
+        )}
+      </Card>
+    </Stack>
   );
 }

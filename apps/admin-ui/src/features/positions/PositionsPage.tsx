@@ -1,141 +1,154 @@
-import { useState } from 'react';
-import { toast, ToastContainer } from 'react-toastify';
-import { getAdminToken } from '../../lib/api';
-import { useOpenPositions, useClosePosition } from './hooks';
+import { useState } from "react";
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Group,
+  Loader,
+  ScrollArea,
+  Stack,
+  Table,
+  Text,
+  Title,
+} from "@mantine/core";
+import { modals } from "@mantine/modals";
+import { notifications } from "@mantine/notifications";
+import { getAdminToken } from "../../lib/api";
+import { useOpenPositions, useClosePosition } from "./hooks";
 
-type MessageType = 'success' | 'error' | 'warning' | 'info';
-
-function showMessage(text: string, type: MessageType = 'info') {
-  if (type === 'success') { toast.success(text); return; }
-  if (type === 'error') { toast.error(text); return; }
-  if (type === 'warning') { toast.warning(text); return; }
-  toast.info(text);
+function PnL({ value, suffix = "" }: { value: number; suffix?: string }) {
+  const color = value > 0 ? "teal" : value < 0 ? "red" : "dimmed";
+  const sign = value > 0 ? "+" : "";
+  return (
+    <Text c={color} fw={600} size="sm">
+      {sign}{value.toFixed(2)}{suffix}
+    </Text>
+  );
 }
 
 export function PositionsPage() {
   const [token] = useState<string | null>(() => getAdminToken());
-
-  const {
-    data: positions = [],
-    isLoading,
-    isError,
-    error,
-  } = useOpenPositions(token);
-
+  const { data: positions = [], isLoading, isError, error } = useOpenPositions(token);
   const closePositionMutation = useClosePosition(token);
 
-  async function handleClosePosition(symbol: string) {
-    const confirmed = window.confirm(`Submit sell order to close ${symbol}?`);
-    if (!confirmed) return;
-
-    try {
-      await closePositionMutation.mutateAsync(symbol);
-      showMessage(`Close order submitted for ${symbol}.`, 'success');
-    } catch (err) {
-      showMessage(
-        err instanceof Error ? err.message : `Failed to close ${symbol}.`,
-        'error'
-      );
-    }
+  function handleClosePosition(symbol: string) {
+    modals.openConfirmModal({
+      title: "Close position",
+      children: <Text size="sm">Submit a sell order to close <strong>{symbol}</strong>?</Text>,
+      labels: { confirm: "Close position", cancel: "Cancel" },
+      confirmProps: { color: "red" },
+      onConfirm: async () => {
+        try {
+          await closePositionMutation.mutateAsync(symbol);
+          notifications.show({ message: `Close order submitted for ${symbol}.`, color: "teal" });
+        } catch (err) {
+          notifications.show({
+            message: err instanceof Error ? err.message : `Failed to close ${symbol}.`,
+            color: "red",
+          });
+        }
+      },
+    });
   }
 
   return (
-    <section>
-      <div className="page-header">
-        <p className="eyebrow">AI Trader Admin</p>
-        <h1>Open Positions</h1>
-        <p className="muted">View and close open tracked positions.</p>
+    <Stack gap="lg">
+      <div>
+        <Title order={2} size="h3">Open Positions</Title>
+        <Text size="sm" c="dimmed">View and close open tracked positions.</Text>
       </div>
 
-      <section className="card">
-        <h2>Open Positions</h2>
-
+      <Card withBorder radius="md" p="md">
         {isError && (
-          <p className="error">
-            {error instanceof Error
-              ? error.message
-              : 'Failed to load positions.'}
-          </p>
+          <Alert color="red" mb="md">
+            {error instanceof Error ? error.message : "Failed to load positions."}
+          </Alert>
         )}
 
-        {isLoading && <p className="muted">Loading positions...</p>}
+        {isLoading && (
+          <Group gap="sm">
+            <Loader size="sm" color="cyan" />
+            <Text size="sm" c="dimmed">Loading positions…</Text>
+          </Group>
+        )}
 
-        {!isLoading && !positions.length && (
-          <p className="muted">No open positions.</p>
+        {!isLoading && positions.length === 0 && (
+          <Text size="sm" c="dimmed">No open positions.</Text>
         )}
 
         {positions.length > 0 && (
-          <table>
-            <thead>
-              <tr>
-                <th>Symbol</th>
-                <th>Side</th>
-                <th>Qty</th>
-                <th>Avg Entry</th>
-                <th>Current</th>
-                <th>P/L</th>
-                <th>P/L %</th>
-                <th>Status</th>
-                <th>Subscription</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {positions.map((position) => {
-                const isClosing =
-                  closePositionMutation.isPending &&
-                  closePositionMutation.variables === position.symbol;
+          <ScrollArea>
+            <Table striped highlightOnHover style={{ minWidth: 700 }}>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Symbol</Table.Th>
+                  <Table.Th>Side</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>Qty</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>Avg Entry</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>Current</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>P/L</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>P/L %</Table.Th>
+                  <Table.Th>Status</Table.Th>
+                  <Table.Th>Subscription</Table.Th>
+                  <Table.Th />
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {positions.map((position) => {
+                  const isClosing =
+                    closePositionMutation.isPending &&
+                    closePositionMutation.variables === position.symbol;
 
-                return (
-                  <tr key={position.id}>
-                    <td>{position.symbol}</td>
-                    <td>{position.side}</td>
-                    <td>{position.qty}</td>
-                    <td>{position.avgEntryPrice.toFixed(2)}</td>
-                    <td>{position.currentPrice.toFixed(2)}</td>
-                    <td>{position.unrealizedPnL.toFixed(2)}</td>
-                    <td>{position.unrealizedPnLPct.toFixed(2)}%</td>
-                    <td>
-                      {isClosing ? (
-                        <span className="status-pill warning">closing</span>
-                      ) : (
-                        position.status
-                      )}
-                    </td>
-                    <td>{position.subscription?.key ?? '—'}</td>
-                    <td>
-                      {isClosing ? (
-                        <button className="small-button" disabled>
-                          Sell pending
-                        </button>
-                      ) : (
-                        <button
-                          className="small-button danger"
+                  return (
+                    <Table.Tr key={position.id}>
+                      <Table.Td fw={600}>{position.symbol}</Table.Td>
+                      <Table.Td>
+                        <Badge size="sm" color={position.side === "long" ? "teal" : "red"} variant="light">
+                          {position.side}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>{position.qty}</Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>${position.avgEntryPrice.toFixed(2)}</Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>${position.currentPrice.toFixed(2)}</Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>
+                        <PnL value={position.unrealizedPnL} />
+                      </Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>
+                        <PnL value={position.unrealizedPnLPct * 100} suffix="%" />
+                      </Table.Td>
+                      <Table.Td>
+                        <Badge
+                          size="sm"
+                          color={isClosing ? "yellow" : "teal"}
+                          variant="light"
+                        >
+                          {isClosing ? "closing" : position.status}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm" c="dimmed">{position.subscription?.key ?? "—"}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Button
+                          size="xs"
+                          color="red"
+                          variant="subtle"
+                          loading={isClosing}
+                          disabled={isClosing}
                           onClick={() => handleClosePosition(position.symbol)}
                         >
                           Close
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                        </Button>
+                      </Table.Td>
+                    </Table.Tr>
+                  );
+                })}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea>
         )}
-      </section>
-
-      <ToastContainer
-        position="top-right"
-        autoClose={5000}
-        hideProgressBar={false}
-        newestOnTop
-        closeOnClick
-        pauseOnFocusLoss
-        draggable
-        pauseOnHover
-        theme="dark"
-      />
-    </section>
+      </Card>
+    </Stack>
   );
 }
