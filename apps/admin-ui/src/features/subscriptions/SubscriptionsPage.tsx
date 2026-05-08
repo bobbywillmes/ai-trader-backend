@@ -1,19 +1,18 @@
-import { useEffect, useState, Fragment } from 'react';
+import { useState, Fragment } from 'react';
 
-import type { ExitProfile } from '../../types/api';
 import type { Subscription } from './types';
-import { apiRequest, getAdminToken } from '../../lib/api';
+import { getAdminToken } from '../../lib/api';
 import { toast, ToastContainer } from 'react-toastify';
 import {
   useSetSubscriptionEnabled,
   useSubscriptions,
   useUpdateSubscription,
 } from "./hooks";
+import { useExitProfiles } from "../exitProfiles/hooks";
 
 
 export function SubscriptionsPage() {
-  const [token, setToken] = useState<string | null>(null);
-  const [exitProfiles, setExitProfiles] = useState<ExitProfile[]>([]);
+  const [token] = useState<string | null>(() => getAdminToken());
   const [editingSubscriptionId, setEditingSubscriptionId] = useState<number | null>(null);
   const [editSizingValue, setEditSizingValue] = useState("");
   const [editExitProfileKey, setEditExitProfileKey] = useState("");
@@ -25,19 +24,10 @@ export function SubscriptionsPage() {
     error: subscriptionsError,
   } = useSubscriptions(token);
 
+  const { data: exitProfiles = [] } = useExitProfiles(token);
+
   const updateSubscriptionMutation = useUpdateSubscription(token);
   const setSubscriptionEnabledMutation = useSetSubscriptionEnabled(token);
-  
-  useEffect(() => {
-    loadExitProfiles();
-  }, []);
-
-  async function loadExitProfiles() {
-    const token = getAdminToken();
-    setToken(token);
-    const exitProfiles = await apiRequest<ExitProfile[]>('/api/exit-profiles', { token });
-    setExitProfiles(exitProfiles);
-  }
 
   async function handleToggleSubscription(
     subscriptionId: number,
