@@ -43,11 +43,8 @@ export type BrokerOpenOrder = {
 };
 
 export type RuntimeTradingConfig = {
-  subscriptionKey: string | null;
-  exitProfileKey: string | null;
-  maxPositions: number;
-  maxPositionSize: number;
-  enableTrading: boolean;
+  tradingEnabled: boolean;
+  paperMode: boolean;
 };
 
 export type RiskStatus = {

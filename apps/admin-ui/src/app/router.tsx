@@ -12,6 +12,7 @@ import { PositionsPage } from "../features/positions/PositionsPage";
 import { OrdersPage } from "../features/orders/OrdersPage";
 import { SecuritiesPage } from "../features/securities/SecuritiesPage";
 import { SystemEventsPage } from "../features/systemEvents/SystemEventsPage";
+import { SettingsPage } from "../features/settings/SettingsPage";
 
 export const router = createBrowserRouter([
   {
@@ -64,7 +65,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "settings",
-        element: <PlaceholderPage title="Settings" />,
+        element: <SettingsPage />,
       },
     ],
   },
