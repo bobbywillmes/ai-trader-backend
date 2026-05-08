@@ -4,23 +4,14 @@ import { AdminLayout } from "../layouts/AdminLayout";
 import { HomePage } from "../pages/HomePage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
+import { PlaceholderPage } from "../pages/PlaceholderPage";
 import LegacyAdminPage from "../features/legacy/LegacyAdminPage";
 import { SubscriptionsPage } from "../features/subscriptions/SubscriptionsPage";
 import { ExitProfilesPage } from "../features/exitProfiles/ExitProfilesPage";
 import { PositionsPage } from "../features/positions/PositionsPage";
 import { OrdersPage } from "../features/orders/OrdersPage";
 import { SecuritiesPage } from "../features/securities/SecuritiesPage";
-
-function PlaceholderPage({ title }: { title: string }) {
-  return (
-    <section>
-      <div className="page-header">
-        <h1>{title}</h1>
-        <p className="muted">This page is coming soon.</p>
-      </div>
-    </section>
-  );
-}
+import { SystemEventsPage } from "../features/systemEvents/SystemEventsPage";
 
 export const router = createBrowserRouter([
   {
@@ -69,7 +60,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "system/events",
-        element: <PlaceholderPage title="System Events" />,
+        element: <SystemEventsPage />,
       },
       {
         path: "settings",
