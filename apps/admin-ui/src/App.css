@@ -19,33 +19,54 @@ body {
     #0f172a;
 }
 
-button,
-input {
+input,
+select {
   font: inherit;
-}
-
-button {
-  border: 0;
-  border-radius: 12px;
-  background: #38bdf8;
-  color: #082f49;
-  cursor: pointer;
-  font-weight: 700;
-  padding: 0.8rem 1rem;
-}
-
-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-input {
   width: 100%;
   border: 1px solid #334155;
   border-radius: 12px;
   background: #020617;
   color: #e5e7eb;
   padding: 0.8rem 1rem;
+}
+
+.small-button {
+  border: 0;
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: #38bdf8;
+  color: #020617;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.small-button:hover {
+  filter: brightness(1.08);
+}
+
+.small-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.small-button.danger {
+  background: #f97316;
+}
+
+.page-header {
+  margin-bottom: 1.5rem;
+}
+
+.page-header h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #f1f5f9;
+  margin: 0.25rem 0 0.5rem;
+}
+
+.error {
+  color: #f87171;
 }
 
 table {
