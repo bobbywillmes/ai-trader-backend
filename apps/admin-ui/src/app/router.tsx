@@ -8,6 +8,7 @@ import LegacyAdminPage from "../features/legacy/LegacyAdminPage";
 import { SubscriptionsPage } from "../features/subscriptions/SubscriptionsPage";
 import { ExitProfilesPage } from "../features/exitProfiles/ExitProfilesPage";
 import { PositionsPage } from "../features/positions/PositionsPage";
+import { OrdersPage } from "../features/orders/OrdersPage";
 
 function PlaceholderPage({ title }: { title: string }) {
   return (
@@ -47,7 +48,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "orders/open",
-        element: <PlaceholderPage title="Open Orders" />,
+        element: <OrdersPage />,
       },
       {
         path: "subscriptions",
