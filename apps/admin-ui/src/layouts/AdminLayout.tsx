@@ -40,7 +40,6 @@ const navGroups: NavGroup[] = [
   {
     label: "System",
     items: [
-      { to: "/dashboard", label: "Dashboard" },
       { to: "/reports", label: "Reports" },
       { to: "/system/events", label: "System Events" },
       { to: "/settings", label: "Settings" },
@@ -108,6 +107,7 @@ export function AdminLayout() {
         <Divider />
 
         <AppShell.Section grow component={ScrollArea} p="xs">
+          <AppNavLink to="/dashboard" label="Dashboard" onNavigate={close} />
           {navGroups.map((group) => (
             <div key={group.label}>
               <Text
