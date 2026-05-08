@@ -7,6 +7,7 @@ const navItems = [
   { to: "/orders/open", label: "Open Orders" },
   { to: "/subscriptions", label: "Subscriptions" },
   { to: "/exit-profiles", label: "Exit Profiles" },
+  { to: "/securities", label: "Securities" },
   { to: "/reports", label: "Reports" },
   { to: "/system/events", label: "System Events" },
   { to: "/settings", label: "Settings" },

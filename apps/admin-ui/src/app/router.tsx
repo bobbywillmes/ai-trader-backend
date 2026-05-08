@@ -9,6 +9,7 @@ import { SubscriptionsPage } from "../features/subscriptions/SubscriptionsPage";
 import { ExitProfilesPage } from "../features/exitProfiles/ExitProfilesPage";
 import { PositionsPage } from "../features/positions/PositionsPage";
 import { OrdersPage } from "../features/orders/OrdersPage";
+import { SecuritiesPage } from "../features/securities/SecuritiesPage";
 
 function PlaceholderPage({ title }: { title: string }) {
   return (
@@ -57,6 +58,10 @@ export const router = createBrowserRouter([
       {
         path: "exit-profiles",
         element: <ExitProfilesPage />,
+      },
+      {
+        path: "securities",
+        element: <SecuritiesPage />,
       },
       {
         path: "reports",
