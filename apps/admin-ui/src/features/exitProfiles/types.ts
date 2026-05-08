@@ -38,3 +38,16 @@ export type UpdateExitProfilePayload = {
   takeProfitBehavior?: string;
   enabled?: boolean;
 };
+
+export type ExitProfileForm = {
+  key: string;
+  name: string;
+  description: string;
+  targetPct: string;
+  stopLossPct: string;
+  trailingStopPct: string;
+  maxHoldDays: string;
+  exitMode: string;
+  takeProfitBehavior: string;
+  enabled: boolean;
+};
