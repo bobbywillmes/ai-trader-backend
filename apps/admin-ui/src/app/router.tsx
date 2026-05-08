@@ -7,6 +7,7 @@ import { NotFoundPage } from "../pages/NotFoundPage";
 import LegacyAdminPage from "../features/legacy/LegacyAdminPage";
 import { SubscriptionsPage } from "../features/subscriptions/SubscriptionsPage";
 import { ExitProfilesPage } from "../features/exitProfiles/ExitProfilesPage";
+import { PositionsPage } from "../features/positions/PositionsPage";
 
 function PlaceholderPage({ title }: { title: string }) {
   return (
@@ -42,7 +43,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "positions/open",
-        element: <PlaceholderPage title="Open Positions" />,
+        element: <PositionsPage />,
       },
       {
         path: "orders/open",
