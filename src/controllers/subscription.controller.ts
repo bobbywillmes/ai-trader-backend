@@ -30,6 +30,10 @@ function parsePositiveId(value: string) {
   return id;
 }
 
+function getRouteParam(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
 export async function strategiesController(
   _req: Request,
   res: Response,
@@ -71,8 +75,13 @@ export async function subscriptionByKeyController(
   res: Response,
   next: NextFunction
 ) {
+  const key = getRouteParam(req.params.key);
+  if (!key) {
+    res.status(400).json({ error: 'Subscription key is required' });
+    return;
+  }
   try {
-    const subscription = await getSubscriptionByKey(req.params.key);
+    const subscription = await getSubscriptionByKey(key);
     res.status(200).json(subscription);
   } catch (error) {
     next(error);
@@ -101,7 +110,12 @@ export async function updateSubscriptionController(
   next: NextFunction
 ) {
   try {
-    const id = parsePositiveId(req.params.id);
+    const key = getRouteParam(req.params.key);
+    if (!key) {
+      res.status(400).json({ error: 'Subscription key is required' });
+      return;
+    }
+    const id = parsePositiveId(key);
     const input = updateSubscriptionSchema.parse(req.body);
 
     const subscription = await updateSubscription(id, input);
@@ -133,7 +147,12 @@ export async function updateExitProfileController(
   next: NextFunction
 ) {
   try {
-    const id = parsePositiveId(req.params.id);
+  const key = getRouteParam(req.params.key);
+  if (!key) {
+    res.status(400).json({ error: 'Subscription key is required' });
+    return;
+  }
+    const id = parsePositiveId(key);
     const input = updateExitProfileSchema.parse(req.body);
 
     const exitProfile = await updateExitProfile(id, input);

@@ -15,9 +15,17 @@ export async function positionsController(
   }
 }
 
-export async function closePositionController(req, res, next) {
+export async function closePositionController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
   try {
-    const { symbol } = req.params;
+    const symbol = req.params.symbol as string;
+    if (!symbol) {
+      res.status(400).json({ error: 'Symbol is required' });
+      return;
+    }
 
     const result = await closePosition(symbol);
 

@@ -62,12 +62,21 @@ export async function createBrokerOrder(args: {
   status: string;
   rawBrokerJson: Prisma.InputJsonValue;
 }) {
+  const normalizedSymbol = args.symbol.trim().toUpperCase();
+  const security = await prisma.security.findUnique({
+    where: { symbol: normalizedSymbol },
+  });
+
+  if (!security) {
+    throw new Error(`Security not found for symbol ${normalizedSymbol}`);
+  }
   return prisma.brokerOrder.create({
     data: {
       orderIntentId: args.orderIntentId,
       broker: 'alpaca',
       brokerOrderId: args.brokerOrderId,
       clientOrderId: args.clientOrderId,
+      securityId: security.id,
       symbol: args.symbol,
       side: args.side,
       status: args.status,

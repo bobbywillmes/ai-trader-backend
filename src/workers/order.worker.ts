@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { getNormalizedOpenOrders } from '../services/orders.service.js';
 import { placeOrderSchema } from '../validators/place-order.schema.js';
+import type { ResolvedPlaceOrderInput } from '../validators/place-order.schema.js';
 import { submitOrderToBroker } from '../services/place-order.service.js';
 import { createSystemEvent } from '../services/system-event.service.js';
 
@@ -20,8 +21,16 @@ export async function processPendingOrders() {
   for (const intent of pending) {
     console.log(`Processing intent (${intent.id}): ${intent.symbol} ${intent.side} ${intent.orderType}`);
     try {
-      const input = placeOrderSchema.parse(intent.rawRequestJson);
-      const result = await submitOrderToBroker(input);
+      const rawInput = placeOrderSchema.parse(intent.rawRequestJson);
+      const resolvedInput: ResolvedPlaceOrderInput = {
+        ...rawInput,
+        symbol: intent.symbol,
+        side: intent.side as 'buy' | 'sell',
+        orderType: intent.orderType as 'market' | 'limit',
+        timeInForce: intent.timeInForce as 'day' | 'gtc',
+        ...(intent.subscriptionId !== null && { subscriptionId: intent.subscriptionId }),
+      };
+      const result = await submitOrderToBroker(resolvedInput);
       const brokerOrder = result.order;
 
       await prisma.orderIntent.update({
@@ -36,6 +45,7 @@ export async function processPendingOrders() {
               symbol: brokerOrder.symbol,
               side: brokerOrder.side,
               status: brokerOrder.status,
+              security: { connect: { symbol: brokerOrder.symbol.toUpperCase() } },
               rawBrokerJson: brokerOrder as unknown as Prisma.InputJsonValue
             }
           }

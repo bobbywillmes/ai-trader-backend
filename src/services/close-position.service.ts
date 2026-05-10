@@ -22,7 +22,7 @@ export async function closePosition(symbol: string) {
   await createSystemEvent({
     type: 'position.close_requested',
     entityType: 'trackedPosition',
-    entityId: null,
+    entityId: upperSymbol,
     payloadJson: {
       symbol: upperSymbol,
       broker: 'alpaca',

@@ -1,4 +1,5 @@
 import { prisma } from '../db/prisma.js';
+import { Prisma } from '@prisma/client';
 import { HttpError } from '../errors/http-error.js';
 import type {
   PlaceOrderInput,
@@ -93,8 +94,8 @@ export async function resolveSubscriptionOrderInput(
 }
 
 async function resolveStrategyId(input: {
-  strategyId?: number;
-  strategyKey?: string;
+  strategyId?: number | undefined;
+  strategyKey?: string | undefined;
 }) {
   if (input.strategyId !== undefined) {
     const strategy = await prisma.strategy.findUnique({
@@ -124,8 +125,8 @@ async function resolveStrategyId(input: {
 }
 
 async function resolveExitProfileId(input: {
-  exitProfileId?: number;
-  exitProfileKey?: string;
+  exitProfileId?: number | undefined;
+  exitProfileKey?: string | undefined;
 }) {
   if (input.exitProfileId !== undefined) {
     const exitProfile = await prisma.exitProfile.findUnique({
@@ -169,14 +170,19 @@ async function assertNoEnabledSubscriptionConflict(input: {
 }) {
   if (!input.enabled) return;
 
+  const where: Prisma.SubscriptionWhereInput = {
+    broker: input.broker,
+    brokerMode: input.brokerMode,
+    symbol: input.symbol,
+    enabled: true,
+  };
+
+  if (input.idToExclude) {
+    where.NOT = { id: input.idToExclude };
+  }
+
   const existing = await prisma.subscription.findFirst({
-    where: {
-      broker: input.broker,
-      brokerMode: input.brokerMode,
-      symbol: input.symbol,
-      enabled: true,
-      NOT: input.idToExclude ? { id: input.idToExclude } : undefined,
-    },
+    where,
   });
 
   if (existing) {
@@ -212,12 +218,20 @@ export async function createSubscription(input: CreateSubscriptionInput) {
     symbol: input.symbol,
     enabled,
   });
+    const normalizedSymbol = input.symbol.trim().toUpperCase();
+    const security = await prisma.security.findUnique({
+      where: { symbol: normalizedSymbol },
+    });
 
+    if (!security) {
+      throw new Error(`Security not found for symbol ${normalizedSymbol}`);
+    }
   return prisma.subscription.create({
     data: {
       key: input.key,
       name: input.name,
       symbol: input.symbol,
+      securityId: security.id,
       broker: input.broker,
       brokerMode: input.brokerMode,
       sizingType: input.sizingType,
@@ -287,16 +301,16 @@ export async function updateSubscription(
   return prisma.subscription.update({
     where: { id },
     data: {
-      key: input.key,
-      name: input.name,
-      symbol: input.symbol,
-      broker: input.broker,
-      brokerMode: input.brokerMode,
-      sizingType: input.sizingType,
-      sizingValue: input.sizingValue,
-      strategyId,
-      exitProfileId,
-      enabled: input.enabled,
+      ...(input.key !== undefined && { key: input.key }),
+      ...(input.name !== undefined && { name: input.name }),
+      ...(input.symbol !== undefined && { symbol: input.symbol }),
+      ...(input.broker !== undefined && { broker: input.broker }),
+      ...(input.brokerMode !== undefined && { brokerMode: input.brokerMode }),
+      ...(input.sizingType !== undefined && { sizingType: input.sizingType }),
+      ...(input.sizingValue !== undefined && { sizingValue: input.sizingValue }),
+      ...(strategyId !== undefined && { strategyId }),
+      ...(exitProfileId !== undefined && { exitProfileId }),
+      ...(input.enabled !== undefined && { enabled: input.enabled }),
     },
     include: subscriptionInclude,
   });
@@ -307,11 +321,11 @@ export async function createExitProfile(input: CreateExitProfileInput) {
     data: {
       key: input.key,
       name: input.name,
-      description: input.description,
-      targetPct: input.targetPct,
-      stopLossPct: input.stopLossPct,
-      trailingStopPct: input.trailingStopPct,
-      maxHoldDays: input.maxHoldDays,
+      ...(input.description !== undefined && { description: input.description }),
+      ...(input.targetPct !== undefined && { targetPct: input.targetPct }),
+      ...(input.stopLossPct !== undefined && { stopLossPct: input.stopLossPct }),
+      ...(input.trailingStopPct !== undefined && { trailingStopPct: input.trailingStopPct }),
+      ...(input.maxHoldDays !== undefined && { maxHoldDays: input.maxHoldDays }),
       exitMode: input.exitMode,
       takeProfitBehavior: input.takeProfitBehavior,
       enabled: input.enabled ?? true,
@@ -334,16 +348,16 @@ export async function updateExitProfile(
   return prisma.exitProfile.update({
     where: { id },
     data: {
-      key: input.key,
-      name: input.name,
-      description: input.description,
-      targetPct: input.targetPct,
-      stopLossPct: input.stopLossPct,
-      trailingStopPct: input.trailingStopPct,
-      maxHoldDays: input.maxHoldDays,
-      exitMode: input.exitMode,
-      takeProfitBehavior: input.takeProfitBehavior,
-      enabled: input.enabled,
+      ...(input.key !== undefined && { key: input.key }),
+      ...(input.name !== undefined && { name: input.name }),
+      ...(input.description !== undefined && { description: input.description }),
+      ...(input.targetPct !== undefined && { targetPct: input.targetPct }),
+      ...(input.stopLossPct !== undefined && { stopLossPct: input.stopLossPct }),
+      ...(input.trailingStopPct !== undefined && { trailingStopPct: input.trailingStopPct }),
+      ...(input.maxHoldDays !== undefined && { maxHoldDays: input.maxHoldDays }),
+      ...(input.exitMode !== undefined && { exitMode: input.exitMode }),
+      ...(input.takeProfitBehavior !== undefined && { takeProfitBehavior: input.takeProfitBehavior }),
+      ...(input.enabled !== undefined && { enabled: input.enabled }),
     },
   });
 }

@@ -30,7 +30,14 @@ export async function placeOrderController(
     const input = placeOrderSchema.parse(req.body);
     const result = await submitOrder(input);
 
-    res.status(result.duplicate ? 200 : 201).json(result);
+    let status = undefined;
+    if ('duplicate' in result && result.duplicate) {
+      status = 200; // OK
+    } else {
+       status = 201; // Created
+    }
+
+    res.status(status).json(result);
   } catch (error) {
     if (error instanceof ZodError) {
       res.status(400).json({
