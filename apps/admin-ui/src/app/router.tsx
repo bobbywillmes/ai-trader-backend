@@ -13,6 +13,7 @@ import { OrdersPage } from "../features/orders/OrdersPage";
 import { SecuritiesPage } from "../features/securities/SecuritiesPage";
 import { SystemEventsPage } from "../features/systemEvents/SystemEventsPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
+import { SecurityDetailPage } from "../features/securities/SecurityDetailPage";
 
 export const router = createBrowserRouter([
   {
@@ -54,6 +55,10 @@ export const router = createBrowserRouter([
       {
         path: "securities",
         element: <SecuritiesPage />,
+      },
+      {
+        path: "securities/:symbol",
+        element: <SecurityDetailPage />,
       },
       {
         path: "reports",

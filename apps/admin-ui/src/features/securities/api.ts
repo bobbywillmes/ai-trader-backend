@@ -5,6 +5,7 @@ import type {
   UpdateSecurityPayload,
   SecuritiesQueryParams,
   SecuritiesResponse,
+  SecurityDetailResponse,
 } from "./types";
 
 export async function getSecurities(token: string) {
@@ -67,4 +68,11 @@ export async function fetchSecurities(
   appendQueryParam(params, 'industry', query.industry);
 
   return apiRequest<SecuritiesResponse>(`/api/securities?${params.toString()}`, { token });
+}
+
+export async function fetchSecurity(symbol: string, token?: string | null): Promise<SecurityDetailResponse> {
+  return apiRequest<SecurityDetailResponse>(
+    `/api/securities/${encodeURIComponent(symbol)}`,
+    { token }
+  );
 }

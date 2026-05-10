@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createSecurity, updateSecurity, fetchSecurities } from "./api";
+import { createSecurity, updateSecurity, fetchSecurities, fetchSecurity } from "./api";
+import { getAdminToken } from "../../lib/api";
 import type { CreateSecurityPayload, UpdateSecurityPayload, SecuritiesQueryParams } from "./types";
 
 export const securityKeys = {
@@ -30,23 +31,30 @@ export function useCreateSecurity(token: string | null) {
   });
 }
 
-export function useUpdateSecurity(token: string | null) {
+export function useSecurity(symbol: string | undefined) {
+  return useQuery({
+    queryKey: ['security', symbol],
+    queryFn: () => fetchSecurity(symbol as string, getAdminToken()),
+    enabled: Boolean(symbol),
+  });
+}
+
+export function useUpdateSecurity(symbol: string | undefined) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({
-      symbol,
-      payload,
-    }: {
-      symbol: string;
-      payload: UpdateSecurityPayload;
-    }) => {
+    mutationFn: (payload: UpdateSecurityPayload) => {
+      if (!symbol) {
+        throw new Error('Symbol is required.');
+      }
+      const token = getAdminToken();
       if (!token) {
-        throw new Error("Admin session is missing. Please log in again.");
+        throw new Error('Admin session is missing. Please log in again.');
       }
       return updateSecurity(symbol, payload, token);
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['security', symbol] });
       queryClient.invalidateQueries({ queryKey: securityKeys.all });
     },
   });

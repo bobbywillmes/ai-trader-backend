@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useSecurities } from './hooks';
 import { getAdminToken } from '../../lib/api';
 import type { SecuritiesQueryParams } from './types';
@@ -205,9 +206,12 @@ export function SecuritiesPage() {
                     </span>
                   </td>
                   <td className="actions-column">
-                    <button type="button" className="table-link-button">
+                    <Link
+                      className="table-link-button"
+                      to={`/securities/${security.symbol}`}
+                    >
                       View
-                    </button>
+                    </Link>
                   </td>
                 </tr>
               ))

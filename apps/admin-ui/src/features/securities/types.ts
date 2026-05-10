@@ -65,3 +65,55 @@ export type SecuritiesResponse = {
   pagination: SecuritiesPagination;
   filters: SecuritiesFilters;
 };
+
+export type SecurityStrategy = {
+  id: number;
+  key: string;
+  name: string;
+  enabled: boolean;
+};
+
+export type SecurityExitProfile = {
+  id: number;
+  key: string;
+  name: string;
+  enabled: boolean;
+  targetPct: number | null;
+  stopLossPct: number | null;
+  trailingStopPct: number | null;
+  maxHoldDays: number | null;
+  exitMode: string;
+  takeProfitBehavior: string;
+};
+
+export type SecuritySubscription = {
+  id: number;
+  key: string;
+  name: string;
+  symbol: string;
+  broker: string;
+  brokerMode: string;
+  sizingType: 'fixed_qty' | 'dollar_amount';
+  sizingValue: number;
+  enabled: boolean;
+  strategy: SecurityStrategy | null;
+  exitProfile: SecurityExitProfile | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SecurityDetail = Security & {
+  subscriptions: SecuritySubscription[];
+};
+
+export type SecurityDetailResponse = {
+  security: SecurityDetail;
+};
+
+export type UpdateSecurityInput = {
+  name?: string;
+  enabled?: boolean;
+  assetType?: string;
+  sector?: string | null;
+  industry?: string | null;
+};
