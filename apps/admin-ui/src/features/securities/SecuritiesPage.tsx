@@ -1,283 +1,250 @@
-import React, { useState, Fragment } from "react";
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  Checkbox,
-  Group,
-  Loader,
-  ScrollArea,
-  Select,
-  SimpleGrid,
-  Stack,
-  Table,
-  Text,
-  TextInput,
-  Title,
-} from "@mantine/core";
-import { notifications } from "@mantine/notifications";
-import { getAdminToken } from "../../lib/api";
-import { useSecurities, useCreateSecurity, useUpdateSecurity } from "./hooks";
-import { ASSET_TYPES } from "./types";
-import type { Security, SecurityForm } from "./types";
+import { useMemo, useState } from 'react';
+import { useSecurities } from './hooks';
+import { getAdminToken } from '../../lib/api';
+import type { SecuritiesQueryParams } from './types';
+import './SecuritiesPage.css';
 
-const EMPTY_FORM: SecurityForm = {
-  symbol: "",
-  name: "",
-  assetType: "STOCK",
-  sector: "",
-  industry: "",
-  enabled: true,
-};
-
-function securityToForm(security: Security): SecurityForm {
-  return {
-    symbol: security.symbol,
-    name: security.name,
-    assetType: security.assetType,
-    sector: security.sector ?? "",
-    industry: security.industry ?? "",
-    enabled: security.enabled,
-  };
-}
-
-type SecurityEditorProps = {
-  form: SecurityForm;
-  setForm: React.Dispatch<React.SetStateAction<SecurityForm>>;
-  onSave: () => void;
-  onCancel: () => void;
-  isCreating: boolean;
-  isSaving: boolean;
-};
-
-function SecurityEditor({ form, setForm, onSave, onCancel, isCreating, isSaving }: SecurityEditorProps) {
-  function field<K extends keyof SecurityForm>(key: K) {
-    return (value: SecurityForm[K]) => setForm((f) => ({ ...f, [key]: value }));
-  }
-
-  return (
-    <Stack gap="md" p="sm" style={{ background: "var(--mantine-color-dark-7)", borderRadius: "var(--mantine-radius-md)" }}>
-      <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="sm">
-        <TextInput
-          label="Symbol"
-          value={form.symbol}
-          disabled={!isCreating}
-          onChange={(e) => field("symbol")(e.currentTarget.value.toUpperCase())}
-          size="sm"
-        />
-        <TextInput
-          label="Name"
-          value={form.name}
-          onChange={(e) => field("name")(e.currentTarget.value)}
-          size="sm"
-        />
-        <Select
-          label="Asset Type"
-          data={ASSET_TYPES}
-          value={form.assetType}
-          onChange={(v) => field("assetType")(v ?? form.assetType)}
-          size="sm"
-        />
-        <TextInput
-          label="Sector"
-          value={form.sector}
-          onChange={(e) => field("sector")(e.currentTarget.value)}
-          size="sm"
-        />
-        <TextInput
-          label="Industry"
-          value={form.industry}
-          onChange={(e) => field("industry")(e.currentTarget.value)}
-          size="sm"
-        />
-      </SimpleGrid>
-
-      <Group gap="sm" align="center">
-        <Checkbox
-          label="Enabled"
-          checked={form.enabled}
-          onChange={(e) => field("enabled")(e.currentTarget.checked)}
-          size="sm"
-        />
-      </Group>
-
-      <Group gap="sm">
-        <Button size="sm" color="cyan" loading={isSaving} onClick={onSave}>
-          Save
-        </Button>
-        <Button size="sm" variant="subtle" onClick={onCancel}>
-          Cancel
-        </Button>
-      </Group>
-    </Stack>
-  );
-}
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 250];
 
 export function SecuritiesPage() {
-  const [token] = useState<string | null>(() => getAdminToken());
-  const [creatingSecurity, setCreatingSecurity] = useState(false);
-  const [editingSymbol, setEditingSymbol] = useState<string | null>(null);
-  const [form, setForm] = useState<SecurityForm>(EMPTY_FORM);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [sector, setSector] = useState('');
+  const [industry, setIndustry] = useState('');
 
-  const { data: securities = [], isLoading, isError, error } = useSecurities(token);
-  const createMutation = useCreateSecurity(token);
-  const updateMutation = useUpdateSecurity(token);
+  const query = useMemo<SecuritiesQueryParams>(
+    () => ({
+      page,
+      pageSize,
+      search: search || undefined,
+      sector: sector || undefined,
+      industry: industry || undefined,
+    }),
+    [page, pageSize, search, sector, industry]
+  );
 
-  function startCreating() {
-    setCreatingSecurity(true);
-    setEditingSymbol(null);
-    setForm(EMPTY_FORM);
+  const securitiesQuery = useSecurities(query, getAdminToken());
+
+  // Extract securities data, pagination, and filters from the query result
+  const securities = securitiesQuery.data?.data ?? [];
+  const pagination = securitiesQuery.data?.pagination;
+  const filters = securitiesQuery.data?.filters;
+
+  // Calculate pagination details
+  const total = pagination?.total ?? 0;
+  const totalPages = pagination?.totalPages ?? 1;
+  const firstResult = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const lastResult = Math.min(page * pageSize, total);
+
+  function handleApplyFilters() {
+    setPage(1);
+    setSearch(searchInput.trim());
   }
 
-  function startEditing(security: Security) {
-    setCreatingSecurity(false);
-    setEditingSymbol(security.symbol);
-    setForm(securityToForm(security));
+  function handleClearFilters() {
+    setPage(1);
+    setSearchInput('');
+    setSearch('');
+    setSector('');
+    setIndustry('');
   }
 
-  function cancelForm() {
-    setCreatingSecurity(false);
-    setEditingSymbol(null);
+  function handlePageSizeChange(nextPageSize: number) {
+    setPage(1);
+    setPageSize(nextPageSize);
   }
-
-  async function handleSave() {
-    const symbol = form.symbol.trim().toUpperCase();
-    const name = form.name.trim();
-
-    if (!symbol) { notifications.show({ message: "Symbol is required.", color: "red" }); return; }
-    if (!name) { notifications.show({ message: "Name is required.", color: "red" }); return; }
-
-    const commonFields = {
-      name,
-      assetType: form.assetType as Security["assetType"],
-      sector: form.sector.trim() || undefined,
-      industry: form.industry.trim() || undefined,
-      enabled: form.enabled,
-    };
-
-    try {
-      if (editingSymbol !== null) {
-        await updateMutation.mutateAsync({ symbol: editingSymbol, payload: commonFields });
-        notifications.show({ message: `Security updated: ${editingSymbol}`, color: "teal" });
-      } else {
-        await createMutation.mutateAsync({ symbol, ...commonFields });
-        notifications.show({ message: `Security added: ${symbol}`, color: "teal" });
-      }
-      cancelForm();
-    } catch (err) {
-      notifications.show({
-        message: err instanceof Error ? err.message : "Failed to save security.",
-        color: "red",
-      });
-    }
-  }
-
-  const isSaving = createMutation.isPending || updateMutation.isPending;
 
   return (
-    <Stack gap="lg">
-      <Group justify="space-between" align="flex-end">
+    <div className="securities-page">
+      <div className="page-header">
         <div>
-          <Title order={2} size="h3">Securities</Title>
-          <Text size="sm" c="dimmed">Manage the symbol registry for trading.</Text>
+          <h1>Securities</h1>
+          <p>Manage the symbol registry for trading.</p>
         </div>
-        <Button size="sm" color="cyan" onClick={startCreating} disabled={creatingSecurity}>
-          Add Security
-        </Button>
-      </Group>
+      </div>
 
-      {creatingSecurity && (
-        <SecurityEditor
-          form={form}
-          setForm={setForm}
-          onSave={handleSave}
-          onCancel={cancelForm}
-          isCreating
-          isSaving={isSaving}
-        />
-      )}
+      <section className="securities-controls">
+        <div className="control-group search-control">
+          <label htmlFor="security-search">Search</label>
+          <input
+            id="security-search"
+            type="text"
+            value={searchInput}
+            placeholder="Symbol or company name"
+            onChange={(event) => setSearchInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                handleApplyFilters();
+              }
+            }}
+          />
+        </div>
 
-      <Card withBorder radius="md" p="md">
-        {isError && (
-          <Alert color="red" mb="md">
-            {error instanceof Error ? error.message : "Failed to load securities."}
-          </Alert>
+        <div className="control-group">
+          <label htmlFor="security-sector">Sector</label>
+          <select
+            id="security-sector"
+            value={sector}
+            onChange={(event) => {
+              setPage(1);
+              setSector(event.target.value);
+            }}
+          >
+            <option value="">All sectors</option>
+            {(filters?.sectors ?? []).map((sectorOption) => (
+              <option key={sectorOption} value={sectorOption}>
+                {sectorOption}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="control-group">
+          <label htmlFor="security-industry">Industry</label>
+          <select
+            id="security-industry"
+            value={industry}
+            onChange={(event) => {
+              setPage(1);
+              setIndustry(event.target.value);
+            }}
+          >
+            <option value="">All industries</option>
+            {(filters?.industries ?? []).map((industryOption) => (
+              <option key={industryOption} value={industryOption}>
+                {industryOption}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="control-group">
+          <label htmlFor="security-page-size">Rows</label>
+          <select
+            id="security-page-size"
+            value={pageSize}
+            onChange={(event) =>
+              handlePageSizeChange(Number(event.target.value))
+            }
+          >
+            {PAGE_SIZE_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="filter-actions">
+          <button type="button" onClick={handleApplyFilters}>
+            Apply
+          </button>
+
+          <button type="button" className="secondary-button" onClick={handleClearFilters}>
+            Clear
+          </button>
+        </div>
+      </section>
+
+      <section className="securities-table-card">
+        {securitiesQuery.isError && (
+          <div className="table-message error-message">
+            Failed to load securities.
+          </div>
         )}
 
-        {isLoading && (
-          <Group gap="sm">
-            <Loader size="sm" color="cyan" />
-            <Text size="sm" c="dimmed">Loading securities…</Text>
-          </Group>
-        )}
+        <table className="securities-table">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Sector</th>
+              <th>Industry</th>
+              <th>Status</th>
+              <th className="actions-column">Actions</th>
+            </tr>
+          </thead>
 
-        {!isLoading && securities.length === 0 && (
-          <Text size="sm" c="dimmed">No securities.</Text>
-        )}
+          <tbody>
+            {securitiesQuery.isLoading ? (
+              <tr>
+                <td colSpan={7} className="table-message">
+                  Loading securities...
+                </td>
+              </tr>
+            ) : securities.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="table-message">
+                  No securities found.
+                </td>
+              </tr>
+            ) : (
+              securities.map((security) => (
+                <tr key={security.id}>
+                  <td className="symbol-cell">{security.symbol}</td>
+                  <td>{security.name}</td>
+                  <td>
+                    <span className="type-pill">
+                      {security.assetType}
+                    </span>
+                  </td>
+                  <td>{security.sector ?? '-'}</td>
+                  <td>{security.industry ?? '-'}</td>
+                  <td>
+                    <span
+                      className={
+                        security.enabled
+                          ? 'status-pill status-enabled'
+                          : 'status-pill status-disabled'
+                      }
+                    >
+                      {security.enabled ? 'Enabled' : 'Disabled'}
+                    </span>
+                  </td>
+                  <td className="actions-column">
+                    <button type="button" className="table-link-button">
+                      View
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
 
-        {securities.length > 0 && (
-          <ScrollArea>
-            <Table striped highlightOnHover style={{ minWidth: 600 }}>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Symbol</Table.Th>
-                  <Table.Th>Name</Table.Th>
-                  <Table.Th>Type</Table.Th>
-                  <Table.Th>Sector</Table.Th>
-                  <Table.Th>Status</Table.Th>
-                  <Table.Th />
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {securities.map((security) => (
-                  <Fragment key={security.symbol}>
-                    <Table.Tr>
-                      <Table.Td fw={600}>{security.symbol}</Table.Td>
-                      <Table.Td>{security.name}</Table.Td>
-                      <Table.Td>
-                        <Badge size="sm" color="blue" variant="light">{security.assetType}</Badge>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="sm" c="dimmed">{security.sector ?? "—"}</Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Badge size="sm" color={security.enabled ? "teal" : "gray"} variant="light">
-                          {security.enabled ? "Enabled" : "Disabled"}
-                        </Badge>
-                      </Table.Td>
-                      <Table.Td>
-                        <Button
-                          size="xs"
-                          variant="subtle"
-                          onClick={() => editingSymbol === security.symbol ? cancelForm() : startEditing(security)}
-                        >
-                          {editingSymbol === security.symbol ? "Cancel" : "Edit"}
-                        </Button>
-                      </Table.Td>
-                    </Table.Tr>
+        <footer className="pagination-bar">
+          <div className="pagination-summary">
+            Showing {firstResult}-{lastResult} of {total}
+          </div>
 
-                    {editingSymbol === security.symbol && (
-                      <Table.Tr>
-                        <Table.Td colSpan={6} style={{ padding: "8px 0" }}>
-                          <SecurityEditor
-                            form={form}
-                            setForm={setForm}
-                            onSave={handleSave}
-                            onCancel={cancelForm}
-                            isCreating={false}
-                            isSaving={isSaving}
-                          />
-                        </Table.Td>
-                      </Table.Tr>
-                    )}
-                  </Fragment>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
-        )}
-      </Card>
-    </Stack>
+          <div className="pagination-actions">
+            <button
+              type="button"
+              disabled={page <= 1 || securitiesQuery.isFetching}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+            >
+              Previous
+            </button>
+
+            <span>
+              Page {page} of {totalPages}
+            </span>
+
+            <button
+              type="button"
+              disabled={page >= totalPages || securitiesQuery.isFetching}
+              onClick={() =>
+                setPage((current) => Math.min(totalPages, current + 1))
+              }
+            >
+              Next
+            </button>
+          </div>
+        </footer>
+      </section>
+    </div>
   );
 }

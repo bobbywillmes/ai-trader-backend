@@ -1,0 +1,245 @@
+.securities-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.page-header h1 {
+  margin: 0;
+}
+
+.page-header p {
+  margin: 0.25rem 0 0;
+  color: var(--muted-text, #9ca3af);
+}
+
+.primary-button,
+.secondary-button,
+.securities-controls button,
+.pagination-actions button,
+.table-link-button {
+  border: 0;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.primary-button {
+  background: #0ea5e9;
+  color: white;
+  padding: 0.7rem 1rem;
+}
+
+.secondary-button {
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  padding: 0.65rem 0.9rem;
+}
+
+.securities-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) minmax(180px, 1fr) minmax(220px, 1fr) 120px auto;
+  gap: 0.75rem;
+  align-items: end;
+  padding: 1rem;
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.control-group label {
+  color: var(--muted-text, #9ca3af);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.control-group input,
+.control-group select {
+  min-height: 2.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.5rem;
+  background-color: rgba(10, 18, 35, 0.92);
+  color: #e5e7eb;
+  padding: 0 0.75rem;
+  color-scheme: dark;
+}
+
+.control-group input::placeholder {
+  color: #7b8798;
+}
+
+.control-group select {
+  cursor: pointer;
+}
+
+.control-group select option {
+  background-color: #111827;
+  color: #e5e7eb;
+}
+
+.control-group select option:checked {
+  background-color: #1d4ed8;
+  color: #ffffff;
+}
+
+.control-group input:focus,
+.control-group select:focus {
+  outline: 2px solid rgba(14, 165, 233, 0.45);
+  outline-offset: 1px;
+  border-color: rgba(14, 165, 233, 0.7);
+}
+
+.filter-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.filter-actions button {
+  min-height: 2.4rem;
+  padding: 0 0.9rem;
+}
+
+.securities-table-card {
+  overflow: hidden;
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.securities-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.securities-table th,
+.securities-table td {
+  padding: 0.8rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.securities-table th {
+  color: var(--muted-text, #9ca3af);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.securities-table tbody tr:nth-child(odd) {
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.securities-table tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.securities-table tbody tr:hover {
+  background: rgba(14, 165, 233, 0.08);
+}
+
+.symbol-cell {
+  font-weight: 800;
+}
+
+.type-pill,
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.type-pill {
+  background: rgba(14, 165, 233, 0.18);
+  color: #7dd3fc;
+}
+
+.status-enabled {
+  background: rgba(16, 185, 129, 0.18);
+  color: #6ee7b7;
+}
+
+.status-disabled {
+  background: rgba(239, 68, 68, 0.16);
+  color: #fca5a5;
+}
+
+.actions-column {
+  width: 110px;
+  text-align: right;
+}
+
+.table-link-button {
+  background: transparent;
+  color: #bae6fd;
+  padding: 0.25rem 0.4rem;
+}
+
+.table-link-button:hover {
+  color: white;
+  text-decoration: underline;
+}
+
+.table-message {
+  padding: 1.5rem;
+  color: var(--muted-text, #9ca3af);
+  text-align: center;
+}
+
+.error-message {
+  color: #fca5a5;
+}
+
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+}
+
+.pagination-summary {
+  color: var(--muted-text, #9ca3af);
+}
+
+.pagination-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.pagination-actions button {
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  padding: 0.5rem 0.75rem;
+}
+
+.pagination-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+@media (max-width: 1100px) {
+  .securities-controls {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .filter-actions {
+    grid-column: span 2;
+  }
+}

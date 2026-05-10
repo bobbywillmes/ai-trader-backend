@@ -1,16 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getSecurities, createSecurity, updateSecurity } from "./api";
-import type { CreateSecurityPayload, UpdateSecurityPayload } from "./types";
+import { createSecurity, updateSecurity, fetchSecurities } from "./api";
+import type { CreateSecurityPayload, UpdateSecurityPayload, SecuritiesQueryParams } from "./types";
 
 export const securityKeys = {
   all: ["securities"] as const,
 };
 
-export function useSecurities(token: string | null) {
+export function useSecurities(query: SecuritiesQueryParams, token?: string | null) {
   return useQuery({
-    queryKey: securityKeys.all,
-    queryFn: () => getSecurities(token as string),
-    enabled: Boolean(token),
+    queryKey: ['securities', query],
+    queryFn: () => fetchSecurities(query, token),
+    placeholderData: (previousData) => previousData,
   });
 }
 

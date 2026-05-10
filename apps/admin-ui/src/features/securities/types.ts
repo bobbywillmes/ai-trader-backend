@@ -38,3 +38,30 @@ export type SecurityForm = {
   industry: string;
   enabled: boolean;
 };
+
+export type SecuritiesPagination = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+};
+
+export type SecuritiesFilters = {
+  sectors: string[];
+  industries: string[];
+};
+
+export type SecuritiesQueryParams = {
+  page: number;
+  pageSize: number;
+  search?: string;
+  sector?: string;
+  industry?: string;
+};
+
+export type SecuritiesResponse = {
+  securities: Security[];
+  data: Security[];
+  pagination: SecuritiesPagination;
+  filters: SecuritiesFilters;
+};

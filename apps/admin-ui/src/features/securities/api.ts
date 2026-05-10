@@ -3,6 +3,8 @@ import type {
   Security,
   CreateSecurityPayload,
   UpdateSecurityPayload,
+  SecuritiesQueryParams,
+  SecuritiesResponse,
 } from "./types";
 
 export async function getSecurities(token: string) {
@@ -38,4 +40,31 @@ export async function updateSecurity(
     }
   );
   return result.security;
+}
+
+function appendQueryParam(
+  params: URLSearchParams,
+  key: string,
+  value: string | number | undefined
+) {
+  if (value === undefined || value === '') {
+    return;
+  }
+
+  params.set(key, String(value));
+}
+
+export async function fetchSecurities(
+  query: SecuritiesQueryParams,
+  token?: string | null
+): Promise<SecuritiesResponse> {
+  const params = new URLSearchParams();
+
+  appendQueryParam(params, 'page', query.page);
+  appendQueryParam(params, 'pageSize', query.pageSize);
+  appendQueryParam(params, 'search', query.search);
+  appendQueryParam(params, 'sector', query.sector);
+  appendQueryParam(params, 'industry', query.industry);
+
+  return apiRequest<SecuritiesResponse>(`/api/securities?${params.toString()}`, { token });
 }
