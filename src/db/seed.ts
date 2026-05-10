@@ -1,25 +1,18 @@
 import { prisma } from './prisma.js';
+import { Prisma, AssetType } from '@prisma/client';
+import type { SeedSecurity } from '../types/securities.js';
+
+// Set to true to seed subscriptions for all securities in the securities.json file, which will create a very large number of subscriptions and is mainly intended for testing the system's performance and scalability with a large dataset. When false, only a curated list of popular tickers and ETFs will have subscriptions created, which is more suitable for development and demonstration purposes.
+const seedAllSecuritySubscriptions = process.env.SEED_ALL_SECURITY_SUBSCRIPTIONS === 'true';
+
 
 const settings = [
   { key: 'tradingEnabled', value: 'true' },
   { key: 'paperMode', value: 'true' }
 ];
 
-const securities = [
-  { symbol: 'SPY', name: 'SPDR S&P 500 ETF Trust', assetType: 'ETF' },
-  { symbol: 'QQQ', name: 'Invesco QQQ Trust', assetType: 'ETF' },
-  { symbol: 'DIA', name: 'SPDR Dow Jones Industrial Average ETF Trust', assetType: 'ETF' },
-  { symbol: 'IWM', name: 'iShares Russell 2000 ETF', assetType: 'ETF' },
-  { symbol: 'RSP', name: 'Invesco S&P 500 Equal Weight ETF', assetType: 'ETF' },
-  { symbol: 'AAPL', name: 'Apple Inc.', assetType: 'STOCK' },
-  { symbol: 'AMZN', name: 'Amazon.com, Inc.', assetType: 'STOCK' },
-  { symbol: 'GOOG', name: 'Alphabet Inc. Class C', assetType: 'STOCK' },
-  { symbol: 'META', name: 'Meta Platforms, Inc.', assetType: 'STOCK' },
-  { symbol: 'MSFT', name: 'Microsoft Corporation', assetType: 'STOCK' },
-  { symbol: 'NVDA', name: 'NVIDIA Corporation', assetType: 'STOCK' },
-  { symbol: 'TSLA', name: 'Tesla, Inc.', assetType: 'STOCK' },
-  { symbol: 'AMD', name: 'Advanced Micro Devices, Inc.', assetType: 'STOCK' }
-];
+import securitiesData from './securities.json' with { type: 'json' };
+const securities = securitiesData as SeedSecurity[];
 
 const strategies = [
   {
@@ -32,71 +25,75 @@ const strategies = [
     key: 'dip_n_ride_ticker',
     name: 'Dip N Ride - Ticker',
     description: 'Dip-buying strategy for large-cap individual tickers.',
-    allowedSymbolsJson: ['AAPL', 'AMZN', 'GOOG', 'META', 'MSFT']
+    allowedSymbolsJson: Prisma.JsonNull
   },
   {
     key: 'momentum',
     name: 'Momentum',
     description: 'Momentum-based entry strategy.',
-    allowedSymbolsJson: null
+    allowedSymbolsJson: Prisma.JsonNull,
   },
   {
     key: 'quick_test_momentum',
     name: 'Quick Test Momentum',
     description: 'Fast test strategy for backend entry/exit loop validation.',
-    allowedSymbolsJson: ['NVDA', 'TSLA', 'AMD'],
+    allowedSymbolsJson: Prisma.JsonNull,
     enabled: true,
   }
 ];
 
 const exitProfiles = [
   {
-    key: 'fixed_2pct_no_stop',
-    name: 'Fixed 2% Target - No Stop',
-    description: 'Basic fixed profit target with no stop-loss.',
+    key: 'exit_core_target',
+    name: 'Core Target Exit',
+    description: 'Default fixed target exit profile.',
     targetPct: 2,
     stopLossPct: null,
     trailingStopPct: null,
     maxHoldDays: null,
     exitMode: 'fixed_target',
-    takeProfitBehavior: 'immediate'
+    takeProfitBehavior: 'immediate',
+    enabled: true,
   },
   {
-    key: 'target_2pct_trail_0_5pct',
-    name: '2% Target Then 0.5% Trail',
-    description: 'Begin trailing after target is reached.',
+    key: 'exit_core_trailing',
+    name: 'Core Target Then Trail',
+    description: 'Target reached first, then trailing exit logic takes over.',
     targetPct: 2,
     stopLossPct: null,
     trailingStopPct: 0.5,
     maxHoldDays: null,
     exitMode: 'hybrid',
-    takeProfitBehavior: 'trail_after_target'
+    takeProfitBehavior: 'trail_after_target',
+    enabled: true,
   },
   {
-    key: 'stop_3pct_target_2pct',
-    name: '3% Stop / 2% Target',
-    description: 'Fixed stop-loss and fixed target.',
+    key: 'exit_core_bracket',
+    name: 'Core Bracket Exit',
+    description: 'Fixed target with stop-loss protection.',
     targetPct: 2,
     stopLossPct: 3,
     trailingStopPct: null,
     maxHoldDays: null,
     exitMode: 'fixed_bracket',
-    takeProfitBehavior: 'immediate'
+    takeProfitBehavior: 'immediate',
+    enabled: true,
   },
   {
-    key: 'ai_assisted_profit_protection',
-    name: 'AI-Assisted Profit Protection',
-    description: 'Template for future AI-assisted exit decisions.',
+    key: 'exit_ai_assisted',
+    name: 'AI Assisted Exit',
+    description: 'Reserved for future AI-assisted exit decisions.',
     targetPct: 2,
     stopLossPct: null,
     trailingStopPct: 0.5,
     maxHoldDays: 10,
     exitMode: 'ai_assisted',
-    takeProfitBehavior: 'ai_confirm'
+    takeProfitBehavior: 'ai_confirm',
+    enabled: true,
   },
   {
-    key: 'quick_test_tiny_exit',
-    name: 'Quick Test Tiny Exit',
+    key: 'exit_quick_test',
+    name: 'Quick Test Exit',
     description: 'Tiny profit/stop thresholds for fast backend exit testing.',
     targetPct: 0.05,
     stopLossPct: 0.05,
@@ -105,93 +102,146 @@ const exitProfiles = [
     exitMode: 'fixed_bracket',
     takeProfitBehavior: 'immediate',
     enabled: true,
-  }
+  },
 ];
 
-const subscriptions = [
-  {
-    key: 'dip_n_ride_spy_paper',
-    name: 'Dip N Ride - SPY Paper',
-    symbol: 'SPY',
-    broker: 'alpaca',
-    brokerMode: 'paper',
-    strategyKey: 'dip_n_ride_etf',
-    exitProfileKey: 'target_2pct_trail_0_5pct',
-    sizingType: 'fixed_qty',
-    sizingValue: 1
-  },
-  {
-    key: 'dip_n_ride_qqq_paper',
-    name: 'Dip N Ride - QQQ Paper',
-    symbol: 'QQQ',
-    broker: 'alpaca',
-    brokerMode: 'paper',
-    strategyKey: 'dip_n_ride_etf',
-    exitProfileKey: 'target_2pct_trail_0_5pct',
-    sizingType: 'fixed_qty',
-    sizingValue: 1
-  },
-  {
-    key: 'dip_n_ride_aapl_paper',
-    name: 'Dip N Ride - AAPL Paper',
-    symbol: 'AAPL',
-    broker: 'alpaca',
-    brokerMode: 'paper',
-    strategyKey: 'dip_n_ride_ticker',
-    exitProfileKey: 'stop_3pct_target_2pct',
-    sizingType: 'fixed_qty',
-    sizingValue: 1
-  },
-  {
-    key: 'quick_test_nvda_paper',
-    name: 'Quick Test - NVDA Paper',
-    symbol: 'NVDA',
-    broker: 'alpaca',
-    brokerMode: 'paper',
-    strategyKey: 'quick_test_momentum',
-    exitProfileKey: 'quick_test_tiny_exit',
-    sizingType: 'fixed_qty',
-    sizingValue: 1,
-    enabled: true,
-  },
-  {
-    key: 'quick_test_tsla_paper',
-    name: 'Quick Test - TSLA Paper',
-    symbol: 'TSLA',
-    broker: 'alpaca',
-    brokerMode: 'paper',
-    strategyKey: 'quick_test_momentum',
-    exitProfileKey: 'quick_test_tiny_exit',
-    sizingType: 'fixed_qty',
-    sizingValue: 1,
-    enabled: true,
-  },
-  {
-    key: 'quick_test_amd_paper',
-    name: 'Quick Test - AMD Paper',
-    symbol: 'AMD',
-    broker: 'alpaca',
-    brokerMode: 'paper',
-    strategyKey: 'quick_test_momentum',
-    exitProfileKey: 'quick_test_tiny_exit',
-    sizingType: 'fixed_qty',
-    sizingValue: 1,
-    enabled: true,
-  }
-];
+const getDipStrategyKey = (security: Pick<SeedSecurity, 'assetType'>) => {
+  return security.assetType === 'ETF' ? 'dip_n_ride_etf' : 'dip_n_ride_ticker';
+};
+
+// Seed subscriptions for a curated list of popular tickers and ETFs that are commonly traded and have good liquidity. This will allow us to have a solid set of active subscriptions for testing and demonstration purposes.
+const curatedSubscriptionSymbols = new Set<string>([
+  'SPY',
+  'QQQ',
+  'DIA',
+  'IWM',
+  'RSP',
+  'AAPL',
+  'AMZN',
+  'GOOG',
+  'META',
+  'MSFT',
+  'NVDA',
+  'TSLA',
+  'AMD',
+  'INTC',
+  'NFLX',
+]);
+
+const curatedSubscriptionSecurities = securities.filter((security) =>
+  curatedSubscriptionSymbols.has(security.symbol)
+);
+
+const subscriptionSourceSecurities: SeedSecurity[] = seedAllSecuritySubscriptions
+  ? securities
+  : curatedSubscriptionSecurities;
+
+console.log(
+  [
+    'Seed configuration:',
+    `- securities source: ${securities.length} total securities from src/db/securities.json`,
+    `- subscription mode: ${
+      seedAllSecuritySubscriptions
+        ? 'FULL — subscriptions will be created for every seeded security'
+        : 'CURATED — subscriptions will be created only for curated symbols'
+    }`,
+    `- subscription source count: ${subscriptionSourceSecurities.length} securities`,
+    `- expected subscriptions: ${subscriptionSourceSecurities.length * 5}`,
+  ].join('\n')
+);
+
+// For each selected security, create multiple subscriptions with different exit profiles and strategies to demonstrate the flexibility of the system. The "Dip N Ride" strategies will be used for their respective asset types, and the "Quick Test Momentum" strategy will be included for testing purposes.
+const subscriptions = subscriptionSourceSecurities.flatMap((security) => {
+  const symbol = security.symbol;
+  const symbolKey = symbol.toLowerCase();
+  const dipStrategyKey = getDipStrategyKey(security);
+
+  return [
+    {
+      key: `${symbolKey}_dip_core`,
+      name: `${symbol} Dip Core`,
+      symbol,
+      broker: 'alpaca',
+      brokerMode: 'paper',
+      strategyKey: dipStrategyKey,
+      exitProfileKey: 'exit_core_target',
+      sizingType: 'fixed_qty',
+      sizingValue: 1,
+      enabled: true,
+    },
+    {
+      key: `${symbolKey}_dip_conservative`,
+      name: `${symbol} Dip Conservative`,
+      symbol,
+      broker: 'alpaca',
+      brokerMode: 'paper',
+      strategyKey: dipStrategyKey,
+      exitProfileKey: 'exit_core_bracket',
+      sizingType: 'fixed_qty',
+      sizingValue: 1,
+      enabled: false,
+    },
+    {
+      key: `${symbolKey}_dip_aggressive`,
+      name: `${symbol} Dip Aggressive`,
+      symbol,
+      broker: 'alpaca',
+      brokerMode: 'paper',
+      strategyKey: dipStrategyKey,
+      exitProfileKey: 'exit_core_trailing',
+      sizingType: 'fixed_qty',
+      sizingValue: 1,
+      enabled: false,
+    },
+    {
+      key: `${symbolKey}_dip_ai_assisted`,
+      name: `${symbol} Dip AI Assisted`,
+      symbol,
+      broker: 'alpaca',
+      brokerMode: 'paper',
+      strategyKey: dipStrategyKey,
+      exitProfileKey: 'exit_ai_assisted',
+      sizingType: 'fixed_qty',
+      sizingValue: 1,
+      enabled: false,
+    },
+    {
+      key: `${symbolKey}_test_momentum`,
+      name: `${symbol} Test Momentum`,
+      symbol,
+      broker: 'alpaca',
+      brokerMode: 'paper',
+      strategyKey: 'quick_test_momentum',
+      exitProfileKey: 'exit_quick_test',
+      sizingType: 'fixed_qty',
+      sizingValue: 1,
+      enabled: false,
+    },
+  ];
+});
+
+const toPrismaAssetType = (assetType: SeedSecurity['assetType']) => {
+  return assetType === 'ETF' ? AssetType.ETF : AssetType.STOCK;
+};
 
 async function main() {
   for (const security of securities) {
+    const assetType = toPrismaAssetType(security.assetType);
+
     await prisma.security.upsert({
       where: { symbol: security.symbol },
       update: {
         name: security.name,
-        assetType: security.assetType
+        assetType,
+        sector: security.sector,
+        industry: security.industry,
       },
       create: {
         symbol: security.symbol,
         name: security.name,
-        assetType: security.assetType
+        assetType,
+        sector: security.sector,
+        industry: security.industry,
       }
     });
   }
@@ -263,7 +313,16 @@ for (const subscription of subscriptions) {
   });
 }
 
-  console.log('Seeded database with tickers, settings, strategies, exit profiles, and subscriptions.');
+  console.log(
+    [
+      'Database seed completed successfully:',
+      `- securities upserted: ${securities.length}`,
+      `- settings upserted: ${settings.length}`,
+      `- strategies upserted: ${strategies.length}`,
+      `- exit profiles upserted: ${exitProfiles.length}`,
+      `- subscriptions upserted: ${subscriptions.length}`,
+    ].join('\n')
+  );
 }
 
 main()

@@ -226,6 +226,20 @@ src/
    types/
    validators/
 ```
+### Relevant Data Files
+```txt
+prisma/seed.ts
+```
+Main Prisma seed script. Upserts settings, strategies, exit profiles, securities, and subscriptions.
+```txt
+prisma/securities.json
+```
+Static seed data for the full tradable security universe.
+```txt
+src/types/securities.ts
+```
+Shared TypeScript types for imported security seed data.
+
 ## ➡️ Request Flow
 
 The Express app follows this general pattern:
@@ -1172,6 +1186,67 @@ e.g. fixed target (without stop), fixed target with stop, trailing stop after fi
 Symbol-specific deployment of a strategy. Contains Symbol, position size (qty: 1), broker. It is connected to its parent strategy and an exit profile.
 e.g. Dip N Ride - QQQ
 
+
+## Seed Data
+
+The project uses Prisma seed data to populate required reference/configuration tables for local development and production setup.
+Seeded data currently includes:
+
+- Settings
+- Strategies
+- Exit Profiles
+- Securities
+- Subscriptions
+
+### Securities
+
+Tradable securities are now seeded from a static JSON file:
+
+```txt
+prisma/securities.json
+```
+
+This file contains the full tradable security universe for the AI Trader. The current list includes:
+- Core ETFs used by the strategy engine (SPY, QQQ, DIA, IWM & RSP )
+- S&P 500 constituents
+- Nasdaq-100 additions not already included in the S&P 500
+- Dow components included through index overlap
+
+Each security includes:
+- symbol
+- name
+- assetType
+- sector
+- industry
+
+The TypeScript shape for this seed data is defined in:
+```txt
+src/types/securities.ts
+```
+This keeps the seed file clean while allowing the same security data shape to be reused elsewhere in the backend.
+
+### Subscriptions
+
+The full security universe is seeded into the Security table, but subscriptions are intentionally seeded only for a curated list of actively tested symbols by default.
+
+This prevents the seed process from automatically creating thousands of strategy subscriptions before the system is ready to manage them at scale.
+
+By default, the curated subscription list includes:
+
+- SPY, QQQ, DIA, IWM, RSP,
+- AAPL, AMZN, GOOG, META, MSFT, NVDA, TSLA, AMD
+
+Each curated security receives multiple subscription variants, such as:
+```ts
+<symbol>_dip_core
+<symbol>_dip_conservative
+<symbol>_dip_aggressive
+<symbol>_dip_ai_assisted
+<symbol>_test_momentum
+```
+
+The full securities table can therefore support future expansion, reporting, filtering, and AI-driven candidate selection, while the active subscription set remains controlled.
+
 ----------
 
 ## 🗝 Environment Variables
@@ -1190,6 +1265,26 @@ ALPACA_BASE_URL=https://paper-api.alpaca.markets
 DATABASE_URL=postgresql://trader:traderpass@localhost:5432/ai_trader
 ```
 Never commit `.env`.
+
+### Seed Environment Variables
+
+#### `SEED_ALL_SECURITY_SUBSCRIPTIONS`
+
+Controls whether Prisma seed creates subscriptions for every security in `prisma/securities.json`.
+
+Default behavior:
+
+```env
+SEED_ALL_SECURITY_SUBSCRIPTIONS=false
+```
+When unset or set to anything other than true, the seed process creates subscriptions only for the curated active/testing universe.
+
+To create subscriptions for every seeded security:
+```env
+SEED_ALL_SECURITY_SUBSCRIPTIONS=true
+```
+
+Use this carefully. Enabling this creates multiple subscriptions per security and can significantly increase the size of the Subscription table.
 
 ----------
 
@@ -1332,7 +1427,6 @@ This prevents automation clients from accidentally changing strategy configurati
 
 Near-term:
 
-- Expand the admin UI to a routed multi-page app
 - Add account snapshot logging
 - Add broker activity/fill endpoint
 - Deploy backend to Hostinger
