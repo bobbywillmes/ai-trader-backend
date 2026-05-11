@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useSecurity, useUpdateSecurity, useUpdateSecuritySubscription, useEditSecuritySubscription } from './hooks';
+import { useSecurity, useUpdateSecurity, useUpdateSecuritySubscription, useEditSecuritySubscription, useCreateSecuritySubscription } from './hooks';
 import { notifications } from '@mantine/notifications';
 import { useExitProfiles } from '../exitProfiles/hooks';
+import { useStrategies } from '../strategies/hooks';
 import { getAdminToken } from '../../lib/api';
 import { SubscriptionEditModal } from './SubscriptionEditModal';
+import { SubscriptionCreateModal } from './SubscriptionCreateModal';
 import type { SecuritySubscription } from './types';
+import type { CreateSubscriptionPayload } from '../subscriptions/types';
 import './SecurityDetailPage.css';
 
 function formatSizing(type: string, value: number) {
@@ -39,9 +42,12 @@ export function SecurityDetailPage() {
   const updateSecurityMutation = useUpdateSecurity(symbol);
   const updateSubscriptionMutation = useUpdateSecuritySubscription(symbol);
   const editSubscriptionMutation = useEditSecuritySubscription(symbol);
+  const createSubscriptionMutation = useCreateSecuritySubscription(symbol);
   const exitProfilesQuery = useExitProfiles(getAdminToken());
+  const strategiesQuery = useStrategies(getAdminToken());
 
   const [editingSubscription, setEditingSubscription] = useState<SecuritySubscription | null>(null);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
 
   const security = securityQuery.data?.security;
 
@@ -96,6 +102,26 @@ export function SecurityDetailPage() {
         },
       }
     );
+  }
+
+  function handleCreateSubscription(payload: CreateSubscriptionPayload) {
+    createSubscriptionMutation.mutate(payload, {
+      onSuccess: () => {
+        setCreateModalOpen(false);
+        notifications.show({
+          title: 'Subscription created',
+          message: `${payload.name} has been created.`,
+          color: 'green',
+        });
+      },
+      onError: (error) => {
+        notifications.show({
+          title: 'Subscription creation failed',
+          message: getErrorMessage(error),
+          color: 'red',
+        });
+      },
+    });
   }
 
   function handleSaveEdit(data: {
@@ -260,6 +286,13 @@ export function SecurityDetailPage() {
               {security.subscriptions.length === 1 ? '' : 's'}
             </p>
           </div>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => setCreateModalOpen(true)}
+          >
+            + New Subscription
+          </button>
         </div>
 
         {security.subscriptions.length === 0 ? (
@@ -352,6 +385,16 @@ export function SecurityDetailPage() {
         onClose={() => setEditingSubscription(null)}
         onSave={handleSaveEdit}
         isPending={editSubscriptionMutation.isPending}
+      />
+
+      <SubscriptionCreateModal
+        symbol={security.symbol}
+        strategies={strategiesQuery.data ?? []}
+        exitProfiles={exitProfilesQuery.data ?? []}
+        isOpen={createModalOpen}
+        onClose={() => setCreateModalOpen(false)}
+        onSave={handleCreateSubscription}
+        isPending={createSubscriptionMutation.isPending}
       />
 
     </div>

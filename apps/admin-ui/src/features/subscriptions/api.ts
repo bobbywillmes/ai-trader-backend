@@ -1,9 +1,17 @@
 import { apiRequest } from "../../lib/api";
-import type { Subscription, UpdateSubscriptionPayload } from "./types";
+import type { Subscription, CreateSubscriptionPayload, UpdateSubscriptionPayload } from "./types";
 
 export function getSubscriptions(token: string) {
   return apiRequest<Subscription[]>("/api/subscriptions", {
     token,
+  });
+}
+
+export function createSubscription(payload: CreateSubscriptionPayload, token: string) {
+  return apiRequest<Subscription>("/api/subscriptions", {
+    method: "POST",
+    token,
+    body: payload,
   });
 }
 

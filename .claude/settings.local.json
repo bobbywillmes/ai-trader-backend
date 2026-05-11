@@ -4,7 +4,8 @@
       "Bash(npx eslint *)",
       "Bash(Get-ChildItem -Directory)",
       "Bash(Select-Object Name)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(Get-ChildItem \"c:\\\\Users\\\\bobby\\\\Desktop\\\\AI Trader Backend\\\\src\" -MaxDepth 1 -Name)"
     ]
   }
 }

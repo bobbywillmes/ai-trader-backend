@@ -20,6 +20,19 @@ export type UpdateSubscriptionPayload = {
   enabled?: boolean;
 };
 
+export type CreateSubscriptionPayload = {
+  key: string;
+  name: string;
+  symbol: string;
+  broker?: string;
+  brokerMode?: string;
+  sizingType: 'fixed_qty' | 'dollar_amount';
+  sizingValue: number;
+  strategyId: number;
+  exitProfileId: number;
+  enabled?: boolean;
+};
+
 export type UpdateSubscriptionInput = {
   enabled?: boolean;
   name?: string;

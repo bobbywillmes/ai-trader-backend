@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createSecurity, updateSecurity, fetchSecurities, fetchSecurity } from "./api";
 import { getAdminToken } from "../../lib/api";
 import type { CreateSecurityPayload, UpdateSecurityPayload, SecuritiesQueryParams } from "./types";
-import { updateSubscription } from "../subscriptions/api";
+import { createSubscription, updateSubscription } from "../subscriptions/api";
+import type { CreateSubscriptionPayload } from "../subscriptions/types";
 
 export const securityKeys = {
   all: ["securities"] as const,
@@ -73,6 +74,25 @@ export function useUpdateSecuritySubscription(symbol: string | undefined) {
       return updateSubscription(input.subscriptionId, {
         enabled: input.enabled,
       }, token);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['security', symbol] });
+      queryClient.invalidateQueries({ queryKey: ['securities'] });
+      queryClient.invalidateQueries({ queryKey: ['subscriptions'] });
+    },
+  });
+}
+
+export function useCreateSecuritySubscription(symbol: string | undefined) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: CreateSubscriptionPayload) => {
+      const token = getAdminToken();
+      if (!token) {
+        throw new Error('Admin session is missing. Please log in again.');
+      }
+      return createSubscription(payload, token);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['security', symbol] });
