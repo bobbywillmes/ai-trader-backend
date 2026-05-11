@@ -72,7 +72,7 @@ export function HomePage() {
           "radial-gradient(circle at top left, rgba(6, 182, 212, 0.12), transparent 40%), #0f172a",
       }}
     >
-      <Grid gutter={0} style={{ minHeight: "100vh" }}>
+      <Grid style={{ minHeight: "100vh" }}>
         {/* Left — branding + description */}
         <Grid.Col
           span={{ base: 12, md: 7 }}

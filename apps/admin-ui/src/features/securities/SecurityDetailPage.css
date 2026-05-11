@@ -387,3 +387,51 @@
   justify-content: flex-end;
   gap: 0.5rem;
 }
+
+.securities-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(120px, 1fr));
+  gap: 0.75rem;
+}
+
+.summary-card {
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.045);
+  padding: 1rem;
+}
+
+.summary-card span {
+  display: block;
+  color: #9ca3af;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.summary-card strong {
+  display: block;
+  margin-top: 0.35rem;
+  color: #ffffff;
+  font-size: 1.4rem;
+}
+
+.warning-card strong {
+  color: #fca5a5;
+}
+
+.muted-card strong {
+  color: #cbd5e1;
+}
+
+@media (max-width: 1200px) {
+  .securities-summary-grid {
+    grid-template-columns: repeat(3, minmax(120px, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .securities-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}

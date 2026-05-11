@@ -6,6 +6,7 @@ import type {
   SecuritiesQueryParams,
   SecuritiesResponse,
   SecurityDetailResponse,
+  SecuritiesSummaryResponse,
 } from "./types";
 
 export async function getSecurities(token: string) {
@@ -77,4 +78,12 @@ export async function fetchSecurity(symbol: string, token?: string | null): Prom
     `/api/securities/${encodeURIComponent(symbol)}`,
     { token }
   );
+}
+
+export function fetchSecuritiesSummary(
+  token: string
+): Promise<SecuritiesSummaryResponse> {
+  return apiRequest<SecuritiesSummaryResponse>('/api/securities/summary', {
+    token,
+  });
 }

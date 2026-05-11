@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createSecurity, updateSecurity, fetchSecurities, fetchSecurity } from "./api";
+import { createSecurity, updateSecurity, fetchSecurities, fetchSecurity, fetchSecuritiesSummary } from "./api";
 import { getAdminToken } from "../../lib/api";
 import type { CreateSecurityPayload, UpdateSecurityPayload, SecuritiesQueryParams } from "./types";
 import { createSubscription, updateSubscription } from "../subscriptions/api";
@@ -7,6 +7,10 @@ import type { CreateSubscriptionPayload } from "../subscriptions/types";
 
 export const securityKeys = {
   all: ["securities"] as const,
+};
+
+export const securitiesSummaryKeys = {
+  all: ['securitiesSummary'] as const,
 };
 
 export function useSecurities(query: SecuritiesQueryParams, token?: string | null) {
@@ -127,5 +131,13 @@ export function useEditSecuritySubscription(symbol: string | undefined) {
       queryClient.invalidateQueries({ queryKey: ['securities'] });
       queryClient.invalidateQueries({ queryKey: ['subscriptions'] });
     },
+  });
+}
+
+export function useSecuritiesSummary(token: string | null) {
+  return useQuery({
+    queryKey: securitiesSummaryKeys.all,
+    queryFn: () => fetchSecuritiesSummary(token as string),
+    enabled: Boolean(token),
   });
 }

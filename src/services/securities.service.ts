@@ -252,3 +252,50 @@ export async function updateSecurity(
 
   return security;
 }
+
+export async function getSecuritiesSummary() {
+  const [
+    total,
+    enabled,
+    disabled,
+    configured,
+    unconfigured,
+    enabledSubscriptions,
+  ] = await prisma.$transaction([
+    prisma.security.count(),
+    prisma.security.count({
+      where: { enabled: true },
+    }),
+    prisma.security.count({
+      where: { enabled: false },
+    }),
+    prisma.security.count({
+      where: {
+        subscriptions: {
+          some: {},
+        },
+      },
+    }),
+    prisma.security.count({
+      where: {
+        subscriptions: {
+          none: {},
+        },
+      },
+    }),
+    prisma.subscription.count({
+      where: {
+        enabled: true,
+      },
+    }),
+  ]);
+
+  return {
+    total,
+    enabled,
+    disabled,
+    configured,
+    unconfigured,
+    enabledSubscriptions,
+  };
+}

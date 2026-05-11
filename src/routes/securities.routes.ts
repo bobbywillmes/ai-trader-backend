@@ -1,13 +1,15 @@
 import { Router } from 'express';
 import {
-  addSecurityController,
-  findSecurityController,
   getAllSecuritiesController,
-  updateSecurityController
+  getSecuritiesSummaryController,
+  findSecurityController,
+  addSecurityController,
+  updateSecurityController,
 } from '../controllers/securities.controller.js';
 
 const router = Router();
 
+router.get('/summary', getSecuritiesSummaryController);
 router.get('/', getAllSecuritiesController);
 router.get('/:symbol', findSecurityController);
 router.post('/', addSecurityController);

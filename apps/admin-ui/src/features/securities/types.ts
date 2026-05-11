@@ -127,3 +127,16 @@ export type UpdateSecurityInput = {
   sector?: string | null;
   industry?: string | null;
 };
+
+export type SecuritiesSummary = {
+  total: number;
+  enabled: number;
+  disabled: number;
+  configured: number;
+  unconfigured: number;
+  enabledSubscriptions: number;
+};
+
+export type SecuritiesSummaryResponse = {
+  summary: SecuritiesSummary;
+};

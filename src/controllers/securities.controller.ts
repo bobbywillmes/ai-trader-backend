@@ -3,6 +3,7 @@ import type { AssetType } from '@prisma/client';
 import { ZodError } from 'zod';
 import {
   getAllSecurities,
+  getSecuritiesSummary,
   findSecurity,
   addSecurity,
   updateSecurity,
@@ -31,6 +32,30 @@ function getQueryNumber(value: unknown) {
 
 function getRouteParam(value: unknown) {
   return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function getQueryBoolean(value: unknown) {
+  if (value === 'true') {
+    return true;
+  }
+
+  if (value === 'false') {
+    return false;
+  }
+
+  return undefined;
+}
+
+function getSubscriptionStatusFilter(value: unknown) {
+  if (
+    value === 'configured' ||
+    value === 'unconfigured' ||
+    value === 'all'
+  ) {
+    return value;
+  }
+
+  return undefined;
 }
 
 export async function getAllSecuritiesController(
@@ -166,26 +191,16 @@ export async function updateSecurityController(
   }
 }
 
-function getQueryBoolean(value: unknown) {
-  if (value === 'true') {
-    return true;
+export async function getSecuritiesSummaryController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const summary = await getSecuritiesSummary();
+
+    res.status(200).json({ summary });
+  } catch (error) {
+    next(error);
   }
-
-  if (value === 'false') {
-    return false;
-  }
-
-  return undefined;
-}
-
-function getSubscriptionStatusFilter(value: unknown) {
-  if (
-    value === 'configured' ||
-    value === 'unconfigured' ||
-    value === 'all'
-  ) {
-    return value;
-  }
-
-  return undefined;
 }

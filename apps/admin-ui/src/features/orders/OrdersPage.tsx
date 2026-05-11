@@ -108,7 +108,7 @@ export function OrdersPage() {
                         </Badge>
                       </Table.Td>
                       <Table.Td>
-                        <Text size="sm" tt="capitalize">{(order.type ?? order.orderType ?? "").replace(/_/g, " ")}</Text>
+                        <Text size="sm" tt="capitalize">{order.type}</Text>
                       </Table.Td>
                       <Table.Td style={{ textAlign: "right" }}>{order.qty ?? "—"}</Table.Td>
                       <Table.Td style={{ textAlign: "right" }}>{filledQty}</Table.Td>

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useSecurities } from './hooks';
+import { useSecurities, useSecuritiesSummary } from './hooks';
 import { getAdminToken } from '../../lib/api';
 import type { SecuritiesQueryParams } from './types';
 import './SecuritiesPage.css';
@@ -41,7 +41,11 @@ export function SecuritiesPage() {
     ]
   );
 
-  const securitiesQuery = useSecurities(query, getAdminToken());
+  const token = getAdminToken();
+  const securitiesQuery = useSecurities(query, token);
+
+  const summaryQuery = useSecuritiesSummary(token);
+  const summary = summaryQuery.data?.summary;
 
   // Extract securities data, pagination, and filters from the query result
   const securities = securitiesQuery.data?.data ?? [];
@@ -82,6 +86,39 @@ export function SecuritiesPage() {
           <p>Manage the symbol registry for trading.</p>
         </div>
       </div>
+
+      <section className="securities-summary-grid">
+        <article className="summary-card">
+          <span>Total Securities</span>
+          <strong>{summary?.total ?? '-'}</strong>
+        </article>
+
+        <article className="summary-card">
+          <span>Enabled</span>
+          <strong>{summary?.enabled ?? '-'}</strong>
+        </article>
+
+        <article className="summary-card warning-card">
+          <span>Disabled</span>
+          <strong>{summary?.disabled ?? '-'}</strong>
+        </article>
+
+        <article className="summary-card">
+          <span>Configured</span>
+          <strong>{summary?.configured ?? '-'}</strong>
+        </article>
+
+        <article className="summary-card muted-card">
+          <span>Unconfigured</span>
+          <strong>{summary?.unconfigured ?? '-'}</strong>
+        </article>
+
+        <article className="summary-card">
+          <span>Enabled Subscriptions</span>
+          <strong>{summary?.enabledSubscriptions ?? '-'}</strong>
+        </article>
+      </section>
+
 
       <section className="securities-controls">
         <div className="control-group search-control">
