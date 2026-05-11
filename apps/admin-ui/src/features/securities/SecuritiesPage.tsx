@@ -14,6 +14,8 @@ export function SecuritiesPage() {
   const [search, setSearch] = useState('');
   const [sector, setSector] = useState('');
   const [industry, setIndustry] = useState('');
+  const [enabledFilter, setEnabledFilter] = useState<'all' | 'enabled' | 'disabled'>('all');
+  const [subscriptionStatus, setSubscriptionStatus] = useState<'all' | 'configured' | 'unconfigured'>('all');
 
   const query = useMemo<SecuritiesQueryParams>(
     () => ({
@@ -22,8 +24,21 @@ export function SecuritiesPage() {
       search: search || undefined,
       sector: sector || undefined,
       industry: industry || undefined,
+      enabled:
+        enabledFilter === 'all'
+          ? undefined
+          : enabledFilter === 'enabled',
+      subscriptionStatus,
     }),
-    [page, pageSize, search, sector, industry]
+    [
+      page,
+      pageSize,
+      search,
+      sector,
+      industry,
+      enabledFilter,
+      subscriptionStatus
+    ]
   );
 
   const securitiesQuery = useSecurities(query, getAdminToken());
@@ -50,6 +65,8 @@ export function SecuritiesPage() {
     setSearch('');
     setSector('');
     setIndustry('');
+    setEnabledFilter('all');
+    setSubscriptionStatus('all');
   }
 
   function handlePageSizeChange(nextPageSize: number) {
@@ -118,6 +135,42 @@ export function SecuritiesPage() {
                 {industryOption}
               </option>
             ))}
+          </select>
+        </div>
+
+        <div className="control-group">
+          <label htmlFor="security-status">Status</label>
+          <select
+            id="security-status"
+            value={enabledFilter}
+            onChange={(event) => {
+              setPage(1);
+              setEnabledFilter(
+                event.target.value as 'all' | 'enabled' | 'disabled'
+              );
+            }}
+          >
+            <option value="all">All statuses</option>
+            <option value="enabled">Enabled</option>
+            <option value="disabled">Disabled</option>
+          </select>
+        </div>
+
+        <div className="control-group">
+          <label htmlFor="security-subscriptions">Subscriptions</label>
+          <select
+            id="security-subscriptions"
+            value={subscriptionStatus}
+            onChange={(event) => {
+              setPage(1);
+              setSubscriptionStatus(
+                event.target.value as 'all' | 'configured' | 'unconfigured'
+              );
+            }}
+          >
+            <option value="all">All securities</option>
+            <option value="configured">Configured only</option>
+            <option value="unconfigured">Unconfigured only</option>
           </select>
         </div>
 

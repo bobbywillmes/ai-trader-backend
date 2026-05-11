@@ -46,7 +46,7 @@ export async function updateSecurity(
 function appendQueryParam(
   params: URLSearchParams,
   key: string,
-  value: string | number | undefined
+  value: string | number | boolean | undefined
 ) {
   if (value === undefined || value === '') {
     return;
@@ -66,6 +66,8 @@ export async function fetchSecurities(
   appendQueryParam(params, 'search', query.search);
   appendQueryParam(params, 'sector', query.sector);
   appendQueryParam(params, 'industry', query.industry);
+  appendQueryParam(params, 'enabled', query.enabled);
+  appendQueryParam(params, 'subscriptionStatus', query.subscriptionStatus);
 
   return apiRequest<SecuritiesResponse>(`/api/securities?${params.toString()}`, { token });
 }

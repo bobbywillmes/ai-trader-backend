@@ -52,12 +52,21 @@ export type SecuritiesFilters = {
   industries: string[];
 };
 
+export type SubscriptionStatusFilter =
+  | 'all'
+  | 'configured'
+  | 'unconfigured';
+
+export type EnabledStatusFilter = 'all' | 'enabled' | 'disabled';
+
 export type SecuritiesQueryParams = {
   page: number;
   pageSize: number;
   search?: string;
   sector?: string;
   industry?: string;
+  enabled?: boolean;
+  subscriptionStatus?: SubscriptionStatusFilter;
 };
 
 export type SecuritiesResponse = {

@@ -45,6 +45,10 @@ export async function getAllSecuritiesController(
       search: getQueryString(req.query.search),
       sector: getQueryString(req.query.sector),
       industry: getQueryString(req.query.industry),
+      enabled: getQueryBoolean(req.query.enabled),
+      subscriptionStatus: getSubscriptionStatusFilter(
+        req.query.subscriptionStatus
+      ),
     });
 
     res.status(200).json({
@@ -160,4 +164,28 @@ export async function updateSecurityController(
 
     next(error);
   }
+}
+
+function getQueryBoolean(value: unknown) {
+  if (value === 'true') {
+    return true;
+  }
+
+  if (value === 'false') {
+    return false;
+  }
+
+  return undefined;
+}
+
+function getSubscriptionStatusFilter(value: unknown) {
+  if (
+    value === 'configured' ||
+    value === 'unconfigured' ||
+    value === 'all'
+  ) {
+    return value;
+  }
+
+  return undefined;
 }

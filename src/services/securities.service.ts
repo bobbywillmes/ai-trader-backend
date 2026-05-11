@@ -8,7 +8,15 @@ export type GetAllSecuritiesParams = {
   search?: string | undefined;
   sector?: string | undefined;
   industry?: string | undefined;
+  enabled?: boolean | undefined;
+  subscriptionStatus?: SecuritySubscriptionStatusFilter | undefined;
 };
+
+export type SecuritySubscriptionStatusFilter =
+  | 'all'
+  | 'configured'
+  | 'unconfigured';
+
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 50;
@@ -32,6 +40,8 @@ function buildSecurityWhere(params: GetAllSecuritiesParams): Prisma.SecurityWher
   const search = normalizeOptionalString(params.search);
   const sector = normalizeOptionalString(params.sector);
   const industry = normalizeOptionalString(params.industry);
+  const enabled = params.enabled;
+  const subscriptionStatus = params.subscriptionStatus ?? 'all';
 
   const where: Prisma.SecurityWhereInput = {};
 
@@ -58,6 +68,22 @@ function buildSecurityWhere(params: GetAllSecuritiesParams): Prisma.SecurityWher
 
   if (industry) {
     where.industry = industry;
+  }
+
+  if (enabled !== undefined) {
+    where.enabled = enabled;
+  }
+
+  if (subscriptionStatus === 'configured') {
+    where.subscriptions = {
+      some: {},
+    };
+  }
+
+  if (subscriptionStatus === 'unconfigured') {
+    where.subscriptions = {
+      none: {},
+    };
   }
 
   return where;
