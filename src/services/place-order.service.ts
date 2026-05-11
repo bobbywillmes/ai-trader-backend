@@ -16,6 +16,7 @@ import {
   updateOrderIntentStatus
 } from './order-audit.service.js';
 import { resolveSubscriptionOrderInput } from './subscription.service.js';
+import { assertSecurityTradingEnabled } from './security-trading-guard.service.js';
 import type {
   PlaceOrderInput,
   ResolvedPlaceOrderInput
@@ -75,6 +76,17 @@ export async function submitOrder(input: PlaceOrderInput) {
       await updateOrderIntentStatus(intent.id, 'blocked', reason);
       throw new HttpError(403, reason);
     }
+  }
+
+  // Check if the security is enabled for trading before allowing orders to proceed
+  try {
+    await assertSecurityTradingEnabled(resolvedInput.symbol);
+  } catch (error) {
+    const reason =
+      error instanceof HttpError        ? error.message
+      : `Security ${resolvedInput.symbol} is not enabled for trading.`; 
+    await updateOrderIntentStatus(intent.id, 'blocked', reason);
+    throw error instanceof HttpError ? error : new HttpError(403, reason);
   }
 
   const account = await getNormalizedAccount();
