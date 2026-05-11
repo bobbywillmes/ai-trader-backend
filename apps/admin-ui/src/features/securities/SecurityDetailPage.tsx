@@ -1,6 +1,11 @@
+import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useSecurity, useUpdateSecurity, useUpdateSecuritySubscription } from './hooks';
+import { useSecurity, useUpdateSecurity, useUpdateSecuritySubscription, useEditSecuritySubscription } from './hooks';
 import { notifications } from '@mantine/notifications';
+import { useExitProfiles } from '../exitProfiles/hooks';
+import { getAdminToken } from '../../lib/api';
+import { SubscriptionEditModal } from './SubscriptionEditModal';
+import type { SecuritySubscription } from './types';
 import './SecurityDetailPage.css';
 
 function formatSizing(type: string, value: number) {
@@ -33,6 +38,10 @@ export function SecurityDetailPage() {
   const securityQuery = useSecurity(symbol);
   const updateSecurityMutation = useUpdateSecurity(symbol);
   const updateSubscriptionMutation = useUpdateSecuritySubscription(symbol);
+  const editSubscriptionMutation = useEditSecuritySubscription(symbol);
+  const exitProfilesQuery = useExitProfiles(getAdminToken());
+
+  const [editingSubscription, setEditingSubscription] = useState<SecuritySubscription | null>(null);
 
   const security = securityQuery.data?.security;
 
@@ -87,6 +96,31 @@ export function SecurityDetailPage() {
         },
       }
     );
+  }
+
+  function handleSaveEdit(data: {
+    subscriptionId: number;
+    sizingType: 'fixed_qty' | 'dollar_amount';
+    sizingValue: number;
+    exitProfileId: number;
+  }) {
+    editSubscriptionMutation.mutate(data, {
+      onSuccess: () => {
+        setEditingSubscription(null);
+        notifications.show({
+          title: 'Subscription updated',
+          message: 'Subscription has been saved.',
+          color: 'green',
+        });
+      },
+      onError: (error) => {
+        notifications.show({
+          title: 'Subscription update failed',
+          message: getErrorMessage(error),
+          color: 'red',
+        });
+      },
+    });
   }
 
   function handleToggleSubscription(
@@ -277,23 +311,32 @@ export function SecurityDetailPage() {
                     </span>
                   </td>
                   <td>
-                    <button
-                      type="button"
-                      className={
-                        subscription.enabled
-                          ? 'small-danger-button'
-                          : 'small-primary-button'
-                      }
-                      disabled={
-                        updateSubscriptionMutation.isPending &&
-                        updateSubscriptionMutation.variables?.subscriptionId === subscription.id
-                      }
-                      onClick={() =>
-                        handleToggleSubscription(subscription.id, subscription.enabled, subscription.name)
-                      }
-                    >
-                      {subscription.enabled ? 'Disable' : 'Enable'}
-                    </button>
+                    <div className="action-cell">
+                      <button
+                        type="button"
+                        className={
+                          subscription.enabled
+                            ? 'small-danger-button'
+                            : 'small-primary-button'
+                        }
+                        disabled={
+                          updateSubscriptionMutation.isPending &&
+                          updateSubscriptionMutation.variables?.subscriptionId === subscription.id
+                        }
+                        onClick={() =>
+                          handleToggleSubscription(subscription.id, subscription.enabled, subscription.name)
+                        }
+                      >
+                        {subscription.enabled ? 'Disable' : 'Enable'}
+                      </button>
+                      <button
+                        type="button"
+                        className="small-secondary-button"
+                        onClick={() => setEditingSubscription(subscription)}
+                      >
+                        Edit
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -301,6 +344,16 @@ export function SecurityDetailPage() {
           </table>
         )}
       </section>
+
+      <SubscriptionEditModal
+        subscription={editingSubscription}
+        exitProfiles={exitProfilesQuery.data ?? []}
+        isOpen={editingSubscription !== null}
+        onClose={() => setEditingSubscription(null)}
+        onSave={handleSaveEdit}
+        isPending={editSubscriptionMutation.isPending}
+      />
+
     </div>
   );
 }

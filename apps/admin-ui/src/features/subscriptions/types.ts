@@ -13,7 +13,9 @@ export type Subscription = {
 };
 
 export type UpdateSubscriptionPayload = {
+  sizingType?: 'fixed_qty' | 'dollar_amount';
   sizingValue?: number;
+  exitProfileId?: number;
   exitProfileKey?: string | null;
   enabled?: boolean;
 };

@@ -81,3 +81,31 @@ export function useUpdateSecuritySubscription(symbol: string | undefined) {
     },
   });
 }
+
+export function useEditSecuritySubscription(symbol: string | undefined) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: {
+      subscriptionId: number;
+      sizingType: 'fixed_qty' | 'dollar_amount';
+      sizingValue: number;
+      exitProfileId: number;
+    }) => {
+      const token = getAdminToken();
+      if (!token) {
+        throw new Error('Admin session is missing. Please log in again.');
+      }
+      return updateSubscription(input.subscriptionId, {
+        sizingType: input.sizingType,
+        sizingValue: input.sizingValue,
+        exitProfileId: input.exitProfileId,
+      }, token);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['security', symbol] });
+      queryClient.invalidateQueries({ queryKey: ['securities'] });
+      queryClient.invalidateQueries({ queryKey: ['subscriptions'] });
+    },
+  });
+}
