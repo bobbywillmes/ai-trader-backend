@@ -110,9 +110,9 @@ export async function updateSubscriptionController(
   next: NextFunction
 ) {
   try {
-    const key = getRouteParam(req.params.key);
+    const key = getRouteParam(req.params.id);
     if (!key) {
-      res.status(400).json({ error: 'Subscription key is required' });
+      res.status(400).json({ error: 'Subscription id is required' });
       return;
     }
     const id = parsePositiveId(key);

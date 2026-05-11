@@ -1,5 +1,6 @@
 import { Link, useParams } from 'react-router-dom';
-import { useSecurity, useUpdateSecurity } from './hooks';
+import { useSecurity, useUpdateSecurity, useUpdateSecuritySubscription } from './hooks';
+import { notifications } from '@mantine/notifications';
 import './SecurityDetailPage.css';
 
 function formatSizing(type: string, value: number) {
@@ -18,11 +19,20 @@ function formatPct(value: number | null) {
   return `${value}%`;
 }
 
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return 'Something went wrong.';
+}
+
 export function SecurityDetailPage() {
   const { symbol } = useParams<{ symbol: string }>();
 
   const securityQuery = useSecurity(symbol);
   const updateSecurityMutation = useUpdateSecurity(symbol);
+  const updateSubscriptionMutation = useUpdateSecuritySubscription(symbol);
 
   const security = securityQuery.data?.security;
 
@@ -52,11 +62,65 @@ export function SecurityDetailPage() {
       return;
     }
 
-    updateSecurityMutation.mutate({
-      enabled: !security.enabled,
-    });
+    const nextEnabled = !security.enabled;
+
+    updateSecurityMutation.mutate(
+      {
+        enabled: nextEnabled,
+      },
+      {
+        onSuccess: () => {
+          notifications.show({
+            title: 'Security updated',
+            message: `${security.symbol} trading has been ${
+              nextEnabled ? 'enabled' : 'disabled'
+            }.`,
+            color: nextEnabled ? 'green' : 'red',
+          });
+        },
+        onError: (error) => {
+          notifications.show({
+            title: 'Security update failed',
+            message: getErrorMessage(error),
+            color: 'red',
+          });
+        },
+      }
+    );
   }
 
+  function handleToggleSubscription(
+    subscriptionId: number,
+    enabled: boolean,
+    subscriptionName: string
+  ) {
+    const nextEnabled = !enabled;
+
+    updateSubscriptionMutation.mutate(
+      {
+        subscriptionId,
+        enabled: nextEnabled,
+      },
+      {
+        onSuccess: () => {
+          notifications.show({
+            title: 'Subscription updated',
+            message: `${subscriptionName} has been ${
+              nextEnabled ? 'enabled' : 'disabled'
+            }.`,
+            color: nextEnabled ? 'green' : 'red',
+          });
+        },
+        onError: (error) => {
+          notifications.show({
+            title: 'Subscription update failed',
+            message: getErrorMessage(error),
+            color: 'red',
+          });
+        },
+      }
+    );
+  }
   return (
     <div className="security-detail-page">
       <div className="detail-header">
@@ -180,6 +244,7 @@ export function SecurityDetailPage() {
                 <th>Target</th>
                 <th>Stop</th>
                 <th>Status</th>
+                <th>Action</th>
               </tr>
             </thead>
 
@@ -210,6 +275,25 @@ export function SecurityDetailPage() {
                     >
                       {subscription.enabled ? 'Enabled' : 'Disabled'}
                     </span>
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className={
+                        subscription.enabled
+                          ? 'small-danger-button'
+                          : 'small-primary-button'
+                      }
+                      disabled={
+                        updateSubscriptionMutation.isPending &&
+                        updateSubscriptionMutation.variables?.subscriptionId === subscription.id
+                      }
+                      onClick={() =>
+                        handleToggleSubscription(subscription.id, subscription.enabled, subscription.name)
+                      }
+                    >
+                      {subscription.enabled ? 'Disable' : 'Enable'}
+                    </button>
                   </td>
                 </tr>
               ))}

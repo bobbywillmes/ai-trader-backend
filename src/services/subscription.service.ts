@@ -161,38 +161,6 @@ async function resolveExitProfileId(input: {
   return undefined;
 }
 
-async function assertNoEnabledSubscriptionConflict(input: {
-  idToExclude?: number;
-  broker: string;
-  brokerMode: string;
-  symbol: string;
-  enabled: boolean;
-}) {
-  if (!input.enabled) return;
-
-  const where: Prisma.SubscriptionWhereInput = {
-    broker: input.broker,
-    brokerMode: input.brokerMode,
-    symbol: input.symbol,
-    enabled: true,
-  };
-
-  if (input.idToExclude) {
-    where.NOT = { id: input.idToExclude };
-  }
-
-  const existing = await prisma.subscription.findFirst({
-    where,
-  });
-
-  if (existing) {
-    throw new HttpError(
-      409,
-      `An enabled subscription already exists for ${input.symbol} on ${input.broker}-${input.brokerMode}: ${existing.key}.`
-    );
-  }
-}
-
 const subscriptionInclude = {
   strategy: true,
   exitProfile: true,
@@ -212,12 +180,6 @@ export async function createSubscription(input: CreateSubscriptionInput) {
 
   const enabled = input.enabled ?? true;
 
-  await assertNoEnabledSubscriptionConflict({
-    broker: input.broker,
-    brokerMode: input.brokerMode,
-    symbol: input.symbol,
-    enabled,
-  });
     const normalizedSymbol = input.symbol.trim().toUpperCase();
     const security = await prisma.security.findUnique({
       where: { symbol: normalizedSymbol },
@@ -258,20 +220,6 @@ export async function updateSubscription(
 
   const strategyId = await resolveStrategyId(input);
   const exitProfileId = await resolveExitProfileId(input);
-
-  const nextBroker = input.broker ?? current.broker;
-  const nextBrokerMode = input.brokerMode ?? current.brokerMode;
-  const nextSymbol = input.symbol ?? current.symbol;
-  const nextEnabled = input.enabled ?? current.enabled;
-
-  await assertNoEnabledSubscriptionConflict({
-    idToExclude: id,
-    broker: nextBroker,
-    brokerMode: nextBrokerMode,
-    symbol: nextSymbol,
-    enabled: nextEnabled,
-  });
-
 
   // Prevent disabling a subscription if it has an active position
   if (input.enabled === false) {

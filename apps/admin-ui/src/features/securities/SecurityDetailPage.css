@@ -197,3 +197,38 @@
     flex-direction: column;
   }
 }
+
+
+.small-primary-button,
+.small-danger-button {
+  border: 0;
+  border-radius: 0.45rem;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 0.4rem 0.65rem;
+}
+
+.small-primary-button {
+  background: rgba(14, 165, 233, 0.18);
+  color: #7dd3fc;
+}
+
+.small-danger-button {
+  background: rgba(239, 68, 68, 0.16);
+  color: #fca5a5;
+}
+
+.small-primary-button:hover {
+  background: rgba(14, 165, 233, 0.28);
+}
+
+.small-danger-button:hover {
+  background: rgba(239, 68, 68, 0.24);
+}
+
+.small-primary-button:disabled,
+.small-danger-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
