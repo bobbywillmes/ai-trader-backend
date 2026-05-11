@@ -10,6 +10,7 @@ export type Security = {
   assetType: AssetType;
   sector: string | null;
   industry: string | null;
+  subscriptionCount: number;
   createdAt: string;
   updatedAt: string;
 };

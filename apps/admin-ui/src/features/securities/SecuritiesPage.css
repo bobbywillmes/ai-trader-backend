@@ -179,6 +179,25 @@
   color: #fca5a5;
 }
 
+.subscription-count {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.subscription-count-active {
+  background: rgba(16, 185, 129, 0.18);
+  color: #6ee7b7;
+}
+
+.subscription-count-none {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted-text, #9ca3af);
+}
+
 .actions-column {
   width: 110px;
   text-align: right;

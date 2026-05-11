@@ -164,6 +164,7 @@ export function SecuritiesPage() {
               <th>Type</th>
               <th>Sector</th>
               <th>Industry</th>
+              <th>Subscriptions</th>
               <th>Status</th>
               <th className="actions-column">Actions</th>
             </tr>
@@ -172,13 +173,13 @@ export function SecuritiesPage() {
           <tbody>
             {securitiesQuery.isLoading ? (
               <tr>
-                <td colSpan={7} className="table-message">
+                <td colSpan={8} className="table-message">
                   Loading securities...
                 </td>
               </tr>
             ) : securities.length === 0 ? (
               <tr>
-                <td colSpan={7} className="table-message">
+                <td colSpan={8} className="table-message">
                   No securities found.
                 </td>
               </tr>
@@ -194,6 +195,17 @@ export function SecuritiesPage() {
                   </td>
                   <td>{security.sector ?? '-'}</td>
                   <td>{security.industry ?? '-'}</td>
+                  <td>
+                    <span
+                      className={
+                        security.subscriptionCount > 0
+                          ? 'subscription-count subscription-count-active'
+                          : 'subscription-count subscription-count-none'
+                      }
+                    >
+                      {security.subscriptionCount}
+                    </span>
+                  </td>
                   <td>
                     <span
                       className={

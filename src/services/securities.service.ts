@@ -96,6 +96,11 @@ export async function getAllSecurities(params: GetAllSecuritiesParams = {}) {
       orderBy: { symbol: 'asc' },
       skip,
       take: pageSize,
+      include: {
+        _count: {
+          select: { subscriptions: true },
+        },
+      },
     }),
     prisma.security.count({ where }),
     prisma.security.findMany({
@@ -130,8 +135,13 @@ export async function getAllSecurities(params: GetAllSecuritiesParams = {}) {
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
+  const mapped = data.map(({ _count, ...security }) => ({
+    ...security,
+    subscriptionCount: _count.subscriptions,
+  }));
+
   return {
-    data,
+    data: mapped,
     pagination: {
       page,
       pageSize,
