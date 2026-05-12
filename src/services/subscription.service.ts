@@ -1,6 +1,7 @@
 import { prisma } from '../db/prisma.js';
 import { Prisma } from '@prisma/client';
 import { HttpError } from '../errors/http-error.js';
+import { createAdminAuditEvent, getChangedFields } from './admin-audit.service.js';
 import type {
   PlaceOrderInput,
   ResolvedPlaceOrderInput
@@ -188,7 +189,7 @@ export async function createSubscription(input: CreateSubscriptionInput) {
     if (!security) {
       throw new Error(`Security not found for symbol ${normalizedSymbol}`);
     }
-  return prisma.subscription.create({
+  const subscription = await prisma.subscription.create({
     data: {
       key: input.key,
       name: input.name,
@@ -204,6 +205,27 @@ export async function createSubscription(input: CreateSubscriptionInput) {
     },
     include: subscriptionInclude,
   });
+
+  await createAdminAuditEvent({
+    eventType: 'subscription_created',
+    entityType: 'subscription',
+    entityId: subscription.id,
+    message: `Subscription ${subscription.key} was created for ${subscription.symbol}.`,
+    payload: {
+      subscriptionId: subscription.id,
+      subscriptionKey: subscription.key,
+      symbol: subscription.symbol,
+      enabled: subscription.enabled,
+      broker: subscription.broker,
+      brokerMode: subscription.brokerMode,
+      sizingType: subscription.sizingType,
+      sizingValue: subscription.sizingValue,
+      strategyId: subscription.strategyId,
+      exitProfileId: subscription.exitProfileId,
+    },
+  });
+
+  return subscription
 }
 
 export async function updateSubscription(
@@ -245,8 +267,15 @@ export async function updateSubscription(
     }
   }
 
+  const beforeSubscription = await prisma.subscription.findUnique({
+    where: { id },
+  });
 
-  return prisma.subscription.update({
+  if (!beforeSubscription) {
+    throw new Error(`Subscription not found for id ${id}`);
+  }
+
+  const subscription = await prisma.subscription.update({
     where: { id },
     data: {
       ...(input.key !== undefined && { key: input.key }),
@@ -262,6 +291,62 @@ export async function updateSubscription(
     },
     include: subscriptionInclude,
   });
+
+
+  const before = {
+    key: beforeSubscription.key,
+    name: beforeSubscription.name,
+    symbol: beforeSubscription.symbol,
+    broker: beforeSubscription.broker,
+    brokerMode: beforeSubscription.brokerMode,
+    sizingType: beforeSubscription.sizingType,
+    sizingValue: beforeSubscription.sizingValue,
+    strategyId: beforeSubscription.strategyId,
+    exitProfileId: beforeSubscription.exitProfileId,
+    enabled: beforeSubscription.enabled,
+  };
+
+  const after = {
+    key: subscription.key,
+    name: subscription.name,
+    symbol: subscription.symbol,
+    broker: subscription.broker,
+    brokerMode: subscription.brokerMode,
+    sizingType: subscription.sizingType,
+    sizingValue: subscription.sizingValue,
+    strategyId: subscription.strategyId,
+    exitProfileId: subscription.exitProfileId,
+    enabled: subscription.enabled,
+  };
+
+  const changedFields = getChangedFields(before, after);
+
+  if (changedFields.length > 0) {
+    const eventType =
+      changedFields.length === 1 && changedFields.includes('enabled')
+        ? subscription.enabled
+          ? 'subscription_enabled'
+          : 'subscription_disabled'
+        : 'subscription_updated';
+
+    await createAdminAuditEvent({
+      eventType,
+      entityType: 'subscription',
+      entityId: subscription.id,
+      message: `Subscription ${subscription.key} was updated.`,
+      payload: {
+        subscriptionId: subscription.id,
+        subscriptionKey: subscription.key,
+        symbol: subscription.symbol,
+        changedFields,
+        before,
+        after,
+      },
+    });
+  }
+
+
+  return subscription
 }
 
 export async function createExitProfile(input: CreateExitProfileInput) {

@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { AssetType } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
+import { createAdminAuditEvent, getChangedFields } from './admin-audit.service.js';
 
 export type GetAllSecuritiesParams = {
   page?: number | undefined;
@@ -296,10 +297,60 @@ export async function updateSecurity(
     data.industry = input.industry.trim() || null;
   }
 
+  const beforeSecurity = await prisma.security.findUnique({
+    where: { symbol: normalizedSymbol },
+  });
+
+  if (!beforeSecurity) {
+    throw new Error(`Security not found for symbol ${normalizedSymbol}`);
+  }
+
   const security = await prisma.security.update({
     where: { symbol: normalizedSymbol },
     data,
   });
+
+// analyze the changes, create systemEvent if amy changes
+  const before = {
+    name: beforeSecurity.name,
+    enabled: beforeSecurity.enabled,
+    assetType: beforeSecurity.assetType,
+    sector: beforeSecurity.sector,
+    industry: beforeSecurity.industry,
+  };
+
+  const after = {
+    name: security.name,
+    enabled: security.enabled,
+    assetType: security.assetType,
+    sector: security.sector,
+    industry: security.industry,
+  };
+
+  const changedFields = getChangedFields(before, after);
+
+  if (changedFields.length > 0) {
+    const eventType =
+      changedFields.length === 1 && changedFields.includes('enabled')
+        ? security.enabled
+          ? 'security_trading_enabled'
+          : 'security_trading_disabled'
+        : 'security_updated';
+
+    await createAdminAuditEvent({
+      eventType,
+      entityType: 'security',
+      entityId: security.symbol,
+      message: `Security ${security.symbol} was updated.`,
+      payload: {
+        symbol: security.symbol,
+        changedFields,
+        before,
+        after,
+      },
+    });
+  }
+
 
   return security;
 }

@@ -127,6 +127,7 @@ model SystemEvent {
   type        String
   entityType  String
   entityId    String
+  message     String?
   payloadJson Json
   processed   Boolean  @default(false)
   createdAt   DateTime @default(now())

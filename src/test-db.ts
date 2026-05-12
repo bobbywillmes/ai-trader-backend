@@ -9,7 +9,7 @@ const adapter = new PrismaPg({
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  const tickers = await prisma.allowedTicker.findMany();
+  const tickers = await prisma.security.findMany();
   console.log(tickers);
   const settings = await prisma.setting.findMany();
   console.log(settings);
