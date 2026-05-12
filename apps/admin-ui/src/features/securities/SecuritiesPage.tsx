@@ -2,7 +2,11 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useSecurities, useSecuritiesSummary } from './hooks';
 import { getAdminToken } from '../../lib/api';
-import type { SecuritiesQueryParams } from './types';
+import type {
+  SecuritiesQueryParams,
+  SecuritySortBy,
+  SortDirection,
+} from './types';
 import './SecuritiesPage.css';
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 250];
@@ -16,6 +20,8 @@ export function SecuritiesPage() {
   const [industry, setIndustry] = useState('');
   const [enabledFilter, setEnabledFilter] = useState<'all' | 'enabled' | 'disabled'>('all');
   const [subscriptionStatus, setSubscriptionStatus] = useState<'all' | 'configured' | 'unconfigured'>('all');
+  const [sortBy, setSortBy] = useState<SecuritySortBy>('symbol');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
 
   const query = useMemo<SecuritiesQueryParams>(
     () => ({
@@ -29,6 +35,8 @@ export function SecuritiesPage() {
           ? undefined
           : enabledFilter === 'enabled',
       subscriptionStatus,
+      sortBy,
+      sortDirection,
     }),
     [
       page,
@@ -37,7 +45,9 @@ export function SecuritiesPage() {
       sector,
       industry,
       enabledFilter,
-      subscriptionStatus
+      subscriptionStatus,
+      sortBy,
+      sortDirection,
     ]
   );
 
@@ -111,6 +121,26 @@ export function SecuritiesPage() {
       setEnabledFilter('all');
       setSubscriptionStatus('unconfigured');
     }
+  }
+
+  function handleSort(nextSortBy: SecuritySortBy) {
+    setPage(1);
+
+    if (sortBy === nextSortBy) {
+      setSortDirection((current) => (current === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+
+    setSortBy(nextSortBy);
+    setSortDirection('asc');
+  }
+
+  function getSortLabel(column: SecuritySortBy) {
+    if (sortBy !== column) {
+      return '';
+    }
+
+    return sortDirection === 'asc' ? ' ↑' : ' ↓';
   }
 
   return (
@@ -315,13 +345,74 @@ export function SecuritiesPage() {
         <table className="securities-table">
           <thead>
             <tr>
-              <th>Symbol</th>
-              <th>Name</th>
-              <th>Type</th>
-              <th>Sector</th>
-              <th>Industry</th>
-              <th>Subscriptions</th>
-              <th>Status</th>
+              <th>
+                <button
+                  type="button"
+                  className="sortable-header"
+                  onClick={() => handleSort('symbol')}
+                >
+                  Symbol{getSortLabel('symbol')}
+                </button>
+              </th>
+              <th>
+                <button
+                  type="button"
+                  className="sortable-header"
+                  onClick={() => handleSort('name')}
+                >
+                  Name{getSortLabel('name')}
+                </button>
+              </th>
+
+              <th>
+                <button
+                  type="button"
+                  className="sortable-header"
+                  onClick={() => handleSort('assetType')}
+                >
+                  Type{getSortLabel('assetType')}
+                </button>
+              </th>
+
+              <th>
+                <button
+                  type="button"
+                  className="sortable-header"
+                  onClick={() => handleSort('sector')}
+                >
+                  Sector{getSortLabel('sector')}
+                </button>
+              </th>
+
+              <th>
+                <button
+                  type="button"
+                  className="sortable-header"
+                  onClick={() => handleSort('industry')}
+                >
+                  Industry{getSortLabel('industry')}
+                </button>
+              </th>
+
+              <th>
+                <button
+                  type="button"
+                  className="sortable-header"
+                  onClick={() => handleSort('subscriptionCount')}
+                >
+                  Subscriptions{getSortLabel('subscriptionCount')}
+                </button>
+              </th>
+
+              <th>
+                <button
+                  type="button"
+                  className="sortable-header"
+                  onClick={() => handleSort('enabled')}
+                >
+                  Status{getSortLabel('enabled')}
+                </button>
+              </th>
               <th className="actions-column">Actions</th>
             </tr>
           </thead>

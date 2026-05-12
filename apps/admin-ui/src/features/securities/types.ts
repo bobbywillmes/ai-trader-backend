@@ -67,6 +67,8 @@ export type SecuritiesQueryParams = {
   industry?: string;
   enabled?: boolean;
   subscriptionStatus?: SubscriptionStatusFilter;
+  sortBy?: SecuritySortBy;
+  sortDirection?: SortDirection;
 };
 
 export type SecuritiesResponse = {
@@ -140,3 +142,14 @@ export type SecuritiesSummary = {
 export type SecuritiesSummaryResponse = {
   summary: SecuritiesSummary;
 };
+
+export type SecuritySortBy =
+  | 'symbol'
+  | 'name'
+  | 'assetType'
+  | 'sector'
+  | 'industry'
+  | 'enabled'
+  | 'subscriptionCount';
+
+export type SortDirection = 'asc' | 'desc';

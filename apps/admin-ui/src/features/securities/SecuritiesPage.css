@@ -301,3 +301,26 @@
   background: rgba(14, 165, 233, 0.12) !important;
   box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.28);
 }
+
+.sortable-header {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+  letter-spacing: inherit;
+  padding: 0;
+  text-align: left;
+  text-transform: inherit;
+}
+
+.sortable-header:hover {
+  color: #ffffff;
+}
+
+.sortable-header:focus-visible {
+  outline: 2px solid rgba(14, 165, 233, 0.65);
+  outline-offset: 3px;
+  border-radius: 0.25rem;
+}

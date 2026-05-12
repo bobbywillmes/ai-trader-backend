@@ -58,6 +58,30 @@ function getSubscriptionStatusFilter(value: unknown) {
   return undefined;
 }
 
+function getSortBy(value: unknown) {
+  if (
+    value === 'symbol' ||
+    value === 'name' ||
+    value === 'assetType' ||
+    value === 'sector' ||
+    value === 'industry' ||
+    value === 'enabled' ||
+    value === 'subscriptionCount'
+  ) {
+    return value;
+  }
+
+  return undefined;
+}
+
+function getSortDirection(value: unknown) {
+  if (value === 'asc' || value === 'desc') {
+    return value;
+  }
+
+  return undefined;
+}
+
 export async function getAllSecuritiesController(
   req: Request,
   res: Response,
@@ -71,9 +95,9 @@ export async function getAllSecuritiesController(
       sector: getQueryString(req.query.sector),
       industry: getQueryString(req.query.industry),
       enabled: getQueryBoolean(req.query.enabled),
-      subscriptionStatus: getSubscriptionStatusFilter(
-        req.query.subscriptionStatus
-      ),
+      subscriptionStatus: getSubscriptionStatusFilter(req.query.subscriptionStatus),
+      sortBy: getSortBy(req.query.sortBy),
+      sortDirection: getSortDirection(req.query.sortDirection),
     });
 
     res.status(200).json({

@@ -10,6 +10,8 @@ export type GetAllSecuritiesParams = {
   industry?: string | undefined;
   enabled?: boolean | undefined;
   subscriptionStatus?: SecuritySubscriptionStatusFilter | undefined;
+  sortBy?: SecuritySortBy | undefined;
+  sortDirection?: SortDirection | undefined;
 };
 
 export type SecuritySubscriptionStatusFilter =
@@ -17,6 +19,16 @@ export type SecuritySubscriptionStatusFilter =
   | 'configured'
   | 'unconfigured';
 
+export type SecuritySortBy =
+  | 'symbol'
+  | 'name'
+  | 'assetType'
+  | 'sector'
+  | 'industry'
+  | 'enabled'
+  | 'subscriptionCount';
+
+export type SortDirection = 'asc' | 'desc';
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 50;
@@ -89,6 +101,44 @@ function buildSecurityWhere(params: GetAllSecuritiesParams): Prisma.SecurityWher
   return where;
 }
 
+function buildSecurityOrderBy(
+  params: GetAllSecuritiesParams
+): Prisma.SecurityOrderByWithRelationInput[] {
+  const sortBy = params.sortBy ?? 'symbol';
+  const sortDirection = params.sortDirection ?? 'asc';
+
+  switch (sortBy) {
+    case 'name':
+      return [{ name: sortDirection }, { symbol: 'asc' }];
+
+    case 'assetType':
+      return [{ assetType: sortDirection }, { symbol: 'asc' }];
+
+    case 'sector':
+      return [{ sector: sortDirection }, { symbol: 'asc' }];
+
+    case 'industry':
+      return [{ industry: sortDirection }, { symbol: 'asc' }];
+
+    case 'enabled':
+      return [{ enabled: sortDirection }, { symbol: 'asc' }];
+
+    case 'subscriptionCount':
+      return [
+        {
+          subscriptions: {
+            _count: sortDirection,
+          },
+        },
+        { symbol: 'asc' },
+      ];
+
+    case 'symbol':
+    default:
+      return [{ symbol: sortDirection }];
+  }
+}
+
 export async function findSecurity(symbol: string) {
   const normalizedSymbol = symbol.trim().toUpperCase();
 
@@ -113,13 +163,14 @@ export async function getAllSecurities(params: GetAllSecuritiesParams = {}) {
   const requestedPageSize = normalizePositiveInt(params.pageSize, DEFAULT_PAGE_SIZE);
   const pageSize = Math.min(requestedPageSize, MAX_PAGE_SIZE);
   const skip = (page - 1) * pageSize;
+  const orderBy = buildSecurityOrderBy(params);
 
   const where = buildSecurityWhere(params);
 
   const [data, total, sectorRows, industryRows] = await prisma.$transaction([
     prisma.security.findMany({
       where,
-      orderBy: { symbol: 'asc' },
+      orderBy,
       skip,
       take: pageSize,
       include: {

@@ -69,6 +69,8 @@ export async function fetchSecurities(
   appendQueryParam(params, 'industry', query.industry);
   appendQueryParam(params, 'enabled', query.enabled);
   appendQueryParam(params, 'subscriptionStatus', query.subscriptionStatus);
+  appendQueryParam(params, 'sortBy', query.sortBy);
+  appendQueryParam(params, 'sortDirection', query.sortDirection);
 
   return apiRequest<SecuritiesResponse>(`/api/securities?${params.toString()}`, { token });
 }
