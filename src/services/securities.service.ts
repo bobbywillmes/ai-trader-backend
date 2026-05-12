@@ -166,6 +166,18 @@ export async function getAllSecurities(params: GetAllSecuritiesParams = {}) {
   const skip = (page - 1) * pageSize;
   const orderBy = buildSecurityOrderBy(params);
 
+  const selectedSector = normalizeOptionalString(params.sector);
+
+  const industryOptionsWhere: Prisma.SecurityWhereInput = {
+    industry: {
+      not: null,
+    },
+  };
+
+  if (selectedSector) {
+    industryOptionsWhere.sector = selectedSector;
+  }
+
   const where = buildSecurityWhere(params);
 
   const [data, total, sectorRows, industryRows] = await prisma.$transaction([
@@ -196,11 +208,7 @@ export async function getAllSecurities(params: GetAllSecuritiesParams = {}) {
       },
     }),
     prisma.security.findMany({
-      where: {
-        industry: {
-          not: null,
-        },
-      },
+      where: industryOptionsWhere,
       distinct: ['industry'],
       select: {
         industry: true,

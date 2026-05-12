@@ -247,6 +247,15 @@ export function SecuritiesPage() {
     }
 
     setSearchParams(nextParams, { replace: true });
+
+    const availableIndustries = filters?.industries;
+    if (!industry || !availableIndustries) {
+      return;
+    }
+    if (!availableIndustries.includes(industry)) {
+      setPage(1);
+      setIndustry('');
+    }
   }, [
     page,
     pageSize,
@@ -258,6 +267,8 @@ export function SecuritiesPage() {
     sortBy,
     sortDirection,
     setSearchParams,
+    industry,
+    filters?.industries,
   ]);
 
   return (
@@ -358,6 +369,7 @@ export function SecuritiesPage() {
             onChange={(event) => {
               setPage(1);
               setSector(event.target.value);
+              setIndustry('');
             }}
           >
             <option value="">All sectors</option>
