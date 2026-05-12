@@ -9,6 +9,7 @@ import { SubscriptionEditModal } from './SubscriptionEditModal';
 import { SubscriptionCreateModal } from './SubscriptionCreateModal';
 import type { SecuritySubscription } from './types';
 import type { CreateSubscriptionPayload } from '../subscriptions/types';
+import { useSecurityActivity } from '../systemEvents/hooks';
 import './SecurityDetailPage.css';
 
 function formatSizing(type: string, value: number) {
@@ -35,6 +36,20 @@ function getErrorMessage(error: unknown) {
   return 'Something went wrong.';
 }
 
+function formatEventType(type: string) {
+  return type
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(new Date(value));
+}
+
 export function SecurityDetailPage() {
   const { symbol } = useParams<{ symbol: string }>();
 
@@ -48,6 +63,9 @@ export function SecurityDetailPage() {
 
   const [editingSubscription, setEditingSubscription] = useState<SecuritySubscription | null>(null);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+
+  const activityQuery = useSecurityActivity(symbol, getAdminToken());
+  const activityEvents = activityQuery.data?.events ?? [];
 
   const security = securityQuery.data?.security;
 
@@ -377,6 +395,41 @@ export function SecurityDetailPage() {
           </table>
         )}
       </section>
+
+
+      <section className="detail-card recent-activity-card">
+        <div className="section-title-row">
+          <div>
+            <h2>Recent Activity</h2>
+            <p>Latest admin changes for this security and its subscriptions.</p>
+          </div>
+        </div>
+
+        {activityQuery.isLoading ? (
+          <div className="detail-message">Loading recent activity...</div>
+        ) : activityEvents.length === 0 ? (
+          <div className="detail-message">No recent activity for this security.</div>
+        ) : (
+          <ol className="activity-list">
+            {activityEvents.map((event) => (
+              <li key={event.id} className="activity-item">
+                <div>
+                  <strong>{event.message ?? formatEventType(event.type)}</strong>
+                  <span>
+                    {formatEventType(event.type)} · {event.entityType}
+                  </span>
+                </div>
+
+                <time dateTime={event.createdAt}>
+                  {formatDateTime(event.createdAt)}
+                </time>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+
+
 
       <SubscriptionEditModal
         subscription={editingSubscription}

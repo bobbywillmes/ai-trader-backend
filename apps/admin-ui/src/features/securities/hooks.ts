@@ -62,6 +62,7 @@ export function useUpdateSecurity(symbol: string | undefined) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['security', symbol] });
       queryClient.invalidateQueries({ queryKey: securityKeys.all });
+      queryClient.invalidateQueries({ queryKey: ['securityActivity', symbol] });
     },
   });
 }
@@ -130,6 +131,7 @@ export function useEditSecuritySubscription(symbol: string | undefined) {
       queryClient.invalidateQueries({ queryKey: ['security', symbol] });
       queryClient.invalidateQueries({ queryKey: ['securities'] });
       queryClient.invalidateQueries({ queryKey: ['subscriptions'] });
+      queryClient.invalidateQueries({ queryKey: ['securityActivity', symbol] });
     },
   });
 }

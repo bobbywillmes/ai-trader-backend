@@ -25,3 +25,29 @@ export async function getRecentSystemEvents(limit = 50) {
     take: limit
   });
 }
+
+export async function getSecurityActivity(symbol: string, limit = 10) {
+  const normalizedSymbol = symbol.trim().toUpperCase();
+
+  return prisma.systemEvent.findMany({
+    where: {
+      OR: [
+        {
+          entityType: 'security',
+          entityId: normalizedSymbol,
+        },
+        {
+          entityType: 'subscription',
+          payloadJson: {
+            path: ['symbol'],
+            equals: normalizedSymbol,
+          },
+        },
+      ],
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+    take: limit,
+  });
+}

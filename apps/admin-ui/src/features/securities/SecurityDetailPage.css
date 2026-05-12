@@ -435,3 +435,44 @@
     grid-template-columns: 1fr;
   }
 }
+
+.recent-activity-card {
+  margin-top: 1rem;
+}
+
+.activity-list {
+  display: grid;
+  gap: 0.6rem;
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+}
+
+.activity-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  border-radius: 0.65rem;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 0.75rem;
+}
+
+.activity-item strong {
+  display: block;
+  color: #ffffff;
+  font-size: 0.9rem;
+}
+
+.activity-item span {
+  display: block;
+  margin-top: 0.2rem;
+  color: #9ca3af;
+  font-size: 0.78rem;
+}
+
+.activity-item time {
+  flex-shrink: 0;
+  color: #9ca3af;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
