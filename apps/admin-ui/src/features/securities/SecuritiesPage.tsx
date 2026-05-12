@@ -78,6 +78,41 @@ export function SecuritiesPage() {
     setPageSize(nextPageSize);
   }
 
+  function applySummaryFilter(
+    filter: 'total' | 'enabled' | 'disabled' | 'configured' | 'unconfigured'
+  ) {
+    setPage(1);
+
+    if (filter === 'total') {
+      setEnabledFilter('all');
+      setSubscriptionStatus('all');
+      return;
+    }
+
+    if (filter === 'enabled') {
+      setEnabledFilter('enabled');
+      setSubscriptionStatus('all');
+      return;
+    }
+
+    if (filter === 'disabled') {
+      setEnabledFilter('disabled');
+      setSubscriptionStatus('all');
+      return;
+    }
+
+    if (filter === 'configured') {
+      setEnabledFilter('all');
+      setSubscriptionStatus('configured');
+      return;
+    }
+
+    if (filter === 'unconfigured') {
+      setEnabledFilter('all');
+      setSubscriptionStatus('unconfigured');
+    }
+  }
+
   return (
     <div className="securities-page">
       <div className="page-header">
@@ -88,30 +123,61 @@ export function SecuritiesPage() {
       </div>
 
       <section className="securities-summary-grid">
-        <article className="summary-card">
+
+        <button
+          type="button"
+          className={`summary-card summary-card-button ${
+            enabledFilter === 'all' && subscriptionStatus === 'all' ? 'summary-card-active' : ''
+          }`}
+          onClick={() => applySummaryFilter('total')}
+        >
           <span>Total Securities</span>
           <strong>{summary?.total ?? '-'}</strong>
-        </article>
+        </button>
 
-        <article className="summary-card">
+        <button
+          type="button"
+          className={`summary-card summary-card-button ${
+            enabledFilter === 'enabled' ? 'summary-card-active' : ''
+          }`}
+          onClick={() => applySummaryFilter('enabled')}
+        >
           <span>Enabled</span>
           <strong>{summary?.enabled ?? '-'}</strong>
-        </article>
+        </button>
 
-        <article className="summary-card warning-card">
+        <button
+          type="button"
+          className={`summary-card summary-card-button warning-card ${
+            enabledFilter === 'disabled' ? 'summary-card-active' : ''
+          }`}
+          onClick={() => applySummaryFilter('disabled')}
+        >
           <span>Disabled</span>
           <strong>{summary?.disabled ?? '-'}</strong>
-        </article>
+        </button>
 
-        <article className="summary-card">
+        <button
+          type="button"
+          className={`summary-card summary-card-button ${
+            subscriptionStatus === 'configured' ? 'summary-card-active' : ''
+          }`}
+          onClick={() => applySummaryFilter('configured')}
+        >
           <span>Configured</span>
           <strong>{summary?.configured ?? '-'}</strong>
-        </article>
+        </button>
 
-        <article className="summary-card muted-card">
+        <button
+          type="button"
+          className={`summary-card summary-card-button ${
+            subscriptionStatus === 'unconfigured' ? 'summary-card-active' : ''
+          }`}
+          onClick={() => applySummaryFilter('unconfigured')}
+        >
           <span>Unconfigured</span>
           <strong>{summary?.unconfigured ?? '-'}</strong>
-        </article>
+        </button>
 
         <article className="summary-card">
           <span>Enabled Subscriptions</span>

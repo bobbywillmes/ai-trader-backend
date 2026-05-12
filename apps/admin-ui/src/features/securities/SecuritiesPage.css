@@ -275,3 +275,29 @@
     grid-column: span 2;
   }
 }
+
+.summary-card-button {
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background 120ms ease,
+    transform 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.summary-card-button:hover {
+  background: rgba(14, 165, 233, 0.09);
+  box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.18);
+  transform: translateY(-1px);
+}
+
+.summary-card-button:focus-visible {
+  outline: 2px solid rgba(14, 165, 233, 0.65);
+  outline-offset: 2px;
+}
+
+.summary-card-active {
+  background: rgba(14, 165, 233, 0.12) !important;
+  box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.28);
+}
