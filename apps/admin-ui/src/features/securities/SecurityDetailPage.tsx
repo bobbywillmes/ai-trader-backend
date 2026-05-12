@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { useSecurity, useUpdateSecurity, useUpdateSecuritySubscription, useEditSecuritySubscription, useCreateSecuritySubscription } from './hooks';
 import { notifications } from '@mantine/notifications';
 import { useExitProfiles } from '../exitProfiles/hooks';
@@ -7,7 +7,7 @@ import { useStrategies } from '../strategies/hooks';
 import { getAdminToken } from '../../lib/api';
 import { SubscriptionEditModal } from './SubscriptionEditModal';
 import { SubscriptionCreateModal } from './SubscriptionCreateModal';
-import type { SecuritySubscription } from './types';
+import type { SecuritySubscription, SecurityDetailLocationState } from './types';
 import type { CreateSubscriptionPayload } from '../subscriptions/types';
 import { useSecurityActivity } from '../systemEvents/hooks';
 import './SecurityDetailPage.css';
@@ -69,6 +69,10 @@ export function SecurityDetailPage() {
 
   const security = securityQuery.data?.security;
 
+  const location = useLocation();
+  const locationState = location.state as SecurityDetailLocationState | null;
+  const backToSecuritiesUrl = locationState?.returnTo ?? '/securities';
+
   if (securityQuery.isLoading) {
     return (
       <div className="security-detail-page">
@@ -80,7 +84,7 @@ export function SecurityDetailPage() {
   if (securityQuery.isError || !security) {
     return (
       <div className="security-detail-page">
-        <Link className="back-link" to="/securities">
+        <Link className="back-link" to={backToSecuritiesUrl}>
           ← Back to securities
         </Link>
         <div className="detail-message error-message">
@@ -203,7 +207,7 @@ export function SecurityDetailPage() {
     <div className="security-detail-page">
       <div className="detail-header">
         <div>
-          <Link className="back-link" to="/securities">
+          <Link className="back-link" to={backToSecuritiesUrl}>
             ← Back to securities
           </Link>
 

@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useSecurities, useSecuritiesSummary } from './hooks';
 import { getAdminToken } from '../../lib/api';
 import type {
@@ -11,17 +11,77 @@ import './SecuritiesPage.css';
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 250];
 
+function getNumberParam(
+  params: URLSearchParams,
+  key: string,
+  fallback: number
+) {
+  const value = Number(params.get(key));
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function getStringParam(params: URLSearchParams, key: string) {
+  return params.get(key) ?? '';
+}
+
+function getEnabledFilterParam(params: URLSearchParams) {
+  const value = params.get('status');
+
+  if (value === 'enabled' || value === 'disabled') {
+    return value;
+  }
+
+  return 'all';
+}
+
+function getSubscriptionStatusParam(params: URLSearchParams) {
+  const value = params.get('subscriptionStatus');
+
+  if (
+    value === 'configured' ||
+    value === 'unconfigured' ||
+    value === 'all'
+  ) {
+    return value;
+  }
+
+  return 'all';
+}
+
+function getSortByParam(params: URLSearchParams): SecuritySortBy {
+  const value = params.get('sortBy');
+
+  if (
+    value === 'symbol' ||
+    value === 'name' ||
+    value === 'assetType' ||
+    value === 'sector' ||
+    value === 'industry' ||
+    value === 'enabled' ||
+    value === 'subscriptionCount'
+  ) {
+    return value;
+  }
+
+  return 'symbol';
+}
+
+function getSortDirectionParam(params: URLSearchParams): SortDirection {
+  return params.get('sortDirection') === 'desc' ? 'desc' : 'asc';
+}
+
 export function SecuritiesPage() {
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(50);
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
-  const [sector, setSector] = useState('');
-  const [industry, setIndustry] = useState('');
-  const [enabledFilter, setEnabledFilter] = useState<'all' | 'enabled' | 'disabled'>('all');
-  const [subscriptionStatus, setSubscriptionStatus] = useState<'all' | 'configured' | 'unconfigured'>('all');
-  const [sortBy, setSortBy] = useState<SecuritySortBy>('symbol');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [page, setPage] = useState(() => getNumberParam(searchParams, 'page', 1));
+  const [pageSize, setPageSize] = useState(() => getNumberParam(searchParams, 'pageSize', 50));
+  const [searchInput, setSearchInput] = useState(() => getStringParam(searchParams, 'search'));
+  const [search, setSearch] = useState(() => getStringParam(searchParams, 'search'));
+  const [sector, setSector] = useState(() => getStringParam(searchParams, 'sector'));
+  const [industry, setIndustry] = useState(() => getStringParam(searchParams, 'industry'));
+  const [enabledFilter, setEnabledFilter] = useState<'all' | 'enabled' | 'disabled'>(() => getEnabledFilterParam(searchParams));
+  const [subscriptionStatus, setSubscriptionStatus] = useState<'all' | 'configured' | 'unconfigured'>(() => getSubscriptionStatusParam(searchParams));
+  const [sortBy, setSortBy] = useState<SecuritySortBy>(() => getSortByParam(searchParams)  );
+  const [sortDirection, setSortDirection] = useState<SortDirection>(() => getSortDirectionParam(searchParams));
 
   const query = useMemo<SecuritiesQueryParams>(
     () => ({
@@ -67,6 +127,10 @@ export function SecuritiesPage() {
   const totalPages = pagination?.totalPages ?? 1;
   const firstResult = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const lastResult = Math.min(page * pageSize, total);
+
+  // store the url state (with sorting/filtering) to send to security detail page
+  const location = useLocation();
+  const returnToSecuritiesUrl = `${location.pathname}${location.search}`;
 
   function handleApplyFilters() {
     setPage(1);
@@ -142,6 +206,59 @@ export function SecuritiesPage() {
 
     return sortDirection === 'asc' ? ' ↑' : ' ↓';
   }
+
+  useEffect(() => {
+    const nextParams = new URLSearchParams();
+
+    if (page !== 1) {
+      nextParams.set('page', String(page));
+    }
+
+    if (pageSize !== 50) {
+      nextParams.set('pageSize', String(pageSize));
+    }
+
+    if (search) {
+      nextParams.set('search', search);
+    }
+
+    if (sector) {
+      nextParams.set('sector', sector);
+    }
+
+    if (industry) {
+      nextParams.set('industry', industry);
+    }
+
+    if (enabledFilter !== 'all') {
+      nextParams.set('status', enabledFilter);
+    }
+
+    if (subscriptionStatus !== 'all') {
+      nextParams.set('subscriptionStatus', subscriptionStatus);
+    }
+
+    if (sortBy !== 'symbol') {
+      nextParams.set('sortBy', sortBy);
+    }
+
+    if (sortDirection !== 'asc') {
+      nextParams.set('sortDirection', sortDirection);
+    }
+
+    setSearchParams(nextParams, { replace: true });
+  }, [
+    page,
+    pageSize,
+    search,
+    sector,
+    industry,
+    enabledFilter,
+    subscriptionStatus,
+    sortBy,
+    sortDirection,
+    setSearchParams,
+  ]);
 
   return (
     <div className="securities-page">
@@ -468,6 +585,7 @@ export function SecuritiesPage() {
                     <Link
                       className="table-link-button"
                       to={`/securities/${security.symbol}`}
+                      state={{ returnTo: returnToSecuritiesUrl }}
                     >
                       View
                     </Link>

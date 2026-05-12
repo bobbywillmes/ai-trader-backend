@@ -153,3 +153,7 @@ export type SecuritySortBy =
   | 'subscriptionCount';
 
 export type SortDirection = 'asc' | 'desc';
+
+export type SecurityDetailLocationState = {
+  returnTo?: string;
+};
