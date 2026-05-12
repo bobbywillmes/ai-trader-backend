@@ -1,4 +1,4 @@
-import React, { FormEvent, Fragment, useEffect, useState } from 'react';
+import React, { Fragment, useEffect, useState } from 'react';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import '../../App.css';
@@ -161,7 +161,7 @@ function LegacyAdminPage() {
     checkSession();
   }, []);
 
-  async function handleLogin(event: FormEvent) {
+  async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setStatus('Logging in...');
