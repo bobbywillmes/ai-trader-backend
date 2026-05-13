@@ -462,27 +462,87 @@ Revokes the active admin session.
 
 ## 💻 Admin UI
 
-The project now includes a React/Vite admin UI under:
-
-    apps/admin-ui
-
 The admin UI provides a browser-based control panel for monitoring and managing the AI Trader backend.
 
-Current capabilities:
+Current admin sections include:
+- Dashboard
+- Live Data
+- Open Positions
+- Open Orders
+- Subscriptions
+- Exit Profiles
+- Securities
+- Reports
+- System Events
+- Settings
+- Legacy Admin
 
-- Admin login/logout
-- Session persistence through an admin bearer token
-- Dashboard summary cards
-- Open orders display
-- Cancel open orders
-- Open positions display
-- Submit close-position orders
+### Securities Control Panel
+
+The Securities section manages the full symbol registry used by the trading system. The registry currently supports 500+ securities and is designed to act as the main control panel for expanding, configuring, and disabling securities for trading.
+
+The Securities list includes:
+- Server-side pagination
+- Configurable rows per page
+- Server-side search by symbol or company name
+- Server-side filtering by:
+  - Sector
+  - Industry
+  - Security status
+  - Subscription configuration status
+- Connected Sector → Industry filtering
+  - Selecting a sector limits the industry dropdown to valid industries within that sector
+  - Changing sector clears invalid industry selections
+- Server-side sorting by:
+  - Symbol
+  - Name
+  - Asset type
+  - Sector
+  - Industry
+  - Subscription count
+  - Enabled status
+- URL-persisted table state
+  - Pagination, filters, search, and sorting survive refreshes
+  - Detail-page navigation preserves the previous securities list state
+- Summary dashboard cards for:
+  - Total securities
+  - Enabled securities
+  - Disabled securities
+  - Configured securities
+  - Unconfigured securities
+  - Enabled subscriptions
+- Clickable summary cards that apply common quick filters
+- Subscription count column to distinguish configured and unconfigured securities
+
+Each security has a detail page at:
+
+```txt
+/securities/:symbol
+```
+The security detail page includes:
+
+- Security metadata
+- Security-level trading enable/disable control
+- Related subscriptions
+- Subscription creation modal
+- Subscription editing modal
 - Subscription enable/disable controls
-- Subscription edit controls for sizing value and exit profile
-- Exit profile list
-- Create exit profile
-- Edit exit profile
-- Toast notifications for success/error/status messages
+- Toast notifications for successful or failed admin actions
+- Recent activity timeline based on system event audit logs
+
+The security-level enable/disable control acts as a master trading lockout. When a security is disabled, new buy/order-entry flow is blocked for that symbol. This does not prevent order cancellation or future sell/close-position behavior.
+
+The Securities admin workflow now supports:
+
+```txt
+Find security
+→ Open detail page
+→ Enable/disable trading
+→ Create subscriptions
+→ Edit subscriptions
+→ Enable/disable subscriptions
+→ Review recent activity
+```
 
 The UI communicates with the backend through the same admin API routes used in Postman.
 
@@ -653,18 +713,49 @@ POST  /api/securities
 PATCH /api/securities/:symbol
 ```
 
-Securities are the canonical symbol records used by the trading system.
+The backend uses the `Security` model as the canonical symbol registry. Related trading models such as `Subscription`, `BrokerOrder`, and `TrackedPosition` are linked back to securities through foreign keys.
 
-They replace the older `AllowedTicker` allowlist and provide richer metadata and controls, including:
 
-- symbol
-- name
-- enabled
-- assetType
+The primary securities list endpoint supports server-side pagination, filtering, sorting, and subscription counts.
+
+```txt
+GET /api/securities
+```
+
+Supported query params:
+
+- page
+- pageSize
+- search
 - sector
 - industry
+- enabled
+- subscriptionStatus
+- sortBy
+- sortDirection
 
-The backend uses securities to validate whether a symbol is known and currently enabled before allowing subscription-driven entries or direct order placement.
+Example:
+
+```http
+GET /api/securities?page=1&pageSize=50&sector=Information%20Technology&subscriptionStatus=configured&sortBy=subscriptionCount&sortDirection=desc
+```
+Response shape:
+```json
+{
+  "securities": [],
+  "data": [],
+  "pagination": {
+    "page": 1,
+    "pageSize": 50,
+    "total": 521,
+    "totalPages": 11
+  },
+  "filters": {
+    "sectors": [],
+    "industries": []
+  }
+}
+```
 
 ----------
 
@@ -1089,6 +1180,64 @@ The system runs continuous polling loops:
 - Webhooks
 - Streaming APIs
 
+---
+
+## 📝 Admin Audit Events
+
+Admin control actions are recorded as `SystemEvent` records.
+
+The `SystemEvent` model includes a readable `message` field and structured `payloadJson` data.
+
+Admin audit events are created for:
+
+- Security updated
+- Security trading enabled
+- Security trading disabled
+- Subscription created
+- Subscription updated
+- Subscription enabled
+- Subscription disabled
+
+Example security audit payload:
+```json
+{
+  "symbol": "AAPL",
+  "changedFields": ["enabled"],
+  "before": {
+    "enabled": true
+  },
+  "after": {
+    "enabled": false
+  }
+}
+```
+Example subscription audit payload:
+```json
+{
+  "subscriptionId": 28,
+  "subscriptionKey": "aapl_dip_core",
+  "symbol": "AAPL",
+  "changedFields": ["sizingValue", "exitProfileId"],
+  "before": {
+    "sizingValue": 1,
+    "exitProfileId": 2
+  },
+  "after": {
+    "sizingValue": 2,
+    "exitProfileId": 4
+  }
+}
+```
+
+Security detail pages display recent activity using:
+```http
+GET /api/system-events/security-activity/:symbol?limit=10
+```
+This endpoint returns both:
+
+- Security events where entityType = security and entityId = symbol
+- Subscription events where payloadJson.symbol = symbol
+
 
 ## 🆔 Client Order ID Strategy
 
@@ -1227,6 +1376,8 @@ This keeps the seed file clean while allowing the same security data shape to be
 
 ### Subscriptions
 
+Subscriptions are strategy-specific trading configurations attached to securities.
+
 The full security universe is seeded into the Security table, but subscriptions are intentionally seeded only for a curated list of actively tested symbols by default.
 
 This prevents the seed process from automatically creating thousands of strategy subscriptions before the system is ready to manage them at scale.
@@ -1236,7 +1387,7 @@ By default, the curated subscription list includes:
 - SPY, QQQ, DIA, IWM, RSP,
 - AAPL, AMZN, GOOG, META, MSFT, NVDA, TSLA, AMD
 
-Each curated security receives multiple subscription variants, such as:
+Multiple enabled subscriptions are allowed for the same security, broker, and broker mode. This supports independent strategy configurations, such as:
 ```ts
 <symbol>_dip_core
 <symbol>_dip_conservative
@@ -1320,7 +1471,7 @@ Use this carefully. Enabling this creates multiple subscriptions per security an
 ```
 Default local URL:
 
-http://localhost:3000
+   http://localhost:3000
 
 ### 7. Install admin UI dependencies
 ```
@@ -1332,7 +1483,6 @@ http://localhost:3000
     npm run dev
 ```
 
-```
 Default local admin UI URL:
 
     http://localhost:5173
@@ -1387,6 +1537,18 @@ The backend intentionally uses normalized response shapes.
 Alpaca returns many numeric fields as strings. The backend converts key values to numbers before returning them to n8n or future UI clients.
 
 This protects the rest of the AI Trader system from depending on raw Alpaca response formats.
+
+### Admin UI Bundle Warning
+
+The admin UI build may show a Vite warning about chunks larger than 500 kB.
+
+This is currently treated as a non-blocking performance warning. The admin UI is an internal control panel, and the build completes successfully.
+
+Potential future optimization:
+
+- Route-level lazy loading for admin UI pages
+- Code splitting for heavier feature areas
+- Bundle analysis if first-load performance becomes a problem
 
 ----------
 
