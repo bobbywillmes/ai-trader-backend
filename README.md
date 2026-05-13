@@ -648,6 +648,64 @@ Core fields:
 
 This allows the backend and admin UI to treat symbols as first-class records instead of loose string values.
 
+
+## 💼 Asset-Class Trading Policy
+
+The backend treats ETF and stock behavior separately.
+
+Asset type is stored on the `Security` model and is used to determine which strategy families are appropriate for a security.
+
+### ETF policy
+
+ETFs are treated primarily as broad-market, index, or sector exposure trades.
+
+Allowed ETF strategies:
+
+- `dip_n_ride_etf`
+- `momentum_etf`
+- `quick_test_momentum`
+
+ETF dip strategies can be more mechanical than single-stock dip strategies because ETFs do not carry the same company-specific earnings/news risk as individual stocks.
+
+AI-confirmed dip subscriptions are not seeded for ETFs.
+
+### Stock policy
+
+Stocks are treated as single-company trades and carry more company-specific risk.
+
+Allowed stock strategies:
+
+- `dip_n_ride_stock`
+- `momentum_stock`
+- `ai_confirmed_dip_stock`
+- `quick_test_momentum`
+
+Single-stock dip trades should account for:
+
+- company-specific news
+- earnings
+- guidance changes
+- analyst downgrades
+- regulatory issues
+- sector weakness
+- broad-market weakness
+
+The `ai_confirmed_dip_stock` strategy is an entry filter only. It does not mean the AI controls the exit.
+
+### Policy enforcement
+
+The seed file validates that each seeded subscription uses a strategy allowed for that security's asset type.
+
+For example:
+
+- ETFs may use `dip_n_ride_etf`
+- Stocks may use `dip_n_ride_stock`
+- Stocks may use `ai_confirmed_dip_stock`
+- ETFs may not use `ai_confirmed_dip_stock`
+
+
+
+
 ## ⚙️ Current API Endpoints
 
 ### Health
