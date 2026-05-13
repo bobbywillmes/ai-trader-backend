@@ -2,6 +2,10 @@ import { prisma } from './prisma.js';
 import { Prisma, AssetType } from '@prisma/client';
 import type { SeedSecurity } from '../types/securities.js';
 import { STRATEGY_KEYS } from '../types/strategies.js';
+import {
+  assertStrategyAllowedForAssetType,
+  getDefaultDipStrategyForAssetType,
+} from '../types/securityPolicies.js';
 
 // Set to true to seed subscriptions for all securities in the securities.json file, which will create a very large number of subscriptions and is mainly intended for testing the system's performance and scalability with a large dataset. When false, only a curated list of popular tickers and ETFs will have subscriptions created, which is more suitable for development and demonstration purposes.
 const seedAllSecuritySubscriptions = process.env.SEED_ALL_SECURITY_SUBSCRIPTIONS === 'true';
@@ -124,18 +128,6 @@ const exitProfiles = [
   },
 ];
 
-function getDipStrategyForSecurityType(assetType: SeedSecurity['assetType']) {
-  if (assetType === 'ETF') {
-    return STRATEGY_KEYS.DIP_N_RIDE_ETF;
-  }
-
-  if (assetType === 'STOCK') {
-    return STRATEGY_KEYS.DIP_N_RIDE_STOCK;
-  }
-
-  throw new Error(`Unsupported security type for dip strategy: ${assetType}`);
-}
-
 // Seed subscriptions for a curated list of popular stocks and ETFs that are commonly traded and have good liquidity. This will allow us to have a solid set of active subscriptions for testing and demonstration purposes.
 const curatedSubscriptionSymbols = new Set<string>([
   'SPY',
@@ -180,7 +172,7 @@ console.log(
 const subscriptions = subscriptionSourceSecurities.flatMap((security) => {
   const symbol = security.symbol;
   const symbolKey = symbol.toLowerCase();
-  const dipStrategyKey = getDipStrategyForSecurityType(security.assetType);
+  const dipStrategyKey = getDefaultDipStrategyForAssetType(security.assetType);
 
   const baseSubscriptions = [
     {
@@ -324,6 +316,8 @@ for (const subscription of subscriptions) {
   const security = await prisma.security.findUniqueOrThrow({
     where: { symbol: subscription.symbol }
   });
+
+  assertStrategyAllowedForAssetType(security.assetType, subscription.strategyKey);
 
   await prisma.subscription.upsert({
     where: { key: subscription.key },
