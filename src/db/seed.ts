@@ -6,6 +6,13 @@ import {
   assertStrategyAllowedForAssetType,
   getDefaultDipStrategyForAssetType,
 } from '../types/securityPolicies.js';
+import {
+  EXIT_PROFILE_KEYS,
+  EXIT_PROFILE_SEEDS,
+  getDipExitProfileForAssetTypeAndRiskMode,
+} from '../types/exitProfiles.js';
+
+import { SUBSCRIPTION_RISK_MODES } from '../types/securityPolicies.js';
 
 // Set to true to seed subscriptions for all securities in the securities.json file, which will create a very large number of subscriptions and is mainly intended for testing the system's performance and scalability with a large dataset. When false, only a curated list of popular tickers and ETFs will have subscriptions created, which is more suitable for development and demonstration purposes.
 const seedAllSecuritySubscriptions = process.env.SEED_ALL_SECURITY_SUBSCRIPTIONS === 'true';
@@ -65,68 +72,7 @@ const strategies = [
   },
 ];
 
-const exitProfiles = [
-  {
-    key: 'exit_core_target',
-    name: 'Core Target Exit',
-    description: 'Default fixed target exit profile.',
-    targetPct: 2,
-    stopLossPct: null,
-    trailingStopPct: null,
-    maxHoldDays: null,
-    exitMode: 'fixed_target',
-    takeProfitBehavior: 'immediate',
-    enabled: true,
-  },
-  {
-    key: 'exit_core_trailing',
-    name: 'Core Target Then Trail',
-    description: 'Target reached first, then trailing exit logic takes over.',
-    targetPct: 2,
-    stopLossPct: null,
-    trailingStopPct: 0.5,
-    maxHoldDays: null,
-    exitMode: 'hybrid',
-    takeProfitBehavior: 'trail_after_target',
-    enabled: true,
-  },
-  {
-    key: 'exit_core_bracket',
-    name: 'Core Bracket Exit',
-    description: 'Fixed target with stop-loss protection.',
-    targetPct: 2,
-    stopLossPct: 3,
-    trailingStopPct: null,
-    maxHoldDays: null,
-    exitMode: 'fixed_bracket',
-    takeProfitBehavior: 'immediate',
-    enabled: true,
-  },
-  {
-    key: 'exit_ai_assisted',
-    name: 'AI Assisted Exit',
-    description: 'Reserved for future AI-assisted exit decisions.',
-    targetPct: 2,
-    stopLossPct: null,
-    trailingStopPct: 0.5,
-    maxHoldDays: 10,
-    exitMode: 'ai_assisted',
-    takeProfitBehavior: 'ai_confirm',
-    enabled: false,
-  },
-  {
-    key: 'exit_quick_test',
-    name: 'Quick Test Exit',
-    description: 'Tiny profit/stop thresholds for fast backend exit testing.',
-    targetPct: 0.05,
-    stopLossPct: 0.05,
-    trailingStopPct: null,
-    maxHoldDays: null,
-    exitMode: 'fixed_bracket',
-    takeProfitBehavior: 'immediate',
-    enabled: true,
-  },
-];
+const exitProfiles = EXIT_PROFILE_SEEDS;
 
 // Seed subscriptions for a curated list of popular stocks and ETFs that are commonly traded and have good liquidity. This will allow us to have a solid set of active subscriptions for testing and demonstration purposes.
 const curatedSubscriptionSymbols = new Set<string>([
@@ -182,7 +128,10 @@ const subscriptions = subscriptionSourceSecurities.flatMap((security) => {
       broker: 'alpaca',
       brokerMode: 'paper',
       strategyKey: dipStrategyKey,
-      exitProfileKey: 'exit_core_target',
+      exitProfileKey: getDipExitProfileForAssetTypeAndRiskMode(
+        security.assetType,
+        SUBSCRIPTION_RISK_MODES.CORE,
+      ),
       sizingType: 'fixed_qty',
       sizingValue: 1,
       enabled: true,
@@ -194,7 +143,10 @@ const subscriptions = subscriptionSourceSecurities.flatMap((security) => {
       broker: 'alpaca',
       brokerMode: 'paper',
       strategyKey: dipStrategyKey,
-      exitProfileKey: 'exit_core_bracket',
+      exitProfileKey: getDipExitProfileForAssetTypeAndRiskMode(
+        security.assetType,
+        SUBSCRIPTION_RISK_MODES.CONSERVATIVE,
+      ),
       sizingType: 'fixed_qty',
       sizingValue: 1,
       enabled: false,
@@ -206,7 +158,10 @@ const subscriptions = subscriptionSourceSecurities.flatMap((security) => {
       broker: 'alpaca',
       brokerMode: 'paper',
       strategyKey: dipStrategyKey,
-      exitProfileKey: 'exit_core_trailing',
+      exitProfileKey: getDipExitProfileForAssetTypeAndRiskMode(
+        security.assetType,
+        SUBSCRIPTION_RISK_MODES.AGGRESSIVE,
+      ),
       sizingType: 'fixed_qty',
       sizingValue: 1,
       enabled: false,
@@ -218,7 +173,7 @@ const subscriptions = subscriptionSourceSecurities.flatMap((security) => {
       broker: 'alpaca',
       brokerMode: 'paper',
       strategyKey: STRATEGY_KEYS.QUICK_TEST_MOMENTUM,
-      exitProfileKey: 'exit_quick_test',
+      exitProfileKey: EXIT_PROFILE_KEYS.QUICK_TEST,
       sizingType: 'fixed_qty',
       sizingValue: 1,
       enabled: false,
@@ -238,7 +193,10 @@ const subscriptions = subscriptionSourceSecurities.flatMap((security) => {
       broker: 'alpaca',
       brokerMode: 'paper',
       strategyKey: STRATEGY_KEYS.AI_CONFIRMED_DIP_STOCK,
-      exitProfileKey: 'exit_core_target',
+      exitProfileKey: getDipExitProfileForAssetTypeAndRiskMode(
+        security.assetType,
+        SUBSCRIPTION_RISK_MODES.AI_CONFIRMED,
+      ),
       sizingType: 'fixed_qty',
       sizingValue: 1,
       enabled: false,

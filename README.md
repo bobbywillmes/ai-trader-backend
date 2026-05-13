@@ -704,6 +704,62 @@ For example:
 - ETFs may not use `ai_confirmed_dip_stock`
 
 
+## ❎ Exit Profile Hierarchy
+
+Exit profiles define how a position is managed after entry.
+
+They do not define:
+
+- the symbol
+- broker
+- account mode
+- sizing
+- entry thesis
+
+Those concerns belong to securities, subscriptions, and strategies.
+
+### ETF dip exits
+
+- `exit_etf_dip_core_target`
+  - Core ETF dip exit using a fixed recovery target.
+- `exit_etf_dip_conservative_bracket`
+  - Conservative ETF dip exit with fixed target and fixed stop.
+- `exit_etf_dip_aggressive_trailing`
+  - Aggressive ETF dip exit that allows trailing upside after the target behavior is satisfied.
+
+### Stock dip exits
+
+- `exit_stock_dip_core_target`
+  - Core stock dip exit using a fixed recovery target.
+- `exit_stock_dip_conservative_bracket`
+  - Conservative stock dip exit with fixed target and fixed stop.
+- `exit_stock_dip_aggressive_trailing`
+  - Aggressive stock dip exit that allows trailing upside after the target behavior is satisfied.
+
+### Momentum exits
+
+Momentum exits are production-intended, but momentum subscriptions are not enabled by default yet.
+
+- `exit_etf_momentum_bracket`
+- `exit_etf_momentum_trailing`
+- `exit_stock_momentum_fail_fast`
+- `exit_stock_momentum_trailing`
+
+Failed momentum trades should not be averaged down.
+
+### AI-assisted exit
+
+- `exit_ai_assisted`
+
+This profile is reserved for future AI-assisted exit decisions and is disabled by default.
+
+Current AI usage is limited to `ai_confirmed_dip_stock`, which is an entry-confirmation strategy, not an AI-managed exit.
+
+### System test exit
+
+- `exit_quick_test`
+
+This is a non-production exit profile used to validate the full signal → order → position → exit lifecycle.
 
 
 ## ⚙️ Current API Endpoints
