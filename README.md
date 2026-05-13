@@ -1512,6 +1512,62 @@ Multiple enabled subscriptions are allowed for the same security, broker, and br
 
 The full securities table can therefore support future expansion, reporting, filtering, and AI-driven candidate selection, while the active subscription set remains controlled.
 
+
+### Subscription Templates
+
+Subscriptions are generated from asset-class-aware templates during seeding.
+
+A subscription defines the execution configuration for a security:
+
+- symbol
+- broker
+- broker mode
+- sizing type
+- sizing value
+- strategy
+- exit profile
+- enabled/disabled state
+
+A subscription does not define the strategy thesis itself or the exit mechanics directly. It links a security to a strategy and an exit profile.
+
+#### ETF seeded subscriptions
+
+ETFs receive:
+
+- `{symbol}_dip_core`
+- `{symbol}_dip_conservative`
+- `{symbol}_dip_aggressive`
+- `{symbol}_momentum_conservative`
+- `{symbol}_momentum_core`
+- `{symbol}_test_momentum`
+
+#### Stock seeded subscriptions
+
+Stocks receive:
+
+- `{symbol}_dip_core`
+- `{symbol}_dip_conservative`
+- `{symbol}_dip_aggressive`
+- `{symbol}_momentum_conservative`
+- `{symbol}_momentum_core`
+- `{symbol}_ai_confirmed_dip`
+- `{symbol}_test_momentum`
+
+#### Default enabled state
+
+Only `dip_core` subscriptions are enabled by default.
+
+All other subscription variants are seeded but disabled:
+
+- conservative dip
+- aggressive dip
+- momentum conservative
+- momentum core
+- AI-confirmed dip
+- quick test momentum
+
+This allows the admin UI to show the intended production structure while keeping the initial paper-trading launch conservative.
+
 ----------
 
 ## 🗝 Environment Variables

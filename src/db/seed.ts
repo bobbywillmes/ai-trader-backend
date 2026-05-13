@@ -11,6 +11,7 @@ import {
   EXIT_PROFILE_SEEDS,
   getDipExitProfileForAssetTypeAndRiskMode,
 } from '../types/exitProfiles.js';
+import { buildSubscriptionsForSecurity } from '../types/subscriptionTemplates.js';
 
 import { SUBSCRIPTION_RISK_MODES } from '../types/securityPolicies.js';
 
@@ -115,94 +116,12 @@ console.log(
 );
 
 // For each selected security, create multiple subscriptions with different exit profiles and strategies to demonstrate the flexibility of the system. The "Dip N Ride" strategies will be used for their respective asset types, and the "Quick Test Momentum" strategy will be included for testing purposes.
-const subscriptions = subscriptionSourceSecurities.flatMap((security) => {
-  const symbol = security.symbol;
-  const symbolKey = symbol.toLowerCase();
-  const dipStrategyKey = getDefaultDipStrategyForAssetType(security.assetType);
-
-  const baseSubscriptions = [
-    {
-      key: `${symbolKey}_dip_core`,
-      name: `${symbol} Dip Core`,
-      symbol,
-      broker: 'alpaca',
-      brokerMode: 'paper',
-      strategyKey: dipStrategyKey,
-      exitProfileKey: getDipExitProfileForAssetTypeAndRiskMode(
-        security.assetType,
-        SUBSCRIPTION_RISK_MODES.CORE,
-      ),
-      sizingType: 'fixed_qty',
-      sizingValue: 1,
-      enabled: true,
-    },
-    {
-      key: `${symbolKey}_dip_conservative`,
-      name: `${symbol} Dip Conservative`,
-      symbol,
-      broker: 'alpaca',
-      brokerMode: 'paper',
-      strategyKey: dipStrategyKey,
-      exitProfileKey: getDipExitProfileForAssetTypeAndRiskMode(
-        security.assetType,
-        SUBSCRIPTION_RISK_MODES.CONSERVATIVE,
-      ),
-      sizingType: 'fixed_qty',
-      sizingValue: 1,
-      enabled: false,
-    },
-    {
-      key: `${symbolKey}_dip_aggressive`,
-      name: `${symbol} Dip Aggressive`,
-      symbol,
-      broker: 'alpaca',
-      brokerMode: 'paper',
-      strategyKey: dipStrategyKey,
-      exitProfileKey: getDipExitProfileForAssetTypeAndRiskMode(
-        security.assetType,
-        SUBSCRIPTION_RISK_MODES.AGGRESSIVE,
-      ),
-      sizingType: 'fixed_qty',
-      sizingValue: 1,
-      enabled: false,
-    },
-    {
-      key: `${symbolKey}_test_momentum`,
-      name: `${symbol} Test Momentum`,
-      symbol,
-      broker: 'alpaca',
-      brokerMode: 'paper',
-      strategyKey: STRATEGY_KEYS.QUICK_TEST_MOMENTUM,
-      exitProfileKey: EXIT_PROFILE_KEYS.QUICK_TEST,
-      sizingType: 'fixed_qty',
-      sizingValue: 1,
-      enabled: false,
-    },
-  ];
-
-  if (security.assetType !== 'STOCK') {
-    return baseSubscriptions;
-  }
-
-  return [
-    ...baseSubscriptions,
-    {
-      key: `${symbolKey}_ai_confirmed_dip`,
-      name: `${symbol} AI Confirmed Dip`,
-      symbol,
-      broker: 'alpaca',
-      brokerMode: 'paper',
-      strategyKey: STRATEGY_KEYS.AI_CONFIRMED_DIP_STOCK,
-      exitProfileKey: getDipExitProfileForAssetTypeAndRiskMode(
-        security.assetType,
-        SUBSCRIPTION_RISK_MODES.AI_CONFIRMED,
-      ),
-      sizingType: 'fixed_qty',
-      sizingValue: 1,
-      enabled: false,
-    },
-  ];
-});
+const subscriptions = subscriptionSourceSecurities.flatMap((security) =>
+  buildSubscriptionsForSecurity({
+    symbol: security.symbol,
+    assetType: security.assetType,
+  }),
+);
 
 const toPrismaAssetType = (assetType: SeedSecurity['assetType']) => {
   if (assetType === 'ETF') {
