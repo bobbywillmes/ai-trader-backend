@@ -1,25 +1,21 @@
 import crypto from 'node:crypto';
-import type { Prisma } from '@prisma/client';
-import { prisma } from '../db/prisma.js';
-
 import { HttpError } from '../errors/http-error.js';
-import { normalizeOpenOrder } from '../integrations/alpaca/normalizers.js';
 import {
   getAlpacaOrderByClientOrderId,
-  placeAlpacaOrder
+  placeAlpacaOrder,
 } from '../integrations/alpaca/orders.adapter.js';
-import { getNormalizedAccount } from './account.service.js';
-import { getRuntimeTradingConfig } from './config.service.js';
 import {
-  createBrokerOrder,
   createOrderIntent,
-  updateOrderIntentStatus
+  updateOrderIntentStatus,
 } from './order-audit.service.js';
+import {
+  evaluateOrderRisk,
+  logRiskGateBlockedOrder,
+} from './risk-gate.service.js';
 import { resolveSubscriptionOrderInput } from './subscription.service.js';
-import { assertSecurityTradingEnabled } from './security-trading-guard.service.js';
 import type {
   PlaceOrderInput,
-  ResolvedPlaceOrderInput
+  ResolvedPlaceOrderInput,
 } from '../validators/place-order.schema.js';
 
 function buildClientOrderId(input: ResolvedPlaceOrderInput): string {
@@ -34,7 +30,7 @@ function buildClientOrderId(input: ResolvedPlaceOrderInput): string {
     input.symbol,
     input.side,
     input.orderType,
-    crypto.randomUUID().slice(0, 8)
+    crypto.randomUUID().slice(0, 8),
   ]
     .join('-')
     .slice(0, 128);
@@ -43,86 +39,33 @@ function buildClientOrderId(input: ResolvedPlaceOrderInput): string {
 export async function submitOrder(input: PlaceOrderInput) {
   const resolvedInput = await resolveSubscriptionOrderInput(input);
   const clientOrderId = buildClientOrderId(resolvedInput);
-  
+
   const intent = await createOrderIntent(resolvedInput, 'api', clientOrderId);
 
-  const runtimeConfig = await getRuntimeTradingConfig();
+  const riskResult = await evaluateOrderRisk(resolvedInput);
 
-  if (!runtimeConfig.tradingEnabled) {
-    await updateOrderIntentStatus(intent.id, 'blocked', 'Trading is disabled.');
-    throw new HttpError(403, 'Trading is disabled.');
-  }
+  if (!riskResult.allowed) {
+    await updateOrderIntentStatus(intent.id, 'blocked', riskResult.reason);
 
-  // Check if the security exists
-  const existingSecurity = await prisma.security.findUnique({
-    where: { symbol: resolvedInput.symbol }
-  });
-
-  // if the security doesn't exist, then refuse the order and return an error
-  if (!existingSecurity) {
-    const reason = `Ticker ${resolvedInput.symbol} is not in the securities database.`;
-    await updateOrderIntentStatus(intent.id, 'blocked', reason);
-    throw new HttpError(403, reason);
-  }
-
-  // Check if the subscription is disabled before allowing orders to proceed
-  if (resolvedInput.subscriptionKey) {
-    const subscription = await prisma.subscription.findUnique({
-      where: { key: resolvedInput.subscriptionKey }
+    await logRiskGateBlockedOrder({
+      orderIntentId: intent.id,
+      input: resolvedInput,
+      result: riskResult,
     });
 
-    if (!subscription || !subscription.enabled) {
-      const reason = `Subscription ${resolvedInput.subscriptionKey} is disabled.`;
-      await updateOrderIntentStatus(intent.id, 'blocked', reason);
-      throw new HttpError(403, reason);
-    }
+    throw new HttpError(
+      riskResult.statusCode,
+      riskResult.reason,
+      riskResult.details
+    );
   }
-
-  // Check if the security is enabled for trading before allowing orders to proceed
-  try {
-    await assertSecurityTradingEnabled(resolvedInput.symbol);
-  } catch (error) {
-    const reason =
-      error instanceof HttpError        ? error.message
-      : `Security ${resolvedInput.symbol} is not enabled for trading.`; 
-    await updateOrderIntentStatus(intent.id, 'blocked', reason);
-    throw error instanceof HttpError ? error : new HttpError(403, reason);
-  }
-
-  const account = await getNormalizedAccount();
-
-  if (account.tradingBlocked) {
-    await updateOrderIntentStatus(intent.id, 'blocked', 'Broker account is trading blocked.');
-    throw new HttpError(403, 'Broker account is trading blocked.');
-  }
-
-  // Enforce only one open position per symbol for entry signals to prevent overexposure.
-  if (resolvedInput.subscriptionKey && resolvedInput.signalType === 'entry') {
-    const existingOpenPosition = await prisma.trackedPosition.findFirst({
-      where: {
-        symbol: resolvedInput.symbol,
-        status: {
-          in: ['open', 'closing'],
-        },
-      },
-    });
-    // If there's an existing open or closing position for the same symbol, block the new entry signal.
-    if (existingOpenPosition) {
-      const reason = `Entry signal blocked because ${resolvedInput.symbol} already has an open or closing tracked position.`;
-
-      await updateOrderIntentStatus(intent.id, 'blocked', reason);
-
-      throw new HttpError(409, reason);
-    }
-  }
-
 
   await updateOrderIntentStatus(intent.id, 'pending');
 
   return {
     ok: true,
     intentId: intent.id,
-    status: 'pending'
+    status: 'pending',
   };
 }
 
@@ -137,7 +80,7 @@ export async function submitOrderToBroker(input: ResolvedPlaceOrderInput) {
   if (existing) {
     return {
       duplicate: true,
-      order: existing
+      order: existing,
     };
   }
 
@@ -156,7 +99,7 @@ export async function submitOrderToBroker(input: ResolvedPlaceOrderInput) {
     side: input.side,
     type: input.orderType,
     time_in_force: input.timeInForce,
-    client_order_id: clientOrderId
+    client_order_id: clientOrderId,
   };
 
   if (input.qty !== undefined) payload.qty = String(input.qty);
@@ -168,6 +111,6 @@ export async function submitOrderToBroker(input: ResolvedPlaceOrderInput) {
 
   return {
     duplicate: false,
-    order: created
+    order: created,
   };
 }

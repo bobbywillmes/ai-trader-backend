@@ -19,9 +19,18 @@ import { SUBSCRIPTION_RISK_MODES } from '../types/securityPolicies.js';
 const seedAllSecuritySubscriptions = process.env.SEED_ALL_SECURITY_SUBSCRIPTIONS === 'true';
 
 
-const settings = [
-  { key: 'tradingEnabled', value: 'true' },
-  { key: 'paperMode', value: 'true' }
+const runtimeSettings = [
+  { key: 'tradingEnabled', value: 'false' },
+  { key: 'paperMode', value: 'true' },
+  { key: 'killSwitchEnabled', value: 'false' },
+
+  // Conservative paper-production defaults.
+  { key: 'maxDailyEntryOrders', value: '5' },
+  { key: 'maxDailyEntryNotional', value: '10000' },
+  { key: 'maxOpenPositions', value: '5' },
+  { key: 'maxTotalOpenNotional', value: '25000' },
+  { key: 'maxSymbolOpenNotional', value: '5000' },
+  { key: 'maxSubscriptionOpenNotional', value: '5000' },
 ];
 
 import securitiesData from './securities.json' with { type: 'json' };
@@ -157,7 +166,7 @@ async function main() {
     });
   }
 
-  for (const setting of settings) {
+  for (const setting of runtimeSettings) {
     await prisma.setting.upsert({
       where: { key: setting.key },
       update: {},
@@ -230,7 +239,7 @@ for (const subscription of subscriptions) {
     [
       'Database seed completed successfully:',
       `- securities upserted: ${securities.length}`,
-      `- settings upserted: ${settings.length}`,
+      `- settings upserted: ${runtimeSettings.length}`,
       `- strategies upserted: ${strategies.length}`,
       `- exit profiles upserted: ${exitProfiles.length}`,
       `- subscriptions upserted: ${subscriptions.length}`,
