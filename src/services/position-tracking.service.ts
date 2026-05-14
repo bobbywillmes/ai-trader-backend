@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { getNormalizedPositions } from './positions.service.js';
 import { createSystemEvent } from './system-event.service.js';
+import { recordAccountSnapshot } from './account-snapshot.service.js';
 
 export async function syncTrackedPositions() {
   const brokerPositions = await getNormalizedPositions();
@@ -61,6 +62,13 @@ export async function syncTrackedPositions() {
         } as Prisma.InputJsonValue
       });
 
+      await recordAccountSnapshot({
+        reason: 'position_opened',
+        force: true,
+        sourceEntityType: 'trackedPosition',
+        sourceEntityId: created.id,
+      });
+
       console.log(`Position opened: ${created.symbol}`);
       continue;
     }
@@ -116,6 +124,13 @@ export async function syncTrackedPositions() {
         previousStatus: 'open',
         nextStatus: 'closed'
       } as Prisma.InputJsonValue
+    });
+
+    await recordAccountSnapshot({
+      reason: 'position_closed',
+      force: true,
+      sourceEntityType: 'trackedPosition',
+      sourceEntityId: closed.id,
     });
 
     console.log(`Position closed: ${closed.symbol}`);

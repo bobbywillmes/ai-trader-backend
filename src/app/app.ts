@@ -21,6 +21,7 @@ import signalsRoutes from '../routes/signals.routes.js';
 import { openTrackedPositionsController } from '../controllers/tracked-positions.controller.js';
 import adminAuthRoutes from '../routes/admin-auth.routes.js';
 import securitiesRoutes from '../routes/securities.routes.js';
+import accountSnapshotsRoutes from '../routes/account-snapshots.routes.js';
 
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
@@ -59,6 +60,7 @@ export function createApp() {
   // Admin routes
   app.use('/api/bootstrap', requireAdminAccess, bootstrapRoutes);
   app.use('/api/account', requireAdminAccess, accountRoutes);
+  app.use('/api/account-snapshots', requireAdminAccess, accountSnapshotsRoutes);
   app.use('/api/positions', requireAdminAccess, positionsRoutes);
   app.use('/api/orders', requireAdminAccess, ordersRoutes);
   app.use('/api/order-intents', requireAdminAccess, orderIntentsRoutes);

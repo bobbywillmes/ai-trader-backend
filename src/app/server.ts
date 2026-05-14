@@ -4,12 +4,21 @@ import { logger } from '../config/logger.js';
 import { processPendingOrders, syncSubmittedOrders } from '../workers/order.worker.js';
 import { syncTrackedPositions } from '../services/position-tracking.service.js';
 import { evaluateExits } from '../services/exit-evaluator.service.js';
+import { runScheduledAccountSnapshots } from '../workers/account-snapshot.worker.js';
 
 const app = createApp();
 
 app.listen(env.PORT, () => {
   logger.info(`AI Trader Backend listening on http://localhost:${env.PORT}`);
 });
+
+// Account snapshot checkpoints do not need the high-frequency trading loop.
+// This checks once per minute and records only scheduled checkpoint snapshots.
+setInterval(() => {
+  runScheduledAccountSnapshots().catch((error) => {
+    console.error('Scheduled account snapshot error:', error);
+  });
+}, 60_000);
 
 // Start the order processing worker loop
 setInterval(() => {

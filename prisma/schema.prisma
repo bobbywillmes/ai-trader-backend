@@ -160,6 +160,41 @@ model TrackedPosition {
   subscription        Subscription?   @relation(fields: [subscriptionId], references: [id])
 }
 
+model AccountSnapshot {
+  id               Int      @id @default(autoincrement())
+
+  broker           String
+  mode             String
+  accountStatus    String?
+  currency         String?
+  accountNumber    String?
+
+  reason           String
+  runKey           String?  @unique
+  sourceEntityType String?
+  sourceEntityId   String?
+
+  cash             Float
+  buyingPower      Float
+  equity           Float
+  portfolioValue   Float
+  lastEquity       Float?
+  dayPnL           Float?
+  dayPnLPct        Float?
+  tradingBlocked   Boolean
+
+  snapshotHash     String
+  changed          Boolean  @default(true)
+
+  rawJson          Json
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([reason])
+  @@index([broker, mode])
+  @@index([changed])
+}
+
 model Strategy {
   id                 Int            @id @default(autoincrement())
   key                String         @unique
