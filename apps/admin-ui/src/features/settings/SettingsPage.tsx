@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   Alert,
   Badge,
+  Button,
   Card,
   Divider,
   Group,
@@ -15,10 +16,12 @@ import {
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { getAdminToken } from "../../lib/api";
+import { ChangePasswordModal } from "../auth/ChangePasswordModal";
 import { useConfig, useUpdateConfig } from "./hooks";
 
 export function SettingsPage() {
   const [token] = useState<string | null>(() => getAdminToken());
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const { data: config, isLoading, isError } = useConfig(token);
   const updateMutation = useUpdateConfig(token);
 
@@ -92,7 +95,7 @@ export function SettingsPage() {
     <Stack gap="lg">
       <div>
         <Title order={2} size="h3">Settings</Title>
-        <Text size="sm" c="dimmed">Runtime trading configuration.</Text>
+        <Text size="sm" c="dimmed">Runtime trading configuration and admin account management.</Text>
       </div>
 
       <Card withBorder radius="md" p="md">
@@ -175,6 +178,36 @@ export function SettingsPage() {
           </Stack>
         )}
       </Card>
+
+      <Card withBorder radius="md" p="md">
+        <Text fw={600} size="sm" mb="md">Security</Text>
+
+        <Group justify="space-between" align="flex-start">
+          <div>
+            <Group gap="xs" mb={4}>
+              <Text size="sm" fw={600}>Admin Password</Text>
+            </Group>
+            <Text size="xs" c="dimmed" maw={420}>
+              Change the password used to log in to this admin panel.
+            </Text>
+          </div>
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => setChangePasswordOpen(true)}
+          >
+            Change Password
+          </Button>
+        </Group>
+      </Card>
+
+      {token && (
+        <ChangePasswordModal
+          opened={changePasswordOpen}
+          onClose={() => setChangePasswordOpen(false)}
+          token={token}
+        />
+      )}
     </Stack>
   );
 }

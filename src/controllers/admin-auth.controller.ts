@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import {
   adminBootstrapSchema,
   adminLoginSchema,
+  adminChangePasswordSchema,
 } from '../validators/admin-auth.schema.js';
 import {
   bootstrapFirstAdminUser,
@@ -9,6 +10,8 @@ import {
   getAdminSessionFromToken,
   revokeAdminSession,
   validateAdminLogin,
+  changeAdminPassword,
+  verifyAdminPassword,
 } from '../services/admin-auth.service.js';
 import { HttpError } from '../errors/http-error.js';
 
@@ -130,6 +133,61 @@ export async function adminLogoutController(
       ok: true,
       revoked: Boolean(revokedSession),
       session: revokedSession,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function adminVerifyPasswordController(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    const adminUser = res.locals.adminUser;
+
+    if (!adminUser) {
+      throw new HttpError(401, 'Admin session required.');
+    }
+
+    const password = req.body.password;
+    if (!password || typeof password !== 'string') {
+      throw new HttpError(400, 'Password is required.');
+    }
+
+    const passwordIsValid = await verifyAdminPassword(password, adminUser.passwordHash);
+
+    if (!passwordIsValid) {
+      throw new HttpError(401, 'Current password is incorrect.');
+    }
+
+    res.status(200).json({
+      ok: true,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function adminChangePasswordController(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    const input = adminChangePasswordSchema.parse(req.body);
+    const adminUser = res.locals.adminUser;
+    const adminSession = res.locals.adminSession;
+
+    if (!adminUser || !adminSession) {
+      throw new HttpError(401, 'Admin session required.');
+    }
+
+    await changeAdminPassword(adminUser.id, adminSession.id, input);
+
+    res.status(200).json({
+      ok: true,
     });
   } catch (error) {
     next(error);

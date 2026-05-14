@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getMe, login, logout } from "./api";
+import { getMe, login, logout, changePassword, verifyPassword } from "./api";
 import { setAdminToken, clearAdminToken } from "../../lib/api";
 
 export const authKeys = {
@@ -38,5 +38,23 @@ export function useLogout(token: string | null) {
       clearAdminToken();
       queryClient.clear();
     },
+  });
+}
+
+export function useVerifyPassword(token: string) {
+  return useMutation({
+    mutationFn: (password: string) => verifyPassword(token, password),
+  });
+}
+
+export function useChangePassword(token: string) {
+  return useMutation({
+    mutationFn: ({
+      currentPassword,
+      newPassword,
+    }: {
+      currentPassword: string;
+      newPassword: string;
+    }) => changePassword(token, currentPassword, newPassword),
   });
 }

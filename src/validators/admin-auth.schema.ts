@@ -10,5 +10,16 @@ export const adminLoginSchema = z.object({
   password: z.string().min(1, 'Password is required.'),
 });
 
+export const adminChangePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, 'Current password is required.'),
+    newPassword: z.string().min(12, 'Password must be at least 12 characters.'),
+  })
+  .refine((data) => data.currentPassword !== data.newPassword, {
+    message: 'New password must differ from current password.',
+    path: ['newPassword'],
+  });
+
 export type AdminBootstrapInput = z.infer<typeof adminBootstrapSchema>;
 export type AdminLoginInput = z.infer<typeof adminLoginSchema>;
+export type AdminChangePasswordInput = z.infer<typeof adminChangePasswordSchema>;

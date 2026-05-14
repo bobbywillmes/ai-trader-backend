@@ -2,9 +2,11 @@ import argon2 from 'argon2';
 import crypto from 'node:crypto';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
+import { createAdminAuditEvent } from './admin-audit.service.js';
 import type {
   AdminBootstrapInput,
   AdminLoginInput,
+  AdminChangePasswordInput,
 } from '../validators/admin-auth.schema.js';
 
 const SESSION_TOKEN_BYTES = 32;
@@ -188,5 +190,53 @@ export async function revokeAdminSession(rawToken: string) {
       adminUserId: true,
       revokedAt: true,
     },
+  });
+}
+
+export async function changeAdminPassword(
+  adminUserId: number,
+  currentSessionId: number,
+  input: AdminChangePasswordInput,
+) {
+  const adminUser = await prisma.adminUser.findUnique({
+    where: { id: adminUserId },
+  });
+
+  if (!adminUser) {
+    throw new HttpError(404, 'Admin user not found.');
+  }
+
+  const passwordIsValid = await verifyAdminPassword(
+    input.currentPassword,
+    adminUser.passwordHash,
+  );
+
+  if (!passwordIsValid) {
+    throw new HttpError(401, 'Current password is incorrect.');
+  }
+
+  const newPasswordHash = await hashAdminPassword(input.newPassword);
+
+  await prisma.$transaction([
+    prisma.adminUser.update({
+      where: { id: adminUserId },
+      data: { passwordHash: newPasswordHash },
+    }),
+    prisma.adminSession.updateMany({
+      where: {
+        adminUserId,
+        id: { not: currentSessionId },
+        revokedAt: null,
+      },
+      data: { revokedAt: new Date() },
+    }),
+  ]);
+
+  await createAdminAuditEvent({
+    eventType: 'admin_password_changed',
+    entityType: 'admin_user',
+    entityId: adminUserId,
+    message: 'Admin password changed',
+    payload: { currentSessionId },
   });
 }

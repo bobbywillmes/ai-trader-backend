@@ -18,3 +18,23 @@ export function logout(token: string) {
     token,
   });
 }
+
+export function verifyPassword(token: string, password: string) {
+  return apiRequest<{ ok: boolean }>("/api/admin-auth/verify-password", {
+    method: "POST",
+    token,
+    body: { password },
+  });
+}
+
+export function changePassword(
+  token: string,
+  currentPassword: string,
+  newPassword: string,
+) {
+  return apiRequest<{ ok: boolean }>("/api/admin-auth/change-password", {
+    method: "POST",
+    token,
+    body: { currentPassword, newPassword },
+  });
+}
