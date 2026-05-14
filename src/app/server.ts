@@ -5,6 +5,7 @@ import { processPendingOrders, syncSubmittedOrders } from '../workers/order.work
 import { syncTrackedPositions } from '../services/position-tracking.service.js';
 import { evaluateExits } from '../services/exit-evaluator.service.js';
 import { runScheduledAccountSnapshots } from '../workers/account-snapshot.worker.js';
+import { runBrokerActivitySync } from '../workers/broker-activity.worker.js';
 
 const app = createApp();
 
@@ -17,6 +18,14 @@ app.listen(env.PORT, () => {
 setInterval(() => {
   runScheduledAccountSnapshots().catch((error) => {
     console.error('Scheduled account snapshot error:', error);
+  });
+}, 60_000);
+
+// Broker activity sync writes only new/updated broker-confirmed activities.
+// It is intentionally separate from account snapshots.
+setInterval(() => {
+  runBrokerActivitySync().catch((error) => {
+    console.error('Broker activity sync error:', error);
   });
 }, 60_000);
 

@@ -101,6 +101,7 @@ model OrderIntent {
   subscription      Subscription? @relation(fields: [subscriptionId], references: [id])
 
   brokerOrders   BrokerOrder[]
+  brokerActivities  BrokerActivity[]
 }
 
 model BrokerOrder {
@@ -120,6 +121,8 @@ model BrokerOrder {
   security   Security @relation(fields: [securityId], references: [id])
 
   orderIntent    OrderIntent @relation(fields: [orderIntentId], references: [id])
+
+  brokerActivities BrokerActivity[]
 }
 
 model SystemEvent {
@@ -193,6 +196,48 @@ model AccountSnapshot {
   @@index([reason])
   @@index([broker, mode])
   @@index([changed])
+}
+
+model BrokerActivity {
+  id                    Int @id @default(autoincrement())
+
+  broker                String
+  mode                  String
+
+  activityId            String @unique
+  activityType          String
+  activityCategory      String?
+
+  symbol                String?
+  side                  String?
+
+  qty                   Float?
+  cumQty                Float?
+  leavesQty             Float?
+  price                 Float?
+  netAmount             Float?
+
+  orderId               String?
+  orderIntentId         Int?
+  brokerOrderRecordId   Int?
+
+  transactionTime       DateTime?
+  rawBrokerJson         Json
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  orderIntent           OrderIntent? @relation(fields: [orderIntentId], references: [id])
+  brokerOrderRecord     BrokerOrder? @relation(fields: [brokerOrderRecordId], references: [id])
+
+  @@index([activityType])
+  @@index([symbol])
+  @@index([side])
+  @@index([orderId])
+  @@index([transactionTime])
+  @@index([orderIntentId])
+  @@index([brokerOrderRecordId])
+  @@index([broker, mode])
 }
 
 model Strategy {

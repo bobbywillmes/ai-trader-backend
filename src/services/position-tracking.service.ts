@@ -4,6 +4,7 @@ import { prisma } from '../db/prisma.js';
 import { getNormalizedPositions } from './positions.service.js';
 import { createSystemEvent } from './system-event.service.js';
 import { recordAccountSnapshot } from './account-snapshot.service.js';
+import { syncBrokerActivities } from './broker-activity.service.js';
 
 export async function syncTrackedPositions() {
   const brokerPositions = await getNormalizedPositions();
@@ -69,6 +70,12 @@ export async function syncTrackedPositions() {
         sourceEntityId: created.id,
       });
 
+      await syncBrokerActivities({
+        activityType: 'FILL',
+        pageSize: 100,
+        maxPages: 2,
+      });
+
       console.log(`Position opened: ${created.symbol}`);
       continue;
     }
@@ -131,6 +138,12 @@ export async function syncTrackedPositions() {
       force: true,
       sourceEntityType: 'trackedPosition',
       sourceEntityId: closed.id,
+    });
+
+    await syncBrokerActivities({
+      activityType: 'FILL',
+      pageSize: 100,
+      maxPages: 2,
     });
 
     console.log(`Position closed: ${closed.symbol}`);
