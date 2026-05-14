@@ -4,7 +4,6 @@ import { AdminLayout } from "../layouts/AdminLayout";
 import { HomePage } from "../pages/HomePage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
-import { PlaceholderPage } from "../pages/PlaceholderPage";
 import LegacyAdminPage from "../features/legacy/LegacyAdminPage";
 import { SubscriptionsPage } from "../features/subscriptions/SubscriptionsPage";
 import { ExitProfilesPage } from "../features/exitProfiles/ExitProfilesPage";
@@ -14,6 +13,7 @@ import { SecuritiesPage } from "../features/securities/SecuritiesPage";
 import { SystemEventsPage } from "../features/systemEvents/SystemEventsPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { SecurityDetailPage } from "../features/securities/SecurityDetailPage";
+import { ReportsPage } from "../features/reports/ReportsPage";
 
 export const router = createBrowserRouter([
   {
@@ -62,7 +62,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "reports",
-        element: <PlaceholderPage title="Reports" />,
+        element: <ReportsPage />,
       },
       {
         path: "system/events",
