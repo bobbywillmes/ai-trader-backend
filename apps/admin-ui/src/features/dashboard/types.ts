@@ -45,11 +45,39 @@ export type BrokerOpenOrder = {
 export type RuntimeTradingConfig = {
   tradingEnabled: boolean;
   paperMode: boolean;
+  killSwitchEnabled: boolean;
+  maxDailyEntryOrders: number | null;
+  maxDailyEntryNotional: number | null;
+  maxOpenPositions: number | null;
+  maxTotalOpenNotional: number | null;
+  maxSymbolOpenNotional: number | null;
+  maxSubscriptionOpenNotional: number | null;
 };
 
 export type RiskStatus = {
-  canTrade: boolean;
-  reason: string | null;
+  canEnter: boolean;
+  reasons: string[];
+  broker: {
+    name: string;
+    mode: "paper" | "live";
+    expectedMode: "paper" | "live";
+    tradingBlocked: boolean;
+  };
+  limits: {
+    maxDailyEntryOrders: number | null;
+    maxDailyEntryNotional: number | null;
+    maxOpenPositions: number | null;
+    maxTotalOpenNotional: number | null;
+    maxSymbolOpenNotional: number | null;
+    maxSubscriptionOpenNotional: number | null;
+  };
+  usage: {
+    dailyEntryOrderCount: number;
+    dailyEntryNotional: number;
+    activePositionCount: number;
+    totalOpenNotional: number;
+    activeSymbols: string[];
+  };
 };
 
 export type BootstrapResponse = {

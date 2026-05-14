@@ -21,12 +21,16 @@ export function useUpdateConfig(token: string | null) {
 
   return useMutation({
     mutationFn: (payload: Partial<RuntimeTradingConfig>) => {
-      if (!token) throw new Error("Admin session is missing. Please log in again.");
+      if (!token) {
+        throw new Error("Admin session is missing. Please log in again.");
+      }
+
       return updateConfig(token, payload);
     },
     onSuccess: (updated) => {
       queryClient.setQueryData(settingsKeys.config, updated);
-      // Keep bootstrap config in sync so the dashboard status badges update
+
+      // Keep dashboard bootstrap risk/config badges in sync.
       queryClient.invalidateQueries({ queryKey: dashboardKeys.bootstrap });
     },
   });

@@ -226,15 +226,17 @@ export function DashboardPage() {
                 {account.mode === "live" ? "Live Trading" : "Paper Trading"}
               </Badge>
               <Badge
-                color={account.tradingBlocked ? "red" : risk?.canTrade === false ? "orange" : "teal"}
+                color={account.tradingBlocked
+                        ? "Trading Blocked"
+                        : risk?.canEnter === false ? "orange" : "teal"}
                 variant="light"
                 size="sm"
               >
                 {account.tradingBlocked
                   ? "Trading Blocked"
-                  : risk?.canTrade === false
-                  ? risk.reason ?? "Risk Limit"
-                  : "Trading Active"}
+                  : risk?.canEnter === false
+                    ? risk.reasons?.[0] ?? "Entries Blocked"
+                    : "Trading Active"}
               </Badge>
             </>
           )}
