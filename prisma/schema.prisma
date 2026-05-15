@@ -123,6 +123,9 @@ model BrokerOrder {
   orderIntent    OrderIntent @relation(fields: [orderIntentId], references: [id])
 
   brokerActivities BrokerActivity[]
+
+  @@unique([broker, brokerOrderId])
+  @@unique([broker, clientOrderId])
 }
 
 model SystemEvent {

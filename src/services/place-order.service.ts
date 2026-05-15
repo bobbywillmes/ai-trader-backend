@@ -69,11 +69,19 @@ export async function submitOrder(input: PlaceOrderInput) {
   };
 }
 
-export async function submitOrderToBroker(input: ResolvedPlaceOrderInput) {
-  const clientOrderId =
-    'clientOrderId' in input && typeof input.clientOrderId === 'string'
-      ? input.clientOrderId
-      : buildClientOrderId(input);
+export type BrokerOrderSubmissionInput = ResolvedPlaceOrderInput & {
+  clientOrderId: string;
+};
+
+export async function submitOrderToBroker(input: BrokerOrderSubmissionInput) {
+  const clientOrderId = input.clientOrderId;
+
+  if (!clientOrderId) {
+    throw new HttpError(
+      500,
+      'Cannot submit broker order without a stable clientOrderId.'
+    );
+  }
 
   const existing = await getAlpacaOrderByClientOrderId(clientOrderId);
 

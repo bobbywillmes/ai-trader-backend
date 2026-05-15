@@ -29,18 +29,31 @@ setInterval(() => {
   });
 }, 60_000);
 
-// Start the order processing worker loop
+let tradingWorkersRunning = false;
+
+async function runTradingWorkers() {
+  if (tradingWorkersRunning) {
+    console.log('Trading worker tick skipped because previous tick is still running.');
+    return;
+  }
+
+  tradingWorkersRunning = true;
+
+  // Start the order processing worker loop
+  try {
+    await processPendingOrders();
+    await syncSubmittedOrders();
+    await syncTrackedPositions();
+    await evaluateExits();
+  } catch (error) {
+    console.error('Trading worker loop error:', error);
+  } finally {
+    tradingWorkersRunning = false;
+  }
+}
+
 setInterval(() => {
-  processPendingOrders().catch((error) => {
-    console.error('Order worker error:', error);
+  runTradingWorkers().catch((error) => {
+    console.error('Trading worker interval error:', error);
   });
-  syncSubmittedOrders().catch((error) => {
-    console.error('Sync submitted orders error:', error);
-  });
-  syncTrackedPositions().catch((error) => {
-    console.error('Position sync error:', error);
-  });
-  evaluateExits().catch((error) => {
-    console.error('Exit evaluation error:', error);
-  });
-}, 2000);
+}, 2_000);
