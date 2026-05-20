@@ -27,18 +27,40 @@ function fmt(n: number, decimals = 2) {
   });
 }
 
-function fmtCurrency(n: number) {
-  return `$${fmt(Math.abs(n))}`;
+function formatMoney(value: number | null | undefined) {
+  if (value === null || value === undefined) return "-";
+
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
 }
 
-function PnLText({ value, suffix = "" }: { value: number; suffix?: string }) {
+function formatSignedPercent(value: number | null | undefined) {
+  if (value === null || value === undefined) return "-";
+
+  const formatted = `${Math.abs(value).toFixed(2)}%`;
+
+  if (value > 0) return `${formatted}`;
+  if (value < 0) return `- ${formatted}`;
+  return formatted;
+}
+
+function PnLText({ format, value }: { format: string, value: number; }) {
+  const fmt = format;
   const color = value > 0 ? "teal" : value < 0 ? "red" : "dimmed";
-  const sign = value > 0 ? "+" : "";
+  if (fmt == 'percent') {
+    return (
+      <Text c={color} >
+        {formatSignedPercent(value)}
+      </Text>
+    )
+  }
   return (
     <Text c={color} fw={600} size="sm">
-      {sign}
-      {fmtCurrency(value)}
-      {suffix}
+      {formatMoney(value)}
     </Text>
   );
 }
@@ -84,8 +106,9 @@ function PositionsTable({ positions }: { positions: BrokerPosition[] }) {
         <Table.Thead>
           <Table.Tr>
             <Table.Th>Symbol</Table.Th>
-            <Table.Th>Side</Table.Th>
             <Table.Th style={{ textAlign: "right" }}>Qty</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Last Price</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Avg Cost</Table.Th>
             <Table.Th style={{ textAlign: "right" }}>Mkt Value</Table.Th>
             <Table.Th style={{ textAlign: "right" }}>Unrealized P/L</Table.Th>
             <Table.Th style={{ textAlign: "right" }}>P/L %</Table.Th>
@@ -95,18 +118,15 @@ function PositionsTable({ positions }: { positions: BrokerPosition[] }) {
           {positions.map((p) => (
             <Table.Tr key={p.symbol}>
               <Table.Td fw={600}>{p.symbol}</Table.Td>
-              <Table.Td>
-                <Badge size="sm" color={p.side === "long" ? "teal" : "red"} variant="light">
-                  {p.side}
-                </Badge>
-              </Table.Td>
               <Table.Td style={{ textAlign: "right" }}>{fmt(p.qty, 0)}</Table.Td>
+              <Table.Td style={{ textAlign: "right" }}>${fmt(p.currentPrice)}</Table.Td>
+              <Table.Td style={{ textAlign: "right" }}>${fmt(p.avgEntryPrice)}</Table.Td>
               <Table.Td style={{ textAlign: "right" }}>${fmt(p.marketValue)}</Table.Td>
               <Table.Td style={{ textAlign: "right" }}>
-                <PnLText value={p.unrealizedPnL} />
+                <PnLText format ="money" value={p.unrealizedPnL} />
               </Table.Td>
               <Table.Td style={{ textAlign: "right" }}>
-                <PnLText value={p.unrealizedPnLPct * 100} suffix="%" />
+                <PnLText format="percent" value={p.unrealizedPnLPct * 100} />
               </Table.Td>
             </Table.Tr>
           ))}
@@ -163,14 +183,28 @@ function OrdersTable({ orders }: { orders: BrokerOpenOrder[] }) {
   );
 }
 
+const hiddenDashboardEventTypes = new Set([
+  "broker_activity.synced",
+  "order.filled",
+  "order.new",
+]);
+
+function shouldShowDashboardEvent(event: SystemEvent) {
+  return !hiddenDashboardEventTypes.has(event.type);
+}
+
 function EventFeed({ events }: { events: SystemEvent[] }) {
   if (events.length === 0) {
     return <Text size="sm" c="dimmed" py="sm">No recent events.</Text>;
   }
 
+  const recentEvents = events.filter(
+    shouldShowDashboardEvent
+  );
+
   return (
     <Stack gap={0}>
-      {events.map((ev, i) => {
+      {recentEvents.map((ev, i) => {
         const { label, description, color } = describeEvent(ev);
         return (
           <Box key={ev.id}>
@@ -201,7 +235,7 @@ function EventFeed({ events }: { events: SystemEvent[] }) {
 export function DashboardPage() {
   const [token] = useState<string | null>(() => getAdminToken());
   const { data: bootstrap, isLoading: bootstrapLoading } = useBootstrap(token);
-  const { data: events, isLoading: eventsLoading } = useSystemEvents(token, 25);
+  const { data: events, isLoading: eventsLoading } = useSystemEvents(token, 50);
 
   const account = bootstrap?.account;
   const positions = bootstrap?.positions ?? [];
@@ -255,12 +289,12 @@ export function DashboardPage() {
           label="Day P/L"
           value={
             account ? (
-              <PnLText value={account.dayPnL} />
+              <PnLText format="money" value={account.dayPnL} />
             ) : "—"
           }
           subValue={
             account ? (
-              <PnLText value={account.dayPnLPct * 100} suffix="%" />
+              <PnLText format="percent" value={account.dayPnLPct * 100} />
             ) : undefined
           }
           loading={bootstrapLoading}

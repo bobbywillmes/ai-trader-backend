@@ -23,6 +23,38 @@ function fmt(n: number) {
   return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function getNestedString(
+  record: Record<string, unknown>,
+  key: string,
+  nestedKey: string
+): string | undefined {
+  const nested = record[key];
+
+  if (!isRecord(nested)) {
+    return undefined;
+  }
+
+  return getString(nested[nestedKey]);
+}
+
+function getSubscriptionName(p: Record<string, unknown>) {
+  return (
+    getNestedString(p, "after", "name") ??
+    getNestedString(p, "before", "name") ??
+    getString(p.subscriptionKey) ??
+    getString(p.key) ??
+    "Subscription"
+  );
+}
+
 export function describeEvent(ev: SystemEvent): EventMeta {
   const p = parsePayload(ev);
 
@@ -47,10 +79,23 @@ export function describeEvent(ev: SystemEvent): EventMeta {
         color: "teal",
       };
     }
-    case "position.closed":
-      return { label: "Closed", description: `${p.symbol as string}`, color: "cyan" };
+    case "position.closed": {
+      const qty = typeof p.closeQty === "number" ? `${p.closeQty} ` : "";
+      const price =
+        typeof p.closePrice === "number" ? ` @ $${fmt(p.closePrice)}` : "";
+      return {
+        label: "Closed",
+        description: `${qty}${p.symbol as string}${price}`,
+        color: "cyan",
+      };
+    }
     case "position.close_requested":
       return { label: "Close Req", description: `${p.symbol as string}`, color: "cyan" };
+    case "subscription_enabled":
+      return { label: "Enabled", description: `${getSubscriptionName(p)}`, color: "green" };
+    case "subscription_disabled":
+      return { label: "Disabled", description: `${getSubscriptionName(p)}`, color: "red" };
+
     case "exit.triggered": {
       const pct = typeof p.pnlPct === "number" ? p.pnlPct * 100 : null;
       const sign = pct != null && pct >= 0 ? "+" : "";

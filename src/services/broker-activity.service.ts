@@ -272,3 +272,32 @@ export async function getLatestBrokerActivity() {
     },
   });
 }
+
+export async function getLatestBrokerFillForSymbol(args: {
+  symbol: string;
+  side?: 'buy' | 'sell';
+  after?: Date;
+}) {
+  const where: Prisma.BrokerActivityWhereInput = {
+    broker: 'alpaca',
+    activityType: 'FILL',
+    symbol: args.symbol,
+  };
+
+  if (args.side) {
+    where.side = args.side;
+  }
+
+  if (args.after) {
+    where.transactionTime = {
+      gte: args.after,
+    };
+  }
+
+  return prisma.brokerActivity.findFirst({
+    where,
+    orderBy: {
+      transactionTime: 'desc',
+    },
+  });
+}

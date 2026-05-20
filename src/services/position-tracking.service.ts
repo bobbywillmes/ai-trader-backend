@@ -4,7 +4,19 @@ import { prisma } from '../db/prisma.js';
 import { getNormalizedPositions } from './positions.service.js';
 import { createSystemEvent } from './system-event.service.js';
 import { recordAccountSnapshot } from './account-snapshot.service.js';
-import { syncBrokerActivities } from './broker-activity.service.js';
+import {
+  getLatestBrokerFillForSymbol,
+  syncBrokerActivities,
+} from './broker-activity.service.js';
+
+
+function getCloseFillSide(positionSide: string): 'buy' | 'sell' {
+  return positionSide.toLowerCase() === 'short' ? 'buy' : 'sell';
+}
+
+function minutesAgo(minutes: number) {
+  return new Date(Date.now() - minutes * 60_000);
+}
 
 export async function syncTrackedPositions() {
   const brokerPositions = await getNormalizedPositions();
@@ -193,6 +205,20 @@ export async function syncTrackedPositions() {
       where: { id: tracked.id },
     });
 
+    await syncBrokerActivities({
+      activityType: 'FILL',
+      pageSize: 100,
+      maxPages: 2,
+    });
+
+    const closeSide = getCloseFillSide(tracked.side);
+
+    const closeFill = await getLatestBrokerFillForSymbol({
+      symbol: closed.symbol,
+      side: closeSide,
+      after: minutesAgo(30),
+    });
+
     await createSystemEvent({
       type: 'position.closed',
       entityType: 'trackedPosition',
@@ -201,6 +227,12 @@ export async function syncTrackedPositions() {
         symbol: closed.symbol,
         previousStatus: tracked.status,
         nextStatus: 'closed',
+        closeSide,
+        closeQty: closeFill?.qty ?? null,
+        closePrice: closeFill?.price ?? null,
+        closeFillTime: closeFill?.transactionTime?.toISOString() ?? null,
+        brokerActivityId: closeFill?.id ?? null,
+        closeOrderId: closeFill?.orderId ?? null,
       } as Prisma.InputJsonValue,
     });
 
@@ -209,12 +241,6 @@ export async function syncTrackedPositions() {
       force: true,
       sourceEntityType: 'trackedPosition',
       sourceEntityId: closed.id,
-    });
-
-    await syncBrokerActivities({
-      activityType: 'FILL',
-      pageSize: 100,
-      maxPages: 2,
     });
 
     console.log(`Position closed: ${closed.symbol}`);
