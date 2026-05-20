@@ -5,6 +5,7 @@ import {
   Button,
   Card,
   Divider,
+  Grid,
   Group,
   Loader,
   NumberInput,
@@ -20,7 +21,7 @@ import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { getAdminToken } from "../../lib/api";
 import { ChangePasswordModal } from "../auth/ChangePasswordModal";
-import { useConfig, useUpdateConfig } from "./hooks";
+import { useConfig, useSystemStatus, useUpdateConfig } from "./hooks";
 import type { RuntimeTradingConfig } from "../dashboard/types";
 
 type RiskLimitKey =
@@ -132,11 +133,56 @@ function hasRiskLimitChanges(
   );
 }
 
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "-";
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(date);
+}
+
+function formatUptime(seconds: number) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+
+  return `${minutes}m`;
+}
+
+function StatusBadge({
+  ok,
+  trueLabel = "OK",
+  falseLabel = "Issue",
+}: {
+  ok: boolean;
+  trueLabel?: string;
+  falseLabel?: string;
+}) {
+  return (
+    <Badge color={ok ? "teal" : "red"} variant="light">
+      {ok ? trueLabel : falseLabel}
+    </Badge>
+  );
+}
+
 export function SettingsPage() {
   const theme = useMantineTheme();
   const [token] = useState<string | null>(() => getAdminToken());
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [riskForm, setRiskForm] = useState<RiskLimitForm | null>(null);
+  const systemStatusQuery = useSystemStatus(token);
+  const systemStatus = systemStatusQuery.data;
 
   const { data: config, isLoading, isError } = useConfig(token);
   const updateMutation = useUpdateConfig(token);
@@ -357,6 +403,259 @@ export function SettingsPage() {
               {entryStatus.message}
             </Alert>
           )}
+
+
+          <Card withBorder radius="md" p="lg">
+            <Stack gap="md">
+              <Group justify="space-between" align="flex-start">
+                <div>
+                  <Title order={3}>System Status</Title>
+                  <Text c="dimmed" size="sm">
+                    Production readiness snapshot for the app, database, broker mode,
+                    workers, and trading entry state.
+                  </Text>
+                </div>
+
+                <Group>
+                  {systemStatus && (
+                    <Badge
+                      color={systemStatus.health.ok ? "teal" : "red"}
+                      size="lg"
+                      variant="light"
+                    >
+                      {systemStatus.health.ok ? "Healthy" : "Health Issue"}
+                    </Badge>
+                  )}
+
+                  {systemStatus && (
+                    <Badge
+                      color={systemStatus.trading.risk.canEnter ? "teal" : "orange"}
+                      size="lg"
+                      variant="light"
+                    >
+                      {systemStatus.trading.risk.canEnter
+                        ? "Entries Allowed"
+                        : "Entries Blocked"}
+                    </Badge>
+                  )}
+
+                  <Button
+                    variant="default"
+                    onClick={() => systemStatusQuery.refetch()}
+                    loading={systemStatusQuery.isFetching}
+                  >
+                    Refresh
+                  </Button>
+                </Group>
+              </Group>
+
+              <Divider />
+
+              {systemStatusQuery.isLoading && (
+                <Group>
+                  <Loader size="sm" />
+                  <Text>Loading system status…</Text>
+                </Group>
+              )}
+
+              {systemStatusQuery.isError && (
+                <Alert color="red" title="Failed to load system status">
+                  Check the backend connection and admin session.
+                </Alert>
+              )}
+
+              {systemStatus && (
+                <Stack gap="md">
+                  {!systemStatus.trading.risk.canEnter &&
+                    systemStatus.trading.risk.reasons.length > 0 && (
+                      <Alert color="orange" title="Entries are currently blocked">
+                        {systemStatus.trading.risk.reasons[0]}
+                      </Alert>
+                    )}
+
+                  <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }}>
+                    <Card withBorder radius="md" p="md">
+                      <Group justify="space-between">
+                        <Text fw={600}>App / DB</Text>
+                        <StatusBadge ok={systemStatus.health.ok} />
+                      </Group>
+                      <Text size="sm" c="dimmed" mt="xs">
+                        Env: {systemStatus.environment.nodeEnv}
+                      </Text>
+                      <Text size="sm" c="dimmed">
+                        Uptime: {formatUptime(systemStatus.health.uptimeSeconds)}
+                      </Text>
+                      <Text size="sm" c="dimmed">
+                        Database:{" "}
+                        {systemStatus.health.database.ok ? "reachable" : "unreachable"}
+                      </Text>
+                    </Card>
+
+                    <Card withBorder radius="md" p="md">
+                      <Group justify="space-between">
+                        <Text fw={600}>Broker Mode</Text>
+                        <Badge
+                          color={
+                            systemStatus.trading.risk.broker.mode ===
+                            systemStatus.trading.risk.broker.expectedMode
+                              ? "teal"
+                              : "red"
+                          }
+                          variant="light"
+                        >
+                          {systemStatus.trading.risk.broker.mode}
+                        </Badge>
+                      </Group>
+                      <Text size="sm" c="dimmed" mt="xs">
+                        Expected: {systemStatus.trading.risk.broker.expectedMode}
+                      </Text>
+                      <Text size="sm" c="dimmed">
+                        Trading blocked:{" "}
+                        {systemStatus.trading.risk.broker.tradingBlocked ? "yes" : "no"}
+                      </Text>
+                    </Card>
+
+                    <Card withBorder radius="md" p="md">
+                      <Group justify="space-between">
+                        <Text fw={600}>Workers</Text>
+                        <StatusBadge
+                          ok={
+                            systemStatus.workers.pendingOrderCount === 0 &&
+                            systemStatus.workers.submittingOrderCount === 0
+                          }
+                          trueLabel="Clear"
+                          falseLabel="Pending"
+                        />
+                      </Group>
+                      <Text size="sm" c="dimmed" mt="xs">
+                        Pending: {systemStatus.workers.pendingOrderCount}
+                      </Text>
+                      <Text size="sm" c="dimmed">
+                        Submitting: {systemStatus.workers.submittingOrderCount}
+                      </Text>
+                      <Text size="sm" c="dimmed">
+                        Submitted: {systemStatus.workers.submittedOrderCount}
+                      </Text>
+                    </Card>
+
+                    <Card withBorder radius="md" p="md">
+                      <Group justify="space-between">
+                        <Text fw={600}>Positions</Text>
+                        <Badge color="blue" variant="light">
+                          {systemStatus.workers.openTrackedPositionCount} open
+                        </Badge>
+                      </Group>
+                      <Text size="sm" c="dimmed" mt="xs">
+                        Closing: {systemStatus.workers.closingTrackedPositionCount}
+                      </Text>
+                      <Text size="sm" c="dimmed">
+                        Unprocessed events:{" "}
+                        {systemStatus.workers.unprocessedSystemEventCount}
+                      </Text>
+                    </Card>
+                  </SimpleGrid>
+
+                  <Grid>
+                    <Grid.Col span={{ base: 12, md: 6 }}>
+                      <Card withBorder radius="md" p="md">
+                        <Title order={4}>Environment</Title>
+
+                        <SimpleGrid cols={{ base: 1, sm: 2 }} mt="sm">
+                          <Group justify="space-between">
+                            <Text size="sm">DATABASE_URL</Text>
+                            <StatusBadge ok={systemStatus.environment.hasDatabaseUrl} />
+                          </Group>
+
+                          <Group justify="space-between">
+                            <Text size="sm">ALPACA_API_KEY</Text>
+                            <StatusBadge ok={systemStatus.environment.hasAlpacaApiKey} />
+                          </Group>
+
+                          <Group justify="space-between">
+                            <Text size="sm">ALPACA_SECRET_KEY</Text>
+                            <StatusBadge
+                              ok={systemStatus.environment.hasAlpacaSecretKey}
+                            />
+                          </Group>
+
+                          <Group justify="space-between">
+                            <Text size="sm">ALPACA_BASE_URL</Text>
+                            <StatusBadge ok={systemStatus.environment.hasAlpacaBaseUrl} />
+                          </Group>
+
+                          <Group justify="space-between" py="sm">
+                            <div>
+                              <Text size="sm" fw={500}>Admin session token</Text>
+                              <Text size="xs" c="dimmed">BEARER TOKEN</Text>
+                            </div>
+                            <StatusBadge ok={systemStatusQuery.isSuccess} />
+                          </Group>
+
+                          <Group justify="space-between">
+                            <Text size="sm">SIGNAL_API_KEY</Text>
+                            <StatusBadge ok={systemStatus.environment.hasSignalApiKey} />
+                          </Group>
+                        </SimpleGrid>
+                      </Card>
+                    </Grid.Col>
+
+
+
+
+                    <Grid.Col span={{ base: 12, md: 6 }}>
+                      <Card withBorder radius="md" p="md">
+                        <Title order={4}>Audit Freshness</Title>
+
+                        <Stack gap="xs" mt="sm">
+                          <Group justify="space-between">
+                            <Text size="sm">Latest account snapshot</Text>
+                            <Text size="sm" c="dimmed">
+                              {formatDateTime(
+                                systemStatus.audit.latestAccountSnapshot?.createdAt
+                              )}
+                            </Text>
+                          </Group>
+
+                          <Group justify="space-between">
+                            <Text size="sm">Snapshot reason</Text>
+                            <Badge variant="light">
+                              {systemStatus.audit.latestAccountSnapshot?.reason ?? "-"}
+                            </Badge>
+                          </Group>
+
+                          <Group justify="space-between">
+                            <Text size="sm">Latest broker activity</Text>
+                            <Text size="sm" c="dimmed">
+                              {formatDateTime(
+                                systemStatus.audit.latestBrokerActivity?.transactionTime
+                              )}
+                            </Text>
+                          </Group>
+
+                          <Group justify="space-between">
+                            <Text size="sm">Last broker event</Text>
+                            <Text size="sm" c="dimmed">
+                              {[
+                                systemStatus.audit.latestBrokerActivity?.activityType,
+                                systemStatus.audit.latestBrokerActivity?.side,
+                                systemStatus.audit.latestBrokerActivity?.symbol,
+                              ]
+                                .filter(Boolean)
+                                .join(" ") || "-"}
+                            </Text>
+                          </Group>
+                        </Stack>
+                      </Card>
+                    </Grid.Col>
+                  </Grid>
+
+                  <Text size="xs" c="dimmed">
+                    Last checked: {formatDateTime(systemStatus.timestamp)}
+                  </Text>
+                </Stack>
+              )}
+            </Stack>
+          </Card>
 
           <Card withBorder radius="md" p="lg">
             <Stack gap="md">

@@ -62,10 +62,9 @@ export async function getSystemStatus() {
       port: process.env.PORT ?? null,
       hasDatabaseUrl: hasEnv('DATABASE_URL'),
       hasAlpacaApiKey: hasEnv('ALPACA_API_KEY'),
-      hasAlpacaSecretKey: hasEnv('ALPACA_SECRET_KEY'),
+      hasAlpacaSecretKey: hasEnv('ALPACA_API_SECRET'),
       hasAlpacaBaseUrl: hasEnv('ALPACA_BASE_URL'),
-      hasAdminJwtSecret: hasEnv('ADMIN_JWT_SECRET'),
-      hasSignalApiKey: hasEnv('SIGNAL_API_KEY'),
+      hasSignalApiKey: hasEnv('AI_TRADER_SIGNAL_API_KEY'),
     },
     trading: {
       config: runtimeConfig,

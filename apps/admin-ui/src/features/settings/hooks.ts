@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getConfig, updateConfig } from "./api";
+import { getConfig, getSystemStatus, updateConfig } from "./api";
 import { dashboardKeys } from "../dashboard/hooks";
 import type { RuntimeTradingConfig } from "../dashboard/types";
 
 export const settingsKeys = {
   config: ["settings", "config"] as const,
+  systemStatus: ["settings", "systemStatus"] as const,
 };
 
 export function useConfig(token: string | null) {
@@ -29,9 +30,18 @@ export function useUpdateConfig(token: string | null) {
     },
     onSuccess: (updated) => {
       queryClient.setQueryData(settingsKeys.config, updated);
-
-      // Keep dashboard bootstrap risk/config badges in sync.
+      queryClient.invalidateQueries({ queryKey: settingsKeys.systemStatus });
       queryClient.invalidateQueries({ queryKey: dashboardKeys.bootstrap });
     },
+  });
+}
+
+export function useSystemStatus(token: string | null) {
+  return useQuery({
+    queryKey: settingsKeys.systemStatus,
+    queryFn: () => getSystemStatus(token as string),
+    enabled: Boolean(token),
+    staleTime: 15000,
+    refetchInterval: 30000,
   });
 }
