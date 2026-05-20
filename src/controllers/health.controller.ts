@@ -1,9 +1,16 @@
-import type { Request, Response } from 'express';
+import type { Request, Response, NextFunction } from 'express';
+import { getHealthStatus } from '../services/health.service.js';
 
-export function healthController(_req: Request, res: Response) {
-  res.status(200).json({
-    ok: true,
-    service: 'ai-trader-backend',
-    timestamp: new Date().toISOString()
-  });
+export async function getHealthController(
+  _req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const health = await getHealthStatus();
+
+    res.status(health.ok ? 200 : 503).json(health);
+  } catch (error) {
+    next(error);
+  }
 }

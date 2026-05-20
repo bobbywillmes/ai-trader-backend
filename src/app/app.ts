@@ -6,6 +6,7 @@ import { pinoHttp } from 'pino-http';
 import { logger } from '../config/logger.js';
 
 import healthRoutes from '../routes/health.routes.js';
+import systemStatusRoutes from '../routes/system-status.routes.js';
 import bootstrapRoutes from '../routes/bootstrap.routes.js';
 import accountRoutes from '../routes/account.routes.js';
 import positionsRoutes from '../routes/positions.routes.js';
@@ -60,13 +61,14 @@ export function createApp() {
 
   // Admin routes
   app.use('/api/bootstrap', requireAdminAccess, bootstrapRoutes);
+  app.use('/api/system-status', requireAdminAccess, systemStatusRoutes);
+  app.use('/api/system-events', requireAdminAccess, systemEventsRoutes);
   app.use('/api/account', requireAdminAccess, accountRoutes);
   app.use('/api/account-snapshots', requireAdminAccess, accountSnapshotsRoutes);
   app.use('/api/broker-activities', requireAdminAccess, brokerActivitiesRoutes);
   app.use('/api/positions', requireAdminAccess, positionsRoutes);
   app.use('/api/orders', requireAdminAccess, ordersRoutes);
   app.use('/api/order-intents', requireAdminAccess, orderIntentsRoutes);
-  app.use('/api/system-events', requireAdminAccess, systemEventsRoutes);
   app.use('/api/tracked-positions', requireAdminAccess, trackedPositionsRoutes);
   app.use('/api/config', requireAdminAccess, configRoutes);
   app.use('/api/strategies', requireAdminAccess, strategiesRoutes);
