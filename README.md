@@ -1,21 +1,26 @@
 # AI Trader Backend
+
 Backend service for the n8n AI Trader system.
 
-This project is the broker/control layer between the AI Trader workflow and Alpaca paper trading. n8n handles strategy logic and sends trade requests. This backend handles broker communication, account/position/order retrieval, validation, order submission, cancellation, runtime trading config, allowed securities to trade, and audit logging. Admin authentication allows this to all be viewed & configured in a single-page UI.
+This project is the broker/control layer between the AI Trader workflow, the admin UI, and Alpaca paper trading. n8n handles strategy signal generation. This backend handles broker communication, subscription resolution, risk-gate enforcement, order intent logging, broker order submission, position tracking, exit evaluation, account snapshots, broker activity imports, runtime trading configuration, admin controls, and audit logging.
+
+The design goal is that automation clients such as n8n do **not** talk directly to Alpaca. n8n decides what it wants to do. The backend decides whether that request is allowed, records the intent, submits approved orders to Alpaca, tracks the resulting position, imports broker-confirmed activity, and records the account/audit trail.
+
+---
 
 ## 🔹 Overview
 
 AI Trader Backend is an event-driven trading engine that:
 
-- Accepts external trade signals (via n8n or API)
-- Executes trades through a broker (Alpaca)
-- Tracks all positions internally
-- Automatically manages exits based on configurable strategies
-
-It is designed to be:
-- Fully automated
-- State-aware
-- Extensible for advanced strategy logic
+- Accepts external trade signals from n8n or API clients
+- Resolves those signals through configured subscriptions
+- Enforces runtime safety and entry-risk rules
+- Executes approved trades through Alpaca
+- Tracks broker positions internally
+- Automatically manages exits based on configurable exit profiles
+- Imports broker-confirmed fill activity
+- Records account snapshots and internal system events
+- Provides an admin UI for monitoring, configuration, and production readiness checks
 
 Current stack:
 
@@ -26,272 +31,462 @@ Current stack:
 - Prisma
 - Docker Compose
 - Alpaca Trading API
+- React / Vite admin UI
+- TanStack Query
 
 ---
+
 ## 💡 Big Picture Architecture
 
 Original algo trading stack:
-```
+
+```text
 TradingView strategies → TradersPost → E*TRADE
 ```
 
 Current backend-driven AI Trader stack:
+
 ```text
 n8n
-  → POST (to backend) /api/signals/entry
-node/express backend
-  → Subscription
+  → POST /api/signals/entry
+  → Subscription resolution
+  → Risk Gate / Kill Switch / Entry Limits
   → OrderIntent
-      → BrokerOrder / Alpaca
+  → Async Order Worker
+  → BrokerOrder / Alpaca
+  → BrokerActivity fill import
   → TrackedPosition
   → ExitProfile-driven exit evaluation
+  → AccountSnapshot / SystemEvent audit trail
 ```
-n8n sends strategy signals. The backend resolves the subscription, validates risk/config rules, determines sizing, logs the order intent, submits approved orders to Alpaca, tracks the resulting position, and manages exits.
 
-The design goal is that n8n does **not** talk directly to Alpaca.
+The backend resolves the subscription, validates runtime config and entry-risk rules, determines sizing, logs the order intent, submits approved orders to Alpaca, tracks the resulting position, imports broker-confirmed fills, records account snapshots, and manages exits.
 
-n8n decides what it wants to do.
-The backend decides whether that request is allowed, logs the intent, sends approved orders to Alpaca, and records the broker response.
-
-----------
+---
 
 ## ⚒️ Core Responsibilities
 
 The backend currently handles:
 
--   Fetching Alpaca account details
--   Fetching open positions
--   Fetching open orders
--   Returning a combined bootstrap payload for n8n
--   Submitting paper trading orders
--   Canceling one open order
--   Canceling all open orders
--   Validating securities and enforcing symbol-level enable/disable controls
--   Enforcing `tradingEnabled`
--   Loading runtime config from PostgreSQL
--   Logging order intents before broker submission
--   Logging broker order responses after Alpaca accepts/rejects orders
+- Fetching Alpaca account details
+- Fetching open positions
+- Fetching open orders
+- Returning combined bootstrap/status payloads for the admin UI
+- Accepting n8n entry signals
+- Resolving subscription-driven trade requests
+- Enforcing symbol, subscription, strategy, exit profile, and runtime risk controls
+- Enforcing `tradingEnabled`
+- Enforcing `killSwitchEnabled`
+- Enforcing daily/order/exposure risk limits
+- Logging order intents before broker submission
+- Submitting approved orders to Alpaca asynchronously
+- Logging broker order responses
+- Importing broker-confirmed `FILL` activities from Alpaca
+- Tracking positions internally
+- Evaluating exits using linked exit profiles
+- Recording account snapshots
+- Recording internal system events
+- Providing admin authentication and admin UI controls
 
 Key features:
 
-- Subscription-driven order execution (strategy + exit profile bound at entry)
-- OrderIntent stores `subscriptionId` and `subscriptionKey` for full traceability
-- Positions are linked to subscriptions, enabling strategy-aware tracking
-- Positions include embedded strategy + exit profile context
+- Subscription-driven order execution
+- Strategy + exit profile bound at entry
+- Securities registry with symbol-level trading enable/disable controls
+- Centralized entry risk gate
+- Runtime kill switch for entry-only pauses
+- Account snapshot audit trail
+- Broker activity/fill ledger
+- System Status card for production readiness checks
+- Curated Dashboard activity feed separate from the full audit log
 
+---
 
 ## ⚒️ Core Data Flow
 
-The system is now structured around **subscription-driven trading**.
+The system is structured around **subscription-driven trading**.
 
 ### Entry Flow
-1. n8n sends signal:
-   - `subscriptionKey` (e.g. "dip_n_ride_spy")
-   - `signalType` (e.g. "entry")
 
-2. Backend resolves:
-   - Subscription
+1. n8n sends a signal to `POST /api/signals/entry`.
+2. The backend resolves the signal through a `Subscription`.
+3. The subscription links the request to:
+   - Security
    - Strategy
    - ExitProfile
-   - Position sizing
-
-3. Backend creates `OrderIntent`:
-   - Stores:
-     - symbol
-     - side
-     - qty / notional
-     - `subscriptionId`
-     - `subscriptionKey`
-     - `clientOrderId`: A timestamped unique identifier, sent to Alpaca as primary key for order.
-
-4. Order is submitted to Alpaca
-
----
+   - Sizing rule
+   - Broker/broker mode
+4. The risk gate validates whether the entry is allowed.
+5. The backend creates an `OrderIntent`.
+6. The async order worker atomically claims the pending intent.
+7. The worker submits the order to Alpaca using the stable `clientOrderId` stored on the `OrderIntent`.
+8. The broker order response is stored as `BrokerOrder`.
+9. Broker/order sync updates status transitions.
+10. Broker activity sync imports Alpaca `FILL` activity.
+11. Position sync creates or updates `TrackedPosition`.
+12. Account snapshots and system events record the lifecycle.
 
 ### Position Tracking Flow
-1. Positions are pulled from broker
-2. System finds matching `OrderIntent` (latest filled)
-3. Position is stored as `TrackedPosition` with:
-   - `subscriptionId`
-4. Subscription is included on reads:
-   - Strategy
-   - ExitProfile
 
----
-
-### Result
-Every open position now has:
-- Strategy context
-- Exit rules attached
-- Full traceability from signal → execution → position
+1. Positions are pulled from Alpaca.
+2. The sync service matches the latest filled `OrderIntent` when possible.
+3. The position is stored as `TrackedPosition` with:
+   - security link
+   - subscription link
+   - quantity
+   - average entry price
+   - current price
+   - market value
+   - cost basis
+   - unrealized P/L
+   - status
+   - raw broker position JSON
+4. Reads include linked subscription, strategy, and exit profile context.
 
 ### Position Lifecycle Management
 
-- **Open Positions Tracking**
-  - Internal `tracked_positions` table mirrors broker positions
-  - Sync runs continuously via background worker
-  - Includes real-time PnL, cost basis, and position metadata
+Open positions are tracked in the internal `TrackedPosition` table. The sync worker mirrors broker positions and uses guarded state transitions so lifecycle events are not emitted twice when worker ticks overlap.
 
-- **Get Open Positions**
-  - `GET /api/tracked-positions/open`
-  - Returns only active positions (filters out closed history)
-  - Includes linked `subscription`, `strategy`, and `exitProfile`
+Relevant routes:
 
-- **Close Position (by Ticker)**
-  - `DELETE /api/positions/:symbol`
-  - Closes position at broker (Alpaca)
-  - Automatically updates internal state via sync loop
-  - Emits system events:
-    - `position.close_requested`
-    - `position.closed`
+```http
+GET /api/tracked-positions
+GET /api/tracked-positions/open
+DELETE /api/positions/:symbol
+```
 
-- **Full Position History**
-  - `GET /api/tracked-positions`
-  - Returns all positions (open + closed)
+`DELETE /api/positions/:symbol` requests a broker close. The sync loop confirms the position is closed and emits `position.closed` only after the tracked position successfully transitions from `open` or `closing` to `closed`.
 
-----------
+---
+
+## Production Safety Layer
+
+The backend includes a centralized entry-risk gate that sits between signal/order creation and broker submission.
+
+The risk gate answers one question:
+
+```text
+Even if this signal is valid, is the system allowed to enter this trade right now?
+```
+
+Entry orders are blocked when any of the following conditions apply:
+
+- Global automated trading is disabled.
+- Kill switch is active.
+- Broker account is trading blocked.
+- Runtime broker mode does not match the connected Alpaca mode.
+- Security is disabled.
+- Subscription is disabled.
+- Strategy is disabled.
+- Exit profile is disabled.
+- Symbol already has an open or closing tracked position.
+- Daily entry order limit has been reached.
+- Daily entry notional limit would be exceeded.
+- Maximum open position count would be exceeded.
+- Total open notional limit would be exceeded.
+- Per-symbol exposure limit would be exceeded.
+- Per-subscription exposure limit would be exceeded.
+
+### Trading Enabled vs Kill Switch
+
+`tradingEnabled` is the global master switch for automated order submission.
+
+When `tradingEnabled = false`, the backend broadly rejects automated trading requests even if securities, subscriptions, strategies, and exit profiles are enabled.
+
+`killSwitchEnabled` is an entry-only pause.
+
+When `killSwitchEnabled = true`, the system stays online for monitoring, syncing, position tracking, exit workflows, reports, and admin visibility, but new buy-side entries are blocked.
+
+This gives two levels of production control:
+
+```text
+Trading Enabled Off
+  = broad automated trading shutdown
+
+Kill Switch On
+  = stop opening new positions, but keep the system awake
+```
+
+### Entry Risk Settings
+
+Runtime risk settings are stored in the `Setting` table and managed from the admin UI Settings page.
+
+Current runtime risk settings:
+
+```text
+tradingEnabled
+paperMode
+killSwitchEnabled
+maxDailyEntryOrders
+maxDailyEntryNotional
+maxOpenPositions
+maxTotalOpenNotional
+maxSymbolOpenNotional
+maxSubscriptionOpenNotional
+```
+
+---
 
 ## ⚙️ Background Workers
 
-The system runs multiple continuous loops to maintain synchronization and automate trading behavior:
+The system runs several background workers to keep broker state, internal state, and audit records synchronized.
 
-- **Order Processing Worker**
-  - Handles pending order intents
+### Trading Worker Loop
 
-- **Order Sync Worker**
-  - Syncs submitted orders with broker status
+Runs approximately every 2 seconds.
 
-- **Position Sync Worker**
-  - Syncs broker positions → internal database
+This loop is guarded to prevent overlapping worker ticks.
 
-- **Exit Evaluation Worker**
-  - Monitors open positions and triggers exits
+It performs:
 
-All loops run independently at short intervals (~2 seconds), enabling near real-time behavior.
+1. Pending order processing
+2. Submitted order synchronization
+3. Tracked position synchronization
+4. Exit evaluation
 
-----------
+The order worker uses an atomic `pending → submitting` claim step before calling Alpaca. This prevents overlapping worker ticks from submitting the same `OrderIntent` more than once.
+
+The position sync worker uses guarded state transitions so lifecycle events such as `position.opened` and `position.closed` are emitted only when the worker successfully transitions the tracked position state.
+
+### Account Snapshot Worker
+
+Runs on a slower checkpoint schedule.
+
+Scheduled snapshots are recorded around major trading-day checkpoints:
+
+```text
+scheduled_morning
+scheduled_midday
+scheduled_after_close
+```
+
+Account snapshots are also recorded after meaningful lifecycle events:
+
+```text
+position_opened
+position_closed
+manual
+```
+
+Scheduled snapshots are skipped when the account state has not changed. Event/manual snapshots can be forced because they represent meaningful trading context.
+
+### Broker Activity Worker
+
+Runs separately from the fast trading loop.
+
+It imports broker-confirmed Alpaca account activities, starting with `FILL` events. Imported broker activities are stored idempotently by Alpaca activity ID.
+
+This creates a durable broker-confirmed ledger separate from internal app events.
+
+---
 
 ## ⚙️ Exit Evaluation Engine
 
 The backend includes a real-time exit evaluation system that continuously monitors open positions and executes exits based on configured rules.
 
-### How it Works
+### How It Works
 
-1. Background loop runs every ~2 seconds
-2. Fetches all open tracked positions
-3. Joins each position with its:
-   - Subscription
-   - Strategy
-   - Exit Profile
-4. Evaluates exit conditions:
-   - Target profit reached
-   - Stop loss triggered
-5. If triggered:
-   - Sends close request to broker
-   - Updates position state
-   - Emits system events
+1. Background loop fetches all open tracked positions.
+2. Each position is joined with its subscription, strategy, and exit profile.
+3. Exit conditions are evaluated.
+4. If an exit is triggered, the backend requests a broker close and emits audit events.
+5. Position sync confirms the close and records final lifecycle activity.
 
-### Supported Exit Modes
+Supported exit modes include:
 
-- **Fixed Target**
-- **Trailing Stop (after target)**
-- **Fixed Stop + Target**
-- **(Future) AI-assisted exits**
+- Fixed target
+- Fixed target + fixed stop
+- Trailing stop after target
+- Max hold days
+- Reserved AI-assisted exit profile
 
-### Example Flow
+Example flow:
 
 ```text
 Position Opened → Market Moves → Exit Condition Hit → Close Requested → Position Closed
 ```
-Key File:
-`src/services/exit-evaluator.service.ts`
 
-----------
+Key file:
+
+```txt
+src/services/exit-evaluator.service.ts
+```
+
+---
+
+## ⚙️ Production Audit Layer
+
+The backend separates audit records into distinct models with different responsibilities.
+
+### OrderIntent
+
+Represents what the app intended to do.
+
+Every accepted or blocked order request creates an `OrderIntent` before broker submission.
+
+### BrokerOrder
+
+Represents the broker order created by Alpaca.
+
+Broker orders are linked back to `OrderIntent` and `Security`.
+
+### BrokerActivity
+
+Represents what Alpaca says actually happened.
+
+The first supported activity type is Alpaca `FILL`.
+
+Broker activities are imported from Alpaca and stored idempotently by Alpaca activity ID. This makes the broker activity table the durable broker-confirmed execution ledger.
+
+### AccountSnapshot
+
+Represents what the account looked like at a point in time.
+
+Snapshots include:
+
+- cash
+- buying power
+- equity
+- portfolio value
+- day P/L
+- broker mode
+- account status
+- trading blocked status
+- reason
+- changed flag
+- snapshot hash
+
+Common reasons:
+
+```text
+manual
+scheduled_morning
+scheduled_midday
+scheduled_after_close
+position_opened
+position_closed
+```
+
+### SystemEvent
+
+Represents significant internal state transitions.
+
+Examples:
+
+```text
+order.new
+order.filled
+position.opened
+position.close_requested
+position.closed
+risk_gate.blocked
+broker_activity.synced
+subscription.enabled
+subscription.disabled
+```
+
+System Events are the full internal audit log.
+
+### Dashboard vs Reports vs System Events
+
+The admin UI intentionally separates these views:
+
+```text
+Dashboard
+  Curated operational summary
+
+Reports
+  Account snapshots and broker-confirmed activity ledger
+
+System Events
+  Full internal audit log
+```
+
+The dashboard hides noisy/internal events such as broker activity syncs and low-level order status transitions. Reports and System Events remain complete audit views.
+
+---
 
 ## 📂 Project Structure
-```
-src/
-   app/
-      app.ts
-      server.ts
-   config/
-   controllers/
-   db/
-   errors/
-   integrations/
-      alpaca/
-   middleware/
-   routes/
-   services/
-   types/
-   validators/
-```
-### Relevant Data Files
+
 ```txt
-prisma/seed.ts
+src/
+  app/
+    app.ts
+    server.ts
+  config/
+  controllers/
+  db/
+  errors/
+  integrations/
+    alpaca/
+  middleware/
+  routes/
+  services/
+  types/
+  validators/
+  workers/
+
+apps/
+  admin-ui/
+
+prisma/
+  migrations/
+  schema.prisma
+  securities.json
 ```
-Main Prisma seed script. Upserts settings, strategies, exit profiles, securities, and subscriptions.
+
+Relevant data files:
+
 ```txt
 prisma/securities.json
 ```
-Static seed data for the full tradable security universe.
+
+Static seed data for the tradable security universe.
+
 ```txt
 src/types/securities.ts
 ```
+
 Shared TypeScript types for imported security seed data.
+
+---
 
 ## ➡️ Request Flow
 
 The Express app follows this general pattern:
+
+```text
+server.ts → app.ts → routes → controllers → services → database and/or Alpaca integration adapters
 ```
-server.ts
-  → app.ts
-    → routes
-      → controllers
-        → services
-          → database and/or Alpaca integration adapters
-```
+
 ### `server.ts`
 
-`server.ts` is the entry point. It creates the Express app and starts listening on the configured port.
+`server.ts` creates the Express app, starts the HTTP server, and starts background workers.
 
 ### `app.ts`
 
-`app.ts` builds the main Express application.
+`app.ts` builds the main Express application. It wires in:
 
-It wires in:
--   security middleware
--   JSON parsing
--   request logging
--   top-level routes
--   404 handler
--   central error handler
+- security middleware
+- JSON parsing
+- request logging
+- top-level routes
+- 404 handler
+- central error handler
 
 Example route mounting:
-```
-app.use('/api/account', accountRoutes);
-app.use('/api/orders', ordersRoutes);
-app.use('/api/bootstrap', bootstrapRoutes);
-```
-### Routes
 
-Route files define endpoint paths and connect them to controllers.
-
-Example:
-```
-router.get('/open', openOrdersController);
-router.post('/', placeOrderController);
-router.delete('/', cancelAllOrdersController);
-router.delete('/:orderId', cancelOrderController);
+```ts
+app.use('/health', healthRoutes);
+app.use('/api/bootstrap', requireAdminAccess, bootstrapRoutes);
+app.use('/api/system-status', requireAdminAccess, systemStatusRoutes);
+app.use('/api/account', requireAdminAccess, accountRoutes);
+app.use('/api/orders', requireAdminAccess, ordersRoutes);
 ```
 
 ### Controllers
 
-Controllers handle the HTTP request/response layer.
-
-They parse request params/body, call services, and return JSON responses.
-
-Controllers should not contain broker logic or database-heavy business logic.
+Controllers handle the HTTP request/response layer. They parse params/body, call services, and return JSON responses. Controllers should not contain broker logic or database-heavy business logic.
 
 ### Services
 
@@ -299,37 +494,41 @@ Services hold the business logic.
 
 Examples:
 
--   `place-order.service.ts` validates runtime config, checks securities, creates order intents, submits to Alpaca, and records broker orders.
--   `bootstrap.service.ts` gathers account, positions, open orders, and runtime config into one payload.
--   `config.service.ts` loads settings from PostgreSQL.
--   `order-audit.service.ts` handles order intent and broker order logging.
+- `place-order.service.ts` resolves and creates order intents.
+- `risk-gate.service.ts` enforces entry safety rules.
+- `order.worker.ts` submits pending orders and syncs order status.
+- `position-tracking.service.ts` syncs broker positions into tracked positions.
+- `account-snapshot.service.ts` records account snapshots.
+- `broker-activity.service.ts` imports Alpaca fill activity.
+- `config.service.ts` loads runtime settings from PostgreSQL.
+- `bootstrap.service.ts` gathers account, positions, open orders, config, and risk state.
+- `system-status.service.ts` gathers production readiness status.
 
 ### Integrations
 
-The `integrations/alpaca` folder isolates Alpaca-specific code.
+The `src/integrations/alpaca` folder isolates Alpaca-specific code. The backend normalizes Alpaca responses before returning them to n8n, the admin UI, or future clients.
 
-This keeps the rest of the backend from depending directly on Alpaca’s raw response shape.
-
-The backend normalizes Alpaca responses before returning them to n8n or future UI clients.
+---
 
 ## 🔐 API Authentication
 
-All protected API routes require an API key sent through a single shared header:
+The backend supports two broad access paths:
 
-```http
-ai-trader-api-key: <your_api_key>
-```
-The backend supports two API key roles:
+1. Signal API key access for automation clients such as n8n.
+2. Admin access through either an admin API key or admin login/session bearer token.
 
-Signal API Key
+### Signal API Key
+
 The signal key is intended for automation clients such as n8n.
 
 This key can:
+
 - Submit entry signals
 - Read current open tracked positions
 
 This key cannot:
-- Modify config/settings
+
+- Modify runtime config/settings
 - Modify securities
 - Create or edit strategies
 - Create or edit subscriptions
@@ -338,135 +537,83 @@ This key cannot:
 - Close positions manually
 - View full admin history
 
+### Admin Access
 
-Admin API Key
-The admin key is intended for manual control, Postman, and the future web dashboard.
+Admin access is intended for the web admin UI, Postman, and manual control.
 
-This key can access everything the signal key can access, plus:
+Admin access can manage:
+
 - Runtime config/settings
-- Security / symbol management
-- Strategy management
-- Exit profile management
-- Subscription management
+- Securities
+- Strategies
+- Exit profiles
+- Subscriptions
 - Manual order placement
 - Position close actions
 - Full position history
 - Order intent history
 - System event history
-- Environment Variables
+- Account snapshots
+- Broker activity sync
+- System status
 
-API keys are configured in .env:
-```
-AI_TRADER_SIGNAL_API_KEY=your_signal_key_here
-AI_TRADER_ADMIN_API_KEY=your_admin_key_here
+### Admin Authentication & Sessions
 
-# keys for HTTP requests as admin & signal/n8n
-AI_TRADER_SIGNAL_API_KEY=
-AI_TRADER_ADMIN_API_KEY=
-
-# Development tunnel only
-NGROK_AUTHTOKEN=your_ngrok_authtoken_here
-NGROK_DOMAIN=your_ngrok_dev_domain_here
-```
-
-Both keys use the same request header:
-```
-ai-trader-api-key: your_key_here
-```
-The backend decides access level by comparing the provided key against the signal/admin keys configured in the environment.
-
-For the admin UI, create:
-```
-    apps/admin-ui/.env
-```
-
-Example:
-```
-    VITE_API_BASE_URL=http://localhost:3000
-```
-
-### Roles
-
-The system supports two levels of access:
-
-#### 1. Signal-Level Access (Automation / n8n)
-
-- Submit trade signals
-- Read positions
-- Cannot modify system configuration
-
-#### 2. Admin-Level Access
-
-- Full system control:
-  - Strategies
-  - Subscriptions
-  - Exit Profiles
-  - Settings
-
-### Enforcement
-
-- Global middleware validates API key
-- Admin routes require elevated permissions
-
-### Design Principle
-
-This separation ensures:
-- Automation cannot accidentally modify system behavior
-- Manual control remains safe and intentional
-
-## 👤 Admin Authentication & Sessions
-
-The backend now supports admin login sessions for the web admin UI.
+The backend supports admin login sessions for the web admin UI.
 
 Admin authentication is separate from the signal API key system:
 
 - n8n uses the signal API key.
-- Admin tools may use either the admin API key or an admin session token.
+- Admin tools may use an admin API key or an admin session token.
 - The web admin UI uses admin login sessions.
 
-Admin users are stored in `AdminUser`.
+Admin users are stored in `AdminUser`. Admin sessions are stored in `AdminSession`. Passwords are stored as hashes, not plaintext.
 
-Admin sessions are stored in `AdminSession`.
+#### First Admin Bootstrap
 
-Passwords are stored as hashes, not plaintext.
+```http
+POST /api/admin-auth/bootstrap
+```
 
-### First Admin Bootstrap
+Creates the first admin account. Once an admin user exists, bootstrap is blocked.
 
-The first admin account can be created through a bootstrap endpoint:
+#### Login
 
-    POST /api/admin-auth/bootstrap
-
-This endpoint is intended only for first-time setup.
-
-Once an admin user exists, bootstrap is blocked.
-
-### Login
-
-    POST /api/admin-auth/login
+```http
+POST /api/admin-auth/login
+```
 
 Successful login returns a bearer token that the admin UI stores locally and sends through:
 
-    Authorization: Bearer <admin_session_token>
+```http
+Authorization: Bearer <token>
+```
 
-### Current Admin Session
+#### Current Admin Session
 
-    GET /api/admin-auth/me
+```http
+GET /api/admin-auth/me
+```
 
 Returns the current admin user and session when the token is valid.
 
-### Logout
+#### Logout
 
-    POST /api/admin-auth/logout
+```http
+POST /api/admin-auth/logout
+```
 
 Revokes the active admin session.
+
+---
 
 ## 💻 Admin UI
 
 The admin UI provides a browser-based control panel for monitoring and managing the AI Trader backend.
 
 Current admin sections include:
+
 - Dashboard
-- Live Data
 - Open Positions
 - Open Orders
 - Subscriptions
@@ -477,48 +624,99 @@ Current admin sections include:
 - Settings
 - Legacy Admin
 
+### Dashboard
+
+The Dashboard provides a curated live overview:
+
+- portfolio value
+- day P/L
+- cash
+- buying power
+- open positions
+- open orders
+- curated recent activity
+
+Recent Activity is intentionally not a raw mirror of System Events. It focuses on meaningful operational events such as:
+
+- position opened
+- position closed
+- close requested
+- risk/order blocks
+- subscription enabled/disabled
+
+### Reports
+
+The Reports page provides production audit visibility:
+
+- latest account snapshot summary
+- account snapshot history
+- broker activity / fills table
+- manual account snapshot button
+- manual broker fill sync button
+
+### Settings
+
+The Settings page manages runtime trading configuration and production status.
+
+It includes:
+
+- System Status card
+- Trading Controls
+- Entry Risk Limits
+- Admin password management
+
+The System Status card shows:
+
+- app/database health
+- broker mode alignment
+- worker/order counts
+- open/closing position counts
+- environment/config readiness checks
+- latest account snapshot
+- latest broker activity
+
+Trading Controls include:
+
+- Automated Trading
+- Kill Switch
+- Paper Trading Mode
+
+Entry Risk Limits include:
+
+- max daily entry orders
+- max daily entry notional
+- max open positions
+- max total open notional
+- max symbol open notional
+- max subscription open notional
+
+Changed risk settings are visually highlighted before save, and the Save button is enabled only when there are unsaved changes.
+
 ### Securities Control Panel
 
-The Securities section manages the full symbol registry used by the trading system. The registry currently supports 500+ securities and is designed to act as the main control panel for expanding, configuring, and disabling securities for trading.
+The Securities section manages the full symbol registry used by the trading system.
+
+The registry currently supports 500+ securities and is designed to act as the main control panel for expanding, configuring, and disabling securities for trading.
 
 The Securities list includes:
-- Server-side pagination
-- Configurable rows per page
-- Server-side search by symbol or company name
-- Server-side filtering by:
-  - Sector
-  - Industry
-  - Security status
-  - Subscription configuration status
-- Connected Sector → Industry filtering
-  - Selecting a sector limits the industry dropdown to valid industries within that sector
-  - Changing sector clears invalid industry selections
-- Server-side sorting by:
-  - Symbol
-  - Name
-  - Asset type
-  - Sector
-  - Industry
-  - Subscription count
-  - Enabled status
+
+- server-side pagination
+- configurable rows per page
+- server-side search by symbol or company name
+- server-side filtering by sector, industry, security status, and subscription configuration status
+- connected Sector → Industry filtering
+- server-side sorting
 - URL-persisted table state
-  - Pagination, filters, search, and sorting survive refreshes
-  - Detail-page navigation preserves the previous securities list state
-- Summary dashboard cards for:
-  - Total securities
-  - Enabled securities
-  - Disabled securities
-  - Configured securities
-  - Unconfigured securities
-  - Enabled subscriptions
-- Clickable summary cards that apply common quick filters
-- Subscription count column to distinguish configured and unconfigured securities
+- summary dashboard cards
+- subscription count column
+- security detail pages
 
 Each security has a detail page at:
 
 ```txt
 /securities/:symbol
 ```
+
 The security detail page includes:
 
 - Security metadata
@@ -527,63 +725,50 @@ The security detail page includes:
 - Subscription creation modal
 - Subscription editing modal
 - Subscription enable/disable controls
-- Toast notifications for successful or failed admin actions
-- Recent activity timeline based on system event audit logs
+- Toast notifications
+- Recent activity timeline based on system events
 
-The security-level enable/disable control acts as a master trading lockout. When a security is disabled, new buy/order-entry flow is blocked for that symbol. This does not prevent order cancellation or future sell/close-position behavior.
+The security-level enable/disable control acts as a master trading lockout for that symbol. When a security is disabled, new buy/order-entry flow is blocked for that symbol. This does not prevent order cancellation or future sell/close-position behavior.
 
-The Securities admin workflow now supports:
-
-```txt
-Find security
-→ Open detail page
-→ Enable/disable trading
-→ Create subscriptions
-→ Edit subscriptions
-→ Enable/disable subscriptions
-→ Review recent activity
-```
-
-The UI communicates with the backend through the same admin API routes used in Postman.
+---
 
 ## 🔌 n8n Integration Proof of Concept
+
 The backend has been successfully tested with a small n8n proof-of-concept workflow that sends trading signals into the Node API and reads current open positions back from the backend.
-This confirms that n8n can communicate with the local development backend through a public ngrok tunnel, using the same API key authentication model that will later be used in production.
 
-### What was tested
-The proof-of-concept n8n workflow includes:
-1. A manual trigger node.
-2. A setup node that stores the backend URL and API key.
-3. A code node that builds a sample entry signal payload.
-4. An HTTP Request node that sends the signal to:
-```http
-POST /api/signals/entry
-```
-5. A response parser node that normalizes both successful and failed responses.
-6. A second HTTP Request node that reads open tracked positions from:
-```http
-GET /api/tracked-positions/open
-```
-7. A response parser node for open position results.
+This confirms that n8n can communicate with the local development backend through a public ngrok tunnel, using signal-level authentication that will later be used in production.
 
-### Local development tunnel
+### What Was Tested
+
+The proof-of-concept workflow includes:
+
+1. Manual trigger node
+2. Setup node storing backend URL and API key
+3. Code node building a sample entry signal payload
+4. HTTP Request node sending the signal to `POST /api/signals/entry`
+5. Response parser node normalizing success/failure responses
+6. HTTP Request node reading open tracked positions from `GET /api/tracked-positions/open`
+7. Response parser node for open position results
+
+### Local Development Tunnel
+
 During local development, the backend can be exposed to n8n through ngrok.
-ngrok is installed as a development dependency and needs two environment variables to be set.
-```
-NGROK_AUTHTOKEN=auto generated token from ngrok
-NGROK_DOMAIN=unique url that exposes localhost
+
+Required environment variables:
+
+```env
+NGROK_AUTHTOKEN=your_ngrok_authtoken_here
+NGROK_DOMAIN=your_ngrok_dev_domain_here
 ```
 
-The project includes a development tunnel script:
+Start the tunnel:
+
 ```bash
 npm run dev:tunnel
 ```
-This starts an ngrok tunnel that forwards traffic to the local backend server:
-```http
-https://<ngrok-url> -> http://localhost:3000
-```
 
-A normal local development session now typically uses two terminals:
+A normal local development session often uses two terminals:
+
 ```bash
 npm run dev
 npm run dev:tunnel
@@ -591,43 +776,17 @@ npm run dev:tunnel
 
 The ngrok URL is then used by n8n as the backend base URL.
 
-#### Signal-level API access
-The n8n workflow uses the signal-level API key and sends it in the shared API header:
-```http
-ai-trader-api-key: <signal-api-key>
-```
-This allows n8n to perform only signal/client-level actions, such as:
-- Sending entry signals.
-- Reading current open positions.
+### Signal-Level API Access
 
-Admin-level actions remain protected by the admin API key and are not exposed to the n8n signal workflow.
+The n8n workflow uses the signal-level API key. This allows n8n to perform only signal/client-level actions, such as sending entry signals and reading current open positions.
 
-#### Error handling
-The n8n HTTP Request nodes are configured to continue on error so the workflow can inspect backend responses instead of failing immediately.
-This allows the workflow to handle expected backend responses such as:
-```http
-201 Created
-```
-for accepted entry signals, and:
-```http
-409 Conflict
-```
-for safely blocked signals, such as when a ticker already has an open or closing tracked position.
+Admin-level actions remain protected and are not exposed to the n8n signal workflow.
 
-The proof-of-concept confirmed that 409 responses from the backend can be parsed into a clean object containing:
-```json
-{
-  "ok": false,
-  "status": 409,
-  "error": "HttpError",
-  "message": "Entry signal blocked because SPY already has an open or closing tracked position.",
-  "details": null
-}
-```
+---
 
 ## 📈 Security Master / Symbol Registry
 
-The backend now uses `Security` as the canonical symbol registry.
+The backend uses `Security` as the canonical symbol registry.
 
 A `Security` represents a tradable symbol known to the system, such as a stock, ETF, index, fund, or other instrument. This replaces the older `AllowedTicker` model.
 
@@ -648,14 +807,13 @@ Core fields:
 
 This allows the backend and admin UI to treat symbols as first-class records instead of loose string values.
 
+---
 
 ## 💼 Asset-Class Trading Policy
 
-The backend treats ETF and stock behavior separately.
+The backend treats ETF and stock behavior separately. Asset type is stored on the `Security` model and is used to determine which strategy families are appropriate for a security.
 
-Asset type is stored on the `Security` model and is used to determine which strategy families are appropriate for a security.
-
-### ETF policy
+### ETF Policy
 
 ETFs are treated primarily as broad-market, index, or sector exposure trades.
 
@@ -669,7 +827,7 @@ ETF dip strategies can be more mechanical than single-stock dip strategies becau
 
 AI-confirmed dip subscriptions are not seeded for ETFs.
 
-### Stock policy
+### Stock Policy
 
 Stocks are treated as single-company trades and carry more company-specific risk.
 
@@ -692,17 +850,18 @@ Single-stock dip trades should account for:
 
 The `ai_confirmed_dip_stock` strategy is an entry filter only. It does not mean the AI controls the exit.
 
-### Policy enforcement
+### Policy Enforcement
 
 The seed file validates that each seeded subscription uses a strategy allowed for that security's asset type.
 
-For example:
+Examples:
 
-- ETFs may use `dip_n_ride_etf`
-- Stocks may use `dip_n_ride_stock`
-- Stocks may use `ai_confirmed_dip_stock`
-- ETFs may not use `ai_confirmed_dip_stock`
+- ETFs may use `dip_n_ride_etf`.
+- Stocks may use `dip_n_ride_stock`.
+- Stocks may use `ai_confirmed_dip_stock`.
+- ETFs may not use `ai_confirmed_dip_stock`.
 
+---
 
 ## ❎ Exit Profile Hierarchy
 
@@ -710,7 +869,7 @@ Exit profiles define how a position is managed after entry.
 
 They do not define:
 
-- the symbol
+- symbol
 - broker
 - account mode
 - sizing
@@ -718,25 +877,19 @@ They do not define:
 
 Those concerns belong to securities, subscriptions, and strategies.
 
-### ETF dip exits
+### ETF Dip Exits
 
-- `exit_etf_dip_core_target`
-  - Core ETF dip exit using a fixed recovery target.
-- `exit_etf_dip_conservative_bracket`
-  - Conservative ETF dip exit with fixed target and fixed stop.
-- `exit_etf_dip_aggressive_trailing`
-  - Aggressive ETF dip exit that allows trailing upside after the target behavior is satisfied.
+- `exit_etf_dip_core_target` — Core ETF dip exit using a fixed recovery target.
+- `exit_etf_dip_conservative_bracket` — Conservative ETF dip exit with fixed target and fixed stop.
+- `exit_etf_dip_aggressive_trailing` — Aggressive ETF dip exit that allows trailing upside after the target behavior is satisfied.
 
-### Stock dip exits
+### Stock Dip Exits
 
-- `exit_stock_dip_core_target`
-  - Core stock dip exit using a fixed recovery target.
-- `exit_stock_dip_conservative_bracket`
-  - Conservative stock dip exit with fixed target and fixed stop.
-- `exit_stock_dip_aggressive_trailing`
-  - Aggressive stock dip exit that allows trailing upside after the target behavior is satisfied.
+- `exit_stock_dip_core_target` — Core stock dip exit using a fixed recovery target.
+- `exit_stock_dip_conservative_bracket` — Conservative stock dip exit with fixed target and fixed stop.
+- `exit_stock_dip_aggressive_trailing` — Aggressive stock dip exit that allows trailing upside after the target behavior is satisfied.
 
-### Momentum exits
+### Momentum Exits
 
 Momentum exits are production-intended, but momentum subscriptions are not enabled by default yet.
 
@@ -747,165 +900,228 @@ Momentum exits are production-intended, but momentum subscriptions are not enabl
 
 Failed momentum trades should not be averaged down.
 
-### AI-assisted exit
+### AI-Assisted Exit
 
 - `exit_ai_assisted`
 
-This profile is reserved for future AI-assisted exit decisions and is disabled by default.
+This profile is reserved for future AI-assisted exit decisions and is disabled by default. Current AI usage is limited to `ai_confirmed_dip_stock`, which is an entry-confirmation strategy, not an AI-managed exit.
 
-Current AI usage is limited to `ai_confirmed_dip_stock`, which is an entry-confirmation strategy, not an AI-managed exit.
-
-### System test exit
+### System Test Exit
 
 - `exit_quick_test`
 
 This is a non-production exit profile used to validate the full signal → order → position → exit lifecycle.
 
+---
 
 ## ⚙️ Current API Endpoints
 
 ### Health
-```
+
+```http
 GET /health
 ```
-Returns a simple service health response.
 
-----------
+Public lightweight health check.
+
+Returns:
+
+- service name
+- environment
+- uptime
+- database reachability
+- timestamp
+
+This endpoint is intended for deployment checks.
+
+### System Status
+
+```http
+GET /api/system-status
+```
+
+Admin-protected production readiness endpoint.
+
+Returns:
+
+- health status
+- environment/config readiness
+- runtime trading config
+- risk status
+- worker counts
+- open/closing tracked position counts
+- latest account snapshot
+- latest broker activity
+
+This endpoint powers the Settings → System Status card.
 
 ### Bootstrap
-```
+
+```http
 GET /api/bootstrap
 ```
-Returns the main startup payload for n8n.
+
+Returns the main admin/dashboard bootstrap payload.
 
 Includes:
 
--   account summary
--   positions
--   open orders
--   runtime config
--   risk status
+- account summary
+- positions
+- open orders
+- runtime config
+- risk status
 
 Example shape:
-```
+
+```json
 {
- "account": {},
- "positions": [],
- "openOrders": [],
- "config": {
- "tradingEnabled": true,
- "paperMode": true,
- },
- "risk": {
- "canTrade": true,
- "reason": null
- }
+  "account": {},
+  "positions": [],
+  "openOrders": [],
+  "config": {
+    "tradingEnabled": true,
+    "paperMode": true,
+    "killSwitchEnabled": false,
+    "maxDailyEntryOrders": 5,
+    "maxDailyEntryNotional": 5000,
+    "maxOpenPositions": 5,
+    "maxTotalOpenNotional": 10000,
+    "maxSymbolOpenNotional": 5000,
+    "maxSubscriptionOpenNotional": 5000
+  },
+  "risk": {
+    "canEnter": true,
+    "reasons": [],
+    "broker": {
+      "name": "alpaca",
+      "mode": "paper",
+      "expectedMode": "paper",
+      "tradingBlocked": false
+    },
+    "limits": {},
+    "usage": {}
+  }
 }
 ```
-----------
 
 ### Account
-```
+
+```http
 GET /api/account
 ```
+
 Fetches normalized Alpaca account details.
 
 Important fields include:
 
--   cash
--   buying power
--   equity
--   portfolio value
--   day P/L
--   trading blocked status
+- cash
+- buying power
+- equity
+- portfolio value
+- day P/L
+- trading blocked status
+- paper/live mode
+
+### Account Snapshots
+
+```http
+GET /api/account-snapshots
+GET /api/account-snapshots/latest
+POST /api/account-snapshots/manual
+```
+
+Admin-protected account audit endpoints.
+
+Account snapshots record account-level state such as cash, buying power, equity, portfolio value, day P/L, broker mode, and snapshot reason.
+
+Manual snapshots are useful for debugging and production checkpoints.
+
+### Broker Activities
+
+```http
+GET /api/broker-activities
+GET /api/broker-activities/latest
+POST /api/broker-activities/sync
+```
+
+Admin-protected broker activity endpoints.
+
+The first supported broker activity type is Alpaca `FILL`.
+
+Broker activities are used as the broker-confirmed execution ledger and can be filtered by symbol and activity type.
+
+Example:
+
+```http
+GET /api/broker-activities?symbol=SPY&activityType=FILL&limit=20
+```
 
 ### Securities
+
 ```http
-GET   /api/securities
-GET   /api/securities/:symbol
-POST  /api/securities
+GET /api/securities
+GET /api/securities/:symbol
+POST /api/securities
 PATCH /api/securities/:symbol
 ```
 
-The backend uses the `Security` model as the canonical symbol registry. Related trading models such as `Subscription`, `BrokerOrder`, and `TrackedPosition` are linked back to securities through foreign keys.
-
+The backend uses the `Security` model as the canonical symbol registry.
 
 The primary securities list endpoint supports server-side pagination, filtering, sorting, and subscription counts.
 
-```txt
-GET /api/securities
-```
-
 Supported query params:
 
-- page
-- pageSize
-- search
-- sector
-- industry
-- enabled
-- subscriptionStatus
-- sortBy
-- sortDirection
+- `page`
+- `pageSize`
+- `search`
+- `sector`
+- `industry`
+- `enabled`
+- `subscriptionStatus`
+- `sortBy`
+- `sortDirection`
 
 Example:
 
 ```http
 GET /api/securities?page=1&pageSize=50&sector=Information%20Technology&subscriptionStatus=configured&sortBy=subscriptionCount&sortDirection=desc
 ```
-Response shape:
-```json
-{
-  "securities": [],
-  "data": [],
-  "pagination": {
-    "page": 1,
-    "pageSize": 50,
-    "total": 521,
-    "totalPages": 11
-  },
-  "filters": {
-    "sectors": [],
-    "industries": []
-  }
-}
-```
-
-----------
 
 ### Positions
 
-- `GET /api/tracked-positions` → All positions (history)
-- `GET /api/tracked-positions/open` → Open positions only
-- `DELETE /api/positions/:symbol` → Close position
+```http
+GET /api/tracked-positions
+GET /api/tracked-positions/open
+DELETE /api/positions/:symbol
+```
 
-----------
-
-### Exit System
-
-- Automated via background worker (no direct endpoint)
-
-----------
+- `GET /api/tracked-positions` returns all positions, including history.
+- `GET /api/tracked-positions/open` returns active positions only.
+- `DELETE /api/positions/:symbol` requests a broker close for the symbol.
 
 ### Open Orders
-```
+
+```http
 GET /api/orders/open
 ```
+
 Fetches normalized open Alpaca orders.
 
 ### Signals
+
 ```http
 POST /api/signals/entry
 ```
 
 Primary endpoint for n8n-driven entry signals.
 
-This is the preferred automation entrypoint. Instead of n8n sending full order instructions, it sends a subscription key and signal metadata. The backend resolves the subscription, validates the request, determines sizing, creates an order intent, and submits the order asynchronously.
+Instead of n8n sending full order instructions, it sends a subscription key and signal metadata. The backend resolves the subscription, validates the request, determines sizing, creates an order intent, and submits the order asynchronously.
 
 Example request:
+
 ```json
 {
-  "subscriptionKey": "dip_n_ride_spy_paper",
+  "subscriptionKey": "spy_dip_core",
   "reason": "SPY dip signal triggered",
   "source": "n8n-ai-trader",
   "confidence": "high",
@@ -918,11 +1134,12 @@ Example request:
 ```
 
 Example response:
+
 ```json
 {
   "ok": true,
   "signal": {
-    "subscriptionKey": "dip_n_ride_spy_paper",
+    "subscriptionKey": "spy_dip_core",
     "signalType": "entry",
     "source": "n8n-ai-trader"
   },
@@ -935,37 +1152,43 @@ Example response:
 ```
 
 Entry signals are blocked if:
-- The subscription is disabled
-- The subscription strategy is disabled
-- The subscription exit profile is disabled
-- The ticker is not allowed
-- Trading is disabled
-- The Alpaca account is trading-blocked
-- The ticker already has an open or closing tracked position
 
-This route is available to the signal API key and the admin API key.
+- automated trading is disabled
+- kill switch is active
+- subscription is disabled
+- subscription strategy is disabled
+- subscription exit profile is disabled
+- security is disabled
+- broker account is trading-blocked
+- runtime broker mode does not match connected broker mode
+- symbol already has an open or closing tracked position
+- daily entry order limit is reached
+- daily entry notional limit would be exceeded
+- max open position limit would be exceeded
+- total open exposure limit would be exceeded
+- per-symbol exposure limit would be exceeded
+- per-subscription exposure limit would be exceeded
 
-
-### Admin: Strategies
+### Strategies
 
 ```http
 GET /api/strategies
 ```
 
-Returns configured strategy records.
+Returns configured strategy records. Strategies are high-level reporting and grouping categories such as Dip N Ride, Momentum, or quick test strategies.
 
-Strategies are mostly used as high-level reporting and grouping categories. They describe the broad trading logic bucket, such as Dip N Ride, Momentum, or quick test strategies.
+### Exit Profiles
 
-Admin-only route.
-```js
-Admin: Exit Profiles
-GET   /api/exit-profiles
-POST  /api/exit-profiles
+```http
+GET /api/exit-profiles
+POST /api/exit-profiles
 PATCH /api/exit-profiles/:id
 ```
+
 Exit profiles define how positions should be closed once opened.
 
-Current exit profile fields include:
+Current fields include:
+
 - key
 - name
 - description
@@ -977,64 +1200,65 @@ Current exit profile fields include:
 - takeProfitBehavior
 - enabled
 
-Exit profiles are linked to subscriptions, allowing each subscription to define its own position exit behavior.
+### Subscriptions
 
-Admin-only routes.
-
-Admin: Subscriptions
-```js
-GET   /api/subscriptions
-GET   /api/subscriptions/:key
-POST  /api/subscriptions
+```http
+GET /api/subscriptions
+GET /api/subscriptions/:key
+POST /api/subscriptions
 PATCH /api/subscriptions/:id
 ```
 
 Subscriptions are the main deployment object for strategy execution.
 
 A subscription connects:
-- Ticker
-- Broker
-- Broker mode
-- Position sizing
-- Strategy
-- Exit profile
-- Enabled/disabled state
+
+- security/symbol
+- broker
+- broker mode
+- position sizing
+- strategy
+- exit profile
+- enabled/disabled state
 
 Example subscription:
+
 ```json
 {
-  "key": "dip_n_ride_spy_paper",
-  "name": "Dip N Ride - SPY Paper",
+  "key": "spy_dip_core",
+  "name": "SPY Dip Core",
   "symbol": "SPY",
   "broker": "alpaca",
   "brokerMode": "paper",
   "sizingType": "fixed_qty",
   "sizingValue": 1,
   "strategyKey": "dip_n_ride_etf",
-  "exitProfileKey": "target_2pct_trail_0_5pct",
+  "exitProfileKey": "exit_etf_dip_core_target",
   "enabled": true
 }
 ```
 
-The backend enforces that only one enabled subscription can exist for the same symbol/broker/brokerMode combination. This prevents duplicate active deployments for the same ticker in the same broker environment while still allowing disabled test subscriptions to exist.
-
+Multiple enabled subscriptions are supported when they represent distinct strategy/exit configurations. The risk gate still prevents a symbol from opening multiple active tracked positions at the same time.
 
 ### Place Order
-```js
+
+```http
 POST /api/orders
 ```
-Manual/admin order placement endpoint.
 
-This route is primarily intended for admin use, testing, and fallback manual actions. The preferred n8n automation path is:
+Manual/admin order placement endpoint. This route is primarily intended for admin use, testing, and fallback manual actions.
 
-Subscription-driven example:
+Preferred n8n automation path:
+
 ```json
 {
-  "subscriptionKey": "dip_n_ride_spy_paper",
+  "subscriptionKey": "spy_dip_core",
   "signalType": "entry"
 }
 ```
+
 Direct/manual market order example:
+
 ```json
 {
   "symbol": "SPY",
@@ -1044,415 +1268,253 @@ Direct/manual market order example:
   "qty": 1
 }
 ```
-Direct/manual limit order example:
+
+Response:
+
 ```json
 {
-  "symbol": "AAPL",
-  "side": "buy",
-  "orderType": "limit",
-  "timeInForce": "day",
-  "qty": 1,
-  "limitPrice": 150,
-  "extendedHours": true
+  "ok": true,
+  "intentId": 11,
+  "status": "pending"
 }
 ```
-Backend validation currently checks:
 
--   trading is enabled
--   ticker is allowed
--   account is not trading-blocked
--   order request schema is valid
+Notes:
 
- Note: `clientOrderId` generation is handled on the backend.
- 
-### Response
-```
-{
- "ok": true,
- "intentId": 11,
- "status": "pending"
-}
-```
-----------
+- Order execution is asynchronous.
+- Use `/api/order-intents/:id` to track status.
+- Final execution status is determined by worker + broker sync.
+- `clientOrderId` generation is handled by the backend.
 
-### Notes
+### Cancel Orders
 
--   Order execution is asynchronous
--   Use `/api/order-intents/:id` to track status
--   Final execution status is determined by worker + broker sync
-
-----------
-
-### Cancel One Order
-```
+```http
 DELETE /api/orders/:orderId
-```
-Cancels a single open Alpaca order by broker order ID.
-
-Example:
-```
-DELETE /api/orders/abc-123
-```
-----------
-
-### Cancel All Open Orders
-```
 DELETE /api/orders
 ```
-Requests cancellation of all open Alpaca orders.
 
-----------
+- `DELETE /api/orders/:orderId` cancels a single open Alpaca order by broker order ID.
+- `DELETE /api/orders` requests cancellation of all open Alpaca orders.
 
 ### Order Intents
-```
+
+```http
 GET /api/order-intents
+GET /api/order-intents/:id
 ```
-Returns recent order intent audit records.
 
-This is the beginning of the backend audit trail.
+Returns order intent audit records.
 
-Each order request creates an `OrderIntent` before the backend attempts to submit anything to Alpaca.
+Possible statuses include:
 
-Possible statuses:
+- `received`
+- `pending`
+- `submitting`
+- `submitted`
+- `filled`
+- `blocked`
+- `failed`
+- `rejected`
+- `duplicate`
 
--   `received`
--   `blocked`
--   `submitted`
--   `duplicate`
--   `rejected`
+## 📡 System Events
 
-### Includes
-
-- Linked `brokerOrders`
-- Current execution status
-- Generated `clientOrderId`
-
----
-
-### Notes
-
-- `status` reflects latest known broker state
-- May update shortly after submission due to async processing
-
-## ⚙️ Order Processing Architecture (Async)
-
-Orders are processed asynchronously using a two-phase system:
-
-### 1. Intent Creation (API Layer)
-
-When a client submits an order:
-
-- A new `orderIntent` is created in the database
-- The backend generates a unique `clientOrderId`  (combination of ticker, ordertype, timestamp & uuid)
-- The order is marked as `pending`
-- The API immediately returns a response
-
-```json
-{
-"ok": true,
-"intentId": 123,
-"status": "pending"
-}
-```
-### 2. Worker Processing (Background Loop)
-
-A background worker runs every few seconds:
-
--   Picks up `pending` intents
--   Submits orders to Alpaca
--   Stores the resulting `brokerOrder`
--   Updates status → `submitted`
-
-----------
-
-### 3. Status Synchronization
-
-Another loop continuously:
-
--   Fetches open orders from Alpaca
--   Matches them to `brokerOrders`
--   Updates intent status (`submitted → filled`, etc.)
--   Emits system events
-
-----------
-
-### Why this design?
-
--   Prevents API blocking
--   Supports retries + resilience
--   Enables event-driven strategies
--   Decouples trading logic from request timing
-
----
-## 🔄Order Lifecycle
-
-An order progresses through the following states:
-
-| Status      | Description |
-|------------|------------|
-| `received`  | API received request |
-| `pending`   | Waiting for worker processing |
-| `submitted` | Sent to broker |
-| `filled`    | Fully executed |
-| `rejected`  | Broker rejected order |
-| `blocked`   | Prevented by risk/config |
-| `duplicate` | Duplicate clientOrderId detected |
-
----
-
-### Example Flow
- 
-received → pending → submitted → filled
-
-----------
-
-### Notes
-
--   Status transitions are driven by the worker, not the API
--   `filled` is determined via Alpaca sync, not immediate response
-
-
----
-
-## 📡 System Events  (Event Log)
-
-All important state changes are logged as events.
-```
+```http
 GET /api/system-events
+GET /api/system-events/security-activity/:symbol?limit=10
 ```
 
-### Example Events
+System Events form the full internal audit log.
 
-- `order.submitted`
+Example events:
+
+- `order.new`
+- `order.filled`
 - `position.opened`
 - `position.close_requested`
 - `position.closed`
 - `exit.triggered`
+- `risk_gate.blocked`
+- `broker_activity.synced`
+- `subscription.enabled`
+- `subscription.disabled`
 
-These events form the foundation for:
-- Logging
-- Auditing
-- Future analytics
-- UI updates
-
----
-
-### Event Structure
+Example event shape:
 
 ```json
 {
- "id": 1,
- "type": "order.filled",
- "entityType": "orderIntent",
- "entityId": 11,
- "payloadJson": {
- "symbol": "QQQ",
- "side": "buy",
- "previousStatus": "submitted",
- "nextStatus": "filled"
- },
- "processed": false,
- "createdAt": "..."
-}
-```
-
-### Purpose
-
--   Audit trail
--   Debugging
--   Future automation triggers
--   Foundation for exit strategies
-
-----------
-
-## 🔁 Background Workers
-
-The system runs continuous polling loops:
-
-### Order Processing Worker
-
-- Runs every ~2 seconds
-- Processes `pending` intents
-- Submits orders to Alpaca
-
----
-
-### Sync Worker
-
-- Runs every ~2 seconds
-- Fetches broker order updates
-- Updates intent statuses
-- Emits system events
-
----
-
-### Design Notes
-
-- Simple polling (no queues yet)
-- Eventually replaceable with:
-- Redis queues
-- Webhooks
-- Streaming APIs
-
----
-
-## 📝 Admin Audit Events
-
-Admin control actions are recorded as `SystemEvent` records.
-
-The `SystemEvent` model includes a readable `message` field and structured `payloadJson` data.
-
-Admin audit events are created for:
-
-- Security updated
-- Security trading enabled
-- Security trading disabled
-- Subscription created
-- Subscription updated
-- Subscription enabled
-- Subscription disabled
-
-Example security audit payload:
-```json
-{
-  "symbol": "AAPL",
-  "changedFields": ["enabled"],
-  "before": {
-    "enabled": true
+  "id": 1,
+  "type": "order.filled",
+  "entityType": "orderIntent",
+  "entityId": "11",
+  "payloadJson": {
+    "symbol": "QQQ",
+    "side": "buy",
+    "previousStatus": "submitted",
+    "nextStatus": "filled"
   },
-  "after": {
-    "enabled": false
-  }
-}
-```
-Example subscription audit payload:
-```json
-{
-  "subscriptionId": 28,
-  "subscriptionKey": "aapl_dip_core",
-  "symbol": "AAPL",
-  "changedFields": ["sizingValue", "exitProfileId"],
-  "before": {
-    "sizingValue": 1,
-    "exitProfileId": 2
-  },
-  "after": {
-    "sizingValue": 2,
-    "exitProfileId": 4
-  }
+  "processed": false,
+  "createdAt": "..."
 }
 ```
 
-Security detail pages display recent activity using:
-```http
-GET /api/system-events/security-activity/:symbol?limit=10
-```
-This endpoint returns both:
+---
 
-- Security events where entityType = security and entityId = symbol
-- Subscription events where payloadJson.symbol = symbol
+## ⚙️ Order Processing Architecture (Async)
 
+Orders are processed asynchronously using a two-phase system.
+
+### 1. Intent Creation
+
+When a client submits an order:
+
+- A new `OrderIntent` is created.
+- The backend generates a unique, stable `clientOrderId`.
+- The intent is marked `pending`.
+- The API immediately returns the intent ID.
+
+### 2. Worker Processing
+
+The order worker:
+
+- Finds pending intents.
+- Atomically claims each intent with `pending → submitting`.
+- Submits the order to Alpaca using the existing `OrderIntent.clientOrderId`.
+- Stores the resulting `BrokerOrder`.
+- Updates the intent status to `submitted`.
+
+### 3. Status Synchronization
+
+The sync worker:
+
+- Fetches broker order updates.
+- Matches them to `BrokerOrder` records.
+- Updates intent/broker order statuses.
+- Emits system events for status transitions.
+
+Status updates are guarded so duplicate worker ticks do not emit duplicate lifecycle events.
+
+---
 
 ## 🆔 Client Order ID Strategy
 
 The backend generates unique `clientOrderId` values:
-```
-ai-{timestamp}-{symbol}-{side}-{random}
+
+```text
+ai-{timestamp}-{symbol}-{side}-{orderType}-{random}
 ```
 
-### Example
-```
+Example:
+
+```text
 ai-20260427T155054-QQQ-buy-market-1c277020
 ```
 
+Why this matters:
+
+- Prevents duplicate order submission.
+- Survives fast worker polling.
+- Enables reliable broker matching.
+- Gives Alpaca a stable idempotency key.
+
+The order worker must reuse the `clientOrderId` stored on the `OrderIntent`. It should not generate a fresh client order ID during broker submission.
+
 ---
-
-### Why?
-
-- Prevents duplicate order submission
-- Survives database resets
-- Enables reliable broker matching
-
-----------
 
 ## 📇 Database
 
 PostgreSQL runs locally through Docker Compose.
 
-Current Prisma models:
+Current Prisma models include:
 
--   `Setting`
--   `AdminUser`
--   `AdminSession`
--   `Security`
--   `OrderIntent`
--   `BrokerOrder`
--   `SystemEvent`
--   `TrackedPosition`
--   `Strategy`
--   `ExitProfile`
--   `Subscription`
+- `Setting`
+- `AdminUser`
+- `AdminSession`
+- `Security`
+- `Strategy`
+- `ExitProfile`
+- `Subscription`
+- `OrderIntent`
+- `BrokerOrder`
+- `BrokerActivity`
+- `TrackedPosition`
+- `AccountSnapshot`
+- `SystemEvent`
 
-### `Setting`
+### Setting
 
-Stores runtime trading settings.
+Stores runtime trading and risk settings.
 
 Current keys:
-```
+
+```text
 tradingEnabled
 paperMode
+killSwitchEnabled
+maxDailyEntryOrders
+maxDailyEntryNotional
+maxOpenPositions
+maxTotalOpenNotional
+maxSymbolOpenNotional
+maxSubscriptionOpenNotional
 ```
-### `Security`
 
-Canonical symbol registry for tradable instruments.
+### Security
 
-A security stores the symbol, display name, enabled state, asset type, and optional classification metadata.
+Canonical symbol registry for tradable instruments. A security stores the symbol, display name, enabled state, asset type, and optional classification metadata.
 
-It is linked to:
+Linked to:
 
 - `Subscription`
 - `TrackedPosition`
 - `BrokerOrder`
 
-This makes symbol-level controls part of the data model instead of relying on a separate allowlist table.
+### OrderIntent
 
-### `OrderIntent`
+Logs every order request received by the backend before broker submission. This includes blocked and rejected requests.
 
-Logs every order request received by the backend before broker submission.
+### BrokerOrder
 
-This includes blocked and rejected requests.
+Logs broker order responses from Alpaca.
 
-### `BrokerOrder`
+### BrokerActivity
 
-Logs broker responses from Alpaca for submitted or duplicate orders.
+Stores broker-confirmed Alpaca account activities.
 
-### `SystemEvent`
+Currently used for `FILL` activity imports. These records are separate from `SystemEvent` because they represent broker-confirmed execution history rather than internal app state transitions.
 
-All state change events are logged.
+### AccountSnapshot
 
-### `TrackedPosition`
+Stores account-level audit snapshots from Alpaca account state.
 
-Current state of open positions.
+Used for scheduled checkpoints, manual snapshots, and position lifecycle snapshots.
 
-### `Strategy`
+### TrackedPosition
 
-Top-level/reusable trading logic identity.
-e.g. Dip n Ride, Momentum.
+Stores the current known state of broker positions, plus historical closed records.
 
-### `ExitProfile`
+### SystemEvent
 
-Key decisions for strategy involve exit points. 
-e.g. fixed target (without stop), fixed target with stop, trailing stop after fixed target is hit
+Stores internal state transition events for audit and UI activity feeds.
 
-### `Subscription`
+### Strategy
 
-Symbol-specific deployment of a strategy. Contains Symbol, position size (qty: 1), broker. It is connected to its parent strategy and an exit profile.
-e.g. Dip N Ride - QQQ
+Top-level/reusable trading logic identity, such as Dip N Ride, Momentum, or quick test strategies.
 
+### ExitProfile
 
-## Seed Data
+Configurable exit rules attached to subscriptions.
+
+### Subscription
+
+Symbol-specific deployment of a strategy and exit profile with sizing and enable/disable state.
+
+---
+
+## 🌱 Seed Data
 
 The project uses Prisma seed data to populate required reference/configuration tables for local development and production setup.
+
 Seeded data currently includes:
 
 - Settings
@@ -1463,19 +1525,23 @@ Seeded data currently includes:
 
 ### Securities
 
-Tradable securities are now seeded from a static JSON file:
+Tradable securities are seeded from:
 
 ```txt
 prisma/securities.json
 ```
 
-This file contains the full tradable security universe for the AI Trader. The current list includes:
-- Core ETFs used by the strategy engine (SPY, QQQ, DIA, IWM & RSP )
+This file contains the full tradable security universe for the AI Trader.
+
+The current list includes:
+
+- Core ETFs used by the strategy engine: SPY, QQQ, DIA, IWM, RSP
 - S&P 500 constituents
 - Nasdaq-100 additions not already included in the S&P 500
 - Dow components included through index overlap
 
 Each security includes:
+
 - symbol
 - name
 - assetType
@@ -1483,41 +1549,38 @@ Each security includes:
 - industry
 
 The TypeScript shape for this seed data is defined in:
+
 ```txt
 src/types/securities.ts
 ```
-This keeps the seed file clean while allowing the same security data shape to be reused elsewhere in the backend.
 
 ### Subscriptions
 
 Subscriptions are strategy-specific trading configurations attached to securities.
 
-The full security universe is seeded into the Security table, but subscriptions are intentionally seeded only for a curated list of actively tested symbols by default.
-
-This prevents the seed process from automatically creating thousands of strategy subscriptions before the system is ready to manage them at scale.
+The full security universe is seeded into the `Security` table, but subscriptions are intentionally seeded only for a curated list of actively tested symbols by default. This prevents the seed process from automatically creating thousands of strategy subscriptions before the system is ready to manage them at scale.
 
 By default, the curated subscription list includes:
 
-- SPY, QQQ, DIA, IWM, RSP,
-- AAPL, AMZN, GOOG, META, MSFT, NVDA, TSLA, AMD
-
-Multiple enabled subscriptions are allowed for the same security, broker, and broker mode. This supports independent strategy configurations, such as:
-```ts
-<symbol>_dip_core
-<symbol>_dip_conservative
-<symbol>_dip_aggressive
-<symbol>_dip_ai_assisted
-<symbol>_test_momentum
-```
-
-The full securities table can therefore support future expansion, reporting, filtering, and AI-driven candidate selection, while the active subscription set remains controlled.
-
+- SPY
+- QQQ
+- DIA
+- IWM
+- RSP
+- AAPL
+- AMZN
+- GOOG
+- META
+- MSFT
+- NVDA
+- TSLA
+- AMD
 
 ### Subscription Templates
 
 Subscriptions are generated from asset-class-aware templates during seeding.
 
-A subscription defines the execution configuration for a security:
+A subscription defines:
 
 - symbol
 - broker
@@ -1530,7 +1593,7 @@ A subscription defines the execution configuration for a security:
 
 A subscription does not define the strategy thesis itself or the exit mechanics directly. It links a security to a strategy and an exit profile.
 
-#### ETF seeded subscriptions
+#### ETF Seeded Subscriptions
 
 ETFs receive:
 
@@ -1541,7 +1604,7 @@ ETFs receive:
 - `{symbol}_momentum_core`
 - `{symbol}_test_momentum`
 
-#### Stock seeded subscriptions
+#### Stock Seeded Subscriptions
 
 Stocks receive:
 
@@ -1553,7 +1616,7 @@ Stocks receive:
 - `{symbol}_ai_confirmed_dip`
 - `{symbol}_test_momentum`
 
-#### Default enabled state
+#### Default Enabled State
 
 Only `dip_core` subscriptions are enabled by default.
 
@@ -1568,25 +1631,6 @@ All other subscription variants are seeded but disabled:
 
 This allows the admin UI to show the intended production structure while keeping the initial paper-trading launch conservative.
 
-----------
-
-## 🗝 Environment Variables
-
-Create a `.env` file in the project root.
-
-Use `.env.example` as the template:
-```
-PORT=3000
-NODE_ENV=development
-
-ALPACA_API_KEY=
-ALPACA_API_SECRET=
-ALPACA_BASE_URL=https://paper-api.alpaca.markets
-
-DATABASE_URL=postgresql://trader:traderpass@localhost:5432/ai_trader
-```
-Never commit `.env`.
-
 ### Seed Environment Variables
 
 #### `SEED_ALL_SECURITY_SUBSCRIPTIONS`
@@ -1598,121 +1642,211 @@ Default behavior:
 ```env
 SEED_ALL_SECURITY_SUBSCRIPTIONS=false
 ```
-When unset or set to anything other than true, the seed process creates subscriptions only for the curated active/testing universe.
+
+When unset or set to anything other than `true`, the seed process creates subscriptions only for the curated active/testing universe.
 
 To create subscriptions for every seeded security:
+
 ```env
 SEED_ALL_SECURITY_SUBSCRIPTIONS=true
 ```
 
-Use this carefully. Enabling this creates multiple subscriptions per security and can significantly increase the size of the Subscription table.
+Use this carefully. Enabling this creates multiple subscriptions per security and can significantly increase the size of the `Subscription` table.
 
-----------
+---
+
+## 🗝 Environment Variables
+
+Create a `.env` file in the project root.
+
+Use `.env.example` as the template.
+
+```env
+PORT=3000
+NODE_ENV=development
+
+DATABASE_URL=postgresql://trader:traderpass@localhost:5432/ai_trader
+
+ALPACA_API_KEY=
+ALPACA_API_SECRET=
+ALPACA_BASE_URL=https://paper-api.alpaca.markets
+
+AI_TRADER_SIGNAL_API_KEY=
+AI_TRADER_ADMIN_API_KEY=
+
+# Development tunnel only
+NGROK_AUTHTOKEN=
+NGROK_DOMAIN=
+```
+
+Never commit `.env`.
+
+### Admin UI Environment
+
+Create:
+
+```txt
+apps/admin-ui/.env
+```
+
+Example:
+
+```env
+VITE_API_BASE_URL=http://localhost:3000
+```
+
+The admin UI does not need broker secrets. It authenticates through the backend login/session flow and sends the returned bearer token to protected admin routes.
+
+---
 
 ## 💻 Local Setup
 
-### 1. Install dependencies
+### 1. Install Backend Dependencies
+
+```bash
+npm install
 ```
-   npm install
-```
+
 ### 2. Start Postgres
-```
-   docker compose up -d
-```
-### 3. Run Prisma migrations
-```
-   npx prisma migrate dev
-```
-### 4. Generate Prisma client
-```
-   npx prisma generate
-```
-### 5. Run Prisma client
-```
-   npx prisma studio
-```
-### 6. Seed default settings, securities, strategies, exit profiles, and subscriptions
-```
-   npx tsx src/db/seed.ts
-```
-### 7. Start the backend
-```
-   npm run dev
-```
-Default local URL:
 
-   http://localhost:3000
+```bash
+docker compose up -d
+```
 
-### 7. Install admin UI dependencies
+### 3. Run Prisma Migrations
+
+```bash
+npx prisma migrate dev
 ```
-    cd apps/admin-ui
-    npm install
+
+### 4. Generate Prisma Client
+
+```bash
+npx prisma generate
 ```
+
+### 5. Seed Default Settings, Securities, Strategies, Exit Profiles, and Subscriptions
+
+```bash
+npx tsx src/db/seed.ts
+```
+
+### 6. Start Backend
+
+```bash
+npm run dev
+```
+
+Default local backend URL:
+
+```text
+http://localhost:3000
+```
+
+### 7. Install Admin UI Dependencies
+
+```bash
+cd apps/admin-ui
+npm install
+```
+
 ### 8. Start Admin UI
-```
-    npm run dev
+
+```bash
+npm run dev
 ```
 
 Default local admin UI URL:
 
-    http://localhost:5173
+```text
+http://localhost:5173
+```
 
-----------
+---
 
 ## ⌨️ Useful Commands
 
 Start backend in dev mode:
+
+```bash
+npm run dev
 ```
-   npm run dev
-```
+
 Start admin UI in dev mode:
+
+```bash
+cd apps/admin-ui
+npm run dev
 ```
-   cd apps/admin-ui
-   npm run dev
+
+Type-check backend:
+
+```bash
+npm run check
 ```
-Type-check:
+
+Build backend:
+
+```bash
+npm run build
 ```
-   npm run check
+
+Build admin UI:
+
+```bash
+cd apps/admin-ui
+npm run build
 ```
-Build:
-```
-   npm run build
-```
+
 Start Postgres:
+
+```bash
+docker compose up -d
 ```
-   docker compose up -d
-```
+
 Stop Postgres:
+
+```bash
+docker compose down
 ```
-   docker compose down
-```
+
 Run migrations:
+
+```bash
+npx prisma migrate dev
 ```
-   npx prisma migrate dev
-```
+
 Open Prisma Studio:
+
+```bash
+npx prisma studio
 ```
-   npx prisma studio
-```
+
 Seed database:
+
+```bash
+npx tsx src/db/seed.ts
 ```
-   npx tsx src/db/seed.ts
+
+Run local ngrok tunnel:
+
+```bash
+npm run dev:tunnel
 ```
-----------
+
+---
 
 ## 📄 Development Notes
 
 The backend intentionally uses normalized response shapes.
 
-Alpaca returns many numeric fields as strings. The backend converts key values to numbers before returning them to n8n or future UI clients.
-
-This protects the rest of the AI Trader system from depending on raw Alpaca response formats.
+Alpaca returns many numeric fields as strings. The backend converts key values to numbers before returning them to n8n, the admin UI, or future clients. This protects the rest of the AI Trader system from depending on raw Alpaca response formats.
 
 ### Admin UI Bundle Warning
 
-The admin UI build may show a Vite warning about chunks larger than 500 kB.
+The admin UI build may show a Vite warning about chunks larger than 500 kB. This is currently treated as a non-blocking performance warning.
 
-This is currently treated as a non-blocking performance warning. The admin UI is an internal control panel, and the build completes successfully.
+The admin UI is an internal control panel, and the build completes successfully.
 
 Potential future optimization:
 
@@ -1720,59 +1854,114 @@ Potential future optimization:
 - Code splitting for heavier feature areas
 - Bundle analysis if first-load performance becomes a problem
 
-----------
+---
 
 ## 🛡 Current Safety Controls
 
 The backend currently protects trading and configuration changes with:
 
 - API key authentication
+- Admin login sessions
 - Separate signal-level and admin-level access
-- Single shared API key header: `ai-trader-api-key`
-- Ticker allowlist
 - Runtime `tradingEnabled` setting
+- Runtime `killSwitchEnabled` setting
 - Paper/live mode setting
 - Alpaca account `tradingBlocked` check
+- Broker mode matching
 - Zod schema validation
-- Backend-generated `clientOrderId`
+- Security enable/disable checks
+- Subscription enable/disable checks
+- Strategy enable/disable checks
+- Exit profile enable/disable checks
+- Daily entry order limit
+- Daily entry notional limit
+- Max open position limit
+- Total open notional limit
+- Per-symbol exposure limit
+- Per-subscription exposure limit
+- Backend-generated stable `clientOrderId`
+- Atomic order worker claim: `pending → submitting`
 - Duplicate broker order protection
+- Open/closing position guard for entry signals
+- Atomic tracked-position lifecycle transitions
 - Order intent audit logging
 - Broker order audit logging
+- Broker activity/fill import
+- Account snapshot audit logging
 - System event logging
-- Open/closing position guard for entry signals
-- Subscription enabled/disabled checks
-- Strategy enabled/disabled checks
-- Exit profile enabled/disabled checks
-- One-enabled-subscription-per-symbol/broker/brokerMode guard
 
 The intended production separation is:
 
 ```text
-n8n / automation → signal API key → signal routes only
-Admin dashboard / Postman → admin API key → full management routes
+n8n / automation
+  → signal API key
+  → signal routes only
+
+Admin UI / Postman
+  → admin login session or admin API key
+  → full management routes
 ```
+
 This prevents automation clients from accidentally changing strategy configuration, subscription sizing, exit rules, or global trading settings.
 
-----------
+---
 
 ## 🧭 Roadmap
 
-Near-term:
+### Recently Completed
 
-- Add account snapshot logging
-- Add broker activity/fill endpoint
-- Deploy backend to Hostinger
-- Configure production API keys/secrets
-- Add production logging/monitoring checks
+Production-readiness foundation:
 
-Longer-term:
+- Centralized entry risk gate
+- Kill switch
+- Runtime entry risk settings
+- Risk controls in Settings UI
+- Account snapshots
+- Broker activity / fill import
+- Reports UI for account snapshots and broker activity
+- Worker idempotency fixes
+- Duplicate broker submission prevention
+- Duplicate position lifecycle event prevention
+- Curated dashboard Recent Activity feed
+- Health endpoint
+- Admin-protected system status endpoint
+- System Status card in Settings
 
-- Replace more Google Sheet state with database tables
+### Near-Term Production Launch Work
+
+- Finalize production `.env` template and deployment checklist
+- Confirm production seed behavior
+- Confirm default production launch state:
+  - `tradingEnabled=false`
+  - `paperMode=true`
+  - `killSwitchEnabled=false`
+- Deploy backend to production host
+- Deploy/admin UI production build
+- Lock down CORS to the admin UI domain
+- Configure n8n production signal API key
+- Verify `/health` and `/api/system-status` after deploy
+- Confirm account snapshot and broker activity sync in hosted environment
+- Run paper-trading production smoke test
+
+### Next Backend Enhancements
+
+- Add broker activity support beyond `FILL` if useful
+- Add more precise close-fill linking between close orders and broker activities
+- Add order/position reconciliation checks
+- Add historical performance reports by:
+  - strategy
+  - subscription
+  - exit profile
+  - security
+- Add account equity/exposure trend charts from `AccountSnapshot`
+- Add broker activity drill-down pages
+
+### Longer-Term
+
+- Replace more Google Sheet state with database-backed market memory
 - Add Market Diary persistence
-- Add per-ticker budget rules
-- Add max daily orders and max exposure rules
-- Add kill switch
 - Add websocket trade update listener
 - Add historical audit dashboard
-- Add richer exit modes such as AI-assisted profit protection
-- Add performance reporting by strategy/subscription/exit profile
+- Add AI-assisted profit-protection workflows
+- Add multi-account support
+- Add live-trading deployment checklist and approval workflow
