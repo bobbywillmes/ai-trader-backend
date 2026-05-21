@@ -4,17 +4,26 @@ import { closePosition } from './close-position.service.js';
 import { createSystemEvent } from './system-event.service.js';
 import {
   ensurePositionExitState,
+  markTrailingStopOrderSubmitFailed,
   unlockTrailingStopExitState,
 } from './position-exit-state.service.js';
+import { submitTrailingStopExitOrder } from './trailing-stop-exit.service.js';
 
-function isUnlockTrailingProfile(exitProfile: {
-  exitMode: string;
-  takeProfitBehavior: string;
-}) {
-  return (
-    exitProfile.exitMode === 'unlock_trailing_stop' ||
-    exitProfile.takeProfitBehavior === 'trail_after_target'
-  );
+function isUnlockTrailingProfile(exitProfile: { exitMode: string }) {
+  return exitProfile.exitMode === 'unlock_trailing_stop';
+}
+
+function errorToPayloadJson(error: unknown): Prisma.InputJsonValue {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+    };
+  }
+
+  return {
+    message: String(error),
+  };
 }
 
 export async function evaluateExits() {
@@ -37,21 +46,26 @@ export async function evaluateExits() {
     const pnlPct = position.unrealizedPnLPct ?? 0;
 
     if (isUnlockTrailingProfile(exitProfile)) {
-      const exitState =
+      let exitState =
         position.exitState ?? (await ensurePositionExitState(position.id));
 
       const targetPct = exitState.targetPct ?? exitProfile.targetPct;
       const trailingStopPct =
         exitState.trailingStopPct ?? exitProfile.trailingStopPct;
 
-      if (!targetPct || !trailingStopPct) {
+      if (
+        targetPct === null ||
+        targetPct === undefined ||
+        trailingStopPct === null ||
+        trailingStopPct === undefined
+      ) {
         continue;
       }
 
       const hasReachedTarget = pnlPct >= targetPct / 100;
 
       if (!exitState.targetUnlocked && hasReachedTarget) {
-        await unlockTrailingStopExitState({
+        exitState = await unlockTrailingStopExitState({
           trackedPositionId: position.id,
           currentPrice: position.currentPrice,
           pnlPct,
@@ -77,6 +91,37 @@ export async function evaluateExits() {
         console.log(
           `Exit target unlocked for ${position.symbol}: ${targetPct}% target -> ${trailingStopPct}% trail`
         );
+      }
+
+      const shouldSubmitTrailingStop =
+        exitState.targetUnlocked &&
+        !exitState.trailBrokerOrderId &&
+        exitState.trailOrderStatus !== 'submit_failed';
+
+      if (shouldSubmitTrailingStop) {
+        try {
+          await submitTrailingStopExitOrder(position.id);
+        } catch (error) {
+          const payloadJson = errorToPayloadJson(error);
+
+          await markTrailingStopOrderSubmitFailed(position.id, payloadJson);
+
+          await createSystemEvent({
+            type: 'exit.trailing_stop_submit_failed',
+            entityType: 'trackedPosition',
+            entityId: position.id,
+            message: `${position.symbol} trailing stop exit order submission failed.`,
+            payloadJson: {
+              symbol: position.symbol,
+              error: payloadJson,
+            } as Prisma.InputJsonValue,
+          });
+
+          console.error(
+            `Trailing stop submit failed for ${position.symbol}:`,
+            error
+          );
+        }
       }
 
       continue;
@@ -111,7 +156,7 @@ export async function evaluateExits() {
         symbol: position.symbol,
         reason,
         pnlPct,
-      },
+      } as Prisma.InputJsonValue,
     });
   }
 }

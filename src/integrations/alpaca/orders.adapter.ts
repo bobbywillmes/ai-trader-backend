@@ -4,11 +4,14 @@ import type { AlpacaOrder } from './alpaca.types.js';
 type AlpacaCreateOrderRequest = {
   symbol: string;
   side: 'buy' | 'sell';
-  type: 'market' | 'limit';
+  type: 'market' | 'limit' | 'stop' | 'stop_limit' | 'trailing_stop';
   time_in_force: 'day' | 'gtc';
   qty?: string;
   notional?: string;
   limit_price?: string;
+  stop_price?: string;
+  trail_price?: string;
+  trail_percent?: string;
   extended_hours?: boolean;
   client_order_id: string;
 };
@@ -20,7 +23,7 @@ export async function getOpenAlpacaOrders(): Promise<AlpacaOrder[]> {
 export async function getAlpacaOrderByClientOrderId(
   clientOrderId: string
 ): Promise<AlpacaOrder | null> {
-  return alpacaRequest<AlpacaOrder | null>(
+  return alpacaRequest(
     `/v2/orders:by_client_order_id?client_order_id=${encodeURIComponent(clientOrderId)}`,
     { returnNullOn404: true }
   );

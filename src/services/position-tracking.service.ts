@@ -11,6 +11,7 @@ import {
 import {
   ensurePositionExitState,
   markPositionExitStateClosed,
+  resetPositionExitStateForOpenPosition,
 } from './position-exit-state.service.js';
 
 
@@ -70,7 +71,7 @@ export async function syncTrackedPositions() {
         },
       });
 
-      await ensurePositionExitState(created.id);
+      await resetPositionExitStateForOpenPosition(created.id);
 
       await createSystemEvent({
         type: 'position.opened',
@@ -163,6 +164,12 @@ export async function syncTrackedPositions() {
 
       console.log(`Position opened: ${opened.symbol}`);
     }
+
+  if (!wasClosedOrInactive) {
+    await ensurePositionExitState(existing.id);
+  }
+
+
   }
 
   const activeTrackedPositions = await prisma.trackedPosition.findMany({
