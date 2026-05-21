@@ -28,6 +28,10 @@ const envSchema = z.object({
 
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
 
+  CORS_ALLOWED_ORIGINS: z
+    .string()
+    .default('http://localhost:5173,http://localhost:4173'),
+
   ALPACA_API_KEY: z.string().min(1, 'ALPACA_API_KEY is required'),
   ALPACA_API_SECRET: z.string().min(1, 'ALPACA_API_SECRET is required'),
   ALPACA_BASE_URL: z.url().default('https://paper-api.alpaca.markets'),

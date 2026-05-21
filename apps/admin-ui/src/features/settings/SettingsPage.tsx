@@ -595,11 +595,23 @@ export function SettingsPage() {
                             <Text size="sm">SIGNAL_API_KEY</Text>
                             <StatusBadge ok={systemStatus.environment.hasSignalApiKey} />
                           </Group>
+
+                          <Group justify="space-between">
+                            <Text size="sm">CORS allowed origins</Text>
+                            <StatusBadge ok={systemStatus.environment.hasCorsAllowedOrigins} />
+                          </Group>
+
                         </SimpleGrid>
                       </Card>
                     </Grid.Col>
 
 
+                    <Text size="xs" c="dimmed" mt="sm">
+                      CORS origins:{" "}
+                      {systemStatus.environment.corsAllowedOrigins.length > 0
+                        ? systemStatus.environment.corsAllowedOrigins.join(", ")
+                        : "-"}
+                    </Text>
 
 
                     <Grid.Col span={{ base: 12, md: 6 }}>

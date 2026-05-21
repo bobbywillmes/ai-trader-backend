@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import { corsOptions } from '../config/cors.js';
 import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
 
@@ -33,7 +34,7 @@ export function createApp() {
   const app = express();
 
   app.use(helmet());
-  app.use(cors());
+  app.use(cors(corsOptions));
   app.use(express.json());
 
   app.use(

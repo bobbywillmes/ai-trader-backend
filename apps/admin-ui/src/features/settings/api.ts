@@ -38,6 +38,8 @@ export type SystemStatusResponse = {
     hasAlpacaBaseUrl: boolean;
     hasAdminJwtSecret: boolean;
     hasSignalApiKey: boolean;
+    corsAllowedOrigins: string[];
+    hasCorsAllowedOrigins: boolean;
   };
   trading: {
     config: {

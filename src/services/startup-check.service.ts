@@ -2,6 +2,7 @@ import { prisma } from '../db/prisma.js';
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { getRuntimeTradingConfig } from './config.service.js';
+import { allowedCorsOrigins } from '../config/cors.js';
 
 type StartupCheckStatus = 'pass' | 'warn' | 'fail';
 
@@ -93,6 +94,18 @@ function logStartupReport(report: StartupCheckReport) {
       logger.info(payload, check.message);
     }
   }
+}
+
+function isLocalhostOrigin(origin: string) {
+  return (
+    origin.includes('localhost') ||
+    origin.includes('127.0.0.1') ||
+    origin.includes('0.0.0.0')
+  );
+}
+
+function isWildcardOrigin(origin: string) {
+  return origin === '*';
 }
 
 export async function runStartupChecks(): Promise<StartupCheckReport> {
@@ -187,6 +200,53 @@ export async function runStartupChecks(): Promise<StartupCheckReport> {
           'production_live_trading_guard',
           'Production startup is configured for live trading, but ALLOW_LIVE_TRADING is not enabled.'
         )
+      );
+    }
+
+    if (allowedCorsOrigins.length === 0) {
+      checks.push(
+        fail(
+          'cors_allowed_origins',
+          'CORS_ALLOWED_ORIGINS must include at least one allowed admin UI origin.'
+        )
+      );
+    } else {
+      checks.push(
+        pass('cors_allowed_origins', 'CORS allowed origins configured.', {
+          allowedCorsOrigins,
+        })
+      );
+    }
+
+    if (allowedCorsOrigins.some(isWildcardOrigin)) {
+      checks.push(
+        fail(
+          'cors_wildcard_origin',
+          'Wildcard CORS origin is not allowed. Configure explicit admin UI origins instead.',
+          {
+            allowedCorsOrigins,
+          }
+        )
+      );
+    }
+
+    if (isProduction && allowedCorsOrigins.some(isLocalhostOrigin)) {
+      checks.push(
+        fail(
+          'production_localhost_cors_origin',
+          'Production CORS config includes a localhost origin. Configure the deployed admin UI origin before production startup.',
+          {
+            allowedCorsOrigins,
+          }
+        )
+      );
+    }
+
+    if (!isProduction && allowedCorsOrigins.some(isLocalhostOrigin)) {
+      checks.push(
+        pass('development_localhost_cors_origin', 'Development localhost CORS origin configured.', {
+          allowedCorsOrigins,
+        })
       );
     }
 

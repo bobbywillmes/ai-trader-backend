@@ -4,6 +4,7 @@ import { getRiskStatus } from './risk-gate.service.js';
 import { getLatestAccountSnapshot } from './account-snapshot.service.js';
 import { getLatestBrokerActivity } from './broker-activity.service.js';
 import { getHealthStatus } from './health.service.js';
+import { allowedCorsOrigins } from '../config/cors.js';
 
 function hasEnv(name: string) {
   return Boolean(process.env[name]);
@@ -64,7 +65,10 @@ export async function getSystemStatus() {
       hasAlpacaApiKey: hasEnv('ALPACA_API_KEY'),
       hasAlpacaSecretKey: hasEnv('ALPACA_API_SECRET'),
       hasAlpacaBaseUrl: hasEnv('ALPACA_BASE_URL'),
+      hasAdminSessionToken: true,
       hasSignalApiKey: hasEnv('AI_TRADER_SIGNAL_API_KEY'),
+      corsAllowedOrigins: allowedCorsOrigins,
+      hasCorsAllowedOrigins: allowedCorsOrigins.length > 0,
     },
     trading: {
       config: runtimeConfig,
