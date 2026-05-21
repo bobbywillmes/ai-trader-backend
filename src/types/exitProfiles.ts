@@ -10,6 +10,11 @@ export const EXIT_PROFILE_KEYS = {
   ETF_DIP_CONSERVATIVE_BRACKET: 'exit_etf_dip_conservative_bracket',
   ETF_DIP_AGGRESSIVE_TRAILING: 'exit_etf_dip_aggressive_trailing',
 
+  ETF_UNLOCK_1_0_TRAIL_0_5: 'exit_etf_unlock_1_0_trail_0_5',
+  ETF_UNLOCK_1_0_TRAIL_0_75: 'exit_etf_unlock_1_0_trail_0_75',
+  ETF_UNLOCK_0_5_TRAIL_0_5: 'exit_etf_unlock_0_5_trail_0_5',
+  ETF_UNLOCK_0_5_TRAIL_0_25: 'exit_etf_unlock_0_5_trail_0_25',
+
   STOCK_DIP_CORE_TARGET: 'exit_stock_dip_core_target',
   STOCK_DIP_CONSERVATIVE_BRACKET: 'exit_stock_dip_conservative_bracket',
   STOCK_DIP_AGGRESSIVE_TRAILING: 'exit_stock_dip_aggressive_trailing',
@@ -80,6 +85,59 @@ export const EXIT_PROFILE_SEEDS: ExitProfileSeed[] = [
     exitMode: 'hybrid',
     takeProfitBehavior: 'trail_after_target',
     enabled: true,
+  },
+
+  {
+    key: EXIT_PROFILE_KEYS.ETF_UNLOCK_1_0_TRAIL_0_5,
+    name: 'ETF: +1.0% Unlock -> Trail 0.5%',
+    description:
+      'ETF exit profile based on backtested unlock-then-trail behavior. Once the position reaches +1.0% profit, the backend should submit a broker-native trailing stop sell order with a 0.5% trail. No initial stop loss is used.',
+    targetPct: 1,
+    stopLossPct: null,
+    trailingStopPct: 0.5,
+    maxHoldDays: null,
+    exitMode: 'unlock_trailing_stop',
+    takeProfitBehavior: 'trail_after_target',
+    enabled: false,
+  },
+  {
+    key: EXIT_PROFILE_KEYS.ETF_UNLOCK_1_0_TRAIL_0_75,
+    name: 'ETF: +1.0% Unlock -> Trail 0.75%',
+    description:
+      'ETF exit profile based on backtested unlock-then-trail behavior. Once the position reaches +1.0% profit, the backend should submit a broker-native trailing stop sell order with a 0.75% trail. No initial stop loss is used.',
+    targetPct: 1,
+    stopLossPct: null,
+    trailingStopPct: 0.75,
+    maxHoldDays: null,
+    exitMode: 'unlock_trailing_stop',
+    takeProfitBehavior: 'trail_after_target',
+    enabled: false,
+  },
+  {
+    key: EXIT_PROFILE_KEYS.ETF_UNLOCK_0_5_TRAIL_0_5,
+    name: 'ETF: +0.5% Unlock -> Trail 0.5%',
+    description:
+      'ETF exit profile based on backtested unlock-then-trail behavior. Once the position reaches +0.5% profit, the backend should submit a broker-native trailing stop sell order with a 0.5% trail. No initial stop loss is used.',
+    targetPct: 0.5,
+    stopLossPct: null,
+    trailingStopPct: 0.5,
+    maxHoldDays: null,
+    exitMode: 'unlock_trailing_stop',
+    takeProfitBehavior: 'trail_after_target',
+    enabled: false,
+  },
+  {
+    key: EXIT_PROFILE_KEYS.ETF_UNLOCK_0_5_TRAIL_0_25,
+    name: 'ETF: +0.5% Unlock -> Trail 0.25%',
+    description:
+      'ETF exit profile based on backtested unlock-then-trail behavior. Once the position reaches +0.5% profit, the backend should submit a broker-native trailing stop sell order with a 0.25% trail. No initial stop loss is used.',
+    targetPct: 0.5,
+    stopLossPct: null,
+    trailingStopPct: 0.25,
+    maxHoldDays: null,
+    exitMode: 'unlock_trailing_stop',
+    takeProfitBehavior: 'trail_after_target',
+    enabled: false,
   },
 
   {
