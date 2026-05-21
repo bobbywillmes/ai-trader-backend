@@ -9,6 +9,7 @@ import {
   type BrokerOrderSubmissionInput,
 } from '../services/place-order.service.js';
 import { createSystemEvent } from '../services/system-event.service.js';
+import { syncTrailingStopOrderStatus } from '../services/position-exit-state.service.js';
 
 export async function processPendingOrders() {
   const pending = await prisma.orderIntent.findMany({
@@ -152,6 +153,19 @@ export async function syncSubmittedOrders() {
 
       const previousStatus = brokerOrder.status;
       const nextStatus = alpacaOrder.status;
+
+    await syncTrailingStopOrderStatus({
+      clientOrderId: brokerOrder.clientOrderId,
+      brokerOrderId: brokerOrder.brokerOrderId,
+      orderStatus: nextStatus,
+      rawBrokerJson: {
+        brokerOrderId: brokerOrder.brokerOrderId,
+        clientOrderId: brokerOrder.clientOrderId,
+        previousStatus: brokerOrder.status,
+        nextStatus,
+        matchedOpenOrder: alpacaOrder.status ?? null,
+      } as Prisma.InputJsonValue,
+    });
 
       if (previousStatus !== nextStatus) {
         const updated = await prisma.brokerOrder.updateMany({

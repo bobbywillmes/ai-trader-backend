@@ -25,6 +25,28 @@ function calculateTrailStopPrice(
   return highWaterMark * (1 - trailingStopPct / 100);
 }
 
+type SyncTrailingStopOrderStatusArgs = {
+  clientOrderId: string;
+  brokerOrderId?: string;
+  orderStatus: string;
+  rawBrokerJson: Prisma.InputJsonValue;
+};
+
+function mapTrailingStopOrderStatusToExitStateStatus(orderStatus: string) {
+  switch (orderStatus) {
+    case 'filled':
+      return 'trailing_stop_filled';
+    case 'canceled':
+      return 'trailing_stop_canceled';
+    case 'expired':
+      return 'trailing_stop_expired';
+    case 'rejected':
+      return 'trailing_stop_rejected';
+    default:
+      return 'trailing_stop_submitted';
+  }
+}
+
 async function getPositionWithExitProfile(trackedPositionId: number) {
   const position = await prisma.trackedPosition.findUnique({
     where: { id: trackedPositionId },
@@ -182,5 +204,25 @@ export async function markPositionExitStateClosed(
     where: { trackedPositionId },
     create: createData,
     update: updateData,
+  });
+}
+
+export async function syncTrailingStopOrderStatus(
+  args: SyncTrailingStopOrderStatusArgs
+) {
+  const updateData: Prisma.PositionExitStateUpdateManyMutationInput = {
+    status: mapTrailingStopOrderStatusToExitStateStatus(args.orderStatus),
+    trailOrderStatus: args.orderStatus,
+    rawBrokerJson: args.rawBrokerJson,
+    ...(args.brokerOrderId !== undefined
+      ? { trailBrokerOrderId: args.brokerOrderId }
+      : {}),
+  };
+
+  return prisma.positionExitState.updateMany({
+    where: {
+      trailClientOrderId: args.clientOrderId,
+    },
+    data: updateData,
   });
 }
