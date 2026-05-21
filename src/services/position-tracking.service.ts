@@ -8,6 +8,10 @@ import {
   getLatestBrokerFillForSymbol,
   syncBrokerActivities,
 } from './broker-activity.service.js';
+import {
+  ensurePositionExitState,
+  markPositionExitStateClosed,
+} from './position-exit-state.service.js';
 
 
 function getCloseFillSide(positionSide: string): 'buy' | 'sell' {
@@ -66,6 +70,8 @@ export async function syncTrackedPositions() {
         },
       });
 
+      await ensurePositionExitState(created.id);
+
       await createSystemEvent({
         type: 'position.opened',
         entityType: 'trackedPosition',
@@ -97,7 +103,7 @@ export async function syncTrackedPositions() {
 
     const wasClosedOrInactive = existing.status !== 'open';
 
-    const updateResult = await prisma.trackedPosition.updateMany({
+    const updateResult = await prisma.trackedPosition.update({
       where: {
         id: existing.id,
         status: wasClosedOrInactive ? { not: 'open' } : 'open',
@@ -120,12 +126,8 @@ export async function syncTrackedPositions() {
       },
     });
 
-    if (updateResult.count !== 1) {
-      console.log(
-        `Tracked position ${existing.id} for ${existing.symbol} was already updated by another sync.`
-      );
-      continue;
-    }
+    await ensurePositionExitState(updateResult.id);
+
 
     if (wasClosedOrInactive) {
       const opened = await prisma.trackedPosition.findUniqueOrThrow({
@@ -243,6 +245,8 @@ export async function syncTrackedPositions() {
       sourceEntityId: closed.id,
     });
 
+    await markPositionExitStateClosed(closed.id);
+
     console.log(`Position closed: ${closed.symbol}`);
   }
 }
@@ -251,6 +255,7 @@ export async function getTrackedPositions() {
   return prisma.trackedPosition.findMany({
     orderBy: { symbol: 'asc' },
     include: {
+      exitState: true,
       subscription: {
         include: {
           strategy: true,
@@ -266,6 +271,7 @@ export async function getOpenTrackedPositions() {
     where: { status: 'open' },
     orderBy: { symbol: 'asc' },
     include: {
+      exitState: true,
       subscription: {
         include: {
           strategy: true,

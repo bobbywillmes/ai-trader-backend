@@ -164,6 +164,43 @@ model TrackedPosition {
 
   subscriptionId      Int?
   subscription        Subscription?   @relation(fields: [subscriptionId], references: [id])
+
+  exitState           PositionExitState?
+}
+
+model PositionExitState {
+  id                      Int       @id @default(autoincrement())
+  trackedPositionId       Int       @unique
+
+  status                  String    @default("watching")
+  targetUnlocked          Boolean   @default(false)
+  targetUnlockedAt        DateTime?
+  targetUnlockedPrice     Float?
+  targetUnlockedPnlPct    Float?
+
+  highWaterMark           Float?
+  trailStopPrice          Float?
+
+  exitProfileKey          String?
+  exitMode                String?
+  takeProfitBehavior      String?
+  targetPct               Float?
+  trailingStopPct         Float?
+
+  trailBroker             String?
+  trailBrokerOrderId      String?
+  trailClientOrderId      String?
+  trailOrderStatus        String?
+  rawBrokerJson           Json?
+
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  trackedPosition         TrackedPosition   @relation(fields: [trackedPositionId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([targetUnlocked])
+  @@index([trailOrderStatus])
 }
 
 model AccountSnapshot {

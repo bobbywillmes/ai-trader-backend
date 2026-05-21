@@ -5,17 +5,20 @@ export async function createSystemEvent(args: {
   type: string;
   entityType: string;
   entityId: string | number;
+  message?: string;
   payloadJson: Prisma.InputJsonValue;
 }) {
   console.log('Creating system event:', args.type, args.entityType, args.entityId);
+
   return prisma.systemEvent.create({
     data: {
       type: args.type,
       entityType: args.entityType,
       entityId: String(args.entityId),
+      message: args.message ?? null,
       payloadJson: args.payloadJson,
-      processed: false
-    }
+      processed: false,
+    },
   });
 }
 
