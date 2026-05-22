@@ -19,12 +19,6 @@ export async function getStrategies() {
   });
 }
 
-export async function getExitProfiles() {
-  return prisma.exitProfile.findMany({
-    orderBy: { key: 'asc' }
-  });
-}
-
 export async function getSubscriptions() {
   return prisma.subscription.findMany({
     orderBy: { key: 'asc' },

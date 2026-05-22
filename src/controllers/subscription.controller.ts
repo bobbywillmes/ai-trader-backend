@@ -1,7 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 
 import {
-  getExitProfiles,
   getStrategies,
   getSubscriptionByKey,
   getSubscriptions
@@ -9,15 +8,11 @@ import {
 import {
   createSubscriptionSchema,
   updateSubscriptionSchema,
-  createExitProfileSchema,
-  updateExitProfileSchema,
 } from '../validators/algo-admin.schema.js';
 
 import {
   createSubscription,
   updateSubscription,
-  createExitProfile,
-  updateExitProfile,
 } from '../services/subscription.service.js';
 
 function parsePositiveId(value: string) {
@@ -41,18 +36,6 @@ export async function strategiesController(
 ) {
   try {
     res.status(200).json(await getStrategies());
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function exitProfilesController(
-  _req: Request,
-  res: Response,
-  next: NextFunction
-) {
-  try {
-    res.status(200).json(await getExitProfiles());
   } catch (error) {
     next(error);
   }
@@ -88,7 +71,6 @@ export async function subscriptionByKeyController(
   }
 }
 
-
 export async function createSubscriptionController(
   req: Request,
   res: Response,
@@ -121,43 +103,6 @@ export async function updateSubscriptionController(
     const subscription = await updateSubscription(id, input);
 
     res.status(200).json(subscription);
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function createExitProfileController(
-  req: Request,
-  res: Response,
-  next: NextFunction
-) {
-  try {
-    const input = createExitProfileSchema.parse(req.body);
-    const exitProfile = await createExitProfile(input);
-
-    res.status(201).json(exitProfile);
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function updateExitProfileController(
-  req: Request,
-  res: Response,
-  next: NextFunction
-) {
-  try {
-  const key = getRouteParam(req.params.key);
-  if (!key) {
-    res.status(400).json({ error: 'Subscription key is required' });
-    return;
-  }
-    const id = parsePositiveId(key);
-    const input = updateExitProfileSchema.parse(req.body);
-
-    const exitProfile = await updateExitProfile(id, input);
-
-    res.status(200).json(exitProfile);
   } catch (error) {
     next(error);
   }

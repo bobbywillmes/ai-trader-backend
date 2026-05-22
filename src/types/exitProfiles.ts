@@ -15,6 +15,8 @@ export const EXIT_PROFILE_KEYS = {
   ETF_UNLOCK_0_5_TRAIL_0_5: 'exit_etf_unlock_0_5_trail_0_5',
   ETF_UNLOCK_0_5_TRAIL_0_25: 'exit_etf_unlock_0_5_trail_0_25',
 
+  ETF_UNLOCK_QUICK_TEST: 'exit_etf_unlock_quick_test',
+
   STOCK_DIP_CORE_TARGET: 'exit_stock_dip_core_target',
   STOCK_DIP_CONSERVATIVE_BRACKET: 'exit_stock_dip_conservative_bracket',
   STOCK_DIP_AGGRESSIVE_TRAILING: 'exit_stock_dip_aggressive_trailing',
@@ -260,6 +262,19 @@ export const EXIT_PROFILE_SEEDS: ExitProfileSeed[] = [
     exitMode: 'fixed_bracket',
     takeProfitBehavior: 'fixed',
     enabled: true,
+  },
+  {
+    key: EXIT_PROFILE_KEYS.ETF_UNLOCK_QUICK_TEST,
+    name: 'ETF: Quick Test Unlock -> Trail 0.25%',
+    description:
+      'Temporary paper-test profile. Unlocks a trailing-stop exit after a tiny gain so the target-unlock and broker trailing-stop submission flow can be tested quickly.',
+    targetPct: 0.01,
+    stopLossPct: null,
+    trailingStopPct: 0.25,
+    maxHoldDays: null,
+    exitMode: 'unlock_trailing_stop',
+    takeProfitBehavior: 'trail_after_target',
+    enabled: false,
   },
 ];
 

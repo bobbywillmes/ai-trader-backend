@@ -23,23 +23,74 @@ function minutesAgo(minutes: number) {
   return new Date(Date.now() - minutes * 60_000);
 }
 
+const ACTIVE_POSITION_STATUSES = ['open', 'closing'] as const;
+
+async function findActiveTrackedPosition(args: {
+  broker: string;
+  symbol: string;
+}) {
+  return prisma.trackedPosition.findFirst({
+    where: {
+      broker: args.broker,
+      symbol: args.symbol,
+      status: {
+        in: [...ACTIVE_POSITION_STATUSES],
+      },
+    },
+    orderBy: {
+      openedAt: 'desc',
+    },
+  });
+}
+
+const ENTRY_INTENT_LOOKBACK_MINUTES = 12 * 60;
+
+function getOpenFillSide(positionSide: string): 'buy' | 'sell' {
+  return positionSide.toLowerCase() === 'short' ? 'sell' : 'buy';
+}
+
+async function findLikelyOpeningOrderIntent(args: {
+  broker: string;
+  symbol: string;
+  side: string;
+}) {
+  const entrySide = getOpenFillSide(args.side);
+
+  return prisma.orderIntent.findFirst({
+    where: {
+      symbol: args.symbol,
+      side: entrySide,
+      subscriptionId: { not: null },
+      blockReason: null,
+      createdAt: {
+        gte: minutesAgo(ENTRY_INTENT_LOOKBACK_MINUTES),
+      },
+      brokerOrders: {
+        some: {
+          broker: args.broker,
+          side: entrySide,
+        },
+      },
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+  });
+}
+
 export async function syncTrackedPositions() {
   const brokerPositions = await getNormalizedPositions();
 
   for (const position of brokerPositions) {
-    const existing = await prisma.trackedPosition.findUnique({
-      where: { symbol: position.symbol },
+    const existing = await findActiveTrackedPosition({
+      broker: position.broker,
+      symbol: position.symbol,
     });
 
-    const matchedIntent = await prisma.orderIntent.findFirst({
-      where: {
-        symbol: position.symbol,
-        status: 'filled',
-        subscriptionId: { not: null },
-      },
-      orderBy: {
-        updatedAt: 'desc',
-      },
+    const matchedIntent = await findLikelyOpeningOrderIntent({
+      broker: position.broker,
+      symbol: position.symbol,
+      side: position.side,
     });
 
     const security = await prisma.security.findUnique({
@@ -55,7 +106,6 @@ export async function syncTrackedPositions() {
         data: {
           broker: position.broker,
           symbol: position.symbol,
-          securityId: security.id,
           side: position.side,
           qty: position.qty,
           avgEntryPrice: position.avgEntryPrice,
@@ -65,9 +115,11 @@ export async function syncTrackedPositions() {
           unrealizedPnL: position.unrealizedPnL,
           unrealizedPnLPct: position.unrealizedPnLPct,
           status: 'open',
-          subscriptionId: matchedIntent?.subscriptionId ?? null,
+          openedAt: new Date(),
           lastSyncedAt: new Date(),
           rawPositionJson: position as unknown as Prisma.InputJsonValue,
+          securityId: security.id,
+          subscriptionId: matchedIntent?.subscriptionId ?? null,
         },
       });
 
@@ -77,40 +129,20 @@ export async function syncTrackedPositions() {
         type: 'position.opened',
         entityType: 'trackedPosition',
         entityId: created.id,
+        message: `Position opened: ${created.symbol}`,
         payloadJson: {
           symbol: created.symbol,
-          side: created.side,
           qty: created.qty,
           avgEntryPrice: created.avgEntryPrice,
         } as Prisma.InputJsonValue,
       });
 
-      await recordAccountSnapshot({
-        reason: 'position_opened',
-        force: true,
-        sourceEntityType: 'trackedPosition',
-        sourceEntityId: created.id,
-      });
-
-      await syncBrokerActivities({
-        activityType: 'FILL',
-        pageSize: 100,
-        maxPages: 2,
-      });
-
-      console.log(`Position opened: ${created.symbol}`);
       continue;
     }
 
-    const wasClosedOrInactive = existing.status !== 'open';
-
-    const updateResult = await prisma.trackedPosition.update({
-      where: {
-        id: existing.id,
-        status: wasClosedOrInactive ? { not: 'open' } : 'open',
-      },
+    const updated = await prisma.trackedPosition.update({
+      where: { id: existing.id },
       data: {
-        securityId: security.id,
         side: position.side,
         qty: position.qty,
         avgEntryPrice: position.avgEntryPrice,
@@ -120,72 +152,36 @@ export async function syncTrackedPositions() {
         unrealizedPnL: position.unrealizedPnL,
         unrealizedPnLPct: position.unrealizedPnLPct,
         status: 'open',
-        closedAt: null,
-        subscriptionId: matchedIntent?.subscriptionId ?? existing.subscriptionId,
         lastSyncedAt: new Date(),
         rawPositionJson: position as unknown as Prisma.InputJsonValue,
+        subscriptionId: existing.subscriptionId ?? matchedIntent?.subscriptionId ?? null,
       },
     });
 
-    await ensurePositionExitState(updateResult.id);
-
-
-    if (wasClosedOrInactive) {
-      const opened = await prisma.trackedPosition.findUniqueOrThrow({
-        where: { id: existing.id },
-      });
-
-      await createSystemEvent({
-        type: 'position.opened',
-        entityType: 'trackedPosition',
-        entityId: opened.id,
-        payloadJson: {
-          symbol: opened.symbol,
-          side: opened.side,
-          qty: opened.qty,
-          avgEntryPrice: opened.avgEntryPrice,
-          previousStatus: existing.status,
-          nextStatus: 'open',
-        } as Prisma.InputJsonValue,
-      });
-
-      await recordAccountSnapshot({
-        reason: 'position_opened',
-        force: true,
-        sourceEntityType: 'trackedPosition',
-        sourceEntityId: opened.id,
-      });
-
-      await syncBrokerActivities({
-        activityType: 'FILL',
-        pageSize: 100,
-        maxPages: 2,
-      });
-
-      console.log(`Position opened: ${opened.symbol}`);
-    }
-
-  if (!wasClosedOrInactive) {
-    await ensurePositionExitState(existing.id);
-  }
-
+await ensurePositionExitState(updated.id);
 
   }
 
   const activeTrackedPositions = await prisma.trackedPosition.findMany({
     where: {
       status: {
-        in: ['open', 'closing'],
+        in: [...ACTIVE_POSITION_STATUSES],
       },
     },
   });
 
-  const brokerSymbols = new Set(
-    brokerPositions.map((position) => position.symbol)
+  function positionKey(args: { broker: string; symbol: string }) {
+    return `${args.broker}:${args.symbol}`;
+  }
+
+  const brokerPositionKeys = new Set(
+    brokerPositions.map((position) =>
+      positionKey({ broker: position.broker, symbol: position.symbol })
+    )
   );
 
   for (const tracked of activeTrackedPositions) {
-    if (brokerSymbols.has(tracked.symbol)) {
+    if (brokerPositionKeys.has(positionKey({ broker: tracked.broker, symbol: tracked.symbol }))) {
       continue;
     }
 
@@ -193,7 +189,7 @@ export async function syncTrackedPositions() {
       where: {
         id: tracked.id,
         status: {
-          in: ['open', 'closing'],
+          in: [...ACTIVE_POSITION_STATUSES],
         },
       },
       data: {
@@ -210,9 +206,13 @@ export async function syncTrackedPositions() {
       continue;
     }
 
-    const closed = await prisma.trackedPosition.findUniqueOrThrow({
+    const closed = await prisma.trackedPosition.findUnique({
       where: { id: tracked.id },
     });
+
+    if (!closed) {
+      continue;
+    }
 
     await syncBrokerActivities({
       activityType: 'FILL',

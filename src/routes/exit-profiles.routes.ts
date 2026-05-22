@@ -1,14 +1,16 @@
 import { Router } from 'express';
-import {
-  exitProfilesController,
+import { 
+  getAllExitProfilesController,
+  findExitProfileController,
   createExitProfileController,
-  updateExitProfileController,
-} from '../controllers/subscription.controller.js';
+  updateExitProfileController
+ } from '../controllers/exit-profiles.controller.js';
 
 const router = Router();
 
-router.get('/', exitProfilesController);
+router.get('/', getAllExitProfilesController);
+router.get('/:key', findExitProfileController);
 router.post('/', createExitProfileController);
-router.patch('/:id', updateExitProfileController);
+router.patch('/:key', updateExitProfileController);
 
 export default router;
