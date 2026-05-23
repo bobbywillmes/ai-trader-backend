@@ -9,8 +9,11 @@ import {
   createMarketDiaryEventController,
   getMarketDiaryEventsController,
 } from '../controllers/market-diary.controller.js';
+import { getEtfWatchContextController } from '../controllers/etf-watch-context.controller.js';
 
 const router = Router();
+
+router.get('/etf-watch/context', getEtfWatchContextController);
 
 router.get('/tracked-positions/open', openTrackedPositionsController);
 router.post('/entry', entrySignalController);
