@@ -14,6 +14,7 @@ import { SystemEventsPage } from "../features/systemEvents/SystemEventsPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { SecurityDetailPage } from "../features/securities/SecurityDetailPage";
 import { ReportsPage } from "../features/reports/ReportsPage";
+import { MarketDiaryPage } from "../features/marketDiary/MarketDiaryPage"
 
 export const router = createBrowserRouter([
   {
@@ -67,6 +68,10 @@ export const router = createBrowserRouter([
       {
         path: "system/events",
         element: <SystemEventsPage />,
+      },
+      {
+        path: "market-diary",
+        element: <MarketDiaryPage />,
       },
       {
         path: "settings",

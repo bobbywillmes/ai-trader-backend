@@ -41,6 +41,7 @@ const navGroups: NavGroup[] = [
     label: "System",
     items: [
       { to: "/reports", label: "Reports" },
+      { to: "/market-diary", label: "Market Diary" },
       { to: "/system/events", label: "System Events" },
       { to: "/settings", label: "Settings" },
       { to: "/legacy", label: "Legacy Admin" },
