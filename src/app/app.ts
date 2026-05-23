@@ -20,7 +20,6 @@ import strategiesRoutes from '../routes/strategies.routes.js';
 import exitProfilesRoutes from '../routes/exit-profiles.routes.js';
 import subscriptionsRoutes from '../routes/subscriptions.routes.js';
 import signalsRoutes from '../routes/signals.routes.js';
-import { openTrackedPositionsController } from '../controllers/tracked-positions.controller.js';
 import adminAuthRoutes from '../routes/admin-auth.routes.js';
 import securitiesRoutes from '../routes/securities.routes.js';
 import accountSnapshotsRoutes from '../routes/account-snapshots.routes.js';
@@ -57,8 +56,6 @@ export function createApp() {
 
   // Client / n8n signal routes
   app.use('/api/signals', requireSignalApiKey, signalsRoutes);
-  app.get('/api/tracked-positions/open', requireSignalApiKey, openTrackedPositionsController
-  );
 
   // Admin routes
   app.use('/api/bootstrap', requireAdminAccess, bootstrapRoutes);

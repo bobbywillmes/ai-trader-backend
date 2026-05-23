@@ -2,7 +2,7 @@ import { apiRequest } from "../../lib/api";
 import type { TrackedPosition } from "./types";
 
 export function getOpenPositions(token: string) {
-  return apiRequest<TrackedPosition[]>("/api/tracked-positions", { token });
+  return apiRequest<TrackedPosition[]>("/api/tracked-positions/open", { token });
 }
 
 export function closePosition(symbol: string, token: string) {

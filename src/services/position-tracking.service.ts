@@ -275,7 +275,11 @@ export async function getTrackedPositions() {
 
 export async function getOpenTrackedPositions() {
   return prisma.trackedPosition.findMany({
-    where: { status: 'open' },
+    where: { 
+      status: {
+          in: [...ACTIVE_POSITION_STATUSES],
+        }
+     },
     orderBy: { symbol: 'asc' },
     include: {
       exitState: true,
