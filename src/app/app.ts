@@ -24,6 +24,8 @@ import adminAuthRoutes from '../routes/admin-auth.routes.js';
 import securitiesRoutes from '../routes/securities.routes.js';
 import accountSnapshotsRoutes from '../routes/account-snapshots.routes.js';
 import brokerActivitiesRoutes from '../routes/broker-activities.routes.js';
+import marketStateRoutes from '../routes/market-state.routes.js';
+import marketDiaryRoutes from '../routes/market-diary.routes.js';
 
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
@@ -73,6 +75,8 @@ export function createApp() {
   app.use('/api/exit-profiles', requireAdminAccess, exitProfilesRoutes);
   app.use('/api/subscriptions', requireAdminAccess, subscriptionsRoutes);
   app.use('/api/securities', requireAdminAccess, securitiesRoutes);
+  app.use('/api/market-state', requireAdminAccess, marketStateRoutes);
+  app.use('/api/market-diary', requireAdminAccess, marketDiaryRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
