@@ -38,7 +38,11 @@ services:
       - ai_trader_internal
 
   caddy:
-    image: caddy:2
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+      args:
+        VITE_API_BASE_URL: ""
     container_name: ai-trader-prod-caddy
     restart: unless-stopped
     env_file:
@@ -47,7 +51,6 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ai_trader_caddy_data:/data
       - ai_trader_caddy_config:/config
     depends_on:

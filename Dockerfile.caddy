@@ -1,0 +1,18 @@
+FROM node:24-bookworm-slim AS admin_ui_builder
+
+WORKDIR /app/apps/admin-ui
+
+COPY apps/admin-ui/package*.json ./
+RUN npm ci
+
+COPY apps/admin-ui ./
+
+ARG VITE_API_BASE_URL=""
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+
+RUN npm run build
+
+FROM caddy:2
+
+COPY Caddyfile /etc/caddy/Caddyfile
+COPY --from=admin_ui_builder /app/apps/admin-ui/dist /srv/admin-ui
