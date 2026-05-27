@@ -703,7 +703,7 @@ The Securities list includes:
 - server-side pagination
 - configurable rows per page
 - server-side search by symbol or company name
-- server-side filtering by sector, industry, security status, and subscription configuration status
+- server-side filtering by asset type, sector, industry, security status, and subscription configuration status
 - connected Sector → Industry filtering
 - server-side sorting
 - URL-persisted table state
@@ -729,6 +729,276 @@ The security detail page includes:
 - Recent activity timeline based on system events
 
 The security-level enable/disable control acts as a master trading lockout for that symbol. When a security is disabled, new buy/order-entry flow is blocked for that symbol. This does not prevent order cancellation or future sell/close-position behavior.
+
+---
+
+## Production Deployment Workflow
+
+The hosted production-like environment runs on Hostinger VPS using Docker Compose.
+
+Current production stack:
+
+```text
+Hostinger VPS
+  → Caddy reverse proxy / HTTPS
+  → React admin UI static build
+  → Node/Express backend
+  → PostgreSQL
+  → Prisma migrations
+  → Alpaca paper trading integration
+  → background workers
+```
+Current production URL pattern:
+
+```http
+https://srv1700402.hstgr.cloud/        → Admin UI
+https://srv1700402.hstgr.cloud/health  → Public health check
+https://srv1700402.hstgr.cloud/api/*   → Backend API
+```
+
+The production environment is designed to support true hosted paper-production dry runs:
+
+```text
+Hosted n8n workflow
+  → hosted AI Trader backend
+  → hosted PostgreSQL
+  → Alpaca paper account
+  → Market Diary / System Events / Reports
+  → hosted Admin UI visibility
+```
+
+### Production Safety Baseline
+The first production startup should remain conservative:
+
+```text
+NODE_ENV=production
+ALLOW_LIVE_TRADING=false
+ALLOW_TRADING_ENABLED_ON_START=false
+ALPACA_BASE_URL=https://paper-api.alpaca.markets
+```
+Runtime database settings should also remain conservative unless deliberately changed from the admin UI:
+
+```text
+tradingEnabled=false
+paperMode=true
+killSwitchEnabled=false
+```
+
+This means the backend can run in production, sync account state, read Alpaca paper positions, receive n8n dry-run context requests, and write Market Diary events without accepting automated order-entry activity.
+
+### Local Development Workflow
+Make changes locally first.
+
+Recommended local validation before committing:
+```bash
+npm run check
+npm run build
+
+cd apps/admin-ui
+npm run build
+cd ../..
+```
+
+Then commit and push:
+```bash
+git add .
+git commit -m "feat(scope): describe change"
+git push origin main
+```
+Use conventional commit-style prefixes where practical:
+
+```
+feat(admin-ui): ...
+feat(api): ...
+fix(worker): ...
+refactor(db): ...
+docs: ...
+chore(deploy): ...
+```
+
+### Production Deployment Workflow
+SSH into the AI Trader VPS:
+```bash
+ssh root@srv1700402.hstgr.cloud
+```
+
+Go to the deployed app directory:
+```bash
+cd /opt/ai-trader
+```
+
+Pull the latest code:
+```bash
+git pull origin main
+```
+
+Run Prisma migrations safely:
+```bash
+docker compose -f docker-compose.prod.yml run --rm backend npx prisma migrate deploy
+```
+
+For backend-only changes, rebuild the backend:
+```bash
+docker compose -f docker-compose.prod.yml build backend
+docker compose -f docker-compose.prod.yml up -d backend
+```
+
+For admin UI changes, rebuild Caddy because the React static build is bundled into the Caddy image:
+```bash
+docker compose -f docker-compose.prod.yml build caddy
+docker compose -f docker-compose.prod.yml up -d caddy
+```
+
+For changes that touch both backend and admin UI:
+```bash
+docker compose -f docker-compose.prod.yml build backend caddy
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Check container status:
+```bash
+docker compose -f docker-compose.prod.yml ps
+```
+
+Check recent logs when needed:
+```bash
+docker compose -f docker-compose.prod.yml logs --tail=100 backend
+docker compose -f docker-compose.prod.yml logs --tail=100 caddy
+```
+
+### Production Verification Checklist
+
+After each production deploy, verify the public health endpoint:
+```bash
+curl -s https://srv1700402.hstgr.cloud/health
+```
+Expected result:
+```text
+ok=true
+environment=production
+database reachable
+```
+Then verify protected system status from the VPS:
+```bash
+set -a
+source .env
+set +a
+
+curl -s https://srv1700402.hstgr.cloud/api/system-status \
+  -H "ai-trader-api-key: $AI_TRADER_ADMIN_API_KEY"
+```
+
+Confirm:
+```
+environment=production
+database reachable
+broker mode=paper
+tradingEnabled=false unless deliberately enabled
+paperMode=true
+killSwitchEnabled=false unless deliberately enabled
+pendingOrderCount=0
+submittingOrderCount=0
+submittedOrderCount=0
+```
+
+Also verify from the browser:
+```
+Admin UI loads
+Login works
+Dashboard loads
+Settings → System Status is healthy
+Open Orders is empty unless expected
+Market Diary loads
+Recently changed feature works in production
+```
+
+### n8n Production Dry-Run Workflow
+
+The hosted n8n workflow should use the production backend base URL:
+```
+https://srv1700402.hstgr.cloud
+```
+
+n8n should use the signal API key only:
+```
+ai-trader-api-key: AI_TRADER_SIGNAL_API_KEY
+```
+
+n8n should not use the admin API key.
+
+The lean ETF watcher production dry-run should remain configured as:
+```
+DRY_RUN=true
+FORCE_MARKET_OPEN_FOR_TESTING=false
+```
+
+Expected dry-run behavior:
+```
+n8n gets ETF watch context from backend
+n8n pulls ETF snapshots
+n8n decision engine evaluates candidates
+n8n posts diary events to backend
+backend stores Market Diary events
+admin UI displays Market Diary results
+no live order is submitted
+```
+
+Before enabling any real paper-order workflow, confirm the dry-run system has behaved correctly across multiple market sessions.
+
+### Migration Notes
+
+Use Prisma migration deploy in production:
+```bash
+docker compose -f docker-compose.prod.yml run --rm backend npx prisma migrate deploy
+```
+Do not use development migration commands in production, such as:
+```bash
+npx prisma migrate dev
+npx prisma migrate reset
+```
+Production data should be treated as durable, even while using Alpaca paper trading.
+
+### Environment and Secrets
+
+The production .env file lives only on the VPS:
+```
+/opt/ai-trader/.env
+```
+It should not be committed to GitHub.
+
+Important production secrets include:
+```
+POSTGRES_PASSWORD
+ALPACA_API_KEY
+ALPACA_API_SECRET
+AI_TRADER_SIGNAL_API_KEY
+AI_TRADER_ADMIN_API_KEY
+```
+Generate strong random values for internal secrets, for example:
+```bash
+openssl rand -hex 32
+```
+The signal API key is for n8n and automation clients.
+
+The admin API key is for protected admin HTTP requests and operational checks.
+
+The admin UI login uses an admin email/password account created through:
+```
+POST /api/admin-auth/bootstrap
+```
+These are separate authentication paths.
+
+### Production Operating Rule
+
+The default production rule is:
+```text
+Deploy safely.
+Verify health.
+Verify system status.
+Keep automated trading disabled.
+Let n8n run dry.
+Only enable paper trading deliberately.
+```
 
 ---
 
@@ -1074,6 +1344,7 @@ Supported query params:
 - `page`
 - `pageSize`
 - `search`
+- `assetType`
 - `sector`
 - `industry`
 - `enabled`
