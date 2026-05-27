@@ -58,6 +58,26 @@ function getSubscriptionStatusFilter(value: unknown) {
   return undefined;
 }
 
+function getAssetTypeFilter(value: unknown): AssetType | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const normalized = value.trim().toUpperCase();
+
+  if (
+    normalized === 'STOCK' ||
+    normalized === 'ETF' ||
+    normalized === 'INDEX' ||
+    normalized === 'FUND' ||
+    normalized === 'OTHER'
+  ) {
+    return normalized as AssetType;
+  }
+
+  return undefined;
+}
+
 function getSortBy(value: unknown) {
   if (
     value === 'symbol' ||
@@ -92,6 +112,7 @@ export async function getAllSecuritiesController(
       page: getQueryNumber(req.query.page),
       pageSize: getQueryNumber(req.query.pageSize),
       search: getQueryString(req.query.search),
+      assetType: getAssetTypeFilter(req.query.assetType),
       sector: getQueryString(req.query.sector),
       industry: getQueryString(req.query.industry),
       enabled: getQueryBoolean(req.query.enabled),

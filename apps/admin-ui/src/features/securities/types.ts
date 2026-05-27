@@ -63,6 +63,7 @@ export type SecuritiesQueryParams = {
   page: number;
   pageSize: number;
   search?: string;
+  assetType?: AssetType;
   sector?: string;
   industry?: string;
   enabled?: boolean;

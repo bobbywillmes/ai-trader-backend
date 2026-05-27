@@ -3,6 +3,7 @@ import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useSecurities, useSecuritiesSummary } from './hooks';
 import { getAdminToken } from '../../lib/api';
 import type {
+  AssetType,
   SecuritiesQueryParams,
   SecuritySortBy,
   SortDirection,
@@ -18,6 +19,16 @@ function getNumberParam(
 ) {
   const value = Number(params.get(key));
   return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function getAssetTypeParam(params: URLSearchParams): AssetType | '' {
+  const value = params.get('assetType');
+
+  if (value === 'ETF' || value === 'STOCK') {
+    return value;
+  }
+
+  return '';
 }
 
 function getStringParam(params: URLSearchParams, key: string) {
@@ -76,6 +87,7 @@ export function SecuritiesPage() {
   const [pageSize, setPageSize] = useState(() => getNumberParam(searchParams, 'pageSize', 50));
   const [searchInput, setSearchInput] = useState(() => getStringParam(searchParams, 'search'));
   const [search, setSearch] = useState(() => getStringParam(searchParams, 'search'));
+  const [assetType, setAssetType] = useState<AssetType | ''>(() => getAssetTypeParam(searchParams));
   const [sector, setSector] = useState(() => getStringParam(searchParams, 'sector'));
   const [industry, setIndustry] = useState(() => getStringParam(searchParams, 'industry'));
   const [enabledFilter, setEnabledFilter] = useState<'all' | 'enabled' | 'disabled'>(() => getEnabledFilterParam(searchParams));
@@ -88,6 +100,7 @@ export function SecuritiesPage() {
       page,
       pageSize,
       search: search || undefined,
+      assetType: assetType || undefined,
       sector: sector || undefined,
       industry: industry || undefined,
       enabled:
@@ -102,6 +115,7 @@ export function SecuritiesPage() {
       page,
       pageSize,
       search,
+      assetType,
       sector,
       industry,
       enabledFilter,
@@ -141,6 +155,7 @@ export function SecuritiesPage() {
     setPage(1);
     setSearchInput('');
     setSearch('');
+    setAssetType('');
     setSector('');
     setIndustry('');
     setEnabledFilter('all');
@@ -220,6 +235,10 @@ export function SecuritiesPage() {
 
     if (search) {
       nextParams.set('search', search);
+    }
+
+    if (assetType) {
+      nextParams.set('assetType', assetType);
     }
 
     if (sector) {
@@ -359,6 +378,23 @@ export function SecuritiesPage() {
               }
             }}
           />
+        </div>
+
+        <div className="control-group">
+          <label htmlFor="type">Asset Type</label>
+          <select
+            id="type"
+            value={assetType}
+            onChange={(event) => {
+              setPage(1);
+              setAssetType(event.target.value as AssetType | '');
+              setIndustry('');
+            }}
+          >
+              <option value="">All types</option>
+              <option value="ETF">ETF</option>
+              <option value="STOCK">Stock</option>
+          </select>
         </div>
 
         <div className="control-group">

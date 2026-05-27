@@ -65,6 +65,7 @@ export async function fetchSecurities(
   appendQueryParam(params, 'page', query.page);
   appendQueryParam(params, 'pageSize', query.pageSize);
   appendQueryParam(params, 'search', query.search);
+  appendQueryParam(params, 'assetType', query.assetType);
   appendQueryParam(params, 'sector', query.sector);
   appendQueryParam(params, 'industry', query.industry);
   appendQueryParam(params, 'enabled', query.enabled);

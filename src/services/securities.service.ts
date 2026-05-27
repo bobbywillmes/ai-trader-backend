@@ -9,6 +9,7 @@ export type GetAllSecuritiesParams = {
   search?: string | undefined;
   sector?: string | undefined;
   industry?: string | undefined;
+  assetType?: AssetType | undefined;
   enabled?: boolean | undefined;
   subscriptionStatus?: SecuritySubscriptionStatusFilter | undefined;
   sortBy?: SecuritySortBy | undefined;
@@ -53,6 +54,7 @@ function buildSecurityWhere(params: GetAllSecuritiesParams): Prisma.SecurityWher
   const search = normalizeOptionalString(params.search);
   const sector = normalizeOptionalString(params.sector);
   const industry = normalizeOptionalString(params.industry);
+  const assetType = params.assetType;
   const enabled = params.enabled;
   const subscriptionStatus = params.subscriptionStatus ?? 'all';
 
@@ -81,6 +83,10 @@ function buildSecurityWhere(params: GetAllSecuritiesParams): Prisma.SecurityWher
 
   if (industry) {
     where.industry = industry;
+  }
+
+  if (assetType) {
+    where.assetType = assetType;
   }
 
   if (enabled !== undefined) {
