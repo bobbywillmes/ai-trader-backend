@@ -209,9 +209,28 @@ model TrackedPosition {
 
   exitState           PositionExitState?
 
+  // Unlock trailing-stop state
+  trailingUnlocked            Boolean   @default(false)
+  trailingUnlockedAt          DateTime?
+  trailingUnlockedPrice       Float?
+
+  // Native broker trailing-stop order state
+  trailingStopOrderId         String?
+  trailingStopClientOrderId   String?
+  trailingStopSubmittedAt     DateTime?
+  trailingStopStatus          String?
+
+  // Latest broker-reported trailing-stop values
+  trailingStopTrailPercent    Float?
+  trailingStopHwm             Float?
+  trailingStopStopPrice       Float?
+  trailingStopLastSyncedAt    DateTime?
+
   @@index([broker, symbol])
   @@index([broker, symbol, status])
   @@index([subscriptionId])
+  @@index([trailingStopOrderId])
+  @@index([trailingStopStatus])
 }
 
 model PositionExitState {
