@@ -3,6 +3,7 @@ import type { ExitProfile, Prisma, TrackedPosition } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import {
   getAlpacaOrderByClientOrderId,
+  getAlpacaOrderById,
   placeAlpacaOrder,
 } from '../integrations/alpaca/orders.adapter.js';
 import type { AlpacaOrder } from '../integrations/alpaca/alpaca.types.js';
@@ -231,4 +232,133 @@ export async function submitNativeTrailingStopForTrackedPosition(
 
     throw error;
   }
+}
+
+function isProblemTrailingStopStatus(status: string | null | undefined) {
+  return (
+    status === 'canceled' ||
+    status === 'expired' ||
+    status === 'rejected' ||
+    status === 'suspended'
+  );
+}
+
+export async function syncNativeTrailingStopForTrackedPosition(
+  trackedPositionId: number
+) {
+  const position = await prisma.trackedPosition.findUnique({
+    where: { id: trackedPositionId },
+  });
+
+  if (!position) {
+    throw new Error(`TrackedPosition ${trackedPositionId} not found.`);
+  }
+
+  // Nothing has been handed off to Alpaca yet, so there is no broker order to sync.
+  if (!position.trailingStopOrderId) {
+    return {
+      ok: false,
+      status: 'no_trailing_stop_order',
+      trackedPositionId: position.id,
+      symbol: position.symbol,
+    };
+  }
+
+  const brokerOrder = await getAlpacaOrderById(position.trailingStopOrderId);
+  const now = new Date();
+
+  // If Alpaca cannot find the order, do not silently ignore it.
+  // This should be rare, but it is important to surface because this order is
+  // supposed to be protecting an open position.
+  if (!brokerOrder) {
+    const previousStatus = position.trailingStopStatus;
+
+    await prisma.trackedPosition.update({
+      where: { id: position.id },
+      data: {
+        trailingStopStatus: 'broker_order_not_found',
+        trailingStopLastSyncedAt: now,
+        lastSyncedAt: now,
+      },
+    });
+
+    if (previousStatus !== 'broker_order_not_found') {
+      await createSystemEvent({
+        type: 'position.trailing_stop_order_not_found',
+        entityType: 'trackedPosition',
+        entityId: position.id,
+        payloadJson: {
+          symbol: position.symbol,
+          brokerOrderId: position.trailingStopOrderId,
+          previousStatus,
+        } as Prisma.InputJsonValue,
+      });
+    }
+
+    return {
+      ok: false,
+      status: 'broker_order_not_found',
+      trackedPositionId: position.id,
+      symbol: position.symbol,
+      orderId: position.trailingStopOrderId,
+    };
+  }
+
+  const previousStatus = position.trailingStopStatus;
+  const brokerStatus = brokerOrder.status;
+
+  // Copy Alpaca's latest trailing-stop state into TrackedPosition.
+  //
+  // Important:
+  // - Alpaca owns the real trailing stop once submitted.
+  // - These local fields are display/sync fields.
+  // - We are not recalculating hwm or stop_price ourselves.
+  const updated = await prisma.trackedPosition.update({
+    where: { id: position.id },
+    data: {
+      trailingStopStatus: brokerStatus,
+      trailingStopTrailPercent:
+        toNullableNumber(brokerOrder.trail_percent) ??
+        position.trailingStopTrailPercent,
+      trailingStopHwm: toNullableNumber(brokerOrder.hwm),
+      trailingStopStopPrice: toNullableNumber(brokerOrder.stop_price),
+      trailingStopLastSyncedAt: now,
+      lastSyncedAt: now,
+    },
+  });
+
+  // Avoid noisy system events every worker cycle.
+  // Only log when the broker order status changes.
+  if (previousStatus !== brokerStatus) {
+    await createSystemEvent({
+      type:
+        brokerStatus === 'filled'
+          ? 'position.trailing_stop_filled'
+          : isProblemTrailingStopStatus(brokerStatus)
+            ? 'position.trailing_stop_attention_required'
+            : 'position.trailing_stop_status_changed',
+      entityType: 'trackedPosition',
+      entityId: updated.id,
+      payloadJson: {
+        symbol: updated.symbol,
+        brokerOrderId: updated.trailingStopOrderId,
+        previousStatus,
+        brokerStatus,
+        hwm: updated.trailingStopHwm,
+        stopPrice: updated.trailingStopStopPrice,
+        trailPercent: updated.trailingStopTrailPercent,
+      } as Prisma.InputJsonValue,
+    });
+  }
+
+  return {
+    ok: true,
+    status: 'synced',
+    trackedPositionId: updated.id,
+    symbol: updated.symbol,
+    orderId: updated.trailingStopOrderId,
+    brokerStatus: updated.trailingStopStatus,
+    hwm: updated.trailingStopHwm,
+    stopPrice: updated.trailingStopStopPrice,
+  };
 }

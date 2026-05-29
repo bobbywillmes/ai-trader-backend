@@ -8,7 +8,10 @@ import {
   unlockTrailingStopExitState,
 } from './position-exit-state.service.js';
 import { submitTrailingStopExitOrder } from './trailing-stop-exit.service.js';
-import { submitNativeTrailingStopForTrackedPosition } from './trailing-stop.service.js';
+import {
+  submitNativeTrailingStopForTrackedPosition,
+  syncNativeTrailingStopForTrackedPosition,
+} from './trailing-stop.service.js';
 
 function isUnlockTrailingProfile(exitProfile: { exitMode: string }) {
   return exitProfile.exitMode === 'unlock_trailing_stop';
@@ -159,6 +162,27 @@ export async function evaluateExits() {
 
     // If exitMode is unlock trailing stop
   if (isUnlockTrailingProfile(exitProfile)) {
+    // If a native trailing-stop order has already been submitted,
+    // Alpaca is now responsible for managing the trailing stop.
+    //
+    // Our job during each evaluator cycle is only to sync the broker-reported
+    // status, high-water mark, and current stop price back into TrackedPosition.
+    if (position.trailingStopOrderId) {
+      try {
+        const result = await syncNativeTrailingStopForTrackedPosition(position.id);
+
+        console.log(
+          `Trailing stop sync for ${position.symbol}: ${result.brokerStatus}`
+        );
+      } catch (error) {
+        console.error(`Trailing stop sync failed for ${position.symbol}:`, error);
+      }
+
+      // Important:
+      // Once a native trailing-stop order exists, do not run the older fixed-target
+      // or stop-loss logic for this position.
+      continue;
+    }
     // For unlock-trailing profiles, the target percentage does NOT mean:
     // "sell when this target is reached."
     //
