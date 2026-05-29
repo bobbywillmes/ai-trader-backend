@@ -9,7 +9,6 @@ type AlpacaCreateOrderRequest = {
   qty?: string;
   notional?: string;
   limit_price?: string;
-  stop_price?: string;
   trail_price?: string;
   trail_percent?: string;
   extended_hours?: boolean;
@@ -17,30 +16,42 @@ type AlpacaCreateOrderRequest = {
 };
 
 export async function getOpenAlpacaOrders(): Promise<AlpacaOrder[]> {
-  return alpacaRequest<AlpacaOrder[]>('/v2/orders?status=open&direction=desc');
+  return alpacaRequest('/v2/orders?status=open&direction=desc');
+}
+
+export async function getAlpacaOrderById(
+  orderId: string
+): Promise<AlpacaOrder | null> {
+  return alpacaRequest(`/v2/orders/${orderId}`, {
+    returnNullOn404: true,
+  });
 }
 
 export async function getAlpacaOrderByClientOrderId(
   clientOrderId: string
 ): Promise<AlpacaOrder | null> {
   return alpacaRequest(
-    `/v2/orders:by_client_order_id?client_order_id=${encodeURIComponent(clientOrderId)}`,
-    { returnNullOn404: true }
+    `/v2/orders:by_client_order_id?client_order_id=${encodeURIComponent(
+      clientOrderId
+    )}`,
+    {
+      returnNullOn404: true,
+    }
   );
 }
 
 export async function placeAlpacaOrder(
   payload: AlpacaCreateOrderRequest
 ): Promise<AlpacaOrder> {
-  return alpacaRequest<AlpacaOrder>('/v2/orders', {
+  return alpacaRequest('/v2/orders', {
     method: 'POST',
-    body: payload
+    body: payload,
   });
 }
 
 export async function cancelAlpacaOrder(orderId: string): Promise<void> {
-  await alpacaRequest<void>(`/v2/orders/${orderId}`, {
-    method: 'DELETE'
+  await alpacaRequest(`/v2/orders/${orderId}`, {
+    method: 'DELETE',
   });
 }
 
@@ -50,8 +61,10 @@ export type AlpacaCancelAllOrderResult = {
   body?: unknown;
 };
 
-export async function cancelAllAlpacaOrders(): Promise<AlpacaCancelAllOrderResult[]> {
-  return alpacaRequest<AlpacaCancelAllOrderResult[]>('/v2/orders', {
-    method: 'DELETE'
+export async function cancelAllAlpacaOrders(): Promise<
+  AlpacaCancelAllOrderResult[]
+> {
+  return alpacaRequest('/v2/orders', {
+    method: 'DELETE',
   });
 }

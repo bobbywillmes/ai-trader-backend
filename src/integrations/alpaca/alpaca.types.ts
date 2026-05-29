@@ -35,11 +35,13 @@ export type AlpacaOrder = {
   notional?: string;
   limit_price?: string | null;
   stop_price?: string | null;
-  trail_price?: string | null;
-  trail_percent?: string | null;
-  hwm?: string | null;
   status: string;
   submitted_at: string;
   filled_qty?: string;
   filled_avg_price?: string | null;
+
+  // Trailing-stop order fields
+  trail_price?: string | null;
+  trail_percent?: string | null;
+  hwm?: string | null;
 };
