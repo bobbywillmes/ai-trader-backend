@@ -8,6 +8,7 @@ import {
   unlockTrailingStopExitState,
 } from './position-exit-state.service.js';
 import { submitTrailingStopExitOrder } from './trailing-stop-exit.service.js';
+import { submitNativeTrailingStopForTrackedPosition } from './trailing-stop.service.js';
 
 function isUnlockTrailingProfile(exitProfile: { exitMode: string }) {
   return exitProfile.exitMode === 'unlock_trailing_stop';
@@ -24,6 +25,32 @@ function errorToPayloadJson(error: unknown): Prisma.InputJsonValue {
   return {
     message: String(error),
   };
+}
+
+function hasReachedUnlockTarget(args: {
+  pnlPct: number;
+  targetPct: number | null;
+}) {
+  if (args.targetPct === null || args.targetPct === undefined) {
+    return false;
+  }
+
+  return args.pnlPct >= args.targetPct / 100;
+}
+
+function shouldAttemptTrailingStopSubmit(position: {
+  trailingStopOrderId: string | null;
+  trailingStopStatus: string | null;
+}) {
+  if (position.trailingStopOrderId) {
+    return false;
+  }
+
+  if (position.trailingStopStatus === 'submit_failed') {
+    return false;
+  }
+
+  return true;
 }
 
 export async function evaluateExits() {
@@ -129,6 +156,99 @@ export async function evaluateExits() {
 
     let shouldExit = false;
     let reason = '';
+
+    // If exitMode is unlock trailing stop
+  if (isUnlockTrailingProfile(exitProfile)) {
+    // For unlock-trailing profiles, the target percentage does NOT mean:
+    // "sell when this target is reached."
+    //
+    // Instead, it means:
+    // "when this target is reached, submit a native Alpaca trailing-stop order."
+    const targetPct = exitProfile.targetPct;
+    const trailingStopPct = exitProfile.trailingStopPct;
+
+    // If the profile is missing either the unlock target or trailing-stop percent,
+    // we cannot safely process this exit profile.
+    //
+    // Skip this position for now rather than risking a bad broker order.
+    if (
+      targetPct === null ||
+      targetPct === undefined ||
+      trailingStopPct === null ||
+      trailingStopPct === undefined
+    ) {
+      continue;
+    }
+
+    // Check whether the current open position has reached the unlock threshold.
+    //
+    // Example:
+    // - targetPct = 1.0
+    // - pnlPct must be >= 0.01
+    //
+    // The helper handles the conversion from stored percent value to decimal form.
+    const reachedUnlockTarget = hasReachedUnlockTarget({
+      pnlPct,
+      targetPct,
+    });
+
+    // If the position has not reached the unlock target yet,
+    // do nothing and keep the position open.
+    //
+    // The backend will check again on the next worker cycle.
+    if (!reachedUnlockTarget) {
+      continue;
+    }
+
+    // At this point, the position has reached the unlock target.
+    //
+    // Before submitting anything to Alpaca, make sure we have not already handed
+    // this position off to a native trailing-stop order.
+    //
+    // This prevents duplicate trailing-stop sell orders.
+    if (!shouldAttemptTrailingStopSubmit(position)) {
+      continue;
+    }
+
+    try {
+      // Submit the native Alpaca trailing-stop sell order.
+      //
+      // The trailing-stop service handles:
+      // - claiming the position
+      // - generating/storing a clientOrderId
+      // - checking Alpaca for an existing order with that clientOrderId
+      // - submitting the trailing_stop order if needed
+      // - saving Alpaca order details back to TrackedPosition
+      // - logging a SystemEvent
+      const result = await submitNativeTrailingStopForTrackedPosition(
+        position.id,
+        position.currentPrice
+      );
+
+      // Keep a simple console message for worker visibility during local testing.
+      console.log(
+        `Trailing stop handoff for ${position.symbol}: ${result.status}`
+      );
+    } catch (error) {
+      // The trailing-stop service logs a SystemEvent on failure.
+      //
+      // This console error is mainly for local/dev visibility while watching
+      // the worker process.
+      console.error(
+        `Trailing stop handoff failed for ${position.symbol}:`,
+        error
+      );
+    }
+
+    // Important:
+    //
+    // Stop processing this position after the unlock-trailing logic runs.
+    //
+    // Without this continue, the evaluator could fall through into the older
+    // fixed-target / stop-loss logic and accidentally close the position at the
+    // unlock target instead of letting Alpaca manage the trailing stop.
+    continue;
+  }
 
     // Take profit
     if (exitProfile.targetPct && pnlPct >= exitProfile.targetPct / 100) {
