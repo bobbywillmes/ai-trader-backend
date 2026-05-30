@@ -16,6 +16,7 @@ import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { getAdminToken } from "../../lib/api";
 import { useOpenPositions, useClosePosition } from "./hooks";
+import type { TrackedPosition } from "./types";
 
 function PnL({ value, suffix = "" }: { value: number; suffix?: string }) {
   const color = value > 0 ? "teal" : value < 0 ? "red" : "dimmed";
@@ -25,6 +26,142 @@ function PnL({ value, suffix = "" }: { value: number; suffix?: string }) {
       {sign}{value.toFixed(2)}{suffix}
     </Text>
   );
+}
+
+function getTrailingStopState(position: TrackedPosition) {
+  if (!isUnlockTrailingExit(position)) {
+    return '—';
+  }
+
+  const status = position.trailingStopStatus;
+
+  if (status === 'filled') {
+    return 'Trailing stop filled';
+  }
+
+  if (
+    status === 'canceled' ||
+    status === 'expired' ||
+    status === 'rejected' ||
+    status === 'suspended' ||
+    status === 'broker_order_not_found' ||
+    status === 'submit_failed'
+  ) {
+    return 'Attention required';
+  }
+
+  if (position.trailingStopOrderId) {
+    return 'Broker trailing stop active';
+  }
+
+  if (position.trailingUnlocked) {
+    return 'Trailing unlocked';
+  }
+
+  return 'Waiting for unlock';
+}
+
+function formatCurrency(value: number | null | undefined) {
+  if (value === null || value === undefined) {
+    return '—';
+  }
+
+  return value.toLocaleString(undefined, {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatPercent(value: number | null | undefined) {
+  if (value === null || value === undefined) {
+    return '—';
+  }
+
+  return `${value.toFixed(2)}%`;
+}
+
+function getExitProfile(position: TrackedPosition) {
+  return position.subscription?.exitProfile ?? null;
+}
+
+function getExitMode(position: TrackedPosition) {
+  return position.exitState?.exitMode ?? getExitProfile(position)?.exitMode ?? null;
+}
+
+function isUnlockTrailingExit(position: TrackedPosition) {
+  return getExitMode(position) === 'unlock_trailing_stop';
+}
+
+function isFixedTargetExit(position: TrackedPosition) {
+  return getExitMode(position) === 'fixed_target';
+}
+
+function getExitStrategyLabel(position: TrackedPosition) {
+  const exitMode = getExitMode(position);
+
+  if (exitMode === 'unlock_trailing_stop') {
+    return 'Target Unlocks Trail';
+  }
+
+  if (exitMode === 'fixed_target') {
+    return 'Fixed Target';
+  }
+
+  if (exitMode === 'fixed_bracket') {
+    return 'Fixed Bracket';
+  }
+
+  if (exitMode === 'hybrid') {
+    return 'Hybrid';
+  }
+
+  return exitMode ?? '—';
+}
+
+function getTargetPct(position: TrackedPosition) {
+  return (
+    position.subscription?.exitProfile?.targetPct ??
+    null
+  );
+}
+
+function getExitTargetPrice(position: TrackedPosition) {
+  const targetPct = getTargetPct(position);
+
+  if (targetPct === null || targetPct === undefined) {
+    return null;
+  }
+
+  if (position.side === 'short') {
+    return position.avgEntryPrice * (1 - targetPct / 100);
+  }
+
+  return position.avgEntryPrice * (1 + targetPct / 100);
+}
+
+function getExitTargetLabel(position: TrackedPosition) {
+  const targetPct = getTargetPct(position);
+  const targetPrice = getExitTargetPrice(position);
+
+  if (targetPct === null || targetPct === undefined || targetPrice === null) {
+    return '—';
+  }
+
+  if (isUnlockTrailingExit(position)) {
+    if (position.trailingUnlocked && position.trailingUnlockedPrice) {
+      return `Unlocked at ${formatCurrency(position.trailingUnlockedPrice)}`;
+    }
+
+    return `${targetPct.toFixed(2)}% / ${formatCurrency(targetPrice)}`;
+  }
+
+  if (isFixedTargetExit(position)) {
+    return `${formatCurrency(targetPrice)} (${targetPct.toFixed(2)}%)`;
+  }
+
+  return `${targetPct.toFixed(2)}% / ${formatCurrency(targetPrice)}`;
 }
 
 export function PositionsPage() {
@@ -91,6 +228,12 @@ export function PositionsPage() {
                   <Table.Th style={{ textAlign: "right" }}>P/L %</Table.Th>
                   <Table.Th>Status</Table.Th>
                   <Table.Th>Subscription</Table.Th>
+                  <Table.Th>Exit Strategy</Table.Th>
+                  <Table.Th>Exit Target</Table.Th>
+                  <Table.Th>Trailing State</Table.Th>
+                  <Table.Th>Trail %</Table.Th>
+                  <Table.Th>Trail HWM</Table.Th>
+                  <Table.Th>Stop Price</Table.Th>
                   <Table.Th />
                 </Table.Tr>
               </Table.Thead>
@@ -128,6 +271,24 @@ export function PositionsPage() {
                       </Table.Td>
                       <Table.Td>
                         <Text size="sm" c="dimmed">{position.subscription?.key ?? "—"}</Text>
+                      </Table.Td>
+                      <Table.Td>{getExitStrategyLabel(position)}</Table.Td>
+                      <Table.Td>{getExitTargetLabel(position)}</Table.Td>
+                      <Table.Td>{getTrailingStopState(position)}</Table.Td>
+                      <Table.Td>
+                        {isUnlockTrailingExit(position)
+                          ? formatPercent(position.trailingStopTrailPercent)
+                          : '—'}
+                      </Table.Td>
+                      <Table.Td>
+                        {isUnlockTrailingExit(position)
+                          ? formatCurrency(position.trailingStopHwm)
+                          : '—'}
+                      </Table.Td>
+                      <Table.Td>
+                        {isUnlockTrailingExit(position)
+                          ? formatCurrency(position.trailingStopStopPrice)
+                          : '—'}
                       </Table.Td>
                       <Table.Td>
                         <Button
