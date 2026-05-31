@@ -159,7 +159,7 @@ DELETE /api/positions/:symbol
 
 ---
 
-## Production Safety Layer
+## 🛡 Production Safety Layer
 
 The backend includes a centralized entry-risk gate that sits between signal/order creation and broker submission.
 
@@ -732,7 +732,7 @@ The security-level enable/disable control acts as a master trading lockout for t
 
 ---
 
-## Production Deployment Workflow
+## 🏗 Production Deployment Workflow
 
 The hosted production-like environment runs on Hostinger VPS using Docker Compose.
 
@@ -1152,6 +1152,60 @@ Those concerns belong to securities, subscriptions, and strategies.
 - `exit_etf_dip_core_target` — Core ETF dip exit using a fixed recovery target.
 - `exit_etf_dip_conservative_bracket` — Conservative ETF dip exit with fixed target and fixed stop.
 - `exit_etf_dip_aggressive_trailing` — Aggressive ETF dip exit that allows trailing upside after the target behavior is satisfied.
+
+### Target Unlocks Trailing Stop
+
+Target-unlocks-trailing-stop profiles are ETF exit profiles where the initial profit target acts as an unlock threshold instead of a sell trigger.
+
+For fixed-target exits:
+
+```text
+targetPct = close the position when this profit target is reached
+```
+
+For target-unlocks-trailing exits:
+
+```text
+targetPct = unlock threshold
+trailingStopPct = native Alpaca trailing-stop percentage
+```
+
+The backend handles the unlock decision, then hands the trailing-stop order to Alpaca:
+
+```text
+Position opened
+→ backend watches current P/L against targetPct
+→ targetPct reached
+→ backend marks the tracked position as trailingUnlocked
+→ backend submits a native Alpaca trailing_stop sell order
+→ Alpaca manages the high-water mark and stop price
+→ backend syncs broker-reported trailing-stop status, HWM, and stop price
+→ broker fill / position sync confirms the final close
+```
+
+This keeps the target-unlock decision inside the backend while letting the broker manage the active trailing stop after handoff. The backend stores the handoff and broker-sync state on `TrackedPosition`, including fields such as:
+
+```text
+trailingUnlocked
+trailingUnlockedAt
+trailingUnlockedPrice
+trailingStopOrderId
+trailingStopStatus
+trailingStopTrailPercent
+trailingStopHwm
+trailingStopStopPrice
+trailingStopLastSyncedAt
+```
+
+Current ETF target-unlock profiles include:
+
+- `exit_etf_unlock_0_5_trail_0_25` — Unlock after +0.5%, then submit a 0.25% native trailing stop.
+- `exit_etf_unlock_0_5_trail_0_5` — Unlock after +0.5%, then submit a 0.5% native trailing stop.
+- `exit_etf_unlock_1_0_trail_0_5` — Unlock after +1.0%, then submit a 0.5% native trailing stop.
+- `exit_etf_unlock_1_0_trail_0_75` — Unlock after +1.0%, then submit a 0.75% native trailing stop.
+- `exit_etf_unlock_quick_test` — Non-production paper-test profile that unlocks after a tiny gain so the trailing-stop handoff can be validated quickly.
+
+These profiles are intended to support the Dip N Ride idea more directly than a fixed target: recover from the dip, unlock broker-managed trailing protection, then allow the position to keep running until the trailing stop is hit.
 
 ### Stock Dip Exits
 
@@ -2197,28 +2251,63 @@ Production-readiness foundation:
 - Health endpoint
 - Admin-protected system status endpoint
 - System Status card in Settings
+- Hostinger VPS production-style deployment workflow
+- Docker Compose production stack with Caddy, backend, admin UI, and PostgreSQL
 
-### Near-Term Production Launch Work
+Exit profile and trailing-stop work:
 
-- Finalize production `.env` template and deployment checklist
-- Confirm production seed behavior
-- Confirm default production launch state:
-  - `tradingEnabled=false`
-  - `paperMode=true`
-  - `killSwitchEnabled=false`
-- Deploy backend to production host
-- Deploy/admin UI production build
-- Lock down CORS to the admin UI domain
-- Configure n8n production signal API key
-- Verify `/health` and `/api/system-status` after deploy
-- Confirm account snapshot and broker activity sync in hosted environment
-- Run paper-trading production smoke test
+- Exit profile hierarchy for fixed target, fixed bracket, hybrid, and unlock-trailing-stop exits
+- ETF target-unlocks-trailing-stop profiles seeded for paper testing and future rollout
+- `TrackedPosition` trailing-unlock and broker-sync state fields
+- Native Alpaca `trailing_stop` submission service
+- Exit evaluator support for `unlock_trailing_stop` profiles
+- Broker sync for native trailing-stop status, high-water mark, stop price, and trail percent
+- Open Positions UI columns for Exit Strategy, Exit Target, Trailing State, Trail %, Trail HWM, and Stop Price
+- Quick-test paper profile and subscription path for validating the target-unlock → broker trailing-stop handoff
+
+### Active Paper Validation
+
+The target-unlocks-trailing-stop feature is code-complete but still in paper validation.
+
+Current validation focus:
+
+- Confirm a test position can open from a subscription using `exit_etf_unlock_quick_test`
+- Confirm the position appears with `Exit Strategy = Target Unlocks Trail`
+- Confirm the initial target is treated as an unlock threshold, not a sell trigger
+- Confirm the backend submits one native Alpaca `trailing_stop` sell order after unlock
+- Confirm duplicate trailing-stop submissions are prevented by the stored client order ID and tracked-position state
+- Confirm Open Positions displays broker-reported trailing-stop status, trail percent, HWM, and stop price
+- Confirm Open Orders / Alpaca paper dashboard show the active trailing-stop sell order
+- Confirm System Events clearly show unlock, handoff, sync, and any error states
+- Confirm final broker fill and position sync close the tracked position cleanly
+
+While this validation is in progress, quick-test profiles and subscriptions should be treated as temporary paper-test tooling, not production strategy configuration.
+
+### Near-Term Strategy Rollout
+
+After active fixed-target ETF positions finish their current cycles, ETF subscriptions can be moved gradually to the new target-unlocks-trailing-stop profiles.
+
+Planned rollout approach:
+
+- Let existing fixed-target SPY, QQQ, and DIA positions close under their original exit profile
+- Switch future ETF subscriptions to selected unlock-trailing-stop profiles only after the paper validation path is confirmed
+- Keep unused unlock-trailing profiles disabled until they are intentionally tested
+- Start with conservative paper settings before considering broader production-paper use
+- Monitor Open Positions, Open Orders, System Events, Broker Activity, and Alpaca paper activity during the first several cycles
+- Compare fixed-target outcomes against target-unlock trailing-stop outcomes by subscription and exit profile
 
 ### Next Backend Enhancements
 
 - Add broker activity support beyond `FILL` if useful
 - Add more precise close-fill linking between close orders and broker activities
 - Add order/position reconciliation checks
+- Add explicit attention states for missing, canceled, rejected, or expired protective trailing-stop orders
+- Add tests around unlock-trailing-stop behavior:
+  - target not reached
+  - target reached
+  - duplicate worker tick protection
+  - broker order recovery by client order ID
+  - rejected trailing-stop order
 - Add historical performance reports by:
   - strategy
   - subscription
@@ -2230,7 +2319,7 @@ Production-readiness foundation:
 ### Longer-Term
 
 - Replace more Google Sheet state with database-backed market memory
-- Add Market Diary persistence
+- Expand Market Diary analytics and decision-review workflows
 - Add websocket trade update listener
 - Add historical audit dashboard
 - Add AI-assisted profit-protection workflows
