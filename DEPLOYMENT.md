@@ -1,8 +1,8 @@
 # AI Trader Production Deployment Checklist
 
-This document describes the production launch flow for the AI Trader backend and admin UI.
+This document describes the production launch and routine production update flow for the AI Trader backend and admin UI.
 
-The goal is to make production startup conservative, repeatable, and easy to verify before n8n is connected to the production backend.
+The goal is to make production startup conservative, repeatable, and easy to verify before n8n is connected to the production backend or before paper-order workflows are enabled.
 
 ---
 
@@ -14,12 +14,13 @@ Production launch should follow this order:
 
 ```text
 Deploy safely
+Apply database migrations
 Verify health
 Verify config
 Verify broker mode
 Verify risk gate
 Verify audit layer
-Only then connect n8n signals
+Only then connect n8n signals or enable automated trading
 ```
 
 The first production deployment should start in a safe state:
@@ -28,6 +29,16 @@ The first production deployment should start in a safe state:
 tradingEnabled=false
 paperMode=true
 killSwitchEnabled=false
+ALLOW_LIVE_TRADING=false
+ALLOW_TRADING_ENABLED_ON_START=false
+```
+
+For routine production updates, the safest deploy posture is:
+
+```text
+tradingEnabled=false
+paperMode=true
+killSwitchEnabled=true or false, depending on the current operating plan
 ALLOW_LIVE_TRADING=false
 ALLOW_TRADING_ENABLED_ON_START=false
 ```
@@ -111,52 +122,197 @@ The admin UI does not need broker secrets or backend API keys. It authenticates 
 
 ---
 
-## 3. Production Build Commands
+## 3. Local Pre-Deploy Validation
 
-From the project root:
+Before pushing production updates, validate locally from the project root:
 
 ```bash
+npm run check
 npm run build
-```
 
-For the admin UI:
-
-```bash
 cd apps/admin-ui
 npm run build
+cd ../..
 ```
 
-Both builds should complete successfully before deployment.
+If the update includes Prisma schema changes, make sure the migration folder was generated locally and committed:
+
+```bash
+ls prisma/migrations
+git status
+```
+
+Production uses committed migration files. Production does not generate migrations.
+
+Commit and push:
+
+```bash
+git add .
+git commit -m "feat(scope): describe change"
+git push origin main
+```
+
+Use conventional commit-style prefixes where practical:
+
+```text
+feat(admin-ui): ...
+feat(api): ...
+fix(worker): ...
+refactor(db): ...
+docs: ...
+chore(deploy): ...
+```
 
 ---
 
-## 4. Database Migration Flow
+## 4. Routine Production Update Flow
+
+Use this flow for normal production updates, especially when the update includes backend code, admin UI changes, Prisma schema changes, or new Prisma migrations.
+
+SSH into the AI Trader VPS:
+
+```bash
+ssh root@srv1700402.hstgr.cloud
+```
+
+Go to the deployed app directory:
+
+```bash
+cd /opt/ai-trader
+```
+
+Pull the latest code:
+
+```bash
+git pull origin main
+```
+
+Check for pending Prisma migrations:
+
+```bash
+docker compose -f docker-compose.prod.yml run --rm backend npx prisma migrate status
+```
+
+Apply pending migrations:
+
+```bash
+docker compose -f docker-compose.prod.yml run --rm backend npx prisma migrate deploy
+```
+
+For changes that touch both backend and admin UI, rebuild both runtime images:
+
+```bash
+docker compose -f docker-compose.prod.yml build backend caddy
+docker compose -f docker-compose.prod.yml up -d
+```
+
+For backend-only changes:
+
+```bash
+docker compose -f docker-compose.prod.yml build backend
+docker compose -f docker-compose.prod.yml up -d backend
+```
+
+For admin UI-only changes, rebuild Caddy because the React static build is bundled into the Caddy image:
+
+```bash
+docker compose -f docker-compose.prod.yml build caddy
+docker compose -f docker-compose.prod.yml up -d caddy
+```
+
+Check container status:
+
+```bash
+docker compose -f docker-compose.prod.yml ps
+```
+
+Check recent logs:
+
+```bash
+docker compose -f docker-compose.prod.yml logs --tail=100 backend
+docker compose -f docker-compose.prod.yml logs --tail=100 caddy
+```
+
+Verify the public health endpoint:
+
+```bash
+curl -s https://srv1700402.hstgr.cloud/health
+```
+
+Expected result:
+
+```text
+ok=true
+environment=production
+database reachable
+```
+
+---
+
+## 5. Database Migration Flow
 
 Production should use Prisma migration deploy, not migration dev.
 
-From the backend project root:
+In Docker Compose production, use:
 
 ```bash
-npx prisma migrate deploy
+docker compose -f docker-compose.prod.yml run --rm backend npx prisma migrate status
+docker compose -f docker-compose.prod.yml run --rm backend npx prisma migrate deploy
 ```
 
-Then generate Prisma client if needed:
+Do not use development migration commands in production:
 
 ```bash
-npx prisma generate
-```
-
-Do not run destructive reset commands in production.
-
-Avoid:
-
-```bash
+npx prisma migrate dev
 npx prisma migrate reset
+```
+
+Production data should be treated as durable, even while using Alpaca paper trading.
+
+### Migration Mismatch Symptoms
+
+If the backend code deploys before the production database migration is applied, API routes may fail with errors like:
+
+```text
+Invalid `prisma.trackedPosition.findMany()` invocation:
+The column `TrackedPosition.someNewColumn` does not exist in the current database.
+```
+
+This means the Prisma client expects a column that does not exist in production Postgres yet.
+
+Fix:
+
+```bash
+cd /opt/ai-trader
+
+docker compose -f docker-compose.prod.yml run --rm backend npx prisma migrate status
+docker compose -f docker-compose.prod.yml run --rm backend npx prisma migrate deploy
+docker compose -f docker-compose.prod.yml up -d backend
+```
+
+### Useful Migration Troubleshooting Commands
+
+Confirm a migration file exists on the VPS:
+
+```bash
+grep -R "someNewColumnName" -n prisma/schema.prisma prisma/migrations
+```
+
+Check recent applied migrations:
+
+```bash
+docker compose -f docker-compose.prod.yml exec postgres sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT migration_name, finished_at FROM \"_prisma_migrations\" ORDER BY started_at DESC LIMIT 10;"'
+```
+
+Check whether a specific column exists in production:
+
+```bash
+docker compose -f docker-compose.prod.yml exec postgres sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT column_name FROM information_schema.columns WHERE table_name = '\''TrackedPosition'\'' AND column_name ILIKE '\''%trailing%'\'' ORDER BY ordinal_position;"'
 ```
 
 ---
 
-## 5. Seed / Bootstrap Expectations
+## 6. Seed / Bootstrap Expectations
 
 Production seed behavior should be conservative.
 
@@ -168,7 +324,13 @@ paperMode=true
 killSwitchEnabled=false
 ```
 
-Before connecting n8n, verify:
+Before connecting n8n or enabling order-entry workflows, verify runtime settings from the admin UI:
+
+```text
+Settings → Trading Controls
+```
+
+Or from the API:
 
 ```http
 GET /api/config
@@ -188,7 +350,7 @@ If production startup is blocked because the database already has `tradingEnable
 
 ---
 
-## 6. Production Startup Guards
+## 7. Production Startup Guards
 
 Production startup checks run before workers start.
 
@@ -204,7 +366,7 @@ The backend checks:
 
 ### Safe Production Startup
 
-Expected safe first launch:
+Expected safe production env:
 
 ```env
 NODE_ENV=production
@@ -244,38 +406,57 @@ ALLOW_TRADING_ENABLED_ON_START=false
 
 startup should fail.
 
-This is intentional.
+This is intentional. It prevents an accidental production restart into an already-trading state.
 
-Recovery flow:
+Preferred recovery flow:
 
-1. Temporarily set:
+1. Keep `ALLOW_TRADING_ENABLED_ON_START=false`.
+2. Update the production database setting directly to `tradingEnabled=false`.
+3. Restart the backend.
+4. Verify `/health` and the Admin UI.
+5. Re-enable trading manually from Settings only when ready.
+
+Check the runtime settings directly in production Postgres:
+
+```bash
+docker compose -f docker-compose.prod.yml exec postgres sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT key, value FROM \"Setting\" WHERE key IN ('\''tradingEnabled'\'', '\''paperMode'\'', '\''killSwitchEnabled'\'') ORDER BY key;"'
+```
+
+Disable trading:
+
+```bash
+docker compose -f docker-compose.prod.yml exec postgres sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "UPDATE \"Setting\" SET value = '\''false'\'', \"updatedAt\" = now() WHERE key = '\''tradingEnabled'\'';"'
+```
+
+Verify the safe state:
+
+```text
+killSwitchEnabled | true or false
+paperMode         | true
+tradingEnabled   | false
+```
+
+Restart the backend:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d backend
+```
+
+Then check health:
+
+```bash
+curl -s https://srv1700402.hstgr.cloud/health
+```
+
+### Temporary Override Recovery
+
+A temporary override is also available:
 
 ```env
 ALLOW_TRADING_ENABLED_ON_START=true
 ```
 
-2. Start the server.
-3. Patch runtime config:
-
-```http
-PATCH /api/config/settings
-```
-
-```json
-{
-  "tradingEnabled": false,
-  "paperMode": true
-}
-```
-
-4. Stop the server.
-5. Reset:
-
-```env
-ALLOW_TRADING_ENABLED_ON_START=false
-```
-
-6. Restart the server.
+Use this only when intentionally restarting production with trading already enabled. Do not leave this enabled unless it is deliberately part of the operating plan.
 
 ### Live Trading Guard
 
@@ -289,12 +470,20 @@ Only set this to `true` when intentionally preparing for live trading.
 
 ---
 
-## 7. Start the Backend
+## 8. Start / Restart the Backend
 
-After environment, build, and migrations are complete:
+The production backend normally runs through Docker Compose.
+
+Start or restart all production services:
 
 ```bash
-npm run start
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Restart only the backend:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d backend
 ```
 
 Expected startup behavior:
@@ -309,12 +498,12 @@ Workers should not start if startup checks fail.
 
 ---
 
-## 8. Verify Health
+## 9. Verify Health
 
 Public health check:
 
-```http
-GET /health
+```bash
+curl -s https://srv1700402.hstgr.cloud/health
 ```
 
 Expected:
@@ -323,22 +512,36 @@ Expected:
 {
   "ok": true,
   "service": "ai-trader-backend",
+  "environment": "production",
   "database": {
-    "ok": true
+    "ok": true,
+    "message": "Database reachable."
   }
 }
 ```
 
 This endpoint is intended for deployment checks and uptime monitoring.
 
+If `/health` returns `502 Bad Gateway`, Caddy is reachable but the backend is probably not running or is crash-looping. Check:
+
+```bash
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs --tail=100 backend
+```
+
 ---
 
-## 9. Verify System Status
+## 10. Verify System Status
 
 Admin-protected status check:
 
-```http
-GET /api/system-status
+```bash
+set -a
+source .env
+set +a
+
+curl -s https://srv1700402.hstgr.cloud/api/system-status \
+  -H "ai-trader-api-key: $AI_TRADER_ADMIN_API_KEY"
 ```
 
 Verify:
@@ -370,7 +573,7 @@ Check:
 
 ---
 
-## 10. Verify Runtime Trading Controls
+## 11. Verify Runtime Trading Controls
 
 In the admin UI:
 
@@ -381,8 +584,8 @@ Settings → Trading Controls
 Verify:
 
 ```text
-Automated Trading: Off for first production launch
-Kill Switch: Off
+Automated Trading: Off for first production launch or deploy restart
+Kill Switch: On or Off intentionally
 Paper Trading Mode: Paper
 ```
 
@@ -390,7 +593,7 @@ For a paper-trading smoke test, turn on Automated Trading only after all status 
 
 ---
 
-## 11. Verify Entry Risk Limits
+## 12. Verify Entry Risk Limits
 
 In the admin UI:
 
@@ -413,9 +616,13 @@ Adjust these based on the production paper test plan.
 
 ---
 
-## 12. Verify Admin UI
+## 13. Verify Admin UI
 
-Open the deployed admin UI.
+Open the deployed admin UI:
+
+```text
+https://srv1700402.hstgr.cloud/login
+```
 
 Verify:
 
@@ -438,9 +645,20 @@ Confirm the browser is calling the production backend URL from:
 VITE_API_BASE_URL
 ```
 
+After UI changes, verify the recently changed feature directly. For example, after exit-profile or position-tracking changes, confirm Open Positions renders expected columns such as:
+
+```text
+Exit Strategy
+Exit Target
+Trailing State
+Trail %
+Trail HWM
+Stop Price
+```
+
 ---
 
-## 13. Verify Audit Layer
+## 14. Verify Audit Layer
 
 Before enabling n8n signals, verify audit endpoints.
 
@@ -477,7 +695,7 @@ Reports page shows broker activity
 
 ---
 
-## 14. Connect n8n
+## 15. Connect n8n
 
 Only connect n8n after:
 
@@ -506,9 +724,34 @@ Do not use broker credentials in n8n.
 
 n8n should not talk directly to Alpaca.
 
+The hosted n8n workflow should use the production backend base URL:
+
+```text
+https://srv1700402.hstgr.cloud
+```
+
+The lean ETF watcher production dry-run should remain configured as:
+
+```text
+DRY_RUN=true
+FORCE_MARKET_OPEN_FOR_TESTING=false
+```
+
+Expected dry-run behavior:
+
+```text
+n8n gets ETF watch context from backend
+n8n pulls ETF snapshots
+n8n decision engine evaluates candidates
+n8n posts diary events to backend
+backend stores Market Diary events
+admin UI displays Market Diary results
+no live order is submitted
+```
+
 ---
 
-## 15. Paper-Trading Smoke Test
+## 16. Paper-Trading Smoke Test
 
 Recommended first smoke test:
 
@@ -541,9 +784,36 @@ one tracked position lifecycle
 one clean audit trail
 ```
 
+### Target Unlocks Trailing Stop Smoke Test
+
+For target-unlocks-trailing-stop exits, use a dedicated paper-test subscription and a quick-test exit profile before switching core ETF subscriptions.
+
+Expected flow:
+
+```text
+Paper position opens
+Open Positions shows Target Unlocks Trail
+Position reaches targetPct unlock threshold
+Backend marks trailingUnlocked=true
+Backend submits native Alpaca trailing_stop sell order
+Open Orders shows broker trailing-stop sell order
+Open Positions shows broker trailing state, trail %, HWM, and stop price
+Broker fill / position sync eventually confirms position close
+```
+
+Important checks:
+
+```text
+subscription enabled=true
+exitProfile enabled=true
+tradingEnabled=true only when deliberately testing
+paperMode=true
+killSwitchEnabled=false only when deliberately allowing new entries
+```
+
 ---
 
-## 16. Emergency Controls
+## 17. Emergency Controls
 
 ### Stop opening new positions
 
@@ -553,7 +823,7 @@ Use the Kill Switch:
 Settings → Trading Controls → Kill Switch On
 ```
 
-This blocks new entries while keeping the system online for monitoring, syncing, and exit workflows.
+This blocks new entries while keeping the system online for monitoring, syncing, position tracking, exit workflows, reports, and admin visibility.
 
 ### Stop automated trading broadly
 
@@ -567,43 +837,24 @@ This broadly blocks automated order submission.
 
 ### Stop the backend
 
-Stop the backend process from the production host.
+Stop the backend containers from the production host:
 
-Use this if the service itself needs to be taken offline.
-
----
-
-## 17. Production Recovery Notes
-
-If production starts in an unsafe database state, such as:
-
-```text
-tradingEnabled=true
+```bash
+docker compose -f docker-compose.prod.yml down
 ```
 
-and startup is blocked, use the temporary override recovery flow:
-
-```env
-ALLOW_TRADING_ENABLED_ON_START=true
-```
-
-Start the server, patch settings to a safe state, then reset the override to:
-
-```env
-ALLOW_TRADING_ENABLED_ON_START=false
-```
-
-Do not leave production override flags enabled unless intentionally needed.
+Use this only if the service itself needs to be taken offline.
 
 ---
 
 ## 18. Production Go / No-Go Checklist
 
-Before enabling n8n production signals:
+Before enabling n8n production signals or paper-order workflows:
 
 ```text
 [ ] Backend build succeeded
 [ ] Admin UI build succeeded
+[ ] Prisma migrations committed
 [ ] Prisma migrations deployed
 [ ] .env configured
 [ ] apps/admin-ui/.env configured
@@ -615,8 +866,11 @@ Before enabling n8n production signals:
 [ ] /health returns ok=true
 [ ] /api/system-status reviewed
 [ ] Admin UI login works
+[ ] Dashboard loads
+[ ] Open Positions loads
+[ ] Open Orders loads
 [ ] Settings → System Status reviewed
-[ ] Automated Trading is initially off
+[ ] Automated Trading is initially off after deploy restart
 [ ] Paper Trading Mode is paper
 [ ] Kill Switch behavior understood
 [ ] Entry risk limits reviewed
@@ -630,7 +884,47 @@ Before enabling n8n production signals:
 
 ---
 
-## 19. Live Trading Checklist
+## 19. Environment and Secrets
+
+The production `.env` file lives only on the VPS:
+
+```text
+/opt/ai-trader/.env
+```
+
+It should not be committed to GitHub.
+
+Important production secrets include:
+
+```text
+POSTGRES_PASSWORD
+ALPACA_API_KEY
+ALPACA_API_SECRET
+AI_TRADER_SIGNAL_API_KEY
+AI_TRADER_ADMIN_API_KEY
+```
+
+Generate strong random values for internal secrets, for example:
+
+```bash
+openssl rand -hex 32
+```
+
+The signal API key is for n8n and automation clients.
+
+The admin API key is for protected admin HTTP requests and operational checks.
+
+The admin UI login uses an admin email/password account created through:
+
+```http
+POST /api/admin-auth/bootstrap
+```
+
+These are separate authentication paths.
+
+---
+
+## 20. Live Trading Checklist
 
 Live trading is not part of the first production launch.
 
