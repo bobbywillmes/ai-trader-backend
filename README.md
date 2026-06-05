@@ -258,6 +258,39 @@ Automated paper trading should only be enabled deliberately after confirming:
 - open/closing tracked positions
 - pending/submitting order counts
 
+## 🗺️ Roadmap
+
+The backend is currently focused on hosted paper-production testing, operational safety, and improving confidence in the full signal → order → tracked position → exit lifecycle.
+
+### 🔜 Next Backend Enhancements
+
+- Add more precise close-fill linking between close orders and broker activities.
+- Add order/position reconciliation checks.
+- Add explicit attention states for missing, canceled, rejected, or expired protective trailing-stop orders.
+- Add tests around unlock-trailing-stop behavior:
+  - target not reached
+  - target reached
+  - duplicate worker tick protection
+  - broker order recovery by client order ID
+  - rejected trailing-stop order
+- Add historical performance reports by:
+  - strategy
+  - subscription
+  - exit profile
+  - security
+- Add account equity/exposure trend charts from `AccountSnapshot`.
+- Add broker activity drill-down pages.
+
+### 🧭 Longer-Term
+
+- Replace more Google Sheet state with database-backed market memory.
+- Expand Market Diary analytics and decision-review workflows.
+- Add websocket trade update listener.
+- Add historical audit dashboard.
+- Add AI-assisted profit-protection workflows.
+- Add multi-account support.
+- Add live-trading deployment checklist and approval workflow.
+
 ## 📝 Documentation Rule
 
 This root README is the project front door.
