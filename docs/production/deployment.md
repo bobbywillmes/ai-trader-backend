@@ -1,4 +1,4 @@
-# AI Trader Production Deployment Checklist
+# Production Deployment Checklist
 
 This document describes the production launch and routine production update flow for the AI Trader backend and admin UI.
 
