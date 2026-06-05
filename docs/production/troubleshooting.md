@@ -1,1 +1,130 @@
 # Production Troubleshooting
+
+This doc covers post-deploy verification steps and common production issues: 502 errors, blocked startup due to trading state, migration mismatches, and non-critical build warnings.
+
+---
+
+## ✅ Post-Deploy Verification
+
+After each production deploy, verify the public health endpoint:
+
+```bash
+curl -s https://srv1700402.hstgr.cloud/health
+```
+
+Expected result:
+
+```json
+{
+  "ok": true,
+  "service": "ai-trader-backend",
+  "environment": "production",
+  "database": {
+    "ok": true,
+    "message": "Database reachable."
+  }
+}
+```
+
+Then verify protected system status from the VPS:
+
+```bash
+set -a
+source .env
+set +a
+
+curl -s https://srv1700402.hstgr.cloud/api/system-status \
+  -H "ai-trader-api-key: $AI_TRADER_ADMIN_API_KEY"
+```
+
+Confirm:
+
+```text
+environment=production
+database reachable
+broker mode=paper
+tradingEnabled=false unless deliberately enabled
+paperMode=true
+killSwitchEnabled=false unless deliberately enabled
+pendingOrderCount=0
+submittingOrderCount=0
+submittedOrderCount=0
+```
+
+Also verify from the browser:
+
+```text
+Admin UI loads
+Login works
+Dashboard loads
+Settings → System Status is healthy
+Open Orders is empty unless expected
+Recently changed feature works in production
+```
+
+---
+
+## ⚠️ 502 Bad Gateway
+
+If `/health` returns `502 Bad Gateway`, Caddy is reachable but the backend is probably not running or is crash-looping.
+
+Check:
+
+```bash
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs --tail=100 backend
+```
+
+---
+
+## ⚠️ Blocked Startup: Trading Already Enabled
+
+If the database has `tradingEnabled=true` and production env has `ALLOW_TRADING_ENABLED_ON_START=false`, startup will fail. This is intentional — it prevents an accidental production restart into an already-trading state.
+
+Preferred recovery flow:
+
+1. Keep `ALLOW_TRADING_ENABLED_ON_START=false`.
+2. Update the production database setting directly to `tradingEnabled=false`.
+3. Restart the backend.
+4. Verify `/health` and the Admin UI.
+5. Re-enable trading manually from Settings only when ready.
+
+Check the runtime settings directly in production Postgres:
+
+```bash
+docker compose -f docker-compose.prod.yml exec postgres sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT key, value FROM \"Setting\" WHERE key IN ('\''tradingEnabled'\'', '\''paperMode'\'', '\''killSwitchEnabled'\'') ORDER BY key;"'
+```
+
+Disable trading:
+
+```bash
+docker compose -f docker-compose.prod.yml exec postgres sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "UPDATE \"Setting\" SET value = '\''false'\'', \"updatedAt\" = now() WHERE key = '\''tradingEnabled'\'';"'
+```
+
+Restart the backend:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d backend
+```
+
+---
+
+## ⚠️ Migration Mismatch
+
+See [database-migrations.md](database-migrations.md) for migration mismatch symptoms and fix commands.
+
+---
+
+## ⚠️ Admin UI Bundle Warning
+
+The admin UI build may show a Vite warning about chunks larger than 500 kB. This is currently treated as a non-blocking performance warning.
+
+The admin UI is an internal control panel, and the build completes successfully.
+
+---
+
+## ℹ️ Alpaca Response Normalization
+
+The backend intentionally uses normalized response shapes.
+
+Alpaca returns many numeric fields as strings. The backend converts key values to numbers before returning them to n8n, the admin UI, or future clients. This protects the rest of the AI Trader system from depending on raw Alpaca response formats.

@@ -1,6 +1,6 @@
 # Production Deployment Checklist
 
-This document describes the production launch and routine production update flow for the AI Trader backend and admin UI.
+This doc covers the production launch and routine production update flow for the AI Trader backend and admin UI.
 
 The goal is to make production startup conservative, repeatable, and easy to verify before n8n is connected to the production backend or before paper-order workflows are enabled.
 
