@@ -115,6 +115,12 @@ Symptom-driven production debugging notes.
 
 Use this when something is broken and you need to quickly identify likely causes.
 
+## 🧪 Testing Docs
+
+### [Testing](development/testing.md)
+
+Basic integration testing has been set up with Vitest. Tests have been created around the position lifecycle, particularly around the exit cycle.
+
 ## 🧪 Current Production Posture
 
 The backend is designed to support conservative paper-production testing before live trading.
