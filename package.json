@@ -11,7 +11,9 @@
     "dev:tunnel": "tsx src/dev/ngrok.ts",
     "start": "node dist/app/server.js",
     "build": "tsc -p tsconfig.json",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
     "@ngrok/ngrok": "^1.7.0",
@@ -21,7 +23,8 @@
     "@types/node": "^25.6.0",
     "@types/pg": "^8.20.0",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",
