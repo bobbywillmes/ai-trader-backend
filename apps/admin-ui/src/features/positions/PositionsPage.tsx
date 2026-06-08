@@ -28,12 +28,43 @@ function PnL({ value, suffix = "" }: { value: number; suffix?: string }) {
   );
 }
 
+function getAttentionCodeLabel(code: string | null | undefined) {
+  switch (code) {
+    case "trail_submit_failed":
+      return "Submit failed";
+    case "trail_order_rejected":
+      return "Rejected";
+    case "trail_order_canceled":
+      return "Canceled";
+    case "trail_order_expired":
+      return "Expired";
+    default:
+      return "Attention required";
+  }
+}
+
+function positionNeedsAttention(position: TrackedPosition) {
+  return Boolean(position.exitState?.attentionRequired);
+}
+
+function getAttentionMessage(position: TrackedPosition) {
+  return (
+    position.exitState?.attentionMessage ??
+    getAttentionCodeLabel(position.exitState?.attentionCode)
+  );
+}
+
 function getTrailingStopState(position: TrackedPosition) {
   if (!isUnlockTrailingExit(position)) {
     return '—';
   }
 
-  const status = position.trailingStopStatus;
+  if (position.exitState?.attentionRequired) {
+    return getAttentionCodeLabel(position.exitState.attentionCode);
+  }
+
+  const status =
+    position.exitState?.trailOrderStatus ?? position.trailingStopStatus;
 
   if (status === 'filled') {
     return 'Trailing stop filled';
@@ -50,11 +81,15 @@ function getTrailingStopState(position: TrackedPosition) {
     return 'Attention required';
   }
 
-  if (position.trailingStopOrderId) {
+  if (
+    position.exitState?.trailBrokerOrderId ||
+    position.exitState?.trailClientOrderId ||
+    position.trailingStopOrderId
+  ) {
     return 'Broker trailing stop active';
   }
 
-  if (position.trailingUnlocked) {
+  if (position.exitState?.targetUnlocked || position.trailingUnlocked) {
     return 'Trailing unlocked';
   }
 
@@ -164,10 +199,13 @@ function getExitTargetLabel(position: TrackedPosition) {
   return `${targetPct.toFixed(2)}% / ${formatCurrency(targetPrice)}`;
 }
 
+
+
 export function PositionsPage() {
   const [token] = useState<string | null>(() => getAdminToken());
   const { data: positions = [], isLoading, isError, error } = useOpenPositions(token);
   const closePositionMutation = useClosePosition(token);
+  const attentionPositions = positions.filter(positionNeedsAttention);
 
   function handleClosePosition(symbol: string) {
     modals.openConfirmModal({
@@ -214,6 +252,20 @@ export function PositionsPage() {
           <Text size="sm" c="dimmed">No open positions.</Text>
         )}
 
+
+        {attentionPositions.length > 0 && (
+          <Alert color="red" title="Exit attention required">
+            <Stack gap="xs">
+              {attentionPositions.map((position) => (
+                <Text key={position.id} size="sm">
+                  <strong>{position.symbol}</strong>: {getAttentionMessage(position)}
+                </Text>
+              ))}
+            </Stack>
+          </Alert>
+        )}
+
+
         {positions.length > 0 && (
           <ScrollArea>
             <Table striped highlightOnHover style={{ minWidth: 700 }}>
@@ -227,6 +279,7 @@ export function PositionsPage() {
                   <Table.Th style={{ textAlign: "right" }}>P/L</Table.Th>
                   <Table.Th style={{ textAlign: "right" }}>P/L %</Table.Th>
                   <Table.Th>Status</Table.Th>
+                  <Table.Th>Attention</Table.Th>
                   <Table.Th>Subscription</Table.Th>
                   <Table.Th>Exit Strategy</Table.Th>
                   <Table.Th>Exit Target</Table.Th>
@@ -268,6 +321,22 @@ export function PositionsPage() {
                         >
                           {isClosing ? "closing" : position.status}
                         </Badge>
+                      </Table.Td>
+                      <Table.Td>
+                        {positionNeedsAttention(position) ? (
+                          <Stack gap={2}>
+                            <Badge color="red" variant="light">
+                              {getAttentionCodeLabel(position.exitState?.attentionCode)}
+                            </Badge>
+                            <Text size="xs" c="dimmed">
+                              {getAttentionMessage(position)}
+                            </Text>
+                          </Stack>
+                        ) : (
+                          <Text size="sm" c="dimmed">
+                            —
+                          </Text>
+                        )}
                       </Table.Td>
                       <Table.Td>
                         <Text size="sm" c="dimmed">{position.subscription?.key ?? "—"}</Text>
