@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+
 import { prisma } from '../db/prisma.js';
 
 type UnlockTrailingStopArgs = {
@@ -18,19 +19,19 @@ type MarkTrailingStopOrderSubmittedArgs = {
   rawBrokerJson: Prisma.InputJsonValue;
 };
 
-function calculateTrailStopPrice(
-  highWaterMark: number,
-  trailingStopPct: number
-): number {
-  return highWaterMark * (1 - trailingStopPct / 100);
-}
-
 type SyncTrailingStopOrderStatusArgs = {
   clientOrderId: string;
   brokerOrderId?: string;
   orderStatus: string;
   rawBrokerJson: Prisma.InputJsonValue;
 };
+
+function calculateTrailStopPrice(
+  highWaterMark: number,
+  trailingStopPct: number
+): number {
+  return highWaterMark * (1 - trailingStopPct / 100);
+}
 
 function mapTrailingStopOrderStatusToExitStateStatus(orderStatus: string) {
   switch (orderStatus) {
@@ -44,6 +45,56 @@ function mapTrailingStopOrderStatusToExitStateStatus(orderStatus: string) {
       return 'trailing_stop_rejected';
     default:
       return 'trailing_stop_submitted';
+  }
+}
+
+function buildAttentionRequiredData(args: {
+  code: string;
+  message: string;
+}): Prisma.PositionExitStateUncheckedUpdateInput {
+  return {
+    attentionRequired: true,
+    attentionCode: args.code,
+    attentionMessage: args.message,
+    attentionAt: new Date(),
+    attentionClearedAt: null,
+  };
+}
+
+function buildAttentionClearedData(): Prisma.PositionExitStateUncheckedUpdateInput {
+  return {
+    attentionRequired: false,
+    attentionCode: null,
+    attentionMessage: null,
+    attentionAt: null,
+    attentionClearedAt: new Date(),
+  };
+}
+
+function buildTrailingStopOrderStatusAttentionData(
+  orderStatus: string
+): Prisma.PositionExitStateUncheckedUpdateInput {
+  switch (orderStatus) {
+    case 'rejected':
+      return buildAttentionRequiredData({
+        code: 'trail_order_rejected',
+        message: 'Protective trailing stop order was rejected by the broker.',
+      });
+
+    case 'canceled':
+      return buildAttentionRequiredData({
+        code: 'trail_order_canceled',
+        message: 'Protective trailing stop order was canceled.',
+      });
+
+    case 'expired':
+      return buildAttentionRequiredData({
+        code: 'trail_order_expired',
+        message: 'Protective trailing stop order expired.',
+      });
+
+    default:
+      return buildAttentionClearedData();
   }
 }
 
@@ -87,6 +138,11 @@ export async function ensurePositionExitState(trackedPositionId: number) {
       takeProfitBehavior: exitProfile?.takeProfitBehavior ?? null,
       targetPct: exitProfile?.targetPct ?? null,
       trailingStopPct: exitProfile?.trailingStopPct ?? null,
+      attentionRequired: false,
+      attentionCode: null,
+      attentionMessage: null,
+      attentionAt: null,
+      attentionClearedAt: null,
     },
   });
 }
@@ -108,6 +164,11 @@ export async function resetPositionExitStateForOpenPosition(
       takeProfitBehavior: exitProfile?.takeProfitBehavior ?? null,
       targetPct: exitProfile?.targetPct ?? null,
       trailingStopPct: exitProfile?.trailingStopPct ?? null,
+      attentionRequired: false,
+      attentionCode: null,
+      attentionMessage: null,
+      attentionAt: null,
+      attentionClearedAt: null,
     },
     update: {
       status: 'watching',
@@ -126,6 +187,11 @@ export async function resetPositionExitStateForOpenPosition(
       trailBrokerOrderId: null,
       trailClientOrderId: null,
       trailOrderStatus: null,
+      attentionRequired: false,
+      attentionCode: null,
+      attentionMessage: null,
+      attentionAt: null,
+      attentionClearedAt: null,
     },
   });
 }
@@ -161,12 +227,13 @@ export async function markTrailingStopOrderSubmitted(
   return prisma.positionExitState.update({
     where: { trackedPositionId: args.trackedPositionId },
     data: {
-      status: 'trailing_stop_submitted',
+      status: mapTrailingStopOrderStatusToExitStateStatus(args.orderStatus),
       trailBroker: args.broker,
       trailBrokerOrderId: args.brokerOrderId,
       trailClientOrderId: args.clientOrderId,
       trailOrderStatus: args.orderStatus,
       rawBrokerJson: args.rawBrokerJson,
+      ...buildTrailingStopOrderStatusAttentionData(args.orderStatus),
     },
   });
 }
@@ -181,6 +248,10 @@ export async function markTrailingStopOrderSubmitFailed(
       status: 'trailing_stop_submit_failed',
       trailOrderStatus: 'submit_failed',
       rawBrokerJson: payloadJson,
+      ...buildAttentionRequiredData({
+        code: 'trail_submit_failed',
+        message: 'Protective trailing stop order submission failed.',
+      }),
     },
   });
 }
@@ -192,11 +263,17 @@ export async function markPositionExitStateClosed(
   const createData: Prisma.PositionExitStateUncheckedCreateInput = {
     trackedPositionId,
     status: 'closed',
+    attentionRequired: false,
+    attentionCode: null,
+    attentionMessage: null,
+    attentionAt: null,
+    attentionClearedAt: new Date(),
     ...(payloadJson !== undefined ? { rawBrokerJson: payloadJson } : {}),
   };
 
   const updateData: Prisma.PositionExitStateUncheckedUpdateInput = {
     status: 'closed',
+    ...buildAttentionClearedData(),
     ...(payloadJson !== undefined ? { rawBrokerJson: payloadJson } : {}),
   };
 
@@ -217,6 +294,7 @@ export async function syncTrailingStopOrderStatus(
     ...(args.brokerOrderId !== undefined
       ? { trailBrokerOrderId: args.brokerOrderId }
       : {}),
+    ...buildTrailingStopOrderStatusAttentionData(args.orderStatus),
   };
 
   return prisma.positionExitState.updateMany({
