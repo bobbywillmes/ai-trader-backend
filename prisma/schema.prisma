@@ -258,6 +258,13 @@ model PositionExitState {
   trailOrderStatus        String?
   rawBrokerJson           Json?
 
+  // Human/operator attention state
+  attentionRequired       Boolean @default(false)
+  attentionCode           String?
+  attentionMessage        String?
+  attentionAt             DateTime?
+  attentionClearedAt      DateTime?
+
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 
@@ -266,6 +273,8 @@ model PositionExitState {
   @@index([status])
   @@index([targetUnlocked])
   @@index([trailOrderStatus])
+  @@index([attentionRequired])
+  @@index([attentionCode])
 }
 
 model AccountSnapshot {
