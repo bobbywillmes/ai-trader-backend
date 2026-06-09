@@ -266,7 +266,6 @@ The backend is currently focused on hosted paper-production testing, operational
 
 - Add more precise close-fill linking between close orders and broker activities.
 - Add order/position reconciliation checks.
-- Add explicit attention states for missing, canceled, rejected, or expired protective trailing-stop orders.
 - Add historical performance reports by:
   - strategy
   - subscription

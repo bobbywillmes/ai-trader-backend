@@ -70,6 +70,14 @@ maxSymbolOpenNotional
 maxSubscriptionOpenNotional
 ```
 
+### Exit attention states
+
+The backend records explicit exit attention states for protective trailing-stop failures.
+
+`PositionExitState` can mark `attentionRequired` when a protective trailing-stop order submission fails, is rejected, is canceled, or expires. These states are surfaced in the Open Positions admin page so operator intervention is visible while the tracked position remains open.
+
+Attention states are separate from the normal lifecycle `status`: `status` describes where the exit lifecycle is, while `attentionRequired` indicates that the operator should review the position.
+
 ---
 
 ## 🛡 Current Safety Controls
