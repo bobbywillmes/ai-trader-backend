@@ -250,19 +250,35 @@ export async function runStartupChecks(): Promise<StartupCheckReport> {
       );
     }
 
+    if (isProduction && config.tradingEnabled && config.paperMode) {
+      checks.push(
+        pass(
+          'production_paper_trading_enabled_on_start',
+          'Production startup found paper trading enabled. Paper-production restarts are allowed.',
+          {
+            source: 'Setting table',
+            tradingEnabled: config.tradingEnabled,
+            paperMode: config.paperMode,
+          }
+        )
+      );
+    }
+
     if (
       isProduction &&
       config.tradingEnabled &&
+      !config.paperMode &&
       !env.ALLOW_TRADING_ENABLED_ON_START
     ) {
       checks.push(
         fail(
-          'production_trading_enabled_on_start_guard',
-          'Production startup found database runtime setting tradingEnabled=true. Set ALLOW_TRADING_ENABLED_ON_START=true only when intentionally restarting production with trading already enabled.',
+          'production_live_trading_enabled_on_start_guard',
+          'Production startup found live trading enabled. Set ALLOW_TRADING_ENABLED_ON_START=true only when intentionally restarting production with live trading already enabled.',
           {
             source: 'Setting table',
             settingKey: 'tradingEnabled',
             tradingEnabled: config.tradingEnabled,
+            paperMode: config.paperMode,
           }
         )
       );
