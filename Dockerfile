@@ -8,6 +8,7 @@ RUN apt-get update \
 
 COPY package*.json ./
 COPY tsconfig.json ./
+COPY tsconfig.build.json ./
 COPY prisma.config.ts ./
 COPY prisma ./prisma
 COPY src ./src
