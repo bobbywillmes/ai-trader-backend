@@ -88,6 +88,49 @@ Check whether a specific column exists in production:
 docker compose -f docker-compose.prod.yml exec postgres sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT column_name FROM information_schema.columns WHERE table_name = '\''TrackedPosition'\'' AND column_name ILIKE '\''%trailing%'\'' ORDER BY ordinal_position;"'
 ```
 
+### Prisma migration history says clean, but runtime column is missing
+
+If `prisma migrate deploy` reports no pending migrations but the app fails with a missing-column error, inspect the actual table schema. This can indicate migration drift between `_prisma_migrations` and the live database schema.
+
+Use `information_schema.columns` to confirm whether the column exists before applying any repair SQL. Do not use `prisma migrate reset` in production.
+
+### To fix:
+(in project root)
+1. Run a SQL command to check for missing columns in table
+
+```sql
+cat <<'SQL' | docker compose -f docker-compose.prod.yml run --rm backend npx prisma db execute --stdin
+SELECT column_name
+FROM information_schema.columns
+WHERE table_name = 'PositionExitState'
+  AND lower(column_name) LIKE 'attention%'
+ORDER BY column_name;
+SQL
+```
+2. If response returns nothing, the columns were never added to table. Continue to step 3.
+3. Add missing columns to table
+```sql
+cat <<'SQL' | docker compose -f docker-compose.prod.yml run --rm backend npx prisma db execute --stdin
+ALTER TABLE "PositionExitState"
+  ADD COLUMN IF NOT EXISTS "attentionRequired" BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS "attentionCode" TEXT,
+  ADD COLUMN IF NOT EXISTS "attentionMessage" TEXT,
+  ADD COLUMN IF NOT EXISTS "attentionAt" TIMESTAMP(3),
+  ADD COLUMN IF NOT EXISTS "attentionClearedAt" TIMESTAMP(3);
+
+CREATE INDEX IF NOT EXISTS "PositionExitState_attentionRequired_idx"
+  ON "PositionExitState"("attentionRequired");
+
+CREATE INDEX IF NOT EXISTS "PositionExitState_attentionCode_idx"
+  ON "PositionExitState"("attentionCode");
+SQL
+```
+4. Restart the backend and check server logs
+```bash
+docker compose -f docker-compose.prod.yml up -d --force-recreate backend
+docker compose -f docker-compose.prod.yml logs --tail=10 backend
+```
+
 ---
 
 ## 💽 Database Models
