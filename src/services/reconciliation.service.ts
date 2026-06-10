@@ -1,3 +1,10 @@
+import type { Prisma } from '@prisma/client';
+
+import { prisma } from '../db/prisma.js';
+import { getOpenAlpacaOrders } from '../integrations/alpaca/orders.adapter.js';
+import { createSystemEvent } from './system-event.service.js';
+import { getNormalizedPositions } from './positions.service.js';
+
 export type ReconciliationSeverity = 'info' | 'warn' | 'critical';
 
 export type ReconciliationFindingCode =
@@ -312,4 +319,97 @@ export function reconcileSnapshots(input: ReconciliationInput) {
   }
 
   return findings;
+}
+
+export type RunReconciliationCheckResult = {
+  findings: ReconciliationFinding[];
+  eventCount: number;
+};
+
+function buildReconciliationEventType(code: ReconciliationFindingCode) {
+  return `reconciliation.${code}`;
+}
+
+function buildReconciliationEventPayload(
+  finding: ReconciliationFinding
+): Prisma.InputJsonValue {
+  return {
+    code: finding.code,
+    severity: finding.severity,
+    symbol: finding.symbol,
+    attentionCode: finding.attentionCode ?? null,
+    details: finding.details ?? {},
+  } as Prisma.InputJsonValue;
+}
+
+export async function runReconciliationCheck(): Promise<RunReconciliationCheckResult> {
+  const [trackedPositions, brokerPositions, brokerOrders] = await Promise.all([
+    prisma.trackedPosition.findMany({
+      where: {
+        status: {
+          in: ['open', 'closing'],
+        },
+      },
+      include: {
+        exitState: true,
+      },
+      orderBy: {
+        symbol: 'asc',
+      },
+    }),
+    getNormalizedPositions(),
+    getOpenAlpacaOrders(),
+  ]);
+
+  const findings = reconcileSnapshots({
+    trackedPositions: trackedPositions.map((position) => ({
+      id: position.id,
+      broker: position.broker,
+      symbol: position.symbol,
+      status: position.status,
+      side: position.side,
+      qty: position.qty,
+      exitState: position.exitState
+        ? {
+            targetUnlocked: position.exitState.targetUnlocked,
+            trailClientOrderId: position.exitState.trailClientOrderId,
+            trailBrokerOrderId: position.exitState.trailBrokerOrderId,
+            trailOrderStatus: position.exitState.trailOrderStatus,
+            attentionRequired: position.exitState.attentionRequired,
+          }
+        : null,
+    })),
+    brokerPositions: brokerPositions.map((position) => ({
+      broker: position.broker ?? null,
+      symbol: position.symbol,
+      qty: position.qty ?? null,
+      side: position.side ?? null,
+    })),
+    brokerOrders: brokerOrders.map((order) => ({
+      broker: 'alpaca',
+      id: order.id ?? null,
+      client_order_id: order.client_order_id ?? null,
+      symbol: order.symbol,
+      side: order.side ?? null,
+      qty: order.qty ?? null,
+      type: order.type ?? null,
+      status: order.status ?? null,
+    })),
+    defaultBroker: 'alpaca',
+  });
+
+  for (const finding of findings) {
+    await createSystemEvent({
+      type: buildReconciliationEventType(finding.code),
+      entityType: finding.entityType,
+      entityId: finding.entityId,
+      message: finding.message,
+      payloadJson: buildReconciliationEventPayload(finding),
+    });
+  }
+
+  return {
+    findings,
+    eventCount: findings.length,
+  };
 }
