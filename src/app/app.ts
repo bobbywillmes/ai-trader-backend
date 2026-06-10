@@ -27,6 +27,7 @@ import brokerActivitiesRoutes from '../routes/broker-activities.routes.js';
 import marketStateRoutes from '../routes/market-state.routes.js';
 import marketDiaryRoutes from '../routes/market-diary.routes.js';
 import etfWatchRoutes from '../routes/etf-watch.routes.js';
+import reconciliationRoutes from '../routes/reconciliation.routes.js';
 
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
@@ -64,6 +65,7 @@ export function createApp() {
   app.use('/api/bootstrap', requireAdminAccess, bootstrapRoutes);
   app.use('/api/system-status', requireAdminAccess, systemStatusRoutes);
   app.use('/api/system-events', requireAdminAccess, systemEventsRoutes);
+  app.use('/api/reconciliation', requireAdminAccess, reconciliationRoutes);
   app.use('/api/account', requireAdminAccess, accountRoutes);
   app.use('/api/account-snapshots', requireAdminAccess, accountSnapshotsRoutes);
   app.use('/api/broker-activities', requireAdminAccess, brokerActivitiesRoutes);

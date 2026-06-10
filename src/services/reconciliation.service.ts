@@ -321,9 +321,14 @@ export function reconcileSnapshots(input: ReconciliationInput) {
   return findings;
 }
 
+export type RunReconciliationCheckOptions = {
+  persistEvents?: boolean;
+};
+
 export type RunReconciliationCheckResult = {
   findings: ReconciliationFinding[];
   eventCount: number;
+  persistedEvents: boolean;
 };
 
 function buildReconciliationEventType(code: ReconciliationFindingCode) {
@@ -342,7 +347,9 @@ function buildReconciliationEventPayload(
   } as Prisma.InputJsonValue;
 }
 
-export async function runReconciliationCheck(): Promise<RunReconciliationCheckResult> {
+export async function runReconciliationCheck(
+  options: RunReconciliationCheckOptions = {}
+): Promise<RunReconciliationCheckResult> {
   const [trackedPositions, brokerPositions, brokerOrders] = await Promise.all([
     prisma.trackedPosition.findMany({
       where: {
@@ -398,18 +405,27 @@ export async function runReconciliationCheck(): Promise<RunReconciliationCheckRe
     defaultBroker: 'alpaca',
   });
 
-  for (const finding of findings) {
-    await createSystemEvent({
-      type: buildReconciliationEventType(finding.code),
-      entityType: finding.entityType,
-      entityId: finding.entityId,
-      message: finding.message,
-      payloadJson: buildReconciliationEventPayload(finding),
-    });
+  const persistEvents = options.persistEvents ?? true;
+
+let eventCount = 0;
+
+  if (persistEvents) {
+    for (const finding of findings) {
+      await createSystemEvent({
+        type: buildReconciliationEventType(finding.code),
+        entityType: finding.entityType,
+        entityId: finding.entityId,
+        message: finding.message,
+        payloadJson: buildReconciliationEventPayload(finding),
+      });
+
+      eventCount += 1;
+    }
   }
 
   return {
     findings,
-    eventCount: findings.length,
+    eventCount,
+    persistedEvents: persistEvents,
   };
 }

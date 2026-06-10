@@ -306,6 +306,7 @@ describe('runReconciliationCheck', () => {
     ]);
 
     expect(result.eventCount).toBe(1);
+    expect(result.persistedEvents).toBe(true);
 
     expect(mocks.createSystemEvent).toHaveBeenCalledWith({
       type: 'reconciliation.trail_order_missing_after_unlock',
@@ -356,6 +357,54 @@ describe('runReconciliationCheck', () => {
 
     expect(result.findings).toEqual([]);
     expect(result.eventCount).toBe(0);
+    expect(result.persistedEvents).toBe(true);
+    expect(mocks.createSystemEvent).not.toHaveBeenCalled();
+  });
+
+  it('can return findings without creating system events when persistEvents is false', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      {
+        id: 101,
+        broker: 'alpaca',
+        symbol: 'SPY',
+        status: 'open',
+        side: 'long',
+        qty: 1,
+        exitState: {
+          targetUnlocked: true,
+          trailClientOrderId: null,
+          trailBrokerOrderId: null,
+          trailOrderStatus: null,
+          attentionRequired: false,
+        },
+      },
+    ]);
+
+    mocks.getNormalizedPositions.mockResolvedValue([
+      {
+        broker: 'alpaca',
+        symbol: 'SPY',
+        qty: 1,
+        side: 'long',
+      },
+    ]);
+
+    mocks.getOpenAlpacaOrders.mockResolvedValue([]);
+
+    const result = await runReconciliationCheck({ persistEvents: false });
+
+    expect(result.findings).toEqual([
+      expect.objectContaining({
+        code: 'trail_order_missing_after_unlock',
+        severity: 'critical',
+        entityType: 'trackedPosition',
+        entityId: '101',
+        symbol: 'SPY',
+      }),
+    ]);
+
+    expect(result.eventCount).toBe(0);
+    expect(result.persistedEvents).toBe(false);
     expect(mocks.createSystemEvent).not.toHaveBeenCalled();
   });
 });
