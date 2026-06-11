@@ -6,12 +6,16 @@ const mocks = vi.hoisted(() => ({
   getOpenAlpacaOrders: vi.fn(),
   createSystemEvent: vi.fn(),
   markPositionExitStateAttentionRequired: vi.fn(),
+  systemEventFindFirst: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
   prisma: {
     trackedPosition: {
       findMany: mocks.trackedPositionFindMany,
+    },
+    systemEvent: {
+      findFirst: mocks.systemEventFindFirst,
     },
   },
 }));
@@ -252,6 +256,7 @@ describe('reconcileSnapshots', () => {
 describe('runReconciliationCheck', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.systemEventFindFirst.mockResolvedValue(null);
   });
 
   it('loads backend and broker snapshots, then creates system events for findings', async () => {
@@ -330,6 +335,8 @@ describe('runReconciliationCheck', () => {
 
     expect(result.attentionUpdateCount).toBe(1);
     expect(result.persistedAttention).toBe(true);
+
+    expect(result.skippedDuplicateEventCount).toBe(0);
 
     expect(mocks.markPositionExitStateAttentionRequired).toHaveBeenCalledWith({
       trackedPositionId: 101,
@@ -434,4 +441,74 @@ describe('runReconciliationCheck', () => {
     expect(mocks.markPositionExitStateAttentionRequired).not.toHaveBeenCalled();
 
   });
+
+  it('skips duplicate reconciliation system events within the de-dupe window while still applying attention', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      {
+        id: 101,
+        broker: 'alpaca',
+        symbol: 'SPY',
+        status: 'open',
+        side: 'long',
+        qty: 1,
+        exitState: {
+          targetUnlocked: true,
+          trailClientOrderId: null,
+          trailBrokerOrderId: null,
+          trailOrderStatus: null,
+          attentionRequired: false,
+        },
+      },
+    ]);
+
+    mocks.getNormalizedPositions.mockResolvedValue([
+      {
+        broker: 'alpaca',
+        symbol: 'SPY',
+        qty: 1,
+        side: 'long',
+      },
+    ]);
+
+    mocks.getOpenAlpacaOrders.mockResolvedValue([]);
+    mocks.systemEventFindFirst.mockResolvedValue({
+      id: 999,
+      type: 'reconciliation.trail_order_missing_after_unlock',
+      entityType: 'trackedPosition',
+      entityId: '101',
+    });
+
+    mocks.markPositionExitStateAttentionRequired.mockResolvedValue({});
+
+    const result = await runReconciliationCheck({
+      persistEvents: true,
+      persistAttention: true,
+    });
+
+    expect(result.findings).toEqual([
+      expect.objectContaining({
+        code: 'trail_order_missing_after_unlock',
+        severity: 'critical',
+        entityType: 'trackedPosition',
+        entityId: '101',
+        symbol: 'SPY',
+      }),
+    ]);
+
+    expect(result.eventCount).toBe(0);
+    expect(result.skippedDuplicateEventCount).toBe(1);
+    expect(result.attentionUpdateCount).toBe(1);
+    expect(result.persistedEvents).toBe(true);
+    expect(result.persistedAttention).toBe(true);
+
+    expect(mocks.createSystemEvent).not.toHaveBeenCalled();
+
+    expect(mocks.markPositionExitStateAttentionRequired).toHaveBeenCalledWith({
+      trackedPositionId: 101,
+      code: 'trail_order_missing_after_unlock',
+      message:
+        'SPY target is unlocked, but no protective trailing-stop order is linked.',
+    });
+  });
+
 });

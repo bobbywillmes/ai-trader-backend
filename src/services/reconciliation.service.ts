@@ -325,11 +325,14 @@ export function reconcileSnapshots(input: ReconciliationInput) {
 export type RunReconciliationCheckOptions = {
   persistEvents?: boolean;
   persistAttention?: boolean;
+  dedupeEvents?: boolean;
+  dedupeWindowMinutes?: number;
 };
 
 export type RunReconciliationCheckResult = {
   findings: ReconciliationFinding[];
   eventCount: number;
+  skippedDuplicateEventCount: number;
   attentionUpdateCount: number;
   persistedEvents: boolean;
   persistedAttention: boolean;
@@ -349,6 +352,33 @@ function buildReconciliationEventPayload(
     attentionCode: finding.attentionCode ?? null,
     details: finding.details ?? {},
   } as Prisma.InputJsonValue;
+}
+
+const DEFAULT_RECONCILIATION_EVENT_DEDUPE_WINDOW_MINUTES = 60;
+
+function getDedupeSince(windowMinutes: number) {
+  return new Date(Date.now() - windowMinutes * 60_000);
+}
+
+async function hasRecentReconciliationEvent(
+  finding: ReconciliationFinding,
+  dedupeSince: Date
+) {
+  const existing = await prisma.systemEvent.findFirst({
+    where: {
+      type: buildReconciliationEventType(finding.code),
+      entityType: finding.entityType,
+      entityId: finding.entityId,
+      createdAt: {
+        gte: dedupeSince,
+      },
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+  });
+
+  return Boolean(existing);
 }
 
 export async function runReconciliationCheck(
@@ -411,11 +441,29 @@ export async function runReconciliationCheck(
 
   const persistEvents = options.persistEvents ?? true;
   const persistAttention = options.persistAttention ?? persistEvents;
+  const dedupeEvents = options.dedupeEvents ?? true;
+  const dedupeWindowMinutes =
+    options.dedupeWindowMinutes ??
+    DEFAULT_RECONCILIATION_EVENT_DEDUPE_WINDOW_MINUTES;
+  const dedupeSince = getDedupeSince(dedupeWindowMinutes);
 
 let eventCount = 0;
+let skippedDuplicateEventCount = 0;
 
   if (persistEvents) {
     for (const finding of findings) {
+      if (dedupeEvents) {
+        const duplicateExists = await hasRecentReconciliationEvent(
+          finding,
+          dedupeSince
+        );
+
+        if (duplicateExists) {
+          skippedDuplicateEventCount += 1;
+          continue;
+        }
+      }
+
       await createSystemEvent({
         type: buildReconciliationEventType(finding.code),
         entityType: finding.entityType,
@@ -459,6 +507,7 @@ let eventCount = 0;
   return {
     findings,
     eventCount,
+    skippedDuplicateEventCount,
     attentionUpdateCount,
     persistedEvents: persistEvents,
     persistedAttention: persistAttention,

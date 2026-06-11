@@ -136,6 +136,10 @@ export function ReconciliationPage() {
               <Badge color="gray">
                 {result.attentionUpdateCount} attention update(s)
               </Badge>
+
+              <Badge color="gray">
+                {result.skippedDuplicateEventCount} duplicate event(s) skipped
+              </Badge>
             </Group>
 
             {result.findings.length === 0 ? (

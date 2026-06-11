@@ -26,6 +26,7 @@ export type RunReconciliationResult = {
   attentionUpdateCount: number;
   persistedEvents: boolean;
   persistedAttention: boolean;
+  skippedDuplicateEventCount: number;
 };
 
 export function runReconciliation(

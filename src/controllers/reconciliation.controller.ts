@@ -18,6 +18,14 @@ function shouldPersistAttention(req: Request, persistEvents: boolean) {
   return persistEvents;
 }
 
+function shouldDedupeEvents(req: Request) {
+  if (req.body?.dedupeEvents === false || req.query.dedupeEvents === 'false') {
+    return false;
+  }
+
+  return true;
+}
+
 export async function runReconciliationController(
   req: Request,
   res: Response,
@@ -30,6 +38,7 @@ export async function runReconciliationController(
     const result = await runReconciliationCheck({
       persistEvents,
       persistAttention,
+      dedupeEvents: shouldDedupeEvents(req),
     });
 
     res.status(200).json({
