@@ -127,3 +127,23 @@ Admin UI / Postman
 ```
 
 This prevents automation clients from accidentally changing strategy configuration, subscription sizing, exit rules, or global trading settings.
+
+### Reconciliation checks
+
+The backend includes a manual reconciliation flow for comparing local tracked-position state against broker state.
+
+Reconciliation currently compares:
+
+- active `TrackedPosition` records
+- related `PositionExitState` records
+- broker open positions
+- broker open orders
+
+The Admin UI exposes this under **System → Reconciliation**.
+
+Two execution modes are supported:
+
+- **Dry run** — returns findings only and does not mutate data.
+- **Persist events + attention** — creates `SystemEvent` records and applies exit attention states for critical tracked-position findings.
+
+Reconciliation is intentionally observational first. It detects mismatches and surfaces them for operator review rather than automatically changing positions or submitting/canceling broker orders.

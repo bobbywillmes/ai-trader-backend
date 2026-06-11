@@ -265,7 +265,7 @@ The backend is currently focused on hosted paper-production testing, operational
 ### 🔜 Next Backend Enhancements
 
 - Add more precise close-fill linking between close orders and broker activities.
-- Add order/position reconciliation checks.
+- Broker/order reconciliation checks — manual reconciliation runner added; scheduled reconciliation worker still pending
 - Add historical performance reports by:
   - strategy
   - subscription
