@@ -130,7 +130,7 @@ This prevents automation clients from accidentally changing strategy configurati
 
 ### Reconciliation checks
 
-The backend includes a manual reconciliation flow for comparing local tracked-position state against broker state.
+The backend includes reconciliation flows for comparing local tracked-position state against broker state.
 
 Reconciliation currently compares:
 
@@ -139,11 +139,26 @@ Reconciliation currently compares:
 - broker open positions
 - broker open orders
 
-The Admin UI exposes this under **System → Reconciliation**.
+The Admin UI exposes manual reconciliation under **System → Reconciliation**.
 
-Two execution modes are supported:
+Two manual execution modes are supported:
 
 - **Dry run** — returns findings only and does not mutate data.
 - **Persist events + attention** — creates `SystemEvent` records and applies exit attention states for critical tracked-position findings.
 
 Reconciliation is intentionally observational first. It detects mismatches and surfaces them for operator review rather than automatically changing positions or submitting/canceling broker orders.
+
+### Scheduled reconciliation worker
+
+The backend also includes an optional scheduled reconciliation worker.
+
+The worker is controlled by database-backed runtime settings:
+
+- reconciliationWorkerEnabled
+- reconciliationWorkerIntervalMinutes
+
+The worker is disabled by default. When enabled, it runs reconciliation on the configured interval, persists reconciliation `SystemEvent` records, and applies exit attention states for critical tracked-position findings.
+
+Reconciliation events are de-duplicated within a recent time window so a persistent mismatch does not create repeated identical system events.
+
+Manual reconciliation should be used first when validating broker/backend state. The scheduled worker should only be enabled after a clean manual dry run and when automatic monitoring is intentionally desired.
