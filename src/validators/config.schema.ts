@@ -14,6 +14,15 @@ export const updateRuntimeSettingsSchema = z
     maxTotalOpenNotional: nullableNonnegativeNumber,
     maxSymbolOpenNotional: nullableNonnegativeNumber,
     maxSubscriptionOpenNotional: nullableNonnegativeNumber,
+
+    reconciliationWorkerEnabled: z.boolean().optional(),
+    reconciliationWorkerIntervalMinutes: z
+      .number()
+      .int()
+      .min(1)
+      .max(1440)
+      .optional(),
+  
   })
   .refine(
     (data) => Object.values(data).some((value) => value !== undefined),

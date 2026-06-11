@@ -34,6 +34,11 @@ type RiskLimitKey =
 
 type RiskLimitForm = Pick<RuntimeTradingConfig, RiskLimitKey>;
 
+type ReconciliationSettingsDraft = {
+  reconciliationWorkerEnabled: boolean;
+  reconciliationWorkerIntervalMinutes: number;
+};
+
 const riskLimitDefinitions: {
   key: RiskLimitKey;
   label: string;
@@ -183,6 +188,7 @@ export function SettingsPage() {
   const [riskForm, setRiskForm] = useState<RiskLimitForm | null>(null);
   const systemStatusQuery = useSystemStatus(token);
   const systemStatus = systemStatusQuery.data;
+  const [reconciliationDraft, setReconciliationDraft] = useState<ReconciliationSettingsDraft | null>(null);
 
   const { data: config, isLoading, isError } = useConfig(token);
   const updateMutation = useUpdateConfig(token);
@@ -192,6 +198,21 @@ export function SettingsPage() {
       setRiskForm(configToRiskForm(config));
     }
   }, [config]);
+
+  useEffect(() => {
+    if (!config) {
+      return;
+    }
+
+    setReconciliationDraft({
+      reconciliationWorkerEnabled: config.reconciliationWorkerEnabled,
+      reconciliationWorkerIntervalMinutes:
+        config.reconciliationWorkerIntervalMinutes,
+    });
+  }, [
+    config?.reconciliationWorkerEnabled,
+    config?.reconciliationWorkerIntervalMinutes,
+  ]);
 
   const entryStatus = useMemo(() => {
     if (!config) return null;
@@ -363,6 +384,44 @@ export function SettingsPage() {
     if (config) {
       setRiskForm(configToRiskForm(config));
     }
+  }
+
+  const reconciliationSettingsChanged =
+    Boolean(config && reconciliationDraft) &&
+    (reconciliationDraft?.reconciliationWorkerEnabled !==
+      config?.reconciliationWorkerEnabled ||
+      reconciliationDraft?.reconciliationWorkerIntervalMinutes !==
+        config?.reconciliationWorkerIntervalMinutes);
+
+  const reconciliationIntervalValid =
+    reconciliationDraft !== null &&
+    Number.isInteger(reconciliationDraft.reconciliationWorkerIntervalMinutes) &&
+    reconciliationDraft.reconciliationWorkerIntervalMinutes >= 1 &&
+    reconciliationDraft.reconciliationWorkerIntervalMinutes <= 1440;
+
+  function resetReconciliationSettings() {
+    if (!config) {
+      return;
+    }
+
+    setReconciliationDraft({
+      reconciliationWorkerEnabled: config.reconciliationWorkerEnabled,
+      reconciliationWorkerIntervalMinutes:
+        config.reconciliationWorkerIntervalMinutes,
+    });
+  }
+
+  async function saveReconciliationSettings() {
+    if (!reconciliationDraft) {
+      return;
+    }
+
+    await applyUpdate({
+      reconciliationWorkerEnabled:
+        reconciliationDraft.reconciliationWorkerEnabled,
+      reconciliationWorkerIntervalMinutes:
+        reconciliationDraft.reconciliationWorkerIntervalMinutes,
+    });
   }
 
   return (
@@ -880,6 +939,119 @@ export function SettingsPage() {
               )}
             </Stack>
           </Card>
+
+          <Card withBorder>
+            <Stack gap="md">
+              <Group justify="space-between" align="flex-start">
+                <div>
+                  <Text fw={700}>Scheduled Reconciliation</Text>
+                  <Text size="sm" c="dimmed">
+                    Runs broker/backend reconciliation automatically and applies
+                    attention states for critical tracked-position findings.
+                  </Text>
+                </div>
+
+                <Group>
+                  {reconciliationSettingsChanged && (
+                    <Badge color="blue" variant="light">
+                      Unsaved changes
+                    </Badge>
+                  )}
+
+                  <Badge
+                    color={
+                      reconciliationDraft?.reconciliationWorkerEnabled ? "teal" : "gray"
+                    }
+                  >
+                    {reconciliationDraft?.reconciliationWorkerEnabled
+                      ? "Enabled"
+                      : "Disabled"}
+                  </Badge>
+
+                  <Switch
+                    checked={reconciliationDraft?.reconciliationWorkerEnabled ?? false}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+
+                      setReconciliationDraft((current) =>
+                        current
+                          ? {
+                              ...current,
+                              reconciliationWorkerEnabled: checked,
+                            }
+                          : current
+                      );
+                    }}
+                    disabled={updateMutation.isPending || !reconciliationDraft}
+                    color="teal"
+                    size="md"
+                  />
+                </Group>
+              </Group>
+
+              <NumberInput
+                label="Interval minutes"
+                description="How often the scheduled reconciliation worker is allowed to run when enabled."
+                min={1}
+                max={1440}
+                step={1}
+                value={
+                  reconciliationDraft?.reconciliationWorkerIntervalMinutes ?? 15
+                }
+                onChange={(value) => {
+                  const interval =
+                    typeof value === "number"
+                      ? value
+                      : Number.parseInt(value, 10);
+
+                  if (!Number.isFinite(interval)) {
+                    return;
+                  }
+
+                  setReconciliationDraft((current) =>
+                    current
+                      ? {
+                          ...current,
+                          reconciliationWorkerIntervalMinutes: interval,
+                        }
+                      : current
+                  );
+                }}
+                error={
+                  reconciliationIntervalValid
+                    ? undefined
+                    : "Interval must be between 1 and 1440 minutes."
+                }
+                disabled={updateMutation.isPending || !reconciliationDraft}
+              />
+
+              <Group justify="flex-end">
+                <Button
+                  variant="subtle"
+                  onClick={resetReconciliationSettings}
+                  disabled={!reconciliationSettingsChanged || updateMutation.isPending}
+                >
+                  Reset
+                </Button>
+
+                <Button
+                  onClick={saveReconciliationSettings}
+                  loading={updateMutation.isPending}
+                  disabled={
+                    !reconciliationSettingsChanged || !reconciliationIntervalValid
+                  }
+                >
+                  Save Reconciliation Settings
+                </Button>
+              </Group>
+
+              <Alert color="blue" title="Recommended starting point">
+                Keep this disabled until you are ready for automatic checks. When enabled,
+                a 15 minute interval is a reasonable starting point for paper production.
+              </Alert>
+            </Stack>
+          </Card>
+
         </>
       )}
 

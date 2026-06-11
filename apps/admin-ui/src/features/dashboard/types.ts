@@ -52,6 +52,8 @@ export type RuntimeTradingConfig = {
   maxTotalOpenNotional: number | null;
   maxSymbolOpenNotional: number | null;
   maxSubscriptionOpenNotional: number | null;
+  reconciliationWorkerEnabled: boolean;
+  reconciliationWorkerIntervalMinutes: number;
 };
 
 export type RiskStatus = {
