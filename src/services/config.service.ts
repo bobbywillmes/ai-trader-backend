@@ -10,6 +10,8 @@ export type RuntimeTradingConfig = {
   maxTotalOpenNotional: number | null;
   maxSymbolOpenNotional: number | null;
   maxSubscriptionOpenNotional: number | null;
+  reconciliationWorkerEnabled: boolean;
+  reconciliationWorkerIntervalMinutes: number;
 };
 
 export type UpdateRuntimeSettingsInput = {
@@ -22,6 +24,8 @@ export type UpdateRuntimeSettingsInput = {
   maxTotalOpenNotional?: number | null | undefined;
   maxSymbolOpenNotional?: number | null | undefined;
   maxSubscriptionOpenNotional?: number | null | undefined;
+  reconciliationWorkerEnabled?: boolean | undefined;
+  reconciliationWorkerIntervalMinutes?: number | null | undefined;
 };
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -84,6 +88,12 @@ export async function getRuntimeTradingConfig(): Promise<RuntimeTradingConfig> {
       map.get('maxSubscriptionOpenNotional'),
       5_000
     ),
+    reconciliationWorkerEnabled: parseBoolean(
+      map.get('reconciliationWorkerEnabled'),
+      false
+    ),
+    reconciliationWorkerIntervalMinutes:
+      parseNullableNumber(map.get('reconciliationWorkerIntervalMinutes'), 15) ?? 15,
   };
 }
 
@@ -133,6 +143,24 @@ export async function updateRuntimeSettings(input: UpdateRuntimeSettingsInput) {
       upsertSetting(
         'maxSubscriptionOpenNotional',
         input.maxSubscriptionOpenNotional
+      )
+    );
+  }
+
+  if (input.reconciliationWorkerEnabled !== undefined) {
+    updates.push(
+      upsertSetting(
+        'reconciliationWorkerEnabled',
+        input.reconciliationWorkerEnabled
+      )
+    );
+  }
+
+  if (input.reconciliationWorkerIntervalMinutes !== undefined) {
+    updates.push(
+      upsertSetting(
+        'reconciliationWorkerIntervalMinutes',
+        input.reconciliationWorkerIntervalMinutes
       )
     );
   }

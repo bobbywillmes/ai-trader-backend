@@ -10,6 +10,7 @@ import { evaluateExits } from '../services/exit-evaluator.service.js';
 import { runScheduledAccountSnapshots } from '../workers/account-snapshot.worker.js';
 import { runBrokerActivitySync } from '../workers/broker-activity.worker.js';
 import { assertStartupSafe } from '../services/startup-check.service.js';
+import { runScheduledReconciliation } from '../workers/reconciliation.worker.js';
 
 const app = createApp();
 
@@ -58,6 +59,14 @@ function startWorkers() {
       logger.error({ error }, 'Trading worker interval error.');
     });
   }, 2_000);
+
+  // Reconciliation checks are internally gated by runtime settings and
+  // de-duped before creating SystemEvents.
+  setInterval(() => {
+    runScheduledReconciliation().catch((error) => {
+      logger.error({ error }, 'Scheduled reconciliation error.');
+    });
+  }, 60_000);
 }
 
 async function startServer() {
