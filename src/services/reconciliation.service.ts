@@ -4,6 +4,7 @@ import { prisma } from '../db/prisma.js';
 import { getOpenAlpacaOrders } from '../integrations/alpaca/orders.adapter.js';
 import { createSystemEvent } from './system-event.service.js';
 import { getNormalizedPositions } from './positions.service.js';
+import { markPositionExitStateAttentionRequired } from './position-exit-state.service.js';
 
 export type ReconciliationSeverity = 'info' | 'warn' | 'critical';
 
@@ -323,12 +324,15 @@ export function reconcileSnapshots(input: ReconciliationInput) {
 
 export type RunReconciliationCheckOptions = {
   persistEvents?: boolean;
+  persistAttention?: boolean;
 };
 
 export type RunReconciliationCheckResult = {
   findings: ReconciliationFinding[];
   eventCount: number;
+  attentionUpdateCount: number;
   persistedEvents: boolean;
+  persistedAttention: boolean;
 };
 
 function buildReconciliationEventType(code: ReconciliationFindingCode) {
@@ -406,6 +410,7 @@ export async function runReconciliationCheck(
   });
 
   const persistEvents = options.persistEvents ?? true;
+  const persistAttention = options.persistAttention ?? persistEvents;
 
 let eventCount = 0;
 
@@ -423,9 +428,39 @@ let eventCount = 0;
     }
   }
 
+  let attentionUpdateCount = 0;
+
+  if (persistAttention) {
+    for (const finding of findings) {
+      if (
+        finding.entityType !== 'trackedPosition' ||
+        !finding.attentionCode ||
+        finding.severity !== 'critical'
+      ) {
+        continue;
+      }
+
+      const trackedPositionId = Number(finding.entityId);
+
+      if (!Number.isFinite(trackedPositionId)) {
+        continue;
+      }
+
+      await markPositionExitStateAttentionRequired({
+        trackedPositionId,
+        code: finding.attentionCode,
+        message: finding.message,
+      });
+
+      attentionUpdateCount += 1;
+    }
+  }
+
   return {
     findings,
     eventCount,
+    attentionUpdateCount,
     persistedEvents: persistEvents,
+    persistedAttention: persistAttention,
   };
 }

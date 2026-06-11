@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getNormalizedPositions: vi.fn(),
   getOpenAlpacaOrders: vi.fn(),
   createSystemEvent: vi.fn(),
+  markPositionExitStateAttentionRequired: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -25,6 +26,11 @@ vi.mock('../integrations/alpaca/orders.adapter.js', () => ({
 
 vi.mock('./system-event.service.js', () => ({
   createSystemEvent: mocks.createSystemEvent,
+}));
+
+vi.mock('./position-exit-state.service.js', () => ({
+  markPositionExitStateAttentionRequired:
+    mocks.markPositionExitStateAttentionRequired,
 }));
 
 import {
@@ -321,6 +327,17 @@ describe('runReconciliationCheck', () => {
         attentionCode: 'trail_order_missing_after_unlock',
       }),
     });
+
+    expect(result.attentionUpdateCount).toBe(1);
+    expect(result.persistedAttention).toBe(true);
+
+    expect(mocks.markPositionExitStateAttentionRequired).toHaveBeenCalledWith({
+      trackedPositionId: 101,
+      code: 'trail_order_missing_after_unlock',
+      message:
+        'SPY target is unlocked, but no protective trailing-stop order is linked.',
+    });
+
   });
 
   it('does not create system events when reconciliation has no findings', async () => {
@@ -359,6 +376,11 @@ describe('runReconciliationCheck', () => {
     expect(result.eventCount).toBe(0);
     expect(result.persistedEvents).toBe(true);
     expect(mocks.createSystemEvent).not.toHaveBeenCalled();
+
+    expect(result.attentionUpdateCount).toBe(0);
+    expect(result.persistedAttention).toBe(true);
+    expect(mocks.markPositionExitStateAttentionRequired).not.toHaveBeenCalled();
+
   });
 
   it('can return findings without creating system events when persistEvents is false', async () => {
@@ -406,5 +428,10 @@ describe('runReconciliationCheck', () => {
     expect(result.eventCount).toBe(0);
     expect(result.persistedEvents).toBe(false);
     expect(mocks.createSystemEvent).not.toHaveBeenCalled();
+
+    expect(result.attentionUpdateCount).toBe(0);
+    expect(result.persistedAttention).toBe(false);
+    expect(mocks.markPositionExitStateAttentionRequired).not.toHaveBeenCalled();
+
   });
 });

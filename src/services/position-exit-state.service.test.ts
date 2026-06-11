@@ -17,6 +17,7 @@ vi.mock('../db/prisma.js', () => ({
 }));
 
 import {
+  markPositionExitStateAttentionRequired,
   markPositionExitStateClosed,
   markTrailingStopOrderSubmitted,
   markTrailingStopOrderSubmitFailed,
@@ -220,4 +221,28 @@ describe('position exit attention states', () => {
       }),
     });
   });
+
+  it('can mark a position exit state as attention required from reconciliation', async () => {
+    mocks.positionExitStateUpdate.mockResolvedValue({});
+
+    await markPositionExitStateAttentionRequired({
+      trackedPositionId: 101,
+      code: 'trail_order_missing_after_unlock',
+      message:
+        'SPY target is unlocked, but no protective trailing-stop order is linked.',
+    });
+
+    expect(mocks.positionExitStateUpdate).toHaveBeenCalledWith({
+      where: { trackedPositionId: 101 },
+      data: expect.objectContaining({
+        attentionRequired: true,
+        attentionCode: 'trail_order_missing_after_unlock',
+        attentionMessage:
+          'SPY target is unlocked, but no protective trailing-stop order is linked.',
+        attentionAt: expect.any(Date),
+        attentionClearedAt: null,
+      }),
+    });
+  });
+
 });

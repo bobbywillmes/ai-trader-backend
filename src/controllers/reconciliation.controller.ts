@@ -6,6 +6,18 @@ function shouldPersistEvents(req: Request) {
   return req.body?.persistEvents === true || req.query.persistEvents === 'true';
 }
 
+function shouldPersistAttention(req: Request, persistEvents: boolean) {
+  if (req.body?.persistAttention === true || req.query.persistAttention === 'true') {
+    return true;
+  }
+
+  if (req.body?.persistAttention === false || req.query.persistAttention === 'false') {
+    return false;
+  }
+
+  return persistEvents;
+}
+
 export async function runReconciliationController(
   req: Request,
   res: Response,
@@ -13,7 +25,12 @@ export async function runReconciliationController(
 ) {
   try {
     const persistEvents = shouldPersistEvents(req);
-    const result = await runReconciliationCheck({ persistEvents });
+    const persistAttention = shouldPersistAttention(req, persistEvents);
+
+    const result = await runReconciliationCheck({
+      persistEvents,
+      persistAttention,
+    });
 
     res.status(200).json({
       ok: true,

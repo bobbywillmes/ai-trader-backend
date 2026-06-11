@@ -26,6 +26,12 @@ type SyncTrailingStopOrderStatusArgs = {
   rawBrokerJson: Prisma.InputJsonValue;
 };
 
+type MarkPositionExitStateAttentionRequiredArgs = {
+  trackedPositionId: number;
+  code: string;
+  message: string;
+};
+
 function calculateTrailStopPrice(
   highWaterMark: number,
   trailingStopPct: number
@@ -302,5 +308,17 @@ export async function syncTrailingStopOrderStatus(
       trailClientOrderId: args.clientOrderId,
     },
     data: updateData,
+  });
+}
+
+export async function markPositionExitStateAttentionRequired(
+  args: MarkPositionExitStateAttentionRequiredArgs
+) {
+  return prisma.positionExitState.update({
+    where: { trackedPositionId: args.trackedPositionId },
+    data: buildAttentionRequiredData({
+      code: args.code,
+      message: args.message,
+    }),
   });
 }
