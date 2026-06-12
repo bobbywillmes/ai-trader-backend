@@ -133,6 +133,23 @@ export async function syncSubmittedOrders() {
     take: 10
   });
 
+  if (submittedIntents.length === 0) {
+    return;
+  }
+
+  let openOrders: Awaited<ReturnType<typeof getNormalizedOpenOrders>>;
+
+  try {
+    openOrders = await getNormalizedOpenOrders();
+  } catch (error) {
+    console.error('Failed to fetch Alpaca open orders during submitted order sync', error);
+    return;
+  }
+
+  const openOrdersByBrokerOrderId = new Map(
+    openOrders.map((order) => [order.id, order])
+  );
+
   for (const intent of submittedIntents) {
     try {
       const brokerOrder = intent.brokerOrders[0];
@@ -141,11 +158,7 @@ export async function syncSubmittedOrders() {
         continue;
       }
 
-      const openOrders = await getNormalizedOpenOrders();
-
-      const alpacaOrder = openOrders.find(
-        (order) => order.id === brokerOrder.brokerOrderId
-      );
+      const alpacaOrder = openOrdersByBrokerOrderId.get(brokerOrder.brokerOrderId);
 
       if (!alpacaOrder) {
         continue;
@@ -154,18 +167,18 @@ export async function syncSubmittedOrders() {
       const previousStatus = brokerOrder.status;
       const nextStatus = alpacaOrder.status;
 
-    await syncTrailingStopOrderStatus({
-      clientOrderId: brokerOrder.clientOrderId,
-      brokerOrderId: brokerOrder.brokerOrderId,
-      orderStatus: nextStatus,
-      rawBrokerJson: {
-        brokerOrderId: brokerOrder.brokerOrderId,
+      await syncTrailingStopOrderStatus({
         clientOrderId: brokerOrder.clientOrderId,
-        previousStatus: brokerOrder.status,
-        nextStatus,
-        matchedOpenOrder: alpacaOrder.status ?? null,
-      } as Prisma.InputJsonValue,
-    });
+        brokerOrderId: brokerOrder.brokerOrderId,
+        orderStatus: nextStatus,
+        rawBrokerJson: {
+          brokerOrderId: brokerOrder.brokerOrderId,
+          clientOrderId: brokerOrder.clientOrderId,
+          previousStatus: brokerOrder.status,
+          nextStatus,
+          matchedOpenOrder: alpacaOrder.status ?? null,
+        } as Prisma.InputJsonValue,
+      });
 
       if (previousStatus !== nextStatus) {
         const updated = await prisma.brokerOrder.updateMany({
@@ -183,6 +196,7 @@ export async function syncSubmittedOrders() {
           console.log(
             `Order ${brokerOrder.id} status was already updated by another worker tick.`
           );
+
           continue;
         }
 
@@ -211,8 +225,6 @@ export async function syncSubmittedOrders() {
           `Order ${brokerOrder.id} changed from ${previousStatus} to ${nextStatus}`
         );
       }
-
-
     } catch (error) {
       console.error(`Sync error for intent ${intent.id}`, error);
     }
