@@ -136,6 +136,8 @@ NODE_ENV=production
 ALLOW_LIVE_TRADING=false
 ALLOW_TRADING_ENABLED_ON_START=false
 ALPACA_BASE_URL=https://paper-api.alpaca.markets
+MASSIVE_API_KEY=...
+MASSIVE_BASE_URL=https://api.massive.com
 ```
 
 Runtime database settings should also remain conservative unless deliberately changed from the admin UI:

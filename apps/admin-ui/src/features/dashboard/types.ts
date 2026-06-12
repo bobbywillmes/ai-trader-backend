@@ -90,6 +90,25 @@ export type BootstrapResponse = {
   risk: RiskStatus;
 };
 
+export type IndexPerformanceSymbol = {
+  symbol: "SPY" | "QQQ" | "DIA" | "IWM";
+  lastPrice: number | null;
+  todayChange: number | null;
+  todayChangePercent: number | null;
+  dayHigh: number | null;
+  dayLow: number | null;
+  previousClose: number | null;
+  marketStatus: string | null;
+  updatedTime: string | null;
+};
+
+export type IndexPerformanceResponse = {
+  marketStatus: string | null;
+  serverTime: string | null;
+  updatedAt: string;
+  symbols: IndexPerformanceSymbol[];
+};
+
 export type SystemEvent = {
   id: number;
   type: string;

@@ -16,8 +16,18 @@ import {
   Title,
 } from "@mantine/core";
 import { getAdminToken } from "../lib/api";
-import { useBootstrap, useSystemEvents } from "../features/dashboard/hooks";
-import type { BrokerPosition, BrokerOpenOrder, SystemEvent } from "../features/dashboard/types";
+import {
+  useBootstrap,
+  useIndexPerformance,
+  useSystemEvents,
+} from "../features/dashboard/hooks";
+import type {
+  BrokerPosition,
+  BrokerOpenOrder,
+  IndexPerformanceResponse,
+  IndexPerformanceSymbol,
+  SystemEvent,
+} from "../features/dashboard/types";
 import { describeEvent } from "../features/dashboard/eventUtils";
 
 function fmt(n: number, decimals = 2) {
@@ -38,6 +48,20 @@ function formatMoney(value: number | null | undefined) {
   }).format(value);
 }
 
+function formatPrice(value: number | null | undefined) {
+  return formatMoney(value);
+}
+
+function formatSignedMoney(value: number | null | undefined) {
+  if (value === null || value === undefined) return "-";
+
+  const formatted = formatMoney(Math.abs(value));
+
+  if (value > 0) return `+${formatted}`;
+  if (value < 0) return `-${formatted}`;
+  return formatted;
+}
+
 function formatSignedPercent(value: number | null | undefined) {
   if (value === null || value === undefined) return "-";
 
@@ -48,18 +72,52 @@ function formatSignedPercent(value: number | null | undefined) {
   return formatted;
 }
 
+function formatMarketSignedPercent(value: number | null | undefined) {
+  if (value === null || value === undefined) return "-";
+
+  const formatted = `${Math.abs(value).toFixed(2)}%`;
+
+  if (value > 0) return `+${formatted}`;
+  if (value < 0) return `-${formatted}`;
+  return formatted;
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function performanceColor(value: number | null | undefined) {
+  if (value === null || value === undefined) return "dimmed";
+  if (value > 0) return "teal";
+  if (value < 0) return "red";
+  return "dimmed";
+}
+
 function PnLText({ format, value }: { format: string, value: number; }) {
   const fmt = format;
   const color = value > 0 ? "teal" : value < 0 ? "red" : "dimmed";
   if (fmt == 'percent') {
     return (
-      <Text c={color} >
+      <Text component="span" c={color} >
         {formatSignedPercent(value)}
       </Text>
     )
   }
   return (
-    <Text c={color} fw={600} size="sm">
+    <Text component="span" c={color} fw={600} size="sm">
       {formatMoney(value)}
     </Text>
   );
@@ -183,6 +241,155 @@ function OrdersTable({ orders }: { orders: BrokerOpenOrder[] }) {
   );
 }
 
+function IndexMarketPulseCard({ symbol }: { symbol: IndexPerformanceSymbol }) {
+  const color = performanceColor(symbol.todayChangePercent);
+
+  return (
+    <Card withBorder radius="md" p="md">
+      <Group justify="space-between" align="flex-start" mb="sm">
+        <div>
+          <Text fw={700} size="lg">{symbol.symbol}</Text>
+          <Text size="xs" c="dimmed">Updated {formatDateTime(symbol.updatedTime)}</Text>
+        </div>
+        <Badge color={symbol.marketStatus === "open" ? "teal" : "gray"} variant="light">
+          {symbol.marketStatus ?? "unknown"}
+        </Badge>
+      </Group>
+      <Text size="xl" fw={700}>{formatPrice(symbol.lastPrice)}</Text>
+      <Group gap="xs" mt={4}>
+        <Text c={color} fw={700} size="sm">
+          {formatMarketSignedPercent(symbol.todayChangePercent)}
+        </Text>
+        <Text c={color} size="sm">
+          {formatSignedMoney(symbol.todayChange)}
+        </Text>
+      </Group>
+      <Group gap="lg" mt="sm">
+        <Text size="xs" c="dimmed">H {formatPrice(symbol.dayHigh)}</Text>
+        <Text size="xs" c="dimmed">L {formatPrice(symbol.dayLow)}</Text>
+      </Group>
+    </Card>
+  );
+}
+
+function IndexMarketPulseTable({ symbols }: { symbols: IndexPerformanceSymbol[] }) {
+  return (
+    <ScrollArea>
+      <Table striped highlightOnHover style={{ minWidth: 760 }}>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>Symbol</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Last</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Change %</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Change</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>High</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Low</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Prev Close</Table.Th>
+            <Table.Th>Status</Table.Th>
+            <Table.Th>Updated</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {symbols.map((symbol) => {
+            const color = performanceColor(symbol.todayChangePercent);
+
+            return (
+              <Table.Tr key={symbol.symbol}>
+                <Table.Td fw={700}>{symbol.symbol}</Table.Td>
+                <Table.Td style={{ textAlign: "right" }}>{formatPrice(symbol.lastPrice)}</Table.Td>
+                <Table.Td style={{ textAlign: "right" }}>
+                  <Text c={color} size="sm" fw={700}>
+                    {formatMarketSignedPercent(symbol.todayChangePercent)}
+                  </Text>
+                </Table.Td>
+                <Table.Td style={{ textAlign: "right" }}>
+                  <Text c={color} size="sm">
+                    {formatSignedMoney(symbol.todayChange)}
+                  </Text>
+                </Table.Td>
+                <Table.Td style={{ textAlign: "right" }}>{formatPrice(symbol.dayHigh)}</Table.Td>
+                <Table.Td style={{ textAlign: "right" }}>{formatPrice(symbol.dayLow)}</Table.Td>
+                <Table.Td style={{ textAlign: "right" }}>{formatPrice(symbol.previousClose)}</Table.Td>
+                <Table.Td>
+                  <Badge size="sm" color={symbol.marketStatus === "open" ? "teal" : "gray"} variant="light">
+                    {symbol.marketStatus ?? "unknown"}
+                  </Badge>
+                </Table.Td>
+                <Table.Td>
+                  <Text size="xs" c="dimmed">{formatDateTime(symbol.updatedTime)}</Text>
+                </Table.Td>
+              </Table.Tr>
+            );
+          })}
+        </Table.Tbody>
+      </Table>
+    </ScrollArea>
+  );
+}
+
+function IndexMarketPulse({
+  data,
+  loading,
+  error,
+}: {
+  data: IndexPerformanceResponse | undefined;
+  loading: boolean;
+  error: Error | null;
+}) {
+  const symbols = data?.symbols ?? [];
+
+  return (
+    <Card withBorder radius="md" p="md">
+      <Group justify="space-between" mb="md" align="flex-start">
+        <div>
+          <Text fw={600} size="sm">Index Market Pulse</Text>
+          <Text size="xs" c="dimmed">
+            SPY, QQQ, DIA, and IWM from Massive market data
+          </Text>
+        </div>
+        <Group gap="xs">
+          {data?.marketStatus && (
+            <Badge color={data.marketStatus === "open" ? "teal" : "gray"} variant="light">
+              Market {data.marketStatus}
+            </Badge>
+          )}
+          {data?.serverTime && (
+            <Text size="xs" c="dimmed">
+              Server {formatDateTime(data.serverTime)}
+            </Text>
+          )}
+          {loading && <Loader size="xs" color="cyan" />}
+        </Group>
+      </Group>
+
+      {error ? (
+        <Box p="sm" style={{ border: "1px solid rgba(248, 113, 113, 0.35)", borderRadius: 8 }}>
+          <Text size="sm" c="red" fw={600}>Market data unavailable</Text>
+          <Text size="xs" c="dimmed">{error.message}</Text>
+        </Box>
+      ) : loading ? (
+        <Stack gap="md">
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} height={126} radius="md" />
+            ))}
+          </SimpleGrid>
+          <Skeleton height={160} radius="md" />
+        </Stack>
+      ) : (
+        <Stack gap="md">
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
+            {symbols.map((symbol) => (
+              <IndexMarketPulseCard key={symbol.symbol} symbol={symbol} />
+            ))}
+          </SimpleGrid>
+          <IndexMarketPulseTable symbols={symbols} />
+        </Stack>
+      )}
+    </Card>
+  );
+}
+
 const hiddenDashboardEventTypes = new Set([
   "broker_activity.synced",
   "order.filled",
@@ -236,6 +443,11 @@ export function DashboardPage() {
   const [token] = useState<string | null>(() => getAdminToken());
   const { data: bootstrap, isLoading: bootstrapLoading } = useBootstrap(token);
   const { data: events, isLoading: eventsLoading } = useSystemEvents(token, 50);
+  const {
+    data: indexPerformance,
+    error: indexPerformanceError,
+    isLoading: indexPerformanceLoading,
+  } = useIndexPerformance(token);
 
   const account = bootstrap?.account;
   const positions = bootstrap?.positions ?? [];
@@ -310,6 +522,12 @@ export function DashboardPage() {
           loading={bootstrapLoading}
         />
       </SimpleGrid>
+
+      <IndexMarketPulse
+        data={indexPerformance}
+        loading={indexPerformanceLoading}
+        error={indexPerformanceError}
+      />
 
       {/* Positions + Orders */}
       <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">

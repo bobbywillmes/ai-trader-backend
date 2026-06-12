@@ -36,6 +36,9 @@ const envSchema = z.object({
   ALPACA_API_SECRET: z.string().min(1, 'ALPACA_API_SECRET is required'),
   ALPACA_BASE_URL: z.url().default('https://paper-api.alpaca.markets'),
 
+  MASSIVE_API_KEY: z.string().min(1, 'MASSIVE_API_KEY is required'),
+  MASSIVE_BASE_URL: z.url().default('https://api.massive.com'),
+
   AI_TRADER_SIGNAL_API_KEY: z
     .string()
     .min(16, 'AI_TRADER_SIGNAL_API_KEY must be at least 16 characters'),
