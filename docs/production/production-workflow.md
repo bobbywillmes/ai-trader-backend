@@ -112,6 +112,18 @@ docker compose -f docker-compose.prod.yml build backend caddy
 docker compose -f docker-compose.prod.yml up -d
 ```
 
+If you edit `/opt/ai-trader/.env`, restart production with the production
+compose file so the backend container receives the updated environment:
+
+```bash
+docker compose -f docker-compose.prod.yml down
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Do not use plain `docker compose down && docker compose up -d` in production.
+That uses the default development compose file and can leave the production
+backend unavailable or missing required environment variables.
+
 Check container status:
 
 ```bash
