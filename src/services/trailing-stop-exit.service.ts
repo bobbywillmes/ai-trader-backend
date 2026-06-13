@@ -87,6 +87,7 @@ async function persistTrailingStopOrder(args: {
         limitPrice: null,
         extendedHours: false,
         clientOrderId: args.clientOrderId,
+        trackedPositionId: position.id,
         subscriptionId: position.subscriptionId,
         subscriptionKey: position.subscription?.key ?? null,
         status: 'submitted',
@@ -101,6 +102,15 @@ async function persistTrailingStopOrder(args: {
       },
     }));
 
+  if (existingIntent && existingIntent.trackedPositionId === null) {
+    await prisma.orderIntent.update({
+      where: { id: existingIntent.id },
+      data: {
+        trackedPositionId: position.id,
+      },
+    });
+  }
+
   await prisma.brokerOrder.upsert({
     where: {
       broker_clientOrderId: {
@@ -113,6 +123,7 @@ async function persistTrailingStopOrder(args: {
       broker: 'alpaca',
       brokerOrderId: args.order.id,
       clientOrderId: args.clientOrderId,
+      trackedPositionId: position.id,
       securityId: position.securityId,
       symbol: position.symbol,
       side: 'sell',
@@ -121,6 +132,7 @@ async function persistTrailingStopOrder(args: {
     },
     update: {
       brokerOrderId: args.order.id,
+      trackedPositionId: position.id,
       status: args.order.status,
       rawBrokerJson: args.order as unknown as Prisma.InputJsonValue,
     },

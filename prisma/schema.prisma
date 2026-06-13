@@ -100,8 +100,13 @@ model OrderIntent {
   subscriptionKey   String?
   subscription      Subscription? @relation(fields: [subscriptionId], references: [id])
 
+  trackedPositionId Int?
+  trackedPosition   TrackedPosition? @relation(fields: [trackedPositionId], references: [id], onDelete: SetNull)
+
   brokerOrders   BrokerOrder[]
   brokerActivities  BrokerActivity[]
+
+  @@index([trackedPositionId])
 }
 
 model BrokerOrder {
@@ -122,10 +127,14 @@ model BrokerOrder {
 
   orderIntent    OrderIntent @relation(fields: [orderIntentId], references: [id])
 
+  trackedPositionId Int?
+  trackedPosition   TrackedPosition? @relation(fields: [trackedPositionId], references: [id], onDelete: SetNull)
+
   brokerActivities BrokerActivity[]
 
   @@unique([broker, brokerOrderId])
   @@unique([broker, clientOrderId])
+  @@index([trackedPositionId])
 }
 
 model SystemEvent {
@@ -206,6 +215,10 @@ model TrackedPosition {
 
   subscriptionId      Int?
   subscription        Subscription?   @relation(fields: [subscriptionId], references: [id])
+
+  orderIntents        OrderIntent[]
+  brokerOrders        BrokerOrder[]
+  brokerActivities    BrokerActivity[]
 
   exitState           PositionExitState?
 
@@ -334,6 +347,9 @@ model BrokerActivity {
   orderId               String?
   orderIntentId         Int?
   brokerOrderRecordId   Int?
+  trackedPositionId     Int?
+  trackedPositionLinkSource String?
+  trackedPositionLinkedAt   DateTime?
 
   transactionTime       DateTime?
   rawBrokerJson         Json
@@ -343,6 +359,7 @@ model BrokerActivity {
 
   orderIntent           OrderIntent? @relation(fields: [orderIntentId], references: [id])
   brokerOrderRecord     BrokerOrder? @relation(fields: [brokerOrderRecordId], references: [id])
+  trackedPosition       TrackedPosition? @relation(fields: [trackedPositionId], references: [id], onDelete: SetNull)
 
   @@index([activityType])
   @@index([symbol])
@@ -351,6 +368,8 @@ model BrokerActivity {
   @@index([transactionTime])
   @@index([orderIntentId])
   @@index([brokerOrderRecordId])
+  @@index([trackedPositionId])
+  @@index([trackedPositionLinkSource])
   @@index([broker, mode])
 }
 

@@ -172,6 +172,22 @@ The first supported activity type is Alpaca `FILL`.
 
 Broker activities are imported from Alpaca and stored idempotently by Alpaca activity ID. This makes the broker activity table the durable broker-confirmed execution ledger.
 
+Broker activities can now be linked directly to a tracked-position cycle through
+`trackedPositionId`. Deterministic links are preferred:
+
+- Alpaca activity `order_id` -> local `BrokerOrder.brokerOrderId`
+- local `BrokerOrder.trackedPositionId`
+- trailing-stop `PositionExitState.trailBrokerOrderId`
+
+If a local development database is only observing the same Alpaca paper account
+that production is trading, the local database may not have production-created
+`OrderIntent` or `BrokerOrder` rows. In that case, close-fill attribution may use
+the `reconciliation_discovered_close` source only when one local tracked-position
+cycle is eligible, the fill side is the close side, the fill occurs after the
+local cycle opened, the quantity is consistent with closing the tracked quantity,
+and no newer active same-symbol cycle exists. Ambiguous fills remain unlinked and
+are surfaced through a system event instead of being attached by symbol alone.
+
 ### AccountSnapshot
 
 Represents what the account looked like at a point in time.

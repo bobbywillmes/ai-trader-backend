@@ -97,6 +97,13 @@ export async function processPendingOrders() {
               symbol: brokerOrder.symbol,
               side: brokerOrder.side,
               status: brokerOrder.status,
+              ...(intent.trackedPositionId !== null
+                ? {
+                    trackedPosition: {
+                      connect: { id: intent.trackedPositionId },
+                    },
+                  }
+                : {}),
               security: {
                 connect: { symbol: brokerOrder.symbol.toUpperCase() },
               },

@@ -5,7 +5,7 @@ import { getNormalizedPositions } from './positions.service.js';
 import { createSystemEvent } from './system-event.service.js';
 import { recordAccountSnapshot } from './account-snapshot.service.js';
 import {
-  getLatestBrokerFillForSymbol,
+  attributeCloseFillsForTrackedPosition,
   syncBrokerActivities,
 } from './broker-activity.service.js';
 import {
@@ -21,6 +21,41 @@ function getCloseFillSide(positionSide: string): 'buy' | 'sell' {
 
 function minutesAgo(minutes: number) {
   return new Date(Date.now() - minutes * 60_000);
+}
+
+function summarizeCloseFills(
+  fills: Array<{
+    id: number;
+    qty: number | null;
+    price: number | null;
+    orderId: string | null;
+    transactionTime: Date | null;
+  }>
+) {
+  const closeQty = fills.reduce(
+    (total, fill) => total + Math.abs(fill.qty ?? 0),
+    0
+  );
+  const notional = fills.reduce(
+    (total, fill) => total + Math.abs(fill.qty ?? 0) * (fill.price ?? 0),
+    0
+  );
+  const closePrice = closeQty > 0 ? notional / closeQty : null;
+  const orderedTimes = fills
+    .map((fill) => fill.transactionTime)
+    .filter((time): time is Date => time !== null)
+    .sort((a, b) => a.getTime() - b.getTime());
+
+  return {
+    closeQty: closeQty > 0 ? closeQty : null,
+    closePrice,
+    firstCloseFillTime: orderedTimes[0]?.toISOString() ?? null,
+    lastCloseFillTime: orderedTimes.at(-1)?.toISOString() ?? null,
+    brokerActivityIds: fills.map((fill) => fill.id),
+    closeOrderIds: Array.from(
+      new Set(fills.map((fill) => fill.orderId).filter(Boolean))
+    ),
+  };
 }
 
 const ACTIVE_POSITION_STATUSES = ['open', 'closing'] as const;
@@ -222,11 +257,35 @@ await ensurePositionExitState(updated.id);
 
     const closeSide = getCloseFillSide(tracked.side);
 
-    const closeFill = await getLatestBrokerFillForSymbol({
+    const closeFillAttribution = await attributeCloseFillsForTrackedPosition({
+      trackedPositionId: closed.id,
+      broker: closed.broker,
       symbol: closed.symbol,
-      side: closeSide,
-      after: minutesAgo(30),
+      closeSide,
+      openedAt: closed.openedAt,
+      qty: closed.qty,
     });
+    const closeFillSummary = summarizeCloseFills(
+      closeFillAttribution.activities
+    );
+
+    if (closeFillAttribution.status === 'ambiguous') {
+      await createSystemEvent({
+        type: 'position.close_fill_attribution_ambiguous',
+        entityType: 'trackedPosition',
+        entityId: closed.id,
+        message: `${closed.symbol} close-fill attribution is ambiguous.`,
+        payloadJson: {
+          symbol: closed.symbol,
+          trackedPositionId: closed.id,
+          closeSide,
+          reason: closeFillAttribution.reason ?? null,
+          candidateBrokerActivityIds: closeFillAttribution.activities.map(
+            (activity) => activity.id
+          ),
+        } as Prisma.InputJsonValue,
+      });
+    }
 
     await createSystemEvent({
       type: 'position.closed',
@@ -237,11 +296,10 @@ await ensurePositionExitState(updated.id);
         previousStatus: tracked.status,
         nextStatus: 'closed',
         closeSide,
-        closeQty: closeFill?.qty ?? null,
-        closePrice: closeFill?.price ?? null,
-        closeFillTime: closeFill?.transactionTime?.toISOString() ?? null,
-        brokerActivityId: closeFill?.id ?? null,
-        closeOrderId: closeFill?.orderId ?? null,
+        closeFillAttributionStatus: closeFillAttribution.status,
+        closeFillAttributionSource: closeFillAttribution.source,
+        closeFillAttributionReason: closeFillAttribution.reason ?? null,
+        ...closeFillSummary,
       } as Prisma.InputJsonValue,
     });
 
@@ -252,7 +310,13 @@ await ensurePositionExitState(updated.id);
       sourceEntityId: closed.id,
     });
 
-    await markPositionExitStateClosed(closed.id);
+    await markPositionExitStateClosed(closed.id, {
+      closeSide,
+      closeFillAttributionStatus: closeFillAttribution.status,
+      closeFillAttributionSource: closeFillAttribution.source,
+      closeFillAttributionReason: closeFillAttribution.reason ?? null,
+      ...closeFillSummary,
+    } as Prisma.InputJsonValue);
 
     console.log(`Position closed: ${closed.symbol}`);
   }

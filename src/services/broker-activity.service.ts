@@ -14,6 +14,13 @@ type SyncBrokerActivitiesInput = {
   maxPages?: number;
 };
 
+export type BrokerActivityTrackedPositionLinkSource =
+  | 'broker_order'
+  | 'exit_state_trailing_order'
+  | 'close_order_submission'
+  | 'reconciliation_discovered_close'
+  | 'manual_review';
+
 function parseNullableFloat(value: string | undefined): number | null {
   if (value === undefined) return null;
 
@@ -72,10 +79,61 @@ async function findLinkedBrokerOrder(activity: AlpacaAccountActivity) {
       broker: 'alpaca',
       brokerOrderId: activity.order_id,
     },
+    include: {
+      orderIntent: true,
+    },
     orderBy: {
       createdAt: 'desc',
     },
   });
+}
+
+async function findTrackedPositionLink(args: {
+  activity: AlpacaAccountActivity;
+  linkedBrokerOrder: Awaited<ReturnType<typeof findLinkedBrokerOrder>>;
+}) {
+  const trackedPositionId =
+    args.linkedBrokerOrder?.trackedPositionId ??
+    args.linkedBrokerOrder?.orderIntent.trackedPositionId ??
+    null;
+
+  if (trackedPositionId !== null) {
+    return {
+      trackedPositionId,
+      trackedPositionLinkSource:
+        args.linkedBrokerOrder?.orderIntent.source === 'close-position'
+          ? ('close_order_submission' as const)
+          : ('broker_order' as const),
+    };
+  }
+
+  if (!args.activity.order_id) {
+    return {
+      trackedPositionId: null,
+      trackedPositionLinkSource: null,
+    };
+  }
+
+  const exitState = await prisma.positionExitState.findFirst({
+    where: {
+      trailBrokerOrderId: args.activity.order_id,
+    },
+    orderBy: {
+      updatedAt: 'desc',
+    },
+  });
+
+  if (exitState) {
+    return {
+      trackedPositionId: exitState.trackedPositionId,
+      trackedPositionLinkSource: 'exit_state_trailing_order' as const,
+    };
+  }
+
+  return {
+    trackedPositionId: null,
+    trackedPositionLinkSource: null,
+  };
 }
 
 async function upsertBrokerActivity(args: {
@@ -91,6 +149,14 @@ async function upsertBrokerActivity(args: {
   });
 
   const linkedBrokerOrder = await findLinkedBrokerOrder(activity);
+  const trackedPositionLink = await findTrackedPositionLink({
+    activity,
+    linkedBrokerOrder,
+  });
+  const trackedPositionLinkedAt =
+    trackedPositionLink.trackedPositionId !== null
+      ? existing?.trackedPositionLinkedAt ?? new Date()
+      : existing?.trackedPositionLinkedAt ?? null;
 
   const data = {
     broker: 'alpaca',
@@ -112,6 +178,13 @@ async function upsertBrokerActivity(args: {
     orderId: activity.order_id ?? null,
     brokerOrderRecordId: linkedBrokerOrder?.id ?? null,
     orderIntentId: linkedBrokerOrder?.orderIntentId ?? null,
+    trackedPositionId:
+      trackedPositionLink.trackedPositionId ?? existing?.trackedPositionId ?? null,
+    trackedPositionLinkSource:
+      trackedPositionLink.trackedPositionLinkSource ??
+      existing?.trackedPositionLinkSource ??
+      null,
+    trackedPositionLinkedAt,
 
     transactionTime: parseNullableDate(activity.transaction_time),
 
@@ -300,4 +373,152 @@ export async function getLatestBrokerFillForSymbol(args: {
       transactionTime: 'desc',
     },
   });
+}
+
+export type CloseFillAttributionResult = {
+  status: 'linked' | 'ambiguous' | 'none';
+  source: BrokerActivityTrackedPositionLinkSource | null;
+  activities: Awaited<ReturnType<typeof getCloseFillsForTrackedPosition>>;
+  reason?: string;
+};
+
+const ACTIVE_TRACKED_POSITION_STATUSES = ['open', 'closing'] as const;
+
+function hasPositiveCloseQtySum(args: {
+  activities: Array<{ qty: number | null }>;
+  targetQty: number;
+}) {
+  const totalQty = args.activities.reduce(
+    (total, activity) => total + Math.abs(activity.qty ?? 0),
+    0
+  );
+
+  return totalQty > 0 && totalQty <= Math.abs(args.targetQty) + 0.000001;
+}
+
+export async function getCloseFillsForTrackedPosition(args: {
+  trackedPositionId: number;
+  broker: string;
+  symbol: string;
+  closeSide: 'buy' | 'sell';
+  openedAt: Date;
+}) {
+  return prisma.brokerActivity.findMany({
+    where: {
+      trackedPositionId: args.trackedPositionId,
+      broker: args.broker,
+      activityType: 'FILL',
+      symbol: args.symbol,
+      side: args.closeSide,
+      transactionTime: {
+        gte: args.openedAt,
+      },
+    },
+    orderBy: {
+      transactionTime: 'asc',
+    },
+  });
+}
+
+export async function attributeCloseFillsForTrackedPosition(args: {
+  trackedPositionId: number;
+  broker: string;
+  symbol: string;
+  closeSide: 'buy' | 'sell';
+  openedAt: Date;
+  qty: number;
+}): Promise<CloseFillAttributionResult> {
+  const existingLinked = await getCloseFillsForTrackedPosition(args);
+
+  if (existingLinked.length > 0) {
+    return {
+      status: 'linked',
+      source:
+        (existingLinked[0]?.trackedPositionLinkSource as
+          | BrokerActivityTrackedPositionLinkSource
+          | null) ?? 'broker_order',
+      activities: existingLinked,
+    };
+  }
+
+  const activeSameSymbolCycle = await prisma.trackedPosition.findFirst({
+    where: {
+      id: {
+        not: args.trackedPositionId,
+      },
+      broker: args.broker,
+      symbol: args.symbol,
+      status: {
+        in: [...ACTIVE_TRACKED_POSITION_STATUSES],
+      },
+    },
+    orderBy: {
+      openedAt: 'desc',
+    },
+  });
+
+  if (activeSameSymbolCycle) {
+    return {
+      status: 'ambiguous',
+      source: null,
+      activities: [],
+      reason: 'active_same_symbol_cycle_exists',
+    };
+  }
+
+  const candidates = await prisma.brokerActivity.findMany({
+    where: {
+      broker: args.broker,
+      activityType: 'FILL',
+      symbol: args.symbol,
+      side: args.closeSide,
+      trackedPositionId: null,
+      transactionTime: {
+        gte: args.openedAt,
+      },
+    },
+    orderBy: {
+      transactionTime: 'asc',
+    },
+  });
+
+  if (candidates.length === 0) {
+    return {
+      status: 'none',
+      source: null,
+      activities: [],
+      reason: 'no_unlinked_candidate_close_fills',
+    };
+  }
+
+  if (!hasPositiveCloseQtySum({ activities: candidates, targetQty: args.qty })) {
+    return {
+      status: 'ambiguous',
+      source: null,
+      activities: candidates,
+      reason: 'candidate_fill_quantity_inconsistent',
+    };
+  }
+
+  await prisma.brokerActivity.updateMany({
+    where: {
+      id: {
+        in: candidates.map((activity) => activity.id),
+      },
+      trackedPositionId: null,
+    },
+    data: {
+      trackedPositionId: args.trackedPositionId,
+      trackedPositionLinkSource: 'reconciliation_discovered_close',
+      trackedPositionLinkedAt: new Date(),
+    },
+  });
+
+  const linked = await getCloseFillsForTrackedPosition(args);
+
+  return {
+    status: 'linked',
+    source: 'reconciliation_discovered_close',
+    activities: linked,
+  };
 }
