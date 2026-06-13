@@ -29,6 +29,7 @@ import marketStateRoutes from '../routes/market-state.routes.js';
 import marketDiaryRoutes from '../routes/market-diary.routes.js';
 import etfWatchRoutes from '../routes/etf-watch.routes.js';
 import reconciliationRoutes from '../routes/reconciliation.routes.js';
+import tradeCyclesRoutes from '../routes/trade-cycles.routes.js';
 
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
@@ -75,6 +76,7 @@ export function createApp() {
   app.use('/api/orders', requireAdminAccess, ordersRoutes);
   app.use('/api/order-intents', requireAdminAccess, orderIntentsRoutes);
   app.use('/api/tracked-positions', requireAdminAccess, trackedPositionsRoutes);
+  app.use('/api/trade-cycles', requireAdminAccess, tradeCyclesRoutes);
   app.use('/api/config', requireAdminAccess, configRoutes);
   app.use('/api/strategies', requireAdminAccess, strategiesRoutes);
   app.use('/api/exit-profiles', requireAdminAccess, exitProfilesRoutes);

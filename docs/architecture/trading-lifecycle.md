@@ -55,9 +55,19 @@ Relevant routes:
 GET /api/tracked-positions
 GET /api/tracked-positions/open
 DELETE /api/positions/:symbol
+GET /api/trade-cycles
+GET /api/trade-cycles/:id
 ```
 
 `DELETE /api/positions/:symbol` requests a broker close. The sync loop confirms the position is closed and emits `position.closed` only after the tracked position successfully transitions from `open` or `closing` to `closed`.
+
+`GET /api/trade-cycles` and `GET /api/trade-cycles/:id` are the canonical
+backend lifecycle review endpoints. They treat a `TrackedPosition` row as one
+trade cycle and assemble linked subscription, strategy, exit profile, order
+intents, broker orders, broker activities, system events, computed close-fill
+summary, and a chronological timeline server-side. Admin UI trade-history views
+should use these endpoints instead of independently joining raw order, position,
+activity, and event endpoints.
 
 ---
 
