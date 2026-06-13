@@ -35,6 +35,7 @@ const navGroups: NavGroup[] = [
       { to: "/subscriptions", label: "Subscriptions" },
       { to: "/exit-profiles", label: "Exit Profiles" },
       { to: "/securities", label: "Securities" },
+      { to: "/trade-history", label: "Trade History" },
     ],
   },
   {
