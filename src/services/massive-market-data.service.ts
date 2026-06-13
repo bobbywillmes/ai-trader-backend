@@ -24,6 +24,23 @@ export type IndexPerformanceResponse = {
   symbols: IndexPerformanceSymbol[];
 };
 
+export type IndexIntradayPoint = {
+  time: string;
+  close: number;
+};
+
+export type IndexIntradaySymbol = {
+  symbol: IndexSymbol;
+  date: string | null;
+  points: IndexIntradayPoint[];
+};
+
+export type IndexIntradayResponse = {
+  updatedAt: string;
+  intervalMinutes: number;
+  symbols: IndexIntradaySymbol[];
+};
+
 type MassiveMarketStatus = {
   market?: unknown;
   serverTime?: unknown;
@@ -52,6 +69,15 @@ type MassiveSnapshotTicker = {
 
 type MassiveSnapshotResponse = {
   ticker?: MassiveSnapshotTicker;
+};
+
+type MassiveAggregateBar = {
+  c?: unknown;
+  t?: unknown;
+};
+
+type MassiveAggregatesResponse = {
+  results?: MassiveAggregateBar[];
 };
 
 function toFiniteNumber(value: unknown): number | null {
@@ -84,6 +110,25 @@ function toIsoFromMassiveTimestamp(value: unknown): string | null {
   const date = new Date(milliseconds);
 
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function getEtDateString(date: Date) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  return `${year}-${month}-${day}`;
 }
 
 function buildMassiveUrl(path: string) {
@@ -170,6 +215,51 @@ async function getTickerSnapshot(
   return normalizeMassiveSnapshotTicker(symbol, response.ticker, marketStatus);
 }
 
+function normalizeAggregatePoints(
+  bars: MassiveAggregateBar[] | undefined
+): IndexIntradayPoint[] {
+  return (bars ?? []).flatMap((bar) => {
+    const close = toFiniteNumber(bar.c);
+    const time = toIsoFromMassiveTimestamp(bar.t);
+
+    if (close === null || time === null) {
+      return [];
+    }
+
+    return [{ close, time }];
+  });
+}
+
+async function getTickerIntraday(
+  symbol: IndexSymbol,
+  snapshot: IndexPerformanceSymbol
+): Promise<IndexIntradaySymbol> {
+  const sourceDate = snapshot.updatedTime
+    ? new Date(snapshot.updatedTime)
+    : new Date();
+  const date = Number.isNaN(sourceDate.getTime())
+    ? getEtDateString(new Date())
+    : getEtDateString(sourceDate);
+
+  if (!date) {
+    return {
+      symbol,
+      date: null,
+      points: [],
+    };
+  }
+
+  const response = await massiveGet<MassiveAggregatesResponse>(
+    `/v2/aggs/ticker/${symbol}/range/5/minute/${date}/${date}?adjusted=true&sort=asc&limit=50000`
+  );
+
+  return {
+    symbol,
+    date,
+    points: normalizeAggregatePoints(response.results),
+  };
+}
+
 export async function getIndexPerformance(): Promise<IndexPerformanceResponse> {
   const status = await getMarketStatus();
   const symbols = await Promise.all(
@@ -182,6 +272,21 @@ export async function getIndexPerformance(): Promise<IndexPerformanceResponse> {
     marketStatus: status.marketStatus,
     serverTime: status.serverTime,
     updatedAt: new Date().toISOString(),
+    symbols,
+  };
+}
+
+export async function getIndexIntraday(): Promise<IndexIntradayResponse> {
+  const performance = await getIndexPerformance();
+  const symbols = await Promise.all(
+    performance.symbols.map((symbol) =>
+      getTickerIntraday(symbol.symbol, symbol)
+    )
+  );
+
+  return {
+    updatedAt: new Date().toISOString(),
+    intervalMinutes: 5,
     symbols,
   };
 }

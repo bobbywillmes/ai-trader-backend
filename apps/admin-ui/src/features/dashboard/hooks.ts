@@ -1,8 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import { getBootstrap, getIndexPerformance, getSystemEvents } from "./api";
+import {
+  getBootstrap,
+  getIndexIntraday,
+  getIndexPerformance,
+  getSystemEvents,
+} from "./api";
 
 export const dashboardKeys = {
   bootstrap: ["dashboard", "bootstrap"] as const,
+  indexIntraday: ["dashboard", "index-intraday"] as const,
   indexPerformance: ["dashboard", "index-performance"] as const,
   systemEvents: (limit: number) => ["dashboard", "system-events", limit] as const,
 };
@@ -33,5 +39,15 @@ export function useIndexPerformance(token: string | null) {
     enabled: Boolean(token),
     refetchInterval: 10000,
     staleTime: 0,
+  });
+}
+
+export function useIndexIntraday(token: string | null) {
+  return useQuery({
+    queryKey: dashboardKeys.indexIntraday,
+    queryFn: () => getIndexIntraday(token as string),
+    enabled: Boolean(token),
+    refetchInterval: 60000,
+    staleTime: 30000,
   });
 }

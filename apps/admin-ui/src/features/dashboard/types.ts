@@ -109,6 +109,23 @@ export type IndexPerformanceResponse = {
   symbols: IndexPerformanceSymbol[];
 };
 
+export type IndexIntradayPoint = {
+  time: string;
+  close: number;
+};
+
+export type IndexIntradaySymbol = {
+  symbol: "SPY" | "QQQ" | "DIA" | "IWM";
+  date: string | null;
+  points: IndexIntradayPoint[];
+};
+
+export type IndexIntradayResponse = {
+  updatedAt: string;
+  intervalMinutes: number;
+  symbols: IndexIntradaySymbol[];
+};
+
 export type SystemEvent = {
   id: number;
   type: string;

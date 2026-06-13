@@ -20,6 +20,8 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Line,
+  LineChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -29,12 +31,15 @@ import {
 import { getAdminToken } from "../lib/api";
 import {
   useBootstrap,
+  useIndexIntraday,
   useIndexPerformance,
   useSystemEvents,
 } from "../features/dashboard/hooks";
 import type {
   BrokerPosition,
   BrokerOpenOrder,
+  IndexIntradayResponse,
+  IndexIntradaySymbol,
   IndexPerformanceResponse,
   IndexPerformanceSymbol,
   SystemEvent,
@@ -252,7 +257,101 @@ function OrdersTable({ orders }: { orders: BrokerOpenOrder[] }) {
   );
 }
 
-function IndexMarketPulseCard({ symbol }: { symbol: IndexPerformanceSymbol }) {
+function SparklineTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{
+    payload?: {
+      close?: number;
+      time?: string;
+    };
+  }>;
+}) {
+  const point = payload?.[0]?.payload;
+
+  if (!active || !point) {
+    return null;
+  }
+
+  return (
+    <Box
+      p="xs"
+      style={{
+        background: "#111827",
+        border: "1px solid rgba(148, 163, 184, 0.28)",
+        borderRadius: 8,
+        boxShadow: "0 12px 30px rgba(0, 0, 0, 0.35)",
+      }}
+    >
+      <Text size="xs" c="gray.2">{formatDateTime(point.time)}</Text>
+      <Text size="xs" fw={700} c="gray.1">{formatPrice(point.close)}</Text>
+    </Box>
+  );
+}
+
+function IndexSparkline({
+  intraday,
+  loading,
+}: {
+  intraday: IndexIntradaySymbol | undefined;
+  loading: boolean;
+}) {
+  const points = intraday?.points ?? [];
+
+  if (loading) {
+    return <Skeleton height={48} radius="sm" mt="sm" />;
+  }
+
+  if (points.length < 2) {
+    return (
+      <Box h={48} mt="sm" style={{ display: "flex", alignItems: "center" }}>
+        <Text size="xs" c="dimmed">No intraday bars available.</Text>
+      </Box>
+    );
+  }
+
+  const first = points[0]?.close ?? 0;
+  const last = points.at(-1)?.close ?? first;
+  const stroke = last >= first ? "#14b8a6" : "#ef4444";
+
+  return (
+    <Box h={48} mt="sm">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={points} margin={{ top: 6, right: 0, bottom: 6, left: 0 }}>
+          <YAxis
+            hide
+            type="number"
+            domain={["dataMin", "dataMax"]}
+          />
+          <Tooltip
+            cursor={{ stroke: "rgba(203, 213, 225, 0.24)" }}
+            content={<SparklineTooltip />}
+          />
+          <Line
+            type="monotone"
+            dataKey="close"
+            stroke={stroke}
+            strokeWidth={2}
+            dot={false}
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </Box>
+  );
+}
+
+function IndexMarketPulseCard({
+  intraday,
+  intradayLoading,
+  symbol,
+}: {
+  intraday: IndexIntradaySymbol | undefined;
+  intradayLoading: boolean;
+  symbol: IndexPerformanceSymbol;
+}) {
   const color = performanceColor(symbol.todayChangePercent);
 
   return (
@@ -260,11 +359,7 @@ function IndexMarketPulseCard({ symbol }: { symbol: IndexPerformanceSymbol }) {
       <Group justify="space-between" align="flex-start" mb="sm">
         <div>
           <Text fw={700} size="lg">{symbol.symbol}</Text>
-          <Text size="xs" c="dimmed">Updated {formatDateTime(symbol.updatedTime)}</Text>
         </div>
-        <Badge color={symbol.marketStatus === "open" ? "teal" : "gray"} variant="light">
-          {symbol.marketStatus ?? "unknown"}
-        </Badge>
       </Group>
       <Text size="xl" fw={700}>{formatPrice(symbol.lastPrice)}</Text>
       <Group gap="xs" mt={4}>
@@ -279,6 +374,7 @@ function IndexMarketPulseCard({ symbol }: { symbol: IndexPerformanceSymbol }) {
         <Text size="xs" c="dimmed">H {formatPrice(symbol.dayHigh)}</Text>
         <Text size="xs" c="dimmed">L {formatPrice(symbol.dayLow)}</Text>
       </Group>
+      <IndexSparkline intraday={intraday} loading={intradayLoading} />
     </Card>
   );
 }
@@ -435,14 +531,29 @@ function IndexPercentChangeChart({ symbols }: { symbols: IndexPerformanceSymbol[
 
 function IndexMarketPulse({
   data,
+  intradayData,
+  intradayError,
+  intradayLoading,
   loading,
   error,
 }: {
   data: IndexPerformanceResponse | undefined;
+  intradayData: IndexIntradayResponse | undefined;
+  intradayError: Error | null;
+  intradayLoading: boolean;
   loading: boolean;
   error: Error | null;
 }) {
   const symbols = data?.symbols ?? [];
+  const latestSymbolUpdate = symbols
+    .map((symbol) => symbol.updatedTime)
+    .filter((value): value is string => Boolean(value))
+    .map((value) => new Date(value))
+    .filter((date) => !Number.isNaN(date.getTime()))
+    .sort((a, b) => b.getTime() - a.getTime())[0];
+  const intradayBySymbol = new Map(
+    (intradayData?.symbols ?? []).map((symbol) => [symbol.symbol, symbol])
+  );
 
   return (
     <Card withBorder radius="md" p="md">
@@ -458,6 +569,11 @@ function IndexMarketPulse({
             <Badge color={data.marketStatus === "open" ? "teal" : "gray"} variant="light">
               Market {data.marketStatus}
             </Badge>
+          )}
+          {latestSymbolUpdate && (
+            <Text size="xs" c="dimmed">
+              Updated {formatDateTime(latestSymbolUpdate.toISOString())}
+            </Text>
           )}
           {data?.serverTime && (
             <Text size="xs" c="dimmed">
@@ -485,9 +601,19 @@ function IndexMarketPulse({
       ) : (
         <Stack gap="md">
           <IndexPercentChangeChart symbols={symbols} />
+          {intradayError && (
+            <Text size="xs" c="dimmed">
+              Intraday sparklines unavailable: {intradayError.message}
+            </Text>
+          )}
           <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
             {symbols.map((symbol) => (
-              <IndexMarketPulseCard key={symbol.symbol} symbol={symbol} />
+              <IndexMarketPulseCard
+                key={symbol.symbol}
+                intraday={intradayBySymbol.get(symbol.symbol)}
+                intradayLoading={intradayLoading}
+                symbol={symbol}
+              />
             ))}
           </SimpleGrid>
           <IndexMarketPulseTable symbols={symbols} />
@@ -555,6 +681,11 @@ export function DashboardPage() {
     error: indexPerformanceError,
     isLoading: indexPerformanceLoading,
   } = useIndexPerformance(token);
+  const {
+    data: indexIntraday,
+    error: indexIntradayError,
+    isLoading: indexIntradayLoading,
+  } = useIndexIntraday(token);
 
   const account = bootstrap?.account;
   const positions = bootstrap?.positions ?? [];
@@ -632,6 +763,9 @@ export function DashboardPage() {
 
       <IndexMarketPulse
         data={indexPerformance}
+        intradayData={indexIntraday}
+        intradayError={indexIntradayError}
+        intradayLoading={indexIntradayLoading}
         loading={indexPerformanceLoading}
         error={indexPerformanceError}
       />

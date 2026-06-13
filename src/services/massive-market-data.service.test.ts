@@ -9,6 +9,7 @@ vi.mock('../config/env.js', () => ({
 }));
 
 import {
+  getIndexIntraday,
   getIndexPerformance,
   normalizeMassiveSnapshotTicker,
 } from './massive-market-data.service.js';
@@ -176,5 +177,103 @@ describe('getIndexPerformance', () => {
       statusCode: 502,
       message: 'rate limit',
     } satisfies Partial<HttpError>);
+  });
+});
+
+describe('getIndexIntraday', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('fetches 5-minute bars for the latest snapshot trading date', async () => {
+    const fetchMock = vi.fn(async (url: string, _options?: RequestInit) => {
+      const parsed = new URL(url);
+
+      if (parsed.pathname.includes('/v1/marketstatus/now')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            market: 'closed',
+            serverTime: '2026-06-13T14:00:00Z',
+          }),
+        };
+      }
+
+      if (parsed.pathname.includes('/v2/snapshot/')) {
+        const symbol = parsed.pathname.split('/').at(-1);
+
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ticker: {
+              ticker: symbol,
+              lastTrade: {
+                p: 100,
+                t: 1781368200000000000,
+              },
+            },
+          }),
+        };
+      }
+
+      if (parsed.pathname.includes('/v2/aggs/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            results: [
+              {
+                c: 100.5,
+                t: 1781357400000,
+              },
+              {
+                c: 101.25,
+                t: 1781357700000,
+              },
+              {
+                c: null,
+                t: 1781358000000,
+              },
+            ],
+          }),
+        };
+      }
+
+      throw new Error(`Unexpected URL ${url}`);
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await getIndexIntraday();
+
+    expect(result.intervalMinutes).toBe(5);
+    expect(result.symbols).toHaveLength(4);
+    expect(result.symbols[0]).toEqual({
+      symbol: 'SPY',
+      date: '2026-06-13',
+      points: [
+        {
+          close: 100.5,
+          time: '2026-06-13T13:30:00.000Z',
+        },
+        {
+          close: 101.25,
+          time: '2026-06-13T13:35:00.000Z',
+        },
+      ],
+    });
+
+    const aggregateUrls = fetchMock.mock.calls
+      .map(([url]) => new URL(url))
+      .filter((url) => url.pathname.includes('/v2/aggs/'));
+
+    expect(aggregateUrls).toHaveLength(4);
+    expect(aggregateUrls[0]?.pathname).toContain(
+      '/v2/aggs/ticker/SPY/range/5/minute/2026-06-13/2026-06-13'
+    );
+    expect(aggregateUrls[0]?.searchParams.get('adjusted')).toBe('true');
+    expect(aggregateUrls[0]?.searchParams.get('sort')).toBe('asc');
   });
 });

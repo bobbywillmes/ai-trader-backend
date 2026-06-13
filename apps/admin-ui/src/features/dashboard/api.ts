@@ -1,6 +1,7 @@
 import { apiRequest } from "../../lib/api";
 import type {
   BootstrapResponse,
+  IndexIntradayResponse,
   IndexPerformanceResponse,
   SystemEvent,
 } from "./types";
@@ -16,6 +17,13 @@ export function getSystemEvents(token: string, limit = 20) {
 export function getIndexPerformance(token: string) {
   return apiRequest<IndexPerformanceResponse>(
     "/api/dashboard/index-performance",
+    { token }
+  );
+}
+
+export function getIndexIntraday(token: string) {
+  return apiRequest<IndexIntradayResponse>(
+    "/api/dashboard/index-intraday",
     { token }
   );
 }
