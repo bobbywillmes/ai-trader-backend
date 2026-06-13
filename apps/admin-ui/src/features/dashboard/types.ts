@@ -109,20 +109,38 @@ export type IndexPerformanceResponse = {
   symbols: IndexPerformanceSymbol[];
 };
 
+export type IndexChartRange = "1d" | "7d" | "14d" | "30d" | "6m" | "1y";
+
 export type IndexIntradayPoint = {
   time: string;
   close: number;
 };
 
+export type IndexChartSummary = {
+  open: number | null;
+  close: number | null;
+  change: number | null;
+  changePercent: number | null;
+  high: number | null;
+  low: number | null;
+};
+
 export type IndexIntradaySymbol = {
   symbol: "SPY" | "QQQ" | "DIA" | "IWM";
-  date: string | null;
+  from: string | null;
+  to: string | null;
+  summary: IndexChartSummary;
   points: IndexIntradayPoint[];
 };
 
 export type IndexIntradayResponse = {
   updatedAt: string;
-  intervalMinutes: number;
+  range: IndexChartRange;
+  rangeLabel: string;
+  interval: {
+    multiplier: number;
+    timespan: string;
+  };
   symbols: IndexIntradaySymbol[];
 };
 

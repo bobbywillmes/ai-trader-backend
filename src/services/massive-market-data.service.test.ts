@@ -12,6 +12,7 @@ import {
   getIndexIntraday,
   getIndexPerformance,
   normalizeMassiveSnapshotTicker,
+  parseIndexChartRange,
 } from './massive-market-data.service.js';
 
 describe('normalizeMassiveSnapshotTicker', () => {
@@ -226,14 +227,23 @@ describe('getIndexIntraday', () => {
             results: [
               {
                 c: 100.5,
+                h: 101,
+                l: 99,
+                o: 99.5,
                 t: 1781357400000,
               },
               {
                 c: 101.25,
+                h: 102,
+                l: 100,
+                o: 100.5,
                 t: 1781357700000,
               },
               {
                 c: null,
+                h: 103,
+                l: 98,
+                o: 101,
                 t: 1781358000000,
               },
             ],
@@ -248,11 +258,25 @@ describe('getIndexIntraday', () => {
 
     const result = await getIndexIntraday();
 
-    expect(result.intervalMinutes).toBe(5);
+    expect(result.range).toBe('1d');
+    expect(result.rangeLabel).toBe('1D');
+    expect(result.interval).toEqual({
+      multiplier: 5,
+      timespan: 'minute',
+    });
     expect(result.symbols).toHaveLength(4);
     expect(result.symbols[0]).toEqual({
       symbol: 'SPY',
-      date: '2026-06-13',
+      from: '2026-06-13',
+      to: '2026-06-13',
+      summary: {
+        open: 99.5,
+        close: 101.25,
+        change: 1.75,
+        changePercent: 1.7587939698492463,
+        high: 102,
+        low: 99,
+      },
       points: [
         {
           close: 100.5,
@@ -275,5 +299,90 @@ describe('getIndexIntraday', () => {
     );
     expect(aggregateUrls[0]?.searchParams.get('adjusted')).toBe('true');
     expect(aggregateUrls[0]?.searchParams.get('sort')).toBe('asc');
+  });
+
+  it('scales the aggregate interval and date range for longer chart ranges', async () => {
+    const fetchMock = vi.fn(async (url: string, _options?: RequestInit) => {
+      const parsed = new URL(url);
+
+      if (parsed.pathname.includes('/v1/marketstatus/now')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            market: 'closed',
+          }),
+        };
+      }
+
+      if (parsed.pathname.includes('/v2/snapshot/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ticker: {
+              lastTrade: {
+                p: 100,
+                t: 1781368200000000000,
+              },
+            },
+          }),
+        };
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          results: [
+            {
+              c: 100,
+              h: 101,
+              l: 99,
+              o: 99.5,
+              t: 1781357400000,
+            },
+          ],
+        }),
+      };
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await getIndexIntraday('30d');
+
+    expect(result.range).toBe('30d');
+    expect(result.rangeLabel).toBe('30D');
+    expect(result.interval).toEqual({
+      multiplier: 4,
+      timespan: 'hour',
+    });
+    expect(result.symbols[0]).toMatchObject({
+      from: '2026-05-15',
+      to: '2026-06-13',
+    });
+
+    const aggregateUrl = fetchMock.mock.calls
+      .map(([url]) => new URL(url))
+      .find((url) => url.pathname.includes('/v2/aggs/'));
+
+    expect(aggregateUrl?.pathname).toContain(
+      '/v2/aggs/ticker/SPY/range/4/hour/2026-05-15/2026-06-13'
+    );
+  });
+});
+
+describe('parseIndexChartRange', () => {
+  it('defaults invalid values to the one-day range', () => {
+    expect(parseIndexChartRange(undefined)).toBe('1d');
+    expect(parseIndexChartRange('bad')).toBe('1d');
+  });
+
+  it('accepts supported chart ranges', () => {
+    expect(parseIndexChartRange('7d')).toBe('7d');
+    expect(parseIndexChartRange('14d')).toBe('14d');
+    expect(parseIndexChartRange('30d')).toBe('30d');
+    expect(parseIndexChartRange('6m')).toBe('6m');
+    expect(parseIndexChartRange('1y')).toBe('1y');
   });
 });

@@ -7,6 +7,7 @@ import {
   Group,
   Loader,
   ScrollArea,
+  SegmentedControl,
   SimpleGrid,
   Skeleton,
   Stack,
@@ -38,6 +39,8 @@ import {
 import type {
   BrokerPosition,
   BrokerOpenOrder,
+  IndexChartSummary,
+  IndexChartRange,
   IndexIntradayResponse,
   IndexIntradaySymbol,
   IndexPerformanceResponse,
@@ -115,12 +118,37 @@ function formatDateTime(value: string | null | undefined) {
   });
 }
 
+function formatDate(value: string | null | undefined) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+
+  return date.toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 function performanceColor(value: number | null | undefined) {
   if (value === null || value === undefined) return "dimmed";
   if (value > 0) return "teal";
   if (value < 0) return "red";
   return "dimmed";
 }
+
+const indexChartRangeOptions: Array<{ label: string; value: IndexChartRange }> = [
+  { label: "1D", value: "1d" },
+  { label: "7D", value: "7d" },
+  { label: "14D", value: "14d" },
+  { label: "30D", value: "30d" },
+  { label: "6M", value: "6m" },
+  { label: "1Y", value: "1y" },
+];
 
 function PnLText({ format, value }: { format: string, value: number; }) {
   const fmt = format;
@@ -259,9 +287,11 @@ function OrdersTable({ orders }: { orders: BrokerOpenOrder[] }) {
 
 function SparklineTooltip({
   active,
+  dateOnly,
   payload,
 }: {
   active?: boolean;
+  dateOnly: boolean;
   payload?: Array<{
     payload?: {
       close?: number;
@@ -285,16 +315,34 @@ function SparklineTooltip({
         boxShadow: "0 12px 30px rgba(0, 0, 0, 0.35)",
       }}
     >
-      <Text size="xs" c="gray.2">{formatDateTime(point.time)}</Text>
+      <Text size="xs" c="gray.2">
+        {dateOnly ? formatDate(point.time) : formatDateTime(point.time)}
+      </Text>
       <Text size="xs" fw={700} c="gray.1">{formatPrice(point.close)}</Text>
     </Box>
   );
 }
 
+function getRangeSummary(
+  symbol: IndexPerformanceSymbol,
+  intraday: IndexIntradaySymbol | undefined
+): IndexChartSummary {
+  return {
+    open: intraday?.summary.open ?? symbol.previousClose,
+    close: intraday?.summary.close ?? symbol.lastPrice,
+    change: intraday?.summary.change ?? symbol.todayChange,
+    changePercent: intraday?.summary.changePercent ?? symbol.todayChangePercent,
+    high: intraday?.summary.high ?? symbol.dayHigh,
+    low: intraday?.summary.low ?? symbol.dayLow,
+  };
+}
+
 function IndexSparkline({
+  dateOnly,
   intraday,
   loading,
 }: {
+  dateOnly: boolean;
   intraday: IndexIntradaySymbol | undefined;
   loading: boolean;
 }) {
@@ -327,7 +375,7 @@ function IndexSparkline({
           />
           <Tooltip
             cursor={{ stroke: "rgba(203, 213, 225, 0.24)" }}
-            content={<SparklineTooltip />}
+            content={<SparklineTooltip dateOnly={dateOnly} />}
           />
           <Line
             type="monotone"
@@ -344,15 +392,19 @@ function IndexSparkline({
 }
 
 function IndexMarketPulseCard({
+  chartRange,
   intraday,
   intradayLoading,
   symbol,
 }: {
+  chartRange: IndexChartRange;
   intraday: IndexIntradaySymbol | undefined;
   intradayLoading: boolean;
   symbol: IndexPerformanceSymbol;
 }) {
-  const color = performanceColor(symbol.todayChangePercent);
+  const summary = getRangeSummary(symbol, intraday);
+  const color = performanceColor(summary.changePercent);
+  const dateOnly = chartRange === "6m" || chartRange === "1y";
 
   return (
     <Card withBorder radius="md" p="md">
@@ -361,70 +413,78 @@ function IndexMarketPulseCard({
           <Text fw={700} size="lg">{symbol.symbol}</Text>
         </div>
       </Group>
-      <Text size="xl" fw={700}>{formatPrice(symbol.lastPrice)}</Text>
+      <Text size="xl" fw={700}>{formatPrice(summary.close)}</Text>
       <Group gap="xs" mt={4}>
         <Text c={color} fw={700} size="sm">
-          {formatMarketSignedPercent(symbol.todayChangePercent)}
+          {formatMarketSignedPercent(summary.changePercent)}
         </Text>
         <Text c={color} size="sm">
-          {formatSignedMoney(symbol.todayChange)}
+          {formatSignedMoney(summary.change)}
         </Text>
       </Group>
       <Group gap="lg" mt="sm">
-        <Text size="xs" c="dimmed">H {formatPrice(symbol.dayHigh)}</Text>
-        <Text size="xs" c="dimmed">L {formatPrice(symbol.dayLow)}</Text>
+        <Text size="xs" c="dimmed">O {formatPrice(summary.open)}</Text>
+        <Text size="xs" c="dimmed">H {formatPrice(summary.high)}</Text>
+        <Text size="xs" c="dimmed">L {formatPrice(summary.low)}</Text>
+        <Text size="xs" c="dimmed">C {formatPrice(summary.close)}</Text>
       </Group>
-      <IndexSparkline intraday={intraday} loading={intradayLoading} />
+      <IndexSparkline
+        dateOnly={dateOnly}
+        intraday={intraday}
+        loading={intradayLoading}
+      />
     </Card>
   );
 }
 
-function IndexMarketPulseTable({ symbols }: { symbols: IndexPerformanceSymbol[] }) {
+function IndexMarketPulseTable({
+  intradayBySymbol,
+  symbols,
+}: {
+  intradayBySymbol: Map<IndexPerformanceSymbol["symbol"], IndexIntradaySymbol>;
+  symbols: IndexPerformanceSymbol[];
+}) {
   return (
     <ScrollArea>
       <Table striped highlightOnHover style={{ minWidth: 760 }}>
         <Table.Thead>
           <Table.Tr>
             <Table.Th>Symbol</Table.Th>
-            <Table.Th style={{ textAlign: "right" }}>Last</Table.Th>
             <Table.Th style={{ textAlign: "right" }}>Change %</Table.Th>
             <Table.Th style={{ textAlign: "right" }}>Change</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Open</Table.Th>
             <Table.Th style={{ textAlign: "right" }}>High</Table.Th>
             <Table.Th style={{ textAlign: "right" }}>Low</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Close</Table.Th>
             <Table.Th style={{ textAlign: "right" }}>Prev Close</Table.Th>
-            <Table.Th>Status</Table.Th>
-            <Table.Th>Updated</Table.Th>
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
           {symbols.map((symbol) => {
-            const color = performanceColor(symbol.todayChangePercent);
+            const summary = getRangeSummary(
+              symbol,
+              intradayBySymbol.get(symbol.symbol)
+            );
+            const color = performanceColor(summary.changePercent);
 
             return (
               <Table.Tr key={symbol.symbol}>
                 <Table.Td fw={700}>{symbol.symbol}</Table.Td>
-                <Table.Td style={{ textAlign: "right" }}>{formatPrice(symbol.lastPrice)}</Table.Td>
                 <Table.Td style={{ textAlign: "right" }}>
                   <Text c={color} size="sm" fw={700}>
-                    {formatMarketSignedPercent(symbol.todayChangePercent)}
+                    {formatMarketSignedPercent(summary.changePercent)}
                   </Text>
                 </Table.Td>
                 <Table.Td style={{ textAlign: "right" }}>
                   <Text c={color} size="sm">
-                    {formatSignedMoney(symbol.todayChange)}
+                    {formatSignedMoney(summary.change)}
                   </Text>
                 </Table.Td>
-                <Table.Td style={{ textAlign: "right" }}>{formatPrice(symbol.dayHigh)}</Table.Td>
-                <Table.Td style={{ textAlign: "right" }}>{formatPrice(symbol.dayLow)}</Table.Td>
+                <Table.Td style={{ textAlign: "right" }}>{formatPrice(summary.open)}</Table.Td>
+                <Table.Td style={{ textAlign: "right" }}>{formatPrice(summary.high)}</Table.Td>
+                <Table.Td style={{ textAlign: "right" }}>{formatPrice(summary.low)}</Table.Td>
+                <Table.Td style={{ textAlign: "right" }}>{formatPrice(summary.close)}</Table.Td>
                 <Table.Td style={{ textAlign: "right" }}>{formatPrice(symbol.previousClose)}</Table.Td>
-                <Table.Td>
-                  <Badge size="sm" color={symbol.marketStatus === "open" ? "teal" : "gray"} variant="light">
-                    {symbol.marketStatus ?? "unknown"}
-                  </Badge>
-                </Table.Td>
-                <Table.Td>
-                  <Text size="xs" c="dimmed">{formatDateTime(symbol.updatedTime)}</Text>
-                </Table.Td>
               </Table.Tr>
             );
           })}
@@ -467,12 +527,22 @@ function PercentChangeTooltip({
   );
 }
 
-function IndexPercentChangeChart({ symbols }: { symbols: IndexPerformanceSymbol[] }) {
-  const data = symbols.map((symbol) => ({
-    symbol: symbol.symbol,
-    changePercent: symbol.todayChangePercent ?? 0,
-    hasValue: symbol.todayChangePercent !== null,
-  }));
+function IndexPercentChangeChart({
+  intradayBySymbol,
+  symbols,
+}: {
+  intradayBySymbol: Map<IndexPerformanceSymbol["symbol"], IndexIntradaySymbol>;
+  symbols: IndexPerformanceSymbol[];
+}) {
+  const data = symbols.map((symbol) => {
+    const summary = getRangeSummary(symbol, intradayBySymbol.get(symbol.symbol));
+
+    return {
+      symbol: symbol.symbol,
+      changePercent: summary.changePercent ?? 0,
+      hasValue: summary.changePercent !== null,
+    };
+  });
 
   return (
     <Box>
@@ -531,16 +601,20 @@ function IndexPercentChangeChart({ symbols }: { symbols: IndexPerformanceSymbol[
 
 function IndexMarketPulse({
   data,
+  chartRange,
   intradayData,
   intradayError,
   intradayLoading,
+  onChartRangeChange,
   loading,
   error,
 }: {
   data: IndexPerformanceResponse | undefined;
+  chartRange: IndexChartRange;
   intradayData: IndexIntradayResponse | undefined;
   intradayError: Error | null;
   intradayLoading: boolean;
+  onChartRangeChange: (range: IndexChartRange) => void;
   loading: boolean;
   error: Error | null;
 }) {
@@ -564,24 +638,33 @@ function IndexMarketPulse({
             SPY, QQQ, DIA, and IWM from Massive market data
           </Text>
         </div>
-        <Group gap="xs">
-          {data?.marketStatus && (
-            <Badge color={data.marketStatus === "open" ? "teal" : "gray"} variant="light">
-              Market {data.marketStatus}
-            </Badge>
-          )}
-          {latestSymbolUpdate && (
-            <Text size="xs" c="dimmed">
-              Updated {formatDateTime(latestSymbolUpdate.toISOString())}
-            </Text>
-          )}
-          {data?.serverTime && (
-            <Text size="xs" c="dimmed">
-              Server {formatDateTime(data.serverTime)}
-            </Text>
-          )}
-          {loading && <Loader size="xs" color="cyan" />}
-        </Group>
+        <Stack gap="xs" align="flex-end">
+          <Group gap="xs">
+            {data?.marketStatus && (
+              <Badge color={data.marketStatus === "open" ? "teal" : "gray"} variant="light">
+                Market {data.marketStatus}
+              </Badge>
+            )}
+            {latestSymbolUpdate && (
+              <Text size="xs" c="dimmed">
+                Updated {formatDateTime(latestSymbolUpdate.toISOString())}
+              </Text>
+            )}
+            {data?.serverTime && (
+              <Text size="xs" c="dimmed">
+                Server {formatDateTime(data.serverTime)}
+              </Text>
+            )}
+            {loading && <Loader size="xs" color="cyan" />}
+          </Group>
+          <SegmentedControl
+            aria-label="Index chart timeframe"
+            data={indexChartRangeOptions}
+            onChange={(value) => onChartRangeChange(value as IndexChartRange)}
+            size="xs"
+            value={chartRange}
+          />
+        </Stack>
       </Group>
 
       {error ? (
@@ -600,7 +683,10 @@ function IndexMarketPulse({
         </Stack>
       ) : (
         <Stack gap="md">
-          <IndexPercentChangeChart symbols={symbols} />
+          <IndexPercentChangeChart
+            intradayBySymbol={intradayBySymbol}
+            symbols={symbols}
+          />
           {intradayError && (
             <Text size="xs" c="dimmed">
               Intraday sparklines unavailable: {intradayError.message}
@@ -610,13 +696,17 @@ function IndexMarketPulse({
             {symbols.map((symbol) => (
               <IndexMarketPulseCard
                 key={symbol.symbol}
+                chartRange={chartRange}
                 intraday={intradayBySymbol.get(symbol.symbol)}
                 intradayLoading={intradayLoading}
                 symbol={symbol}
               />
             ))}
           </SimpleGrid>
-          <IndexMarketPulseTable symbols={symbols} />
+          <IndexMarketPulseTable
+            intradayBySymbol={intradayBySymbol}
+            symbols={symbols}
+          />
         </Stack>
       )}
     </Card>
@@ -674,6 +764,8 @@ function EventFeed({ events }: { events: SystemEvent[] }) {
 
 export function DashboardPage() {
   const [token] = useState<string | null>(() => getAdminToken());
+  const [indexChartRange, setIndexChartRange] =
+    useState<IndexChartRange>("1d");
   const { data: bootstrap, isLoading: bootstrapLoading } = useBootstrap(token);
   const { data: events, isLoading: eventsLoading } = useSystemEvents(token, 50);
   const {
@@ -685,7 +777,7 @@ export function DashboardPage() {
     data: indexIntraday,
     error: indexIntradayError,
     isLoading: indexIntradayLoading,
-  } = useIndexIntraday(token);
+  } = useIndexIntraday(token, indexChartRange);
 
   const account = bootstrap?.account;
   const positions = bootstrap?.positions ?? [];
@@ -762,10 +854,12 @@ export function DashboardPage() {
       </SimpleGrid>
 
       <IndexMarketPulse
+        chartRange={indexChartRange}
         data={indexPerformance}
         intradayData={indexIntraday}
         intradayError={indexIntradayError}
         intradayLoading={indexIntradayLoading}
+        onChartRangeChange={setIndexChartRange}
         loading={indexPerformanceLoading}
         error={indexPerformanceError}
       />

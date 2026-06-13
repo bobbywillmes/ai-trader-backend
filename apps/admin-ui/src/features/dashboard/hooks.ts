@@ -5,10 +5,12 @@ import {
   getIndexPerformance,
   getSystemEvents,
 } from "./api";
+import type { IndexChartRange } from "./types";
 
 export const dashboardKeys = {
   bootstrap: ["dashboard", "bootstrap"] as const,
-  indexIntraday: ["dashboard", "index-intraday"] as const,
+  indexIntraday: (range: IndexChartRange) =>
+    ["dashboard", "index-intraday", range] as const,
   indexPerformance: ["dashboard", "index-performance"] as const,
   systemEvents: (limit: number) => ["dashboard", "system-events", limit] as const,
 };
@@ -42,10 +44,10 @@ export function useIndexPerformance(token: string | null) {
   });
 }
 
-export function useIndexIntraday(token: string | null) {
+export function useIndexIntraday(token: string | null, range: IndexChartRange) {
   return useQuery({
-    queryKey: dashboardKeys.indexIntraday,
-    queryFn: () => getIndexIntraday(token as string),
+    queryKey: dashboardKeys.indexIntraday(range),
+    queryFn: () => getIndexIntraday(token as string, range),
     enabled: Boolean(token),
     refetchInterval: 60000,
     staleTime: 30000,

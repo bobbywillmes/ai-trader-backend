@@ -2,8 +2,47 @@ import { env } from '../config/env.js';
 import { HttpError } from '../errors/http-error.js';
 
 const INDEX_SYMBOLS = ['SPY', 'QQQ', 'DIA', 'IWM'] as const;
+const INDEX_CHART_RANGE_CONFIG = {
+  '1d': {
+    label: '1D',
+    multiplier: 5,
+    timespan: 'minute',
+    subtract: { days: 0 },
+  },
+  '7d': {
+    label: '7D',
+    multiplier: 30,
+    timespan: 'minute',
+    subtract: { days: 6 },
+  },
+  '14d': {
+    label: '14D',
+    multiplier: 1,
+    timespan: 'hour',
+    subtract: { days: 13 },
+  },
+  '30d': {
+    label: '30D',
+    multiplier: 4,
+    timespan: 'hour',
+    subtract: { days: 29 },
+  },
+  '6m': {
+    label: '6M',
+    multiplier: 1,
+    timespan: 'day',
+    subtract: { months: 6 },
+  },
+  '1y': {
+    label: '1Y',
+    multiplier: 1,
+    timespan: 'day',
+    subtract: { years: 1 },
+  },
+} as const;
 
 export type IndexSymbol = (typeof INDEX_SYMBOLS)[number];
+export type IndexChartRange = keyof typeof INDEX_CHART_RANGE_CONFIG;
 
 export type IndexPerformanceSymbol = {
   symbol: IndexSymbol;
@@ -29,15 +68,31 @@ export type IndexIntradayPoint = {
   close: number;
 };
 
+export type IndexChartSummary = {
+  open: number | null;
+  close: number | null;
+  change: number | null;
+  changePercent: number | null;
+  high: number | null;
+  low: number | null;
+};
+
 export type IndexIntradaySymbol = {
   symbol: IndexSymbol;
-  date: string | null;
+  from: string | null;
+  to: string | null;
+  summary: IndexChartSummary;
   points: IndexIntradayPoint[];
 };
 
 export type IndexIntradayResponse = {
   updatedAt: string;
-  intervalMinutes: number;
+  range: IndexChartRange;
+  rangeLabel: string;
+  interval: {
+    multiplier: number;
+    timespan: string;
+  };
   symbols: IndexIntradaySymbol[];
 };
 
@@ -73,6 +128,9 @@ type MassiveSnapshotResponse = {
 
 type MassiveAggregateBar = {
   c?: unknown;
+  h?: unknown;
+  l?: unknown;
+  o?: unknown;
   t?: unknown;
 };
 
@@ -129,6 +187,35 @@ function getEtDateString(date: Date) {
   }
 
   return `${year}-${month}-${day}`;
+}
+
+function getIndexChartRangeConfig(range: IndexChartRange) {
+  return INDEX_CHART_RANGE_CONFIG[range];
+}
+
+export function parseIndexChartRange(value: unknown): IndexChartRange {
+  return typeof value === 'string' && value in INDEX_CHART_RANGE_CONFIG
+    ? (value as IndexChartRange)
+    : '1d';
+}
+
+function subtractChartRange(date: Date, range: IndexChartRange) {
+  const config = getIndexChartRangeConfig(range);
+  const result = new Date(date);
+
+  if ('days' in config.subtract) {
+    result.setUTCDate(result.getUTCDate() - config.subtract.days);
+  }
+
+  if ('months' in config.subtract) {
+    result.setUTCMonth(result.getUTCMonth() - config.subtract.months);
+  }
+
+  if ('years' in config.subtract) {
+    result.setUTCFullYear(result.getUTCFullYear() - config.subtract.years);
+  }
+
+  return result;
 }
 
 function buildMassiveUrl(path: string) {
@@ -230,32 +317,97 @@ function normalizeAggregatePoints(
   });
 }
 
+function summarizeAggregateBars(
+  bars: MassiveAggregateBar[] | undefined
+): IndexChartSummary {
+  const validBars = (bars ?? []).flatMap((bar) => {
+    const close = toFiniteNumber(bar.c);
+    const high = toFiniteNumber(bar.h);
+    const low = toFiniteNumber(bar.l);
+    const open = toFiniteNumber(bar.o);
+    const time = toFiniteNumber(bar.t);
+
+    if (
+      close === null ||
+      high === null ||
+      low === null ||
+      open === null ||
+      time === null
+    ) {
+      return [];
+    }
+
+    return [{ close, high, low, open, time }];
+  });
+
+  validBars.sort((a, b) => a.time - b.time);
+
+  const first = validBars[0];
+  const last = validBars.at(-1);
+
+  if (!first || !last) {
+    return {
+      open: null,
+      close: null,
+      change: null,
+      changePercent: null,
+      high: null,
+      low: null,
+    };
+  }
+
+  const change = last.close - first.open;
+
+  return {
+    open: first.open,
+    close: last.close,
+    change,
+    changePercent: first.open === 0 ? null : (change / first.open) * 100,
+    high: Math.max(...validBars.map((bar) => bar.high)),
+    low: Math.min(...validBars.map((bar) => bar.low)),
+  };
+}
+
 async function getTickerIntraday(
   symbol: IndexSymbol,
-  snapshot: IndexPerformanceSymbol
+  snapshot: IndexPerformanceSymbol,
+  range: IndexChartRange
 ): Promise<IndexIntradaySymbol> {
+  const config = getIndexChartRangeConfig(range);
   const sourceDate = snapshot.updatedTime
     ? new Date(snapshot.updatedTime)
     : new Date();
-  const date = Number.isNaN(sourceDate.getTime())
-    ? getEtDateString(new Date())
-    : getEtDateString(sourceDate);
+  const toDate = Number.isNaN(sourceDate.getTime()) ? new Date() : sourceDate;
+  const fromDate = subtractChartRange(toDate, range);
+  const from = getEtDateString(fromDate);
+  const to = getEtDateString(toDate);
 
-  if (!date) {
+  if (!from || !to) {
     return {
       symbol,
-      date: null,
+      from: null,
+      to: null,
+      summary: {
+        open: null,
+        close: null,
+        change: null,
+        changePercent: null,
+        high: null,
+        low: null,
+      },
       points: [],
     };
   }
 
   const response = await massiveGet<MassiveAggregatesResponse>(
-    `/v2/aggs/ticker/${symbol}/range/5/minute/${date}/${date}?adjusted=true&sort=asc&limit=50000`
+    `/v2/aggs/ticker/${symbol}/range/${config.multiplier}/${config.timespan}/${from}/${to}?adjusted=true&sort=asc&limit=50000`
   );
 
   return {
     symbol,
-    date,
+    from,
+    to,
+    summary: summarizeAggregateBars(response.results),
     points: normalizeAggregatePoints(response.results),
   };
 }
@@ -276,17 +428,25 @@ export async function getIndexPerformance(): Promise<IndexPerformanceResponse> {
   };
 }
 
-export async function getIndexIntraday(): Promise<IndexIntradayResponse> {
+export async function getIndexIntraday(
+  range: IndexChartRange = '1d'
+): Promise<IndexIntradayResponse> {
+  const config = getIndexChartRangeConfig(range);
   const performance = await getIndexPerformance();
   const symbols = await Promise.all(
     performance.symbols.map((symbol) =>
-      getTickerIntraday(symbol.symbol, symbol)
+      getTickerIntraday(symbol.symbol, symbol, range)
     )
   );
 
   return {
     updatedAt: new Date().toISOString(),
-    intervalMinutes: 5,
+    range,
+    rangeLabel: config.label,
+    interval: {
+      multiplier: config.multiplier,
+      timespan: config.timespan,
+    },
     symbols,
   };
 }

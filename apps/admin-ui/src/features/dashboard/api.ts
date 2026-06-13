@@ -1,6 +1,7 @@
 import { apiRequest } from "../../lib/api";
 import type {
   BootstrapResponse,
+  IndexChartRange,
   IndexIntradayResponse,
   IndexPerformanceResponse,
   SystemEvent,
@@ -21,9 +22,11 @@ export function getIndexPerformance(token: string) {
   );
 }
 
-export function getIndexIntraday(token: string) {
+export function getIndexIntraday(token: string, range: IndexChartRange) {
+  const query = new URLSearchParams({ range });
+
   return apiRequest<IndexIntradayResponse>(
-    "/api/dashboard/index-intraday",
+    `/api/dashboard/index-intraday?${query.toString()}`,
     { token }
   );
 }

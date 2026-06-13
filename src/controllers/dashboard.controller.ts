@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import {
   getIndexIntraday,
   getIndexPerformance,
+  parseIndexChartRange,
 } from '../services/massive-market-data.service.js';
 
 export async function getIndexPerformanceController(
@@ -18,12 +19,12 @@ export async function getIndexPerformanceController(
 }
 
 export async function getIndexIntradayController(
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction
 ) {
   try {
-    const data = await getIndexIntraday();
+    const data = await getIndexIntraday(parseIndexChartRange(req.query.range));
     res.status(200).json(data);
   } catch (error) {
     next(error);
