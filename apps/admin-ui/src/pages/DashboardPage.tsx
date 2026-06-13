@@ -547,7 +547,7 @@ function IndexPercentChangeChart({
   return (
     <Box>
       <Group justify="space-between" mb="xs">
-        <Text fw={600} size="sm">Current Percent Change</Text>
+        <Text fw={600} size="sm">Range Percent Change</Text>
         <Text size="xs" c="dimmed">10 second refresh</Text>
       </Group>
       <Box h={180}>
