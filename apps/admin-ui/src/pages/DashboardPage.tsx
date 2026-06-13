@@ -15,6 +15,17 @@ import {
   ThemeIcon,
   Title,
 } from "@mantine/core";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { getAdminToken } from "../lib/api";
 import {
   useBootstrap,
@@ -327,6 +338,101 @@ function IndexMarketPulseTable({ symbols }: { symbols: IndexPerformanceSymbol[] 
   );
 }
 
+function PercentChangeTooltip({
+  active,
+  label,
+  payload,
+}: {
+  active?: boolean;
+  label?: string | number;
+  payload?: Array<{ value?: number | string }>;
+}) {
+  if (!active || !payload?.length) {
+    return null;
+  }
+
+  const value = Number(payload[0]?.value ?? 0);
+
+  return (
+    <Box
+      p="xs"
+      style={{
+        background: "#111827",
+        border: "1px solid rgba(148, 163, 184, 0.28)",
+        borderRadius: 8,
+        boxShadow: "0 12px 30px rgba(0, 0, 0, 0.35)",
+      }}
+    >
+      <Text size="xs" fw={700} c="gray.2">{label}</Text>
+      <Text size="xs" c={value >= 0 ? "teal.3" : "red.3"}>
+        Change {formatMarketSignedPercent(value)}
+      </Text>
+    </Box>
+  );
+}
+
+function IndexPercentChangeChart({ symbols }: { symbols: IndexPerformanceSymbol[] }) {
+  const data = symbols.map((symbol) => ({
+    symbol: symbol.symbol,
+    changePercent: symbol.todayChangePercent ?? 0,
+    hasValue: symbol.todayChangePercent !== null,
+  }));
+
+  return (
+    <Box>
+      <Group justify="space-between" mb="xs">
+        <Text fw={600} size="sm">Current Percent Change</Text>
+        <Text size="xs" c="dimmed">10 second refresh</Text>
+      </Group>
+      <Box h={180}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart
+            data={data}
+            layout="vertical"
+            margin={{ top: 8, right: 16, bottom: 8, left: 0 }}
+          >
+            <CartesianGrid stroke="rgba(148, 163, 184, 0.16)" horizontal={false} />
+            <XAxis
+              type="number"
+              tickFormatter={(value) => `${Number(value).toFixed(1)}%`}
+              stroke="rgba(203, 213, 225, 0.64)"
+              tickLine={false}
+              axisLine={false}
+            />
+            <YAxis
+              dataKey="symbol"
+              type="category"
+              width={42}
+              stroke="rgba(203, 213, 225, 0.84)"
+              tickLine={false}
+              axisLine={false}
+            />
+            <Tooltip
+              cursor={{ fill: "rgba(148, 163, 184, 0.08)" }}
+              content={<PercentChangeTooltip />}
+            />
+            <ReferenceLine x={0} stroke="rgba(203, 213, 225, 0.36)" />
+            <Bar dataKey="changePercent" radius={[4, 4, 4, 4]} barSize={20}>
+              {data.map((item) => (
+                <Cell
+                  key={item.symbol}
+                  fill={
+                    !item.hasValue
+                      ? "#64748b"
+                      : item.changePercent >= 0
+                        ? "#14b8a6"
+                        : "#ef4444"
+                  }
+                />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </Box>
+    </Box>
+  );
+}
+
 function IndexMarketPulse({
   data,
   loading,
@@ -378,6 +484,7 @@ function IndexMarketPulse({
         </Stack>
       ) : (
         <Stack gap="md">
+          <IndexPercentChangeChart symbols={symbols} />
           <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
             {symbols.map((symbol) => (
               <IndexMarketPulseCard key={symbol.symbol} symbol={symbol} />
