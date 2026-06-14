@@ -129,6 +129,35 @@ function readPayloadNumber(
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function readSnapshotObject(
+  snapshot: Prisma.JsonValue | null | undefined,
+  key: string
+) {
+  if (!snapshot || !isJsonObject(snapshot)) {
+    return null;
+  }
+
+  const value = snapshot[key];
+
+  return value !== undefined && isJsonObject(value) ? value : null;
+}
+
+function readSnapshotString(
+  value: Prisma.JsonObject | null,
+  key: string
+): string | null {
+  const field = value?.[key];
+  return typeof field === 'string' ? field : null;
+}
+
+function readSnapshotNumber(
+  value: Prisma.JsonObject | null,
+  key: string
+): number | null {
+  const field = value?.[key];
+  return typeof field === 'number' && Number.isFinite(field) ? field : null;
+}
+
 function getLatestPositionClosedEvent(events: TrackedPositionSystemEvent[]) {
   return events
     .filter((event) => event.type === 'position.closed')
@@ -161,6 +190,10 @@ function buildCycleSummary(
   const avgEntryPrice =
     averageFillPrice(entryFills) ?? position.avgEntryPrice ?? null;
   const closedEvent = getLatestPositionClosedEvent(systemEvents);
+  const snapshot = position.configSnapshotJson as Prisma.JsonValue | null;
+  const snapshotStrategy = readSnapshotObject(snapshot, 'strategy');
+  const snapshotSubscription = readSnapshotObject(snapshot, 'subscription');
+  const snapshotExitProfile = readSnapshotObject(snapshot, 'exitProfile');
   const eventClosePrice = closedEvent
     ? readPayloadNumber(closedEvent.payloadJson, 'closePrice')
     : null;
@@ -198,14 +231,27 @@ function buildCycleSummary(
     }),
     entryFillQty: sumFillQty(entryFills),
     closeFillQty: sumFillQty(closeFills) ?? eventCloseQty,
-    strategy: position.subscription?.strategy
+    strategy: snapshotStrategy
+      ? {
+          id: readSnapshotNumber(snapshotStrategy, 'id'),
+          key: readSnapshotString(snapshotStrategy, 'key'),
+          name: readSnapshotString(snapshotStrategy, 'name'),
+        }
+      : position.subscription?.strategy
       ? {
           id: position.subscription.strategy.id,
           key: position.subscription.strategy.key,
           name: position.subscription.strategy.name,
         }
       : null,
-    subscription: position.subscription
+    subscription: snapshotSubscription
+      ? {
+          id: readSnapshotNumber(snapshotSubscription, 'id'),
+          key: readSnapshotString(snapshotSubscription, 'key'),
+          name: readSnapshotString(snapshotSubscription, 'name'),
+          brokerMode: readSnapshotString(snapshotSubscription, 'brokerMode'),
+        }
+      : position.subscription
       ? {
           id: position.subscription.id,
           key: position.subscription.key,
@@ -213,7 +259,13 @@ function buildCycleSummary(
           brokerMode: position.subscription.brokerMode,
         }
       : null,
-    exitProfile: position.subscription?.exitProfile
+    exitProfile: snapshotExitProfile
+      ? {
+          id: readSnapshotNumber(snapshotExitProfile, 'id'),
+          key: readSnapshotString(snapshotExitProfile, 'key'),
+          name: readSnapshotString(snapshotExitProfile, 'name'),
+        }
+      : position.subscription?.exitProfile
       ? {
           id: position.subscription.exitProfile.id,
           key: position.subscription.exitProfile.key,
@@ -373,6 +425,8 @@ export async function getTradeCycleById(id: number) {
     cycle: {
       ...buildCycleSummary(position, systemEvents),
       rawPositionJson: position.rawPositionJson,
+      configSnapshotJson: position.configSnapshotJson,
+      configSnapshotCapturedAt: position.configSnapshotCapturedAt,
       currentPrice: position.currentPrice,
       marketValue: position.marketValue,
       costBasis: position.costBasis,

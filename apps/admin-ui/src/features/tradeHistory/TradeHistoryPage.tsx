@@ -424,6 +424,10 @@ function TradeCycleDrawer({
             <Info label="Subscription" value={cycle.subscription?.name ?? "-"} />
             <Info label="Exit Profile" value={cycle.exitProfile?.name ?? "-"} />
             <Info label="Exit Reason" value={cycle.exitReason ?? cycle.exitStateStatus ?? "-"} />
+            <Info
+              label="Config Snapshot"
+              value={cycle.configSnapshotCapturedAt ? formatDate(cycle.configSnapshotCapturedAt) : "Live fallback"}
+            />
           </SimpleGrid>
 
           <Divider />

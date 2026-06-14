@@ -13,6 +13,7 @@ import {
   markPositionExitStateClosed,
   resetPositionExitStateForOpenPosition,
 } from './position-exit-state.service.js';
+import { captureTrackedPositionConfigSnapshot } from './trade-cycle-config-snapshot.service.js';
 
 
 function getCloseFillSide(positionSide: string): 'buy' | 'sell' {
@@ -160,6 +161,13 @@ export async function syncTrackedPositions() {
 
       await resetPositionExitStateForOpenPosition(created.id);
 
+      if (created.subscriptionId !== null) {
+        await captureTrackedPositionConfigSnapshot({
+          trackedPositionId: created.id,
+          source: 'position_opened',
+        });
+      }
+
       await createSystemEvent({
         type: 'position.opened',
         entityType: 'trackedPosition',
@@ -174,6 +182,11 @@ export async function syncTrackedPositions() {
 
       continue;
     }
+
+    const recoveredSubscriptionId =
+      existing.subscriptionId === null && matchedIntent?.subscriptionId
+        ? matchedIntent.subscriptionId
+        : null;
 
     const updated = await prisma.trackedPosition.update({
       where: { id: existing.id },
@@ -194,6 +207,19 @@ export async function syncTrackedPositions() {
     });
 
 await ensurePositionExitState(updated.id);
+
+    if (
+      updated.configSnapshotJson === null &&
+      updated.subscriptionId !== null
+    ) {
+      await captureTrackedPositionConfigSnapshot({
+        trackedPositionId: updated.id,
+        source:
+          recoveredSubscriptionId !== null
+            ? 'subscription_recovered'
+            : 'position_opened',
+      });
+    }
 
   }
 

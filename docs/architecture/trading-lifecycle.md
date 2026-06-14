@@ -69,6 +69,15 @@ summary, and a chronological timeline server-side. Admin UI trade-history views
 should use these endpoints instead of independently joining raw order, position,
 activity, and event endpoints.
 
+When a tracked-position cycle is opened with a known subscription, the backend
+stores a nullable `TrackedPosition.configSnapshotJson` payload. The snapshot
+captures the strategy, subscription, exit profile, security, and runtime risk
+settings that governed the cycle. If a development observer database first sees
+a broker position before it can recover the subscription, snapshot capture waits
+until the subscription is known. Trade-cycle API responses prefer snapshot
+strategy/subscription/exit-profile values over live joins so historical trades
+do not silently change meaning after configuration edits.
+
 ---
 
 ## ⚙️ Background Workers

@@ -44,6 +44,8 @@ export type TradeCycleTimelineItem = {
 
 export type TradeCycleDetail = TradeCycleSummary & {
   rawPositionJson: unknown;
+  configSnapshotJson: unknown;
+  configSnapshotCapturedAt: string | null;
   currentPrice: number;
   marketValue: number;
   costBasis: number;

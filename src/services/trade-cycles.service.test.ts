@@ -37,6 +37,8 @@ function buildCycle(overrides: Record<string, unknown> = {}) {
     openedAt: new Date('2026-06-12T14:30:00.000Z'),
     closedAt: new Date('2026-06-12T18:00:00.000Z'),
     rawPositionJson: {},
+    configSnapshotJson: null,
+    configSnapshotCapturedAt: null,
     exitState: {
       id: 201,
       status: 'closed',
@@ -184,6 +186,64 @@ describe('trade cycle service', () => {
         closeFillQty: 2,
         realizedPnl: 10,
         returnPct: 0.05,
+      })
+    );
+  });
+
+  it('prefers historical config snapshot values over live joined config', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      buildCycle({
+        configSnapshotJson: {
+          schemaVersion: 1,
+          subscription: {
+            id: 301,
+            key: 'spy_dip_core',
+            name: 'Historical SPY Core',
+            brokerMode: 'paper',
+          },
+          strategy: {
+            id: 401,
+            key: 'dip_buy',
+            name: 'Historical Strategy Name',
+          },
+          exitProfile: {
+            id: 501,
+            key: 'target_trail',
+            name: 'Historical Exit Profile',
+          },
+        },
+        subscription: {
+          id: 301,
+          key: 'spy_dip_core',
+          name: 'Renamed SPY Core',
+          brokerMode: 'paper',
+          strategy: {
+            id: 401,
+            key: 'dip_buy',
+            name: 'Renamed Strategy',
+          },
+          exitProfile: {
+            id: 501,
+            key: 'target_trail',
+            name: 'Renamed Exit Profile',
+          },
+        },
+      }),
+    ]);
+
+    const result = await listTradeCycles();
+
+    expect(result.cycles[0]).toEqual(
+      expect.objectContaining({
+        strategy: expect.objectContaining({
+          name: 'Historical Strategy Name',
+        }),
+        subscription: expect.objectContaining({
+          name: 'Historical SPY Core',
+        }),
+        exitProfile: expect.objectContaining({
+          name: 'Historical Exit Profile',
+        }),
       })
     );
   });

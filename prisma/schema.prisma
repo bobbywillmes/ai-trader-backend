@@ -222,6 +222,9 @@ model TrackedPosition {
 
   exitState           PositionExitState?
 
+  configSnapshotJson          Json?
+  configSnapshotCapturedAt    DateTime?
+
   // Unlock trailing-stop state
   trailingUnlocked            Boolean   @default(false)
   trailingUnlockedAt          DateTime?
