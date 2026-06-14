@@ -3,15 +3,18 @@ import {
   createManualAccountSnapshot,
   getAccountSnapshots,
   getBrokerActivities,
+  getTradePerformance,
   syncBrokerActivities,
 } from "./api";
-import type { BrokerActivitiesQuery } from "./types";
+import type { BrokerActivitiesQuery, TradePerformanceQuery } from "./types";
 
 export const reportsKeys = {
   accountSnapshots: (limit: number) =>
     ["reports", "accountSnapshots", limit] as const,
   brokerActivities: (query: BrokerActivitiesQuery) =>
     ["reports", "brokerActivities", query] as const,
+  tradePerformance: (query: TradePerformanceQuery) =>
+    ["reports", "tradePerformance", query] as const,
 };
 
 export function useAccountSnapshots(token: string | null, limit: number) {
@@ -66,5 +69,17 @@ export function useSyncBrokerActivities(token: string | null) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["reports", "brokerActivities"] });
     },
+  });
+}
+
+export function useTradePerformance(
+  token: string | null,
+  query: TradePerformanceQuery
+) {
+  return useQuery({
+    queryKey: reportsKeys.tradePerformance(query),
+    queryFn: () => getTradePerformance(token as string, query),
+    enabled: Boolean(token),
+    staleTime: 15000,
   });
 }

@@ -4,6 +4,8 @@ import type {
   BrokerActivitiesQuery,
   BrokerActivitiesResponse,
   BrokerActivitySyncResponse,
+  TradePerformanceQuery,
+  TradePerformanceResponse,
   ManualAccountSnapshotResponse,
 } from "./types";
 
@@ -57,4 +59,22 @@ export function syncBrokerActivities(token: string) {
     method: "POST",
     token,
   });
+}
+
+export function getTradePerformance(
+  token: string,
+  query: TradePerformanceQuery = {}
+) {
+  return apiRequest<TradePerformanceResponse>(
+    `/api/trade-performance${buildQuery({
+      limit: query.limit,
+      mode: query.mode,
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+      strategyId: query.strategyId,
+      subscriptionId: query.subscriptionId,
+      exitProfileId: query.exitProfileId,
+    })}`,
+    { token }
+  );
 }

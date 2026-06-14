@@ -85,3 +85,55 @@ export type BrokerActivitiesQuery = {
   symbol?: string;
   activityType?: string;
 };
+
+export type TradePerformanceGroup = {
+  id: string;
+  label: string;
+  tradeCount: number;
+  reportableTradeCount: number;
+  totalRealizedPnl: number;
+  averageReturnPct: number | null;
+  winRate: number | null;
+  winnerCount: number;
+  loserCount: number;
+  averageWinner: number | null;
+  averageLoser: number | null;
+  profitFactor: number | null;
+  averageHoldingDurationMs: number | null;
+};
+
+export type TradePerformanceSummary = Omit<
+  TradePerformanceGroup,
+  "id" | "label"
+>;
+
+export type TradePerformanceResponse = {
+  generatedAt: string;
+  filters: {
+    dateFrom: string | null;
+    dateTo: string | null;
+    strategyId: number | null;
+    subscriptionId: number | null;
+    exitProfileId: number | null;
+    mode: string | null;
+    limit: number;
+  };
+  summary: TradePerformanceSummary;
+  groups: {
+    byStrategy: TradePerformanceGroup[];
+    bySubscription: TradePerformanceGroup[];
+    byExitProfile: TradePerformanceGroup[];
+    bySecurity: TradePerformanceGroup[];
+    byExitReason: TradePerformanceGroup[];
+  };
+};
+
+export type TradePerformanceQuery = {
+  limit?: number;
+  mode?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  strategyId?: number;
+  subscriptionId?: number;
+  exitProfileId?: number;
+};

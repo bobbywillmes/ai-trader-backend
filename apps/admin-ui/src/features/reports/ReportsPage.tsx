@@ -18,14 +18,25 @@ import {
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { getAdminToken } from "../../lib/api";
 import {
   useAccountSnapshots,
   useBrokerActivities,
   useCreateManualAccountSnapshot,
   useSyncBrokerActivities,
+  useTradePerformance,
 } from "./hooks";
-import type { BrokerActivitiesQuery } from "./types";
+import type { BrokerActivitiesQuery, TradePerformanceGroup } from "./types";
 
 function formatDate(value: string | null) {
   if (!value) return "-";
@@ -60,6 +71,65 @@ function formatNumber(value: number | null | undefined) {
   });
 }
 
+function formatPercent(value: number | null | undefined) {
+  if (value === null || value === undefined) return "-";
+
+  return new Intl.NumberFormat(undefined, {
+    style: "percent",
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function formatDuration(value: number | null | undefined) {
+  if (value === null || value === undefined) return "-";
+
+  const minutes = Math.round(value / 60000);
+
+  if (minutes < 60) return `${minutes}m`;
+
+  const hours = minutes / 60;
+
+  if (hours < 48) {
+    return `${hours.toLocaleString(undefined, {
+      maximumFractionDigits: 1,
+    })}h`;
+  }
+
+  return `${(hours / 24).toLocaleString(undefined, {
+    maximumFractionDigits: 1,
+  })}d`;
+}
+
+function getTimespanDateFrom(timespan: string) {
+  const now = new Date();
+
+  if (timespan === "today") {
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+  }
+
+  if (timespan === "7d") {
+    return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  if (timespan === "30d") {
+    return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  if (timespan === "90d") {
+    return new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  if (timespan === "ytd") {
+    return new Date(now.getFullYear(), 0, 1).toISOString();
+  }
+
+  if (timespan === "1y") {
+    return new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  return undefined;
+}
+
 function normalizeLimit(value: string | number, fallback: number) {
   if (value === "") return fallback;
 
@@ -74,11 +144,84 @@ function sideColor(side: string | null) {
   return "gray";
 }
 
+function performanceColor(value: number) {
+  if (value > 0) return "#12b886";
+  if (value < 0) return "#fa5252";
+  return "#868e96";
+}
+
+function PerformanceTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload: TradePerformanceGroup }>;
+}) {
+  if (!active || !payload?.length) return null;
+
+  const group = payload[0].payload;
+
+  return (
+    <Card withBorder shadow="sm" radius="md" p="sm">
+      <Text fw={700}>{group.label}</Text>
+      <Text size="sm">P/L: {formatMoney(group.totalRealizedPnl)}</Text>
+      <Text size="sm">Trades: {group.reportableTradeCount}</Text>
+      <Text size="sm">Win rate: {formatPercent(group.winRate)}</Text>
+      <Text size="sm">Return: {formatPercent(group.averageReturnPct)}</Text>
+    </Card>
+  );
+}
+
+function PerformanceBarChart({
+  data,
+  emptyLabel,
+}: {
+  data: TradePerformanceGroup[];
+  emptyLabel: string;
+}) {
+  const chartData = data.slice(0, 8);
+
+  if (chartData.length === 0) {
+    return <Text c="dimmed">{emptyLabel}</Text>;
+  }
+
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <BarChart
+        data={chartData}
+        margin={{ top: 8, right: 16, bottom: 48, left: 8 }}
+      >
+        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+        <XAxis
+          dataKey="label"
+          interval={0}
+          angle={-35}
+          textAnchor="end"
+          height={64}
+          tick={{ fontSize: 12 }}
+        />
+        <YAxis tickFormatter={(value) => `$${value}`} width={54} />
+        <Tooltip content={<PerformanceTooltip />} />
+        <Bar dataKey="totalRealizedPnl" radius={[4, 4, 0, 0]}>
+          {chartData.map((entry) => (
+            <Cell
+              key={entry.id}
+              fill={performanceColor(entry.totalRealizedPnl)}
+            />
+          ))}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
 export function ReportsPage() {
   const [token] = useState(() => getAdminToken());
 
   const [snapshotLimit, setSnapshotLimit] = useState(20);
   const [activityLimit, setActivityLimit] = useState(20);
+  const [performanceTimespan, setPerformanceTimespan] = useState("all");
+  const [performanceModeFilter, setPerformanceModeFilter] = useState("all");
   const [symbolFilter, setSymbolFilter] = useState("");
   const [activityTypeFilter, setActivityTypeFilter] = useState<string | null>(
     "FILL"
@@ -102,14 +245,26 @@ export function ReportsPage() {
     return query;
   }, [activityLimit, activityTypeFilter, symbolFilter]);
 
+  const performanceQuery = useMemo(() => {
+    const dateFrom = getTimespanDateFrom(performanceTimespan);
+
+    return {
+      limit: 5000,
+      ...(performanceModeFilter !== "all" ? { mode: performanceModeFilter } : {}),
+      ...(dateFrom ? { dateFrom } : {}),
+    };
+  }, [performanceModeFilter, performanceTimespan]);
+
   const accountSnapshotsQuery = useAccountSnapshots(token, snapshotLimit);
   const brokerActivitiesQuery = useBrokerActivities(token, brokerQuery);
+  const tradePerformanceQuery = useTradePerformance(token, performanceQuery);
 
   const manualSnapshotMutation = useCreateManualAccountSnapshot(token);
   const brokerSyncMutation = useSyncBrokerActivities(token);
 
   const snapshots = accountSnapshotsQuery.data?.snapshots ?? [];
   const activities = brokerActivitiesQuery.data?.activities ?? [];
+  const performance = tradePerformanceQuery.data;
   const latestSnapshot = snapshots[0];
 
   async function handleManualSnapshot() {
@@ -226,6 +381,172 @@ export function ReportsPage() {
           </Card>
         </SimpleGrid>
       )}
+
+      <Card withBorder radius="md" p="lg">
+        <Stack gap="md">
+          <Group justify="space-between" align="flex-start">
+            <div>
+              <Title order={3}>Trade Performance</Title>
+              <Text size="sm" c="dimmed">
+                Closed trade-cycle results grouped by lifecycle ownership.
+              </Text>
+            </div>
+
+            <Group align="flex-end">
+              <Select
+                label="Mode"
+                value={performanceModeFilter}
+                onChange={(value) => setPerformanceModeFilter(value ?? "all")}
+                data={[
+                  { value: "all", label: "All" },
+                  { value: "paper", label: "Paper" },
+                  { value: "live", label: "Live" },
+                ]}
+                w={120}
+              />
+
+              <Select
+                label="Timespan"
+                value={performanceTimespan}
+                onChange={(value) => setPerformanceTimespan(value ?? "all")}
+                data={[
+                  { value: "today", label: "Today" },
+                  { value: "7d", label: "7 days" },
+                  { value: "30d", label: "30 days" },
+                  { value: "90d", label: "90 days" },
+                  { value: "ytd", label: "YTD" },
+                  { value: "1y", label: "1 year" },
+                  { value: "all", label: "All time" },
+                ]}
+                w={140}
+              />
+            </Group>
+          </Group>
+
+          <Divider />
+
+          {tradePerformanceQuery.isLoading && (
+            <Group>
+              <Loader size="sm" />
+              <Text>Loading trade performance...</Text>
+            </Group>
+          )}
+
+          {tradePerformanceQuery.isError && (
+            <Alert color="red" title="Failed to load trade performance">
+              Check the backend route and admin session.
+            </Alert>
+          )}
+
+          {performance && (
+            <Stack gap="lg">
+              <SimpleGrid cols={{ base: 1, sm: 2, lg: 5 }}>
+                <Card withBorder radius="md" p="md">
+                  <Text size="sm" c="dimmed">
+                    Realized P/L
+                  </Text>
+                  <Text
+                    fw={700}
+                    c={
+                      performance.summary.totalRealizedPnl >= 0
+                        ? "teal"
+                        : "red"
+                    }
+                  >
+                    {formatMoney(performance.summary.totalRealizedPnl)}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    {performance.summary.reportableTradeCount} reportable trades
+                  </Text>
+                </Card>
+
+                <Card withBorder radius="md" p="md">
+                  <Text size="sm" c="dimmed">
+                    Win Rate
+                  </Text>
+                  <Text fw={700}>
+                    {formatPercent(performance.summary.winRate)}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    {performance.summary.winnerCount} wins /{" "}
+                    {performance.summary.loserCount} losses
+                  </Text>
+                </Card>
+
+                <Card withBorder radius="md" p="md">
+                  <Text size="sm" c="dimmed">
+                    Avg Return
+                  </Text>
+                  <Text fw={700}>
+                    {formatPercent(performance.summary.averageReturnPct)}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    Per reportable trade
+                  </Text>
+                </Card>
+
+                <Card withBorder radius="md" p="md">
+                  <Text size="sm" c="dimmed">
+                    Profit Factor
+                  </Text>
+                  <Text fw={700}>
+                    {formatNumber(performance.summary.profitFactor)}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    Gross wins over gross losses
+                  </Text>
+                </Card>
+
+                <Card withBorder radius="md" p="md">
+                  <Text size="sm" c="dimmed">
+                    Avg Hold
+                  </Text>
+                  <Text fw={700}>
+                    {formatDuration(
+                      performance.summary.averageHoldingDurationMs
+                    )}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    Closed cycle duration
+                  </Text>
+                </Card>
+              </SimpleGrid>
+
+              <SimpleGrid cols={{ base: 1, lg: 3 }}>
+                <Card withBorder radius="md" p="md">
+                  <Stack gap="sm">
+                    <Title order={4}>By Strategy</Title>
+                    <PerformanceBarChart
+                      data={performance.groups.byStrategy}
+                      emptyLabel="No strategy results yet."
+                    />
+                  </Stack>
+                </Card>
+
+                <Card withBorder radius="md" p="md">
+                  <Stack gap="sm">
+                    <Title order={4}>By Symbol</Title>
+                    <PerformanceBarChart
+                      data={performance.groups.bySecurity}
+                      emptyLabel="No symbol results yet."
+                    />
+                  </Stack>
+                </Card>
+
+                <Card withBorder radius="md" p="md">
+                  <Stack gap="sm">
+                    <Title order={4}>By Exit Reason</Title>
+                    <PerformanceBarChart
+                      data={performance.groups.byExitReason}
+                      emptyLabel="No exit results yet."
+                    />
+                  </Stack>
+                </Card>
+              </SimpleGrid>
+            </Stack>
+          )}
+        </Stack>
+      </Card>
 
       <SimpleGrid cols={{ base: 1, lg: 2 }}>
         <Card withBorder radius="md" p="lg">

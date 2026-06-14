@@ -57,6 +57,7 @@ GET /api/tracked-positions/open
 DELETE /api/positions/:symbol
 GET /api/trade-cycles
 GET /api/trade-cycles/:id
+GET /api/trade-performance
 ```
 
 `DELETE /api/positions/:symbol` requests a broker close. The sync loop confirms the position is closed and emits `position.closed` only after the tracked position successfully transitions from `open` or `closing` to `closed`.
@@ -68,6 +69,13 @@ intents, broker orders, broker activities, system events, computed close-fill
 summary, and a chronological timeline server-side. Admin UI trade-history views
 should use these endpoints instead of independently joining raw order, position,
 activity, and event endpoints.
+
+`GET /api/trade-performance` reuses the canonical closed trade-cycle summaries
+as the reporting source of truth. It aggregates reportable closed cycles into
+total realized P/L, average return, win rate, average winner and loser, profit
+factor, holding duration, and grouped results by strategy, subscription, exit
+profile, security, and exit reason. The Reports admin page uses this endpoint
+instead of independently recomputing performance from raw broker activity.
 
 When a tracked-position cycle is opened with a known subscription, the backend
 stores a nullable `TrackedPosition.configSnapshotJson` payload. The snapshot
