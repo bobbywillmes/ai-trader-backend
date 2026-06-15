@@ -128,8 +128,13 @@ export function TradeHistoryPage() {
   const [limit, setLimit] = useState(50);
   const [symbolFilter, setSymbolFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<string | null>("closed");
-  const [modeFilter, setModeFilter] = useState<string | null>(null);
+  const [modeFilter, setModeFilter] = useState("all");
   const [selectedCycleId, setSelectedCycleId] = useState<number | null>(null);
+  const hasActiveFilters =
+    symbolFilter.trim() !== "" ||
+    statusFilter !== "closed" ||
+    modeFilter !== "all" ||
+    limit !== 50;
 
   const query = useMemo(() => {
     const next: TradeCyclesQuery = { limit };
@@ -143,7 +148,7 @@ export function TradeHistoryPage() {
     ) {
       next.status = statusFilter;
     }
-    if (modeFilter) next.mode = modeFilter;
+    if (modeFilter !== "all") next.mode = modeFilter;
 
     return next;
   }, [limit, modeFilter, statusFilter, symbolFilter]);
@@ -156,7 +161,7 @@ export function TradeHistoryPage() {
   function clearFilters() {
     setSymbolFilter("");
     setStatusFilter("closed");
-    setModeFilter(null);
+    setModeFilter("all");
     setLimit(50);
   }
 
@@ -208,11 +213,11 @@ export function TradeHistoryPage() {
             <Select
               label="Mode"
               value={modeFilter}
-              onChange={setModeFilter}
+              onChange={(value) => setModeFilter(value ?? "all")}
               data={[
+                { value: "all", label: "All" },
                 { value: "paper", label: "Paper" },
                 { value: "live", label: "Live" },
-                { value: "", label: "All" },
               ]}
               w={120}
             />
@@ -227,9 +232,10 @@ export function TradeHistoryPage() {
             />
 
             <Button
-              variant="subtle"
+              variant="default"
               leftSection={<IconX size={16} />}
               onClick={clearFilters}
+              disabled={!hasActiveFilters}
             >
               Clear
             </Button>
@@ -351,7 +357,7 @@ function TradeCycleRow({
         </Badge>
       </Table.Td>
       <Table.Td>
-        <Button size="xs" variant="subtle" onClick={onSelect}>
+        <Button size="xs" variant="default" onClick={onSelect}>
           View
         </Button>
       </Table.Td>
