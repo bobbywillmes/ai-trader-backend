@@ -66,6 +66,85 @@ describe('normalizeMassiveSnapshotTicker', () => {
       updatedTime: null,
     });
   });
+
+  it('rejects timestamp zero instead of normalizing it to 1970', () => {
+    const normalized = normalizeMassiveSnapshotTicker(
+      'SPY',
+      {
+        lastTrade: {
+          p: 100,
+          t: 0,
+        },
+        updated: 0,
+      },
+      'closed'
+    );
+
+    expect(normalized.updatedTime).toBeNull();
+  });
+
+  it('does not treat cleared zero-valued weekend snapshot prices as market prices', () => {
+    const normalized = normalizeMassiveSnapshotTicker(
+      'SPY',
+      {
+        lastTrade: {
+          p: 0,
+          t: 0,
+        },
+        min: {
+          c: 0,
+          t: 0,
+        },
+        day: {
+          c: 0,
+          h: 0,
+          l: 0,
+          t: 0,
+        },
+        prevDay: {
+          c: 540,
+          t: Date.UTC(2026, 5, 12, 20),
+        },
+        todaysChange: 0,
+        todaysChangePerc: 0,
+        updated: 0,
+      },
+      'closed'
+    );
+
+    expect(normalized).toMatchObject({
+      lastPrice: null,
+      todayChange: null,
+      todayChangePercent: null,
+      dayHigh: null,
+      dayLow: null,
+      previousClose: 540,
+      updatedTime: '2026-06-12T20:00:00.000Z',
+    });
+  });
+
+  it('uses prevDay.t as a valid latest market timestamp when current prices are cleared', () => {
+    const normalized = normalizeMassiveSnapshotTicker(
+      'QQQ',
+      {
+        day: {
+          c: 0,
+          h: 0,
+          l: 0,
+          t: 0,
+        },
+        prevDay: {
+          c: 470.25,
+          t: Date.UTC(2026, 5, 12, 20),
+        },
+        updated: 0,
+      },
+      'closed'
+    );
+
+    expect(normalized.updatedTime).toBe('2026-06-12T20:00:00.000Z');
+    expect(normalized.previousClose).toBe(470.25);
+  });
 });
 
 describe('getIndexPerformance', () => {
@@ -160,6 +239,9 @@ describe('getIndexPerformance', () => {
             status: 429,
             json: async () => ({
               error: 'rate limit',
+              message: 'too many requests',
+              status: 'ERROR',
+              request_id: 'req_123',
             }),
           };
         }
@@ -177,6 +259,15 @@ describe('getIndexPerformance', () => {
     await expect(getIndexPerformance()).rejects.toMatchObject({
       statusCode: 502,
       message: 'rate limit',
+      details: {
+        upstreamStatus: 429,
+        upstream: {
+          error: 'rate limit',
+          message: 'too many requests',
+          status: 'ERROR',
+          requestId: 'req_123',
+        },
+      },
     } satisfies Partial<HttpError>);
   });
 });
@@ -368,6 +459,339 @@ describe('getIndexIntraday', () => {
 
     expect(aggregateUrl?.pathname).toContain(
       '/v2/aggs/ticker/SPY/range/4/hour/2026-05-15/2026-06-13'
+    );
+  });
+
+  it('uses prevDay timestamps from cleared weekend snapshots and never requests 1969 or 1970 aggregates', async () => {
+    const fetchMock = vi.fn(async (url: string, _options?: RequestInit) => {
+      const parsed = new URL(url);
+
+      if (parsed.pathname.includes('/v1/marketstatus/now')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            market: 'closed',
+            serverTime: '2026-06-14T16:00:00Z',
+          }),
+        };
+      }
+
+      if (parsed.pathname.includes('/v2/snapshot/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ticker: {
+              lastTrade: {
+                p: 0,
+                t: 0,
+              },
+              min: {
+                c: 0,
+                t: 0,
+              },
+              day: {
+                c: 0,
+                h: 0,
+                l: 0,
+                t: 0,
+              },
+              prevDay: {
+                c: 540,
+                t: Date.UTC(2026, 5, 12, 20),
+              },
+              todaysChange: 0,
+              todaysChangePerc: 0,
+              updated: 0,
+            },
+          }),
+        };
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          results: [
+            {
+              c: 541,
+              h: 542,
+              l: 539,
+              o: 540,
+              t: Date.UTC(2026, 5, 12, 13, 30),
+            },
+            {
+              c: 543,
+              h: 544,
+              l: 540,
+              o: 541,
+              t: Date.UTC(2026, 5, 12, 20),
+            },
+          ],
+        }),
+      };
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await getIndexIntraday('1d');
+
+    expect(result.symbols[0]).toMatchObject({
+      from: '2026-06-12',
+      to: '2026-06-12',
+      summary: {
+        open: 540,
+        close: 543,
+        change: 3,
+      },
+    });
+
+    const aggregatePaths = fetchMock.mock.calls
+      .map(([url]) => new URL(url).pathname)
+      .filter((path) => path.includes('/v2/aggs/'));
+
+    expect(aggregatePaths).toHaveLength(4);
+    expect(aggregatePaths.every((path) => path.includes('2026-06-12'))).toBe(
+      true
+    );
+    expect(aggregatePaths.join('\n')).not.toMatch(/1969|1970/);
+  });
+
+  it('falls back from a Sunday one-day request to the latest returned trading session', async () => {
+    const fetchMock = vi.fn(async (url: string, _options?: RequestInit) => {
+      const parsed = new URL(url);
+      const path = parsed.pathname;
+
+      if (path.includes('/v1/marketstatus/now')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ market: 'closed' }),
+        };
+      }
+
+      if (path.includes('/v2/snapshot/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ticker: {
+              lastTrade: {
+                p: 100,
+                t: Date.UTC(2026, 5, 14, 16),
+              },
+            },
+          }),
+        };
+      }
+
+      if (path.includes('/range/5/minute/2026-06-14/2026-06-14')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ results: [] }),
+        };
+      }
+
+      if (path.includes('/range/1/day/2026-06-04/2026-06-14')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            results: [
+              {
+                c: 101,
+                h: 102,
+                l: 99,
+                o: 100,
+                t: Date.UTC(2026, 5, 12, 20),
+              },
+            ],
+          }),
+        };
+      }
+
+      if (path.includes('/range/5/minute/2026-06-12/2026-06-12')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            results: [
+              {
+                c: 100.5,
+                h: 101,
+                l: 99.5,
+                o: 100,
+                t: Date.UTC(2026, 5, 12, 13, 30),
+              },
+              {
+                c: 101,
+                h: 101.5,
+                l: 100,
+                o: 100.5,
+                t: Date.UTC(2026, 5, 12, 20),
+              },
+            ],
+          }),
+        };
+      }
+
+      throw new Error(`Unexpected URL ${url}`);
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await getIndexIntraday('1d');
+
+    expect(result.symbols[0]).toMatchObject({
+      from: '2026-06-12',
+      to: '2026-06-12',
+      points: [
+        {
+          close: 100.5,
+          time: '2026-06-12T13:30:00.000Z',
+        },
+        {
+          close: 101,
+          time: '2026-06-12T20:00:00.000Z',
+        },
+      ],
+    });
+
+    const aggregatePaths = fetchMock.mock.calls
+      .map(([url]) => new URL(url).pathname)
+      .filter((path) => path.includes('/v2/aggs/'));
+
+    expect(aggregatePaths).toContain(
+      '/v2/aggs/ticker/SPY/range/5/minute/2026-06-14/2026-06-14'
+    );
+    expect(aggregatePaths).toContain(
+      '/v2/aggs/ticker/SPY/range/1/day/2026-06-04/2026-06-14'
+    );
+    expect(aggregatePaths).toContain(
+      '/v2/aggs/ticker/SPY/range/5/minute/2026-06-12/2026-06-12'
+    );
+  });
+
+  it('returns an empty one-day chart without throwing when holiday lookback has no sessions', async () => {
+    const fetchMock = vi.fn(async (url: string, _options?: RequestInit) => {
+      const parsed = new URL(url);
+
+      if (parsed.pathname.includes('/v1/marketstatus/now')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ market: 'closed' }),
+        };
+      }
+
+      if (parsed.pathname.includes('/v2/snapshot/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ticker: {
+              lastTrade: {
+                p: 100,
+                t: Date.UTC(2026, 6, 3, 16),
+              },
+            },
+          }),
+        };
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ results: [] }),
+      };
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await getIndexIntraday('1d');
+
+    expect(result.symbols[0]).toEqual({
+      symbol: 'SPY',
+      from: '2026-07-03',
+      to: '2026-07-03',
+      summary: {
+        open: null,
+        close: null,
+        change: null,
+        changePercent: null,
+        high: null,
+        low: null,
+      },
+      points: [],
+    });
+  });
+
+  it('keeps normal weekday one-day behavior when the requested session has bars', async () => {
+    const fetchMock = vi.fn(async (url: string, _options?: RequestInit) => {
+      const parsed = new URL(url);
+
+      if (parsed.pathname.includes('/v1/marketstatus/now')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ market: 'open' }),
+        };
+      }
+
+      if (parsed.pathname.includes('/v2/snapshot/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ticker: {
+              lastTrade: {
+                p: 101,
+                t: Date.UTC(2026, 5, 12, 16),
+              },
+            },
+          }),
+        };
+      }
+
+      if (parsed.pathname.includes('/range/1/day/')) {
+        throw new Error(`Unexpected daily fallback ${url}`);
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          results: [
+            {
+              c: 100.5,
+              h: 101,
+              l: 99.5,
+              o: 100,
+              t: Date.UTC(2026, 5, 12, 13, 30),
+            },
+          ],
+        }),
+      };
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await getIndexIntraday('1d');
+
+    expect(result.symbols[0]).toMatchObject({
+      from: '2026-06-12',
+      to: '2026-06-12',
+    });
+
+    const aggregatePaths = fetchMock.mock.calls
+      .map(([url]) => new URL(url).pathname)
+      .filter((path) => path.includes('/v2/aggs/'));
+
+    expect(aggregatePaths).toHaveLength(4);
+    expect(aggregatePaths[0]).toContain(
+      '/v2/aggs/ticker/SPY/range/5/minute/2026-06-12/2026-06-12'
     );
   });
 });

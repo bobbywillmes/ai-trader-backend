@@ -501,13 +501,16 @@ function PercentChangeTooltip({
 }: {
   active?: boolean;
   label?: string | number;
-  payload?: Array<{ value?: number | string }>;
+  payload?: Array<{ value?: number | string | null }>;
 }) {
   if (!active || !payload?.length) {
     return null;
   }
 
-  const value = Number(payload[0]?.value ?? 0);
+  const rawValue = payload[0]?.value;
+  const value = rawValue === null || rawValue === undefined
+    ? null
+    : Number(rawValue);
 
   return (
     <Box
@@ -520,8 +523,8 @@ function PercentChangeTooltip({
       }}
     >
       <Text size="xs" fw={700} c="gray.2">{label}</Text>
-      <Text size="xs" c={value >= 0 ? "teal.3" : "red.3"}>
-        Change {formatMarketSignedPercent(value)}
+      <Text size="xs" c={value === null ? "dimmed" : value >= 0 ? "teal.3" : "red.3"}>
+        {value === null ? "Change unavailable" : `Change ${formatMarketSignedPercent(value)}`}
       </Text>
     </Box>
   );
@@ -539,7 +542,7 @@ function IndexPercentChangeChart({
 
     return {
       symbol: symbol.symbol,
-      changePercent: summary.changePercent ?? 0,
+      changePercent: summary.changePercent,
       hasValue: summary.changePercent !== null,
     };
   });
@@ -585,7 +588,7 @@ function IndexPercentChangeChart({
                   fill={
                     !item.hasValue
                       ? "#64748b"
-                      : item.changePercent >= 0
+                      : (item.changePercent ?? 0) >= 0
                         ? "#14b8a6"
                         : "#ef4444"
                   }
