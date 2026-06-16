@@ -105,6 +105,7 @@ describe('trade cycle config snapshot service', () => {
       expect.objectContaining({
         schemaVersion: 1,
         source: 'position_opened',
+        subscriptionResolutionSource: null,
         broker: 'alpaca',
         symbol: 'SPY',
         security: expect.objectContaining({
@@ -175,5 +176,34 @@ describe('trade cycle config snapshot service', () => {
         configSnapshotCapturedAt: expect.any(Date),
       },
     });
+  });
+
+  it('does not overwrite an existing tracked-position snapshot', async () => {
+    const existingSnapshot = {
+      schemaVersion: 1,
+      capturedAt: '2026-06-16T15:00:00.000Z',
+      subscription: { key: 'dia_dip_core' },
+    };
+    mocks.trackedPositionFindUnique.mockResolvedValue({
+      id: 101,
+      broker: 'alpaca',
+      symbol: 'DIA',
+      securityId: 11,
+      subscriptionId: 22,
+      configSnapshotJson: existingSnapshot,
+    });
+
+    const result = await captureTrackedPositionConfigSnapshot({
+      trackedPositionId: 101,
+      source: 'subscription_recovered',
+      subscriptionResolutionSource: 'unique_observer_fallback',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        configSnapshotJson: existingSnapshot,
+      })
+    );
+    expect(mocks.trackedPositionUpdate).not.toHaveBeenCalled();
   });
 });

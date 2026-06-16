@@ -14,14 +14,15 @@ import {
   resetPositionExitStateForOpenPosition,
 } from './position-exit-state.service.js';
 import { captureTrackedPositionConfigSnapshot } from './trade-cycle-config-snapshot.service.js';
+import {
+  linkLocalEntryOwnership,
+  resolveTrackedPositionSubscription,
+  type SubscriptionResolutionResult,
+} from './tracked-position-subscription-resolution.service.js';
 
 
 function getCloseFillSide(positionSide: string): 'buy' | 'sell' {
   return positionSide.toLowerCase() === 'short' ? 'buy' : 'sell';
-}
-
-function minutesAgo(minutes: number) {
-  return new Date(Date.now() - minutes * 60_000);
 }
 
 function summarizeCloseFills(
@@ -79,39 +80,140 @@ async function findActiveTrackedPosition(args: {
   });
 }
 
-const ENTRY_INTENT_LOOKBACK_MINUTES = 12 * 60;
+async function hasRecentSubscriptionResolutionEvent(args: {
+  trackedPositionId: number;
+  type: string;
+}) {
+  const since = new Date(Date.now() - 60 * 60_000);
 
-function getOpenFillSide(positionSide: string): 'buy' | 'sell' {
-  return positionSide.toLowerCase() === 'short' ? 'sell' : 'buy';
+  const existing = await prisma.systemEvent.findFirst({
+    where: {
+      type: args.type,
+      entityType: 'trackedPosition',
+      entityId: String(args.trackedPositionId),
+      createdAt: {
+        gte: since,
+      },
+    },
+  });
+
+  return Boolean(existing);
 }
 
-async function findLikelyOpeningOrderIntent(args: {
+async function createSubscriptionResolutionEvent(args: {
+  trackedPositionId: number;
+  symbol: string;
+  result: SubscriptionResolutionResult;
+}) {
+  const eventType =
+    args.result.status === 'resolved'
+      ? 'position.subscription_resolved'
+      : args.result.status === 'ambiguous'
+        ? 'position.subscription_resolution_ambiguous'
+        : 'position.subscription_resolution_unresolved';
+
+  if (
+    args.result.status !== 'resolved' &&
+    (await hasRecentSubscriptionResolutionEvent({
+      trackedPositionId: args.trackedPositionId,
+      type: eventType,
+    }))
+  ) {
+    return;
+  }
+
+  await createSystemEvent({
+    type: eventType,
+    entityType: 'trackedPosition',
+    entityId: args.trackedPositionId,
+    message:
+      args.result.status === 'resolved'
+        ? `${args.symbol} subscription resolved via ${args.result.source}.`
+        : `${args.symbol} subscription resolution ${args.result.status}: ${args.result.reason}.`,
+    payloadJson: {
+      symbol: args.symbol,
+      trackedPositionId: args.trackedPositionId,
+      status: args.result.status,
+      source: args.result.source,
+      subscriptionId: args.result.subscriptionId,
+      subscriptionKey: args.result.subscriptionKey,
+      reason: args.result.reason,
+      evidence: args.result.evidence,
+    } as Prisma.InputJsonValue,
+  });
+}
+
+async function applySubscriptionResolution(args: {
+  trackedPositionId: number;
   broker: string;
   symbol: string;
   side: string;
+  openedAt: Date;
+  currentSubscriptionId: number | null;
+  configSnapshotJson: Prisma.JsonValue | null;
 }) {
-  const entrySide = getOpenFillSide(args.side);
+  if (args.currentSubscriptionId !== null) {
+    if (args.configSnapshotJson === null) {
+      await captureTrackedPositionConfigSnapshot({
+        trackedPositionId: args.trackedPositionId,
+        source: 'position_opened',
+        subscriptionResolutionSource: 'local_order_intent',
+      });
+    }
 
-  return prisma.orderIntent.findFirst({
-    where: {
+    return null;
+  }
+
+  const resolution = await resolveTrackedPositionSubscription({
+    broker: args.broker,
+    symbol: args.symbol,
+    side: args.side,
+    openedAt: args.openedAt,
+  });
+
+  if (resolution.status !== 'resolved') {
+    await createSubscriptionResolutionEvent({
+      trackedPositionId: args.trackedPositionId,
       symbol: args.symbol,
-      side: entrySide,
-      subscriptionId: { not: null },
-      blockReason: null,
-      createdAt: {
-        gte: minutesAgo(ENTRY_INTENT_LOOKBACK_MINUTES),
-      },
-      brokerOrders: {
-        some: {
-          broker: args.broker,
-          side: entrySide,
-        },
-      },
-    },
-    orderBy: {
-      createdAt: 'desc',
+      result: resolution,
+    });
+
+    return resolution;
+  }
+
+  await prisma.trackedPosition.update({
+    where: { id: args.trackedPositionId },
+    data: {
+      subscriptionId: resolution.subscriptionId,
     },
   });
+
+  if (resolution.source === 'local_order_intent') {
+    await linkLocalEntryOwnership({
+      trackedPositionId: args.trackedPositionId,
+      broker: args.broker,
+      symbol: args.symbol,
+      side: args.side,
+      openedAt: args.openedAt,
+    });
+  }
+
+  await captureTrackedPositionConfigSnapshot({
+    trackedPositionId: args.trackedPositionId,
+    source:
+      resolution.source === 'local_order_intent'
+        ? 'position_opened'
+        : 'subscription_recovered',
+    subscriptionResolutionSource: resolution.source,
+  });
+
+  await createSubscriptionResolutionEvent({
+    trackedPositionId: args.trackedPositionId,
+    symbol: args.symbol,
+    result: resolution,
+  });
+
+  return resolution;
 }
 
 export async function syncTrackedPositions() {
@@ -121,12 +223,6 @@ export async function syncTrackedPositions() {
     const existing = await findActiveTrackedPosition({
       broker: position.broker,
       symbol: position.symbol,
-    });
-
-    const matchedIntent = await findLikelyOpeningOrderIntent({
-      broker: position.broker,
-      symbol: position.symbol,
-      side: position.side,
     });
 
     const security = await prisma.security.findUnique({
@@ -155,18 +251,20 @@ export async function syncTrackedPositions() {
           lastSyncedAt: new Date(),
           rawPositionJson: position as unknown as Prisma.InputJsonValue,
           securityId: security.id,
-          subscriptionId: matchedIntent?.subscriptionId ?? null,
         },
       });
 
       await resetPositionExitStateForOpenPosition(created.id);
 
-      if (created.subscriptionId !== null) {
-        await captureTrackedPositionConfigSnapshot({
-          trackedPositionId: created.id,
-          source: 'position_opened',
-        });
-      }
+      const openingSubscriptionResolution = await applySubscriptionResolution({
+        trackedPositionId: created.id,
+        broker: created.broker,
+        symbol: created.symbol,
+        side: created.side,
+        openedAt: created.openedAt,
+        currentSubscriptionId: created.subscriptionId,
+        configSnapshotJson: created.configSnapshotJson as Prisma.JsonValue | null,
+      });
 
       await createSystemEvent({
         type: 'position.opened',
@@ -177,16 +275,18 @@ export async function syncTrackedPositions() {
           symbol: created.symbol,
           qty: created.qty,
           avgEntryPrice: created.avgEntryPrice,
+          subscriptionId:
+            openingSubscriptionResolution?.subscriptionId ??
+            created.subscriptionId,
+          subscriptionResolutionSource:
+            openingSubscriptionResolution?.source ?? null,
+          subscriptionResolutionStatus:
+            openingSubscriptionResolution?.status ?? null,
         } as Prisma.InputJsonValue,
       });
 
       continue;
     }
-
-    const recoveredSubscriptionId =
-      existing.subscriptionId === null && matchedIntent?.subscriptionId
-        ? matchedIntent.subscriptionId
-        : null;
 
     const updated = await prisma.trackedPosition.update({
       where: { id: existing.id },
@@ -202,25 +302,20 @@ export async function syncTrackedPositions() {
         status: 'open',
         lastSyncedAt: new Date(),
         rawPositionJson: position as unknown as Prisma.InputJsonValue,
-        subscriptionId: existing.subscriptionId ?? matchedIntent?.subscriptionId ?? null,
       },
     });
 
-await ensurePositionExitState(updated.id);
+    await ensurePositionExitState(updated.id);
 
-    if (
-      updated.configSnapshotJson === null &&
-      updated.subscriptionId !== null
-    ) {
-      await captureTrackedPositionConfigSnapshot({
-        trackedPositionId: updated.id,
-        source:
-          recoveredSubscriptionId !== null
-            ? 'subscription_recovered'
-            : 'position_opened',
-      });
-    }
-
+    await applySubscriptionResolution({
+      trackedPositionId: updated.id,
+      broker: updated.broker,
+      symbol: updated.symbol,
+      side: updated.side,
+      openedAt: updated.openedAt,
+      currentSubscriptionId: updated.subscriptionId,
+      configSnapshotJson: updated.configSnapshotJson as Prisma.JsonValue | null,
+    });
   }
 
   const activeTrackedPositions = await prisma.trackedPosition.findMany({

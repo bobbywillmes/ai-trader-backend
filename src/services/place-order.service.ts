@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import { HttpError } from '../errors/http-error.js';
 import {
   getAlpacaOrderByClientOrderId,
@@ -17,24 +16,7 @@ import type {
   PlaceOrderInput,
   ResolvedPlaceOrderInput,
 } from '../validators/place-order.schema.js';
-
-function buildClientOrderId(input: ResolvedPlaceOrderInput): string {
-  const timestamp = new Date()
-    .toISOString()
-    .replace(/[-:.]/g, '')
-    .slice(0, 15);
-
-  return [
-    'ai',
-    timestamp,
-    input.symbol,
-    input.side,
-    input.orderType,
-    crypto.randomUUID().slice(0, 8),
-  ]
-    .join('-')
-    .slice(0, 128);
-}
+import { buildClientOrderId } from './client-order-id.service.js';
 
 export async function submitOrder(input: PlaceOrderInput) {
   const resolvedInput = await resolveSubscriptionOrderInput(input);

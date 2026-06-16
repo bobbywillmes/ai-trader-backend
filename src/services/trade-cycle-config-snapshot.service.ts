@@ -8,6 +8,10 @@ type BuildSnapshotArgs = {
   securityId: number;
   subscriptionId: number | null;
   source: 'position_opened' | 'subscription_recovered';
+  subscriptionResolutionSource?:
+    | 'local_order_intent'
+    | 'broker_client_order_id'
+    | 'unique_observer_fallback';
 };
 
 function toIso(value: Date | null | undefined) {
@@ -38,6 +42,7 @@ export async function buildTradeCycleConfigSnapshot(
     schemaVersion: 1,
     capturedAt: new Date().toISOString(),
     source: args.source,
+    subscriptionResolutionSource: args.subscriptionResolutionSource ?? null,
     broker: args.broker,
     symbol: args.symbol,
     security: security
@@ -112,6 +117,10 @@ export async function buildTradeCycleConfigSnapshot(
 export async function captureTrackedPositionConfigSnapshot(args: {
   trackedPositionId: number;
   source: 'position_opened' | 'subscription_recovered';
+  subscriptionResolutionSource?:
+    | 'local_order_intent'
+    | 'broker_client_order_id'
+    | 'unique_observer_fallback';
 }) {
   const position = await prisma.trackedPosition.findUnique({
     where: { id: args.trackedPositionId },
@@ -129,13 +138,19 @@ export async function captureTrackedPositionConfigSnapshot(args: {
     return position;
   }
 
-  const snapshot = await buildTradeCycleConfigSnapshot({
+  const snapshotArgs: BuildSnapshotArgs = {
     broker: position.broker,
     symbol: position.symbol,
     securityId: position.securityId,
     subscriptionId: position.subscriptionId,
     source: args.source,
-  });
+  };
+
+  if (args.subscriptionResolutionSource !== undefined) {
+    snapshotArgs.subscriptionResolutionSource = args.subscriptionResolutionSource;
+  }
+
+  const snapshot = await buildTradeCycleConfigSnapshot(snapshotArgs);
 
   return prisma.trackedPosition.update({
     where: { id: position.id },
