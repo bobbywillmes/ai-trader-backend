@@ -113,6 +113,39 @@ docker compose -f docker-compose.prod.yml up -d backend
 
 See [database-migrations.md](database-migrations.md) for migration mismatch symptoms and fix commands.
 
+Lifecycle-review deployments are especially sensitive to missing-column mismatches because Trade History, Reports, and broker-activity ingestion now rely on newer ownership and snapshot fields such as:
+
+```text
+trackedPositionId
+trackedPositionLinkSource
+configSnapshotJson
+configSnapshotCapturedAt
+```
+
+If the admin UI loads but lifecycle fields are unexpectedly blank for new trades, first confirm the related migration was deployed before investigating the application logic.
+
+---
+
+## ⚠️ Trade History or Reports Missing Expected Data
+
+If Trade History or Reports load but a recently closed trade is missing key data:
+
+Check:
+
+```text
+the cycle actually reached status=closed
+the close fill was imported into BrokerActivity
+the close fill was linked to the expected tracked-position cycle
+the production database and development observer database are not being confused
+```
+
+Important distinction:
+
+```text
+older legacy cycles may still show null fields because they predate lifecycle attribution or config snapshots
+newly closed trades in this branch should populate close-fill and reporting fields when attribution succeeds
+```
+
 ---
 
 ## ⚠️ Admin UI Bundle Warning

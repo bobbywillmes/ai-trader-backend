@@ -170,6 +170,7 @@ This means the backend can run in production, sync account state, read Alpaca pa
 Deploy safely.
 Verify health.
 Verify system status.
+Verify lifecycle review surfaces.
 Keep automated trading disabled.
 Let n8n run dry.
 Only enable paper trading deliberately.
@@ -206,3 +207,26 @@ docker compose -f docker-compose.prod.yml down
 ```
 
 Use this only if the service itself needs to be taken offline.
+
+---
+
+## ✅ Post-Deploy Lifecycle Checks
+
+After routine health and system-status verification, also confirm:
+
+```text
+/api/trade-cycles returns data
+/api/trade-performance returns data
+Trade History page loads
+Reports page loads
+legacy historical rows render without breaking the UI even if some fields remain null
+```
+
+For a fresh paper close, verify:
+
+```text
+one tracked trade cycle owns the close fill
+avg exit price and realized P/L are populated
+config snapshot timestamp is present once subscription context is known
+the closed cycle appears in performance reporting
+```

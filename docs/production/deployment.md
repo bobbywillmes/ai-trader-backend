@@ -678,6 +678,13 @@ latest snapshot returns account state
 Reports page shows snapshot history
 ```
 
+Also verify:
+
+```text
+Trade History page loads
+Reports page loads including Trade Performance
+```
+
 ### Broker activities
 
 ```http
@@ -772,6 +779,11 @@ Recommended first smoke test:
 15. Confirm one close fill.
 16. Confirm one `position.closed` SystemEvent.
 17. Confirm account snapshot reason `position_closed`.
+18. Confirm the close fill is linked to the correct tracked-position cycle.
+19. Confirm the cycle has `avgExitPrice`, `realizedPnl`, and `returnPct`.
+20. Confirm the cycle captured configuration snapshot context once subscription context is known.
+21. Confirm the Trade History page renders the cycle timeline correctly.
+22. Confirm the Reports page includes the closed cycle in Trade Performance.
 
 Expected result:
 
@@ -782,6 +794,8 @@ one broker order
 one broker fill
 one tracked position lifecycle
 one clean audit trail
+one reviewable trade cycle
+one performance-reportable closed trade
 ```
 
 ### Target Unlocks Trailing Stop Smoke Test
@@ -876,10 +890,13 @@ Before enabling n8n production signals or paper-order workflows:
 [ ] Entry risk limits reviewed
 [ ] Account snapshot manual test works
 [ ] Broker activity sync works
+[ ] Trade History page loads
 [ ] Reports page loads
+[ ] Trade Performance loads
 [ ] System Events page loads
 [ ] n8n signal API key configured
 [ ] One paper smoke test completed successfully
+[ ] One closed paper trade appears correctly in Trade History and Reports
 ```
 
 ---

@@ -10,13 +10,13 @@ Use this index to find the right document for the task at hand.
 
 | Need	                                             | Open |
 | -------------------------------------------------- | -----------------------  |
-| Understand the backend safety model	             | Risk & Safety            |
-| Understand how a signal becomes a tracked position | Trading Lifecycle        |
-| Deploy or update production	                     | Production Deployment    |
-| Follow the normal local → GitHub → VPS workflow	 | Production Workflow      |
-| Run or debug Prisma migrations	                 | Database Migrations      |
-| Diagnose production problems	                     | Troubleshooting          |
-| Understand the n8n → backend contract	             | n8n Integration          |
+| Understand the backend safety model	               | [Risk & Safety](architecture/risk-and-safety.md) |
+| Understand how a signal becomes a full trade cycle | [Trading Lifecycle](architecture/trading-lifecycle.md) |
+| Deploy or update production	                       | [Production Deployment](production/deployment.md) |
+| Follow the normal local → GitHub → VPS workflow	   | [Production Workflow](production/production-workflow.md) |
+| Run or debug Prisma migrations	                   | [Database Migrations](production/database-migrations.md) |
+| Diagnose production problems	                     | [Troubleshooting](production/troubleshooting.md) |
+| Understand the n8n → backend contract	             | [n8n Integration](integrations/n8n.md) |
 
 
 
@@ -36,7 +36,8 @@ Explains the backend safety model, including:
 - production startup checks
 - entry blocking rules
 - safe launch posture
-- Trading Lifecycle
+
+### [Trading Lifecycle](architecture/trading-lifecycle.md)
 
 Explains the full backend-managed lifecycle:
 
@@ -46,10 +47,11 @@ n8n signal
 → risk gate
 → order intent
 → broker order
-→ tracked position
+→ tracked position / trade cycle
 → exit profile
 → broker fill import
 → position closure
+→ trade history / reporting
 ```
 
 Use this doc when changing signal handling, tracked positions, exit profiles, broker activity imports, or lifecycle event logging.
@@ -109,7 +111,8 @@ Use this when:
 - debugging missing-column errors
 - checking migration state
 - validating production DB updates
-- Troubleshooting
+
+### [Troubleshooting](production/troubleshooting.md)
 
 Symptom-driven production debugging notes.
 
@@ -119,7 +122,7 @@ Use this when something is broken and you need to quickly identify likely causes
 
 ### [Testing](development/testing.md)
 
-Basic integration testing has been set up with Vitest. Tests have been created around the position lifecycle, particularly around the exit cycle.
+Documents backend test commands and the current service-level coverage around lifecycle attribution, trade-cycle APIs, config snapshots, and reporting.
 
 ## 🧪 Current Production Posture
 
@@ -140,6 +143,16 @@ backend health
 ```
 
 Automated trading should only be enabled deliberately after production health, settings, broker mode, and n8n behavior are confirmed.
+
+For this branch family, production validation should also confirm:
+
+```text
+fresh paper entry opens one tracked trade cycle
+close fill is attributed to the correct cycle
+config snapshot is captured
+Trade History renders the cycle correctly
+Reports includes the closed cycle
+```
 
 ## 📝 Documentation Conventions
 

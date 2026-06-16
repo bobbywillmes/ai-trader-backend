@@ -25,9 +25,10 @@ Backend:
 → Async Order Worker
 → BrokerOrder / Alpaca
 → BrokerActivity fill import
-→ TrackedPosition
+→ TrackedPosition trade cycle
 → ExitProfile-driven exit evaluation
 → AccountSnapshot / SystemEvent audit trail
+→ TradeHistory / Performance review
 ```
 
 The backend is designed so n8n does not talk directly to Alpaca. n8n watches the market & sends signals at the right time. The backend handles all of the heavy-lifting, business/broker logic.
@@ -44,7 +45,10 @@ The backend currently handles:
 - Internal tracked position lifecycle management
 - Exit profile evaluation
 - Broker-confirmed fill imports
+- Canonical trade-cycle lifecycle review APIs
+- Historical config snapshots for tracked trade cycles
 - Account snapshot history
+- Performance reporting from closed trade cycles
 - System event audit logging
 - Admin UI authentication and controls
 - Production readiness checks
@@ -197,7 +201,7 @@ For more about production workflow, see:
 
 ### Start here:
 
-[docs/README.md](docs/readme.md)
+[docs/README.md](docs/README.md)
 
 ### Architecture:
 
@@ -222,6 +226,8 @@ Primary API areas include:
 
 - signal ingestion
 - tracked positions
+- trade cycles
+- trade performance
 - subscriptions
 - securities
 - strategies
@@ -264,14 +270,9 @@ The backend is currently focused on hosted paper-production testing, operational
 
 ### 🔜 Next Backend Enhancements
 
-- Add more precise close-fill linking between close orders and broker activities.
-- Add historical performance reports by:
-  - strategy
-  - subscription
-  - exit profile
-  - security
 - Add account equity/exposure trend charts from `AccountSnapshot`.
-- Add broker activity drill-down pages.
+- Add deeper trade-performance filtering and drill-down tables.
+- Add broker activity drill-down inside trade lifecycle review.
 
 ### 🧭 Longer-Term
 

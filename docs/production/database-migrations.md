@@ -56,6 +56,17 @@ The column `TrackedPosition.someNewColumn` does not exist in the current databas
 
 This means the Prisma client expects a column that does not exist in production Postgres yet.
 
+Recent lifecycle-review examples include missing columns such as:
+
+```text
+OrderIntent.trackedPositionId
+BrokerOrder.trackedPositionId
+BrokerActivity.trackedPositionId
+BrokerActivity.trackedPositionLinkSource
+TrackedPosition.configSnapshotJson
+TrackedPosition.configSnapshotCapturedAt
+```
+
 Fix:
 
 ```bash
@@ -185,15 +196,29 @@ Linked to:
 
 Logs every order request received by the backend before broker submission. This includes blocked and rejected requests.
 
+Lifecycle-review additions:
+
+- nullable `trackedPositionId` for trade-cycle ownership
+
 ### BrokerOrder
 
 Logs broker order responses from Alpaca.
+
+Lifecycle-review additions:
+
+- nullable `trackedPositionId` for trade-cycle ownership
 
 ### BrokerActivity
 
 Stores broker-confirmed Alpaca account activities.
 
 Currently used for `FILL` activity imports. These records are separate from `SystemEvent` because they represent broker-confirmed execution history rather than internal app state transitions.
+
+Lifecycle-review additions:
+
+- nullable `trackedPositionId`
+- `trackedPositionLinkSource`
+- `trackedPositionLinkedAt`
 
 ### AccountSnapshot
 
@@ -204,6 +229,13 @@ Used for scheduled checkpoints, manual snapshots, and position lifecycle snapsho
 ### TrackedPosition
 
 Stores the current known state of broker positions, plus historical closed records.
+
+Lifecycle-review additions:
+
+- `configSnapshotJson`
+- `configSnapshotCapturedAt`
+
+`TrackedPosition` now acts as the canonical trade-cycle anchor for lifecycle review and performance reporting.
 
 ### SystemEvent
 

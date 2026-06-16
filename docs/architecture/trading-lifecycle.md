@@ -70,6 +70,9 @@ summary, and a chronological timeline server-side. Admin UI trade-history views
 should use these endpoints instead of independently joining raw order, position,
 activity, and event endpoints.
 
+The admin UI `Trade History` page is the primary consumer of these lifecycle
+endpoints.
+
 `GET /api/trade-performance` reuses the canonical closed trade-cycle summaries
 as the reporting source of truth. It aggregates reportable closed cycles into
 total realized P/L, average return, win rate, average winner and loser, profit
@@ -205,6 +208,7 @@ Broker activities can now be linked directly to a tracked-position cycle through
 - Alpaca activity `order_id` -> local `BrokerOrder.brokerOrderId`
 - local `BrokerOrder.trackedPositionId`
 - trailing-stop `PositionExitState.trailBrokerOrderId`
+- close-order submission ownership persisted on local records
 
 If a local development database is only observing the same Alpaca paper account
 that production is trading, the local database may not have production-created
