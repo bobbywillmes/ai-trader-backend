@@ -85,16 +85,21 @@ Pull the latest code:
 git pull origin main
 ```
 
-Apply pending Prisma migrations:
+Rebuild the backend image before running Prisma migration commands when the release includes new migration files. In production, `docker compose ... run --rm backend ...` reads the Prisma schema and migration folders from the backend image, not directly from the VPS working tree.
+
+For releases with Prisma changes:
 
 ```bash
+docker compose -f docker-compose.prod.yml build backend
+docker compose -f docker-compose.prod.yml run --rm backend npx prisma migrate status
 docker compose -f docker-compose.prod.yml run --rm backend npx prisma migrate deploy
 ```
+
+If the release does not include Prisma changes, you can skip the migration commands.
 
 For backend-only changes:
 
 ```bash
-docker compose -f docker-compose.prod.yml build backend
 docker compose -f docker-compose.prod.yml up -d backend
 ```
 

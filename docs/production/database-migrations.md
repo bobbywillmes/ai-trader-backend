@@ -25,9 +25,12 @@ Production data should be treated as durable, even while using Alpaca paper trad
 
 ## 🔃 Routine Migration Flow
 
-Check for pending migrations before rebuilding containers:
+If the release includes new migration folders, rebuild the backend image first. In this production setup, Prisma migration commands run inside the backend image, so they only see migration files that were bundled into that image build.
+
+Check for pending migrations:
 
 ```bash
+docker compose -f docker-compose.prod.yml build backend
 docker compose -f docker-compose.prod.yml run --rm backend npx prisma migrate status
 ```
 
@@ -72,6 +75,7 @@ Fix:
 ```bash
 cd /opt/ai-trader
 
+docker compose -f docker-compose.prod.yml build backend
 docker compose -f docker-compose.prod.yml run --rm backend npx prisma migrate status
 docker compose -f docker-compose.prod.yml run --rm backend npx prisma migrate deploy
 docker compose -f docker-compose.prod.yml up -d backend
@@ -141,6 +145,12 @@ SQL
 docker compose -f docker-compose.prod.yml up -d --force-recreate backend
 docker compose -f docker-compose.prod.yml logs --tail=10 backend
 ```
+
+### Prisma says no pending migrations to deploy / already up to date
+
+Confirm you rebuilt the backend image after pulling code that added the migration files. If the host working tree contains the new migration directories but the backend image was not rebuilt, Prisma inside the container can still report the old migration count.
+
+
 
 ---
 

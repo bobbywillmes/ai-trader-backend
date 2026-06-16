@@ -187,9 +187,12 @@ Pull the latest code:
 git pull origin main
 ```
 
+If the release includes Prisma schema changes or new migration directories, rebuild the backend image before checking migration status. The production migration commands run inside the backend image and will only see migration files that were included in that image build.
+
 Check for pending Prisma migrations:
 
 ```bash
+docker compose -f docker-compose.prod.yml build backend
 docker compose -f docker-compose.prod.yml run --rm backend npx prisma migrate status
 ```
 
