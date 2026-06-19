@@ -32,6 +32,8 @@ export async function processPendingOrders() {
     console.log(`Order worker: Found ${pending.length} pending orders`);
   }
 
+  let processed = 0;
+
   for (const intent of pending) {
     console.log(`Processing intent (${intent.id}): ${intent.symbol} ${intent.side} ${intent.orderType}`);
 
@@ -50,6 +52,8 @@ export async function processPendingOrders() {
         console.log(`Intent (${intent.id}) was already claimed by another worker tick.`);
         continue;
       }
+
+      processed += 1;
 
       if (!intent.clientOrderId) {
         throw new Error(
@@ -173,6 +177,11 @@ export async function processPendingOrders() {
       console.error(`Intent (${intent.id}) failed during broker submission`, error);
     }
   }
+
+  return {
+    found: pending.length,
+    processed,
+  };
 }
 
 export async function syncSubmittedOrders() {
@@ -187,7 +196,10 @@ export async function syncSubmittedOrders() {
   });
 
   if (submittedIntents.length === 0) {
-    return;
+    return {
+      found: 0,
+      synced: 0,
+    };
   }
 
   let openOrders: Awaited<ReturnType<typeof getNormalizedOpenOrders>>;
@@ -196,12 +208,14 @@ export async function syncSubmittedOrders() {
     openOrders = await getNormalizedOpenOrders();
   } catch (error) {
     console.error('Failed to fetch Alpaca open orders during submitted order sync', error);
-    return;
+    throw error;
   }
 
   const openOrdersByBrokerOrderId = new Map(
     openOrders.map((order) => [order.id, order])
   );
+
+  let synced = 0;
 
   for (const intent of submittedIntents) {
     try {
@@ -277,9 +291,15 @@ export async function syncSubmittedOrders() {
         console.log(
           `Order ${brokerOrder.id} changed from ${previousStatus} to ${nextStatus}`
         );
+        synced += 1;
       }
     } catch (error) {
       console.error(`Sync error for intent ${intent.id}`, error);
     }
   }
+
+  return {
+    found: submittedIntents.length,
+    synced,
+  };
 }

@@ -4,17 +4,25 @@ let running = false;
 
 export async function runBrokerActivitySync() {
   if (running) {
-    return;
+    return {
+      skipped: true,
+      reason: 'already_running' as const,
+    };
   }
 
   running = true;
 
   try {
-    await syncBrokerActivities({
+    const result = await syncBrokerActivities({
       activityType: 'FILL',
       pageSize: 100,
       maxPages: 3,
     });
+
+    return {
+      skipped: false,
+      result,
+    };
   } finally {
     running = false;
   }

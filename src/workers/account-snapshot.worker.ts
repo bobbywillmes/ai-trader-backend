@@ -69,25 +69,42 @@ export async function runScheduledAccountSnapshots() {
   const eastern = getEasternDateParts();
 
   if (!isWeekday(eastern.weekday)) {
-    return;
+    return {
+      due: false,
+      recorded: 0,
+    };
   }
 
+  let due = false;
+  let recorded = 0;
+
   for (const checkpoint of CHECKPOINTS) {
-    const due = isWithinCheckpointWindow({
+    const checkpointDue = isWithinCheckpointWindow({
       currentHour: eastern.hour,
       currentMinute: eastern.minute,
       checkpointHour: checkpoint.hour,
       checkpointMinute: checkpoint.minute,
     });
 
-    if (!due) {
+    if (!checkpointDue) {
       continue;
     }
 
-    await recordAccountSnapshot({
+    due = true;
+
+    const result = await recordAccountSnapshot({
       reason: checkpoint.reason,
       force: false,
       runKey: `${checkpoint.reason}:${eastern.dateKey}`,
     });
+
+    if (result.created) {
+      recorded += 1;
+    }
   }
+
+  return {
+    due,
+    recorded,
+  };
 }
