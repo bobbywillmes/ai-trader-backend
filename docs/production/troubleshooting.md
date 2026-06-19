@@ -46,6 +46,9 @@ broker mode=paper
 tradingEnabled=false unless deliberately enabled
 paperMode=true
 killSwitchEnabled=false unless deliberately enabled
+readiness.serviceHealthy=true
+readiness.workersHealthy=true after startup grace
+workers.health.summary.processInstanceId is current
 pendingOrderCount=0
 submittingOrderCount=0
 submittedOrderCount=0
@@ -161,3 +164,38 @@ The admin UI is an internal control panel, and the build completes successfully.
 The backend intentionally uses normalized response shapes.
 
 Alpaca returns many numeric fields as strings. The backend converts key values to numbers before returning them to n8n, the admin UI, or future clients. This protects the rest of the AI Trader system from depending on raw Alpaca response formats.
+
+---
+
+## ℹ️ Worker Health Delayed, Stale, or Failing
+
+Worker health is surfaced in Settings -> System Status and in the protected `/api/system-status` response.
+
+Check:
+
+```text
+workers.health.summary.processInstanceId
+workers.health.summary.processStartedAt
+the affected worker lastSucceededAt
+the affected worker lastFailedAt
+the affected worker currentRunStartedAt
+the affected worker lastError
+related worker_health.* SystemEvents
+backend container logs around the same timestamps
+```
+
+Important distinctions:
+
+```text
+disabled = intentionally off and not unhealthy
+idle or not_due = healthy scheduler heartbeat with no business work
+delayed = heartbeat older than the delay threshold
+stale = heartbeat overdue, never succeeded after grace, or run timeout
+failing = at least three consecutive top-level failures
+```
+
+Do not restart immediately just because a worker is stale. First identify whether the cause is runtime configuration, Alpaca integration failure, database failure, or a stuck run.
+
+Worker health is diagnostic only. It does not automatically enable the kill switch, disable trading, reject signals, or restart containers.
+
+See [Worker Health](../architecture/workers.md) for full status semantics.

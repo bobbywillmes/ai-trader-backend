@@ -36,10 +36,17 @@ export type SystemStatusResponse = {
     hasAlpacaApiKey: boolean;
     hasAlpacaSecretKey: boolean;
     hasAlpacaBaseUrl: boolean;
-    hasAdminJwtSecret: boolean;
+    hasAdminSessionToken: boolean;
     hasSignalApiKey: boolean;
     corsAllowedOrigins: string[];
     hasCorsAllowedOrigins: boolean;
+  };
+  readiness: {
+    serviceHealthy: boolean;
+    workersHealthy: boolean;
+    tradingReady: boolean;
+    canEnter: boolean;
+    needsAttention: boolean;
   };
   trading: {
     config: {
@@ -96,6 +103,69 @@ export type SystemStatusResponse = {
     };
   };
   workers: {
+    health: {
+      summary: {
+        status:
+          | "disabled"
+          | "starting"
+          | "healthy"
+          | "degraded"
+          | "delayed"
+          | "stale"
+          | "failing";
+        total: number;
+        enabled: number;
+        disabled: number;
+        healthy: number;
+        degraded: number;
+        delayed: number;
+        stale: number;
+        failing: number;
+        starting: number;
+        criticalHealthy: boolean;
+        needsAttention: boolean;
+        processInstanceId: string;
+        processStartedAt: string;
+        evaluatedAt: string;
+      };
+      items: Array<{
+        key: string;
+        displayName: string;
+        description: string;
+        criticality: "critical" | "important" | "informational";
+        enabled: boolean;
+        status:
+          | "disabled"
+          | "starting"
+          | "healthy"
+          | "degraded"
+          | "delayed"
+          | "stale"
+          | "failing";
+        statusReason: string;
+        expectedIntervalMs: number;
+        delayedAfterMs: number;
+        staleAfterMs: number;
+        maxRunDurationMs: number;
+        running: boolean;
+        currentRunStartedAt: string | null;
+        lastTickStartedAt: string | null;
+        lastTickCompletedAt: string | null;
+        lastSucceededAt: string | null;
+        lastWorkSucceededAt: string | null;
+        lastFailedAt: string | null;
+        lastDurationMs: number | null;
+        lastOutcome: "success" | "idle" | "skipped" | "failed" | null;
+        lastSkipReason: string | null;
+        consecutiveFailures: number;
+        totalRuns: number;
+        totalFailures: number;
+        totalSkips: number;
+        lastError: string | null;
+        lastErrorAt: string | null;
+        ageSinceLastSuccessMs: number | null;
+      }>;
+    };
     tradingLoopSeconds: number;
     accountSnapshotCheckSeconds: number;
     brokerActivitySyncSeconds: number;

@@ -45,6 +45,7 @@ The backend currently handles:
 - Internal tracked position lifecycle management
 - Exit profile evaluation
 - Broker-confirmed fill imports
+- Runtime worker health and stale-worker visibility
 - Canonical trade-cycle lifecycle review APIs
 - Historical config snapshots for tracked trade cycles
 - Account snapshot history
@@ -208,6 +209,7 @@ For more about production workflow, see:
 
 - [Risk & Safety](docs/architecture/risk-and-safety.md)
 - [Trading Lifecycle](docs/architecture/trading-lifecycle.md)
+- [Worker Health](docs/architecture/workers.md)
 
 ### Integrations:
 

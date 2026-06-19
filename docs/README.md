@@ -8,15 +8,16 @@ The root `README.md` is the project front door. These docs are the working manua
 
 Use this index to find the right document for the task at hand.
 
-| Need	                                             | Open |
-| -------------------------------------------------- | -----------------------  |
-| Understand the backend safety model	               | [Risk & Safety](architecture/risk-and-safety.md) |
-| Understand how a signal becomes a full trade cycle | [Trading Lifecycle](architecture/trading-lifecycle.md) |
-| Deploy or update production	                       | [Production Deployment](production/deployment.md) |
-| Follow the normal local → GitHub → VPS workflow	   | [Production Workflow](production/production-workflow.md) |
-| Run or debug Prisma migrations	                   | [Database Migrations](production/database-migrations.md) |
-| Diagnose production problems	                     | [Troubleshooting](production/troubleshooting.md) |
-| Understand the n8n → backend contract	             | [n8n Integration](integrations/n8n.md) |
+| Need	                                                  | Open |
+| ------------------------------------------------------- | -----------------------  |
+| Understand the backend safety model	                    | [Risk & Safety](architecture/risk-and-safety.md) |
+| Understand how a signal becomes a full trade cycle      | [Trading Lifecycle](architecture/trading-lifecycle.md) |
+| Understand background worker health and stale detection | [Worker Health](architecture/workers.md) |
+| Deploy or update production	                            | [Production Deployment](production/deployment.md) |
+| Follow the normal local → GitHub → VPS workflow	        | [Production Workflow](production/production-workflow.md) |
+| Run or debug Prisma migrations	                        | [Database Migrations](production/database-migrations.md) |
+| Diagnose production problems	                          | [Troubleshooting](production/troubleshooting.md) |
+| Understand the n8n → backend contract	                  | [n8n Integration](integrations/n8n.md) |
 
 
 
@@ -55,6 +56,10 @@ n8n signal
 ```
 
 Use this doc when changing signal handling, tracked positions, exit profiles, broker activity imports, or lifecycle event logging.
+
+### [Worker Health](architecture/workers.md)
+
+Documents recurring worker inventory, cadence, health status derivation, persistence, System Status fields, transition events, and troubleshooting.
 
 ## 🔌 Integration Docs
 
@@ -186,7 +191,6 @@ docs/api/tracked-positions.md
 docs/api/market-diary.md
 docs/integrations/alpaca.md
 docs/integrations/admin-ui.md
-docs/architecture/workers.md
 docs/architecture/data-models.md
 docs/decisions/
 ```

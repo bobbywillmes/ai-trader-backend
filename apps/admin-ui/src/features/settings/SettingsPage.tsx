@@ -9,12 +9,15 @@ import {
   Group,
   Loader,
   NumberInput,
+  ScrollArea,
   SimpleGrid,
   Stack,
   Switch,
+  Table,
   Text,
   ThemeIcon,
   Title,
+  Tooltip,
   useMantineTheme,
 } from "@mantine/core";
 import { modals } from "@mantine/modals";
@@ -23,6 +26,7 @@ import { getAdminToken } from "../../lib/api";
 import { ChangePasswordModal } from "../auth/ChangePasswordModal";
 import { useConfig, useSystemStatus, useUpdateConfig } from "./hooks";
 import type { RuntimeTradingConfig } from "../dashboard/types";
+import type { SystemStatusResponse } from "./api";
 
 type RiskLimitKey =
   | "maxDailyEntryOrders"
@@ -170,6 +174,219 @@ function formatDateTime(value: string | null | undefined) {
     minute: "2-digit",
     second: "2-digit",
   }).format(date);
+}
+
+function formatRelativeTime(value: string | null | undefined) {
+  if (!value) return "Never";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Never";
+
+  const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return `${seconds} seconds ago`;
+
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} minutes ago`;
+
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hours ago`;
+
+  const days = Math.round(hours / 24);
+  return `${days} days ago`;
+}
+
+function formatDurationMs(value: number | null | undefined) {
+  if (value === null || value === undefined) return "-";
+  if (value < 1_000) return `${value} ms`;
+
+  const seconds = value / 1_000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+
+  return `${Math.round(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+}
+
+function formatCadence(value: number) {
+  if (value < 60_000) return `${Math.round(value / 1_000)}s`;
+  return `${Math.round(value / 60_000)}m`;
+}
+
+function formatStatusLabel(value: string) {
+  return value.replace(/_/g, " ").toUpperCase();
+}
+
+function workerStatusColor(status: string) {
+  switch (status) {
+    case "healthy":
+      return "teal";
+    case "starting":
+      return "blue";
+    case "degraded":
+    case "delayed":
+      return "yellow";
+    case "stale":
+    case "failing":
+      return "red";
+    case "disabled":
+      return "gray";
+    default:
+      return "gray";
+  }
+}
+
+function criticalityColor(criticality: string) {
+  switch (criticality) {
+    case "critical":
+      return "red";
+    case "important":
+      return "yellow";
+    default:
+      return "gray";
+  }
+}
+
+function WorkerHealthTable({
+  health,
+}: {
+  health: SystemStatusResponse["workers"]["health"];
+}) {
+  const evaluatedAtMs = new Date(health.summary.evaluatedAt).getTime();
+
+  return (
+    <Card withBorder radius="md" p="md">
+      <Stack gap="sm">
+        <Group justify="space-between" align="flex-start">
+          <div>
+            <Text fw={600}>Worker Health</Text>
+            <Text size="sm" c="dimmed">
+              Process {health.summary.processInstanceId.slice(0, 8)} started{" "}
+              {formatRelativeTime(health.summary.processStartedAt)}
+            </Text>
+          </div>
+          <Badge color={workerStatusColor(health.summary.status)} variant="light">
+            {formatStatusLabel(health.summary.status)}
+          </Badge>
+        </Group>
+
+        <ScrollArea>
+          <Table striped highlightOnHover style={{ minWidth: 980 }}>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Worker</Table.Th>
+                <Table.Th>Criticality</Table.Th>
+                <Table.Th>Status</Table.Th>
+                <Table.Th>Cadence</Table.Th>
+                <Table.Th>Running</Table.Th>
+                <Table.Th>Last Success</Table.Th>
+                <Table.Th>Last Work</Table.Th>
+                <Table.Th>Duration</Table.Th>
+                <Table.Th>Failures</Table.Th>
+                <Table.Th>Error</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {health.items.map((worker) => (
+                <Table.Tr key={worker.key}>
+                  <Table.Td>
+                    <Stack gap={2}>
+                      <Text size="sm" fw={600}>
+                        {worker.displayName}
+                      </Text>
+                      <Text size="xs" c="dimmed" maw={260}>
+                        {worker.description}
+                      </Text>
+                    </Stack>
+                  </Table.Td>
+                  <Table.Td>
+                    <Badge
+                      color={criticalityColor(worker.criticality)}
+                      variant="light"
+                    >
+                      {worker.criticality}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    <Stack gap={2}>
+                      <Badge
+                        color={workerStatusColor(worker.status)}
+                        variant="light"
+                      >
+                        {formatStatusLabel(worker.status)}
+                      </Badge>
+                      <Text size="xs" c="dimmed">
+                        {worker.statusReason.replace(/_/g, " ")}
+                      </Text>
+                    </Stack>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm">{formatCadence(worker.expectedIntervalMs)}</Text>
+                  </Table.Td>
+                  <Table.Td>
+                    {worker.running && worker.currentRunStartedAt ? (
+                      <Tooltip label={formatDateTime(worker.currentRunStartedAt)}>
+                        <Badge color="blue" variant="light">
+                          Running for{" "}
+                          {formatDurationMs(
+                            evaluatedAtMs -
+                              new Date(worker.currentRunStartedAt).getTime()
+                          )}
+                        </Badge>
+                      </Tooltip>
+                    ) : worker.enabled ? (
+                      <Text size="sm">No</Text>
+                    ) : (
+                      <Text size="sm" c="dimmed">
+                        Disabled
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    <Tooltip label={formatDateTime(worker.lastSucceededAt)}>
+                      <Text size="sm">{formatRelativeTime(worker.lastSucceededAt)}</Text>
+                    </Tooltip>
+                  </Table.Td>
+                  <Table.Td>
+                    <Tooltip label={formatDateTime(worker.lastWorkSucceededAt)}>
+                      <Text size="sm">
+                        {worker.lastWorkSucceededAt
+                          ? formatRelativeTime(worker.lastWorkSucceededAt)
+                          : worker.enabled
+                            ? "No work yet"
+                            : "Disabled"}
+                      </Text>
+                    </Tooltip>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm">{formatDurationMs(worker.lastDurationMs)}</Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text
+                      size="sm"
+                      c={worker.consecutiveFailures > 0 ? "red" : undefined}
+                    >
+                      {worker.consecutiveFailures}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    {worker.lastError ? (
+                      <Tooltip label={worker.lastError} multiline maw={420}>
+                        <Text size="sm" c="red" maw={220} truncate="end">
+                          {worker.lastError}
+                        </Text>
+                      </Tooltip>
+                    ) : (
+                      <Text size="sm" c="dimmed">
+                        -
+                      </Text>
+                    )}
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+      </Stack>
+    </Card>
+  );
 }
 
 function formatUptime(seconds: number) {
@@ -651,14 +868,16 @@ export function SettingsPage() {
                     <Card withBorder radius="md" p="md">
                       <Group justify="space-between">
                         <Text fw={600}>Workers</Text>
-                        <StatusBadge
-                          ok={
-                            systemStatus.workers.pendingOrderCount === 0 &&
-                            systemStatus.workers.submittingOrderCount === 0
-                          }
-                          trueLabel="Clear"
-                          falseLabel="Pending"
-                        />
+                        <Badge
+                          color={workerStatusColor(
+                            systemStatus.workers.health.summary.status
+                          )}
+                          variant="light"
+                        >
+                          {formatStatusLabel(
+                            systemStatus.workers.health.summary.status
+                          )}
+                        </Badge>
                       </Group>
                       <Text size="sm" c="dimmed" mt="xs">
                         Pending: {systemStatus.workers.pendingOrderCount}
@@ -668,6 +887,12 @@ export function SettingsPage() {
                       </Text>
                       <Text size="sm" c="dimmed">
                         Submitted: {systemStatus.workers.submittedOrderCount}
+                      </Text>
+                      <Text size="sm" c="dimmed">
+                        Attention:{" "}
+                        {systemStatus.workers.health.summary.needsAttention
+                          ? "yes"
+                          : "no"}
                       </Text>
                     </Card>
 
@@ -687,6 +912,8 @@ export function SettingsPage() {
                       </Text>
                     </Card>
                   </SimpleGrid>
+
+                  <WorkerHealthTable health={systemStatus.workers.health} />
 
                   <Card withBorder radius="md" p="md">
                     <Group justify="space-between" align="flex-start">
