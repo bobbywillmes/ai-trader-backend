@@ -1,4 +1,28 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({
+  workerHealthUpsert: vi.fn(),
+  createSystemEvent: vi.fn(),
+  loggerWarn: vi.fn(),
+}));
+
+vi.mock('../db/prisma.js', () => ({
+  prisma: {
+    workerHealthState: {
+      upsert: mocks.workerHealthUpsert,
+    },
+  },
+}));
+
+vi.mock('./system-event.service.js', () => ({
+  createSystemEvent: mocks.createSystemEvent,
+}));
+
+vi.mock('../config/logger.js', () => ({
+  logger: {
+    warn: mocks.loggerWarn,
+  },
+}));
 
 import {
   type WorkerDefinition,
@@ -44,6 +68,12 @@ function firstItem(registry: WorkerHealthRegistry) {
 }
 
 describe('WorkerHealthRegistry', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.workerHealthUpsert.mockResolvedValue({});
+    mocks.createSystemEvent.mockResolvedValue({});
+  });
+
   it('registers every centralized worker with unique stable keys', () => {
     const keys = workerDefinitions.map((worker) => worker.key);
 
@@ -248,5 +278,116 @@ describe('WorkerHealthRegistry', () => {
     expect(item?.lastError).toContain('token=[redacted]');
     expect(item?.lastError).toContain('password=[redacted]');
     expect(item?.lastError).not.toContain('at Worker');
+  });
+
+  it('batch persists dirty worker state without writing every tick immediately', async () => {
+    const { registry } = createRegistry();
+
+    await registry.runMonitoredWorker('pending_order_processing', async () => ({
+      outcome: 'success',
+    }));
+
+    expect(mocks.workerHealthUpsert).not.toHaveBeenCalled();
+
+    await registry.flushDirtyStates();
+
+    expect(mocks.workerHealthUpsert).toHaveBeenCalledTimes(1);
+    expect(mocks.workerHealthUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { key: 'pending_order_processing' },
+        update: expect.objectContaining({
+          processInstanceId: 'process-test',
+          lastOutcome: 'success',
+        }),
+      })
+    );
+  });
+
+  it('does not fail business worker state when persistence fails', async () => {
+    const { registry } = createRegistry();
+
+    mocks.workerHealthUpsert.mockRejectedValue(new Error('database down'));
+
+    await registry.runMonitoredWorker('pending_order_processing', async () => ({
+      outcome: 'success',
+    }));
+    await registry.flushDirtyStates();
+
+    expect(firstItem(registry)).toMatchObject({
+      status: 'healthy',
+      lastOutcome: 'success',
+    });
+    expect(mocks.loggerWarn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.any(Error),
+      }),
+      'Worker health persistence failed.'
+    );
+  });
+
+  it('creates one failing transition event and one recovery event', async () => {
+    const { registry } = createRegistry();
+
+    await registry.runMonitoredWorker('pending_order_processing', async () => ({
+      outcome: 'success',
+    }));
+
+    for (let i = 0; i < 3; i += 1) {
+      await registry
+        .runMonitoredWorker('pending_order_processing', async () => {
+          throw new Error('Broker unavailable');
+        })
+        .catch(() => undefined);
+    }
+
+    await registry
+      .runMonitoredWorker('pending_order_processing', async () => {
+        throw new Error('Broker still unavailable');
+      })
+      .catch(() => undefined);
+
+    await registry.runMonitoredWorker('pending_order_processing', async () => ({
+      outcome: 'success',
+    }));
+
+    expect(mocks.createSystemEvent).toHaveBeenCalledTimes(2);
+    expect(mocks.createSystemEvent).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        type: 'worker_health.failing',
+        entityType: 'worker',
+        entityId: 'pending_order_processing',
+      })
+    );
+    expect(mocks.createSystemEvent).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        type: 'worker_health.recovered',
+        entityType: 'worker',
+        entityId: 'pending_order_processing',
+      })
+    );
+  });
+
+  it('creates a stale transition event from timer-based evaluation during flush', async () => {
+    const { registry, advance } = createRegistry();
+
+    await registry.runMonitoredWorker('pending_order_processing', async () => ({
+      outcome: 'success',
+    }));
+    await registry.flushDirtyStates();
+    mocks.createSystemEvent.mockClear();
+
+    advance(baseDefinition.staleAfterMs + 1);
+    await registry.flushDirtyStates();
+
+    expect(mocks.createSystemEvent).toHaveBeenCalledTimes(1);
+    expect(mocks.createSystemEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'worker_health.stale',
+        entityType: 'worker',
+        entityId: 'pending_order_processing',
+      })
+    );
   });
 });

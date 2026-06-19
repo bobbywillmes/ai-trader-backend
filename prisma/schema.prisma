@@ -148,6 +148,35 @@ model SystemEvent {
   createdAt   DateTime @default(now())
 }
 
+model WorkerHealthState {
+  id                    Int       @id @default(autoincrement())
+  key                   String    @unique
+  processInstanceId     String
+  enabled               Boolean
+  expectedIntervalMs    Int
+  currentRunStartedAt   DateTime?
+  lastTickStartedAt     DateTime?
+  lastTickCompletedAt   DateTime?
+  lastSucceededAt       DateTime?
+  lastWorkSucceededAt   DateTime?
+  lastFailedAt          DateTime?
+  lastDurationMs        Int?
+  lastOutcome           String?
+  lastSkipReason        String?
+  consecutiveFailures   Int       @default(0)
+  totalRuns             Int       @default(0)
+  totalFailures         Int       @default(0)
+  totalSkips            Int       @default(0)
+  lastError             String?
+  lastErrorAt           DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([processInstanceId])
+  @@index([updatedAt])
+  @@index([enabled])
+}
+
 model CurrentMarketState {
   id            Int @id
 

@@ -5,6 +5,12 @@ import { getLatestAccountSnapshot } from './account-snapshot.service.js';
 import { getLatestBrokerActivity } from './broker-activity.service.js';
 import { getHealthStatus } from './health.service.js';
 import { allowedCorsOrigins } from '../config/cors.js';
+import { workerHealthRegistry } from './worker-health.service.js';
+import {
+  ACCOUNT_SNAPSHOT_WORKER_INTERVAL_MS,
+  BROKER_ACTIVITY_WORKER_INTERVAL_MS,
+  TRADING_WORKER_INTERVAL_MS,
+} from '../workers/worker-health.definitions.js';
 
 function hasEnv(name: string) {
   return Boolean(process.env[name]);
@@ -54,10 +60,23 @@ export async function getSystemStatus() {
       where: { processed: false },
     }),
   ]);
+  const workerHealth = workerHealthRegistry.getSnapshot();
+  const workersHealthy = workerHealth.summary.criticalHealthy;
+  const serviceHealthy = health.ok;
+  const canEnter = risk.canEnter;
+  const tradingReady = serviceHealthy && workersHealthy && canEnter;
+  const needsAttention = !serviceHealthy || workerHealth.summary.needsAttention;
 
   return {
     ok: health.ok,
     health,
+    readiness: {
+      serviceHealthy,
+      workersHealthy,
+      tradingReady,
+      canEnter,
+      needsAttention,
+    },
     environment: {
       nodeEnv: process.env.NODE_ENV ?? 'unknown',
       port: process.env.PORT ?? null,
@@ -75,9 +94,10 @@ export async function getSystemStatus() {
       risk,
     },
     workers: {
-      tradingLoopSeconds: 2,
-      accountSnapshotCheckSeconds: 60,
-      brokerActivitySyncSeconds: 60,
+      health: workerHealth,
+      tradingLoopSeconds: TRADING_WORKER_INTERVAL_MS / 1_000,
+      accountSnapshotCheckSeconds: ACCOUNT_SNAPSHOT_WORKER_INTERVAL_MS / 1_000,
+      brokerActivitySyncSeconds: BROKER_ACTIVITY_WORKER_INTERVAL_MS / 1_000,
       pendingOrderCount,
       submittingOrderCount,
       submittedOrderCount,

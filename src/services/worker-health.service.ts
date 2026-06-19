@@ -1,5 +1,9 @@
 import crypto from 'node:crypto';
 
+import type { Prisma } from '@prisma/client';
+import { logger } from '../config/logger.js';
+import { prisma } from '../db/prisma.js';
+import { createSystemEvent } from './system-event.service.js';
 import {
   type WorkerDefinition,
   type WorkerKey,
@@ -53,6 +57,9 @@ type WorkerRuntimeState = WorkerDefinition & {
   lastErrorCode: string | null;
   lastErrorAt: Date | null;
   processInstanceId: string;
+  lastEmittedStatus: WorkerStatus | null;
+  dirty: boolean;
+  forcePersist: boolean;
 };
 
 export type WorkerHealthItem = Omit<
@@ -104,6 +111,8 @@ export type WorkerHealthSnapshot = {
 };
 
 const MAX_ERROR_LENGTH = 500;
+const PERSIST_INTERVAL_MS = 30_000;
+const PERSIST_FAILURE_LOG_INTERVAL_MS = 5 * 60_000;
 const STATUS_PRIORITY: WorkerStatus[] = [
   'disabled',
   'failing',
@@ -158,6 +167,10 @@ export class WorkerHealthRegistry {
 
   private readonly states = new Map<WorkerKey, WorkerRuntimeState>();
   private readonly now: () => Date;
+  private persistTimer: NodeJS.Timeout | null = null;
+  private transitionEventsEnabled = true;
+  private persistenceFailureLastLoggedAt = 0;
+  private persisting = false;
 
   constructor(args: { now?: () => Date; processInstanceId?: string } = {}) {
     this.processInstanceId = args.processInstanceId ?? crypto.randomUUID();
@@ -196,6 +209,9 @@ export class WorkerHealthRegistry {
       lastErrorCode: null,
       lastErrorAt: null,
       processInstanceId: this.processInstanceId,
+      lastEmittedStatus: null,
+      dirty: true,
+      forcePersist: true,
     };
 
     this.states.set(key, state);
@@ -209,7 +225,14 @@ export class WorkerHealthRegistry {
   }
 
   setWorkerEnabled(key: WorkerKey, enabled: boolean) {
-    this.getState(key).enabled = enabled;
+    const state = this.getState(key);
+
+    if (state.enabled === enabled) {
+      return;
+    }
+
+    state.enabled = enabled;
+    this.markDirty(state, true);
   }
 
   skipWorkerTick(key: WorkerKey, reason: WorkerSkipReason) {
@@ -229,6 +252,8 @@ export class WorkerHealthRegistry {
       state.lastError = null;
       state.lastErrorCode = null;
     }
+
+    this.afterStateChange(state, reason === 'disabled' ? true : false);
   }
 
   beginWorkerTick(key: WorkerKey) {
@@ -249,6 +274,7 @@ export class WorkerHealthRegistry {
     state.lastTickStartedAt = now;
     state.lastSkipReason = null;
     state.totalRuns += 1;
+    this.markDirty(state);
     return true;
   }
 
@@ -282,6 +308,8 @@ export class WorkerHealthRegistry {
     if (result.workSucceeded) {
       state.lastWorkSucceededAt = now;
     }
+
+    this.afterStateChange(state, false);
   }
 
   failWorkerTick(key: WorkerKey, error: unknown) {
@@ -301,6 +329,7 @@ export class WorkerHealthRegistry {
     state.lastErrorCode = sanitized.code;
     state.consecutiveFailures += 1;
     state.totalFailures += 1;
+    this.afterStateChange(state, true);
   }
 
   async runMonitoredWorker(
@@ -366,6 +395,72 @@ export class WorkerHealthRegistry {
     };
   }
 
+  startPersistence() {
+    if (this.persistTimer) {
+      return;
+    }
+
+    this.persistTimer = setInterval(() => {
+      void this.flushDirtyStates();
+    }, PERSIST_INTERVAL_MS);
+  }
+
+  stopPersistence() {
+    if (!this.persistTimer) {
+      return;
+    }
+
+    clearInterval(this.persistTimer);
+    this.persistTimer = null;
+  }
+
+  async shutdown() {
+    this.stopPersistence();
+    await this.flushDirtyStates({ force: true });
+  }
+
+  async flushDirtyStates(args: { force?: boolean } = {}) {
+    if (this.persisting) {
+      return;
+    }
+
+    this.evaluateTimeBasedTransitions();
+
+    const dirtyStates = Array.from(this.states.values()).filter(
+      (state) => args.force || state.dirty || state.forcePersist
+    );
+
+    if (dirtyStates.length === 0) {
+      return;
+    }
+
+    this.persisting = true;
+
+    try {
+      await Promise.all(
+        dirtyStates.map((state) =>
+          prisma.workerHealthState.upsert({
+            where: { key: state.key },
+            update: this.toPersistenceData(state),
+            create: {
+              key: state.key,
+              ...this.toPersistenceData(state),
+            },
+          })
+        )
+      );
+
+      for (const state of dirtyStates) {
+        state.dirty = false;
+        state.forcePersist = false;
+      }
+    } catch (error) {
+      this.logPersistenceFailure(error);
+    } finally {
+      this.persisting = false;
+    }
+  }
+
   private getState(key: WorkerKey) {
     const state = this.states.get(key);
 
@@ -374,6 +469,145 @@ export class WorkerHealthRegistry {
     }
 
     return state;
+  }
+
+  private markDirty(state: WorkerRuntimeState, forcePersist = false) {
+    state.dirty = true;
+    state.forcePersist = state.forcePersist || forcePersist;
+  }
+
+  private evaluateTimeBasedTransitions() {
+    for (const state of this.states.values()) {
+      const previousStatus = state.lastEmittedStatus;
+      const next = this.deriveStatus(state, this.now());
+
+      if (previousStatus === next.status) {
+        continue;
+      }
+
+      this.afterStateChange(state, this.isImportantTransition(previousStatus, next.status));
+    }
+  }
+
+  private afterStateChange(state: WorkerRuntimeState, forcePersist: boolean) {
+    const previousStatus = state.lastEmittedStatus;
+    const next = this.deriveStatus(state, this.now());
+
+    this.markDirty(state, forcePersist || this.isImportantTransition(previousStatus, next.status));
+
+    if (!this.transitionEventsEnabled) {
+      state.lastEmittedStatus = next.status;
+      return;
+    }
+
+    if (this.shouldEmitTransition(previousStatus, next.status)) {
+      void this.createTransitionEvent(state, previousStatus, next.status, next.reason)
+        .catch((error) => {
+          logger.warn(
+            { error, workerKey: state.key },
+            'Worker health transition event write failed.'
+          );
+        });
+    }
+
+    state.lastEmittedStatus = next.status;
+  }
+
+  private shouldEmitTransition(
+    previousStatus: WorkerStatus | null,
+    nextStatus: WorkerStatus
+  ) {
+    if (previousStatus === null || previousStatus === nextStatus) {
+      return false;
+    }
+
+    if (nextStatus === 'stale') {
+      return ['healthy', 'degraded', 'delayed'].includes(previousStatus);
+    }
+
+    if (nextStatus === 'failing') {
+      return previousStatus !== 'failing';
+    }
+
+    return (
+      nextStatus === 'healthy' &&
+      (previousStatus === 'stale' || previousStatus === 'failing')
+    );
+  }
+
+  private isImportantTransition(
+    previousStatus: WorkerStatus | null,
+    nextStatus: WorkerStatus
+  ) {
+    return this.shouldEmitTransition(previousStatus, nextStatus);
+  }
+
+  private async createTransitionEvent(
+    state: WorkerRuntimeState,
+    previousStatus: WorkerStatus | null,
+    nextStatus: WorkerStatus,
+    reason: WorkerStatusReason
+  ) {
+    await createSystemEvent({
+      type:
+        nextStatus === 'healthy'
+          ? 'worker_health.recovered'
+          : `worker_health.${nextStatus}`,
+      entityType: 'worker',
+      entityId: state.key,
+      message:
+        nextStatus === 'healthy'
+          ? `${state.displayName} recovered.`
+          : `${state.displayName} is ${nextStatus}.`,
+      payloadJson: {
+        workerKey: state.key,
+        displayName: state.displayName,
+        previousStatus,
+        nextStatus,
+        reason,
+        consecutiveFailures: state.consecutiveFailures,
+        lastSucceededAt: toIso(state.lastSucceededAt),
+        lastFailedAt: toIso(state.lastFailedAt),
+        processInstanceId: state.processInstanceId,
+      } as Prisma.InputJsonValue,
+    });
+  }
+
+  private toPersistenceData(state: WorkerRuntimeState) {
+    return {
+      processInstanceId: state.processInstanceId,
+      enabled: state.enabled,
+      expectedIntervalMs: state.expectedIntervalMs,
+      currentRunStartedAt: state.currentRunStartedAt,
+      lastTickStartedAt: state.lastTickStartedAt,
+      lastTickCompletedAt: state.lastTickCompletedAt,
+      lastSucceededAt: state.lastSucceededAt,
+      lastWorkSucceededAt: state.lastWorkSucceededAt,
+      lastFailedAt: state.lastFailedAt,
+      lastDurationMs: state.lastDurationMs,
+      lastOutcome: state.lastOutcome,
+      lastSkipReason: state.lastSkipReason,
+      consecutiveFailures: state.consecutiveFailures,
+      totalRuns: state.totalRuns,
+      totalFailures: state.totalFailures,
+      totalSkips: state.totalSkips,
+      lastError: state.lastError,
+      lastErrorAt: state.lastErrorAt,
+    };
+  }
+
+  private logPersistenceFailure(error: unknown) {
+    const now = this.now().getTime();
+
+    if (
+      now - this.persistenceFailureLastLoggedAt <
+      PERSIST_FAILURE_LOG_INTERVAL_MS
+    ) {
+      return;
+    }
+
+    this.persistenceFailureLastLoggedAt = now;
+    logger.warn({ error }, 'Worker health persistence failed.');
   }
 
   private deriveStatus(

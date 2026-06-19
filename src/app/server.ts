@@ -1,6 +1,7 @@
 import { createApp } from './app.js';
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
+import type { Server } from 'node:http';
 import {
   processPendingOrders,
   syncSubmittedOrders,
@@ -27,6 +28,7 @@ import { getRuntimeTradingConfig } from '../services/config.service.js';
 const app = createApp();
 
 let tradingWorkersRunning = false;
+let server: Server | null = null;
 
 function logWorkerError(key: WorkerKey, error: unknown) {
   logger.error({ error, workerKey: key }, 'Worker tick failed.');
@@ -106,6 +108,8 @@ async function runTradingWorkers() {
 }
 
 function startWorkers() {
+  workerHealthRegistry.startPersistence();
+
   // Account snapshot checkpoints do not need the high-frequency trading loop.
   // This checks once per minute and records only scheduled checkpoint snapshots.
   setInterval(() => {
@@ -199,12 +203,47 @@ function startWorkers() {
 async function startServer() {
   await assertStartupSafe();
 
-  app.listen(env.PORT, () => {
+  server = app.listen(env.PORT, () => {
     logger.info(`AI Trader Backend listening on http://localhost:${env.PORT}`);
   });
 
   startWorkers();
 }
+
+async function shutdown(signal: NodeJS.Signals) {
+  logger.info({ signal }, 'AI Trader Backend shutdown requested.');
+
+  workerHealthRegistry.stopPersistence();
+
+  await Promise.race([
+    workerHealthRegistry.shutdown(),
+    new Promise((resolve) => setTimeout(resolve, 5_000)),
+  ]);
+
+  if (server) {
+    server.close(() => {
+      logger.info('AI Trader Backend HTTP server closed.');
+      process.exit(0);
+    });
+
+    setTimeout(() => {
+      logger.warn('Timed out waiting for HTTP server close.');
+      process.exit(0);
+    }, 5_000).unref();
+
+    return;
+  }
+
+  process.exit(0);
+}
+
+process.once('SIGINT', (signal) => {
+  void shutdown(signal);
+});
+
+process.once('SIGTERM', (signal) => {
+  void shutdown(signal);
+});
 
 startServer().catch((error) => {
   logger.fatal({ error }, 'AI Trader Backend failed startup checks.');
