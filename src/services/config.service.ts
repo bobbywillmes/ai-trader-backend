@@ -1,4 +1,5 @@
 import { prisma } from '../db/prisma.js';
+import { HttpError } from '../errors/http-error.js';
 
 export type RuntimeTradingConfig = {
   tradingEnabled: boolean;
@@ -10,6 +11,10 @@ export type RuntimeTradingConfig = {
   maxTotalOpenNotional: number | null;
   maxSymbolOpenNotional: number | null;
   maxSubscriptionOpenNotional: number | null;
+  entrySessionGuardEnabled: boolean;
+  entryStartMinutesAfterOpen: number;
+  entryCutoffMinutesBeforeClose: number | null;
+  failClosedOnMarketClockError: boolean;
   reconciliationWorkerEnabled: boolean;
   reconciliationWorkerIntervalMinutes: number;
 };
@@ -24,6 +29,10 @@ export type UpdateRuntimeSettingsInput = {
   maxTotalOpenNotional?: number | null | undefined;
   maxSymbolOpenNotional?: number | null | undefined;
   maxSubscriptionOpenNotional?: number | null | undefined;
+  entrySessionGuardEnabled?: boolean | undefined;
+  entryStartMinutesAfterOpen?: number | undefined;
+  entryCutoffMinutesBeforeClose?: number | null | undefined;
+  failClosedOnMarketClockError?: boolean | undefined;
   reconciliationWorkerEnabled?: boolean | undefined;
   reconciliationWorkerIntervalMinutes?: number | null | undefined;
 };
@@ -88,6 +97,20 @@ export async function getRuntimeTradingConfig(): Promise<RuntimeTradingConfig> {
       map.get('maxSubscriptionOpenNotional'),
       5_000
     ),
+    entrySessionGuardEnabled: parseBoolean(
+      map.get('entrySessionGuardEnabled'),
+      false
+    ),
+    entryStartMinutesAfterOpen:
+      parseNullableNumber(map.get('entryStartMinutesAfterOpen'), 15) ?? 15,
+    entryCutoffMinutesBeforeClose: parseNullableNumber(
+      map.get('entryCutoffMinutesBeforeClose'),
+      30
+    ),
+    failClosedOnMarketClockError: parseBoolean(
+      map.get('failClosedOnMarketClockError'),
+      true
+    ),
     reconciliationWorkerEnabled: parseBoolean(
       map.get('reconciliationWorkerEnabled'),
       false
@@ -98,6 +121,26 @@ export async function getRuntimeTradingConfig(): Promise<RuntimeTradingConfig> {
 }
 
 export async function updateRuntimeSettings(input: UpdateRuntimeSettingsInput) {
+  if (
+    input.entryStartMinutesAfterOpen !== undefined ||
+    input.entryCutoffMinutesBeforeClose !== undefined
+  ) {
+    const current = await getRuntimeTradingConfig();
+    const openingBuffer =
+      input.entryStartMinutesAfterOpen ?? current.entryStartMinutesAfterOpen;
+    const closingBuffer =
+      input.entryCutoffMinutesBeforeClose !== undefined
+        ? input.entryCutoffMinutesBeforeClose
+        : current.entryCutoffMinutesBeforeClose;
+
+    if (closingBuffer !== null && openingBuffer + closingBuffer >= 390) {
+      throw new HttpError(
+        400,
+        'Opening and closing entry buffers must leave part of a normal 390-minute session available.'
+      );
+    }
+  }
+
   const updates: Promise<unknown>[] = [];
 
   if (input.tradingEnabled !== undefined) {
@@ -143,6 +186,36 @@ export async function updateRuntimeSettings(input: UpdateRuntimeSettingsInput) {
       upsertSetting(
         'maxSubscriptionOpenNotional',
         input.maxSubscriptionOpenNotional
+      )
+    );
+  }
+
+  if (input.entrySessionGuardEnabled !== undefined) {
+    updates.push(
+      upsertSetting('entrySessionGuardEnabled', input.entrySessionGuardEnabled)
+    );
+  }
+
+  if (input.entryStartMinutesAfterOpen !== undefined) {
+    updates.push(
+      upsertSetting('entryStartMinutesAfterOpen', input.entryStartMinutesAfterOpen)
+    );
+  }
+
+  if (input.entryCutoffMinutesBeforeClose !== undefined) {
+    updates.push(
+      upsertSetting(
+        'entryCutoffMinutesBeforeClose',
+        input.entryCutoffMinutesBeforeClose
+      )
+    );
+  }
+
+  if (input.failClosedOnMarketClockError !== undefined) {
+    updates.push(
+      upsertSetting(
+        'failClosedOnMarketClockError',
+        input.failClosedOnMarketClockError
       )
     );
   }

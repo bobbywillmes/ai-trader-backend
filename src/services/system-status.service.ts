@@ -56,7 +56,7 @@ export async function getSystemStatus() {
   ]);
 
   return {
-    ok: health.ok && risk.canEnter,
+    ok: health.ok,
     health,
     environment: {
       nodeEnv: process.env.NODE_ENV ?? 'unknown',

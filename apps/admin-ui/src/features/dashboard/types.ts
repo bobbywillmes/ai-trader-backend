@@ -52,6 +52,10 @@ export type RuntimeTradingConfig = {
   maxTotalOpenNotional: number | null;
   maxSymbolOpenNotional: number | null;
   maxSubscriptionOpenNotional: number | null;
+  entrySessionGuardEnabled: boolean;
+  entryStartMinutesAfterOpen: number;
+  entryCutoffMinutesBeforeClose: number | null;
+  failClosedOnMarketClockError: boolean;
   reconciliationWorkerEnabled: boolean;
   reconciliationWorkerIntervalMinutes: number;
 };
@@ -72,6 +76,33 @@ export type RiskStatus = {
     maxTotalOpenNotional: number | null;
     maxSymbolOpenNotional: number | null;
     maxSubscriptionOpenNotional: number | null;
+  };
+  entrySession: {
+    enabled: boolean;
+    status:
+      | "disabled"
+      | "allowed"
+      | "market_closed"
+      | "open_buffer"
+      | "close_buffer"
+      | "unavailable"
+      | "degraded"
+      | "invalid_window";
+    canEnterNow: boolean;
+    marketOpen: boolean | null;
+    evaluatedAt: string;
+    sessionOpenAt: string | null;
+    entryAllowedAt: string | null;
+    entryCutoffAt: string | null;
+    sessionCloseAt: string | null;
+    nextOpenAt: string | null;
+    nextCloseAt: string | null;
+    openingBufferMinutes: number;
+    closingBufferMinutes: number | null;
+    failClosed: boolean;
+    degraded: boolean;
+    rule: string | null;
+    error: { name: string; message: string } | null;
   };
   usage: {
     dailyEntryOrderCount: number;

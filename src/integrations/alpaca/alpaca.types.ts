@@ -45,3 +45,18 @@ export type AlpacaOrder = {
   trail_percent?: string | null;
   hwm?: string | null;
 };
+
+export type AlpacaClock = {
+  timestamp: string;
+  is_open: boolean;
+  next_open: string;
+  next_close: string;
+};
+
+export type AlpacaCalendarSession = {
+  date: string;
+  open?: string;
+  close?: string;
+  session_open?: string;
+  session_close?: string;
+};

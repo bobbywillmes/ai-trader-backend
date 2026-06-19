@@ -4,6 +4,12 @@ import { getNormalizedAccount } from './account.service.js';
 import { getRuntimeTradingConfig } from './config.service.js';
 import { createSystemEvent } from './system-event.service.js';
 import type { ResolvedPlaceOrderInput } from '../validators/place-order.schema.js';
+import {
+  entrySessionDetailsAsJson,
+  evaluateEntrySessionGuard,
+  isEntrySessionBlocked,
+  type EntrySessionDecision,
+} from './entry-session-guard.service.js';
 
 type RiskGateAllowed = {
   allowed: true;
@@ -67,6 +73,22 @@ function block(
     reason,
     details: details as Prisma.InputJsonValue,
   };
+}
+
+function sessionBlockReason(rule: string) {
+  switch (rule) {
+    case 'entry_open_buffer_active':
+      return 'Opening entry buffer is active.';
+    case 'entry_close_buffer_active':
+      return 'Pre-close entry cutoff is active.';
+    case 'market_clock_unavailable':
+      return 'Alpaca market session is unavailable.';
+    case 'entry_window_unavailable':
+      return 'Entry window is unavailable.';
+    case 'market_closed':
+    default:
+      return 'Regular market is closed.';
+  }
 }
 
 async function findSubscriptionForInput(input: ResolvedPlaceOrderInput) {
@@ -279,6 +301,17 @@ export async function evaluateOrderRisk(
     };
   }
 
+  const entrySession = await evaluateEntrySessionGuard(config);
+
+  if (isEntrySessionBlocked(entrySession)) {
+    return {
+      allowed: false,
+      statusCode: entrySession.statusCode,
+      reason: entrySession.reason,
+      details: entrySessionDetailsAsJson(entrySession),
+    };
+  }
+
   const requestedNotional = getRequestedNotional(input);
   const usage = await getRiskUsage();
 
@@ -390,6 +423,7 @@ export async function evaluateOrderRisk(
       side: input.side,
       subscriptionKey: input.subscriptionKey ?? null,
       requestedNotional,
+      entrySession: entrySession.details,
       usage: {
         dailyEntryOrderCount: usage.dailyEntryOrderCount,
         dailyEntryNotional: usage.dailyEntryNotional,
@@ -448,6 +482,13 @@ export async function getRiskStatus() {
     );
   }
 
+  const entrySession: EntrySessionDecision =
+    await evaluateEntrySessionGuard(config);
+
+  if (isEntrySessionBlocked(entrySession)) {
+    reasons.push(sessionBlockReason(entrySession.details.rule));
+  }
+
   if (
     isLimitEnabled(config.maxDailyEntryOrders) &&
     usage.dailyEntryOrderCount >= config.maxDailyEntryOrders
@@ -492,6 +533,26 @@ export async function getRiskStatus() {
       maxTotalOpenNotional: config.maxTotalOpenNotional,
       maxSymbolOpenNotional: config.maxSymbolOpenNotional,
       maxSubscriptionOpenNotional: config.maxSubscriptionOpenNotional,
+    },
+    entrySession: {
+      enabled: config.entrySessionGuardEnabled,
+      status: entrySession.details.status,
+      canEnterNow: entrySession.allowed,
+      marketOpen: entrySession.details.marketOpen,
+      evaluatedAt: entrySession.details.evaluatedAt,
+      sessionOpenAt: entrySession.details.sessionOpenAt,
+      entryAllowedAt: entrySession.details.entryAllowedAt,
+      entryCutoffAt: entrySession.details.entryCutoffAt,
+      sessionCloseAt: entrySession.details.sessionCloseAt,
+      nextOpenAt: entrySession.details.nextOpenAt,
+      openingBufferMinutes: entrySession.details.openingBufferMinutes,
+      closingBufferMinutes: entrySession.details.closingBufferMinutes,
+      failClosed: entrySession.details.failClosed,
+      degraded: entrySession.allowed ? entrySession.degraded : false,
+      rule: isEntrySessionBlocked(entrySession)
+        ? entrySession.details.rule
+        : null,
+      error: entrySession.details.error ?? null,
     },
     usage: {
       dailyEntryOrderCount: usage.dailyEntryOrderCount,

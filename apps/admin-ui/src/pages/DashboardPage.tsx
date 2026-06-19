@@ -118,6 +118,69 @@ function formatDateTime(value: string | null | undefined) {
   });
 }
 
+function formatTime(value: string | null | undefined) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+
+  return date.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "America/New_York",
+    timeZoneName: "short",
+  });
+}
+
+function formatMarketDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+
+  return date.toLocaleString([], {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "America/New_York",
+    timeZoneName: "short",
+  });
+}
+
+function formatSessionStatus(status: string) {
+  return status.replace(/_/g, " ");
+}
+
+function formatSessionRange(
+  start: string | null | undefined,
+  end: string | null | undefined
+) {
+  if (!start || !end) return "No regular session today";
+
+  return `${formatTime(start)}-${formatTime(end)}`;
+}
+
+function formatEntryPermission(
+  canEnterNow: boolean,
+  start: string | null | undefined,
+  cutoff: string | null | undefined,
+  sessionClose: string | null | undefined
+) {
+  const state = canEnterNow ? "Permitted" : "Not permitted";
+
+  if (!start) return state;
+
+  return `${state} (${formatTime(start)}-${cutoff ? formatTime(cutoff) : formatTime(sessionClose)})`;
+}
+
 function formatDate(value: string | null | undefined) {
   if (!value) return "-";
 
@@ -855,6 +918,68 @@ export function DashboardPage() {
           loading={bootstrapLoading}
         />
       </SimpleGrid>
+
+      {risk?.entrySession && (
+        <Card withBorder radius="md" p="md">
+          <Group justify="space-between" align="flex-start" mb="sm">
+            <div>
+              <Text fw={600} size="sm">Entry Trading Window</Text>
+              <Text size="xs" c="dimmed">
+                Regular-session entry guard from backend risk status
+              </Text>
+            </div>
+            <Badge
+              color={
+                risk.entrySession.canEnterNow
+                  ? "teal"
+                  : risk.entrySession.status === "disabled"
+                    ? "gray"
+                    : "orange"
+              }
+              variant="light"
+            >
+              {formatSessionStatus(risk.entrySession.status)}
+            </Badge>
+          </Group>
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 5 }}>
+            <Text size="sm">
+              Market:{" "}
+              {risk.entrySession.marketOpen === null
+                ? "-"
+                : risk.entrySession.marketOpen
+                  ? "Open"
+                  : "Closed"}
+            </Text>
+            <Text size="sm">
+              Session:{" "}
+              {formatSessionRange(
+                risk.entrySession.sessionOpenAt,
+                risk.entrySession.sessionCloseAt
+              )}
+            </Text>
+            <Text size="sm">
+              Entries:{" "}
+              {formatEntryPermission(
+                risk.entrySession.canEnterNow,
+                risk.entrySession.entryAllowedAt,
+                risk.entrySession.entryCutoffAt,
+                risk.entrySession.sessionCloseAt
+              )}
+            </Text>
+            <Text size="sm">
+              {risk.entrySession.marketOpen ? "Next close" : "Next open"}:{" "}
+              {formatMarketDateTime(
+                risk.entrySession.marketOpen
+                  ? risk.entrySession.nextCloseAt
+                  : risk.entrySession.nextOpenAt
+              )}
+            </Text>
+            <Text size="sm">
+              Evaluated: {formatDateTime(risk.entrySession.evaluatedAt)}
+            </Text>
+          </SimpleGrid>
+        </Card>
+      )}
 
       <IndexMarketPulse
         chartRange={indexChartRange}

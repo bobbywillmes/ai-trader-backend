@@ -39,6 +39,13 @@ type ReconciliationSettingsDraft = {
   reconciliationWorkerIntervalMinutes: number;
 };
 
+type EntrySessionSettingsDraft = {
+  entrySessionGuardEnabled: boolean;
+  entryStartMinutesAfterOpen: number;
+  entryCutoffMinutesBeforeClose: number | null;
+  failClosedOnMarketClockError: boolean;
+};
+
 const riskLimitDefinitions: {
   key: RiskLimitKey;
   label: string;
@@ -104,6 +111,17 @@ function configToRiskForm(config: RuntimeTradingConfig): RiskLimitForm {
     maxTotalOpenNotional: config.maxTotalOpenNotional,
     maxSymbolOpenNotional: config.maxSymbolOpenNotional,
     maxSubscriptionOpenNotional: config.maxSubscriptionOpenNotional,
+  };
+}
+
+function configToEntrySessionDraft(
+  config: RuntimeTradingConfig
+): EntrySessionSettingsDraft {
+  return {
+    entrySessionGuardEnabled: config.entrySessionGuardEnabled,
+    entryStartMinutesAfterOpen: config.entryStartMinutesAfterOpen,
+    entryCutoffMinutesBeforeClose: config.entryCutoffMinutesBeforeClose,
+    failClosedOnMarketClockError: config.failClosedOnMarketClockError,
   };
 }
 
@@ -189,6 +207,8 @@ export function SettingsPage() {
   const systemStatusQuery = useSystemStatus(token);
   const systemStatus = systemStatusQuery.data;
   const [reconciliationDraft, setReconciliationDraft] = useState<ReconciliationSettingsDraft | null>(null);
+  const [entrySessionDraft, setEntrySessionDraft] =
+    useState<EntrySessionSettingsDraft | null>(null);
 
   const { data: config, isLoading, isError } = useConfig(token);
   const updateMutation = useUpdateConfig(token);
@@ -196,6 +216,7 @@ export function SettingsPage() {
   useEffect(() => {
     if (config) {
       setRiskForm(configToRiskForm(config));
+      setEntrySessionDraft(configToEntrySessionDraft(config));
     }
   }, [config]);
 
@@ -393,6 +414,30 @@ export function SettingsPage() {
       reconciliationDraft?.reconciliationWorkerIntervalMinutes !==
         config?.reconciliationWorkerIntervalMinutes);
 
+  const entrySessionSettingsChanged =
+    Boolean(config && entrySessionDraft) &&
+    (entrySessionDraft?.entrySessionGuardEnabled !==
+      config?.entrySessionGuardEnabled ||
+      entrySessionDraft?.entryStartMinutesAfterOpen !==
+        config?.entryStartMinutesAfterOpen ||
+      entrySessionDraft?.entryCutoffMinutesBeforeClose !==
+        config?.entryCutoffMinutesBeforeClose ||
+      entrySessionDraft?.failClosedOnMarketClockError !==
+        config?.failClosedOnMarketClockError);
+
+  const entrySessionSettingsValid =
+    entrySessionDraft !== null &&
+    Number.isInteger(entrySessionDraft.entryStartMinutesAfterOpen) &&
+    entrySessionDraft.entryStartMinutesAfterOpen >= 0 &&
+    entrySessionDraft.entryStartMinutesAfterOpen <= 390 &&
+    (entrySessionDraft.entryCutoffMinutesBeforeClose === null ||
+      (Number.isInteger(entrySessionDraft.entryCutoffMinutesBeforeClose) &&
+        entrySessionDraft.entryCutoffMinutesBeforeClose >= 0 &&
+        entrySessionDraft.entryCutoffMinutesBeforeClose <= 390 &&
+        entrySessionDraft.entryStartMinutesAfterOpen +
+          entrySessionDraft.entryCutoffMinutesBeforeClose <
+          390));
+
   const reconciliationIntervalValid =
     reconciliationDraft !== null &&
     Number.isInteger(reconciliationDraft.reconciliationWorkerIntervalMinutes) &&
@@ -422,6 +467,22 @@ export function SettingsPage() {
       reconciliationWorkerIntervalMinutes:
         reconciliationDraft.reconciliationWorkerIntervalMinutes,
     });
+  }
+
+  function resetEntrySessionSettings() {
+    if (!config) {
+      return;
+    }
+
+    setEntrySessionDraft(configToEntrySessionDraft(config));
+  }
+
+  async function saveEntrySessionSettings() {
+    if (!entrySessionDraft) {
+      return;
+    }
+
+    await applyUpdate(entrySessionDraft);
   }
 
   return (
@@ -527,9 +588,22 @@ export function SettingsPage() {
                 <Stack gap="md">
                   {!systemStatus.trading.risk.canEnter &&
                     systemStatus.trading.risk.reasons.length > 0 && (
-                      <Alert color="orange" title="Entries are currently blocked">
-                        {systemStatus.trading.risk.reasons[0]}
-                      </Alert>
+                      <Group
+                        gap="sm"
+                        p="sm"
+                        style={{
+                          border: `1px solid ${theme.colors.blue[8]}`,
+                          borderRadius: theme.radius.sm,
+                          background: "rgba(59, 130, 246, 0.08)",
+                        }}
+                      >
+                        <ThemeIcon color="blue" variant="light" size="sm">
+                          i
+                        </ThemeIcon>
+                        <Text size="sm" c="dimmed">
+                          {systemStatus.trading.risk.reasons[0]}
+                        </Text>
+                      </Group>
                     )}
 
                   <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }}>
@@ -613,6 +687,84 @@ export function SettingsPage() {
                       </Text>
                     </Card>
                   </SimpleGrid>
+
+                  <Card withBorder radius="md" p="md">
+                    <Group justify="space-between" align="flex-start">
+                      <div>
+                        <Text fw={600}>Entry Trading Window</Text>
+                        <Text size="sm" c="dimmed">
+                          Current regular-session entry policy from backend risk
+                          status.
+                        </Text>
+                      </div>
+                      <Badge
+                        color={
+                          systemStatus.trading.risk.entrySession.canEnterNow
+                            ? "teal"
+                            : systemStatus.trading.risk.entrySession.status ===
+                                "disabled"
+                              ? "gray"
+                              : "orange"
+                        }
+                        variant="light"
+                      >
+                        {formatEntrySessionStatus(
+                          systemStatus.trading.risk.entrySession.status
+                        )}
+                      </Badge>
+                    </Group>
+
+                    <SimpleGrid cols={{ base: 1, sm: 2, lg: 5 }} mt="sm">
+                      <Text size="sm">
+                        Market:{" "}
+                        {systemStatus.trading.risk.entrySession.marketOpen === null
+                          ? "-"
+                          : systemStatus.trading.risk.entrySession.marketOpen
+                            ? "Open"
+                            : "Closed"}
+                      </Text>
+                      <Text size="sm">
+                        Regular session:{" "}
+                        {formatSessionRange(
+                          systemStatus.trading.risk.entrySession.sessionOpenAt,
+                          systemStatus.trading.risk.entrySession.sessionCloseAt
+                        )}
+                      </Text>
+                      <Text size="sm">
+                        Entries:{" "}
+                        {formatEntryPermission(
+                          systemStatus.trading.risk.entrySession.canEnterNow,
+                          systemStatus.trading.risk.entrySession.entryAllowedAt,
+                          systemStatus.trading.risk.entrySession.entryCutoffAt,
+                          systemStatus.trading.risk.entrySession.sessionCloseAt
+                        )}
+                      </Text>
+                      <Text size="sm">
+                        {systemStatus.trading.risk.entrySession.marketOpen
+                          ? "Next close"
+                          : "Next open"}
+                        :{" "}
+                        {formatMarketDateTime(
+                          systemStatus.trading.risk.entrySession.marketOpen
+                            ? systemStatus.trading.risk.entrySession.nextCloseAt
+                            : systemStatus.trading.risk.entrySession.nextOpenAt
+                        )}
+                      </Text>
+                      <Text size="sm">
+                        Evaluated:{" "}
+                        {formatDateTime(
+                          systemStatus.trading.risk.entrySession.evaluatedAt
+                        )}
+                      </Text>
+                    </SimpleGrid>
+
+                    {systemStatus.trading.risk.entrySession.error && (
+                      <Text size="xs" c="dimmed" mt="xs">
+                        Session warning:{" "}
+                        {systemStatus.trading.risk.entrySession.error.message}
+                      </Text>
+                    )}
+                  </Card>
 
                   <Grid>
                     <Grid.Col span={{ base: 12, md: 6 }}>
@@ -725,6 +877,185 @@ export function SettingsPage() {
                   </Text>
                 </Stack>
               )}
+            </Stack>
+          </Card>
+
+          <Card withBorder radius="md" p="lg">
+            <Stack gap="md">
+              <Group justify="space-between" align="flex-start">
+                <div>
+                  <Title order={3}>Entry Trading Window</Title>
+                  <Text c="dimmed" size="sm" maw={760}>
+                    Controls new entries only. Exits and protective orders remain
+                    permitted. The backend uses Alpaca's actual daily market
+                    schedule, including holidays and early closes. Leaving the
+                    close cutoff blank disables only the pre-close buffer.
+                  </Text>
+                </div>
+
+                <Group>
+                  {entrySessionSettingsChanged && (
+                    <Badge color="blue" variant="light">
+                      Unsaved changes
+                    </Badge>
+                  )}
+                  <Badge
+                    color={
+                      entrySessionDraft?.entrySessionGuardEnabled ? "teal" : "gray"
+                    }
+                  >
+                    {entrySessionDraft?.entrySessionGuardEnabled
+                      ? "Enabled"
+                      : "Disabled"}
+                  </Badge>
+                  <Switch
+                    checked={entrySessionDraft?.entrySessionGuardEnabled ?? false}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      setEntrySessionDraft((current) =>
+                        current
+                          ? {
+                              ...current,
+                              entrySessionGuardEnabled: checked,
+                            }
+                          : current
+                      );
+                    }}
+                    disabled={updateMutation.isPending || !entrySessionDraft}
+                    color="teal"
+                    size="md"
+                  />
+                </Group>
+              </Group>
+
+              <SimpleGrid
+                cols={{ base: 1, md: 3 }}
+                style={{
+                  opacity: entrySessionDraft?.entrySessionGuardEnabled ? 1 : 0.62,
+                }}
+              >
+                <NumberInput
+                  label="Wait after market open"
+                  description="Minutes after the regular-session open before entries are allowed."
+                  min={0}
+                  max={390}
+                  step={1}
+                  value={entrySessionDraft?.entryStartMinutesAfterOpen ?? 15}
+                  onChange={(value) => {
+                    const minutes =
+                      typeof value === "number"
+                        ? value
+                        : Number.parseInt(value, 10);
+
+                    if (!Number.isFinite(minutes)) {
+                      return;
+                    }
+
+                    setEntrySessionDraft((current) =>
+                      current
+                        ? {
+                            ...current,
+                            entryStartMinutesAfterOpen: minutes,
+                          }
+                        : current
+                    );
+                  }}
+                  disabled={
+                    updateMutation.isPending ||
+                    !entrySessionDraft ||
+                    !entrySessionDraft.entrySessionGuardEnabled
+                  }
+                />
+
+                <NumberInput
+                  label="Stop entries before close"
+                  description="Blank disables only the pre-close buffer."
+                  min={0}
+                  max={390}
+                  step={1}
+                  value={entrySessionDraft?.entryCutoffMinutesBeforeClose ?? ""}
+                  onChange={(value) => {
+                    const minutes = normalizeNumberInput(value);
+                    setEntrySessionDraft((current) =>
+                      current
+                        ? {
+                            ...current,
+                            entryCutoffMinutesBeforeClose: minutes,
+                          }
+                        : current
+                    );
+                  }}
+                  disabled={
+                    updateMutation.isPending ||
+                    !entrySessionDraft ||
+                    !entrySessionDraft.entrySessionGuardEnabled
+                  }
+                />
+
+                <Group justify="space-between" align="flex-start" wrap="nowrap">
+                  <div>
+                    <Text fw={600} size="sm">
+                      Fail closed on session error
+                    </Text>
+                    <Text size="sm" c="dimmed">
+                      Blocks entries if Alpaca clock or calendar data cannot be
+                      verified.
+                    </Text>
+                  </div>
+                  <Switch
+                    checked={
+                      entrySessionDraft?.failClosedOnMarketClockError ?? true
+                    }
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      setEntrySessionDraft((current) =>
+                        current
+                          ? {
+                              ...current,
+                              failClosedOnMarketClockError: checked,
+                            }
+                          : current
+                      );
+                    }}
+                    disabled={
+                      updateMutation.isPending ||
+                      !entrySessionDraft ||
+                      !entrySessionDraft.entrySessionGuardEnabled
+                    }
+                    color="orange"
+                    size="md"
+                  />
+                </Group>
+              </SimpleGrid>
+
+              {!entrySessionSettingsValid && (
+                <Alert color="red" title="Invalid entry window">
+                  Opening and closing buffers must be between 0 and 390 minutes,
+                  and together must leave part of a normal 390-minute session
+                  available.
+                </Alert>
+              )}
+
+              <Group justify="flex-end">
+                <Button
+                  variant="subtle"
+                  onClick={resetEntrySessionSettings}
+                  disabled={
+                    !entrySessionSettingsChanged || updateMutation.isPending
+                  }
+                >
+                  Reset
+                </Button>
+                <Button
+                  onClick={saveEntrySessionSettings}
+                  loading={updateMutation.isPending}
+                  disabled={
+                    !entrySessionSettingsChanged || !entrySessionSettingsValid
+                  }
+                >
+                  Save Entry Window
+                </Button>
+              </Group>
             </Stack>
           </Card>
 
@@ -1083,4 +1414,63 @@ export function SettingsPage() {
       )}
     </Stack>
   );
+}
+
+function formatTime(value: string | null | undefined) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "-";
+
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "America/New_York",
+    timeZoneName: "short",
+  }).format(date);
+}
+
+function formatMarketDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "-";
+
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "America/New_York",
+    timeZoneName: "short",
+  }).format(date);
+}
+
+function formatEntrySessionStatus(status: string) {
+  return status.replace(/_/g, " ");
+}
+
+function formatSessionRange(
+  start: string | null | undefined,
+  end: string | null | undefined
+) {
+  if (!start || !end) return "No regular session today";
+
+  return `${formatTime(start)}-${formatTime(end)}`;
+}
+
+function formatEntryPermission(
+  canEnterNow: boolean,
+  start: string | null | undefined,
+  cutoff: string | null | undefined,
+  sessionClose: string | null | undefined
+) {
+  const state = canEnterNow ? "Permitted" : "Not permitted";
+
+  if (!start) return state;
+
+  return `${state} (${formatTime(start)}-${cutoff ? formatTime(cutoff) : formatTime(sessionClose)})`;
 }

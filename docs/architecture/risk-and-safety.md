@@ -24,6 +24,9 @@ Entry orders are blocked when any of the following conditions apply:
 - Subscription is disabled.
 - Strategy is disabled.
 - Exit profile is disabled.
+- Regular-session entry guard blocks the entry because the market is closed,
+  the opening buffer is active, the pre-close cutoff is active, or session data
+  is unavailable while fail-closed behavior is enabled.
 - Symbol already has an open or closing tracked position.
 - Daily entry order limit has been reached.
 - Daily entry notional limit would be exceeded.
@@ -68,7 +71,79 @@ maxOpenPositions
 maxTotalOpenNotional
 maxSymbolOpenNotional
 maxSubscriptionOpenNotional
+entrySessionGuardEnabled
+entryStartMinutesAfterOpen
+entryCutoffMinutesBeforeClose
+failClosedOnMarketClockError
 ```
+
+### Regular-session entry guard
+
+The backend can independently enforce a regular-session-only window for new
+entries. n8n may still decide when to send a signal, but the backend is the
+authority for whether a new entry may proceed.
+
+The guard applies only to new buy-side entry orders. Exit orders, protective
+sells, trailing-stop orders, reconciliation activity, and other non-entry
+orders bypass this session-window restriction and continue through their
+existing safety checks.
+
+Runtime settings:
+
+```text
+entrySessionGuardEnabled=false
+entryStartMinutesAfterOpen=15
+entryCutoffMinutesBeforeClose=30
+failClosedOnMarketClockError=true
+```
+
+`entryCutoffMinutesBeforeClose = null` disables only the pre-close buffer. No
+Prisma migration is expected for these settings because the existing `Setting`
+model stores generic key/value runtime settings.
+
+When enabled, the backend uses Alpaca Trading API `/v2/clock` and `/v2/calendar`
+for the relevant trading date. The calendar response supplies the actual regular
+session open and close, including holidays and early closes. The implementation
+does not hardcode regular-session times, UTC offsets, or holiday lists.
+
+The `/v2/clock` response is the primary session source. The backend stores the
+normalized clock payload in the generic `Setting` table as
+`alpacaMarketClockCache`, including Alpaca `timestamp`, `is_open`, `next_open`,
+`next_close`, and local fetch time. That cache is reused until its `next_close`
+is stale, which lets status pages show values such as the next Monday open after
+a Friday holiday close without repeatedly calling Alpaca. Calendar lookup is
+reserved for recovery cases where the backend starts mid-session and clock alone
+does not identify the current session open needed for the opening buffer.
+
+Boundary behavior:
+
+- Entry is allowed at the exact opening-buffer boundary.
+- Entry is blocked at the exact closing-buffer boundary.
+- A zero opening buffer permits entries at the regular-session open.
+- A zero close buffer permits entries until the regular-session close.
+- A null close buffer removes the pre-close cutoff.
+- If the calculated allowed start is at or after the calculated cutoff, entries
+  are blocked with `entry_window_unavailable`.
+
+Expected signal-time HTTP behavior:
+
+- `409` for policy blocks such as market closed, active opening buffer, active
+  close buffer, or invalid/unavailable entry window.
+- `503` when Alpaca session information cannot be verified and
+  `failClosedOnMarketClockError = true`.
+
+When `failClosedOnMarketClockError = false`, the entry may continue with
+structured degraded warning details. The backend does not pretend session
+verification succeeded, and risk/system status exposes the degraded state.
+
+The guard is enforced twice:
+
+1. Signal-time risk evaluation checks the session window before entry exposure
+   limits are finalized.
+2. The order worker rechecks the same policy after claiming a pending
+   `OrderIntent` and immediately before broker submission. If the worker-time
+   recheck blocks, the intent is marked `blocked`, no Alpaca order is submitted,
+   and a structured `SystemEvent` is written.
 
 ### Exit attention states
 
@@ -89,6 +164,7 @@ The backend currently protects trading and configuration changes with:
 - Separate signal-level and admin-level access
 - Runtime `tradingEnabled` setting
 - Runtime `killSwitchEnabled` setting
+- Runtime regular-session entry guard
 - Paper/live mode setting
 - Alpaca account `tradingBlocked` check
 - Broker mode matching

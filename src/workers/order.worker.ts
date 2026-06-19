@@ -8,8 +8,18 @@ import {
   submitOrderToBroker,
   type BrokerOrderSubmissionInput,
 } from '../services/place-order.service.js';
+import { getRuntimeTradingConfig } from '../services/config.service.js';
+import {
+  entrySessionDetailsAsJson,
+  evaluateEntrySessionGuard,
+  isEntrySessionBlocked,
+} from '../services/entry-session-guard.service.js';
 import { createSystemEvent } from '../services/system-event.service.js';
 import { syncTrailingStopOrderStatus } from '../services/position-exit-state.service.js';
+
+function isEntryOrder(input: BrokerOrderSubmissionInput): boolean {
+  return input.side === 'buy' && (input.signalType ?? 'entry') === 'entry';
+}
 
 export async function processPendingOrders() {
   const pending = await prisma.orderIntent.findMany({
@@ -60,6 +70,42 @@ export async function processPendingOrders() {
 
       if (intent.subscriptionId !== null) {
         resolvedInput.subscriptionId = intent.subscriptionId;
+      }
+
+      if (isEntryOrder(resolvedInput)) {
+        const config = await getRuntimeTradingConfig();
+        const entrySession = await evaluateEntrySessionGuard(config);
+
+        if (isEntrySessionBlocked(entrySession)) {
+          await prisma.orderIntent.update({
+            where: { id: intent.id },
+            data: {
+              status: 'blocked',
+              blockReason: entrySession.reason,
+            },
+          });
+
+          await createSystemEvent({
+            type: 'order_intent.blocked.entry_session',
+            entityType: 'orderIntent',
+            entityId: String(intent.id),
+            payloadJson: {
+              orderIntentId: intent.id,
+              symbol: resolvedInput.symbol,
+              side: resolvedInput.side,
+              subscriptionKey: resolvedInput.subscriptionKey ?? null,
+              reason: entrySession.reason,
+              statusCode: entrySession.statusCode,
+              details: entrySessionDetailsAsJson(entrySession),
+            } as Prisma.InputJsonValue,
+          });
+
+          console.log(
+            `Intent (${intent.id}) blocked by entry session guard: ${entrySession.details.rule}`
+          );
+
+          continue;
+        }
       }
 
       const result = await submitOrderToBroker(resolvedInput);

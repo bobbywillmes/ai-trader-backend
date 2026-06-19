@@ -190,6 +190,11 @@ maxOpenPositions
 maxTotalOpenNotional
 maxSymbolOpenNotional
 maxSubscriptionOpenNotional
+entrySessionGuardEnabled
+entryStartMinutesAfterOpen
+entryCutoffMinutesBeforeClose
+failClosedOnMarketClockError
+alpacaMarketClockCache
 ```
 
 ### Security

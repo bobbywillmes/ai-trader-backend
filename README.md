@@ -155,6 +155,7 @@ Entry orders can be blocked by:
 - disabled subscription
 - disabled strategy
 - disabled exit profile
+- regular-session entry guard closed, buffering, or unavailable
 - existing open or closing tracked position
 - daily order limits
 - notional exposure limits
