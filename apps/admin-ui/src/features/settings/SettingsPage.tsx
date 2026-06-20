@@ -244,6 +244,269 @@ function criticalityColor(criticality: string) {
   }
 }
 
+function alpacaApiUsageStatusColor(
+  status: SystemStatusResponse["alpacaApiUsage"]["status"]
+) {
+  switch (status) {
+    case "normal":
+      return "teal";
+    case "elevated":
+      return "yellow";
+    case "rate_limited":
+      return "orange";
+    case "degraded":
+      return "red";
+    default:
+      return "gray";
+  }
+}
+
+function formatNumber(value: number | null | undefined) {
+  if (value === null || value === undefined) return "-";
+  return value.toLocaleString();
+}
+
+function formatWindowCounts(
+  oneMinuteValue: number | null | undefined,
+  fiveMinuteValue: number | null | undefined
+) {
+  return `Last 1 minute: ${formatNumber(oneMinuteValue)} | Last 5 minutes: ${formatNumber(
+    fiveMinuteValue
+  )}`;
+}
+
+function AlpacaUsageGroupTable({
+  title,
+  groups,
+}: {
+  title: string;
+  groups: SystemStatusResponse["alpacaApiUsage"]["topOperations"];
+}) {
+  return (
+    <Stack gap="xs">
+      <Text fw={600} size="sm">
+        {title}
+      </Text>
+      {groups.length > 0 ? (
+        <ScrollArea>
+          <Table striped highlightOnHover style={{ minWidth: 520 }}>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Name</Table.Th>
+                <Table.Th>Requests</Table.Th>
+                <Table.Th>Failures</Table.Th>
+                <Table.Th>429s</Table.Th>
+                <Table.Th>Avg</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {groups.slice(0, 5).map((group) => (
+                <Table.Tr key={group.key}>
+                  <Table.Td>
+                    <Tooltip label={group.key} multiline maw={420}>
+                      <Text size="sm" truncate="end" maw={220}>
+                        {group.key}
+                      </Text>
+                    </Tooltip>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm">{formatNumber(group.requestCount)}</Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text
+                      size="sm"
+                      c={group.failureCount > 0 ? "red" : undefined}
+                    >
+                      {formatNumber(group.failureCount)}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text
+                      size="sm"
+                      c={group.rateLimitCount > 0 ? "orange" : undefined}
+                    >
+                      {formatNumber(group.rateLimitCount)}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm">
+                      {formatDurationMs(Math.round(group.averageDurationMs))}
+                    </Text>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+      ) : (
+        <Text size="sm" c="dimmed">
+          No requests observed.
+        </Text>
+      )}
+    </Stack>
+  );
+}
+
+function AlpacaApiUsagePanel({
+  usage,
+}: {
+  usage: SystemStatusResponse["alpacaApiUsage"];
+}) {
+  const oneMinute = usage.rolling.oneMinute;
+  const fiveMinutes = usage.rolling.fiveMinutes;
+  const latestLimitReset = usage.rateLimit.latestKnownResetAt
+    ? formatDateTime(usage.rateLimit.latestKnownResetAt)
+    : "-";
+
+  return (
+    <Card withBorder radius="md" p="md">
+      <Stack gap="md">
+        <Group justify="space-between" align="flex-start">
+          <div>
+            <Text fw={600}>Alpaca API Usage</Text>
+            <Text size="sm" c="dimmed">
+              Tracks broker API traffic so the backend can spot request spikes,
+              avoid rate-limit loops, and confirm usage data is being saved.
+            </Text>
+            <Text size="xs" c="dimmed" mt={2}>
+              Process {usage.processInstanceId.slice(0, 8)} started{" "}
+              {formatRelativeTime(usage.processStartedAt)}
+            </Text>
+          </div>
+          <Badge color={alpacaApiUsageStatusColor(usage.status)} variant="light">
+            {formatStatusLabel(usage.status)}
+          </Badge>
+        </Group>
+
+        <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
+          <Stack gap={2}>
+            <Text size="xs" c="dimmed" tt="uppercase">
+              Alpaca Requests
+            </Text>
+            <Text size="sm">
+              {formatWindowCounts(
+                oneMinute.requestCount,
+                fiveMinutes.requestCount
+              )}
+            </Text>
+            <Text size="xs" c="dimmed">
+              Since backend start: {formatNumber(usage.totalRequestsSinceStartup)}
+            </Text>
+          </Stack>
+
+          <Stack gap={2}>
+            <Text size="xs" c="dimmed" tt="uppercase">
+              Failed Requests
+            </Text>
+            <Text size="sm">
+              {formatWindowCounts(
+                oneMinute.failureCount,
+                fiveMinutes.failureCount
+              )}
+            </Text>
+            <Text size="xs" c="dimmed">
+              Network failures in last 5 minutes:{" "}
+              {formatNumber(fiveMinutes.networkErrorCount)}
+            </Text>
+          </Stack>
+
+          <Stack gap={2}>
+            <Text size="xs" c="dimmed" tt="uppercase">
+              Rate-Limited Requests
+            </Text>
+            <Text size="sm">
+              {formatWindowCounts(
+                oneMinute.rateLimitCount,
+                fiveMinutes.rateLimitCount
+              )}
+            </Text>
+            <Text size="xs" c="dimmed">
+              Rate-limit incidents since backend start:{" "}
+              {formatNumber(usage.rateLimit.incidentCount)}
+            </Text>
+          </Stack>
+
+          <Stack gap={2}>
+            <Text size="xs" c="dimmed" tt="uppercase">
+              Saved Usage Data
+            </Text>
+            <Tooltip label={formatDateTime(usage.persistence.lastFlushSucceededAt)}>
+              <Text size="sm">
+                Last database save:{" "}
+                {formatRelativeTime(usage.persistence.lastFlushSucceededAt)}
+              </Text>
+            </Tooltip>
+            <Text size="xs" c="dimmed">
+              Waiting to save:{" "}
+              {formatNumber(usage.persistence.pendingAggregateCount)} buckets |
+              retention: {usage.persistence.retentionDays} days
+            </Text>
+          </Stack>
+        </SimpleGrid>
+
+        <SimpleGrid cols={{ base: 1, md: 2 }}>
+          <Stack gap="xs">
+            <Text fw={600} size="sm">
+              Rate-Limit State
+            </Text>
+            <SimpleGrid cols={{ base: 1, sm: 2 }}>
+              <Text size="sm">
+                Backoff: {usage.rateLimit.active ? "active" : "inactive"}
+              </Text>
+              <Tooltip label={formatDateTime(usage.rateLimit.backoffUntil)}>
+                <Text size="sm">
+                  Backoff ends: {formatDateTime(usage.rateLimit.backoffUntil)}
+                </Text>
+              </Tooltip>
+              <Text size="sm">
+                Latest remaining calls:{" "}
+                {formatNumber(usage.rateLimit.latestKnownRemaining)}
+              </Text>
+              <Text size="sm">
+                Latest reported limit:{" "}
+                {formatNumber(usage.rateLimit.latestKnownLimit)}
+              </Text>
+              <Text size="sm">Reset: {latestLimitReset}</Text>
+              <Text size="sm">
+                Latest 429:{" "}
+                {formatRelativeTime(usage.rateLimit.lastRateLimitedAt)}
+              </Text>
+            </SimpleGrid>
+          </Stack>
+
+          <Stack gap="xs">
+            <Text fw={600} size="sm">
+              Warning State
+            </Text>
+            <SimpleGrid cols={{ base: 1, sm: 2 }}>
+              <Text size="sm">
+                Warning: {usage.warning.active ? "active" : "inactive"}
+              </Text>
+              <Text size="sm">
+                Threshold: {formatNumber(usage.warning.thresholdPerMinute)}/m
+              </Text>
+              <Text size="sm">
+                Active requests: {formatNumber(usage.activeRequestCount)}
+              </Text>
+              <Text size="sm">
+                Peak concurrent: {formatNumber(usage.peakConcurrentRequests)}
+              </Text>
+            </SimpleGrid>
+          </Stack>
+        </SimpleGrid>
+
+        <SimpleGrid cols={{ base: 1, lg: 2 }}>
+          <AlpacaUsageGroupTable
+            title="Top Operations"
+            groups={usage.topOperations}
+          />
+          <AlpacaUsageGroupTable title="Top Endpoints" groups={usage.topEndpoints} />
+        </SimpleGrid>
+      </Stack>
+    </Card>
+  );
+}
+
 function WorkerHealthTable({
   health,
 }: {
@@ -914,6 +1177,8 @@ export function SettingsPage() {
                   </SimpleGrid>
 
                   <WorkerHealthTable health={systemStatus.workers.health} />
+
+                  <AlpacaApiUsagePanel usage={systemStatus.alpacaApiUsage} />
 
                   <Card withBorder radius="md" p="md">
                     <Group justify="space-between" align="flex-start">

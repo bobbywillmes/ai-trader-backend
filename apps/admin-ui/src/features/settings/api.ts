@@ -176,6 +176,92 @@ export type SystemStatusResponse = {
     closingTrackedPositionCount: number;
     unprocessedSystemEventCount: number;
   };
+  alpacaApiUsage: {
+    evaluatedAt: string;
+    processInstanceId: string;
+    processStartedAt: string;
+    status: "normal" | "elevated" | "rate_limited" | "degraded";
+    activeRequestCount: number;
+    peakConcurrentRequests: number;
+    totalRequestsSinceStartup: number;
+    totalFailuresSinceStartup: number;
+    totalRateLimitedSinceStartup: number;
+    warning: {
+      active: boolean;
+      thresholdPerMinute: number;
+      startedAt: string | null;
+      recoveredAt: string | null;
+    };
+    rateLimit: {
+      active: boolean;
+      firstRateLimitedAt: string | null;
+      lastRateLimitedAt: string | null;
+      backoffUntil: string | null;
+      retryAfterSeconds: number | null;
+      incidentCount: number;
+      currentIncident429Count: number;
+      lastOperation: string | null;
+      lastEndpoint: string | null;
+      latestKnownLimit: number | null;
+      latestKnownRemaining: number | null;
+      latestKnownResetAt: string | null;
+      recoveredAt: string | null;
+    };
+    rolling: Record<
+      | "currentMinute"
+      | "oneMinute"
+      | "fiveMinutes"
+      | "fifteenMinutes"
+      | "sixtyMinutes"
+      | "sinceStartup",
+      {
+        requestCount: number;
+        successCount: number;
+        failureCount: number;
+        rateLimitCount: number;
+        networkErrorCount: number;
+        totalDurationMs: number;
+        averageDurationMs: number;
+        maxDurationMs: number;
+      }
+    >;
+    topOperations: Array<{
+      key: string;
+      requestCount: number;
+      successCount: number;
+      failureCount: number;
+      rateLimitCount: number;
+      networkErrorCount: number;
+      totalDurationMs: number;
+      averageDurationMs: number;
+      maxDurationMs: number;
+      latestRequestAt: string | null;
+      latestFailureAt: string | null;
+      latestRateLimitedAt: string | null;
+    }>;
+    topEndpoints: Array<{
+      key: string;
+      requestCount: number;
+      successCount: number;
+      failureCount: number;
+      rateLimitCount: number;
+      networkErrorCount: number;
+      totalDurationMs: number;
+      averageDurationMs: number;
+      maxDurationMs: number;
+      latestRequestAt: string | null;
+      latestFailureAt: string | null;
+      latestRateLimitedAt: string | null;
+    }>;
+    persistence: {
+      lastFlushAttemptAt: string | null;
+      lastFlushSucceededAt: string | null;
+      lastFlushFailedAt: string | null;
+      pendingAggregateCount: number;
+      retentionDays: number;
+      lastRetentionRunAt: string | null;
+    };
+  };
   audit: {
     latestAccountSnapshot: {
       createdAt: string;
