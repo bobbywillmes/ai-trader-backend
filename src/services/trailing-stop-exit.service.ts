@@ -227,7 +227,10 @@ export async function submitTrailingStopExitOrder(trackedPositionId: number) {
     };
   }
 
-  const existingAlpacaOrder = await getAlpacaOrderByClientOrderId(clientOrderId);
+  const existingAlpacaOrder = await getAlpacaOrderByClientOrderId(
+    clientOrderId,
+    'protective_order_idempotency_check'
+  );
 
   if (existingAlpacaOrder) {
     await persistTrailingStopOrder({
@@ -254,7 +257,10 @@ export async function submitTrailingStopExitOrder(trackedPositionId: number) {
     client_order_id: clientOrderId,
   };
 
-  const created = await placeAlpacaOrder(payload);
+  const created = await placeAlpacaOrder(
+    payload,
+    'protective_order_submission'
+  );
 
   await persistTrailingStopOrder({
     trackedPositionId: position.id,

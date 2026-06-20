@@ -7,9 +7,9 @@ import { getRiskStatus } from './risk-gate.service.js';
 export async function getBootstrapData() {
   const [account, positions, openOrders, runtimeConfig, risk] =
     await Promise.all([
-      getNormalizedAccount(),
-      getNormalizedPositions(),
-      getNormalizedOpenOrders(),
+      getNormalizedAccount('bootstrap_snapshot'),
+      getNormalizedPositions('bootstrap_snapshot'),
+      getNormalizedOpenOrders('bootstrap_snapshot'),
       getRuntimeTradingConfig(),
       getRiskStatus(),
     ]);

@@ -8,7 +8,7 @@ export async function positionsController(
   next: NextFunction
 ) {
   try {
-    const positions = await getNormalizedPositions();
+    const positions = await getNormalizedPositions('manual_admin_action');
     res.status(200).json(positions);
   } catch (error) {
     next(error);

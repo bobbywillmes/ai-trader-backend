@@ -4,6 +4,7 @@ import {
   getAlpacaAccountActivities,
   type AlpacaAccountActivity,
 } from '../integrations/alpaca/activities.adapter.js';
+import type { AlpacaApiOperation } from '../integrations/alpaca/request-metadata.js';
 import { getRuntimeTradingConfig } from './config.service.js';
 import { createSystemEvent } from './system-event.service.js';
 
@@ -12,6 +13,7 @@ type SyncBrokerActivitiesInput = {
   after?: Date;
   pageSize?: number;
   maxPages?: number;
+  operation?: AlpacaApiOperation;
 };
 
 export type BrokerActivityTrackedPositionLinkSource =
@@ -236,11 +238,13 @@ export async function syncBrokerActivities(
       direction?: 'asc' | 'desc';
       pageSize?: number;
       pageToken?: string;
+      operation?: AlpacaApiOperation;
     } = {
       activityType,
       after,
       direction: 'asc',
       pageSize,
+      operation: input.operation ?? 'broker_activity_sync',
     };
 
     if (pageToken) {

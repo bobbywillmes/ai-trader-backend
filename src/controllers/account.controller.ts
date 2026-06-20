@@ -7,7 +7,7 @@ export async function accountController(
   next: NextFunction
 ) {
   try {
-    const account = await getNormalizedAccount();
+    const account = await getNormalizedAccount('manual_admin_action');
     res.status(200).json(account);
   } catch (error) {
     next(error);

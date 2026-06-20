@@ -91,10 +91,12 @@ export async function syncBrokerActivitiesController(
       after?: Date;
       pageSize?: number;
       maxPages?: number;
+      operation?: 'manual_admin_action';
     } = {
       activityType: getQueryString(req.query.activityType) ?? 'FILL',
       pageSize: getQueryNumber(req.query.pageSize, 100),
       maxPages: getQueryNumber(req.query.maxPages, 5),
+      operation: 'manual_admin_action',
     };
 
     if (after) {

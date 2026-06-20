@@ -129,7 +129,8 @@ describe('submitTrailingStopExitOrder', () => {
     });
 
     expect(mocks.getAlpacaOrderByClientOrderId).toHaveBeenCalledWith(
-      expectedClientOrderId
+      expectedClientOrderId,
+      'protective_order_idempotency_check'
     );
 
     // This is the safety assertion:

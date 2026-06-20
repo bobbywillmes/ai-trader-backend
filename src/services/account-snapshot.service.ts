@@ -58,7 +58,7 @@ export async function recordAccountSnapshot(input: RecordAccountSnapshotInput) {
     }
   }
 
-  const account = await getNormalizedAccount();
+  const account = await getNormalizedAccount('account_snapshot');
   const snapshotHash = buildSnapshotHash(account);
 
   const latestSnapshot = await prisma.accountSnapshot.findFirst({

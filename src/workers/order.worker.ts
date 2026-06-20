@@ -205,7 +205,7 @@ export async function syncSubmittedOrders() {
   let openOrders: Awaited<ReturnType<typeof getNormalizedOpenOrders>>;
 
   try {
-    openOrders = await getNormalizedOpenOrders();
+    openOrders = await getNormalizedOpenOrders('submitted_order_sync');
   } catch (error) {
     console.error('Failed to fetch Alpaca open orders during submitted order sync', error);
     throw error;

@@ -1,7 +1,7 @@
 import { cancelAllAlpacaOrders } from '../integrations/alpaca/orders.adapter.js';
 
 export async function cancelAllOpenOrders() {
-  const results = await cancelAllAlpacaOrders();
+  const results = await cancelAllAlpacaOrders('order_cancel_all');
 
   return {
     ok: true,

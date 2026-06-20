@@ -4,7 +4,7 @@ import { cancelAlpacaOrder } from '../integrations/alpaca/orders.adapter.js';
 
 export async function cancelOrderById(orderId: string) {
   try {
-    await cancelAlpacaOrder(orderId);
+    await cancelAlpacaOrder(orderId, 'order_cancel');
 
     return {
       ok: true,

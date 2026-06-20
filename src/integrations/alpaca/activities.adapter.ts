@@ -1,4 +1,8 @@
 import { alpacaRequest } from './client.js';
+import type {
+  AlpacaApiEndpoint,
+  AlpacaApiOperation,
+} from './request-metadata.js';
 
 export type AlpacaAccountActivity = {
   id: string;
@@ -29,6 +33,7 @@ type GetAlpacaAccountActivitiesParams = {
   direction?: 'asc' | 'desc';
   pageSize?: number;
   pageToken?: string;
+  operation?: AlpacaApiOperation;
 };
 
 function toQueryDate(value: Date | string) {
@@ -41,6 +46,9 @@ export async function getAlpacaAccountActivities(
   const path = params.activityType
     ? `/v2/account/activities/${encodeURIComponent(params.activityType)}`
     : '/v2/account/activities';
+  const endpoint: AlpacaApiEndpoint = params.activityType
+    ? 'GET /v2/account/activities/:activityType'
+    : 'GET /v2/account/activities';
 
   const search = new URLSearchParams();
 
@@ -54,6 +62,20 @@ export async function getAlpacaAccountActivities(
   const query = search.toString();
 
   return alpacaRequest<AlpacaAccountActivity[]>(
-    query ? `${path}?${query}` : path
+    query ? `${path}?${query}` : path,
+    {
+      metadata: {
+        operation: params.operation ?? 'broker_activity_sync',
+        endpoint,
+        method: 'GET',
+        requestClass:
+          params.operation === 'manual_admin_action'
+            ? 'informational_read'
+            : 'synchronization_read',
+        deferDuringRateLimit:
+          (params.operation ?? 'broker_activity_sync') !==
+          'manual_admin_action',
+      },
+    }
   );
 }

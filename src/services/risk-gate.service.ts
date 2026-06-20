@@ -263,7 +263,7 @@ export async function evaluateOrderRisk(
     });
   }
 
-  const account = await getNormalizedAccount();
+  const account = await getNormalizedAccount('risk_gate_account_check');
 
   if (account.tradingBlocked) {
     return block(403, 'Broker account is trading blocked.', {
@@ -458,7 +458,7 @@ export async function logRiskGateBlockedOrder(args: {
 
 export async function getRiskStatus() {
   const config = await getRuntimeTradingConfig();
-  const account = await getNormalizedAccount();
+  const account = await getNormalizedAccount('risk_gate_account_check');
   const usage = await getRiskUsage();
 
   const expectedMode = config.paperMode ? 'paper' : 'live';

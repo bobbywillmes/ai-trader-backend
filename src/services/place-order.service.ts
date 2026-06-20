@@ -65,7 +65,10 @@ export async function submitOrderToBroker(input: BrokerOrderSubmissionInput) {
     );
   }
 
-  const existing = await getAlpacaOrderByClientOrderId(clientOrderId);
+  const existing = await getAlpacaOrderByClientOrderId(
+    clientOrderId,
+    'pending_order_idempotency_check'
+  );
 
   if (existing) {
     return {
@@ -97,7 +100,7 @@ export async function submitOrderToBroker(input: BrokerOrderSubmissionInput) {
   if (input.limitPrice !== undefined) payload.limit_price = String(input.limitPrice);
   if (input.extendedHours) payload.extended_hours = true;
 
-  const created = await placeAlpacaOrder(payload);
+  const created = await placeAlpacaOrder(payload, 'pending_order_submission');
 
   return {
     duplicate: false,

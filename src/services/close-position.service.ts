@@ -57,7 +57,7 @@ export async function closePosition(symbol: string) {
     );
   }
 
-  const result = await closeAlpacaPosition(upperSymbol);
+  const result = await closeAlpacaPosition(upperSymbol, 'position_close');
 
   const tracked = await prisma.trackedPosition.updateMany({
     where: {

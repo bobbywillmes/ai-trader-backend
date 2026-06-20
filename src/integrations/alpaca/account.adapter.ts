@@ -1,6 +1,17 @@
 import { alpacaRequest } from './client.js';
 import type { AlpacaAccount } from './alpaca.types.js';
+import type { AlpacaApiOperation } from './request-metadata.js';
 
-export async function getAlpacaAccount(): Promise<AlpacaAccount> {
-  return alpacaRequest<AlpacaAccount>('/v2/account');
+export async function getAlpacaAccount(
+  operation: AlpacaApiOperation = 'account_read'
+): Promise<AlpacaAccount> {
+  return alpacaRequest<AlpacaAccount>('/v2/account', {
+    metadata: {
+      operation,
+      endpoint: 'GET /v2/account',
+      method: 'GET',
+      requestClass: 'informational_read',
+      deferDuringRateLimit: operation === 'account_snapshot',
+    },
+  });
 }

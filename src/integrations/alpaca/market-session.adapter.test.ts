@@ -147,7 +147,15 @@ describe('Alpaca market session adapter', () => {
 
     const refreshed = await getAlpacaMarketSessionSnapshot();
 
-    expect(mocks.alpacaRequest).toHaveBeenCalledWith('/v2/clock');
+    expect(mocks.alpacaRequest).toHaveBeenCalledWith(
+      '/v2/clock',
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          operation: 'market_clock',
+          endpoint: 'GET /v2/clock',
+        }),
+      })
+    );
     expect(refreshed.nextOpenAt).toBe('2026-06-23T13:30:00.000Z');
   });
 });

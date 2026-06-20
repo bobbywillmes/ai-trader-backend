@@ -398,8 +398,8 @@ export async function runReconciliationCheck(
         symbol: 'asc',
       },
     }),
-    getNormalizedPositions(),
-    getOpenAlpacaOrders(),
+    getNormalizedPositions('reconciliation_check'),
+    getOpenAlpacaOrders('reconciliation_check'),
   ]);
 
   const findings = reconcileSnapshots({

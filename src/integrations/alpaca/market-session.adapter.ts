@@ -268,7 +268,15 @@ async function getClock(nowMs: number) {
   }
 
   if (!clockInFlight) {
-    clockInFlight = alpacaRequest<AlpacaClock>('/v2/clock')
+    clockInFlight = alpacaRequest<AlpacaClock>('/v2/clock', {
+      metadata: {
+        operation: 'market_clock',
+        endpoint: 'GET /v2/clock',
+        method: 'GET',
+        requestClass: 'informational_read',
+        deferDuringRateLimit: false,
+      },
+    })
       .then(async (raw) => {
         const fetchedAtIso = new Date().toISOString();
         clockCache = {
@@ -303,7 +311,16 @@ async function getCalendarSession(tradingDate: string, nowMs: number) {
   const request = alpacaRequest<AlpacaCalendarSession[]>(
     `/v2/calendar?start=${encodeURIComponent(tradingDate)}&end=${encodeURIComponent(
       tradingDate
-    )}`
+    )}`,
+    {
+      metadata: {
+        operation: 'market_calendar',
+        endpoint: 'GET /v2/calendar',
+        method: 'GET',
+        requestClass: 'informational_read',
+        deferDuringRateLimit: true,
+      },
+    }
   )
     .then((raw) => {
       const session = raw[0] ?? null;

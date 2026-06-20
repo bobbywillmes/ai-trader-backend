@@ -14,7 +14,7 @@ export async function openOrdersController(
   next: NextFunction
 ) {
   try {
-    const orders = await getNormalizedOpenOrders();
+    const orders = await getNormalizedOpenOrders('manual_admin_action');
     res.status(200).json(orders);
   } catch (error) {
     next(error);

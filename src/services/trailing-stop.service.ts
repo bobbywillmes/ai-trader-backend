@@ -145,19 +145,25 @@ export async function submitNativeTrailingStopForTrackedPosition(
 
   try {
     const existingBrokerOrder =
-      await getAlpacaOrderByClientOrderId(clientOrderId);
+      await getAlpacaOrderByClientOrderId(
+        clientOrderId,
+        'protective_order_idempotency_check'
+      );
 
     const brokerOrder =
       existingBrokerOrder ??
-      (await placeAlpacaOrder({
-        symbol: position.symbol,
-        side: getExitSide(position),
-        type: 'trailing_stop',
-        time_in_force: 'gtc',
-        qty: String(Math.abs(position.qty)),
-        trail_percent: String(exitProfile.trailingStopPct),
-        client_order_id: clientOrderId,
-      }));
+      (await placeAlpacaOrder(
+        {
+          symbol: position.symbol,
+          side: getExitSide(position),
+          type: 'trailing_stop',
+          time_in_force: 'gtc',
+          qty: String(Math.abs(position.qty)),
+          trail_percent: String(exitProfile.trailingStopPct),
+          client_order_id: clientOrderId,
+        },
+        'protective_order_submission'
+      ));
 
     const updated = await prisma.trackedPosition.update({
       where: { id: position.id },
@@ -264,7 +270,10 @@ export async function syncNativeTrailingStopForTrackedPosition(
     };
   }
 
-  const brokerOrder = await getAlpacaOrderById(position.trailingStopOrderId);
+  const brokerOrder = await getAlpacaOrderById(
+    position.trailingStopOrderId,
+    'protective_order_sync'
+  );
   const now = new Date();
 
   // If Alpaca cannot find the order, do not silently ignore it.
