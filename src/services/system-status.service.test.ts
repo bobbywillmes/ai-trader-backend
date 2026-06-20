@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   trackedPositionCount: vi.fn(),
   systemEventCount: vi.fn(),
   workerHealthSnapshot: vi.fn(),
+  alpacaUsageSnapshot: vi.fn(),
+  alpacaUsagePersistenceSnapshot: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -45,6 +47,17 @@ vi.mock('./worker-health.service.js', () => ({
   workerHealthRegistry: {
     getSnapshot: mocks.workerHealthSnapshot,
   },
+}));
+
+vi.mock('./alpaca-api-usage.service.js', () => ({
+  alpacaApiUsageRegistry: {
+    getSnapshot: mocks.alpacaUsageSnapshot,
+  },
+}));
+
+vi.mock('./alpaca-api-usage-persistence.service.js', () => ({
+  getAlpacaApiUsagePersistenceSnapshot:
+    mocks.alpacaUsagePersistenceSnapshot,
 }));
 
 vi.mock('../config/cors.js', () => ({
@@ -87,6 +100,56 @@ describe('system status health semantics', () => {
       },
       items: [],
     });
+    mocks.alpacaUsageSnapshot.mockReturnValue({
+      evaluatedAt: '2026-06-18T21:00:00.000Z',
+      processInstanceId: 'alpaca-process-test',
+      processStartedAt: '2026-06-18T20:59:00.000Z',
+      status: 'normal',
+      activeRequestCount: 0,
+      peakConcurrentRequests: 0,
+      totalRequestsSinceStartup: 0,
+      totalFailuresSinceStartup: 0,
+      totalRateLimitedSinceStartup: 0,
+      warning: {
+        active: false,
+        thresholdPerMinute: 120,
+        startedAt: null,
+        recoveredAt: null,
+      },
+      rateLimit: {
+        active: false,
+        firstRateLimitedAt: null,
+        lastRateLimitedAt: null,
+        backoffUntil: null,
+        retryAfterSeconds: null,
+        incidentCount: 0,
+        currentIncident429Count: 0,
+        lastOperation: null,
+        lastEndpoint: null,
+        latestKnownLimit: null,
+        latestKnownRemaining: null,
+        latestKnownResetAt: null,
+        recoveredAt: null,
+      },
+      rolling: {
+        currentMinute: {},
+        oneMinute: { requestCount: 0 },
+        fiveMinutes: { requestCount: 0 },
+        fifteenMinutes: { requestCount: 0 },
+        sixtyMinutes: { requestCount: 0 },
+        sinceStartup: { requestCount: 0 },
+      },
+      topOperations: [],
+      topEndpoints: [],
+    });
+    mocks.alpacaUsagePersistenceSnapshot.mockReturnValue({
+      lastFlushAttemptAt: null,
+      lastFlushSucceededAt: null,
+      lastFlushFailedAt: null,
+      pendingAggregateCount: 0,
+      retentionDays: 30,
+      lastRetentionRunAt: null,
+    });
     mocks.getLatestAccountSnapshot.mockResolvedValue(null);
     mocks.getLatestBrokerActivity.mockResolvedValue(null);
     mocks.orderIntentCount.mockResolvedValue(0);
@@ -105,6 +168,12 @@ describe('system status health semantics', () => {
       canEnter: false,
       tradingReady: false,
       needsAttention: false,
+    });
+    expect(status.alpacaApiUsage).toMatchObject({
+      status: 'normal',
+      persistence: {
+        retentionDays: 30,
+      },
     });
   });
 
@@ -153,5 +222,40 @@ describe('system status health semantics', () => {
       needsAttention: true,
     });
     expect(status.workers.health.summary.status).toBe('stale');
+  });
+
+  it('marks Alpaca API usage degraded when the persistence worker is unhealthy', async () => {
+    mocks.workerHealthSnapshot.mockReturnValue({
+      summary: {
+        status: 'degraded',
+        total: 8,
+        enabled: 8,
+        disabled: 0,
+        healthy: 7,
+        degraded: 1,
+        delayed: 0,
+        stale: 0,
+        failing: 0,
+        starting: 0,
+        criticalHealthy: true,
+        needsAttention: true,
+        processInstanceId: 'process-test',
+        processStartedAt: '2026-06-18T20:59:00.000Z',
+        evaluatedAt: '2026-06-18T21:00:00.000Z',
+      },
+      items: [
+        {
+          key: 'alpaca_api_usage_persistence',
+          status: 'degraded',
+          enabled: true,
+          criticality: 'informational',
+        },
+      ],
+    });
+
+    const status = await getSystemStatus();
+
+    expect(status.readiness.workersHealthy).toBe(true);
+    expect(status.alpacaApiUsage.status).toBe('degraded');
   });
 });

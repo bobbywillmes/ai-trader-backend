@@ -56,6 +56,7 @@ export type AlpacaApiUsageSnapshot = {
   evaluatedAt: string;
   processInstanceId: string;
   processStartedAt: string;
+  status: 'normal' | 'elevated' | 'rate_limited' | 'degraded';
   activeRequestCount: number;
   peakConcurrentRequests: number;
   totalRequestsSinceStartup: number;
@@ -383,6 +384,11 @@ export class AlpacaApiUsageRegistry {
       evaluatedAt: now.toISOString(),
       processInstanceId: this.processInstanceId,
       processStartedAt: this.processStartedAt.toISOString(),
+      status: this.rateLimit.active
+        ? 'rate_limited'
+        : this.warningActive
+          ? 'elevated'
+          : 'normal',
       activeRequestCount: this.activeRequestCount,
       peakConcurrentRequests: this.peakConcurrentRequests,
       totalRequestsSinceStartup: this.sinceStartup.requestCount,

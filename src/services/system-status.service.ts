@@ -6,6 +6,8 @@ import { getLatestBrokerActivity } from './broker-activity.service.js';
 import { getHealthStatus } from './health.service.js';
 import { allowedCorsOrigins } from '../config/cors.js';
 import { workerHealthRegistry } from './worker-health.service.js';
+import { alpacaApiUsageRegistry } from './alpaca-api-usage.service.js';
+import { getAlpacaApiUsagePersistenceSnapshot } from './alpaca-api-usage-persistence.service.js';
 import {
   ACCOUNT_SNAPSHOT_WORKER_INTERVAL_MS,
   BROKER_ACTIVITY_WORKER_INTERVAL_MS,
@@ -61,6 +63,18 @@ export async function getSystemStatus() {
     }),
   ]);
   const workerHealth = workerHealthRegistry.getSnapshot();
+  const alpacaApiUsage = alpacaApiUsageRegistry.getSnapshot();
+  const alpacaApiUsagePersistence = getAlpacaApiUsagePersistenceSnapshot();
+  const alpacaUsagePersistenceWorker = workerHealth.items.find(
+    (worker) => worker.key === 'alpaca_api_usage_persistence'
+  );
+  const alpacaApiUsageStatus =
+    alpacaUsagePersistenceWorker &&
+    ['degraded', 'delayed', 'stale', 'failing'].includes(
+      alpacaUsagePersistenceWorker.status
+    )
+      ? 'degraded'
+      : alpacaApiUsage.status;
   const workersHealthy = workerHealth.summary.criticalHealthy;
   const serviceHealthy = health.ok;
   const canEnter = risk.canEnter;
@@ -104,6 +118,11 @@ export async function getSystemStatus() {
       openTrackedPositionCount,
       closingTrackedPositionCount,
       unprocessedSystemEventCount,
+    },
+    alpacaApiUsage: {
+      ...alpacaApiUsage,
+      status: alpacaApiUsageStatus,
+      persistence: alpacaApiUsagePersistence,
     },
     audit: {
       latestAccountSnapshot,
