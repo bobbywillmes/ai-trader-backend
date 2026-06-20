@@ -92,6 +92,26 @@ type RequestCompletion = {
   headers?: Headers | null;
 };
 
+export type AlpacaApiUsageAggregateDelta = {
+  bucketStart: Date;
+  bucketSizeMinutes: number;
+  operation: AlpacaApiOperation;
+  endpoint: AlpacaApiEndpoint;
+  method: string;
+  requestClass: string;
+  requestCount: number;
+  successCount: number;
+  failureCount: number;
+  rateLimitCount: number;
+  networkErrorCount: number;
+  totalDurationMs: number;
+  maxDurationMs: number;
+  lastStatusCode: number | null;
+  lastRequestAt: Date | null;
+  lastFailureAt: Date | null;
+  lastRateLimitedAt: Date | null;
+};
+
 type CounterValues = {
   requestCount: number;
   successCount: number;
@@ -130,6 +150,8 @@ type RateLimitState = {
 
 const BUCKET_COUNT = 60;
 const MINUTE_MS = 60_000;
+const PERSISTENCE_BUCKET_MINUTES = 5;
+const PERSISTENCE_BUCKET_MS = PERSISTENCE_BUCKET_MINUTES * MINUTE_MS;
 const WARNING_RECOVERY_RATIO = 0.7;
 
 function createCounters(): CounterValues {
@@ -258,6 +280,7 @@ export class AlpacaApiUsageRegistry {
   private readonly now: () => Date;
   private readonly warningThresholdPerMinute: number;
   private readonly sinceStartup = createCounters();
+  private readonly pendingDeltas = new Map<string, AlpacaApiUsageAggregateDelta>();
   private activeRequestCount = 0;
   private peakConcurrentRequests = 0;
   private warningActive = false;
@@ -334,6 +357,12 @@ export class AlpacaApiUsageRegistry {
       durationMs,
       completion,
     });
+    this.recordPersistenceDelta({
+      metadata: start.metadata,
+      completedAt,
+      durationMs,
+      completion,
+    });
 
     if (completion.outcome === 'rate_limited') {
       this.recordRateLimit(start.metadata, completion.headers ?? null, completedAt);
@@ -393,6 +422,24 @@ export class AlpacaApiUsageRegistry {
     };
   }
 
+  drainPendingAggregateDeltas() {
+    const deltas = Array.from(this.pendingDeltas.values()).map((delta) => ({
+      ...delta,
+    }));
+    this.pendingDeltas.clear();
+    return deltas;
+  }
+
+  restorePendingAggregateDeltas(deltas: AlpacaApiUsageAggregateDelta[]) {
+    for (const delta of deltas) {
+      this.mergePendingDelta(delta);
+    }
+  }
+
+  getPendingAggregateCount() {
+    return this.pendingDeltas.size;
+  }
+
   private recordCounters(args: {
     metadata: AlpacaRequestMetadata;
     completedAt: Date;
@@ -440,6 +487,76 @@ export class AlpacaApiUsageRegistry {
         counters.networkErrorCount += 1;
       }
     }
+  }
+
+  private recordPersistenceDelta(args: {
+    metadata: AlpacaRequestMetadata;
+    completedAt: Date;
+    durationMs: number;
+    completion: RequestCompletion;
+  }) {
+    const bucketStart = new Date(
+      Math.floor(args.completedAt.getTime() / PERSISTENCE_BUCKET_MS) *
+        PERSISTENCE_BUCKET_MS
+    );
+    const delta: AlpacaApiUsageAggregateDelta = {
+      bucketStart,
+      bucketSizeMinutes: PERSISTENCE_BUCKET_MINUTES,
+      operation: args.metadata.operation,
+      endpoint: args.metadata.endpoint,
+      method: args.metadata.method,
+      requestClass: args.metadata.requestClass,
+      requestCount: 1,
+      successCount: args.completion.outcome === 'success' ? 1 : 0,
+      failureCount: args.completion.outcome === 'success' ? 0 : 1,
+      rateLimitCount: args.completion.outcome === 'rate_limited' ? 1 : 0,
+      networkErrorCount:
+        args.completion.outcome === 'network_error' ||
+        args.completion.outcome === 'timeout'
+          ? 1
+          : 0,
+      totalDurationMs: Math.round(args.durationMs),
+      maxDurationMs: Math.round(args.durationMs),
+      lastStatusCode: args.completion.statusCode,
+      lastRequestAt: args.completedAt,
+      lastFailureAt:
+        args.completion.outcome === 'success' ? null : args.completedAt,
+      lastRateLimitedAt:
+        args.completion.outcome === 'rate_limited' ? args.completedAt : null,
+    };
+
+    this.mergePendingDelta(delta);
+  }
+
+  private mergePendingDelta(delta: AlpacaApiUsageAggregateDelta) {
+    const key = [
+      delta.bucketStart.toISOString(),
+      delta.operation,
+      delta.endpoint,
+      delta.method,
+      delta.requestClass,
+    ].join('|');
+    const existing = this.pendingDeltas.get(key);
+
+    if (!existing) {
+      this.pendingDeltas.set(key, { ...delta });
+      return;
+    }
+
+    existing.requestCount += delta.requestCount;
+    existing.successCount += delta.successCount;
+    existing.failureCount += delta.failureCount;
+    existing.rateLimitCount += delta.rateLimitCount;
+    existing.networkErrorCount += delta.networkErrorCount;
+    existing.totalDurationMs += delta.totalDurationMs;
+    existing.maxDurationMs = Math.max(existing.maxDurationMs, delta.maxDurationMs);
+    existing.lastStatusCode = delta.lastStatusCode ?? existing.lastStatusCode;
+    existing.lastRequestAt = latestDate(existing.lastRequestAt, delta.lastRequestAt);
+    existing.lastFailureAt = latestDate(existing.lastFailureAt, delta.lastFailureAt);
+    existing.lastRateLimitedAt = latestDate(
+      existing.lastRateLimitedAt,
+      delta.lastRateLimitedAt
+    );
   }
 
   private recordRateLimit(

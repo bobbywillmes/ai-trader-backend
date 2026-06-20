@@ -227,4 +227,30 @@ describe('AlpacaApiUsageRegistry', () => {
       })
     );
   });
+
+  it('drains and restores pending aggregate deltas without double counting', () => {
+    const { registry } = createRegistry();
+
+    recordSuccess(registry);
+    recordSuccess(registry);
+
+    expect(registry.getPendingAggregateCount()).toBe(1);
+
+    const firstDrain = registry.drainPendingAggregateDeltas();
+
+    expect(firstDrain).toHaveLength(1);
+    expect(firstDrain[0]).toMatchObject({
+      bucketSizeMinutes: 5,
+      operation: 'submitted_order_sync',
+      endpoint: 'GET /v2/orders',
+      requestCount: 2,
+      successCount: 2,
+    });
+    expect(registry.getPendingAggregateCount()).toBe(0);
+
+    registry.restorePendingAggregateDeltas(firstDrain);
+
+    expect(registry.getPendingAggregateCount()).toBe(1);
+    expect(registry.drainPendingAggregateDeltas()[0]?.requestCount).toBe(2);
+  });
 });

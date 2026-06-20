@@ -41,6 +41,12 @@ const envSchema = z.object({
     .min(1)
     .max(10_000)
     .default(120),
+  ALPACA_API_USAGE_RETENTION_DAYS: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(365)
+    .default(30),
 
   MASSIVE_API_KEY: z.string().min(1, 'MASSIVE_API_KEY is required'),
   MASSIVE_BASE_URL: z.url().default('https://api.massive.com'),

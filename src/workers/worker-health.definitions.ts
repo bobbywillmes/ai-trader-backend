@@ -17,6 +17,7 @@ export const TRADING_WORKER_INTERVAL_MS = 2_000;
 export const ACCOUNT_SNAPSHOT_WORKER_INTERVAL_MS = 60_000;
 export const BROKER_ACTIVITY_WORKER_INTERVAL_MS = 60_000;
 export const RECONCILIATION_SCHEDULER_INTERVAL_MS = 60_000;
+export const ALPACA_API_USAGE_PERSISTENCE_INTERVAL_MS = 60_000;
 
 function thresholds(
   expectedIntervalMs: number,
@@ -96,6 +97,15 @@ export const workerDefinitions = [
     expectedIntervalMs: RECONCILIATION_SCHEDULER_INTERVAL_MS,
     enabledByDefault: false,
     ...thresholds(RECONCILIATION_SCHEDULER_INTERVAL_MS, 120_000),
+  },
+  {
+    key: 'alpaca_api_usage_persistence',
+    displayName: 'Alpaca API usage persistence',
+    description: 'Flushes in-memory Alpaca API usage aggregates and applies retention.',
+    criticality: 'informational',
+    expectedIntervalMs: ALPACA_API_USAGE_PERSISTENCE_INTERVAL_MS,
+    enabledByDefault: true,
+    ...thresholds(ALPACA_API_USAGE_PERSISTENCE_INTERVAL_MS, 30_000),
   },
 ] as const satisfies readonly WorkerDefinition[];
 

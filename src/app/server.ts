@@ -14,6 +14,7 @@ import { runBrokerActivitySync } from '../workers/broker-activity.worker.js';
 import { assertStartupSafe } from '../services/startup-check.service.js';
 import { runScheduledReconciliation } from '../workers/reconciliation.worker.js';
 import {
+  ALPACA_API_USAGE_PERSISTENCE_INTERVAL_MS,
   ACCOUNT_SNAPSHOT_WORKER_INTERVAL_MS,
   BROKER_ACTIVITY_WORKER_INTERVAL_MS,
   RECONCILIATION_SCHEDULER_INTERVAL_MS,
@@ -25,6 +26,7 @@ import {
   workerHealthRegistry,
 } from '../services/worker-health.service.js';
 import { getRuntimeTradingConfig } from '../services/config.service.js';
+import { runAlpacaApiUsagePersistence } from '../services/alpaca-api-usage-persistence.service.js';
 
 const app = createApp();
 
@@ -217,6 +219,34 @@ function startWorkers() {
       logger.error({ error }, 'Scheduled reconciliation wrapper error.');
     });
   }, RECONCILIATION_SCHEDULER_INTERVAL_MS);
+
+  // Observability persistence is intentionally separate from broker-facing
+  // trading workers. Failures here should affect only this worker's health.
+  setInterval(() => {
+    void runWorker('alpaca_api_usage_persistence', async () => {
+      const result = await runAlpacaApiUsagePersistence();
+
+      if (result.flushedAggregateCount === 0 && !result.retentionDue) {
+        return {
+          outcome: 'idle',
+        };
+      }
+
+      if (result.flushedAggregateCount === 0 && result.retentionDue) {
+        return {
+          outcome: 'skipped',
+          skipReason: 'not_due',
+        };
+      }
+
+      return {
+        outcome: 'success',
+        workSucceeded:
+          result.flushedAggregateCount > 0 ||
+          result.retentionDeletedCount > 0,
+      };
+    });
+  }, ALPACA_API_USAGE_PERSISTENCE_INTERVAL_MS);
 }
 
 async function startServer() {

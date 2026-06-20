@@ -177,6 +177,35 @@ model WorkerHealthState {
   @@index([enabled])
 }
 
+model AlpacaApiUsageBucket {
+  id                 Int      @id @default(autoincrement())
+  bucketStart        DateTime
+  bucketSizeMinutes  Int
+  operation          String
+  endpoint           String
+  method             String
+  requestClass       String
+  requestCount       Int      @default(0)
+  successCount       Int      @default(0)
+  failureCount       Int      @default(0)
+  rateLimitCount     Int      @default(0)
+  networkErrorCount  Int      @default(0)
+  totalDurationMs    Int      @default(0)
+  maxDurationMs      Int      @default(0)
+  lastStatusCode     Int?
+  lastRequestAt      DateTime?
+  lastFailureAt      DateTime?
+  lastRateLimitedAt  DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([bucketStart, operation, endpoint, method, requestClass])
+  @@index([bucketStart])
+  @@index([operation])
+  @@index([endpoint])
+  @@index([updatedAt])
+}
+
 model CurrentMarketState {
   id            Int @id
 
