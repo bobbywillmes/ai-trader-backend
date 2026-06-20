@@ -318,7 +318,7 @@ async function getCalendarSession(tradingDate: string, nowMs: number) {
         endpoint: 'GET /v2/calendar',
         method: 'GET',
         requestClass: 'informational_read',
-        deferDuringRateLimit: true,
+        deferDuringRateLimit: false,
       },
     }
   )

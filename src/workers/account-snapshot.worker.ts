@@ -1,3 +1,4 @@
+import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
 import { recordAccountSnapshot } from '../services/account-snapshot.service.js';
 
 const EASTERN_TIME_ZONE = 'America/New_York';
@@ -72,6 +73,7 @@ export async function runScheduledAccountSnapshots() {
     return {
       due: false,
       recorded: 0,
+      deferred: false,
     };
   }
 
@@ -92,11 +94,26 @@ export async function runScheduledAccountSnapshots() {
 
     due = true;
 
-    const result = await recordAccountSnapshot({
-      reason: checkpoint.reason,
-      force: false,
-      runKey: `${checkpoint.reason}:${eastern.dateKey}`,
-    });
+    let result: Awaited<ReturnType<typeof recordAccountSnapshot>>;
+
+    try {
+      result = await recordAccountSnapshot({
+        reason: checkpoint.reason,
+        force: false,
+        runKey: `${checkpoint.reason}:${eastern.dateKey}`,
+      });
+    } catch (error) {
+      if (error instanceof AlpacaRateLimitDeferredError) {
+        return {
+          due: false,
+          recorded,
+          deferred: true,
+          backoffUntil: error.backoffUntil?.toISOString() ?? null,
+        };
+      }
+
+      throw error;
+    }
 
     if (result.created) {
       recorded += 1;
@@ -106,5 +123,6 @@ export async function runScheduledAccountSnapshots() {
   return {
     due,
     recorded,
+    deferred: false,
   };
 }

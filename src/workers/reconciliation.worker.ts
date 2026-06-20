@@ -1,4 +1,5 @@
 import { logger } from '../config/logger.js';
+import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
 import { getRuntimeTradingConfig } from '../services/config.service.js';
 import { runReconciliationCheck } from '../services/reconciliation.service.js';
 
@@ -45,11 +46,26 @@ export async function runScheduledReconciliation() {
 
     lastRunAt = now;
 
-    const result = await runReconciliationCheck({
-      persistEvents: true,
-      persistAttention: true,
-      dedupeEvents: true,
-    });
+    let result: Awaited<ReturnType<typeof runReconciliationCheck>>;
+
+    try {
+      result = await runReconciliationCheck({
+        persistEvents: true,
+        persistAttention: true,
+        dedupeEvents: true,
+      });
+    } catch (error) {
+      if (error instanceof AlpacaRateLimitDeferredError) {
+        return {
+          skipped: true,
+          reason: 'not_due' as const,
+          deferred: true,
+          backoffUntil: error.backoffUntil?.toISOString() ?? null,
+        };
+      }
+
+      throw error;
+    }
 
     if (result.findings.length > 0) {
       logger.warn(

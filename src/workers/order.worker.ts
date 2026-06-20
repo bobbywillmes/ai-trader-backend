@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 
+import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
 import { prisma } from '../db/prisma.js';
 import { getNormalizedOpenOrders } from '../services/orders.service.js';
 import { placeOrderSchema } from '../validators/place-order.schema.js';
@@ -199,6 +200,7 @@ export async function syncSubmittedOrders() {
     return {
       found: 0,
       synced: 0,
+      deferred: false,
     };
   }
 
@@ -207,6 +209,16 @@ export async function syncSubmittedOrders() {
   try {
     openOrders = await getNormalizedOpenOrders('submitted_order_sync');
   } catch (error) {
+    if (error instanceof AlpacaRateLimitDeferredError) {
+      return {
+        found: submittedIntents.length,
+        synced: 0,
+        deferred: true,
+        reason: 'rate_limited' as const,
+        backoffUntil: error.backoffUntil?.toISOString() ?? null,
+      };
+    }
+
     console.error('Failed to fetch Alpaca open orders during submitted order sync', error);
     throw error;
   }
@@ -301,5 +313,6 @@ export async function syncSubmittedOrders() {
   return {
     found: submittedIntents.length,
     synced,
+    deferred: false,
   };
 }
