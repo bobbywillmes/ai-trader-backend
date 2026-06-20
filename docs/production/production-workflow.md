@@ -225,6 +225,8 @@ After routine health and system-status verification, also confirm:
 Trade History page loads
 Reports page loads
 legacy historical rows render without breaking the UI even if some fields remain null
+Settings -> System Status -> Alpaca API Usage shows a normal or explainable status
+Saved Usage Data shows a recent database save after startup
 ```
 
 For a fresh paper close, verify:

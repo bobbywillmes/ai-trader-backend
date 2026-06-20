@@ -13,6 +13,7 @@ The backend monitors every recurring background operation as an independent work
 | `account_snapshot_scheduler` | Account snapshot scheduler | 60s | important | Checks whether scheduled account snapshot checkpoints are due. |
 | `broker_activity_sync` | Broker activity sync | 60s | critical | Imports broker-confirmed fill activities into `BrokerActivity`. |
 | `scheduled_reconciliation` | Scheduled reconciliation | 60s scheduler | important | Checks runtime settings and runs reconciliation when enabled and due. |
+| `alpaca_api_usage_persistence` | Alpaca API usage persistence | 30s | informational | Flushes in-memory Alpaca REST API usage buckets to `AlpacaApiUsageBucket`. |
 
 The centralized definitions live in `src/workers/worker-health.definitions.ts`. The scheduler and System Status use these same definitions so displayed cadence does not drift from real timer cadence.
 
@@ -131,6 +132,16 @@ It does not create an event every tick, every System Status request, or for the 
 `workersHealthy` means all enabled critical workers are healthy. `tradingReady` combines service health, worker health, and the existing risk-gate `canEnter` value.
 
 Worker health does not automatically enable the kill switch, disable trading, reject signals, restart workers, or restart the process. This branch is diagnostic.
+
+## Alpaca API Usage
+
+System Status also includes `alpacaApiUsage`, which is separate from worker health but uses worker health as one input.
+
+The Alpaca usage snapshot tracks live broker REST traffic, rate-limit incidents, active backoff state, request durations, top operations, top endpoints, and usage persistence state. The Admin UI renders this under Settings -> System Status -> Alpaca API Usage.
+
+If the `alpaca_api_usage_persistence` worker becomes delayed, stale, degraded, or failing, `alpacaApiUsage.status` is reported as `degraded`. This means live request counters may still be available in memory, but durable bucket persistence is unhealthy.
+
+See [Alpaca Integration](../integrations/alpaca.md) for request metadata, rate-limit, and persistence details.
 
 ## Troubleshooting
 

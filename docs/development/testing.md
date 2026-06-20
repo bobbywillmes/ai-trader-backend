@@ -49,6 +49,7 @@ Current service-level coverage includes:
 - tracked-position config snapshot capture and snapshot precedence
 - trade-performance aggregation and closedAt date filtering
 - worker health status derivation, persistence throttling, transition events, and System Status readiness semantics
+- Alpaca request metadata enforcement, API usage aggregation, rate-limit deferral, usage persistence, and System Status exposure
 ```
 
 Prefer small service-level tests that mock external dependencies such as Prisma and Alpaca.
@@ -62,4 +63,5 @@ do not treat failed protection as successful protection
 do not silently ignore broker/order uncertainty
 do not let mutable live config rewrite historical trade meaning
 do not mark worker health failed for idle, not-due, or per-record business outcomes
+do not let nonessential Alpaca rate-limit deferrals look like business failures
 ```

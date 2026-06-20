@@ -241,6 +241,12 @@ Stores account-level audit snapshots from Alpaca account state.
 
 Used for scheduled checkpoints, manual snapshots, and position lifecycle snapshots.
 
+### AlpacaApiUsageBucket
+
+Stores aggregated Alpaca REST API usage by time bucket, operation, endpoint, method, and HTTP status code.
+
+Used for broker API observability and rate-limit diagnostics. The live Admin UI panel is backed by the current process snapshot, while this table preserves recent usage aggregates for operational review and future historical reporting.
+
 ### TrackedPosition
 
 Stores the current known state of broker positions, plus historical closed records.

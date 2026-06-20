@@ -42,6 +42,7 @@ The backend currently handles:
 - Runtime trading controls
 - Paper/live broker mode validation
 - Alpaca order submission
+- Alpaca API usage and rate-limit observability
 - Internal tracked position lifecycle management
 - Exit profile evaluation
 - Broker-confirmed fill imports
@@ -214,6 +215,7 @@ For more about production workflow, see:
 ### Integrations:
 
 - [n8n Integration](docs/integrations/n8n.md)
+- [Alpaca Integration](docs/integrations/alpaca.md)
 
 ### Production:
 
@@ -262,6 +264,7 @@ Automated paper trading should only be enabled deliberately after confirming:
 - database migration status
 - broker mode alignment
 - admin UI status
+- Alpaca API Usage status
 - n8n dry-run behavior
 - risk settings
 - open/closing tracked positions

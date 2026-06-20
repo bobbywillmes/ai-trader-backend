@@ -52,6 +52,8 @@ workers.health.summary.processInstanceId is current
 pendingOrderCount=0
 submittingOrderCount=0
 submittedOrderCount=0
+alpacaApiUsage.status is normal or explainable
+alpacaApiUsage.persistence.lastFlushSucceededAt is recent after startup
 ```
 
 Also verify from the browser:
@@ -61,6 +63,7 @@ Admin UI loads
 Login works
 Dashboard loads
 Settings → System Status is healthy
+Settings -> System Status -> Alpaca API Usage is visible
 Open Orders is empty unless expected
 Recently changed feature works in production
 ```
@@ -199,3 +202,45 @@ Do not restart immediately just because a worker is stale. First identify whethe
 Worker health is diagnostic only. It does not automatically enable the kill switch, disable trading, reject signals, or restart containers.
 
 See [Worker Health](../architecture/workers.md) for full status semantics.
+
+---
+
+## Alpaca API Usage Warnings or Rate Limits
+
+Alpaca API usage is surfaced in Settings -> System Status -> Alpaca API Usage and in the protected `/api/system-status` response as `alpacaApiUsage`.
+
+Use it when production appears healthy but broker polling or Alpaca calls are heavier than expected.
+
+Check:
+
+```text
+alpacaApiUsage.status
+alpacaApiUsage.warning.active
+alpacaApiUsage.rateLimit.active
+alpacaApiUsage.rateLimit.backoffUntil
+alpacaApiUsage.rateLimit.latestKnownRemaining
+alpacaApiUsage.persistence.lastFlushSucceededAt
+alpacaApiUsage.persistence.pendingAggregateCount
+top operations
+top endpoints
+```
+
+Status meanings:
+
+```text
+normal = request volume and persistence look healthy
+elevated = request volume crossed ALPACA_API_USAGE_WARNING_REQUESTS_PER_MINUTE
+rate_limited = Alpaca returned 429 and the backend is in backoff
+degraded = usage persistence worker is unhealthy
+```
+
+During active rate-limit backoff, nonessential safe read polling may be deferred and reported as healthy `not_due` worker skips. Critical broker write paths keep their existing behavior.
+
+If request counts look unexpectedly high:
+
+1. Compare top operations and endpoints with worker health.
+2. Check backend logs around the same timestamps.
+3. Confirm there are no overlapping local/dev backends polling the same Alpaca account.
+4. Review recent code changes before adjusting worker cadences.
+
+See [Alpaca Integration](../integrations/alpaca.md) for the full request instrumentation and persistence model.

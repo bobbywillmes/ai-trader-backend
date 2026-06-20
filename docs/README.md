@@ -18,6 +18,7 @@ Use this index to find the right document for the task at hand.
 | Run or debug Prisma migrations	                        | [Database Migrations](production/database-migrations.md) |
 | Diagnose production problems	                          | [Troubleshooting](production/troubleshooting.md) |
 | Understand the n8n → backend contract	                  | [n8n Integration](integrations/n8n.md) |
+| Understand Alpaca broker API observability              | [Alpaca Integration](integrations/alpaca.md) |
 
 
 
@@ -78,6 +79,12 @@ Documents the production n8n workflow contract, including:
 - production testing notes
 
 Use this doc when modifying the n8n workflow or backend signal routes.
+
+### [Alpaca Integration](integrations/alpaca.md)
+
+Documents the backend-owned Alpaca REST integration, request metadata requirements, API usage tracking, rate-limit backoff behavior, persistence, and the Admin UI usage panel.
+
+Use this doc when adding Alpaca adapter calls, changing broker polling behavior, or investigating Alpaca rate-limit pressure.
 
 ## 🏭 Production Docs
 
@@ -157,6 +164,8 @@ close fill is attributed to the correct cycle
 config snapshot is captured
 Trade History renders the cycle correctly
 Reports includes the closed cycle
+Alpaca API Usage is visible in Settings -> System Status
+Saved Usage Data shows a recent database save
 ```
 
 ## 📝 Documentation Conventions
@@ -189,7 +198,6 @@ docs/api/signals.md
 docs/api/settings.md
 docs/api/tracked-positions.md
 docs/api/market-diary.md
-docs/integrations/alpaca.md
 docs/integrations/admin-ui.md
 docs/architecture/data-models.md
 docs/decisions/
