@@ -17,6 +17,27 @@ import {
 } from '../services/entry-session-guard.service.js';
 import { createSystemEvent } from '../services/system-event.service.js';
 import { syncTrailingStopOrderStatus } from '../services/position-exit-state.service.js';
+import {
+  adaptivePollingCoordinator,
+  type AdaptivePollingDecision,
+} from '../services/adaptive-polling.service.js';
+
+export type SubmittedOrderSyncResult = {
+  found: number;
+  polled: boolean;
+  synced: number;
+  skipped: boolean;
+  skipReason:
+    | 'no_local_submitted_orders'
+    | 'adaptive_poll_not_due'
+    | 'rate_limited'
+    | null;
+  deferred: boolean;
+  backoffUntil?: string | null;
+  mode?: AdaptivePollingDecision['mode'];
+  effectiveIntervalMs?: number | null;
+  nextDueAt?: string | null;
+};
 
 function isEntryOrder(input: BrokerOrderSubmissionInput): boolean {
   return input.side === 'buy' && (input.signalType ?? 'entry') === 'entry';
@@ -199,26 +220,62 @@ export async function syncSubmittedOrders() {
   if (submittedIntents.length === 0) {
     return {
       found: 0,
+      polled: false,
       synced: 0,
+      skipped: true,
+      skipReason: 'no_local_submitted_orders' as const,
       deferred: false,
-    };
+    } satisfies SubmittedOrderSyncResult;
+  }
+
+  const decision = await adaptivePollingCoordinator.getDecision(
+    'submitted_order_sync'
+  );
+
+  if (!decision.due) {
+    return {
+      found: submittedIntents.length,
+      polled: false,
+      synced: 0,
+      skipped: true,
+      skipReason:
+        decision.reason === 'rate_limit_backoff'
+          ? 'rate_limited'
+          : 'adaptive_poll_not_due',
+      deferred: false,
+      mode: decision.mode,
+      effectiveIntervalMs: decision.effectiveIntervalMs,
+      nextDueAt: decision.nextDueAt?.toISOString() ?? null,
+    } satisfies SubmittedOrderSyncResult;
   }
 
   let openOrders: Awaited<ReturnType<typeof getNormalizedOpenOrders>>;
 
   try {
+    adaptivePollingCoordinator.recordAttempt('submitted_order_sync');
     openOrders = await getNormalizedOpenOrders('submitted_order_sync');
   } catch (error) {
     if (error instanceof AlpacaRateLimitDeferredError) {
+      adaptivePollingCoordinator.recordRateLimitDeferred(
+        'submitted_order_sync',
+        error.backoffUntil
+      );
+
       return {
         found: submittedIntents.length,
+        polled: false,
         synced: 0,
+        skipped: true,
+        skipReason: 'rate_limited' as const,
         deferred: true,
-        reason: 'rate_limited' as const,
         backoffUntil: error.backoffUntil?.toISOString() ?? null,
-      };
+        mode: decision.mode,
+        effectiveIntervalMs: decision.effectiveIntervalMs,
+        nextDueAt: error.backoffUntil?.toISOString() ?? null,
+      } satisfies SubmittedOrderSyncResult;
     }
 
+    adaptivePollingCoordinator.recordFailure('submitted_order_sync');
     console.error('Failed to fetch Alpaca open orders during submitted order sync', error);
     throw error;
   }
@@ -310,9 +367,24 @@ export async function syncSubmittedOrders() {
     }
   }
 
+  adaptivePollingCoordinator.recordSuccess(
+    'submitted_order_sync',
+    new Date(),
+    decision.effectiveIntervalMs
+  );
+
   return {
     found: submittedIntents.length,
+    polled: true,
     synced,
     deferred: false,
-  };
+    skipped: false,
+    skipReason: null,
+    mode: decision.mode,
+    effectiveIntervalMs: decision.effectiveIntervalMs,
+    nextDueAt:
+      decision.effectiveIntervalMs === null
+        ? null
+        : new Date(Date.now() + decision.effectiveIntervalMs).toISOString(),
+  } satisfies SubmittedOrderSyncResult;
 }

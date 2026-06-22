@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
+import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
 import { getNormalizedPositions } from './positions.service.js';
 import { createSystemEvent } from './system-event.service.js';
 import { recordAccountSnapshot } from './account-snapshot.service.js';
@@ -19,6 +20,25 @@ import {
   resolveTrackedPositionSubscription,
   type SubscriptionResolutionResult,
 } from './tracked-position-subscription-resolution.service.js';
+import {
+  adaptivePollingCoordinator,
+  type AdaptivePollingDecision,
+} from './adaptive-polling.service.js';
+
+export type TrackedPositionSyncResult = {
+  polled: boolean;
+  skipped: boolean;
+  skipReason: 'adaptive_poll_not_due' | 'rate_limited' | null;
+  deferred: boolean;
+  backoffUntil?: string | null;
+  seen: number;
+  created: number;
+  updated: number;
+  closed: number;
+  mode?: AdaptivePollingDecision['mode'];
+  effectiveIntervalMs?: number | null;
+  nextDueAt?: string | null;
+};
 
 
 function getCloseFillSide(positionSide: string): 'buy' | 'sell' {
@@ -216,8 +236,65 @@ async function applySubscriptionResolution(args: {
   return resolution;
 }
 
-export async function syncTrackedPositions() {
-  const brokerPositions = await getNormalizedPositions();
+export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult> {
+  const decision = await adaptivePollingCoordinator.getDecision(
+    'tracked_position_sync'
+  );
+
+  if (!decision.due) {
+    return {
+      polled: false,
+      skipped: true,
+      skipReason:
+        decision.reason === 'rate_limit_backoff'
+          ? 'rate_limited'
+          : 'adaptive_poll_not_due',
+      deferred: false,
+      seen: 0,
+      created: 0,
+      updated: 0,
+      closed: 0,
+      mode: decision.mode,
+      effectiveIntervalMs: decision.effectiveIntervalMs,
+      nextDueAt: decision.nextDueAt?.toISOString() ?? null,
+    };
+  }
+
+  let brokerPositions: Awaited<ReturnType<typeof getNormalizedPositions>>;
+
+  try {
+    adaptivePollingCoordinator.recordAttempt('tracked_position_sync');
+    brokerPositions = await getNormalizedPositions('tracked_position_sync');
+  } catch (error) {
+    if (error instanceof AlpacaRateLimitDeferredError) {
+      adaptivePollingCoordinator.recordRateLimitDeferred(
+        'tracked_position_sync',
+        error.backoffUntil
+      );
+
+      return {
+        polled: false,
+        skipped: true,
+        skipReason: 'rate_limited',
+        deferred: true,
+        backoffUntil: error.backoffUntil?.toISOString() ?? null,
+        seen: 0,
+        created: 0,
+        updated: 0,
+        closed: 0,
+        mode: decision.mode,
+        effectiveIntervalMs: decision.effectiveIntervalMs,
+        nextDueAt: error.backoffUntil?.toISOString() ?? null,
+      };
+    }
+
+    adaptivePollingCoordinator.recordFailure('tracked_position_sync');
+    throw error;
+  }
+
+  let createdCount = 0;
+  let updatedCount = 0;
+  let closedCount = 0;
 
   for (const position of brokerPositions) {
     const existing = await findActiveTrackedPosition({
@@ -254,6 +331,7 @@ export async function syncTrackedPositions() {
         },
       });
 
+      createdCount += 1;
       await resetPositionExitStateForOpenPosition(created.id);
 
       const openingSubscriptionResolution = await applySubscriptionResolution({
@@ -305,6 +383,7 @@ export async function syncTrackedPositions() {
       },
     });
 
+    updatedCount += 1;
     await ensurePositionExitState(updated.id);
 
     await applySubscriptionResolution({
@@ -361,6 +440,8 @@ export async function syncTrackedPositions() {
       );
       continue;
     }
+
+    closedCount += 1;
 
     const closed = await prisma.trackedPosition.findUnique({
       where: { id: tracked.id },
@@ -441,6 +522,30 @@ export async function syncTrackedPositions() {
 
     console.log(`Position closed: ${closed.symbol}`);
   }
+
+  const completedAt = new Date();
+  adaptivePollingCoordinator.recordSuccess(
+    'tracked_position_sync',
+    completedAt,
+    decision.effectiveIntervalMs
+  );
+
+  return {
+    polled: true,
+    skipped: false,
+    skipReason: null,
+    deferred: false,
+    seen: brokerPositions.length,
+    created: createdCount,
+    updated: updatedCount,
+    closed: closedCount,
+    mode: decision.mode,
+    effectiveIntervalMs: decision.effectiveIntervalMs,
+    nextDueAt:
+      decision.effectiveIntervalMs === null
+        ? null
+        : new Date(completedAt.getTime() + decision.effectiveIntervalMs).toISOString(),
+  };
 }
 
 export async function getTrackedPositions() {

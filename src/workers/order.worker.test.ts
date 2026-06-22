@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { processPendingOrders } from './order.worker.js';
+import { processPendingOrders, syncSubmittedOrders } from './order.worker.js';
 
 const mocks = vi.hoisted(() => ({
   orderIntentFindMany: vi.fn(),
@@ -7,10 +7,16 @@ const mocks = vi.hoisted(() => ({
   orderIntentUpdate: vi.fn(),
   brokerOrderFindFirst: vi.fn(),
   submitOrderToBroker: vi.fn(),
+  getNormalizedOpenOrders: vi.fn(),
   getRuntimeTradingConfig: vi.fn(),
   evaluateEntrySessionGuard: vi.fn(),
   createSystemEvent: vi.fn(),
   syncTrailingStopOrderStatus: vi.fn(),
+  adaptiveGetDecision: vi.fn(),
+  adaptiveRecordAttempt: vi.fn(),
+  adaptiveRecordSuccess: vi.fn(),
+  adaptiveRecordFailure: vi.fn(),
+  adaptiveRecordRateLimitDeferred: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -45,11 +51,21 @@ vi.mock('../services/system-event.service.js', () => ({
 }));
 
 vi.mock('../services/orders.service.js', () => ({
-  getNormalizedOpenOrders: vi.fn(),
+  getNormalizedOpenOrders: mocks.getNormalizedOpenOrders,
 }));
 
 vi.mock('../services/position-exit-state.service.js', () => ({
   syncTrailingStopOrderStatus: mocks.syncTrailingStopOrderStatus,
+}));
+
+vi.mock('../services/adaptive-polling.service.js', () => ({
+  adaptivePollingCoordinator: {
+    getDecision: mocks.adaptiveGetDecision,
+    recordAttempt: mocks.adaptiveRecordAttempt,
+    recordSuccess: mocks.adaptiveRecordSuccess,
+    recordFailure: mocks.adaptiveRecordFailure,
+    recordRateLimitDeferred: mocks.adaptiveRecordRateLimitDeferred,
+  },
 }));
 
 const baseIntent = {
@@ -100,6 +116,13 @@ describe('order worker entry-session recheck', () => {
         side: 'buy',
         status: 'new',
       },
+    });
+    mocks.adaptiveGetDecision.mockResolvedValue({
+      due: true,
+      mode: 'market_open_active',
+      effectiveIntervalMs: 10_000,
+      nextDueAt: null,
+      reason: 'startup_due',
     });
   });
 
@@ -165,5 +188,69 @@ describe('order worker entry-session recheck', () => {
         clientOrderId: 'client-101',
       })
     );
+  });
+});
+
+describe('submitted order sync adaptive polling', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.adaptiveGetDecision.mockResolvedValue({
+      due: true,
+      mode: 'market_open_active',
+      effectiveIntervalMs: 10_000,
+      nextDueAt: null,
+      reason: 'startup_due',
+    });
+    mocks.getNormalizedOpenOrders.mockResolvedValue([]);
+  });
+
+  it('returns healthy idle without an Alpaca request when no submitted intents exist', async () => {
+    mocks.orderIntentFindMany.mockResolvedValue([]);
+
+    const result = await syncSubmittedOrders();
+
+    expect(result).toMatchObject({
+      found: 0,
+      polled: false,
+      skipped: true,
+      skipReason: 'no_local_submitted_orders',
+    });
+    expect(mocks.adaptiveGetDecision).not.toHaveBeenCalled();
+    expect(mocks.getNormalizedOpenOrders).not.toHaveBeenCalled();
+  });
+
+  it('skips the Alpaca open-orders request when adaptive polling is not due', async () => {
+    mocks.orderIntentFindMany.mockResolvedValue([
+      {
+        ...baseIntent,
+        status: 'submitted',
+        brokerOrders: [
+          {
+            id: 501,
+            brokerOrderId: 'broker-501',
+            clientOrderId: 'client-501',
+            status: 'new',
+            orderIntentId: 101,
+          },
+        ],
+      },
+    ]);
+    mocks.adaptiveGetDecision.mockResolvedValue({
+      due: false,
+      mode: 'market_open_active',
+      effectiveIntervalMs: 10_000,
+      nextDueAt: new Date('2026-06-22T14:00:10.000Z'),
+      reason: 'adaptive_poll_not_due',
+    });
+
+    const result = await syncSubmittedOrders();
+
+    expect(result).toMatchObject({
+      found: 1,
+      polled: false,
+      skipped: true,
+      skipReason: 'adaptive_poll_not_due',
+    });
+    expect(mocks.getNormalizedOpenOrders).not.toHaveBeenCalled();
   });
 });

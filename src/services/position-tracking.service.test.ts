@@ -20,6 +20,11 @@ const mocks = vi.hoisted(() => ({
   trackedPositionFindUnique: vi.fn(),
   trackedPositionFindMany: vi.fn(),
   systemEventFindFirst: vi.fn(),
+  adaptiveGetDecision: vi.fn(),
+  adaptiveRecordAttempt: vi.fn(),
+  adaptiveRecordSuccess: vi.fn(),
+  adaptiveRecordFailure: vi.fn(),
+  adaptiveRecordRateLimitDeferred: vi.fn(),
 }));
 
 vi.mock('./positions.service.js', () => ({
@@ -75,6 +80,16 @@ vi.mock('../db/prisma.js', () => ({
   },
 }));
 
+vi.mock('./adaptive-polling.service.js', () => ({
+  adaptivePollingCoordinator: {
+    getDecision: mocks.adaptiveGetDecision,
+    recordAttempt: mocks.adaptiveRecordAttempt,
+    recordSuccess: mocks.adaptiveRecordSuccess,
+    recordFailure: mocks.adaptiveRecordFailure,
+    recordRateLimitDeferred: mocks.adaptiveRecordRateLimitDeferred,
+  },
+}));
+
 import { syncTrackedPositions } from './position-tracking.service.js';
 
 const brokerPosition = {
@@ -100,6 +115,13 @@ describe('position tracking subscription recovery', () => {
     mocks.captureTrackedPositionConfigSnapshot.mockResolvedValue({});
     mocks.ensurePositionExitState.mockResolvedValue({});
     mocks.trackedPositionFindMany.mockResolvedValue([]);
+    mocks.adaptiveGetDecision.mockResolvedValue({
+      due: true,
+      mode: 'market_open_active',
+      effectiveIntervalMs: 15_000,
+      nextDueAt: null,
+      reason: 'startup_due',
+    });
   });
 
   it('recovers an existing open cycle with null subscriptionId on a later sync and captures its snapshot', async () => {
@@ -157,5 +179,25 @@ describe('position tracking subscription recovery', () => {
         entityId: 101,
       })
     );
+  });
+
+  it('skips the Alpaca positions request when adaptive polling is not due', async () => {
+    mocks.adaptiveGetDecision.mockResolvedValue({
+      due: false,
+      mode: 'market_closed_idle',
+      effectiveIntervalMs: 300_000,
+      nextDueAt: new Date('2026-06-22T14:05:00.000Z'),
+      reason: 'adaptive_poll_not_due',
+    });
+
+    const result = await syncTrackedPositions();
+
+    expect(result).toMatchObject({
+      polled: false,
+      skipped: true,
+      skipReason: 'adaptive_poll_not_due',
+      seen: 0,
+    });
+    expect(mocks.getNormalizedPositions).not.toHaveBeenCalled();
   });
 });

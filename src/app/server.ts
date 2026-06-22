@@ -2,7 +2,6 @@ import { createApp } from './app.js';
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import type { Server } from 'node:http';
-import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
 import {
   processPendingOrders,
   syncSubmittedOrders,
@@ -84,7 +83,7 @@ async function runTradingWorkers() {
     await runWorker('submitted_order_sync', async () => {
       const result = await syncSubmittedOrders();
 
-      if (result.deferred) {
+      if (result.skipped) {
         return {
           outcome: 'skipped',
           skipReason: 'not_due',
@@ -98,21 +97,19 @@ async function runTradingWorkers() {
     });
 
     await runWorker('tracked_position_sync', async () => {
-      try {
-        await syncTrackedPositions();
-      } catch (error) {
-        if (error instanceof AlpacaRateLimitDeferredError) {
-          return {
-            outcome: 'skipped',
-            skipReason: 'not_due',
-          };
-        }
+      const result = await syncTrackedPositions();
 
-        throw error;
+      if (result.skipped) {
+        return {
+          outcome: 'skipped',
+          skipReason: 'not_due',
+        };
       }
 
       return {
-        outcome: 'success',
+        outcome: result.seen > 0 || result.closed > 0 ? 'success' : 'idle',
+        workSucceeded:
+          result.created > 0 || result.updated > 0 || result.closed > 0,
       };
     });
 
