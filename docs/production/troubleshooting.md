@@ -54,6 +54,8 @@ submittingOrderCount=0
 submittedOrderCount=0
 alpacaApiUsage.status is normal or explainable
 alpacaApiUsage.persistence.lastFlushSucceededAt is recent after startup
+adaptivePolling.status is normal or explainable
+adaptivePolling.marketState matches the current market session or is degraded with a clear sanitized error
 ```
 
 Also verify from the browser:
@@ -64,9 +66,27 @@ Login works
 Dashboard loads
 Settings → System Status is healthy
 Settings -> System Status -> Alpaca API Usage is visible
+Settings -> System Status -> Adaptive Polling is visible
 Open Orders is empty unless expected
 Recently changed feature works in production
 ```
+
+For adaptive Alpaca polling rollouts, also confirm:
+
+```text
+no Prisma migration is required
+all workers become healthy after startup grace
+closed-market active cadence is selected when positions are open
+submitted-order sync reports idle and makes no broker request when no submitted intents exist
+Alpaca API Usage shows lower submitted_order_sync and tracked_position_sync request counts after rollout
+a successful paper order during regular market hours forces prompt order and position synchronization
+order, fill, tracked-position, and exit lifecycle behavior remains intact
+simulated market-clock failure selects unknown/degraded conservative polling in local tests
+rate-limit deferral remains covered by deterministic local tests
+at least one open/closed or closed/open market transition is observed when practical
+```
+
+Rollback is application-only. No database rollback should be necessary because adaptive polling state is process-local and no migration is created.
 
 ---
 
@@ -244,3 +264,37 @@ If request counts look unexpectedly high:
 4. Review recent code changes before adjusting worker cadences.
 
 See [Alpaca Integration](../integrations/alpaca.md) for the full request instrumentation and persistence model.
+
+---
+
+## Adaptive Polling Degraded Or Unexpected Cadence
+
+Adaptive polling is surfaced in Settings -> System Status -> Adaptive Polling and in `/api/system-status` as `adaptivePolling`.
+
+Check:
+
+```text
+adaptivePolling.status
+adaptivePolling.marketState
+adaptivePolling.mode
+adaptivePolling.marketSession.consecutiveFailures
+adaptivePolling.marketSession.lastError
+adaptivePolling.localActivity
+adaptivePolling.workers.submittedOrderSync
+adaptivePolling.workers.trackedPositionSync
+alpacaApiUsage.rateLimit.active
+```
+
+Expected behavior:
+
+```text
+normal adaptive skips are healthy not_due worker ticks
+market closed is not an attention state by itself
+unknown market state uses conservative cadence
+submitted-order sync is not scheduled when there are no submitted intents
+tracked-position sync remains scheduled even when local lifecycle is idle
+forced state clears only after the relevant broker read succeeds
+active 429 backoff can defer forced reads
+```
+
+If the panel is degraded because Alpaca market session cannot be read, inspect backend logs and Alpaca API Usage before changing trading settings. The degraded polling state does not activate the kill switch, block critical writes, or directly change `risk.canEnter`.

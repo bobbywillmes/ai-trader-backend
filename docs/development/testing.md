@@ -50,6 +50,7 @@ Current service-level coverage includes:
 - trade-performance aggregation and closedAt date filtering
 - worker health status derivation, persistence throttling, transition events, and System Status readiness semantics
 - Alpaca request metadata enforcement, API usage aggregation, rate-limit deferral, usage persistence, and System Status exposure
+- adaptive Alpaca REST polling decisions, market modes, forced sync, rate-limit-compatible skips, and System Status serialization
 ```
 
 Prefer small service-level tests that mock external dependencies such as Prisma and Alpaca.
@@ -64,4 +65,17 @@ do not silently ignore broker/order uncertainty
 do not let mutable live config rewrite historical trade meaning
 do not mark worker health failed for idle, not-due, or per-record business outcomes
 do not let nonessential Alpaca rate-limit deferrals look like business failures
+do not let adaptive skips increment Alpaca request metrics
+do not let forced synchronization bypass active rate-limit backoff
+```
+
+Adaptive polling tests should use injected clocks/providers and fake timers where useful. They must not call real Alpaca endpoints or sleep in real time.
+
+Focused commands used while changing adaptive polling:
+
+```bash
+npm run test -- src/services/adaptive-polling.service.test.ts
+npm run test -- src/workers/order.worker.test.ts src/services/position-tracking.service.test.ts
+npm run test -- src/services/system-status.service.test.ts
+npm run check
 ```

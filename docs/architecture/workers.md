@@ -7,8 +7,8 @@ The backend monitors every recurring background operation as an independent work
 | Key | Display name | Cadence | Criticality | Notes |
 | --- | --- | ---: | --- | --- |
 | `pending_order_processing` | Pending order processing | 2s | critical | Claims pending `OrderIntent` rows and submits eligible broker orders. |
-| `submitted_order_sync` | Submitted order sync | 2s | critical | Refreshes submitted order status from broker open orders. |
-| `tracked_position_sync` | Tracked position sync | 2s | critical | Mirrors broker positions into `TrackedPosition` lifecycle state. |
+| `submitted_order_sync` | Submitted order sync | 2s scheduler | critical | Adaptive Alpaca open-order read; keeps submitted order status fresh without polling every heartbeat. |
+| `tracked_position_sync` | Tracked position sync | 2s scheduler | critical | Adaptive Alpaca positions read; mirrors broker positions into `TrackedPosition` lifecycle state. |
 | `exit_evaluation` | Exit evaluation | 2s | critical | Evaluates open positions against configured exit profiles. |
 | `account_snapshot_scheduler` | Account snapshot scheduler | 60s | important | Checks whether scheduled account snapshot checkpoints are due. |
 | `broker_activity_sync` | Broker activity sync | 60s | critical | Imports broker-confirmed fill activities into `BrokerActivity`. |
@@ -46,6 +46,23 @@ Healthy outcomes include:
 `lastWorkSucceededAt` is updated only when the worker actually created, updated, imported, or found meaningful business work. A worker can be healthy even when `lastWorkSucceededAt` is null.
 
 `already_running` skips do not refresh `lastSucceededAt`; the original run age determines whether the worker becomes delayed or stale.
+
+## Adaptive Broker Reads
+
+`submitted_order_sync` and `tracked_position_sync` enter the worker-health wrapper every two-second trading scheduler heartbeat, but their Alpaca REST reads are gated by the adaptive polling coordinator.
+
+Worker-health `expectedIntervalMs` remains two seconds for both workers because that field represents scheduler liveness. The effective Alpaca polling interval is exposed separately in `systemStatus.adaptivePolling`.
+
+Normal adaptive skips are healthy `skipped` + `not_due` outcomes. They do not count as worker failures and do not update `lastWorkSucceededAt`.
+
+Important distinctions:
+
+- `submitted_order_sync` with no local submitted intents is healthy idle/skipped behavior and makes no Alpaca open-orders request.
+- `tracked_position_sync` continues idle polling on a slower cadence so externally created broker positions can be discovered.
+- actual broker read failures still fail only the relevant worker tick and use bounded adaptive retry.
+- rate-limit deferrals remain healthy `not_due` skips and preserve the forced state until a later broker read succeeds.
+
+Effective broker-read cadences are documented in [Alpaca Integration](../integrations/alpaca.md).
 
 ## Statuses
 
@@ -142,6 +159,18 @@ The Alpaca usage snapshot tracks live broker REST traffic, rate-limit incidents,
 If the `alpaca_api_usage_persistence` worker becomes delayed, stale, degraded, or failing, `alpacaApiUsage.status` is reported as `degraded`. This means live request counters may still be available in memory, but durable bucket persistence is unhealthy.
 
 See [Alpaca Integration](../integrations/alpaca.md) for request metadata, rate-limit, and persistence details.
+
+## Adaptive Polling Status
+
+System Status includes `adaptivePolling` for the process-local broker-read coordinator. This section shows:
+
+- normal or degraded coordinator status
+- market state and mode
+- cached market-session metadata and sanitized error details
+- local lifecycle activity counts
+- per-worker effective interval, force state, last attempt, last successful actual broker sync, and next due time
+
+Adaptive market-session degradation is visible here but does not directly change `readiness.serviceHealthy`, `readiness.workersHealthy`, `readiness.canEnter`, or `readiness.tradingReady`.
 
 ## Troubleshooting
 

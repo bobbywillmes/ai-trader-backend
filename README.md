@@ -43,6 +43,7 @@ The backend currently handles:
 - Paper/live broker mode validation
 - Alpaca order submission
 - Alpaca API usage and rate-limit observability
+- Adaptive Alpaca REST polling for order and position synchronization
 - Internal tracked position lifecycle management
 - Exit profile evaluation
 - Broker-confirmed fill imports

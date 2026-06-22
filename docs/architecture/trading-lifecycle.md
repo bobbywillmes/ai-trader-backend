@@ -112,6 +112,19 @@ The order worker uses an atomic `pending → submitting` claim step before calli
 
 The position sync worker uses guarded state transitions so lifecycle events such as `position.opened` and `position.closed` are emitted only when the worker successfully transitions the tracked position state.
 
+Submitted-order sync and tracked-position sync are adaptive broker-read workers. They still enter the two-second trading loop every heartbeat for worker-health liveness, but Alpaca REST reads are due only when the coordinator cadence or forced-sync state says they are due.
+
+The adaptive behavior does not change:
+
+- pending order processing frequency
+- exit evaluation frequency
+- broker activity import cadence
+- account snapshot cadence
+- risk-gate account checks
+- critical Alpaca writes
+
+Successful broker writes force prompt follow-up synchronization on the shared scheduler. The system does not launch uncontrolled parallel sync calls from HTTP handlers or write callbacks.
+
 ### Account Snapshot Worker
 
 Runs on a slower checkpoint schedule.
@@ -320,6 +333,8 @@ The sync worker:
 - Emits system events for status transitions.
 
 Status updates are guarded so duplicate worker ticks do not emit duplicate lifecycle events.
+
+When no local submitted intents exist, the submitted-order sync returns healthy idle and does not call Alpaca open orders. When submitted work exists, the effective broker-read cadence is market/activity aware and visible in System Status.
 
 ---
 
