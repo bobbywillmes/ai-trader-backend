@@ -557,10 +557,16 @@ export class AdaptivePollingCoordinator {
 
   async getSnapshot(): Promise<AdaptivePollingSnapshot> {
     const now = this.now();
-    const [activity, market] = await Promise.all([
-      this.getLocalActivity(now),
-      this.evaluateMarket(now),
-    ]);
+    const activity = await this.getLocalActivity(now);
+    const market =
+      this.latestEvaluation ??
+      ({
+        state: 'unknown',
+        snapshot: this.latestMarketSessionSnapshot,
+        degraded: this.hadMarketSessionFailure,
+        error: this.lastMarketSessionError,
+        evaluatedAt: now,
+      } satisfies MarketEvaluation);
     const active = hasTrackedPositionActivity(activity);
     const mode = modeFor({ marketState: market.state, active });
 

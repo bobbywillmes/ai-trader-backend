@@ -324,4 +324,16 @@ describe('AdaptivePollingCoordinator', () => {
 
     expect(marketProvider).toHaveBeenCalledTimes(1);
   });
+
+  it('does not request market-session data just to build a status snapshot', async () => {
+    const { coordinator, marketProvider } = createHarness({ active: false });
+
+    const snapshot = await coordinator.getSnapshot();
+
+    expect(marketProvider).not.toHaveBeenCalled();
+    expect(snapshot).toMatchObject({
+      marketState: 'unknown',
+      mode: 'market_unknown',
+    });
+  });
 });
