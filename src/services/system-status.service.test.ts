@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   workerHealthSnapshot: vi.fn(),
   alpacaUsageSnapshot: vi.fn(),
   alpacaUsagePersistenceSnapshot: vi.fn(),
+  adaptivePollingSnapshot: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -58,6 +59,12 @@ vi.mock('./alpaca-api-usage.service.js', () => ({
 vi.mock('./alpaca-api-usage-persistence.service.js', () => ({
   getAlpacaApiUsagePersistenceSnapshot:
     mocks.alpacaUsagePersistenceSnapshot,
+}));
+
+vi.mock('./adaptive-polling.service.js', () => ({
+  adaptivePollingCoordinator: {
+    getSnapshot: mocks.adaptivePollingSnapshot,
+  },
 }));
 
 vi.mock('../config/cors.js', () => ({
@@ -150,6 +157,63 @@ describe('system status health semantics', () => {
       retentionDays: 30,
       lastRetentionRunAt: null,
     });
+    mocks.adaptivePollingSnapshot.mockResolvedValue({
+      status: 'normal',
+      evaluatedAt: '2026-06-18T21:00:00.000Z',
+      marketState: 'closed',
+      mode: 'market_closed_idle',
+      marketSession: {
+        tradingDate: '2026-06-18',
+        marketOpen: false,
+        evaluatedAt: '2026-06-18T21:00:00.000Z',
+        fetchedAt: '2026-06-18T20:59:00.000Z',
+        nextOpenAt: '2026-06-19T13:30:00.000Z',
+        nextCloseAt: '2026-06-19T20:00:00.000Z',
+        clockCacheStatus: 'cached',
+        consecutiveFailures: 0,
+        lastError: null,
+        lastErrorAt: null,
+        recoveredAt: null,
+      },
+      localActivity: {
+        submittedOrderCount: 0,
+        submittingOrderCount: 0,
+        nonterminalBrokerOrderCount: 0,
+        openPositionCount: 0,
+        closingPositionCount: 0,
+        activeExitCount: 0,
+        activeProtectiveOrderCount: 0,
+        evaluatedAt: '2026-06-18T21:00:00.000Z',
+      },
+      workers: {
+        submittedOrderSync: {
+          schedulerIntervalMs: 2000,
+          effectiveIntervalMs: null,
+          due: false,
+          forced: false,
+          forceReason: null,
+          decisionReason: 'no_local_submitted_orders',
+          lastAttemptAt: null,
+          lastSuccessAt: null,
+          nextDueAt: null,
+          localActivity: false,
+          mode: 'market_closed_idle',
+        },
+        trackedPositionSync: {
+          schedulerIntervalMs: 2000,
+          effectiveIntervalMs: 300000,
+          due: false,
+          forced: false,
+          forceReason: null,
+          decisionReason: 'adaptive_poll_not_due',
+          lastAttemptAt: '2026-06-18T20:55:00.000Z',
+          lastSuccessAt: '2026-06-18T20:55:00.000Z',
+          nextDueAt: '2026-06-18T21:00:00.000Z',
+          localActivity: false,
+          mode: 'market_closed_idle',
+        },
+      },
+    });
     mocks.getLatestAccountSnapshot.mockResolvedValue(null);
     mocks.getLatestBrokerActivity.mockResolvedValue(null);
     mocks.orderIntentCount.mockResolvedValue(0);
@@ -174,6 +238,87 @@ describe('system status health semantics', () => {
       persistence: {
         retentionDays: 30,
       },
+    });
+    expect(status.adaptivePolling).toMatchObject({
+      status: 'normal',
+      marketState: 'closed',
+      mode: 'market_closed_idle',
+    });
+    expect(mocks.adaptivePollingSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces degraded adaptive polling without changing readiness semantics', async () => {
+    mocks.adaptivePollingSnapshot.mockResolvedValue({
+      status: 'degraded',
+      evaluatedAt: '2026-06-18T21:00:00.000Z',
+      marketState: 'unknown',
+      mode: 'market_unknown',
+      marketSession: {
+        tradingDate: null,
+        marketOpen: null,
+        evaluatedAt: null,
+        fetchedAt: null,
+        nextOpenAt: null,
+        nextCloseAt: null,
+        clockCacheStatus: null,
+        consecutiveFailures: 2,
+        lastError: 'clock unavailable',
+        lastErrorAt: '2026-06-18T21:00:00.000Z',
+        recoveredAt: null,
+      },
+      localActivity: {
+        submittedOrderCount: 1,
+        submittingOrderCount: 0,
+        nonterminalBrokerOrderCount: 1,
+        openPositionCount: 1,
+        closingPositionCount: 0,
+        activeExitCount: 1,
+        activeProtectiveOrderCount: 0,
+        evaluatedAt: '2026-06-18T21:00:00.000Z',
+      },
+      workers: {
+        submittedOrderSync: {
+          schedulerIntervalMs: 2000,
+          effectiveIntervalMs: 10000,
+          due: true,
+          forced: false,
+          forceReason: null,
+          decisionReason: 'market_state_unknown',
+          lastAttemptAt: null,
+          lastSuccessAt: null,
+          nextDueAt: null,
+          localActivity: true,
+          mode: 'market_unknown',
+        },
+        trackedPositionSync: {
+          schedulerIntervalMs: 2000,
+          effectiveIntervalMs: 15000,
+          due: true,
+          forced: false,
+          forceReason: null,
+          decisionReason: 'market_state_unknown',
+          lastAttemptAt: null,
+          lastSuccessAt: null,
+          nextDueAt: null,
+          localActivity: true,
+          mode: 'market_unknown',
+        },
+      },
+    });
+
+    const status = await getSystemStatus();
+
+    expect(status.adaptivePolling).toMatchObject({
+      status: 'degraded',
+      marketState: 'unknown',
+      marketSession: {
+        lastError: 'clock unavailable',
+      },
+    });
+    expect(status.readiness).toMatchObject({
+      serviceHealthy: true,
+      workersHealthy: true,
+      needsAttention: false,
     });
   });
 
