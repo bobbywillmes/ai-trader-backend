@@ -195,6 +195,26 @@ function formatRelativeTime(value: string | null | undefined) {
   return `${days} days ago`;
 }
 
+function formatRelativeFuture(value: string | null | undefined) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+
+  const seconds = Math.round((date.getTime() - Date.now()) / 1000);
+  if (seconds <= 0) return "Due now";
+  if (seconds < 60) return `In ${seconds} seconds`;
+
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `In ${minutes} minutes`;
+
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `In ${hours} hours`;
+
+  const days = Math.round(hours / 24);
+  return `In ${days} days`;
+}
+
 function formatDurationMs(value: number | null | undefined) {
   if (value === null || value === undefined) return "-";
   if (value < 1_000) return `${value} ms`;
@@ -259,6 +279,54 @@ function alpacaApiUsageStatusColor(
     default:
       return "gray";
   }
+}
+
+function adaptivePollingStatusColor(
+  status: SystemStatusResponse["adaptivePolling"]["status"]
+) {
+  return status === "normal" ? "teal" : "orange";
+}
+
+function formatMarketState(
+  marketState: SystemStatusResponse["adaptivePolling"]["marketState"]
+) {
+  switch (marketState) {
+    case "open":
+      return "Open";
+    case "closed":
+      return "Closed";
+    case "unknown":
+      return "Unknown";
+    default:
+      return "-";
+  }
+}
+
+function formatModeReason(
+  adaptivePolling: SystemStatusResponse["adaptivePolling"]
+) {
+  const activity = adaptivePolling.localActivity;
+
+  if (adaptivePolling.marketState === "unknown") {
+    return "Conservative polling";
+  }
+
+  const activePositionCount =
+    activity.openPositionCount + activity.closingPositionCount;
+
+  if (activePositionCount > 0) {
+    return `${activePositionCount} open or closing positions`;
+  }
+
+  if (activity.submittedOrderCount > 0) {
+    return `${activity.submittedOrderCount} submitted orders`;
+  }
+
+  if (activity.nonterminalBrokerOrderCount > 0) {
+    return `${activity.nonterminalBrokerOrderCount} active broker orders`;
+  }
+
+  return "No active local lifecycle";
 }
 
 function formatNumber(value: number | null | undefined) {
@@ -501,6 +569,156 @@ function AlpacaApiUsagePanel({
             groups={usage.topOperations}
           />
           <AlpacaUsageGroupTable title="Top Endpoints" groups={usage.topEndpoints} />
+        </SimpleGrid>
+      </Stack>
+    </Card>
+  );
+}
+
+function AdaptiveWorkerStatus({
+  title,
+  worker,
+  idleMessage,
+}: {
+  title: string;
+  worker: SystemStatusResponse["adaptivePolling"]["workers"]["submittedOrderSync"];
+  idleMessage?: string;
+}) {
+  const cadence =
+    worker.effectiveIntervalMs === null
+      ? "Not scheduled"
+      : `Every ${formatCadence(worker.effectiveIntervalMs)}`;
+
+  return (
+    <Card withBorder radius="md" p="md">
+      <Stack gap="xs">
+        <Group justify="space-between" align="flex-start">
+          <Text fw={600}>{title}</Text>
+          {worker.forced && (
+            <Badge color="blue" variant="light">
+              Forced
+            </Badge>
+          )}
+        </Group>
+
+        {worker.effectiveIntervalMs === null && idleMessage ? (
+          <Text size="sm">{idleMessage}</Text>
+        ) : (
+          <Text size="sm">Cadence: {cadence}</Text>
+        )}
+
+        <Tooltip label={formatDateTime(worker.lastSuccessAt)}>
+          <Text size="sm" c="dimmed">
+            Last broker sync: {formatRelativeTime(worker.lastSuccessAt)}
+          </Text>
+        </Tooltip>
+
+        <Tooltip label={formatDateTime(worker.nextDueAt)}>
+          <Text size="sm" c="dimmed">
+            Next sync: {formatRelativeFuture(worker.nextDueAt)}
+          </Text>
+        </Tooltip>
+
+        <Text size="xs" c="dimmed">
+          Reason: {worker.decisionReason.replace(/_/g, " ")}
+          {worker.forceReason ? ` | ${worker.forceReason.replace(/_/g, " ")}` : ""}
+        </Text>
+      </Stack>
+    </Card>
+  );
+}
+
+function AdaptivePollingPanel({
+  adaptivePolling,
+}: {
+  adaptivePolling: SystemStatusResponse["adaptivePolling"];
+}) {
+  const activity = adaptivePolling.localActivity;
+
+  return (
+    <Card withBorder radius="md" p="md">
+      <Stack gap="md">
+        <Group justify="space-between" align="flex-start">
+          <div>
+            <Text fw={600}>Adaptive Polling</Text>
+            <Text size="sm" c="dimmed">
+              Effective Alpaca REST cadence for broker-state synchronization.
+            </Text>
+          </div>
+          <Badge
+            color={adaptivePollingStatusColor(adaptivePolling.status)}
+            variant="light"
+          >
+            {formatStatusLabel(adaptivePolling.status)}
+          </Badge>
+        </Group>
+
+        <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
+          <Stack gap={2}>
+            <Text size="xs" c="dimmed" tt="uppercase">
+              Market
+            </Text>
+            <Text size="sm">{formatMarketState(adaptivePolling.marketState)}</Text>
+            <Text size="xs" c="dimmed">
+              Clock: {adaptivePolling.marketSession.clockCacheStatus ?? "-"}
+            </Text>
+          </Stack>
+
+          <Stack gap={2}>
+            <Text size="xs" c="dimmed" tt="uppercase">
+              Mode
+            </Text>
+            <Text size="sm">{adaptivePolling.mode.replace(/_/g, " ")}</Text>
+            <Text size="xs" c="dimmed">
+              {formatModeReason(adaptivePolling)}
+            </Text>
+          </Stack>
+
+          <Stack gap={2}>
+            <Text size="xs" c="dimmed" tt="uppercase">
+              Orders
+            </Text>
+            <Text size="sm">
+              Submitted: {activity.submittedOrderCount}
+            </Text>
+            <Text size="xs" c="dimmed">
+              Submitting: {activity.submittingOrderCount} | broker orders:{" "}
+              {activity.nonterminalBrokerOrderCount}
+            </Text>
+          </Stack>
+
+          <Stack gap={2}>
+            <Text size="xs" c="dimmed" tt="uppercase">
+              Positions
+            </Text>
+            <Text size="sm">
+              Open/closing:{" "}
+              {activity.openPositionCount + activity.closingPositionCount}
+            </Text>
+            <Text size="xs" c="dimmed">
+              Exit states: {activity.activeExitCount} | protective:{" "}
+              {activity.activeProtectiveOrderCount}
+            </Text>
+          </Stack>
+        </SimpleGrid>
+
+        {adaptivePolling.status === "degraded" && (
+          <Alert color="orange" title="Market session unavailable">
+            {adaptivePolling.marketSession.lastError ??
+              "Alpaca market-session state is unavailable; conservative polling is active."}
+          </Alert>
+        )}
+
+        <SimpleGrid cols={{ base: 1, md: 2 }}>
+          <AdaptiveWorkerStatus
+            title="Submitted orders"
+            worker={adaptivePolling.workers.submittedOrderSync}
+            idleMessage="Status: Idle - no submitted orders. Broker request: not scheduled."
+          />
+          <AdaptiveWorkerStatus
+            title="Tracked positions"
+            worker={adaptivePolling.workers.trackedPositionSync}
+          />
         </SimpleGrid>
       </Stack>
     </Card>
@@ -1179,6 +1397,10 @@ export function SettingsPage() {
                   <WorkerHealthTable health={systemStatus.workers.health} />
 
                   <AlpacaApiUsagePanel usage={systemStatus.alpacaApiUsage} />
+
+                  <AdaptivePollingPanel
+                    adaptivePolling={systemStatus.adaptivePolling}
+                  />
 
                   <Card withBorder radius="md" p="md">
                     <Group justify="space-between" align="flex-start">

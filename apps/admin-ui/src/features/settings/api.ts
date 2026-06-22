@@ -262,6 +262,68 @@ export type SystemStatusResponse = {
       lastRetentionRunAt: string | null;
     };
   };
+  adaptivePolling: {
+    status: "normal" | "degraded";
+    evaluatedAt: string;
+    marketState: "open" | "closed" | "unknown";
+    mode:
+      | "market_open_active"
+      | "market_open_idle"
+      | "market_closed_active"
+      | "market_closed_idle"
+      | "market_unknown";
+    marketSession: {
+      tradingDate: string | null;
+      marketOpen: boolean | null;
+      evaluatedAt: string | null;
+      fetchedAt: string | null;
+      nextOpenAt: string | null;
+      nextCloseAt: string | null;
+      clockCacheStatus: string | null;
+      consecutiveFailures: number;
+      lastError: string | null;
+      lastErrorAt: string | null;
+      recoveredAt: string | null;
+    };
+    localActivity: {
+      submittedOrderCount: number;
+      submittingOrderCount: number;
+      nonterminalBrokerOrderCount: number;
+      openPositionCount: number;
+      closingPositionCount: number;
+      activeExitCount: number;
+      activeProtectiveOrderCount: number;
+      evaluatedAt: string;
+    };
+    workers: {
+      submittedOrderSync: {
+        schedulerIntervalMs: number;
+        effectiveIntervalMs: number | null;
+        due: boolean;
+        forced: boolean;
+        forceReason: string | null;
+        decisionReason: string;
+        lastAttemptAt: string | null;
+        lastSuccessAt: string | null;
+        nextDueAt: string | null;
+        localActivity: boolean;
+        mode: string;
+      };
+      trackedPositionSync: {
+        schedulerIntervalMs: number;
+        effectiveIntervalMs: number | null;
+        due: boolean;
+        forced: boolean;
+        forceReason: string | null;
+        decisionReason: string;
+        lastAttemptAt: string | null;
+        lastSuccessAt: string | null;
+        nextDueAt: string | null;
+        localActivity: boolean;
+        mode: string;
+      };
+    };
+  };
   audit: {
     latestAccountSnapshot: {
       createdAt: string;
