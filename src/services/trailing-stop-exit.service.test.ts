@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
 
   ensurePositionExitState: vi.fn(),
   markTrailingStopOrderSubmitted: vi.fn(),
+  forceAfterBrokerOrderCreated: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -46,6 +47,12 @@ vi.mock('./system-event.service.js', () => ({
 vi.mock('./position-exit-state.service.js', () => ({
   ensurePositionExitState: mocks.ensurePositionExitState,
   markTrailingStopOrderSubmitted: mocks.markTrailingStopOrderSubmitted,
+}));
+
+vi.mock('./adaptive-polling.service.js', () => ({
+  adaptivePollingCoordinator: {
+    forceAfterBrokerOrderCreated: mocks.forceAfterBrokerOrderCreated,
+  },
 }));
 
 import { submitTrailingStopExitOrder } from './trailing-stop-exit.service.js';
@@ -185,5 +192,40 @@ describe('submitTrailingStopExitOrder', () => {
 
     // This was not a new submission, so the "submitted" event should not fire.
     expect(mocks.createSystemEvent).not.toHaveBeenCalled();
+    expect(mocks.forceAfterBrokerOrderCreated).not.toHaveBeenCalled();
+  });
+
+  it('forces adaptive synchronization after creating a new Alpaca trailing-stop order', async () => {
+    const expectedClientOrderId = 'ai-exit-trail-SPY-101-20260606153000';
+    const createdOrder = {
+      id: 'alpaca-new-trail-123',
+      client_order_id: expectedClientOrderId,
+      status: 'accepted',
+      symbol: 'SPY',
+      side: 'sell',
+      type: 'trailing_stop',
+      qty: '3',
+      trail_percent: '0.25',
+    };
+
+    mocks.trackedPositionFindUnique.mockResolvedValue(buildPosition());
+    mocks.brokerOrderFindUnique.mockResolvedValue(null);
+    mocks.getAlpacaOrderByClientOrderId.mockResolvedValue(null);
+    mocks.placeAlpacaOrder.mockResolvedValue(createdOrder);
+    mocks.orderIntentFindFirst.mockResolvedValue(null);
+    mocks.orderIntentCreate.mockResolvedValue({ id: 301 });
+    mocks.brokerOrderUpsert.mockResolvedValue({});
+    mocks.markTrailingStopOrderSubmitted.mockResolvedValue({});
+    mocks.createSystemEvent.mockResolvedValue({});
+
+    const result = await submitTrailingStopExitOrder(101);
+
+    expect(result).toMatchObject({
+      submitted: true,
+      brokerOrderId: 'alpaca-new-trail-123',
+    });
+    expect(mocks.forceAfterBrokerOrderCreated).toHaveBeenCalledWith(
+      'protective_order_created'
+    );
   });
 });

@@ -10,6 +10,7 @@ import {
   ensurePositionExitState,
   markTrailingStopOrderSubmitted,
 } from './position-exit-state.service.js';
+import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
 
 const TRAILING_STOP_TIME_IN_FORCE = 'gtc' as const;
 
@@ -260,6 +261,10 @@ export async function submitTrailingStopExitOrder(trackedPositionId: number) {
   const created = await placeAlpacaOrder(
     payload,
     'protective_order_submission'
+  );
+
+  adaptivePollingCoordinator.forceAfterBrokerOrderCreated(
+    'protective_order_created'
   );
 
   await persistTrailingStopOrder({

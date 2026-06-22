@@ -17,6 +17,7 @@ import type {
   ResolvedPlaceOrderInput,
 } from '../validators/place-order.schema.js';
 import { buildClientOrderId } from './client-order-id.service.js';
+import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
 
 export async function submitOrder(input: PlaceOrderInput) {
   const resolvedInput = await resolveSubscriptionOrderInput(input);
@@ -101,6 +102,10 @@ export async function submitOrderToBroker(input: BrokerOrderSubmissionInput) {
   if (input.extendedHours) payload.extended_hours = true;
 
   const created = await placeAlpacaOrder(payload, 'pending_order_submission');
+
+  adaptivePollingCoordinator.forceAfterBrokerOrderCreated(
+    'broker_order_created'
+  );
 
   return {
     duplicate: false,

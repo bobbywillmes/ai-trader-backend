@@ -1,10 +1,14 @@
 import { AlpacaApiError } from '../errors/alpaca-api-error.js';
 import { HttpError } from '../errors/http-error.js';
 import { cancelAlpacaOrder } from '../integrations/alpaca/orders.adapter.js';
+import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
 
 export async function cancelOrderById(orderId: string) {
   try {
     await cancelAlpacaOrder(orderId, 'order_cancel');
+    adaptivePollingCoordinator.forceAfterBrokerOrderCancellation(
+      'broker_order_cancel_requested'
+    );
 
     return {
       ok: true,

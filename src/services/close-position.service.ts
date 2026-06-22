@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { createSystemEvent } from './system-event.service.js';
 import { closeAlpacaPosition } from '../integrations/alpaca/positions.adapter.js';
 import { HttpError } from '../errors/http-error.js';
+import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -58,6 +59,10 @@ export async function closePosition(symbol: string) {
   }
 
   const result = await closeAlpacaPosition(upperSymbol, 'position_close');
+
+  adaptivePollingCoordinator.forceAfterBrokerPositionWrite(
+    'broker_position_close_requested'
+  );
 
   const tracked = await prisma.trackedPosition.updateMany({
     where: {

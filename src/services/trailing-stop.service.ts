@@ -8,6 +8,7 @@ import {
 } from '../integrations/alpaca/orders.adapter.js';
 import type { AlpacaOrder } from '../integrations/alpaca/alpaca.types.js';
 import { createSystemEvent } from './system-event.service.js';
+import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
 
 function toNullableNumber(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined || value === '') {
@@ -164,6 +165,12 @@ export async function submitNativeTrailingStopForTrackedPosition(
         },
         'protective_order_submission'
       ));
+
+    if (!existingBrokerOrder) {
+      adaptivePollingCoordinator.forceAfterBrokerOrderCreated(
+        'protective_order_created'
+      );
+    }
 
     const updated = await prisma.trackedPosition.update({
       where: { id: position.id },
