@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Accordion,
   Alert,
   Badge,
   Button,
@@ -287,6 +288,27 @@ function adaptivePollingStatusColor(
   return status === "normal" ? "teal" : "orange";
 }
 
+function DetailPurpose({
+  label,
+  description,
+  color = "blue",
+}: {
+  label: string;
+  description: string;
+  color?: string;
+}) {
+  return (
+    <Group gap="xs" align="center">
+      <Badge color={color} variant="light">
+        {label}
+      </Badge>
+      <Text size="sm" c="dimmed">
+        {description}
+      </Text>
+    </Group>
+  );
+}
+
 function formatMarketState(
   marketState: SystemStatusResponse["adaptivePolling"]["marketState"]
 ) {
@@ -329,6 +351,240 @@ function formatModeReason(
   return "No active local lifecycle";
 }
 
+const adaptivePollingModeRows = [
+  {
+    state: "Open + active",
+    mode: "market_open_active",
+    color: "teal",
+    submittedOrders: "10s when submitted orders exist",
+    trackedPositions: "15s",
+  },
+  {
+    state: "Open + idle",
+    mode: "market_open_idle",
+    color: "blue",
+    submittedOrders: "Not scheduled",
+    trackedPositions: "60s",
+  },
+  {
+    state: "Closed + active",
+    mode: "market_closed_active",
+    color: "orange",
+    submittedOrders: "60s when submitted orders exist",
+    trackedPositions: "2m",
+  },
+  {
+    state: "Closed + idle",
+    mode: "market_closed_idle",
+    color: "gray",
+    submittedOrders: "Not scheduled",
+    trackedPositions: "5m",
+  },
+  {
+    state: "Unknown",
+    mode: "market_unknown",
+    color: "red",
+    submittedOrders: "10s when submitted orders exist",
+    trackedPositions: "15s active / 60s idle",
+  },
+  {
+    state: "Forced write follow-up",
+    mode: "Any mode",
+    color: "violet",
+    submittedOrders: "Next scheduler tick",
+    trackedPositions: "Next scheduler tick when relevant",
+  },
+];
+
+function panelStyle(color: string) {
+  return {
+    borderColor: `var(--mantine-color-${color}-7)`,
+    background: `linear-gradient(135deg, color-mix(in srgb, var(--mantine-color-${color}-9) 18%, transparent), transparent 42%)`,
+  };
+}
+
+function summaryTileStyle(color: string) {
+  return {
+    border: `1px solid var(--mantine-color-${color}-8)`,
+    borderLeft: `4px solid var(--mantine-color-${color}-5)`,
+    borderRadius: 8,
+    background: `color-mix(in srgb, var(--mantine-color-${color}-9) 22%, transparent)`,
+  };
+}
+
+function sectionPanelStyle(color: string) {
+  return {
+    border: `1px solid var(--mantine-color-${color}-8)`,
+    borderTop: `3px solid var(--mantine-color-${color}-5)`,
+    borderRadius: 8,
+    background: `color-mix(in srgb, var(--mantine-color-${color}-9) 12%, transparent)`,
+  };
+}
+
+function tableHeaderStyle(color: string) {
+  return {
+    background: `color-mix(in srgb, var(--mantine-color-${color}-9) 24%, transparent)`,
+  };
+}
+
+function usageTableRowStyle(index: number) {
+  return {
+    background:
+      index % 2 === 0
+        ? "color-mix(in srgb, var(--mantine-color-dark-6) 24%, transparent)"
+        : "color-mix(in srgb, var(--mantine-color-dark-5) 18%, transparent)",
+  };
+}
+
+function modeRowStyle(color: string, isCurrent: boolean) {
+  return {
+    background: isCurrent
+      ? `color-mix(in srgb, var(--mantine-color-${color}-9) 35%, transparent)`
+      : undefined,
+  };
+}
+
+function formatAdaptiveCadence(
+  worker: SystemStatusResponse["adaptivePolling"]["workers"]["submittedOrderSync"],
+  idleLabel = "Not scheduled"
+) {
+  if (worker.forced) return "Next scheduler tick";
+  if (worker.effectiveIntervalMs === null) return idleLabel;
+  return `Every ${formatCadence(worker.effectiveIntervalMs)}`;
+}
+
+function formatEntryMarketState(
+  entrySession: SystemStatusResponse["trading"]["risk"]["entrySession"]
+) {
+  if (entrySession.marketOpen === null) return "Unknown";
+  return entrySession.marketOpen ? "Open" : "Closed";
+}
+
+function BrokerMonitoringSummary({
+  status,
+}: {
+  status: SystemStatusResponse;
+}) {
+  const usage = status.alpacaApiUsage;
+  const adaptivePolling = status.adaptivePolling;
+  const entrySession = status.trading.risk.entrySession;
+  const submittedWorker = adaptivePolling.workers.submittedOrderSync;
+  const positionWorker = adaptivePolling.workers.trackedPositionSync;
+  const requestCount = usage.rolling.fiveMinutes.requestCount;
+  const rateLimited = usage.rateLimit.active;
+  const openOrClosing =
+    adaptivePolling.localActivity.openPositionCount +
+    adaptivePolling.localActivity.closingPositionCount;
+
+  return (
+    <Card withBorder radius="md" p="md" style={panelStyle("cyan")}>
+      <Stack gap="md">
+        <Group justify="space-between" align="flex-start">
+          <div>
+            <Text fw={700}>Broker Monitoring</Text>
+            <Text size="sm" c="dimmed">
+              One view for Alpaca traffic, adaptive polling, and market-entry state.
+            </Text>
+          </div>
+          <Group gap="xs">
+            <Badge color={alpacaApiUsageStatusColor(usage.status)} variant="light">
+              API {formatStatusLabel(usage.status)}
+            </Badge>
+            <Badge
+              color={adaptivePollingStatusColor(adaptivePolling.status)}
+              variant="light"
+            >
+              Polling {formatStatusLabel(adaptivePolling.status)}
+            </Badge>
+          </Group>
+        </Group>
+
+        <SimpleGrid cols={{ base: 1, sm: 2, xl: 4 }}>
+          <Stack
+            gap={2}
+            p="sm"
+            style={summaryTileStyle(
+              adaptivePolling.marketState === "unknown"
+                ? "red"
+                : adaptivePolling.marketState === "open"
+                  ? "teal"
+                  : "orange"
+            )}
+          >
+            <Text size="xs" c="dimmed" tt="uppercase">
+              Current State
+            </Text>
+            <Text size="sm" fw={700}>
+              {formatMarketState(adaptivePolling.marketState)} /{" "}
+              {adaptivePolling.mode.replace(/_/g, " ")}
+            </Text>
+            <Text size="xs" c="dimmed">
+              {openOrClosing} open or closing positions,{" "}
+              {adaptivePolling.localActivity.submittedOrderCount} submitted orders
+            </Text>
+          </Stack>
+
+          <Stack
+            gap={2}
+            p="sm"
+            style={summaryTileStyle("blue")}
+          >
+            <Text size="xs" c="dimmed" tt="uppercase">
+              Alpaca Reads
+            </Text>
+            <Text size="sm" fw={700}>
+              Orders: {formatAdaptiveCadence(submittedWorker)}
+            </Text>
+            <Text size="xs" c="dimmed">
+              Positions: {formatAdaptiveCadence(positionWorker)}
+            </Text>
+          </Stack>
+
+          <Stack
+            gap={2}
+            p="sm"
+            style={summaryTileStyle(rateLimited ? "orange" : "teal")}
+          >
+            <Text size="xs" c="dimmed" tt="uppercase">
+              API Pressure
+            </Text>
+            <Text size="sm" fw={700}>
+              {formatNumber(requestCount)} requests in 5m
+            </Text>
+            <Text size="xs" c={rateLimited ? "orange" : "dimmed"}>
+              {rateLimited
+                ? `Backoff until ${formatDateTime(usage.rateLimit.backoffUntil)}`
+                : "No active rate-limit backoff"}
+            </Text>
+          </Stack>
+
+          <Stack
+            gap={2}
+            p="sm"
+            style={summaryTileStyle(entrySession.canEnterNow ? "teal" : "violet")}
+          >
+            <Text size="xs" c="dimmed" tt="uppercase">
+              Entry Window
+            </Text>
+            <Text size="sm" fw={700}>
+              {formatEntryMarketState(entrySession)} /{" "}
+              {formatEntrySessionStatus(entrySession.status)}
+            </Text>
+            <Text size="xs" c="dimmed">
+              {entrySession.marketOpen ? "Next close" : "Next open"}:{" "}
+              {formatMarketDateTime(
+                entrySession.marketOpen
+                  ? entrySession.nextCloseAt
+                  : entrySession.nextOpenAt
+              )}
+            </Text>
+          </Stack>
+        </SimpleGrid>
+      </Stack>
+    </Card>
+  );
+}
+
 function formatNumber(value: number | null | undefined) {
   if (value === null || value === undefined) return "-";
   return value.toLocaleString();
@@ -346,19 +602,26 @@ function formatWindowCounts(
 function AlpacaUsageGroupTable({
   title,
   groups,
+  color = "blue",
 }: {
   title: string;
   groups: SystemStatusResponse["alpacaApiUsage"]["topOperations"];
+  color?: string;
 }) {
   return (
-    <Stack gap="xs">
-      <Text fw={600} size="sm">
-        {title}
-      </Text>
+    <Stack gap="xs" p="md" style={sectionPanelStyle(color)}>
+      <Group justify="space-between" align="center">
+        <Text fw={600} size="sm">
+          {title}
+        </Text>
+        <Badge color={color} variant="light" size="xs">
+          Top {Math.min(groups.length, 5)}
+        </Badge>
+      </Group>
       {groups.length > 0 ? (
         <ScrollArea>
-          <Table striped highlightOnHover style={{ minWidth: 520 }}>
-            <Table.Thead>
+          <Table highlightOnHover withRowBorders={false} style={{ minWidth: 520 }}>
+            <Table.Thead style={tableHeaderStyle(color)}>
               <Table.Tr>
                 <Table.Th>Name</Table.Th>
                 <Table.Th>Requests</Table.Th>
@@ -368,8 +631,8 @@ function AlpacaUsageGroupTable({
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {groups.slice(0, 5).map((group) => (
-                <Table.Tr key={group.key}>
+              {groups.slice(0, 5).map((group, index) => (
+                <Table.Tr key={group.key} style={usageTableRowStyle(index)}>
                   <Table.Td>
                     <Tooltip label={group.key} multiline maw={420}>
                       <Text size="sm" truncate="end" maw={220}>
@@ -446,8 +709,14 @@ function AlpacaApiUsagePanel({
           </Badge>
         </Group>
 
+        <DetailPurpose
+          label="Traffic"
+          description="Is Alpaca request volume normal?"
+          color="teal"
+        />
+
         <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
-          <Stack gap={2}>
+          <Stack gap={2} p="sm" style={summaryTileStyle("blue")}>
             <Text size="xs" c="dimmed" tt="uppercase">
               Alpaca Requests
             </Text>
@@ -462,7 +731,11 @@ function AlpacaApiUsagePanel({
             </Text>
           </Stack>
 
-          <Stack gap={2}>
+          <Stack
+            gap={2}
+            p="sm"
+            style={summaryTileStyle(fiveMinutes.failureCount > 0 ? "red" : "gray")}
+          >
             <Text size="xs" c="dimmed" tt="uppercase">
               Failed Requests
             </Text>
@@ -478,7 +751,15 @@ function AlpacaApiUsagePanel({
             </Text>
           </Stack>
 
-          <Stack gap={2}>
+          <Stack
+            gap={2}
+            p="sm"
+            style={summaryTileStyle(
+              fiveMinutes.rateLimitCount > 0 || usage.rateLimit.active
+                ? "orange"
+                : "gray"
+            )}
+          >
             <Text size="xs" c="dimmed" tt="uppercase">
               Rate-Limited Requests
             </Text>
@@ -494,7 +775,7 @@ function AlpacaApiUsagePanel({
             </Text>
           </Stack>
 
-          <Stack gap={2}>
+          <Stack gap={2} p="sm" style={summaryTileStyle("teal")}>
             <Text size="xs" c="dimmed" tt="uppercase">
               Saved Usage Data
             </Text>
@@ -513,10 +794,19 @@ function AlpacaApiUsagePanel({
         </SimpleGrid>
 
         <SimpleGrid cols={{ base: 1, md: 2 }}>
-          <Stack gap="xs">
-            <Text fw={600} size="sm">
-              Rate-Limit State
-            </Text>
+          <Stack gap="sm" p="md" style={sectionPanelStyle("orange")}>
+            <Group justify="space-between" align="center">
+              <Text fw={600} size="sm">
+                Rate-Limit State
+              </Text>
+              <Badge
+                color={usage.rateLimit.active ? "orange" : "gray"}
+                variant="light"
+                size="xs"
+              >
+                {usage.rateLimit.active ? "Backoff active" : "No backoff"}
+              </Badge>
+            </Group>
             <SimpleGrid cols={{ base: 1, sm: 2 }}>
               <Text size="sm">
                 Backoff: {usage.rateLimit.active ? "active" : "inactive"}
@@ -542,10 +832,19 @@ function AlpacaApiUsagePanel({
             </SimpleGrid>
           </Stack>
 
-          <Stack gap="xs">
-            <Text fw={600} size="sm">
-              Warning State
-            </Text>
+          <Stack gap="sm" p="md" style={sectionPanelStyle("violet")}>
+            <Group justify="space-between" align="center">
+              <Text fw={600} size="sm">
+                Warning State
+              </Text>
+              <Badge
+                color={usage.warning.active ? "orange" : "gray"}
+                variant="light"
+                size="xs"
+              >
+                {usage.warning.active ? "Warning active" : "Quiet"}
+              </Badge>
+            </Group>
             <SimpleGrid cols={{ base: 1, sm: 2 }}>
               <Text size="sm">
                 Warning: {usage.warning.active ? "active" : "inactive"}
@@ -567,8 +866,13 @@ function AlpacaApiUsagePanel({
           <AlpacaUsageGroupTable
             title="Top Operations"
             groups={usage.topOperations}
+            color="blue"
           />
-          <AlpacaUsageGroupTable title="Top Endpoints" groups={usage.topEndpoints} />
+          <AlpacaUsageGroupTable
+            title="Top Endpoints"
+            groups={usage.topEndpoints}
+            color="cyan"
+          />
         </SimpleGrid>
       </Stack>
     </Card>
@@ -579,10 +883,12 @@ function AdaptiveWorkerStatus({
   title,
   worker,
   idleMessage,
+  accentColor = "blue",
 }: {
   title: string;
   worker: SystemStatusResponse["adaptivePolling"]["workers"]["submittedOrderSync"];
   idleMessage?: string;
+  accentColor?: string;
 }) {
   const cadence =
     worker.effectiveIntervalMs === null
@@ -590,7 +896,12 @@ function AdaptiveWorkerStatus({
       : `Every ${formatCadence(worker.effectiveIntervalMs)}`;
 
   return (
-    <Card withBorder radius="md" p="md">
+    <Card
+      withBorder
+      radius="md"
+      p="md"
+      style={summaryTileStyle(worker.forced ? "violet" : accentColor)}
+    >
       <Stack gap="xs">
         <Group justify="space-between" align="flex-start">
           <Text fw={600}>{title}</Text>
@@ -636,7 +947,12 @@ function AdaptivePollingPanel({
   const activity = adaptivePolling.localActivity;
 
   return (
-    <Card withBorder radius="md" p="md">
+    <Card
+      withBorder
+      radius="md"
+      p="md"
+      style={panelStyle(adaptivePolling.status === "degraded" ? "orange" : "blue")}
+    >
       <Stack gap="md">
         <Group justify="space-between" align="flex-start">
           <div>
@@ -653,8 +969,24 @@ function AdaptivePollingPanel({
           </Badge>
         </Group>
 
+        <DetailPurpose
+          label="Cadence"
+          description="How often are broker-state reads happening?"
+          color="blue"
+        />
+
         <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
-          <Stack gap={2}>
+          <Stack
+            gap={2}
+            p="sm"
+            style={summaryTileStyle(
+              adaptivePolling.marketState === "unknown"
+                ? "red"
+                : adaptivePolling.marketState === "open"
+                  ? "teal"
+                  : "orange"
+            )}
+          >
             <Text size="xs" c="dimmed" tt="uppercase">
               Market
             </Text>
@@ -664,7 +996,17 @@ function AdaptivePollingPanel({
             </Text>
           </Stack>
 
-          <Stack gap={2}>
+          <Stack
+            gap={2}
+            p="sm"
+            style={summaryTileStyle(
+              adaptivePolling.mode === "market_unknown"
+                ? "red"
+                : adaptivePolling.mode.includes("active")
+                  ? "orange"
+                  : "blue"
+            )}
+          >
             <Text size="xs" c="dimmed" tt="uppercase">
               Mode
             </Text>
@@ -674,7 +1016,13 @@ function AdaptivePollingPanel({
             </Text>
           </Stack>
 
-          <Stack gap={2}>
+          <Stack
+            gap={2}
+            p="sm"
+            style={summaryTileStyle(
+              activity.submittedOrderCount > 0 ? "violet" : "gray"
+            )}
+          >
             <Text size="xs" c="dimmed" tt="uppercase">
               Orders
             </Text>
@@ -687,7 +1035,7 @@ function AdaptivePollingPanel({
             </Text>
           </Stack>
 
-          <Stack gap={2}>
+          <Stack gap={2} p="sm" style={summaryTileStyle("teal")}>
             <Text size="xs" c="dimmed" tt="uppercase">
               Positions
             </Text>
@@ -714,12 +1062,81 @@ function AdaptivePollingPanel({
             title="Submitted orders"
             worker={adaptivePolling.workers.submittedOrderSync}
             idleMessage="Status: Idle - no submitted orders. Broker request: not scheduled."
+            accentColor="violet"
           />
           <AdaptiveWorkerStatus
             title="Tracked positions"
             worker={adaptivePolling.workers.trackedPositionSync}
+            accentColor="blue"
           />
         </SimpleGrid>
+
+        <Accordion variant="contained">
+          <Accordion.Item value="cadence-reference">
+            <Accordion.Control>
+              <Group gap="xs">
+                <Text fw={600} size="sm">
+                  Cadence reference
+                </Text>
+                <Badge color="blue" variant="light" size="xs">
+                  Static
+                </Badge>
+              </Group>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <ScrollArea>
+                <Table striped highlightOnHover style={{ minWidth: 720 }}>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>State</Table.Th>
+                      <Table.Th>Mode</Table.Th>
+                      <Table.Th>Submitted orders</Table.Th>
+                      <Table.Th>Tracked positions</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {adaptivePollingModeRows.map((row) => {
+                      const isCurrent = row.mode === adaptivePolling.mode;
+
+                      return (
+                        <Table.Tr
+                          key={row.state}
+                          style={modeRowStyle(row.color, isCurrent)}
+                        >
+                          <Table.Td
+                            style={{
+                              borderLeft: `4px solid var(--mantine-color-${row.color}-5)`,
+                            }}
+                          >
+                            <Group gap="xs" wrap="nowrap">
+                              {isCurrent && (
+                                <Badge color={row.color} variant="light" size="xs">
+                                  Current
+                                </Badge>
+                              )}
+                              <Text size="sm" fw={isCurrent ? 700 : 500}>
+                                {row.state}
+                              </Text>
+                            </Group>
+                          </Table.Td>
+                          <Table.Td>
+                            <Text size="sm">{row.mode}</Text>
+                          </Table.Td>
+                          <Table.Td>
+                            <Text size="sm">{row.submittedOrders}</Text>
+                          </Table.Td>
+                          <Table.Td>
+                            <Text size="sm">{row.trackedPositions}</Text>
+                          </Table.Td>
+                        </Table.Tr>
+                      );
+                    })}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+            </Accordion.Panel>
+          </Accordion.Item>
+        </Accordion>
       </Stack>
     </Card>
   );
@@ -747,6 +1164,12 @@ function WorkerHealthTable({
             {formatStatusLabel(health.summary.status)}
           </Badge>
         </Group>
+
+        <DetailPurpose
+          label="Scheduler"
+          description="Is each background worker alive and completing work?"
+          color="gray"
+        />
 
         <ScrollArea>
           <Table striped highlightOnHover style={{ minWidth: 980 }}>
@@ -1394,91 +1817,57 @@ export function SettingsPage() {
                     </Card>
                   </SimpleGrid>
 
+                  <BrokerMonitoringSummary status={systemStatus} />
+
+                  <Accordion
+                    multiple
+                    defaultValue={["api-usage", "adaptive-polling"]}
+                    variant="contained"
+                  >
+                    <Accordion.Item value="api-usage">
+                      <Accordion.Control>
+                        <Group gap="xs">
+                          <Text fw={600}>API Usage Details</Text>
+                          <Badge
+                            color={alpacaApiUsageStatusColor(
+                              systemStatus.alpacaApiUsage.status
+                            )}
+                            variant="light"
+                            size="xs"
+                          >
+                            {formatStatusLabel(systemStatus.alpacaApiUsage.status)}
+                          </Badge>
+                        </Group>
+                      </Accordion.Control>
+                      <Accordion.Panel>
+                        <AlpacaApiUsagePanel usage={systemStatus.alpacaApiUsage} />
+                      </Accordion.Panel>
+                    </Accordion.Item>
+
+                    <Accordion.Item value="adaptive-polling">
+                      <Accordion.Control>
+                        <Group gap="xs">
+                          <Text fw={600}>Adaptive Polling Details</Text>
+                          <Badge
+                            color={adaptivePollingStatusColor(
+                              systemStatus.adaptivePolling.status
+                            )}
+                            variant="light"
+                            size="xs"
+                          >
+                            {formatStatusLabel(systemStatus.adaptivePolling.status)}
+                          </Badge>
+                        </Group>
+                      </Accordion.Control>
+                      <Accordion.Panel>
+                        <AdaptivePollingPanel
+                          adaptivePolling={systemStatus.adaptivePolling}
+                        />
+                      </Accordion.Panel>
+                    </Accordion.Item>
+                  </Accordion>
+
                   <WorkerHealthTable health={systemStatus.workers.health} />
-
-                  <AlpacaApiUsagePanel usage={systemStatus.alpacaApiUsage} />
-
-                  <AdaptivePollingPanel
-                    adaptivePolling={systemStatus.adaptivePolling}
-                  />
-
-                  <Card withBorder radius="md" p="md">
-                    <Group justify="space-between" align="flex-start">
-                      <div>
-                        <Text fw={600}>Entry Trading Window</Text>
-                        <Text size="sm" c="dimmed">
-                          Current regular-session entry policy from backend risk
-                          status.
-                        </Text>
-                      </div>
-                      <Badge
-                        color={
-                          systemStatus.trading.risk.entrySession.canEnterNow
-                            ? "teal"
-                            : systemStatus.trading.risk.entrySession.status ===
-                                "disabled"
-                              ? "gray"
-                              : "orange"
-                        }
-                        variant="light"
-                      >
-                        {formatEntrySessionStatus(
-                          systemStatus.trading.risk.entrySession.status
-                        )}
-                      </Badge>
-                    </Group>
-
-                    <SimpleGrid cols={{ base: 1, sm: 2, lg: 5 }} mt="sm">
-                      <Text size="sm">
-                        Market:{" "}
-                        {systemStatus.trading.risk.entrySession.marketOpen === null
-                          ? "-"
-                          : systemStatus.trading.risk.entrySession.marketOpen
-                            ? "Open"
-                            : "Closed"}
-                      </Text>
-                      <Text size="sm">
-                        Regular session:{" "}
-                        {formatSessionRange(
-                          systemStatus.trading.risk.entrySession.sessionOpenAt,
-                          systemStatus.trading.risk.entrySession.sessionCloseAt
-                        )}
-                      </Text>
-                      <Text size="sm">
-                        Entries:{" "}
-                        {formatEntryPermission(
-                          systemStatus.trading.risk.entrySession.canEnterNow,
-                          systemStatus.trading.risk.entrySession.entryAllowedAt,
-                          systemStatus.trading.risk.entrySession.entryCutoffAt,
-                          systemStatus.trading.risk.entrySession.sessionCloseAt
-                        )}
-                      </Text>
-                      <Text size="sm">
-                        {systemStatus.trading.risk.entrySession.marketOpen
-                          ? "Next close"
-                          : "Next open"}
-                        :{" "}
-                        {formatMarketDateTime(
-                          systemStatus.trading.risk.entrySession.marketOpen
-                            ? systemStatus.trading.risk.entrySession.nextCloseAt
-                            : systemStatus.trading.risk.entrySession.nextOpenAt
-                        )}
-                      </Text>
-                      <Text size="sm">
-                        Evaluated:{" "}
-                        {formatDateTime(
-                          systemStatus.trading.risk.entrySession.evaluatedAt
-                        )}
-                      </Text>
-                    </SimpleGrid>
-
-                    {systemStatus.trading.risk.entrySession.error && (
-                      <Text size="xs" c="dimmed" mt="xs">
-                        Session warning:{" "}
-                        {systemStatus.trading.risk.entrySession.error.message}
-                      </Text>
-                    )}
-                  </Card>
 
                   <Grid>
                     <Grid.Col span={{ base: 12, md: 6 }}>
@@ -2130,21 +2519,6 @@ export function SettingsPage() {
   );
 }
 
-function formatTime(value: string | null | undefined) {
-  if (!value) return "-";
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) return "-";
-
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: "America/New_York",
-    timeZoneName: "short",
-  }).format(date);
-}
-
 function formatMarketDateTime(value: string | null | undefined) {
   if (!value) return "-";
 
@@ -2165,26 +2539,4 @@ function formatMarketDateTime(value: string | null | undefined) {
 
 function formatEntrySessionStatus(status: string) {
   return status.replace(/_/g, " ");
-}
-
-function formatSessionRange(
-  start: string | null | undefined,
-  end: string | null | undefined
-) {
-  if (!start || !end) return "No regular session today";
-
-  return `${formatTime(start)}-${formatTime(end)}`;
-}
-
-function formatEntryPermission(
-  canEnterNow: boolean,
-  start: string | null | undefined,
-  cutoff: string | null | undefined,
-  sessionClose: string | null | undefined
-) {
-  const state = canEnterNow ? "Permitted" : "Not permitted";
-
-  if (!start) return state;
-
-  return `${state} (${formatTime(start)}-${cutoff ? formatTime(cutoff) : formatTime(sessionClose)})`;
 }
