@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import type { SetStateAction } from "react";
 import {
   Accordion,
   Alert,
@@ -130,6 +131,16 @@ function configToEntrySessionDraft(
   };
 }
 
+function configToReconciliationDraft(
+  config: RuntimeTradingConfig
+): ReconciliationSettingsDraft {
+  return {
+    reconciliationWorkerEnabled: config.reconciliationWorkerEnabled,
+    reconciliationWorkerIntervalMinutes:
+      config.reconciliationWorkerIntervalMinutes,
+  };
+}
+
 function normalizeNumberInput(value: string | number): number | null {
   if (value === "") return null;
 
@@ -233,6 +244,28 @@ function formatCadence(value: number) {
 
 function formatStatusLabel(value: string) {
   return value.replace(/_/g, " ").toUpperCase();
+}
+
+function useConfigDraft<T>(source: T | null) {
+  const [draft, setDraftState] = useState<T | null>(null);
+
+  const value = draft ?? source;
+
+  function setDraft(next: SetStateAction<T | null>) {
+    setDraftState((currentDraft) => {
+      const currentValue = currentDraft ?? source;
+
+      return typeof next === "function"
+        ? (next as (previous: T | null) => T | null)(currentValue)
+        : next;
+    });
+  }
+
+  function resetDraft() {
+    setDraftState(null);
+  }
+
+  return [value, setDraft, resetDraft] as const;
 }
 
 function workerStatusColor(status: string) {
@@ -1324,37 +1357,32 @@ export function SettingsPage() {
   const theme = useMantineTheme();
   const [token] = useState<string | null>(() => getAdminToken());
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
-  const [riskForm, setRiskForm] = useState<RiskLimitForm | null>(null);
+
   const systemStatusQuery = useSystemStatus(token);
   const systemStatus = systemStatusQuery.data;
-  const [reconciliationDraft, setReconciliationDraft] = useState<ReconciliationSettingsDraft | null>(null);
-  const [entrySessionDraft, setEntrySessionDraft] =
-    useState<EntrySessionSettingsDraft | null>(null);
 
   const { data: config, isLoading, isError } = useConfig(token);
   const updateMutation = useUpdateConfig(token);
 
-  useEffect(() => {
-    if (config) {
-      setRiskForm(configToRiskForm(config));
-      setEntrySessionDraft(configToEntrySessionDraft(config));
-    }
-  }, [config]);
+  const [riskForm, setRiskForm, resetRiskFormDraft] = useConfigDraft(
+    config ? configToRiskForm(config) : null
+  );
 
-  useEffect(() => {
-    if (!config) {
-      return;
-    }
+  const [
+    reconciliationDraft,
+    setReconciliationDraft,
+    resetReconciliationDraft,
+  ] = useConfigDraft(
+    config ? configToReconciliationDraft(config) : null
+  );
 
-    setReconciliationDraft({
-      reconciliationWorkerEnabled: config.reconciliationWorkerEnabled,
-      reconciliationWorkerIntervalMinutes:
-        config.reconciliationWorkerIntervalMinutes,
-    });
-  }, [
-    config?.reconciliationWorkerEnabled,
-    config?.reconciliationWorkerIntervalMinutes,
-  ]);
+  const [
+    entrySessionDraft,
+    setEntrySessionDraft,
+    resetEntrySessionDraft,
+  ] = useConfigDraft(
+    config ? configToEntrySessionDraft(config) : null
+  );
 
   const entryStatus = useMemo(() => {
     if (!config) return null;
@@ -1520,12 +1548,11 @@ export function SettingsPage() {
     if (!riskForm) return;
 
     await applyUpdate(riskForm);
+    resetRiskFormDraft();
   }
 
   function handleResetRiskForm() {
-    if (config) {
-      setRiskForm(configToRiskForm(config));
-    }
+    resetRiskFormDraft();
   }
 
   const reconciliationSettingsChanged =
@@ -1566,15 +1593,7 @@ export function SettingsPage() {
     reconciliationDraft.reconciliationWorkerIntervalMinutes <= 1440;
 
   function resetReconciliationSettings() {
-    if (!config) {
-      return;
-    }
-
-    setReconciliationDraft({
-      reconciliationWorkerEnabled: config.reconciliationWorkerEnabled,
-      reconciliationWorkerIntervalMinutes:
-        config.reconciliationWorkerIntervalMinutes,
-    });
+    resetReconciliationDraft();
   }
 
   async function saveReconciliationSettings() {
@@ -1588,14 +1607,12 @@ export function SettingsPage() {
       reconciliationWorkerIntervalMinutes:
         reconciliationDraft.reconciliationWorkerIntervalMinutes,
     });
+
+    resetReconciliationDraft();
   }
 
   function resetEntrySessionSettings() {
-    if (!config) {
-      return;
-    }
-
-    setEntrySessionDraft(configToEntrySessionDraft(config));
+    resetEntrySessionDraft();
   }
 
   async function saveEntrySessionSettings() {
@@ -1604,6 +1621,7 @@ export function SettingsPage() {
     }
 
     await applyUpdate(entrySessionDraft);
+    resetEntrySessionDraft();
   }
 
   return (

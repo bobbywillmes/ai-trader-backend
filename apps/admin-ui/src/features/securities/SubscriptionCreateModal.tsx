@@ -1,5 +1,5 @@
 import { Modal } from '@mantine/core';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import type { Strategy } from '../strategies/types';
 import type { ExitProfile } from '../exitProfiles/types';
 import type { CreateSubscriptionPayload } from '../subscriptions/types';
@@ -34,7 +34,20 @@ type Props = {
   isPending: boolean;
 };
 
-export function SubscriptionCreateModal({
+export function SubscriptionCreateModal(props: Props) {
+  if (!props.isOpen) {
+    return null;
+  }
+
+  return (
+    <SubscriptionCreateModalContent
+      key={props.symbol}
+      {...props}
+    />
+  );
+}
+
+function SubscriptionCreateModalContent({
   symbol,
   strategies,
   exitProfiles,
@@ -43,17 +56,11 @@ export function SubscriptionCreateModal({
   onSave,
   isPending,
 }: Props) {
-  const [form, setForm] = useState<CreateForm>(EMPTY_FORM);
-
-  useEffect(() => {
-    if (isOpen) {
-      setForm({
-        ...EMPTY_FORM,
-        strategyId: strategies.length === 1 ? strategies[0].id.toString() : '',
-        exitProfileId: exitProfiles.length === 1 ? exitProfiles[0].id.toString() : '',
-      });
-    }
-  }, [isOpen, strategies, exitProfiles]);
+  const [form, setForm] = useState<CreateForm>(() => ({
+    ...EMPTY_FORM,
+    strategyId: strategies.length === 1 ? strategies[0].id.toString() : '',
+    exitProfileId: exitProfiles.length === 1 ? exitProfiles[0].id.toString() : '',
+  }));
 
   const selectedProfile = exitProfiles.find(
     (p) => p.id.toString() === form.exitProfileId

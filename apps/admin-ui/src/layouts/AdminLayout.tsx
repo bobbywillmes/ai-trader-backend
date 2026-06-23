@@ -46,7 +46,6 @@ const navGroups: NavGroup[] = [
       { to: "/system/events", label: "System Events" },
       { to: "/system/reconciliation", label: "Reconciliation" },
       { to: "/settings", label: "Settings" },
-      { to: "/legacy", label: "Legacy Admin" },
     ],
   },
 ];

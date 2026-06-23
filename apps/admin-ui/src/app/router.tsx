@@ -4,7 +4,6 @@ import { AdminLayout } from "../layouts/AdminLayout";
 import { HomePage } from "../pages/HomePage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
-import LegacyAdminPage from "../features/legacy/LegacyAdminPage";
 import { SubscriptionsPage } from "../features/subscriptions/SubscriptionsPage";
 import { ExitProfilesPage } from "../features/exitProfiles/ExitProfilesPage";
 import { PositionsPage } from "../features/positions/PositionsPage";
@@ -34,10 +33,6 @@ export const router = createBrowserRouter([
       {
         path: "dashboard",
         element: <DashboardPage />,
-      },
-      {
-        path: "legacy",
-        element: <LegacyAdminPage />,
       },
       {
         path: "positions/open",

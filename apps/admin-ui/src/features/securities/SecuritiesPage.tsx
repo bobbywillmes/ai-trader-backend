@@ -267,18 +267,11 @@ export function SecuritiesPage() {
 
     setSearchParams(nextParams, { replace: true });
 
-    const availableIndustries = filters?.industries;
-    if (!industry || !availableIndustries) {
-      return;
-    }
-    if (!availableIndustries.includes(industry)) {
-      setPage(1);
-      setIndustry('');
-    }
   }, [
     page,
     pageSize,
     search,
+    assetType,
     sector,
     industry,
     enabledFilter,
@@ -286,8 +279,6 @@ export function SecuritiesPage() {
     sortBy,
     sortDirection,
     setSearchParams,
-    industry,
-    filters?.industries,
   ]);
 
   return (

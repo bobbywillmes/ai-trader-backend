@@ -1,5 +1,5 @@
 import { Modal } from '@mantine/core';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import type { SecuritySubscription } from './types';
 import type { ExitProfile } from '../exitProfiles/types';
 
@@ -23,36 +23,44 @@ type Props = {
   isPending: boolean;
 };
 
-export function SubscriptionEditModal({
+type EditModalContentProps = Omit<Props, 'subscription'> & {
+  subscription: SecuritySubscription;
+};
+
+export function SubscriptionEditModal(props: Props) {
+  if (!props.isOpen || !props.subscription) {
+    return null;
+  }
+
+  return (
+    <SubscriptionEditModalContent
+      key={props.subscription.id}
+      {...props}
+      subscription={props.subscription}
+    />
+  );
+}
+
+function SubscriptionEditModalContent({
   subscription,
   exitProfiles,
   isOpen,
   onClose,
   onSave,
   isPending,
-}: Props) {
-  const [form, setForm] = useState<EditForm>({
-    sizingType: 'fixed_qty',
-    sizingValue: '',
-    exitProfileId: '',
-  });
-
-  useEffect(() => {
-    if (subscription) {
-      setForm({
-        sizingType: subscription.sizingType,
-        sizingValue: subscription.sizingValue.toString(),
-        exitProfileId: subscription.exitProfile?.id?.toString() ?? '',
-      });
-    }
-  }, [subscription]);
+}: EditModalContentProps) {
+  const [form, setForm] = useState<EditForm>(() => ({
+    sizingType: subscription.sizingType,
+    sizingValue: subscription.sizingValue.toString(),
+    exitProfileId: subscription.exitProfile?.id?.toString() ?? '',
+  }));
 
   const selectedProfile = exitProfiles.find(
     (p) => p.id.toString() === form.exitProfileId
   );
 
   function handleSave() {
-    if (!subscription || !form.exitProfileId) return;
+    if (!form.exitProfileId) return;
     const sizingValue = parseFloat(form.sizingValue);
     if (isNaN(sizingValue) || sizingValue <= 0) return;
     onSave({
@@ -67,7 +75,7 @@ export function SubscriptionEditModal({
     <Modal
       opened={isOpen}
       onClose={onClose}
-      title={subscription ? `Edit: ${subscription.name}` : 'Edit Subscription'}
+      title={`Edit: ${subscription.name}`}
       size="md"
       centered
     >

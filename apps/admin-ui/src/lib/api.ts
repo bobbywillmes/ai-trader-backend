@@ -75,7 +75,7 @@ export async function apiRequest<T>(
 
   const responseText = await response.text();
 
-  let data: any = null;
+  let data: unknown = null;
 
   if (responseText) {
     try {
@@ -86,7 +86,15 @@ export async function apiRequest<T>(
   }
 
   if (!response.ok) {
-    throw new Error(data?.message ?? `Request failed with status ${response.status}`);
+    const message =
+      typeof data === "object" &&
+      data !== null &&
+      "message" in data &&
+      typeof data.message === "string"
+        ? data.message
+        : `Request failed with status ${response.status}`;
+
+    throw new Error(message);
   }
 
   return data as T;
