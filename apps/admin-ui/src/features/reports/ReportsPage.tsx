@@ -18,6 +18,7 @@ import {
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { IconFileAnalytics } from "@tabler/icons-react";
 import {
   Bar,
   BarChart,
@@ -32,6 +33,11 @@ import {
   YAxis,
 } from "recharts";
 import { getAdminToken } from "../../lib/api";
+import { useExitProfiles } from "../exitProfiles/hooks";
+import { TradeCycleDrawer } from "../tradeHistory/TradeCycleDrawer";
+import { useTradeCycleDrawer } from "../tradeHistory/hooks";
+import { useStrategies } from "../strategies/hooks";
+import { useSubscriptions } from "../subscriptions/hooks";
 import {
   useAccountSnapshotTrends,
   useAccountSnapshots,
@@ -44,6 +50,11 @@ import type {
   AccountSnapshot,
   BrokerActivitiesQuery,
   TradePerformanceGroup,
+  TradePerformanceOutcome,
+  TradePerformanceQuery,
+  TradePerformanceSortBy,
+  TradePerformanceSortDirection,
+  TradePerformanceTradeRow,
 } from "./types";
 
 function formatDate(value: string | null) {
@@ -164,6 +175,22 @@ function performanceColor(value: number) {
   if (value > 0) return "#12b886";
   if (value < 0) return "#fa5252";
   return "#868e96";
+}
+
+function pnlTextColor(value: number | null | undefined) {
+  if (value === null || value === undefined) return "dimmed";
+  if (value > 0) return "teal";
+  if (value < 0) return "red";
+  return "dimmed";
+}
+
+function getSortLabel(
+  column: TradePerformanceSortBy,
+  sortBy: TradePerformanceSortBy,
+  sortDirection: TradePerformanceSortDirection
+) {
+  if (column !== sortBy) return "";
+  return sortDirection === "asc" ? " ↑" : " ↓";
 }
 
 function PerformanceTooltip({
@@ -343,6 +370,266 @@ function AccountTrendChart({
   );
 }
 
+function PerformanceSortHeader({
+  column,
+  label,
+  align = "left",
+  sortBy,
+  sortDirection,
+  onSort,
+}: {
+  column: TradePerformanceSortBy;
+  label: string;
+  align?: "left" | "right";
+  sortBy: TradePerformanceSortBy;
+  sortDirection: TradePerformanceSortDirection;
+  onSort: (sortBy: TradePerformanceSortBy) => void;
+}) {
+  return (
+    <Table.Th ta={align}>
+      <Button
+        variant="subtle"
+        size="compact-sm"
+        onClick={() => onSort(column)}
+      >
+        {label}
+        {getSortLabel(column, sortBy, sortDirection)}
+      </Button>
+    </Table.Th>
+  );
+}
+
+function PerformancePaginationFooter({
+  page,
+  pageSize,
+  total,
+  totalPages,
+  rowCount,
+  isFetching,
+  onPageChange,
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  rowCount: number;
+  isFetching: boolean;
+  onPageChange: (page: number) => void;
+}) {
+  const firstResult = total === 0 || rowCount === 0 ? 0 : (page - 1) * pageSize + 1;
+  const lastResult =
+    total === 0 || rowCount === 0
+      ? 0
+      : Math.min(firstResult + rowCount - 1, total);
+
+  return (
+    <Group justify="space-between">
+      <Text size="sm" c="dimmed">
+        Showing {firstResult}-{lastResult} of {total}
+      </Text>
+      <Group gap="xs">
+        <Button
+          size="xs"
+          variant="default"
+          disabled={page <= 1 || isFetching}
+          onClick={() => onPageChange(Math.max(1, page - 1))}
+        >
+          Previous
+        </Button>
+        <Text size="sm">
+          Page {page} of {totalPages}
+        </Text>
+        <Button
+          size="xs"
+          variant="default"
+          disabled={page >= totalPages || isFetching}
+          onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+        >
+          Next
+        </Button>
+      </Group>
+    </Group>
+  );
+}
+
+function PerformanceTradesTable({
+  trades,
+  page,
+  pageSize,
+  total,
+  totalPages,
+  sortBy,
+  sortDirection,
+  isFetching,
+  onPageChange,
+  onSort,
+  onOpenCycle,
+}: {
+  trades: TradePerformanceTradeRow[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  sortBy: TradePerformanceSortBy;
+  sortDirection: TradePerformanceSortDirection;
+  isFetching: boolean;
+  onPageChange: (page: number) => void;
+  onSort: (sortBy: TradePerformanceSortBy) => void;
+  onOpenCycle: (cycleId: number) => void;
+}) {
+  if (trades.length === 0) {
+    return (
+      <Stack gap="sm">
+        <Text c="dimmed">No completed trades match these filters.</Text>
+        {total > 0 && (
+          <PerformancePaginationFooter
+            page={page}
+            pageSize={pageSize}
+            total={total}
+            totalPages={totalPages}
+            rowCount={trades.length}
+            isFetching={isFetching}
+            onPageChange={onPageChange}
+          />
+        )}
+      </Stack>
+    );
+  }
+
+  return (
+    <Stack gap="sm">
+      <ScrollArea>
+        <Table striped highlightOnHover withTableBorder miw={1120}>
+          <Table.Thead>
+            <Table.Tr>
+              <PerformanceSortHeader
+                column="symbol"
+                label="Symbol"
+                sortBy={sortBy}
+                sortDirection={sortDirection}
+                onSort={onSort}
+              />
+              <Table.Th>Mode</Table.Th>
+              <PerformanceSortHeader
+                column="openedAt"
+                label="Opened"
+                sortBy={sortBy}
+                sortDirection={sortDirection}
+                onSort={onSort}
+              />
+              <PerformanceSortHeader
+                column="closedAt"
+                label="Closed"
+                sortBy={sortBy}
+                sortDirection={sortDirection}
+                onSort={onSort}
+              />
+              <Table.Th ta="right">Qty</Table.Th>
+              <Table.Th ta="right">Avg Entry</Table.Th>
+              <Table.Th ta="right">Avg Exit</Table.Th>
+              <PerformanceSortHeader
+                column="realizedPnl"
+                label="P/L"
+                align="right"
+                sortBy={sortBy}
+                sortDirection={sortDirection}
+                onSort={onSort}
+              />
+              <PerformanceSortHeader
+                column="returnPct"
+                label="Return"
+                align="right"
+                sortBy={sortBy}
+                sortDirection={sortDirection}
+                onSort={onSort}
+              />
+              <PerformanceSortHeader
+                column="holdingDurationMs"
+                label="Hold"
+                sortBy={sortBy}
+                sortDirection={sortDirection}
+                onSort={onSort}
+              />
+              <Table.Th>Strategy</Table.Th>
+              <Table.Th>Exit</Table.Th>
+              <Table.Th />
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {trades.map((trade) => (
+              <Table.Tr key={trade.id}>
+                <Table.Td>
+                  <Text fw={700}>{trade.symbol}</Text>
+                  <Text size="xs" c="dimmed">
+                    {trade.side}
+                  </Text>
+                </Table.Td>
+                <Table.Td>
+                  <Badge size="sm" variant="light">
+                    {trade.mode ?? "-"}
+                  </Badge>
+                </Table.Td>
+                <Table.Td>{formatDate(trade.openedAt)}</Table.Td>
+                <Table.Td>{formatDate(trade.closedAt)}</Table.Td>
+                <Table.Td ta="right">{formatNumber(trade.quantity)}</Table.Td>
+                <Table.Td ta="right">{formatMoney(trade.avgEntryPrice)}</Table.Td>
+                <Table.Td ta="right">{formatMoney(trade.avgExitPrice)}</Table.Td>
+                <Table.Td ta="right">
+                  <Text fw={700} c={pnlTextColor(trade.realizedPnl)} size="sm">
+                    {formatMoney(trade.realizedPnl)}
+                  </Text>
+                </Table.Td>
+                <Table.Td ta="right">
+                  <Text fw={700} c={pnlTextColor(trade.returnPct)} size="sm">
+                    {formatPercent(trade.returnPct)}
+                  </Text>
+                </Table.Td>
+                <Table.Td>{formatDuration(trade.holdingDurationMs)}</Table.Td>
+                <Table.Td>
+                  <Stack gap={2}>
+                    <Text size="sm">{trade.strategy?.name ?? "-"}</Text>
+                    <Text size="xs" c="dimmed">
+                      {trade.subscription?.name ?? trade.subscription?.key ?? "-"}
+                    </Text>
+                  </Stack>
+                </Table.Td>
+                <Table.Td>
+                  <Stack gap={2}>
+                    <Text size="sm">{trade.exitProfile?.name ?? "-"}</Text>
+                    <Text size="xs" c="dimmed">
+                      {trade.exitReason ?? "-"}
+                    </Text>
+                  </Stack>
+                </Table.Td>
+                <Table.Td>
+                  <Button
+                    size="xs"
+                    variant="default"
+                    leftSection={<IconFileAnalytics size={14} />}
+                    onClick={() => onOpenCycle(trade.id)}
+                  >
+                    Lifecycle
+                  </Button>
+                </Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+      </ScrollArea>
+
+      <PerformancePaginationFooter
+        page={page}
+        pageSize={pageSize}
+        total={total}
+        totalPages={totalPages}
+        rowCount={trades.length}
+        isFetching={isFetching}
+        onPageChange={onPageChange}
+      />
+    </Stack>
+  );
+}
+
 export function ReportsPage() {
   const [token] = useState(() => getAdminToken());
 
@@ -354,6 +641,23 @@ export function ReportsPage() {
   const [activityTypeFilter, setActivityTypeFilter] = useState<string | null>(
     "FILL"
   );
+  const [performanceSymbolFilter, setPerformanceSymbolFilter] = useState("");
+  const [performanceStrategyId, setPerformanceStrategyId] = useState<string | null>(null);
+  const [performanceSubscriptionId, setPerformanceSubscriptionId] = useState<string | null>(null);
+  const [performanceExitProfileId, setPerformanceExitProfileId] = useState<string | null>(null);
+  const [performanceExitReason, setPerformanceExitReason] = useState<string | null>(null);
+  const [performanceOutcome, setPerformanceOutcome] =
+    useState<TradePerformanceOutcome>("all");
+  const [performancePage, setPerformancePage] = useState(1);
+  const [performancePageSize, setPerformancePageSize] = useState(25);
+  const [performanceSortBy, setPerformanceSortBy] =
+    useState<TradePerformanceSortBy>("closedAt");
+  const [performanceSortDirection, setPerformanceSortDirection] =
+    useState<TradePerformanceSortDirection>("desc");
+  const tradeCycleDrawer = useTradeCycleDrawer(token);
+  const strategiesQuery = useStrategies(token);
+  const subscriptionsQuery = useSubscriptions(token);
+  const exitProfilesQuery = useExitProfiles(token);
 
   const brokerQuery = useMemo(() => {
     const query: BrokerActivitiesQuery = {
@@ -383,15 +687,42 @@ export function ReportsPage() {
     };
   }, [reportModeFilter, reportTimespan, snapshotLimit]);
 
-  const performanceQuery = useMemo(() => {
+  const performanceQuery = useMemo<TradePerformanceQuery>(() => {
     const dateFrom = getTimespanDateFrom(reportTimespan);
+    const symbol = performanceSymbolFilter.trim().toUpperCase();
 
     return {
-      limit: 5000,
+      page: performancePage,
+      pageSize: performancePageSize,
+      sortBy: performanceSortBy,
+      sortDirection: performanceSortDirection,
       ...(reportModeFilter !== "all" ? { mode: reportModeFilter } : {}),
       ...(dateFrom ? { dateFrom } : {}),
+      ...(symbol ? { symbol } : {}),
+      ...(performanceStrategyId ? { strategyId: Number(performanceStrategyId) } : {}),
+      ...(performanceSubscriptionId
+        ? { subscriptionId: Number(performanceSubscriptionId) }
+        : {}),
+      ...(performanceExitProfileId
+        ? { exitProfileId: Number(performanceExitProfileId) }
+        : {}),
+      ...(performanceExitReason ? { exitReason: performanceExitReason } : {}),
+      ...(performanceOutcome !== "all" ? { outcome: performanceOutcome } : {}),
     };
-  }, [reportModeFilter, reportTimespan]);
+  }, [
+    performanceExitProfileId,
+    performanceExitReason,
+    performanceOutcome,
+    performancePage,
+    performancePageSize,
+    performanceSortBy,
+    performanceSortDirection,
+    performanceStrategyId,
+    performanceSubscriptionId,
+    performanceSymbolFilter,
+    reportModeFilter,
+    reportTimespan,
+  ]);
 
   const accountSnapshotsQuery = useAccountSnapshots(token, accountSnapshotQuery);
   const accountSnapshotTrendsQuery = useAccountSnapshotTrends(
@@ -408,12 +739,74 @@ export function ReportsPage() {
   const trendSnapshots = accountSnapshotTrendsQuery.data?.snapshots ?? [];
   const activities = brokerActivitiesQuery.data?.activities ?? [];
   const performance = tradePerformanceQuery.data;
+  const performanceTrades = performance?.trades ?? [];
+  const performancePagination = performance?.pagination;
   const latestSnapshot = snapshots[0];
   const accountTrendData = trendSnapshots.map((snapshot) => ({
     ...snapshot,
     grossExposure: snapshot.exposure.grossExposure,
     grossExposurePct: snapshot.exposure.grossExposurePct,
   }));
+  const strategyOptions = [
+    { value: "", label: "All strategies" },
+    ...(strategiesQuery.data ?? []).map((strategy) => ({
+      value: String(strategy.id),
+      label: strategy.name,
+    })),
+  ];
+  const subscriptionOptions = [
+    { value: "", label: "All subscriptions" },
+    ...(subscriptionsQuery.data ?? []).map((subscription) => ({
+      value: String(subscription.id),
+      label: subscription.key,
+    })),
+  ];
+  const exitProfileOptions = [
+    { value: "", label: "All exit profiles" },
+    ...(exitProfilesQuery.data ?? []).map((profile) => ({
+      value: String(profile.id),
+      label: profile.name,
+    })),
+  ];
+  const exitReasonOptions = [
+    { value: "", label: "All exit reasons" },
+    ...Array.from(
+      new Set([
+        ...(performance?.groups.byExitReason ?? [])
+          .map((group) => group.id)
+          .filter((value) => value !== "unknown"),
+        ...(performanceExitReason ? [performanceExitReason] : []),
+      ])
+    ).map((reason) => ({ value: reason, label: reason })),
+  ];
+
+  function resetPerformancePage() {
+    setPerformancePage(1);
+  }
+
+  function clearPerformanceFilters() {
+    setPerformanceSymbolFilter("");
+    setPerformanceStrategyId(null);
+    setPerformanceSubscriptionId(null);
+    setPerformanceExitProfileId(null);
+    setPerformanceExitReason(null);
+    setPerformanceOutcome("all");
+    setPerformancePage(1);
+  }
+
+  function handlePerformanceSort(nextSortBy: TradePerformanceSortBy) {
+    setPerformancePage(1);
+
+    if (performanceSortBy === nextSortBy) {
+      setPerformanceSortDirection((current) =>
+        current === "asc" ? "desc" : "asc"
+      );
+      return;
+    }
+
+    setPerformanceSortBy(nextSortBy);
+    setPerformanceSortDirection(nextSortBy === "symbol" ? "asc" : "desc");
+  }
 
   async function handleManualSnapshot() {
     try {
@@ -470,7 +863,10 @@ export function ReportsPage() {
           <Select
             label="Mode"
             value={reportModeFilter}
-            onChange={(value) => setReportModeFilter(value ?? "all")}
+            onChange={(value) => {
+              setReportModeFilter(value ?? "all");
+              setPerformancePage(1);
+            }}
             data={[
               { value: "all", label: "All" },
               { value: "paper", label: "Paper" },
@@ -482,7 +878,10 @@ export function ReportsPage() {
           <Select
             label="Timespan"
             value={reportTimespan}
-            onChange={(value) => setReportTimespan(value ?? "all")}
+            onChange={(value) => {
+              setReportTimespan(value ?? "all");
+              setPerformancePage(1);
+            }}
             data={[
               { value: "today", label: "Today" },
               { value: "7d", label: "7 days" },
@@ -582,6 +981,105 @@ export function ReportsPage() {
           </Group>
 
           <Divider />
+
+          <Group align="flex-end">
+            <TextInput
+              label="Symbol"
+              placeholder="SPY"
+              value={performanceSymbolFilter}
+              onChange={(event) => {
+                setPerformanceSymbolFilter(event.currentTarget.value);
+                resetPerformancePage();
+              }}
+              w={110}
+            />
+
+            <Select
+              label="Strategy"
+              value={performanceStrategyId ?? ""}
+              onChange={(value) => {
+                setPerformanceStrategyId(value || null);
+                resetPerformancePage();
+              }}
+              data={strategyOptions}
+              searchable
+              w={190}
+            />
+
+            <Select
+              label="Subscription"
+              value={performanceSubscriptionId ?? ""}
+              onChange={(value) => {
+                setPerformanceSubscriptionId(value || null);
+                resetPerformancePage();
+              }}
+              data={subscriptionOptions}
+              searchable
+              w={190}
+            />
+
+            <Select
+              label="Exit profile"
+              value={performanceExitProfileId ?? ""}
+              onChange={(value) => {
+                setPerformanceExitProfileId(value || null);
+                resetPerformancePage();
+              }}
+              data={exitProfileOptions}
+              searchable
+              w={190}
+            />
+
+            <Select
+              label="Exit reason"
+              value={performanceExitReason ?? ""}
+              onChange={(value) => {
+                setPerformanceExitReason(value || null);
+                resetPerformancePage();
+              }}
+              data={exitReasonOptions}
+              searchable
+              w={180}
+            />
+
+            <Select
+              label="Outcome"
+              value={performanceOutcome}
+              onChange={(value) => {
+                setPerformanceOutcome(
+                  (value as TradePerformanceOutcome | null) ?? "all"
+                );
+                resetPerformancePage();
+              }}
+              data={[
+                { value: "all", label: "All" },
+                { value: "winner", label: "Winners" },
+                { value: "loser", label: "Losers" },
+                { value: "breakeven", label: "Breakeven" },
+              ]}
+              w={140}
+            />
+
+            <Select
+              label="Rows"
+              value={String(performancePageSize)}
+              onChange={(value) => {
+                setPerformancePageSize(Number(value ?? 25));
+                resetPerformancePage();
+              }}
+              data={[
+                { value: "10", label: "10" },
+                { value: "25", label: "25" },
+                { value: "50", label: "50" },
+                { value: "100", label: "100" },
+              ]}
+              w={100}
+            />
+
+            <Button variant="default" onClick={clearPerformanceFilters}>
+              Clear
+            </Button>
+          </Group>
 
           {tradePerformanceQuery.isLoading && (
             <Group>
@@ -701,6 +1199,38 @@ export function ReportsPage() {
                   </Stack>
                 </Card>
               </SimpleGrid>
+
+              <Card withBorder radius="md" p="md">
+                <Stack gap="sm">
+                  <Group justify="space-between" align="flex-start">
+                    <div>
+                      <Title order={4}>Trades</Title>
+                      <Text size="sm" c="dimmed">
+                        Completed trade cycles matching the current filters.
+                      </Text>
+                    </div>
+                    {tradePerformanceQuery.isFetching && (
+                      <Badge variant="light" color="blue">
+                        Refreshing
+                      </Badge>
+                    )}
+                  </Group>
+
+                  <PerformanceTradesTable
+                    trades={performanceTrades}
+                    page={performancePagination?.page ?? performancePage}
+                    pageSize={performancePagination?.pageSize ?? performancePageSize}
+                    total={performancePagination?.total ?? 0}
+                    totalPages={performancePagination?.totalPages ?? 1}
+                    sortBy={performanceSortBy}
+                    sortDirection={performanceSortDirection}
+                    isFetching={tradePerformanceQuery.isFetching}
+                    onPageChange={setPerformancePage}
+                    onSort={handlePerformanceSort}
+                    onOpenCycle={tradeCycleDrawer.openCycle}
+                  />
+                </Stack>
+              </Card>
             </Stack>
           )}
         </Stack>
@@ -1041,6 +1571,11 @@ export function ReportsPage() {
           </Stack>
         </Card>
       </SimpleGrid>
+
+      <TradeCycleDrawer
+        {...tradeCycleDrawer.drawerProps}
+        onClose={tradeCycleDrawer.closeCycle}
+      />
     </Stack>
   );
 }

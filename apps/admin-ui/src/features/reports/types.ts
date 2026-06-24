@@ -134,16 +134,65 @@ export type TradePerformanceSummary = Omit<
   "id" | "label"
 >;
 
+export type TradePerformanceOutcome = "all" | "winner" | "loser" | "breakeven";
+export type TradePerformanceSortBy =
+  | "closedAt"
+  | "openedAt"
+  | "symbol"
+  | "realizedPnl"
+  | "returnPct"
+  | "holdingDurationMs";
+export type TradePerformanceSortDirection = "asc" | "desc";
+
+export type TradePerformanceTradeRow = {
+  id: number;
+  symbol: string;
+  side: string;
+  mode: string | null;
+  openedAt: string;
+  closedAt: string | null;
+  quantity: number;
+  avgEntryPrice: number | null;
+  avgExitPrice: number | null;
+  realizedPnl: number | null;
+  returnPct: number | null;
+  holdingDurationMs: number | null;
+  strategy: {
+    id: number | null;
+    key: string | null;
+    name: string | null;
+  } | null;
+  subscription: {
+    id: number | null;
+    key: string | null;
+    name: string | null;
+    brokerMode?: string | null;
+  } | null;
+  exitProfile: {
+    id: number | null;
+    key: string | null;
+    name: string | null;
+  } | null;
+  exitReason: string | null;
+};
+
 export type TradePerformanceResponse = {
   generatedAt: string;
   filters: {
     dateFrom: string | null;
     dateTo: string | null;
+    symbol: string | null;
     strategyId: number | null;
     subscriptionId: number | null;
     exitProfileId: number | null;
+    exitReason: string | null;
+    outcome: TradePerformanceOutcome;
     mode: string | null;
-    limit: number;
+    limit: number | null;
+    page: number;
+    pageSize: number;
+    sortBy: TradePerformanceSortBy;
+    sortDirection: TradePerformanceSortDirection;
   };
   summary: TradePerformanceSummary;
   groups: {
@@ -153,14 +202,29 @@ export type TradePerformanceResponse = {
     bySecurity: TradePerformanceGroup[];
     byExitReason: TradePerformanceGroup[];
   };
+  trades: TradePerformanceTradeRow[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+  };
 };
 
 export type TradePerformanceQuery = {
-  limit?: number;
   mode?: string;
   dateFrom?: string;
   dateTo?: string;
+  symbol?: string;
   strategyId?: number;
   subscriptionId?: number;
   exitProfileId?: number;
+  exitReason?: string;
+  outcome?: TradePerformanceOutcome;
+  page?: number;
+  pageSize?: number;
+  sortBy?: TradePerformanceSortBy;
+  sortDirection?: TradePerformanceSortDirection;
 };

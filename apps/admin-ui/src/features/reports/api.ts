@@ -92,13 +92,19 @@ export function getTradePerformance(
 ) {
   return apiRequest<TradePerformanceResponse>(
     `/api/trade-performance${buildQuery({
-      limit: query.limit,
       mode: query.mode,
       dateFrom: query.dateFrom,
       dateTo: query.dateTo,
+      symbol: query.symbol,
       strategyId: query.strategyId,
       subscriptionId: query.subscriptionId,
       exitProfileId: query.exitProfileId,
+      exitReason: query.exitReason,
+      outcome: query.outcome,
+      page: query.page,
+      pageSize: query.pageSize,
+      sortBy: query.sortBy,
+      sortDirection: query.sortDirection,
     })}`,
     { token }
   );
