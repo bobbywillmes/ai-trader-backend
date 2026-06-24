@@ -16,6 +16,7 @@ import {
   IconClock,
   IconFileAnalytics,
 } from "@tabler/icons-react";
+import { TradeCycleDetailSections } from "./TradeCycleDetailSections";
 import {
   formatDate,
   formatDuration,
@@ -178,14 +179,12 @@ export function TradeCycleDrawer({
 
           <Divider />
 
-          <SimpleGrid cols={{ base: 1, sm: 3 }}>
-            <Info label="Order Intents" value={String(cycle.orderIntents.length)} />
-            <Info label="Broker Orders" value={String(cycle.brokerOrders.length)} />
-            <Info
-              label="Broker Activities"
-              value={String(cycle.brokerActivities.length)}
-            />
-          </SimpleGrid>
+          <TradeCycleDetailSections
+            orderIntents={cycle.orderIntents}
+            brokerOrders={cycle.brokerOrders}
+            brokerActivities={cycle.brokerActivities}
+            systemEvents={cycle.systemEvents}
+          />
         </Stack>
       )}
     </Drawer>

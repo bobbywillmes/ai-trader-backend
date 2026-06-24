@@ -16,6 +16,14 @@ export function formatNumber(value: number | null | undefined) {
   });
 }
 
+export function formatPreciseNumber(value: number | null | undefined) {
+  if (value === null || value === undefined) return "-";
+
+  return value.toLocaleString(undefined, {
+    maximumFractionDigits: 8,
+  });
+}
+
 export function formatPercent(value: number | null | undefined) {
   if (value === null || value === undefined) return "-";
 
