@@ -241,6 +241,15 @@ Stores account-level audit snapshots from Alpaca account state.
 
 Used for scheduled checkpoints, manual snapshots, and position lifecycle snapshots.
 
+Exposure-trend additions:
+
+- nullable `longMarketValue`
+- nullable `shortMarketValue`
+
+These fields preserve historical rows without estimated backfills. Derived gross,
+net, and percentage exposure metrics are calculated from these stored values in
+the account snapshot reporting service.
+
 ### AlpacaApiUsageBucket
 
 Stores aggregated Alpaca REST API usage by time bucket, operation, endpoint, method, and HTTP status code.

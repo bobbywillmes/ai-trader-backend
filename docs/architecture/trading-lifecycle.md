@@ -242,6 +242,8 @@ Snapshots include:
 - buying power
 - equity
 - portfolio value
+- long market value
+- short market value
 - day P/L
 - broker mode
 - account status
@@ -249,6 +251,19 @@ Snapshots include:
 - reason
 - changed flag
 - snapshot hash
+
+Exposure metrics come from Alpaca account fields, not local position
+estimates:
+
+- long exposure = `longMarketValue`
+- short exposure = `abs(shortMarketValue)`
+- gross exposure = `longMarketValue + abs(shortMarketValue)`
+- net exposure = `longMarketValue + shortMarketValue`
+- gross exposure percentage = `grossExposure / equity * 100`
+
+Historical snapshots recorded before exposure capture have nullable long and
+short market values. Reports treat those older exposure metrics as unavailable
+instead of backfilling estimated values.
 
 Common reasons:
 

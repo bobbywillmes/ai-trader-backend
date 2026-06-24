@@ -277,7 +277,6 @@ The backend is currently focused on hosted paper-production testing, operational
 
 ### 🔜 Next Backend Enhancements
 
-- Add account equity/exposure trend charts from `AccountSnapshot`.
 - Add deeper trade-performance filtering and drill-down tables.
 - Add broker activity drill-down inside trade lifecycle review.
 

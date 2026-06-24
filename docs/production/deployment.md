@@ -671,6 +671,7 @@ Before enabling n8n signals, verify audit endpoints.
 POST /api/account-snapshots/manual
 GET /api/account-snapshots/latest
 GET /api/account-snapshots?limit=20
+GET /api/account-snapshots/trends?mode=paper&dateFrom=2026-06-01T00:00:00.000Z&limit=200
 ```
 
 Expected:
@@ -678,8 +679,13 @@ Expected:
 ```text
 manual snapshot creates a row
 latest snapshot returns account state
-Reports page shows snapshot history
+Reports page shows snapshot history and account equity/exposure trends
 ```
+
+`mode` can be `paper` or `live`. Trend data is returned chronologically for
+chart rendering, while the snapshot table remains newest-first. Older snapshots
+may show unavailable exposure values because long and short market values were
+added after the original account snapshot table.
 
 Also verify:
 
