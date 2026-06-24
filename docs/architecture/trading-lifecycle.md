@@ -70,11 +70,19 @@ summary, and a chronological timeline server-side. Admin UI trade-history views
 should use these endpoints instead of independently joining raw order, position,
 activity, and event endpoints.
 
-The admin UI `Trade History` page is the primary consumer of these lifecycle
-endpoints. Its trade-cycle drawer shows the summary metrics, captured
-strategy/subscription/exit-profile context, chronological lifecycle timeline,
-and drill-down sections for the linked `OrderIntent`, `BrokerOrder`,
+The admin UI `Trade History`, `Open Positions`, and `Reports` pages share the
+same trade-cycle drawer for lifecycle review. The drawer shows summary metrics,
+captured strategy/subscription/exit-profile context, chronological lifecycle
+timeline, and drill-down sections for the linked `OrderIntent`, `BrokerOrder`,
 `BrokerActivity`, and `SystemEvent` records behind that timeline.
+
+Open-position lifecycle review opens the drawer by the active
+`TrackedPosition.id`. Active cycles are valid trade-cycle detail records even
+when `closedAt`, average exit, realized P/L, return, close fills, exit reason,
+or exit orders are not available yet. The drawer labels closed-only values as
+not closed, unavailable, or in progress rather than presenting them as realized
+results. Reading lifecycle detail uses the local database and does not trigger
+additional Alpaca polling.
 
 `GET /api/trade-performance` reuses the canonical closed trade-cycle summaries
 as the reporting source of truth. It aggregates reportable closed cycles into
@@ -82,6 +90,37 @@ total realized P/L, average return, win rate, average winner and loser, profit
 factor, holding duration, and grouped results by strategy, subscription, exit
 profile, security, and exit reason. The Reports admin page uses this endpoint
 instead of independently recomputing performance from raw broker activity.
+
+Trade-performance reports support filters for closed date range, paper/live
+mode, symbol, strategy, subscription, exit profile, exit reason, and outcome.
+Outcome definitions are based on realized P/L:
+
+- winner: realized P/L greater than zero
+- loser: realized P/L less than zero
+- breakeven: realized P/L equal to zero
+
+The endpoint also returns a paginated and sortable `trades` row collection for
+completed trade cycles. Sortable row fields are `closedAt`, `openedAt`,
+`symbol`, `realizedPnl`, `returnPct`, and `holdingDurationMs`. Pagination and
+sorting affect only the visible `trades` collection. Summary cards and grouped
+performance metrics are calculated from the full filtered matching set, not
+just the current page.
+
+Common query parameters:
+
+```http
+GET /api/trade-performance?dateFrom=2026-06-01T00:00:00Z&dateTo=2026-06-30T23:59:59Z
+GET /api/trade-performance?mode=paper&symbol=SPY&outcome=winner
+GET /api/trade-performance?strategyId=1&subscriptionId=2&exitProfileId=3
+GET /api/trade-performance?exitReason=target&page=2&pageSize=25&sortBy=realizedPnl&sortDirection=desc
+```
+
+The response keeps the existing `filters`, `summary`, and `groups` fields and
+adds `trades` plus `pagination`. Each trade row includes the cycle id, symbol,
+mode, opened and closed timestamps, quantity, average entry and exit prices,
+realized P/L, return percentage, holding duration, lifecycle ownership labels,
+and exit reason. Reports opens the shared lifecycle drawer from a trade row
+using that cycle id without navigating away or clearing filters.
 
 When a tracked-position cycle is opened with a known subscription, the backend
 stores a nullable `TrackedPosition.configSnapshotJson` payload. The snapshot

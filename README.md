@@ -277,7 +277,7 @@ The backend is currently focused on hosted paper-production testing, operational
 
 ### 🔜 Next Backend Enhancements
 
-- Add deeper trade-performance filtering and drill-down tables.
+- Expand operational review workflows around Market Diary decisions and trade-cycle outcomes.
 
 ### 🧭 Longer-Term
 
