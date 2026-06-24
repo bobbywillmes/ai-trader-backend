@@ -4,115 +4,35 @@ import {
   Badge,
   Button,
   Card,
-  Divider,
-  Drawer,
   Group,
   Loader,
   NumberInput,
   ScrollArea,
   Select,
-  SimpleGrid,
   Stack,
   Table,
   Text,
   TextInput,
-  Timeline,
   Title,
 } from "@mantine/core";
-import {
-  IconCircleCheck,
-  IconClock,
-  IconFileAnalytics,
-  IconRefresh,
-  IconSearch,
-  IconX,
-} from "@tabler/icons-react";
+import { IconRefresh, IconSearch, IconX } from "@tabler/icons-react";
 import { getAdminToken } from "../../lib/api";
+import { TradeCycleDrawer } from "./TradeCycleDrawer";
+import {
+  formatDate,
+  formatDuration,
+  formatMoney,
+  formatNumber,
+  formatPercent,
+  pnlColor,
+} from "./formatters";
 import { useTradeCycle, useTradeCycles } from "./hooks";
-import type {
-  TradeCycleDetail,
-  TradeCycleSummary,
-  TradeCyclesQuery,
-} from "./types";
-
-function formatMoney(value: number | null | undefined) {
-  if (value === null || value === undefined) return "-";
-
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 2,
-  }).format(value);
-}
-
-function formatNumber(value: number | null | undefined) {
-  if (value === null || value === undefined) return "-";
-
-  return value.toLocaleString(undefined, {
-    maximumFractionDigits: 4,
-  });
-}
-
-function formatPercent(value: number | null | undefined) {
-  if (value === null || value === undefined) return "-";
-
-  return `${(value * 100).toFixed(2)}%`;
-}
-
-function formatDate(value: string | null | undefined) {
-  if (!value) return "-";
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) return "-";
-
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "2-digit",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
-}
-
-function formatDuration(ms: number | null | undefined) {
-  if (ms === null || ms === undefined) return "-";
-
-  const totalMinutes = Math.max(0, Math.round(ms / 60_000));
-  const days = Math.floor(totalMinutes / 1440);
-  const hours = Math.floor((totalMinutes % 1440) / 60);
-  const minutes = totalMinutes % 60;
-
-  if (days > 0) return `${days}d ${hours}h`;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
-}
-
-function pnlColor(value: number | null | undefined) {
-  if (value === null || value === undefined) return "dimmed";
-  if (value > 0) return "teal";
-  if (value < 0) return "red";
-  return "dimmed";
-}
+import type { TradeCycleSummary, TradeCyclesQuery } from "./types";
 
 function statusColor(status: string) {
   if (status === "closed") return "gray";
   if (status === "closing") return "yellow";
   return "teal";
-}
-
-function sourceColor(source: string) {
-  switch (source) {
-    case "broker_activity":
-      return "blue";
-    case "broker_order":
-      return "violet";
-    case "order_intent":
-      return "cyan";
-    case "system_event":
-      return "orange";
-    default:
-      return "gray";
-  }
 }
 
 function normalizeLimit(value: string | number, fallback: number) {
@@ -365,158 +285,3 @@ function TradeCycleRow({
   );
 }
 
-function TradeCycleDrawer({
-  opened,
-  cycle,
-  isLoading,
-  isError,
-  error,
-  onClose,
-}: {
-  opened: boolean;
-  cycle: TradeCycleDetail | null;
-  isLoading: boolean;
-  isError: boolean;
-  error: Error | null;
-  onClose: () => void;
-}) {
-  return (
-    <Drawer
-      opened={opened}
-      onClose={onClose}
-      position="right"
-      size="xl"
-      title={
-        cycle ? (
-          <Group gap="sm">
-            <IconFileAnalytics size={20} />
-            <Text fw={700}>
-              {cycle.symbol} Cycle #{cycle.id}
-            </Text>
-          </Group>
-        ) : (
-          "Trade Cycle"
-        )
-      }
-    >
-      {isLoading && (
-        <Group>
-          <Loader size="sm" />
-          <Text c="dimmed">Loading lifecycle...</Text>
-        </Group>
-      )}
-
-      {isError && (
-        <Alert color="red" title="Failed to load trade cycle">
-          {error?.message ?? "Check the backend route and admin session."}
-        </Alert>
-      )}
-
-      {cycle && (
-        <Stack gap="lg">
-          <SimpleGrid cols={{ base: 1, sm: 2 }}>
-            <Metric label="Realized P/L" value={formatMoney(cycle.realizedPnl)} color={pnlColor(cycle.realizedPnl)} />
-            <Metric label="Return" value={formatPercent(cycle.returnPct)} color={pnlColor(cycle.returnPct)} />
-            <Metric label="Average Entry" value={formatMoney(cycle.avgEntryPrice)} />
-            <Metric label="Average Exit" value={formatMoney(cycle.avgExitPrice)} />
-            <Metric label="Quantity" value={formatNumber(cycle.quantity)} />
-            <Metric label="Holding Duration" value={formatDuration(cycle.holdingDurationMs)} />
-          </SimpleGrid>
-
-          <Divider />
-
-          <SimpleGrid cols={{ base: 1, sm: 2 }}>
-            <Info label="Strategy" value={cycle.strategy?.name ?? "-"} />
-            <Info label="Subscription" value={cycle.subscription?.name ?? "-"} />
-            <Info label="Exit Profile" value={cycle.exitProfile?.name ?? "-"} />
-            <Info label="Exit Reason" value={cycle.exitReason ?? cycle.exitStateStatus ?? "-"} />
-            <Info
-              label="Config Snapshot"
-              value={cycle.configSnapshotCapturedAt ? formatDate(cycle.configSnapshotCapturedAt) : "Live fallback"}
-            />
-          </SimpleGrid>
-
-          <Divider />
-
-          <Stack gap="sm">
-            <Title order={3} size="h4">
-              Lifecycle Timeline
-            </Title>
-            {cycle.timeline.length === 0 ? (
-              <Text c="dimmed">No lifecycle events recorded.</Text>
-            ) : (
-              <Timeline active={cycle.timeline.length} bulletSize={26} lineWidth={2}>
-                {cycle.timeline.map((item, index) => (
-                  <Timeline.Item
-                    key={`${item.source}-${item.entityId ?? "none"}-${index}`}
-                    bullet={
-                      item.source === "tracked_position" ? (
-                        <IconCircleCheck size={14} />
-                      ) : (
-                        <IconClock size={14} />
-                      )
-                    }
-                    title={
-                      <Group gap="xs">
-                        <Text fw={600} size="sm">
-                          {item.summary}
-                        </Text>
-                        <Badge size="xs" color={sourceColor(item.source)} variant="light">
-                          {item.source.replaceAll("_", " ")}
-                        </Badge>
-                      </Group>
-                    }
-                  >
-                    <Text size="xs" c="dimmed">
-                      {formatDate(item.occurredAt)} - {item.type}
-                    </Text>
-                  </Timeline.Item>
-                ))}
-              </Timeline>
-            )}
-          </Stack>
-
-          <Divider />
-
-          <SimpleGrid cols={{ base: 1, sm: 3 }}>
-            <Info label="Order Intents" value={String(cycle.orderIntents.length)} />
-            <Info label="Broker Orders" value={String(cycle.brokerOrders.length)} />
-            <Info label="Broker Activities" value={String(cycle.brokerActivities.length)} />
-          </SimpleGrid>
-        </Stack>
-      )}
-    </Drawer>
-  );
-}
-
-function Metric({
-  label,
-  value,
-  color = "inherit",
-}: {
-  label: string;
-  value: string;
-  color?: string;
-}) {
-  return (
-    <div>
-      <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
-        {label}
-      </Text>
-      <Text fw={700} c={color}>
-        {value}
-      </Text>
-    </div>
-  );
-}
-
-function Info({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
-        {label}
-      </Text>
-      <Text size="sm">{value}</Text>
-    </div>
-  );
-}
