@@ -7,12 +7,14 @@ export type TradeCycleFilters = {
   status?: 'open' | 'closed' | 'closing';
   dateFrom?: Date;
   dateTo?: Date;
+  closedDateFrom?: Date;
+  closedDateTo?: Date;
   strategyId?: number;
   subscriptionId?: number;
   exitProfileId?: number;
   exitReason?: string;
   mode?: string;
-  limit?: number;
+  limit?: number | null;
 };
 
 function getCloseSide(positionSide: string): 'buy' | 'sell' {
@@ -295,6 +297,13 @@ function buildWhere(filters: TradeCycleFilters): Prisma.TrackedPositionWhereInpu
     };
   }
 
+  if (filters.closedDateFrom || filters.closedDateTo) {
+    where.closedAt = {
+      ...(filters.closedDateFrom ? { gte: filters.closedDateFrom } : {}),
+      ...(filters.closedDateTo ? { lte: filters.closedDateTo } : {}),
+    };
+  }
+
   if (filters.subscriptionId !== undefined) {
     where.subscriptionId = filters.subscriptionId;
   }
@@ -343,13 +352,14 @@ const tradeCycleInclude = {
 } satisfies Prisma.TrackedPositionInclude;
 
 export async function listTradeCycles(filters: TradeCycleFilters = {}) {
+  const take = filters.limit === null ? undefined : filters.limit ?? 50;
   const cycles = await prisma.trackedPosition.findMany({
     where: buildWhere(filters),
     include: tradeCycleInclude,
     orderBy: {
       openedAt: 'desc',
     },
-    take: filters.limit ?? 50,
+    ...(take !== undefined ? { take } : {}),
   });
 
   const systemEvents = await prisma.systemEvent.findMany({
