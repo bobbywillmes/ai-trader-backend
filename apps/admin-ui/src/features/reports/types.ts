@@ -16,6 +16,8 @@ export type AccountSnapshot = {
   equity: number;
   portfolioValue: number;
   lastEquity: number | null;
+  longMarketValue: number | null;
+  shortMarketValue: number | null;
   dayPnL: number | null;
   dayPnLPct: number | null;
   tradingBlocked: boolean;
@@ -24,9 +26,34 @@ export type AccountSnapshot = {
   changed: boolean;
   rawJson: unknown;
   createdAt: string;
+  exposure: {
+    longExposure: number | null;
+    shortExposure: number | null;
+    grossExposure: number | null;
+    netExposure: number | null;
+    grossExposurePct: number | null;
+  };
 };
 
 export type AccountSnapshotsResponse = {
+  snapshots: AccountSnapshot[];
+};
+
+export type AccountSnapshotQuery = {
+  limit?: number;
+  mode?: string;
+  dateFrom?: string;
+  dateTo?: string;
+};
+
+export type AccountSnapshotTrendsResponse = {
+  generatedAt: string;
+  filters: {
+    dateFrom: string | null;
+    dateTo: string | null;
+    mode: string | null;
+    limit: number;
+  };
   snapshots: AccountSnapshot[];
 };
 

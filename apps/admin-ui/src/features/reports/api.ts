@@ -1,6 +1,8 @@
 import { apiRequest } from "../../lib/api";
 import type {
+  AccountSnapshotQuery,
   AccountSnapshotsResponse,
+  AccountSnapshotTrendsResponse,
   BrokerActivitiesQuery,
   BrokerActivitiesResponse,
   BrokerActivitySyncResponse,
@@ -23,9 +25,32 @@ function buildQuery(params: Record<string, string | number | undefined>) {
   return query ? `?${query}` : "";
 }
 
-export function getAccountSnapshots(token: string, limit = 20) {
+export function getAccountSnapshots(
+  token: string,
+  query: AccountSnapshotQuery = {}
+) {
   return apiRequest<AccountSnapshotsResponse>(
-    `/api/account-snapshots${buildQuery({ limit })}`,
+    `/api/account-snapshots${buildQuery({
+      limit: query.limit,
+      mode: query.mode,
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+    })}`,
+    { token }
+  );
+}
+
+export function getAccountSnapshotTrends(
+  token: string,
+  query: AccountSnapshotQuery = {}
+) {
+  return apiRequest<AccountSnapshotTrendsResponse>(
+    `/api/account-snapshots/trends${buildQuery({
+      limit: query.limit,
+      mode: query.mode,
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+    })}`,
     { token }
   );
 }

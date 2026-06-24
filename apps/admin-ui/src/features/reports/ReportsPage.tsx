@@ -23,6 +23,9 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Legend,
+  Line,
+  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -30,13 +33,18 @@ import {
 } from "recharts";
 import { getAdminToken } from "../../lib/api";
 import {
+  useAccountSnapshotTrends,
   useAccountSnapshots,
   useBrokerActivities,
   useCreateManualAccountSnapshot,
   useSyncBrokerActivities,
   useTradePerformance,
 } from "./hooks";
-import type { BrokerActivitiesQuery, TradePerformanceGroup } from "./types";
+import type {
+  AccountSnapshot,
+  BrokerActivitiesQuery,
+  TradePerformanceGroup,
+} from "./types";
 
 function formatDate(value: string | null) {
   if (!value) return "-";
@@ -78,6 +86,14 @@ function formatPercent(value: number | null | undefined) {
     style: "percent",
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function formatExposurePercent(value: number | null | undefined) {
+  if (value === null || value === undefined) return "-";
+
+  return `${value.toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+  })}%`;
 }
 
 function formatDuration(value: number | null | undefined) {
@@ -215,13 +231,125 @@ function PerformanceBarChart({
   );
 }
 
+type AccountTrendPoint = AccountSnapshot & {
+  grossExposure: number | null;
+  grossExposurePct: number | null;
+};
+
+type AccountTrendLine = {
+  dataKey: keyof Pick<
+    AccountTrendPoint,
+    "equity" | "portfolioValue" | "cash" | "grossExposure" | "grossExposurePct"
+  >;
+  name: string;
+  stroke: string;
+};
+
+function AccountTrendTooltip({
+  active,
+  payload,
+  valueFormatter,
+}: {
+  active?: boolean;
+  payload?: Array<{
+    color?: string;
+    name?: string;
+    value?: number | null;
+    payload: AccountTrendPoint;
+  }>;
+  valueFormatter: (value: number | null | undefined) => string;
+}) {
+  if (!active || !payload?.length) return null;
+
+  const point = payload[0]?.payload;
+
+  if (!point) return null;
+
+  return (
+    <Card withBorder shadow="sm" radius="md" p="sm">
+      <Text fw={700}>{formatDate(point.createdAt)}</Text>
+      <Stack gap={2} mt={4}>
+        {payload.map((item) => (
+          <Text key={item.name} size="sm" style={{ color: item.color }}>
+            {item.name}: {valueFormatter(item.value)}
+          </Text>
+        ))}
+      </Stack>
+    </Card>
+  );
+}
+
+function AccountTrendChart({
+  data,
+  emptyLabel,
+  lines,
+  unavailableLabel,
+  valueFormatter,
+  yAxisFormatter,
+}: {
+  data: AccountTrendPoint[];
+  emptyLabel: string;
+  lines: AccountTrendLine[];
+  unavailableLabel?: string;
+  valueFormatter: (value: number | null | undefined) => string;
+  yAxisFormatter: (value: number) => string;
+}) {
+  const hasRenderableValue = data.some((point) =>
+    lines.some((line) => point[line.dataKey] !== null)
+  );
+
+  if (data.length === 0) {
+    return <Text c="dimmed">{emptyLabel}</Text>;
+  }
+
+  if (!hasRenderableValue) {
+    return <Text c="dimmed">{unavailableLabel ?? emptyLabel}</Text>;
+  }
+
+  return (
+    <ResponsiveContainer width="100%" height={240}>
+      <LineChart data={data} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
+        <CartesianGrid
+          stroke="var(--mantine-color-gray-4)"
+          strokeDasharray="3 3"
+          vertical={false}
+        />
+        <XAxis
+          dataKey="createdAt"
+          tickFormatter={formatDate}
+          tick={{ fontSize: 12 }}
+          minTickGap={24}
+        />
+        <YAxis tickFormatter={yAxisFormatter} width={68} />
+        <Tooltip
+          content={<AccountTrendTooltip valueFormatter={valueFormatter} />}
+        />
+        <Legend />
+        {lines.map((line) => (
+          <Line
+            key={line.dataKey}
+            type="monotone"
+            dataKey={line.dataKey}
+            name={line.name}
+            stroke={line.stroke}
+            strokeWidth={2}
+            dot={false}
+            connectNulls={false}
+            isAnimationActive={false}
+          />
+        ))}
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
 export function ReportsPage() {
   const [token] = useState(() => getAdminToken());
 
   const [snapshotLimit, setSnapshotLimit] = useState(20);
   const [activityLimit, setActivityLimit] = useState(20);
-  const [performanceTimespan, setPerformanceTimespan] = useState("all");
-  const [performanceModeFilter, setPerformanceModeFilter] = useState("all");
+  const [reportTimespan, setReportTimespan] = useState("all");
+  const [reportModeFilter, setReportModeFilter] = useState("all");
   const [symbolFilter, setSymbolFilter] = useState("");
   const [activityTypeFilter, setActivityTypeFilter] = useState<string | null>(
     "FILL"
@@ -245,17 +373,31 @@ export function ReportsPage() {
     return query;
   }, [activityLimit, activityTypeFilter, symbolFilter]);
 
+  const accountSnapshotQuery = useMemo(() => {
+    const dateFrom = getTimespanDateFrom(reportTimespan);
+
+    return {
+      limit: snapshotLimit,
+      ...(reportModeFilter !== "all" ? { mode: reportModeFilter } : {}),
+      ...(dateFrom ? { dateFrom } : {}),
+    };
+  }, [reportModeFilter, reportTimespan, snapshotLimit]);
+
   const performanceQuery = useMemo(() => {
-    const dateFrom = getTimespanDateFrom(performanceTimespan);
+    const dateFrom = getTimespanDateFrom(reportTimespan);
 
     return {
       limit: 5000,
-      ...(performanceModeFilter !== "all" ? { mode: performanceModeFilter } : {}),
+      ...(reportModeFilter !== "all" ? { mode: reportModeFilter } : {}),
       ...(dateFrom ? { dateFrom } : {}),
     };
-  }, [performanceModeFilter, performanceTimespan]);
+  }, [reportModeFilter, reportTimespan]);
 
-  const accountSnapshotsQuery = useAccountSnapshots(token, snapshotLimit);
+  const accountSnapshotsQuery = useAccountSnapshots(token, accountSnapshotQuery);
+  const accountSnapshotTrendsQuery = useAccountSnapshotTrends(
+    token,
+    accountSnapshotQuery
+  );
   const brokerActivitiesQuery = useBrokerActivities(token, brokerQuery);
   const tradePerformanceQuery = useTradePerformance(token, performanceQuery);
 
@@ -263,9 +405,15 @@ export function ReportsPage() {
   const brokerSyncMutation = useSyncBrokerActivities(token);
 
   const snapshots = accountSnapshotsQuery.data?.snapshots ?? [];
+  const trendSnapshots = accountSnapshotTrendsQuery.data?.snapshots ?? [];
   const activities = brokerActivitiesQuery.data?.activities ?? [];
   const performance = tradePerformanceQuery.data;
   const latestSnapshot = snapshots[0];
+  const accountTrendData = trendSnapshots.map((snapshot) => ({
+    ...snapshot,
+    grossExposure: snapshot.exposure.grossExposure,
+    grossExposurePct: snapshot.exposure.grossExposurePct,
+  }));
 
   async function handleManualSnapshot() {
     try {
@@ -318,7 +466,35 @@ export function ReportsPage() {
           </Text>
         </div>
 
-        <Group>
+        <Group align="flex-end">
+          <Select
+            label="Mode"
+            value={reportModeFilter}
+            onChange={(value) => setReportModeFilter(value ?? "all")}
+            data={[
+              { value: "all", label: "All" },
+              { value: "paper", label: "Paper" },
+              { value: "live", label: "Live" },
+            ]}
+            w={120}
+          />
+
+          <Select
+            label="Timespan"
+            value={reportTimespan}
+            onChange={(value) => setReportTimespan(value ?? "all")}
+            data={[
+              { value: "today", label: "Today" },
+              { value: "7d", label: "7 days" },
+              { value: "30d", label: "30 days" },
+              { value: "90d", label: "90 days" },
+              { value: "ytd", label: "YTD" },
+              { value: "1y", label: "1 year" },
+              { value: "all", label: "All time" },
+            ]}
+            w={140}
+          />
+
           <Button
             variant="default"
             onClick={handleManualSnapshot}
@@ -337,7 +513,7 @@ export function ReportsPage() {
       </Group>
 
       {latestSnapshot && (
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
+        <SimpleGrid cols={{ base: 1, sm: 2, lg: 5 }}>
           <Card withBorder radius="md" p="md">
             <Text size="sm" c="dimmed">
               Latest Snapshot
@@ -379,6 +555,18 @@ export function ReportsPage() {
                 : `${latestSnapshot.dayPnLPct.toFixed(3)}%`}
             </Text>
           </Card>
+
+          <Card withBorder radius="md" p="md">
+            <Text size="sm" c="dimmed">
+              Gross Exposure
+            </Text>
+            <Text fw={700}>
+              {formatMoney(latestSnapshot.exposure.grossExposure)}
+            </Text>
+            <Text size="xs" c="dimmed">
+              {formatExposurePercent(latestSnapshot.exposure.grossExposurePct)}
+            </Text>
+          </Card>
         </SimpleGrid>
       )}
 
@@ -391,36 +579,6 @@ export function ReportsPage() {
                 Closed trade-cycle results grouped by lifecycle ownership.
               </Text>
             </div>
-
-            <Group align="flex-end">
-              <Select
-                label="Mode"
-                value={performanceModeFilter}
-                onChange={(value) => setPerformanceModeFilter(value ?? "all")}
-                data={[
-                  { value: "all", label: "All" },
-                  { value: "paper", label: "Paper" },
-                  { value: "live", label: "Live" },
-                ]}
-                w={120}
-              />
-
-              <Select
-                label="Timespan"
-                value={performanceTimespan}
-                onChange={(value) => setPerformanceTimespan(value ?? "all")}
-                data={[
-                  { value: "today", label: "Today" },
-                  { value: "7d", label: "7 days" },
-                  { value: "30d", label: "30 days" },
-                  { value: "90d", label: "90 days" },
-                  { value: "ytd", label: "YTD" },
-                  { value: "1y", label: "1 year" },
-                  { value: "all", label: "All time" },
-                ]}
-                w={140}
-              />
-            </Group>
           </Group>
 
           <Divider />
@@ -548,6 +706,143 @@ export function ReportsPage() {
         </Stack>
       </Card>
 
+      <SimpleGrid cols={{ base: 1, lg: 3 }}>
+        <Card withBorder radius="md" p="lg">
+          <Stack gap="sm">
+            <div>
+              <Title order={3}>Account Value</Title>
+              <Text size="sm" c="dimmed">
+                Equity and portfolio value over the selected snapshot range.
+              </Text>
+            </div>
+
+            {accountSnapshotTrendsQuery.isLoading && (
+              <Group>
+                <Loader size="sm" />
+                <Text>Loading account trends...</Text>
+              </Group>
+            )}
+
+            {accountSnapshotTrendsQuery.isError && (
+              <Alert color="red" title="Failed to load account trends">
+                Check the backend route and admin session.
+              </Alert>
+            )}
+
+            {!accountSnapshotTrendsQuery.isLoading &&
+              !accountSnapshotTrendsQuery.isError && (
+                <AccountTrendChart
+                  data={accountTrendData}
+                  emptyLabel="No account snapshots match these filters."
+                  lines={[
+                    {
+                      dataKey: "equity",
+                      name: "Equity",
+                      stroke: "var(--mantine-color-blue-6)",
+                    },
+                    {
+                      dataKey: "portfolioValue",
+                      name: "Portfolio value",
+                      stroke: "var(--mantine-color-teal-6)",
+                    },
+                  ]}
+                  valueFormatter={formatMoney}
+                  yAxisFormatter={(value) => `$${Number(value).toLocaleString()}`}
+                />
+              )}
+          </Stack>
+        </Card>
+
+        <Card withBorder radius="md" p="lg">
+          <Stack gap="sm">
+            <div>
+              <Title order={3}>Capital Allocation</Title>
+              <Text size="sm" c="dimmed">
+                Cash compared with gross market exposure.
+              </Text>
+            </div>
+
+            {accountSnapshotTrendsQuery.isLoading && (
+              <Group>
+                <Loader size="sm" />
+                <Text>Loading allocation trends...</Text>
+              </Group>
+            )}
+
+            {accountSnapshotTrendsQuery.isError && (
+              <Alert color="red" title="Failed to load allocation trends">
+                Check the backend route and admin session.
+              </Alert>
+            )}
+
+            {!accountSnapshotTrendsQuery.isLoading &&
+              !accountSnapshotTrendsQuery.isError && (
+                <AccountTrendChart
+                  data={accountTrendData}
+                  emptyLabel="No account snapshots match these filters."
+                  unavailableLabel="Exposure data is unavailable for these historical snapshots."
+                  lines={[
+                    {
+                      dataKey: "cash",
+                      name: "Cash",
+                      stroke: "var(--mantine-color-green-6)",
+                    },
+                    {
+                      dataKey: "grossExposure",
+                      name: "Gross exposure",
+                      stroke: "var(--mantine-color-orange-6)",
+                    },
+                  ]}
+                  valueFormatter={formatMoney}
+                  yAxisFormatter={(value) => `$${Number(value).toLocaleString()}`}
+                />
+              )}
+          </Stack>
+        </Card>
+
+        <Card withBorder radius="md" p="lg">
+          <Stack gap="sm">
+            <div>
+              <Title order={3}>Exposure Percent</Title>
+              <Text size="sm" c="dimmed">
+                Gross exposure as a percentage of account equity.
+              </Text>
+            </div>
+
+            {accountSnapshotTrendsQuery.isLoading && (
+              <Group>
+                <Loader size="sm" />
+                <Text>Loading exposure trends...</Text>
+              </Group>
+            )}
+
+            {accountSnapshotTrendsQuery.isError && (
+              <Alert color="red" title="Failed to load exposure trends">
+                Check the backend route and admin session.
+              </Alert>
+            )}
+
+            {!accountSnapshotTrendsQuery.isLoading &&
+              !accountSnapshotTrendsQuery.isError && (
+                <AccountTrendChart
+                  data={accountTrendData}
+                  emptyLabel="No account snapshots match these filters."
+                  unavailableLabel="Exposure percentage is unavailable for these historical snapshots."
+                  lines={[
+                    {
+                      dataKey: "grossExposurePct",
+                      name: "Gross exposure",
+                      stroke: "var(--mantine-color-violet-6)",
+                    },
+                  ]}
+                  valueFormatter={formatExposurePercent}
+                  yAxisFormatter={(value) => `${Number(value).toFixed(0)}%`}
+                />
+              )}
+          </Stack>
+        </Card>
+      </SimpleGrid>
+
       <SimpleGrid cols={{ base: 1, lg: 2 }}>
         <Card withBorder radius="md" p="lg">
           <Stack gap="md">
@@ -601,6 +896,7 @@ export function ReportsPage() {
                       <Table.Th>Cash</Table.Th>
                       <Table.Th>Buying Power</Table.Th>
                       <Table.Th>Equity</Table.Th>
+                      <Table.Th>Gross Exposure</Table.Th>
                       <Table.Th>Changed</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
@@ -614,6 +910,9 @@ export function ReportsPage() {
                         <Table.Td>{formatMoney(snapshot.cash)}</Table.Td>
                         <Table.Td>{formatMoney(snapshot.buyingPower)}</Table.Td>
                         <Table.Td>{formatMoney(snapshot.equity)}</Table.Td>
+                        <Table.Td>
+                          {formatMoney(snapshot.exposure.grossExposure)}
+                        </Table.Td>
                         <Table.Td>
                           <Badge
                             color={snapshot.changed ? "teal" : "gray"}

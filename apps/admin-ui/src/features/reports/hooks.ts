@@ -1,26 +1,48 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  getAccountSnapshotTrends,
   createManualAccountSnapshot,
   getAccountSnapshots,
   getBrokerActivities,
   getTradePerformance,
   syncBrokerActivities,
 } from "./api";
-import type { BrokerActivitiesQuery, TradePerformanceQuery } from "./types";
+import type {
+  AccountSnapshotQuery,
+  BrokerActivitiesQuery,
+  TradePerformanceQuery,
+} from "./types";
 
 export const reportsKeys = {
-  accountSnapshots: (limit: number) =>
-    ["reports", "accountSnapshots", limit] as const,
+  accountSnapshots: (query: AccountSnapshotQuery) =>
+    ["reports", "accountSnapshots", query] as const,
+  accountSnapshotTrends: (query: AccountSnapshotQuery) =>
+    ["reports", "accountSnapshotTrends", query] as const,
   brokerActivities: (query: BrokerActivitiesQuery) =>
     ["reports", "brokerActivities", query] as const,
   tradePerformance: (query: TradePerformanceQuery) =>
     ["reports", "tradePerformance", query] as const,
 };
 
-export function useAccountSnapshots(token: string | null, limit: number) {
+export function useAccountSnapshots(
+  token: string | null,
+  query: AccountSnapshotQuery
+) {
   return useQuery({
-    queryKey: reportsKeys.accountSnapshots(limit),
-    queryFn: () => getAccountSnapshots(token as string, limit),
+    queryKey: reportsKeys.accountSnapshots(query),
+    queryFn: () => getAccountSnapshots(token as string, query),
+    enabled: Boolean(token),
+    staleTime: 15000,
+  });
+}
+
+export function useAccountSnapshotTrends(
+  token: string | null,
+  query: AccountSnapshotQuery
+) {
+  return useQuery({
+    queryKey: reportsKeys.accountSnapshotTrends(query),
+    queryFn: () => getAccountSnapshotTrends(token as string, query),
     enabled: Boolean(token),
     staleTime: 15000,
   });
@@ -39,6 +61,9 @@ export function useCreateManualAccountSnapshot(token: string | null) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["reports", "accountSnapshots"] });
+      queryClient.invalidateQueries({
+        queryKey: ["reports", "accountSnapshotTrends"],
+      });
     },
   });
 }
