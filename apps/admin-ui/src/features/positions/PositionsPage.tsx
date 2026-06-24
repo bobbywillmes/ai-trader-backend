@@ -11,10 +11,14 @@ import {
   Table,
   Text,
   Title,
+  Tooltip,
 } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
+import { IconFileAnalytics } from "@tabler/icons-react";
 import { getAdminToken } from "../../lib/api";
+import { TradeCycleDrawer } from "../tradeHistory/TradeCycleDrawer";
+import { useTradeCycleDrawer } from "../tradeHistory/hooks";
 import { useOpenPositions, useClosePosition } from "./hooks";
 import type { TrackedPosition } from "./types";
 
@@ -205,6 +209,7 @@ export function PositionsPage() {
   const [token] = useState<string | null>(() => getAdminToken());
   const { data: positions = [], isLoading, isError, error } = useOpenPositions(token);
   const closePositionMutation = useClosePosition(token);
+  const tradeCycleDrawer = useTradeCycleDrawer(token);
   const attentionPositions = positions.filter(positionNeedsAttention);
 
   function handleClosePosition(symbol: string) {
@@ -360,16 +365,29 @@ export function PositionsPage() {
                           : '—'}
                       </Table.Td>
                       <Table.Td>
-                        <Button
-                          size="xs"
-                          color="red"
-                          variant="subtle"
-                          loading={isClosing}
-                          disabled={isClosing}
-                          onClick={() => handleClosePosition(position.symbol)}
-                        >
-                          Close
-                        </Button>
+                        <Group gap="xs" justify="flex-end" wrap="nowrap">
+                          <Tooltip label="Review this position's trade-cycle lifecycle">
+                            <Button
+                              size="xs"
+                              variant="default"
+                              leftSection={<IconFileAnalytics size={14} />}
+                              onClick={() => tradeCycleDrawer.openCycle(position.id)}
+                            >
+                              View lifecycle
+                            </Button>
+                          </Tooltip>
+
+                          <Button
+                            size="xs"
+                            color="red"
+                            variant="subtle"
+                            loading={isClosing}
+                            disabled={isClosing}
+                            onClick={() => handleClosePosition(position.symbol)}
+                          >
+                            Close
+                          </Button>
+                        </Group>
                       </Table.Td>
                     </Table.Tr>
                   );
@@ -379,6 +397,11 @@ export function PositionsPage() {
           </ScrollArea>
         )}
       </Card>
+
+      <TradeCycleDrawer
+        {...tradeCycleDrawer.drawerProps}
+        onClose={tradeCycleDrawer.closeCycle}
+      />
     </Stack>
   );
 }

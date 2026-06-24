@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   Alert,
   Badge,
@@ -42,6 +43,16 @@ function sourceColor(source: string) {
   }
 }
 
+function statusColor(status: string) {
+  if (status === "closed") return "gray";
+  if (status === "closing") return "yellow";
+  return "teal";
+}
+
+function isClosedCycle(cycle: TradeCycleDetail) {
+  return cycle.status === "closed" && cycle.closedAt !== null;
+}
+
 type TradeCycleDrawerProps = {
   opened: boolean;
   cycle: TradeCycleDetail | null;
@@ -59,6 +70,8 @@ export function TradeCycleDrawer({
   error,
   onClose,
 }: TradeCycleDrawerProps) {
+  const closed = cycle ? isClosedCycle(cycle) : false;
+
   return (
     <Drawer
       opened={opened}
@@ -96,33 +109,60 @@ export function TradeCycleDrawer({
           <SimpleGrid cols={{ base: 1, sm: 2 }}>
             <Metric
               label="Realized P/L"
-              value={formatMoney(cycle.realizedPnl)}
+              value={closed ? formatMoney(cycle.realizedPnl) : "Not closed"}
               color={pnlColor(cycle.realizedPnl)}
             />
             <Metric
               label="Return"
-              value={formatPercent(cycle.returnPct)}
+              value={closed ? formatPercent(cycle.returnPct) : "Not closed"}
               color={pnlColor(cycle.returnPct)}
             />
             <Metric label="Average Entry" value={formatMoney(cycle.avgEntryPrice)} />
-            <Metric label="Average Exit" value={formatMoney(cycle.avgExitPrice)} />
+            <Metric
+              label="Average Exit"
+              value={closed ? formatMoney(cycle.avgExitPrice) : "Unavailable"}
+            />
             <Metric label="Quantity" value={formatNumber(cycle.quantity)} />
             <Metric
               label="Holding Duration"
-              value={formatDuration(cycle.holdingDurationMs)}
+              value={closed ? formatDuration(cycle.holdingDurationMs) : "In progress"}
             />
+            {!closed && (
+              <>
+                <Metric label="Current Price" value={formatMoney(cycle.currentPrice)} />
+                <Metric
+                  label="Unrealized P/L"
+                  value={formatMoney(cycle.unrealizedPnL)}
+                  color={pnlColor(cycle.unrealizedPnL)}
+                />
+              </>
+            )}
           </SimpleGrid>
 
           <Divider />
 
           <SimpleGrid cols={{ base: 1, sm: 2 }}>
+            <Info
+              label="Status"
+              value={
+                <Badge color={statusColor(cycle.status)} variant="light">
+                  {closed ? "Closed" : cycle.status === "closing" ? "Closing" : "Open / Active"}
+                </Badge>
+              }
+            />
             <Info label="Strategy" value={cycle.strategy?.name ?? "-"} />
             <Info label="Subscription" value={cycle.subscription?.name ?? "-"} />
             <Info label="Exit Profile" value={cycle.exitProfile?.name ?? "-"} />
             <Info
               label="Exit Reason"
-              value={cycle.exitReason ?? cycle.exitStateStatus ?? "-"}
+              value={
+                closed
+                  ? cycle.exitReason ?? cycle.exitStateStatus ?? "Unavailable"
+                  : cycle.exitStateStatus ?? "In progress"
+              }
             />
+            <Info label="Opened" value={formatDate(cycle.openedAt)} />
+            <Info label="Closed" value={closed ? formatDate(cycle.closedAt) : "Not closed"} />
             <Info
               label="Config Snapshot"
               value={
@@ -212,7 +252,7 @@ function Metric({
   );
 }
 
-function Info({ label, value }: { label: string; value: string }) {
+function Info({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
       <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
