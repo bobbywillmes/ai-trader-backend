@@ -11,6 +11,8 @@ export type BrokerAccountSummary = {
   equity: number;
   portfolioValue: number;
   lastEquity: number;
+  longMarketValue: number | null;
+  shortMarketValue: number | null;
   dayPnL: number;
   dayPnLPct: number | null;
   tradingBlocked: boolean;

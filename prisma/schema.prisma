@@ -15,35 +15,35 @@ model Setting {
 }
 
 model AdminUser {
-  id           Int      @id @default(autoincrement())
-  email        String   @unique
+  id           Int     @id @default(autoincrement())
+  email        String  @unique
   passwordHash String
-  role         String   @default("admin")
-  enabled      Boolean  @default(true)
+  role         String  @default("admin")
+  enabled      Boolean @default(true)
 
-  lastLoginAt  DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  sessions     AdminSession[]
-}
-
-model AdminSession {
-  id          Int       @id @default(autoincrement())
-  adminUserId Int
-  tokenHash   String    @unique
-
-  userAgent   String?
-  ipAddress   String?
-
-  expiresAt   DateTime
-  revokedAt   DateTime?
-  lastSeenAt  DateTime  @default(now())
-
+  lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  adminUser   AdminUser @relation(fields: [adminUserId], references: [id])
+  sessions AdminSession[]
+}
+
+model AdminSession {
+  id          Int    @id @default(autoincrement())
+  adminUserId Int
+  tokenHash   String @unique
+
+  userAgent String?
+  ipAddress String?
+
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastSeenAt DateTime  @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  adminUser AdminUser @relation(fields: [adminUserId], references: [id])
 
   @@index([adminUserId])
   @@index([expiresAt])
@@ -67,8 +67,8 @@ model Security {
   sector    String?
   industry  String?
 
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   subscriptions    Subscription[]
   trackedPositions TrackedPosition[]
@@ -96,36 +96,36 @@ model OrderIntent {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  subscriptionId    Int?
-  subscriptionKey   String?
-  subscription      Subscription? @relation(fields: [subscriptionId], references: [id])
+  subscriptionId  Int?
+  subscriptionKey String?
+  subscription    Subscription? @relation(fields: [subscriptionId], references: [id])
 
   trackedPositionId Int?
   trackedPosition   TrackedPosition? @relation(fields: [trackedPositionId], references: [id], onDelete: SetNull)
 
-  brokerOrders   BrokerOrder[]
-  brokerActivities  BrokerActivity[]
+  brokerOrders     BrokerOrder[]
+  brokerActivities BrokerActivity[]
 
   @@index([trackedPositionId])
 }
 
 model BrokerOrder {
-  id             Int      @id @default(autoincrement())
-  orderIntentId  Int
-  broker         String
-  brokerOrderId  String
-  clientOrderId  String
-  symbol         String
-  side           String
-  status         String
-  rawBrokerJson  Json
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id            Int      @id @default(autoincrement())
+  orderIntentId Int
+  broker        String
+  brokerOrderId String
+  clientOrderId String
+  symbol        String
+  side          String
+  status        String
+  rawBrokerJson Json
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   securityId Int
   security   Security @relation(fields: [securityId], references: [id])
 
-  orderIntent    OrderIntent @relation(fields: [orderIntentId], references: [id])
+  orderIntent OrderIntent @relation(fields: [orderIntentId], references: [id])
 
   trackedPositionId Int?
   trackedPosition   TrackedPosition? @relation(fields: [trackedPositionId], references: [id], onDelete: SetNull)
@@ -149,28 +149,28 @@ model SystemEvent {
 }
 
 model WorkerHealthState {
-  id                    Int       @id @default(autoincrement())
-  key                   String    @unique
-  processInstanceId     String
-  enabled               Boolean
-  expectedIntervalMs    Int
-  currentRunStartedAt   DateTime?
-  lastTickStartedAt     DateTime?
-  lastTickCompletedAt   DateTime?
-  lastSucceededAt       DateTime?
-  lastWorkSucceededAt   DateTime?
-  lastFailedAt          DateTime?
-  lastDurationMs        Int?
-  lastOutcome           String?
-  lastSkipReason        String?
-  consecutiveFailures   Int       @default(0)
-  totalRuns             Int       @default(0)
-  totalFailures         Int       @default(0)
-  totalSkips            Int       @default(0)
-  lastError             String?
-  lastErrorAt           DateTime?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  id                  Int       @id @default(autoincrement())
+  key                 String    @unique
+  processInstanceId   String
+  enabled             Boolean
+  expectedIntervalMs  Int
+  currentRunStartedAt DateTime?
+  lastTickStartedAt   DateTime?
+  lastTickCompletedAt DateTime?
+  lastSucceededAt     DateTime?
+  lastWorkSucceededAt DateTime?
+  lastFailedAt        DateTime?
+  lastDurationMs      Int?
+  lastOutcome         String?
+  lastSkipReason      String?
+  consecutiveFailures Int       @default(0)
+  totalRuns           Int       @default(0)
+  totalFailures       Int       @default(0)
+  totalSkips          Int       @default(0)
+  lastError           String?
+  lastErrorAt         DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   @@index([processInstanceId])
   @@index([updatedAt])
@@ -178,26 +178,26 @@ model WorkerHealthState {
 }
 
 model AlpacaApiUsageBucket {
-  id                 Int      @id @default(autoincrement())
-  bucketStart        DateTime
-  bucketSizeMinutes  Int
-  operation          String
-  endpoint           String
-  method             String
-  requestClass       String
-  requestCount       Int      @default(0)
-  successCount       Int      @default(0)
-  failureCount       Int      @default(0)
-  rateLimitCount     Int      @default(0)
-  networkErrorCount  Int      @default(0)
-  totalDurationMs    Int      @default(0)
-  maxDurationMs      Int      @default(0)
-  lastStatusCode     Int?
-  lastRequestAt      DateTime?
-  lastFailureAt      DateTime?
-  lastRateLimitedAt  DateTime?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id                Int       @id @default(autoincrement())
+  bucketStart       DateTime
+  bucketSizeMinutes Int
+  operation         String
+  endpoint          String
+  method            String
+  requestClass      String
+  requestCount      Int       @default(0)
+  successCount      Int       @default(0)
+  failureCount      Int       @default(0)
+  rateLimitCount    Int       @default(0)
+  networkErrorCount Int       @default(0)
+  totalDurationMs   Int       @default(0)
+  maxDurationMs     Int       @default(0)
+  lastStatusCode    Int?
+  lastRequestAt     DateTime?
+  lastFailureAt     DateTime?
+  lastRateLimitedAt DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   @@unique([bucketStart, operation, endpoint, method, requestClass])
   @@index([bucketStart])
@@ -207,40 +207,40 @@ model AlpacaApiUsageBucket {
 }
 
 model CurrentMarketState {
-  id            Int @id
+  id Int @id
 
-  marketBias    String @default("neutral")
-  riskMode      String @default("normal")
+  marketBias String @default("neutral")
+  riskMode   String @default("normal")
 
-  macroSummary  String?
-  watchFor      String?
-  avoidBecause  String?
-  notes         String?
+  macroSummary String?
+  watchFor     String?
+  avoidBecause String?
+  notes        String?
 
-  source        String    @default("system")
-  validUntil    DateTime?
-  lastLlmRunAt  DateTime?
+  source       String    @default("system")
+  validUntil   DateTime?
+  lastLlmRunAt DateTime?
 
-  payloadJson   Json?
+  payloadJson Json?
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model MarketDiaryEvent {
   id Int @id @default(autoincrement())
 
-  eventType     String
-  source        String  @default("system")
-  symbol        String?
+  eventType String
+  source    String  @default("system")
+  symbol    String?
 
-  summary       String
-  details       String?
+  summary String
+  details String?
 
-  symbolsJson   Json?
-  payloadJson   Json?
+  symbolsJson Json?
+  payloadJson Json?
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([eventType])
   @@index([source])
@@ -249,56 +249,56 @@ model MarketDiaryEvent {
 }
 
 model TrackedPosition {
-  id                  Int      @id @default(autoincrement())
-  broker              String
-  symbol              String
-  side                String
-  qty                 Float
-  avgEntryPrice       Float
-  currentPrice        Float
-  marketValue         Float
-  costBasis           Float
-  unrealizedPnL       Float
-  unrealizedPnLPct    Float
-  status              String    @default("open")
-  openedAt            DateTime  @default(now())
-  lastSyncedAt        DateTime  @default(now())
-  closedAt            DateTime?
-  rawPositionJson     Json
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  id               Int       @id @default(autoincrement())
+  broker           String
+  symbol           String
+  side             String
+  qty              Float
+  avgEntryPrice    Float
+  currentPrice     Float
+  marketValue      Float
+  costBasis        Float
+  unrealizedPnL    Float
+  unrealizedPnLPct Float
+  status           String    @default("open")
+  openedAt         DateTime  @default(now())
+  lastSyncedAt     DateTime  @default(now())
+  closedAt         DateTime?
+  rawPositionJson  Json
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  securityId          Int
-  security            Security @relation(fields: [securityId], references: [id])
+  securityId Int
+  security   Security @relation(fields: [securityId], references: [id])
 
-  subscriptionId      Int?
-  subscription        Subscription?   @relation(fields: [subscriptionId], references: [id])
+  subscriptionId Int?
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
 
-  orderIntents        OrderIntent[]
-  brokerOrders        BrokerOrder[]
-  brokerActivities    BrokerActivity[]
+  orderIntents     OrderIntent[]
+  brokerOrders     BrokerOrder[]
+  brokerActivities BrokerActivity[]
 
-  exitState           PositionExitState?
+  exitState PositionExitState?
 
-  configSnapshotJson          Json?
-  configSnapshotCapturedAt    DateTime?
+  configSnapshotJson       Json?
+  configSnapshotCapturedAt DateTime?
 
   // Unlock trailing-stop state
-  trailingUnlocked            Boolean   @default(false)
-  trailingUnlockedAt          DateTime?
-  trailingUnlockedPrice       Float?
+  trailingUnlocked      Boolean   @default(false)
+  trailingUnlockedAt    DateTime?
+  trailingUnlockedPrice Float?
 
   // Native broker trailing-stop order state
-  trailingStopOrderId         String?
-  trailingStopClientOrderId   String?
-  trailingStopSubmittedAt     DateTime?
-  trailingStopStatus          String?
+  trailingStopOrderId       String?
+  trailingStopClientOrderId String?
+  trailingStopSubmittedAt   DateTime?
+  trailingStopStatus        String?
 
   // Latest broker-reported trailing-stop values
-  trailingStopTrailPercent    Float?
-  trailingStopHwm             Float?
-  trailingStopStopPrice       Float?
-  trailingStopLastSyncedAt    DateTime?
+  trailingStopTrailPercent Float?
+  trailingStopHwm          Float?
+  trailingStopStopPrice    Float?
+  trailingStopLastSyncedAt DateTime?
 
   @@index([broker, symbol])
   @@index([broker, symbol, status])
@@ -308,41 +308,41 @@ model TrackedPosition {
 }
 
 model PositionExitState {
-  id                      Int       @id @default(autoincrement())
-  trackedPositionId       Int       @unique
+  id                Int @id @default(autoincrement())
+  trackedPositionId Int @unique
 
-  status                  String    @default("watching")
-  targetUnlocked          Boolean   @default(false)
-  targetUnlockedAt        DateTime?
-  targetUnlockedPrice     Float?
-  targetUnlockedPnlPct    Float?
+  status               String    @default("watching")
+  targetUnlocked       Boolean   @default(false)
+  targetUnlockedAt     DateTime?
+  targetUnlockedPrice  Float?
+  targetUnlockedPnlPct Float?
 
-  highWaterMark           Float?
-  trailStopPrice          Float?
+  highWaterMark  Float?
+  trailStopPrice Float?
 
-  exitProfileKey          String?
-  exitMode                String?
-  takeProfitBehavior      String?
-  targetPct               Float?
-  trailingStopPct         Float?
+  exitProfileKey     String?
+  exitMode           String?
+  takeProfitBehavior String?
+  targetPct          Float?
+  trailingStopPct    Float?
 
-  trailBroker             String?
-  trailBrokerOrderId      String?
-  trailClientOrderId      String?
-  trailOrderStatus        String?
-  rawBrokerJson           Json?
+  trailBroker        String?
+  trailBrokerOrderId String?
+  trailClientOrderId String?
+  trailOrderStatus   String?
+  rawBrokerJson      Json?
 
   // Human/operator attention state
-  attentionRequired       Boolean @default(false)
-  attentionCode           String?
-  attentionMessage        String?
-  attentionAt             DateTime?
-  attentionClearedAt      DateTime?
+  attentionRequired  Boolean   @default(false)
+  attentionCode      String?
+  attentionMessage   String?
+  attentionAt        DateTime?
+  attentionClearedAt DateTime?
 
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  trackedPosition         TrackedPosition   @relation(fields: [trackedPositionId], references: [id], onDelete: Cascade)
+  trackedPosition TrackedPosition @relation(fields: [trackedPositionId], references: [id], onDelete: Cascade)
 
   @@index([status])
   @@index([targetUnlocked])
@@ -352,16 +352,16 @@ model PositionExitState {
 }
 
 model AccountSnapshot {
-  id               Int      @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
-  broker           String
-  mode             String
-  accountStatus    String?
-  currency         String?
-  accountNumber    String?
+  broker        String
+  mode          String
+  accountStatus String?
+  currency      String?
+  accountNumber String?
 
   reason           String
-  runKey           String?  @unique
+  runKey           String? @unique
   sourceEntityType String?
   sourceEntityId   String?
 
@@ -370,15 +370,17 @@ model AccountSnapshot {
   equity           Float
   portfolioValue   Float
   lastEquity       Float?
+  longMarketValue  Float?
+  shortMarketValue Float?
   dayPnL           Float?
   dayPnLPct        Float?
   tradingBlocked   Boolean
 
-  snapshotHash     String
-  changed          Boolean  @default(true)
+  snapshotHash String
+  changed      Boolean @default(true)
 
-  rawJson          Json
-  createdAt        DateTime @default(now())
+  rawJson   Json
+  createdAt DateTime @default(now())
 
   @@index([createdAt])
   @@index([reason])
@@ -387,40 +389,40 @@ model AccountSnapshot {
 }
 
 model BrokerActivity {
-  id                    Int @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
-  broker                String
-  mode                  String
+  broker String
+  mode   String
 
-  activityId            String @unique
-  activityType          String
-  activityCategory      String?
+  activityId       String  @unique
+  activityType     String
+  activityCategory String?
 
-  symbol                String?
-  side                  String?
+  symbol String?
+  side   String?
 
-  qty                   Float?
-  cumQty                Float?
-  leavesQty             Float?
-  price                 Float?
-  netAmount             Float?
+  qty       Float?
+  cumQty    Float?
+  leavesQty Float?
+  price     Float?
+  netAmount Float?
 
-  orderId               String?
-  orderIntentId         Int?
-  brokerOrderRecordId   Int?
-  trackedPositionId     Int?
+  orderId                   String?
+  orderIntentId             Int?
+  brokerOrderRecordId       Int?
+  trackedPositionId         Int?
   trackedPositionLinkSource String?
   trackedPositionLinkedAt   DateTime?
 
-  transactionTime       DateTime?
-  rawBrokerJson         Json
+  transactionTime DateTime?
+  rawBrokerJson   Json
 
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  orderIntent           OrderIntent? @relation(fields: [orderIntentId], references: [id])
-  brokerOrderRecord     BrokerOrder? @relation(fields: [brokerOrderRecordId], references: [id])
-  trackedPosition       TrackedPosition? @relation(fields: [trackedPositionId], references: [id], onDelete: SetNull)
+  orderIntent       OrderIntent?     @relation(fields: [orderIntentId], references: [id])
+  brokerOrderRecord BrokerOrder?     @relation(fields: [brokerOrderRecordId], references: [id])
+  trackedPosition   TrackedPosition? @relation(fields: [trackedPositionId], references: [id], onDelete: SetNull)
 
   @@index([activityType])
   @@index([symbol])
@@ -435,21 +437,21 @@ model BrokerActivity {
 }
 
 model Strategy {
-  id                 Int            @id @default(autoincrement())
-  key                String         @unique
+  id                 Int      @id @default(autoincrement())
+  key                String   @unique
   name               String
   description        String?
   allowedSymbolsJson Json?
-  enabled            Boolean        @default(true)
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
+  enabled            Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
-  subscriptions      Subscription[]
+  subscriptions Subscription[]
 }
 
 model ExitProfile {
-  id                 Int            @id @default(autoincrement())
-  key                String         @unique
+  id                 Int      @id @default(autoincrement())
+  key                String   @unique
   name               String
   description        String?
   targetPct          Float?
@@ -458,37 +460,37 @@ model ExitProfile {
   maxHoldDays        Int?
   exitMode           String
   takeProfitBehavior String
-  enabled            Boolean        @default(true)
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
+  enabled            Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
-  subscriptions      Subscription[]
+  subscriptions Subscription[]
 }
 
 model Subscription {
-  id             Int         @id @default(autoincrement())
-  key            String      @unique
-  name           String
-  symbol         String
-  broker         String      @default("alpaca")
-  brokerMode     String      @default("paper")
-  sizingType     String
-  sizingValue    Float
-  enabled        Boolean     @default(true)
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  id          Int      @id @default(autoincrement())
+  key         String   @unique
+  name        String
+  symbol      String
+  broker      String   @default("alpaca")
+  brokerMode  String   @default("paper")
+  sizingType  String
+  sizingValue Float
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  strategyId     Int
-  exitProfileId  Int
+  strategyId    Int
+  exitProfileId Int
 
-  securityId     Int
-  security       Security @relation(fields: [securityId], references: [id])
+  securityId Int
+  security   Security @relation(fields: [securityId], references: [id])
 
-  strategy       Strategy    @relation(fields: [strategyId], references: [id])
-  exitProfile    ExitProfile @relation(fields: [exitProfileId], references: [id])
+  strategy    Strategy    @relation(fields: [strategyId], references: [id])
+  exitProfile ExitProfile @relation(fields: [exitProfileId], references: [id])
 
-  trackedPositions    TrackedPosition[]
-  orderIntents        OrderIntent[]
+  trackedPositions TrackedPosition[]
+  orderIntents     OrderIntent[]
 
   @@index([symbol])
   @@index([strategyId])

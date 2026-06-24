@@ -8,6 +8,8 @@ export type AlpacaAccount = {
   portfolio_value: string;
   equity: string;
   last_equity: string;
+  long_market_value?: string | null;
+  short_market_value?: string | null;
   trading_blocked: boolean;
 };
 

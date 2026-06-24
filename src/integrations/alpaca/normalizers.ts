@@ -50,6 +50,8 @@ export function normalizeAccount(raw: AlpacaAccount): BrokerAccountSummary {
     equity,
     portfolioValue: toNumber(raw.portfolio_value),
     lastEquity,
+    longMarketValue: toNullableNumber(raw.long_market_value),
+    shortMarketValue: toNullableNumber(raw.short_market_value),
     dayPnL,
     dayPnLPct,
     tradingBlocked: raw.trading_blocked
