@@ -286,8 +286,24 @@ describe('trade cycle service', () => {
     expect(mocks.trackedPositionFindUnique).toHaveBeenCalledWith({
       where: { id: 101 },
       include: expect.objectContaining({
-        orderIntents: expect.any(Object),
-        brokerOrders: expect.any(Object),
+        orderIntents: expect.objectContaining({
+          include: {
+            brokerOrders: true,
+          },
+          orderBy: {
+            createdAt: 'asc',
+          },
+        }),
+        brokerOrders: expect.objectContaining({
+          orderBy: {
+            createdAt: 'asc',
+          },
+        }),
+        brokerActivities: expect.objectContaining({
+          orderBy: {
+            transactionTime: 'asc',
+          },
+        }),
       }),
     });
     expect(mocks.systemEventFindMany).toHaveBeenCalledWith({
@@ -324,6 +340,162 @@ describe('trade cycle service', () => {
         'broker_order',
         'broker_activity',
         'system_event',
+      ])
+    );
+  });
+
+  it('returns empty lifecycle collections for cycles without related records', async () => {
+    mocks.trackedPositionFindUnique.mockResolvedValue({
+      ...buildCycle({
+        brokerActivities: [],
+        closedAt: null,
+        status: 'open',
+        subscription: null,
+        exitState: null,
+      }),
+      orderIntents: [],
+      brokerOrders: [],
+    });
+    mocks.systemEventFindMany.mockResolvedValue([]);
+
+    const result = await getTradeCycleById(101);
+
+    expect(result.cycle).toEqual(
+      expect.objectContaining({
+        status: 'open',
+        closedAt: null,
+        strategy: null,
+        subscription: null,
+        exitProfile: null,
+        exitReason: null,
+        exitStateStatus: null,
+        avgExitPrice: null,
+        realizedPnl: null,
+        returnPct: null,
+        closeFillQty: null,
+        orderIntents: [],
+        brokerOrders: [],
+        brokerActivities: [],
+        systemEvents: [],
+      })
+    );
+    expect(result.cycle.timeline).toEqual([
+      expect.objectContaining({
+        type: 'position.opened',
+        source: 'tracked_position',
+      }),
+    ]);
+  });
+
+  it('preserves nullable links and structured system event payloads in detail responses', async () => {
+    mocks.trackedPositionFindUnique.mockResolvedValue({
+      ...buildCycle({
+        brokerActivities: [
+          {
+            id: 604,
+            activityType: 'FILL',
+            activityCategory: 'fill',
+            side: 'sell',
+            qty: 0.12345678,
+            cumQty: 0.12345678,
+            price: 104.987654,
+            netAmount: 12.96143814812,
+            orderId: 'close-order',
+            orderIntentId: null,
+            brokerOrderRecordId: null,
+            trackedPositionId: null,
+            trackedPositionLinkSource: null,
+            trackedPositionLinkedAt: null,
+            transactionTime: new Date('2026-06-12T17:59:30.000Z'),
+            createdAt: new Date('2026-06-12T18:00:05.000Z'),
+            rawBrokerJson: {
+              id: 'activity-604',
+              qty: '0.12345678',
+            },
+          },
+        ],
+      }),
+      orderIntents: [
+        {
+          id: 702,
+          source: 'observer',
+          side: 'sell',
+          status: 'blocked',
+          blockReason: null,
+          subscriptionId: null,
+          subscriptionKey: null,
+          trackedPositionId: null,
+          createdAt: new Date('2026-06-12T17:58:00.000Z'),
+          brokerOrders: [],
+        },
+      ],
+      brokerOrders: [],
+    });
+    mocks.systemEventFindMany.mockResolvedValue([
+      {
+        id: 902,
+        type: 'position.close_fill_attribution_ambiguous',
+        entityType: 'trackedPosition',
+        entityId: '101',
+        message: null,
+        createdAt: new Date('2026-06-12T18:00:10.000Z'),
+        payloadJson: {
+          reasons: ['multiple eligible close fills'],
+          candidates: [
+            {
+              activityId: 'activity-604',
+              qty: 0.12345678,
+            },
+          ],
+        },
+      },
+    ]);
+
+    const result = await getTradeCycleById(101);
+
+    expect(result.cycle.orderIntents[0]).toEqual(
+      expect.objectContaining({
+        id: 702,
+        subscriptionId: null,
+        subscriptionKey: null,
+        trackedPositionId: null,
+        brokerOrders: [],
+      })
+    );
+    expect(result.cycle.brokerActivities[0]).toEqual(
+      expect.objectContaining({
+        id: 604,
+        orderIntentId: null,
+        brokerOrderRecordId: null,
+        trackedPositionId: null,
+        trackedPositionLinkSource: null,
+        qty: 0.12345678,
+        price: 104.987654,
+      })
+    );
+    expect(result.cycle.systemEvents[0]).toEqual(
+      expect.objectContaining({
+        id: 902,
+        message: null,
+        payloadJson: {
+          reasons: ['multiple eligible close fills'],
+          candidates: [
+            {
+              activityId: 'activity-604',
+              qty: 0.12345678,
+            },
+          ],
+        },
+      })
+    );
+    expect(result.cycle.timeline).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'position.close_fill_attribution_ambiguous',
+          source: 'system_event',
+          summary: 'position.close_fill_attribution_ambiguous',
+          entityId: 902,
+        }),
       ])
     );
   });
