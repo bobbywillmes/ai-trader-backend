@@ -1,0 +1,2 @@
+-- RenameIndex
+ALTER INDEX "AlpacaApiUsageBucket_bucketStart_operation_endpoint_method_requ" RENAME TO "AlpacaApiUsageBucket_bucketStart_operation_endpoint_method__key";
