@@ -26,7 +26,7 @@ import {
   formatPercent,
   pnlColor,
 } from "./formatters";
-import { useTradeCycle, useTradeCycles } from "./hooks";
+import { useTradeCycleDrawer, useTradeCycles } from "./hooks";
 import type { TradeCycleSummary, TradeCyclesQuery } from "./types";
 
 function statusColor(status: string) {
@@ -49,7 +49,7 @@ export function TradeHistoryPage() {
   const [symbolFilter, setSymbolFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<string | null>("closed");
   const [modeFilter, setModeFilter] = useState("all");
-  const [selectedCycleId, setSelectedCycleId] = useState<number | null>(null);
+  const tradeCycleDrawer = useTradeCycleDrawer(token);
   const hasActiveFilters =
     symbolFilter.trim() !== "" ||
     statusFilter !== "closed" ||
@@ -74,9 +74,7 @@ export function TradeHistoryPage() {
   }, [limit, modeFilter, statusFilter, symbolFilter]);
 
   const tradeCyclesQuery = useTradeCycles(token, query);
-  const detailQuery = useTradeCycle(token, selectedCycleId);
   const cycles = tradeCyclesQuery.data?.cycles ?? [];
-  const selectedCycle = detailQuery.data?.cycle ?? null;
 
   function clearFilters() {
     setSymbolFilter("");
@@ -206,7 +204,7 @@ export function TradeHistoryPage() {
                     <TradeCycleRow
                       key={cycle.id}
                       cycle={cycle}
-                      onSelect={() => setSelectedCycleId(cycle.id)}
+                      onSelect={() => tradeCycleDrawer.openCycle(cycle.id)}
                     />
                   ))}
                 </Table.Tbody>
@@ -217,12 +215,8 @@ export function TradeHistoryPage() {
       </Card>
 
       <TradeCycleDrawer
-        opened={selectedCycleId !== null}
-        cycle={selectedCycle}
-        isLoading={detailQuery.isLoading}
-        isError={detailQuery.isError}
-        error={detailQuery.error}
-        onClose={() => setSelectedCycleId(null)}
+        {...tradeCycleDrawer.drawerProps}
+        onClose={tradeCycleDrawer.closeCycle}
       />
     </Stack>
   );
