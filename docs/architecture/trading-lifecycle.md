@@ -71,7 +71,10 @@ should use these endpoints instead of independently joining raw order, position,
 activity, and event endpoints.
 
 The admin UI `Trade History` page is the primary consumer of these lifecycle
-endpoints.
+endpoints. Its trade-cycle drawer shows the summary metrics, captured
+strategy/subscription/exit-profile context, chronological lifecycle timeline,
+and drill-down sections for the linked `OrderIntent`, `BrokerOrder`,
+`BrokerActivity`, and `SystemEvent` records behind that timeline.
 
 `GET /api/trade-performance` reuses the canonical closed trade-cycle summaries
 as the reporting source of truth. It aggregates reportable closed cycles into
