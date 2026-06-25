@@ -60,6 +60,7 @@ function buildCycle(overrides: Record<string, unknown> = {}) {
         name: 'Target Trail',
       },
     },
+    entryDecision: null,
     brokerActivities: [
       {
         id: 601,
@@ -248,6 +249,44 @@ describe('trade cycle service', () => {
     );
   });
 
+  it('includes linked entry decision summaries in trade cycles', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      buildCycle({
+        entryDecision: {
+          id: 901,
+          decisionKey: 'decision-901',
+          evaluatedAt: new Date('2026-06-12T14:29:00.000Z'),
+          source: 'n8n-ai-trader',
+          decisionState: 'signal_created',
+          decisionReason: 'dip_threshold_met',
+          signalCreated: true,
+          signalBlocked: false,
+          blockingReason: null,
+          persistenceReason: 'signal_created',
+        },
+      }),
+    ]);
+
+    const result = await listTradeCycles();
+
+    expect(result.cycles[0]).toEqual(
+      expect.objectContaining({
+        entryDecision: {
+          id: 901,
+          decisionKey: 'decision-901',
+          evaluatedAt: new Date('2026-06-12T14:29:00.000Z'),
+          source: 'n8n-ai-trader',
+          decisionState: 'signal_created',
+          decisionReason: 'dip_threshold_met',
+          signalCreated: true,
+          signalBlocked: false,
+          blockingReason: null,
+          persistenceReason: 'signal_created',
+        },
+      })
+    );
+  });
+
   it('returns a trade-cycle detail with related records and timeline', async () => {
     mocks.trackedPositionFindUnique.mockResolvedValue({
       ...buildCycle(),
@@ -270,6 +309,18 @@ describe('trade cycle service', () => {
           createdAt: new Date('2026-06-12T17:58:01.000Z'),
         },
       ],
+      entryDecision: {
+        id: 903,
+        decisionKey: 'decision-903',
+        evaluatedAt: new Date('2026-06-12T14:29:00.000Z'),
+        source: 'n8n-ai-trader',
+        decisionState: 'signal_created',
+        decisionReason: 'dip_threshold_met',
+        signalCreated: true,
+        signalBlocked: false,
+        blockingReason: null,
+        persistenceReason: 'signal_created',
+      },
     });
     mocks.systemEventFindMany.mockResolvedValue([
       {
@@ -325,6 +376,10 @@ describe('trade cycle service', () => {
         brokerOrders: expect.arrayContaining([
           expect.objectContaining({ id: 801 }),
         ]),
+        entryDecision: expect.objectContaining({
+          id: 903,
+          decisionKey: 'decision-903',
+        }),
         brokerActivities: expect.arrayContaining([
           expect.objectContaining({ id: 602 }),
         ]),
@@ -336,6 +391,7 @@ describe('trade cycle service', () => {
     expect(result.cycle.timeline.map((item) => item.source)).toEqual(
       expect.arrayContaining([
         'tracked_position',
+        'entry_decision',
         'order_intent',
         'broker_order',
         'broker_activity',

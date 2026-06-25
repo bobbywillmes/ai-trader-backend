@@ -177,6 +177,7 @@ function buildCycleSummary(
         };
       };
       brokerActivities: true;
+      entryDecision: true;
     };
   }>,
   systemEvents: TrackedPositionSystemEvent[] = []
@@ -276,6 +277,20 @@ function buildCycleSummary(
       : null,
     exitReason: parseExitReason(position),
     exitStateStatus: position.exitState?.status ?? null,
+    entryDecision: position.entryDecision
+      ? {
+          id: position.entryDecision.id,
+          decisionKey: position.entryDecision.decisionKey,
+          evaluatedAt: position.entryDecision.evaluatedAt,
+          source: position.entryDecision.source,
+          decisionState: position.entryDecision.decisionState,
+          decisionReason: position.entryDecision.decisionReason,
+          signalCreated: position.entryDecision.signalCreated,
+          signalBlocked: position.entryDecision.signalBlocked,
+          blockingReason: position.entryDecision.blockingReason,
+          persistenceReason: position.entryDecision.persistenceReason,
+        }
+      : null,
   };
 }
 
@@ -349,6 +364,7 @@ const tradeCycleInclude = {
       transactionTime: 'asc',
     },
   },
+  entryDecision: true,
 } satisfies Prisma.TrackedPositionInclude;
 
 export async function listTradeCycles(filters: TradeCycleFilters = {}) {
@@ -446,10 +462,12 @@ export async function getTradeCycleById(id: number) {
       orderIntents: position.orderIntents,
       brokerOrders: position.brokerOrders,
       brokerActivities: position.brokerActivities,
+      entryDecision: position.entryDecision,
       systemEvents,
       timeline: buildTimeline({
         openedAt: position.openedAt,
         closedAt: position.closedAt,
+        entryDecision: position.entryDecision,
         orderIntents: position.orderIntents,
         brokerOrders: position.brokerOrders,
         brokerActivities: position.brokerActivities,
@@ -462,6 +480,12 @@ export async function getTradeCycleById(id: number) {
 function buildTimeline(args: {
   openedAt: Date;
   closedAt: Date | null;
+  entryDecision: {
+    id: number;
+    decisionState: string;
+    decisionReason: string | null;
+    evaluatedAt: Date;
+  } | null;
   orderIntents: Array<{
     id: number;
     source: string;
@@ -493,6 +517,19 @@ function buildTimeline(args: {
       summary: 'Position tracking started',
       entityId: null,
     },
+    ...(args.entryDecision
+      ? [
+          {
+            type: `entry_decision.${args.entryDecision.decisionState}`,
+            occurredAt: args.entryDecision.evaluatedAt,
+            source: 'entry_decision',
+            summary:
+              args.entryDecision.decisionReason ??
+              args.entryDecision.decisionState,
+            entityId: args.entryDecision.id,
+          },
+        ]
+      : []),
     ...args.orderIntents.map((intent) => ({
       type: `order_intent.${intent.status}`,
       occurredAt: intent.createdAt,
