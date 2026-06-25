@@ -21,6 +21,7 @@ import {
   adaptivePollingCoordinator,
   type AdaptivePollingDecision,
 } from '../services/adaptive-polling.service.js';
+import { linkEntryDecisionToBrokerOrder } from '../services/entry-decision.service.js';
 
 export type SubmittedOrderSyncResult = {
   found: number;
@@ -145,6 +146,11 @@ export async function processPendingOrders() {
       });
 
       if (existingBrokerOrderRecord) {
+        await linkEntryDecisionToBrokerOrder({
+          orderIntentId: intent.id,
+          brokerOrderRecordId: existingBrokerOrderRecord.id,
+        });
+
         await prisma.orderIntent.update({
           where: { id: intent.id },
           data: {
@@ -184,6 +190,20 @@ export async function processPendingOrders() {
           },
         },
       });
+
+      const createdBrokerOrderRecord = await prisma.brokerOrder.findFirst({
+        where: {
+          broker: 'alpaca',
+          brokerOrderId: brokerOrder.id,
+        },
+      });
+
+      if (createdBrokerOrderRecord) {
+        await linkEntryDecisionToBrokerOrder({
+          orderIntentId: intent.id,
+          brokerOrderRecordId: createdBrokerOrderRecord.id,
+        });
+      }
 
       console.log(`Intent (${intent.id}) for ${intent.symbol} submitted.`);
     } catch (error) {

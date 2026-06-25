@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   evaluateEntrySessionGuard: vi.fn(),
   createSystemEvent: vi.fn(),
   syncTrailingStopOrderStatus: vi.fn(),
+  linkEntryDecisionToBrokerOrder: vi.fn(),
   adaptiveGetDecision: vi.fn(),
   adaptiveRecordAttempt: vi.fn(),
   adaptiveRecordSuccess: vi.fn(),
@@ -66,6 +67,10 @@ vi.mock('../services/adaptive-polling.service.js', () => ({
     recordFailure: mocks.adaptiveRecordFailure,
     recordRateLimitDeferred: mocks.adaptiveRecordRateLimitDeferred,
   },
+}));
+
+vi.mock('../services/entry-decision.service.js', () => ({
+  linkEntryDecisionToBrokerOrder: mocks.linkEntryDecisionToBrokerOrder,
 }));
 
 const baseIntent = {
@@ -188,6 +193,38 @@ describe('order worker entry-session recheck', () => {
         clientOrderId: 'client-101',
       })
     );
+  });
+
+  it('links entry decisions to newly created broker order records', async () => {
+    mocks.orderIntentFindMany.mockResolvedValue([baseIntent]);
+    mocks.brokerOrderFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 501 });
+
+    await processPendingOrders();
+
+    expect(mocks.linkEntryDecisionToBrokerOrder).toHaveBeenCalledWith({
+      orderIntentId: 101,
+      brokerOrderRecordId: 501,
+    });
+  });
+
+  it('links entry decisions to existing broker order records on idempotent retries', async () => {
+    mocks.orderIntentFindMany.mockResolvedValue([baseIntent]);
+    mocks.brokerOrderFindFirst.mockResolvedValue({ id: 501 });
+
+    await processPendingOrders();
+
+    expect(mocks.linkEntryDecisionToBrokerOrder).toHaveBeenCalledWith({
+      orderIntentId: 101,
+      brokerOrderRecordId: 501,
+    });
+    expect(mocks.orderIntentUpdate).toHaveBeenCalledWith({
+      where: { id: 101 },
+      data: {
+        status: 'submitted',
+      },
+    });
   });
 });
 

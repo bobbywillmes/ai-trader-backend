@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   subscriptionFindMany: vi.fn(),
   subscriptionFindUnique: vi.fn(),
   settingFindMany: vi.fn(),
+  linkEntryDecisionToTrackedPosition: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -30,6 +31,10 @@ vi.mock('../db/prisma.js', () => ({
       findMany: mocks.settingFindMany,
     },
   },
+}));
+
+vi.mock('./entry-decision.service.js', () => ({
+  linkEntryDecisionToTrackedPosition: mocks.linkEntryDecisionToTrackedPosition,
 }));
 
 import { buildClientOrderId } from './client-order-id.service.js';
@@ -69,6 +74,7 @@ describe('tracked position subscription resolution', () => {
     mocks.subscriptionFindUnique.mockResolvedValue(null);
     mocks.orderIntentUpdateMany.mockResolvedValue({ count: 1 });
     mocks.brokerOrderUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.linkEntryDecisionToTrackedPosition.mockResolvedValue({ count: 1 });
   });
 
   it('resolves a locally submitted entry through its local order intent', async () => {
@@ -240,6 +246,10 @@ describe('tracked position subscription resolution', () => {
     expect(mocks.brokerOrderUpdateMany).toHaveBeenCalledWith({
       where: { orderIntentId: 101, trackedPositionId: null },
       data: { trackedPositionId: 303 },
+    });
+    expect(mocks.linkEntryDecisionToTrackedPosition).toHaveBeenCalledWith({
+      orderIntentId: 101,
+      trackedPositionId: 303,
     });
   });
 });

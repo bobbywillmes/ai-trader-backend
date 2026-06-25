@@ -28,7 +28,9 @@ vi.mock('../db/prisma.js', () => ({
 
 import {
   ensureEntryDecisionCanLink,
+  linkEntryDecisionToBrokerOrder,
   linkEntryDecisionToOrderIntent,
+  linkEntryDecisionToTrackedPosition,
   recordEntryDecision,
 } from './entry-decision.service.js';
 
@@ -294,6 +296,40 @@ describe('entry decision service', () => {
       },
       data: {
         orderIntentId: 55,
+      },
+    });
+  });
+
+  it('links an entry decision to a broker order by order intent', async () => {
+    await linkEntryDecisionToBrokerOrder({
+      orderIntentId: 55,
+      brokerOrderRecordId: 77,
+    });
+
+    expect(mocks.entryDecisionUpdateMany).toHaveBeenCalledWith({
+      where: {
+        orderIntentId: 55,
+        brokerOrderRecordId: null,
+      },
+      data: {
+        brokerOrderRecordId: 77,
+      },
+    });
+  });
+
+  it('links an entry decision to a tracked position by order intent', async () => {
+    await linkEntryDecisionToTrackedPosition({
+      orderIntentId: 55,
+      trackedPositionId: 303,
+    });
+
+    expect(mocks.entryDecisionUpdateMany).toHaveBeenCalledWith({
+      where: {
+        orderIntentId: 55,
+        trackedPositionId: null,
+      },
+      data: {
+        trackedPositionId: 303,
       },
     });
   });

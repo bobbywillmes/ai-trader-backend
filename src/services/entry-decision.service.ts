@@ -402,3 +402,33 @@ export async function linkEntryDecisionToOrderIntent(args: {
     }
   );
 }
+
+export async function linkEntryDecisionToBrokerOrder(args: {
+  orderIntentId: number;
+  brokerOrderRecordId: number;
+}) {
+  return prisma.entryDecision.updateMany({
+    where: {
+      orderIntentId: args.orderIntentId,
+      brokerOrderRecordId: null,
+    },
+    data: {
+      brokerOrderRecordId: args.brokerOrderRecordId,
+    },
+  });
+}
+
+export async function linkEntryDecisionToTrackedPosition(args: {
+  orderIntentId: number;
+  trackedPositionId: number;
+}) {
+  return prisma.entryDecision.updateMany({
+    where: {
+      orderIntentId: args.orderIntentId,
+      trackedPositionId: null,
+    },
+    data: {
+      trackedPositionId: args.trackedPositionId,
+    },
+  });
+}

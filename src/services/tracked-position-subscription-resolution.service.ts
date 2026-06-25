@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { getRuntimeTradingConfig } from './config.service.js';
 import { parseSubscriptionKeyFromClientOrderId } from './client-order-id.service.js';
+import { linkEntryDecisionToTrackedPosition } from './entry-decision.service.js';
 
 export type SubscriptionResolutionSource =
   | 'local_order_intent'
@@ -402,5 +403,10 @@ export async function linkLocalEntryOwnership(args: {
     data: {
       trackedPositionId: args.trackedPositionId,
     },
+  });
+
+  await linkEntryDecisionToTrackedPosition({
+    orderIntentId: intent.id,
+    trackedPositionId: args.trackedPositionId,
   });
 }
