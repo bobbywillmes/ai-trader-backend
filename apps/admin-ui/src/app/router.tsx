@@ -16,6 +16,7 @@ import { ReportsPage } from "../features/reports/ReportsPage";
 import { MarketDiaryPage } from "../features/marketDiary/MarketDiaryPage"
 import { ReconciliationPage } from "../features/reconciliation/ReconciliationPage";
 import { TradeHistoryPage } from "../features/tradeHistory/TradeHistoryPage";
+import { EntryDecisionsPage } from "../features/entryDecisions/EntryDecisionsPage";
 
 export const router = createBrowserRouter([
   {
@@ -45,6 +46,10 @@ export const router = createBrowserRouter([
       {
         path: "trade-history",
         element: <TradeHistoryPage />,
+      },
+      {
+        path: "entry-decisions",
+        element: <EntryDecisionsPage />,
       },
       {
         path: "subscriptions",

@@ -173,6 +173,18 @@ export type TradePerformanceTradeRow = {
     key: string | null;
     name: string | null;
   } | null;
+  entryDecision: {
+    id: number;
+    decisionKey: string;
+    evaluatedAt: string;
+    source: string;
+    decisionState: string;
+    decisionReason: string | null;
+    signalCreated: boolean;
+    signalBlocked: boolean;
+    blockingReason: string | null;
+    persistenceReason: string;
+  } | null;
   exitReason: string | null;
 };
 
@@ -201,6 +213,7 @@ export type TradePerformanceResponse = {
     byExitProfile: TradePerformanceGroup[];
     bySecurity: TradePerformanceGroup[];
     byExitReason: TradePerformanceGroup[];
+    byEntryDecisionState: TradePerformanceGroup[];
   };
   trades: TradePerformanceTradeRow[];
   pagination: {

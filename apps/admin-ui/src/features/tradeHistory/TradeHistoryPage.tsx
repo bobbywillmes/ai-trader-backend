@@ -195,6 +195,7 @@ export function TradeHistoryPage() {
                     <Table.Th>Strategy</Table.Th>
                     <Table.Th>Subscription</Table.Th>
                     <Table.Th>Exit Profile</Table.Th>
+                    <Table.Th>Entry Decision</Table.Th>
                     <Table.Th>Status</Table.Th>
                     <Table.Th />
                   </Table.Tr>
@@ -266,6 +267,28 @@ function TradeCycleRow({
       </Table.Td>
       <Table.Td>{cycle.exitProfile?.name ?? "-"}</Table.Td>
       <Table.Td>
+        <Stack gap={2}>
+          {cycle.entryDecision ? (
+            <>
+              <Badge
+                size="xs"
+                variant="light"
+                color={decisionColor(cycle.entryDecision.decisionState)}
+              >
+                {cycle.entryDecision.decisionState}
+              </Badge>
+              <Text size="xs" c="dimmed" lineClamp={1}>
+                {cycle.entryDecision.decisionReason ??
+                  cycle.entryDecision.blockingReason ??
+                  cycle.entryDecision.persistenceReason}
+              </Text>
+            </>
+          ) : (
+            <Text size="sm">-</Text>
+          )}
+        </Stack>
+      </Table.Td>
+      <Table.Td>
         <Badge color={statusColor(cycle.status)} variant="light">
           {cycle.status}
         </Badge>
@@ -279,3 +302,9 @@ function TradeCycleRow({
   );
 }
 
+function decisionColor(state: string) {
+  if (state.includes("allow") || state.includes("eligible")) return "teal";
+  if (state.includes("block") || state.includes("deny")) return "red";
+  if (state.includes("watch") || state.includes("cooldown")) return "yellow";
+  return "blue";
+}

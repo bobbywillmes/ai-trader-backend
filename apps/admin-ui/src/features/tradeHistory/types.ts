@@ -30,6 +30,18 @@ export type TradeCycleSummary = {
     key: string;
     name: string;
   } | null;
+  entryDecision: {
+    id: number;
+    decisionKey: string;
+    evaluatedAt: string;
+    source: string;
+    decisionState: string;
+    decisionReason: string | null;
+    signalCreated: boolean;
+    signalBlocked: boolean;
+    blockingReason: string | null;
+    persistenceReason: string;
+  } | null;
   exitReason: string | null;
   exitStateStatus: string | null;
 };

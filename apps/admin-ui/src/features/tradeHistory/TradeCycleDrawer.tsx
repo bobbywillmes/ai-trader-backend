@@ -36,6 +36,8 @@ function sourceColor(source: string) {
       return "violet";
     case "order_intent":
       return "cyan";
+    case "entry_decision":
+      return "blue";
     case "system_event":
       return "orange";
     default:
@@ -153,6 +155,28 @@ export function TradeCycleDrawer({
             <Info label="Strategy" value={cycle.strategy?.name ?? "-"} />
             <Info label="Subscription" value={cycle.subscription?.name ?? "-"} />
             <Info label="Exit Profile" value={cycle.exitProfile?.name ?? "-"} />
+            <Info
+              label="Entry Decision"
+              value={
+                cycle.entryDecision ? (
+                  <Group gap="xs">
+                    <Badge
+                      color={sourceColor("entry_decision")}
+                      variant="light"
+                    >
+                      {cycle.entryDecision.decisionState}
+                    </Badge>
+                    <Text size="sm">
+                      {cycle.entryDecision.decisionReason ??
+                        cycle.entryDecision.blockingReason ??
+                        cycle.entryDecision.persistenceReason}
+                    </Text>
+                  </Group>
+                ) : (
+                  "-"
+                )
+              }
+            />
             <Info
               label="Exit Reason"
               value={
