@@ -184,6 +184,13 @@ function pnlTextColor(value: number | null | undefined) {
   return "dimmed";
 }
 
+function decisionColor(state: string) {
+  if (state.includes("allow") || state.includes("eligible")) return "teal";
+  if (state.includes("block") || state.includes("deny")) return "red";
+  if (state.includes("watch") || state.includes("cooldown")) return "yellow";
+  return "blue";
+}
+
 function getSortLabel(
   column: TradePerformanceSortBy,
   sortBy: TradePerformanceSortBy,
@@ -499,7 +506,7 @@ function PerformanceTradesTable({
   return (
     <Stack gap="sm">
       <ScrollArea>
-        <Table striped highlightOnHover withTableBorder miw={1120}>
+        <Table striped highlightOnHover withTableBorder miw={1240}>
           <Table.Thead>
             <Table.Tr>
               <PerformanceSortHeader
@@ -551,6 +558,7 @@ function PerformanceTradesTable({
                 onSort={onSort}
               />
               <Table.Th>Strategy</Table.Th>
+              <Table.Th>Entry Decision</Table.Th>
               <Table.Th>Exit</Table.Th>
               <Table.Th />
             </Table.Tr>
@@ -591,6 +599,30 @@ function PerformanceTradesTable({
                     <Text size="xs" c="dimmed">
                       {trade.subscription?.name ?? trade.subscription?.key ?? "-"}
                     </Text>
+                  </Stack>
+                </Table.Td>
+                <Table.Td>
+                  <Stack gap={2}>
+                    {trade.entryDecision ? (
+                      <>
+                        <Badge
+                          size="xs"
+                          variant="light"
+                          color={decisionColor(
+                            trade.entryDecision.decisionState
+                          )}
+                        >
+                          {trade.entryDecision.decisionState}
+                        </Badge>
+                        <Text size="xs" c="dimmed" lineClamp={1}>
+                          {trade.entryDecision.decisionReason ??
+                            trade.entryDecision.blockingReason ??
+                            trade.entryDecision.persistenceReason}
+                        </Text>
+                      </>
+                    ) : (
+                      <Text size="sm">-</Text>
+                    )}
                   </Stack>
                 </Table.Td>
                 <Table.Td>
@@ -1168,13 +1200,23 @@ export function ReportsPage() {
                 </Card>
               </SimpleGrid>
 
-              <SimpleGrid cols={{ base: 1, lg: 3 }}>
+              <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }}>
                 <Card withBorder radius="md" p="md">
                   <Stack gap="sm">
                     <Title order={4}>By Strategy</Title>
                     <PerformanceBarChart
                       data={performance.groups.byStrategy}
                       emptyLabel="No strategy results yet."
+                    />
+                  </Stack>
+                </Card>
+
+                <Card withBorder radius="md" p="md">
+                  <Stack gap="sm">
+                    <Title order={4}>By Entry Decision</Title>
+                    <PerformanceBarChart
+                      data={performance.groups.byEntryDecisionState}
+                      emptyLabel="No decision-state results yet."
                     />
                   </Stack>
                 </Card>
