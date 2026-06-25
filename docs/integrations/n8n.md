@@ -99,6 +99,60 @@ Before enabling any real paper-order workflow, confirm the dry-run system has be
 
 ## ➡️ Signal API
 
+### Entry Decision Snapshot
+
+```http
+POST /api/signals/entry-decisions
+```
+
+Records a durable snapshot for an ETF decision engine evaluation. n8n should use this endpoint for meaningful decisions, including skipped or idle opportunities that should remain analyzable without creating an order.
+
+The backend uses `decisionKey` for idempotency. Re-sending the same decision key returns the existing decision instead of creating a duplicate. Repeated unchanged idle decisions may be accepted but skipped according to the backend persistence policy.
+
+Example request:
+
+```json
+{
+  "decisionKey": "n8n:etf-watch:spy_dip_core:2026-06-25T15:00Z",
+  "evaluatedAt": "2026-06-25T15:00:00.000Z",
+  "source": "n8n-ai-trader",
+  "symbol": "SPY",
+  "subscriptionKey": "spy_dip_core",
+  "decisionState": "idle",
+  "decisionReason": "above_dip_threshold",
+  "signalEligible": false,
+  "signalCreated": false,
+  "signalBlocked": false,
+  "currentPrice": 540.12,
+  "previousClose": 542.5,
+  "dipPercent": -0.44,
+  "dipThresholdPercent": -1,
+  "allowOrderSignals": true,
+  "dryRun": true,
+  "paperMode": true,
+  "rawDecisionJson": {
+    "engineVersion": "etf-watch-v1",
+    "candidateRank": 1
+  }
+}
+```
+
+Example persisted response:
+
+```json
+{
+  "ok": true,
+  "decision": {
+    "persisted": true,
+    "skipped": false,
+    "duplicate": false,
+    "persistenceReason": "initial_state",
+    "id": 101,
+    "decisionKey": "n8n:etf-watch:spy_dip_core:2026-06-25T15:00Z"
+  }
+}
+```
+
 ### Entry Signal
 
 ```http
