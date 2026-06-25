@@ -109,6 +109,13 @@ Records a durable snapshot for an ETF decision engine evaluation. n8n should use
 
 The backend uses `decisionKey` for idempotency. Re-sending the same decision key returns the existing decision instead of creating a duplicate. Repeated unchanged idle decisions may be accepted but skipped according to the backend persistence policy.
 
+Admin/operator review is available through:
+
+```http
+GET /api/entry-decisions
+GET /api/entry-decisions/:id
+```
+
 Example request:
 
 ```json

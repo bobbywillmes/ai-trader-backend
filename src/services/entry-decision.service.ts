@@ -42,7 +42,22 @@ export type RecordEntryDecisionResult =
       decision: EntryDecision;
     };
 
+export type EntryDecisionFilters = {
+  symbol?: string;
+  decisionState?: string;
+  subscriptionId?: number;
+  strategyId?: number;
+  exitProfileId?: number;
+  dateFrom?: Date;
+  dateTo?: Date;
+  signalCreated?: boolean;
+  signalBlocked?: boolean;
+  limit?: number;
+};
+
 const CHECKPOINT_INTERVAL_MS = 60 * 60 * 1000;
+const DEFAULT_DECISION_LIMIT = 100;
+const MAX_DECISION_LIMIT = 500;
 
 function nullable<T>(value: T | null | undefined) {
   return value ?? null;
@@ -172,6 +187,44 @@ function inputAsJson(input: EntryDecisionInput): Prisma.InputJsonValue {
     evaluatedAt: input.evaluatedAt.toISOString(),
     cooldownUntil: toIso(input.cooldownUntil),
   } as Prisma.InputJsonValue;
+}
+
+function normalizeLimit(limit: number | undefined) {
+  if (limit === undefined || !Number.isFinite(limit)) {
+    return DEFAULT_DECISION_LIMIT;
+  }
+
+  return Math.min(Math.max(Math.trunc(limit), 1), MAX_DECISION_LIMIT);
+}
+
+function buildEntryDecisionWhere(
+  filters: EntryDecisionFilters
+): Prisma.EntryDecisionWhereInput {
+  const where: Prisma.EntryDecisionWhereInput = {};
+
+  if (filters.symbol) where.symbol = filters.symbol.trim().toUpperCase();
+  if (filters.decisionState) where.decisionState = filters.decisionState;
+  if (filters.subscriptionId !== undefined) {
+    where.subscriptionId = filters.subscriptionId;
+  }
+  if (filters.strategyId !== undefined) where.strategyId = filters.strategyId;
+  if (filters.exitProfileId !== undefined) {
+    where.exitProfileId = filters.exitProfileId;
+  }
+  if (filters.signalCreated !== undefined) {
+    where.signalCreated = filters.signalCreated;
+  }
+  if (filters.signalBlocked !== undefined) {
+    where.signalBlocked = filters.signalBlocked;
+  }
+  if (filters.dateFrom || filters.dateTo) {
+    where.evaluatedAt = {
+      ...(filters.dateFrom ? { gte: filters.dateFrom } : {}),
+      ...(filters.dateTo ? { lte: filters.dateTo } : {}),
+    };
+  }
+
+  return where;
 }
 
 async function resolveDecisionContext(input: EntryDecisionInput) {
@@ -320,6 +373,90 @@ export async function recordEntryDecision(
     persistenceReason,
     decision,
   };
+}
+
+export async function listEntryDecisions(filters: EntryDecisionFilters = {}) {
+  const limit = normalizeLimit(filters.limit);
+
+  const decisions = await prisma.entryDecision.findMany({
+    where: buildEntryDecisionWhere(filters),
+    orderBy: {
+      evaluatedAt: 'desc',
+    },
+    take: limit,
+    select: {
+      id: true,
+      decisionKey: true,
+      evaluatedAt: true,
+      source: true,
+      symbol: true,
+      decisionState: true,
+      decisionReason: true,
+      signalAction: true,
+      signalEligible: true,
+      signalCreated: true,
+      signalBlocked: true,
+      blockingReason: true,
+      persistenceReason: true,
+      currentPrice: true,
+      dipPercent: true,
+      dipThresholdPercent: true,
+      allowOrderSignals: true,
+      dryRun: true,
+      eventRisk: true,
+      marketSession: true,
+      tradingEnabled: true,
+      killSwitchEnabled: true,
+      paperMode: true,
+      subscriptionId: true,
+      subscriptionKey: true,
+      strategyId: true,
+      strategyKey: true,
+      exitProfileId: true,
+      exitProfileKey: true,
+      orderIntentId: true,
+      brokerOrderRecordId: true,
+      trackedPositionId: true,
+      createdAt: true,
+    },
+  });
+
+  return {
+    decisions,
+    filters: {
+      symbol: filters.symbol?.trim().toUpperCase() ?? null,
+      decisionState: filters.decisionState ?? null,
+      subscriptionId: filters.subscriptionId ?? null,
+      strategyId: filters.strategyId ?? null,
+      exitProfileId: filters.exitProfileId ?? null,
+      dateFrom: filters.dateFrom?.toISOString() ?? null,
+      dateTo: filters.dateTo?.toISOString() ?? null,
+      signalCreated: filters.signalCreated ?? null,
+      signalBlocked: filters.signalBlocked ?? null,
+      limit,
+    },
+  };
+}
+
+export async function getEntryDecisionById(id: number) {
+  const decision = await prisma.entryDecision.findUnique({
+    where: { id },
+    include: {
+      security: true,
+      subscription: true,
+      strategy: true,
+      exitProfile: true,
+      orderIntent: true,
+      brokerOrderRecord: true,
+      trackedPosition: true,
+    },
+  });
+
+  if (!decision) {
+    throw new HttpError(404, `Entry decision ${id} was not found.`);
+  }
+
+  return { decision };
 }
 
 export async function ensureEntryDecisionCanLink(decisionKey: string) {

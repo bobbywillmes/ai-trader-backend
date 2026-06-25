@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   entryDecisionCreate: vi.fn(),
   entryDecisionFindFirst: vi.fn(),
+  entryDecisionFindMany: vi.fn(),
   entryDecisionFindUnique: vi.fn(),
   entryDecisionUpdateMany: vi.fn(),
   securityFindUnique: vi.fn(),
@@ -14,6 +15,7 @@ vi.mock('../db/prisma.js', () => ({
     entryDecision: {
       create: mocks.entryDecisionCreate,
       findFirst: mocks.entryDecisionFindFirst,
+      findMany: mocks.entryDecisionFindMany,
       findUnique: mocks.entryDecisionFindUnique,
       updateMany: mocks.entryDecisionUpdateMany,
     },
@@ -31,6 +33,7 @@ import {
   linkEntryDecisionToBrokerOrder,
   linkEntryDecisionToOrderIntent,
   linkEntryDecisionToTrackedPosition,
+  listEntryDecisions,
   recordEntryDecision,
 } from './entry-decision.service.js';
 
@@ -82,6 +85,7 @@ describe('entry decision service', () => {
     vi.clearAllMocks();
     mocks.entryDecisionFindUnique.mockResolvedValue(null);
     mocks.entryDecisionFindFirst.mockResolvedValue(null);
+    mocks.entryDecisionFindMany.mockResolvedValue([]);
     mocks.entryDecisionUpdateMany.mockResolvedValue({ count: 1 });
     mocks.securityFindUnique.mockResolvedValue({ id: 11, symbol: 'SPY' });
     mocks.subscriptionFindUnique.mockResolvedValue(null);
@@ -331,6 +335,47 @@ describe('entry decision service', () => {
       data: {
         trackedPositionId: 303,
       },
+    });
+  });
+
+  it('lists entry decisions with bounded filters', async () => {
+    mocks.entryDecisionFindMany.mockResolvedValue([
+      decision({ id: 101, decisionKey: 'decision-101' }),
+    ]);
+
+    const result = await listEntryDecisions({
+      symbol: 'spy',
+      decisionState: 'idle',
+      subscriptionId: 22,
+      signalCreated: false,
+      dateFrom: new Date('2026-06-25T14:00:00.000Z'),
+      dateTo: new Date('2026-06-25T16:00:00.000Z'),
+      limit: 900,
+    });
+
+    expect(mocks.entryDecisionFindMany).toHaveBeenCalledWith({
+      where: {
+        symbol: 'SPY',
+        decisionState: 'idle',
+        subscriptionId: 22,
+        signalCreated: false,
+        evaluatedAt: {
+          gte: new Date('2026-06-25T14:00:00.000Z'),
+          lte: new Date('2026-06-25T16:00:00.000Z'),
+        },
+      },
+      orderBy: {
+        evaluatedAt: 'desc',
+      },
+      take: 500,
+      select: expect.any(Object),
+    });
+    expect(result.filters).toMatchObject({
+      symbol: 'SPY',
+      decisionState: 'idle',
+      subscriptionId: 22,
+      signalCreated: false,
+      limit: 500,
     });
   });
 });
