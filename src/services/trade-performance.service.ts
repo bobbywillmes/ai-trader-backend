@@ -48,6 +48,18 @@ type PerformanceCycle = {
   } | null;
   exitProfile: { id: number | null; key: string | null; name: string | null } | null;
   exitReason: string | null;
+  entryDecision: {
+    id: number;
+    decisionKey: string;
+    evaluatedAt: Date | string;
+    source: string;
+    decisionState: string;
+    decisionReason: string | null;
+    signalCreated: boolean;
+    signalBlocked: boolean;
+    blockingReason: string | null;
+    persistenceReason: string;
+  } | null;
 };
 
 export type TradePerformanceTradeRow = {
@@ -67,6 +79,7 @@ export type TradePerformanceTradeRow = {
   subscription: PerformanceCycle['subscription'];
   exitProfile: PerformanceCycle['exitProfile'];
   exitReason: string | null;
+  entryDecision: PerformanceCycle['entryDecision'];
 };
 
 const DEFAULT_PAGE = 1;
@@ -320,6 +333,7 @@ function toTradeRow(cycle: PerformanceCycle): TradePerformanceTradeRow {
     subscription: cycle.subscription,
     exitProfile: cycle.exitProfile,
     exitReason: cycle.exitReason,
+    entryDecision: cycle.entryDecision,
   };
 }
 
@@ -380,6 +394,10 @@ export async function getTradePerformance(query: TradePerformanceQuery = {}) {
       byExitReason: groupBy(reportable, (cycle) => ({
         id: cycle.exitReason ?? 'unknown',
         label: cycle.exitReason ?? 'Unknown',
+      })),
+      byEntryDecisionState: groupBy(reportable, (cycle) => ({
+        id: cycle.entryDecision?.decisionState ?? 'unknown',
+        label: cycle.entryDecision?.decisionState ?? 'Unknown',
       })),
     },
     trades,

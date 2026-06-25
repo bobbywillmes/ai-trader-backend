@@ -39,6 +39,7 @@ function baseCycle() {
     },
     exitProfile: { id: 1, key: 'exit_a', name: 'Exit A' },
     exitReason: 'target',
+    entryDecision: null,
   };
 }
 
@@ -56,6 +57,18 @@ describe('trade performance service', () => {
           realizedPnl: 20,
           returnPct: 0.04,
           strategy: { id: 1, key: 'strategy_a', name: 'Strategy A' },
+          entryDecision: {
+            id: 101,
+            decisionKey: 'decision-101',
+            evaluatedAt: new Date('2026-06-10T14:29:00Z'),
+            source: 'n8n-ai-trader',
+            decisionState: 'signal_created',
+            decisionReason: 'dip_threshold_met',
+            signalCreated: true,
+            signalBlocked: false,
+            blockingReason: null,
+            persistenceReason: 'signal_created',
+          },
         }),
         cycle({
           id: 2,
@@ -133,6 +146,15 @@ describe('trade performance service', () => {
           id: 'stop_loss',
           label: 'stop_loss',
           totalRealizedPnl: -5,
+        }),
+      ])
+    );
+    expect(result.groups.byEntryDecisionState).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'signal_created',
+          label: 'signal_created',
+          totalRealizedPnl: 20,
         }),
       ])
     );
@@ -280,6 +302,18 @@ describe('trade performance service', () => {
           subscription: null,
           exitProfile: null,
           exitReason: null,
+          entryDecision: {
+            id: 101,
+            decisionKey: 'decision-101',
+            evaluatedAt: new Date('2026-06-10T14:29:00Z'),
+            source: 'n8n-ai-trader',
+            decisionState: 'signal_created',
+            decisionReason: 'dip_threshold_met',
+            signalCreated: true,
+            signalBlocked: false,
+            blockingReason: null,
+            persistenceReason: 'signal_created',
+          },
         }),
       ],
     });
@@ -297,6 +331,18 @@ describe('trade performance service', () => {
         subscription: null,
         exitProfile: null,
         exitReason: null,
+        entryDecision: {
+          id: 101,
+          decisionKey: 'decision-101',
+          evaluatedAt: new Date('2026-06-10T14:29:00Z'),
+          source: 'n8n-ai-trader',
+          decisionState: 'signal_created',
+          decisionReason: 'dip_threshold_met',
+          signalCreated: true,
+          signalBlocked: false,
+          blockingReason: null,
+          persistenceReason: 'signal_created',
+        },
         openedAt: '2026-06-10T14:30:00.000Z',
         closedAt: '2026-06-10T16:00:00.000Z',
       })
