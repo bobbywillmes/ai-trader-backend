@@ -45,9 +45,10 @@ Current service-level coverage includes:
 - close-fill attribution from broker activities to tracked trade cycles
 - observer-mode close attribution for development databases watching production paper Alpaca state
 - duplicate broker activity ingestion safety
+- entry decision persistence, idempotency, lifecycle linking, and review filters
 - trade-cycle summary/detail assembly
 - tracked-position config snapshot capture and snapshot precedence
-- trade-performance aggregation and closedAt date filtering
+- trade-performance aggregation, closedAt date filtering, and entry-decision grouping
 - worker health status derivation, persistence throttling, transition events, and System Status readiness semantics
 - Alpaca request metadata enforcement, API usage aggregation, rate-limit deferral, usage persistence, and System Status exposure
 - adaptive Alpaca REST polling decisions, market modes, forced sync, rate-limit-compatible skips, and System Status serialization

@@ -17,6 +17,7 @@ Current backend-driven AI Trader flow:
 
 ```text
 n8n:
+→ POST to /api/signals/entry-decisions
 → POST to /api/signals/entry
 Backend:
 → Receive signal from n8n (Subscription resolution)
@@ -37,6 +38,7 @@ The backend is designed so n8n does not talk directly to Alpaca. n8n watches the
 
 The backend currently handles:
 - Signal ingestion from n8n
+- Entry decision snapshot ingestion and review
 - Subscription-driven order resolution
 - Centralized entry risk-gate enforcement
 - Runtime trading controls
@@ -234,6 +236,7 @@ Primary API areas include:
 - tracked positions
 - trade cycles
 - trade performance
+- entry decisions
 - subscriptions
 - securities
 - strategies
@@ -277,13 +280,11 @@ The backend is currently focused on hosted paper-production testing, operational
 
 ### 🔜 Next Backend Enhancements
 
-- Expand operational review workflows around Market Diary decisions and trade-cycle outcomes.
+- (no current near term goals)
 
 ### 🧭 Longer-Term
 
 - Replace more Google Sheet state with database-backed market memory.
-- Expand Market Diary analytics and decision-review workflows.
-- Add websocket trade update listener.
 - Add historical audit dashboard.
 - Add AI-assisted profit-protection workflows.
 - Add multi-account support.

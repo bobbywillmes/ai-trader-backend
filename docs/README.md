@@ -45,6 +45,7 @@ Explains the full backend-managed lifecycle:
 
 ```
 n8n signal
+-> entry decision snapshot
 → backend validation
 → risk gate
 → order intent
@@ -71,6 +72,7 @@ Integration docs describe how external systems interact with the backend.
 Documents the production n8n workflow contract, including:
 
 - entry signal endpoint
+- entry decision snapshot endpoint
 - expected request headers
 - expected payload shape
 - success responses
@@ -160,6 +162,7 @@ For this branch family, production validation should also confirm:
 
 ```text
 fresh paper entry opens one tracked trade cycle
+entry decision snapshot links to the created order intent and trade cycle when a decisionKey is present
 close fill is attributed to the correct cycle
 config snapshot is captured
 Trade History renders the cycle correctly

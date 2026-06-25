@@ -222,8 +222,10 @@ After routine health and system-status verification, also confirm:
 ```text
 /api/trade-cycles returns data
 /api/trade-performance returns data
+/api/entry-decisions returns data after n8n records decisions
 Trade History page loads
 Reports page loads
+Entry Decisions page loads
 legacy historical rows render without breaking the UI even if some fields remain null
 Settings -> System Status -> Alpaca API Usage shows a normal or explainable status
 Saved Usage Data shows a recent database save after startup
@@ -233,6 +235,7 @@ For a fresh paper close, verify:
 
 ```text
 one tracked trade cycle owns the close fill
+linked entry decision context appears when the entry signal included decisionKey
 avg exit price and realized P/L are populated
 config snapshot timestamp is present once subscription context is known
 the closed cycle appears in performance reporting

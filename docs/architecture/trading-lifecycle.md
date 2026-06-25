@@ -10,23 +10,26 @@ The system is structured around **subscription-driven trading**.
 
 ### Entry Flow
 
-1. n8n sends a signal to `POST /api/signals/entry`.
-2. The backend resolves the signal through a `Subscription`.
-3. The subscription links the request to:
+1. n8n records a decision snapshot with `POST /api/signals/entry-decisions` when an ETF watch evaluation should be durable.
+2. If the decision creates an entry, n8n sends the entry signal to `POST /api/signals/entry` with the same `decisionKey`.
+3. The backend resolves the signal through a `Subscription`.
+4. The subscription links the request to:
    - Security
    - Strategy
    - ExitProfile
    - Sizing rule
    - Broker/broker mode
-4. The risk gate validates whether the entry is allowed.
-5. The backend creates an `OrderIntent`.
-6. The async order worker atomically claims the pending intent.
-7. The worker submits the order to Alpaca using the stable `clientOrderId` stored on the `OrderIntent`.
-8. The broker order response is stored as `BrokerOrder`.
-9. Broker/order sync updates status transitions.
-10. Broker activity sync imports Alpaca `FILL` activity.
-11. Position sync creates or updates `TrackedPosition`.
-12. Account snapshots and system events record the lifecycle.
+5. The backend links the entry decision snapshot to the `OrderIntent` when the decision key is present.
+6. The risk gate validates whether the entry is allowed.
+7. The backend creates an `OrderIntent`.
+8. The async order worker atomically claims the pending intent.
+9. The worker submits the order to Alpaca using the stable `clientOrderId` stored on the `OrderIntent`.
+10. The broker order response is stored as `BrokerOrder`.
+11. Broker/order sync updates status transitions.
+12. Broker activity sync imports Alpaca `FILL` activity.
+13. Position sync creates or updates `TrackedPosition`.
+14. Entry decision attribution is propagated through broker order and tracked position records when available.
+15. Account snapshots and system events record the lifecycle.
 
 ### Position Tracking Flow
 
@@ -58,6 +61,8 @@ DELETE /api/positions/:symbol
 GET /api/trade-cycles
 GET /api/trade-cycles/:id
 GET /api/trade-performance
+GET /api/entry-decisions
+GET /api/entry-decisions/:id
 ```
 
 `DELETE /api/positions/:symbol` requests a broker close. The sync loop confirms the position is closed and emits `position.closed` only after the tracked position successfully transitions from `open` or `closing` to `closed`.
@@ -66,15 +71,21 @@ GET /api/trade-performance
 backend lifecycle review endpoints. They treat a `TrackedPosition` row as one
 trade cycle and assemble linked subscription, strategy, exit profile, order
 intents, broker orders, broker activities, system events, computed close-fill
-summary, and a chronological timeline server-side. Admin UI trade-history views
-should use these endpoints instead of independently joining raw order, position,
-activity, and event endpoints.
+summary, linked entry decision attribution, and a chronological timeline
+server-side. Admin UI trade-history views should use these endpoints instead of
+independently joining raw decision, order, position, activity, and event
+endpoints.
 
 The admin UI `Trade History`, `Open Positions`, and `Reports` pages share the
 same trade-cycle drawer for lifecycle review. The drawer shows summary metrics,
 captured strategy/subscription/exit-profile context, chronological lifecycle
 timeline, and drill-down sections for the linked `OrderIntent`, `BrokerOrder`,
 `BrokerActivity`, and `SystemEvent` records behind that timeline.
+
+The admin UI `Entry Decisions` page reviews persisted decision snapshots from
+n8n. It supports recent-decision filtering and shows signal outcome, runtime
+flags, market context, raw snapshot payloads, and lifecycle links to the created
+order intent, broker order, tracked position, and trade cycle when available.
 
 Open-position lifecycle review opens the drawer by the active
 `TrackedPosition.id`. Active cycles are valid trade-cycle detail records even
@@ -88,8 +99,9 @@ additional Alpaca polling.
 as the reporting source of truth. It aggregates reportable closed cycles into
 total realized P/L, average return, win rate, average winner and loser, profit
 factor, holding duration, and grouped results by strategy, subscription, exit
-profile, security, and exit reason. The Reports admin page uses this endpoint
-instead of independently recomputing performance from raw broker activity.
+profile, security, exit reason, and entry decision state. The Reports admin page
+uses this endpoint instead of independently recomputing performance from raw
+broker activity.
 
 Trade-performance reports support filters for closed date range, paper/live
 mode, symbol, strategy, subscription, exit profile, exit reason, and outcome.

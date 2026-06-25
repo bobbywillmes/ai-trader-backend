@@ -759,8 +759,10 @@ Expected dry-run behavior:
 n8n gets ETF watch context from backend
 n8n pulls ETF snapshots
 n8n decision engine evaluates candidates
+n8n records durable entry decision snapshots for meaningful evaluations
 n8n posts diary events to backend
 backend stores Market Diary events
+admin UI displays Entry Decisions results
 admin UI displays Market Diary results
 no live order is submitted
 ```
@@ -776,28 +778,33 @@ Recommended first smoke test:
 3. Confirm `ALPACA_BASE_URL=https://paper-api.alpaca.markets`.
 4. Confirm Automated Trading is enabled only when ready.
 5. Enable one conservative subscription.
-6. Send one small test entry signal.
-7. Confirm one `OrderIntent`.
-8. Confirm one `BrokerOrder`.
-9. Confirm one Alpaca order.
-10. Confirm one broker `FILL` activity.
-11. Confirm one `TrackedPosition`.
-12. Confirm one `position.opened` SystemEvent.
-13. Confirm account snapshot reason `position_opened`.
-14. Close the position.
-15. Confirm one close fill.
-16. Confirm one `position.closed` SystemEvent.
-17. Confirm account snapshot reason `position_closed`.
-18. Confirm the close fill is linked to the correct tracked-position cycle.
-19. Confirm the cycle has `avgExitPrice`, `realizedPnl`, and `returnPct`.
-20. Confirm the cycle captured configuration snapshot context once subscription context is known.
-21. Confirm the Trade History page renders the cycle timeline correctly.
-22. Confirm the Reports page includes the closed cycle in Trade Performance.
+6. Record one entry decision snapshot with a stable `decisionKey`.
+7. Send one small test entry signal using that `decisionKey`.
+8. Confirm one `OrderIntent`.
+9. Confirm the entry decision is linked to that `OrderIntent`.
+10. Confirm one `BrokerOrder`.
+11. Confirm one Alpaca order.
+12. Confirm one broker `FILL` activity.
+13. Confirm one `TrackedPosition`.
+14. Confirm the entry decision is linked through the tracked position/trade cycle.
+15. Confirm one `position.opened` SystemEvent.
+16. Confirm account snapshot reason `position_opened`.
+17. Close the position.
+18. Confirm one close fill.
+19. Confirm one `position.closed` SystemEvent.
+20. Confirm account snapshot reason `position_closed`.
+21. Confirm the close fill is linked to the correct tracked-position cycle.
+22. Confirm the cycle has `avgExitPrice`, `realizedPnl`, and `returnPct`.
+23. Confirm the cycle captured configuration snapshot context once subscription context is known.
+24. Confirm the Entry Decisions page shows the decision and lifecycle links.
+25. Confirm the Trade History page renders the cycle timeline correctly.
+26. Confirm the Reports page includes the closed cycle in Trade Performance and entry-decision grouping.
 
 Expected result:
 
 ```text
 one signal
+one entry decision snapshot
 one intent
 one broker order
 one broker fill
