@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   entryDecisionCreate: vi.fn(),
   entryDecisionFindFirst: vi.fn(),
   entryDecisionFindUnique: vi.fn(),
+  entryDecisionUpdateMany: vi.fn(),
   securityFindUnique: vi.fn(),
   subscriptionFindUnique: vi.fn(),
 }));
@@ -14,6 +15,7 @@ vi.mock('../db/prisma.js', () => ({
       create: mocks.entryDecisionCreate,
       findFirst: mocks.entryDecisionFindFirst,
       findUnique: mocks.entryDecisionFindUnique,
+      updateMany: mocks.entryDecisionUpdateMany,
     },
     security: {
       findUnique: mocks.securityFindUnique,
@@ -24,7 +26,11 @@ vi.mock('../db/prisma.js', () => ({
   },
 }));
 
-import { recordEntryDecision } from './entry-decision.service.js';
+import {
+  ensureEntryDecisionCanLink,
+  linkEntryDecisionToOrderIntent,
+  recordEntryDecision,
+} from './entry-decision.service.js';
 
 function input(overrides: Record<string, unknown> = {}) {
   return {
@@ -74,6 +80,7 @@ describe('entry decision service', () => {
     vi.clearAllMocks();
     mocks.entryDecisionFindUnique.mockResolvedValue(null);
     mocks.entryDecisionFindFirst.mockResolvedValue(null);
+    mocks.entryDecisionUpdateMany.mockResolvedValue({ count: 1 });
     mocks.securityFindUnique.mockResolvedValue({ id: 11, symbol: 'SPY' });
     mocks.subscriptionFindUnique.mockResolvedValue(null);
     mocks.entryDecisionCreate.mockImplementation(({ data }) =>
@@ -222,6 +229,72 @@ describe('entry decision service', () => {
         exitProfileId: 44,
         exitProfileKey: 'quick_exit',
       }),
+    });
+  });
+
+  it('preflights linkable entry decisions', async () => {
+    mocks.entryDecisionFindUnique.mockResolvedValue({
+      id: 101,
+      decisionKey: 'decision-101',
+      orderIntentId: null,
+    });
+
+    const result = await ensureEntryDecisionCanLink('decision-101');
+
+    expect(result).toEqual({
+      id: 101,
+      decisionKey: 'decision-101',
+      orderIntentId: null,
+    });
+  });
+
+  it('rejects missing entry decisions before linking', async () => {
+    mocks.entryDecisionFindUnique.mockResolvedValue(null);
+
+    await expect(ensureEntryDecisionCanLink('missing')).rejects.toMatchObject({
+      statusCode: 404,
+      message: 'Entry decision missing was not found.',
+    });
+  });
+
+  it('rejects entry decisions already linked to another order intent', async () => {
+    mocks.entryDecisionFindUnique.mockResolvedValue({
+      id: 101,
+      decisionKey: 'decision-101',
+      orderIntentId: 25,
+    });
+
+    await expect(
+      ensureEntryDecisionCanLink('decision-101')
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      message:
+        'Entry decision decision-101 is already linked to order intent 25.',
+    });
+  });
+
+  it('links an entry decision to an order intent', async () => {
+    mocks.entryDecisionUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.entryDecisionFindUnique.mockResolvedValue(
+      decision({
+        decisionKey: 'decision-101',
+        orderIntentId: 55,
+      })
+    );
+
+    await linkEntryDecisionToOrderIntent({
+      decisionKey: 'decision-101',
+      orderIntentId: 55,
+    });
+
+    expect(mocks.entryDecisionUpdateMany).toHaveBeenCalledWith({
+      where: {
+        decisionKey: 'decision-101',
+        orderIntentId: null,
+      },
+      data: {
+        orderIntentId: 55,
+      },
     });
   });
 });

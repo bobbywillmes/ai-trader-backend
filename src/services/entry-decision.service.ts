@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import type { EntryDecision, Prisma } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
+import { HttpError } from '../errors/http-error.js';
 import {
   entryDecisionSchema,
   type EntryDecisionInput,
@@ -319,4 +320,85 @@ export async function recordEntryDecision(
     persistenceReason,
     decision,
   };
+}
+
+export async function ensureEntryDecisionCanLink(decisionKey: string) {
+  const decision = await prisma.entryDecision.findUnique({
+    where: { decisionKey },
+    select: {
+      id: true,
+      decisionKey: true,
+      orderIntentId: true,
+    },
+  });
+
+  if (!decision) {
+    throw new HttpError(
+      404,
+      `Entry decision ${decisionKey} was not found.`
+    );
+  }
+
+  if (decision.orderIntentId !== null) {
+    throw new HttpError(
+      409,
+      `Entry decision ${decisionKey} is already linked to order intent ${decision.orderIntentId}.`,
+      {
+        decisionKey,
+        orderIntentId: decision.orderIntentId,
+      }
+    );
+  }
+
+  return decision;
+}
+
+export async function linkEntryDecisionToOrderIntent(args: {
+  decisionKey: string;
+  orderIntentId: number;
+}) {
+  const linked = await prisma.entryDecision.updateMany({
+    where: {
+      decisionKey: args.decisionKey,
+      orderIntentId: null,
+    },
+    data: {
+      orderIntentId: args.orderIntentId,
+    },
+  });
+
+  if (linked.count === 1) {
+    return prisma.entryDecision.findUnique({
+      where: { decisionKey: args.decisionKey },
+    });
+  }
+
+  const existing = await prisma.entryDecision.findUnique({
+    where: { decisionKey: args.decisionKey },
+    select: {
+      orderIntentId: true,
+    },
+  });
+
+  if (!existing) {
+    throw new HttpError(
+      404,
+      `Entry decision ${args.decisionKey} was not found.`
+    );
+  }
+
+  if (existing.orderIntentId === args.orderIntentId) {
+    return prisma.entryDecision.findUnique({
+      where: { decisionKey: args.decisionKey },
+    });
+  }
+
+  throw new HttpError(
+    409,
+    `Entry decision ${args.decisionKey} is already linked to order intent ${existing.orderIntentId}.`,
+    {
+      decisionKey: args.decisionKey,
+      orderIntentId: existing.orderIntentId,
+    }
+  );
 }

@@ -15,7 +15,10 @@ vi.mock('../services/place-order.service.js', () => ({
   submitOrder: mocks.submitOrder,
 }));
 
-import { entryDecisionController } from './signals.controller.js';
+import {
+  entryDecisionController,
+  entrySignalController,
+} from './signals.controller.js';
 
 function response() {
   const res = {
@@ -144,6 +147,62 @@ describe('signals controller entry decisions', () => {
       error: 'ValidationError',
       message: 'Invalid entry decision payload.',
       details: expect.any(Array),
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+});
+
+describe('signals controller entry signals', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('passes decision keys through to order submission', async () => {
+    mocks.submitOrder.mockResolvedValue({
+      ok: true,
+      intentId: 55,
+      status: 'pending',
+      entryDecisionKey: 'decision-101',
+    });
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await entrySignalController(
+      {
+        body: {
+          subscriptionKey: 'spy_dip_core',
+          decisionKey: 'decision-101',
+          source: 'n8n-ai-trader',
+        },
+      } as Request,
+      res,
+      next
+    );
+
+    expect(mocks.submitOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subscriptionKey: 'spy_dip_core',
+        signalType: 'entry',
+      }),
+      {
+        entryDecisionKey: 'decision-101',
+      }
+    );
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(res.json).toHaveBeenCalledWith({
+      ok: true,
+      signal: {
+        subscriptionKey: 'spy_dip_core',
+        signalType: 'entry',
+        source: 'n8n-ai-trader',
+        decisionKey: 'decision-101',
+      },
+      order: {
+        ok: true,
+        intentId: 55,
+        status: 'pending',
+        entryDecisionKey: 'decision-101',
+      },
     });
     expect(next).not.toHaveBeenCalled();
   });

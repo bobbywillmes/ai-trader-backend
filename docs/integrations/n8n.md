@@ -168,6 +168,7 @@ Example request:
 ```json
 {
   "subscriptionKey": "spy_dip_core",
+  "decisionKey": "n8n:etf-watch:spy_dip_core:2026-06-25T15:00Z",
   "reason": "SPY dip signal triggered",
   "source": "n8n-ai-trader",
   "confidence": "high",
@@ -187,12 +188,14 @@ Example response:
   "signal": {
     "subscriptionKey": "spy_dip_core",
     "signalType": "entry",
-    "source": "n8n-ai-trader"
+    "source": "n8n-ai-trader",
+    "decisionKey": "n8n:etf-watch:spy_dip_core:2026-06-25T15:00Z"
   },
   "order": {
     "ok": true,
     "intentId": 25,
-    "status": "pending"
+    "status": "pending",
+    "entryDecisionKey": "n8n:etf-watch:spy_dip_core:2026-06-25T15:00Z"
   }
 }
 ```

@@ -38,22 +38,25 @@ export async function entrySignalController(
     const signal = entrySignalSchema.parse(req.body);
     console.log('Received entry signal:', signal);
 
-    const result = await submitOrder({
-      subscriptionKey: signal.subscriptionKey,
-      signalType: 'entry',
-      orderType: 'market',
-      timeInForce: 'day',
-      extendedHours: false,
-      signalMetadata: {
-        source: signal.source,
-        reason: signal.reason ?? null,
-        score: signal.score ?? null,
-        confidence: signal.confidence ?? null,
-        runId: signal.runId ?? null,
-        batchId: signal.batchId ?? null,
-        metadata: signal.metadata ?? null,
+    const result = await submitOrder(
+      {
+        subscriptionKey: signal.subscriptionKey,
+        signalType: 'entry',
+        orderType: 'market',
+        timeInForce: 'day',
+        extendedHours: false,
+        signalMetadata: {
+          source: signal.source,
+          reason: signal.reason ?? null,
+          score: signal.score ?? null,
+          confidence: signal.confidence ?? null,
+          runId: signal.runId ?? null,
+          batchId: signal.batchId ?? null,
+          metadata: signal.metadata ?? null,
+        },
       },
-    });
+      signal.decisionKey ? { entryDecisionKey: signal.decisionKey } : {}
+    );
 
     res.status(201).json({
       ok: true,
@@ -61,6 +64,7 @@ export async function entrySignalController(
         subscriptionKey: signal.subscriptionKey,
         signalType: signal.signalType,
         source: signal.source,
+        decisionKey: signal.decisionKey ?? null,
       },
       order: result,
     });

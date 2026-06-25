@@ -18,12 +18,34 @@ import type {
 } from '../validators/place-order.schema.js';
 import { buildClientOrderId } from './client-order-id.service.js';
 import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
+import {
+  ensureEntryDecisionCanLink,
+  linkEntryDecisionToOrderIntent,
+} from './entry-decision.service.js';
 
-export async function submitOrder(input: PlaceOrderInput) {
+type SubmitOrderOptions = {
+  entryDecisionKey?: string;
+};
+
+export async function submitOrder(
+  input: PlaceOrderInput,
+  options: SubmitOrderOptions = {}
+) {
   const resolvedInput = await resolveSubscriptionOrderInput(input);
   const clientOrderId = buildClientOrderId(resolvedInput);
 
+  if (options.entryDecisionKey) {
+    await ensureEntryDecisionCanLink(options.entryDecisionKey);
+  }
+
   const intent = await createOrderIntent(resolvedInput, 'api', clientOrderId);
+
+  if (options.entryDecisionKey) {
+    await linkEntryDecisionToOrderIntent({
+      decisionKey: options.entryDecisionKey,
+      orderIntentId: intent.id,
+    });
+  }
 
   const riskResult = await evaluateOrderRisk(resolvedInput);
 
@@ -49,6 +71,7 @@ export async function submitOrder(input: PlaceOrderInput) {
     ok: true,
     intentId: intent.id,
     status: 'pending',
+    entryDecisionKey: options.entryDecisionKey ?? null,
   };
 }
 

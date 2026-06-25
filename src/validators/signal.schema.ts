@@ -17,6 +17,7 @@ export const entrySignalSchema = z.object({
 
   runId: z.string().trim().min(1).optional(),
   batchId: z.string().trim().min(1).optional(),
+  decisionKey: z.string().trim().min(1).optional(),
 
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
