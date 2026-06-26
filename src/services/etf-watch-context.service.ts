@@ -2,7 +2,7 @@ import { prisma } from '../db/prisma.js';
 import { getCurrentMarketState, getMarketDiaryEvents } from './market-state.service.js';
 import { getOpenTrackedPositions } from './position-tracking.service.js';
 
-const ETF_SYMBOLS = ['SPY', 'QQQ', 'DIA', 'IWM'];
+const ETF_SYMBOLS = ['SPY', 'QQQ', 'DIA', 'IWM', 'RSP'];
 
 export async function getEtfWatchContext() {
   const [marketState, openPositions, diaryEvents, etfSubscriptions] =
