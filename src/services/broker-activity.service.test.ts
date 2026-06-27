@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 
   getAlpacaAccountActivities: vi.fn(),
   createSystemEvent: vi.fn(),
+  resolveDefaultTradingAccountId: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -50,6 +51,10 @@ vi.mock('./system-event.service.js', () => ({
   createSystemEvent: mocks.createSystemEvent,
 }));
 
+vi.mock('./trading-account.service.js', () => ({
+  resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
+}));
+
 import {
   attributeCloseFillsForTrackedPosition,
   syncBrokerActivities,
@@ -66,6 +71,7 @@ describe('broker activity tracked-position attribution', () => {
     mocks.trackedPositionFindFirst.mockResolvedValue(null);
     mocks.settingFindMany.mockResolvedValue([{ key: 'paperMode', value: 'true' }]);
     mocks.createSystemEvent.mockResolvedValue({});
+    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
   });
 
   it('links observer-discovered close fills when one local cycle is eligible', async () => {
@@ -228,6 +234,7 @@ describe('broker activity tracked-position attribution', () => {
       },
       data: expect.objectContaining({
         trackedPositionId: 101,
+        tradingAccountId: 1,
         trackedPositionLinkSource: 'reconciliation_discovered_close',
         trackedPositionLinkedAt: new Date('2026-06-12T18:00:05.000Z'),
       }),
@@ -271,6 +278,7 @@ describe('broker activity tracked-position attribution', () => {
     expect(mocks.brokerActivityCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         activityId: 'fill-601',
+        tradingAccountId: 1,
         orderId: 'alpaca-close-order-123',
         brokerOrderRecordId: 301,
         orderIntentId: 201,

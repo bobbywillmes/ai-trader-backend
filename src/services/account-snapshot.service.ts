@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { getNormalizedAccount } from './account.service.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 import type { BrokerMode } from '../types/broker.js';
 
 export type AccountSnapshotReason =
@@ -18,6 +19,7 @@ type RecordAccountSnapshotInput = {
   runKey?: string;
   sourceEntityType?: string;
   sourceEntityId?: string | number;
+  tradingAccountId?: number | null;
 };
 
 export type AccountSnapshotQuery = {
@@ -46,6 +48,7 @@ type AccountSnapshotRecord = {
   runKey: string | null;
   sourceEntityType: string | null;
   sourceEntityId: string | null;
+  tradingAccountId: number | null;
   cash: number;
   buyingPower: number;
   equity: number;
@@ -172,6 +175,9 @@ function buildSnapshotHash(account: Awaited<ReturnType<typeof getNormalizedAccou
 }
 
 export async function recordAccountSnapshot(input: RecordAccountSnapshotInput) {
+  const tradingAccountId =
+    input.tradingAccountId ?? (await resolveDefaultTradingAccountId());
+
   if (input.runKey) {
     const existingRun = await prisma.accountSnapshot.findUnique({
       where: { runKey: input.runKey },
@@ -191,6 +197,9 @@ export async function recordAccountSnapshot(input: RecordAccountSnapshotInput) {
   const snapshotHash = buildSnapshotHash(account);
 
   const latestSnapshot = await prisma.accountSnapshot.findFirst({
+    where: {
+      tradingAccountId,
+    },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -209,6 +218,7 @@ export async function recordAccountSnapshot(input: RecordAccountSnapshotInput) {
     data: {
       broker: account.broker,
       mode: account.mode,
+      tradingAccountId,
       accountStatus: account.status,
       currency: account.currency,
       accountNumber: account.accountNumber,

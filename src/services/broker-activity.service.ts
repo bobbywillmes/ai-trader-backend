@@ -7,6 +7,7 @@ import {
 import type { AlpacaApiOperation } from '../integrations/alpaca/request-metadata.js';
 import { getRuntimeTradingConfig } from './config.service.js';
 import { createSystemEvent } from './system-event.service.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 type SyncBrokerActivitiesInput = {
   activityType?: string;
@@ -49,10 +50,14 @@ function defaultInitialAfterDate() {
   return date;
 }
 
-async function getDefaultAfterDate(activityType: string) {
+async function getDefaultAfterDate(args: {
+  activityType: string;
+  tradingAccountId: number;
+}) {
   const latest = await prisma.brokerActivity.findFirst({
     where: {
-      activityType,
+      activityType: args.activityType,
+      tradingAccountId: args.tradingAccountId,
       transactionTime: {
         not: null,
       },
@@ -71,7 +76,12 @@ async function getDefaultAfterDate(activityType: string) {
   return subtractMinutes(latest.transactionTime, 5);
 }
 
-async function findLinkedBrokerOrder(activity: AlpacaAccountActivity) {
+async function findLinkedBrokerOrder(args: {
+  activity: AlpacaAccountActivity;
+  tradingAccountId: number;
+}) {
+  const { activity, tradingAccountId } = args;
+
   if (!activity.order_id) {
     return null;
   }
@@ -80,6 +90,7 @@ async function findLinkedBrokerOrder(activity: AlpacaAccountActivity) {
     where: {
       broker: 'alpaca',
       brokerOrderId: activity.order_id,
+      tradingAccountId,
     },
     include: {
       orderIntent: true,
@@ -141,8 +152,9 @@ async function findTrackedPositionLink(args: {
 async function upsertBrokerActivity(args: {
   activity: AlpacaAccountActivity;
   mode: string;
+  tradingAccountId: number;
 }) {
-  const { activity, mode } = args;
+  const { activity, mode, tradingAccountId } = args;
 
   const existing = await prisma.brokerActivity.findUnique({
     where: {
@@ -150,7 +162,10 @@ async function upsertBrokerActivity(args: {
     },
   });
 
-  const linkedBrokerOrder = await findLinkedBrokerOrder(activity);
+  const linkedBrokerOrder = await findLinkedBrokerOrder({
+    activity,
+    tradingAccountId,
+  });
   const trackedPositionLink = await findTrackedPositionLink({
     activity,
     linkedBrokerOrder,
@@ -163,6 +178,7 @@ async function upsertBrokerActivity(args: {
   const data = {
     broker: 'alpaca',
     mode,
+    tradingAccountId,
 
     activityId: activity.id,
     activityType: activity.activity_type ?? activity.type ?? 'UNKNOWN',
@@ -217,7 +233,13 @@ export async function syncBrokerActivities(
   const activityType = input.activityType ?? 'FILL';
   const pageSize = input.pageSize ?? 100;
   const maxPages = input.maxPages ?? 5;
-  const after = input.after ?? (await getDefaultAfterDate(activityType));
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+  const after =
+    input.after ??
+    (await getDefaultAfterDate({
+      activityType,
+      tradingAccountId,
+    }));
 
   const config = await getRuntimeTradingConfig();
   const mode = config.paperMode ? 'paper' : 'live';
@@ -263,6 +285,7 @@ export async function syncBrokerActivities(
       const result = await upsertBrokerActivity({
         activity,
         mode,
+        tradingAccountId,
       });
 
       if (result === 'created') created += 1;
@@ -287,6 +310,7 @@ export async function syncBrokerActivities(
       type: 'broker_activity.synced',
       entityType: 'brokerActivity',
       entityId: 'alpaca',
+      tradingAccountId,
       payloadJson: {
         broker: 'alpaca',
         mode,
@@ -302,6 +326,7 @@ export async function syncBrokerActivities(
   return {
     broker: 'alpaca',
     mode,
+    tradingAccountId,
     activityType,
     after: after.toISOString(),
     seen,

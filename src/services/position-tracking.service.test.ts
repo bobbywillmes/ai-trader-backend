@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   adaptiveRecordSuccess: vi.fn(),
   adaptiveRecordFailure: vi.fn(),
   adaptiveRecordRateLimitDeferred: vi.fn(),
+  resolveDefaultTradingAccountId: vi.fn(),
 }));
 
 vi.mock('./positions.service.js', () => ({
@@ -90,6 +91,10 @@ vi.mock('./adaptive-polling.service.js', () => ({
   },
 }));
 
+vi.mock('./trading-account.service.js', () => ({
+  resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
+}));
+
 import { syncTrackedPositions } from './position-tracking.service.js';
 
 const brokerPosition = {
@@ -115,6 +120,7 @@ describe('position tracking subscription recovery', () => {
     mocks.captureTrackedPositionConfigSnapshot.mockResolvedValue({});
     mocks.ensurePositionExitState.mockResolvedValue({});
     mocks.trackedPositionFindMany.mockResolvedValue([]);
+    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.adaptiveGetDecision.mockResolvedValue({
       due: true,
       mode: 'market_open_active',
@@ -132,6 +138,7 @@ describe('position tracking subscription recovery', () => {
       symbol: 'DIA',
       side: 'long',
       status: 'open',
+      tradingAccountId: 1,
       openedAt,
       subscriptionId: null,
       configSnapshotJson: null,
@@ -177,6 +184,7 @@ describe('position tracking subscription recovery', () => {
         type: 'position.subscription_resolved',
         entityType: 'trackedPosition',
         entityId: 101,
+        tradingAccountId: 1,
       })
     );
   });

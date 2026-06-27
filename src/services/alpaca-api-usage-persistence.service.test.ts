@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   restorePendingAggregateDeltas: vi.fn(),
   getPendingAggregateCount: vi.fn(),
   loggerWarn: vi.fn(),
+  resolveDefaultTradingAccountId: vi.fn(),
 }));
 
 vi.mock('../config/env.js', () => ({
@@ -32,6 +33,10 @@ vi.mock('../config/logger.js', () => ({
   logger: {
     warn: mocks.loggerWarn,
   },
+}));
+
+vi.mock('./trading-account.service.js', () => ({
+  resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
 }));
 
 import {
@@ -68,6 +73,7 @@ describe('Alpaca API usage persistence', () => {
     mocks.executeRawUnsafe.mockResolvedValue(1);
     mocks.drainPendingAggregateDeltas.mockReturnValue([]);
     mocks.getPendingAggregateCount.mockReturnValue(0);
+    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
   });
 
   it('flushes aggregate deltas with one upsert per aggregate key', async () => {
@@ -102,7 +108,8 @@ describe('Alpaca API usage persistence', () => {
       429,
       delta.lastRequestAt,
       delta.lastFailureAt,
-      delta.lastRateLimitedAt
+      delta.lastRateLimitedAt,
+      1
     );
     expect(mocks.executeRawUnsafe).toHaveBeenNthCalledWith(
       2,

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   accountSnapshotFindMany: vi.fn(),
   accountSnapshotFindUnique: vi.fn(),
   getNormalizedAccount: vi.fn(),
+  resolveDefaultTradingAccountId: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -22,6 +23,10 @@ vi.mock('../db/prisma.js', () => ({
 
 vi.mock('./account.service.js', () => ({
   getNormalizedAccount: mocks.getNormalizedAccount,
+}));
+
+vi.mock('./trading-account.service.js', () => ({
+  resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
 }));
 
 import {
@@ -69,6 +74,7 @@ function snapshot(
     runKey: null,
     sourceEntityType: null,
     sourceEntityId: null,
+    tradingAccountId: 1,
     cash: 10000,
     buyingPower: 20000,
     equity: 15000,
@@ -101,6 +107,7 @@ describe('account snapshot service', () => {
     mocks.accountSnapshotFindFirst.mockResolvedValue(null);
     mocks.accountSnapshotFindMany.mockResolvedValue([]);
     mocks.getNormalizedAccount.mockResolvedValue(account());
+    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.accountSnapshotCreate.mockImplementation(({ data }) =>
       Promise.resolve(
         snapshot({
@@ -117,6 +124,7 @@ describe('account snapshot service', () => {
     expect(mocks.accountSnapshotCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
+          tradingAccountId: 1,
           longMarketValue: 7000,
           shortMarketValue: -1250,
         }),

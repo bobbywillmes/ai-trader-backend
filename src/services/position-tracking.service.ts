@@ -24,6 +24,7 @@ import {
   adaptivePollingCoordinator,
   type AdaptivePollingDecision,
 } from './adaptive-polling.service.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 export type TrackedPositionSyncResult = {
   polled: boolean;
@@ -85,11 +86,13 @@ const ACTIVE_POSITION_STATUSES = ['open', 'closing'] as const;
 async function findActiveTrackedPosition(args: {
   broker: string;
   symbol: string;
+  tradingAccountId: number;
 }) {
   return prisma.trackedPosition.findFirst({
     where: {
       broker: args.broker,
       symbol: args.symbol,
+      tradingAccountId: args.tradingAccountId,
       status: {
         in: [...ACTIVE_POSITION_STATUSES],
       },
@@ -102,6 +105,7 @@ async function findActiveTrackedPosition(args: {
 
 async function hasRecentSubscriptionResolutionEvent(args: {
   trackedPositionId: number;
+  tradingAccountId: number;
   type: string;
 }) {
   const since = new Date(Date.now() - 60 * 60_000);
@@ -111,6 +115,7 @@ async function hasRecentSubscriptionResolutionEvent(args: {
       type: args.type,
       entityType: 'trackedPosition',
       entityId: String(args.trackedPositionId),
+      tradingAccountId: args.tradingAccountId,
       createdAt: {
         gte: since,
       },
@@ -122,6 +127,7 @@ async function hasRecentSubscriptionResolutionEvent(args: {
 
 async function createSubscriptionResolutionEvent(args: {
   trackedPositionId: number;
+  tradingAccountId: number;
   symbol: string;
   result: SubscriptionResolutionResult;
 }) {
@@ -136,6 +142,7 @@ async function createSubscriptionResolutionEvent(args: {
     args.result.status !== 'resolved' &&
     (await hasRecentSubscriptionResolutionEvent({
       trackedPositionId: args.trackedPositionId,
+      tradingAccountId: args.tradingAccountId,
       type: eventType,
     }))
   ) {
@@ -146,6 +153,7 @@ async function createSubscriptionResolutionEvent(args: {
     type: eventType,
     entityType: 'trackedPosition',
     entityId: args.trackedPositionId,
+    tradingAccountId: args.tradingAccountId,
     message:
       args.result.status === 'resolved'
         ? `${args.symbol} subscription resolved via ${args.result.source}.`
@@ -165,6 +173,7 @@ async function createSubscriptionResolutionEvent(args: {
 
 async function applySubscriptionResolution(args: {
   trackedPositionId: number;
+  tradingAccountId: number;
   broker: string;
   symbol: string;
   side: string;
@@ -194,6 +203,7 @@ async function applySubscriptionResolution(args: {
   if (resolution.status !== 'resolved') {
     await createSubscriptionResolutionEvent({
       trackedPositionId: args.trackedPositionId,
+      tradingAccountId: args.tradingAccountId,
       symbol: args.symbol,
       result: resolution,
     });
@@ -229,6 +239,7 @@ async function applySubscriptionResolution(args: {
 
   await createSubscriptionResolutionEvent({
     trackedPositionId: args.trackedPositionId,
+    tradingAccountId: args.tradingAccountId,
     symbol: args.symbol,
     result: resolution,
   });
@@ -260,6 +271,7 @@ export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult>
     };
   }
 
+  const tradingAccountId = await resolveDefaultTradingAccountId();
   let brokerPositions: Awaited<ReturnType<typeof getNormalizedPositions>>;
 
   try {
@@ -300,6 +312,7 @@ export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult>
     const existing = await findActiveTrackedPosition({
       broker: position.broker,
       symbol: position.symbol,
+      tradingAccountId,
     });
 
     const security = await prisma.security.findUnique({
@@ -324,6 +337,7 @@ export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult>
           unrealizedPnL: position.unrealizedPnL,
           unrealizedPnLPct: position.unrealizedPnLPct,
           status: 'open',
+          tradingAccountId,
           openedAt: new Date(),
           lastSyncedAt: new Date(),
           rawPositionJson: position as unknown as Prisma.InputJsonValue,
@@ -336,6 +350,7 @@ export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult>
 
       const openingSubscriptionResolution = await applySubscriptionResolution({
         trackedPositionId: created.id,
+        tradingAccountId,
         broker: created.broker,
         symbol: created.symbol,
         side: created.side,
@@ -348,6 +363,7 @@ export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult>
         type: 'position.opened',
         entityType: 'trackedPosition',
         entityId: created.id,
+        tradingAccountId,
         message: `Position opened: ${created.symbol}`,
         payloadJson: {
           symbol: created.symbol,
@@ -388,6 +404,7 @@ export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult>
 
     await applySubscriptionResolution({
       trackedPositionId: updated.id,
+      tradingAccountId: updated.tradingAccountId ?? tradingAccountId,
       broker: updated.broker,
       symbol: updated.symbol,
       side: updated.side,
@@ -402,6 +419,7 @@ export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult>
       status: {
         in: [...ACTIVE_POSITION_STATUSES],
       },
+      tradingAccountId,
     },
   });
 
@@ -476,6 +494,7 @@ export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult>
         type: 'position.close_fill_attribution_ambiguous',
         entityType: 'trackedPosition',
         entityId: closed.id,
+        tradingAccountId: closed.tradingAccountId,
         message: `${closed.symbol} close-fill attribution is ambiguous.`,
         payloadJson: {
           symbol: closed.symbol,
@@ -493,6 +512,7 @@ export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult>
       type: 'position.closed',
       entityType: 'trackedPosition',
       entityId: closed.id,
+      tradingAccountId: closed.tradingAccountId,
       payloadJson: {
         symbol: closed.symbol,
         previousStatus: tracked.status,
@@ -510,6 +530,7 @@ export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult>
       force: true,
       sourceEntityType: 'trackedPosition',
       sourceEntityId: closed.id,
+      tradingAccountId: closed.tradingAccountId,
     });
 
     await markPositionExitStateClosed(closed.id, {

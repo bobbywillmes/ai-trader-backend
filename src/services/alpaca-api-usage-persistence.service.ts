@@ -5,6 +5,7 @@ import {
   alpacaApiUsageRegistry,
   type AlpacaApiUsageAggregateDelta,
 } from './alpaca-api-usage.service.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 export type AlpacaApiUsagePersistenceSnapshot = {
   lastFlushAttemptAt: string | null;
@@ -42,7 +43,10 @@ function toDbTimestamp(value: Date | null) {
   return value;
 }
 
-async function persistDelta(delta: AlpacaApiUsageAggregateDelta) {
+async function persistDelta(
+  delta: AlpacaApiUsageAggregateDelta,
+  tradingAccountId: number
+) {
   await prisma.$executeRawUnsafe(
     `
       INSERT INTO "AlpacaApiUsageBucket" (
@@ -63,12 +67,14 @@ async function persistDelta(delta: AlpacaApiUsageAggregateDelta) {
         "lastRequestAt",
         "lastFailureAt",
         "lastRateLimitedAt",
+        "tradingAccountId",
         "createdAt",
         "updatedAt"
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, now(), now())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, now(), now())
       ON CONFLICT ("bucketStart", "operation", "endpoint", "method", "requestClass")
       DO UPDATE SET
+        "tradingAccountId" = COALESCE("AlpacaApiUsageBucket"."tradingAccountId", EXCLUDED."tradingAccountId"),
         "requestCount" = "AlpacaApiUsageBucket"."requestCount" + EXCLUDED."requestCount",
         "successCount" = "AlpacaApiUsageBucket"."successCount" + EXCLUDED."successCount",
         "failureCount" = "AlpacaApiUsageBucket"."failureCount" + EXCLUDED."failureCount",
@@ -107,7 +113,8 @@ async function persistDelta(delta: AlpacaApiUsageAggregateDelta) {
     delta.lastStatusCode,
     toDbTimestamp(delta.lastRequestAt),
     toDbTimestamp(delta.lastFailureAt),
-    toDbTimestamp(delta.lastRateLimitedAt)
+    toDbTimestamp(delta.lastRateLimitedAt),
+    tradingAccountId
   );
 }
 
@@ -150,10 +157,11 @@ export async function runAlpacaApiUsagePersistence(now = new Date()) {
   const deltas = alpacaApiUsageRegistry.drainPendingAggregateDeltas();
   let retentionDeletedCount = 0;
   const retentionDue = shouldRunRetention(now);
+  const tradingAccountId = await resolveDefaultTradingAccountId();
 
   try {
     for (const delta of deltas) {
-      await persistDelta(delta);
+      await persistDelta(delta, tradingAccountId);
     }
 
     if (retentionDue) {
