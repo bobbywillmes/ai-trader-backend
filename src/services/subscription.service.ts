@@ -12,6 +12,7 @@ import type {
   CreateExitProfileInput,
   UpdateExitProfileInput,
 } from '../validators/algo-admin.schema.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 export async function getStrategies() {
   return prisma.strategy.findMany({
@@ -164,6 +165,7 @@ const subscriptionInclude = {
 export async function createSubscription(input: CreateSubscriptionInput) {
   const strategyId = await resolveStrategyId(input);
   const exitProfileId = await resolveExitProfileId(input);
+  const tradingAccountId = await resolveDefaultTradingAccountId();
 
   if (!strategyId) {
     throw new HttpError(400, 'strategyId or strategyKey is required.');
@@ -195,6 +197,7 @@ export async function createSubscription(input: CreateSubscriptionInput) {
       sizingValue: input.sizingValue,
       strategyId,
       exitProfileId,
+      tradingAccountId,
       enabled,
     },
     include: subscriptionInclude,
@@ -236,6 +239,8 @@ export async function updateSubscription(
 
   const strategyId = await resolveStrategyId(input);
   const exitProfileId = await resolveExitProfileId(input);
+  const tradingAccountId =
+    current.tradingAccountId ?? (await resolveDefaultTradingAccountId());
 
   // Prevent disabling a subscription if it has an active position
   if (input.enabled === false) {
@@ -281,6 +286,7 @@ export async function updateSubscription(
       ...(input.sizingValue !== undefined && { sizingValue: input.sizingValue }),
       ...(strategyId !== undefined && { strategyId }),
       ...(exitProfileId !== undefined && { exitProfileId }),
+      ...(current.tradingAccountId === null && { tradingAccountId }),
       ...(input.enabled !== undefined && { enabled: input.enabled }),
     },
     include: subscriptionInclude,

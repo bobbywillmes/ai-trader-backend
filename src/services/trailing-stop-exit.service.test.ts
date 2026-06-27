@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 
   orderIntentFindFirst: vi.fn(),
   orderIntentCreate: vi.fn(),
+  orderIntentUpdate: vi.fn(),
 
   getAlpacaOrderByClientOrderId: vi.fn(),
   placeAlpacaOrder: vi.fn(),
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   ensurePositionExitState: vi.fn(),
   markTrailingStopOrderSubmitted: vi.fn(),
   forceAfterBrokerOrderCreated: vi.fn(),
+  resolveDefaultTradingAccountId: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -31,6 +33,7 @@ vi.mock('../db/prisma.js', () => ({
     orderIntent: {
       findFirst: mocks.orderIntentFindFirst,
       create: mocks.orderIntentCreate,
+      update: mocks.orderIntentUpdate,
     },
   },
 }));
@@ -55,6 +58,10 @@ vi.mock('./adaptive-polling.service.js', () => ({
   },
 }));
 
+vi.mock('./trading-account.service.js', () => ({
+  resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
+}));
+
 import { submitTrailingStopExitOrder } from './trailing-stop-exit.service.js';
 
 function buildPosition(overrides: Record<string, unknown> = {}) {
@@ -62,6 +69,7 @@ function buildPosition(overrides: Record<string, unknown> = {}) {
     id: 101,
     symbol: 'SPY',
     qty: 3,
+    tradingAccountId: 1,
     securityId: 11,
     subscriptionId: 22,
     subscription: {
@@ -84,6 +92,7 @@ function buildPosition(overrides: Record<string, unknown> = {}) {
 describe('submitTrailingStopExitOrder', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
   });
 
   it('recovers an existing Alpaca trailing-stop order by client order ID instead of submitting a duplicate', async () => {
@@ -153,6 +162,7 @@ describe('submitTrailingStopExitOrder', () => {
         timeInForce: 'gtc',
         qty: 3,
         clientOrderId: expectedClientOrderId,
+        tradingAccountId: 1,
         subscriptionId: 22,
         subscriptionKey: 'SPY_dip_core',
         status: 'submitted',
@@ -169,6 +179,7 @@ describe('submitTrailingStopExitOrder', () => {
         },
         create: expect.objectContaining({
           orderIntentId: 301,
+          tradingAccountId: 1,
           broker: 'alpaca',
           brokerOrderId: 'alpaca-existing-trail-123',
           clientOrderId: expectedClientOrderId,

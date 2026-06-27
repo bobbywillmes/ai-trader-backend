@@ -11,6 +11,7 @@ import {
   markTrailingStopOrderSubmitted,
 } from './position-exit-state.service.js';
 import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 const TRAILING_STOP_TIME_IN_FORCE = 'gtc' as const;
 
@@ -68,6 +69,8 @@ async function persistTrailingStopOrder(args: {
   if (!position) {
     throw new Error(`Tracked position ${args.trackedPositionId} was not found.`);
   }
+  const tradingAccountId =
+    position.tradingAccountId ?? (await resolveDefaultTradingAccountId());
 
   const existingIntent = await prisma.orderIntent.findFirst({
     where: { clientOrderId: args.clientOrderId },
@@ -88,6 +91,7 @@ async function persistTrailingStopOrder(args: {
         limitPrice: null,
         extendedHours: false,
         clientOrderId: args.clientOrderId,
+        tradingAccountId,
         trackedPositionId: position.id,
         subscriptionId: position.subscriptionId,
         subscriptionKey: position.subscription?.key ?? null,
@@ -103,11 +107,20 @@ async function persistTrailingStopOrder(args: {
       },
     }));
 
-  if (existingIntent && existingIntent.trackedPositionId === null) {
+  if (
+    existingIntent &&
+    (existingIntent.trackedPositionId === null ||
+      existingIntent.tradingAccountId === null)
+  ) {
     await prisma.orderIntent.update({
       where: { id: existingIntent.id },
       data: {
-        trackedPositionId: position.id,
+        ...(existingIntent.trackedPositionId === null && {
+          trackedPositionId: position.id,
+        }),
+        ...(existingIntent.tradingAccountId === null && {
+          tradingAccountId,
+        }),
       },
     });
   }
@@ -121,6 +134,7 @@ async function persistTrailingStopOrder(args: {
     },
     create: {
       orderIntentId: orderIntent.id,
+      tradingAccountId,
       broker: 'alpaca',
       brokerOrderId: args.order.id,
       clientOrderId: args.clientOrderId,
@@ -133,6 +147,7 @@ async function persistTrailingStopOrder(args: {
     },
     update: {
       brokerOrderId: args.order.id,
+      tradingAccountId,
       trackedPositionId: position.id,
       status: args.order.status,
       rawBrokerJson: args.order as unknown as Prisma.InputJsonValue,
@@ -161,6 +176,8 @@ export async function submitTrailingStopExitOrder(trackedPositionId: number) {
   if (!position) {
     throw new Error(`Tracked position ${trackedPositionId} was not found.`);
   }
+  const tradingAccountId =
+    position.tradingAccountId ?? (await resolveDefaultTradingAccountId());
 
   const exitState =
     position.exitState ?? (await ensurePositionExitState(position.id));
@@ -277,6 +294,7 @@ export async function submitTrailingStopExitOrder(trackedPositionId: number) {
     type: 'exit.trailing_stop_submitted',
     entityType: 'trackedPosition',
     entityId: position.id,
+    tradingAccountId,
     message: `${position.symbol} trailing stop exit order submitted after target unlock.`,
     payloadJson: {
       symbol: position.symbol,

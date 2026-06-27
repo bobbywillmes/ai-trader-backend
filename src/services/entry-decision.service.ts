@@ -7,6 +7,7 @@ import {
   entryDecisionSchema,
   type EntryDecisionInput,
 } from '../validators/entry-decision.schema.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 type PersistedEntryDecisionPersistenceReason = NonNullable<
   EntryDecisionInput['persistenceReason']
@@ -121,9 +122,13 @@ function buildDecisionFingerprint(input: EntryDecisionInput) {
     .digest('hex');
 }
 
-function latestDecisionWhere(input: EntryDecisionInput): Prisma.EntryDecisionWhereInput {
+function latestDecisionWhere(
+  input: EntryDecisionInput,
+  tradingAccountId: number
+): Prisma.EntryDecisionWhereInput {
   const where: Prisma.EntryDecisionWhereInput = {
     symbol: input.symbol,
+    tradingAccountId,
   };
 
   if (input.subscriptionId !== null && input.subscriptionId !== undefined) {
@@ -281,9 +286,11 @@ export async function recordEntryDecision(
     };
   }
 
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+
   const [previous, context] = await Promise.all([
     prisma.entryDecision.findFirst({
-      where: latestDecisionWhere(input),
+      where: latestDecisionWhere(input, tradingAccountId),
       orderBy: {
         evaluatedAt: 'desc',
       },
@@ -356,6 +363,7 @@ export async function recordEntryDecision(
         | typeof Prisma.JsonNull,
       rawDecisionJson: (input.rawDecisionJson ?? inputAsJson(input)) as
         Prisma.InputJsonValue,
+      tradingAccountId,
       securityId: context.securityId,
       subscriptionId: context.subscriptionId,
       subscriptionKey: context.subscriptionKey,

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   entryDecisionUpdateMany: vi.fn(),
   securityFindUnique: vi.fn(),
   subscriptionFindUnique: vi.fn(),
+  resolveDefaultTradingAccountId: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -26,6 +27,10 @@ vi.mock('../db/prisma.js', () => ({
       findUnique: mocks.subscriptionFindUnique,
     },
   },
+}));
+
+vi.mock('./trading-account.service.js', () => ({
+  resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
 }));
 
 import {
@@ -89,6 +94,7 @@ describe('entry decision service', () => {
     mocks.entryDecisionUpdateMany.mockResolvedValue({ count: 1 });
     mocks.securityFindUnique.mockResolvedValue({ id: 11, symbol: 'SPY' });
     mocks.subscriptionFindUnique.mockResolvedValue(null);
+    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.entryDecisionCreate.mockImplementation(({ data }) =>
       Promise.resolve({
         id: 101,
@@ -110,6 +116,7 @@ describe('entry decision service', () => {
         symbol: 'SPY',
         decisionState: 'idle',
         persistenceReason: 'initial_state',
+        tradingAccountId: 1,
         securityId: 11,
       }),
     });
@@ -171,6 +178,7 @@ describe('entry decision service', () => {
       data: expect.objectContaining({
         decisionState: 'eligible',
         persistenceReason: 'decision_state_changed',
+        tradingAccountId: 1,
       }),
     });
   });
@@ -228,6 +236,7 @@ describe('entry decision service', () => {
     expect(mocks.entryDecisionCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         securityId: 11,
+        tradingAccountId: 1,
         subscriptionId: 22,
         subscriptionKey: 'spy_dip_core',
         strategyId: 33,

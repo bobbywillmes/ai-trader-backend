@@ -4,6 +4,7 @@ import { createSystemEvent } from './system-event.service.js';
 import { closeAlpacaPosition } from '../integrations/alpaca/positions.adapter.js';
 import { HttpError } from '../errors/http-error.js';
 import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -38,10 +39,12 @@ function getCloseOrderFromBrokerResult(result: unknown) {
 
 export async function closePosition(symbol: string) {
   const upperSymbol = symbol.toUpperCase();
+  const defaultTradingAccountId = await resolveDefaultTradingAccountId();
 
   const trackedPosition = await prisma.trackedPosition.findFirst({
     where: {
       symbol: upperSymbol,
+      tradingAccountId: defaultTradingAccountId,
       status: {
         in: ['open', 'closing'],
       },
@@ -78,6 +81,8 @@ export async function closePosition(symbol: string) {
   });
 
   const closeOrder = getCloseOrderFromBrokerResult(result);
+  const tradingAccountId =
+    trackedPosition.tradingAccountId ?? defaultTradingAccountId;
 
   if (closeOrder) {
     const orderIntent = await prisma.orderIntent.create({
@@ -92,6 +97,7 @@ export async function closePosition(symbol: string) {
         limitPrice: null,
         extendedHours: false,
         clientOrderId: closeOrder.clientOrderId,
+        tradingAccountId,
         status: 'submitted',
         subscriptionId: trackedPosition.subscriptionId,
         subscriptionKey: null,
@@ -113,6 +119,7 @@ export async function closePosition(symbol: string) {
       },
       create: {
         orderIntentId: orderIntent.id,
+        tradingAccountId,
         broker: 'alpaca',
         brokerOrderId: closeOrder.id,
         clientOrderId: closeOrder.clientOrderId,
@@ -125,6 +132,7 @@ export async function closePosition(symbol: string) {
       },
       update: {
         orderIntentId: orderIntent.id,
+        tradingAccountId,
         status: closeOrder.status,
         trackedPositionId: trackedPosition.id,
         rawBrokerJson: closeOrder.raw as Prisma.InputJsonValue,
@@ -136,6 +144,7 @@ export async function closePosition(symbol: string) {
     type: 'position.close_requested',
     entityType: 'trackedPosition',
     entityId: trackedPosition.id,
+    tradingAccountId,
     payloadJson: {
       symbol: upperSymbol,
       broker: 'alpaca',
