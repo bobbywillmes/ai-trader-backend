@@ -10,6 +10,7 @@ import {
   isEntrySessionBlocked,
   type EntrySessionDecision,
 } from './entry-session-guard.service.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 type RiskGateAllowed = {
   allowed: true;
@@ -91,7 +92,10 @@ function sessionBlockReason(rule: string) {
   }
 }
 
-async function findSubscriptionForInput(input: ResolvedPlaceOrderInput) {
+async function findSubscriptionForInput(
+  input: ResolvedPlaceOrderInput,
+  tradingAccountId: number
+) {
   const include = {
     strategy: true,
     exitProfile: true,
@@ -99,8 +103,11 @@ async function findSubscriptionForInput(input: ResolvedPlaceOrderInput) {
   };
 
   if (input.subscriptionId !== undefined) {
-    return prisma.subscription.findUnique({
-      where: { id: input.subscriptionId },
+    return prisma.subscription.findFirst({
+      where: {
+        id: input.subscriptionId,
+        tradingAccountId,
+      },
       include,
     });
   }
@@ -115,12 +122,13 @@ async function findSubscriptionForInput(input: ResolvedPlaceOrderInput) {
   return null;
 }
 
-async function getRiskUsage() {
+async function getRiskUsage(tradingAccountId: number) {
   const todayStart = startOfUtcDay();
 
   const [activePositions, dailyEntryOrders] = await Promise.all([
     prisma.trackedPosition.findMany({
       where: {
+        tradingAccountId,
         status: {
           in: ACTIVE_POSITION_STATUSES,
         },
@@ -137,6 +145,7 @@ async function getRiskUsage() {
 
     prisma.orderIntent.findMany({
       where: {
+        tradingAccountId,
         side: 'buy',
         status: {
           in: ENTRY_ORDER_STATUSES,
@@ -190,6 +199,7 @@ async function getRiskUsage() {
 export async function evaluateOrderRisk(
   input: ResolvedPlaceOrderInput
 ): Promise<RiskGateResult> {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
   const config = await getRuntimeTradingConfig();
 
   if (!config.tradingEnabled) {
@@ -199,7 +209,7 @@ export async function evaluateOrderRisk(
     });
   }
 
-  const subscription = await findSubscriptionForInput(input);
+  const subscription = await findSubscriptionForInput(input, tradingAccountId);
 
   const security =
     subscription?.security ??
@@ -313,7 +323,7 @@ export async function evaluateOrderRisk(
   }
 
   const requestedNotional = getRequestedNotional(input);
-  const usage = await getRiskUsage();
+  const usage = await getRiskUsage(tradingAccountId);
 
   const existingSymbolPosition = usage.activePositions.find(
     (position) => position.symbol === input.symbol
@@ -419,6 +429,7 @@ export async function evaluateOrderRisk(
     allowed: true,
     details: {
       orderType: 'entry',
+      tradingAccountId,
       symbol: input.symbol,
       side: input.side,
       subscriptionKey: input.subscriptionKey ?? null,
@@ -437,6 +448,7 @@ export async function evaluateOrderRisk(
 
 export async function logRiskGateBlockedOrder(args: {
   orderIntentId: number;
+  tradingAccountId?: number | null;
   input: ResolvedPlaceOrderInput;
   result: RiskGateBlocked;
 }) {
@@ -444,6 +456,7 @@ export async function logRiskGateBlockedOrder(args: {
     type: 'risk_gate.blocked',
     entityType: 'orderIntent',
     entityId: args.orderIntentId,
+    tradingAccountId: args.tradingAccountId ?? null,
     payloadJson: {
       orderIntentId: args.orderIntentId,
       symbol: args.input.symbol,
@@ -457,9 +470,10 @@ export async function logRiskGateBlockedOrder(args: {
 }
 
 export async function getRiskStatus() {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
   const config = await getRuntimeTradingConfig();
   const account = await getNormalizedAccount('risk_gate_account_check');
-  const usage = await getRiskUsage();
+  const usage = await getRiskUsage(tradingAccountId);
 
   const expectedMode = config.paperMode ? 'paper' : 'live';
   const reasons: string[] = [];

@@ -145,6 +145,7 @@ describe('place order service entry decision attribution', () => {
     );
     expect(mocks.logRiskGateBlockedOrder).toHaveBeenCalledWith({
       orderIntentId: 55,
+      tradingAccountId: 1,
       input: resolvedInput,
       result: riskResult,
     });

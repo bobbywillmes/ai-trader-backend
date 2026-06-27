@@ -62,6 +62,7 @@ export async function submitOrder(
 
     await logRiskGateBlockedOrder({
       orderIntentId: intent.id,
+      tradingAccountId,
       input: resolvedInput,
       result: riskResult,
     });

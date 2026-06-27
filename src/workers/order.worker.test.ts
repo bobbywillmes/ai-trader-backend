@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   createSystemEvent: vi.fn(),
   syncTrailingStopOrderStatus: vi.fn(),
   linkEntryDecisionToBrokerOrder: vi.fn(),
+  resolveDefaultTradingAccountId: vi.fn(),
   adaptiveGetDecision: vi.fn(),
   adaptiveRecordAttempt: vi.fn(),
   adaptiveRecordSuccess: vi.fn(),
@@ -73,6 +74,10 @@ vi.mock('../services/entry-decision.service.js', () => ({
   linkEntryDecisionToBrokerOrder: mocks.linkEntryDecisionToBrokerOrder,
 }));
 
+vi.mock('../services/trading-account.service.js', () => ({
+  resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
+}));
+
 const baseIntent = {
   id: 101,
   source: 'api',
@@ -105,6 +110,7 @@ const baseIntent = {
 describe('order worker entry-session recheck', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.orderIntentUpdateMany.mockResolvedValue({ count: 1 });
     mocks.brokerOrderFindFirst.mockResolvedValue(null);
     mocks.getRuntimeTradingConfig.mockResolvedValue({});
@@ -147,6 +153,14 @@ describe('order worker entry-session recheck', () => {
 
     await processPendingOrders();
 
+    expect(mocks.orderIntentFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          status: 'pending',
+          tradingAccountId: 1,
+        },
+      })
+    );
     expect(mocks.submitOrderToBroker).not.toHaveBeenCalled();
     expect(mocks.orderIntentUpdate).toHaveBeenCalledWith({
       where: { id: 101 },
@@ -234,6 +248,7 @@ describe('order worker entry-session recheck', () => {
 describe('submitted order sync adaptive polling', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.adaptiveGetDecision.mockResolvedValue({
       due: true,
       mode: 'market_open_active',
@@ -249,6 +264,14 @@ describe('submitted order sync adaptive polling', () => {
 
     const result = await syncSubmittedOrders();
 
+    expect(mocks.orderIntentFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          status: 'submitted',
+          tradingAccountId: 1,
+        },
+      })
+    );
     expect(result).toMatchObject({
       found: 0,
       polled: false,

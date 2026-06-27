@@ -22,6 +22,7 @@ import {
   type AdaptivePollingDecision,
 } from '../services/adaptive-polling.service.js';
 import { linkEntryDecisionToBrokerOrder } from '../services/entry-decision.service.js';
+import { resolveDefaultTradingAccountId } from '../services/trading-account.service.js';
 
 export type SubmittedOrderSyncResult = {
   found: number;
@@ -45,8 +46,9 @@ function isEntryOrder(input: BrokerOrderSubmissionInput): boolean {
 }
 
 export async function processPendingOrders() {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
   const pending = await prisma.orderIntent.findMany({
-    where: { status: 'pending' },
+    where: { status: 'pending', tradingAccountId },
     take: 5,
     orderBy: { createdAt: 'asc' },
   });
@@ -143,6 +145,7 @@ export async function processPendingOrders() {
         where: {
           broker: 'alpaca',
           brokerOrderId: brokerOrder.id,
+          tradingAccountId,
         },
       });
 
@@ -237,9 +240,11 @@ export async function processPendingOrders() {
 }
 
 export async function syncSubmittedOrders() {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
   const submittedIntents = await prisma.orderIntent.findMany({
     where: {
-      status: 'submitted'
+      status: 'submitted',
+      tradingAccountId,
     },
     include: {
       brokerOrders: true

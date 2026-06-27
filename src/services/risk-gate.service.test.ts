@@ -5,17 +5,22 @@ import type { RuntimeTradingConfig } from './config.service.js';
 const mocks = vi.hoisted(() => ({
   securityFindUnique: vi.fn(),
   subscriptionFindUnique: vi.fn(),
+  subscriptionFindFirst: vi.fn(),
   trackedPositionFindMany: vi.fn(),
   orderIntentFindMany: vi.fn(),
   getRuntimeTradingConfig: vi.fn(),
   getNormalizedAccount: vi.fn(),
   evaluateEntrySessionGuard: vi.fn(),
+  resolveDefaultTradingAccountId: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
   prisma: {
     security: { findUnique: mocks.securityFindUnique },
-    subscription: { findUnique: mocks.subscriptionFindUnique },
+    subscription: {
+      findUnique: mocks.subscriptionFindUnique,
+      findFirst: mocks.subscriptionFindFirst,
+    },
     trackedPosition: { findMany: mocks.trackedPositionFindMany },
     orderIntent: { findMany: mocks.orderIntentFindMany },
   },
@@ -39,6 +44,10 @@ vi.mock('./entry-session-guard.service.js', () => ({
   isEntrySessionBlocked: (decision: { allowed: boolean }) => !decision.allowed,
 }));
 
+vi.mock('./trading-account.service.js', () => ({
+  resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
+}));
+
 const config: RuntimeTradingConfig = {
   tradingEnabled: true,
   paperMode: true,
@@ -60,6 +69,7 @@ const config: RuntimeTradingConfig = {
 describe('risk gate entry session integration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.getRuntimeTradingConfig.mockResolvedValue(config);
     mocks.securityFindUnique.mockResolvedValue({
       symbol: 'SPY',
@@ -94,6 +104,20 @@ describe('risk gate entry session integration', () => {
 
     expect(result.allowed).toBe(true);
     expect(mocks.evaluateEntrySessionGuard).toHaveBeenCalledOnce();
+    expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tradingAccountId: 1,
+        }),
+      })
+    );
+    expect(mocks.orderIntentFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tradingAccountId: 1,
+        }),
+      })
+    );
   });
 
   it('bypasses the entry-session guard for non-entry orders', async () => {
