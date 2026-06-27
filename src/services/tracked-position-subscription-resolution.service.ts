@@ -4,6 +4,7 @@ import { prisma } from '../db/prisma.js';
 import { getRuntimeTradingConfig } from './config.service.js';
 import { parseSubscriptionKeyFromClientOrderId } from './client-order-id.service.js';
 import { linkEntryDecisionToTrackedPosition } from './entry-decision.service.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 export type SubscriptionResolutionSource =
   | 'local_order_intent'
@@ -74,6 +75,7 @@ function isCompatibleSubscription(subscription: {
 }
 
 async function findLocalOpeningOrderIntent(args: {
+  tradingAccountId: number;
   broker: string;
   symbol: string;
   side: string;
@@ -84,6 +86,7 @@ async function findLocalOpeningOrderIntent(args: {
   return prisma.orderIntent.findFirst({
     where: {
       symbol: normalizeSymbol(args.symbol),
+      tradingAccountId: args.tradingAccountId,
       side: entrySide,
       subscriptionId: { not: null },
       blockReason: null,
@@ -97,6 +100,7 @@ async function findLocalOpeningOrderIntent(args: {
       brokerOrders: {
         some: {
           broker: args.broker,
+          tradingAccountId: args.tradingAccountId,
           side: entrySide,
           OR: [
             { trackedPositionId: null },
@@ -132,6 +136,7 @@ function extractClientOrderIdFromRawBrokerJson(value: Prisma.JsonValue) {
 }
 
 async function resolveFromBrokerClientOrderId(args: {
+  tradingAccountId: number;
   broker: string;
   symbol: string;
   side: string;
@@ -142,6 +147,7 @@ async function resolveFromBrokerClientOrderId(args: {
   const activities = await prisma.brokerActivity.findMany({
     where: {
       broker: args.broker,
+      tradingAccountId: args.tradingAccountId,
       mode: args.mode,
       activityType: 'FILL',
       symbol: normalizeSymbol(args.symbol),
@@ -197,8 +203,11 @@ async function resolveFromBrokerClientOrderId(args: {
   }
 
   const subscriptionKey = Array.from(subscriptionKeys)[0]!;
-  const subscription = await prisma.subscription.findUnique({
-    where: { key: subscriptionKey },
+  const subscription = await prisma.subscription.findFirst({
+    where: {
+      key: subscriptionKey,
+      tradingAccountId: args.tradingAccountId,
+    },
     include: {
       strategy: true,
       exitProfile: true,
@@ -240,6 +249,7 @@ async function resolveFromBrokerClientOrderId(args: {
 }
 
 async function resolveFromUniqueObserverFallback(args: {
+  tradingAccountId: number;
   broker: string;
   symbol: string;
   mode: string;
@@ -247,6 +257,7 @@ async function resolveFromUniqueObserverFallback(args: {
   const candidates = await prisma.subscription.findMany({
     where: {
       symbol: normalizeSymbol(args.symbol),
+      tradingAccountId: args.tradingAccountId,
       broker: args.broker,
       brokerMode: args.mode,
       enabled: true,
@@ -321,9 +332,11 @@ export async function resolveTrackedPositionSubscription(args: {
   openedAt: Date;
 }): Promise<SubscriptionResolutionResult> {
   const runtimeConfig = await getRuntimeTradingConfig();
+  const tradingAccountId = await resolveDefaultTradingAccountId();
   const mode = getModeFromRuntimeConfig(runtimeConfig);
 
   const localIntent = await findLocalOpeningOrderIntent({
+    tradingAccountId,
     broker: args.broker,
     symbol: args.symbol,
     side: args.side,
@@ -354,6 +367,7 @@ export async function resolveTrackedPositionSubscription(args: {
   }
 
   const brokerClientOrderResolution = await resolveFromBrokerClientOrderId({
+    tradingAccountId,
     broker: args.broker,
     symbol: args.symbol,
     side: args.side,
@@ -366,6 +380,7 @@ export async function resolveTrackedPositionSubscription(args: {
   }
 
   return resolveFromUniqueObserverFallback({
+    tradingAccountId,
     broker: args.broker,
     symbol: args.symbol,
     mode,
@@ -379,7 +394,11 @@ export async function linkLocalEntryOwnership(args: {
   side: string;
   openedAt: Date;
 }) {
-  const intent = await findLocalOpeningOrderIntent(args);
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+  const intent = await findLocalOpeningOrderIntent({
+    ...args,
+    tradingAccountId,
+  });
 
   if (!intent) {
     return;
@@ -408,5 +427,6 @@ export async function linkLocalEntryOwnership(args: {
   await linkEntryDecisionToTrackedPosition({
     orderIntentId: intent.id,
     trackedPositionId: args.trackedPositionId,
+    tradingAccountId: intent.tradingAccountId,
   });
 }

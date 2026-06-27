@@ -2,20 +2,25 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   trackedPositionFindMany: vi.fn(),
-  trackedPositionFindUnique: vi.fn(),
+  trackedPositionFindFirst: vi.fn(),
   systemEventFindMany: vi.fn(),
+  resolveDefaultTradingAccountId: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
   prisma: {
     trackedPosition: {
       findMany: mocks.trackedPositionFindMany,
-      findUnique: mocks.trackedPositionFindUnique,
+      findFirst: mocks.trackedPositionFindFirst,
     },
     systemEvent: {
       findMany: mocks.systemEventFindMany,
     },
   },
+}));
+
+vi.mock('./trading-account.service.js', () => ({
+  resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
 }));
 
 import { getTradeCycleById, listTradeCycles } from './trade-cycles.service.js';
@@ -100,6 +105,7 @@ function buildCycle(overrides: Record<string, unknown> = {}) {
 describe('trade cycle service', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.systemEventFindMany.mockResolvedValue([]);
   });
 
@@ -116,6 +122,7 @@ describe('trade cycle service', () => {
       where: {
         symbol: 'SPY',
         status: 'closed',
+        tradingAccountId: 1,
       },
       include: expect.any(Object),
       orderBy: {
@@ -288,7 +295,7 @@ describe('trade cycle service', () => {
   });
 
   it('returns a trade-cycle detail with related records and timeline', async () => {
-    mocks.trackedPositionFindUnique.mockResolvedValue({
+    mocks.trackedPositionFindFirst.mockResolvedValue({
       ...buildCycle(),
       orderIntents: [
         {
@@ -334,8 +341,8 @@ describe('trade cycle service', () => {
 
     const result = await getTradeCycleById(101);
 
-    expect(mocks.trackedPositionFindUnique).toHaveBeenCalledWith({
-      where: { id: 101 },
+    expect(mocks.trackedPositionFindFirst).toHaveBeenCalledWith({
+      where: { id: 101, tradingAccountId: 1 },
       include: expect.objectContaining({
         orderIntents: expect.objectContaining({
           include: {
@@ -361,6 +368,7 @@ describe('trade cycle service', () => {
       where: {
         entityType: 'trackedPosition',
         entityId: '101',
+        tradingAccountId: 1,
       },
       orderBy: {
         createdAt: 'asc',
@@ -401,7 +409,7 @@ describe('trade cycle service', () => {
   });
 
   it('returns empty lifecycle collections for cycles without related records', async () => {
-    mocks.trackedPositionFindUnique.mockResolvedValue({
+    mocks.trackedPositionFindFirst.mockResolvedValue({
       ...buildCycle({
         brokerActivities: [],
         closedAt: null,
@@ -444,7 +452,7 @@ describe('trade cycle service', () => {
   });
 
   it('preserves nullable links and structured system event payloads in detail responses', async () => {
-    mocks.trackedPositionFindUnique.mockResolvedValue({
+    mocks.trackedPositionFindFirst.mockResolvedValue({
       ...buildCycle({
         brokerActivities: [
           {
@@ -557,7 +565,7 @@ describe('trade cycle service', () => {
   });
 
   it('throws a 404 when a trade cycle is missing', async () => {
-    mocks.trackedPositionFindUnique.mockResolvedValue(null);
+    mocks.trackedPositionFindFirst.mockResolvedValue(null);
 
     await expect(getTradeCycleById(999)).rejects.toMatchObject({
       statusCode: 404,

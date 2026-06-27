@@ -579,6 +579,7 @@ export async function linkEntryDecisionToBrokerOrder(args: {
 export async function linkEntryDecisionToTrackedPosition(args: {
   orderIntentId: number;
   trackedPositionId: number;
+  tradingAccountId?: number | null;
 }) {
   return prisma.entryDecision.updateMany({
     where: {
@@ -587,6 +588,9 @@ export async function linkEntryDecisionToTrackedPosition(args: {
     },
     data: {
       trackedPositionId: args.trackedPositionId,
+      ...(args.tradingAccountId !== undefined && {
+        tradingAccountId: args.tradingAccountId,
+      }),
     },
   });
 }

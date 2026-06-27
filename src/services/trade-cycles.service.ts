@@ -1,6 +1,7 @@
 import type { BrokerActivity, Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 export type TradeCycleFilters = {
   symbol?: string;
@@ -294,8 +295,11 @@ function buildCycleSummary(
   };
 }
 
-function buildWhere(filters: TradeCycleFilters): Prisma.TrackedPositionWhereInput {
-  const where: Prisma.TrackedPositionWhereInput = {};
+function buildWhere(
+  filters: TradeCycleFilters,
+  tradingAccountId: number
+): Prisma.TrackedPositionWhereInput {
+  const where: Prisma.TrackedPositionWhereInput = { tradingAccountId };
 
   if (filters.symbol) {
     where.symbol = filters.symbol.trim().toUpperCase();
@@ -368,9 +372,10 @@ const tradeCycleInclude = {
 } satisfies Prisma.TrackedPositionInclude;
 
 export async function listTradeCycles(filters: TradeCycleFilters = {}) {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
   const take = filters.limit === null ? undefined : filters.limit ?? 50;
   const cycles = await prisma.trackedPosition.findMany({
-    where: buildWhere(filters),
+    where: buildWhere(filters, tradingAccountId),
     include: tradeCycleInclude,
     orderBy: {
       openedAt: 'desc',
@@ -384,6 +389,7 @@ export async function listTradeCycles(filters: TradeCycleFilters = {}) {
       entityId: {
         in: cycles.map((cycle) => String(cycle.id)),
       },
+      tradingAccountId,
       type: 'position.closed',
     },
     orderBy: {
@@ -413,8 +419,9 @@ export async function listTradeCycles(filters: TradeCycleFilters = {}) {
 }
 
 export async function getTradeCycleById(id: number) {
-  const position = await prisma.trackedPosition.findUnique({
-    where: { id },
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+  const position = await prisma.trackedPosition.findFirst({
+    where: { id, tradingAccountId },
     include: {
       ...tradeCycleInclude,
       orderIntents: {
@@ -441,6 +448,7 @@ export async function getTradeCycleById(id: number) {
     where: {
       entityType: 'trackedPosition',
       entityId: String(id),
+      tradingAccountId,
     },
     orderBy: {
       createdAt: 'asc',

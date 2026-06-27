@@ -12,6 +12,7 @@ import {
   submitNativeTrailingStopForTrackedPosition,
   syncNativeTrailingStopForTrackedPosition,
 } from './trailing-stop.service.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 function isUnlockTrailingProfile(exitProfile: { exitMode: string }) {
   return exitProfile.exitMode === 'unlock_trailing_stop';
@@ -57,8 +58,9 @@ function shouldAttemptTrailingStopSubmit(position: {
 }
 
 export async function evaluateExits() {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
   const openPositions = await prisma.trackedPosition.findMany({
-    where: { status: 'open' },
+    where: { status: 'open', tradingAccountId },
     include: {
       exitState: true,
       subscription: {
@@ -107,6 +109,7 @@ export async function evaluateExits() {
           type: 'exit.target_unlocked',
           entityType: 'trackedPosition',
           entityId: position.id,
+          tradingAccountId: position.tradingAccountId,
           message: `${position.symbol} reached target unlock for trailing stop exit.`,
           payloadJson: {
             symbol: position.symbol,
@@ -140,6 +143,7 @@ export async function evaluateExits() {
             type: 'exit.trailing_stop_submit_failed',
             entityType: 'trackedPosition',
             entityId: position.id,
+            tradingAccountId: position.tradingAccountId,
             message: `${position.symbol} trailing stop exit order submission failed.`,
             payloadJson: {
               symbol: position.symbol,
@@ -296,6 +300,7 @@ export async function evaluateExits() {
       type: 'exit.triggered',
       entityType: 'trackedPosition',
       entityId: position.id,
+      tradingAccountId: position.tradingAccountId,
       payloadJson: {
         symbol: position.symbol,
         reason,

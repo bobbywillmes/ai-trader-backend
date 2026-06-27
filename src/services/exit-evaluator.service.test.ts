@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 
   submitNativeTrailingStopForTrackedPosition: vi.fn(),
   syncNativeTrailingStopForTrackedPosition: vi.fn(),
+  resolveDefaultTradingAccountId: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -50,12 +51,17 @@ vi.mock('./trailing-stop.service.js', () => ({
     mocks.syncNativeTrailingStopForTrackedPosition,
 }));
 
+vi.mock('./trading-account.service.js', () => ({
+  resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
+}));
+
 import { evaluateExits } from './exit-evaluator.service.js';
 
 function buildUnlockTrailingPosition(overrides: Record<string, unknown> = {}) {
   return {
     id: 101,
     symbol: 'SPY',
+    tradingAccountId: 1,
     status: 'open',
     currentPrice: 100.4,
     unrealizedPnLPct: 0.003, // 0.3%
@@ -100,6 +106,7 @@ function buildExitState(overrides: Record<string, unknown> = {}) {
 describe('evaluateExits - unlock trailing stop lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
 
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -120,7 +127,7 @@ describe('evaluateExits - unlock trailing stop lifecycle', () => {
     await evaluateExits();
 
     expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith({
-      where: { status: 'open' },
+      where: { status: 'open', tradingAccountId: 1 },
       include: {
         exitState: true,
         subscription: {

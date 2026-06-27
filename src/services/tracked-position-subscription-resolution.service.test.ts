@@ -6,9 +6,11 @@ const mocks = vi.hoisted(() => ({
   brokerOrderUpdateMany: vi.fn(),
   brokerActivityFindMany: vi.fn(),
   subscriptionFindMany: vi.fn(),
+  subscriptionFindFirst: vi.fn(),
   subscriptionFindUnique: vi.fn(),
   settingFindMany: vi.fn(),
   linkEntryDecisionToTrackedPosition: vi.fn(),
+  resolveDefaultTradingAccountId: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -25,6 +27,7 @@ vi.mock('../db/prisma.js', () => ({
     },
     subscription: {
       findMany: mocks.subscriptionFindMany,
+      findFirst: mocks.subscriptionFindFirst,
       findUnique: mocks.subscriptionFindUnique,
     },
     setting: {
@@ -35,6 +38,10 @@ vi.mock('../db/prisma.js', () => ({
 
 vi.mock('./entry-decision.service.js', () => ({
   linkEntryDecisionToTrackedPosition: mocks.linkEntryDecisionToTrackedPosition,
+}));
+
+vi.mock('./trading-account.service.js', () => ({
+  resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
 }));
 
 import { buildClientOrderId } from './client-order-id.service.js';
@@ -71,7 +78,9 @@ describe('tracked position subscription resolution', () => {
     mocks.orderIntentFindFirst.mockResolvedValue(null);
     mocks.brokerActivityFindMany.mockResolvedValue([]);
     mocks.subscriptionFindMany.mockResolvedValue([]);
+    mocks.subscriptionFindFirst.mockResolvedValue(null);
     mocks.subscriptionFindUnique.mockResolvedValue(null);
+    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.orderIntentUpdateMany.mockResolvedValue({ count: 1 });
     mocks.brokerOrderUpdateMany.mockResolvedValue({ count: 1 });
     mocks.linkEntryDecisionToTrackedPosition.mockResolvedValue({ count: 1 });
@@ -80,6 +89,7 @@ describe('tracked position subscription resolution', () => {
   it('resolves a locally submitted entry through its local order intent', async () => {
     mocks.orderIntentFindFirst.mockResolvedValue({
       id: 101,
+      tradingAccountId: 1,
       clientOrderId: 'ai-20260616T-DIA-buy-market-abcdef12',
       subscriptionId: 22,
       subscription: subscription(),
@@ -120,7 +130,7 @@ describe('tracked position subscription resolution', () => {
         brokerOrderRecord: null,
       },
     ]);
-    mocks.subscriptionFindUnique.mockResolvedValue(subscription());
+    mocks.subscriptionFindFirst.mockResolvedValue(subscription());
 
     const result = await resolveTrackedPositionSubscription({
       broker: 'alpaca',
@@ -225,6 +235,7 @@ describe('tracked position subscription resolution', () => {
   it('links local entry ownership to the recovered tracked position', async () => {
     mocks.orderIntentFindFirst.mockResolvedValue({
       id: 101,
+      tradingAccountId: 1,
       clientOrderId: 'ai-20260616T-DIA-buy-market-abcdef12',
       subscriptionId: 22,
       subscription: subscription(),
@@ -250,6 +261,7 @@ describe('tracked position subscription resolution', () => {
     expect(mocks.linkEntryDecisionToTrackedPosition).toHaveBeenCalledWith({
       orderIntentId: 101,
       trackedPositionId: 303,
+      tradingAccountId: 1,
     });
   });
 });
