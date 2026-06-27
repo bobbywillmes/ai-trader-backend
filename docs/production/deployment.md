@@ -976,3 +976,20 @@ At minimum, live trading should require:
 [ ] Live order smoke test defined
 [ ] Rollback plan documented
 ```
+
+## 21. One-time trading account bootstrap
+
+After the trading account schema foundation migration has been applied, run the one-time default trading account bootstrap script.
+
+This script creates the initial legacy single-account trading account, grants the current admin user owner access, and backfills existing single-account trading records with the new `tradingAccountId`.
+
+The script is intentionally not added to `package.json` because it should only be run manually when bootstrapping an environment.
+
+Run from the project root:
+
+```bash
+DEFAULT_TRADING_ACCOUNT_OWNER_EMAIL="your-admin-email@example.com" \
+DEFAULT_TRADING_ACCOUNT_DISPLAY_NAME="Bobby Paper" \
+DEFAULT_TRADING_ACCOUNT_CAPITAL="10000" \
+DEFAULT_TRADING_ACCOUNT_ENVIRONMENT="PAPER" \
+npx tsx scripts/bootstrap-default-trading-account.ts
