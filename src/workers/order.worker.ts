@@ -116,6 +116,7 @@ export async function processPendingOrders() {
             type: 'order_intent.blocked.entry_session',
             entityType: 'orderIntent',
             entityId: String(intent.id),
+            tradingAccountId: intent.tradingAccountId,
             payloadJson: {
               orderIntentId: intent.id,
               symbol: resolvedInput.symbol,
@@ -149,6 +150,7 @@ export async function processPendingOrders() {
         await linkEntryDecisionToBrokerOrder({
           orderIntentId: intent.id,
           brokerOrderRecordId: existingBrokerOrderRecord.id,
+          tradingAccountId: intent.tradingAccountId,
         });
 
         await prisma.orderIntent.update({
@@ -175,6 +177,13 @@ export async function processPendingOrders() {
               symbol: brokerOrder.symbol,
               side: brokerOrder.side,
               status: brokerOrder.status,
+              ...(intent.tradingAccountId !== null
+                ? {
+                    tradingAccount: {
+                      connect: { id: intent.tradingAccountId },
+                    },
+                  }
+                : {}),
               ...(intent.trackedPositionId !== null
                 ? {
                     trackedPosition: {
@@ -202,6 +211,7 @@ export async function processPendingOrders() {
         await linkEntryDecisionToBrokerOrder({
           orderIntentId: intent.id,
           brokerOrderRecordId: createdBrokerOrderRecord.id,
+          tradingAccountId: intent.tradingAccountId,
         });
       }
 
@@ -367,6 +377,7 @@ export async function syncSubmittedOrders() {
           type: `order.${nextStatus}`,
           entityType: 'brokerOrder',
           entityId: brokerOrder.id,
+          tradingAccountId: brokerOrder.tradingAccountId,
           payloadJson: {
             orderIntentId: brokerOrder.orderIntentId,
             brokerOrderId: brokerOrder.brokerOrderId,

@@ -493,6 +493,7 @@ export async function ensureEntryDecisionCanLink(decisionKey: string) {
 export async function linkEntryDecisionToOrderIntent(args: {
   decisionKey: string;
   orderIntentId: number;
+  tradingAccountId?: number | null;
 }) {
   const linked = await prisma.entryDecision.updateMany({
     where: {
@@ -501,6 +502,9 @@ export async function linkEntryDecisionToOrderIntent(args: {
     },
     data: {
       orderIntentId: args.orderIntentId,
+      ...(args.tradingAccountId !== undefined && {
+        tradingAccountId: args.tradingAccountId,
+      }),
     },
   });
 
@@ -543,6 +547,7 @@ export async function linkEntryDecisionToOrderIntent(args: {
 export async function linkEntryDecisionToBrokerOrder(args: {
   orderIntentId: number;
   brokerOrderRecordId: number;
+  tradingAccountId?: number | null;
 }) {
   return prisma.entryDecision.updateMany({
     where: {
@@ -551,6 +556,9 @@ export async function linkEntryDecisionToBrokerOrder(args: {
     },
     data: {
       brokerOrderRecordId: args.brokerOrderRecordId,
+      ...(args.tradingAccountId !== undefined && {
+        tradingAccountId: args.tradingAccountId,
+      }),
     },
   });
 }

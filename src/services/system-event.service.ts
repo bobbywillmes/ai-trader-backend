@@ -5,6 +5,7 @@ export async function createSystemEvent(args: {
   type: string;
   entityType: string;
   entityId: string | number;
+  tradingAccountId?: number | null;
   message?: string;
   payloadJson: Prisma.InputJsonValue;
 }) {
@@ -15,6 +16,7 @@ export async function createSystemEvent(args: {
       type: args.type,
       entityType: args.entityType,
       entityId: String(args.entityId),
+      tradingAccountId: args.tradingAccountId ?? null,
       message: args.message ?? null,
       payloadJson: args.payloadJson,
       processed: false,

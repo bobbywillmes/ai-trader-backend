@@ -99,6 +99,7 @@ const baseIntent = {
   subscriptionId: null,
   subscriptionKey: null,
   trackedPositionId: null,
+  tradingAccountId: 1,
 };
 
 describe('order worker entry-session recheck', () => {
@@ -204,9 +205,10 @@ describe('order worker entry-session recheck', () => {
     await processPendingOrders();
 
     expect(mocks.linkEntryDecisionToBrokerOrder).toHaveBeenCalledWith({
-      orderIntentId: 101,
-      brokerOrderRecordId: 501,
-    });
+        orderIntentId: 101,
+        brokerOrderRecordId: 501,
+        tradingAccountId: 1,
+      });
   });
 
   it('links entry decisions to existing broker order records on idempotent retries', async () => {
@@ -218,6 +220,7 @@ describe('order worker entry-session recheck', () => {
     expect(mocks.linkEntryDecisionToBrokerOrder).toHaveBeenCalledWith({
       orderIntentId: 101,
       brokerOrderRecordId: 501,
+      tradingAccountId: 1,
     });
     expect(mocks.orderIntentUpdate).toHaveBeenCalledWith({
       where: { id: 101 },

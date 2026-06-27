@@ -14,7 +14,8 @@ type IntentStatus =
 export async function createOrderIntent(
   input: ResolvedPlaceOrderInput,
   source = 'api',
-  clientOrderId: string
+  clientOrderId: string,
+  tradingAccountId?: number | null
 ) {
   return prisma.orderIntent.create({
     data: {
@@ -30,6 +31,7 @@ export async function createOrderIntent(
       clientOrderId,
       subscriptionId: input.subscriptionId ?? null,
       subscriptionKey: input.subscriptionKey ?? null,
+      tradingAccountId: tradingAccountId ?? null,
       status: 'received',
       rawRequestJson: {
         ...input,
@@ -55,6 +57,7 @@ export async function updateOrderIntentStatus(
 
 export async function createBrokerOrder(args: {
   orderIntentId: number;
+  tradingAccountId?: number | null;
   brokerOrderId: string;
   clientOrderId: string;
   symbol: string;
@@ -73,6 +76,7 @@ export async function createBrokerOrder(args: {
   return prisma.brokerOrder.create({
     data: {
       orderIntentId: args.orderIntentId,
+      tradingAccountId: args.tradingAccountId ?? null,
       broker: 'alpaca',
       brokerOrderId: args.brokerOrderId,
       clientOrderId: args.clientOrderId,

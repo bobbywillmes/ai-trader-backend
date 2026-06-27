@@ -291,6 +291,7 @@ describe('entry decision service', () => {
     await linkEntryDecisionToOrderIntent({
       decisionKey: 'decision-101',
       orderIntentId: 55,
+      tradingAccountId: 1,
     });
 
     expect(mocks.entryDecisionUpdateMany).toHaveBeenCalledWith({
@@ -300,6 +301,7 @@ describe('entry decision service', () => {
       },
       data: {
         orderIntentId: 55,
+        tradingAccountId: 1,
       },
     });
   });
@@ -308,6 +310,7 @@ describe('entry decision service', () => {
     await linkEntryDecisionToBrokerOrder({
       orderIntentId: 55,
       brokerOrderRecordId: 77,
+      tradingAccountId: 1,
     });
 
     expect(mocks.entryDecisionUpdateMany).toHaveBeenCalledWith({
@@ -317,6 +320,7 @@ describe('entry decision service', () => {
       },
       data: {
         brokerOrderRecordId: 77,
+        tradingAccountId: 1,
       },
     });
   });

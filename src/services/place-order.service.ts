@@ -22,6 +22,7 @@ import {
   ensureEntryDecisionCanLink,
   linkEntryDecisionToOrderIntent,
 } from './entry-decision.service.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 type SubmitOrderOptions = {
   entryDecisionKey?: string;
@@ -32,18 +33,25 @@ export async function submitOrder(
   options: SubmitOrderOptions = {}
 ) {
   const resolvedInput = await resolveSubscriptionOrderInput(input);
+  const tradingAccountId = await resolveDefaultTradingAccountId();
   const clientOrderId = buildClientOrderId(resolvedInput);
 
   if (options.entryDecisionKey) {
     await ensureEntryDecisionCanLink(options.entryDecisionKey);
   }
 
-  const intent = await createOrderIntent(resolvedInput, 'api', clientOrderId);
+  const intent = await createOrderIntent(
+    resolvedInput,
+    'api',
+    clientOrderId,
+    tradingAccountId
+  );
 
   if (options.entryDecisionKey) {
     await linkEntryDecisionToOrderIntent({
       decisionKey: options.entryDecisionKey,
       orderIntentId: intent.id,
+      tradingAccountId,
     });
   }
 

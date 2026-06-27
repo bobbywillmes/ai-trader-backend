@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   linkEntryDecisionToOrderIntent: vi.fn(),
   logRiskGateBlockedOrder: vi.fn(),
   resolveSubscriptionOrderInput: vi.fn(),
+  resolveDefaultTradingAccountId: vi.fn(),
   updateOrderIntentStatus: vi.fn(),
 }));
 
@@ -45,6 +46,10 @@ vi.mock('./subscription.service.js', () => ({
   resolveSubscriptionOrderInput: mocks.resolveSubscriptionOrderInput,
 }));
 
+vi.mock('./trading-account.service.js', () => ({
+  resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
+}));
+
 import { submitOrder } from './place-order.service.js';
 
 const resolvedInput = {
@@ -63,6 +68,7 @@ describe('place order service entry decision attribution', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.resolveSubscriptionOrderInput.mockResolvedValue(resolvedInput);
+    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.buildClientOrderId.mockReturnValue('client-101');
     mocks.createOrderIntent.mockResolvedValue({ id: 55 });
     mocks.evaluateOrderRisk.mockResolvedValue({
@@ -89,6 +95,7 @@ describe('place order service entry decision attribution', () => {
     expect(mocks.linkEntryDecisionToOrderIntent).toHaveBeenCalledWith({
       decisionKey: 'decision-101',
       orderIntentId: 55,
+      tradingAccountId: 1,
     });
     expect(mocks.updateOrderIntentStatus).toHaveBeenCalledWith(55, 'pending');
     expect(result).toEqual({
@@ -129,6 +136,7 @@ describe('place order service entry decision attribution', () => {
     expect(mocks.linkEntryDecisionToOrderIntent).toHaveBeenCalledWith({
       decisionKey: 'decision-101',
       orderIntentId: 55,
+      tradingAccountId: 1,
     });
     expect(mocks.updateOrderIntentStatus).toHaveBeenCalledWith(
       55,
