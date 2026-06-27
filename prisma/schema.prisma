@@ -16,16 +16,23 @@ model Setting {
 
 model AdminUser {
   id           Int     @id @default(autoincrement())
+
   email        String  @unique
   passwordHash String
   role         String  @default("admin")
   enabled      Boolean @default(true)
+
+  name              String?
+  emailVerifiedAt   DateTime?
 
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   sessions AdminSession[]
+
+  ownedTradingAccounts  TradingAccount[] @relation("TradingAccountOwner")
+  tradingAccountAccess  TradingAccountAccess[]
 }
 
 model AdminSession {
@@ -48,6 +55,155 @@ model AdminSession {
   @@index([adminUserId])
   @@index([expiresAt])
   @@index([revokedAt])
+}
+
+enum TradingBroker {
+  ALPACA
+}
+
+enum TradingAccountEnvironment {
+  PAPER
+  LIVE
+}
+
+enum TradingAccountStatus {
+  NEEDS_CREDENTIALS
+  ACTIVE
+  PAUSED
+  DISABLED
+  ERROR
+}
+
+model TradingAccount {
+  id                        Int @id @default(autoincrement())
+
+  ownerAdminUserId          Int
+  ownerAdminUser            AdminUser @relation("TradingAccountOwner", fields: [ownerAdminUserId], references: [id])
+
+  displayName               String
+
+  broker                    TradingBroker @default(ALPACA)
+  environment               TradingAccountEnvironment @default(PAPER)
+  status                    TradingAccountStatus @default(NEEDS_CREDENTIALS)
+
+  tradingEnabled            Boolean @default(false)
+  killSwitchEnabled         Boolean @default(true)
+
+  estimatedTradingCapital   Float?
+  baseCurrency              String @default("USD")
+
+  brokerAccountId           String?
+  brokerAccountNumberMasked String?
+  brokerAccountStatus       String?
+
+  lastBrokerSyncAt          DateTime?
+  lastCash                  Float?
+  lastBuyingPower           Float?
+  lastEquity                Float?
+  lastPortfolioValue        Float?
+  tradingBlocked            Boolean?
+
+  pausedReason              String?
+  notes                     String?
+
+  credential                TradingAccountCredential?
+  access                    TradingAccountAccess[]
+
+  // Future/current trading relations
+  subscriptions             Subscription[]
+  orderIntents              OrderIntent[]
+  brokerOrders              BrokerOrder[]
+  brokerActivities          BrokerActivity[]
+  trackedPositions          TrackedPosition[]
+  accountSnapshots          AccountSnapshot[]
+  entryDecisions            EntryDecision[]
+  systemEvents              SystemEvent[]
+  alpacaApiUsageBuckets     AlpacaApiUsageBucket[]
+
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  @@index([ownerAdminUserId])
+  @@index([broker, environment])
+  @@index([status])
+  @@index([tradingEnabled])
+  @@index([killSwitchEnabled])
+  @@unique([broker, environment, brokerAccountId])
+}
+
+enum BrokerCredentialAuthType {
+  API_KEY
+  OAUTH
+}
+
+enum BrokerCredentialStatus {
+  NEEDS_VERIFICATION
+  ACTIVE
+  INVALID
+  REVOKED
+}
+
+model TradingAccountCredential {
+  id                      Int @id @default(autoincrement())
+
+  tradingAccountId        Int @unique
+  tradingAccount          TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Cascade)
+
+  authType                BrokerCredentialAuthType @default(API_KEY)
+  status                  BrokerCredentialStatus @default(NEEDS_VERIFICATION)
+
+  apiKeyCiphertext        String?
+  apiSecretCiphertext     String?
+
+  accessTokenCiphertext   String?
+  refreshTokenCiphertext  String?
+
+  keyFingerprint          String?
+  encryptionVersion       Int @default(1)
+
+  verifiedAt              DateTime?
+  lastUsedAt              DateTime?
+  lastFailedAt            DateTime?
+  revokedAt               DateTime?
+
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@index([status])
+}
+
+enum TradingAccountAccessRole {
+  OWNER
+  MANAGER
+  VIEWER
+}
+
+model TradingAccountAccess {
+  id                        Int @id @default(autoincrement())
+
+  tradingAccountId          Int
+  tradingAccount            TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Cascade)
+
+  adminUserId               Int
+  adminUser                 AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  role                      TradingAccountAccessRole
+
+  canView                   Boolean @default(true)
+  canPauseTrading           Boolean @default(false)
+  canResumeTrading          Boolean @default(false)
+  canEditRiskSettings       Boolean @default(false)
+  canEditStrategySettings   Boolean @default(false)
+  canEditCredentials        Boolean @default(false)
+  canManageAccess           Boolean @default(false)
+
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  @@unique([tradingAccountId, adminUserId])
+  @@index([adminUserId])
+  @@index([tradingAccountId])
+  @@index([role])
 }
 
 enum AssetType {
@@ -104,11 +260,17 @@ model OrderIntent {
   trackedPositionId Int?
   trackedPosition   TrackedPosition? @relation(fields: [trackedPositionId], references: [id], onDelete: SetNull)
 
+  tradingAccountId  Int?
+  tradingAccount    TradingAccount? @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
+
   brokerOrders     BrokerOrder[]
   brokerActivities BrokerActivity[]
   entryDecision    EntryDecision?
 
   @@index([trackedPositionId])
+  @@index([tradingAccountId])
+  @@index([tradingAccountId, status])
+  @@index([tradingAccountId, createdAt])
 }
 
 model BrokerOrder {
@@ -132,12 +294,18 @@ model BrokerOrder {
   trackedPositionId Int?
   trackedPosition   TrackedPosition? @relation(fields: [trackedPositionId], references: [id], onDelete: SetNull)
 
+  tradingAccountId  Int?
+  tradingAccount    TradingAccount? @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
+
   brokerActivities BrokerActivity[]
   entryDecision    EntryDecision?
 
   @@unique([broker, brokerOrderId])
   @@unique([broker, clientOrderId])
   @@index([trackedPositionId])
+  @@index([tradingAccountId])
+  @@index([tradingAccountId, status])
+  @@index([tradingAccountId, symbol])
 }
 
 model SystemEvent {
@@ -149,6 +317,11 @@ model SystemEvent {
   payloadJson Json
   processed   Boolean  @default(false)
   createdAt   DateTime @default(now())
+  tradingAccountId  Int?
+  tradingAccount    TradingAccount? @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
+
+  @@index([tradingAccountId])
+  @@index([tradingAccountId, createdAt])
 }
 
 model WorkerHealthState {
@@ -202,11 +375,17 @@ model AlpacaApiUsageBucket {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
+  tradingAccountId  Int?
+  tradingAccount    TradingAccount? @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
+
   @@unique([bucketStart, operation, endpoint, method, requestClass])
   @@index([bucketStart])
   @@index([operation])
   @@index([endpoint])
   @@index([updatedAt])
+  @@index([tradingAccountId])
+  @@index([tradingAccountId, bucketStart])
+  @@index([tradingAccountId, updatedAt])
 }
 
 model CurrentMarketState {
@@ -319,6 +498,9 @@ model EntryDecision {
   trackedPositionId       Int?             @unique
   trackedPosition         TrackedPosition? @relation(fields: [trackedPositionId], references: [id], onDelete: SetNull)
 
+  tradingAccountId        Int?
+  tradingAccount          TradingAccount? @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
+
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
@@ -329,6 +511,9 @@ model EntryDecision {
   @@index([strategyId, evaluatedAt])
   @@index([exitProfileId, evaluatedAt])
   @@index([securityId])
+  @@index([tradingAccountId])
+  @@index([tradingAccountId, evaluatedAt])
+  @@index([tradingAccountId, symbol, evaluatedAt])
 }
 
 model TrackedPosition {
@@ -367,6 +552,9 @@ model TrackedPosition {
   configSnapshotJson       Json?
   configSnapshotCapturedAt DateTime?
 
+  tradingAccountId        Int?
+  tradingAccount          TradingAccount? @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
+
   // Unlock trailing-stop state
   trailingUnlocked      Boolean   @default(false)
   trailingUnlockedAt    DateTime?
@@ -389,6 +577,10 @@ model TrackedPosition {
   @@index([subscriptionId])
   @@index([trailingStopOrderId])
   @@index([trailingStopStatus])
+  @@index([tradingAccountId])
+  @@index([tradingAccountId, status])
+  @@index([tradingAccountId, symbol])
+  @@index([tradingAccountId, symbol, status])
 }
 
 model PositionExitState {
@@ -460,6 +652,9 @@ model AccountSnapshot {
   dayPnLPct        Float?
   tradingBlocked   Boolean
 
+  tradingAccountId  Int?
+  tradingAccount    TradingAccount? @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
+
   snapshotHash String
   changed      Boolean @default(true)
 
@@ -470,6 +665,9 @@ model AccountSnapshot {
   @@index([reason])
   @@index([broker, mode])
   @@index([changed])
+  @@index([tradingAccountId])
+  @@index([tradingAccountId, createdAt])
+  @@index([tradingAccountId, reason])
 }
 
 model BrokerActivity {
@@ -508,6 +706,9 @@ model BrokerActivity {
   brokerOrderRecord BrokerOrder?     @relation(fields: [brokerOrderRecordId], references: [id])
   trackedPosition   TrackedPosition? @relation(fields: [trackedPositionId], references: [id], onDelete: SetNull)
 
+  tradingAccountId  Int?
+  tradingAccount    TradingAccount? @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
+
   @@index([activityType])
   @@index([symbol])
   @@index([side])
@@ -518,6 +719,9 @@ model BrokerActivity {
   @@index([trackedPositionId])
   @@index([trackedPositionLinkSource])
   @@index([broker, mode])
+  @@index([tradingAccountId])
+  @@index([tradingAccountId, transactionTime])
+  @@index([tradingAccountId, symbol])
 }
 
 model Strategy {
@@ -579,7 +783,13 @@ model Subscription {
   orderIntents     OrderIntent[]
   entryDecisions   EntryDecision[]
 
+  tradingAccountId  Int?
+  tradingAccount    TradingAccount? @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
+
   @@index([symbol])
   @@index([strategyId])
   @@index([exitProfileId])
+  @@index([tradingAccountId])
+  @@index([tradingAccountId, enabled])
+  @@index([tradingAccountId, symbol])
 }
