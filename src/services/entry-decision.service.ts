@@ -384,10 +384,13 @@ export async function recordEntryDecision(
 }
 
 export async function listEntryDecisions(filters: EntryDecisionFilters = {}) {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
   const limit = normalizeLimit(filters.limit);
+  const where = buildEntryDecisionWhere(filters);
+  where.tradingAccountId = tradingAccountId;
 
   const decisions = await prisma.entryDecision.findMany({
-    where: buildEntryDecisionWhere(filters),
+    where,
     orderBy: {
       evaluatedAt: 'desc',
     },
@@ -447,8 +450,10 @@ export async function listEntryDecisions(filters: EntryDecisionFilters = {}) {
 }
 
 export async function getEntryDecisionById(id: number) {
-  const decision = await prisma.entryDecision.findUnique({
-    where: { id },
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+
+  const decision = await prisma.entryDecision.findFirst({
+    where: { id, tradingAccountId },
     include: {
       security: true,
       subscription: true,

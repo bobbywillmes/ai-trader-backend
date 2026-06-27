@@ -21,7 +21,12 @@ export async function getStrategies() {
 }
 
 export async function getSubscriptions() {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+
   return prisma.subscription.findMany({
+    where: {
+      tradingAccountId,
+    },
     orderBy: { key: 'asc' },
     include: {
       strategy: true,

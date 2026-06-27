@@ -371,6 +371,7 @@ describe('entry decision service', () => {
         symbol: 'SPY',
         decisionState: 'idle',
         subscriptionId: 22,
+        tradingAccountId: 1,
         signalCreated: false,
         evaluatedAt: {
           gte: new Date('2026-06-25T14:00:00.000Z'),

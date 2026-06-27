@@ -232,6 +232,7 @@ describe('account snapshot service', () => {
           lte: dateTo,
         },
         mode: 'paper',
+        tradingAccountId: 1,
       },
       orderBy: { createdAt: 'desc' },
       take: 100,
@@ -250,6 +251,9 @@ describe('account snapshot service', () => {
 
     expect(mocks.accountSnapshotFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: {
+          tradingAccountId: 1,
+        },
         take: 2000,
       })
     );

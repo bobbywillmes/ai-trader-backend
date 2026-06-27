@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import type { ResolvedPlaceOrderInput } from '../validators/place-order.schema.js';
 import { HttpError } from '../errors/http-error.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 type IntentStatus =
   | 'received'
@@ -90,7 +91,12 @@ export async function createBrokerOrder(args: {
 }
 
 export async function getRecentOrderIntents(limit = 50) {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+
   return prisma.orderIntent.findMany({
+    where: {
+      tradingAccountId,
+    },
     orderBy: { createdAt: 'desc' },
     take: limit,
     include: {
@@ -100,8 +106,10 @@ export async function getRecentOrderIntents(limit = 50) {
 }
 
 export async function getOrderIntentById(id: number) {
-  const intent = await prisma.orderIntent.findUnique({
-    where: { id },
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+
+  const intent = await prisma.orderIntent.findFirst({
+    where: { id, tradingAccountId },
     include: {
       brokerOrders: true
     }

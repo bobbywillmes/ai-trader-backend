@@ -479,6 +479,7 @@ export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult>
 
     const closeFillAttribution = await attributeCloseFillsForTrackedPosition({
       trackedPositionId: closed.id,
+      tradingAccountId: closed.tradingAccountId,
       broker: closed.broker,
       symbol: closed.symbol,
       closeSide,
@@ -570,7 +571,12 @@ export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult>
 }
 
 export async function getTrackedPositions() {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+
   return prisma.trackedPosition.findMany({
+    where: {
+      tradingAccountId,
+    },
     orderBy: { symbol: 'asc' },
     include: {
       exitState: true,
@@ -585,8 +591,11 @@ export async function getTrackedPositions() {
 }
 
 export async function getOpenTrackedPositions() {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+
   return prisma.trackedPosition.findMany({
-    where: { 
+    where: {
+      tradingAccountId,
       status: {
           in: [...ACTIVE_POSITION_STATUSES],
         }

@@ -79,6 +79,7 @@ function buildSnapshotWhere(query: AccountSnapshotQuery) {
   const where: {
     createdAt?: { gte?: Date; lte?: Date };
     mode?: BrokerMode;
+    tradingAccountId?: number;
   } = {};
 
   if (query.dateFrom !== undefined || query.dateTo !== undefined) {
@@ -261,8 +262,12 @@ export async function getRecentAccountSnapshots(
   limit = DEFAULT_RECENT_SNAPSHOT_LIMIT,
   query: AccountSnapshotQuery = {}
 ) {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+  const where = buildSnapshotWhere(query);
+  where.tradingAccountId = tradingAccountId;
+
   const snapshots = await prisma.accountSnapshot.findMany({
-    where: buildSnapshotWhere(query),
+    where,
     orderBy: { createdAt: 'desc' },
     take: clampLimit(limit, DEFAULT_RECENT_SNAPSHOT_LIMIT, MAX_RECENT_SNAPSHOT_LIMIT),
   });
@@ -271,7 +276,12 @@ export async function getRecentAccountSnapshots(
 }
 
 export async function getLatestAccountSnapshot() {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+
   const snapshot = await prisma.accountSnapshot.findFirst({
+    where: {
+      tradingAccountId,
+    },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -281,13 +291,16 @@ export async function getLatestAccountSnapshot() {
 export async function getAccountSnapshotTrends(
   query: AccountSnapshotQuery = {}
 ) {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+  const where = buildSnapshotWhere(query);
+  where.tradingAccountId = tradingAccountId;
   const limit = clampLimit(
     query.limit,
     DEFAULT_TREND_SNAPSHOT_LIMIT,
     MAX_TREND_SNAPSHOT_LIMIT
   );
   const newestSnapshots = await prisma.accountSnapshot.findMany({
-    where: buildSnapshotWhere(query),
+    where,
     orderBy: { createdAt: 'desc' },
     take: limit,
   });
