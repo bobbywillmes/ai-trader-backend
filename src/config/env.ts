@@ -47,6 +47,7 @@ const envSchema = z.object({
     .min(1)
     .max(365)
     .default(30),
+  DEFAULT_TRADING_ACCOUNT_ID: z.coerce.number().int().min(1).optional(),
 
   MASSIVE_API_KEY: z.string().min(1, 'MASSIVE_API_KEY is required'),
   MASSIVE_BASE_URL: z.url().default('https://api.massive.com'),
