@@ -7,6 +7,7 @@ import {
   type NormalizedMarketSessionSnapshot,
 } from '../integrations/alpaca/market-session.adapter.js';
 import { TRADING_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 export type AdaptiveWorkerKey =
   | 'submitted_order_sync'
@@ -274,6 +275,7 @@ function defaultLocalActivity(now: Date): AdaptivePollingLocalActivitySnapshot {
 async function readLocalActivity(
   now: Date
 ): Promise<AdaptivePollingLocalActivitySnapshot> {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
   const [
     submittedOrderCount,
     submittingOrderCount,
@@ -283,19 +285,23 @@ async function readLocalActivity(
     activeExitCount,
     activeProtectiveOrderCount,
   ] = await Promise.all([
-    prisma.orderIntent.count({ where: { status: 'submitted' } }),
-    prisma.orderIntent.count({ where: { status: 'submitting' } }),
+    prisma.orderIntent.count({ where: { status: 'submitted', tradingAccountId } }),
+    prisma.orderIntent.count({ where: { status: 'submitting', tradingAccountId } }),
     prisma.brokerOrder.count({
       where: {
+        tradingAccountId,
         status: {
           notIn: ['filled', 'canceled', 'expired', 'rejected', 'suspended'],
         },
       },
     }),
-    prisma.trackedPosition.count({ where: { status: 'open' } }),
-    prisma.trackedPosition.count({ where: { status: 'closing' } }),
+    prisma.trackedPosition.count({ where: { status: 'open', tradingAccountId } }),
+    prisma.trackedPosition.count({ where: { status: 'closing', tradingAccountId } }),
     prisma.positionExitState.count({
       where: {
+        trackedPosition: {
+          tradingAccountId,
+        },
         status: {
           in: [
             'watching',
@@ -308,6 +314,7 @@ async function readLocalActivity(
     }),
     prisma.trackedPosition.count({
       where: {
+        tradingAccountId,
         OR: [
           {
             trailingStopOrderId: {

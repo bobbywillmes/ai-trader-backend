@@ -1,8 +1,12 @@
 import { cancelAllAlpacaOrders } from '../integrations/alpaca/orders.adapter.js';
 import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 export async function cancelAllOpenOrders() {
-  const results = await cancelAllAlpacaOrders('order_cancel_all');
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+  const results = await cancelAllAlpacaOrders('order_cancel_all', {
+    tradingAccountId,
+  });
   const accepted = results.some(
     (result) => result.status >= 200 && result.status < 300
   );

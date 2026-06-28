@@ -206,7 +206,10 @@ describe('order worker entry-session recheck', () => {
         symbol: 'SPY',
         side: 'sell',
         clientOrderId: 'client-101',
-      })
+      }),
+      {
+        tradingAccountId: 1,
+      }
     );
   });
 

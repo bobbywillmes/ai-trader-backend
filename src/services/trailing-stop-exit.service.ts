@@ -247,7 +247,8 @@ export async function submitTrailingStopExitOrder(trackedPositionId: number) {
 
   const existingAlpacaOrder = await getAlpacaOrderByClientOrderId(
     clientOrderId,
-    'protective_order_idempotency_check'
+    'protective_order_idempotency_check',
+    { tradingAccountId }
   );
 
   if (existingAlpacaOrder) {
@@ -277,7 +278,8 @@ export async function submitTrailingStopExitOrder(trackedPositionId: number) {
 
   const created = await placeAlpacaOrder(
     payload,
-    'protective_order_submission'
+    'protective_order_submission',
+    { tradingAccountId }
   );
 
   adaptivePollingCoordinator.forceAfterBrokerOrderCreated(

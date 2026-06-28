@@ -34,6 +34,7 @@ type GetAlpacaAccountActivitiesParams = {
   pageSize?: number;
   pageToken?: string;
   operation?: AlpacaApiOperation;
+  tradingAccountId?: number | undefined;
 };
 
 function toQueryDate(value: Date | string) {
@@ -64,6 +65,7 @@ export async function getAlpacaAccountActivities(
   return alpacaRequest<AlpacaAccountActivity[]>(
     query ? `${path}?${query}` : path,
     {
+      tradingAccountId: params.tradingAccountId,
       metadata: {
         operation: params.operation ?? 'broker_activity_sync',
         endpoint,

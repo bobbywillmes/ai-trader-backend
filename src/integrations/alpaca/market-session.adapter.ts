@@ -31,6 +31,10 @@ type CalendarCache = {
   fetchedAtMs: number;
 };
 
+type AlpacaMarketSessionOptions = {
+  tradingAccountId?: number | undefined;
+};
+
 export type NormalizedMarketSessionSnapshot = {
   source: 'alpaca';
   brokerTimestamp: string;
@@ -252,7 +256,7 @@ function advanceTimestamp(rawTimestamp: string, fetchedAtMs: number, nowMs: numb
   return new Date(timestamp.getTime() + Math.max(0, nowMs - fetchedAtMs));
 }
 
-async function getClock(nowMs: number) {
+async function getClock(nowMs: number, options: AlpacaMarketSessionOptions = {}) {
   if (clockCache && nowMs - clockCache.fetchedAtMs <= CLOCK_TTL_MS) {
     return { raw: clockCache.raw, cacheStatus: 'cached' as const };
   }
@@ -269,6 +273,7 @@ async function getClock(nowMs: number) {
 
   if (!clockInFlight) {
     clockInFlight = alpacaRequest<AlpacaClock>('/v2/clock', {
+      tradingAccountId: options.tradingAccountId,
       metadata: {
         operation: 'market_clock',
         endpoint: 'GET /v2/clock',
@@ -296,7 +301,11 @@ async function getClock(nowMs: number) {
   return clockInFlight;
 }
 
-async function getCalendarSession(tradingDate: string, nowMs: number) {
+async function getCalendarSession(
+  tradingDate: string,
+  nowMs: number,
+  options: AlpacaMarketSessionOptions = {}
+) {
   const cached = calendarCache.get(tradingDate);
 
   if (cached && nowMs - cached.fetchedAtMs <= CALENDAR_TTL_MS) {
@@ -313,6 +322,7 @@ async function getCalendarSession(tradingDate: string, nowMs: number) {
       tradingDate
     )}`,
     {
+      tradingAccountId: options.tradingAccountId,
       metadata: {
         operation: 'market_calendar',
         endpoint: 'GET /v2/calendar',
@@ -402,10 +412,11 @@ function deriveClockSessionWindow(clock: AlpacaClock, evaluatedMs: number) {
 }
 
 export async function getAlpacaMarketSessionSnapshot(
-  now = new Date()
+  now = new Date(),
+  options: AlpacaMarketSessionOptions = {}
 ): Promise<NormalizedMarketSessionSnapshot> {
   const nowMs = now.getTime();
-  const { raw: clock, cacheStatus: clockStatus } = await getClock(nowMs);
+  const { raw: clock, cacheStatus: clockStatus } = await getClock(nowMs, options);
   const fetchedAt = clockCache?.fetchedAtIso ?? new Date().toISOString();
   const evaluated = advanceTimestamp(clock.timestamp, clockCache?.fetchedAtMs ?? nowMs, nowMs);
   const evaluatedTimestamp = evaluated.toISOString();
@@ -421,7 +432,8 @@ export async function getAlpacaMarketSessionSnapshot(
   if (marketOpen && (!sessionOpenAt || !sessionCloseAt)) {
     const { raw: calendar, cacheStatus } = await getCalendarSession(
       tradingDate,
-      nowMs
+      nowMs,
+      options
     );
     calendarStatus = cacheStatus;
 

@@ -103,7 +103,9 @@ export async function processPendingOrders() {
 
       if (isEntryOrder(resolvedInput)) {
         const config = await getRuntimeTradingConfig();
-        const entrySession = await evaluateEntrySessionGuard(config);
+        const entrySession = await evaluateEntrySessionGuard(config, new Date(), {
+          tradingAccountId,
+        });
 
         if (isEntrySessionBlocked(entrySession)) {
           await prisma.orderIntent.update({
@@ -138,7 +140,9 @@ export async function processPendingOrders() {
         }
       }
 
-      const result = await submitOrderToBroker(resolvedInput);
+      const result = await submitOrderToBroker(resolvedInput, {
+        tradingAccountId: intent.tradingAccountId ?? tradingAccountId,
+      });
       const brokerOrder = result.order;
 
       const existingBrokerOrderRecord = await prisma.brokerOrder.findFirst({
@@ -288,7 +292,9 @@ export async function syncSubmittedOrders() {
 
   try {
     adaptivePollingCoordinator.recordAttempt('submitted_order_sync');
-    openOrders = await getNormalizedOpenOrders('submitted_order_sync');
+    openOrders = await getNormalizedOpenOrders('submitted_order_sync', {
+      tradingAccountId,
+    });
   } catch (error) {
     if (error instanceof AlpacaRateLimitDeferredError) {
       adaptivePollingCoordinator.recordRateLimitDeferred(

@@ -1,7 +1,8 @@
-import { env } from '../../config/env.js';
 import { AlpacaApiError } from '../../errors/alpaca-api-error.js';
 import { AlpacaRateLimitDeferredError } from '../../errors/alpaca-rate-limit-deferred-error.js';
 import { alpacaApiUsageRegistry } from '../../services/alpaca-api-usage.service.js';
+import { resolveAlpacaConfigForTradingAccount } from '../../services/alpaca-config-resolver.service.js';
+import { resolveDefaultTradingAccountId } from '../../services/trading-account.service.js';
 import {
   assertKnownAlpacaEndpoint,
   assertKnownAlpacaOperation,
@@ -13,6 +14,7 @@ type RequestOptions = {
   body?: unknown;
   returnNullOn404?: boolean;
   metadata: AlpacaRequestMetadata;
+  tradingAccountId?: number | undefined;
 };
 
 export async function alpacaRequest<T>(
@@ -29,14 +31,17 @@ export async function alpacaRequest<T>(
     });
   }
 
-  const url = `${env.ALPACA_BASE_URL}${path}`;
+  const tradingAccountId =
+    options.tradingAccountId ?? (await resolveDefaultTradingAccountId());
+  const config = await resolveAlpacaConfigForTradingAccount(tradingAccountId);
+  const url = `${config.baseUrl}${path}`;
   const method = options.method ?? 'GET';
 
   const requestInit: RequestInit = {
     method,
     headers: {
-      'APCA-API-KEY-ID': env.ALPACA_API_KEY,
-      'APCA-API-SECRET-KEY': env.ALPACA_API_SECRET,
+      'APCA-API-KEY-ID': config.apiKey,
+      'APCA-API-SECRET-KEY': config.apiSecret,
       'Content-Type': 'application/json'
     }
   };

@@ -194,7 +194,9 @@ export async function recordAccountSnapshot(input: RecordAccountSnapshotInput) {
     }
   }
 
-  const account = await getNormalizedAccount('account_snapshot');
+  const account = await getNormalizedAccount('account_snapshot', {
+    tradingAccountId,
+  });
   const snapshotHash = buildSnapshotHash(account);
 
   const latestSnapshot = await prisma.accountSnapshot.findFirst({

@@ -2,10 +2,13 @@ import { AlpacaApiError } from '../errors/alpaca-api-error.js';
 import { HttpError } from '../errors/http-error.js';
 import { cancelAlpacaOrder } from '../integrations/alpaca/orders.adapter.js';
 import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 export async function cancelOrderById(orderId: string) {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+
   try {
-    await cancelAlpacaOrder(orderId, 'order_cancel');
+    await cancelAlpacaOrder(orderId, 'order_cancel', { tradingAccountId });
     adaptivePollingCoordinator.forceAfterBrokerOrderCancellation(
       'broker_order_cancel_requested'
     );

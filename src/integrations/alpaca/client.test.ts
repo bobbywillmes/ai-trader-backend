@@ -6,14 +6,17 @@ const mocks = vi.hoisted(() => ({
   getBackoffUntil: vi.fn(),
   beginRequest: vi.fn(),
   completeRequest: vi.fn(),
+  resolveAlpacaConfigForTradingAccount: vi.fn(),
+  resolveDefaultTradingAccountId: vi.fn(),
 }));
 
-vi.mock('../../config/env.js', () => ({
-  env: {
-    ALPACA_API_KEY: 'test-key',
-    ALPACA_API_SECRET: 'test-secret',
-    ALPACA_BASE_URL: 'https://paper-api.alpaca.markets',
-  },
+vi.mock('../../services/alpaca-config-resolver.service.js', () => ({
+  resolveAlpacaConfigForTradingAccount:
+    mocks.resolveAlpacaConfigForTradingAccount,
+}));
+
+vi.mock('../../services/trading-account.service.js', () => ({
+  resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
 }));
 
 vi.mock('../../services/alpaca-api-usage.service.js', () => ({
@@ -57,6 +60,16 @@ describe('alpacaRequest', () => {
       metadata: accountReadMetadata,
       startedAt: new Date('2026-06-20T00:00:00.000Z'),
     });
+    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
+    mocks.resolveAlpacaConfigForTradingAccount.mockResolvedValue({
+      tradingAccountId: 1,
+      baseUrl: 'https://paper-api.alpaca.markets',
+      apiKey: 'test-key',
+      apiSecret: 'test-secret',
+      source: 'legacy_env',
+      credentialId: null,
+      keyFingerprint: null,
+    });
   });
 
   afterEach(() => {
@@ -89,6 +102,59 @@ describe('alpacaRequest', () => {
         outcome: 'success',
       })
     );
+    expect(mocks.resolveDefaultTradingAccountId).toHaveBeenCalledOnce();
+    expect(mocks.resolveAlpacaConfigForTradingAccount).toHaveBeenCalledWith(1);
+  });
+
+  it('uses an explicit trading account id when one is provided', async () => {
+    mocks.resolveAlpacaConfigForTradingAccount.mockResolvedValueOnce({
+      tradingAccountId: 42,
+      baseUrl: 'https://api.alpaca.markets',
+      apiKey: 'account-key',
+      apiSecret: 'account-secret',
+      source: 'trading_account_credential',
+      credentialId: 7,
+      keyFingerprint: 'fingerprint-1',
+    });
+    mocks.fetch.mockResolvedValueOnce(jsonResponse({ id: 'account-42' }));
+
+    await expect(
+      alpacaRequest('/v2/account', {
+        tradingAccountId: 42,
+        metadata: accountReadMetadata,
+      })
+    ).resolves.toEqual({ id: 'account-42' });
+
+    expect(mocks.resolveDefaultTradingAccountId).not.toHaveBeenCalled();
+    expect(mocks.resolveAlpacaConfigForTradingAccount).toHaveBeenCalledWith(42);
+    expect(mocks.fetch).toHaveBeenCalledWith(
+      'https://api.alpaca.markets/v2/account',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'APCA-API-KEY-ID': 'account-key',
+          'APCA-API-SECRET-KEY': 'account-secret',
+        }),
+      })
+    );
+  });
+
+  it('propagates missing account credentials before sending an Alpaca request', async () => {
+    mocks.resolveAlpacaConfigForTradingAccount.mockRejectedValueOnce(
+      new Error(
+        'Trading account 42 does not have active Alpaca credentials. Add an ACTIVE TradingAccountCredential before using this non-default trading account.'
+      )
+    );
+
+    await expect(
+      alpacaRequest('/v2/account', {
+        tradingAccountId: 42,
+        metadata: accountReadMetadata,
+      })
+    ).rejects.toThrow('Trading account 42 does not have active Alpaca credentials');
+
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.beginRequest).not.toHaveBeenCalled();
+    expect(mocks.completeRequest).not.toHaveBeenCalled();
   });
 
   it('preserves AlpacaApiError for HTTP failures', async () => {

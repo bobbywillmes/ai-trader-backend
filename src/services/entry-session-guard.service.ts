@@ -115,7 +115,8 @@ export function entrySessionDetailsAsJson(
 
 export async function evaluateEntrySessionGuard(
   config: RuntimeTradingConfig,
-  now = new Date()
+  now = new Date(),
+  options: { tradingAccountId?: number | undefined } = {}
 ): Promise<EntrySessionDecision> {
   const currentTimestamp = now.toISOString();
 
@@ -145,7 +146,9 @@ export async function evaluateEntrySessionGuard(
   let session: NormalizedMarketSessionSnapshot;
 
   try {
-    session = await getAlpacaMarketSessionSnapshot(now);
+    session = await getAlpacaMarketSessionSnapshot(now, {
+      tradingAccountId: options.tradingAccountId,
+    });
   } catch (error) {
     const details: EntrySessionBaseDetails = {
       enabled: true,

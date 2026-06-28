@@ -5,6 +5,7 @@ import { getOpenAlpacaOrders } from '../integrations/alpaca/orders.adapter.js';
 import { createSystemEvent } from './system-event.service.js';
 import { getNormalizedPositions } from './positions.service.js';
 import { markPositionExitStateAttentionRequired } from './position-exit-state.service.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 export type ReconciliationSeverity = 'info' | 'warn' | 'critical';
 
@@ -384,9 +385,11 @@ async function hasRecentReconciliationEvent(
 export async function runReconciliationCheck(
   options: RunReconciliationCheckOptions = {}
 ): Promise<RunReconciliationCheckResult> {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
   const [trackedPositions, brokerPositions, brokerOrders] = await Promise.all([
     prisma.trackedPosition.findMany({
       where: {
+        tradingAccountId,
         status: {
           in: ['open', 'closing'],
         },
@@ -398,8 +401,8 @@ export async function runReconciliationCheck(
         symbol: 'asc',
       },
     }),
-    getNormalizedPositions('reconciliation_check'),
-    getOpenAlpacaOrders('reconciliation_check'),
+    getNormalizedPositions('reconciliation_check', { tradingAccountId }),
+    getOpenAlpacaOrders('reconciliation_check', { tradingAccountId }),
   ]);
 
   const findings = reconcileSnapshots({

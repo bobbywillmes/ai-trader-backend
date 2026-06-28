@@ -273,7 +273,9 @@ export async function evaluateOrderRisk(
     });
   }
 
-  const account = await getNormalizedAccount('risk_gate_account_check');
+  const account = await getNormalizedAccount('risk_gate_account_check', {
+    tradingAccountId,
+  });
 
   if (account.tradingBlocked) {
     return block(403, 'Broker account is trading blocked.', {
@@ -311,7 +313,9 @@ export async function evaluateOrderRisk(
     };
   }
 
-  const entrySession = await evaluateEntrySessionGuard(config);
+  const entrySession = await evaluateEntrySessionGuard(config, new Date(), {
+    tradingAccountId,
+  });
 
   if (isEntrySessionBlocked(entrySession)) {
     return {
@@ -472,7 +476,9 @@ export async function logRiskGateBlockedOrder(args: {
 export async function getRiskStatus() {
   const tradingAccountId = await resolveDefaultTradingAccountId();
   const config = await getRuntimeTradingConfig();
-  const account = await getNormalizedAccount('risk_gate_account_check');
+  const account = await getNormalizedAccount('risk_gate_account_check', {
+    tradingAccountId,
+  });
   const usage = await getRiskUsage(tradingAccountId);
 
   const expectedMode = config.paperMode ? 'paper' : 'live';
@@ -497,7 +503,9 @@ export async function getRiskStatus() {
   }
 
   const entrySession: EntrySessionDecision =
-    await evaluateEntrySessionGuard(config);
+    await evaluateEntrySessionGuard(config, new Date(), {
+      tradingAccountId,
+    });
 
   if (isEntrySessionBlocked(entrySession)) {
     reasons.push(sessionBlockReason(entrySession.details.rule));

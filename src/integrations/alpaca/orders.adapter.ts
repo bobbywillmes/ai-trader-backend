@@ -17,9 +17,11 @@ type AlpacaCreateOrderRequest = {
 };
 
 export async function getOpenAlpacaOrders(
-  operation: AlpacaApiOperation = 'open_orders_sync'
+  operation: AlpacaApiOperation = 'open_orders_sync',
+  options: { tradingAccountId?: number | undefined } = {}
 ): Promise<AlpacaOrder[]> {
   return alpacaRequest('/v2/orders?status=open&direction=desc', {
+    tradingAccountId: options.tradingAccountId,
     metadata: {
       operation,
       endpoint: 'GET /v2/orders',
@@ -38,9 +40,11 @@ export async function getOpenAlpacaOrders(
 
 export async function getAlpacaOrderById(
   orderId: string,
-  operation: AlpacaApiOperation = 'protective_order_sync'
+  operation: AlpacaApiOperation = 'protective_order_sync',
+  options: { tradingAccountId?: number | undefined } = {}
 ): Promise<AlpacaOrder | null> {
   return alpacaRequest(`/v2/orders/${orderId}`, {
+    tradingAccountId: options.tradingAccountId,
     returnNullOn404: true,
     metadata: {
       operation,
@@ -54,13 +58,15 @@ export async function getAlpacaOrderById(
 
 export async function getAlpacaOrderByClientOrderId(
   clientOrderId: string,
-  operation: AlpacaApiOperation = 'pending_order_idempotency_check'
+  operation: AlpacaApiOperation = 'pending_order_idempotency_check',
+  options: { tradingAccountId?: number | undefined } = {}
 ): Promise<AlpacaOrder | null> {
   return alpacaRequest(
     `/v2/orders:by_client_order_id?client_order_id=${encodeURIComponent(
       clientOrderId
     )}`,
     {
+      tradingAccountId: options.tradingAccountId,
       returnNullOn404: true,
       metadata: {
         operation,
@@ -75,9 +81,11 @@ export async function getAlpacaOrderByClientOrderId(
 
 export async function placeAlpacaOrder(
   payload: AlpacaCreateOrderRequest,
-  operation: AlpacaApiOperation = 'pending_order_submission'
+  operation: AlpacaApiOperation = 'pending_order_submission',
+  options: { tradingAccountId?: number | undefined } = {}
 ): Promise<AlpacaOrder> {
   return alpacaRequest('/v2/orders', {
+    tradingAccountId: options.tradingAccountId,
     method: 'POST',
     body: payload,
     metadata: {
@@ -92,9 +100,11 @@ export async function placeAlpacaOrder(
 
 export async function cancelAlpacaOrder(
   orderId: string,
-  operation: AlpacaApiOperation = 'order_cancel'
+  operation: AlpacaApiOperation = 'order_cancel',
+  options: { tradingAccountId?: number | undefined } = {}
 ): Promise<void> {
   await alpacaRequest(`/v2/orders/${orderId}`, {
+    tradingAccountId: options.tradingAccountId,
     method: 'DELETE',
     metadata: {
       operation,
@@ -113,11 +123,13 @@ export type AlpacaCancelAllOrderResult = {
 };
 
 export async function cancelAllAlpacaOrders(
-  operation: AlpacaApiOperation = 'order_cancel_all'
+  operation: AlpacaApiOperation = 'order_cancel_all',
+  options: { tradingAccountId?: number | undefined } = {}
 ): Promise<
   AlpacaCancelAllOrderResult[]
 > {
   return alpacaRequest('/v2/orders', {
+    tradingAccountId: options.tradingAccountId,
     method: 'DELETE',
     metadata: {
       operation,

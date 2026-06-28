@@ -61,7 +61,11 @@ export async function closePosition(symbol: string) {
     );
   }
 
-  const result = await closeAlpacaPosition(upperSymbol, 'position_close');
+  const tradingAccountId =
+    trackedPosition.tradingAccountId ?? defaultTradingAccountId;
+  const result = await closeAlpacaPosition(upperSymbol, 'position_close', {
+    tradingAccountId,
+  });
 
   adaptivePollingCoordinator.forceAfterBrokerPositionWrite(
     'broker_position_close_requested'
@@ -81,8 +85,6 @@ export async function closePosition(symbol: string) {
   });
 
   const closeOrder = getCloseOrderFromBrokerResult(result);
-  const tradingAccountId =
-    trackedPosition.tradingAccountId ?? defaultTradingAccountId;
 
   if (closeOrder) {
     const orderIntent = await prisma.orderIntent.create({

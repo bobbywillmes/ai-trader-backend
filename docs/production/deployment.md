@@ -68,6 +68,7 @@ DATABASE_URL=
 ALPACA_API_KEY=
 ALPACA_API_SECRET=
 ALPACA_BASE_URL=https://paper-api.alpaca.markets
+DEFAULT_TRADING_ACCOUNT_ID=1
 
 AI_TRADER_SIGNAL_API_KEY=
 AI_TRADER_ADMIN_API_KEY=
@@ -85,6 +86,15 @@ CORS_ALLOWED_ORIGINS=https://your-admin-ui-domain.com
 ```env
 ALPACA_BASE_URL=https://paper-api.alpaca.markets
 ```
+
+The current single-account runtime should keep `DEFAULT_TRADING_ACCOUNT_ID=1`
+for the Bobby Paper `TradingAccount`. Alpaca runtime calls resolve credentials
+through the account-scoped resolver. If an ACTIVE `TradingAccountCredential`
+exists for the account, it is used. If no account credential exists for Bobby
+Paper, the runtime falls back to the legacy `ALPACA_API_KEY`,
+`ALPACA_API_SECRET`, and `ALPACA_BASE_URL` env vars. Non-default accounts
+require an ACTIVE `TradingAccountCredential` before broker runtime calls can
+use them.
 
 Admin and signal API keys must be different.
 
