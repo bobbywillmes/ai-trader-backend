@@ -3,9 +3,11 @@ import type { AlpacaPosition } from './alpaca.types.js';
 import type { AlpacaApiOperation } from './request-metadata.js';
 
 export async function getAlpacaPositions(
-  operation: AlpacaApiOperation = 'tracked_position_sync'
+  operation: AlpacaApiOperation = 'tracked_position_sync',
+  options: { tradingAccountId?: number } = {}
 ): Promise<AlpacaPosition[]> {
   return alpacaRequest<AlpacaPosition[]>('/v2/positions', {
+    tradingAccountId: options.tradingAccountId,
     metadata: {
       operation,
       endpoint: 'GET /v2/positions',
@@ -24,9 +26,11 @@ export async function getAlpacaPositions(
 
 export async function closeAlpacaPosition(
   symbol: string,
-  operation: AlpacaApiOperation = 'position_close'
+  operation: AlpacaApiOperation = 'position_close',
+  options: { tradingAccountId?: number } = {}
 ) {
   return alpacaRequest(`/v2/positions/${symbol}`, {
+    tradingAccountId: options.tradingAccountId,
     method: 'DELETE',
     metadata: {
       operation,
