@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { ReactNode } from "react";
 import {
   Alert,
@@ -383,10 +383,6 @@ function SafetySettingsCard({
   const displayNameValid = draft.displayName.trim().length > 0;
   const capitalValid =
     draft.estimatedTradingCapital === null || draft.estimatedTradingCapital >= 0;
-
-  useEffect(() => {
-    setDraft(accountToSettingsDraft(account));
-  }, [account]);
 
   function resetDraft() {
     setDraft(accountToSettingsDraft(account));
@@ -915,7 +911,11 @@ export function TradingAccountDetailPage() {
           <AccountSummaryCard account={account} />
           <BrokerSnapshotCard account={account} />
           <CredentialStatusCard account={account} />
-          <SafetySettingsCard account={account} token={token} />
+          <SafetySettingsCard
+            key={`settings-${account.id}-${account.updatedAt}`}
+            account={account}
+            token={token}
+          />
           <CredentialManagementCard account={account} token={token} />
           <NotesCard account={account} />
         </>
