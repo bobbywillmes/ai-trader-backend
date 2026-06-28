@@ -1,6 +1,7 @@
 import {
   BrokerCredentialAuthType,
   BrokerCredentialStatus,
+  TradingAccountStatus,
   type TradingAccountCredential,
 } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
@@ -149,4 +150,52 @@ export async function upsertTradingAccountApiKeyCredential(
       revokedAt: null,
     },
   });
+}
+
+export async function revokeTradingAccountCredential(tradingAccountId: number) {
+  const account = await prisma.tradingAccount.findUnique({
+    where: { id: tradingAccountId },
+    select: {
+      id: true,
+      credential: {
+        select: {
+          id: true,
+        },
+      },
+    },
+  });
+
+  if (!account) {
+    return null;
+  }
+
+  if (!account.credential) {
+    return {
+      revoked: false,
+    };
+  }
+
+  const now = new Date();
+
+  await prisma.$transaction([
+    prisma.tradingAccountCredential.update({
+      where: { id: account.credential.id },
+      data: {
+        status: BrokerCredentialStatus.REVOKED,
+        revokedAt: now,
+      },
+    }),
+    prisma.tradingAccount.update({
+      where: { id: tradingAccountId },
+      data: {
+        status: TradingAccountStatus.NEEDS_CREDENTIALS,
+        tradingEnabled: false,
+        killSwitchEnabled: true,
+      },
+    }),
+  ]);
+
+  return {
+    revoked: true,
+  };
 }

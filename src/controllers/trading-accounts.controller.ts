@@ -7,7 +7,10 @@ import {
   listTradingAccountsForAdmin,
   updateTradingAccountForAdmin,
 } from '../services/trading-account.service.js';
-import { upsertTradingAccountApiKeyCredential } from '../services/trading-account-credential.service.js';
+import {
+  revokeTradingAccountCredential,
+  upsertTradingAccountApiKeyCredential,
+} from '../services/trading-account-credential.service.js';
 import {
   updateTradingAccountSchema,
   upsertTradingAccountCredentialSchema,
@@ -144,6 +147,34 @@ export async function verifyTradingAccountCredentialController(
     }
 
     res.status(200).json({ account: result.account });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function revokeTradingAccountCredentialController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const id = parseTradingAccountId(req.params.id);
+    const result = await revokeTradingAccountCredential(id);
+
+    if (!result) {
+      throw new HttpError(404, 'Trading account not found.');
+    }
+
+    const account = await getTradingAccountForAdmin(id);
+
+    if (!account) {
+      throw new HttpError(404, 'Trading account not found.');
+    }
+
+    res.status(200).json({
+      revoked: result.revoked,
+      account,
+    });
   } catch (error) {
     next(error);
   }

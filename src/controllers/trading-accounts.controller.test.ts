@@ -5,11 +5,13 @@ const mocks = vi.hoisted(() => ({
   getTradingAccountForAdmin: vi.fn(),
   listTradingAccountsForAdmin: vi.fn(),
   updateTradingAccountForAdmin: vi.fn(),
+  revokeTradingAccountCredential: vi.fn(),
   upsertTradingAccountApiKeyCredential: vi.fn(),
   verifyTradingAccountCredential: vi.fn(),
 }));
 
 vi.mock('../services/trading-account-credential.service.js', () => ({
+  revokeTradingAccountCredential: mocks.revokeTradingAccountCredential,
   upsertTradingAccountApiKeyCredential:
     mocks.upsertTradingAccountApiKeyCredential,
 }));
@@ -27,6 +29,7 @@ vi.mock('../services/trading-account.service.js', () => ({
 import {
   getTradingAccountController,
   listTradingAccountsController,
+  revokeTradingAccountCredentialController,
   updateTradingAccountController,
   upsertTradingAccountCredentialController,
   verifyTradingAccountCredentialController,
@@ -51,6 +54,7 @@ describe('trading accounts controller', () => {
     vi.clearAllMocks();
     mocks.listTradingAccountsForAdmin.mockResolvedValue([{ id: 1 }]);
     mocks.getTradingAccountForAdmin.mockResolvedValue({ id: 1 });
+    mocks.revokeTradingAccountCredential.mockResolvedValue({ revoked: true });
     mocks.updateTradingAccountForAdmin.mockResolvedValue({ id: 1 });
     mocks.upsertTradingAccountApiKeyCredential.mockResolvedValue({ id: 10 });
     mocks.verifyTradingAccountCredential.mockResolvedValue({
@@ -440,6 +444,67 @@ describe('trading accounts controller', () => {
     mocks.verifyTradingAccountCredential.mockResolvedValue(null);
 
     await verifyTradingAccountCredentialController(
+      {
+        params: {
+          id: '404',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 404,
+        message: 'Trading account not found.',
+      })
+    );
+  });
+
+  it('revokes trading account credentials and returns a safe account response', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.getTradingAccountForAdmin.mockResolvedValue({
+      id: 1,
+      credential: {
+        exists: true,
+        status: 'REVOKED',
+        authType: 'API_KEY',
+      },
+    });
+
+    await revokeTradingAccountCredentialController(
+      {
+        params: {
+          id: '1',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.revokeTradingAccountCredential).toHaveBeenCalledWith(1);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      revoked: true,
+      account: {
+        id: 1,
+        credential: {
+          exists: true,
+          status: 'REVOKED',
+          authType: 'API_KEY',
+        },
+      },
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('returns not found when revoking credentials for a missing account', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.revokeTradingAccountCredential.mockResolvedValue(null);
+
+    await revokeTradingAccountCredentialController(
       {
         params: {
           id: '404',
