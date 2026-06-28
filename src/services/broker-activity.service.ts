@@ -261,12 +261,14 @@ export async function syncBrokerActivities(
       pageSize?: number;
       pageToken?: string;
       operation?: AlpacaApiOperation;
+      tradingAccountId?: number;
     } = {
       activityType,
       after,
       direction: 'asc',
       pageSize,
       operation: input.operation ?? 'broker_activity_sync',
+      tradingAccountId,
     };
 
     if (pageToken) {

@@ -34,7 +34,7 @@ type GetAlpacaAccountActivitiesParams = {
   pageSize?: number;
   pageToken?: string;
   operation?: AlpacaApiOperation;
-  tradingAccountId?: number;
+  tradingAccountId?: number | undefined;
 };
 
 function toQueryDate(value: Date | string) {

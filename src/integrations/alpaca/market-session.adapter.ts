@@ -32,7 +32,7 @@ type CalendarCache = {
 };
 
 type AlpacaMarketSessionOptions = {
-  tradingAccountId?: number;
+  tradingAccountId?: number | undefined;
 };
 
 export type NormalizedMarketSessionSnapshot = {

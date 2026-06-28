@@ -4,7 +4,7 @@ import type { AlpacaApiOperation } from './request-metadata.js';
 
 export async function getAlpacaAccount(
   operation: AlpacaApiOperation = 'account_read',
-  options: { tradingAccountId?: number } = {}
+  options: { tradingAccountId?: number | undefined } = {}
 ): Promise<AlpacaAccount> {
   return alpacaRequest<AlpacaAccount>('/v2/account', {
     tradingAccountId: options.tradingAccountId,

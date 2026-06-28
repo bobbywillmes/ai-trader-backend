@@ -276,7 +276,9 @@ export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult>
 
   try {
     adaptivePollingCoordinator.recordAttempt('tracked_position_sync');
-    brokerPositions = await getNormalizedPositions('tracked_position_sync');
+    brokerPositions = await getNormalizedPositions('tracked_position_sync', {
+      tradingAccountId,
+    });
   } catch (error) {
     if (error instanceof AlpacaRateLimitDeferredError) {
       adaptivePollingCoordinator.recordRateLimitDeferred(

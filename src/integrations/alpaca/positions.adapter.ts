@@ -4,7 +4,7 @@ import type { AlpacaApiOperation } from './request-metadata.js';
 
 export async function getAlpacaPositions(
   operation: AlpacaApiOperation = 'tracked_position_sync',
-  options: { tradingAccountId?: number } = {}
+  options: { tradingAccountId?: number | undefined } = {}
 ): Promise<AlpacaPosition[]> {
   return alpacaRequest<AlpacaPosition[]>('/v2/positions', {
     tradingAccountId: options.tradingAccountId,
@@ -27,7 +27,7 @@ export async function getAlpacaPositions(
 export async function closeAlpacaPosition(
   symbol: string,
   operation: AlpacaApiOperation = 'position_close',
-  options: { tradingAccountId?: number } = {}
+  options: { tradingAccountId?: number | undefined } = {}
 ) {
   return alpacaRequest(`/v2/positions/${symbol}`, {
     tradingAccountId: options.tradingAccountId,

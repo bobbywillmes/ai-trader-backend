@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { getNormalizedPositions } from '../services/positions.service.js';
 import { closePosition } from '../services/close-position.service.js';
+import { resolveDefaultTradingAccountId } from '../services/trading-account.service.js';
 
 export async function positionsController(
   _req: Request,
@@ -8,7 +9,10 @@ export async function positionsController(
   next: NextFunction
 ) {
   try {
-    const positions = await getNormalizedPositions('manual_admin_action');
+    const tradingAccountId = await resolveDefaultTradingAccountId();
+    const positions = await getNormalizedPositions('manual_admin_action', {
+      tradingAccountId,
+    });
     res.status(200).json(positions);
   } catch (error) {
     next(error);
