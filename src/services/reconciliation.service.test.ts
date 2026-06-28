@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   createSystemEvent: vi.fn(),
   markPositionExitStateAttentionRequired: vi.fn(),
   systemEventFindFirst: vi.fn(),
+  resolveDefaultTradingAccountId: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -35,6 +36,10 @@ vi.mock('./system-event.service.js', () => ({
 vi.mock('./position-exit-state.service.js', () => ({
   markPositionExitStateAttentionRequired:
     mocks.markPositionExitStateAttentionRequired,
+}));
+
+vi.mock('./trading-account.service.js', () => ({
+  resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
 }));
 
 import {
@@ -257,6 +262,7 @@ describe('runReconciliationCheck', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.systemEventFindFirst.mockResolvedValue(null);
+    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
   });
 
   it('loads backend and broker snapshots, then creates system events for findings', async () => {
@@ -294,6 +300,7 @@ describe('runReconciliationCheck', () => {
 
     expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith({
       where: {
+        tradingAccountId: 1,
         status: {
           in: ['open', 'closing'],
         },
@@ -305,6 +312,14 @@ describe('runReconciliationCheck', () => {
         symbol: 'asc',
       },
     });
+    expect(mocks.getNormalizedPositions).toHaveBeenCalledWith(
+      'reconciliation_check',
+      { tradingAccountId: 1 }
+    );
+    expect(mocks.getOpenAlpacaOrders).toHaveBeenCalledWith(
+      'reconciliation_check',
+      { tradingAccountId: 1 }
+    );
 
     expect(result.findings).toEqual([
       expect.objectContaining({
