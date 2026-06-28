@@ -12,6 +12,7 @@ import {
   updateTradingAccountSchema,
   upsertTradingAccountCredentialSchema,
 } from '../validators/trading-account.schema.js';
+import { verifyTradingAccountCredential } from '../services/trading-account-credential-verification.service.js';
 
 function parseTradingAccountId(value: unknown) {
   const id = typeof value === 'string' ? Number(value) : NaN;
@@ -116,6 +117,34 @@ export async function upsertTradingAccountCredentialController(
       return;
     }
 
+    next(error);
+  }
+}
+
+export async function verifyTradingAccountCredentialController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const id = parseTradingAccountId(req.params.id);
+    const result = await verifyTradingAccountCredential(id);
+
+    if (!result) {
+      throw new HttpError(404, 'Trading account not found.');
+    }
+
+    if (!result.ok) {
+      res.status(400).json({
+        error: 'CredentialVerificationFailed',
+        message: result.message,
+        account: result.account,
+      });
+      return;
+    }
+
+    res.status(200).json({ account: result.account });
+  } catch (error) {
     next(error);
   }
 }

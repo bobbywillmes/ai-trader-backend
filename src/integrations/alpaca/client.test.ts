@@ -103,7 +103,10 @@ describe('alpacaRequest', () => {
       })
     );
     expect(mocks.resolveDefaultTradingAccountId).toHaveBeenCalledOnce();
-    expect(mocks.resolveAlpacaConfigForTradingAccount).toHaveBeenCalledWith(1);
+    expect(mocks.resolveAlpacaConfigForTradingAccount).toHaveBeenCalledWith(
+      1,
+      {}
+    );
   });
 
   it('uses an explicit trading account id when one is provided', async () => {
@@ -126,7 +129,10 @@ describe('alpacaRequest', () => {
     ).resolves.toEqual({ id: 'account-42' });
 
     expect(mocks.resolveDefaultTradingAccountId).not.toHaveBeenCalled();
-    expect(mocks.resolveAlpacaConfigForTradingAccount).toHaveBeenCalledWith(42);
+    expect(mocks.resolveAlpacaConfigForTradingAccount).toHaveBeenCalledWith(
+      42,
+      {}
+    );
     expect(mocks.fetch).toHaveBeenCalledWith(
       'https://api.alpaca.markets/v2/account',
       expect.objectContaining({

@@ -21,6 +21,8 @@ export type ActiveTradingAccountApiKeyCredential = {
   lastUsedAt: Date | null;
 };
 
+export type TradingAccountApiKeyCredential = ActiveTradingAccountApiKeyCredential;
+
 function incompleteApiKeyCredentialError(tradingAccountId: number) {
   return new Error(
     `Trading account ${tradingAccountId} has an active API key credential record, but the encrypted API key and secret are not both present.`
@@ -51,10 +53,22 @@ export async function getActiveTradingAccountCredential(
   });
 }
 
-export async function loadActiveTradingAccountApiKeyCredential(
-  tradingAccountId: number
-): Promise<ActiveTradingAccountApiKeyCredential | null> {
-  const credential = await getActiveTradingAccountCredential(tradingAccountId);
+export async function loadTradingAccountApiKeyCredential(
+  tradingAccountId: number,
+  statuses: BrokerCredentialStatus[] = [BrokerCredentialStatus.ACTIVE]
+): Promise<TradingAccountApiKeyCredential | null> {
+  const credential = await prisma.tradingAccountCredential.findFirst({
+    where: {
+      tradingAccountId,
+      status: {
+        in: statuses,
+      },
+      revokedAt: null,
+    },
+    orderBy: {
+      id: 'desc',
+    },
+  });
 
   if (!credential) {
     return null;
@@ -80,6 +94,14 @@ export async function loadActiveTradingAccountApiKeyCredential(
     verifiedAt: credential.verifiedAt,
     lastUsedAt: credential.lastUsedAt,
   };
+}
+
+export async function loadActiveTradingAccountApiKeyCredential(
+  tradingAccountId: number
+): Promise<ActiveTradingAccountApiKeyCredential | null> {
+  return loadTradingAccountApiKeyCredential(tradingAccountId, [
+    BrokerCredentialStatus.ACTIVE,
+  ]);
 }
 
 export async function upsertTradingAccountApiKeyCredential(

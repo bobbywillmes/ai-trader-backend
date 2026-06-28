@@ -6,11 +6,16 @@ const mocks = vi.hoisted(() => ({
   listTradingAccountsForAdmin: vi.fn(),
   updateTradingAccountForAdmin: vi.fn(),
   upsertTradingAccountApiKeyCredential: vi.fn(),
+  verifyTradingAccountCredential: vi.fn(),
 }));
 
 vi.mock('../services/trading-account-credential.service.js', () => ({
   upsertTradingAccountApiKeyCredential:
     mocks.upsertTradingAccountApiKeyCredential,
+}));
+
+vi.mock('../services/trading-account-credential-verification.service.js', () => ({
+  verifyTradingAccountCredential: mocks.verifyTradingAccountCredential,
 }));
 
 vi.mock('../services/trading-account.service.js', () => ({
@@ -24,6 +29,7 @@ import {
   listTradingAccountsController,
   updateTradingAccountController,
   upsertTradingAccountCredentialController,
+  verifyTradingAccountCredentialController,
 } from './trading-accounts.controller.js';
 
 function response() {
@@ -47,6 +53,10 @@ describe('trading accounts controller', () => {
     mocks.getTradingAccountForAdmin.mockResolvedValue({ id: 1 });
     mocks.updateTradingAccountForAdmin.mockResolvedValue({ id: 1 });
     mocks.upsertTradingAccountApiKeyCredential.mockResolvedValue({ id: 10 });
+    mocks.verifyTradingAccountCredential.mockResolvedValue({
+      ok: true,
+      account: { id: 1 },
+    });
   });
 
   it('returns trading account list responses', async () => {
@@ -362,6 +372,77 @@ describe('trading accounts controller', () => {
         body: {
           apiKey: 'plain-key',
           apiSecret: 'plain-secret',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 404,
+        message: 'Trading account not found.',
+      })
+    );
+  });
+
+  it('verifies trading account credentials', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await verifyTradingAccountCredentialController(
+      {
+        params: {
+          id: '1',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.verifyTradingAccountCredential).toHaveBeenCalledWith(1);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({ account: { id: 1 } });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('returns a safe credential verification failure response', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.verifyTradingAccountCredential.mockResolvedValue({
+      ok: false,
+      message: 'Broker credential verification failed.',
+      account: { id: 1 },
+    });
+
+    await verifyTradingAccountCredentialController(
+      {
+        params: {
+          id: '1',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'CredentialVerificationFailed',
+      message: 'Broker credential verification failed.',
+      account: { id: 1 },
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('returns not found when verification targets a missing trading account', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.verifyTradingAccountCredential.mockResolvedValue(null);
+
+    await verifyTradingAccountCredentialController(
+      {
+        params: {
+          id: '404',
         },
       } as unknown as Request,
       res,

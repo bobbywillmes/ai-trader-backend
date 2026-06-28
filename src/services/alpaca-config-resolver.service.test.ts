@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
   },
   getTradingAccountById: vi.fn(),
   resolveDefaultTradingAccountId: vi.fn(),
-  loadActiveTradingAccountApiKeyCredential: vi.fn(),
+  loadTradingAccountApiKeyCredential: vi.fn(),
 }));
 
 vi.mock('../config/env.js', () => ({
@@ -27,8 +27,7 @@ vi.mock('./trading-account.service.js', () => ({
 }));
 
 vi.mock('./trading-account-credential.service.js', () => ({
-  loadActiveTradingAccountApiKeyCredential:
-    mocks.loadActiveTradingAccountApiKeyCredential,
+  loadTradingAccountApiKeyCredential: mocks.loadTradingAccountApiKeyCredential,
 }));
 
 import { resolveAlpacaConfigForTradingAccount } from './alpaca-config-resolver.service.js';
@@ -70,7 +69,7 @@ describe('Alpaca config resolver', () => {
     mocks.env.ALPACA_BASE_URL = 'https://paper-api.alpaca.markets';
     mocks.getTradingAccountById.mockResolvedValue(tradingAccount());
     mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
-    mocks.loadActiveTradingAccountApiKeyCredential.mockResolvedValue(null);
+    mocks.loadTradingAccountApiKeyCredential.mockResolvedValue(null);
   });
 
   it('uses active trading account credentials before legacy env fallback', async () => {
@@ -81,7 +80,7 @@ describe('Alpaca config resolver', () => {
         environment: TradingAccountEnvironment.PAPER,
       })
     );
-    mocks.loadActiveTradingAccountApiKeyCredential.mockResolvedValue({
+    mocks.loadTradingAccountApiKeyCredential.mockResolvedValue({
       credentialId: 11,
       tradingAccountId: 2,
       apiKey: 'scoped-key',
@@ -110,7 +109,7 @@ describe('Alpaca config resolver', () => {
         environment: TradingAccountEnvironment.LIVE,
       })
     );
-    mocks.loadActiveTradingAccountApiKeyCredential.mockResolvedValue({
+    mocks.loadTradingAccountApiKeyCredential.mockResolvedValue({
       credentialId: 12,
       tradingAccountId: 3,
       apiKey: 'live-key',
@@ -166,7 +165,7 @@ describe('Alpaca config resolver', () => {
       'Trading account 404 could not be found'
     );
     expect(
-      mocks.loadActiveTradingAccountApiKeyCredential
+      mocks.loadTradingAccountApiKeyCredential
     ).not.toHaveBeenCalled();
   });
 });
