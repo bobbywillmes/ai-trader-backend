@@ -17,6 +17,7 @@ import { MarketDiaryPage } from "../features/marketDiary/MarketDiaryPage"
 import { ReconciliationPage } from "../features/reconciliation/ReconciliationPage";
 import { TradeHistoryPage } from "../features/tradeHistory/TradeHistoryPage";
 import { EntryDecisionsPage } from "../features/entryDecisions/EntryDecisionsPage";
+import { TradingAccountsPage } from "../features/tradingAccounts/TradingAccountsPage";
 
 export const router = createBrowserRouter([
   {
@@ -50,6 +51,10 @@ export const router = createBrowserRouter([
       {
         path: "entry-decisions",
         element: <EntryDecisionsPage />,
+      },
+      {
+        path: "trading-accounts",
+        element: <TradingAccountsPage />,
       },
       {
         path: "subscriptions",
