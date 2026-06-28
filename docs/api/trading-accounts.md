@@ -136,6 +136,33 @@ Revocation does not delete the credential row. It marks the credential
 `REVOKED`, sets `revokedAt`, disables trading for the account, enables the
 account kill switch, and moves the account to `NEEDS_CREDENTIALS`.
 
+## Admin UI Workflow
+
+The Admin UI exposes trading accounts under:
+
+```text
+Trading -> Trading Accounts
+```
+
+Use the list page to review account scope, broker environment, safety posture,
+broker balance snapshots, and credential status.
+
+Use the detail page to:
+
+- inspect account summary and broker metadata
+- edit only safe mutable account fields
+- submit or replace Alpaca API-key credentials
+- verify credentials and refresh broker metadata
+- revoke credentials when account-scoped broker access should be disabled
+
+Credential inputs are intentionally never prefilled. After credentials are
+saved, the UI clears the submitted key and secret and displays only the safe
+credential summary returned by the backend.
+
+Credential verification does not enable trading or disable the kill switch.
+Those safety controls must be changed separately through the safe account
+settings form.
+
 ## Safety Notes
 
 - No route returns decrypted credentials.
