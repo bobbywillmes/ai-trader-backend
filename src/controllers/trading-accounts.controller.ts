@@ -1,10 +1,13 @@
 import type { NextFunction, Request, Response } from 'express';
+import { ZodError } from 'zod';
 
 import { HttpError } from '../errors/http-error.js';
 import {
   getTradingAccountForAdmin,
   listTradingAccountsForAdmin,
+  updateTradingAccountForAdmin,
 } from '../services/trading-account.service.js';
+import { updateTradingAccountSchema } from '../validators/trading-account.schema.js';
 
 function parseTradingAccountId(value: unknown) {
   const id = typeof value === 'string' ? Number(value) : NaN;
@@ -45,6 +48,33 @@ export async function getTradingAccountController(
 
     res.status(200).json({ account });
   } catch (error) {
+    next(error);
+  }
+}
+
+export async function updateTradingAccountController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const id = parseTradingAccountId(req.params.id);
+    const input = updateTradingAccountSchema.parse(req.body);
+    const account = await updateTradingAccountForAdmin(id, input);
+
+    if (!account) {
+      throw new HttpError(404, 'Trading account not found.');
+    }
+
+    res.status(200).json({ account });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      next(
+        new HttpError(400, 'Invalid trading account update request.', error.flatten())
+      );
+      return;
+    }
+
     next(error);
   }
 }

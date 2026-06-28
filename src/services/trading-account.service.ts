@@ -7,6 +7,7 @@ import {
 } from '@prisma/client';
 import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
+import type { UpdateTradingAccountInput } from '../validators/trading-account.schema.js';
 
 const LEGACY_DEFAULT_TRADING_ACCOUNT = {
   broker: TradingBroker.ALPACA,
@@ -127,6 +128,46 @@ export async function getTradingAccountForAdmin(id: number) {
   });
 
   return account ? serializeTradingAccountForAdmin(account) : null;
+}
+
+export async function updateTradingAccountForAdmin(
+  id: number,
+  input: UpdateTradingAccountInput
+) {
+  const existing = await prisma.tradingAccount.findUnique({
+    where: { id },
+    select: { id: true },
+  });
+
+  if (!existing) {
+    return null;
+  }
+
+  const data: Prisma.TradingAccountUpdateInput = {
+    ...(input.displayName !== undefined && { displayName: input.displayName }),
+    ...(input.estimatedTradingCapital !== undefined && {
+      estimatedTradingCapital: input.estimatedTradingCapital,
+    }),
+    ...(input.status !== undefined && { status: input.status }),
+    ...(input.tradingEnabled !== undefined && {
+      tradingEnabled: input.tradingEnabled,
+    }),
+    ...(input.killSwitchEnabled !== undefined && {
+      killSwitchEnabled: input.killSwitchEnabled,
+    }),
+    ...(input.pausedReason !== undefined && {
+      pausedReason: input.pausedReason,
+    }),
+    ...(input.notes !== undefined && { notes: input.notes }),
+  };
+
+  const account = await prisma.tradingAccount.update({
+    where: { id },
+    data,
+    select: TRADING_ACCOUNT_ADMIN_SELECT,
+  });
+
+  return serializeTradingAccountForAdmin(account);
 }
 
 export async function resolveDefaultTradingAccount(): Promise<TradingAccount> {

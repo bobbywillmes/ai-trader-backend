@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   tradingAccountFindFirst: vi.fn(),
   tradingAccountFindMany: vi.fn(),
   tradingAccountFindUnique: vi.fn(),
+  tradingAccountUpdate: vi.fn(),
 }));
 
 vi.mock('../config/env.js', () => ({
@@ -23,6 +24,7 @@ vi.mock('../db/prisma.js', () => ({
       findFirst: mocks.tradingAccountFindFirst,
       findMany: mocks.tradingAccountFindMany,
       findUnique: mocks.tradingAccountFindUnique,
+      update: mocks.tradingAccountUpdate,
     },
   },
 }));
@@ -32,6 +34,7 @@ import {
   listTradingAccountsForAdmin,
   resolveDefaultTradingAccount,
   resolveDefaultTradingAccountId,
+  updateTradingAccountForAdmin,
 } from './trading-account.service.js';
 
 function tradingAccount(overrides: Partial<TradingAccount> = {}): TradingAccount {
@@ -70,6 +73,10 @@ describe('trading account service', () => {
     mocks.tradingAccountFindFirst.mockResolvedValue(null);
     mocks.tradingAccountFindMany.mockResolvedValue([]);
     mocks.tradingAccountFindUnique.mockResolvedValue(null);
+    mocks.tradingAccountUpdate.mockResolvedValue({
+      ...tradingAccount(),
+      credential: null,
+    });
   });
 
   it('resolves the configured default trading account id first', async () => {
@@ -184,5 +191,63 @@ describe('trading account service', () => {
         }),
       }),
     });
+  });
+
+  it('updates only safe admin trading account fields', async () => {
+    mocks.tradingAccountFindUnique.mockResolvedValue({ id: 1 });
+    mocks.tradingAccountUpdate.mockResolvedValue({
+      ...tradingAccount({
+        displayName: 'Updated Paper',
+        status: TradingAccountStatus.PAUSED,
+        tradingEnabled: false,
+        killSwitchEnabled: true,
+        estimatedTradingCapital: 25_000,
+        pausedReason: 'credential rotation',
+        notes: null,
+      }),
+      credential: null,
+    });
+
+    const result = await updateTradingAccountForAdmin(1, {
+      displayName: 'Updated Paper',
+      status: TradingAccountStatus.PAUSED,
+      tradingEnabled: false,
+      killSwitchEnabled: true,
+      estimatedTradingCapital: 25_000,
+      pausedReason: 'credential rotation',
+      notes: null,
+    });
+
+    expect(mocks.tradingAccountUpdate).toHaveBeenCalledWith({
+      where: { id: 1 },
+      data: {
+        displayName: 'Updated Paper',
+        status: TradingAccountStatus.PAUSED,
+        tradingEnabled: false,
+        killSwitchEnabled: true,
+        estimatedTradingCapital: 25_000,
+        pausedReason: 'credential rotation',
+        notes: null,
+      },
+      select: expect.any(Object),
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        displayName: 'Updated Paper',
+        status: TradingAccountStatus.PAUSED,
+        credential: expect.objectContaining({ exists: false }),
+      })
+    );
+  });
+
+  it('returns null instead of updating a missing trading account', async () => {
+    mocks.tradingAccountFindUnique.mockResolvedValue(null);
+
+    await expect(
+      updateTradingAccountForAdmin(404, {
+        displayName: 'Missing Account',
+      })
+    ).resolves.toBeNull();
+    expect(mocks.tradingAccountUpdate).not.toHaveBeenCalled();
   });
 });
