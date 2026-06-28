@@ -138,6 +138,25 @@ describe('alpacaRequest', () => {
     );
   });
 
+  it('propagates missing account credentials before sending an Alpaca request', async () => {
+    mocks.resolveAlpacaConfigForTradingAccount.mockRejectedValueOnce(
+      new Error(
+        'Trading account 42 does not have active Alpaca credentials. Add an ACTIVE TradingAccountCredential before using this non-default trading account.'
+      )
+    );
+
+    await expect(
+      alpacaRequest('/v2/account', {
+        tradingAccountId: 42,
+        metadata: accountReadMetadata,
+      })
+    ).rejects.toThrow('Trading account 42 does not have active Alpaca credentials');
+
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.beginRequest).not.toHaveBeenCalled();
+    expect(mocks.completeRequest).not.toHaveBeenCalled();
+  });
+
   it('preserves AlpacaApiError for HTTP failures', async () => {
     mocks.fetch.mockResolvedValueOnce(
       new Response('rejected', {
