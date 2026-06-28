@@ -4,7 +4,12 @@ import {
   type TradingAccountCredential,
 } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
-import { decryptSecret } from './trading-credential-crypto.service.js';
+import type { UpsertTradingAccountCredentialInput } from '../validators/trading-account.schema.js';
+import {
+  decryptSecret,
+  encryptSecret,
+  fingerprintSecret,
+} from './trading-credential-crypto.service.js';
 
 export type ActiveTradingAccountApiKeyCredential = {
   credentialId: number;
@@ -75,4 +80,51 @@ export async function loadActiveTradingAccountApiKeyCredential(
     verifiedAt: credential.verifiedAt,
     lastUsedAt: credential.lastUsedAt,
   };
+}
+
+export async function upsertTradingAccountApiKeyCredential(
+  tradingAccountId: number,
+  input: UpsertTradingAccountCredentialInput
+) {
+  const account = await prisma.tradingAccount.findUnique({
+    where: { id: tradingAccountId },
+    select: { id: true },
+  });
+
+  if (!account) {
+    return null;
+  }
+
+  const apiKeyCiphertext = encryptSecret(input.apiKey);
+  const apiSecretCiphertext = encryptSecret(input.apiSecret);
+  const keyFingerprint = fingerprintSecret(input.apiKey);
+
+  return prisma.tradingAccountCredential.upsert({
+    where: { tradingAccountId },
+    create: {
+      tradingAccountId,
+      authType: input.authType,
+      status: BrokerCredentialStatus.NEEDS_VERIFICATION,
+      apiKeyCiphertext,
+      apiSecretCiphertext,
+      keyFingerprint,
+      encryptionVersion: 1,
+      verifiedAt: null,
+      lastFailedAt: null,
+      revokedAt: null,
+    },
+    update: {
+      authType: input.authType,
+      status: BrokerCredentialStatus.NEEDS_VERIFICATION,
+      apiKeyCiphertext,
+      apiSecretCiphertext,
+      accessTokenCiphertext: null,
+      refreshTokenCiphertext: null,
+      keyFingerprint,
+      encryptionVersion: 1,
+      verifiedAt: null,
+      lastFailedAt: null,
+      revokedAt: null,
+    },
+  });
 }

@@ -1,4 +1,4 @@
-import { TradingAccountStatus } from '@prisma/client';
+import { BrokerCredentialAuthType, TradingAccountStatus } from '@prisma/client';
 import { z } from 'zod';
 
 export const updateTradingAccountSchema = z
@@ -17,4 +17,16 @@ export const updateTradingAccountSchema = z
 
 export type UpdateTradingAccountInput = z.infer<
   typeof updateTradingAccountSchema
+>;
+
+export const upsertTradingAccountCredentialSchema = z.strictObject({
+  authType: z.literal(BrokerCredentialAuthType.API_KEY).default(
+    BrokerCredentialAuthType.API_KEY
+  ),
+  apiKey: z.string().trim().min(1),
+  apiSecret: z.string().trim().min(1),
+});
+
+export type UpsertTradingAccountCredentialInput = z.infer<
+  typeof upsertTradingAccountCredentialSchema
 >;

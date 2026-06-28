@@ -5,6 +5,12 @@ const mocks = vi.hoisted(() => ({
   getTradingAccountForAdmin: vi.fn(),
   listTradingAccountsForAdmin: vi.fn(),
   updateTradingAccountForAdmin: vi.fn(),
+  upsertTradingAccountApiKeyCredential: vi.fn(),
+}));
+
+vi.mock('../services/trading-account-credential.service.js', () => ({
+  upsertTradingAccountApiKeyCredential:
+    mocks.upsertTradingAccountApiKeyCredential,
 }));
 
 vi.mock('../services/trading-account.service.js', () => ({
@@ -17,6 +23,7 @@ import {
   getTradingAccountController,
   listTradingAccountsController,
   updateTradingAccountController,
+  upsertTradingAccountCredentialController,
 } from './trading-accounts.controller.js';
 
 function response() {
@@ -39,6 +46,7 @@ describe('trading accounts controller', () => {
     mocks.listTradingAccountsForAdmin.mockResolvedValue([{ id: 1 }]);
     mocks.getTradingAccountForAdmin.mockResolvedValue({ id: 1 });
     mocks.updateTradingAccountForAdmin.mockResolvedValue({ id: 1 });
+    mocks.upsertTradingAccountApiKeyCredential.mockResolvedValue({ id: 10 });
   });
 
   it('returns trading account list responses', async () => {
@@ -229,6 +237,137 @@ describe('trading accounts controller', () => {
     expect(mocks.updateTradingAccountForAdmin).toHaveBeenCalledWith(404, {
       displayName: 'Missing Account',
     });
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 404,
+        message: 'Trading account not found.',
+      })
+    );
+  });
+
+  it('upserts trading account credentials and returns a safe account response', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.getTradingAccountForAdmin.mockResolvedValue({
+      id: 1,
+      credential: {
+        exists: true,
+        status: 'NEEDS_VERIFICATION',
+        authType: 'API_KEY',
+        keyFingerprint: 'sha256:fingerprint',
+      },
+    });
+
+    await upsertTradingAccountCredentialController(
+      {
+        params: {
+          id: '1',
+        },
+        body: {
+          authType: 'API_KEY',
+          apiKey: 'plain-key',
+          apiSecret: 'plain-secret',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.upsertTradingAccountApiKeyCredential).toHaveBeenCalledWith(1, {
+      authType: 'API_KEY',
+      apiKey: 'plain-key',
+      apiSecret: 'plain-secret',
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(JSON.stringify(res.json.mock.calls[0]?.[0])).not.toContain(
+      'plain-secret'
+    );
+    expect(res.json).toHaveBeenCalledWith({
+      account: {
+        id: 1,
+        credential: {
+          exists: true,
+          status: 'NEEDS_VERIFICATION',
+          authType: 'API_KEY',
+          keyFingerprint: 'sha256:fingerprint',
+        },
+      },
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('defaults credential upsert authType to API_KEY', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await upsertTradingAccountCredentialController(
+      {
+        params: {
+          id: '1',
+        },
+        body: {
+          apiKey: 'plain-key',
+          apiSecret: 'plain-secret',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.upsertTradingAccountApiKeyCredential).toHaveBeenCalledWith(1, {
+      authType: 'API_KEY',
+      apiKey: 'plain-key',
+      apiSecret: 'plain-secret',
+    });
+  });
+
+  it('rejects unsupported credential auth types', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await upsertTradingAccountCredentialController(
+      {
+        params: {
+          id: '1',
+        },
+        body: {
+          authType: 'OAUTH',
+          apiKey: 'plain-key',
+          apiSecret: 'plain-secret',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.upsertTradingAccountApiKeyCredential).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 400,
+        message: 'Invalid trading account credential request.',
+      })
+    );
+  });
+
+  it('returns not found when credential upsert targets a missing account', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.upsertTradingAccountApiKeyCredential.mockResolvedValue(null);
+
+    await upsertTradingAccountCredentialController(
+      {
+        params: {
+          id: '404',
+        },
+        body: {
+          apiKey: 'plain-key',
+          apiSecret: 'plain-secret',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
     expect(next).toHaveBeenCalledWith(
       expect.objectContaining({
         statusCode: 404,

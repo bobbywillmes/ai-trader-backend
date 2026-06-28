@@ -7,7 +7,11 @@ import {
   listTradingAccountsForAdmin,
   updateTradingAccountForAdmin,
 } from '../services/trading-account.service.js';
-import { updateTradingAccountSchema } from '../validators/trading-account.schema.js';
+import { upsertTradingAccountApiKeyCredential } from '../services/trading-account-credential.service.js';
+import {
+  updateTradingAccountSchema,
+  upsertTradingAccountCredentialSchema,
+} from '../validators/trading-account.schema.js';
 
 function parseTradingAccountId(value: unknown) {
   const id = typeof value === 'string' ? Number(value) : NaN;
@@ -71,6 +75,43 @@ export async function updateTradingAccountController(
     if (error instanceof ZodError) {
       next(
         new HttpError(400, 'Invalid trading account update request.', error.flatten())
+      );
+      return;
+    }
+
+    next(error);
+  }
+}
+
+export async function upsertTradingAccountCredentialController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const id = parseTradingAccountId(req.params.id);
+    const input = upsertTradingAccountCredentialSchema.parse(req.body);
+    const credential = await upsertTradingAccountApiKeyCredential(id, input);
+
+    if (!credential) {
+      throw new HttpError(404, 'Trading account not found.');
+    }
+
+    const account = await getTradingAccountForAdmin(id);
+
+    if (!account) {
+      throw new HttpError(404, 'Trading account not found.');
+    }
+
+    res.status(200).json({ account });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      next(
+        new HttpError(
+          400,
+          'Invalid trading account credential request.',
+          error.flatten()
+        )
       );
       return;
     }
