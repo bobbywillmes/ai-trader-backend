@@ -1,4 +1,5 @@
 import {
+  BrokerCredentialStatus,
   TradingAccountEnvironment,
   TradingBroker,
   type TradingAccount,
@@ -8,7 +9,7 @@ import {
   getTradingAccountById,
   resolveDefaultTradingAccountId,
 } from './trading-account.service.js';
-import { loadActiveTradingAccountApiKeyCredential } from './trading-account-credential.service.js';
+import { loadTradingAccountApiKeyCredential } from './trading-account-credential.service.js';
 
 const ALPACA_PAPER_BASE_URL = 'https://paper-api.alpaca.markets';
 const ALPACA_LIVE_BASE_URL = 'https://api.alpaca.markets';
@@ -23,6 +24,10 @@ export type AlpacaResolvedConfig = {
   source: AlpacaCredentialSource;
   credentialId: number | null;
   keyFingerprint: string | null;
+};
+
+export type AlpacaConfigResolverOptions = {
+  credentialStatuses?: BrokerCredentialStatus[] | undefined;
 };
 
 function missingTradingAccountError(tradingAccountId: number) {
@@ -60,7 +65,8 @@ function baseUrlForAccountEnvironment(environment: TradingAccountEnvironment) {
 }
 
 export async function resolveAlpacaConfigForTradingAccount(
-  tradingAccountId: number
+  tradingAccountId: number,
+  options: AlpacaConfigResolverOptions = {}
 ): Promise<AlpacaResolvedConfig> {
   const account = await getTradingAccountById(tradingAccountId);
 
@@ -72,8 +78,10 @@ export async function resolveAlpacaConfigForTradingAccount(
     throw unsupportedBrokerError(account);
   }
 
-  const credential =
-    await loadActiveTradingAccountApiKeyCredential(tradingAccountId);
+  const credential = await loadTradingAccountApiKeyCredential(
+    tradingAccountId,
+    options.credentialStatuses ?? [BrokerCredentialStatus.ACTIVE]
+  );
 
   if (credential) {
     return {

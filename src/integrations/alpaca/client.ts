@@ -1,3 +1,4 @@
+import type { BrokerCredentialStatus } from '@prisma/client';
 import { AlpacaApiError } from '../../errors/alpaca-api-error.js';
 import { AlpacaRateLimitDeferredError } from '../../errors/alpaca-rate-limit-deferred-error.js';
 import { alpacaApiUsageRegistry } from '../../services/alpaca-api-usage.service.js';
@@ -15,6 +16,7 @@ type RequestOptions = {
   returnNullOn404?: boolean;
   metadata: AlpacaRequestMetadata;
   tradingAccountId?: number | undefined;
+  credentialStatuses?: BrokerCredentialStatus[] | undefined;
 };
 
 export async function alpacaRequest<T>(
@@ -33,7 +35,9 @@ export async function alpacaRequest<T>(
 
   const tradingAccountId =
     options.tradingAccountId ?? (await resolveDefaultTradingAccountId());
-  const config = await resolveAlpacaConfigForTradingAccount(tradingAccountId);
+  const config = await resolveAlpacaConfigForTradingAccount(tradingAccountId, {
+    credentialStatuses: options.credentialStatuses,
+  });
   const url = `${config.baseUrl}${path}`;
   const method = options.method ?? 'GET';
 

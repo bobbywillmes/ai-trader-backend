@@ -1,10 +1,16 @@
 import {
   BrokerCredentialAuthType,
   BrokerCredentialStatus,
+  TradingAccountStatus,
   type TradingAccountCredential,
 } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
-import { decryptSecret } from './trading-credential-crypto.service.js';
+import type { UpsertTradingAccountCredentialInput } from '../validators/trading-account.schema.js';
+import {
+  decryptSecret,
+  encryptSecret,
+  fingerprintSecret,
+} from './trading-credential-crypto.service.js';
 
 export type ActiveTradingAccountApiKeyCredential = {
   credentialId: number;
@@ -15,6 +21,8 @@ export type ActiveTradingAccountApiKeyCredential = {
   verifiedAt: Date | null;
   lastUsedAt: Date | null;
 };
+
+export type TradingAccountApiKeyCredential = ActiveTradingAccountApiKeyCredential;
 
 function incompleteApiKeyCredentialError(tradingAccountId: number) {
   return new Error(
@@ -46,10 +54,22 @@ export async function getActiveTradingAccountCredential(
   });
 }
 
-export async function loadActiveTradingAccountApiKeyCredential(
-  tradingAccountId: number
-): Promise<ActiveTradingAccountApiKeyCredential | null> {
-  const credential = await getActiveTradingAccountCredential(tradingAccountId);
+export async function loadTradingAccountApiKeyCredential(
+  tradingAccountId: number,
+  statuses: BrokerCredentialStatus[] = [BrokerCredentialStatus.ACTIVE]
+): Promise<TradingAccountApiKeyCredential | null> {
+  const credential = await prisma.tradingAccountCredential.findFirst({
+    where: {
+      tradingAccountId,
+      status: {
+        in: statuses,
+      },
+      revokedAt: null,
+    },
+    orderBy: {
+      id: 'desc',
+    },
+  });
 
   if (!credential) {
     return null;
@@ -74,5 +94,108 @@ export async function loadActiveTradingAccountApiKeyCredential(
     keyFingerprint: credential.keyFingerprint,
     verifiedAt: credential.verifiedAt,
     lastUsedAt: credential.lastUsedAt,
+  };
+}
+
+export async function loadActiveTradingAccountApiKeyCredential(
+  tradingAccountId: number
+): Promise<ActiveTradingAccountApiKeyCredential | null> {
+  return loadTradingAccountApiKeyCredential(tradingAccountId, [
+    BrokerCredentialStatus.ACTIVE,
+  ]);
+}
+
+export async function upsertTradingAccountApiKeyCredential(
+  tradingAccountId: number,
+  input: UpsertTradingAccountCredentialInput
+) {
+  const account = await prisma.tradingAccount.findUnique({
+    where: { id: tradingAccountId },
+    select: { id: true },
+  });
+
+  if (!account) {
+    return null;
+  }
+
+  const apiKeyCiphertext = encryptSecret(input.apiKey);
+  const apiSecretCiphertext = encryptSecret(input.apiSecret);
+  const keyFingerprint = fingerprintSecret(input.apiKey);
+
+  return prisma.tradingAccountCredential.upsert({
+    where: { tradingAccountId },
+    create: {
+      tradingAccountId,
+      authType: input.authType,
+      status: BrokerCredentialStatus.NEEDS_VERIFICATION,
+      apiKeyCiphertext,
+      apiSecretCiphertext,
+      keyFingerprint,
+      encryptionVersion: 1,
+      verifiedAt: null,
+      lastFailedAt: null,
+      revokedAt: null,
+    },
+    update: {
+      authType: input.authType,
+      status: BrokerCredentialStatus.NEEDS_VERIFICATION,
+      apiKeyCiphertext,
+      apiSecretCiphertext,
+      accessTokenCiphertext: null,
+      refreshTokenCiphertext: null,
+      keyFingerprint,
+      encryptionVersion: 1,
+      verifiedAt: null,
+      lastFailedAt: null,
+      revokedAt: null,
+    },
+  });
+}
+
+export async function revokeTradingAccountCredential(tradingAccountId: number) {
+  const account = await prisma.tradingAccount.findUnique({
+    where: { id: tradingAccountId },
+    select: {
+      id: true,
+      credential: {
+        select: {
+          id: true,
+        },
+      },
+    },
+  });
+
+  if (!account) {
+    return null;
+  }
+
+  if (!account.credential) {
+    return {
+      revoked: false,
+    };
+  }
+
+  const now = new Date();
+
+  await prisma.$transaction([
+    prisma.tradingAccountCredential.update({
+      where: { id: account.credential.id },
+      data: {
+        status: BrokerCredentialStatus.REVOKED,
+        revokedAt: now,
+      },
+    }),
+    prisma.tradingAccount.update({
+      where: { id: tradingAccountId },
+      data: {
+        status: TradingAccountStatus.NEEDS_CREDENTIALS,
+        tradingEnabled: false,
+        killSwitchEnabled: true,
+      },
+    }),
+  ]);
+
+  return {
+    revoked: true,
   };
 }
