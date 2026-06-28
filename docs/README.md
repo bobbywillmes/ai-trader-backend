@@ -18,6 +18,7 @@ Use this index to find the right document for the task at hand.
 | Run or debug Prisma migrations	                        | [Database Migrations](production/database-migrations.md) |
 | Diagnose production problems	                          | [Troubleshooting](production/troubleshooting.md) |
 | Understand the n8n → backend contract	                  | [n8n Integration](integrations/n8n.md) |
+| Manage trading accounts and broker credentials          | [Trading Account Admin API](api/trading-accounts.md) |
 | Understand Alpaca broker API observability              | [Alpaca Integration](integrations/alpaca.md) |
 
 
@@ -62,6 +63,16 @@ Use this doc when changing signal handling, tracked positions, exit profiles, br
 ### [Worker Health](architecture/workers.md)
 
 Documents recurring worker inventory, cadence, health status derivation, persistence, System Status fields, transition events, and troubleshooting.
+
+## API Docs
+
+API docs describe backend HTTP surfaces that are stable enough to call from
+admin tools, automation, or future UI work.
+
+### [Trading Account Admin API](api/trading-accounts.md)
+
+Documents admin-only trading account read/update endpoints and account-scoped
+broker credential upsert, verification, and revocation behavior.
 
 ## 🔌 Integration Docs
 
@@ -176,6 +187,7 @@ Saved Usage Data shows a recent database save
 The documentation structure is intentionally split by purpose:
 ```
 docs/
+  api/              Backend API notes
   architecture/     System design and lifecycle explanations
   integrations/     External system contracts and workflows
   production/       Deployment, migrations, workflows and troubleshooting

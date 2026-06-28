@@ -52,6 +52,7 @@ Current service-level coverage includes:
 - worker health status derivation, persistence throttling, transition events, and System Status readiness semantics
 - Alpaca request metadata enforcement, API usage aggregation, rate-limit deferral, usage persistence, and System Status exposure
 - adaptive Alpaca REST polling decisions, market modes, forced sync, rate-limit-compatible skips, and System Status serialization
+- trading account admin read/update APIs and broker credential upsert, verification, and revocation safety behavior
 ```
 
 Prefer small service-level tests that mock external dependencies such as Prisma and Alpaca.

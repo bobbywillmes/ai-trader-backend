@@ -92,6 +92,7 @@ prisma/
   schema.prisma           Database schema
 
 docs/
+  api/                    Backend API notes
   architecture/           System design docs
   integrations/           External workflow docs
   production/             Production runbooks
@@ -244,11 +245,12 @@ Primary API areas include:
 - settings
 - system status
 - market diary
+- trading accounts
 - account snapshots
 - broker activity
 - system events
 
-Detailed API notes should live in /docs/api as the project grows.
+Detailed API notes live in /docs/api as the project grows.
 
 ## 🧪 Current Operating Posture
 
