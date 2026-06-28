@@ -18,6 +18,7 @@ import { ReconciliationPage } from "../features/reconciliation/ReconciliationPag
 import { TradeHistoryPage } from "../features/tradeHistory/TradeHistoryPage";
 import { EntryDecisionsPage } from "../features/entryDecisions/EntryDecisionsPage";
 import { TradingAccountsPage } from "../features/tradingAccounts/TradingAccountsPage";
+import { TradingAccountDetailPage } from "../features/tradingAccounts/TradingAccountDetailPage";
 
 export const router = createBrowserRouter([
   {
@@ -55,6 +56,10 @@ export const router = createBrowserRouter([
       {
         path: "trading-accounts",
         element: <TradingAccountsPage />,
+      },
+      {
+        path: "trading-accounts/:id",
+        element: <TradingAccountDetailPage />,
       },
       {
         path: "subscriptions",
