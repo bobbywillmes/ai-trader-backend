@@ -9,6 +9,7 @@ import {
 const mocks = vi.hoisted(() => ({
   env: {} as { DEFAULT_TRADING_ACCOUNT_ID?: number },
   tradingAccountFindFirst: vi.fn(),
+  tradingAccountFindMany: vi.fn(),
   tradingAccountFindUnique: vi.fn(),
 }));
 
@@ -20,12 +21,15 @@ vi.mock('../db/prisma.js', () => ({
   prisma: {
     tradingAccount: {
       findFirst: mocks.tradingAccountFindFirst,
+      findMany: mocks.tradingAccountFindMany,
       findUnique: mocks.tradingAccountFindUnique,
     },
   },
 }));
 
 import {
+  getTradingAccountForAdmin,
+  listTradingAccountsForAdmin,
   resolveDefaultTradingAccount,
   resolveDefaultTradingAccountId,
 } from './trading-account.service.js';
@@ -64,6 +68,7 @@ describe('trading account service', () => {
     vi.clearAllMocks();
     delete mocks.env.DEFAULT_TRADING_ACCOUNT_ID;
     mocks.tradingAccountFindFirst.mockResolvedValue(null);
+    mocks.tradingAccountFindMany.mockResolvedValue([]);
     mocks.tradingAccountFindUnique.mockResolvedValue(null);
   });
 
@@ -106,5 +111,78 @@ describe('trading account service', () => {
     await expect(resolveDefaultTradingAccount()).rejects.toThrow(
       'scripts/bootstrap-default-trading-account.ts'
     );
+  });
+
+  it('lists admin trading account summaries without credential ciphertext', async () => {
+    const verifiedAt = new Date('2026-06-27T01:00:00.000Z');
+    const account = {
+      ...tradingAccount({ brokerAccountId: 'account-1' }),
+      credential: {
+        status: 'ACTIVE',
+        authType: 'API_KEY',
+        keyFingerprint: 'sha256:fingerprint',
+        verifiedAt,
+        lastUsedAt: null,
+        lastFailedAt: null,
+        revokedAt: null,
+        apiKeyCiphertext: 'must-not-leak',
+        apiSecretCiphertext: 'must-not-leak',
+      },
+    };
+    mocks.tradingAccountFindMany.mockResolvedValue([account]);
+
+    await expect(listTradingAccountsForAdmin()).resolves.toEqual([
+      expect.objectContaining({
+        id: 1,
+        brokerAccountId: 'account-1',
+        credential: {
+          exists: true,
+          status: 'ACTIVE',
+          authType: 'API_KEY',
+          keyFingerprint: 'sha256:fingerprint',
+          verifiedAt,
+          lastUsedAt: null,
+          lastFailedAt: null,
+          revokedAt: null,
+        },
+      }),
+    ]);
+    expect(JSON.stringify(await listTradingAccountsForAdmin())).not.toContain(
+      'must-not-leak'
+    );
+  });
+
+  it('returns a safe empty credential summary when no credential exists', async () => {
+    mocks.tradingAccountFindUnique.mockResolvedValue({
+      ...tradingAccount(),
+      credential: null,
+    });
+
+    await expect(getTradingAccountForAdmin(1)).resolves.toEqual(
+      expect.objectContaining({
+        id: 1,
+        credential: {
+          exists: false,
+          status: null,
+          authType: null,
+          keyFingerprint: null,
+          verifiedAt: null,
+          lastUsedAt: null,
+          lastFailedAt: null,
+          revokedAt: null,
+        },
+      })
+    );
+    expect(mocks.tradingAccountFindUnique).toHaveBeenLastCalledWith({
+      where: { id: 1 },
+      select: expect.objectContaining({
+        credential: expect.objectContaining({
+          select: expect.not.objectContaining({
+            apiKeyCiphertext: true,
+            apiSecretCiphertext: true,
+          }),
+        }),
+      }),
+    });
   });
 });

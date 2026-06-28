@@ -32,6 +32,7 @@ import reconciliationRoutes from '../routes/reconciliation.routes.js';
 import tradeCyclesRoutes from '../routes/trade-cycles.routes.js';
 import tradePerformanceRoutes from '../routes/trade-performance.routes.js';
 import entryDecisionsRoutes from '../routes/entry-decisions.routes.js';
+import tradingAccountsRoutes from '../routes/trading-accounts.routes.js';
 
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
@@ -81,6 +82,7 @@ export function createApp() {
   app.use('/api/entry-decisions', requireAdminAccess, entryDecisionsRoutes);
   app.use('/api/trade-cycles', requireAdminAccess, tradeCyclesRoutes);
   app.use('/api/trade-performance', requireAdminAccess, tradePerformanceRoutes);
+  app.use('/api/trading-accounts', requireAdminAccess, tradingAccountsRoutes);
   app.use('/api/config', requireAdminAccess, configRoutes);
   app.use('/api/strategies', requireAdminAccess, strategiesRoutes);
   app.use('/api/exit-profiles', requireAdminAccess, exitProfilesRoutes);
