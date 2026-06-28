@@ -88,7 +88,10 @@ export type BrokerOrderSubmissionInput = ResolvedPlaceOrderInput & {
   clientOrderId: string;
 };
 
-export async function submitOrderToBroker(input: BrokerOrderSubmissionInput) {
+export async function submitOrderToBroker(
+  input: BrokerOrderSubmissionInput,
+  options: { tradingAccountId?: number | undefined } = {}
+) {
   const clientOrderId = input.clientOrderId;
 
   if (!clientOrderId) {
@@ -100,7 +103,8 @@ export async function submitOrderToBroker(input: BrokerOrderSubmissionInput) {
 
   const existing = await getAlpacaOrderByClientOrderId(
     clientOrderId,
-    'pending_order_idempotency_check'
+    'pending_order_idempotency_check',
+    { tradingAccountId: options.tradingAccountId }
   );
 
   if (existing) {
@@ -133,7 +137,9 @@ export async function submitOrderToBroker(input: BrokerOrderSubmissionInput) {
   if (input.limitPrice !== undefined) payload.limit_price = String(input.limitPrice);
   if (input.extendedHours) payload.extended_hours = true;
 
-  const created = await placeAlpacaOrder(payload, 'pending_order_submission');
+  const created = await placeAlpacaOrder(payload, 'pending_order_submission', {
+    tradingAccountId: options.tradingAccountId,
+  });
 
   adaptivePollingCoordinator.forceAfterBrokerOrderCreated(
     'broker_order_created'

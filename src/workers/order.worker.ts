@@ -140,7 +140,9 @@ export async function processPendingOrders() {
         }
       }
 
-      const result = await submitOrderToBroker(resolvedInput);
+      const result = await submitOrderToBroker(resolvedInput, {
+        tradingAccountId: intent.tradingAccountId ?? tradingAccountId,
+      });
       const brokerOrder = result.order;
 
       const existingBrokerOrderRecord = await prisma.brokerOrder.findFirst({

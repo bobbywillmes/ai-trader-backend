@@ -9,6 +9,7 @@ import {
 import type { AlpacaOrder } from '../integrations/alpaca/alpaca.types.js';
 import { createSystemEvent } from './system-event.service.js';
 import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 function toNullableNumber(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined || value === '') {
@@ -75,6 +76,8 @@ export async function submitNativeTrailingStopForTrackedPosition(
   if (!position) {
     throw new Error(`TrackedPosition ${trackedPositionId} not found.`);
   }
+  const tradingAccountId =
+    position.tradingAccountId ?? (await resolveDefaultTradingAccountId());
 
   if (position.status !== 'open') {
     return {
@@ -148,7 +151,8 @@ export async function submitNativeTrailingStopForTrackedPosition(
     const existingBrokerOrder =
       await getAlpacaOrderByClientOrderId(
         clientOrderId,
-        'protective_order_idempotency_check'
+        'protective_order_idempotency_check',
+        { tradingAccountId }
       );
 
     const brokerOrder =
@@ -163,7 +167,8 @@ export async function submitNativeTrailingStopForTrackedPosition(
           trail_percent: String(exitProfile.trailingStopPct),
           client_order_id: clientOrderId,
         },
-        'protective_order_submission'
+        'protective_order_submission',
+        { tradingAccountId }
       ));
 
     if (!existingBrokerOrder) {
@@ -266,6 +271,8 @@ export async function syncNativeTrailingStopForTrackedPosition(
   if (!position) {
     throw new Error(`TrackedPosition ${trackedPositionId} not found.`);
   }
+  const tradingAccountId =
+    position.tradingAccountId ?? (await resolveDefaultTradingAccountId());
 
   // Nothing has been handed off to Alpaca yet, so there is no broker order to sync.
   if (!position.trailingStopOrderId) {
@@ -279,7 +286,8 @@ export async function syncNativeTrailingStopForTrackedPosition(
 
   const brokerOrder = await getAlpacaOrderById(
     position.trailingStopOrderId,
-    'protective_order_sync'
+    'protective_order_sync',
+    { tradingAccountId }
   );
   const now = new Date();
 
