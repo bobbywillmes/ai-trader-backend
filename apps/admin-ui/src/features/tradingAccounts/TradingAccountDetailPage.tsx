@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import {
   Alert,
   Badge,
@@ -7,14 +8,20 @@ import {
   Grid,
   Group,
   Loader,
+  NumberInput,
+  Select,
   SimpleGrid,
   Stack,
+  Switch,
   Text,
+  Textarea,
+  TextInput,
   Title,
 } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { getAdminToken } from "../../lib/api";
-import { useTradingAccount } from "./hooks";
+import { useTradingAccount, useUpdateTradingAccount } from "./hooks";
 import type {
   BrokerCredentialStatus,
   TradingAccount,
@@ -24,8 +31,68 @@ import type {
 
 type DetailItemProps = {
   label: string;
-  value: React.ReactNode;
+  value: ReactNode;
 };
+
+type AccountSettingsDraft = {
+  displayName: string;
+  estimatedTradingCapital: number | null;
+  status: TradingAccountStatus;
+  tradingEnabled: boolean;
+  killSwitchEnabled: boolean;
+  pausedReason: string;
+  notes: string;
+};
+
+const tradingAccountStatusOptions: {
+  value: TradingAccountStatus;
+  label: string;
+}[] = [
+  { value: "ACTIVE", label: "Active" },
+  { value: "PAUSED", label: "Paused" },
+  { value: "NEEDS_CREDENTIALS", label: "Needs credentials" },
+  { value: "ERROR", label: "Error" },
+  { value: "ARCHIVED", label: "Archived" },
+];
+
+function accountToSettingsDraft(account: TradingAccount): AccountSettingsDraft {
+  return {
+    displayName: account.displayName,
+    estimatedTradingCapital: account.estimatedTradingCapital,
+    status: account.status,
+    tradingEnabled: account.tradingEnabled,
+    killSwitchEnabled: account.killSwitchEnabled,
+    pausedReason: account.pausedReason ?? "",
+    notes: account.notes ?? "",
+  };
+}
+
+function normalizeOptionalText(value: string) {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeNumberInput(value: string | number) {
+  if (value === "") return null;
+
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function settingsDraftChanged(
+  account: TradingAccount,
+  draft: AccountSettingsDraft
+) {
+  return (
+    account.displayName !== draft.displayName ||
+    account.estimatedTradingCapital !== draft.estimatedTradingCapital ||
+    account.status !== draft.status ||
+    account.tradingEnabled !== draft.tradingEnabled ||
+    account.killSwitchEnabled !== draft.killSwitchEnabled ||
+    (account.pausedReason ?? "") !== draft.pausedReason ||
+    (account.notes ?? "") !== draft.notes
+  );
+}
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "-";
@@ -288,6 +355,253 @@ function NotesCard({ account }: { account: TradingAccount }) {
   );
 }
 
+function SafetySettingsCard({
+  account,
+  token,
+}: {
+  account: TradingAccount;
+  token: string | null;
+}) {
+  const [draft, setDraft] = useState<AccountSettingsDraft>(() =>
+    accountToSettingsDraft(account)
+  );
+  const updateMutation = useUpdateTradingAccount(token);
+  const hasChanges = settingsDraftChanged(account, draft);
+  const displayNameValid = draft.displayName.trim().length > 0;
+  const capitalValid =
+    draft.estimatedTradingCapital === null || draft.estimatedTradingCapital >= 0;
+
+  useEffect(() => {
+    setDraft(accountToSettingsDraft(account));
+  }, [account]);
+
+  function resetDraft() {
+    setDraft(accountToSettingsDraft(account));
+  }
+
+  async function saveSettings() {
+    if (!displayNameValid) {
+      notifications.show({
+        message: "Display name is required.",
+        color: "red",
+      });
+      return;
+    }
+
+    if (!capitalValid) {
+      notifications.show({
+        message: "Estimated trading capital must be zero or greater.",
+        color: "red",
+      });
+      return;
+    }
+
+    try {
+      await updateMutation.mutateAsync({
+        id: account.id,
+        payload: {
+          displayName: draft.displayName.trim(),
+          estimatedTradingCapital: draft.estimatedTradingCapital,
+          status: draft.status,
+          tradingEnabled: draft.tradingEnabled,
+          killSwitchEnabled: draft.killSwitchEnabled,
+          pausedReason: normalizeOptionalText(draft.pausedReason),
+          notes: normalizeOptionalText(draft.notes),
+        },
+      });
+
+      notifications.show({
+        message: "Trading account settings saved.",
+        color: "teal",
+      });
+    } catch (error) {
+      notifications.show({
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to save trading account settings.",
+        color: "red",
+      });
+    }
+  }
+
+  return (
+    <Card withBorder radius="md" p="lg">
+      <Stack gap="md">
+        <Group justify="space-between" align="flex-start">
+          <div>
+            <Group gap="xs">
+              <Title order={3}>Safety / Status Controls</Title>
+              {hasChanges && (
+                <Badge color="blue" variant="light">
+                  Unsaved changes
+                </Badge>
+              )}
+            </Group>
+            <Text size="sm" c="dimmed">
+              Save-gated account settings. Broker identity and broker metadata
+              are read-only.
+            </Text>
+          </div>
+          <Group>
+            <Button
+              variant="default"
+              onClick={resetDraft}
+              disabled={!hasChanges || updateMutation.isPending}
+            >
+              Reset
+            </Button>
+            <Button
+              onClick={saveSettings}
+              loading={updateMutation.isPending}
+              disabled={!hasChanges || !displayNameValid || !capitalValid}
+            >
+              Save Settings
+            </Button>
+          </Group>
+        </Group>
+
+        {account.environment === "LIVE" && draft.tradingEnabled && (
+          <Alert color="red" title="Live trading enablement">
+            This would mark a live account as trading-enabled. Credential
+            verification does not turn this on automatically.
+          </Alert>
+        )}
+
+        <SimpleGrid cols={{ base: 1, md: 2 }}>
+          <TextInput
+            label="Display name"
+            value={draft.displayName}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+
+              setDraft((current) => ({
+                ...current,
+                displayName: value,
+              }));
+            }}
+            error={displayNameValid ? undefined : "Display name is required."}
+            disabled={updateMutation.isPending}
+          />
+
+          <NumberInput
+            label="Estimated trading capital"
+            value={draft.estimatedTradingCapital ?? ""}
+            onChange={(value) =>
+              setDraft((current) => ({
+                ...current,
+                estimatedTradingCapital: normalizeNumberInput(value),
+              }))
+            }
+            min={0}
+            thousandSeparator=","
+            prefix="$"
+            error={capitalValid ? undefined : "Must be zero or greater."}
+            disabled={updateMutation.isPending}
+          />
+
+          <Select
+            label="Status"
+            data={tradingAccountStatusOptions}
+            value={draft.status}
+            onChange={(value) => {
+              if (!value) return;
+
+              setDraft((current) => ({
+                ...current,
+                status: value as TradingAccountStatus,
+              }));
+            }}
+            disabled={updateMutation.isPending}
+          />
+
+          <Stack gap="sm">
+            <Group justify="space-between" align="flex-start" wrap="nowrap">
+              <div>
+                <Text fw={600} size="sm">
+                  Automated trading
+                </Text>
+                <Text size="sm" c="dimmed">
+                  Account-level master switch for broker-facing automation.
+                </Text>
+              </div>
+              <Switch
+                checked={draft.tradingEnabled}
+                onChange={(event) => {
+                  const checked = event.currentTarget.checked;
+
+                  setDraft((current) => ({
+                    ...current,
+                    tradingEnabled: checked,
+                  }));
+                }}
+                disabled={updateMutation.isPending}
+                color="teal"
+              />
+            </Group>
+
+            <Group justify="space-between" align="flex-start" wrap="nowrap">
+              <div>
+                <Text fw={600} size="sm">
+                  Kill switch
+                </Text>
+                <Text size="sm" c="dimmed">
+                  Blocks new account-scoped broker access when enabled.
+                </Text>
+              </div>
+              <Switch
+                checked={draft.killSwitchEnabled}
+                onChange={(event) => {
+                  const checked = event.currentTarget.checked;
+
+                  setDraft((current) => ({
+                    ...current,
+                    killSwitchEnabled: checked,
+                  }));
+                }}
+                disabled={updateMutation.isPending}
+                color="orange"
+              />
+            </Group>
+          </Stack>
+
+          <Textarea
+            label="Paused reason"
+            value={draft.pausedReason}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+
+              setDraft((current) => ({
+                ...current,
+                pausedReason: value,
+              }));
+            }}
+            autosize
+            minRows={3}
+            disabled={updateMutation.isPending}
+          />
+
+          <Textarea
+            label="Notes"
+            value={draft.notes}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+
+              setDraft((current) => ({
+                ...current,
+                notes: value,
+              }));
+            }}
+            autosize
+            minRows={3}
+            disabled={updateMutation.isPending}
+          />
+        </SimpleGrid>
+      </Stack>
+    </Card>
+  );
+}
+
 export function TradingAccountDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -363,6 +677,7 @@ export function TradingAccountDetailPage() {
           <AccountSummaryCard account={account} />
           <BrokerSnapshotCard account={account} />
           <CredentialStatusCard account={account} />
+          <SafetySettingsCard account={account} token={token} />
           <NotesCard account={account} />
         </>
       )}
