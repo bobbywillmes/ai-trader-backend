@@ -69,6 +69,8 @@ ALPACA_API_KEY=
 ALPACA_API_SECRET=
 ALPACA_BASE_URL=https://paper-api.alpaca.markets
 DEFAULT_TRADING_ACCOUNT_ID=1
+TRADING_CREDENTIAL_ENCRYPTION_KEY=
+TRADING_CREDENTIAL_ENCRYPTION_KEY_ID=prod-v1
 
 AI_TRADER_SIGNAL_API_KEY=
 AI_TRADER_ADMIN_API_KEY=
@@ -95,6 +97,20 @@ Paper, the runtime falls back to the legacy `ALPACA_API_KEY`,
 `ALPACA_API_SECRET`, and `ALPACA_BASE_URL` env vars. Non-default accounts
 require an ACTIVE `TradingAccountCredential` before broker runtime calls can
 use them.
+
+`TRADING_CREDENTIAL_ENCRYPTION_KEY` encrypts account-scoped broker API
+credentials before they are stored in the database. Generate it once per
+environment with:
+
+```bash
+openssl rand -base64 32
+```
+
+Keep the value only in the environment, never in Git. Do not rotate or remove
+it casually: existing encrypted credential rows need the same key material to
+decrypt until a deliberate key-rotation workflow exists.
+`TRADING_CREDENTIAL_ENCRYPTION_KEY_ID` is a non-secret identifier stored with
+encrypted payloads for future rotation support.
 
 Admin and signal API keys must be different.
 
@@ -943,6 +959,7 @@ Important production secrets include:
 POSTGRES_PASSWORD
 ALPACA_API_KEY
 ALPACA_API_SECRET
+TRADING_CREDENTIAL_ENCRYPTION_KEY
 AI_TRADER_SIGNAL_API_KEY
 AI_TRADER_ADMIN_API_KEY
 ```

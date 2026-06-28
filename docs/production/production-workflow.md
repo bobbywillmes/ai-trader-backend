@@ -154,6 +154,8 @@ ALLOW_LIVE_TRADING=false
 ALLOW_TRADING_ENABLED_ON_START=false
 ALPACA_BASE_URL=https://paper-api.alpaca.markets
 DEFAULT_TRADING_ACCOUNT_ID=1
+TRADING_CREDENTIAL_ENCRYPTION_KEY=...
+TRADING_CREDENTIAL_ENCRYPTION_KEY_ID=prod-v1
 MASSIVE_API_KEY=...
 MASSIVE_BASE_URL=https://api.massive.com
 ```
@@ -162,6 +164,11 @@ For the current Bobby Paper runtime, keep the legacy `ALPACA_API_KEY`,
 `ALPACA_API_SECRET`, and `ALPACA_BASE_URL` env vars configured. Account-scoped
 Alpaca credentials take precedence when an ACTIVE `TradingAccountCredential`
 exists, but Bobby Paper continues to fall back to those env vars.
+
+Keep `TRADING_CREDENTIAL_ENCRYPTION_KEY` configured before using
+account-scoped broker credentials. It is required to decrypt stored
+`TradingAccountCredential` values and should stay stable for the environment
+until a deliberate key-rotation workflow exists.
 
 Runtime database settings should also remain conservative unless deliberately changed from the admin UI:
 

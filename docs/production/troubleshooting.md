@@ -267,6 +267,29 @@ See [Alpaca Integration](../integrations/alpaca.md) for the full request instrum
 
 ---
 
+## Trading Credential Encryption Problems
+
+Account-scoped broker credentials depend on these backend environment values:
+
+```text
+TRADING_CREDENTIAL_ENCRYPTION_KEY
+TRADING_CREDENTIAL_ENCRYPTION_KEY_ID
+```
+
+If credential upsert, verification, or broker runtime calls fail after
+account-scoped credentials are added, confirm the backend container received
+both values from `/opt/ai-trader/.env` and was restarted after any env edit.
+
+Do not change `TRADING_CREDENTIAL_ENCRYPTION_KEY` to test a fix unless the
+stored credentials can be replaced. Existing encrypted credential rows need the
+same key material to decrypt. `TRADING_CREDENTIAL_ENCRYPTION_KEY_ID` is only a
+label for encrypted payloads and does not decrypt credentials by itself.
+
+Never paste decrypted broker credentials into logs, SystemEvents, issue notes,
+or screenshots while debugging.
+
+---
+
 ## Adaptive Polling Degraded Or Unexpected Cadence
 
 Adaptive polling is surfaced in Settings -> System Status -> Adaptive Polling and in `/api/system-status` as `adaptivePolling`.
