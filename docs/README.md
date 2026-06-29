@@ -20,6 +20,7 @@ Use this index to find the right document for the task at hand.
 | Understand the n8n → backend contract	                  | [n8n Integration](integrations/n8n.md) |
 | Manage trading accounts and broker credentials          | [Trading Account Admin API](api/trading-accounts.md) |
 | Understand Alpaca broker API observability              | [Alpaca Integration](integrations/alpaca.md) |
+| Database visualisation                                  | [Database Readme](database/README.md) |
 
 
 
@@ -142,6 +143,9 @@ Use this when:
 Symptom-driven production debugging notes.
 
 Use this when something is broken and you need to quickly identify likely causes.
+
+## 💾 Database Docs
+- [Database Visualization](./database/README.md) — how to generate DBML from Prisma and import the schema into dbdiagram.io.
 
 ## 🧪 Testing Docs
 

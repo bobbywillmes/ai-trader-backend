@@ -2,6 +2,15 @@ generator client {
   provider = "prisma-client-js"
 }
 
+generator dbml {
+  provider            = "prisma-dbml-generator"
+  output              = "../docs/database"
+  outputName          = "ai-trader.dbml"
+  projectName         = "AI Trader Backend"
+  projectDatabaseType = "PostgreSQL"
+  projectNote         = "Generated from prisma/schema.prisma. Do not edit manually."
+}
+
 datasource db {
   provider = "postgresql"
 }

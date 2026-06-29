@@ -1,0 +1,662 @@
+//// ------------------------------------------------------
+//// THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
+//// ------------------------------------------------------
+
+Project "AI Trader Backend" {
+  database_type: 'PostgreSQL'
+  Note: 'Generated from prisma/schema.prisma. Do not edit manually.'
+}
+
+Table Setting {
+  id Int [pk, increment]
+  key String [unique, not null]
+  value String [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+}
+
+Table AdminUser {
+  id Int [pk, increment]
+  email String [unique, not null]
+  passwordHash String [not null]
+  role String [not null, default: 'admin']
+  enabled Boolean [not null, default: true]
+  name String
+  emailVerifiedAt DateTime
+  lastLoginAt DateTime
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  sessions AdminSession [not null]
+  ownedTradingAccounts TradingAccount [not null]
+  tradingAccountAccess TradingAccountAccess [not null]
+}
+
+Table AdminSession {
+  id Int [pk, increment]
+  adminUserId Int [not null]
+  tokenHash String [unique, not null]
+  userAgent String
+  ipAddress String
+  expiresAt DateTime [not null]
+  revokedAt DateTime
+  lastSeenAt DateTime [default: `now()`, not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  adminUser AdminUser [not null]
+}
+
+Table TradingAccount {
+  id Int [pk, increment]
+  ownerAdminUserId Int [not null]
+  ownerAdminUser AdminUser [not null]
+  displayName String [not null]
+  broker TradingBroker [not null, default: 'ALPACA']
+  environment TradingAccountEnvironment [not null, default: 'PAPER']
+  status TradingAccountStatus [not null, default: 'NEEDS_CREDENTIALS']
+  tradingEnabled Boolean [not null, default: false]
+  killSwitchEnabled Boolean [not null, default: true]
+  estimatedTradingCapital Float
+  baseCurrency String [not null, default: 'USD']
+  brokerAccountId String
+  brokerAccountNumberMasked String
+  brokerAccountStatus String
+  lastBrokerSyncAt DateTime
+  lastCash Float
+  lastBuyingPower Float
+  lastEquity Float
+  lastPortfolioValue Float
+  tradingBlocked Boolean
+  pausedReason String
+  notes String
+  credential TradingAccountCredential
+  access TradingAccountAccess [not null]
+  subscriptions Subscription [not null]
+  orderIntents OrderIntent [not null]
+  brokerOrders BrokerOrder [not null]
+  brokerActivities BrokerActivity [not null]
+  trackedPositions TrackedPosition [not null]
+  accountSnapshots AccountSnapshot [not null]
+  entryDecisions EntryDecision [not null]
+  systemEvents SystemEvent [not null]
+  alpacaApiUsageBuckets AlpacaApiUsageBucket [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+
+  indexes {
+    (broker, environment, brokerAccountId) [unique]
+  }
+}
+
+Table TradingAccountCredential {
+  id Int [pk, increment]
+  tradingAccountId Int [unique, not null]
+  tradingAccount TradingAccount [not null]
+  authType BrokerCredentialAuthType [not null, default: 'API_KEY']
+  status BrokerCredentialStatus [not null, default: 'NEEDS_VERIFICATION']
+  apiKeyCiphertext String
+  apiSecretCiphertext String
+  accessTokenCiphertext String
+  refreshTokenCiphertext String
+  keyFingerprint String
+  encryptionVersion Int [not null, default: 1]
+  verifiedAt DateTime
+  lastUsedAt DateTime
+  lastFailedAt DateTime
+  revokedAt DateTime
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+}
+
+Table TradingAccountAccess {
+  id Int [pk, increment]
+  tradingAccountId Int [not null]
+  tradingAccount TradingAccount [not null]
+  adminUserId Int [not null]
+  adminUser AdminUser [not null]
+  role TradingAccountAccessRole [not null]
+  canView Boolean [not null, default: true]
+  canPauseTrading Boolean [not null, default: false]
+  canResumeTrading Boolean [not null, default: false]
+  canEditRiskSettings Boolean [not null, default: false]
+  canEditStrategySettings Boolean [not null, default: false]
+  canEditCredentials Boolean [not null, default: false]
+  canManageAccess Boolean [not null, default: false]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+
+  indexes {
+    (tradingAccountId, adminUserId) [unique]
+  }
+}
+
+Table Security {
+  id Int [pk, increment]
+  symbol String [unique, not null]
+  name String [not null]
+  enabled Boolean [not null, default: true]
+  assetType AssetType [not null]
+  sector String
+  industry String
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  subscriptions Subscription [not null]
+  trackedPositions TrackedPosition [not null]
+  brokerOrders BrokerOrder [not null]
+  entryDecisions EntryDecision [not null]
+}
+
+Table OrderIntent {
+  id Int [pk, increment]
+  source String [not null]
+  symbol String [not null]
+  side String [not null]
+  orderType String [not null]
+  timeInForce String [not null]
+  qty Float
+  notional Float
+  limitPrice Float
+  extendedHours Boolean [not null, default: false]
+  clientOrderId String
+  status String [not null, default: 'received']
+  blockReason String
+  rawRequestJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  subscriptionId Int
+  subscriptionKey String
+  subscription Subscription
+  trackedPositionId Int
+  trackedPosition TrackedPosition
+  tradingAccountId Int
+  tradingAccount TradingAccount
+  brokerOrders BrokerOrder [not null]
+  brokerActivities BrokerActivity [not null]
+  entryDecision EntryDecision
+}
+
+Table BrokerOrder {
+  id Int [pk, increment]
+  orderIntentId Int [not null]
+  broker String [not null]
+  brokerOrderId String [not null]
+  clientOrderId String [not null]
+  symbol String [not null]
+  side String [not null]
+  status String [not null]
+  rawBrokerJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  securityId Int [not null]
+  security Security [not null]
+  orderIntent OrderIntent [not null]
+  trackedPositionId Int
+  trackedPosition TrackedPosition
+  tradingAccountId Int
+  tradingAccount TradingAccount
+  brokerActivities BrokerActivity [not null]
+  entryDecision EntryDecision
+
+  indexes {
+    (broker, brokerOrderId) [unique]
+    (broker, clientOrderId) [unique]
+  }
+}
+
+Table SystemEvent {
+  id Int [pk, increment]
+  type String [not null]
+  entityType String [not null]
+  entityId String [not null]
+  message String
+  payloadJson Json [not null]
+  processed Boolean [not null, default: false]
+  createdAt DateTime [default: `now()`, not null]
+  tradingAccountId Int
+  tradingAccount TradingAccount
+}
+
+Table WorkerHealthState {
+  id Int [pk, increment]
+  key String [unique, not null]
+  processInstanceId String [not null]
+  enabled Boolean [not null]
+  expectedIntervalMs Int [not null]
+  currentRunStartedAt DateTime
+  lastTickStartedAt DateTime
+  lastTickCompletedAt DateTime
+  lastSucceededAt DateTime
+  lastWorkSucceededAt DateTime
+  lastFailedAt DateTime
+  lastDurationMs Int
+  lastOutcome String
+  lastSkipReason String
+  consecutiveFailures Int [not null, default: 0]
+  totalRuns Int [not null, default: 0]
+  totalFailures Int [not null, default: 0]
+  totalSkips Int [not null, default: 0]
+  lastError String
+  lastErrorAt DateTime
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+}
+
+Table AlpacaApiUsageBucket {
+  id Int [pk, increment]
+  bucketStart DateTime [not null]
+  bucketSizeMinutes Int [not null]
+  operation String [not null]
+  endpoint String [not null]
+  method String [not null]
+  requestClass String [not null]
+  requestCount Int [not null, default: 0]
+  successCount Int [not null, default: 0]
+  failureCount Int [not null, default: 0]
+  rateLimitCount Int [not null, default: 0]
+  networkErrorCount Int [not null, default: 0]
+  totalDurationMs Int [not null, default: 0]
+  maxDurationMs Int [not null, default: 0]
+  lastStatusCode Int
+  lastRequestAt DateTime
+  lastFailureAt DateTime
+  lastRateLimitedAt DateTime
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  tradingAccountId Int
+  tradingAccount TradingAccount
+
+  indexes {
+    (bucketStart, operation, endpoint, method, requestClass) [unique]
+  }
+}
+
+Table CurrentMarketState {
+  id Int [pk]
+  marketBias String [not null, default: 'neutral']
+  riskMode String [not null, default: 'normal']
+  macroSummary String
+  watchFor String
+  avoidBecause String
+  notes String
+  source String [not null, default: 'system']
+  validUntil DateTime
+  lastLlmRunAt DateTime
+  payloadJson Json
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+}
+
+Table MarketDiaryEvent {
+  id Int [pk, increment]
+  eventType String [not null]
+  source String [not null, default: 'system']
+  symbol String
+  summary String [not null]
+  details String
+  symbolsJson Json
+  payloadJson Json
+  createdAt DateTime [default: `now()`, not null]
+}
+
+Table EntryDecision {
+  id Int [pk, increment]
+  decisionKey String [unique, not null]
+  evaluatedAt DateTime [not null]
+  source String [not null]
+  symbol String [not null]
+  decisionState String [not null]
+  decisionReason String
+  signalAction String
+  signalEligible Boolean
+  signalCreated Boolean [not null, default: false]
+  signalBlocked Boolean [not null, default: false]
+  blockingReason String
+  currentPrice Float
+  previousClose Float
+  dayLow Float
+  dayChangePercent Float
+  dipPercent Float
+  dipThresholdPercent Float
+  retraceFraction Float
+  cooldownActive Boolean
+  cooldownUntil DateTime
+  minutesSinceLastSignal Float
+  allowOrderSignals Boolean
+  dryRun Boolean
+  eventRisk String
+  marketSession String
+  tradingEnabled Boolean
+  killSwitchEnabled Boolean
+  paperMode Boolean
+  persistenceReason String [not null]
+  decisionFingerprint String [not null]
+  marketSnapshotJson Json
+  runtimeSnapshotJson Json
+  strategySnapshotJson Json
+  indicatorSnapshotJson Json
+  rawDecisionJson Json [not null]
+  securityId Int
+  security Security
+  subscriptionId Int
+  subscriptionKey String
+  subscription Subscription
+  strategyId Int
+  strategyKey String
+  strategy Strategy
+  exitProfileId Int
+  exitProfileKey String
+  exitProfile ExitProfile
+  orderIntentId Int [unique]
+  orderIntent OrderIntent
+  brokerOrderRecordId Int [unique]
+  brokerOrderRecord BrokerOrder
+  trackedPositionId Int [unique]
+  trackedPosition TrackedPosition
+  tradingAccountId Int
+  tradingAccount TradingAccount
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+}
+
+Table TrackedPosition {
+  id Int [pk, increment]
+  broker String [not null]
+  symbol String [not null]
+  side String [not null]
+  qty Float [not null]
+  avgEntryPrice Float [not null]
+  currentPrice Float [not null]
+  marketValue Float [not null]
+  costBasis Float [not null]
+  unrealizedPnL Float [not null]
+  unrealizedPnLPct Float [not null]
+  status String [not null, default: 'open']
+  openedAt DateTime [default: `now()`, not null]
+  lastSyncedAt DateTime [default: `now()`, not null]
+  closedAt DateTime
+  rawPositionJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  securityId Int [not null]
+  security Security [not null]
+  subscriptionId Int
+  subscription Subscription
+  orderIntents OrderIntent [not null]
+  brokerOrders BrokerOrder [not null]
+  brokerActivities BrokerActivity [not null]
+  entryDecision EntryDecision
+  exitState PositionExitState
+  configSnapshotJson Json
+  configSnapshotCapturedAt DateTime
+  tradingAccountId Int
+  tradingAccount TradingAccount
+  trailingUnlocked Boolean [not null, default: false]
+  trailingUnlockedAt DateTime
+  trailingUnlockedPrice Float
+  trailingStopOrderId String
+  trailingStopClientOrderId String
+  trailingStopSubmittedAt DateTime
+  trailingStopStatus String
+  trailingStopTrailPercent Float
+  trailingStopHwm Float
+  trailingStopStopPrice Float
+  trailingStopLastSyncedAt DateTime
+}
+
+Table PositionExitState {
+  id Int [pk, increment]
+  trackedPositionId Int [unique, not null]
+  status String [not null, default: 'watching']
+  targetUnlocked Boolean [not null, default: false]
+  targetUnlockedAt DateTime
+  targetUnlockedPrice Float
+  targetUnlockedPnlPct Float
+  highWaterMark Float
+  trailStopPrice Float
+  exitProfileKey String
+  exitMode String
+  takeProfitBehavior String
+  targetPct Float
+  trailingStopPct Float
+  trailBroker String
+  trailBrokerOrderId String
+  trailClientOrderId String
+  trailOrderStatus String
+  rawBrokerJson Json
+  attentionRequired Boolean [not null, default: false]
+  attentionCode String
+  attentionMessage String
+  attentionAt DateTime
+  attentionClearedAt DateTime
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  trackedPosition TrackedPosition [not null]
+}
+
+Table AccountSnapshot {
+  id Int [pk, increment]
+  broker String [not null]
+  mode String [not null]
+  accountStatus String
+  currency String
+  accountNumber String
+  reason String [not null]
+  runKey String [unique]
+  sourceEntityType String
+  sourceEntityId String
+  cash Float [not null]
+  buyingPower Float [not null]
+  equity Float [not null]
+  portfolioValue Float [not null]
+  lastEquity Float
+  longMarketValue Float
+  shortMarketValue Float
+  dayPnL Float
+  dayPnLPct Float
+  tradingBlocked Boolean [not null]
+  tradingAccountId Int
+  tradingAccount TradingAccount
+  snapshotHash String [not null]
+  changed Boolean [not null, default: true]
+  rawJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+}
+
+Table BrokerActivity {
+  id Int [pk, increment]
+  broker String [not null]
+  mode String [not null]
+  activityId String [unique, not null]
+  activityType String [not null]
+  activityCategory String
+  symbol String
+  side String
+  qty Float
+  cumQty Float
+  leavesQty Float
+  price Float
+  netAmount Float
+  orderId String
+  orderIntentId Int
+  brokerOrderRecordId Int
+  trackedPositionId Int
+  trackedPositionLinkSource String
+  trackedPositionLinkedAt DateTime
+  transactionTime DateTime
+  rawBrokerJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  orderIntent OrderIntent
+  brokerOrderRecord BrokerOrder
+  trackedPosition TrackedPosition
+  tradingAccountId Int
+  tradingAccount TradingAccount
+}
+
+Table Strategy {
+  id Int [pk, increment]
+  key String [unique, not null]
+  name String [not null]
+  description String
+  allowedSymbolsJson Json
+  enabled Boolean [not null, default: true]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  subscriptions Subscription [not null]
+  entryDecisions EntryDecision [not null]
+}
+
+Table ExitProfile {
+  id Int [pk, increment]
+  key String [unique, not null]
+  name String [not null]
+  description String
+  targetPct Float
+  stopLossPct Float
+  trailingStopPct Float
+  maxHoldDays Int
+  exitMode String [not null]
+  takeProfitBehavior String [not null]
+  enabled Boolean [not null, default: true]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  subscriptions Subscription [not null]
+  entryDecisions EntryDecision [not null]
+}
+
+Table Subscription {
+  id Int [pk, increment]
+  key String [unique, not null]
+  name String [not null]
+  symbol String [not null]
+  broker String [not null, default: 'alpaca']
+  brokerMode String [not null, default: 'paper']
+  sizingType String [not null]
+  sizingValue Float [not null]
+  enabled Boolean [not null, default: true]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  strategyId Int [not null]
+  exitProfileId Int [not null]
+  securityId Int [not null]
+  security Security [not null]
+  strategy Strategy [not null]
+  exitProfile ExitProfile [not null]
+  trackedPositions TrackedPosition [not null]
+  orderIntents OrderIntent [not null]
+  entryDecisions EntryDecision [not null]
+  tradingAccountId Int
+  tradingAccount TradingAccount
+}
+
+Enum TradingBroker {
+  ALPACA
+}
+
+Enum TradingAccountEnvironment {
+  PAPER
+  LIVE
+}
+
+Enum TradingAccountStatus {
+  NEEDS_CREDENTIALS
+  ACTIVE
+  PAUSED
+  DISABLED
+  ERROR
+}
+
+Enum BrokerCredentialAuthType {
+  API_KEY
+  OAUTH
+}
+
+Enum BrokerCredentialStatus {
+  NEEDS_VERIFICATION
+  ACTIVE
+  INVALID
+  REVOKED
+}
+
+Enum TradingAccountAccessRole {
+  OWNER
+  MANAGER
+  VIEWER
+}
+
+Enum AssetType {
+  STOCK
+  ETF
+  INDEX
+  FUND
+  OTHER
+}
+
+Ref: AdminSession.adminUserId > AdminUser.id
+
+Ref: TradingAccount.ownerAdminUserId > AdminUser.id
+
+Ref: TradingAccountCredential.tradingAccountId - TradingAccount.id [delete: Cascade]
+
+Ref: TradingAccountAccess.tradingAccountId > TradingAccount.id [delete: Cascade]
+
+Ref: TradingAccountAccess.adminUserId > AdminUser.id [delete: Cascade]
+
+Ref: OrderIntent.subscriptionId > Subscription.id
+
+Ref: OrderIntent.trackedPositionId > TrackedPosition.id [delete: Set Null]
+
+Ref: OrderIntent.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: BrokerOrder.securityId > Security.id
+
+Ref: BrokerOrder.orderIntentId > OrderIntent.id
+
+Ref: BrokerOrder.trackedPositionId > TrackedPosition.id [delete: Set Null]
+
+Ref: BrokerOrder.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: SystemEvent.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: AlpacaApiUsageBucket.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: EntryDecision.securityId > Security.id [delete: Set Null]
+
+Ref: EntryDecision.subscriptionId > Subscription.id [delete: Set Null]
+
+Ref: EntryDecision.strategyId > Strategy.id [delete: Set Null]
+
+Ref: EntryDecision.exitProfileId > ExitProfile.id [delete: Set Null]
+
+Ref: EntryDecision.orderIntentId - OrderIntent.id [delete: Set Null]
+
+Ref: EntryDecision.brokerOrderRecordId - BrokerOrder.id [delete: Set Null]
+
+Ref: EntryDecision.trackedPositionId - TrackedPosition.id [delete: Set Null]
+
+Ref: EntryDecision.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: TrackedPosition.securityId > Security.id
+
+Ref: TrackedPosition.subscriptionId > Subscription.id
+
+Ref: TrackedPosition.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: PositionExitState.trackedPositionId - TrackedPosition.id [delete: Cascade]
+
+Ref: AccountSnapshot.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: BrokerActivity.orderIntentId > OrderIntent.id
+
+Ref: BrokerActivity.brokerOrderRecordId > BrokerOrder.id
+
+Ref: BrokerActivity.trackedPositionId > TrackedPosition.id [delete: Set Null]
+
+Ref: BrokerActivity.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: Subscription.securityId > Security.id
+
+Ref: Subscription.strategyId > Strategy.id
+
+Ref: Subscription.exitProfileId > ExitProfile.id
+
+Ref: Subscription.tradingAccountId > TradingAccount.id [delete: Set Null]
