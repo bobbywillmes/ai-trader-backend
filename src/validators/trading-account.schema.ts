@@ -1,4 +1,8 @@
-import { BrokerCredentialAuthType, TradingAccountStatus } from '@prisma/client';
+import {
+  BrokerCredentialAuthType,
+  PositionSizingType,
+  TradingAccountStatus,
+} from '@prisma/client';
 import { z } from 'zod';
 
 const allocationKeySchema = z
@@ -76,4 +80,69 @@ export const updateTradingAccountAllocationSchema = z
 
 export type UpdateTradingAccountAllocationInput = z.infer<
   typeof updateTradingAccountAllocationSchema
+>;
+
+const accountSubscriptionBaseSchema = {
+  allocationId: z.coerce.number().int().positive().nullable().optional(),
+  enabled: z.boolean().optional(),
+  entriesEnabled: z.boolean().optional(),
+  exitsEnabled: z.boolean().optional(),
+  sizingType: z.enum(PositionSizingType).optional(),
+  fixedQty: z.coerce.number().positive().nullable().optional(),
+  maxPositionNotional: z.coerce.number().positive().nullable().optional(),
+  minPositionNotional: z.coerce.number().nonnegative().nullable().optional(),
+  maxQty: z.coerce.number().positive().nullable().optional(),
+  notes: z.string().trim().nullable().optional(),
+} as const;
+
+function validateCreateAccountSubscriptionSizing(
+  data: {
+    sizingType?: PositionSizingType | undefined;
+    fixedQty?: number | null | undefined;
+    maxPositionNotional?: number | null | undefined;
+  },
+  ctx: z.RefinementCtx
+) {
+  const sizingType = data.sizingType ?? PositionSizingType.FIXED_QTY;
+
+  if (sizingType === PositionSizingType.FIXED_QTY && data.fixedQty == null) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['fixedQty'],
+      message: 'fixedQty is required when sizingType is FIXED_QTY.',
+    });
+  }
+
+  if (
+    sizingType === PositionSizingType.MAX_NOTIONAL &&
+    data.maxPositionNotional == null
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['maxPositionNotional'],
+      message:
+        'maxPositionNotional is required when sizingType is MAX_NOTIONAL.',
+    });
+  }
+}
+
+export const createTradingAccountSubscriptionSchema = z
+  .strictObject({
+    subscriptionId: z.coerce.number().int().positive(),
+    ...accountSubscriptionBaseSchema,
+  })
+  .superRefine(validateCreateAccountSubscriptionSizing);
+
+export type CreateTradingAccountSubscriptionInput = z.infer<
+  typeof createTradingAccountSubscriptionSchema
+>;
+
+export const updateTradingAccountSubscriptionSchema = z
+  .strictObject(accountSubscriptionBaseSchema)
+  .refine((data) => Object.values(data).some((value) => value !== undefined), {
+    message: 'At least one trading account subscription field is required.',
+  });
+
+export type UpdateTradingAccountSubscriptionInput = z.infer<
+  typeof updateTradingAccountSubscriptionSchema
 >;
