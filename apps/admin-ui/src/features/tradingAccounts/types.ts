@@ -17,6 +17,8 @@ export type BrokerCredentialStatus =
 
 export type BrokerCredentialAuthType = "API_KEY";
 
+export type PositionSizingType = "FIXED_QTY" | "MAX_NOTIONAL";
+
 export type TradingAccountCredentialSummary = {
   exists: boolean;
   status: BrokerCredentialStatus | null;
@@ -90,6 +92,58 @@ export type TradingAccountAllocationResponse = {
   allocation: TradingAccountAllocation;
 };
 
+export type TradingAccountSubscriptionContext = {
+  id: number;
+  key: string;
+  symbol: string;
+  enabled: boolean;
+  strategy?: {
+    id: number;
+    key: string;
+    name: string;
+  } | null;
+  exitProfile?: {
+    id: number;
+    key: string;
+    name: string;
+  } | null;
+};
+
+export type TradingAccountSubscriptionAllocation = {
+  id: number;
+  key: string;
+  name: string;
+  enabled: boolean;
+};
+
+export type TradingAccountSubscription = {
+  id: number;
+  tradingAccountId: number;
+  subscriptionId: number;
+  allocationId: number | null;
+  enabled: boolean;
+  entriesEnabled: boolean;
+  exitsEnabled: boolean;
+  sizingType: PositionSizingType;
+  fixedQty: number | null;
+  maxPositionNotional: number | null;
+  minPositionNotional: number | null;
+  maxQty: number | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  subscription: TradingAccountSubscriptionContext;
+  allocation: TradingAccountSubscriptionAllocation | null;
+};
+
+export type TradingAccountSubscriptionsResponse = {
+  accountSubscriptions: TradingAccountSubscription[];
+};
+
+export type TradingAccountSubscriptionResponse = {
+  accountSubscription: TradingAccountSubscription;
+};
+
 export type UpdateTradingAccountPayload = Partial<{
   displayName: string;
   estimatedTradingCapital: number | null;
@@ -116,3 +170,21 @@ export type TradingAccountAllocationInput = {
   maxPositionNotional?: number | null;
   notes?: string | null;
 };
+
+export type TradingAccountSubscriptionInput = {
+  allocationId?: number | null;
+  enabled?: boolean;
+  entriesEnabled?: boolean;
+  exitsEnabled?: boolean;
+  sizingType?: PositionSizingType;
+  fixedQty?: number | null;
+  maxPositionNotional?: number | null;
+  minPositionNotional?: number | null;
+  maxQty?: number | null;
+  notes?: string | null;
+};
+
+export type CreateTradingAccountSubscriptionInput =
+  TradingAccountSubscriptionInput & {
+    subscriptionId: number;
+  };
