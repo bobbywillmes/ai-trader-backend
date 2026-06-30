@@ -31,6 +31,7 @@ import {
   useRevokeTradingAccountCredential,
   useTradingAccount,
   useTradingAccountAllocations,
+  useTradingAccountSubscriptionMarketContext,
   useTradingAccountSubscriptions,
   useUpdateTradingAccount,
   useUpdateTradingAccountAllocation,
@@ -39,6 +40,7 @@ import {
   useVerifyTradingAccountCredential,
 } from "./hooks";
 import type {
+  AccountSubscriptionMarketContextItem,
   BrokerCredentialStatus,
   PositionSizingType,
   TradingAccount,
@@ -400,6 +402,117 @@ function formatMoney(value: number | null | undefined, currency = "USD") {
   }).format(value);
 }
 
+function formatMarketDate(value: string | null | undefined) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
+
+function formatShareLabel(value: number | null | undefined) {
+  if (value === null || value === undefined) return "-";
+
+  return `${formatQuantity(value)} ${value === 1 ? "share" : "shares"}`;
+}
+
+function MarketContextCell({
+  context,
+  currency,
+  loading,
+}: {
+  context: AccountSubscriptionMarketContextItem | undefined;
+  currency: string;
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <Group gap="xs" wrap="nowrap">
+        <Loader size="xs" color="cyan" />
+        <Text size="xs" c="dimmed">
+          Loading...
+        </Text>
+      </Group>
+    );
+  }
+
+  if (!context) {
+    return (
+      <Text size="sm" c="dimmed">
+        Price unavailable
+      </Text>
+    );
+  }
+
+  if (context.latestPrice === null) {
+    return (
+      <Stack gap={2}>
+        <Text size="sm" c="dimmed">
+          Price unavailable
+        </Text>
+        {context.warnings.slice(0, 1).map((warning) => (
+          <Text key={warning} size="xs" c="orange">
+            {warning}
+          </Text>
+        ))}
+      </Stack>
+    );
+  }
+
+  return (
+    <Stack gap={2}>
+      <Text size="sm" fw={600}>
+        Latest: {formatMoney(context.latestPrice, currency)}
+      </Text>
+      <Text size="xs" c="dimmed">
+        52W: {formatMoney(context.week52Low, currency)} -{" "}
+        {formatMoney(context.week52High, currency)}
+      </Text>
+      {context.sizingType === "MAX_NOTIONAL" ? (
+        <>
+          <Text size="xs">
+            Budget: {formatMoney(context.maxPositionNotional, currency)}{" "}
+            {"->"}{" "}
+            {formatShareLabel(context.estimatedQty)}
+          </Text>
+          {context.dollarsToNextShare !== null &&
+            context.nextShareQty !== null &&
+            context.dollarsToNextShare > 0 && (
+              <Text size="xs" c="dimmed">
+                +{formatMoney(context.dollarsToNextShare, currency)} to reach{" "}
+                {formatShareLabel(context.nextShareQty)}
+              </Text>
+            )}
+        </>
+      ) : (
+        <>
+          <Text size="xs">
+            Fixed qty: {formatQuantity(context.fixedQty)}
+          </Text>
+          <Text size="xs" c="dimmed">
+            Estimated notional:{" "}
+            {formatMoney(context.estimatedNotional, currency)}
+          </Text>
+        </>
+      )}
+      {context.latestPriceAt && (
+        <Text size="xs" c="dimmed">
+          As of {formatMarketDate(context.latestPriceAt)}
+        </Text>
+      )}
+      {context.warnings.slice(0, 1).map((warning) => (
+        <Text key={warning} size="xs" c="orange">
+          {warning}
+        </Text>
+      ))}
+    </Stack>
+  );
+}
+
 function formatStatus(value: string | null | undefined) {
   if (!value) return "-";
   return value.replace(/_/g, " ");
@@ -659,6 +772,11 @@ function SizingAndAllocationsSection({
         These settings configure account-specific sizing and allocation budgets.
         Runtime order sizing still uses the legacy subscription sizing path
         until the next runtime sizing phase is implemented.
+      </Alert>
+
+      <Alert color="cyan" title="Market context note">
+        Price context is used to preview share quantities and budget thresholds.
+        Runtime order sizing has not been switched to these settings yet.
       </Alert>
 
       <AllocationManagementCard account={account} token={token} />
@@ -1125,9 +1243,25 @@ function AccountSubscriptionsManagementCard({
     account.id,
     token
   );
+  const {
+    data: marketContextData,
+    isLoading: marketContextLoading,
+    isError: marketContextIsError,
+    error: marketContextError,
+  } = useTradingAccountSubscriptionMarketContext(
+    account.id,
+    token,
+    statusFilter
+  );
   const updateMutation = useUpdateTradingAccountSubscription(token);
   const accountSubscriptions = data?.accountSubscriptions ?? [];
   const allocations = allocationData?.allocations ?? [];
+  const marketContextByAccountSubscriptionId = new Map(
+    (marketContextData?.items ?? []).map((item) => [
+      item.accountSubscriptionId,
+      item,
+    ])
+  );
   const draftError = draft ? validateAccountSubscriptionDraft(draft) : null;
   const filteredAccountSubscriptions = accountSubscriptions.filter(
     (accountSubscription) => {
@@ -1330,6 +1464,14 @@ function AccountSubscriptionsManagementCard({
             </Alert>
           )}
 
+          {marketContextIsError && (
+            <Alert color="yellow" title="Failed to load market context">
+              {marketContextError instanceof Error
+                ? marketContextError.message
+                : "Price context is unavailable."}
+            </Alert>
+          )}
+
           {isLoading && (
             <Group gap="sm">
               <Loader size="sm" color="cyan" />
@@ -1356,7 +1498,7 @@ function AccountSubscriptionsManagementCard({
 
           {filteredAccountSubscriptions.length > 0 && (
             <ScrollArea>
-              <Table striped highlightOnHover style={{ minWidth: 1240 }}>
+              <Table striped highlightOnHover style={{ minWidth: 1460 }}>
                 <Table.Thead>
                   <Table.Tr>
                     <Table.Th>Symbol</Table.Th>
@@ -1368,6 +1510,7 @@ function AccountSubscriptionsManagementCard({
                     <Table.Th>Entries</Table.Th>
                     <Table.Th>Exits</Table.Th>
                     <Table.Th>Sizing</Table.Th>
+                    <Table.Th>Market context</Table.Th>
                     <Table.Th>Limits</Table.Th>
                     <Table.Th>Updated</Table.Th>
                     <Table.Th />
@@ -1493,6 +1636,15 @@ function AccountSubscriptionsManagementCard({
                             )}
                           </Text>
                         </Stack>
+                      </Table.Td>
+                      <Table.Td style={{ minWidth: 230 }}>
+                        <MarketContextCell
+                          context={marketContextByAccountSubscriptionId.get(
+                            accountSubscription.id
+                          )}
+                          currency={account.baseCurrency}
+                          loading={marketContextLoading}
+                        />
                       </Table.Td>
                       <Table.Td>
                         <Text size="sm">
