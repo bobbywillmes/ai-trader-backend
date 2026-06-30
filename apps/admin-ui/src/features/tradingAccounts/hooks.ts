@@ -1,13 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  createTradingAccountAllocation,
+  createTradingAccountSubscription,
   getTradingAccount,
   getTradingAccounts,
+  getTradingAccountSubscription,
+  listTradingAccountAllocations,
+  listTradingAccountSubscriptions,
   revokeTradingAccountCredential,
   updateTradingAccount,
+  updateTradingAccountAllocation,
+  updateTradingAccountSubscription,
   upsertTradingAccountCredential,
   verifyTradingAccountCredential,
 } from "./api";
 import type {
+  CreateTradingAccountSubscriptionInput,
+  TradingAccountAllocationInput,
+  TradingAccountSubscriptionInput,
   UpdateTradingAccountPayload,
   UpsertTradingAccountCredentialPayload,
 } from "./types";
@@ -17,6 +27,15 @@ export const tradingAccountKeys = {
   lists: () => [...tradingAccountKeys.all, "list"] as const,
   details: () => [...tradingAccountKeys.all, "detail"] as const,
   detail: (id: number) => [...tradingAccountKeys.details(), id] as const,
+  allocations: (id: number) =>
+    [...tradingAccountKeys.detail(id), "allocations"] as const,
+  accountSubscriptions: (id: number) =>
+    [...tradingAccountKeys.detail(id), "accountSubscriptions"] as const,
+  accountSubscription: (id: number, accountSubscriptionId: number) =>
+    [
+      ...tradingAccountKeys.accountSubscriptions(id),
+      accountSubscriptionId,
+    ] as const,
 };
 
 export function useTradingAccounts(token: string | null) {
@@ -32,6 +51,52 @@ export function useTradingAccount(id: number | undefined, token: string | null) 
     queryKey: id ? tradingAccountKeys.detail(id) : tradingAccountKeys.details(),
     queryFn: () => getTradingAccount(id as number, token as string),
     enabled: Boolean(token && id),
+  });
+}
+
+export function useTradingAccountAllocations(
+  id: number | undefined,
+  token: string | null
+) {
+  return useQuery({
+    queryKey: id
+      ? tradingAccountKeys.allocations(id)
+      : [...tradingAccountKeys.details(), "allocations"],
+    queryFn: () => listTradingAccountAllocations(id as number, token as string),
+    enabled: Boolean(token && id),
+  });
+}
+
+export function useTradingAccountSubscriptions(
+  id: number | undefined,
+  token: string | null
+) {
+  return useQuery({
+    queryKey: id
+      ? tradingAccountKeys.accountSubscriptions(id)
+      : [...tradingAccountKeys.details(), "accountSubscriptions"],
+    queryFn: () => listTradingAccountSubscriptions(id as number, token as string),
+    enabled: Boolean(token && id),
+  });
+}
+
+export function useTradingAccountSubscription(
+  id: number | undefined,
+  accountSubscriptionId: number | undefined,
+  token: string | null
+) {
+  return useQuery({
+    queryKey:
+      id && accountSubscriptionId
+        ? tradingAccountKeys.accountSubscription(id, accountSubscriptionId)
+        : [...tradingAccountKeys.details(), "accountSubscriptions", "detail"],
+    queryFn: () =>
+      getTradingAccountSubscription(
+        id as number,
+        accountSubscriptionId as number,
+        token as string
+      ),
+    enabled: Boolean(token && id && accountSubscriptionId),
   });
 }
 
@@ -123,6 +188,153 @@ export function useRevokeTradingAccountCredential(token: string | null) {
         account,
       });
       queryClient.invalidateQueries({ queryKey: tradingAccountKeys.lists() });
+    },
+  });
+}
+
+export function useCreateTradingAccountAllocation(token: string | null) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      id,
+      payload,
+    }: {
+      id: number;
+      payload: TradingAccountAllocationInput;
+    }) => {
+      if (!token) {
+        throw new Error("Admin session is missing. Please log in again.");
+      }
+
+      return createTradingAccountAllocation(id, payload, token);
+    },
+    onSuccess: ({ allocation }) => {
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.allocations(allocation.tradingAccountId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.accountSubscriptions(
+          allocation.tradingAccountId
+        ),
+      });
+    },
+  });
+}
+
+export function useUpdateTradingAccountAllocation(token: string | null) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      id,
+      allocationId,
+      payload,
+    }: {
+      id: number;
+      allocationId: number;
+      payload: TradingAccountAllocationInput;
+    }) => {
+      if (!token) {
+        throw new Error("Admin session is missing. Please log in again.");
+      }
+
+      return updateTradingAccountAllocation(id, allocationId, payload, token);
+    },
+    onSuccess: ({ allocation }) => {
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.allocations(allocation.tradingAccountId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.accountSubscriptions(
+          allocation.tradingAccountId
+        ),
+      });
+    },
+  });
+}
+
+export function useCreateTradingAccountSubscription(token: string | null) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      id,
+      payload,
+    }: {
+      id: number;
+      payload: CreateTradingAccountSubscriptionInput;
+    }) => {
+      if (!token) {
+        throw new Error("Admin session is missing. Please log in again.");
+      }
+
+      return createTradingAccountSubscription(id, payload, token);
+    },
+    onSuccess: ({ accountSubscription }) => {
+      queryClient.setQueryData(
+        tradingAccountKeys.accountSubscription(
+          accountSubscription.tradingAccountId,
+          accountSubscription.id
+        ),
+        { accountSubscription }
+      );
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.accountSubscriptions(
+          accountSubscription.tradingAccountId
+        ),
+      });
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.allocations(
+          accountSubscription.tradingAccountId
+        ),
+      });
+    },
+  });
+}
+
+export function useUpdateTradingAccountSubscription(token: string | null) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      id,
+      accountSubscriptionId,
+      payload,
+    }: {
+      id: number;
+      accountSubscriptionId: number;
+      payload: TradingAccountSubscriptionInput;
+    }) => {
+      if (!token) {
+        throw new Error("Admin session is missing. Please log in again.");
+      }
+
+      return updateTradingAccountSubscription(
+        id,
+        accountSubscriptionId,
+        payload,
+        token
+      );
+    },
+    onSuccess: ({ accountSubscription }) => {
+      queryClient.setQueryData(
+        tradingAccountKeys.accountSubscription(
+          accountSubscription.tradingAccountId,
+          accountSubscription.id
+        ),
+        { accountSubscription }
+      );
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.accountSubscriptions(
+          accountSubscription.tradingAccountId
+        ),
+      });
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.allocations(
+          accountSubscription.tradingAccountId
+        ),
+      });
     },
   });
 }

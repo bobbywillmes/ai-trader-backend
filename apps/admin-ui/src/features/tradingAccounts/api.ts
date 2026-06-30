@@ -1,7 +1,14 @@
 import { apiRequest } from "../../lib/api";
 import type {
+  CreateTradingAccountSubscriptionInput,
   RevokeTradingAccountCredentialResponse,
+  TradingAccountAllocationInput,
+  TradingAccountAllocationResponse,
+  TradingAccountAllocationsResponse,
   TradingAccountResponse,
+  TradingAccountSubscriptionInput,
+  TradingAccountSubscriptionResponse,
+  TradingAccountSubscriptionsResponse,
   TradingAccountsListResponse,
   UpdateTradingAccountPayload,
   UpsertTradingAccountCredentialPayload,
@@ -66,6 +73,99 @@ export function revokeTradingAccountCredential(id: number, token: string) {
     {
       method: "POST",
       token,
+    }
+  );
+}
+
+export function listTradingAccountAllocations(id: number, token: string) {
+  return apiRequest<TradingAccountAllocationsResponse>(
+    `/api/trading-accounts/${id}/allocations`,
+    {
+      token,
+    }
+  );
+}
+
+export function createTradingAccountAllocation(
+  id: number,
+  payload: TradingAccountAllocationInput,
+  token: string
+) {
+  return apiRequest<TradingAccountAllocationResponse>(
+    `/api/trading-accounts/${id}/allocations`,
+    {
+      method: "POST",
+      token,
+      body: payload,
+    }
+  );
+}
+
+export function updateTradingAccountAllocation(
+  id: number,
+  allocationId: number,
+  payload: TradingAccountAllocationInput,
+  token: string
+) {
+  return apiRequest<TradingAccountAllocationResponse>(
+    `/api/trading-accounts/${id}/allocations/${allocationId}`,
+    {
+      method: "PATCH",
+      token,
+      body: payload,
+    }
+  );
+}
+
+export function listTradingAccountSubscriptions(id: number, token: string) {
+  return apiRequest<TradingAccountSubscriptionsResponse>(
+    `/api/trading-accounts/${id}/account-subscriptions`,
+    {
+      token,
+    }
+  );
+}
+
+export function getTradingAccountSubscription(
+  id: number,
+  accountSubscriptionId: number,
+  token: string
+) {
+  return apiRequest<TradingAccountSubscriptionResponse>(
+    `/api/trading-accounts/${id}/account-subscriptions/${accountSubscriptionId}`,
+    {
+      token,
+    }
+  );
+}
+
+export function createTradingAccountSubscription(
+  id: number,
+  payload: CreateTradingAccountSubscriptionInput,
+  token: string
+) {
+  return apiRequest<TradingAccountSubscriptionResponse>(
+    `/api/trading-accounts/${id}/account-subscriptions`,
+    {
+      method: "POST",
+      token,
+      body: payload,
+    }
+  );
+}
+
+export function updateTradingAccountSubscription(
+  id: number,
+  accountSubscriptionId: number,
+  payload: TradingAccountSubscriptionInput,
+  token: string
+) {
+  return apiRequest<TradingAccountSubscriptionResponse>(
+    `/api/trading-accounts/${id}/account-subscriptions/${accountSubscriptionId}`,
+    {
+      method: "PATCH",
+      token,
+      body: payload,
     }
   );
 }
