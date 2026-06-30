@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   revokeTradingAccountCredential: vi.fn(),
   upsertTradingAccountApiKeyCredential: vi.fn(),
   verifyTradingAccountCredential: vi.fn(),
+  createTradingAccountAllocationForAdmin: vi.fn(),
+  listTradingAccountAllocationsForAdmin: vi.fn(),
+  updateTradingAccountAllocationForAdmin: vi.fn(),
 }));
 
 vi.mock('../services/trading-account-credential.service.js', () => ({
@@ -26,11 +29,23 @@ vi.mock('../services/trading-account.service.js', () => ({
   updateTradingAccountForAdmin: mocks.updateTradingAccountForAdmin,
 }));
 
+vi.mock('../services/trading-account-allocation.service.js', () => ({
+  createTradingAccountAllocationForAdmin:
+    mocks.createTradingAccountAllocationForAdmin,
+  listTradingAccountAllocationsForAdmin:
+    mocks.listTradingAccountAllocationsForAdmin,
+  updateTradingAccountAllocationForAdmin:
+    mocks.updateTradingAccountAllocationForAdmin,
+}));
+
 import {
+  createTradingAccountAllocationController,
   getTradingAccountController,
+  listTradingAccountAllocationsController,
   listTradingAccountsController,
   revokeTradingAccountCredentialController,
   updateTradingAccountController,
+  updateTradingAccountAllocationController,
   upsertTradingAccountCredentialController,
   verifyTradingAccountCredentialController,
 } from './trading-accounts.controller.js';
@@ -61,6 +76,9 @@ describe('trading accounts controller', () => {
       ok: true,
       account: { id: 1 },
     });
+    mocks.listTradingAccountAllocationsForAdmin.mockResolvedValue([{ id: 10 }]);
+    mocks.createTradingAccountAllocationForAdmin.mockResolvedValue({ id: 10 });
+    mocks.updateTradingAccountAllocationForAdmin.mockResolvedValue({ id: 10 });
   });
 
   it('returns trading account list responses', async () => {
@@ -255,6 +273,255 @@ describe('trading accounts controller', () => {
       expect.objectContaining({
         statusCode: 404,
         message: 'Trading account not found.',
+      })
+    );
+  });
+
+  it('lists trading account allocations', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await listTradingAccountAllocationsController(
+      {
+        params: {
+          id: '1',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.listTradingAccountAllocationsForAdmin).toHaveBeenCalledWith(1);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({ allocations: [{ id: 10 }] });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('returns not found when listing allocations for a missing account', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.listTradingAccountAllocationsForAdmin.mockResolvedValue(null);
+
+    await listTradingAccountAllocationsController(
+      {
+        params: {
+          id: '404',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 404,
+        message: 'Trading account not found.',
+      })
+    );
+  });
+
+  it('creates trading account allocations with validated fields', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await createTradingAccountAllocationController(
+      {
+        params: {
+          id: '1',
+        },
+        body: {
+          key: ' Momentum ',
+          name: 'Momentum',
+          enabled: false,
+          maxAllocatedNotional: '10000',
+          maxOpenPositions: '4',
+          maxPositionNotional: '2500',
+          notes: null,
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.createTradingAccountAllocationForAdmin).toHaveBeenCalledWith(1, {
+      key: 'momentum',
+      name: 'Momentum',
+      enabled: false,
+      maxAllocatedNotional: 10_000,
+      maxOpenPositions: 4,
+      maxPositionNotional: 2_500,
+      notes: null,
+    });
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(res.json).toHaveBeenCalledWith({ allocation: { id: 10 } });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid allocation create requests', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await createTradingAccountAllocationController(
+      {
+        params: {
+          id: '1',
+        },
+        body: {
+          key: 'bad key',
+          name: 'Bad Key',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.createTradingAccountAllocationForAdmin).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 400,
+        message: 'Invalid trading account allocation request.',
+      })
+    );
+  });
+
+  it('returns not found when creating allocations for a missing account', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.createTradingAccountAllocationForAdmin.mockResolvedValue(null);
+
+    await createTradingAccountAllocationController(
+      {
+        params: {
+          id: '404',
+        },
+        body: {
+          key: 'momentum',
+          name: 'Momentum',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 404,
+        message: 'Trading account not found.',
+      })
+    );
+  });
+
+  it('updates trading account allocations with validated safe fields', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await updateTradingAccountAllocationController(
+      {
+        params: {
+          id: '1',
+          allocationId: '10',
+        },
+        body: {
+          key: ' Swing ',
+          name: 'Swing',
+          enabled: false,
+          maxAllocatedNotional: null,
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.updateTradingAccountAllocationForAdmin).toHaveBeenCalledWith(
+      1,
+      10,
+      {
+        key: 'swing',
+        name: 'Swing',
+        enabled: false,
+        maxAllocatedNotional: null,
+      }
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({ allocation: { id: 10 } });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid allocation ids on update', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await updateTradingAccountAllocationController(
+      {
+        params: {
+          id: '1',
+          allocationId: 'nope',
+        },
+        body: {
+          name: 'Swing',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.updateTradingAccountAllocationForAdmin).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 400,
+        message: 'Invalid trading account allocation id.',
+      })
+    );
+  });
+
+  it('rejects empty allocation updates', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await updateTradingAccountAllocationController(
+      {
+        params: {
+          id: '1',
+          allocationId: '10',
+        },
+        body: {},
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.updateTradingAccountAllocationForAdmin).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 400,
+        message: 'Invalid trading account allocation request.',
+      })
+    );
+  });
+
+  it('returns not found when updating a missing allocation', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.updateTradingAccountAllocationForAdmin.mockResolvedValue(null);
+
+    await updateTradingAccountAllocationController(
+      {
+        params: {
+          id: '1',
+          allocationId: '404',
+        },
+        body: {
+          name: 'Missing',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 404,
+        message: 'Trading account allocation not found.',
       })
     );
   });
