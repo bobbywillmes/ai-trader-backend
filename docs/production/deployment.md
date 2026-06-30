@@ -1020,3 +1020,12 @@ DEFAULT_TRADING_ACCOUNT_DISPLAY_NAME="Bobby Paper" \
 DEFAULT_TRADING_ACCOUNT_CAPITAL="10000" \
 DEFAULT_TRADING_ACCOUNT_ENVIRONMENT="PAPER" \
 npx tsx scripts/bootstrap-default-trading-account.ts
+```
+
+## 22. One-time trading account subscription bootstrap
+
+After applying the account subscription sizing foundation migration, run the one-time bootstrap script to create `TradingAccountSubscription` rows for the default account and backfill lifecycle records.
+
+```bash
+DEFAULT_TRADING_ACCOUNT_ID=1 npx tsx scripts/bootstrap-trading-account-subscriptions.ts
+```
