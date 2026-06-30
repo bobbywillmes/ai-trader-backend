@@ -83,6 +83,11 @@ enum TradingAccountStatus {
   ERROR
 }
 
+enum PositionSizingType {
+  FIXED_QTY
+  MAX_NOTIONAL
+}
+
 model TradingAccount {
   id                        Int @id @default(autoincrement())
 
@@ -120,6 +125,8 @@ model TradingAccount {
 
   // Future/current trading relations
   subscriptions             Subscription[]
+  allocations               TradingAccountAllocation[]
+  accountSubscriptions      TradingAccountSubscription[]
   orderIntents              OrderIntent[]
   brokerOrders              BrokerOrder[]
   brokerActivities          BrokerActivity[]
@@ -215,6 +222,94 @@ model TradingAccountAccess {
   @@index([role])
 }
 
+model TradingAccountAllocation {
+  id                      Int @id @default(autoincrement())
+
+  tradingAccountId        Int
+  tradingAccount          TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Cascade)
+
+  key                     String
+  name                    String
+  description             String?
+
+  enabled                 Boolean @default(true)
+
+  // Total dollars allowed/reserved for this allocation bucket.
+  // Optional for the foundation migration so existing data can be backfilled safely.
+  maxAllocatedNotional    Float?
+
+  // Useful for shared buckets like momentum.
+  maxOpenPositions        Int?
+
+  // Optional default per-position cap for subscriptions assigned to this bucket.
+  // TradingAccountSubscription.maxPositionNotional can override this.
+  maxPositionNotional     Float?
+
+  notes String?
+
+  accountSubscriptions    TradingAccountSubscription[]
+
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@unique([tradingAccountId, key])
+  @@index([tradingAccountId])
+  @@index([enabled])
+}
+
+model TradingAccountSubscription {
+  id Int @id @default(autoincrement())
+
+  tradingAccountId      Int
+  tradingAccount        TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Cascade)
+
+  subscriptionId        Int
+  subscription          Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  allocationId          Int?
+  allocation            TradingAccountAllocation? @relation(fields: [allocationId], references: [id], onDelete: SetNull)
+
+  // Master account-subscription switch.
+  enabled               Boolean @default(true)
+
+  // Operational switches.
+  entriesEnabled        Boolean @default(true)
+  exitsEnabled          Boolean @default(true)
+
+  sizingType            PositionSizingType @default(FIXED_QTY)
+
+  // Used when sizingType = FIXED_QTY.
+  fixedQty              Float?
+
+  // Used when sizingType = MAX_NOTIONAL.
+  maxPositionNotional   Float?
+
+  // Optional guardrails.
+  minPositionNotional   Float?
+  maxQty                Float?
+
+  notes String?
+
+  orderIntents          OrderIntent[]
+  trackedPositions      TrackedPosition[]
+  entryDecisions        EntryDecision[]
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([tradingAccountId, subscriptionId])
+  @@index([tradingAccountId])
+  @@index([subscriptionId])
+  @@index([allocationId])
+  @@index([enabled])
+  @@index([entriesEnabled])
+  @@index([exitsEnabled])
+  @@index([tradingAccountId, enabled])
+  @@index([tradingAccountId, entriesEnabled])
+  @@index([tradingAccountId, exitsEnabled])
+  @@index([allocationId, enabled])
+}
+
 enum AssetType {
   STOCK
   ETF
@@ -272,6 +367,9 @@ model OrderIntent {
   tradingAccountId  Int?
   tradingAccount    TradingAccount? @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
 
+  tradingAccountSubscriptionId      Int?
+  tradingAccountSubscription        TradingAccountSubscription? @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: SetNull)
+
   brokerOrders     BrokerOrder[]
   brokerActivities BrokerActivity[]
   entryDecision    EntryDecision?
@@ -280,6 +378,9 @@ model OrderIntent {
   @@index([tradingAccountId])
   @@index([tradingAccountId, status])
   @@index([tradingAccountId, createdAt])
+  @@index([tradingAccountSubscriptionId])
+  @@index([tradingAccountId, tradingAccountSubscriptionId])
+  @@index([tradingAccountSubscriptionId, createdAt])
 }
 
 model BrokerOrder {
@@ -510,6 +611,9 @@ model EntryDecision {
   tradingAccountId        Int?
   tradingAccount          TradingAccount? @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
 
+  tradingAccountSubscriptionId    Int?
+  tradingAccountSubscription      TradingAccountSubscription? @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: SetNull)
+
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
@@ -523,6 +627,9 @@ model EntryDecision {
   @@index([tradingAccountId])
   @@index([tradingAccountId, evaluatedAt])
   @@index([tradingAccountId, symbol, evaluatedAt])
+  @@index([tradingAccountSubscriptionId])
+  @@index([tradingAccountId, tradingAccountSubscriptionId])
+  @@index([tradingAccountSubscriptionId, evaluatedAt])
 }
 
 model TrackedPosition {
@@ -564,6 +671,9 @@ model TrackedPosition {
   tradingAccountId        Int?
   tradingAccount          TradingAccount? @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
 
+  tradingAccountSubscriptionId    Int?
+  tradingAccountSubscription      TradingAccountSubscription? @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: SetNull)
+
   // Unlock trailing-stop state
   trailingUnlocked      Boolean   @default(false)
   trailingUnlockedAt    DateTime?
@@ -590,6 +700,9 @@ model TrackedPosition {
   @@index([tradingAccountId, status])
   @@index([tradingAccountId, symbol])
   @@index([tradingAccountId, symbol, status])
+  @@index([tradingAccountSubscriptionId])
+  @@index([tradingAccountId, tradingAccountSubscriptionId])
+  @@index([tradingAccountSubscriptionId, status])
 }
 
 model PositionExitState {
@@ -788,9 +901,10 @@ model Subscription {
   strategy    Strategy    @relation(fields: [strategyId], references: [id])
   exitProfile ExitProfile @relation(fields: [exitProfileId], references: [id])
 
-  trackedPositions TrackedPosition[]
-  orderIntents     OrderIntent[]
-  entryDecisions   EntryDecision[]
+  trackedPositions        TrackedPosition[]
+  orderIntents            OrderIntent[]
+  entryDecisions          EntryDecision[]
+  accountSubscriptions    TradingAccountSubscription[]
 
   tradingAccountId  Int?
   tradingAccount    TradingAccount? @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
