@@ -381,6 +381,136 @@ groundwork only in this phase. Setting an account subscription to
 sizing still follows the legacy `Subscription.sizingType` /
 `Subscription.sizingValue` path until the runtime sizing phase is implemented.
 
+## Account Subscription Market Context
+
+Market context endpoints provide backend-owned price data for account
+subscription budget configuration. They are admin preview APIs only. They do not
+change runtime order sizing, order-worker behavior, broker submissions, or the
+n8n signal contract.
+
+List market context for account subscriptions:
+
+```http
+GET /api/trading-accounts/:id/account-subscriptions/market-context
+```
+
+Supported query parameters:
+
+```text
+status=active|all|disabled
+symbols=SPY,QQQ,DIA
+```
+
+`status` defaults to `active`. `symbols` is optional and filters the account's
+account subscriptions by symbol after loading account-scoped rows.
+
+Response envelope:
+
+```json
+{
+  "tradingAccountId": 1,
+  "generatedAt": "2026-06-30T00:00:00.000Z",
+  "items": [
+    {
+      "accountSubscriptionId": 1,
+      "subscriptionId": 10,
+      "symbol": "DIA",
+      "subscriptionKey": "dia-swing",
+      "latestPrice": 522.67,
+      "latestPriceAt": "2026-06-30T20:00:00.000Z",
+      "latestPriceSource": "lastTrade",
+      "week52High": 545.1,
+      "week52Low": 410.25,
+      "week52HighAt": "2026-06-20",
+      "week52LowAt": "2025-08-05",
+      "sizingType": "MAX_NOTIONAL",
+      "fixedQty": null,
+      "maxPositionNotional": 1000,
+      "minPositionNotional": null,
+      "maxQty": null,
+      "estimatedQty": 1,
+      "estimatedNotional": 522.67,
+      "nextShareQty": 2,
+      "nextShareNotional": 1045.34,
+      "dollarsToNextShare": 45.34,
+      "warnings": []
+    }
+  ]
+}
+```
+
+Budget preview rules are whole-share only:
+
+```text
+MAX_NOTIONAL estimatedQty = floor(maxPositionNotional / latestPrice)
+MAX_NOTIONAL estimatedNotional = estimatedQty * latestPrice
+MAX_NOTIONAL nextShareQty = estimatedQty + 1
+MAX_NOTIONAL nextShareNotional = nextShareQty * latestPrice
+MAX_NOTIONAL dollarsToNextShare = max(0, nextShareNotional - maxPositionNotional)
+
+FIXED_QTY estimatedQty = fixedQty
+FIXED_QTY estimatedNotional = fixedQty * latestPrice
+```
+
+When the latest price is unavailable, estimated quantity and notional values are
+`null` and `warnings` includes:
+
+```text
+Latest price unavailable.
+```
+
+When a `MAX_NOTIONAL` budget is below the latest price, `warnings` includes:
+
+```text
+Budget is below the latest price; calculated quantity would be 0.
+```
+
+Read daily price history for one account subscription:
+
+```http
+GET /api/trading-accounts/:id/account-subscriptions/:accountSubscriptionId/price-history?range=1y
+```
+
+Supported ranges:
+
+```text
+3m
+6m
+1y
+```
+
+The default range is `1y`. The endpoint returns daily candles intended for
+budget-setting charts, plus latest close and 52-week high/low summary values.
+
+Response envelope:
+
+```json
+{
+  "tradingAccountId": 1,
+  "accountSubscriptionId": 1,
+  "subscriptionId": 10,
+  "symbol": "DIA",
+  "range": "1y",
+  "generatedAt": "2026-06-30T00:00:00.000Z",
+  "candles": [
+    {
+      "date": "2026-06-30",
+      "open": 520.1,
+      "high": 525.5,
+      "low": 519.75,
+      "close": 522.67,
+      "volume": 1234567
+    }
+  ],
+  "summary": {
+    "latestClose": 522.67,
+    "latestCloseAt": "2026-06-30",
+    "week52High": 545.1,
+    "week52Low": 410.25
+  }
+}
+```
+
 Credential inputs are intentionally never prefilled. After credentials are
 saved, the UI clears the submitted key and secret and displays only the safe
 credential summary returned by the backend.
