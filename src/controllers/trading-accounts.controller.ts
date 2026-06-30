@@ -23,6 +23,12 @@ import {
   updateTradingAccountSubscriptionForAdmin,
 } from '../services/trading-account-subscription.service.js';
 import {
+  getAccountSubscriptionPriceHistoryForAdmin,
+  listAccountSubscriptionMarketContextForAdmin,
+  parseAccountSubscriptionMarketContextStatus,
+  parseAccountSubscriptionPriceHistoryRange,
+} from '../services/account-subscription-market-context.service.js';
+import {
   createTradingAccountAllocationSchema,
   createTradingAccountSubscriptionSchema,
   updateTradingAccountSchema,
@@ -60,6 +66,19 @@ function parseAccountSubscriptionId(value: unknown) {
   }
 
   return id;
+}
+
+function parseSymbolsQuery(value: unknown) {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const symbols = value
+    .split(',')
+    .map((symbol) => symbol.trim().toUpperCase())
+    .filter((symbol) => symbol.length > 0);
+
+  return symbols.length > 0 ? symbols : undefined;
 }
 
 export async function listTradingAccountsController(
@@ -251,6 +270,60 @@ export async function getTradingAccountSubscriptionController(
     }
 
     res.status(200).json({ accountSubscription });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function listTradingAccountSubscriptionMarketContextController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const accountId = parseTradingAccountId(req.params.id);
+    const symbols = parseSymbolsQuery(req.query.symbols);
+    const result = await listAccountSubscriptionMarketContextForAdmin(
+      accountId,
+      {
+        status: parseAccountSubscriptionMarketContextStatus(req.query.status),
+        ...(symbols !== undefined && { symbols }),
+      }
+    );
+
+    if (!result) {
+      throw new HttpError(404, 'Trading account not found.');
+    }
+
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getTradingAccountSubscriptionPriceHistoryController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const accountId = parseTradingAccountId(req.params.id);
+    const accountSubscriptionId = parseAccountSubscriptionId(
+      req.params.accountSubscriptionId
+    );
+    const result = await getAccountSubscriptionPriceHistoryForAdmin(
+      accountId,
+      accountSubscriptionId,
+      {
+        range: parseAccountSubscriptionPriceHistoryRange(req.query.range),
+      }
+    );
+
+    if (!result) {
+      throw new HttpError(404, 'Trading account subscription not found.');
+    }
+
+    res.status(200).json(result);
   } catch (error) {
     next(error);
   }

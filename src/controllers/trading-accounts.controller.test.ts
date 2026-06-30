@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   getTradingAccountSubscriptionForAdmin: vi.fn(),
   listTradingAccountSubscriptionsForAdmin: vi.fn(),
   updateTradingAccountSubscriptionForAdmin: vi.fn(),
+  getAccountSubscriptionPriceHistoryForAdmin: vi.fn(),
+  listAccountSubscriptionMarketContextForAdmin: vi.fn(),
 }));
 
 vi.mock('../services/trading-account-credential.service.js', () => ({
@@ -53,12 +55,29 @@ vi.mock('../services/trading-account-subscription.service.js', () => ({
     mocks.updateTradingAccountSubscriptionForAdmin,
 }));
 
+vi.mock('../services/account-subscription-market-context.service.js', async () => {
+  const actual =
+    await vi.importActual<
+      typeof import('../services/account-subscription-market-context.service.js')
+    >('../services/account-subscription-market-context.service.js');
+
+  return {
+    ...actual,
+    getAccountSubscriptionPriceHistoryForAdmin:
+      mocks.getAccountSubscriptionPriceHistoryForAdmin,
+    listAccountSubscriptionMarketContextForAdmin:
+      mocks.listAccountSubscriptionMarketContextForAdmin,
+  };
+});
+
 import {
   createTradingAccountAllocationController,
   createTradingAccountSubscriptionController,
+  getTradingAccountSubscriptionPriceHistoryController,
   getTradingAccountSubscriptionController,
   getTradingAccountController,
   listTradingAccountAllocationsController,
+  listTradingAccountSubscriptionMarketContextController,
   listTradingAccountSubscriptionsController,
   listTradingAccountsController,
   revokeTradingAccountCredentialController,
@@ -102,6 +121,26 @@ describe('trading accounts controller', () => {
     mocks.getTradingAccountSubscriptionForAdmin.mockResolvedValue({ id: 20 });
     mocks.createTradingAccountSubscriptionForAdmin.mockResolvedValue({ id: 20 });
     mocks.updateTradingAccountSubscriptionForAdmin.mockResolvedValue({ id: 20 });
+    mocks.listAccountSubscriptionMarketContextForAdmin.mockResolvedValue({
+      tradingAccountId: 1,
+      generatedAt: '2026-06-30T16:00:00.000Z',
+      items: [{ accountSubscriptionId: 20 }],
+    });
+    mocks.getAccountSubscriptionPriceHistoryForAdmin.mockResolvedValue({
+      tradingAccountId: 1,
+      accountSubscriptionId: 20,
+      subscriptionId: 30,
+      symbol: 'DIA',
+      range: '1y',
+      generatedAt: '2026-06-30T16:00:00.000Z',
+      candles: [],
+      summary: {
+        latestClose: null,
+        latestCloseAt: null,
+        week52High: null,
+        week52Low: null,
+      },
+    });
   });
 
   it('returns trading account list responses', async () => {
@@ -657,6 +696,210 @@ describe('trading accounts controller', () => {
           id: '1',
           accountSubscriptionId: '404',
         },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 404,
+        message: 'Trading account subscription not found.',
+      })
+    );
+  });
+
+  it('lists account subscription market context with simple query filters', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await listTradingAccountSubscriptionMarketContextController(
+      {
+        params: {
+          id: '1',
+        },
+        query: {
+          status: 'all',
+          symbols: ' spy, DIA ,,',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(
+      mocks.listAccountSubscriptionMarketContextForAdmin
+    ).toHaveBeenCalledWith(1, {
+      status: 'all',
+      symbols: ['SPY', 'DIA'],
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      tradingAccountId: 1,
+      generatedAt: '2026-06-30T16:00:00.000Z',
+      items: [{ accountSubscriptionId: 20 }],
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('defaults account subscription market context filters conservatively', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await listTradingAccountSubscriptionMarketContextController(
+      {
+        params: {
+          id: '1',
+        },
+        query: {
+          status: 'bad',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(
+      mocks.listAccountSubscriptionMarketContextForAdmin
+    ).toHaveBeenCalledWith(1, {
+      status: 'active',
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('returns not found when market context targets a missing trading account', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.listAccountSubscriptionMarketContextForAdmin.mockResolvedValue(null);
+
+    await listTradingAccountSubscriptionMarketContextController(
+      {
+        params: {
+          id: '404',
+        },
+        query: {},
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 404,
+        message: 'Trading account not found.',
+      })
+    );
+  });
+
+  it('returns account subscription price history with parsed range', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await getTradingAccountSubscriptionPriceHistoryController(
+      {
+        params: {
+          id: '1',
+          accountSubscriptionId: '20',
+        },
+        query: {
+          range: '3m',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(
+      mocks.getAccountSubscriptionPriceHistoryForAdmin
+    ).toHaveBeenCalledWith(1, 20, {
+      range: '3m',
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      tradingAccountId: 1,
+      accountSubscriptionId: 20,
+      subscriptionId: 30,
+      symbol: 'DIA',
+      range: '1y',
+      generatedAt: '2026-06-30T16:00:00.000Z',
+      candles: [],
+      summary: {
+        latestClose: null,
+        latestCloseAt: null,
+        week52High: null,
+        week52Low: null,
+      },
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('defaults invalid price history ranges to 1y', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await getTradingAccountSubscriptionPriceHistoryController(
+      {
+        params: {
+          id: '1',
+          accountSubscriptionId: '20',
+        },
+        query: {
+          range: 'bad',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(
+      mocks.getAccountSubscriptionPriceHistoryForAdmin
+    ).toHaveBeenCalledWith(1, 20, {
+      range: '1y',
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid account subscription ids on price history requests', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await getTradingAccountSubscriptionPriceHistoryController(
+      {
+        params: {
+          id: '1',
+          accountSubscriptionId: 'nope',
+        },
+        query: {},
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(
+      mocks.getAccountSubscriptionPriceHistoryForAdmin
+    ).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 400,
+        message: 'Invalid trading account subscription id.',
+      })
+    );
+  });
+
+  it('returns not found when price history targets a missing account subscription', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.getAccountSubscriptionPriceHistoryForAdmin.mockResolvedValue(null);
+
+    await getTradingAccountSubscriptionPriceHistoryController(
+      {
+        params: {
+          id: '1',
+          accountSubscriptionId: '404',
+        },
+        query: {},
       } as unknown as Request,
       res,
       next
