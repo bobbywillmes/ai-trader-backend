@@ -362,9 +362,24 @@ Use the detail page to:
 
 - inspect account summary and broker metadata
 - edit only safe mutable account fields
+- manage account allocation buckets under `Sizing & Allocations`
+- review account subscriptions under `Sizing & Allocations`
+- edit account-subscription allocation, activation switches, sizing type,
+  sizing values, optional limits, and notes
 - submit or replace Alpaca API-key credentials
 - verify credentials and refresh broker metadata
 - revoke credentials when account-scoped broker access should be disabled
+
+The account subscriptions table defaults to active account subscriptions so
+accounts with many historical or disabled rows stay readable. Admins can switch
+the status filter to all or disabled rows, and can also filter by search text,
+sizing type, or allocation bucket.
+
+Account-subscription sizing changes in the Admin UI are configuration
+groundwork only in this phase. Setting an account subscription to
+`MAX_NOTIONAL` stores the account-specific configuration, but runtime order
+sizing still follows the legacy `Subscription.sizingType` /
+`Subscription.sizingValue` path until the runtime sizing phase is implemented.
 
 Credential inputs are intentionally never prefilled. After credentials are
 saved, the UI clears the submitted key and secret and displays only the safe
