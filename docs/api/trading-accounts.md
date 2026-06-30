@@ -69,6 +69,217 @@ notes
 Identity fields such as `broker` and `environment` are intentionally rejected
 by this generic update endpoint.
 
+## Manage Allocation Buckets
+
+Allocation buckets group account-scoped subscription sizing limits. They are
+admin configuration records only; they do not change runtime order sizing until
+the sizing runtime is switched in a later phase.
+
+List allocations for one trading account:
+
+```http
+GET /api/trading-accounts/:id/allocations
+```
+
+Response envelope:
+
+```json
+{
+  "allocations": [
+    {
+      "id": 1,
+      "tradingAccountId": 1,
+      "key": "momentum",
+      "name": "Momentum",
+      "description": null,
+      "enabled": true,
+      "maxAllocatedNotional": 10000,
+      "maxOpenPositions": 4,
+      "maxPositionNotional": 2500,
+      "notes": null,
+      "createdAt": "2026-06-30T00:00:00.000Z",
+      "updatedAt": "2026-06-30T00:00:00.000Z",
+      "accountSubscriptionCount": 2
+    }
+  ]
+}
+```
+
+Create an allocation:
+
+```http
+POST /api/trading-accounts/:id/allocations
+```
+
+Payload:
+
+```json
+{
+  "key": "momentum",
+  "name": "Momentum",
+  "description": "Momentum strategy allocation bucket",
+  "enabled": true,
+  "maxAllocatedNotional": 10000,
+  "maxOpenPositions": 4,
+  "maxPositionNotional": 2500,
+  "notes": null
+}
+```
+
+Update an allocation:
+
+```http
+PATCH /api/trading-accounts/:id/allocations/:allocationId
+```
+
+Allowed update fields:
+
+```text
+key
+name
+description
+enabled
+maxAllocatedNotional
+maxOpenPositions
+maxPositionNotional
+notes
+```
+
+Allocation keys are trimmed, lowercased, and must contain only letters,
+numbers, hyphens, and underscores. Duplicate keys within the same trading
+account return `409`.
+
+Use `enabled=false` to disable an allocation. Hard delete is intentionally not
+available.
+
+## Manage Account Subscriptions
+
+Account subscriptions attach a trading account to an existing legacy
+`Subscription` and store account-specific sizing configuration. These records
+are for future account-scoped sizing management only; current runtime order
+sizing and the n8n signal request/response contract remain unchanged.
+
+List account subscriptions:
+
+```http
+GET /api/trading-accounts/:id/account-subscriptions
+```
+
+Read one account subscription:
+
+```http
+GET /api/trading-accounts/:id/account-subscriptions/:accountSubscriptionId
+```
+
+Response envelope:
+
+```json
+{
+  "accountSubscription": {
+    "id": 1,
+    "tradingAccountId": 1,
+    "subscriptionId": 10,
+    "allocationId": 1,
+    "enabled": true,
+    "entriesEnabled": true,
+    "exitsEnabled": true,
+    "sizingType": "FIXED_QTY",
+    "fixedQty": 1,
+    "maxPositionNotional": null,
+    "minPositionNotional": null,
+    "maxQty": null,
+    "notes": null,
+    "createdAt": "2026-06-30T00:00:00.000Z",
+    "updatedAt": "2026-06-30T00:00:00.000Z",
+    "subscription": {
+      "id": 10,
+      "key": "spy-swing",
+      "symbol": "SPY",
+      "enabled": true,
+      "strategy": {
+        "id": 2,
+        "key": "swing",
+        "name": "Swing"
+      },
+      "exitProfile": {
+        "id": 3,
+        "key": "standard",
+        "name": "Standard"
+      }
+    },
+    "allocation": {
+      "id": 1,
+      "key": "momentum",
+      "name": "Momentum",
+      "enabled": true
+    }
+  }
+}
+```
+
+Create an account subscription:
+
+```http
+POST /api/trading-accounts/:id/account-subscriptions
+```
+
+Payload:
+
+```json
+{
+  "subscriptionId": 10,
+  "allocationId": 1,
+  "enabled": true,
+  "entriesEnabled": true,
+  "exitsEnabled": true,
+  "sizingType": "FIXED_QTY",
+  "fixedQty": 1,
+  "minPositionNotional": null,
+  "maxQty": null,
+  "notes": null
+}
+```
+
+Update an account subscription:
+
+```http
+PATCH /api/trading-accounts/:id/account-subscriptions/:accountSubscriptionId
+```
+
+Allowed update fields:
+
+```text
+allocationId
+enabled
+entriesEnabled
+exitsEnabled
+sizingType
+fixedQty
+maxPositionNotional
+minPositionNotional
+maxQty
+notes
+```
+
+The generic update endpoint does not allow changing `id`, `tradingAccountId`,
+or `subscriptionId`.
+
+Sizing validation:
+
+```text
+FIXED_QTY requires fixedQty > 0
+MAX_NOTIONAL requires maxPositionNotional > 0
+minPositionNotional must be >= 0 when present
+maxQty must be > 0 when present
+```
+
+When switching `sizingType`, the opposite sizing field is normalized to `null`.
+For example, switching to `FIXED_QTY` clears `maxPositionNotional`, and
+switching to `MAX_NOTIONAL` clears `fixedQty`.
+
+`allocationId`, when present, must belong to the same trading account.
+Duplicate `tradingAccountId + subscriptionId` rows return `409`.
+
 ## Upsert Broker Credentials
 
 ```http
@@ -169,5 +380,8 @@ settings form.
 - No route returns encrypted credential payloads.
 - n8n should continue to use signal APIs only and should not use broker
   credentials.
+- Allocation and account-subscription APIs configure future account-scoped
+  sizing data only. They do not change order worker behavior or the n8n signal
+  contract in this phase.
 - Bobby Paper can continue to use legacy Alpaca env credentials when no
   `ACTIVE` account-scoped credential exists.

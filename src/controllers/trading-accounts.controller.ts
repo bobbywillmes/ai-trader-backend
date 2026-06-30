@@ -12,7 +12,22 @@ import {
   upsertTradingAccountApiKeyCredential,
 } from '../services/trading-account-credential.service.js';
 import {
+  createTradingAccountAllocationForAdmin,
+  listTradingAccountAllocationsForAdmin,
+  updateTradingAccountAllocationForAdmin,
+} from '../services/trading-account-allocation.service.js';
+import {
+  createTradingAccountSubscriptionForAdmin,
+  getTradingAccountSubscriptionForAdmin,
+  listTradingAccountSubscriptionsForAdmin,
+  updateTradingAccountSubscriptionForAdmin,
+} from '../services/trading-account-subscription.service.js';
+import {
+  createTradingAccountAllocationSchema,
+  createTradingAccountSubscriptionSchema,
   updateTradingAccountSchema,
+  updateTradingAccountAllocationSchema,
+  updateTradingAccountSubscriptionSchema,
   upsertTradingAccountCredentialSchema,
 } from '../validators/trading-account.schema.js';
 import { verifyTradingAccountCredential } from '../services/trading-account-credential-verification.service.js';
@@ -22,6 +37,26 @@ function parseTradingAccountId(value: unknown) {
 
   if (!Number.isInteger(id) || id <= 0) {
     throw new HttpError(400, 'Invalid trading account id.');
+  }
+
+  return id;
+}
+
+function parseAllocationId(value: unknown) {
+  const id = typeof value === 'string' ? Number(value) : NaN;
+
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new HttpError(400, 'Invalid trading account allocation id.');
+  }
+
+  return id;
+}
+
+function parseAccountSubscriptionId(value: unknown) {
+  const id = typeof value === 'string' ? Number(value) : NaN;
+
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new HttpError(400, 'Invalid trading account subscription id.');
   }
 
   return id;
@@ -79,6 +114,212 @@ export async function updateTradingAccountController(
     if (error instanceof ZodError) {
       next(
         new HttpError(400, 'Invalid trading account update request.', error.flatten())
+      );
+      return;
+    }
+
+    next(error);
+  }
+}
+
+export async function listTradingAccountAllocationsController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const accountId = parseTradingAccountId(req.params.id);
+    const allocations = await listTradingAccountAllocationsForAdmin(accountId);
+
+    if (!allocations) {
+      throw new HttpError(404, 'Trading account not found.');
+    }
+
+    res.status(200).json({ allocations });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function createTradingAccountAllocationController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const accountId = parseTradingAccountId(req.params.id);
+    const input = createTradingAccountAllocationSchema.parse(req.body);
+    const allocation = await createTradingAccountAllocationForAdmin(
+      accountId,
+      input
+    );
+
+    if (!allocation) {
+      throw new HttpError(404, 'Trading account not found.');
+    }
+
+    res.status(201).json({ allocation });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      next(
+        new HttpError(
+          400,
+          'Invalid trading account allocation request.',
+          error.flatten()
+        )
+      );
+      return;
+    }
+
+    next(error);
+  }
+}
+
+export async function updateTradingAccountAllocationController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const accountId = parseTradingAccountId(req.params.id);
+    const allocationId = parseAllocationId(req.params.allocationId);
+    const input = updateTradingAccountAllocationSchema.parse(req.body);
+    const allocation = await updateTradingAccountAllocationForAdmin(
+      accountId,
+      allocationId,
+      input
+    );
+
+    if (!allocation) {
+      throw new HttpError(404, 'Trading account allocation not found.');
+    }
+
+    res.status(200).json({ allocation });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      next(
+        new HttpError(
+          400,
+          'Invalid trading account allocation request.',
+          error.flatten()
+        )
+      );
+      return;
+    }
+
+    next(error);
+  }
+}
+
+export async function listTradingAccountSubscriptionsController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const accountId = parseTradingAccountId(req.params.id);
+    const accountSubscriptions =
+      await listTradingAccountSubscriptionsForAdmin(accountId);
+
+    if (!accountSubscriptions) {
+      throw new HttpError(404, 'Trading account not found.');
+    }
+
+    res.status(200).json({ accountSubscriptions });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getTradingAccountSubscriptionController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const accountId = parseTradingAccountId(req.params.id);
+    const accountSubscriptionId = parseAccountSubscriptionId(
+      req.params.accountSubscriptionId
+    );
+    const accountSubscription = await getTradingAccountSubscriptionForAdmin(
+      accountId,
+      accountSubscriptionId
+    );
+
+    if (!accountSubscription) {
+      throw new HttpError(404, 'Trading account subscription not found.');
+    }
+
+    res.status(200).json({ accountSubscription });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function createTradingAccountSubscriptionController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const accountId = parseTradingAccountId(req.params.id);
+    const input = createTradingAccountSubscriptionSchema.parse(req.body);
+    const accountSubscription = await createTradingAccountSubscriptionForAdmin(
+      accountId,
+      input
+    );
+
+    if (!accountSubscription) {
+      throw new HttpError(404, 'Trading account not found.');
+    }
+
+    res.status(201).json({ accountSubscription });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      next(
+        new HttpError(
+          400,
+          'Invalid trading account subscription request.',
+          error.flatten()
+        )
+      );
+      return;
+    }
+
+    next(error);
+  }
+}
+
+export async function updateTradingAccountSubscriptionController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const accountId = parseTradingAccountId(req.params.id);
+    const accountSubscriptionId = parseAccountSubscriptionId(
+      req.params.accountSubscriptionId
+    );
+    const input = updateTradingAccountSubscriptionSchema.parse(req.body);
+    const accountSubscription = await updateTradingAccountSubscriptionForAdmin(
+      accountId,
+      accountSubscriptionId,
+      input
+    );
+
+    if (!accountSubscription) {
+      throw new HttpError(404, 'Trading account subscription not found.');
+    }
+
+    res.status(200).json({ accountSubscription });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      next(
+        new HttpError(
+          400,
+          'Invalid trading account subscription request.',
+          error.flatten()
+        )
       );
       return;
     }
