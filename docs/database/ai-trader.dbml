@@ -71,6 +71,8 @@ Table TradingAccount {
   credential TradingAccountCredential
   access TradingAccountAccess [not null]
   subscriptions Subscription [not null]
+  allocations TradingAccountAllocation [not null]
+  accountSubscriptions TradingAccountSubscription [not null]
   orderIntents OrderIntent [not null]
   brokerOrders BrokerOrder [not null]
   brokerActivities BrokerActivity [not null]
@@ -129,6 +131,55 @@ Table TradingAccountAccess {
   }
 }
 
+Table TradingAccountAllocation {
+  id Int [pk, increment]
+  tradingAccountId Int [not null]
+  tradingAccount TradingAccount [not null]
+  key String [not null]
+  name String [not null]
+  description String
+  enabled Boolean [not null, default: true]
+  maxAllocatedNotional Float
+  maxOpenPositions Int
+  maxPositionNotional Float
+  notes String
+  accountSubscriptions TradingAccountSubscription [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+
+  indexes {
+    (tradingAccountId, key) [unique]
+  }
+}
+
+Table TradingAccountSubscription {
+  id Int [pk, increment]
+  tradingAccountId Int [not null]
+  tradingAccount TradingAccount [not null]
+  subscriptionId Int [not null]
+  subscription Subscription [not null]
+  allocationId Int
+  allocation TradingAccountAllocation
+  enabled Boolean [not null, default: true]
+  entriesEnabled Boolean [not null, default: true]
+  exitsEnabled Boolean [not null, default: true]
+  sizingType PositionSizingType [not null, default: 'FIXED_QTY']
+  fixedQty Float
+  maxPositionNotional Float
+  minPositionNotional Float
+  maxQty Float
+  notes String
+  orderIntents OrderIntent [not null]
+  trackedPositions TrackedPosition [not null]
+  entryDecisions EntryDecision [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+
+  indexes {
+    (tradingAccountId, subscriptionId) [unique]
+  }
+}
+
 Table Security {
   id Int [pk, increment]
   symbol String [unique, not null]
@@ -169,6 +220,8 @@ Table OrderIntent {
   trackedPosition TrackedPosition
   tradingAccountId Int
   tradingAccount TradingAccount
+  tradingAccountSubscriptionId Int
+  tradingAccountSubscription TradingAccountSubscription
   brokerOrders BrokerOrder [not null]
   brokerActivities BrokerActivity [not null]
   entryDecision EntryDecision
@@ -353,6 +406,8 @@ Table EntryDecision {
   trackedPosition TrackedPosition
   tradingAccountId Int
   tradingAccount TradingAccount
+  tradingAccountSubscriptionId Int
+  tradingAccountSubscription TradingAccountSubscription
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 }
@@ -389,6 +444,8 @@ Table TrackedPosition {
   configSnapshotCapturedAt DateTime
   tradingAccountId Int
   tradingAccount TradingAccount
+  tradingAccountSubscriptionId Int
+  tradingAccountSubscription TradingAccountSubscription
   trailingUnlocked Boolean [not null, default: false]
   trailingUnlockedAt DateTime
   trailingUnlockedPrice Float
@@ -544,6 +601,7 @@ Table Subscription {
   trackedPositions TrackedPosition [not null]
   orderIntents OrderIntent [not null]
   entryDecisions EntryDecision [not null]
+  accountSubscriptions TradingAccountSubscription [not null]
   tradingAccountId Int
   tradingAccount TradingAccount
 }
@@ -563,6 +621,11 @@ Enum TradingAccountStatus {
   PAUSED
   DISABLED
   ERROR
+}
+
+Enum PositionSizingType {
+  FIXED_QTY
+  MAX_NOTIONAL
 }
 
 Enum BrokerCredentialAuthType {
@@ -601,11 +664,21 @@ Ref: TradingAccountAccess.tradingAccountId > TradingAccount.id [delete: Cascade]
 
 Ref: TradingAccountAccess.adminUserId > AdminUser.id [delete: Cascade]
 
+Ref: TradingAccountAllocation.tradingAccountId > TradingAccount.id [delete: Cascade]
+
+Ref: TradingAccountSubscription.tradingAccountId > TradingAccount.id [delete: Cascade]
+
+Ref: TradingAccountSubscription.subscriptionId > Subscription.id [delete: Cascade]
+
+Ref: TradingAccountSubscription.allocationId > TradingAccountAllocation.id [delete: Set Null]
+
 Ref: OrderIntent.subscriptionId > Subscription.id
 
 Ref: OrderIntent.trackedPositionId > TrackedPosition.id [delete: Set Null]
 
 Ref: OrderIntent.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: OrderIntent.tradingAccountSubscriptionId > TradingAccountSubscription.id [delete: Set Null]
 
 Ref: BrokerOrder.securityId > Security.id
 
@@ -635,11 +708,15 @@ Ref: EntryDecision.trackedPositionId - TrackedPosition.id [delete: Set Null]
 
 Ref: EntryDecision.tradingAccountId > TradingAccount.id [delete: Set Null]
 
+Ref: EntryDecision.tradingAccountSubscriptionId > TradingAccountSubscription.id [delete: Set Null]
+
 Ref: TrackedPosition.securityId > Security.id
 
 Ref: TrackedPosition.subscriptionId > Subscription.id
 
 Ref: TrackedPosition.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: TrackedPosition.tradingAccountSubscriptionId > TradingAccountSubscription.id [delete: Set Null]
 
 Ref: PositionExitState.trackedPositionId - TrackedPosition.id [delete: Cascade]
 
