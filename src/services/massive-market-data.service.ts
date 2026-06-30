@@ -96,6 +96,28 @@ export type IndexIntradayResponse = {
   symbols: IndexIntradaySymbol[];
 };
 
+export type TickerLatestPriceSource =
+  | 'lastTrade'
+  | 'minuteClose'
+  | 'dayClose'
+  | 'previousClose';
+
+export type TickerLatestPrice = {
+  symbol: string;
+  latestPrice: number | null;
+  latestPriceAt: string | null;
+  latestPriceSource: TickerLatestPriceSource | null;
+};
+
+export type DailyMarketCandle = {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number | null;
+};
+
 type MassiveMarketStatus = {
   market?: unknown;
   serverTime?: unknown;
@@ -132,6 +154,7 @@ type MassiveAggregateBar = {
   l?: unknown;
   o?: unknown;
   t?: unknown;
+  v?: unknown;
 };
 
 type MassiveAggregatesResponse = {
@@ -412,6 +435,49 @@ export function normalizeMassiveSnapshotTicker(
   };
 }
 
+export function normalizeTickerLatestPrice(
+  symbol: string,
+  snapshot: MassiveSnapshotTicker | undefined
+): TickerLatestPrice {
+  const candidates: Array<{
+    price: number | null;
+    source: TickerLatestPriceSource;
+    timestamp: unknown;
+  }> = [
+    {
+      price: toPositiveFiniteNumber(snapshot?.lastTrade?.p),
+      source: 'lastTrade',
+      timestamp: snapshot?.lastTrade?.t,
+    },
+    {
+      price: toPositiveFiniteNumber(snapshot?.min?.c),
+      source: 'minuteClose',
+      timestamp: snapshot?.min?.t,
+    },
+    {
+      price: toPositiveFiniteNumber(snapshot?.day?.c),
+      source: 'dayClose',
+      timestamp: snapshot?.day?.t,
+    },
+    {
+      price: toPositiveFiniteNumber(snapshot?.prevDay?.c),
+      source: 'previousClose',
+      timestamp: snapshot?.prevDay?.t,
+    },
+  ];
+  const latest = candidates.find((candidate) => candidate.price !== null);
+
+  return {
+    symbol,
+    latestPrice: latest?.price ?? null,
+    latestPriceAt: latest
+      ? toIsoFromMassiveTimestamp(latest.timestamp) ??
+        toIsoFromMassiveTimestamp(snapshot?.updated)
+      : null,
+    latestPriceSource: latest?.source ?? null,
+  };
+}
+
 async function getMarketStatus() {
   const status = await massiveGet<MassiveMarketStatus>('/v1/marketstatus/now');
 
@@ -430,6 +496,19 @@ async function getTickerSnapshot(
   );
 
   return normalizeMassiveSnapshotTicker(symbol, response.ticker, marketStatus);
+}
+
+export async function getTickerLatestPrice(
+  symbol: string
+): Promise<TickerLatestPrice> {
+  const normalizedSymbol = symbol.trim().toUpperCase();
+  const response = await massiveGet<MassiveSnapshotResponse>(
+    `/v2/snapshot/locale/us/markets/stocks/tickers/${encodeURIComponent(
+      normalizedSymbol
+    )}`
+  );
+
+  return normalizeTickerLatestPrice(normalizedSymbol, response.ticker);
 }
 
 function normalizeAggregatePoints(
@@ -499,7 +578,7 @@ function summarizeAggregateBars(
 }
 
 async function getAggregateBars(
-  symbol: IndexSymbol,
+  symbol: string,
   config: AggregateRequestConfig,
   from: string,
   to: string
@@ -507,6 +586,61 @@ async function getAggregateBars(
   return massiveGet<MassiveAggregatesResponse>(
     `/v2/aggs/ticker/${symbol}/range/${config.multiplier}/${config.timespan}/${from}/${to}?adjusted=true&sort=asc&limit=50000`
   );
+}
+
+function normalizeDailyCandles(
+  bars: MassiveAggregateBar[] | undefined
+): DailyMarketCandle[] {
+  return (bars ?? []).flatMap((bar) => {
+    const close = toPositiveFiniteNumber(bar.c);
+    const high = toPositiveFiniteNumber(bar.h);
+    const low = toPositiveFiniteNumber(bar.l);
+    const open = toPositiveFiniteNumber(bar.o);
+    const time = toMillisFromMassiveTimestamp(bar.t);
+
+    if (
+      close === null ||
+      high === null ||
+      low === null ||
+      open === null ||
+      time === null
+    ) {
+      return [];
+    }
+
+    const date = getEtDateString(new Date(time));
+
+    if (!date) {
+      return [];
+    }
+
+    return [
+      {
+        date,
+        open,
+        high,
+        low,
+        close,
+        volume: toFiniteNumber(bar.v),
+      },
+    ];
+  });
+}
+
+export async function getTickerDailyCandles(
+  symbol: string,
+  from: string,
+  to: string
+): Promise<DailyMarketCandle[]> {
+  const normalizedSymbol = symbol.trim().toUpperCase();
+  const response = await getAggregateBars(
+    normalizedSymbol,
+    { multiplier: 1, timespan: 'day' },
+    from,
+    to
+  );
+
+  return normalizeDailyCandles(response.results);
 }
 
 async function resolveOneDayAggregateBars(

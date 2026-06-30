@@ -2,10 +2,12 @@ import { Router } from 'express';
 import {
   createTradingAccountAllocationController,
   createTradingAccountSubscriptionController,
+  getTradingAccountSubscriptionPriceHistoryController,
   getTradingAccountSubscriptionController,
   getTradingAccountController,
   listTradingAccountsController,
   listTradingAccountAllocationsController,
+  listTradingAccountSubscriptionMarketContextController,
   listTradingAccountSubscriptionsController,
   updateTradingAccountController,
   updateTradingAccountAllocationController,
@@ -29,6 +31,14 @@ router.patch(
 router.get(
   '/:id/account-subscriptions',
   listTradingAccountSubscriptionsController
+);
+router.get(
+  '/:id/account-subscriptions/market-context',
+  listTradingAccountSubscriptionMarketContextController
+);
+router.get(
+  '/:id/account-subscriptions/:accountSubscriptionId/price-history',
+  getTradingAccountSubscriptionPriceHistoryController
 );
 router.get(
   '/:id/account-subscriptions/:accountSubscriptionId',

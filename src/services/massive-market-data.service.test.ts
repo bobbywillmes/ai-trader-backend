@@ -9,9 +9,11 @@ vi.mock('../config/env.js', () => ({
 }));
 
 import {
+  getTickerDailyCandles,
   getIndexIntraday,
   getIndexPerformance,
   normalizeMassiveSnapshotTicker,
+  normalizeTickerLatestPrice,
   parseIndexChartRange,
 } from './massive-market-data.service.js';
 
@@ -144,6 +146,36 @@ describe('normalizeMassiveSnapshotTicker', () => {
 
     expect(normalized.updatedTime).toBe('2026-06-12T20:00:00.000Z');
     expect(normalized.previousClose).toBe(470.25);
+  });
+});
+
+describe('normalizeTickerLatestPrice', () => {
+  it('uses the best available backend-owned price source for a generic ticker', () => {
+    expect(
+      normalizeTickerLatestPrice('DIA', {
+        lastTrade: {
+          p: 0,
+          t: 0,
+        },
+        min: {
+          c: 0,
+          t: 0,
+        },
+        day: {
+          c: 0,
+          t: 0,
+        },
+        prevDay: {
+          c: 522.67,
+          t: Date.UTC(2026, 5, 29, 20),
+        },
+      })
+    ).toEqual({
+      symbol: 'DIA',
+      latestPrice: 522.67,
+      latestPriceAt: '2026-06-29T20:00:00.000Z',
+      latestPriceSource: 'previousClose',
+    });
   });
 });
 
@@ -793,6 +825,59 @@ describe('getIndexIntraday', () => {
     expect(aggregatePaths[0]).toContain(
       '/v2/aggs/ticker/SPY/range/5/minute/2026-06-12/2026-06-12'
     );
+  });
+});
+
+describe('getTickerDailyCandles', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('fetches and normalizes daily candles for a generic ticker', async () => {
+    const fetchMock = vi.fn(async (url: string, _options?: RequestInit) => {
+      expect(new URL(url).pathname).toContain(
+        '/v2/aggs/ticker/DIA/range/1/day/2025-06-30/2026-06-30'
+      );
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          results: [
+            {
+              c: 522.67,
+              h: 545.1,
+              l: 410.25,
+              o: 500,
+              t: Date.UTC(2026, 5, 30, 20),
+              v: 123456,
+            },
+            {
+              c: null,
+              h: 100,
+              l: 90,
+              o: 95,
+              t: Date.UTC(2026, 5, 29, 20),
+            },
+          ],
+        }),
+      };
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      getTickerDailyCandles('dia', '2025-06-30', '2026-06-30')
+    ).resolves.toEqual([
+      {
+        date: '2026-06-30',
+        open: 500,
+        high: 545.1,
+        low: 410.25,
+        close: 522.67,
+        volume: 123456,
+      },
+    ]);
   });
 });
 

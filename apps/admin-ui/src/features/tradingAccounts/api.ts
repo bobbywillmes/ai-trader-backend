@@ -1,5 +1,9 @@
 import { apiRequest } from "../../lib/api";
 import type {
+  AccountSubscriptionMarketContextResponse,
+  AccountSubscriptionMarketContextStatus,
+  AccountSubscriptionPriceHistoryRange,
+  AccountSubscriptionPriceHistoryResponse,
   CreateTradingAccountSubscriptionInput,
   RevokeTradingAccountCredentialResponse,
   TradingAccountAllocationInput,
@@ -13,6 +17,11 @@ import type {
   UpdateTradingAccountPayload,
   UpsertTradingAccountCredentialPayload,
 } from "./types";
+
+type ListMarketContextOptions = {
+  status?: AccountSubscriptionMarketContextStatus;
+  symbols?: string[];
+};
 
 export function getTradingAccounts(token: string) {
   return apiRequest<TradingAccountsListResponse>("/api/trading-accounts", {
@@ -126,6 +135,31 @@ export function listTradingAccountSubscriptions(id: number, token: string) {
   );
 }
 
+export function listTradingAccountSubscriptionMarketContext(
+  id: number,
+  token: string,
+  options: ListMarketContextOptions = {}
+) {
+  const query = new URLSearchParams();
+
+  if (options.status) {
+    query.set("status", options.status);
+  }
+
+  if (options.symbols?.length) {
+    query.set("symbols", options.symbols.join(","));
+  }
+
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+
+  return apiRequest<AccountSubscriptionMarketContextResponse>(
+    `/api/trading-accounts/${id}/account-subscriptions/market-context${suffix}`,
+    {
+      token,
+    }
+  );
+}
+
 export function getTradingAccountSubscription(
   id: number,
   accountSubscriptionId: number,
@@ -133,6 +167,22 @@ export function getTradingAccountSubscription(
 ) {
   return apiRequest<TradingAccountSubscriptionResponse>(
     `/api/trading-accounts/${id}/account-subscriptions/${accountSubscriptionId}`,
+    {
+      token,
+    }
+  );
+}
+
+export function getTradingAccountSubscriptionPriceHistory(
+  id: number,
+  accountSubscriptionId: number,
+  token: string,
+  range: AccountSubscriptionPriceHistoryRange = "1y"
+) {
+  const query = new URLSearchParams({ range });
+
+  return apiRequest<AccountSubscriptionPriceHistoryResponse>(
+    `/api/trading-accounts/${id}/account-subscriptions/${accountSubscriptionId}/price-history?${query.toString()}`,
     {
       token,
     }
