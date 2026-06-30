@@ -11,6 +11,10 @@ const mocks = vi.hoisted(() => ({
   createTradingAccountAllocationForAdmin: vi.fn(),
   listTradingAccountAllocationsForAdmin: vi.fn(),
   updateTradingAccountAllocationForAdmin: vi.fn(),
+  createTradingAccountSubscriptionForAdmin: vi.fn(),
+  getTradingAccountSubscriptionForAdmin: vi.fn(),
+  listTradingAccountSubscriptionsForAdmin: vi.fn(),
+  updateTradingAccountSubscriptionForAdmin: vi.fn(),
 }));
 
 vi.mock('../services/trading-account-credential.service.js', () => ({
@@ -38,14 +42,29 @@ vi.mock('../services/trading-account-allocation.service.js', () => ({
     mocks.updateTradingAccountAllocationForAdmin,
 }));
 
+vi.mock('../services/trading-account-subscription.service.js', () => ({
+  createTradingAccountSubscriptionForAdmin:
+    mocks.createTradingAccountSubscriptionForAdmin,
+  getTradingAccountSubscriptionForAdmin:
+    mocks.getTradingAccountSubscriptionForAdmin,
+  listTradingAccountSubscriptionsForAdmin:
+    mocks.listTradingAccountSubscriptionsForAdmin,
+  updateTradingAccountSubscriptionForAdmin:
+    mocks.updateTradingAccountSubscriptionForAdmin,
+}));
+
 import {
   createTradingAccountAllocationController,
+  createTradingAccountSubscriptionController,
+  getTradingAccountSubscriptionController,
   getTradingAccountController,
   listTradingAccountAllocationsController,
+  listTradingAccountSubscriptionsController,
   listTradingAccountsController,
   revokeTradingAccountCredentialController,
   updateTradingAccountController,
   updateTradingAccountAllocationController,
+  updateTradingAccountSubscriptionController,
   upsertTradingAccountCredentialController,
   verifyTradingAccountCredentialController,
 } from './trading-accounts.controller.js';
@@ -79,6 +98,10 @@ describe('trading accounts controller', () => {
     mocks.listTradingAccountAllocationsForAdmin.mockResolvedValue([{ id: 10 }]);
     mocks.createTradingAccountAllocationForAdmin.mockResolvedValue({ id: 10 });
     mocks.updateTradingAccountAllocationForAdmin.mockResolvedValue({ id: 10 });
+    mocks.listTradingAccountSubscriptionsForAdmin.mockResolvedValue([{ id: 20 }]);
+    mocks.getTradingAccountSubscriptionForAdmin.mockResolvedValue({ id: 20 });
+    mocks.createTradingAccountSubscriptionForAdmin.mockResolvedValue({ id: 20 });
+    mocks.updateTradingAccountSubscriptionForAdmin.mockResolvedValue({ id: 20 });
   });
 
   it('returns trading account list responses', async () => {
@@ -522,6 +545,329 @@ describe('trading accounts controller', () => {
       expect.objectContaining({
         statusCode: 404,
         message: 'Trading account allocation not found.',
+      })
+    );
+  });
+
+  it('lists trading account subscriptions', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await listTradingAccountSubscriptionsController(
+      {
+        params: {
+          id: '1',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.listTradingAccountSubscriptionsForAdmin).toHaveBeenCalledWith(
+      1
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      accountSubscriptions: [{ id: 20 }],
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('returns not found when listing account subscriptions for a missing account', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.listTradingAccountSubscriptionsForAdmin.mockResolvedValue(null);
+
+    await listTradingAccountSubscriptionsController(
+      {
+        params: {
+          id: '404',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 404,
+        message: 'Trading account not found.',
+      })
+    );
+  });
+
+  it('returns trading account subscription detail by account scope', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await getTradingAccountSubscriptionController(
+      {
+        params: {
+          id: '1',
+          accountSubscriptionId: '20',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.getTradingAccountSubscriptionForAdmin).toHaveBeenCalledWith(
+      1,
+      20
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      accountSubscription: { id: 20 },
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid account subscription ids on detail requests', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await getTradingAccountSubscriptionController(
+      {
+        params: {
+          id: '1',
+          accountSubscriptionId: 'nope',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.getTradingAccountSubscriptionForAdmin).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 400,
+        message: 'Invalid trading account subscription id.',
+      })
+    );
+  });
+
+  it('returns not found when reading a missing account subscription', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.getTradingAccountSubscriptionForAdmin.mockResolvedValue(null);
+
+    await getTradingAccountSubscriptionController(
+      {
+        params: {
+          id: '1',
+          accountSubscriptionId: '404',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 404,
+        message: 'Trading account subscription not found.',
+      })
+    );
+  });
+
+  it('creates trading account subscriptions with validated fields', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await createTradingAccountSubscriptionController(
+      {
+        params: {
+          id: '1',
+        },
+        body: {
+          subscriptionId: '30',
+          allocationId: '10',
+          enabled: false,
+          entriesEnabled: true,
+          exitsEnabled: false,
+          sizingType: 'MAX_NOTIONAL',
+          maxPositionNotional: '5000',
+          minPositionNotional: '0',
+          maxQty: '10',
+          notes: null,
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.createTradingAccountSubscriptionForAdmin).toHaveBeenCalledWith(
+      1,
+      {
+        subscriptionId: 30,
+        allocationId: 10,
+        enabled: false,
+        entriesEnabled: true,
+        exitsEnabled: false,
+        sizingType: 'MAX_NOTIONAL',
+        maxPositionNotional: 5_000,
+        minPositionNotional: 0,
+        maxQty: 10,
+        notes: null,
+      }
+    );
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(res.json).toHaveBeenCalledWith({
+      accountSubscription: { id: 20 },
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid account subscription create requests', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await createTradingAccountSubscriptionController(
+      {
+        params: {
+          id: '1',
+        },
+        body: {
+          subscriptionId: '30',
+          sizingType: 'FIXED_QTY',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.createTradingAccountSubscriptionForAdmin).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 400,
+        message: 'Invalid trading account subscription request.',
+      })
+    );
+  });
+
+  it('returns not found when creating account subscriptions for a missing account', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.createTradingAccountSubscriptionForAdmin.mockResolvedValue(null);
+
+    await createTradingAccountSubscriptionController(
+      {
+        params: {
+          id: '404',
+        },
+        body: {
+          subscriptionId: 30,
+          fixedQty: 1,
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 404,
+        message: 'Trading account not found.',
+      })
+    );
+  });
+
+  it('updates trading account subscriptions with validated safe fields', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await updateTradingAccountSubscriptionController(
+      {
+        params: {
+          id: '1',
+          accountSubscriptionId: '20',
+        },
+        body: {
+          allocationId: null,
+          enabled: false,
+          entriesEnabled: false,
+          exitsEnabled: true,
+          sizingType: 'FIXED_QTY',
+          fixedQty: '2',
+          minPositionNotional: '0',
+          maxQty: '5',
+          notes: null,
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.updateTradingAccountSubscriptionForAdmin).toHaveBeenCalledWith(
+      1,
+      20,
+      {
+        allocationId: null,
+        enabled: false,
+        entriesEnabled: false,
+        exitsEnabled: true,
+        sizingType: 'FIXED_QTY',
+        fixedQty: 2,
+        minPositionNotional: 0,
+        maxQty: 5,
+        notes: null,
+      }
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      accountSubscription: { id: 20 },
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid account subscription update requests', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await updateTradingAccountSubscriptionController(
+      {
+        params: {
+          id: '1',
+          accountSubscriptionId: '20',
+        },
+        body: {},
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.updateTradingAccountSubscriptionForAdmin).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 400,
+        message: 'Invalid trading account subscription request.',
+      })
+    );
+  });
+
+  it('returns not found when updating a missing account subscription', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.updateTradingAccountSubscriptionForAdmin.mockResolvedValue(null);
+
+    await updateTradingAccountSubscriptionController(
+      {
+        params: {
+          id: '1',
+          accountSubscriptionId: '404',
+        },
+        body: {
+          enabled: false,
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 404,
+        message: 'Trading account subscription not found.',
       })
     );
   });
