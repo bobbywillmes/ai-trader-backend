@@ -5,7 +5,9 @@ import {
   getTradingAccount,
   getTradingAccounts,
   getTradingAccountSubscription,
+  getTradingAccountSubscriptionPriceHistory,
   listTradingAccountAllocations,
+  listTradingAccountSubscriptionMarketContext,
   listTradingAccountSubscriptions,
   revokeTradingAccountCredential,
   updateTradingAccount,
@@ -15,6 +17,8 @@ import {
   verifyTradingAccountCredential,
 } from "./api";
 import type {
+  AccountSubscriptionMarketContextStatus,
+  AccountSubscriptionPriceHistoryRange,
   CreateTradingAccountSubscriptionInput,
   TradingAccountAllocationInput,
   TradingAccountSubscriptionInput,
@@ -35,6 +39,27 @@ export const tradingAccountKeys = {
     [
       ...tradingAccountKeys.accountSubscriptions(id),
       accountSubscriptionId,
+    ] as const,
+  accountSubscriptionMarketContext: (
+    id: number,
+    status: AccountSubscriptionMarketContextStatus,
+    symbolsKey: string
+  ) =>
+    [
+      ...tradingAccountKeys.accountSubscriptions(id),
+      "marketContext",
+      status,
+      symbolsKey,
+    ] as const,
+  accountSubscriptionPriceHistory: (
+    id: number,
+    accountSubscriptionId: number,
+    range: AccountSubscriptionPriceHistoryRange
+  ) =>
+    [
+      ...tradingAccountKeys.accountSubscription(id, accountSubscriptionId),
+      "priceHistory",
+      range,
     ] as const,
 };
 
@@ -97,6 +122,65 @@ export function useTradingAccountSubscription(
         token as string
       ),
     enabled: Boolean(token && id && accountSubscriptionId),
+  });
+}
+
+export function useTradingAccountSubscriptionMarketContext(
+  id: number | undefined,
+  token: string | null,
+  status: AccountSubscriptionMarketContextStatus = "active",
+  symbols: string[] = []
+) {
+  const symbolsKey = symbols.map((symbol) => symbol.toUpperCase()).join(",");
+
+  return useQuery({
+    queryKey: id
+      ? tradingAccountKeys.accountSubscriptionMarketContext(
+          id,
+          status,
+          symbolsKey
+        )
+      : [...tradingAccountKeys.details(), "accountSubscriptions", "marketContext"],
+    queryFn: () =>
+      listTradingAccountSubscriptionMarketContext(id as number, token as string, {
+        status,
+        ...(symbols.length > 0 && { symbols }),
+      }),
+    enabled: Boolean(token && id),
+    staleTime: 60000,
+    refetchInterval: 120000,
+  });
+}
+
+export function useTradingAccountSubscriptionPriceHistory(
+  id: number | undefined,
+  accountSubscriptionId: number | undefined,
+  token: string | null,
+  range: AccountSubscriptionPriceHistoryRange = "1y"
+) {
+  return useQuery({
+    queryKey:
+      id && accountSubscriptionId
+        ? tradingAccountKeys.accountSubscriptionPriceHistory(
+            id,
+            accountSubscriptionId,
+            range
+          )
+        : [
+            ...tradingAccountKeys.details(),
+            "accountSubscriptions",
+            "priceHistory",
+            range,
+          ],
+    queryFn: () =>
+      getTradingAccountSubscriptionPriceHistory(
+        id as number,
+        accountSubscriptionId as number,
+        token as string,
+        range
+      ),
+    enabled: Boolean(token && id && accountSubscriptionId),
+    staleTime: 300000,
   });
 }
 
@@ -285,6 +369,14 @@ export function useCreateTradingAccountSubscription(token: string | null) {
         ),
       });
       queryClient.invalidateQueries({
+        queryKey: [
+          ...tradingAccountKeys.accountSubscriptions(
+            accountSubscription.tradingAccountId
+          ),
+          "marketContext",
+        ],
+      });
+      queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.allocations(
           accountSubscription.tradingAccountId
         ),
@@ -329,6 +421,14 @@ export function useUpdateTradingAccountSubscription(token: string | null) {
         queryKey: tradingAccountKeys.accountSubscriptions(
           accountSubscription.tradingAccountId
         ),
+      });
+      queryClient.invalidateQueries({
+        queryKey: [
+          ...tradingAccountKeys.accountSubscriptions(
+            accountSubscription.tradingAccountId
+          ),
+          "marketContext",
+        ],
       });
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.allocations(

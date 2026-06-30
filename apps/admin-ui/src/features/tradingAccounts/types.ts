@@ -144,6 +144,69 @@ export type TradingAccountSubscriptionResponse = {
   accountSubscription: TradingAccountSubscription;
 };
 
+export type AccountSubscriptionMarketContextStatus =
+  | "active"
+  | "all"
+  | "disabled";
+
+export type AccountSubscriptionPriceHistoryRange = "3m" | "6m" | "1y";
+
+export type AccountSubscriptionMarketContextItem = {
+  accountSubscriptionId: number;
+  subscriptionId: number;
+  symbol: string;
+  subscriptionKey: string;
+  latestPrice: number | null;
+  latestPriceAt: string | null;
+  latestPriceSource: string | null;
+  week52High: number | null;
+  week52Low: number | null;
+  week52HighAt: string | null;
+  week52LowAt: string | null;
+  sizingType: PositionSizingType;
+  fixedQty: number | null;
+  maxPositionNotional: number | null;
+  minPositionNotional: number | null;
+  maxQty: number | null;
+  estimatedQty: number | null;
+  estimatedNotional: number | null;
+  nextShareQty: number | null;
+  nextShareNotional: number | null;
+  dollarsToNextShare: number | null;
+  warnings: string[];
+};
+
+export type AccountSubscriptionMarketContextResponse = {
+  tradingAccountId: number;
+  generatedAt: string;
+  items: AccountSubscriptionMarketContextItem[];
+};
+
+export type AccountSubscriptionPriceHistoryCandle = {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number | null;
+};
+
+export type AccountSubscriptionPriceHistoryResponse = {
+  tradingAccountId: number;
+  accountSubscriptionId: number;
+  subscriptionId: number;
+  symbol: string;
+  range: AccountSubscriptionPriceHistoryRange;
+  generatedAt: string;
+  candles: AccountSubscriptionPriceHistoryCandle[];
+  summary: {
+    latestClose: number | null;
+    latestCloseAt: string | null;
+    week52High: number | null;
+    week52Low: number | null;
+  };
+};
+
 export type UpdateTradingAccountPayload = Partial<{
   displayName: string;
   estimatedTradingCapital: number | null;
