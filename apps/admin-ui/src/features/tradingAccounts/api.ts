@@ -1,6 +1,9 @@
 import { apiRequest } from "../../lib/api";
 import type {
   RevokeTradingAccountCredentialResponse,
+  TradingAccountAllocationInput,
+  TradingAccountAllocationResponse,
+  TradingAccountAllocationsResponse,
   TradingAccountResponse,
   TradingAccountsListResponse,
   UpdateTradingAccountPayload,
@@ -66,6 +69,46 @@ export function revokeTradingAccountCredential(id: number, token: string) {
     {
       method: "POST",
       token,
+    }
+  );
+}
+
+export function listTradingAccountAllocations(id: number, token: string) {
+  return apiRequest<TradingAccountAllocationsResponse>(
+    `/api/trading-accounts/${id}/allocations`,
+    {
+      token,
+    }
+  );
+}
+
+export function createTradingAccountAllocation(
+  id: number,
+  payload: TradingAccountAllocationInput,
+  token: string
+) {
+  return apiRequest<TradingAccountAllocationResponse>(
+    `/api/trading-accounts/${id}/allocations`,
+    {
+      method: "POST",
+      token,
+      body: payload,
+    }
+  );
+}
+
+export function updateTradingAccountAllocation(
+  id: number,
+  allocationId: number,
+  payload: TradingAccountAllocationInput,
+  token: string
+) {
+  return apiRequest<TradingAccountAllocationResponse>(
+    `/api/trading-accounts/${id}/allocations/${allocationId}`,
+    {
+      method: "PATCH",
+      token,
+      body: payload,
     }
   );
 }

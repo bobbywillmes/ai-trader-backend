@@ -66,6 +66,30 @@ export type RevokeTradingAccountCredentialResponse = {
   account: TradingAccount;
 };
 
+export type TradingAccountAllocation = {
+  id: number;
+  tradingAccountId: number;
+  key: string;
+  name: string;
+  description: string | null;
+  enabled: boolean;
+  maxAllocatedNotional: number | null;
+  maxOpenPositions: number | null;
+  maxPositionNotional: number | null;
+  notes: string | null;
+  accountSubscriptionCount?: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TradingAccountAllocationsResponse = {
+  allocations: TradingAccountAllocation[];
+};
+
+export type TradingAccountAllocationResponse = {
+  allocation: TradingAccountAllocation;
+};
+
 export type UpdateTradingAccountPayload = Partial<{
   displayName: string;
   estimatedTradingCapital: number | null;
@@ -80,4 +104,15 @@ export type UpsertTradingAccountCredentialPayload = {
   authType?: BrokerCredentialAuthType;
   apiKey: string;
   apiSecret: string;
+};
+
+export type TradingAccountAllocationInput = {
+  key: string;
+  name: string;
+  description?: string | null;
+  enabled?: boolean;
+  maxAllocatedNotional?: number | null;
+  maxOpenPositions?: number | null;
+  maxPositionNotional?: number | null;
+  notes?: string | null;
 };
