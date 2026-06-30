@@ -108,6 +108,9 @@ type AccountSubscriptionDraft = {
   notes: string;
 };
 
+type AccountSubscriptionStatusFilter = "all" | "active" | "disabled";
+type AccountSubscriptionSizingFilter = "all" | PositionSizingType;
+
 const tradingAccountStatusOptions: {
   value: TradingAccountStatus;
   label: string;
@@ -335,6 +338,29 @@ function sizingTypeLabel(value: PositionSizingType) {
   return value === "FIXED_QTY"
     ? "Fixed share quantity"
     : "Max position dollars";
+}
+
+function accountSubscriptionMatchesSearch(
+  accountSubscription: TradingAccountSubscription,
+  search: string
+) {
+  const normalizedSearch = search.trim().toLowerCase();
+  if (!normalizedSearch) return true;
+
+  const values = [
+    accountSubscription.subscription.symbol,
+    accountSubscription.subscription.key,
+    accountSubscription.subscription.strategy?.key,
+    accountSubscription.subscription.strategy?.name,
+    accountSubscription.subscription.exitProfile?.key,
+    accountSubscription.subscription.exitProfile?.name,
+    accountSubscription.allocation?.key,
+    accountSubscription.allocation?.name,
+  ];
+
+  return values.some((value) =>
+    value?.toLowerCase().includes(normalizedSearch)
+  );
 }
 
 function settingsDraftChanged(
@@ -1085,6 +1111,12 @@ function AccountSubscriptionsManagementCard({
     null
   );
   const [draft, setDraft] = useState<AccountSubscriptionDraft | null>(null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] =
+    useState<AccountSubscriptionStatusFilter>("active");
+  const [sizingFilter, setSizingFilter] =
+    useState<AccountSubscriptionSizingFilter>("all");
+  const [allocationFilter, setAllocationFilter] = useState("all");
   const { data, isLoading, isError, error } = useTradingAccountSubscriptions(
     account.id,
     token
@@ -1097,6 +1129,51 @@ function AccountSubscriptionsManagementCard({
   const accountSubscriptions = data?.accountSubscriptions ?? [];
   const allocations = allocationData?.allocations ?? [];
   const draftError = draft ? validateAccountSubscriptionDraft(draft) : null;
+  const filteredAccountSubscriptions = accountSubscriptions.filter(
+    (accountSubscription) => {
+      if (!accountSubscriptionMatchesSearch(accountSubscription, search)) {
+        return false;
+      }
+
+      if (
+        statusFilter === "active" &&
+        !accountSubscription.enabled
+      ) {
+        return false;
+      }
+
+      if (
+        statusFilter === "disabled" &&
+        accountSubscription.enabled
+      ) {
+        return false;
+      }
+
+      if (
+        sizingFilter !== "all" &&
+        accountSubscription.sizingType !== sizingFilter
+      ) {
+        return false;
+      }
+
+      if (
+        allocationFilter === "unassigned" &&
+        accountSubscription.allocationId !== null
+      ) {
+        return false;
+      }
+
+      if (
+        allocationFilter !== "all" &&
+        allocationFilter !== "unassigned" &&
+        accountSubscription.allocationId !== Number(allocationFilter)
+      ) {
+        return false;
+      }
+
+      return true;
+    }
+  );
 
   function startEdit(accountSubscription: TradingAccountSubscription) {
     setEditing(accountSubscription);
@@ -1185,9 +1262,67 @@ function AccountSubscriptionsManagementCard({
               </Text>
             </div>
             <Badge color="blue" variant="light">
+              {filteredAccountSubscriptions.length.toLocaleString()} of{" "}
               {accountSubscriptions.length.toLocaleString()} subscriptions
             </Badge>
           </Group>
+
+          {accountSubscriptions.length > 0 && (
+            <SimpleGrid cols={{ base: 1, md: 4 }}>
+              <TextInput
+                label="Search"
+                placeholder="Symbol, subscription, strategy, exit profile"
+                value={search}
+                onChange={(event) => setSearch(event.currentTarget.value)}
+              />
+
+              <Select
+                label="Status"
+                value={statusFilter}
+                onChange={(value) =>
+                  setStatusFilter(
+                    (value ?? "all") as AccountSubscriptionStatusFilter
+                  )
+                }
+                data={[
+                  { value: "all", label: "All statuses" },
+                  { value: "active", label: "Active" },
+                  { value: "disabled", label: "Disabled" },
+                ]}
+              />
+
+              <Select
+                label="Sizing"
+                value={sizingFilter}
+                onChange={(value) =>
+                  setSizingFilter(
+                    (value ?? "all") as AccountSubscriptionSizingFilter
+                  )
+                }
+                data={[
+                  { value: "all", label: "All sizing types" },
+                  { value: "FIXED_QTY", label: "Fixed share quantity" },
+                  { value: "MAX_NOTIONAL", label: "Max position dollars" },
+                ]}
+              />
+
+              <Select
+                label="Allocation"
+                value={allocationFilter}
+                onChange={(value) => setAllocationFilter(value ?? "all")}
+                data={[
+                  { value: "all", label: "All allocations" },
+                  { value: "unassigned", label: "Unassigned" },
+                  ...allocations.map((allocation) => ({
+                    value: String(allocation.id),
+                    label: `${allocation.name} (${allocation.key})${
+                      allocation.enabled ? "" : " - disabled"
+                    }`,
+                  })),
+                ]}
+              />
+            </SimpleGrid>
+          )}
 
           {isError && (
             <Alert color="red" title="Failed to load account subscriptions">
@@ -1210,7 +1345,16 @@ function AccountSubscriptionsManagementCard({
             </Alert>
           )}
 
-          {accountSubscriptions.length > 0 && (
+          {!isLoading &&
+            !isError &&
+            accountSubscriptions.length > 0 &&
+            filteredAccountSubscriptions.length === 0 && (
+              <Alert color="gray">
+                No account subscriptions match the current filters.
+              </Alert>
+            )}
+
+          {filteredAccountSubscriptions.length > 0 && (
             <ScrollArea>
               <Table striped highlightOnHover style={{ minWidth: 1240 }}>
                 <Table.Thead>
@@ -1230,7 +1374,7 @@ function AccountSubscriptionsManagementCard({
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
-                  {accountSubscriptions.map((accountSubscription) => (
+                  {filteredAccountSubscriptions.map((accountSubscription) => (
                     <Table.Tr
                       key={accountSubscription.id}
                       style={{
