@@ -151,7 +151,9 @@ describe('place order service entry decision attribution', () => {
         },
       }
     );
-    expect(mocks.evaluateOrderRisk).toHaveBeenCalledWith(runtimeSizedInput);
+    expect(mocks.evaluateOrderRisk).toHaveBeenCalledWith(runtimeSizedInput, {
+      requestedNotionalOverride: 1500,
+    });
     expect(mocks.linkEntryDecisionToOrderIntent).toHaveBeenCalledWith({
       decisionKey: 'decision-101',
       orderIntentId: 55,

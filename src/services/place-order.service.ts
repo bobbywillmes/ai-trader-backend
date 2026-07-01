@@ -111,7 +111,10 @@ export async function submitOrder(
     });
   }
 
-  const riskResult = await evaluateOrderRisk(resolvedInput);
+  const riskResult = await evaluateOrderRisk(resolvedInput, {
+    requestedNotionalOverride:
+      runtimeSizing.sizing?.estimatedNotional ?? null,
+  });
 
   if (!riskResult.allowed) {
     await updateOrderIntentStatus(intent.id, 'blocked', riskResult.reason);
