@@ -23,7 +23,10 @@ import {
   linkEntryDecisionToOrderIntent,
 } from './entry-decision.service.js';
 import { resolveDefaultTradingAccountId } from './trading-account.service.js';
-import { resolveRuntimeAccountSubscriptionSizing } from './account-subscription-runtime-sizing.service.js';
+import {
+  resolveRuntimeAccountSubscriptionSizing,
+  type RuntimeAccountSubscriptionSizingResult,
+} from './account-subscription-runtime-sizing.service.js';
 
 type SubmitOrderOptions = {
   entryDecisionKey?: string;
@@ -42,9 +45,12 @@ function isEntrySubscriptionOrder(
 async function applyRuntimeAccountSubscriptionSizing(
   input: ResolvedPlaceOrderInput,
   tradingAccountId: number
-): Promise<ResolvedPlaceOrderInput> {
+): Promise<{
+  input: ResolvedPlaceOrderInput;
+  sizing: RuntimeAccountSubscriptionSizingResult | null;
+}> {
   if (!isEntrySubscriptionOrder(input)) {
-    return input;
+    return { input, sizing: null };
   }
 
   const sizing = await resolveRuntimeAccountSubscriptionSizing({
@@ -55,8 +61,11 @@ async function applyRuntimeAccountSubscriptionSizing(
   const { notional: _legacyNotional, ...inputWithoutNotional } = input;
 
   return {
-    ...inputWithoutNotional,
-    qty: sizing.qty,
+    input: {
+      ...inputWithoutNotional,
+      qty: sizing.qty,
+    },
+    sizing,
   };
 }
 
@@ -71,17 +80,25 @@ export async function submitOrder(
     await ensureEntryDecisionCanLink(options.entryDecisionKey);
   }
 
-  const resolvedInput = await applyRuntimeAccountSubscriptionSizing(
+  const runtimeSizing = await applyRuntimeAccountSubscriptionSizing(
     subscriptionResolvedInput,
     tradingAccountId
   );
+  const resolvedInput = runtimeSizing.input;
   const clientOrderId = buildClientOrderId(resolvedInput);
 
   const intent = await createOrderIntent(
     resolvedInput,
     'api',
     clientOrderId,
-    tradingAccountId
+    tradingAccountId,
+    runtimeSizing.sizing
+      ? {
+          tradingAccountSubscriptionId:
+            runtimeSizing.sizing.tradingAccountSubscriptionId,
+          accountSubscriptionSizing: runtimeSizing.sizing.snapshot,
+        }
+      : {}
   );
 
   if (options.entryDecisionKey) {

@@ -90,7 +90,11 @@ describe('place order service entry decision attribution', () => {
       tradingAccountSubscriptionId: 44,
       qty: 3,
       estimatedNotional: 1500,
-      snapshot: {},
+      snapshot: {
+        tradingAccountSubscriptionId: 44,
+        sizingType: 'MAX_NOTIONAL',
+        calculatedQty: 3,
+      },
     });
     mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.buildClientOrderId.mockReturnValue('client-101');
@@ -126,7 +130,15 @@ describe('place order service entry decision attribution', () => {
       runtimeSizedInput,
       'api',
       'client-101',
-      1
+      1,
+      {
+        tradingAccountSubscriptionId: 44,
+        accountSubscriptionSizing: {
+          tradingAccountSubscriptionId: 44,
+          sizingType: 'MAX_NOTIONAL',
+          calculatedQty: 3,
+        },
+      }
     );
     expect(mocks.evaluateOrderRisk).toHaveBeenCalledWith(runtimeSizedInput);
     expect(mocks.linkEntryDecisionToOrderIntent).toHaveBeenCalledWith({
@@ -193,7 +205,11 @@ describe('place order service entry decision attribution', () => {
       tradingAccountSubscriptionId: 44,
       qty: 1,
       estimatedNotional: null,
-      snapshot: {},
+      snapshot: {
+        tradingAccountSubscriptionId: 44,
+        sizingType: 'FIXED_QTY',
+        calculatedQty: 1,
+      },
     });
 
     await submitOrder({
@@ -233,7 +249,8 @@ describe('place order service entry decision attribution', () => {
       exitInput,
       'api',
       'client-101',
-      1
+      1,
+      {}
     );
   });
 });
