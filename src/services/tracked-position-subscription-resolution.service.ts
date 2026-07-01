@@ -361,6 +361,8 @@ export async function resolveTrackedPositionSubscription(args: {
       evidence: {
         orderIntentId: localIntent.id,
         clientOrderId: localIntent.clientOrderId,
+        tradingAccountSubscriptionId:
+          localIntent.tradingAccountSubscriptionId,
         brokerOrderIds: localIntent.brokerOrders.map((order) => order.id),
       } as Prisma.InputJsonValue,
     };
@@ -414,6 +416,18 @@ export async function linkLocalEntryOwnership(args: {
     },
   });
 
+  if (intent.tradingAccountSubscriptionId !== null) {
+    await prisma.trackedPosition.updateMany({
+      where: {
+        id: args.trackedPositionId,
+        tradingAccountSubscriptionId: null,
+      },
+      data: {
+        tradingAccountSubscriptionId: intent.tradingAccountSubscriptionId,
+      },
+    });
+  }
+
   await prisma.brokerOrder.updateMany({
     where: {
       orderIntentId: intent.id,
@@ -428,5 +442,6 @@ export async function linkLocalEntryOwnership(args: {
     orderIntentId: intent.id,
     trackedPositionId: args.trackedPositionId,
     tradingAccountId: intent.tradingAccountId,
+    tradingAccountSubscriptionId: intent.tradingAccountSubscriptionId,
   });
 }

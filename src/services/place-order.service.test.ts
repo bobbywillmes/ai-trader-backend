@@ -145,6 +145,7 @@ describe('place order service entry decision attribution', () => {
       decisionKey: 'decision-101',
       orderIntentId: 55,
       tradingAccountId: 1,
+      tradingAccountSubscriptionId: 44,
     });
     expect(mocks.updateOrderIntentStatus).toHaveBeenCalledWith(55, 'pending');
     expect(result).toEqual({
@@ -186,6 +187,7 @@ describe('place order service entry decision attribution', () => {
       decisionKey: 'decision-101',
       orderIntentId: 55,
       tradingAccountId: 1,
+      tradingAccountSubscriptionId: 44,
     });
     expect(mocks.updateOrderIntentStatus).toHaveBeenCalledWith(
       55,

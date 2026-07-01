@@ -507,6 +507,7 @@ export async function linkEntryDecisionToOrderIntent(args: {
   decisionKey: string;
   orderIntentId: number;
   tradingAccountId?: number | null;
+  tradingAccountSubscriptionId?: number | null;
 }) {
   const linked = await prisma.entryDecision.updateMany({
     where: {
@@ -517,6 +518,9 @@ export async function linkEntryDecisionToOrderIntent(args: {
       orderIntentId: args.orderIntentId,
       ...(args.tradingAccountId !== undefined && {
         tradingAccountId: args.tradingAccountId,
+      }),
+      ...(args.tradingAccountSubscriptionId !== undefined && {
+        tradingAccountSubscriptionId: args.tradingAccountSubscriptionId,
       }),
     },
   });
@@ -580,6 +584,7 @@ export async function linkEntryDecisionToTrackedPosition(args: {
   orderIntentId: number;
   trackedPositionId: number;
   tradingAccountId?: number | null;
+  tradingAccountSubscriptionId?: number | null;
 }) {
   return prisma.entryDecision.updateMany({
     where: {
@@ -590,6 +595,9 @@ export async function linkEntryDecisionToTrackedPosition(args: {
       trackedPositionId: args.trackedPositionId,
       ...(args.tradingAccountId !== undefined && {
         tradingAccountId: args.tradingAccountId,
+      }),
+      ...(args.tradingAccountSubscriptionId !== undefined && {
+        tradingAccountSubscriptionId: args.tradingAccountSubscriptionId,
       }),
     },
   });

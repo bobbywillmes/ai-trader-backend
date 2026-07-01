@@ -106,6 +106,8 @@ export async function submitOrder(
       decisionKey: options.entryDecisionKey,
       orderIntentId: intent.id,
       tradingAccountId,
+      tradingAccountSubscriptionId:
+        runtimeSizing.sizing?.tradingAccountSubscriptionId ?? null,
     });
   }
 

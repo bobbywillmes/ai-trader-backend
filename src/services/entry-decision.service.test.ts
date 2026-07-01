@@ -301,6 +301,7 @@ describe('entry decision service', () => {
       decisionKey: 'decision-101',
       orderIntentId: 55,
       tradingAccountId: 1,
+      tradingAccountSubscriptionId: 44,
     });
 
     expect(mocks.entryDecisionUpdateMany).toHaveBeenCalledWith({
@@ -311,6 +312,7 @@ describe('entry decision service', () => {
       data: {
         orderIntentId: 55,
         tradingAccountId: 1,
+        tradingAccountSubscriptionId: 44,
       },
     });
   });
@@ -338,6 +340,7 @@ describe('entry decision service', () => {
     await linkEntryDecisionToTrackedPosition({
       orderIntentId: 55,
       trackedPositionId: 303,
+      tradingAccountSubscriptionId: 44,
     });
 
     expect(mocks.entryDecisionUpdateMany).toHaveBeenCalledWith({
@@ -347,6 +350,7 @@ describe('entry decision service', () => {
       },
       data: {
         trackedPositionId: 303,
+        tradingAccountSubscriptionId: 44,
       },
     });
   });
