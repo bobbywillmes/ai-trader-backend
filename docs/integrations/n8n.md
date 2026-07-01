@@ -168,7 +168,12 @@ POST /api/signals/entry
 
 Primary endpoint for n8n-driven entry signals.
 
-Instead of n8n sending full order instructions, it sends a subscription key and signal metadata. The backend resolves the subscription, validates the request, determines sizing, creates an order intent, and submits the order asynchronously.
+Instead of n8n sending full order instructions, it sends a subscription key and
+signal metadata. The backend resolves the subscription and the
+account-specific `TradingAccountSubscription`, validates entry gates, determines
+whole-share sizing from account-subscription configuration and backend-owned
+market data when needed, creates an order intent, and submits the order
+asynchronously.
 
 Example request:
 

@@ -23,28 +23,82 @@ import {
   linkEntryDecisionToOrderIntent,
 } from './entry-decision.service.js';
 import { resolveDefaultTradingAccountId } from './trading-account.service.js';
+import {
+  resolveRuntimeAccountSubscriptionSizing,
+  type RuntimeAccountSubscriptionSizingResult,
+} from './account-subscription-runtime-sizing.service.js';
 
 type SubmitOrderOptions = {
   entryDecisionKey?: string;
 };
 
+function isEntrySubscriptionOrder(
+  input: ResolvedPlaceOrderInput
+): input is ResolvedPlaceOrderInput & { subscriptionId: number } {
+  return (
+    input.subscriptionId !== undefined &&
+    input.side === 'buy' &&
+    (input.signalType ?? 'entry') === 'entry'
+  );
+}
+
+async function applyRuntimeAccountSubscriptionSizing(
+  input: ResolvedPlaceOrderInput,
+  tradingAccountId: number
+): Promise<{
+  input: ResolvedPlaceOrderInput;
+  sizing: RuntimeAccountSubscriptionSizingResult | null;
+}> {
+  if (!isEntrySubscriptionOrder(input)) {
+    return { input, sizing: null };
+  }
+
+  const sizing = await resolveRuntimeAccountSubscriptionSizing({
+    tradingAccountId,
+    subscriptionId: input.subscriptionId,
+    symbol: input.symbol,
+  });
+  const { notional: _legacyNotional, ...inputWithoutNotional } = input;
+
+  return {
+    input: {
+      ...inputWithoutNotional,
+      qty: sizing.qty,
+    },
+    sizing,
+  };
+}
+
 export async function submitOrder(
   input: PlaceOrderInput,
   options: SubmitOrderOptions = {}
 ) {
-  const resolvedInput = await resolveSubscriptionOrderInput(input);
   const tradingAccountId = await resolveDefaultTradingAccountId();
-  const clientOrderId = buildClientOrderId(resolvedInput);
+  const subscriptionResolvedInput = await resolveSubscriptionOrderInput(input);
 
   if (options.entryDecisionKey) {
     await ensureEntryDecisionCanLink(options.entryDecisionKey);
   }
 
+  const runtimeSizing = await applyRuntimeAccountSubscriptionSizing(
+    subscriptionResolvedInput,
+    tradingAccountId
+  );
+  const resolvedInput = runtimeSizing.input;
+  const clientOrderId = buildClientOrderId(resolvedInput);
+
   const intent = await createOrderIntent(
     resolvedInput,
     'api',
     clientOrderId,
-    tradingAccountId
+    tradingAccountId,
+    runtimeSizing.sizing
+      ? {
+          tradingAccountSubscriptionId:
+            runtimeSizing.sizing.tradingAccountSubscriptionId,
+          accountSubscriptionSizing: runtimeSizing.sizing.snapshot,
+        }
+      : {}
   );
 
   if (options.entryDecisionKey) {
@@ -52,10 +106,15 @@ export async function submitOrder(
       decisionKey: options.entryDecisionKey,
       orderIntentId: intent.id,
       tradingAccountId,
+      tradingAccountSubscriptionId:
+        runtimeSizing.sizing?.tradingAccountSubscriptionId ?? null,
     });
   }
 
-  const riskResult = await evaluateOrderRisk(resolvedInput);
+  const riskResult = await evaluateOrderRisk(resolvedInput, {
+    requestedNotionalOverride:
+      runtimeSizing.sizing?.estimatedNotional ?? null,
+  });
 
   if (!riskResult.allowed) {
     await updateOrderIntentStatus(intent.id, 'blocked', riskResult.reason);

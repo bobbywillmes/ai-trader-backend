@@ -3,6 +3,7 @@ import { prisma } from '../db/prisma.js';
 import type { ResolvedPlaceOrderInput } from '../validators/place-order.schema.js';
 import { HttpError } from '../errors/http-error.js';
 import { resolveDefaultTradingAccountId } from './trading-account.service.js';
+import type { AccountSubscriptionSizingSnapshot } from './account-subscription-runtime-sizing.service.js';
 
 type IntentStatus =
   | 'received'
@@ -16,7 +17,11 @@ export async function createOrderIntent(
   input: ResolvedPlaceOrderInput,
   source = 'api',
   clientOrderId: string,
-  tradingAccountId?: number | null
+  tradingAccountId?: number | null,
+  options: {
+    tradingAccountSubscriptionId?: number | null;
+    accountSubscriptionSizing?: AccountSubscriptionSizingSnapshot | null;
+  } = {}
 ) {
   return prisma.orderIntent.create({
     data: {
@@ -33,10 +38,17 @@ export async function createOrderIntent(
       subscriptionId: input.subscriptionId ?? null,
       subscriptionKey: input.subscriptionKey ?? null,
       tradingAccountId: tradingAccountId ?? null,
+      tradingAccountSubscriptionId:
+        options.tradingAccountSubscriptionId ?? null,
       status: 'received',
       rawRequestJson: {
         ...input,
-        clientOrderId
+        clientOrderId,
+        ...(options.accountSubscriptionSizing
+          ? {
+              accountSubscriptionSizing: options.accountSubscriptionSizing,
+            }
+          : {}),
       } as Prisma.InputJsonValue
     }
   });

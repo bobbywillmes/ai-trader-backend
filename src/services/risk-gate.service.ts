@@ -29,6 +29,10 @@ export type RiskGateResult = RiskGateAllowed | RiskGateBlocked;
 const ACTIVE_POSITION_STATUSES = ['open', 'closing'];
 const ENTRY_ORDER_STATUSES = ['pending', 'submitted', 'filled'];
 
+type EvaluateOrderRiskOptions = {
+  requestedNotionalOverride?: number | null;
+};
+
 function isEntryOrder(input: ResolvedPlaceOrderInput): boolean {
   return input.side === 'buy' && (input.signalType ?? 'entry') === 'entry';
 }
@@ -43,7 +47,18 @@ function isLimitEnabled(value: number | null): value is number {
   return value !== null && Number.isFinite(value);
 }
 
-function getRequestedNotional(input: ResolvedPlaceOrderInput): number | null {
+function isPositiveFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+function getRequestedNotional(
+  input: ResolvedPlaceOrderInput,
+  options: EvaluateOrderRiskOptions = {}
+): number | null {
+  if (isPositiveFiniteNumber(options.requestedNotionalOverride)) {
+    return options.requestedNotionalOverride;
+  }
+
   if (input.notional !== undefined) {
     return input.notional;
   }
@@ -53,6 +68,46 @@ function getRequestedNotional(input: ResolvedPlaceOrderInput): number | null {
   }
 
   return null;
+}
+
+function getAccountSubscriptionSizingEstimatedNotional(
+  value: Prisma.JsonValue
+) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const raw = value as Record<string, unknown>;
+  const sizing = raw.accountSubscriptionSizing;
+
+  if (!sizing || typeof sizing !== 'object' || Array.isArray(sizing)) {
+    return null;
+  }
+
+  const estimatedNotional = (
+    sizing as Record<string, unknown>
+  ).estimatedNotional;
+
+  return isPositiveFiniteNumber(estimatedNotional)
+    ? estimatedNotional
+    : null;
+}
+
+function getOrderIntentEstimatedNotional(order: {
+  notional: number | null;
+  qty: number | null;
+  limitPrice: number | null;
+  rawRequestJson: Prisma.JsonValue;
+}) {
+  if (order.notional !== null) {
+    return order.notional;
+  }
+
+  if (order.qty !== null && order.limitPrice !== null) {
+    return order.qty * order.limitPrice;
+  }
+
+  return getAccountSubscriptionSizingEstimatedNotional(order.rawRequestJson);
 }
 
 function getPositionExposure(position: {
@@ -161,6 +216,7 @@ async function getRiskUsage(tradingAccountId: number) {
         notional: true,
         qty: true,
         limitPrice: true,
+        rawRequestJson: true,
         status: true,
       },
     }),
@@ -172,15 +228,7 @@ async function getRiskUsage(tradingAccountId: number) {
   );
 
   const dailyEntryNotional = dailyEntryOrders.reduce((total, order) => {
-    if (order.notional !== null) {
-      return total + order.notional;
-    }
-
-    if (order.qty !== null && order.limitPrice !== null) {
-      return total + order.qty * order.limitPrice;
-    }
-
-    return total;
+    return total + (getOrderIntentEstimatedNotional(order) ?? 0);
   }, 0);
 
   return {
@@ -197,7 +245,8 @@ async function getRiskUsage(tradingAccountId: number) {
 }
 
 export async function evaluateOrderRisk(
-  input: ResolvedPlaceOrderInput
+  input: ResolvedPlaceOrderInput,
+  options: EvaluateOrderRiskOptions = {}
 ): Promise<RiskGateResult> {
   const tradingAccountId = await resolveDefaultTradingAccountId();
   const config = await getRuntimeTradingConfig();
@@ -326,7 +375,7 @@ export async function evaluateOrderRisk(
     };
   }
 
-  const requestedNotional = getRequestedNotional(input);
+  const requestedNotional = getRequestedNotional(input, options);
   const usage = await getRiskUsage(tradingAccountId);
 
   const existingSymbolPosition = usage.activePositions.find(

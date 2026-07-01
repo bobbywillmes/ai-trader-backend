@@ -66,6 +66,27 @@ const config: RuntimeTradingConfig = {
   reconciliationWorkerIntervalMinutes: 15,
 };
 
+function subscriptionRecord() {
+  return {
+    id: 22,
+    key: 'spy_dip_core',
+    symbol: 'SPY',
+    enabled: true,
+    strategy: {
+      key: 'dip_n_ride',
+      enabled: true,
+    },
+    exitProfile: {
+      key: 'standard',
+      enabled: true,
+    },
+    security: {
+      symbol: 'SPY',
+      enabled: true,
+    },
+  };
+}
+
 describe('risk gate entry session integration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -133,5 +154,81 @@ describe('risk gate entry session integration', () => {
 
     expect(result.allowed).toBe(true);
     expect(mocks.evaluateEntrySessionGuard).not.toHaveBeenCalled();
+  });
+
+  it('uses requested notional override for qty-only market entry risk checks', async () => {
+    mocks.subscriptionFindFirst.mockResolvedValue(subscriptionRecord());
+
+    const result = await evaluateOrderRisk(
+      {
+        symbol: 'SPY',
+        side: 'buy',
+        orderType: 'market',
+        timeInForce: 'day',
+        qty: 12,
+        extendedHours: false,
+        signalType: 'entry',
+        subscriptionId: 22,
+      },
+      {
+        requestedNotionalOverride: 6_000,
+      }
+    );
+
+    expect(result).toMatchObject({
+      allowed: false,
+      reason: 'Symbol exposure limit would be exceeded for SPY.',
+      details: expect.objectContaining({
+        rule: 'maxSymbolOpenNotional',
+        requestedNotional: 6_000,
+      }),
+    });
+  });
+
+  it('counts account subscription sizing snapshots for pending entry notional usage', async () => {
+    mocks.subscriptionFindFirst.mockResolvedValue(subscriptionRecord());
+    mocks.orderIntentFindMany.mockResolvedValue([
+      {
+        id: 55,
+        symbol: 'QQQ',
+        subscriptionId: 23,
+        notional: null,
+        qty: 3,
+        limitPrice: null,
+        rawRequestJson: {
+          accountSubscriptionSizing: {
+            estimatedNotional: 8_000,
+          },
+        },
+        status: 'pending',
+      },
+    ]);
+
+    const result = await evaluateOrderRisk(
+      {
+        symbol: 'SPY',
+        side: 'buy',
+        orderType: 'market',
+        timeInForce: 'day',
+        qty: 4,
+        extendedHours: false,
+        signalType: 'entry',
+        subscriptionId: 22,
+      },
+      {
+        requestedNotionalOverride: 3_000,
+      }
+    );
+
+    expect(result).toMatchObject({
+      allowed: false,
+      reason: 'Daily entry notional limit would be exceeded.',
+      details: expect.objectContaining({
+        rule: 'maxDailyEntryNotional',
+        dailyEntryNotional: 8_000,
+        requestedNotional: 3_000,
+        projectedDailyEntryNotional: 11_000,
+      }),
+    });
   });
 });

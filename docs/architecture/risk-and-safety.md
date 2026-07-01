@@ -22,8 +22,11 @@ Entry orders are blocked when any of the following conditions apply:
 - Runtime broker mode does not match the connected Alpaca mode.
 - Security is disabled.
 - Subscription is disabled.
+- Account subscription is missing, disabled, or disabled for entries.
 - Strategy is disabled.
 - Exit profile is disabled.
+- Account-subscription sizing is invalid, cannot resolve a required latest
+  price, or calculates less than one whole share.
 - Regular-session entry guard blocks the entry because the market is closed,
   the opening buffer is active, the pre-close cutoff is active, or session data
   is unavailable while fail-closed behavior is enabled.
@@ -171,6 +174,7 @@ The backend currently protects trading and configuration changes with:
 - Zod schema validation
 - Security enable/disable checks
 - Subscription enable/disable checks
+- Account-subscription entry gates and runtime sizing validation
 - Strategy enable/disable checks
 - Exit profile enable/disable checks
 - Daily entry order limit
