@@ -72,8 +72,9 @@ by this generic update endpoint.
 ## Manage Allocation Buckets
 
 Allocation buckets group account-scoped subscription sizing limits. They are
-admin configuration records only; they do not change runtime order sizing until
-the sizing runtime is switched in a later phase.
+admin configuration records for organizing account subscriptions. Runtime entry
+sizing uses the account subscription row, but allocation bucket risk checks such
+as `maxAllocatedNotional` and `maxOpenPositions` are not enforced yet.
 
 List allocations for one trading account:
 
@@ -155,9 +156,25 @@ available.
 ## Manage Account Subscriptions
 
 Account subscriptions attach a trading account to an existing legacy
-`Subscription` and store account-specific sizing configuration. These records
-are for future account-scoped sizing management only; current runtime order
-sizing and the n8n signal request/response contract remain unchanged.
+`Subscription` and store account-specific sizing configuration. Runtime entry
+order sizing now uses these records as the source of truth. The n8n signal
+request/response contract remains unchanged.
+
+At entry signal time, the backend resolves:
+
+```text
+TradingAccount + Subscription
+-> TradingAccountSubscription
+-> enabled / entriesEnabled gates
+-> sizingType / fixedQty / maxPositionNotional
+-> backend-owned latest price when required
+-> whole-share quantity
+```
+
+If the account subscription is missing or disabled for entries, the entry is
+rejected before an `OrderIntent` is created. The backend does not fall back to
+legacy `Subscription.sizingType` / `Subscription.sizingValue` for new entry
+orders.
 
 List account subscriptions:
 
@@ -376,17 +393,18 @@ the status filter to all or disabled rows, and can also filter by search text,
 sizing type, or allocation bucket.
 
 Account-subscription sizing changes in the Admin UI are configuration
-groundwork only in this phase. Setting an account subscription to
-`MAX_NOTIONAL` stores the account-specific configuration, but runtime order
-sizing still follows the legacy `Subscription.sizingType` /
-`Subscription.sizingValue` path until the runtime sizing phase is implemented.
+changes for runtime entry orders. Setting an account subscription to
+`MAX_NOTIONAL` causes new entry orders to calculate whole-share quantity from
+the backend-owned latest price. Existing market order behavior is unchanged:
+`MAX_NOTIONAL` is a sizing estimate and cap based on the latest price, not a
+guarantee that the final market fill notional will match the estimate exactly.
 
 ## Account Subscription Market Context
 
 Market context endpoints provide backend-owned price data for account
-subscription budget configuration. They are admin preview APIs only. They do not
-change runtime order sizing, order-worker behavior, broker submissions, or the
-n8n signal contract.
+subscription budget configuration and preview the same latest-price source used
+by runtime `MAX_NOTIONAL` entry sizing. They do not change order-worker
+behavior, broker submissions, or the n8n signal contract.
 
 List market context for account subscriptions:
 
@@ -525,8 +543,10 @@ settings form.
 - No route returns encrypted credential payloads.
 - n8n should continue to use signal APIs only and should not use broker
   credentials.
-- Allocation and account-subscription APIs configure future account-scoped
-  sizing data only. They do not change order worker behavior or the n8n signal
-  contract in this phase.
+- Account-subscription APIs configure runtime entry sizing. Allocation bucket
+  limits remain configuration-only and are not enforced by runtime risk checks
+  yet.
+- Account-subscription runtime sizing does not change order worker behavior or
+  the n8n signal contract.
 - Bobby Paper can continue to use legacy Alpaca env credentials when no
   `ACTIVE` account-scoped credential exists.
