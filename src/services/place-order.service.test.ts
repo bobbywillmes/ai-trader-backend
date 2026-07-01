@@ -58,6 +58,17 @@ vi.mock('./trading-account.service.js', () => ({
 
 import { submitOrder } from './place-order.service.js';
 
+class TestHttpError extends Error {
+  statusCode: number;
+  details: unknown;
+
+  constructor(statusCode: number, message: string, details: unknown) {
+    super(message);
+    this.statusCode = statusCode;
+    this.details = details;
+  }
+}
+
 const resolvedInput = {
   subscriptionKey: 'spy_dip_core',
   subscriptionId: 22,
@@ -255,4 +266,42 @@ describe('place order service entry decision attribution', () => {
       {}
     );
   });
+
+  it.each([
+    'account_subscription_missing',
+    'account_subscription_disabled',
+    'account_subscription_entries_disabled',
+    'invalid_fixed_qty_sizing',
+    'latest_price_unavailable',
+    'max_notional_below_share_price',
+    'min_position_notional_not_met',
+  ])(
+    'rejects %s before creating an order intent',
+    async (runtimeSizingCode) => {
+      mocks.resolveRuntimeAccountSubscriptionSizing.mockRejectedValue(
+        new TestHttpError(409, runtimeSizingCode, {
+          code: runtimeSizingCode,
+          rule: runtimeSizingCode,
+        })
+      );
+
+      await expect(
+        submitOrder({
+          subscriptionKey: 'spy_dip_core',
+          signalType: 'entry',
+          extendedHours: false,
+        })
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        message: runtimeSizingCode,
+        details: expect.objectContaining({
+          code: runtimeSizingCode,
+        }),
+      });
+
+      expect(mocks.createOrderIntent).not.toHaveBeenCalled();
+      expect(mocks.evaluateOrderRisk).not.toHaveBeenCalled();
+      expect(mocks.buildClientOrderId).not.toHaveBeenCalled();
+    }
+  );
 });
