@@ -23,22 +23,59 @@ import {
   linkEntryDecisionToOrderIntent,
 } from './entry-decision.service.js';
 import { resolveDefaultTradingAccountId } from './trading-account.service.js';
+import { resolveRuntimeAccountSubscriptionSizing } from './account-subscription-runtime-sizing.service.js';
 
 type SubmitOrderOptions = {
   entryDecisionKey?: string;
 };
 
+function isEntrySubscriptionOrder(
+  input: ResolvedPlaceOrderInput
+): input is ResolvedPlaceOrderInput & { subscriptionId: number } {
+  return (
+    input.subscriptionId !== undefined &&
+    input.side === 'buy' &&
+    (input.signalType ?? 'entry') === 'entry'
+  );
+}
+
+async function applyRuntimeAccountSubscriptionSizing(
+  input: ResolvedPlaceOrderInput,
+  tradingAccountId: number
+): Promise<ResolvedPlaceOrderInput> {
+  if (!isEntrySubscriptionOrder(input)) {
+    return input;
+  }
+
+  const sizing = await resolveRuntimeAccountSubscriptionSizing({
+    tradingAccountId,
+    subscriptionId: input.subscriptionId,
+    symbol: input.symbol,
+  });
+  const { notional: _legacyNotional, ...inputWithoutNotional } = input;
+
+  return {
+    ...inputWithoutNotional,
+    qty: sizing.qty,
+  };
+}
+
 export async function submitOrder(
   input: PlaceOrderInput,
   options: SubmitOrderOptions = {}
 ) {
-  const resolvedInput = await resolveSubscriptionOrderInput(input);
   const tradingAccountId = await resolveDefaultTradingAccountId();
-  const clientOrderId = buildClientOrderId(resolvedInput);
+  const subscriptionResolvedInput = await resolveSubscriptionOrderInput(input);
 
   if (options.entryDecisionKey) {
     await ensureEntryDecisionCanLink(options.entryDecisionKey);
   }
+
+  const resolvedInput = await applyRuntimeAccountSubscriptionSizing(
+    subscriptionResolvedInput,
+    tradingAccountId
+  );
+  const clientOrderId = buildClientOrderId(resolvedInput);
 
   const intent = await createOrderIntent(
     resolvedInput,
