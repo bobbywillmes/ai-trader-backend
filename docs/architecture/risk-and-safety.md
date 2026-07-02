@@ -37,6 +37,12 @@ Entry orders are blocked when any of the following conditions apply:
 - Total open notional limit would be exceeded.
 - Per-symbol exposure limit would be exceeded.
 - Per-subscription exposure limit would be exceeded.
+- Account daily entry order limit has been reached.
+- Account daily entry notional limit would be exceeded.
+- Account maximum open position count would be exceeded.
+- Account total open notional limit would be exceeded.
+- Account symbol exposure limit would be exceeded.
+- Account subscription exposure limit would be exceeded.
 
 ### Trading Enabled vs Kill Switch
 
@@ -60,9 +66,9 @@ Kill Switch On
 
 ### Entry Risk Settings
 
-Runtime risk settings are stored in the `Setting` table and managed from the admin UI Settings page.
+Global runtime risk settings are stored in the `Setting` table and managed from the admin UI Settings page. These settings remain backend-wide emergency caps.
 
-Current runtime risk settings:
+Global runtime risk settings:
 
 ```text
 tradingEnabled
@@ -79,6 +85,23 @@ entryStartMinutesAfterOpen
 entryCutoffMinutesBeforeClose
 failClosedOnMarketClockError
 ```
+
+Account-scoped risk settings are stored in `TradingAccountRiskSettings` and managed on the Trading Account detail page under Account Risk Controls.
+
+Account risk settings:
+
+```text
+enabled
+maxDailyEntryOrders
+maxDailyEntryNotional
+maxOpenPositions
+maxTotalOpenNotional
+maxSymbolOpenNotional
+maxSubscriptionOpenNotional
+notes
+```
+
+When `TradingAccountRiskSettings.enabled=false`, only account-specific caps are skipped. Global emergency caps still apply. If an account has no risk settings row yet, the runtime risk gate also skips account-specific caps while keeping global caps active.
 
 ### Regular-session entry guard
 
@@ -169,6 +192,7 @@ The backend currently protects trading and configuration changes with:
 - Runtime `killSwitchEnabled` setting
 - Runtime regular-session entry guard
 - Paper/live mode setting
+- Account-scoped risk settings
 - Alpaca account `tradingBlocked` check
 - Broker mode matching
 - Zod schema validation
@@ -183,6 +207,12 @@ The backend currently protects trading and configuration changes with:
 - Total open notional limit
 - Per-symbol exposure limit
 - Per-subscription exposure limit
+- Account daily entry order limit
+- Account daily entry notional limit
+- Account max open position limit
+- Account total open notional limit
+- Account symbol open notional limit
+- Account subscription open notional limit
 - Backend-generated stable `clientOrderId`
 - Atomic order worker claim: `pending → submitting`
 - Duplicate broker order protection
