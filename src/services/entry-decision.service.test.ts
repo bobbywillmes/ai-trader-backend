@@ -31,6 +31,13 @@ vi.mock('../db/prisma.js', () => ({
 
 vi.mock('./trading-account.service.js', () => ({
   resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
+  TRADING_ACCOUNT_SUMMARY_SELECT: {
+    id: true,
+    displayName: true,
+    broker: true,
+    environment: true,
+    status: true,
+  },
 }));
 
 import {
@@ -386,7 +393,18 @@ describe('entry decision service', () => {
         evaluatedAt: 'desc',
       },
       take: 500,
-      select: expect.any(Object),
+      select: expect.objectContaining({
+        tradingAccountId: true,
+        tradingAccount: {
+          select: {
+            id: true,
+            displayName: true,
+            broker: true,
+            environment: true,
+            status: true,
+          },
+        },
+      }),
     });
     expect(result.filters).toMatchObject({
       symbol: 'SPY',

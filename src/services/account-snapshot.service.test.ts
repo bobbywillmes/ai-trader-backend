@@ -27,6 +27,13 @@ vi.mock('./account.service.js', () => ({
 
 vi.mock('./trading-account.service.js', () => ({
   resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
+  TRADING_ACCOUNT_SUMMARY_SELECT: {
+    id: true,
+    displayName: true,
+    broker: true,
+    environment: true,
+    status: true,
+  },
 }));
 
 import {
@@ -89,6 +96,13 @@ function snapshot(
     changed: true,
     rawJson: {},
     createdAt,
+    tradingAccount: {
+      id: 1,
+      displayName: 'Bobby Paper',
+      broker: 'ALPACA',
+      environment: 'PAPER',
+      status: 'ACTIVE',
+    },
     exposure: {
       longExposure: 7000,
       shortExposure: 1250,
@@ -233,6 +247,17 @@ describe('account snapshot service', () => {
         },
         mode: 'paper',
         tradingAccountId: 1,
+      },
+      include: {
+        tradingAccount: {
+          select: {
+            id: true,
+            displayName: true,
+            broker: true,
+            environment: true,
+            status: true,
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
       take: 100,

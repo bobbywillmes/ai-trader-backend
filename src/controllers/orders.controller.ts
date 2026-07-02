@@ -7,7 +7,10 @@ import { cancelOrderById } from '../services/cancel-order.service.js';
 import { cancelAllOpenOrders } from '../services/cancel-all-orders.service.js';
 import { placeOrderSchema } from '../validators/place-order.schema.js';
 import { cancelOrderParamsSchema } from '../validators/cancel-order.schema.js';
-import { resolveDefaultTradingAccountId } from '../services/trading-account.service.js';
+import {
+  getTradingAccountSummaryById,
+  resolveDefaultTradingAccountId,
+} from '../services/trading-account.service.js';
 
 export async function openOrdersController(
   _req: Request,
@@ -16,10 +19,19 @@ export async function openOrdersController(
 ) {
   try {
     const tradingAccountId = await resolveDefaultTradingAccountId();
-    const orders = await getNormalizedOpenOrders('manual_admin_action', {
-      tradingAccountId,
-    });
-    res.status(200).json(orders);
+    const [orders, tradingAccount] = await Promise.all([
+      getNormalizedOpenOrders('manual_admin_action', {
+        tradingAccountId,
+      }),
+      getTradingAccountSummaryById(tradingAccountId),
+    ]);
+    res.status(200).json(
+      orders.map((order) => ({
+        ...order,
+        tradingAccountId,
+        tradingAccount,
+      }))
+    );
   } catch (error) {
     next(error);
   }

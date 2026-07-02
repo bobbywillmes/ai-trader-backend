@@ -7,7 +7,10 @@ import {
 import type { AlpacaApiOperation } from '../integrations/alpaca/request-metadata.js';
 import { getRuntimeTradingConfig } from './config.service.js';
 import { createSystemEvent } from './system-event.service.js';
-import { resolveDefaultTradingAccountId } from './trading-account.service.js';
+import {
+  resolveDefaultTradingAccountId,
+  TRADING_ACCOUNT_SUMMARY_SELECT,
+} from './trading-account.service.js';
 
 type SyncBrokerActivitiesInput = {
   activityType?: string;
@@ -360,6 +363,9 @@ export async function getRecentBrokerActivities(args: {
     },
     take: args.limit ?? 50,
     include: {
+      tradingAccount: {
+        select: TRADING_ACCOUNT_SUMMARY_SELECT,
+      },
       orderIntent: true,
       brokerOrderRecord: true,
     },
@@ -377,6 +383,9 @@ export async function getLatestBrokerActivity() {
       transactionTime: 'desc',
     },
     include: {
+      tradingAccount: {
+        select: TRADING_ACCOUNT_SUMMARY_SELECT,
+      },
       orderIntent: true,
       brokerOrderRecord: true,
     },

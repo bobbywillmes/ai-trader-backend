@@ -30,14 +30,22 @@ vi.mock('../db/prisma.js', () => ({
 
 vi.mock('./trading-account.service.js', () => ({
   resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
+  TRADING_ACCOUNT_SUMMARY_SELECT: {
+    id: true,
+    displayName: true,
+    broker: true,
+    environment: true,
+    status: true,
+  },
 }));
 
-import { createOrderIntent } from './order-audit.service.js';
+import { createOrderIntent, getRecentOrderIntents } from './order-audit.service.js';
 
 describe('order audit service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.orderIntentCreate.mockResolvedValue({ id: 55 });
+    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
   });
 
   it('stores account subscription linkage and sizing snapshot on order intents', async () => {
@@ -87,6 +95,32 @@ describe('order audit service', () => {
           accountSubscriptionSizing: snapshot,
         }),
       }),
+    });
+  });
+
+  it('lists recent order intents with safe trading account summaries', async () => {
+    mocks.orderIntentFindMany.mockResolvedValue([]);
+
+    await getRecentOrderIntents(25);
+
+    expect(mocks.orderIntentFindMany).toHaveBeenCalledWith({
+      where: {
+        tradingAccountId: 1,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 25,
+      include: {
+        tradingAccount: {
+          select: {
+            id: true,
+            displayName: true,
+            broker: true,
+            environment: true,
+            status: true,
+          },
+        },
+        brokerOrders: true,
+      },
     });
   });
 });

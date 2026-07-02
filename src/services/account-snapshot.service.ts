@@ -2,7 +2,11 @@ import crypto from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { getNormalizedAccount } from './account.service.js';
-import { resolveDefaultTradingAccountId } from './trading-account.service.js';
+import {
+  resolveDefaultTradingAccountId,
+  TRADING_ACCOUNT_SUMMARY_SELECT,
+  type TradingAccountSummaryResponse,
+} from './trading-account.service.js';
 import type { BrokerMode } from '../types/broker.js';
 
 export type AccountSnapshotReason =
@@ -63,6 +67,7 @@ type AccountSnapshotRecord = {
   changed: boolean;
   rawJson: Prisma.JsonValue;
   createdAt: Date;
+  tradingAccount?: TradingAccountSummaryResponse | null;
 };
 
 const DEFAULT_RECENT_SNAPSHOT_LIMIT = 50;
@@ -146,6 +151,7 @@ export function calculateAccountSnapshotExposureMetrics(input: {
 export function mapAccountSnapshot(snapshot: AccountSnapshotRecord) {
   return {
     ...snapshot,
+    tradingAccount: snapshot.tradingAccount ?? null,
     exposure: calculateAccountSnapshotExposureMetrics(snapshot),
   };
 }
@@ -182,6 +188,11 @@ export async function recordAccountSnapshot(input: RecordAccountSnapshotInput) {
   if (input.runKey) {
     const existingRun = await prisma.accountSnapshot.findUnique({
       where: { runKey: input.runKey },
+      include: {
+        tradingAccount: {
+          select: TRADING_ACCOUNT_SUMMARY_SELECT,
+        },
+      },
     });
 
     if (existingRun) {
@@ -202,6 +213,11 @@ export async function recordAccountSnapshot(input: RecordAccountSnapshotInput) {
   const latestSnapshot = await prisma.accountSnapshot.findFirst({
     where: {
       tradingAccountId,
+    },
+    include: {
+      tradingAccount: {
+        select: TRADING_ACCOUNT_SUMMARY_SELECT,
+      },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -250,6 +266,11 @@ export async function recordAccountSnapshot(input: RecordAccountSnapshotInput) {
       // If we later want raw Alpaca JSON, we can add a raw account service.
       rawJson: account as unknown as Prisma.InputJsonValue,
     },
+    include: {
+      tradingAccount: {
+        select: TRADING_ACCOUNT_SUMMARY_SELECT,
+      },
+    },
   });
 
   return {
@@ -270,6 +291,11 @@ export async function getRecentAccountSnapshots(
 
   const snapshots = await prisma.accountSnapshot.findMany({
     where,
+    include: {
+      tradingAccount: {
+        select: TRADING_ACCOUNT_SUMMARY_SELECT,
+      },
+    },
     orderBy: { createdAt: 'desc' },
     take: clampLimit(limit, DEFAULT_RECENT_SNAPSHOT_LIMIT, MAX_RECENT_SNAPSHOT_LIMIT),
   });
@@ -283,6 +309,11 @@ export async function getLatestAccountSnapshot() {
   const snapshot = await prisma.accountSnapshot.findFirst({
     where: {
       tradingAccountId,
+    },
+    include: {
+      tradingAccount: {
+        select: TRADING_ACCOUNT_SUMMARY_SELECT,
+      },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -303,6 +334,11 @@ export async function getAccountSnapshotTrends(
   );
   const newestSnapshots = await prisma.accountSnapshot.findMany({
     where,
+    include: {
+      tradingAccount: {
+        select: TRADING_ACCOUNT_SUMMARY_SELECT,
+      },
+    },
     orderBy: { createdAt: 'desc' },
     take: limit,
   });

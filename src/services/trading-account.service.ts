@@ -62,6 +62,10 @@ type TradingAccountAdminRecord = Prisma.TradingAccountGetPayload<{
   select: typeof TRADING_ACCOUNT_ADMIN_SELECT;
 }>;
 
+export type TradingAccountSummaryResponse = Prisma.TradingAccountGetPayload<{
+  select: typeof TRADING_ACCOUNT_SUMMARY_SELECT;
+}>;
+
 export type TradingAccountAdminResponse = ReturnType<
   typeof serializeTradingAccountForAdmin
 >;
@@ -136,6 +140,13 @@ export async function getTradingAccountForAdmin(id: number) {
   });
 
   return account ? serializeTradingAccountForAdmin(account) : null;
+}
+
+export async function getTradingAccountSummaryById(id: number) {
+  return prisma.tradingAccount.findUnique({
+    where: { id },
+    select: TRADING_ACCOUNT_SUMMARY_SELECT,
+  });
 }
 
 export async function updateTradingAccountForAdmin(
