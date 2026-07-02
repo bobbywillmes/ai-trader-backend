@@ -93,9 +93,20 @@ vi.mock('./adaptive-polling.service.js', () => ({
 
 vi.mock('./trading-account.service.js', () => ({
   resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
+  TRADING_ACCOUNT_SUMMARY_SELECT: {
+    id: true,
+    displayName: true,
+    broker: true,
+    environment: true,
+    status: true,
+  },
 }));
 
-import { syncTrackedPositions } from './position-tracking.service.js';
+import {
+  getOpenTrackedPositions,
+  getTrackedPositions,
+  syncTrackedPositions,
+} from './position-tracking.service.js';
 
 const brokerPosition = {
   broker: 'alpaca',
@@ -207,5 +218,71 @@ describe('position tracking subscription recovery', () => {
       seen: 0,
     });
     expect(mocks.getNormalizedPositions).not.toHaveBeenCalled();
+  });
+
+  it('returns tracked positions with safe trading account summaries', async () => {
+    const position = {
+      id: 101,
+      broker: 'alpaca',
+      symbol: 'DIA',
+      side: 'long',
+      status: 'open',
+      tradingAccountId: 1,
+      tradingAccount: {
+        id: 1,
+        displayName: 'Bobby Paper',
+        broker: 'ALPACA',
+        environment: 'PAPER',
+        status: 'ACTIVE',
+      },
+    };
+    mocks.trackedPositionFindMany.mockResolvedValue([position]);
+
+    await expect(getTrackedPositions()).resolves.toEqual([position]);
+
+    expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith({
+      where: {
+        tradingAccountId: 1,
+      },
+      orderBy: { symbol: 'asc' },
+      include: expect.objectContaining({
+        tradingAccount: {
+          select: {
+            id: true,
+            displayName: true,
+            broker: true,
+            environment: true,
+            status: true,
+          },
+        },
+      }),
+    });
+  });
+
+  it('returns open tracked positions with safe trading account summaries', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([]);
+
+    await getOpenTrackedPositions();
+
+    expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith({
+      where: {
+        tradingAccountId: 1,
+        status: {
+          in: ['open', 'closing'],
+        },
+      },
+      orderBy: { symbol: 'asc' },
+      include: expect.objectContaining({
+        tradingAccount: {
+          select: {
+            id: true,
+            displayName: true,
+            broker: true,
+            environment: true,
+            status: true,
+          },
+        },
+      }),
+    });
   });
 });

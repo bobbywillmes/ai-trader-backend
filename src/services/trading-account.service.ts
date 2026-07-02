@@ -50,6 +50,14 @@ const TRADING_ACCOUNT_ADMIN_SELECT = {
   },
 } satisfies Prisma.TradingAccountSelect;
 
+export const TRADING_ACCOUNT_SUMMARY_SELECT = {
+  id: true,
+  displayName: true,
+  broker: true,
+  environment: true,
+  status: true,
+} satisfies Prisma.TradingAccountSelect;
+
 type TradingAccountAdminRecord = Prisma.TradingAccountGetPayload<{
   select: typeof TRADING_ACCOUNT_ADMIN_SELECT;
 }>;

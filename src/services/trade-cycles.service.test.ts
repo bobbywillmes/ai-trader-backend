@@ -21,6 +21,13 @@ vi.mock('../db/prisma.js', () => ({
 
 vi.mock('./trading-account.service.js', () => ({
   resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
+  TRADING_ACCOUNT_SUMMARY_SELECT: {
+    id: true,
+    displayName: true,
+    broker: true,
+    environment: true,
+    status: true,
+  },
 }));
 
 import { getTradeCycleById, listTradeCycles } from './trade-cycles.service.js';
@@ -28,6 +35,14 @@ import { getTradeCycleById, listTradeCycles } from './trade-cycles.service.js';
 function buildCycle(overrides: Record<string, unknown> = {}) {
   return {
     id: 101,
+    tradingAccountId: 1,
+    tradingAccount: {
+      id: 1,
+      displayName: 'Bobby Paper',
+      broker: 'ALPACA',
+      environment: 'PAPER',
+      status: 'ACTIVE',
+    },
     broker: 'alpaca',
     symbol: 'SPY',
     side: 'long',
@@ -134,6 +149,14 @@ describe('trade cycle service', () => {
     expect(result.cycles[0]).toEqual(
       expect.objectContaining({
         id: 101,
+        tradingAccountId: 1,
+        tradingAccount: {
+          id: 1,
+          displayName: 'Bobby Paper',
+          broker: 'ALPACA',
+          environment: 'PAPER',
+          status: 'ACTIVE',
+        },
         symbol: 'SPY',
         status: 'closed',
         quantity: 3,
@@ -344,6 +367,15 @@ describe('trade cycle service', () => {
     expect(mocks.trackedPositionFindFirst).toHaveBeenCalledWith({
       where: { id: 101, tradingAccountId: 1 },
       include: expect.objectContaining({
+        tradingAccount: {
+          select: {
+            id: true,
+            displayName: true,
+            broker: true,
+            environment: true,
+            status: true,
+          },
+        },
         orderIntents: expect.objectContaining({
           include: {
             brokerOrders: true,

@@ -1,7 +1,10 @@
 import type { BrokerActivity, Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
-import { resolveDefaultTradingAccountId } from './trading-account.service.js';
+import {
+  resolveDefaultTradingAccountId,
+  TRADING_ACCOUNT_SUMMARY_SELECT,
+} from './trading-account.service.js';
 
 export type TradeCycleFilters = {
   symbol?: string;
@@ -179,6 +182,9 @@ function buildCycleSummary(
       };
       brokerActivities: true;
       entryDecision: true;
+      tradingAccount: {
+        select: typeof TRADING_ACCOUNT_SUMMARY_SELECT;
+      };
     };
   }>,
   systemEvents: TrackedPositionSystemEvent[] = []
@@ -214,6 +220,8 @@ function buildCycleSummary(
 
   return {
     id: position.id,
+    tradingAccountId: position.tradingAccountId,
+    tradingAccount: position.tradingAccount,
     broker: position.broker,
     symbol: position.symbol,
     side: position.side,
@@ -369,6 +377,9 @@ const tradeCycleInclude = {
     },
   },
   entryDecision: true,
+  tradingAccount: {
+    select: TRADING_ACCOUNT_SUMMARY_SELECT,
+  },
 } satisfies Prisma.TrackedPositionInclude;
 
 export async function listTradeCycles(filters: TradeCycleFilters = {}) {

@@ -24,7 +24,10 @@ import {
   adaptivePollingCoordinator,
   type AdaptivePollingDecision,
 } from './adaptive-polling.service.js';
-import { resolveDefaultTradingAccountId } from './trading-account.service.js';
+import {
+  resolveDefaultTradingAccountId,
+  TRADING_ACCOUNT_SUMMARY_SELECT,
+} from './trading-account.service.js';
 
 export type TrackedPositionSyncResult = {
   polled: boolean;
@@ -581,6 +584,9 @@ export async function getTrackedPositions() {
     },
     orderBy: { symbol: 'asc' },
     include: {
+      tradingAccount: {
+        select: TRADING_ACCOUNT_SUMMARY_SELECT,
+      },
       exitState: true,
       subscription: {
         include: {
@@ -604,6 +610,9 @@ export async function getOpenTrackedPositions() {
      },
     orderBy: { symbol: 'asc' },
     include: {
+      tradingAccount: {
+        select: TRADING_ACCOUNT_SUMMARY_SELECT,
+      },
       exitState: true,
       subscription: {
         include: {
