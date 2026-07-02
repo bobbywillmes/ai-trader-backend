@@ -33,6 +33,16 @@ type EvaluateOrderRiskOptions = {
   requestedNotionalOverride?: number | null;
 };
 
+type AccountRiskSettings = {
+  enabled: boolean;
+  maxDailyEntryOrders: number | null;
+  maxDailyEntryNotional: number | null;
+  maxOpenPositions: number | null;
+  maxTotalOpenNotional: number | null;
+  maxSymbolOpenNotional: number | null;
+  maxSubscriptionOpenNotional: number | null;
+};
+
 function isEntryOrder(input: ResolvedPlaceOrderInput): boolean {
   return input.side === 'buy' && (input.signalType ?? 'entry') === 'entry';
 }
@@ -116,6 +126,28 @@ function getPositionExposure(position: {
 }) {
   const exposure = position.marketValue || position.costBasis || 0;
   return Math.abs(exposure);
+}
+
+function getSymbolOpenNotional(
+  positions: Array<{ symbol: string; marketValue: number; costBasis: number }>,
+  symbol: string
+) {
+  return positions
+    .filter((position) => position.symbol === symbol)
+    .reduce((total, position) => total + getPositionExposure(position), 0);
+}
+
+function getSubscriptionOpenNotional(
+  positions: Array<{
+    subscriptionId: number | null;
+    marketValue: number;
+    costBasis: number;
+  }>,
+  subscriptionId: number
+) {
+  return positions
+    .filter((position) => position.subscriptionId === subscriptionId)
+    .reduce((total, position) => total + getPositionExposure(position), 0);
 }
 
 function block(
@@ -242,6 +274,25 @@ async function getRiskUsage(tradingAccountId: number) {
       new Set(activePositions.map((position) => position.symbol))
     ),
   };
+}
+
+async function getAccountRiskSettings(
+  tradingAccountId: number
+): Promise<AccountRiskSettings | null> {
+  return prisma.tradingAccountRiskSettings.findUnique({
+    where: {
+      tradingAccountId,
+    },
+    select: {
+      enabled: true,
+      maxDailyEntryOrders: true,
+      maxDailyEntryNotional: true,
+      maxOpenPositions: true,
+      maxTotalOpenNotional: true,
+      maxSymbolOpenNotional: true,
+      maxSubscriptionOpenNotional: true,
+    },
+  });
 }
 
 export async function evaluateOrderRisk(
@@ -476,6 +527,129 @@ export async function evaluateOrderRisk(
         requestedNotional,
       }
     );
+  }
+
+  const accountRiskSettings = await getAccountRiskSettings(tradingAccountId);
+
+  if (accountRiskSettings?.enabled) {
+    if (
+      isLimitEnabled(accountRiskSettings.maxDailyEntryOrders) &&
+      usage.dailyEntryOrderCount >= accountRiskSettings.maxDailyEntryOrders
+    ) {
+      return block(409, 'Account daily entry order limit reached.', {
+        rule: 'account_max_daily_entry_orders_exceeded',
+        tradingAccountId,
+        maxDailyEntryOrders: accountRiskSettings.maxDailyEntryOrders,
+        dailyEntryOrderCount: usage.dailyEntryOrderCount,
+      });
+    }
+
+    if (
+      isLimitEnabled(accountRiskSettings.maxOpenPositions) &&
+      usage.activePositionCount >= accountRiskSettings.maxOpenPositions
+    ) {
+      return block(409, 'Account maximum open position limit reached.', {
+        rule: 'account_max_open_positions_exceeded',
+        tradingAccountId,
+        maxOpenPositions: accountRiskSettings.maxOpenPositions,
+        activePositionCount: usage.activePositionCount,
+        activeSymbols: usage.activeSymbols,
+      });
+    }
+
+    if (
+      requestedNotional !== null &&
+      isLimitEnabled(accountRiskSettings.maxDailyEntryNotional) &&
+      usage.dailyEntryNotional + requestedNotional >
+        accountRiskSettings.maxDailyEntryNotional
+    ) {
+      return block(409, 'Account daily entry notional limit would be exceeded.', {
+        rule: 'account_max_daily_entry_notional_exceeded',
+        tradingAccountId,
+        maxDailyEntryNotional: accountRiskSettings.maxDailyEntryNotional,
+        dailyEntryNotional: usage.dailyEntryNotional,
+        requestedNotional,
+        projectedDailyEntryNotional:
+          usage.dailyEntryNotional + requestedNotional,
+      });
+    }
+
+    if (
+      requestedNotional !== null &&
+      isLimitEnabled(accountRiskSettings.maxTotalOpenNotional) &&
+      usage.totalOpenNotional + requestedNotional >
+        accountRiskSettings.maxTotalOpenNotional
+    ) {
+      return block(409, 'Account total open notional limit would be exceeded.', {
+        rule: 'account_max_total_open_notional_exceeded',
+        tradingAccountId,
+        maxTotalOpenNotional: accountRiskSettings.maxTotalOpenNotional,
+        totalOpenNotional: usage.totalOpenNotional,
+        requestedNotional,
+        projectedTotalOpenNotional:
+          usage.totalOpenNotional + requestedNotional,
+      });
+    }
+
+    const symbolOpenNotional = getSymbolOpenNotional(
+      usage.activePositions,
+      input.symbol
+    );
+
+    if (
+      requestedNotional !== null &&
+      isLimitEnabled(accountRiskSettings.maxSymbolOpenNotional) &&
+      symbolOpenNotional + requestedNotional >
+        accountRiskSettings.maxSymbolOpenNotional
+    ) {
+      return block(
+        409,
+        `Account symbol exposure limit would be exceeded for ${input.symbol}.`,
+        {
+          rule: 'account_max_symbol_open_notional_exceeded',
+          tradingAccountId,
+          symbol: input.symbol,
+          maxSymbolOpenNotional: accountRiskSettings.maxSymbolOpenNotional,
+          symbolOpenNotional,
+          requestedNotional,
+          projectedSymbolOpenNotional:
+            symbolOpenNotional + requestedNotional,
+        }
+      );
+    }
+
+    if (
+      requestedNotional !== null &&
+      input.subscriptionId !== undefined &&
+      isLimitEnabled(accountRiskSettings.maxSubscriptionOpenNotional)
+    ) {
+      const subscriptionOpenNotional = getSubscriptionOpenNotional(
+        usage.activePositions,
+        input.subscriptionId
+      );
+
+      if (
+        subscriptionOpenNotional + requestedNotional >
+        accountRiskSettings.maxSubscriptionOpenNotional
+      ) {
+        return block(
+          409,
+          `Account subscription exposure limit would be exceeded for ${input.subscriptionKey ?? input.subscriptionId}.`,
+          {
+            rule: 'account_max_subscription_open_notional_exceeded',
+            tradingAccountId,
+            subscriptionId: input.subscriptionId,
+            subscriptionKey: input.subscriptionKey ?? null,
+            maxSubscriptionOpenNotional:
+              accountRiskSettings.maxSubscriptionOpenNotional,
+            subscriptionOpenNotional,
+            requestedNotional,
+            projectedSubscriptionOpenNotional:
+              subscriptionOpenNotional + requestedNotional,
+          }
+        );
+      }
+    }
   }
 
   return {
