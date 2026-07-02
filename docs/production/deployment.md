@@ -1029,3 +1029,17 @@ After applying the account subscription sizing foundation migration, run the one
 ```bash
 DEFAULT_TRADING_ACCOUNT_ID=1 npx tsx scripts/bootstrap-trading-account-subscriptions.ts
 ```
+
+## 23. One-time trading account risk settings bootstrap
+
+After applying the account risk settings migration, run the one-time bootstrap script to create or update the default account's `TradingAccountRiskSettings` row.
+
+This copies the current global entry risk limits into the Bobby Paper trading account so the account-level caps preserve current behavior while global settings continue to act as backend-wide emergency caps.
+
+Run locally or from a source checkout with:
+
+```bash
+DEFAULT_TRADING_ACCOUNT_ID=1 npx tsx scripts/bootstrap-trading-account-risk-settings.ts
+```
+
+In production Docker, confirm the `scripts/` directory exists inside the backend image before running the command. If the image does not include one-off scripts, copy the script into the backend container or run it from a checked-out project directory with the production `DATABASE_URL` available, then remove any temporary copied file after the bootstrap completes.
