@@ -742,7 +742,9 @@ function MarketContextPanel({
             Market context
           </Text>
           <Text size="xs" c="dimmed">
-            Preview only. Runtime order sizing still uses the legacy path.
+            Runtime entry sizing uses this account-subscription configuration.
+            MAX_NOTIONAL uses backend-owned latest market data to calculate a
+            whole-share quantity.
           </Text>
         </div>
 
@@ -1055,14 +1057,18 @@ function SizingAndAllocationsSection({
       </div>
 
       <Alert color="blue" title="Runtime sizing note">
-        These settings configure account-specific sizing and allocation budgets.
-        Runtime order sizing still uses the legacy subscription sizing path
-        until the next runtime sizing phase is implemented.
+        New entry orders now use account-specific sizing from
+        TradingAccountSubscription. FIXED_QTY buys a fixed share quantity.
+        MAX_NOTIONAL calculates a whole-share quantity from backend-owned latest
+        market data. Allocation bucket limits are currently informational and
+        are not enforced yet.
       </Alert>
 
       <Alert color="cyan" title="Market context note">
-        Price context is used to preview share quantities and budget thresholds.
-        Runtime order sizing has not been switched to these settings yet.
+        Market context is used to preview share quantities and budget
+        thresholds. Runtime entry sizing uses backend-owned market data when
+        MAX_NOTIONAL sizing is selected. Allocation bucket limits are not
+        enforced yet.
       </Alert>
 
       <AllocationManagementCard account={account} token={token} />

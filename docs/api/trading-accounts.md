@@ -157,8 +157,10 @@ available.
 
 Account subscriptions attach a trading account to an existing legacy
 `Subscription` and store account-specific sizing configuration. Runtime entry
-order sizing now uses these records as the source of truth. The n8n signal
-request/response contract remains unchanged.
+order sizing now uses `TradingAccountSubscription` as the source of truth. The
+legacy `Subscription.sizingType` / `Subscription.sizingValue` fields still
+exist, but they are no longer the source of truth for new entry sizing. The n8n
+signal request/response contract remains unchanged.
 
 At entry signal time, the backend resolves:
 
@@ -398,6 +400,8 @@ changes for runtime entry orders. Setting an account subscription to
 the backend-owned latest price. Existing market order behavior is unchanged:
 `MAX_NOTIONAL` is a sizing estimate and cap based on the latest price, not a
 guarantee that the final market fill notional will match the estimate exactly.
+Allocation bucket limits are configured and visible, but allocation-level risk
+checks are not enforced yet and remain a future phase.
 
 ## Account Subscription Market Context
 
