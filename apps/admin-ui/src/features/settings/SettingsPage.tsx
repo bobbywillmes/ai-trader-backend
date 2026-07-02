@@ -2293,9 +2293,12 @@ export function SettingsPage() {
                 <div>
                   <Title order={3}>Entry Risk Limits</Title>
                   <Text c="dimmed" size="sm">
-                    These limits are checked only after trading is enabled and
-                    the kill switch is off. Clearing a value removes that
-                    specific limit.
+                    These are global emergency entry caps checked only after
+                    trading is enabled and the kill switch is off.
+                    Account-specific sizing lives on trading account
+                    subscriptions. Allocation bucket limits are configured on
+                    trading account allocations but are not enforced yet.
+                    Clearing a value removes that specific limit.
                   </Text>
                 </div>
 
