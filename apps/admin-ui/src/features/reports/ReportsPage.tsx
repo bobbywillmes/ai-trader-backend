@@ -19,6 +19,7 @@ import {
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconFileAnalytics } from "@tabler/icons-react";
+import { TradingAccountBadge } from "../../components/TradingAccountBadge";
 import {
   Bar,
   BarChart,
@@ -506,9 +507,10 @@ function PerformanceTradesTable({
   return (
     <Stack gap="sm">
       <ScrollArea>
-        <Table striped highlightOnHover withTableBorder miw={1240}>
+        <Table striped highlightOnHover withTableBorder miw={1380}>
           <Table.Thead>
             <Table.Tr>
+              <Table.Th>Account</Table.Th>
               <PerformanceSortHeader
                 column="symbol"
                 label="Symbol"
@@ -566,6 +568,12 @@ function PerformanceTradesTable({
           <Table.Tbody>
             {trades.map((trade) => (
               <Table.Tr key={trade.id}>
+                <Table.Td>
+                  <TradingAccountBadge
+                    account={trade.tradingAccount}
+                    tradingAccountId={trade.tradingAccountId}
+                  />
+                </Table.Td>
                 <Table.Td>
                   <Text fw={700}>{trade.symbol}</Text>
                   <Text size="xs" c="dimmed">
@@ -1460,9 +1468,10 @@ export function ReportsPage() {
 
             {snapshots.length > 0 && (
               <ScrollArea>
-                <Table striped highlightOnHover withTableBorder>
+                <Table striped highlightOnHover withTableBorder miw={980}>
                   <Table.Thead>
                     <Table.Tr>
+                      <Table.Th>Account</Table.Th>
                       <Table.Th>Time</Table.Th>
                       <Table.Th>Reason</Table.Th>
                       <Table.Th>Cash</Table.Th>
@@ -1475,6 +1484,12 @@ export function ReportsPage() {
                   <Table.Tbody>
                     {snapshots.map((snapshot) => (
                       <Table.Tr key={snapshot.id}>
+                        <Table.Td>
+                          <TradingAccountBadge
+                            account={snapshot.tradingAccount}
+                            tradingAccountId={snapshot.tradingAccountId}
+                          />
+                        </Table.Td>
                         <Table.Td>{formatDate(snapshot.createdAt)}</Table.Td>
                         <Table.Td>
                           <Badge variant="light">{snapshot.reason}</Badge>
@@ -1567,9 +1582,10 @@ export function ReportsPage() {
 
             {activities.length > 0 && (
               <ScrollArea>
-                <Table striped highlightOnHover withTableBorder>
+                <Table striped highlightOnHover withTableBorder miw={900}>
                   <Table.Thead>
                     <Table.Tr>
+                      <Table.Th>Account</Table.Th>
                       <Table.Th>Time</Table.Th>
                       <Table.Th>Type</Table.Th>
                       <Table.Th>Symbol</Table.Th>
@@ -1582,6 +1598,12 @@ export function ReportsPage() {
                   <Table.Tbody>
                     {activities.map((activity) => (
                       <Table.Tr key={activity.id}>
+                        <Table.Td>
+                          <TradingAccountBadge
+                            account={activity.tradingAccount}
+                            tradingAccountId={activity.tradingAccountId}
+                          />
+                        </Table.Td>
                         <Table.Td>
                           {formatDate(activity.transactionTime)}
                         </Table.Td>

@@ -49,6 +49,10 @@ export async function orderIntentByIdController(
         clientOrderId: intent.clientOrderId,
         status: intent.status,
         blockReason: intent.blockReason,
+        tradingAccountId: intent.tradingAccountId ?? null,
+        tradingAccount: intent.tradingAccount ?? null,
+        tradingAccountSubscriptionId:
+          intent.tradingAccountSubscriptionId ?? null,
         subscriptionId: intent.subscriptionId ?? null,
         subscriptionKey: intent.subscriptionKey ?? null,
         rawRequestJson: intent.rawRequestJson,

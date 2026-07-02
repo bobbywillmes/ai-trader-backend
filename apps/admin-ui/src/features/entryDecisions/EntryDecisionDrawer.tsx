@@ -13,6 +13,7 @@ import {
   Title,
 } from "@mantine/core";
 import { IconFileAnalytics } from "@tabler/icons-react";
+import { TradingAccountBadge } from "../../components/TradingAccountBadge";
 import type { EntryDecisionDetail, EntryDecisionRelatedRecord } from "./types";
 
 type EntryDecisionDrawerProps = {
@@ -67,6 +68,15 @@ export function EntryDecisionDrawer({
       {decision && (
         <Stack gap="lg">
           <SimpleGrid cols={{ base: 1, sm: 2 }}>
+            <Info
+              label="Trading Account"
+              value={
+                <TradingAccountBadge
+                  account={decision.tradingAccount}
+                  tradingAccountId={decision.tradingAccountId}
+                />
+              }
+            />
             <Info
               label="Decision State"
               value={<DecisionBadge state={decision.decisionState} />}

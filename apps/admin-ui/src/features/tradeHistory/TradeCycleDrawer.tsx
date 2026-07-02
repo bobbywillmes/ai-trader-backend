@@ -17,6 +17,7 @@ import {
   IconClock,
   IconFileAnalytics,
 } from "@tabler/icons-react";
+import { TradingAccountBadge } from "../../components/TradingAccountBadge";
 import { TradeCycleDetailSections } from "./TradeCycleDetailSections";
 import {
   formatDate,
@@ -144,6 +145,15 @@ export function TradeCycleDrawer({
           <Divider />
 
           <SimpleGrid cols={{ base: 1, sm: 2 }}>
+            <Info
+              label="Trading Account"
+              value={
+                <TradingAccountBadge
+                  account={cycle.tradingAccount}
+                  tradingAccountId={cycle.tradingAccountId}
+                />
+              }
+            />
             <Info
               label="Status"
               value={

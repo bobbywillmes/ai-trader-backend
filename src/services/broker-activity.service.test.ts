@@ -53,6 +53,13 @@ vi.mock('./system-event.service.js', () => ({
 
 vi.mock('./trading-account.service.js', () => ({
   resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
+  TRADING_ACCOUNT_SUMMARY_SELECT: {
+    id: true,
+    displayName: true,
+    broker: true,
+    environment: true,
+    status: true,
+  },
 }));
 
 import {

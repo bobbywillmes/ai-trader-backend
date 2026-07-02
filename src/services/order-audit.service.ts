@@ -2,7 +2,10 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import type { ResolvedPlaceOrderInput } from '../validators/place-order.schema.js';
 import { HttpError } from '../errors/http-error.js';
-import { resolveDefaultTradingAccountId } from './trading-account.service.js';
+import {
+  resolveDefaultTradingAccountId,
+  TRADING_ACCOUNT_SUMMARY_SELECT,
+} from './trading-account.service.js';
 import type { AccountSubscriptionSizingSnapshot } from './account-subscription-runtime-sizing.service.js';
 
 type IntentStatus =
@@ -112,6 +115,9 @@ export async function getRecentOrderIntents(limit = 50) {
     orderBy: { createdAt: 'desc' },
     take: limit,
     include: {
+      tradingAccount: {
+        select: TRADING_ACCOUNT_SUMMARY_SELECT,
+      },
       brokerOrders: true
     }
   });
@@ -123,6 +129,9 @@ export async function getOrderIntentById(id: number) {
   const intent = await prisma.orderIntent.findFirst({
     where: { id, tradingAccountId },
     include: {
+      tradingAccount: {
+        select: TRADING_ACCOUNT_SUMMARY_SELECT,
+      },
       brokerOrders: true
     }
   });

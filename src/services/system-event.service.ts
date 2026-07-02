@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
+import { TRADING_ACCOUNT_SUMMARY_SELECT } from './trading-account.service.js';
 
 export async function createSystemEvent(args: {
   type: string;
@@ -26,6 +27,11 @@ export async function createSystemEvent(args: {
 
 export async function getRecentSystemEvents(limit = 50) {
   return prisma.systemEvent.findMany({
+    include: {
+      tradingAccount: {
+        select: TRADING_ACCOUNT_SUMMARY_SELECT,
+      },
+    },
     orderBy: { createdAt: 'desc' },
     take: limit
   });
@@ -49,6 +55,11 @@ export async function getSecurityActivity(symbol: string, limit = 10) {
           },
         },
       ],
+    },
+    include: {
+      tradingAccount: {
+        select: TRADING_ACCOUNT_SUMMARY_SELECT,
+      },
     },
     orderBy: {
       createdAt: 'desc',

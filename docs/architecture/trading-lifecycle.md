@@ -82,6 +82,13 @@ captured strategy/subscription/exit-profile context, chronological lifecycle
 timeline, and drill-down sections for the linked `OrderIntent`, `BrokerOrder`,
 `BrokerActivity`, and `SystemEvent` records behind that timeline.
 
+Account-scoped trading records expose a safe `tradingAccount` summary for admin
+display. Operational tables and lifecycle drawers show the owning trading
+account, for example `Bobby Paper` with a `PAPER` environment badge, so positions,
+orders, decisions, fills, snapshots, trade-performance rows, and account-scoped
+events can be reviewed without assuming a single account. Global system events
+remain visibly global rather than being assigned to an account.
+
 The admin UI `Entry Decisions` page reviews persisted decision snapshots from
 n8n. It supports recent-decision filtering and shows signal outcome, runtime
 flags, market context, raw snapshot payloads, and lifecycle links to the created

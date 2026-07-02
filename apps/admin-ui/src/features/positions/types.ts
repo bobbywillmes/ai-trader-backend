@@ -1,3 +1,5 @@
+import type { TradingAccountSummary } from "../../types/tradingAccount";
+
 export type PositionExitState = {
   id?: number;
   trackedPositionId?: number;
@@ -37,6 +39,8 @@ export type PositionExitState = {
 
 export type TrackedPosition = {
   id: number;
+  tradingAccountId: number | null;
+  tradingAccount: TradingAccountSummary | null;
   broker: string;
   symbol: string;
   side: string;

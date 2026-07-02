@@ -7,7 +7,10 @@ import {
   entryDecisionSchema,
   type EntryDecisionInput,
 } from '../validators/entry-decision.schema.js';
-import { resolveDefaultTradingAccountId } from './trading-account.service.js';
+import {
+  resolveDefaultTradingAccountId,
+  TRADING_ACCOUNT_SUMMARY_SELECT,
+} from './trading-account.service.js';
 
 type PersistedEntryDecisionPersistenceReason = NonNullable<
   EntryDecisionInput['persistenceReason']
@@ -419,6 +422,10 @@ export async function listEntryDecisions(filters: EntryDecisionFilters = {}) {
       tradingEnabled: true,
       killSwitchEnabled: true,
       paperMode: true,
+      tradingAccountId: true,
+      tradingAccount: {
+        select: TRADING_ACCOUNT_SUMMARY_SELECT,
+      },
       subscriptionId: true,
       subscriptionKey: true,
       strategyId: true,
@@ -462,6 +469,9 @@ export async function getEntryDecisionById(id: number) {
       orderIntent: true,
       brokerOrderRecord: true,
       trackedPosition: true,
+      tradingAccount: {
+        select: TRADING_ACCOUNT_SUMMARY_SELECT,
+      },
     },
   });
 

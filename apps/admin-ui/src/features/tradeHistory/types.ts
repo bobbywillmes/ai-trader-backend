@@ -1,5 +1,9 @@
+import type { TradingAccountSummary } from "../../types/tradingAccount";
+
 export type TradeCycleSummary = {
   id: number;
+  tradingAccountId: number | null;
+  tradingAccount: TradingAccountSummary | null;
   broker: string;
   symbol: string;
   side: string;

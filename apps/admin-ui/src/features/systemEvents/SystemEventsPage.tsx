@@ -15,6 +15,7 @@ import {
   ActionIcon,
   Tooltip,
 } from "@mantine/core";
+import { TradingAccountBadge } from "../../components/TradingAccountBadge";
 import { getAdminToken } from "../../lib/api";
 import { useSystemEvents } from "../dashboard/hooks";
 import { describeEvent, rawPayload } from "../dashboard/eventUtils";
@@ -62,6 +63,13 @@ function EventRow({ ev }: { ev: SystemEvent }) {
           <Text size="sm">{description}</Text>
         </Table.Td>
         <Table.Td>
+          <TradingAccountBadge
+            account={ev.tradingAccount}
+            tradingAccountId={ev.tradingAccountId}
+            emptyLabel="Global"
+          />
+        </Table.Td>
+        <Table.Td>
           {ev.entityType && (
             <Text size="sm" c="dimmed">
               {ev.entityType}{ev.entityId ? ` · ${ev.entityId}` : ""}
@@ -94,7 +102,7 @@ function EventRow({ ev }: { ev: SystemEvent }) {
 
       {hasPayload && expanded && (
         <Table.Tr>
-          <Table.Td colSpan={5} style={{ padding: 0 }}>
+          <Table.Td colSpan={6} style={{ padding: 0 }}>
             <Box p="sm" style={{ background: "var(--mantine-color-dark-8)", borderTop: "1px solid var(--mantine-color-dark-5)" }}>
               <Code block style={{ fontSize: "var(--mantine-font-size-xs)" }}>
                 {payload}
@@ -166,6 +174,7 @@ export function SystemEventsPage() {
               <Table.Tr>
                 <Table.Th style={{ width: 100 }}>Event</Table.Th>
                 <Table.Th>Description</Table.Th>
+                <Table.Th>Account</Table.Th>
                 <Table.Th>Entity</Table.Th>
                 <Table.Th style={{ width: 180 }}>Time</Table.Th>
                 <Table.Th style={{ width: 32 }} />
@@ -174,7 +183,7 @@ export function SystemEventsPage() {
             <Table.Tbody>
               {filtered.length === 0 && !isLoading && (
                 <Table.Tr>
-                  <Table.Td colSpan={5}>
+                  <Table.Td colSpan={6}>
                     <Text size="sm" c="dimmed" p="md">No events found.</Text>
                   </Table.Td>
                 </Table.Tr>

@@ -1,5 +1,9 @@
+import type { TradingAccountSummary } from "../../types/tradingAccount";
+
 export type OpenOrder = {
   id: string;
+  tradingAccountId: number | null;
+  tradingAccount: TradingAccountSummary | null;
   symbol: string;
   side: string;
   type: string;

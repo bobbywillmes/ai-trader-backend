@@ -1,4 +1,5 @@
 import { listTradeCycles, type TradeCycleFilters } from './trade-cycles.service.js';
+import type { TradingAccountSummaryResponse } from './trading-account.service.js';
 
 export type TradePerformanceOutcome = 'all' | 'winner' | 'loser' | 'breakeven';
 export type TradePerformanceSortBy =
@@ -29,6 +30,8 @@ export type TradePerformanceQuery = {
 
 type PerformanceCycle = {
   id: number;
+  tradingAccountId: number | null;
+  tradingAccount: TradingAccountSummaryResponse | null;
   symbol: string;
   side: string;
   openedAt: Date | string;
@@ -64,6 +67,8 @@ type PerformanceCycle = {
 
 export type TradePerformanceTradeRow = {
   id: number;
+  tradingAccountId: number | null;
+  tradingAccount: TradingAccountSummaryResponse | null;
   symbol: string;
   side: string;
   mode: string | null;
@@ -318,6 +323,8 @@ function sortCycles(
 function toTradeRow(cycle: PerformanceCycle): TradePerformanceTradeRow {
   return {
     id: cycle.id,
+    tradingAccountId: cycle.tradingAccountId,
+    tradingAccount: cycle.tradingAccount,
     symbol: cycle.symbol,
     side: cycle.side,
     mode: cycle.subscription?.brokerMode ?? null,
