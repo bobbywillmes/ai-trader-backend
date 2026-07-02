@@ -16,6 +16,7 @@ import {
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { IconFileAnalytics } from "@tabler/icons-react";
+import { TradingAccountBadge } from "../../components/TradingAccountBadge";
 import { getAdminToken } from "../../lib/api";
 import { TradeCycleDrawer } from "../tradeHistory/TradeCycleDrawer";
 import { useTradeCycleDrawer } from "../tradeHistory/hooks";
@@ -273,9 +274,10 @@ export function PositionsPage() {
 
         {positions.length > 0 && (
           <ScrollArea>
-            <Table striped highlightOnHover style={{ minWidth: 700 }}>
+            <Table striped highlightOnHover style={{ minWidth: 820 }}>
               <Table.Thead>
                 <Table.Tr>
+                  <Table.Th>Account</Table.Th>
                   <Table.Th>Symbol</Table.Th>
                   <Table.Th>Side</Table.Th>
                   <Table.Th style={{ textAlign: "right" }}>Qty</Table.Th>
@@ -303,6 +305,12 @@ export function PositionsPage() {
 
                   return (
                     <Table.Tr key={position.id}>
+                      <Table.Td>
+                        <TradingAccountBadge
+                          account={position.tradingAccount}
+                          tradingAccountId={position.tradingAccountId}
+                        />
+                      </Table.Td>
                       <Table.Td fw={600}>{position.symbol}</Table.Td>
                       <Table.Td>
                         <Badge size="sm" color={position.side === "long" ? "teal" : "red"} variant="light">

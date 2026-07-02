@@ -16,6 +16,7 @@ import {
   Title,
 } from "@mantine/core";
 import { IconRefresh, IconSearch, IconX } from "@tabler/icons-react";
+import { TradingAccountBadge } from "../../components/TradingAccountBadge";
 import { getAdminToken } from "../../lib/api";
 import { TradeCycleDrawer } from "./TradeCycleDrawer";
 import {
@@ -180,9 +181,10 @@ export function TradeHistoryPage() {
 
           {cycles.length > 0 && (
             <ScrollArea>
-              <Table striped highlightOnHover withTableBorder miw={1180}>
+              <Table striped highlightOnHover withTableBorder miw={1320}>
                 <Table.Thead>
                   <Table.Tr>
+                    <Table.Th>Account</Table.Th>
                     <Table.Th>Symbol</Table.Th>
                     <Table.Th>Opened</Table.Th>
                     <Table.Th>Closed</Table.Th>
@@ -232,6 +234,12 @@ function TradeCycleRow({
 }) {
   return (
     <Table.Tr>
+      <Table.Td>
+        <TradingAccountBadge
+          account={cycle.tradingAccount}
+          tradingAccountId={cycle.tradingAccountId}
+        />
+      </Table.Td>
       <Table.Td>
         <Text fw={700}>{cycle.symbol}</Text>
         <Text size="xs" c="dimmed">
