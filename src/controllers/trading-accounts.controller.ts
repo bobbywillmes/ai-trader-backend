@@ -31,12 +31,17 @@ import {
 import {
   createTradingAccountAllocationSchema,
   createTradingAccountSubscriptionSchema,
+  updateTradingAccountRiskSettingsSchema,
   updateTradingAccountSchema,
   updateTradingAccountAllocationSchema,
   updateTradingAccountSubscriptionSchema,
   upsertTradingAccountCredentialSchema,
 } from '../validators/trading-account.schema.js';
 import { verifyTradingAccountCredential } from '../services/trading-account-credential-verification.service.js';
+import {
+  getTradingAccountRiskSettingsForAdmin,
+  updateTradingAccountRiskSettingsForAdmin,
+} from '../services/trading-account-risk-settings.service.js';
 
 function parseTradingAccountId(value: unknown) {
   const id = typeof value === 'string' ? Number(value) : NaN;
@@ -133,6 +138,59 @@ export async function updateTradingAccountController(
     if (error instanceof ZodError) {
       next(
         new HttpError(400, 'Invalid trading account update request.', error.flatten())
+      );
+      return;
+    }
+
+    next(error);
+  }
+}
+
+export async function getTradingAccountRiskSettingsController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const id = parseTradingAccountId(req.params.id);
+    const riskSettings = await getTradingAccountRiskSettingsForAdmin(id);
+
+    if (!riskSettings) {
+      throw new HttpError(404, 'Trading account not found.');
+    }
+
+    res.status(200).json({ riskSettings });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function updateTradingAccountRiskSettingsController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const id = parseTradingAccountId(req.params.id);
+    const input = updateTradingAccountRiskSettingsSchema.parse(req.body);
+    const riskSettings = await updateTradingAccountRiskSettingsForAdmin(
+      id,
+      input
+    );
+
+    if (!riskSettings) {
+      throw new HttpError(404, 'Trading account not found.');
+    }
+
+    res.status(200).json({ riskSettings });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      next(
+        new HttpError(
+          400,
+          'Invalid trading account risk settings request.',
+          error.flatten()
+        )
       );
       return;
     }

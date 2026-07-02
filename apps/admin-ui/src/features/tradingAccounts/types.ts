@@ -63,6 +63,25 @@ export type TradingAccountResponse = {
   account: TradingAccount;
 };
 
+export type TradingAccountRiskSettings = {
+  id: number;
+  tradingAccountId: number;
+  enabled: boolean;
+  maxDailyEntryOrders: number | null;
+  maxDailyEntryNotional: number | null;
+  maxOpenPositions: number | null;
+  maxTotalOpenNotional: number | null;
+  maxSymbolOpenNotional: number | null;
+  maxSubscriptionOpenNotional: number | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TradingAccountRiskSettingsResponse = {
+  riskSettings: TradingAccountRiskSettings;
+};
+
 export type RevokeTradingAccountCredentialResponse = {
   revoked: boolean;
   account: TradingAccount;
@@ -222,6 +241,17 @@ export type UpsertTradingAccountCredentialPayload = {
   apiKey: string;
   apiSecret: string;
 };
+
+export type TradingAccountRiskSettingsInput = Partial<{
+  enabled: boolean;
+  maxDailyEntryOrders: number | null;
+  maxDailyEntryNotional: number | null;
+  maxOpenPositions: number | null;
+  maxTotalOpenNotional: number | null;
+  maxSymbolOpenNotional: number | null;
+  maxSubscriptionOpenNotional: number | null;
+  notes: string | null;
+}>;
 
 export type TradingAccountAllocationInput = {
   key: string;

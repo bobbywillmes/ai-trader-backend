@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   getTradingAccountForAdmin: vi.fn(),
   listTradingAccountsForAdmin: vi.fn(),
   updateTradingAccountForAdmin: vi.fn(),
+  getTradingAccountRiskSettingsForAdmin: vi.fn(),
+  updateTradingAccountRiskSettingsForAdmin: vi.fn(),
   revokeTradingAccountCredential: vi.fn(),
   upsertTradingAccountApiKeyCredential: vi.fn(),
   verifyTradingAccountCredential: vi.fn(),
@@ -33,6 +35,13 @@ vi.mock('../services/trading-account.service.js', () => ({
   getTradingAccountForAdmin: mocks.getTradingAccountForAdmin,
   listTradingAccountsForAdmin: mocks.listTradingAccountsForAdmin,
   updateTradingAccountForAdmin: mocks.updateTradingAccountForAdmin,
+}));
+
+vi.mock('../services/trading-account-risk-settings.service.js', () => ({
+  getTradingAccountRiskSettingsForAdmin:
+    mocks.getTradingAccountRiskSettingsForAdmin,
+  updateTradingAccountRiskSettingsForAdmin:
+    mocks.updateTradingAccountRiskSettingsForAdmin,
 }));
 
 vi.mock('../services/trading-account-allocation.service.js', () => ({
@@ -73,6 +82,7 @@ vi.mock('../services/account-subscription-market-context.service.js', async () =
 import {
   createTradingAccountAllocationController,
   createTradingAccountSubscriptionController,
+  getTradingAccountRiskSettingsController,
   getTradingAccountSubscriptionPriceHistoryController,
   getTradingAccountSubscriptionController,
   getTradingAccountController,
@@ -83,6 +93,7 @@ import {
   revokeTradingAccountCredentialController,
   updateTradingAccountController,
   updateTradingAccountAllocationController,
+  updateTradingAccountRiskSettingsController,
   updateTradingAccountSubscriptionController,
   upsertTradingAccountCredentialController,
   verifyTradingAccountCredentialController,
@@ -107,6 +118,16 @@ describe('trading accounts controller', () => {
     vi.clearAllMocks();
     mocks.listTradingAccountsForAdmin.mockResolvedValue([{ id: 1 }]);
     mocks.getTradingAccountForAdmin.mockResolvedValue({ id: 1 });
+    mocks.getTradingAccountRiskSettingsForAdmin.mockResolvedValue({
+      id: 50,
+      tradingAccountId: 1,
+      enabled: true,
+    });
+    mocks.updateTradingAccountRiskSettingsForAdmin.mockResolvedValue({
+      id: 50,
+      tradingAccountId: 1,
+      enabled: true,
+    });
     mocks.revokeTradingAccountCredential.mockResolvedValue({ revoked: true });
     mocks.updateTradingAccountForAdmin.mockResolvedValue({ id: 1 });
     mocks.upsertTradingAccountApiKeyCredential.mockResolvedValue({ id: 10 });
@@ -331,6 +352,179 @@ describe('trading accounts controller', () => {
     expect(mocks.updateTradingAccountForAdmin).toHaveBeenCalledWith(404, {
       displayName: 'Missing Account',
     });
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 404,
+        message: 'Trading account not found.',
+      })
+    );
+  });
+
+  it('returns trading account risk settings', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await getTradingAccountRiskSettingsController(
+      {
+        params: {
+          id: '1',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.getTradingAccountRiskSettingsForAdmin).toHaveBeenCalledWith(1);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      riskSettings: {
+        id: 50,
+        tradingAccountId: 1,
+        enabled: true,
+      },
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('returns not found when reading risk settings for a missing account', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.getTradingAccountRiskSettingsForAdmin.mockResolvedValue(null);
+
+    await getTradingAccountRiskSettingsController(
+      {
+        params: {
+          id: '404',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 404,
+        message: 'Trading account not found.',
+      })
+    );
+  });
+
+  it('updates trading account risk settings with validated fields', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await updateTradingAccountRiskSettingsController(
+      {
+        params: {
+          id: '1',
+        },
+        body: {
+          enabled: false,
+          maxDailyEntryOrders: '3',
+          maxDailyEntryNotional: '5000',
+          maxOpenPositions: '4',
+          maxTotalOpenNotional: '15000',
+          maxSymbolOpenNotional: '2500',
+          maxSubscriptionOpenNotional: null,
+          notes: ' Account cap ',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.updateTradingAccountRiskSettingsForAdmin).toHaveBeenCalledWith(
+      1,
+      {
+        enabled: false,
+        maxDailyEntryOrders: 3,
+        maxDailyEntryNotional: 5_000,
+        maxOpenPositions: 4,
+        maxTotalOpenNotional: 15_000,
+        maxSymbolOpenNotional: 2_500,
+        maxSubscriptionOpenNotional: null,
+        notes: 'Account cap',
+      }
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      riskSettings: {
+        id: 50,
+        tradingAccountId: 1,
+        enabled: true,
+      },
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid trading account risk settings updates', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await updateTradingAccountRiskSettingsController(
+      {
+        params: {
+          id: '1',
+        },
+        body: {
+          maxDailyEntryOrders: 0,
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.updateTradingAccountRiskSettingsForAdmin).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 400,
+        message: 'Invalid trading account risk settings request.',
+      })
+    );
+  });
+
+  it('rejects empty trading account risk settings updates', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await updateTradingAccountRiskSettingsController(
+      {
+        params: {
+          id: '1',
+        },
+        body: {},
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.updateTradingAccountRiskSettingsForAdmin).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 400,
+        message: 'Invalid trading account risk settings request.',
+      })
+    );
+  });
+
+  it('returns not found when updating risk settings for a missing account', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.updateTradingAccountRiskSettingsForAdmin.mockResolvedValue(null);
+
+    await updateTradingAccountRiskSettingsController(
+      {
+        params: {
+          id: '404',
+        },
+        body: {
+          enabled: true,
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
     expect(next).toHaveBeenCalledWith(
       expect.objectContaining({
         statusCode: 404,

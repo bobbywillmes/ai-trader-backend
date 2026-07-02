@@ -1,33 +1,37 @@
-# Account Risk Settings Audit
+# Account Risk Settings
 
-This audit documents the current runtime trading settings after the account-scoped trading account work. It is intentionally design-only: no settings are removed, no Prisma schema changes are made, and no trading behavior changes are implied by this document.
+This document describes the account-scoped risk settings layer that now sits beside the existing global runtime settings.
 
-The current system has two safety layers that partially overlap:
+The system has two active safety layers that intentionally overlap:
 
 - Global runtime settings in the generic `Setting` table.
-- Account-scoped trading records through `TradingAccount`, `TradingAccountAllocation`, and `TradingAccountSubscription`.
+- Account-scoped risk settings in `TradingAccountRiskSettings`, plus account-scoped trading records through `TradingAccount`, `TradingAccountAllocation`, and `TradingAccountSubscription`.
 
-The global settings still protect the whole backend today. Before live trading expands beyond a single account, account-specific limits should become first-class and the global limits should remain only emergency/system-level caps.
+Global settings still protect the whole backend and remain the emergency/system-level caps. Account risk settings add per-`TradingAccount` entry caps without removing or weakening the global layer.
 
 ## Current State Summary
 
 Runtime settings are loaded by `getRuntimeTradingConfig()` in `src/services/config.service.ts`. Values are stored as key/value strings in the Prisma `Setting` table and are updated through the admin Settings API. Missing settings fall back to conservative defaults in code.
 
-The risk gate currently evaluates:
+The entry flow currently evaluates:
 
 ```text
 global runtime controls
 -> security/subscription/strategy/exit-profile gates
--> account-subscription sizing gates
 -> broker account checks
 -> global entry exposure limits
+-> TradingAccountRiskSettings account exposure limits
+-> TradingAccountSubscription sizing/gates
 ```
+
+Runtime account-subscription sizing happens before the risk gate for account-scoped subscription entry orders. For `MAX_NOTIONAL`, the backend calculates whole-share quantity from backend-owned market data, stores the sizing snapshot on the `OrderIntent`, and passes the estimated notional into the risk gate as risk context. Broker submission remains a quantity order.
 
 The account-scoped model now also includes:
 
 - `TradingAccount.environment` as `PAPER` or `LIVE`.
 - Account-level `tradingEnabled` and `killSwitchEnabled`.
 - Account-owned encrypted broker credentials.
+- `TradingAccountRiskSettings` for account-level entry caps.
 - `TradingAccountAllocation` buckets with configured but not-yet-enforced notional and position limits.
 - `TradingAccountSubscription` entry/exit gates and account-specific sizing.
 
@@ -75,6 +79,32 @@ The same runtime config object also includes reconciliation worker settings, but
 
 ## Related Account-Scoped Controls
 
+### TradingAccountRiskSettings
+
+`TradingAccountRiskSettings` stores the first-class account-level risk caps:
+
+```text
+enabled
+maxDailyEntryOrders
+maxDailyEntryNotional
+maxOpenPositions
+maxTotalOpenNotional
+maxSymbolOpenNotional
+maxSubscriptionOpenNotional
+notes
+```
+
+The Admin UI exposes these controls on the Trading Account detail page under Account Risk Controls. The API is:
+
+```http
+GET   /api/trading-accounts/:id/risk-settings
+PATCH /api/trading-accounts/:id/risk-settings
+```
+
+`enabled=false` skips only account-specific risk caps. Global settings still apply.
+
+If no risk settings row exists, the runtime risk gate skips account-specific caps and keeps global caps active. The admin GET endpoint creates a default row for an existing account so operators can configure it.
+
 ### TradingAccount
 
 `TradingAccount` already owns:
@@ -88,17 +118,7 @@ status
 tradingBlocked
 ```
 
-Recommended future account-level risk settings:
-
-```text
-maxDailyEntryOrders
-maxDailyEntryNotional
-maxOpenPositions
-maxTotalOpenNotional
-maxSymbolOpenNotional
-```
-
-These can either be added directly to `TradingAccount` or placed in a related `TradingAccountRiskSettings` model. A related model is cleaner if the settings need audit history, separate permissions, or future per-asset-class variants.
+Account-level `tradingEnabled` and `killSwitchEnabled` remain account safety fields, but this branch does not change their runtime enforcement semantics.
 
 ### TradingAccountAllocation
 
@@ -129,26 +149,27 @@ maxQty
 
 These should remain subscription-scoped. Runtime entry sizing already uses account-subscription rows instead of legacy subscription sizing fields.
 
-## Recommended Future Evaluation Order
+## Runtime Evaluation Order
 
-The long-term risk gate should evaluate controls in this order:
+The current risk gate evaluates controls in this order:
 
 ```text
 global emergency controls
--> TradingAccount environment/status/trading controls
--> TradingAccount account-level risk limits
--> TradingAccountAllocation bucket limits
--> TradingAccountSubscription gates and sizing guardrails
--> broker account checks and broker submission
+-> security, subscription, strategy, and exit-profile gates
+-> broker account checks and paperMode broker-mode match
+-> entry session guard
+-> one active tracked position per symbol guard
+-> global entry exposure limits
+-> TradingAccountRiskSettings account exposure limits
 ```
 
 Global controls should answer, "May this backend trade at all right now?"
 
-Account controls should answer, "May this account trade right now, and within what account-level limits?"
+Account risk controls should answer, "May this account enter within account-level limits?"
 
 Allocation controls should answer, "May this strategy bucket consume more of its reserved risk budget?"
 
-Subscription controls should answer, "May this account subscription enter this specific position, and at what size?"
+Subscription controls should answer, "May this account subscription enter this specific position, and at what size?" Runtime sizing and account-subscription gates are evaluated before broker submission, but allocation bucket limits are still not enforced.
 
 ## Migration Phases
 
@@ -160,7 +181,7 @@ Also clarify that allocation limits are configured but not enforced yet.
 
 ### Phase B - Account-Scoped Risk Settings Schema
 
-Add account-level fields or a related `TradingAccountRiskSettings` model for:
+Implemented with the related `TradingAccountRiskSettings` model for:
 
 ```text
 maxDailyEntryOrders
@@ -168,21 +189,24 @@ maxDailyEntryNotional
 maxOpenPositions
 maxTotalOpenNotional
 maxSymbolOpenNotional
+maxSubscriptionOpenNotional
 ```
 
-Backfill carefully with conservative values. Avoid casual historical data backfills because trading records are audit-sensitive.
+The one-time `scripts/bootstrap-trading-account-risk-settings.ts` script copies current global entry risk limits into the default account. Avoid casual historical data backfills because trading records are audit-sensitive.
 
 ### Phase C - Risk Gate Uses TradingAccount Limits
 
-Update the risk gate to load the resolved `TradingAccount` and evaluate account-specific limits using account-scoped usage. Keep global settings as emergency ceilings during this phase.
+Implemented. The risk gate loads account risk settings for the resolved trading account and evaluates account-specific limits using account-scoped usage. Global settings remain emergency ceilings.
 
-Expected order:
+Implemented account block rules:
 
 ```text
-global tradingEnabled / killSwitchEnabled / session guard
--> account status / tradingEnabled / killSwitchEnabled / environment
--> account-level risk settings
--> existing subscription and broker checks
+account_max_daily_entry_orders_exceeded
+account_max_daily_entry_notional_exceeded
+account_max_open_positions_exceeded
+account_max_total_open_notional_exceeded
+account_max_symbol_open_notional_exceeded
+account_max_subscription_open_notional_exceeded
 ```
 
 ### Phase D - Allocation Bucket Enforcement
@@ -222,13 +246,13 @@ Do not replace global `paperMode` with one global live/paper toggle. The long-te
 - `paperMode` is still used by startup checks and broker-mode mismatch checks. Removing it early could weaken live-trading safeguards.
 - `maxSubscriptionOpenNotional` overlaps with `TradingAccountSubscription.maxPositionNotional`, but it is still enforced globally today. Removing it early could increase allowed entry size.
 - Allocation limits are visible/configurable but not enforced. Operators should not assume bucket limits currently block orders.
-- Account-level `tradingEnabled` and `killSwitchEnabled` exist, but the current audit target confirms global settings still carry important enforcement paths. Account-specific enforcement must be verified before live multi-account use.
+- Account-level `tradingEnabled` and `killSwitchEnabled` exist, but global settings still carry important enforcement paths. Account-specific enforcement must be verified before live multi-account use.
 - The order worker rechecks the entry session guard before broker submission. Any future risk-order refactor should preserve worker-time safety checks for pending intents.
 - Startup safety should remain conservative: production should not accidentally restart into live trading without explicit live-trading environment overrides.
 
 ## What Not To Remove Yet
 
-Do not remove or hide these until their account-scoped replacements are implemented, tested, documented, and visible:
+Do not remove or hide these global settings. They remain backend-wide emergency caps even though account-scoped caps now exist:
 
 ```text
 paperMode

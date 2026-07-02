@@ -36,6 +36,28 @@ export type UpdateTradingAccountInput = z.infer<
   typeof updateTradingAccountSchema
 >;
 
+const nullablePositiveNumber = z.coerce.number().positive().nullable().optional();
+const nullablePositiveInteger = z.coerce.number().int().positive().nullable().optional();
+
+export const updateTradingAccountRiskSettingsSchema = z
+  .strictObject({
+    enabled: z.boolean().optional(),
+    maxDailyEntryOrders: nullablePositiveInteger,
+    maxDailyEntryNotional: nullablePositiveNumber,
+    maxOpenPositions: nullablePositiveInteger,
+    maxTotalOpenNotional: nullablePositiveNumber,
+    maxSymbolOpenNotional: nullablePositiveNumber,
+    maxSubscriptionOpenNotional: nullablePositiveNumber,
+    notes: z.string().trim().nullable().optional(),
+  })
+  .refine((data) => Object.values(data).some((value) => value !== undefined), {
+    message: 'At least one trading account risk settings field is required.',
+  });
+
+export type UpdateTradingAccountRiskSettingsInput = z.infer<
+  typeof updateTradingAccountRiskSettingsSchema
+>;
+
 export const upsertTradingAccountCredentialSchema = z.strictObject({
   authType: z.literal(BrokerCredentialAuthType.API_KEY).default(
     BrokerCredentialAuthType.API_KEY

@@ -10,6 +10,8 @@ import type {
   TradingAccountAllocationResponse,
   TradingAccountAllocationsResponse,
   TradingAccountResponse,
+  TradingAccountRiskSettingsInput,
+  TradingAccountRiskSettingsResponse,
   TradingAccountSubscriptionInput,
   TradingAccountSubscriptionResponse,
   TradingAccountSubscriptionsResponse,
@@ -45,6 +47,30 @@ export function updateTradingAccount(
     token,
     body: payload,
   });
+}
+
+export function getTradingAccountRiskSettings(id: number, token: string) {
+  return apiRequest<TradingAccountRiskSettingsResponse>(
+    `/api/trading-accounts/${id}/risk-settings`,
+    {
+      token,
+    }
+  );
+}
+
+export function updateTradingAccountRiskSettings(
+  id: number,
+  payload: TradingAccountRiskSettingsInput,
+  token: string
+) {
+  return apiRequest<TradingAccountRiskSettingsResponse>(
+    `/api/trading-accounts/${id}/risk-settings`,
+    {
+      method: "PATCH",
+      token,
+      body: payload,
+    }
+  );
 }
 
 export function upsertTradingAccountCredential(

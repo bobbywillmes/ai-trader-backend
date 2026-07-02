@@ -69,6 +69,73 @@ notes
 Identity fields such as `broker` and `environment` are intentionally rejected
 by this generic update endpoint.
 
+## Manage Account Risk Settings
+
+Account risk settings are per-`TradingAccount` entry caps. Global Settings still
+act as backend-wide emergency caps, and allocation bucket limits are configured
+separately but are not enforced yet.
+
+Read account risk settings:
+
+```http
+GET /api/trading-accounts/:id/risk-settings
+```
+
+If the account exists and no risk settings row exists yet, the backend creates a
+default row with `enabled=true` and null caps.
+
+Response envelope:
+
+```json
+{
+  "riskSettings": {
+    "id": 1,
+    "tradingAccountId": 1,
+    "enabled": true,
+    "maxDailyEntryOrders": 5,
+    "maxDailyEntryNotional": 10000,
+    "maxOpenPositions": 5,
+    "maxTotalOpenNotional": 25000,
+    "maxSymbolOpenNotional": 5000,
+    "maxSubscriptionOpenNotional": 5000,
+    "notes": null,
+    "createdAt": "2026-07-02T00:00:00.000Z",
+    "updatedAt": "2026-07-02T00:00:00.000Z"
+  }
+}
+```
+
+Update account risk settings:
+
+```http
+PATCH /api/trading-accounts/:id/risk-settings
+```
+
+Allowed update fields:
+
+```text
+enabled
+maxDailyEntryOrders
+maxDailyEntryNotional
+maxOpenPositions
+maxTotalOpenNotional
+maxSymbolOpenNotional
+maxSubscriptionOpenNotional
+notes
+```
+
+Validation:
+
+```text
+enabled must be boolean
+count limits must be positive integers or null
+notional limits must be positive numbers or null
+notes may be string or null
+```
+
+`enabled=false` skips only account-specific risk caps. Global emergency caps
+still apply.
+
 ## Manage Allocation Buckets
 
 Allocation buckets group account-scoped subscription sizing limits. They are
@@ -381,6 +448,7 @@ Use the detail page to:
 
 - inspect account summary and broker metadata
 - edit only safe mutable account fields
+- edit account-level risk controls
 - manage account allocation buckets under `Sizing & Allocations`
 - review account subscriptions under `Sizing & Allocations`
 - edit account-subscription allocation, activation switches, sizing type,

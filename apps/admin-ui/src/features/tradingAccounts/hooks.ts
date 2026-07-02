@@ -4,6 +4,7 @@ import {
   createTradingAccountSubscription,
   getTradingAccount,
   getTradingAccounts,
+  getTradingAccountRiskSettings,
   getTradingAccountSubscription,
   getTradingAccountSubscriptionPriceHistory,
   listTradingAccountAllocations,
@@ -12,6 +13,7 @@ import {
   revokeTradingAccountCredential,
   updateTradingAccount,
   updateTradingAccountAllocation,
+  updateTradingAccountRiskSettings,
   updateTradingAccountSubscription,
   upsertTradingAccountCredential,
   verifyTradingAccountCredential,
@@ -21,6 +23,7 @@ import type {
   AccountSubscriptionPriceHistoryRange,
   CreateTradingAccountSubscriptionInput,
   TradingAccountAllocationInput,
+  TradingAccountRiskSettingsInput,
   TradingAccountSubscriptionInput,
   UpdateTradingAccountPayload,
   UpsertTradingAccountCredentialPayload,
@@ -31,6 +34,8 @@ export const tradingAccountKeys = {
   lists: () => [...tradingAccountKeys.all, "list"] as const,
   details: () => [...tradingAccountKeys.all, "detail"] as const,
   detail: (id: number) => [...tradingAccountKeys.details(), id] as const,
+  riskSettings: (id: number) =>
+    [...tradingAccountKeys.detail(id), "riskSettings"] as const,
   allocations: (id: number) =>
     [...tradingAccountKeys.detail(id), "allocations"] as const,
   accountSubscriptions: (id: number) =>
@@ -75,6 +80,19 @@ export function useTradingAccount(id: number | undefined, token: string | null) 
   return useQuery({
     queryKey: id ? tradingAccountKeys.detail(id) : tradingAccountKeys.details(),
     queryFn: () => getTradingAccount(id as number, token as string),
+    enabled: Boolean(token && id),
+  });
+}
+
+export function useTradingAccountRiskSettings(
+  id: number | undefined,
+  token: string | null
+) {
+  return useQuery({
+    queryKey: id
+      ? tradingAccountKeys.riskSettings(id)
+      : [...tradingAccountKeys.details(), "riskSettings"],
+    queryFn: () => getTradingAccountRiskSettings(id as number, token as string),
     enabled: Boolean(token && id),
   });
 }
@@ -272,6 +290,32 @@ export function useRevokeTradingAccountCredential(token: string | null) {
         account,
       });
       queryClient.invalidateQueries({ queryKey: tradingAccountKeys.lists() });
+    },
+  });
+}
+
+export function useUpdateTradingAccountRiskSettings(token: string | null) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      id,
+      payload,
+    }: {
+      id: number;
+      payload: TradingAccountRiskSettingsInput;
+    }) => {
+      if (!token) {
+        throw new Error("Admin session is missing. Please log in again.");
+      }
+
+      return updateTradingAccountRiskSettings(id, payload, token);
+    },
+    onSuccess: ({ riskSettings }) => {
+      queryClient.setQueryData(
+        tradingAccountKeys.riskSettings(riskSettings.tradingAccountId),
+        { riskSettings }
+      );
     },
   });
 }

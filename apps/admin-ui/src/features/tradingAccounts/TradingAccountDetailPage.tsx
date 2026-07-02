@@ -42,11 +42,13 @@ import {
   useRevokeTradingAccountCredential,
   useTradingAccount,
   useTradingAccountAllocations,
+  useTradingAccountRiskSettings,
   useTradingAccountSubscriptionMarketContext,
   useTradingAccountSubscriptionPriceHistory,
   useTradingAccountSubscriptions,
   useUpdateTradingAccount,
   useUpdateTradingAccountAllocation,
+  useUpdateTradingAccountRiskSettings,
   useUpdateTradingAccountSubscription,
   useUpsertTradingAccountCredential,
   useVerifyTradingAccountCredential,
@@ -61,6 +63,8 @@ import type {
   TradingAccountAllocation,
   TradingAccountAllocationInput,
   TradingAccountEnvironment,
+  TradingAccountRiskSettings,
+  TradingAccountRiskSettingsInput,
   TradingAccountSubscription,
   TradingAccountSubscriptionInput,
   TradingAccountStatus,
@@ -84,6 +88,17 @@ type AccountSettingsDraft = {
 type CredentialDraft = {
   apiKey: string;
   apiSecret: string;
+};
+
+type AccountRiskSettingsDraft = {
+  enabled: boolean;
+  maxDailyEntryOrders: number | null;
+  maxDailyEntryNotional: number | null;
+  maxOpenPositions: number | null;
+  maxTotalOpenNotional: number | null;
+  maxSymbolOpenNotional: number | null;
+  maxSubscriptionOpenNotional: number | null;
+  notes: string;
 };
 
 type AllocationDraft = {
@@ -167,6 +182,21 @@ function accountToSettingsDraft(account: TradingAccount): AccountSettingsDraft {
     killSwitchEnabled: account.killSwitchEnabled,
     pausedReason: account.pausedReason ?? "",
     notes: account.notes ?? "",
+  };
+}
+
+function riskSettingsToDraft(
+  riskSettings: TradingAccountRiskSettings
+): AccountRiskSettingsDraft {
+  return {
+    enabled: riskSettings.enabled,
+    maxDailyEntryOrders: riskSettings.maxDailyEntryOrders,
+    maxDailyEntryNotional: riskSettings.maxDailyEntryNotional,
+    maxOpenPositions: riskSettings.maxOpenPositions,
+    maxTotalOpenNotional: riskSettings.maxTotalOpenNotional,
+    maxSymbolOpenNotional: riskSettings.maxSymbolOpenNotional,
+    maxSubscriptionOpenNotional: riskSettings.maxSubscriptionOpenNotional,
+    notes: riskSettings.notes ?? "",
   };
 }
 
@@ -401,6 +431,68 @@ function settingsDraftChanged(
     (account.pausedReason ?? "") !== draft.pausedReason ||
     (account.notes ?? "") !== draft.notes
   );
+}
+
+function riskSettingsDraftChanged(
+  riskSettings: TradingAccountRiskSettings,
+  draft: AccountRiskSettingsDraft
+) {
+  return (
+    riskSettings.enabled !== draft.enabled ||
+    riskSettings.maxDailyEntryOrders !== draft.maxDailyEntryOrders ||
+    riskSettings.maxDailyEntryNotional !== draft.maxDailyEntryNotional ||
+    riskSettings.maxOpenPositions !== draft.maxOpenPositions ||
+    riskSettings.maxTotalOpenNotional !== draft.maxTotalOpenNotional ||
+    riskSettings.maxSymbolOpenNotional !== draft.maxSymbolOpenNotional ||
+    riskSettings.maxSubscriptionOpenNotional !==
+      draft.maxSubscriptionOpenNotional ||
+    (riskSettings.notes ?? "") !== draft.notes
+  );
+}
+
+function validateAccountRiskSettingsDraft(draft: AccountRiskSettingsDraft) {
+  if (
+    draft.maxDailyEntryOrders !== null &&
+    (!Number.isInteger(draft.maxDailyEntryOrders) ||
+      draft.maxDailyEntryOrders <= 0)
+  ) {
+    return "Account max daily entry orders must be empty or a positive whole number.";
+  }
+
+  if (
+    draft.maxOpenPositions !== null &&
+    (!Number.isInteger(draft.maxOpenPositions) || draft.maxOpenPositions <= 0)
+  ) {
+    return "Account max open positions must be empty or a positive whole number.";
+  }
+
+  const dollarLimits = [
+    draft.maxDailyEntryNotional,
+    draft.maxTotalOpenNotional,
+    draft.maxSymbolOpenNotional,
+    draft.maxSubscriptionOpenNotional,
+  ];
+
+  if (dollarLimits.some((value) => value !== null && value <= 0)) {
+    return "Account dollar limits must be empty or greater than zero.";
+  }
+
+  return null;
+}
+
+function riskSettingsDraftToPayload(
+  draft: AccountRiskSettingsDraft
+): TradingAccountRiskSettingsInput {
+  return {
+    enabled: draft.enabled,
+    maxDailyEntryOrders: draft.maxDailyEntryOrders,
+    maxDailyEntryNotional: draft.maxDailyEntryNotional,
+    maxOpenPositions: draft.maxOpenPositions,
+    maxTotalOpenNotional: draft.maxTotalOpenNotional,
+    maxSymbolOpenNotional: draft.maxSymbolOpenNotional,
+    maxSubscriptionOpenNotional: draft.maxSubscriptionOpenNotional,
+    notes: normalizeOptionalText(draft.notes),
+  };
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -2472,6 +2564,299 @@ function SafetySettingsCard({
   );
 }
 
+function AccountRiskControlsForm({
+  account,
+  riskSettings,
+  token,
+}: {
+  account: TradingAccount;
+  riskSettings: TradingAccountRiskSettings;
+  token: string | null;
+}) {
+  const [draft, setDraft] = useState<AccountRiskSettingsDraft>(() =>
+    riskSettingsToDraft(riskSettings)
+  );
+  const updateMutation = useUpdateTradingAccountRiskSettings(token);
+  const hasChanges = riskSettingsDraftChanged(riskSettings, draft);
+  const draftError = validateAccountRiskSettingsDraft(draft);
+
+  function resetDraft() {
+    setDraft(riskSettingsToDraft(riskSettings));
+  }
+
+  async function saveRiskSettings() {
+    if (draftError) {
+      notifications.show({
+        message: draftError,
+        color: "red",
+      });
+      return;
+    }
+
+    try {
+      await updateMutation.mutateAsync({
+        id: account.id,
+        payload: riskSettingsDraftToPayload(draft),
+      });
+
+      notifications.show({
+        message: "Account risk controls saved.",
+        color: "teal",
+      });
+    } catch (error) {
+      notifications.show({
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to save account risk controls.",
+        color: "red",
+      });
+    }
+  }
+
+  function updateDraft(patch: Partial<AccountRiskSettingsDraft>) {
+    setDraft((current) => ({
+      ...current,
+      ...patch,
+    }));
+  }
+
+  return (
+    <Stack gap="md">
+      <Group justify="space-between" align="flex-start">
+        <div>
+          <Group gap="xs">
+            <Title order={3}>Account Risk Controls</Title>
+            {hasChanges && (
+              <Badge color="blue" variant="light">
+                Unsaved changes
+              </Badge>
+            )}
+          </Group>
+          <Text size="sm" c="dimmed">
+            These limits apply only to this TradingAccount. Global Settings
+            still act as backend-wide emergency caps. Allocation bucket limits
+            are configured separately and are not enforced yet.
+          </Text>
+        </div>
+        <Group>
+          <Button
+            variant="default"
+            onClick={resetDraft}
+            disabled={!hasChanges || updateMutation.isPending}
+          >
+            Reset
+          </Button>
+          <Button
+            onClick={saveRiskSettings}
+            loading={updateMutation.isPending}
+            disabled={!hasChanges || draftError !== null}
+          >
+            Save Controls
+          </Button>
+        </Group>
+      </Group>
+
+      {draftError && (
+        <Alert color="yellow">
+          {draftError}
+        </Alert>
+      )}
+
+      <Group justify="space-between" align="flex-start" wrap="nowrap">
+        <div>
+          <Text fw={600} size="sm">
+            Account risk controls enabled
+          </Text>
+          <Text size="sm" c="dimmed">
+            Turn off only to skip account-specific caps. Global emergency caps
+            still apply.
+          </Text>
+        </div>
+        <Switch
+          checked={draft.enabled}
+          onChange={(event) =>
+            updateDraft({ enabled: event.currentTarget.checked })
+          }
+          disabled={updateMutation.isPending}
+          color="teal"
+        />
+      </Group>
+
+      <SimpleGrid cols={{ base: 1, md: 2 }}>
+        <NumberInput
+          label="Account max daily entry orders"
+          value={draft.maxDailyEntryOrders ?? ""}
+          onChange={(value) =>
+            updateDraft({ maxDailyEntryOrders: normalizeNumberInput(value) })
+          }
+          min={1}
+          step={1}
+          thousandSeparator=","
+          error={
+            draft.maxDailyEntryOrders === null ||
+            (Number.isInteger(draft.maxDailyEntryOrders) &&
+              draft.maxDailyEntryOrders > 0)
+              ? undefined
+              : "Must be a positive whole number."
+          }
+          disabled={updateMutation.isPending}
+        />
+
+        <NumberInput
+          label="Account max daily entry dollars"
+          value={draft.maxDailyEntryNotional ?? ""}
+          onChange={(value) =>
+            updateDraft({ maxDailyEntryNotional: normalizeNumberInput(value) })
+          }
+          min={1}
+          thousandSeparator=","
+          prefix="$"
+          error={
+            draft.maxDailyEntryNotional === null ||
+            draft.maxDailyEntryNotional > 0
+              ? undefined
+              : "Must be greater than zero."
+          }
+          disabled={updateMutation.isPending}
+        />
+
+        <NumberInput
+          label="Account max open positions"
+          value={draft.maxOpenPositions ?? ""}
+          onChange={(value) =>
+            updateDraft({ maxOpenPositions: normalizeNumberInput(value) })
+          }
+          min={1}
+          step={1}
+          thousandSeparator=","
+          error={
+            draft.maxOpenPositions === null ||
+            (Number.isInteger(draft.maxOpenPositions) &&
+              draft.maxOpenPositions > 0)
+              ? undefined
+              : "Must be a positive whole number."
+          }
+          disabled={updateMutation.isPending}
+        />
+
+        <NumberInput
+          label="Account max total open dollars"
+          value={draft.maxTotalOpenNotional ?? ""}
+          onChange={(value) =>
+            updateDraft({ maxTotalOpenNotional: normalizeNumberInput(value) })
+          }
+          min={1}
+          thousandSeparator=","
+          prefix="$"
+          error={
+            draft.maxTotalOpenNotional === null ||
+            draft.maxTotalOpenNotional > 0
+              ? undefined
+              : "Must be greater than zero."
+          }
+          disabled={updateMutation.isPending}
+        />
+
+        <NumberInput
+          label="Account max symbol open dollars"
+          value={draft.maxSymbolOpenNotional ?? ""}
+          onChange={(value) =>
+            updateDraft({ maxSymbolOpenNotional: normalizeNumberInput(value) })
+          }
+          min={1}
+          thousandSeparator=","
+          prefix="$"
+          error={
+            draft.maxSymbolOpenNotional === null ||
+            draft.maxSymbolOpenNotional > 0
+              ? undefined
+              : "Must be greater than zero."
+          }
+          disabled={updateMutation.isPending}
+        />
+
+        <NumberInput
+          label="Account max subscription open dollars"
+          value={draft.maxSubscriptionOpenNotional ?? ""}
+          onChange={(value) =>
+            updateDraft({
+              maxSubscriptionOpenNotional: normalizeNumberInput(value),
+            })
+          }
+          min={1}
+          thousandSeparator=","
+          prefix="$"
+          error={
+            draft.maxSubscriptionOpenNotional === null ||
+            draft.maxSubscriptionOpenNotional > 0
+              ? undefined
+              : "Must be greater than zero."
+          }
+          disabled={updateMutation.isPending}
+        />
+      </SimpleGrid>
+
+      <Textarea
+        label="Notes"
+        value={draft.notes}
+        onChange={(event) =>
+          updateDraft({ notes: event.currentTarget.value })
+        }
+        autosize
+        minRows={3}
+        disabled={updateMutation.isPending}
+      />
+    </Stack>
+  );
+}
+
+function AccountRiskControlsCard({
+  account,
+  token,
+}: {
+  account: TradingAccount;
+  token: string | null;
+}) {
+  const { data, isLoading, isError, error } = useTradingAccountRiskSettings(
+    account.id,
+    token
+  );
+  const riskSettings = data?.riskSettings;
+
+  return (
+    <Card withBorder radius="md" p="lg">
+      {isLoading && (
+        <Group gap="sm">
+          <Loader size="sm" color="cyan" />
+          <Text size="sm" c="dimmed">
+            Loading account risk controls...
+          </Text>
+        </Group>
+      )}
+
+      {isError && (
+        <Alert color="red" title="Failed to load account risk controls">
+          {error instanceof Error ? error.message : "Unknown error."}
+        </Alert>
+      )}
+
+      {!isLoading && !isError && !riskSettings && (
+        <Alert color="yellow">Account risk controls are unavailable.</Alert>
+      )}
+
+      {riskSettings && (
+        <AccountRiskControlsForm
+          key={`${riskSettings.id}-${riskSettings.updatedAt}`}
+          account={account}
+          riskSettings={riskSettings}
+          token={token}
+        />
+      )}
+    </Card>
+  );
+}
+
 function CredentialManagementCard({
   account,
   token,
@@ -2777,6 +3162,7 @@ export function TradingAccountDetailPage() {
             account={account}
             token={token}
           />
+          <AccountRiskControlsCard account={account} token={token} />
           <SizingAndAllocationsSection account={account} token={token} />
           <CredentialManagementCard account={account} token={token} />
           <NotesCard account={account} />
