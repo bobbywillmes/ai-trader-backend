@@ -11,6 +11,7 @@ Use this index to find the right document for the task at hand.
 | Need	                                                  | Open |
 | ------------------------------------------------------- | -----------------------  |
 | Understand the backend safety model	                    | [Risk & Safety](architecture/risk-and-safety.md) |
+| Audit global vs account-scoped risk settings            | [Account Risk Settings](architecture/account-risk-settings.md) |
 | Understand how a signal becomes a full trade cycle      | [Trading Lifecycle](architecture/trading-lifecycle.md) |
 | Understand background worker health and stale detection | [Worker Health](architecture/workers.md) |
 | Deploy or update production	                            | [Production Deployment](production/deployment.md) |
@@ -40,6 +41,21 @@ Explains the backend safety model, including:
 - production startup checks
 - entry blocking rules
 - safe launch posture
+
+### [Account Risk Settings](architecture/account-risk-settings.md)
+
+Audits current global Settings fields against the account-scoped trading model,
+including:
+
+- where each setting is stored, read, displayed, and edited
+- which settings should stay global emergency controls
+- which limits should move to `TradingAccount`
+- which limits should be enforced through `TradingAccountAllocation`
+- which settings are already owned by `TradingAccountSubscription`
+- migration phases before live multi-account trading
+
+Use this doc when changing global Settings, account-level risk limits,
+allocation bucket enforcement, or paper/live safety behavior.
 
 ### [Trading Lifecycle](architecture/trading-lifecycle.md)
 
