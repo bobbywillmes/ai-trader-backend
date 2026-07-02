@@ -14,6 +14,7 @@ import {
 } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
+import { TradingAccountBadge } from "../../components/TradingAccountBadge";
 import { getAdminToken } from "../../lib/api";
 import { useOpenOrders, useCancelOrder } from "./hooks";
 
@@ -76,9 +77,10 @@ export function OrdersPage() {
 
         {orders.length > 0 && (
           <ScrollArea>
-            <Table striped highlightOnHover style={{ minWidth: 640 }}>
+            <Table striped highlightOnHover style={{ minWidth: 760 }}>
               <Table.Thead>
                 <Table.Tr>
+                  <Table.Th>Account</Table.Th>
                   <Table.Th>Symbol</Table.Th>
                   <Table.Th>Side</Table.Th>
                   <Table.Th>Type</Table.Th>
@@ -101,6 +103,12 @@ export function OrdersPage() {
 
                   return (
                     <Table.Tr key={order.id}>
+                      <Table.Td>
+                        <TradingAccountBadge
+                          account={order.tradingAccount}
+                          tradingAccountId={order.tradingAccountId}
+                        />
+                      </Table.Td>
                       <Table.Td fw={600}>{order.symbol}</Table.Td>
                       <Table.Td>
                         <Badge size="sm" color={order.side === "buy" ? "teal" : "red"} variant="light">

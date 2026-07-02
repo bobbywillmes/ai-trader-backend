@@ -16,6 +16,7 @@ import {
   Title,
 } from "@mantine/core";
 import { IconRefresh, IconSearch, IconX } from "@tabler/icons-react";
+import { TradingAccountBadge } from "../../components/TradingAccountBadge";
 import { getAdminToken } from "../../lib/api";
 import { EntryDecisionDrawer } from "./EntryDecisionDrawer";
 import { useEntryDecisionDrawer, useEntryDecisions } from "./hooks";
@@ -157,9 +158,10 @@ export function EntryDecisionsPage() {
 
           {decisions.length > 0 && (
             <ScrollArea>
-              <Table striped highlightOnHover withTableBorder miw={1180}>
+              <Table striped highlightOnHover withTableBorder miw={1320}>
                 <Table.Thead>
                   <Table.Tr>
+                    <Table.Th>Account</Table.Th>
                     <Table.Th>Evaluated</Table.Th>
                     <Table.Th>Symbol</Table.Th>
                     <Table.Th>State</Table.Th>
@@ -205,6 +207,12 @@ function EntryDecisionRow({
 }) {
   return (
     <Table.Tr>
+      <Table.Td>
+        <TradingAccountBadge
+          account={decision.tradingAccount}
+          tradingAccountId={decision.tradingAccountId}
+        />
+      </Table.Td>
       <Table.Td>
         <Stack gap={2}>
           <Text size="sm">{formatDate(decision.evaluatedAt)}</Text>

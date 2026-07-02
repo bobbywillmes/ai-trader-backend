@@ -1,5 +1,9 @@
+import type { TradingAccountSummary } from "../../types/tradingAccount";
+
 export type EntryDecisionSummary = {
   id: number;
+  tradingAccountId: number | null;
+  tradingAccount: TradingAccountSummary | null;
   decisionKey: string;
   evaluatedAt: string;
   source: string;

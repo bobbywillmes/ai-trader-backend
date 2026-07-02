@@ -1,3 +1,5 @@
+import type { TradingAccountSummary } from "../../types/tradingAccount";
+
 export type BrokerAccountSummary = {
   cash: number;
   buyingPower: number;
@@ -177,6 +179,8 @@ export type IndexIntradayResponse = {
 
 export type SystemEvent = {
   id: number;
+  tradingAccountId: number | null;
+  tradingAccount: TradingAccountSummary | null;
   type: string;
   entityType: string | null;
   entityId: string | null;

@@ -1,5 +1,9 @@
+import type { TradingAccountSummary } from "../../types/tradingAccount";
+
 export type AccountSnapshot = {
   id: number;
+  tradingAccountId: number | null;
+  tradingAccount: TradingAccountSummary | null;
   broker: string;
   mode: string;
   accountStatus: string | null;
@@ -66,6 +70,8 @@ export type ManualAccountSnapshotResponse = {
 
 export type BrokerActivity = {
   id: number;
+  tradingAccountId: number | null;
+  tradingAccount: TradingAccountSummary | null;
   broker: string;
   mode: string;
 
@@ -146,6 +152,8 @@ export type TradePerformanceSortDirection = "asc" | "desc";
 
 export type TradePerformanceTradeRow = {
   id: number;
+  tradingAccountId: number | null;
+  tradingAccount: TradingAccountSummary | null;
   symbol: string;
   side: string;
   mode: string | null;
