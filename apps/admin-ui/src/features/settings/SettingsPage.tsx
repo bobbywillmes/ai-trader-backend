@@ -64,7 +64,7 @@ const riskLimitDefinitions: {
     label: "Max Daily Entry Orders",
     badge: "daily count",
     description:
-      "Maximum number of buy-side entry orders the system may create in one UTC day. This helps prevent signal storms from opening too many trades.",
+      "Global maximum number of buy-side entry orders the backend may create in one UTC day.",
     placeholder: "Example: 5",
   },
   {
@@ -72,7 +72,7 @@ const riskLimitDefinitions: {
     label: "Max Daily Entry Notional",
     badge: "daily dollars",
     description:
-      "Maximum total dollar value of entry orders allowed in one UTC day. Existing open exposure is not counted here; this only limits today's new entries.",
+      "Global maximum total dollar value of entry orders allowed in one UTC day. Runtime-sized market orders count using their estimated notional snapshot.",
     placeholder: "Example: 10000",
   },
   {
@@ -80,7 +80,7 @@ const riskLimitDefinitions: {
     label: "Max Open Positions",
     badge: "portfolio count",
     description:
-      "Maximum number of active tracked positions allowed at the same time. This protects against the system spreading across too many tickers.",
+      "Global maximum number of active tracked positions allowed at the same time.",
     placeholder: "Example: 5",
   },
   {
@@ -88,7 +88,7 @@ const riskLimitDefinitions: {
     label: "Max Total Open Notional",
     badge: "portfolio dollars",
     description:
-      "Maximum projected total open exposure after a new entry. This is the broad portfolio-level exposure cap.",
+      "Global projected open exposure cap after a new entry. Account- and allocation-scoped limits are planned separately.",
     placeholder: "Example: 25000",
   },
   {
@@ -96,7 +96,7 @@ const riskLimitDefinitions: {
     label: "Max Symbol Open Notional",
     badge: "ticker dollars",
     description:
-      "Maximum dollar exposure allowed for a single ticker. This prevents one symbol from becoming too large.",
+      "Global maximum dollar exposure allowed for a single ticker.",
     placeholder: "Example: 5000",
   },
   {
@@ -104,7 +104,7 @@ const riskLimitDefinitions: {
     label: "Max Subscription Open Notional",
     badge: "strategy dollars",
     description:
-      "Maximum dollar exposure allowed for one subscription. This helps separate risk between strategy/ticker subscriptions.",
+      "Legacy global cap for one subscription. Account-subscription sizing now controls new entry size; this cap remains an emergency guardrail until account-scoped risk settings replace it.",
     placeholder: "Example: 5000",
   },
 ];
@@ -2263,9 +2263,11 @@ export function SettingsPage() {
                     </Badge>
                   </Group>
                   <Text size="sm" c="dimmed" maw={720}>
-                    When enabled, runtime config expects the Alpaca paper
-                    trading environment. Disable only when connected to a live
-                    Alpaca account and ready to trade real funds.
+                    Legacy global broker-mode safety setting. Account
+                    environments now live on TradingAccount. Keep this enabled
+                    while the backend is connected to paper Alpaca credentials.
+                    Disable only when intentionally operating with live Alpaca
+                    credentials and live account controls are configured.
                   </Text>
                   {!config.paperMode && (
                     <Text size="sm" c="red" fw={600} mt="xs">
@@ -2298,7 +2300,7 @@ export function SettingsPage() {
                     Account-specific sizing lives on trading account
                     subscriptions. Allocation bucket limits are configured on
                     trading account allocations but are not enforced yet.
-                    Clearing a value removes that specific limit.
+                    Clearing a value removes that specific global cap.
                   </Text>
                 </div>
 
