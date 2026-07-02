@@ -248,6 +248,8 @@ When a schema change is required:
 4. Update services, tests, and docs in the same branch.
 5. Call out migration/deployment implications in the final summary and commit body.
 
+Do not run `prisma format` in this repository. The Prisma schema intentionally uses hand-aligned whitespace for readability, so schema edits should preserve existing formatting and only change the lines required for the model change.
+
 Do not backfill production data casually. Treat historical trading data as audit-sensitive.
 
 ## Admin UI Guidance

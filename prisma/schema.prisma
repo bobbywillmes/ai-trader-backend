@@ -121,6 +121,7 @@ model TradingAccount {
   notes                     String?
 
   credential                TradingAccountCredential?
+  riskSettings              TradingAccountRiskSettings?
   access                    TradingAccountAccess[]
 
   // Future/current trading relations
@@ -145,6 +146,29 @@ model TradingAccount {
   @@index([tradingEnabled])
   @@index([killSwitchEnabled])
   @@unique([broker, environment, brokerAccountId])
+}
+
+model TradingAccountRiskSettings {
+  id                                  Int @id @default(autoincrement())
+
+  tradingAccountId                    Int @unique
+  tradingAccount                      TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Cascade)
+
+  enabled                             Boolean @default(true)
+
+  maxDailyEntryOrders                 Int?
+  maxDailyEntryNotional               Float?
+  maxOpenPositions                    Int?
+  maxTotalOpenNotional                Float?
+  maxSymbolOpenNotional               Float?
+  maxSubscriptionOpenNotional         Float?
+
+  notes                               String?
+
+  createdAt                           DateTime @default(now())
+  updatedAt                           DateTime @updatedAt
+
+  @@index([enabled])
 }
 
 enum BrokerCredentialAuthType {
