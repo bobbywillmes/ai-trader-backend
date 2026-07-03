@@ -150,6 +150,135 @@ notes may be string or null
 `enabled=false` skips only account-specific risk caps. Global emergency caps
 still apply.
 
+## Preview Entry Risk
+
+Entry risk preview is an admin-only dry-run endpoint for checking account
+subscription sizing and risk decisions without creating trading records or
+submitting broker orders. It is intended for diagnostics and off-hours risk
+tuning.
+
+```http
+POST /api/trading-accounts/:id/entry-risk-preview
+```
+
+Payload:
+
+```json
+{
+  "subscriptionKey": "dia_dip_core"
+}
+```
+
+Optional payload:
+
+```json
+{
+  "subscriptionKey": "dia_dip_core",
+  "ignoreSession": true
+}
+```
+
+`ignoreSession` defaults to `true`. When true, market/session timing does not
+block the preview result. The endpoint may still return session state as
+informational context so admins can see whether a real entry would be blocked
+right now by market closed, opening buffer, pre-close cutoff, or unavailable
+session data.
+
+The endpoint resolves:
+
+```text
+TradingAccount
+-> Subscription by subscriptionKey
+-> TradingAccountSubscription
+-> runtime account-subscription sizing
+-> centralized risk gate
+```
+
+It returns `ok=false` with sizing/risk details when a layer would block. It
+does not create or mutate:
+
+```text
+OrderIntent
+BrokerOrder
+TrackedPosition
+EntryDecision
+SystemEvent
+```
+
+It also never submits to Alpaca.
+
+Response envelope:
+
+```json
+{
+  "preview": {
+    "ok": false,
+    "wouldSubmitIfSessionAllowed": false,
+    "tradingAccount": {
+      "id": 1,
+      "displayName": "Bobby Paper",
+      "broker": "ALPACA",
+      "environment": "PAPER",
+      "status": "ACTIVE"
+    },
+    "subscription": {
+      "id": 10,
+      "key": "dia_dip_core",
+      "symbol": "DIA",
+      "enabled": true
+    },
+    "accountSubscription": {
+      "id": 20,
+      "enabled": true,
+      "entriesEnabled": true,
+      "exitsEnabled": true,
+      "allocationId": 7,
+      "sizingType": "MAX_NOTIONAL"
+    },
+    "allocation": {
+      "id": 7,
+      "key": "core_etf",
+      "name": "Core ETF",
+      "enabled": true,
+      "maxAllocatedNotional": 10000,
+      "maxOpenPositions": 3,
+      "maxPositionNotional": 2000
+    },
+    "sizing": {
+      "ok": true,
+      "code": null,
+      "sizingType": "MAX_NOTIONAL",
+      "fixedQty": null,
+      "maxPositionNotional": 1500,
+      "minPositionNotional": null,
+      "maxQty": null,
+      "latestPrice": 475,
+      "latestPriceAt": "2026-07-02T20:00:00.000Z",
+      "latestPriceSource": "lastTrade",
+      "calculatedQty": 3,
+      "estimatedNotional": 1425
+    },
+    "risk": {
+      "ok": false,
+      "code": "allocation_max_open_positions_exceeded",
+      "layer": "allocation",
+      "message": "Allocation maximum open position limit reached.",
+      "details": {}
+    },
+    "session": {
+      "checked": true,
+      "marketOpen": false,
+      "entryWindowOpen": false,
+      "wouldBlockRealEntryNow": true,
+      "code": "market_closed",
+      "message": "Regular market is closed. New entries are blocked."
+    },
+    "wouldCreateOrderIntent": false,
+    "wouldSubmitBrokerOrder": false
+  }
+}
+```
+
 ## Manage Allocation Buckets
 
 Allocation buckets group account-scoped subscription sizing limits. They are

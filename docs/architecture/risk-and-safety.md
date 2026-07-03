@@ -177,6 +177,21 @@ The guard is enforced twice:
    recheck blocks, the intent is marked `blocked`, no Alpaca order is submitted,
    and a structured `SystemEvent` is written.
 
+### Entry risk preview
+
+Admins can use `POST /api/trading-accounts/:id/entry-risk-preview` to dry-run
+account-subscription sizing and entry-risk decisions by `subscriptionKey`.
+
+The preview endpoint is diagnostic only. It resolves the same account
+subscription sizing inputs and centralized risk checks used for real entries,
+but it does not create `OrderIntent`, `BrokerOrder`, `TrackedPosition`,
+`EntryDecision`, or `SystemEvent` records, and it never submits to Alpaca.
+
+By default, preview ignores market/session timing as a blocker so admins can
+inspect deeper sizing, account, allocation, and subscription risk layers while
+markets are closed. Session state may still be returned as informational
+context showing whether a real entry would be blocked now.
+
 ### Exit attention states
 
 The backend records explicit exit attention states for protective trailing-stop failures.
