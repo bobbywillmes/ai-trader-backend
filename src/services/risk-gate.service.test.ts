@@ -764,6 +764,127 @@ describe('risk gate entry session integration', () => {
     expect(mocks.orderIntentFindMany).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps global caps ahead of allocation checks', async () => {
+    mocks.getRuntimeTradingConfig.mockResolvedValue({
+      ...config,
+      maxDailyEntryOrders: 1,
+      maxDailyEntryNotional: 50_000,
+      maxTotalOpenNotional: 50_000,
+      maxSymbolOpenNotional: 50_000,
+      maxSubscriptionOpenNotional: 50_000,
+    });
+    mocks.subscriptionFindFirst.mockResolvedValue(subscriptionRecord());
+    mocks.orderIntentFindMany.mockResolvedValue([
+      {
+        id: 55,
+        symbol: 'QQQ',
+        subscriptionId: 23,
+        notional: 100,
+        qty: null,
+        limitPrice: null,
+        rawRequestJson: {},
+        status: 'pending',
+      },
+    ]);
+    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue({
+      id: 44,
+      subscriptionId: 22,
+      allocationId: 7,
+      allocation: {
+        id: 7,
+        key: 'core_etf',
+        name: 'Core ETF',
+        enabled: false,
+        maxAllocatedNotional: null,
+        maxOpenPositions: null,
+        maxPositionNotional: null,
+      },
+    });
+
+    const result = await evaluateOrderRisk({
+      symbol: 'SPY',
+      side: 'buy',
+      orderType: 'market',
+      timeInForce: 'day',
+      notional: 100,
+      extendedHours: false,
+      signalType: 'entry',
+      subscriptionId: 22,
+    });
+
+    expect(result).toMatchObject({
+      allowed: false,
+      reason: 'Daily entry order limit reached.',
+      details: expect.objectContaining({
+        rule: 'maxDailyEntryOrders',
+      }),
+    });
+    expect(mocks.tradingAccountSubscriptionFindFirst).not.toHaveBeenCalled();
+  });
+
+  it('keeps account caps ahead of allocation checks', async () => {
+    mocks.getRuntimeTradingConfig.mockResolvedValue({
+      ...config,
+      maxDailyEntryOrders: 5,
+      maxDailyEntryNotional: 50_000,
+      maxTotalOpenNotional: 50_000,
+      maxSymbolOpenNotional: 50_000,
+      maxSubscriptionOpenNotional: 50_000,
+    });
+    mocks.subscriptionFindFirst.mockResolvedValue(subscriptionRecord());
+    mocks.tradingAccountRiskSettingsFindUnique.mockResolvedValue(
+      accountRiskSettings({
+        maxDailyEntryOrders: 1,
+      })
+    );
+    mocks.orderIntentFindMany.mockResolvedValue([
+      {
+        id: 55,
+        symbol: 'QQQ',
+        subscriptionId: 23,
+        notional: 100,
+        qty: null,
+        limitPrice: null,
+        rawRequestJson: {},
+        status: 'pending',
+      },
+    ]);
+    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue({
+      id: 44,
+      subscriptionId: 22,
+      allocationId: 7,
+      allocation: {
+        id: 7,
+        key: 'core_etf',
+        name: 'Core ETF',
+        enabled: false,
+        maxAllocatedNotional: null,
+        maxOpenPositions: null,
+        maxPositionNotional: null,
+      },
+    });
+
+    const result = await evaluateOrderRisk({
+      symbol: 'SPY',
+      side: 'buy',
+      orderType: 'market',
+      timeInForce: 'day',
+      notional: 100,
+      extendedHours: false,
+      signalType: 'entry',
+      subscriptionId: 22,
+    });
+
+    expect(result).toMatchObject({
+      allowed: false,
+      reason: 'Account daily entry order limit reached.',
+      details: expect.objectContaining({
+        rule: 'account_max_daily_entry_orders_exceeded',
+      }),
+    });
+    expect(mocks.tradingAccountSubscriptionFindFirst).not.toHaveBeenCalled();
+  });
+
   it('blocks entries assigned to disabled allocations', async () => {
     mocks.getRuntimeTradingConfig.mockResolvedValue({
       ...config,

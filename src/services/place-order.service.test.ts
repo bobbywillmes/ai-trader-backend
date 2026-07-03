@@ -243,6 +243,60 @@ describe('place order service entry decision attribution', () => {
     expect(createdInput).not.toHaveProperty('notional');
   });
 
+  it('passes MAX_NOTIONAL estimated notional to risk while creating a qty-only intent', async () => {
+    const riskResult = {
+      allowed: false as const,
+      statusCode: 409,
+      reason: 'Allocation per-position notional limit would be exceeded.',
+      details: {
+        rule: 'allocation_max_position_notional_exceeded',
+        requestedNotional: 1500,
+      },
+    };
+    mocks.evaluateOrderRisk.mockResolvedValue(riskResult);
+
+    await expect(
+      submitOrder({
+        subscriptionKey: 'spy_dip_core',
+        signalType: 'entry',
+        extendedHours: false,
+      })
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      message: 'Allocation per-position notional limit would be exceeded.',
+      details: expect.objectContaining({
+        rule: 'allocation_max_position_notional_exceeded',
+      }),
+    });
+
+    expect(mocks.createOrderIntent).toHaveBeenCalledWith(
+      runtimeSizedInput,
+      'api',
+      'client-101',
+      1,
+      {
+        tradingAccountSubscriptionId: 44,
+        accountSubscriptionSizing: {
+          tradingAccountSubscriptionId: 44,
+          sizingType: 'MAX_NOTIONAL',
+          calculatedQty: 3,
+        },
+      }
+    );
+    expect(mocks.evaluateOrderRisk).toHaveBeenCalledWith(runtimeSizedInput, {
+      requestedNotionalOverride: 1500,
+    });
+
+    const createdInput = mocks.createOrderIntent.mock.calls[0]?.[0];
+
+    expect(createdInput).toEqual(
+      expect.objectContaining({
+        qty: 3,
+      })
+    );
+    expect(createdInput).not.toHaveProperty('notional');
+  });
+
   it('does not apply entry runtime sizing to exit subscription orders', async () => {
     const exitInput = {
       ...resolvedInput,
