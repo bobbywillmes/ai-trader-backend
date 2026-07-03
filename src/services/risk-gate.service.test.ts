@@ -705,6 +705,7 @@ describe('risk gate entry session integration', () => {
             openNotional: 1_200,
             pendingEntryOrderCount: 1,
             pendingEntryNotional: 900,
+            currentAllocatedNotional: 2_100,
             projectedAllocatedNotional: 3_100,
           },
         },
@@ -761,5 +762,265 @@ describe('risk gate entry session integration', () => {
     });
     expect(mocks.trackedPositionFindMany).toHaveBeenCalledTimes(1);
     expect(mocks.orderIntentFindMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks entries assigned to disabled allocations', async () => {
+    mocks.getRuntimeTradingConfig.mockResolvedValue({
+      ...config,
+      maxDailyEntryNotional: 50_000,
+      maxTotalOpenNotional: 50_000,
+      maxSymbolOpenNotional: 50_000,
+      maxSubscriptionOpenNotional: 50_000,
+    });
+    mocks.subscriptionFindFirst.mockResolvedValue(subscriptionRecord());
+    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue({
+      id: 44,
+      subscriptionId: 22,
+      allocationId: 7,
+      allocation: {
+        id: 7,
+        key: 'core_etf',
+        name: 'Core ETF',
+        enabled: false,
+        maxAllocatedNotional: null,
+        maxOpenPositions: null,
+        maxPositionNotional: null,
+      },
+    });
+
+    const result = await evaluateOrderRisk(
+      {
+        symbol: 'SPY',
+        side: 'buy',
+        orderType: 'market',
+        timeInForce: 'day',
+        qty: 3,
+        extendedHours: false,
+        signalType: 'entry',
+        subscriptionId: 22,
+      },
+      {
+        requestedNotionalOverride: 1_000,
+      }
+    );
+
+    expect(result).toMatchObject({
+      allowed: false,
+      statusCode: 403,
+      reason: 'Allocation bucket is disabled for new entries.',
+      details: expect.objectContaining({
+        rule: 'allocation_disabled',
+        allocationId: 7,
+        allocationKey: 'core_etf',
+        allocationName: 'Core ETF',
+        tradingAccountSubscriptionId: 44,
+        enabled: false,
+      }),
+    });
+  });
+
+  it('blocks when allocation max position notional would be exceeded', async () => {
+    mocks.getRuntimeTradingConfig.mockResolvedValue({
+      ...config,
+      maxDailyEntryNotional: 50_000,
+      maxTotalOpenNotional: 50_000,
+      maxSymbolOpenNotional: 50_000,
+      maxSubscriptionOpenNotional: 50_000,
+    });
+    mocks.subscriptionFindFirst.mockResolvedValue(subscriptionRecord());
+    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue({
+      id: 44,
+      subscriptionId: 22,
+      allocationId: 7,
+      allocation: {
+        id: 7,
+        key: 'core_etf',
+        name: 'Core ETF',
+        enabled: true,
+        maxAllocatedNotional: null,
+        maxOpenPositions: null,
+        maxPositionNotional: 1_000,
+      },
+    });
+
+    const result = await evaluateOrderRisk(
+      {
+        symbol: 'SPY',
+        side: 'buy',
+        orderType: 'market',
+        timeInForce: 'day',
+        qty: 3,
+        extendedHours: false,
+        signalType: 'entry',
+        subscriptionId: 22,
+      },
+      {
+        requestedNotionalOverride: 1_200,
+      }
+    );
+
+    expect(result).toMatchObject({
+      allowed: false,
+      statusCode: 409,
+      reason: 'Allocation per-position notional limit would be exceeded.',
+      details: expect.objectContaining({
+        rule: 'allocation_max_position_notional_exceeded',
+        allocationId: 7,
+        allocationKey: 'core_etf',
+        allocationName: 'Core ETF',
+        tradingAccountSubscriptionId: 44,
+        limit: 1_000,
+        requestedNotional: 1_200,
+      }),
+    });
+  });
+
+  it('blocks when allocation max open positions would be exceeded', async () => {
+    mocks.getRuntimeTradingConfig.mockResolvedValue({
+      ...config,
+      maxDailyEntryNotional: 50_000,
+      maxTotalOpenNotional: 50_000,
+      maxSymbolOpenNotional: 50_000,
+      maxSubscriptionOpenNotional: 50_000,
+    });
+    mocks.subscriptionFindFirst.mockResolvedValue(subscriptionRecord());
+    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue({
+      id: 44,
+      subscriptionId: 22,
+      allocationId: 7,
+      allocation: {
+        id: 7,
+        key: 'core_etf',
+        name: 'Core ETF',
+        enabled: true,
+        maxAllocatedNotional: null,
+        maxOpenPositions: 3,
+        maxPositionNotional: null,
+      },
+    });
+    mocks.trackedPositionFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        activePosition({ id: 201, symbol: 'QQQ' }),
+        activePosition({ id: 202, symbol: 'DIA' }),
+        activePosition({ id: 203, symbol: 'IWM' }),
+      ]);
+
+    const result = await evaluateOrderRisk(
+      {
+        symbol: 'SPY',
+        side: 'buy',
+        orderType: 'market',
+        timeInForce: 'day',
+        qty: 3,
+        extendedHours: false,
+        signalType: 'entry',
+        subscriptionId: 22,
+      },
+      {
+        requestedNotionalOverride: 1_000,
+      }
+    );
+
+    expect(result).toMatchObject({
+      allowed: false,
+      statusCode: 409,
+      reason: 'Allocation maximum open position limit reached.',
+      details: expect.objectContaining({
+        rule: 'allocation_max_open_positions_exceeded',
+        allocationId: 7,
+        allocationKey: 'core_etf',
+        allocationName: 'Core ETF',
+        tradingAccountSubscriptionId: 44,
+        limit: 3,
+        current: 3,
+        projected: 4,
+        activeSymbols: ['QQQ', 'DIA', 'IWM'],
+      }),
+    });
+  });
+
+  it('blocks when allocation max allocated notional would be exceeded', async () => {
+    mocks.getRuntimeTradingConfig.mockResolvedValue({
+      ...config,
+      maxDailyEntryNotional: 50_000,
+      maxTotalOpenNotional: 50_000,
+      maxSymbolOpenNotional: 50_000,
+      maxSubscriptionOpenNotional: 50_000,
+    });
+    mocks.subscriptionFindFirst.mockResolvedValue(subscriptionRecord());
+    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue({
+      id: 44,
+      subscriptionId: 22,
+      allocationId: 7,
+      allocation: {
+        id: 7,
+        key: 'core_etf',
+        name: 'Core ETF',
+        enabled: true,
+        maxAllocatedNotional: 5_000,
+        maxOpenPositions: null,
+        maxPositionNotional: null,
+      },
+    });
+    mocks.trackedPositionFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        activePosition({
+          id: 201,
+          symbol: 'QQQ',
+          marketValue: 3_500,
+          costBasis: 3_400,
+        }),
+      ]);
+    mocks.orderIntentFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: 301,
+          symbol: 'DIA',
+          tradingAccountSubscriptionId: 45,
+          notional: 800,
+          qty: null,
+          limitPrice: null,
+          rawRequestJson: {},
+          status: 'pending',
+        },
+      ]);
+
+    const result = await evaluateOrderRisk(
+      {
+        symbol: 'SPY',
+        side: 'buy',
+        orderType: 'market',
+        timeInForce: 'day',
+        qty: 3,
+        extendedHours: false,
+        signalType: 'entry',
+        subscriptionId: 22,
+      },
+      {
+        requestedNotionalOverride: 1_000,
+      }
+    );
+
+    expect(result).toMatchObject({
+      allowed: false,
+      statusCode: 409,
+      reason: 'Allocation allocated notional limit would be exceeded.',
+      details: expect.objectContaining({
+        rule: 'allocation_max_allocated_notional_exceeded',
+        allocationId: 7,
+        allocationKey: 'core_etf',
+        allocationName: 'Core ETF',
+        tradingAccountSubscriptionId: 44,
+        limit: 5_000,
+        current: 4_300,
+        projected: 5_300,
+        requestedNotional: 1_000,
+        openNotional: 3_500,
+        pendingEntryNotional: 800,
+      }),
+    });
   });
 });

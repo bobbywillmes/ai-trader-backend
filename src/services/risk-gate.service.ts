@@ -71,7 +71,23 @@ type AllocationRiskUsage = {
   openNotional: number;
   pendingEntryOrderCount: number;
   pendingEntryNotional: number;
+  currentAllocatedNotional: number;
   projectedAllocatedNotional: number | null;
+};
+
+type AllocationRiskDetails = {
+  tradingAccountSubscriptionId: number;
+  allocationId: number;
+  allocationKey: string;
+  allocationName: string;
+  enabled: boolean;
+  limits: {
+    maxAllocatedNotional: number | null;
+    maxOpenPositions: number | null;
+    maxPositionNotional: number | null;
+  };
+  requestedNotional: number | null;
+  usage: AllocationRiskUsage;
 };
 
 function isEntryOrder(input: ResolvedPlaceOrderInput): boolean {
@@ -271,6 +287,7 @@ async function getAllocationRiskUsage(args: {
     openNotional,
     pendingEntryOrderCount: pendingEntryOrders.length,
     pendingEntryNotional,
+    currentAllocatedNotional,
     projectedAllocatedNotional:
       args.requestedNotional === null
         ? null
@@ -282,7 +299,7 @@ async function getAllocationRiskDetails(args: {
   accountSubscription: AllocationRiskAccountSubscription | null;
   tradingAccountId: number;
   requestedNotional: number | null;
-}) {
+}): Promise<AllocationRiskDetails | null> {
   const accountSubscription = args.accountSubscription;
 
   if (!accountSubscription || !accountSubscription.allocation) {
@@ -311,6 +328,106 @@ async function getAllocationRiskDetails(args: {
     requestedNotional: args.requestedNotional,
     usage,
   };
+}
+
+function allocationBlockDetails(
+  allocationRisk: AllocationRiskDetails,
+  details: Record<string, unknown>
+) {
+  return {
+    allocationId: allocationRisk.allocationId,
+    allocationKey: allocationRisk.allocationKey,
+    allocationName: allocationRisk.allocationName,
+    tradingAccountSubscriptionId:
+      allocationRisk.tradingAccountSubscriptionId,
+    ...details,
+  };
+}
+
+function evaluateAllocationRisk(
+  allocationRisk: AllocationRiskDetails | null
+): RiskGateBlocked | null {
+  if (!allocationRisk) {
+    return null;
+  }
+
+  if (!allocationRisk.enabled) {
+    return block(403, 'Allocation bucket is disabled for new entries.', {
+      rule: 'allocation_disabled',
+      ...allocationBlockDetails(allocationRisk, {
+        enabled: allocationRisk.enabled,
+      }),
+    });
+  }
+
+  const requestedNotional = allocationRisk.requestedNotional;
+  const maxPositionNotional = allocationRisk.limits.maxPositionNotional;
+
+  if (
+    requestedNotional !== null &&
+    isLimitEnabled(maxPositionNotional) &&
+    requestedNotional > maxPositionNotional
+  ) {
+    return block(
+      409,
+      'Allocation per-position notional limit would be exceeded.',
+      {
+        rule: 'allocation_max_position_notional_exceeded',
+        ...allocationBlockDetails(allocationRisk, {
+          limit: maxPositionNotional,
+          requestedNotional,
+        }),
+      }
+    );
+  }
+
+  const maxOpenPositions = allocationRisk.limits.maxOpenPositions;
+
+  if (
+    isLimitEnabled(maxOpenPositions) &&
+    allocationRisk.usage.activePositionCount >= maxOpenPositions
+  ) {
+    return block(
+      409,
+      'Allocation maximum open position limit reached.',
+      {
+        rule: 'allocation_max_open_positions_exceeded',
+        ...allocationBlockDetails(allocationRisk, {
+          limit: maxOpenPositions,
+          current: allocationRisk.usage.activePositionCount,
+          projected: allocationRisk.usage.activePositionCount + 1,
+          activeSymbols: allocationRisk.usage.activeSymbols,
+        }),
+      }
+    );
+  }
+
+  const maxAllocatedNotional = allocationRisk.limits.maxAllocatedNotional;
+
+  if (
+    requestedNotional !== null &&
+    allocationRisk.usage.projectedAllocatedNotional !== null &&
+    isLimitEnabled(maxAllocatedNotional) &&
+    allocationRisk.usage.projectedAllocatedNotional > maxAllocatedNotional
+  ) {
+    return block(
+      409,
+      'Allocation allocated notional limit would be exceeded.',
+      {
+        rule: 'allocation_max_allocated_notional_exceeded',
+        ...allocationBlockDetails(allocationRisk, {
+          limit: maxAllocatedNotional,
+          current: allocationRisk.usage.currentAllocatedNotional,
+          projected: allocationRisk.usage.projectedAllocatedNotional,
+          requestedNotional,
+          openNotional: allocationRisk.usage.openNotional,
+          pendingEntryNotional: allocationRisk.usage.pendingEntryNotional,
+        }),
+      }
+    );
+  }
+
+  return null;
 }
 
 function block(
@@ -822,6 +939,11 @@ export async function evaluateOrderRisk(
     tradingAccountId,
     requestedNotional,
   });
+  const allocationRiskResult = evaluateAllocationRisk(allocationRisk);
+
+  if (allocationRiskResult) {
+    return allocationRiskResult;
+  }
 
   return {
     allowed: true,
