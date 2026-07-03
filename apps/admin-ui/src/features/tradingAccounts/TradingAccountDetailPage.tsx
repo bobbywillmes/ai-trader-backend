@@ -39,6 +39,7 @@ import {
 import { getAdminToken } from "../../lib/api";
 import {
   useCreateTradingAccountAllocation,
+  usePreviewTradingAccountEntryRisk,
   useRevokeTradingAccountCredential,
   useTradingAccount,
   useTradingAccountAllocations,
@@ -58,6 +59,7 @@ import type {
   AccountSubscriptionPriceHistoryRange,
   AccountSubscriptionPriceHistoryResponse,
   BrokerCredentialStatus,
+  EntryRiskPreview,
   PositionSizingType,
   TradingAccount,
   TradingAccountAllocation,
@@ -533,6 +535,59 @@ function formatShareLabel(value: number | null | undefined) {
   if (value === null || value === undefined) return "-";
 
   return `${formatQuantity(value)} ${value === 1 ? "share" : "shares"}`;
+}
+
+function previewLayerLabel(layer: EntryRiskPreview["risk"]["layer"]) {
+  if (!layer) return "-";
+
+  switch (layer) {
+    case "global":
+      return "Global";
+    case "account":
+      return "Account";
+    case "allocation":
+      return "Allocation";
+    case "subscription":
+      return "Subscription";
+    case "session":
+      return "Session";
+    case "unknown":
+    default:
+      return "Unknown";
+  }
+}
+
+function previewSessionLabel(session: EntryRiskPreview["session"]) {
+  if (!session.checked) {
+    return session.note ?? "Session checks were not enforced for preview.";
+  }
+
+  if (session.wouldBlockRealEntryNow) {
+    return session.message ?? session.code ?? "Real entry would be blocked now.";
+  }
+
+  return session.entryWindowOpen
+    ? "Entry window is open now."
+    : "Session did not block this preview.";
+}
+
+function PreviewMetric({
+  label,
+  value,
+}: {
+  label: string;
+  value: ReactNode;
+}) {
+  return (
+    <Box>
+      <Text size="xs" c="dimmed">
+        {label}
+      </Text>
+      <Text size="sm" fw={600}>
+        {value}
+      </Text>
+    </Box>
+  );
 }
 
 function MarketContextCell({
@@ -1609,6 +1664,138 @@ function AllocationManagementCard({
   );
 }
 
+function EntryRiskPreviewModal({
+  currency,
+  onClose,
+  preview,
+}: {
+  currency: string;
+  onClose: () => void;
+  preview: EntryRiskPreview | null;
+}) {
+  const allowed = preview?.ok ?? false;
+
+  return (
+    <Modal
+      opened={preview !== null}
+      onClose={onClose}
+      title={
+        preview
+          ? `Entry risk preview: ${preview.subscription.symbol} / ${preview.subscription.key}`
+          : "Entry risk preview"
+      }
+      size="lg"
+      centered
+    >
+      {preview && (
+        <Stack gap="md">
+          <Alert
+            color={allowed ? "teal" : "red"}
+            title={allowed ? "Allowed" : "Blocked"}
+          >
+            {allowed
+              ? "Sizing and risk checks allow this entry when session timing is ignored."
+              : preview.risk.message ??
+                preview.sizing.message ??
+                "A sizing or risk layer blocked this preview."}
+          </Alert>
+
+          <Alert color="blue" title="Dry run only">
+            No order intent will be created and no broker order will be
+            submitted.
+          </Alert>
+
+          <SimpleGrid cols={{ base: 1, sm: 2 }}>
+            <PreviewMetric
+              label="Blocking layer"
+              value={previewLayerLabel(preview.risk.layer)}
+            />
+            <PreviewMetric label="Block code" value={preview.risk.code ?? "-"} />
+            <PreviewMetric
+              label="Calculated quantity"
+              value={formatQuantity(preview.sizing.calculatedQty)}
+            />
+            <PreviewMetric
+              label="Estimated notional"
+              value={formatMoney(preview.sizing.estimatedNotional, currency)}
+            />
+            <PreviewMetric
+              label="Latest price"
+              value={formatMoney(preview.sizing.latestPrice, currency)}
+            />
+            <PreviewMetric
+              label="Latest price source"
+              value={preview.sizing.latestPriceSource ?? "-"}
+            />
+            <PreviewMetric
+              label="Latest price time"
+              value={formatDateTime(preview.sizing.latestPriceAt)}
+            />
+            <PreviewMetric
+              label="Sizing type"
+              value={
+                preview.sizing.sizingType
+                  ? sizingTypeLabel(preview.sizing.sizingType)
+                  : "-"
+              }
+            />
+          </SimpleGrid>
+
+          <SimpleGrid cols={{ base: 1, sm: 2 }}>
+            <PreviewMetric
+              label="Account subscription"
+              value={
+                preview.accountSubscription
+                  ? preview.accountSubscription.enabled
+                    ? "Active"
+                    : "Disabled"
+                  : "Missing"
+              }
+            />
+            <PreviewMetric
+              label="Entries"
+              value={
+                preview.accountSubscription
+                  ? preview.accountSubscription.entriesEnabled
+                    ? "Enabled"
+                    : "Disabled"
+                  : "-"
+              }
+            />
+            <PreviewMetric
+              label="Allocation"
+              value={preview.allocation ? preview.allocation.name : "Unassigned"}
+            />
+            <PreviewMetric
+              label="Allocation status"
+              value={
+                preview.allocation
+                  ? preview.allocation.enabled
+                    ? "Enabled"
+                    : "Disabled"
+                  : "-"
+              }
+            />
+          </SimpleGrid>
+
+          <Alert
+            color={preview.session.wouldBlockRealEntryNow ? "yellow" : "gray"}
+            title="Session context"
+          >
+            {previewSessionLabel(preview.session)}
+          </Alert>
+
+          <Group justify="flex-end">
+            <Button variant="default" onClick={onClose}>
+              Close
+            </Button>
+          </Group>
+        </Stack>
+      )}
+    </Modal>
+  );
+}
+
 function AccountSubscriptionsManagementCard({
   account,
   token,
@@ -1620,6 +1807,7 @@ function AccountSubscriptionsManagementCard({
     null
   );
   const [draft, setDraft] = useState<AccountSubscriptionDraft | null>(null);
+  const [preview, setPreview] = useState<EntryRiskPreview | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] =
     useState<AccountSubscriptionStatusFilter>("active");
@@ -1657,6 +1845,7 @@ function AccountSubscriptionsManagementCard({
     priceHistoryRange
   );
   const updateMutation = useUpdateTradingAccountSubscription(token);
+  const previewMutation = usePreviewTradingAccountEntryRisk(token);
   const accountSubscriptions = data?.accountSubscriptions ?? [];
   const allocations = allocationData?.allocations ?? [];
   const marketContextByAccountSubscriptionId = new Map(
@@ -1782,6 +1971,29 @@ function AccountSubscriptionsManagementCard({
           error instanceof Error
             ? error.message
             : "Failed to save account subscription settings.",
+        color: "red",
+      });
+    }
+  }
+
+  async function previewEntryRisk(
+    accountSubscription: TradingAccountSubscription
+  ) {
+    try {
+      const result = await previewMutation.mutateAsync({
+        id: account.id,
+        payload: {
+          subscriptionKey: accountSubscription.subscription.key,
+        },
+      });
+
+      setPreview(result.preview);
+    } catch (error) {
+      notifications.show({
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to preview entry risk.",
         color: "red",
       });
     }
@@ -2062,13 +2274,28 @@ function AccountSubscriptionsManagementCard({
                         {formatDateTime(accountSubscription.updatedAt)}
                       </Table.Td>
                       <Table.Td>
-                        <Button
-                          size="xs"
-                          variant="subtle"
-                          onClick={() => startEdit(accountSubscription)}
-                        >
-                          Edit
-                        </Button>
+                        <Group gap="xs" wrap="nowrap">
+                          <Button
+                            size="xs"
+                            variant="default"
+                            loading={
+                              previewMutation.isPending &&
+                              previewMutation.variables?.payload
+                                .subscriptionKey ===
+                                accountSubscription.subscription.key
+                            }
+                            onClick={() => previewEntryRisk(accountSubscription)}
+                          >
+                            Preview risk
+                          </Button>
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            onClick={() => startEdit(accountSubscription)}
+                          >
+                            Edit
+                          </Button>
+                        </Group>
                       </Table.Td>
                     </Table.Tr>
                   ))}
@@ -2078,6 +2305,12 @@ function AccountSubscriptionsManagementCard({
           )}
         </Stack>
       </Card>
+
+      <EntryRiskPreviewModal
+        currency={account.baseCurrency}
+        preview={preview}
+        onClose={() => setPreview(null)}
+      />
 
       <Modal
         opened={editing !== null && draft !== null}

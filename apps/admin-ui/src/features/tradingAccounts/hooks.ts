@@ -10,6 +10,7 @@ import {
   listTradingAccountAllocations,
   listTradingAccountSubscriptionMarketContext,
   listTradingAccountSubscriptions,
+  previewTradingAccountEntryRisk,
   revokeTradingAccountCredential,
   updateTradingAccount,
   updateTradingAccountAllocation,
@@ -22,6 +23,7 @@ import type {
   AccountSubscriptionMarketContextStatus,
   AccountSubscriptionPriceHistoryRange,
   CreateTradingAccountSubscriptionInput,
+  EntryRiskPreviewInput,
   TradingAccountAllocationInput,
   TradingAccountRiskSettingsInput,
   TradingAccountSubscriptionInput,
@@ -479,6 +481,24 @@ export function useUpdateTradingAccountSubscription(token: string | null) {
           accountSubscription.tradingAccountId
         ),
       });
+    },
+  });
+}
+
+export function usePreviewTradingAccountEntryRisk(token: string | null) {
+  return useMutation({
+    mutationFn: ({
+      id,
+      payload,
+    }: {
+      id: number;
+      payload: EntryRiskPreviewInput;
+    }) => {
+      if (!token) {
+        throw new Error("Admin session is missing. Please log in again.");
+      }
+
+      return previewTradingAccountEntryRisk(id, payload, token);
     },
   });
 }
