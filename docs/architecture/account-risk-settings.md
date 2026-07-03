@@ -21,6 +21,7 @@ global runtime controls
 -> broker account checks
 -> global entry exposure limits
 -> TradingAccountRiskSettings account exposure limits
+-> TradingAccountAllocation bucket limits
 -> TradingAccountSubscription sizing/gates
 ```
 
@@ -32,7 +33,7 @@ The account-scoped model now also includes:
 - Account-level `tradingEnabled` and `killSwitchEnabled`.
 - Account-owned encrypted broker credentials.
 - `TradingAccountRiskSettings` for account-level entry caps.
-- `TradingAccountAllocation` buckets with configured but not-yet-enforced notional and position limits.
+- `TradingAccountAllocation` buckets with enforced notional and position limits for assigned account subscriptions.
 - `TradingAccountSubscription` entry/exit gates and account-specific sizing.
 
 Important paper/live design constraint: paper and live trading should not be treated as one either/or global mode long term. They should be independently controllable account lanes, such as paper trading enabled while live trading remains disabled.
@@ -130,7 +131,7 @@ maxOpenPositions
 maxPositionNotional
 ```
 
-These are configured but not enforced yet. They should become allocation-bucket limits after account-level risk checks pass and before account-subscription sizing is accepted for broker submission.
+These are enforced as allocation-bucket limits for new entries assigned through `TradingAccountSubscription.allocationId`. Unassigned account subscriptions skip allocation-specific checks and continue to rely on global, account, and subscription controls.
 
 ### TradingAccountSubscription
 
@@ -161,6 +162,7 @@ global emergency controls
 -> one active tracked position per symbol guard
 -> global entry exposure limits
 -> TradingAccountRiskSettings account exposure limits
+-> TradingAccountAllocation allocation exposure limits
 ```
 
 Global controls should answer, "May this backend trade at all right now?"
@@ -169,7 +171,7 @@ Account risk controls should answer, "May this account enter within account-leve
 
 Allocation controls should answer, "May this strategy bucket consume more of its reserved risk budget?"
 
-Subscription controls should answer, "May this account subscription enter this specific position, and at what size?" Runtime sizing and account-subscription gates are evaluated before broker submission, but allocation bucket limits are still not enforced.
+Subscription controls should answer, "May this account subscription enter this specific position, and at what size?" Runtime sizing and account-subscription gates are evaluated before broker submission. Allocation checks use the resolved account subscription and the new order's estimated notional.
 
 ## Migration Phases
 
@@ -177,7 +179,7 @@ Subscription controls should answer, "May this account subscription enter this s
 
 Clarify Settings UI and docs that the current global Entry Risk Limits are emergency/global caps. Do not remove fields and do not change save behavior.
 
-Also clarify that allocation limits are configured but not enforced yet.
+Also clarify that allocation limits are enforced only for new entries assigned to the allocation.
 
 ### Phase B - Account-Scoped Risk Settings Schema
 
@@ -211,7 +213,9 @@ account_max_subscription_open_notional_exceeded
 
 ### Phase D - Allocation Bucket Enforcement
 
-Enforce:
+Implemented. The risk gate evaluates allocation checks after global and account risk caps have passed.
+
+Enforced allocation fields:
 
 ```text
 TradingAccountAllocation.maxAllocatedNotional
@@ -220,6 +224,17 @@ TradingAccountAllocation.maxPositionNotional
 ```
 
 Allocation checks should use the account subscription's `allocationId`. If a subscription has no allocation, define whether it belongs to an implicit default bucket or only account-level limits apply.
+
+Unassigned account subscriptions skip allocation checks in the current implementation.
+
+Implemented allocation block rules:
+
+```text
+allocation_disabled
+allocation_max_position_notional_exceeded
+allocation_max_open_positions_exceeded
+allocation_max_allocated_notional_exceeded
+```
 
 ### Phase E - paperMode Deprecation And Removal
 
@@ -245,7 +260,7 @@ Do not replace global `paperMode` with one global live/paper toggle. The long-te
 
 - `paperMode` is still used by startup checks and broker-mode mismatch checks. Removing it early could weaken live-trading safeguards.
 - `maxSubscriptionOpenNotional` overlaps with `TradingAccountSubscription.maxPositionNotional`, but it is still enforced globally today. Removing it early could increase allowed entry size.
-- Allocation limits are visible/configurable but not enforced. Operators should not assume bucket limits currently block orders.
+- Allocation limits apply only to new entries assigned to that allocation. Unassigned account subscriptions are not failed closed by allocation checks.
 - Account-level `tradingEnabled` and `killSwitchEnabled` exist, but global settings still carry important enforcement paths. Account-specific enforcement must be verified before live multi-account use.
 - The order worker rechecks the entry session guard before broker submission. Any future risk-order refactor should preserve worker-time safety checks for pending intents.
 - Startup safety should remain conservative: production should not accidentally restart into live trading without explicit live-trading environment overrides.
