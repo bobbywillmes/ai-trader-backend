@@ -31,6 +31,8 @@ const ENTRY_ORDER_STATUSES = ['pending', 'submitted', 'filled'];
 
 type EvaluateOrderRiskOptions = {
   requestedNotionalOverride?: number | null;
+  tradingAccountId?: number;
+  enforceEntrySessionGuard?: boolean;
 };
 
 type AccountRiskSettings = {
@@ -579,7 +581,8 @@ export async function evaluateOrderRisk(
   input: ResolvedPlaceOrderInput,
   options: EvaluateOrderRiskOptions = {}
 ): Promise<RiskGateResult> {
-  const tradingAccountId = await resolveDefaultTradingAccountId();
+  const tradingAccountId =
+    options.tradingAccountId ?? (await resolveDefaultTradingAccountId());
   const config = await getRuntimeTradingConfig();
 
   if (!config.tradingEnabled) {
@@ -693,11 +696,14 @@ export async function evaluateOrderRisk(
     };
   }
 
-  const entrySession = await evaluateEntrySessionGuard(config, new Date(), {
-    tradingAccountId,
-  });
+  const entrySession =
+    options.enforceEntrySessionGuard === false
+      ? null
+      : await evaluateEntrySessionGuard(config, new Date(), {
+          tradingAccountId,
+        });
 
-  if (isEntrySessionBlocked(entrySession)) {
+  if (entrySession && isEntrySessionBlocked(entrySession)) {
     return {
       allowed: false,
       statusCode: entrySession.statusCode,
@@ -954,7 +960,10 @@ export async function evaluateOrderRisk(
       side: input.side,
       subscriptionKey: input.subscriptionKey ?? null,
       requestedNotional,
-      entrySession: entrySession.details,
+      entrySession: entrySession?.details ?? {
+        checked: false,
+        reason: 'Entry session guard was not enforced for this evaluation.',
+      },
       usage: {
         dailyEntryOrderCount: usage.dailyEntryOrderCount,
         dailyEntryNotional: usage.dailyEntryNotional,
