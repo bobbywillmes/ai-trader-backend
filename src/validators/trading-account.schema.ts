@@ -58,6 +58,13 @@ export type UpdateTradingAccountRiskSettingsInput = z.infer<
   typeof updateTradingAccountRiskSettingsSchema
 >;
 
+export const entryRiskPreviewSchema = z.strictObject({
+  subscriptionKey: z.string().trim().min(1),
+  ignoreSession: z.boolean().optional(),
+});
+
+export type EntryRiskPreviewInput = z.infer<typeof entryRiskPreviewSchema>;
+
 export const upsertTradingAccountCredentialSchema = z.strictObject({
   authType: z.literal(BrokerCredentialAuthType.API_KEY).default(
     BrokerCredentialAuthType.API_KEY

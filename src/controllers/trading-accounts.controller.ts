@@ -31,6 +31,7 @@ import {
 import {
   createTradingAccountAllocationSchema,
   createTradingAccountSubscriptionSchema,
+  entryRiskPreviewSchema,
   updateTradingAccountRiskSettingsSchema,
   updateTradingAccountSchema,
   updateTradingAccountAllocationSchema,
@@ -42,6 +43,7 @@ import {
   getTradingAccountRiskSettingsForAdmin,
   updateTradingAccountRiskSettingsForAdmin,
 } from '../services/trading-account-risk-settings.service.js';
+import { previewTradingAccountEntryRisk } from '../services/trading-account-entry-risk-preview.service.js';
 
 function parseTradingAccountId(value: unknown) {
   const id = typeof value === 'string' ? Number(value) : NaN;
@@ -189,6 +191,37 @@ export async function updateTradingAccountRiskSettingsController(
         new HttpError(
           400,
           'Invalid trading account risk settings request.',
+          error.flatten()
+        )
+      );
+      return;
+    }
+
+    next(error);
+  }
+}
+
+export async function previewTradingAccountEntryRiskController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const id = parseTradingAccountId(req.params.id);
+    const input = entryRiskPreviewSchema.parse(req.body);
+    const preview = await previewTradingAccountEntryRisk(id, input);
+
+    if (!preview) {
+      throw new HttpError(404, 'Trading account not found.');
+    }
+
+    res.status(200).json({ preview });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      next(
+        new HttpError(
+          400,
+          'Invalid entry risk preview request.',
           error.flatten()
         )
       );

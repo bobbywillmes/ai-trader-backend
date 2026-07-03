@@ -93,7 +93,7 @@ type PreviewRiskLayer =
 
 export type EntryRiskPreviewInput = {
   subscriptionKey: string;
-  ignoreSession?: boolean;
+  ignoreSession?: boolean | undefined;
 };
 
 function getErrorCode(error: unknown) {
