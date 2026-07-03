@@ -43,6 +43,37 @@ type AccountRiskSettings = {
   maxSubscriptionOpenNotional: number | null;
 };
 
+const ALLOCATION_RISK_ACCOUNT_SUBSCRIPTION_SELECT = {
+  id: true,
+  subscriptionId: true,
+  allocationId: true,
+  allocation: {
+    select: {
+      id: true,
+      key: true,
+      name: true,
+      enabled: true,
+      maxAllocatedNotional: true,
+      maxOpenPositions: true,
+      maxPositionNotional: true,
+    },
+  },
+} satisfies Prisma.TradingAccountSubscriptionSelect;
+
+type AllocationRiskAccountSubscription =
+  Prisma.TradingAccountSubscriptionGetPayload<{
+    select: typeof ALLOCATION_RISK_ACCOUNT_SUBSCRIPTION_SELECT;
+  }>;
+
+type AllocationRiskUsage = {
+  activePositionCount: number;
+  activeSymbols: string[];
+  openNotional: number;
+  pendingEntryOrderCount: number;
+  pendingEntryNotional: number;
+  projectedAllocatedNotional: number | null;
+};
+
 function isEntryOrder(input: ResolvedPlaceOrderInput): boolean {
   return input.side === 'buy' && (input.signalType ?? 'entry') === 'entry';
 }
@@ -148,6 +179,138 @@ function getSubscriptionOpenNotional(
   return positions
     .filter((position) => position.subscriptionId === subscriptionId)
     .reduce((total, position) => total + getPositionExposure(position), 0);
+}
+
+async function getAllocationRiskAccountSubscription(
+  input: ResolvedPlaceOrderInput,
+  tradingAccountId: number
+): Promise<AllocationRiskAccountSubscription | null> {
+  if (input.subscriptionId === undefined) {
+    return null;
+  }
+
+  return prisma.tradingAccountSubscription.findFirst({
+    where: {
+      tradingAccountId,
+      subscriptionId: input.subscriptionId,
+    },
+    select: ALLOCATION_RISK_ACCOUNT_SUBSCRIPTION_SELECT,
+  });
+}
+
+async function getAllocationRiskUsage(args: {
+  tradingAccountId: number;
+  allocationId: number;
+  requestedNotional: number | null;
+}): Promise<AllocationRiskUsage> {
+  const [activePositions, pendingEntryOrders] = await Promise.all([
+    prisma.trackedPosition.findMany({
+      where: {
+        tradingAccountId: args.tradingAccountId,
+        status: {
+          in: ACTIVE_POSITION_STATUSES,
+        },
+        tradingAccountSubscription: {
+          is: {
+            allocationId: args.allocationId,
+          },
+        },
+      },
+      select: {
+        id: true,
+        symbol: true,
+        marketValue: true,
+        costBasis: true,
+        status: true,
+        tradingAccountSubscriptionId: true,
+      },
+    }),
+
+    prisma.orderIntent.findMany({
+      where: {
+        tradingAccountId: args.tradingAccountId,
+        side: 'buy',
+        status: {
+          in: ENTRY_ORDER_STATUSES,
+        },
+        tradingAccountSubscription: {
+          is: {
+            allocationId: args.allocationId,
+          },
+        },
+      },
+      select: {
+        id: true,
+        symbol: true,
+        tradingAccountSubscriptionId: true,
+        notional: true,
+        qty: true,
+        limitPrice: true,
+        rawRequestJson: true,
+        status: true,
+      },
+    }),
+  ]);
+
+  const openNotional = activePositions.reduce(
+    (total, position) => total + getPositionExposure(position),
+    0
+  );
+
+  const pendingEntryNotional = pendingEntryOrders.reduce((total, order) => {
+    return total + (getOrderIntentEstimatedNotional(order) ?? 0);
+  }, 0);
+
+  const currentAllocatedNotional = openNotional + pendingEntryNotional;
+
+  return {
+    activePositionCount: activePositions.length,
+    activeSymbols: Array.from(
+      new Set(activePositions.map((position) => position.symbol))
+    ),
+    openNotional,
+    pendingEntryOrderCount: pendingEntryOrders.length,
+    pendingEntryNotional,
+    projectedAllocatedNotional:
+      args.requestedNotional === null
+        ? null
+        : currentAllocatedNotional + args.requestedNotional,
+  };
+}
+
+async function getAllocationRiskDetails(args: {
+  accountSubscription: AllocationRiskAccountSubscription | null;
+  tradingAccountId: number;
+  requestedNotional: number | null;
+}) {
+  const accountSubscription = args.accountSubscription;
+
+  if (!accountSubscription || !accountSubscription.allocation) {
+    return null;
+  }
+
+  const allocation = accountSubscription.allocation;
+
+  const usage = await getAllocationRiskUsage({
+    tradingAccountId: args.tradingAccountId,
+    allocationId: allocation.id,
+    requestedNotional: args.requestedNotional,
+  });
+
+  return {
+    tradingAccountSubscriptionId: accountSubscription.id,
+    allocationId: allocation.id,
+    allocationKey: allocation.key,
+    allocationName: allocation.name,
+    enabled: allocation.enabled,
+    limits: {
+      maxAllocatedNotional: allocation.maxAllocatedNotional,
+      maxOpenPositions: allocation.maxOpenPositions,
+      maxPositionNotional: allocation.maxPositionNotional,
+    },
+    requestedNotional: args.requestedNotional,
+    usage,
+  };
 }
 
 function block(
@@ -652,6 +815,14 @@ export async function evaluateOrderRisk(
     }
   }
 
+  const allocationAccountSubscription =
+    await getAllocationRiskAccountSubscription(input, tradingAccountId);
+  const allocationRisk = await getAllocationRiskDetails({
+    accountSubscription: allocationAccountSubscription,
+    tradingAccountId,
+    requestedNotional,
+  });
+
   return {
     allowed: true,
     details: {
@@ -669,6 +840,7 @@ export async function evaluateOrderRisk(
         totalOpenNotional: usage.totalOpenNotional,
         activeSymbols: usage.activeSymbols,
       },
+      allocationRisk,
     } as Prisma.InputJsonValue,
   };
 }

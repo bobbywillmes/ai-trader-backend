@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   subscriptionFindUnique: vi.fn(),
   subscriptionFindFirst: vi.fn(),
   tradingAccountRiskSettingsFindUnique: vi.fn(),
+  tradingAccountSubscriptionFindFirst: vi.fn(),
   trackedPositionFindMany: vi.fn(),
   orderIntentFindMany: vi.fn(),
   getRuntimeTradingConfig: vi.fn(),
@@ -24,6 +25,9 @@ vi.mock('../db/prisma.js', () => ({
     },
     tradingAccountRiskSettings: {
       findUnique: mocks.tradingAccountRiskSettingsFindUnique,
+    },
+    tradingAccountSubscription: {
+      findFirst: mocks.tradingAccountSubscriptionFindFirst,
     },
     trackedPosition: { findMany: mocks.trackedPositionFindMany },
     orderIntent: { findMany: mocks.orderIntentFindMany },
@@ -152,6 +156,7 @@ describe('risk gate entry session integration', () => {
     mocks.trackedPositionFindMany.mockResolvedValue([]);
     mocks.orderIntentFindMany.mockResolvedValue([]);
     mocks.tradingAccountRiskSettingsFindUnique.mockResolvedValue(null);
+    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue(null);
     mocks.evaluateEntrySessionGuard.mockResolvedValue({
       allowed: true,
       degraded: false,
@@ -609,5 +614,152 @@ describe('risk gate entry session integration', () => {
         projectedSubscriptionOpenNotional: 2_100,
       }),
     });
+  });
+
+  it('includes assigned allocation exposure details on allowed entry risk results', async () => {
+    mocks.getRuntimeTradingConfig.mockResolvedValue({
+      ...config,
+      maxDailyEntryNotional: 50_000,
+      maxTotalOpenNotional: 50_000,
+      maxSymbolOpenNotional: 50_000,
+      maxSubscriptionOpenNotional: 50_000,
+    });
+    mocks.subscriptionFindFirst.mockResolvedValue(subscriptionRecord());
+    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue({
+      id: 44,
+      subscriptionId: 22,
+      allocationId: 7,
+      allocation: {
+        id: 7,
+        key: 'core_etf',
+        name: 'Core ETF',
+        enabled: true,
+        maxAllocatedNotional: 5_000,
+        maxOpenPositions: 3,
+        maxPositionNotional: 1_500,
+      },
+    });
+    mocks.trackedPositionFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        activePosition({
+          id: 201,
+          symbol: 'QQQ',
+          marketValue: 1_200,
+          costBasis: 1_100,
+        }),
+      ]);
+    mocks.orderIntentFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: 301,
+          symbol: 'DIA',
+          tradingAccountSubscriptionId: 45,
+          notional: null,
+          qty: 2,
+          limitPrice: null,
+          rawRequestJson: {
+            accountSubscriptionSizing: {
+              estimatedNotional: 900,
+            },
+          },
+          status: 'pending',
+        },
+      ]);
+
+    const result = await evaluateOrderRisk(
+      {
+        symbol: 'SPY',
+        side: 'buy',
+        orderType: 'market',
+        timeInForce: 'day',
+        qty: 3,
+        extendedHours: false,
+        signalType: 'entry',
+        subscriptionId: 22,
+      },
+      {
+        requestedNotionalOverride: 1_000,
+      }
+    );
+
+    expect(result).toMatchObject({
+      allowed: true,
+      details: expect.objectContaining({
+        allocationRisk: {
+          tradingAccountSubscriptionId: 44,
+          allocationId: 7,
+          allocationKey: 'core_etf',
+          allocationName: 'Core ETF',
+          enabled: true,
+          limits: {
+            maxAllocatedNotional: 5_000,
+            maxOpenPositions: 3,
+            maxPositionNotional: 1_500,
+          },
+          requestedNotional: 1_000,
+          usage: {
+            activePositionCount: 1,
+            activeSymbols: ['QQQ'],
+            openNotional: 1_200,
+            pendingEntryOrderCount: 1,
+            pendingEntryNotional: 900,
+            projectedAllocatedNotional: 3_100,
+          },
+        },
+      }),
+    });
+    expect(mocks.trackedPositionFindMany).toHaveBeenCalledTimes(2);
+    expect(mocks.orderIntentFindMany).toHaveBeenCalledTimes(2);
+    expect(mocks.tradingAccountSubscriptionFindFirst).toHaveBeenCalledWith({
+      where: {
+        tradingAccountId: 1,
+        subscriptionId: 22,
+      },
+      select: expect.any(Object),
+    });
+  });
+
+  it('skips allocation exposure details when the account subscription is unassigned', async () => {
+    mocks.getRuntimeTradingConfig.mockResolvedValue({
+      ...config,
+      maxDailyEntryNotional: 50_000,
+      maxTotalOpenNotional: 50_000,
+      maxSymbolOpenNotional: 50_000,
+      maxSubscriptionOpenNotional: 50_000,
+    });
+    mocks.subscriptionFindFirst.mockResolvedValue(subscriptionRecord());
+    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue({
+      id: 44,
+      subscriptionId: 22,
+      allocationId: null,
+      allocation: null,
+    });
+
+    const result = await evaluateOrderRisk(
+      {
+        symbol: 'SPY',
+        side: 'buy',
+        orderType: 'market',
+        timeInForce: 'day',
+        qty: 3,
+        extendedHours: false,
+        signalType: 'entry',
+        subscriptionId: 22,
+      },
+      {
+        requestedNotionalOverride: 1_000,
+      }
+    );
+
+    expect(result).toMatchObject({
+      allowed: true,
+      details: expect.objectContaining({
+        allocationRisk: null,
+      }),
+    });
+    expect(mocks.trackedPositionFindMany).toHaveBeenCalledTimes(1);
+    expect(mocks.orderIntentFindMany).toHaveBeenCalledTimes(1);
   });
 });
