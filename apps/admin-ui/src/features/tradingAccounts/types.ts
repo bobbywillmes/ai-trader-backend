@@ -48,6 +48,7 @@ export type TradingAccount = {
   lastBuyingPower: number | null;
   lastEquity: number | null;
   lastPortfolioValue: number | null;
+  totalOpenPositionNotional: number;
   pausedReason: string | null;
   notes: string | null;
   createdAt: string;

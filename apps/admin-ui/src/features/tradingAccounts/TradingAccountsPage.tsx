@@ -140,7 +140,7 @@ export function TradingAccountsPage() {
 
         {accounts.length > 0 && (
           <ScrollArea>
-            <Table striped highlightOnHover style={{ minWidth: 1160 }}>
+            <Table striped highlightOnHover style={{ minWidth: 1320 }}>
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>Account</Table.Th>
@@ -150,7 +150,10 @@ export function TradingAccountsPage() {
                   <Table.Th>Trading</Table.Th>
                   <Table.Th>Kill Switch</Table.Th>
                   <Table.Th style={{ textAlign: "right" }}>Capital</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>Cash</Table.Th>
                   <Table.Th style={{ textAlign: "right" }}>Equity</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>Portfolio</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>Open Notional</Table.Th>
                   <Table.Th style={{ textAlign: "right" }}>Buying Power</Table.Th>
                   <Table.Th>Credentials</Table.Th>
                   <Table.Th>Verified</Table.Th>
@@ -206,7 +209,22 @@ export function TradingAccountsPage() {
                       )}
                     </Table.Td>
                     <Table.Td style={{ textAlign: "right" }}>
+                      {formatMoney(account.lastCash, account.baseCurrency)}
+                    </Table.Td>
+                    <Table.Td style={{ textAlign: "right" }}>
                       {formatMoney(account.lastEquity, account.baseCurrency)}
+                    </Table.Td>
+                    <Table.Td style={{ textAlign: "right" }}>
+                      {formatMoney(
+                        account.lastPortfolioValue,
+                        account.baseCurrency
+                      )}
+                    </Table.Td>
+                    <Table.Td style={{ textAlign: "right" }}>
+                      {formatMoney(
+                        account.totalOpenPositionNotional,
+                        account.baseCurrency
+                      )}
                     </Table.Td>
                     <Table.Td style={{ textAlign: "right" }}>
                       {formatMoney(

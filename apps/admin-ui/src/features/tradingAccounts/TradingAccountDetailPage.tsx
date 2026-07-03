@@ -1051,6 +1051,13 @@ function BrokerSnapshotCard({ account }: { account: TradingAccount }) {
             label="Portfolio value"
             value={formatMoney(account.lastPortfolioValue, account.baseCurrency)}
           />
+          <DetailItem
+            label="Open position notional"
+            value={formatMoney(
+              account.totalOpenPositionNotional,
+              account.baseCurrency
+            )}
+          />
         </SimpleGrid>
       </Stack>
     </Card>
@@ -1152,15 +1159,15 @@ function SizingAndAllocationsSection({
         New entry orders now use account-specific sizing from
         TradingAccountSubscription. FIXED_QTY buys a fixed share quantity.
         MAX_NOTIONAL calculates a whole-share quantity from backend-owned latest
-        market data. Allocation bucket limits are currently informational and
-        are not enforced yet.
+        market data. Allocation bucket limits are enforced for new entries
+        assigned to that allocation.
       </Alert>
 
       <Alert color="cyan" title="Market context note">
         Market context is used to preview share quantities and budget
         thresholds. Runtime entry sizing uses backend-owned market data when
-        MAX_NOTIONAL sizing is selected. Allocation bucket limits are not
-        enforced yet.
+        MAX_NOTIONAL sizing is selected. Allocation bucket limits are enforced
+        for new entries assigned to that allocation.
       </Alert>
 
       <AllocationManagementCard account={account} token={token} />
@@ -2636,7 +2643,7 @@ function AccountRiskControlsForm({
           <Text size="sm" c="dimmed">
             These limits apply only to this TradingAccount. Global Settings
             still act as backend-wide emergency caps. Allocation bucket limits
-            are configured separately and are not enforced yet.
+            are configured separately and enforced for assigned new entries.
           </Text>
         </div>
         <Group>

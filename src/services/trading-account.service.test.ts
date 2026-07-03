@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   tradingAccountFindMany: vi.fn(),
   tradingAccountFindUnique: vi.fn(),
   tradingAccountUpdate: vi.fn(),
+  trackedPositionFindMany: vi.fn(),
 }));
 
 vi.mock('../config/env.js', () => ({
@@ -25,6 +26,9 @@ vi.mock('../db/prisma.js', () => ({
       findMany: mocks.tradingAccountFindMany,
       findUnique: mocks.tradingAccountFindUnique,
       update: mocks.tradingAccountUpdate,
+    },
+    trackedPosition: {
+      findMany: mocks.trackedPositionFindMany,
     },
   },
 }));
@@ -77,6 +81,7 @@ describe('trading account service', () => {
       ...tradingAccount(),
       credential: null,
     });
+    mocks.trackedPositionFindMany.mockResolvedValue([]);
   });
 
   it('resolves the configured default trading account id first', async () => {
@@ -137,11 +142,24 @@ describe('trading account service', () => {
       },
     };
     mocks.tradingAccountFindMany.mockResolvedValue([account]);
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      {
+        tradingAccountId: 1,
+        marketValue: 1_200,
+        costBasis: 1_100,
+      },
+      {
+        tradingAccountId: 1,
+        marketValue: 0,
+        costBasis: 300,
+      },
+    ]);
 
     await expect(listTradingAccountsForAdmin()).resolves.toEqual([
       expect.objectContaining({
         id: 1,
         brokerAccountId: 'account-1',
+        totalOpenPositionNotional: 1_500,
         credential: {
           exists: true,
           status: 'ACTIVE',
@@ -154,6 +172,21 @@ describe('trading account service', () => {
         },
       }),
     ]);
+    expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith({
+      where: {
+        tradingAccountId: {
+          in: [1],
+        },
+        status: {
+          in: ['open', 'closing'],
+        },
+      },
+      select: {
+        tradingAccountId: true,
+        marketValue: true,
+        costBasis: true,
+      },
+    });
     expect(JSON.stringify(await listTradingAccountsForAdmin())).not.toContain(
       'must-not-leak'
     );
@@ -164,10 +197,18 @@ describe('trading account service', () => {
       ...tradingAccount(),
       credential: null,
     });
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      {
+        tradingAccountId: 1,
+        marketValue: 750,
+        costBasis: 700,
+      },
+    ]);
 
     await expect(getTradingAccountForAdmin(1)).resolves.toEqual(
       expect.objectContaining({
         id: 1,
+        totalOpenPositionNotional: 750,
         credential: {
           exists: false,
           status: null,
@@ -180,6 +221,19 @@ describe('trading account service', () => {
         },
       })
     );
+    expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith({
+      where: {
+        tradingAccountId: 1,
+        status: {
+          in: ['open', 'closing'],
+        },
+      },
+      select: {
+        tradingAccountId: true,
+        marketValue: true,
+        costBasis: true,
+      },
+    });
     expect(mocks.tradingAccountFindUnique).toHaveBeenLastCalledWith({
       where: { id: 1 },
       select: expect.objectContaining({

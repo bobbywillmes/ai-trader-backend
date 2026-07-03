@@ -21,6 +21,20 @@ or an admin session bearer token
 Trading account responses include operational account fields and a credential
 summary. They never include decrypted credentials or ciphertext columns.
 
+Balance and exposure summary fields include:
+
+```text
+lastCash
+lastBuyingPower
+lastEquity
+lastPortfolioValue
+totalOpenPositionNotional
+```
+
+`totalOpenPositionNotional` is derived from open/closing tracked positions for
+the trading account using the same market-value-with-cost-basis-fallback
+exposure convention used by runtime risk checks.
+
 Credential summary fields:
 
 ```text
@@ -72,8 +86,8 @@ by this generic update endpoint.
 ## Manage Account Risk Settings
 
 Account risk settings are per-`TradingAccount` entry caps. Global Settings still
-act as backend-wide emergency caps, and allocation bucket limits are configured
-separately but are not enforced yet.
+act as backend-wide emergency caps. Allocation bucket limits are configured
+separately and enforced for assigned new entries after account caps pass.
 
 Read account risk settings:
 
@@ -140,8 +154,8 @@ still apply.
 
 Allocation buckets group account-scoped subscription sizing limits. They are
 admin configuration records for organizing account subscriptions. Runtime entry
-sizing uses the account subscription row, but allocation bucket risk checks such
-as `maxAllocatedNotional` and `maxOpenPositions` are not enforced yet.
+sizing uses the account subscription row, and allocation bucket risk checks
+apply to new entries assigned through `TradingAccountSubscription.allocationId`.
 
 List allocations for one trading account:
 
@@ -219,6 +233,32 @@ account return `409`.
 
 Use `enabled=false` to disable an allocation. Hard delete is intentionally not
 available.
+
+Runtime allocation enforcement:
+
+```text
+Global emergency caps apply first.
+TradingAccountRiskSettings account caps apply next.
+TradingAccountAllocation caps apply for assigned account subscriptions.
+TradingAccountSubscription sizing and gates still control final entry
+eligibility and quantity.
+Unassigned account subscriptions skip allocation checks.
+```
+
+Allocation block rules:
+
+```text
+allocation_disabled
+allocation_max_position_notional_exceeded
+allocation_max_open_positions_exceeded
+allocation_max_allocated_notional_exceeded
+```
+
+`maxPositionNotional` caps the estimated notional of the new position.
+`maxOpenPositions` counts open/closing tracked positions assigned to account
+subscriptions in the same allocation. `maxAllocatedNotional` projects open
+tracked-position exposure plus pending/submitted/filled entry order intent
+exposure for the allocation plus the new order's estimated notional.
 
 ## Manage Account Subscriptions
 
@@ -468,8 +508,9 @@ changes for runtime entry orders. Setting an account subscription to
 the backend-owned latest price. Existing market order behavior is unchanged:
 `MAX_NOTIONAL` is a sizing estimate and cap based on the latest price, not a
 guarantee that the final market fill notional will match the estimate exactly.
-Allocation bucket limits are configured and visible, but allocation-level risk
-checks are not enforced yet and remain a future phase.
+Allocation bucket limits are enforced for new entries assigned to that
+allocation. For `MAX_NOTIONAL`, the broker order remains quantity-based while
+risk checks use the backend-estimated notional.
 
 ## Account Subscription Market Context
 
@@ -616,8 +657,7 @@ settings form.
 - n8n should continue to use signal APIs only and should not use broker
   credentials.
 - Account-subscription APIs configure runtime entry sizing. Allocation bucket
-  limits remain configuration-only and are not enforced by runtime risk checks
-  yet.
+  limits are enforced only for new entries assigned to that allocation.
 - Account-subscription runtime sizing does not change order worker behavior or
   the n8n signal contract.
 - Bobby Paper can continue to use legacy Alpaca env credentials when no

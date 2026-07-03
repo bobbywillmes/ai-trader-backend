@@ -43,6 +43,10 @@ Entry orders are blocked when any of the following conditions apply:
 - Account total open notional limit would be exceeded.
 - Account symbol exposure limit would be exceeded.
 - Account subscription exposure limit would be exceeded.
+- Assigned allocation bucket is disabled.
+- Assigned allocation per-position notional limit would be exceeded.
+- Assigned allocation maximum open position count would be exceeded.
+- Assigned allocation allocated notional limit would be exceeded.
 
 ### Trading Enabled vs Kill Switch
 
@@ -102,6 +106,8 @@ notes
 ```
 
 When `TradingAccountRiskSettings.enabled=false`, only account-specific caps are skipped. Global emergency caps still apply. If an account has no risk settings row yet, the runtime risk gate also skips account-specific caps while keeping global caps active.
+
+Allocation bucket risk settings are stored in `TradingAccountAllocation` and apply to new entries whose `TradingAccountSubscription` is assigned to that allocation. Unassigned account subscriptions skip allocation-specific checks. Allocation checks run after global and account caps, and before broker submission, using the new order's estimated notional.
 
 ### Regular-session entry guard
 
@@ -213,6 +219,10 @@ The backend currently protects trading and configuration changes with:
 - Account total open notional limit
 - Account symbol open notional limit
 - Account subscription open notional limit
+- Allocation disabled block
+- Allocation max position notional limit
+- Allocation max open position limit
+- Allocation max allocated notional limit
 - Backend-generated stable `clientOrderId`
 - Atomic order worker claim: `pending → submitting`
 - Duplicate broker order protection
