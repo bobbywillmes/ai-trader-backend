@@ -228,6 +228,14 @@ export type EntryRiskPreview = {
     message: string | null;
     details: unknown;
   };
+  allocationRisk: {
+    checked: boolean;
+    ok: boolean;
+    code: string | null;
+    layer: "allocation" | null;
+    message: string | null;
+    details: unknown;
+  };
   session: {
     checked: boolean;
     marketOpen?: boolean | null;

@@ -265,6 +265,29 @@ Response envelope:
       "message": "Allocation maximum open position limit reached.",
       "details": {}
     },
+    "allocationRisk": {
+      "checked": true,
+      "ok": false,
+      "code": "allocation_max_open_positions_exceeded",
+      "layer": "allocation",
+      "message": "Allocation maximum open position limit reached.",
+      "details": {
+        "limits": {
+          "maxAllocatedNotional": 10000,
+          "maxOpenPositions": 3,
+          "maxPositionNotional": 2000
+        },
+        "requestedNotional": 1425,
+        "usage": {
+          "activePositionCount": 3,
+          "openNotional": 3500,
+          "pendingEntryOrderCount": 1,
+          "pendingEntryNotional": 900,
+          "currentAllocatedNotional": 4400,
+          "projectedAllocatedNotional": 5825
+        }
+      }
+    },
     "session": {
       "checked": true,
       "marketOpen": false,

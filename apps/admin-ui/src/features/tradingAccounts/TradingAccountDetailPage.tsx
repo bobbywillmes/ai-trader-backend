@@ -1674,6 +1674,18 @@ function EntryRiskPreviewModal({
   preview: EntryRiskPreview | null;
 }) {
   const allowed = preview?.ok ?? false;
+  const blockingLayer =
+    preview?.risk.layer ??
+    (preview && !preview.allocationRisk.ok ? preview.allocationRisk.layer : null);
+  const blockingCode =
+    preview?.risk.code ??
+    (preview && !preview.allocationRisk.ok ? preview.allocationRisk.code : null);
+  const blockingMessage =
+    preview?.risk.message ??
+    (preview && !preview.allocationRisk.ok
+      ? preview.allocationRisk.message
+      : null) ??
+    preview?.sizing.message;
 
   return (
     <Modal
@@ -1695,9 +1707,8 @@ function EntryRiskPreviewModal({
           >
             {allowed
               ? "Sizing and risk checks allow this entry when session timing is ignored."
-              : preview.risk.message ??
-                preview.sizing.message ??
-                "A sizing or risk layer blocked this preview."}
+              : blockingMessage ??
+                "A sizing, risk, or allocation layer blocked this preview."}
           </Alert>
 
           <Alert color="blue" title="Dry run only">
@@ -1708,9 +1719,9 @@ function EntryRiskPreviewModal({
           <SimpleGrid cols={{ base: 1, sm: 2 }}>
             <PreviewMetric
               label="Blocking layer"
-              value={previewLayerLabel(preview.risk.layer)}
+              value={previewLayerLabel(blockingLayer)}
             />
-            <PreviewMetric label="Block code" value={preview.risk.code ?? "-"} />
+            <PreviewMetric label="Block code" value={blockingCode ?? "-"} />
             <PreviewMetric
               label="Calculated quantity"
               value={formatQuantity(preview.sizing.calculatedQty)}
@@ -1776,7 +1787,46 @@ function EntryRiskPreviewModal({
                   : "-"
               }
             />
+            <PreviewMetric
+              label="Allocation risk"
+              value={
+                preview.allocationRisk.checked
+                  ? preview.allocationRisk.ok
+                    ? "Pass"
+                    : "Blocked"
+                  : "Not assigned"
+              }
+            />
+            <PreviewMetric
+              label="Allocation block code"
+              value={preview.allocationRisk.code ?? "-"}
+            />
+            <PreviewMetric
+              label="Max allocated notional"
+              value={formatMoney(
+                preview.allocation?.maxAllocatedNotional,
+                currency
+              )}
+            />
+            <PreviewMetric
+              label="Max position notional"
+              value={formatMoney(
+                preview.allocation?.maxPositionNotional,
+                currency
+              )}
+            />
+            <PreviewMetric
+              label="Max open positions"
+              value={formatQuantity(preview.allocation?.maxOpenPositions)}
+            />
           </SimpleGrid>
+
+          {preview.allocationRisk.checked && !preview.allocationRisk.ok && (
+            <Alert color="red" title="Parent allocation would block">
+              {preview.allocationRisk.message ??
+                "An allocation-level rule would block this entry."}
+            </Alert>
+          )}
 
           <Alert
             color={preview.session.wouldBlockRealEntryNow ? "yellow" : "gray"}

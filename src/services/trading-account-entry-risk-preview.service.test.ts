@@ -5,6 +5,9 @@ const mocks = vi.hoisted(() => ({
   tradingAccountFindUnique: vi.fn(),
   subscriptionFindUnique: vi.fn(),
   tradingAccountSubscriptionFindFirst: vi.fn(),
+  tradingAccountSubscriptionFindMany: vi.fn(),
+  trackedPositionFindMany: vi.fn(),
+  orderIntentFindMany: vi.fn(),
   resolveRuntimeAccountSubscriptionSizing: vi.fn(),
   getRuntimeTradingConfig: vi.fn(),
   evaluateEntrySessionGuard: vi.fn(),
@@ -21,6 +24,13 @@ vi.mock('../db/prisma.js', () => ({
     },
     tradingAccountSubscription: {
       findFirst: mocks.tradingAccountSubscriptionFindFirst,
+      findMany: mocks.tradingAccountSubscriptionFindMany,
+    },
+    trackedPosition: {
+      findMany: mocks.trackedPositionFindMany,
+    },
+    orderIntent: {
+      findMany: mocks.orderIntentFindMany,
     },
   },
 }));
@@ -135,6 +145,13 @@ describe('trading account entry risk preview service', () => {
     mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue(
       accountSubscriptionRecord()
     );
+    mocks.tradingAccountSubscriptionFindMany.mockResolvedValue([
+      { id: 40, subscriptionId: 30 },
+      { id: 41, subscriptionId: 31 },
+      { id: 42, subscriptionId: 32 },
+    ]);
+    mocks.trackedPositionFindMany.mockResolvedValue([]);
+    mocks.orderIntentFindMany.mockResolvedValue([]);
     mocks.resolveRuntimeAccountSubscriptionSizing.mockResolvedValue(
       sizingResult()
     );
@@ -188,6 +205,30 @@ describe('trading account entry risk preview service', () => {
         id: 7,
         key: 'core_etf',
         maxOpenPositions: 3,
+      },
+      allocationRisk: {
+        checked: true,
+        ok: true,
+        code: null,
+        layer: 'allocation',
+        details: {
+          limits: {
+            maxAllocatedNotional: 10_000,
+            maxOpenPositions: 3,
+          maxPositionNotional: 2_000,
+          },
+          allocationAccountSubscriptionIds: [40, 41, 42],
+          allocationSubscriptionIds: [30, 31, 32],
+          requestedNotional: 1_425,
+          usage: {
+            activePositionCount: 0,
+            openNotional: 0,
+            pendingEntryOrderCount: 0,
+            pendingEntryNotional: 0,
+            currentAllocatedNotional: 0,
+            projectedAllocatedNotional: 1_425,
+          },
+        },
       },
       sizing: {
         ok: true,
@@ -349,6 +390,169 @@ describe('trading account entry risk preview service', () => {
         code: 'allocation_max_open_positions_exceeded',
         layer: 'allocation',
         message: 'Allocation maximum open position limit reached.',
+      },
+    });
+  });
+
+  it('checks parent allocation max position notional independently of the main risk result', async () => {
+    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue(
+      accountSubscriptionRecord({
+        allocation: {
+          id: 7,
+          key: 'core_etf',
+          name: 'Core ETF',
+          enabled: true,
+          maxAllocatedNotional: 10_000,
+          maxOpenPositions: 3,
+          maxPositionNotional: 1_000,
+        },
+      })
+    );
+
+    const result = await previewTradingAccountEntryRisk(1, {
+      subscriptionKey: 'dia_dip_core',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      wouldSubmitIfSessionAllowed: false,
+      allocationRisk: {
+        checked: true,
+        ok: false,
+        code: 'allocation_max_position_notional_exceeded',
+        layer: 'allocation',
+        message: 'Allocation per-position notional limit would be exceeded.',
+        details: {
+          limit: 1_000,
+          requestedNotional: 1_425,
+        },
+      },
+    });
+  });
+
+  it('checks parent allocation max open positions from allocation-scoped positions', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      {
+        id: 201,
+        symbol: 'SPY',
+        subscriptionId: 30,
+        tradingAccountSubscriptionId: null,
+        marketValue: 1_000,
+        costBasis: 950,
+        status: 'open',
+      },
+      {
+        id: 202,
+        symbol: 'QQQ',
+        subscriptionId: 31,
+        tradingAccountSubscriptionId: null,
+        marketValue: 1_500,
+        costBasis: 1_450,
+        status: 'open',
+      },
+      {
+        id: 203,
+        symbol: 'IWM',
+        subscriptionId: 32,
+        tradingAccountSubscriptionId: null,
+        marketValue: 900,
+        costBasis: 850,
+        status: 'closing',
+      },
+    ]);
+
+    const result = await previewTradingAccountEntryRisk(1, {
+      subscriptionKey: 'dia_dip_core',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      wouldSubmitIfSessionAllowed: false,
+      allocationRisk: {
+        checked: true,
+        ok: false,
+        code: 'allocation_max_open_positions_exceeded',
+        layer: 'allocation',
+        details: {
+          limit: 3,
+          current: 3,
+          projected: 4,
+          usage: {
+            activePositionCount: 3,
+            activeSymbols: ['SPY', 'QQQ', 'IWM'],
+            openNotional: 3_400,
+          },
+        },
+      },
+    });
+  });
+
+  it('checks parent allocation max allocated notional from open and pending exposure', async () => {
+    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue(
+      accountSubscriptionRecord({
+        allocation: {
+          id: 7,
+          key: 'core_etf',
+          name: 'Core ETF',
+          enabled: true,
+          maxAllocatedNotional: 2_500,
+          maxOpenPositions: null,
+          maxPositionNotional: 2_000,
+        },
+      })
+    );
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      {
+        id: 201,
+        symbol: 'SPY',
+        subscriptionId: 30,
+        tradingAccountSubscriptionId: null,
+        marketValue: 800,
+        costBasis: 750,
+        status: 'open',
+      },
+    ]);
+    mocks.orderIntentFindMany.mockResolvedValue([
+      {
+        id: 301,
+        symbol: 'QQQ',
+        subscriptionId: 31,
+        tradingAccountSubscriptionId: null,
+        notional: null,
+        qty: null,
+        limitPrice: null,
+        rawRequestJson: {
+          accountSubscriptionSizing: {
+            estimatedNotional: 500,
+          },
+        },
+        status: 'pending',
+      },
+    ]);
+
+    const result = await previewTradingAccountEntryRisk(1, {
+      subscriptionKey: 'dia_dip_core',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      wouldSubmitIfSessionAllowed: false,
+      allocationRisk: {
+        checked: true,
+        ok: false,
+        code: 'allocation_max_allocated_notional_exceeded',
+        layer: 'allocation',
+        details: {
+          limit: 2_500,
+          current: 1_300,
+          projected: 2_725,
+          usage: {
+            openNotional: 800,
+            pendingEntryNotional: 500,
+            currentAllocatedNotional: 1_300,
+            projectedAllocatedNotional: 2_725,
+          },
+        },
       },
     });
   });
