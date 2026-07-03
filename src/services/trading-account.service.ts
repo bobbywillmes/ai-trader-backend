@@ -15,6 +15,8 @@ const LEGACY_DEFAULT_TRADING_ACCOUNT = {
   displayName: 'Bobby Paper',
 } as const;
 
+const ACTIVE_POSITION_STATUSES = ['open', 'closing'];
+
 const TRADING_ACCOUNT_ADMIN_SELECT = {
   id: true,
   displayName: true,
@@ -62,6 +64,12 @@ type TradingAccountAdminRecord = Prisma.TradingAccountGetPayload<{
   select: typeof TRADING_ACCOUNT_ADMIN_SELECT;
 }>;
 
+type TradingAccountOpenPositionExposure = {
+  tradingAccountId: number | null;
+  marketValue: number;
+  costBasis: number;
+};
+
 export type TradingAccountSummaryResponse = Prisma.TradingAccountGetPayload<{
   select: typeof TRADING_ACCOUNT_SUMMARY_SELECT;
 }>;
@@ -83,7 +91,8 @@ export async function getTradingAccountById(id: number) {
 }
 
 export function serializeTradingAccountForAdmin(
-  account: TradingAccountAdminRecord
+  account: TradingAccountAdminRecord,
+  totalOpenPositionNotional = 0
 ) {
   const credential = account.credential;
 
@@ -105,6 +114,7 @@ export function serializeTradingAccountForAdmin(
     lastBuyingPower: account.lastBuyingPower,
     lastEquity: account.lastEquity,
     lastPortfolioValue: account.lastPortfolioValue,
+    totalOpenPositionNotional,
     pausedReason: account.pausedReason,
     notes: account.notes,
     createdAt: account.createdAt,
@@ -122,6 +132,63 @@ export function serializeTradingAccountForAdmin(
   };
 }
 
+function getPositionExposure(position: {
+  marketValue: number;
+  costBasis: number;
+}) {
+  const exposure = position.marketValue || position.costBasis || 0;
+  return Math.abs(exposure);
+}
+
+function sumOpenPositionNotional(
+  positions: TradingAccountOpenPositionExposure[]
+) {
+  return positions.reduce(
+    (total, position) => total + getPositionExposure(position),
+    0
+  );
+}
+
+async function getOpenPositionNotionalByTradingAccountId(
+  tradingAccountIds: number[]
+) {
+  if (tradingAccountIds.length === 0) {
+    return new Map<number, number>();
+  }
+
+  const positions = await prisma.trackedPosition.findMany({
+    where: {
+      tradingAccountId: {
+        in: tradingAccountIds,
+      },
+      status: {
+        in: ACTIVE_POSITION_STATUSES,
+      },
+    },
+    select: {
+      tradingAccountId: true,
+      marketValue: true,
+      costBasis: true,
+    },
+  });
+
+  const totals = new Map<number, number>();
+
+  for (const position of positions) {
+    if (position.tradingAccountId === null) {
+      continue;
+    }
+
+    totals.set(
+      position.tradingAccountId,
+      (totals.get(position.tradingAccountId) ?? 0) +
+        getPositionExposure(position)
+    );
+  }
+
+  return totals;
+}
+
 export async function listTradingAccountsForAdmin() {
   const accounts = await prisma.tradingAccount.findMany({
     select: TRADING_ACCOUNT_ADMIN_SELECT,
@@ -129,17 +196,46 @@ export async function listTradingAccountsForAdmin() {
       id: 'asc',
     },
   });
+  const openPositionNotionalByAccount =
+    await getOpenPositionNotionalByTradingAccountId(
+      accounts.map((account) => account.id)
+    );
 
-  return accounts.map(serializeTradingAccountForAdmin);
+  return accounts.map((account) =>
+    serializeTradingAccountForAdmin(
+      account,
+      openPositionNotionalByAccount.get(account.id) ?? 0
+    )
+  );
 }
 
 export async function getTradingAccountForAdmin(id: number) {
-  const account = await prisma.tradingAccount.findUnique({
-    where: { id },
-    select: TRADING_ACCOUNT_ADMIN_SELECT,
-  });
+  const [account, positions] = await Promise.all([
+    prisma.tradingAccount.findUnique({
+      where: { id },
+      select: TRADING_ACCOUNT_ADMIN_SELECT,
+    }),
+    prisma.trackedPosition.findMany({
+      where: {
+        tradingAccountId: id,
+        status: {
+          in: ACTIVE_POSITION_STATUSES,
+        },
+      },
+      select: {
+        tradingAccountId: true,
+        marketValue: true,
+        costBasis: true,
+      },
+    }),
+  ]);
 
-  return account ? serializeTradingAccountForAdmin(account) : null;
+  return account
+    ? serializeTradingAccountForAdmin(
+        account,
+        sumOpenPositionNotional(positions)
+      )
+    : null;
 }
 
 export async function getTradingAccountSummaryById(id: number) {

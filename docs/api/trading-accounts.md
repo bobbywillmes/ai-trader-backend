@@ -21,6 +21,20 @@ or an admin session bearer token
 Trading account responses include operational account fields and a credential
 summary. They never include decrypted credentials or ciphertext columns.
 
+Balance and exposure summary fields include:
+
+```text
+lastCash
+lastBuyingPower
+lastEquity
+lastPortfolioValue
+totalOpenPositionNotional
+```
+
+`totalOpenPositionNotional` is derived from open/closing tracked positions for
+the trading account using the same market-value-with-cost-basis-fallback
+exposure convention used by runtime risk checks.
+
 Credential summary fields:
 
 ```text

@@ -1051,6 +1051,13 @@ function BrokerSnapshotCard({ account }: { account: TradingAccount }) {
             label="Portfolio value"
             value={formatMoney(account.lastPortfolioValue, account.baseCurrency)}
           />
+          <DetailItem
+            label="Open position notional"
+            value={formatMoney(
+              account.totalOpenPositionNotional,
+              account.baseCurrency
+            )}
+          />
         </SimpleGrid>
       </Stack>
     </Card>
