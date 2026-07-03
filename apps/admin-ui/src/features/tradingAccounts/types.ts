@@ -164,6 +164,101 @@ export type TradingAccountSubscriptionResponse = {
   accountSubscription: TradingAccountSubscription;
 };
 
+export type EntryRiskPreviewLayer =
+  | "global"
+  | "account"
+  | "allocation"
+  | "subscription"
+  | "session"
+  | "unknown"
+  | null;
+
+export type EntryRiskPreview = {
+  ok: boolean;
+  wouldSubmitIfSessionAllowed: boolean;
+  tradingAccount: {
+    id: number;
+    displayName: string;
+    broker: TradingBroker;
+    environment: TradingAccountEnvironment;
+    status: TradingAccountStatus;
+  };
+  subscription: {
+    id: number;
+    key: string;
+    symbol: string;
+    enabled: boolean;
+  };
+  accountSubscription: {
+    id: number;
+    enabled: boolean;
+    entriesEnabled: boolean;
+    exitsEnabled: boolean;
+    allocationId: number | null;
+    sizingType: PositionSizingType;
+  } | null;
+  allocation: {
+    id: number;
+    key: string;
+    name: string;
+    enabled: boolean;
+    maxAllocatedNotional: number | null;
+    maxOpenPositions: number | null;
+    maxPositionNotional: number | null;
+  } | null;
+  sizing: {
+    ok: boolean;
+    code: string | null;
+    message: string | null;
+    sizingType: PositionSizingType | null;
+    fixedQty: number | null;
+    maxPositionNotional: number | null;
+    minPositionNotional: number | null;
+    maxQty: number | null;
+    latestPrice: number | null;
+    latestPriceAt: string | null;
+    latestPriceSource: string | null;
+    calculatedQty: number | null;
+    estimatedNotional: number | null;
+  };
+  risk: {
+    ok: boolean;
+    code: string | null;
+    layer: EntryRiskPreviewLayer;
+    message: string | null;
+    details: unknown;
+  };
+  allocationRisk: {
+    checked: boolean;
+    ok: boolean;
+    code: string | null;
+    layer: "allocation" | null;
+    message: string | null;
+    details: unknown;
+  };
+  session: {
+    checked: boolean;
+    marketOpen?: boolean | null;
+    entryWindowOpen?: boolean;
+    wouldBlockRealEntryNow?: boolean;
+    code?: string | null;
+    message?: string | null;
+    note?: string;
+    details?: unknown;
+  };
+  wouldCreateOrderIntent: false;
+  wouldSubmitBrokerOrder: false;
+};
+
+export type EntryRiskPreviewResponse = {
+  preview: EntryRiskPreview;
+};
+
+export type EntryRiskPreviewInput = {
+  subscriptionKey: string;
+  ignoreSession?: boolean;
+};
+
 export type AccountSubscriptionMarketContextStatus =
   | "active"
   | "all"

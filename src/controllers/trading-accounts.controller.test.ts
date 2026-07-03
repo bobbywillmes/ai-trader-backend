@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   updateTradingAccountForAdmin: vi.fn(),
   getTradingAccountRiskSettingsForAdmin: vi.fn(),
   updateTradingAccountRiskSettingsForAdmin: vi.fn(),
+  previewTradingAccountEntryRisk: vi.fn(),
   revokeTradingAccountCredential: vi.fn(),
   upsertTradingAccountApiKeyCredential: vi.fn(),
   verifyTradingAccountCredential: vi.fn(),
@@ -42,6 +43,10 @@ vi.mock('../services/trading-account-risk-settings.service.js', () => ({
     mocks.getTradingAccountRiskSettingsForAdmin,
   updateTradingAccountRiskSettingsForAdmin:
     mocks.updateTradingAccountRiskSettingsForAdmin,
+}));
+
+vi.mock('../services/trading-account-entry-risk-preview.service.js', () => ({
+  previewTradingAccountEntryRisk: mocks.previewTradingAccountEntryRisk,
 }));
 
 vi.mock('../services/trading-account-allocation.service.js', () => ({
@@ -90,6 +95,7 @@ import {
   listTradingAccountSubscriptionMarketContextController,
   listTradingAccountSubscriptionsController,
   listTradingAccountsController,
+  previewTradingAccountEntryRiskController,
   revokeTradingAccountCredentialController,
   updateTradingAccountController,
   updateTradingAccountAllocationController,
@@ -127,6 +133,11 @@ describe('trading accounts controller', () => {
       id: 50,
       tradingAccountId: 1,
       enabled: true,
+    });
+    mocks.previewTradingAccountEntryRisk.mockResolvedValue({
+      ok: true,
+      wouldCreateOrderIntent: false,
+      wouldSubmitBrokerOrder: false,
     });
     mocks.revokeTradingAccountCredential.mockResolvedValue({ revoked: true });
     mocks.updateTradingAccountForAdmin.mockResolvedValue({ id: 1 });
@@ -401,6 +412,92 @@ describe('trading accounts controller', () => {
       next
     );
 
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 404,
+        message: 'Trading account not found.',
+      })
+    );
+  });
+
+  it('returns entry risk previews for trading account subscription keys', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await previewTradingAccountEntryRiskController(
+      {
+        params: {
+          id: '1',
+        },
+        body: {
+          subscriptionKey: ' dia_dip_core ',
+          ignoreSession: false,
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.previewTradingAccountEntryRisk).toHaveBeenCalledWith(1, {
+      subscriptionKey: 'dia_dip_core',
+      ignoreSession: false,
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      preview: {
+        ok: true,
+        wouldCreateOrderIntent: false,
+        wouldSubmitBrokerOrder: false,
+      },
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid entry risk preview requests', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await previewTradingAccountEntryRiskController(
+      {
+        params: {
+          id: '1',
+        },
+        body: {},
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.previewTradingAccountEntryRisk).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 400,
+        message: 'Invalid entry risk preview request.',
+      })
+    );
+  });
+
+  it('returns not found when entry risk preview targets a missing trading account', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.previewTradingAccountEntryRisk.mockResolvedValue(null);
+
+    await previewTradingAccountEntryRiskController(
+      {
+        params: {
+          id: '404',
+        },
+        body: {
+          subscriptionKey: 'dia_dip_core',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.previewTradingAccountEntryRisk).toHaveBeenCalledWith(404, {
+      subscriptionKey: 'dia_dip_core',
+    });
     expect(next).toHaveBeenCalledWith(
       expect.objectContaining({
         statusCode: 404,

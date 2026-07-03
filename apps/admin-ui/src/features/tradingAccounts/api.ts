@@ -5,6 +5,8 @@ import type {
   AccountSubscriptionPriceHistoryRange,
   AccountSubscriptionPriceHistoryResponse,
   CreateTradingAccountSubscriptionInput,
+  EntryRiskPreviewInput,
+  EntryRiskPreviewResponse,
   RevokeTradingAccountCredentialResponse,
   TradingAccountAllocationInput,
   TradingAccountAllocationResponse,
@@ -240,6 +242,21 @@ export function updateTradingAccountSubscription(
     `/api/trading-accounts/${id}/account-subscriptions/${accountSubscriptionId}`,
     {
       method: "PATCH",
+      token,
+      body: payload,
+    }
+  );
+}
+
+export function previewTradingAccountEntryRisk(
+  id: number,
+  payload: EntryRiskPreviewInput,
+  token: string
+) {
+  return apiRequest<EntryRiskPreviewResponse>(
+    `/api/trading-accounts/${id}/entry-risk-preview`,
+    {
+      method: "POST",
       token,
       body: payload,
     }

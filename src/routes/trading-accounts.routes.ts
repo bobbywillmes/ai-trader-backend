@@ -10,6 +10,7 @@ import {
   listTradingAccountAllocationsController,
   listTradingAccountSubscriptionMarketContextController,
   listTradingAccountSubscriptionsController,
+  previewTradingAccountEntryRiskController,
   updateTradingAccountController,
   updateTradingAccountAllocationController,
   updateTradingAccountRiskSettingsController,
@@ -24,6 +25,7 @@ const router = Router();
 router.get('/', listTradingAccountsController);
 router.get('/:id/risk-settings', getTradingAccountRiskSettingsController);
 router.patch('/:id/risk-settings', updateTradingAccountRiskSettingsController);
+router.post('/:id/entry-risk-preview', previewTradingAccountEntryRiskController);
 router.get('/:id', getTradingAccountController);
 router.patch('/:id', updateTradingAccountController);
 router.get('/:id/allocations', listTradingAccountAllocationsController);
