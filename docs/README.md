@@ -13,6 +13,7 @@ Use this index to find the right document for the task at hand.
 | Understand the backend safety model	                    | [Risk & Safety](architecture/risk-and-safety.md) |
 | Audit global vs account-scoped risk settings            | [Account Risk Settings](architecture/account-risk-settings.md) |
 | Understand how a signal becomes a full trade cycle      | [Trading Lifecycle](architecture/trading-lifecycle.md) |
+| Understand catalyst/news storage and manual ingestion   | [Catalyst News Foundation](architecture/catalyst-news-foundation.md) |
 | Understand background worker health and stale detection | [Worker Health](architecture/workers.md) |
 | Deploy or update production	                            | [Production Deployment](production/deployment.md) |
 | Follow the normal local → GitHub → VPS workflow	        | [Production Workflow](production/production-workflow.md) |
@@ -76,6 +77,13 @@ n8n signal
 ```
 
 Use this doc when changing signal handling, tracked positions, exit profiles, broker activity imports, or lifecycle event logging.
+
+### [Catalyst News Foundation](architecture/catalyst-news-foundation.md)
+
+Documents Phase 1 catalyst/news storage, Massive manual ingestion, ticker
+impact records, simple provisional scoring, future source support, and deferred
+work such as scheduled workers, n8n triggers, MomentumCandidate, admin UI pages,
+and trading behavior.
 
 ### [Worker Health](architecture/workers.md)
 

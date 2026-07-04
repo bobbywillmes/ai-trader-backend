@@ -564,6 +564,168 @@ model MarketDiaryEvent {
   @@index([createdAt])
 }
 
+enum CatalystSource {
+  MASSIVE_NEWS
+  MASSIVE_BENZINGA
+  SEC_EDGAR
+  COMPANY_IR
+  MANUAL
+}
+
+enum CatalystEventType {
+  EARNINGS
+  GUIDANCE
+  ANALYST_UPGRADE
+  ANALYST_DOWNGRADE
+  FDA_REGULATORY
+  CONTRACT_WIN
+  PARTNERSHIP
+  ACQUISITION_MERGER
+  INDEX_ADDITION
+  INDEX_REMOVAL
+  INSIDER_BUYING
+  INSIDER_SELLING
+  OFFERING_DILUTION
+  SEC_FILING
+  PRODUCT_LAUNCH
+  MACRO_MARKET
+  SECTOR_THEME
+  OPINION_ANALYSIS
+  UNKNOWN
+}
+
+enum CatalystTier {
+  HIGH
+  MEDIUM
+  LOW
+  IGNORE
+}
+
+enum CatalystSentiment {
+  POSITIVE
+  NEGATIVE
+  NEUTRAL
+  MIXED
+  UNKNOWN
+}
+
+enum CatalystTickerRole {
+  PRIMARY_SUBJECT
+  DIRECT_BENEFICIARY
+  INDIRECT_BENEFICIARY
+  DIRECT_NEGATIVE
+  INDIRECT_NEGATIVE
+  PEER_COMPARISON
+  CUSTOMER
+  SUPPLIER
+  COMPETITOR
+  TANGENTIAL_MENTION
+}
+
+model CatalystEvent {
+  id               String @id @default(cuid())
+
+  source           CatalystSource
+  sourceExternalId String?
+  sourceUrl        String?
+  sourcePublisher  String?
+  sourceAuthor     String?
+
+  title            String
+  summary          String?
+  bodyExcerpt      String?
+  language         String?
+
+  publishedAt      DateTime?
+  receivedAt       DateTime @default(now())
+
+  eventType        CatalystEventType @default(UNKNOWN)
+  eventTier        CatalystTier      @default(LOW)
+  sentiment        CatalystSentiment @default(UNKNOWN)
+  confidence       Float?
+
+  isDuplicate      Boolean @default(false)
+  duplicateOfId    String?
+
+  rawPayload       Json?
+  metadata         Json?
+
+  tickerImpacts    CatalystTickerImpact[]
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([source, sourceExternalId])
+  @@index([source, publishedAt])
+  @@index([eventType, eventTier])
+  @@index([receivedAt])
+}
+
+model CatalystTickerImpact {
+  id                 String @id @default(cuid())
+
+  catalystEventId    String
+  catalystEvent      CatalystEvent @relation(fields: [catalystEventId], references: [id], onDelete: Cascade)
+
+  symbol             String
+
+  sentiment          CatalystSentiment @default(UNKNOWN)
+  sentimentReasoning String?
+
+  relevanceScore     Int @default(0)
+  actionabilityScore Int @default(0)
+  freshnessScore     Int @default(0)
+  sourceQualityScore Int @default(0)
+  totalCatalystScore Int @default(0)
+
+  isPrimaryTicker    Boolean @default(false)
+  isCompanySpecific  Boolean @default(false)
+  isMarketWide       Boolean @default(false)
+  isSectorWide       Boolean @default(false)
+
+  catalystRole       CatalystTickerRole?
+  blockedReason      String?
+
+  rawInsight         Json?
+  metadata           Json?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([catalystEventId, symbol])
+  @@index([symbol, totalCatalystScore])
+  @@index([symbol, createdAt])
+  @@index([totalCatalystScore])
+}
+
+model NewsPullCursor {
+  id                String @id @default(cuid())
+
+  source            CatalystSource
+  symbol            String
+
+  enabled           Boolean @default(true)
+  priority          Int     @default(0)
+
+  pullIntervalMin   Int     @default(15)
+  lastPulledAt      DateTime?
+  lastPublishedAt   DateTime?
+  lastSourceCursor  String?
+
+  consecutiveErrors Int     @default(0)
+  lastError         String?
+
+  metadata          Json?
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([source, symbol])
+  @@index([enabled, priority, lastPulledAt])
+  @@index([source, enabled])
+  @@index([symbol])
+}
+
 model EntryDecision {
   id                      Int      @id @default(autoincrement())
   decisionKey             String   @unique

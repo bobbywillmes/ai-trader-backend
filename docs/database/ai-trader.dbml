@@ -367,6 +367,85 @@ Table MarketDiaryEvent {
   createdAt DateTime [default: `now()`, not null]
 }
 
+Table CatalystEvent {
+  id String [pk]
+  source CatalystSource [not null]
+  sourceExternalId String
+  sourceUrl String
+  sourcePublisher String
+  sourceAuthor String
+  title String [not null]
+  summary String
+  bodyExcerpt String
+  language String
+  publishedAt DateTime
+  receivedAt DateTime [default: `now()`, not null]
+  eventType CatalystEventType [not null, default: 'UNKNOWN']
+  eventTier CatalystTier [not null, default: 'LOW']
+  sentiment CatalystSentiment [not null, default: 'UNKNOWN']
+  confidence Float
+  isDuplicate Boolean [not null, default: false]
+  duplicateOfId String
+  rawPayload Json
+  metadata Json
+  tickerImpacts CatalystTickerImpact [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+
+  indexes {
+    (source, sourceExternalId) [unique]
+  }
+}
+
+Table CatalystTickerImpact {
+  id String [pk]
+  catalystEventId String [not null]
+  catalystEvent CatalystEvent [not null]
+  symbol String [not null]
+  sentiment CatalystSentiment [not null, default: 'UNKNOWN']
+  sentimentReasoning String
+  relevanceScore Int [not null, default: 0]
+  actionabilityScore Int [not null, default: 0]
+  freshnessScore Int [not null, default: 0]
+  sourceQualityScore Int [not null, default: 0]
+  totalCatalystScore Int [not null, default: 0]
+  isPrimaryTicker Boolean [not null, default: false]
+  isCompanySpecific Boolean [not null, default: false]
+  isMarketWide Boolean [not null, default: false]
+  isSectorWide Boolean [not null, default: false]
+  catalystRole CatalystTickerRole
+  blockedReason String
+  rawInsight Json
+  metadata Json
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+
+  indexes {
+    (catalystEventId, symbol) [unique]
+  }
+}
+
+Table NewsPullCursor {
+  id String [pk]
+  source CatalystSource [not null]
+  symbol String [not null]
+  enabled Boolean [not null, default: true]
+  priority Int [not null, default: 0]
+  pullIntervalMin Int [not null, default: 15]
+  lastPulledAt DateTime
+  lastPublishedAt DateTime
+  lastSourceCursor String
+  consecutiveErrors Int [not null, default: 0]
+  lastError String
+  metadata Json
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+
+  indexes {
+    (source, symbol) [unique]
+  }
+}
+
 Table EntryDecision {
   id Int [pk, increment]
   decisionKey String [unique, not null]
@@ -671,6 +750,64 @@ Enum AssetType {
   OTHER
 }
 
+Enum CatalystSource {
+  MASSIVE_NEWS
+  MASSIVE_BENZINGA
+  SEC_EDGAR
+  COMPANY_IR
+  MANUAL
+}
+
+Enum CatalystEventType {
+  EARNINGS
+  GUIDANCE
+  ANALYST_UPGRADE
+  ANALYST_DOWNGRADE
+  FDA_REGULATORY
+  CONTRACT_WIN
+  PARTNERSHIP
+  ACQUISITION_MERGER
+  INDEX_ADDITION
+  INDEX_REMOVAL
+  INSIDER_BUYING
+  INSIDER_SELLING
+  OFFERING_DILUTION
+  SEC_FILING
+  PRODUCT_LAUNCH
+  MACRO_MARKET
+  SECTOR_THEME
+  OPINION_ANALYSIS
+  UNKNOWN
+}
+
+Enum CatalystTier {
+  HIGH
+  MEDIUM
+  LOW
+  IGNORE
+}
+
+Enum CatalystSentiment {
+  POSITIVE
+  NEGATIVE
+  NEUTRAL
+  MIXED
+  UNKNOWN
+}
+
+Enum CatalystTickerRole {
+  PRIMARY_SUBJECT
+  DIRECT_BENEFICIARY
+  INDIRECT_BENEFICIARY
+  DIRECT_NEGATIVE
+  INDIRECT_NEGATIVE
+  PEER_COMPARISON
+  CUSTOMER
+  SUPPLIER
+  COMPETITOR
+  TANGENTIAL_MENTION
+}
+
 Ref: AdminSession.adminUserId > AdminUser.id
 
 Ref: TradingAccount.ownerAdminUserId > AdminUser.id
@@ -710,6 +847,8 @@ Ref: BrokerOrder.tradingAccountId > TradingAccount.id [delete: Set Null]
 Ref: SystemEvent.tradingAccountId > TradingAccount.id [delete: Set Null]
 
 Ref: AlpacaApiUsageBucket.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: CatalystTickerImpact.catalystEventId > CatalystEvent.id [delete: Cascade]
 
 Ref: EntryDecision.securityId > Security.id [delete: Set Null]
 
