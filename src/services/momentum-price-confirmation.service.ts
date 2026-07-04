@@ -20,6 +20,10 @@ export type ConfirmActiveCandidatesOptions = ConfirmCandidatePriceOptions & {
   minCatalystScore?: number;
 };
 
+export type ListMomentumCandidatePriceChecksOptions = {
+  limit?: number;
+};
+
 export type PriceConfirmationSnapshot = {
   symbol: string;
   observedAt: Date;
@@ -592,4 +596,41 @@ export async function confirmActiveCandidates(
   }
 
   return summary;
+}
+
+export async function listMomentumCandidatePriceChecks(
+  candidateId: string,
+  options: ListMomentumCandidatePriceChecksOptions = {}
+) {
+  const id = candidateId.trim();
+
+  if (id === '') {
+    throw new HttpError(400, 'Momentum candidate id is required.');
+  }
+
+  const candidate = await prisma.momentumCandidate.findUnique({
+    where: {
+      id,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!candidate) {
+    throw new HttpError(404, 'Momentum candidate not found.');
+  }
+
+  return prisma.momentumCandidatePriceCheck.findMany({
+    where: {
+      momentumCandidateId: id,
+    },
+    orderBy: {
+      observedAt: 'desc',
+    },
+    take: Math.min(
+      normalizePositiveInteger(options.limit, 25),
+      100
+    ),
+  });
 }

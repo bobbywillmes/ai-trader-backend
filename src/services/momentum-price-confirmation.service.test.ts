@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   momentumCandidateFindUnique: vi.fn(),
   momentumCandidateUpdate: vi.fn(),
   priceCheckCreate: vi.fn(),
+  priceCheckFindMany: vi.fn(),
 }));
 
 vi.mock('../config/env.js', () => ({
@@ -31,6 +32,7 @@ vi.mock('../db/prisma.js', () => ({
     },
     momentumCandidatePriceCheck: {
       create: mocks.priceCheckCreate,
+      findMany: mocks.priceCheckFindMany,
     },
   },
 }));
@@ -43,6 +45,7 @@ vi.mock('./massive-market-data.service.js', () => ({
 import {
   confirmActiveCandidates,
   confirmCandidatePrice,
+  listMomentumCandidatePriceChecks,
 } from './momentum-price-confirmation.service.js';
 
 function candidate(overrides: Record<string, unknown> = {}) {
@@ -133,6 +136,7 @@ describe('momentum price confirmation service', () => {
         ...data,
       })
     );
+    mocks.priceCheckFindMany.mockResolvedValue([{ id: 'price-check-1' }]);
     mocks.momentumCandidateUpdate.mockImplementation(({ data }) =>
       Promise.resolve(candidate(data))
     );
@@ -377,5 +381,29 @@ describe('momentum price confirmation service', () => {
     expect(mocks.priceCheckCreate).toHaveBeenCalledTimes(2);
     expect(mocks.momentumCandidateUpdate).toHaveBeenCalledTimes(2);
     expect(mocks.momentumCandidateFindUnique).toHaveBeenCalledTimes(2);
+  });
+
+  it('lists recent price checks for a candidate newest first', async () => {
+    await expect(
+      listMomentumCandidatePriceChecks(' candidate-1 ', { limit: 10 })
+    ).resolves.toEqual([{ id: 'price-check-1' }]);
+
+    expect(mocks.momentumCandidateFindUnique).toHaveBeenCalledWith({
+      where: {
+        id: 'candidate-1',
+      },
+      select: {
+        id: true,
+      },
+    });
+    expect(mocks.priceCheckFindMany).toHaveBeenCalledWith({
+      where: {
+        momentumCandidateId: 'candidate-1',
+      },
+      orderBy: {
+        observedAt: 'desc',
+      },
+      take: 10,
+    });
   });
 });
