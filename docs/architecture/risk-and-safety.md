@@ -192,6 +192,51 @@ inspect deeper sizing, account, allocation, and subscription risk layers while
 markets are closed. Session state may still be returned as informational
 context showing whether a real entry would be blocked now.
 
+### Trading account risk health
+
+Admins can use `GET /api/trading-accounts/:id/risk-health` to review whether a
+TradingAccount appears ready for new entries at the account configuration
+level.
+
+Risk health is diagnostic only. It does not change runtime enforcement, create
+`OrderIntent` records, submit broker orders, call Alpaca order endpoints, or
+change n8n payload behavior. The real entry path remains:
+
+```text
+global emergency controls
+-> global entry risk caps
+-> TradingAccount risk controls
+-> TradingAccountAllocation bucket limits
+-> TradingAccountSubscription sizing/gates
+-> broker execution
+```
+
+The health check has different expectations for `PAPER` and `LIVE` accounts.
+Paper accounts can be ready with warnings for incomplete planning information.
+Live accounts are stricter: missing or stale broker portfolio value, missing
+live risk caps, unassigned active subscriptions, disabled allocation
+assignments, and planned exposure above broker portfolio value are blockers.
+
+Broker-synced capital is the primary source for health checks:
+
+```text
+lastPortfolioValue
+lastEquity, only as broker-derived fallback
+lastCash
+lastBuyingPower
+lastBrokerSyncAt
+```
+
+`estimatedTradingCapital` is displayed only as planning context and is not used
+to pass capital coverage checks. Broker value is stale after 24 hours. Missing
+or stale broker value is a warning for paper accounts and a blocker for live
+accounts.
+
+Planned exposure diagnostics include allocation budget total, active
+subscription budget total, and maximum simultaneous allocation exposure under
+current allocation open-position caps. These numbers are visibility aids for
+operator review and do not replace risk-gate enforcement.
+
 ### Exit attention states
 
 The backend records explicit exit attention states for protective trailing-stop failures.
@@ -214,6 +259,7 @@ The backend currently protects trading and configuration changes with:
 - Runtime regular-session entry guard
 - Paper/live mode setting
 - Account-scoped risk settings
+- Trading account risk health diagnostics
 - Alpaca account `tradingBlocked` check
 - Broker mode matching
 - Zod schema validation
