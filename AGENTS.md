@@ -245,8 +245,9 @@ When a schema change is required:
 1. Update `prisma/schema.prisma`.
 2. Create a Prisma migration.
 3. Regenerate Prisma client if needed.
-4. Update services, tests, and docs in the same branch.
-5. Call out migration/deployment implications in the final summary and commit body.
+4. Commit the generated `docs/database/ai-trader.dbml` update from Prisma generation alongside the schema and migration files.
+5. Update services, tests, and docs in the same branch.
+6. Call out migration/deployment implications in the final summary and commit body.
 
 Do not run `prisma format` in this repository. The Prisma schema intentionally uses hand-aligned whitespace for readability, so schema edits should preserve existing formatting and only change the lines required for the model change.
 
