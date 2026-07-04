@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   createTradingAccountAllocationController,
   createTradingAccountSubscriptionController,
+  getTradingAccountRiskHealthController,
   getTradingAccountSubscriptionPriceHistoryController,
   getTradingAccountSubscriptionController,
   getTradingAccountController,
@@ -25,6 +26,7 @@ const router = Router();
 router.get('/', listTradingAccountsController);
 router.get('/:id/risk-settings', getTradingAccountRiskSettingsController);
 router.patch('/:id/risk-settings', updateTradingAccountRiskSettingsController);
+router.get('/:id/risk-health', getTradingAccountRiskHealthController);
 router.post('/:id/entry-risk-preview', previewTradingAccountEntryRiskController);
 router.get('/:id', getTradingAccountController);
 router.patch('/:id', updateTradingAccountController);

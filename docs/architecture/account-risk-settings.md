@@ -150,6 +150,62 @@ maxQty
 
 These should remain subscription-scoped. Runtime entry sizing already uses account-subscription rows instead of legacy subscription sizing fields.
 
+## Account Readiness / Risk Health
+
+The backend exposes a read-only Trading Account risk health diagnostic:
+
+```http
+GET /api/trading-accounts/:id/risk-health
+```
+
+This endpoint answers a broader account-level question than entry risk preview:
+
+```text
+Is this TradingAccount configured safely and intentionally for new entries?
+```
+
+It does not enforce policy, create orders, submit to Alpaca, change broker credentials, change allocation behavior, or mutate trading records. Runtime order behavior remains owned by the risk gate, order worker, broker adapters, and existing account-subscription sizing path.
+
+Risk health returns:
+
+```text
+READY
+READY_WITH_WARNINGS
+BLOCKED
+```
+
+with separate blocker, warning, and informational checks. `PAPER` accounts are advisory and warning-oriented. `LIVE` accounts are deliberately stricter and should be difficult to mark ready accidentally.
+
+Capital readiness uses broker-synced account data as capital truth:
+
+```text
+lastPortfolioValue
+lastEquity, only as broker-derived fallback
+lastCash
+lastBuyingPower
+lastBrokerSyncAt
+```
+
+`estimatedTradingCapital` is returned only as planning context. It is not treated as trustworthy capital for readiness checks and should not be used to pass capital coverage checks. Broker portfolio value is considered stale when `lastBrokerSyncAt` is older than 24 hours. Missing or stale broker value is a warning for `PAPER` and a blocker for `LIVE`.
+
+The health report includes three planned exposure views:
+
+```text
+allocationBudgetTotal
+  = sum(enabled TradingAccountAllocation.maxAllocatedNotional)
+
+activeSubscriptionBudgetTotal
+  = sum enabled + entry-enabled account-subscription planned position budgets
+
+maxSimultaneousAllocationExposure
+  = sum each enabled allocation's largest active assigned subscription budgets,
+    capped by allocation.maxOpenPositions when configured
+```
+
+For `MAX_NOTIONAL`, the active subscription budget uses `maxPositionNotional`. For `FIXED_QTY`, the budget estimate is `fixedQty * latestPrice` using backend-owned market data. Missing latest price is a warning for `PAPER` and a blocker for `LIVE`.
+
+The readiness diagnostic also highlights unassigned active subscriptions, active subscriptions assigned to disabled allocations, missing allocation caps, missing live account risk caps, global trading/kill-switch state, credential state, broker metadata sync, and unresolved open-position attribution.
+
 ## Runtime Evaluation Order
 
 The current risk gate evaluates controls in this order:

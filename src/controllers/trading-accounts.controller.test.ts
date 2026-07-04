@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   updateTradingAccountForAdmin: vi.fn(),
   getTradingAccountRiskSettingsForAdmin: vi.fn(),
   updateTradingAccountRiskSettingsForAdmin: vi.fn(),
+  getTradingAccountRiskHealth: vi.fn(),
   previewTradingAccountEntryRisk: vi.fn(),
   revokeTradingAccountCredential: vi.fn(),
   upsertTradingAccountApiKeyCredential: vi.fn(),
@@ -49,6 +50,10 @@ vi.mock('../services/trading-account-entry-risk-preview.service.js', () => ({
   previewTradingAccountEntryRisk: mocks.previewTradingAccountEntryRisk,
 }));
 
+vi.mock('../services/trading-account-risk-health.service.js', () => ({
+  getTradingAccountRiskHealth: mocks.getTradingAccountRiskHealth,
+}));
+
 vi.mock('../services/trading-account-allocation.service.js', () => ({
   createTradingAccountAllocationForAdmin:
     mocks.createTradingAccountAllocationForAdmin,
@@ -87,6 +92,7 @@ vi.mock('../services/account-subscription-market-context.service.js', async () =
 import {
   createTradingAccountAllocationController,
   createTradingAccountSubscriptionController,
+  getTradingAccountRiskHealthController,
   getTradingAccountRiskSettingsController,
   getTradingAccountSubscriptionPriceHistoryController,
   getTradingAccountSubscriptionController,
@@ -133,6 +139,11 @@ describe('trading accounts controller', () => {
       id: 50,
       tradingAccountId: 1,
       enabled: true,
+    });
+    mocks.getTradingAccountRiskHealth.mockResolvedValue({
+      tradingAccountId: 1,
+      status: 'READY',
+      readyForEntries: true,
     });
     mocks.previewTradingAccountEntryRisk.mockResolvedValue({
       ok: true,
@@ -412,6 +423,79 @@ describe('trading accounts controller', () => {
       next
     );
 
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 404,
+        message: 'Trading account not found.',
+      })
+    );
+  });
+
+  it('returns trading account risk health', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await getTradingAccountRiskHealthController(
+      {
+        params: {
+          id: '1',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.getTradingAccountRiskHealth).toHaveBeenCalledWith(1);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      riskHealth: {
+        tradingAccountId: 1,
+        status: 'READY',
+        readyForEntries: true,
+      },
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid trading account ids on risk health requests', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await getTradingAccountRiskHealthController(
+      {
+        params: {
+          id: 'nope',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.getTradingAccountRiskHealth).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 400,
+        message: 'Invalid trading account id.',
+      })
+    );
+  });
+
+  it('returns not found when risk health targets a missing trading account', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.getTradingAccountRiskHealth.mockResolvedValue(null);
+
+    await getTradingAccountRiskHealthController(
+      {
+        params: {
+          id: '404',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.getTradingAccountRiskHealth).toHaveBeenCalledWith(404);
     expect(next).toHaveBeenCalledWith(
       expect.objectContaining({
         statusCode: 404,

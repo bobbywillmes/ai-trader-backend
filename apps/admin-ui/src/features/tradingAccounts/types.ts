@@ -83,6 +83,74 @@ export type TradingAccountRiskSettingsResponse = {
   riskSettings: TradingAccountRiskSettings;
 };
 
+export type TradingAccountRiskHealthStatus =
+  | "READY"
+  | "READY_WITH_WARNINGS"
+  | "BLOCKED";
+
+export type TradingAccountRiskHealthCheckSeverity =
+  | "blocker"
+  | "warning"
+  | "info";
+
+export type TradingAccountRiskHealthCheckStatus =
+  | "pass"
+  | "fail"
+  | "warn"
+  | "info";
+
+export type TradingAccountRiskHealthCheck = {
+  id: string;
+  label: string;
+  severity: TradingAccountRiskHealthCheckSeverity;
+  status: TradingAccountRiskHealthCheckStatus;
+  message: string;
+  details?: unknown;
+};
+
+export type TradingAccountRiskHealth = {
+  tradingAccountId: number;
+  status: TradingAccountRiskHealthStatus;
+  profile: TradingAccountEnvironment;
+  readyForEntries: boolean;
+  generatedAt: string;
+  tradingAccount: {
+    id: number;
+    displayName: string;
+    broker: TradingBroker;
+    environment: TradingAccountEnvironment;
+    status: TradingAccountStatus;
+    tradingEnabled: boolean;
+    killSwitchEnabled: boolean;
+  };
+  capital: {
+    brokerPortfolioValue: number | null;
+    brokerPortfolioValueAt: string | null;
+    brokerCash: number | null;
+    brokerBuyingPower: number | null;
+    estimatedTradingCapital: number | null;
+    openPositionNotional: number;
+    allocationBudgetTotal: number;
+    activeSubscriptionBudgetTotal: number;
+    maxSimultaneousAllocationExposure: number;
+    allocationBudgetSurplus: number | null;
+    activeSubscriptionBudgetSurplus: number | null;
+    maxSimultaneousExposureSurplus: number | null;
+    capitalSource:
+      | "BROKER_PORTFOLIO_VALUE"
+      | "ESTIMATED_TRADING_CAPITAL"
+      | "UNAVAILABLE";
+  };
+  checks: TradingAccountRiskHealthCheck[];
+  blockers: TradingAccountRiskHealthCheck[];
+  warnings: TradingAccountRiskHealthCheck[];
+  info: TradingAccountRiskHealthCheck[];
+};
+
+export type TradingAccountRiskHealthResponse = {
+  riskHealth: TradingAccountRiskHealth;
+};
+
 export type RevokeTradingAccountCredentialResponse = {
   revoked: boolean;
   account: TradingAccount;

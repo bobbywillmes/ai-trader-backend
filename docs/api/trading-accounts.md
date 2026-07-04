@@ -150,6 +150,131 @@ notes may be string or null
 `enabled=false` skips only account-specific risk caps. Global emergency caps
 still apply.
 
+## Read Account Risk Health
+
+Trading account risk health is an admin-only, read-only diagnostic endpoint. It
+answers whether one `TradingAccount` appears configured safely and intentionally
+for new entries.
+
+```http
+GET /api/trading-accounts/:id/risk-health
+```
+
+The endpoint does not create orders, submit to Alpaca, mutate broker
+credentials, change runtime risk enforcement, or alter n8n payload behavior.
+
+Response envelope:
+
+```json
+{
+  "riskHealth": {
+    "tradingAccountId": 1,
+    "status": "READY_WITH_WARNINGS",
+    "profile": "PAPER",
+    "readyForEntries": true,
+    "generatedAt": "2026-07-04T16:00:00.000Z",
+    "tradingAccount": {
+      "id": 1,
+      "displayName": "Bobby Paper",
+      "broker": "ALPACA",
+      "environment": "PAPER",
+      "status": "ACTIVE",
+      "tradingEnabled": true,
+      "killSwitchEnabled": false
+    },
+    "capital": {
+      "brokerPortfolioValue": 10000,
+      "brokerPortfolioValueAt": "2026-07-04T15:00:00.000Z",
+      "brokerCash": 8000,
+      "brokerBuyingPower": 20000,
+      "estimatedTradingCapital": 50000,
+      "openPositionNotional": 1500,
+      "allocationBudgetTotal": 12000,
+      "activeSubscriptionBudgetTotal": 9000,
+      "maxSimultaneousAllocationExposure": 7000,
+      "allocationBudgetSurplus": -2000,
+      "activeSubscriptionBudgetSurplus": 1000,
+      "maxSimultaneousExposureSurplus": 3000,
+      "capitalSource": "BROKER_PORTFOLIO_VALUE"
+    },
+    "checks": [],
+    "blockers": [],
+    "warnings": [],
+    "info": []
+  }
+}
+```
+
+Status values:
+
+```text
+READY
+READY_WITH_WARNINGS
+BLOCKED
+```
+
+Profiles:
+
+```text
+PAPER
+LIVE
+```
+
+Each check includes:
+
+```text
+id
+label
+severity: blocker | warning | info
+status: pass | fail | warn | info
+message
+details, optional
+```
+
+Capital rules:
+
+- Broker portfolio value is the primary capital truth.
+- `lastPortfolioValue` is preferred.
+- `lastEquity` may be used only as a broker-derived fallback.
+- `lastCash` and `lastBuyingPower` are displayed for review.
+- `estimatedTradingCapital` is displayed only as planning context.
+- `estimatedTradingCapital` is not trusted for readiness checks.
+- Broker portfolio value is stale when `lastBrokerSyncAt` is older than 24
+  hours.
+- Missing or stale broker value is a warning for `PAPER` and a blocker for
+  `LIVE`.
+
+Planned exposure fields:
+
+```text
+allocationBudgetTotal
+  sum(enabled TradingAccountAllocation.maxAllocatedNotional)
+
+activeSubscriptionBudgetTotal
+  sum enabled + entry-enabled account subscription planned budgets
+
+maxSimultaneousAllocationExposure
+  for each enabled allocation, sum active assigned subscription budgets,
+  capped to the largest maxOpenPositions budgets when maxOpenPositions exists
+```
+
+For active subscription budgets:
+
+```text
+MAX_NOTIONAL uses maxPositionNotional
+FIXED_QTY uses fixedQty * latestPrice
+```
+
+If latest price is unavailable for a `FIXED_QTY` estimate, the check is a
+warning for `PAPER` and a blocker for `LIVE`.
+
+Paper profile is advisory and warning-oriented. Live profile is stricter and
+blocks for missing broker portfolio value, stale broker portfolio value,
+missing key account risk caps, enabled allocations missing required caps,
+unassigned active subscriptions, active subscriptions assigned to disabled
+allocations, invalid active subscription sizing, and planned exposure totals
+above broker portfolio value.
+
 ## Preview Entry Risk
 
 Entry risk preview is an admin-only dry-run endpoint for checking account
