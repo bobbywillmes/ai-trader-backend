@@ -389,6 +389,7 @@ Table CatalystEvent {
   rawPayload Json
   metadata Json
   tickerImpacts CatalystTickerImpact [not null]
+  momentumCandidates MomentumCandidate [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 
@@ -415,6 +416,7 @@ Table CatalystTickerImpact {
   isSectorWide Boolean [not null, default: false]
   catalystRole CatalystTickerRole
   blockedReason String
+  momentumCandidates MomentumCandidate [not null]
   rawInsight Json
   metadata Json
   createdAt DateTime [default: `now()`, not null]
@@ -443,6 +445,34 @@ Table NewsPullCursor {
 
   indexes {
     (source, symbol) [unique]
+  }
+}
+
+Table MomentumCandidate {
+  id String [pk]
+  symbol String [not null]
+  state MomentumCandidateState [not null, default: 'DISCOVERED']
+  catalystEventId String
+  catalystEvent CatalystEvent
+  catalystImpactId String
+  catalystImpact CatalystTickerImpact
+  catalystScore Int [not null, default: 0]
+  priceActionScore Int [not null, default: 0]
+  volumeScore Int [not null, default: 0]
+  riskScore Int [not null, default: 0]
+  totalScore Int [not null, default: 0]
+  reason String
+  blockedReason String
+  discoveredAt DateTime [default: `now()`, not null]
+  lastEvaluatedAt DateTime
+  expiresAt DateTime
+  rawSnapshot Json
+  metadata Json
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+
+  indexes {
+    (symbol, catalystImpactId) [unique]
   }
 }
 
@@ -808,6 +838,15 @@ Enum CatalystTickerRole {
   TANGENTIAL_MENTION
 }
 
+Enum MomentumCandidateState {
+  DISCOVERED
+  WATCHING
+  ENTRY_READY
+  ENTRY_BLOCKED
+  EXPIRED
+  DISMISSED
+}
+
 Ref: AdminSession.adminUserId > AdminUser.id
 
 Ref: TradingAccount.ownerAdminUserId > AdminUser.id
@@ -849,6 +888,10 @@ Ref: SystemEvent.tradingAccountId > TradingAccount.id [delete: Set Null]
 Ref: AlpacaApiUsageBucket.tradingAccountId > TradingAccount.id [delete: Set Null]
 
 Ref: CatalystTickerImpact.catalystEventId > CatalystEvent.id [delete: Cascade]
+
+Ref: MomentumCandidate.catalystEventId > CatalystEvent.id [delete: Set Null]
+
+Ref: MomentumCandidate.catalystImpactId > CatalystTickerImpact.id [delete: Set Null]
 
 Ref: EntryDecision.securityId > Security.id [delete: Set Null]
 
