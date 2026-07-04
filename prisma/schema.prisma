@@ -765,6 +765,8 @@ model MomentumCandidate {
   rawSnapshot        Json?
   metadata           Json?
 
+  priceChecks        MomentumCandidatePriceCheck[]
+
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -775,6 +777,53 @@ model MomentumCandidate {
   @@index([expiresAt])
   @@index([catalystEventId])
   @@index([catalystImpactId])
+}
+
+model MomentumCandidatePriceCheck {
+  id                     String @id @default(cuid())
+
+  momentumCandidateId    String
+  momentumCandidate      MomentumCandidate @relation(fields: [momentumCandidateId], references: [id], onDelete: Cascade)
+
+  symbol                 String
+  observedAt             DateTime @default(now())
+
+  lastPrice              Decimal?
+  previousClose          Decimal?
+  pctFromPreviousClose   Decimal?
+
+  intradayHigh           Decimal?
+  intradayLow            Decimal?
+  distanceFromHighPct    Decimal?
+
+  sessionVwap            Decimal?
+  aboveVwap              Boolean?
+
+  dayVolume              BigInt?
+  dollarVolume           Decimal?
+  relativeVolume         Decimal?
+
+  recentMovePct          Decimal?
+  recentVolume           BigInt?
+
+  priceActionScore       Int @default(0)
+  volumeScore            Int @default(0)
+  riskScore              Int @default(0)
+  totalConfirmationScore Int @default(0)
+
+  confirmed              Boolean @default(false)
+  decision               String?
+  blockedReason          String?
+
+  rawPayload             Json?
+  metadata               Json?
+
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@index([momentumCandidateId, observedAt])
+  @@index([symbol, observedAt])
+  @@index([confirmed, totalConfirmationScore])
 }
 
 model EntryDecision {
