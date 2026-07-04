@@ -650,7 +650,8 @@ model CatalystEvent {
   rawPayload       Json?
   metadata         Json?
 
-  tickerImpacts    CatalystTickerImpact[]
+  tickerImpacts      CatalystTickerImpact[]
+  momentumCandidates MomentumCandidate[]
 
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
@@ -685,6 +686,8 @@ model CatalystTickerImpact {
 
   catalystRole       CatalystTickerRole?
   blockedReason      String?
+
+  momentumCandidates MomentumCandidate[]
 
   rawInsight         Json?
   metadata           Json?
@@ -724,6 +727,54 @@ model NewsPullCursor {
   @@index([enabled, priority, lastPulledAt])
   @@index([source, enabled])
   @@index([symbol])
+}
+
+enum MomentumCandidateState {
+  DISCOVERED
+  WATCHING
+  ENTRY_READY
+  ENTRY_BLOCKED
+  EXPIRED
+  DISMISSED
+}
+
+model MomentumCandidate {
+  id                 String @id @default(cuid())
+
+  symbol             String
+  state              MomentumCandidateState @default(DISCOVERED)
+
+  catalystEventId    String?
+  catalystEvent      CatalystEvent? @relation(fields: [catalystEventId], references: [id], onDelete: SetNull)
+  catalystImpactId   String?
+  catalystImpact     CatalystTickerImpact? @relation(fields: [catalystImpactId], references: [id], onDelete: SetNull)
+
+  catalystScore      Int @default(0)
+  priceActionScore   Int @default(0)
+  volumeScore        Int @default(0)
+  riskScore          Int @default(0)
+  totalScore         Int @default(0)
+
+  reason             String?
+  blockedReason      String?
+
+  discoveredAt       DateTime @default(now())
+  lastEvaluatedAt    DateTime?
+  expiresAt          DateTime?
+
+  rawSnapshot        Json?
+  metadata           Json?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([symbol, catalystImpactId])
+  @@index([symbol, state])
+  @@index([totalScore])
+  @@index([discoveredAt])
+  @@index([expiresAt])
+  @@index([catalystEventId])
+  @@index([catalystImpactId])
 }
 
 model EntryDecision {
