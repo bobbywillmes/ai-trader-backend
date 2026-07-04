@@ -12,6 +12,7 @@ import {
   type CatalystEventFilters,
 } from '../services/catalyst-events.service.js';
 import { isObject } from '../utils/type-check.js';
+import { runMassiveNewsWorkerOnce } from '../workers/massive-news.worker.js';
 
 function getQueryString(value: unknown) {
   return typeof value === 'string' && value.trim() !== ''
@@ -121,6 +122,25 @@ export async function ingestMassiveNewsController(
     const result = await ingestMassiveNewsPayload(req.body);
 
     res.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function runMassiveNewsWorkerOnceController(
+  _req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const result = await runMassiveNewsWorkerOnce({
+      enabled: true,
+    });
+
+    res.status(200).json({
+      ok: true,
+      result,
+    });
   } catch (error) {
     next(error);
   }
