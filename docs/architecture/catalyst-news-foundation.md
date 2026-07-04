@@ -11,6 +11,11 @@ from existing catalyst ticker impacts. It does not add n8n triggers, admin UI
 pages, price or volume confirmation, final scoring, broker behavior, or trading
 behavior.
 
+Phase 4 adds backend-only manual price and volume confirmation for existing
+`MomentumCandidate` rows. It does not add n8n triggers, Slack alerts, signal
+creation, trade creation, broker/order behavior, admin UI pages, or automatic
+buying.
+
 ## Purpose
 
 The catalyst foundation gives the backend a durable place to store market news
@@ -91,6 +96,26 @@ Phase 3 candidate scoring is intentionally simple. `catalystScore` is copied
 from `CatalystTickerImpact.totalCatalystScore`; `totalScore` currently equals
 `catalystScore`; `priceActionScore`, `volumeScore`, and `riskScore` remain `0`
 until a later confirmation phase.
+
+`MomentumCandidatePriceCheck` stores append-only price/volume confirmation
+history:
+
+- linked `MomentumCandidate`
+- symbol and observed timestamp
+- last price, previous close, percent move from previous close
+- intraday high/low and distance from high
+- session VWAP and above-VWAP flag
+- day volume, dollar volume, relative volume placeholder
+- recent move and recent volume
+- price action, volume, risk, and total confirmation scores
+- confirmed flag, decision, blocked reason
+- raw Massive payload and metadata
+
+`MomentumCandidate` remains the latest summary table. Phase 4 updates its
+`priceActionScore`, `volumeScore`, `riskScore`, `totalScore`,
+`lastEvaluatedAt`, `state`, `blockedReason`, and `rawSnapshot` from the most
+recent manual confirmation run while preserving detailed check history in
+`MomentumCandidatePriceCheck`.
 
 ## Phase 2 Massive News Worker
 
@@ -217,6 +242,150 @@ POST /api/momentum-candidates/expire-stale
 These endpoints are for backend verification and review workflows only. There is
 no admin UI page in Phase 3.
 
+## Phase 4 Price And Volume Confirmation
+
+Price confirmation answers whether an existing catalyst-backed candidate has
+enough market confirmation to keep watching or mark as entry-ready for a future
+handoff phase. It is manual and backend-only.
+
+The confirmation service evaluates active candidates in these states:
+
+```text
+DISCOVERED
+WATCHING
+ENTRY_READY
+ENTRY_BLOCKED
+```
+
+It skips terminal candidates:
+
+```text
+EXPIRED
+DISMISSED
+```
+
+Each confirmation run:
+
+- fetches a Massive ticker snapshot
+- fetches current-day one-minute aggregates for the configured lookback window
+- builds a normalized price confirmation snapshot
+- writes a new `MomentumCandidatePriceCheck`
+- updates the candidate latest summary fields and state
+
+The Massive helper normalizes:
+
+- last price
+- previous close
+- percent move from previous close
+- intraday high and low
+- distance from high
+- session VWAP and above-VWAP status
+- day volume and dollar volume
+- recent move and recent volume
+
+Relative volume is intentionally left null in Phase 4 unless a reliable
+historical-volume baseline is added later.
+
+### Phase 4 Scoring
+
+Scoring is deliberately simple and adjustable.
+
+`priceActionScore` is 0-100:
+
+- `+25` when percent from previous close is at least 2%
+- `+25` when price is above session VWAP
+- `+25` when price is within 1.5% of intraday high
+- `+25` when the recent move is positive
+
+`volumeScore` is 0-100:
+
+- `+30` when day volume is positive
+- `+30` when dollar volume meets `MOMENTUM_CONFIRMATION_MIN_DOLLAR_VOLUME`
+- `+20` when recent volume is positive
+- `+20` when relative volume is at least 2, when available
+
+`riskScore` is a risk quality score, not a penalty:
+
+- `+25` when last price is at least `MOMENTUM_CONFIRMATION_MIN_PRICE`
+- `+25` when percent from previous close is not overextended above 15%
+- `+25` when price is not more than 6% above VWAP
+- `+25` as a neutral timing placeholder
+
+Phase 4 does not call a regular-hours timing helper. It therefore does not
+enforce the first-30-minutes-after-open entry-ready rule yet.
+
+The weighted score is:
+
+```text
+round(catalystScore * 0.45 + priceActionScore * 0.30 + volumeScore * 0.20 + riskScore * 0.05)
+```
+
+### Phase 4 State Transitions
+
+Default thresholds:
+
+```text
+MOMENTUM_CONFIRMATION_WATCHING_THRESHOLD=60
+MOMENTUM_CONFIRMATION_ENTRY_READY_THRESHOLD=80
+```
+
+State rules:
+
+- hard blocks set `ENTRY_BLOCKED`
+- score at or above the entry-ready threshold sets `ENTRY_READY`
+- score at or above the watching threshold sets `WATCHING`
+- lower scores keep `DISCOVERED` candidates discovered and move other active
+  candidates back to `WATCHING`
+
+Hard blocks:
+
+- expired candidate
+- missing last price
+- missing previous close or percent move from previous close
+- price below `MOMENTUM_CONFIRMATION_MIN_PRICE`
+- percent from previous close above `MOMENTUM_CONFIRMATION_MAX_PCT_FROM_PREV_CLOSE`
+- stale or empty aggregate data
+
+`ENTRY_READY` is only a review state in Phase 4. It does not create a signal,
+trade, order intent, broker order, n8n webhook, or alert.
+
+### Phase 4 Admin Endpoints
+
+Protected admin endpoints:
+
+```http
+POST /api/momentum-candidates/:id/confirm-price
+POST /api/momentum-candidates/confirm-prices
+GET /api/momentum-candidates/:id/price-checks
+```
+
+Single-candidate confirmation returns the updated candidate and latest price
+check.
+
+Batch confirmation evaluates a bounded active-candidate batch and returns:
+
+```text
+evaluated
+entryReady
+watching
+blocked
+skipped
+errors
+```
+
+Optional batch fields:
+
+```text
+maxCandidates
+state
+minCatalystScore
+now
+recentWindowMinutes
+lookbackMinutes
+```
+
+The price-check history endpoint returns recent checks newest first.
+
 ## Future Sources
 
 The schema is source-flexible. Planned or reserved sources include:
@@ -232,11 +401,14 @@ dedupe.
 
 ## Deferred Work
 
-The following remain intentionally out of scope after Phase 3:
+The following remain intentionally out of scope after Phase 4:
 
 - n8n webhook triggers
-- price and volume confirmation
+- Slack alerts
 - admin UI pages
 - final momentum scoring
+- final relative-volume model
+- final regular-hours entry timing model
 - automated candidate handoff
+- signal creation
 - trading decisions or order behavior
