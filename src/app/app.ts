@@ -27,6 +27,7 @@ import brokerActivitiesRoutes from '../routes/broker-activities.routes.js';
 import dashboardRoutes from '../routes/dashboard.routes.js';
 import marketStateRoutes from '../routes/market-state.routes.js';
 import marketDiaryRoutes from '../routes/market-diary.routes.js';
+import catalystEventsRoutes from '../routes/catalyst-events.routes.js';
 import etfWatchRoutes from '../routes/etf-watch.routes.js';
 import reconciliationRoutes from '../routes/reconciliation.routes.js';
 import tradeCyclesRoutes from '../routes/trade-cycles.routes.js';
@@ -90,6 +91,7 @@ export function createApp() {
   app.use('/api/securities', requireAdminAccess, securitiesRoutes);
   app.use('/api/market-state', requireAdminAccess, marketStateRoutes);
   app.use('/api/market-diary', requireAdminAccess, marketDiaryRoutes);
+  app.use('/api/catalyst-events', requireAdminAccess, catalystEventsRoutes);
   app.use('/api/etf-watch', requireAdminAccess, etfWatchRoutes);
 
   app.use(notFoundHandler);
