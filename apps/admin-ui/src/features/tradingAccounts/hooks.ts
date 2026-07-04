@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   createTradingAccountAllocation,
   createTradingAccountSubscription,
@@ -113,6 +118,20 @@ export function useTradingAccountRiskHealth(
     queryFn: () => getTradingAccountRiskHealth(id as number, token as string),
     enabled: Boolean(token && id),
     staleTime: 60000,
+  });
+}
+
+export function useTradingAccountRiskHealthSummaries(
+  ids: number[],
+  token: string | null
+) {
+  return useQueries({
+    queries: ids.map((id) => ({
+      queryKey: tradingAccountKeys.riskHealth(id),
+      queryFn: () => getTradingAccountRiskHealth(id, token as string),
+      enabled: Boolean(token),
+      staleTime: 60000,
+    })),
   });
 }
 
