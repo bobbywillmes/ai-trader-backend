@@ -5,6 +5,7 @@ vi.mock('../config/env.js', () => ({
   env: {
     MASSIVE_API_KEY: 'test-massive-key',
     MASSIVE_BASE_URL: 'https://api.massive.test',
+    MOMENTUM_CONFIRMATION_LOOKBACK_MINUTES: 390,
   },
 }));
 
@@ -12,7 +13,10 @@ import {
   getTickerDailyCandles,
   getIndexIntraday,
   getIndexPerformance,
+  getTickerPriceConfirmationMarketData,
   normalizeMassiveSnapshotTicker,
+  normalizeTickerPriceConfirmationBars,
+  normalizeTickerPriceConfirmationSnapshot,
   normalizeTickerLatestPrice,
   parseIndexChartRange,
 } from './massive-market-data.service.js';
@@ -176,6 +180,183 @@ describe('normalizeTickerLatestPrice', () => {
       latestPriceAt: '2026-06-29T20:00:00.000Z',
       latestPriceSource: 'previousClose',
     });
+  });
+});
+
+describe('ticker price confirmation normalization', () => {
+  it('maps Massive snapshot fields into a confirmation snapshot', () => {
+    expect(
+      normalizeTickerPriceConfirmationSnapshot('aapl', {
+        lastTrade: {
+          p: 102.5,
+          t: Date.UTC(2026, 6, 4, 15, 30),
+        },
+        min: {
+          c: 102.25,
+          t: Date.UTC(2026, 6, 4, 15, 29),
+        },
+        day: {
+          c: 102,
+          h: 103,
+          l: 98,
+          v: 1234567,
+          vw: 100.5,
+        },
+        prevDay: {
+          c: 97.25,
+        },
+      })
+    ).toEqual({
+      symbol: 'AAPL',
+      lastPrice: 102.5,
+      previousClose: 97.25,
+      intradayHigh: 103,
+      intradayLow: 98,
+      dayVolume: 1234567,
+      sessionVwap: 100.5,
+      updatedTime: '2026-07-04T15:30:00.000Z',
+    });
+  });
+
+  it('normalizes only usable minute aggregate bars', () => {
+    expect(
+      normalizeTickerPriceConfirmationBars([
+        {
+          o: 100,
+          h: 102,
+          l: 99.5,
+          c: 101.5,
+          v: 45000,
+          vw: 100.75,
+          t: Date.UTC(2026, 6, 4, 15, 30),
+        },
+        {
+          o: 0,
+          h: 102,
+          l: 99.5,
+          c: 101.5,
+          t: Date.UTC(2026, 6, 4, 15, 31),
+        },
+      ])
+    ).toEqual([
+      {
+        time: '2026-07-04T15:30:00.000Z',
+        open: 100,
+        high: 102,
+        low: 99.5,
+        close: 101.5,
+        volume: 45000,
+        vwap: 100.75,
+      },
+    ]);
+  });
+});
+
+describe('getTickerPriceConfirmationMarketData', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('fetches a generic ticker snapshot and one-minute aggregate window', async () => {
+    const fetchMock = vi.fn(async (url: string, _options?: RequestInit) => {
+      const parsed = new URL(url);
+
+      if (parsed.pathname.includes('/v2/snapshot/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ticker: {
+              lastTrade: {
+                p: 102.5,
+                t: Date.UTC(2026, 6, 4, 15, 30),
+              },
+              day: {
+                h: 103,
+                l: 98,
+                v: 1234567,
+                vw: 100.5,
+              },
+              prevDay: {
+                c: 97.25,
+              },
+            },
+          }),
+        };
+      }
+
+      if (parsed.pathname.includes('/v2/aggs/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            results: [
+              {
+                o: 100,
+                h: 102,
+                l: 99.5,
+                c: 101.5,
+                v: 45000,
+                vw: 100.75,
+                t: Date.UTC(2026, 6, 4, 15, 30),
+              },
+            ],
+          }),
+        };
+      }
+
+      throw new Error(`Unexpected URL ${url}`);
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      getTickerPriceConfirmationMarketData(' aapl ', {
+        now: new Date('2026-07-04T16:00:00.000Z'),
+        lookbackMinutes: 30,
+      })
+    ).resolves.toMatchObject({
+      symbol: 'AAPL',
+      from: '2026-07-04',
+      to: '2026-07-04',
+      snapshot: {
+        symbol: 'AAPL',
+        lastPrice: 102.5,
+        previousClose: 97.25,
+        intradayHigh: 103,
+        intradayLow: 98,
+        dayVolume: 1234567,
+        sessionVwap: 100.5,
+      },
+      minuteBars: [
+        {
+          time: '2026-07-04T15:30:00.000Z',
+          open: 100,
+          high: 102,
+          low: 99.5,
+          close: 101.5,
+          volume: 45000,
+          vwap: 100.75,
+        },
+      ],
+    });
+
+    const urls = fetchMock.mock.calls.map(([url]) => new URL(url));
+    expect(urls.map((url) => url.pathname)).toEqual([
+      '/v2/snapshot/locale/us/markets/stocks/tickers/AAPL',
+      '/v2/aggs/ticker/AAPL/range/1/minute/2026-07-04/2026-07-04',
+    ]);
+    expect(urls[1]?.searchParams.get('adjusted')).toBe('true');
+    expect(urls[1]?.searchParams.get('sort')).toBe('asc');
+
+    for (const [url, options] of fetchMock.mock.calls) {
+      expect(url).not.toContain('test-massive-key');
+      expect(options).toMatchObject({
+        headers: {
+          Authorization: 'Bearer test-massive-key',
+        },
+      });
+    }
   });
 });
 

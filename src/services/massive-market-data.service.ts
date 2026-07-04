@@ -118,6 +118,44 @@ export type DailyMarketCandle = {
   volume: number | null;
 };
 
+export type TickerPriceConfirmationSnapshot = {
+  symbol: string;
+  lastPrice: number | null;
+  previousClose: number | null;
+  intradayHigh: number | null;
+  intradayLow: number | null;
+  dayVolume: number | null;
+  sessionVwap: number | null;
+  updatedTime: string | null;
+};
+
+export type TickerPriceConfirmationBar = {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number | null;
+  vwap: number | null;
+};
+
+export type TickerPriceConfirmationMarketData = {
+  symbol: string;
+  from: string | null;
+  to: string | null;
+  snapshot: TickerPriceConfirmationSnapshot;
+  minuteBars: TickerPriceConfirmationBar[];
+  rawPayload: {
+    snapshot: unknown;
+    aggregates: unknown;
+  };
+};
+
+export type GetTickerPriceConfirmationMarketDataArgs = {
+  now?: Date;
+  lookbackMinutes?: number;
+};
+
 type MassiveMarketStatus = {
   market?: unknown;
   serverTime?: unknown;
@@ -127,6 +165,8 @@ type MassiveSnapshotBar = {
   c?: unknown;
   h?: unknown;
   l?: unknown;
+  v?: unknown;
+  vw?: unknown;
   t?: unknown;
 };
 
@@ -155,6 +195,7 @@ type MassiveAggregateBar = {
   o?: unknown;
   t?: unknown;
   v?: unknown;
+  vw?: unknown;
 };
 
 type MassiveAggregatesResponse = {
@@ -275,6 +316,10 @@ function subtractUtcDays(date: Date, days: number) {
   result.setUTCDate(result.getUTCDate() - days);
 
   return result;
+}
+
+function subtractUtcMinutes(date: Date, minutes: number) {
+  return new Date(date.getTime() - minutes * 60 * 1000);
 }
 
 function isSafeEtDateString(value: string | null): value is string {
@@ -478,6 +523,86 @@ export function normalizeTickerLatestPrice(
   };
 }
 
+export function normalizeTickerPriceConfirmationSnapshot(
+  symbol: string,
+  snapshot: MassiveSnapshotTicker | undefined
+): TickerPriceConfirmationSnapshot {
+  const normalizedSymbol = symbol.trim().toUpperCase();
+  const lastTradePrice = toPositiveFiniteNumber(snapshot?.lastTrade?.p);
+  const minuteClose = toPositiveFiniteNumber(snapshot?.min?.c);
+  const dayClose = toPositiveFiniteNumber(snapshot?.day?.c);
+  const previousClose = toPositiveFiniteNumber(snapshot?.prevDay?.c);
+  const dayHigh = toPositiveFiniteNumber(snapshot?.day?.h);
+  const dayLow = toPositiveFiniteNumber(snapshot?.day?.l);
+  const dayVolume = toFiniteNumber(snapshot?.day?.v);
+  const sessionVwap = toPositiveFiniteNumber(snapshot?.day?.vw);
+  const validPriceTimestampCandidates = [
+    lastTradePrice !== null ? snapshot?.lastTrade?.t : null,
+    minuteClose !== null ? snapshot?.min?.t : null,
+    dayClose !== null ? snapshot?.day?.t : null,
+  ]
+    .map((value) => ({
+      raw: value,
+      milliseconds: toMillisFromMassiveTimestamp(value),
+    }))
+    .filter(
+      (candidate): candidate is { raw: unknown; milliseconds: number } =>
+        candidate.milliseconds !== null
+    )
+    .sort((a, b) => b.milliseconds - a.milliseconds);
+  const priceUpdatedTimestamp =
+    validPriceTimestampCandidates[0]?.raw ??
+    snapshot?.prevDay?.t ??
+    snapshot?.updated;
+
+  return {
+    symbol: normalizedSymbol,
+    lastPrice: lastTradePrice ?? minuteClose ?? dayClose,
+    previousClose,
+    intradayHigh: dayHigh,
+    intradayLow: dayLow,
+    dayVolume: dayVolume !== null && dayVolume >= 0 ? dayVolume : null,
+    sessionVwap,
+    updatedTime: toIsoFromMassiveTimestamp(priceUpdatedTimestamp),
+  };
+}
+
+export function normalizeTickerPriceConfirmationBars(
+  bars: MassiveAggregateBar[] | undefined
+): TickerPriceConfirmationBar[] {
+  return (bars ?? []).flatMap((bar) => {
+    const close = toPositiveFiniteNumber(bar.c);
+    const high = toPositiveFiniteNumber(bar.h);
+    const low = toPositiveFiniteNumber(bar.l);
+    const open = toPositiveFiniteNumber(bar.o);
+    const time = toIsoFromMassiveTimestamp(bar.t);
+
+    if (
+      close === null ||
+      high === null ||
+      low === null ||
+      open === null ||
+      time === null
+    ) {
+      return [];
+    }
+
+    const volume = toFiniteNumber(bar.v);
+
+    return [
+      {
+        time,
+        open,
+        high,
+        low,
+        close,
+        volume: volume !== null && volume >= 0 ? volume : null,
+        vwap: toPositiveFiniteNumber(bar.vw),
+      },
+    ];
+  });
+}
+
 async function getMarketStatus() {
   const status = await massiveGet<MassiveMarketStatus>('/v1/marketstatus/now');
 
@@ -509,6 +634,62 @@ export async function getTickerLatestPrice(
   );
 
   return normalizeTickerLatestPrice(normalizedSymbol, response.ticker);
+}
+
+export async function getTickerPriceConfirmationMarketData(
+  symbol: string,
+  args: GetTickerPriceConfirmationMarketDataArgs = {}
+): Promise<TickerPriceConfirmationMarketData> {
+  const normalizedSymbol = symbol.trim().toUpperCase();
+  const now = args.now ?? new Date();
+  const lookbackMinutes =
+    args.lookbackMinutes ?? env.MOMENTUM_CONFIRMATION_LOOKBACK_MINUTES ?? 390;
+  const from = getEtDateString(subtractUtcMinutes(now, lookbackMinutes));
+  const to = getEtDateString(now);
+  const snapshotResponse = await massiveGet<MassiveSnapshotResponse>(
+    `/v2/snapshot/locale/us/markets/stocks/tickers/${encodeURIComponent(
+      normalizedSymbol
+    )}`
+  );
+  const snapshot = normalizeTickerPriceConfirmationSnapshot(
+    normalizedSymbol,
+    snapshotResponse.ticker
+  );
+
+  if (!isSafeEtDateString(from) || !isSafeEtDateString(to)) {
+    return {
+      symbol: normalizedSymbol,
+      from,
+      to,
+      snapshot,
+      minuteBars: [],
+      rawPayload: {
+        snapshot: snapshotResponse,
+        aggregates: null,
+      },
+    };
+  }
+
+  const aggregateResponse = await getAggregateBars(
+    normalizedSymbol,
+    { multiplier: 1, timespan: 'minute' },
+    from,
+    to
+  );
+
+  return {
+    symbol: normalizedSymbol,
+    from,
+    to,
+    snapshot,
+    minuteBars: normalizeTickerPriceConfirmationBars(
+      aggregateResponse.results
+    ),
+    rawPayload: {
+      snapshot: snapshotResponse,
+      aggregates: aggregateResponse,
+    },
+  };
 }
 
 function normalizeAggregatePoints(
