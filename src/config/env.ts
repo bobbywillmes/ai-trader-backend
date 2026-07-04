@@ -76,6 +76,46 @@ const envSchema = z.object({
     .min(1)
     .max(100)
     .default(5),
+  MOMENTUM_CONFIRMATION_MIN_PRICE: z.coerce
+    .number()
+    .positive()
+    .default(5),
+  MOMENTUM_CONFIRMATION_MIN_DOLLAR_VOLUME: z.coerce
+    .number()
+    .positive()
+    .default(5_000_000),
+  MOMENTUM_CONFIRMATION_WATCHING_THRESHOLD: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(60),
+  MOMENTUM_CONFIRMATION_ENTRY_READY_THRESHOLD: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(80),
+  MOMENTUM_CONFIRMATION_MAX_SYMBOLS_PER_RUN: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(10),
+  MOMENTUM_CONFIRMATION_RECENT_WINDOW_MINUTES: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .default(30),
+  MOMENTUM_CONFIRMATION_LOOKBACK_MINUTES: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .default(390),
+  MOMENTUM_CONFIRMATION_MAX_PCT_FROM_PREV_CLOSE: z.coerce
+    .number()
+    .positive()
+    .default(20),
 
   AI_TRADER_SIGNAL_API_KEY: z
     .string()

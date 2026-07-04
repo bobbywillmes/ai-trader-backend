@@ -468,12 +468,45 @@ Table MomentumCandidate {
   expiresAt DateTime
   rawSnapshot Json
   metadata Json
+  priceChecks MomentumCandidatePriceCheck [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 
   indexes {
     (symbol, catalystImpactId) [unique]
   }
+}
+
+Table MomentumCandidatePriceCheck {
+  id String [pk]
+  momentumCandidateId String [not null]
+  momentumCandidate MomentumCandidate [not null]
+  symbol String [not null]
+  observedAt DateTime [default: `now()`, not null]
+  lastPrice Decimal
+  previousClose Decimal
+  pctFromPreviousClose Decimal
+  intradayHigh Decimal
+  intradayLow Decimal
+  distanceFromHighPct Decimal
+  sessionVwap Decimal
+  aboveVwap Boolean
+  dayVolume BigInt
+  dollarVolume Decimal
+  relativeVolume Decimal
+  recentMovePct Decimal
+  recentVolume BigInt
+  priceActionScore Int [not null, default: 0]
+  volumeScore Int [not null, default: 0]
+  riskScore Int [not null, default: 0]
+  totalConfirmationScore Int [not null, default: 0]
+  confirmed Boolean [not null, default: false]
+  decision String
+  blockedReason String
+  rawPayload Json
+  metadata Json
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
 }
 
 Table EntryDecision {
@@ -892,6 +925,8 @@ Ref: CatalystTickerImpact.catalystEventId > CatalystEvent.id [delete: Cascade]
 Ref: MomentumCandidate.catalystEventId > CatalystEvent.id [delete: Set Null]
 
 Ref: MomentumCandidate.catalystImpactId > CatalystTickerImpact.id [delete: Set Null]
+
+Ref: MomentumCandidatePriceCheck.momentumCandidateId > MomentumCandidate.id [delete: Cascade]
 
 Ref: EntryDecision.securityId > Security.id [delete: Set Null]
 
