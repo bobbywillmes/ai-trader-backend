@@ -87,6 +87,7 @@ describe('WorkerHealthRegistry', () => {
       'broker_activity_sync',
       'scheduled_reconciliation',
       'alpaca_api_usage_persistence',
+      'massive_news_ingestion',
     ]);
   });
 

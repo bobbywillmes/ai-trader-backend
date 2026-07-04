@@ -26,6 +26,7 @@ import {
 } from '../services/worker-health.service.js';
 import { getRuntimeTradingConfig } from '../services/config.service.js';
 import { runAlpacaApiUsagePersistence } from '../services/alpaca-api-usage-persistence.service.js';
+import { runMassiveNewsWorkerOnce } from '../workers/massive-news.worker.js';
 
 const app = createApp();
 
@@ -244,6 +245,31 @@ function startWorkers() {
       };
     });
   }, ALPACA_API_USAGE_PERSISTENCE_INTERVAL_MS);
+
+  // Massive news ingestion is disabled by default and writes only catalyst
+  // event/cursor state. It does not trigger n8n or trading behavior.
+  setInterval(() => {
+    void runWorker(
+      'massive_news_ingestion',
+      async () => {
+        const result = await runMassiveNewsWorkerOnce();
+
+        if (result.skipped && result.reason) {
+          return {
+            outcome: 'skipped',
+            skipReason: result.reason,
+          };
+        }
+
+        return {
+          outcome: result.pulledSymbols > 0 ? 'success' : 'idle',
+          workSucceeded:
+            result.processedArticles > 0 || result.upsertedTickerImpacts > 0,
+        };
+      },
+      { enabled: env.MASSIVE_NEWS_WORKER_ENABLED }
+    );
+  }, env.MASSIVE_NEWS_WORKER_INTERVAL_MS);
 }
 
 async function startServer() {
