@@ -12,6 +12,7 @@ import type {
   TradingAccountAllocationResponse,
   TradingAccountAllocationsResponse,
   TradingAccountResponse,
+  TradingAccountRiskHealthResponse,
   TradingAccountRiskSettingsInput,
   TradingAccountRiskSettingsResponse,
   TradingAccountSubscriptionInput,
@@ -54,6 +55,15 @@ export function updateTradingAccount(
 export function getTradingAccountRiskSettings(id: number, token: string) {
   return apiRequest<TradingAccountRiskSettingsResponse>(
     `/api/trading-accounts/${id}/risk-settings`,
+    {
+      token,
+    }
+  );
+}
+
+export function getTradingAccountRiskHealth(id: number, token: string) {
+  return apiRequest<TradingAccountRiskHealthResponse>(
+    `/api/trading-accounts/${id}/risk-health`,
     {
       token,
     }

@@ -4,6 +4,7 @@ import {
   createTradingAccountSubscription,
   getTradingAccount,
   getTradingAccounts,
+  getTradingAccountRiskHealth,
   getTradingAccountRiskSettings,
   getTradingAccountSubscription,
   getTradingAccountSubscriptionPriceHistory,
@@ -38,6 +39,8 @@ export const tradingAccountKeys = {
   detail: (id: number) => [...tradingAccountKeys.details(), id] as const,
   riskSettings: (id: number) =>
     [...tradingAccountKeys.detail(id), "riskSettings"] as const,
+  riskHealth: (id: number) =>
+    [...tradingAccountKeys.detail(id), "riskHealth"] as const,
   allocations: (id: number) =>
     [...tradingAccountKeys.detail(id), "allocations"] as const,
   accountSubscriptions: (id: number) =>
@@ -96,6 +99,20 @@ export function useTradingAccountRiskSettings(
       : [...tradingAccountKeys.details(), "riskSettings"],
     queryFn: () => getTradingAccountRiskSettings(id as number, token as string),
     enabled: Boolean(token && id),
+  });
+}
+
+export function useTradingAccountRiskHealth(
+  id: number | undefined,
+  token: string | null
+) {
+  return useQuery({
+    queryKey: id
+      ? tradingAccountKeys.riskHealth(id)
+      : [...tradingAccountKeys.details(), "riskHealth"],
+    queryFn: () => getTradingAccountRiskHealth(id as number, token as string),
+    enabled: Boolean(token && id),
+    staleTime: 60000,
   });
 }
 
@@ -225,6 +242,9 @@ export function useUpdateTradingAccount(token: string | null) {
       queryClient.setQueryData(tradingAccountKeys.detail(account.id), {
         account,
       });
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.riskHealth(account.id),
+      });
       queryClient.invalidateQueries({ queryKey: tradingAccountKeys.lists() });
     },
   });
@@ -251,6 +271,9 @@ export function useUpsertTradingAccountCredential(token: string | null) {
       queryClient.setQueryData(tradingAccountKeys.detail(account.id), {
         account,
       });
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.riskHealth(account.id),
+      });
       queryClient.invalidateQueries({ queryKey: tradingAccountKeys.lists() });
     },
   });
@@ -271,6 +294,9 @@ export function useVerifyTradingAccountCredential(token: string | null) {
       queryClient.setQueryData(tradingAccountKeys.detail(account.id), {
         account,
       });
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.riskHealth(account.id),
+      });
       queryClient.invalidateQueries({ queryKey: tradingAccountKeys.lists() });
     },
   });
@@ -290,6 +316,9 @@ export function useRevokeTradingAccountCredential(token: string | null) {
     onSuccess: ({ account }) => {
       queryClient.setQueryData(tradingAccountKeys.detail(account.id), {
         account,
+      });
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.riskHealth(account.id),
       });
       queryClient.invalidateQueries({ queryKey: tradingAccountKeys.lists() });
     },
@@ -318,6 +347,9 @@ export function useUpdateTradingAccountRiskSettings(token: string | null) {
         tradingAccountKeys.riskSettings(riskSettings.tradingAccountId),
         { riskSettings }
       );
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.riskHealth(riskSettings.tradingAccountId),
+      });
     },
   });
 }
@@ -342,6 +374,9 @@ export function useCreateTradingAccountAllocation(token: string | null) {
     onSuccess: ({ allocation }) => {
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.allocations(allocation.tradingAccountId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.riskHealth(allocation.tradingAccountId),
       });
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.accountSubscriptions(
@@ -374,6 +409,9 @@ export function useUpdateTradingAccountAllocation(token: string | null) {
     onSuccess: ({ allocation }) => {
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.allocations(allocation.tradingAccountId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.riskHealth(allocation.tradingAccountId),
       });
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.accountSubscriptions(
@@ -411,6 +449,11 @@ export function useCreateTradingAccountSubscription(token: string | null) {
       );
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.accountSubscriptions(
+          accountSubscription.tradingAccountId
+        ),
+      });
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.riskHealth(
           accountSubscription.tradingAccountId
         ),
       });
@@ -465,6 +508,11 @@ export function useUpdateTradingAccountSubscription(token: string | null) {
       );
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.accountSubscriptions(
+          accountSubscription.tradingAccountId
+        ),
+      });
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.riskHealth(
           accountSubscription.tradingAccountId
         ),
       });
