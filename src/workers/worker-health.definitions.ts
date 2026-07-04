@@ -18,6 +18,7 @@ export const ACCOUNT_SNAPSHOT_WORKER_INTERVAL_MS = 60_000;
 export const BROKER_ACTIVITY_WORKER_INTERVAL_MS = 60_000;
 export const RECONCILIATION_SCHEDULER_INTERVAL_MS = 60_000;
 export const ALPACA_API_USAGE_PERSISTENCE_INTERVAL_MS = 60_000;
+export const MASSIVE_NEWS_WORKER_INTERVAL_MS = 60_000;
 
 function thresholds(
   expectedIntervalMs: number,
@@ -106,6 +107,15 @@ export const workerDefinitions = [
     expectedIntervalMs: ALPACA_API_USAGE_PERSISTENCE_INTERVAL_MS,
     enabledByDefault: true,
     ...thresholds(ALPACA_API_USAGE_PERSISTENCE_INTERVAL_MS, 30_000),
+  },
+  {
+    key: 'massive_news_ingestion',
+    displayName: 'Massive news ingestion',
+    description: 'Polls Massive reference news for watched stock symbols and stores catalyst events.',
+    criticality: 'informational',
+    expectedIntervalMs: MASSIVE_NEWS_WORKER_INTERVAL_MS,
+    enabledByDefault: false,
+    ...thresholds(MASSIVE_NEWS_WORKER_INTERVAL_MS, 120_000),
   },
 ] as const satisfies readonly WorkerDefinition[];
 
