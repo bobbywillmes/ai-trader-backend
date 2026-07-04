@@ -53,6 +53,29 @@ const envSchema = z.object({
 
   MASSIVE_API_KEY: z.string().min(1, 'MASSIVE_API_KEY is required'),
   MASSIVE_BASE_URL: z.url().default('https://api.massive.com'),
+  MASSIVE_NEWS_WORKER_ENABLED: envBoolean.default(false),
+  MASSIVE_NEWS_WORKER_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(1_000)
+    .default(60_000),
+  MASSIVE_NEWS_LOOKBACK_MINUTES: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .default(240),
+  MASSIVE_NEWS_LIMIT_PER_SYMBOL: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(1_000)
+    .default(50),
+  MASSIVE_NEWS_MAX_SYMBOLS_PER_RUN: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(5),
 
   AI_TRADER_SIGNAL_API_KEY: z
     .string()
