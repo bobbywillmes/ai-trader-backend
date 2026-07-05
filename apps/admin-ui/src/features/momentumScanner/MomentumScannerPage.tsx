@@ -238,9 +238,18 @@ export function MomentumScannerPage() {
   const confirmPrices = useConfirmMomentumCandidatePrices(token);
   const prepareHandoffs = usePrepareMomentumScannerHandoffs(token);
 
-  const catalystEvents = catalystEventsQuery.data ?? [];
-  const candidates = candidatesQuery.data ?? [];
-  const handoffs = handoffsQuery.data ?? [];
+  const catalystEvents = useMemo(
+    () => catalystEventsQuery.data ?? [],
+    [catalystEventsQuery.data]
+  );
+  const candidates = useMemo(
+    () => candidatesQuery.data ?? [],
+    [candidatesQuery.data]
+  );
+  const handoffs = useMemo(
+    () => handoffsQuery.data ?? [],
+    [handoffsQuery.data]
+  );
   const isActionPending =
     runNewsWorker.isPending ||
     generateCandidates.isPending ||
