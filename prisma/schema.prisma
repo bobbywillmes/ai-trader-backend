@@ -738,6 +738,14 @@ enum MomentumCandidateState {
   DISMISSED
 }
 
+enum MomentumScannerHandoffStatus {
+  PENDING
+  SENT
+  ACKNOWLEDGED
+  FAILED
+  CANCELLED
+}
+
 model MomentumCandidate {
   id                 String @id @default(cuid())
 
@@ -766,6 +774,7 @@ model MomentumCandidate {
   metadata           Json?
 
   priceChecks        MomentumCandidatePriceCheck[]
+  scannerHandoffs    MomentumScannerHandoff[]
 
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
@@ -824,6 +833,40 @@ model MomentumCandidatePriceCheck {
   @@index([momentumCandidateId, observedAt])
   @@index([symbol, observedAt])
   @@index([confirmed, totalConfirmationScore])
+}
+
+model MomentumScannerHandoff {
+  id                    String @id @default(cuid())
+
+  momentumCandidateId   String
+  momentumCandidate     MomentumCandidate @relation(fields: [momentumCandidateId], references: [id], onDelete: Cascade)
+
+  symbol                String
+
+  status                MomentumScannerHandoffStatus @default(PENDING)
+
+  payloadVersion        String @default("v1")
+  payload               Json
+
+  preparedAt            DateTime @default(now())
+  sentAt                DateTime?
+  acknowledgedAt        DateTime?
+  failedAt              DateTime?
+
+  attempts              Int @default(0)
+  lastError             String?
+
+  idempotencyKey        String
+
+  metadata              Json?
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([idempotencyKey])
+  @@index([momentumCandidateId])
+  @@index([symbol, status])
+  @@index([status, preparedAt])
 }
 
 model EntryDecision {
