@@ -7,19 +7,23 @@ Phase 2 added an optional backend worker for polling Massive reference news for
 watched stock symbols.
 
 Phase 3 adds backend-only `MomentumCandidate` storage and candidate generation
-from existing catalyst ticker impacts. It does not add n8n triggers, admin UI
-pages, price or volume confirmation, final scoring, broker behavior, or trading
-behavior.
+from existing catalyst ticker impacts. At the time it was added, it did not add
+n8n triggers, admin UI pages, price or volume confirmation, final scoring,
+broker behavior, or trading behavior.
 
 Phase 4 adds backend-only manual price and volume confirmation for existing
-`MomentumCandidate` rows. It does not add n8n triggers, Slack alerts, signal
-creation, trade creation, broker/order behavior, admin UI pages, or automatic
-buying.
+`MomentumCandidate` rows. At the time it was added, it did not add n8n
+triggers, Slack alerts, signal creation, trade creation, broker/order behavior,
+admin UI pages, or automatic buying.
 
 Phase 5 adds backend-to-n8n scanner handoff plumbing for review-only momentum
 candidate payloads. It does not add signal creation, trade creation,
-broker/order behavior, automatic webhook pushing, admin UI pages, or automatic
-buying.
+broker/order behavior, automatic webhook pushing, or automatic buying.
+
+The admin UI now includes a `Momentum Scanner` page for manual review and
+testing of the backend pipeline. The page is visibility and operator testing
+only; it does not create signals, orders, broker activity, n8n workflow changes,
+or automatic buying behavior.
 
 ## Purpose
 
@@ -260,7 +264,8 @@ POST /api/momentum-candidates/expire-stale
 ```
 
 These endpoints are for backend verification and review workflows only. There is
-no admin UI page in Phase 3.
+now a review-only Admin UI page for this pipeline; Phase 3 itself only added
+the backend endpoints and storage.
 
 ## Phase 4 Price And Volume Confirmation
 
@@ -548,6 +553,52 @@ limit
 `mark-sent`, `acknowledge`, and `mark-failed` accept optional `now` and
 `metadata`. `mark-failed` requires an `error` message.
 
+## Momentum Scanner Admin UI
+
+The Admin UI exposes a review-only `Momentum Scanner` page at:
+
+```text
+/momentum-scanner
+```
+
+The page is intended for operator smoke testing and inspection of the catalyst
+news momentum pipeline. It is deliberately not a trading console.
+
+Manual testing sequence:
+
+1. Run Massive news worker.
+2. Review recent `CatalystEvent` rows and ticker impacts.
+3. Generate `MomentumCandidate` rows from catalyst impacts.
+4. Review candidate state and scores.
+5. Confirm candidate prices.
+6. Review latest and historical price-confirmation results.
+7. Prepare scanner handoffs.
+8. Review `MomentumScannerHandoff` payloads and delivery status.
+
+The page shows:
+
+- review-only status badges
+- manual pipeline action buttons
+- catalyst event overview and details
+- momentum candidate overview and details
+- price-check history for selected candidates
+- scanner handoff overview and payload details
+- summary counts for recent events, candidates, entry-ready candidates,
+  blocked candidates, and handoffs
+
+The page intentionally does not include:
+
+- trading buttons
+- signal creation controls
+- order creation controls
+- broker or Alpaca actions
+- n8n workflow editing
+- automatic buying behavior
+- handoff mark-sent, acknowledge, or failed controls
+
+Those delivery-state endpoints remain backend/admin API capabilities for future
+workflow testing, but the UI currently keeps the handoff detail drawer view-only.
+
 ### Phase 5 Explicit Deferrals
 
 Phase 5 remains review-only. It does not add:
@@ -562,7 +613,6 @@ Phase 5 remains review-only. It does not add:
 - Alpaca calls
 - paper or live trading behavior
 - automatic buying
-- admin UI pages
 
 ## Future Sources
 
@@ -584,7 +634,6 @@ The following remain intentionally out of scope after Phase 5:
 - n8n workflow import and configuration
 - automatic backend-to-n8n webhook pushing
 - Slack alerts
-- admin UI pages
 - final momentum scoring
 - final relative-volume model
 - final regular-hours entry timing model
