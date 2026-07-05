@@ -66,6 +66,10 @@ function candidate(overrides: Record<string, unknown> = {}) {
     lastEvaluatedAt: new Date('2026-07-04T14:00:00.000Z'),
     expiresAt: new Date('2026-07-05T14:00:00.000Z'),
     rawSnapshot: {
+      catalystEvent: {
+        id: 'catalyst-event-1',
+        title: 'AAPL catalyst',
+      },
       catalystImpact: {
         id: 'impact-1',
       },
@@ -195,17 +199,23 @@ describe('momentum price confirmation service', () => {
         totalScore: 92,
         lastEvaluatedAt: now,
         rawSnapshot: expect.objectContaining({
-          previous: expect.objectContaining({
-            catalystImpact: {
-              id: 'impact-1',
-            },
-          }),
-          priceConfirmation: expect.objectContaining({
+          catalystEvent: {
+            id: 'catalyst-event-1',
+            title: 'AAPL catalyst',
+          },
+          catalystImpact: {
+            id: 'impact-1',
+          },
+          latestPriceConfirmation: expect.objectContaining({
             symbol: 'AAPL',
           }),
         }),
       }),
     });
+    const updatePayload = mocks.momentumCandidateUpdate.mock.calls[0]![0].data;
+
+    expect(updatePayload.rawSnapshot).not.toHaveProperty('previous');
+    expect(updatePayload.rawSnapshot).not.toHaveProperty('priceConfirmation');
   });
 
   it('keeps a moderate score in WATCHING state', async () => {
@@ -374,13 +384,92 @@ describe('momentum price confirmation service', () => {
     });
   });
 
-  it('repeated confirmation creates price-check history without duplicating candidates', async () => {
+  it('repeated confirmation keeps candidate raw snapshots shallow', async () => {
     await confirmCandidatePrice('candidate-1');
     await confirmCandidatePrice('candidate-1');
 
     expect(mocks.priceCheckCreate).toHaveBeenCalledTimes(2);
     expect(mocks.momentumCandidateUpdate).toHaveBeenCalledTimes(2);
     expect(mocks.momentumCandidateFindUnique).toHaveBeenCalledTimes(2);
+
+    for (const call of mocks.momentumCandidateUpdate.mock.calls) {
+      expect(call[0].data.rawSnapshot).toMatchObject({
+        catalystEvent: {
+          id: 'catalyst-event-1',
+        },
+        catalystImpact: {
+          id: 'impact-1',
+        },
+        latestPriceConfirmation: {
+          symbol: 'AAPL',
+        },
+      });
+      expect(call[0].data.rawSnapshot).not.toHaveProperty('previous');
+    }
+  });
+
+  it('flattens an existing nested raw snapshot on the next confirmation', async () => {
+    mocks.momentumCandidateFindUnique.mockResolvedValue(
+      candidate({
+        rawSnapshot: {
+          previous: {
+            previous: {
+              previous: {
+                catalystEvent: {
+                  id: 'nested-event',
+                  title: 'Nested catalyst',
+                },
+                catalystImpact: {
+                  id: 'nested-impact',
+                  totalCatalystScore: 90,
+                },
+              },
+              priceConfirmation: {
+                symbol: 'AAPL',
+              },
+            },
+          },
+          priceConfirmation: {
+            symbol: 'AAPL',
+          },
+        },
+      })
+    );
+
+    await confirmCandidatePrice('candidate-1');
+
+    expect(mocks.priceCheckCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.momentumCandidateUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          rawSnapshot: expect.objectContaining({
+            catalystEvent: {
+              id: 'nested-event',
+              title: 'Nested catalyst',
+            },
+            catalystImpact: {
+              id: 'nested-impact',
+              totalCatalystScore: 90,
+            },
+            latestPriceConfirmation: expect.objectContaining({
+              symbol: 'AAPL',
+            }),
+          }),
+        }),
+      })
+    );
+
+    const updatePayload = mocks.momentumCandidateUpdate.mock.calls[0]![0].data;
+
+    expect(updatePayload.rawSnapshot).not.toHaveProperty('previous');
+    expect(updatePayload.rawSnapshot).not.toHaveProperty('priceConfirmation');
+  });
+
+  it('still creates one price-check history row per confirmation', async () => {
+    await confirmCandidatePrice('candidate-1');
+    await confirmCandidatePrice('candidate-1');
+
+    expect(mocks.priceCheckCreate).toHaveBeenCalledTimes(2);
   });
 
   it('lists recent price checks for a candidate newest first', async () => {

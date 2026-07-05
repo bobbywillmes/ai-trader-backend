@@ -1,0 +1,219 @@
+export type JsonRecord = Record<string, unknown>;
+
+export type CatalystEventQuery = {
+  limit?: number;
+  symbol?: string;
+  source?: string;
+  eventType?: string;
+  eventTier?: string;
+};
+
+export type MomentumCandidateQuery = {
+  limit?: number;
+  symbol?: string;
+  state?: MomentumCandidateState;
+};
+
+export type MomentumScannerHandoffQuery = {
+  limit?: number;
+  symbol?: string;
+  status?: MomentumScannerHandoffStatus;
+  candidateId?: string;
+};
+
+export type GenerateMomentumCandidatesRequest = {
+  minCatalystScore?: number;
+  take?: number;
+  expiresInHours?: number;
+  recentSince?: string;
+};
+
+export type ConfirmMomentumPricesRequest = {
+  maxCandidates?: number;
+  minCatalystScore?: number;
+  state?: MomentumCandidateState;
+  recentWindowMinutes?: number;
+  lookbackMinutes?: number;
+  now?: string;
+};
+
+export type PrepareMomentumScannerHandoffsRequest = {
+  candidateId?: string;
+  maxCandidates?: number;
+  minScore?: number;
+  force?: boolean;
+  payloadVersion?: string;
+  now?: string;
+};
+
+export type CatalystEvent = {
+  id: string;
+  source: string;
+  sourceExternalId: string | null;
+  sourcePublisher: string | null;
+  sourceUrl: string | null;
+  title: string;
+  summary: string | null;
+  eventType: string;
+  eventTier: string;
+  sentiment: string;
+  sentimentReasoning: string | null;
+  rawPayload: unknown;
+  publishedAt: string | null;
+  receivedAt: string;
+  createdAt: string;
+  updatedAt: string;
+  tickerImpacts: CatalystTickerImpact[];
+};
+
+export type CatalystTickerImpact = {
+  id: string;
+  catalystEventId: string;
+  symbol: string;
+  catalystRole: string | null;
+  sentiment: string;
+  sentimentReasoning: string | null;
+  relevanceScore: number;
+  actionabilityScore: number;
+  freshnessScore: number;
+  sourceQualityScore: number;
+  totalCatalystScore: number;
+  blockedReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MomentumCandidateState =
+  | "DISCOVERED"
+  | "WATCHING"
+  | "ENTRY_READY"
+  | "ENTRY_BLOCKED"
+  | "EXPIRED"
+  | "DISMISSED";
+
+export type MomentumCandidate = {
+  id: string;
+  symbol: string;
+  state: MomentumCandidateState;
+  catalystEventId: string | null;
+  catalystImpactId: string | null;
+  totalScore: number;
+  catalystScore: number;
+  priceActionScore: number;
+  volumeScore: number;
+  riskScore: number;
+  reason: string | null;
+  blockedReason: string | null;
+  discoveredAt: string;
+  lastEvaluatedAt: string | null;
+  expiresAt: string | null;
+  rawSnapshot: unknown;
+  metadata: unknown;
+  createdAt: string;
+  updatedAt: string;
+  catalystEvent?: CatalystEvent | null;
+  catalystImpact?: CatalystTickerImpact | null;
+};
+
+export type MomentumCandidatePriceCheck = {
+  id: string;
+  momentumCandidateId: string;
+  symbol: string;
+  observedAt: string;
+  lastPrice: string | number | null;
+  previousClose: string | number | null;
+  pctFromPreviousClose: string | number | null;
+  intradayHigh: string | number | null;
+  intradayLow: string | number | null;
+  distanceFromHighPct: string | number | null;
+  sessionVwap: string | number | null;
+  aboveVwap: boolean | null;
+  dayVolume: string | number | null;
+  dollarVolume: string | number | null;
+  relativeVolume: string | number | null;
+  recentMovePct: string | number | null;
+  recentVolume: string | number | null;
+  confirmed: boolean;
+  decision: string;
+  blockedReason: string | null;
+  rawPayload: unknown;
+  metadata: unknown;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MomentumScannerHandoffStatus =
+  | "PENDING"
+  | "SENT"
+  | "ACKNOWLEDGED"
+  | "FAILED"
+  | "CANCELLED";
+
+export type MomentumScannerHandoffPayload = {
+  type?: string;
+  version?: string;
+  idempotencyKey?: string;
+  candidate?: JsonRecord;
+  catalyst?: JsonRecord | null;
+  priceConfirmation?: JsonRecord | null;
+  reviewGuidance?: JsonRecord;
+  [key: string]: unknown;
+};
+
+export type MomentumScannerHandoff = {
+  id: string;
+  momentumCandidateId: string;
+  symbol: string;
+  status: MomentumScannerHandoffStatus;
+  payloadVersion: string;
+  payload: MomentumScannerHandoffPayload;
+  idempotencyKey: string;
+  attempts: number;
+  preparedAt: string;
+  sentAt: string | null;
+  acknowledgedAt: string | null;
+  failedAt: string | null;
+  lastError: string | null;
+  metadata: unknown;
+  createdAt: string;
+  updatedAt: string;
+  momentumCandidate?: MomentumCandidate | null;
+};
+
+export type RunMassiveNewsWorkerResponse = {
+  ok: boolean;
+  result: unknown;
+};
+
+export type GenerateMomentumCandidatesResponse = {
+  evaluatedImpacts: number;
+  generatedCandidates: number;
+  minCatalystScore: number;
+  recentSince: string;
+  expiresAt: string;
+  candidates: MomentumCandidate[];
+};
+
+export type ConfirmMomentumPricesResponse = {
+  checked?: number;
+  confirmed?: number;
+  blocked?: number;
+  skipped?: number;
+  results?: Array<{
+    candidate: MomentumCandidate;
+    priceCheck: MomentumCandidatePriceCheck;
+    [key: string]: unknown;
+  }>;
+  [key: string]: unknown;
+};
+
+export type PrepareMomentumScannerHandoffsResponse = {
+  prepared: number;
+  skipped: number;
+  handoffs: MomentumScannerHandoff[];
+  skippedReasons: Array<{
+    candidateId: string;
+    symbol: string;
+    reason: string;
+  }>;
+};

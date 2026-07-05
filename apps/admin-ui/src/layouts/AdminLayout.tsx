@@ -38,6 +38,7 @@ const navGroups: NavGroup[] = [
       { to: "/trading-accounts", label: "Trading Accounts" },
       { to: "/trade-history", label: "Trade History" },
       { to: "/entry-decisions", label: "Entry Decisions" },
+      { to: "/momentum-scanner", label: "Momentum Scanner" },
     ],
   },
   {
