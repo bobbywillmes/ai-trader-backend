@@ -321,7 +321,9 @@ describe('momentum scanner handoff service', () => {
   it('returns an existing idempotent handoff instead of creating a duplicate', async () => {
     mocks.handoffFindUnique.mockResolvedValue(handoff());
 
-    const result = await prepareMomentumScannerHandoff('candidate-1');
+    const result = await prepareMomentumScannerHandoff('candidate-1', {
+      now: new Date('2026-07-04T15:32:00.000Z'),
+    });
 
     expect(result).toMatchObject({
       skipped: false,
