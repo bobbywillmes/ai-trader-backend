@@ -280,14 +280,43 @@ function nextStateForDecision(
     : MomentumCandidateState.WATCHING;
 }
 
+function isJsonObject(value: Prisma.JsonValue | null): value is Prisma.JsonObject {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function extractCandidateBaseSnapshot(
+  existing: Prisma.JsonValue | null
+): Prisma.InputJsonObject {
+  let current: Prisma.JsonValue | null = existing;
+  const base: Record<string, Prisma.InputJsonValue> = {};
+
+  while (isJsonObject(current)) {
+    if (base.catalystEvent === undefined && current.catalystEvent !== undefined) {
+      base.catalystEvent = current.catalystEvent as Prisma.InputJsonValue;
+    }
+
+    if (base.catalystImpact === undefined && current.catalystImpact !== undefined) {
+      base.catalystImpact = current.catalystImpact as Prisma.InputJsonValue;
+    }
+
+    if (base.catalystEvent !== undefined && base.catalystImpact !== undefined) {
+      break;
+    }
+
+    current = current.previous ?? null;
+  }
+
+  return base as Prisma.InputJsonObject;
+}
+
 function buildRawSnapshot(
   existing: Prisma.JsonValue | null,
   snapshot: PriceConfirmationSnapshot,
   scores: PriceConfirmationScores
 ): Prisma.InputJsonValue {
   return {
-    previous: existing ?? null,
-    priceConfirmation: {
+    ...extractCandidateBaseSnapshot(existing),
+    latestPriceConfirmation: {
       observedAt: snapshot.observedAt.toISOString(),
       symbol: snapshot.symbol,
       lastPrice: snapshot.lastPrice,
