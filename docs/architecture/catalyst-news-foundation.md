@@ -16,6 +16,11 @@ Phase 4 adds backend-only manual price and volume confirmation for existing
 creation, trade creation, broker/order behavior, admin UI pages, or automatic
 buying.
 
+Phase 5 adds backend-to-n8n scanner handoff plumbing for review-only momentum
+candidate payloads. It does not add signal creation, trade creation,
+broker/order behavior, automatic webhook pushing, admin UI pages, or automatic
+buying.
+
 ## Purpose
 
 The catalyst foundation gives the backend a durable place to store market news
@@ -116,6 +121,21 @@ history:
 `lastEvaluatedAt`, `state`, `blockedReason`, and `rawSnapshot` from the most
 recent manual confirmation run while preserving detailed check history in
 `MomentumCandidatePriceCheck`.
+
+`MomentumScannerHandoff` stores scanner-review handoff audit records:
+
+- linked `MomentumCandidate`
+- symbol
+- handoff status
+- payload version and prepared payload
+- prepared, sent, acknowledged, and failed timestamps
+- attempts and last error
+- idempotency key
+- metadata
+
+The handoff table is the audit source for whether a candidate has been prepared
+or sent to a scanner-review workflow. `MomentumCandidate` remains the candidate
+summary table and is not used as the delivery ledger.
 
 ## Phase 2 Massive News Worker
 
@@ -386,6 +406,164 @@ lookbackMinutes
 
 The price-check history endpoint returns recent checks newest first.
 
+## Phase 5 Momentum Scanner Handoffs
+
+Phase 5 prepares `MomentumCandidate` rows for n8n scanner review after catalyst
+generation and price confirmation have already marked a candidate
+`ENTRY_READY`.
+
+The backend exposes a protected handoff queue. n8n pulls scanner-ready payloads
+from the backend and can post back delivery state. The backend does not push to
+n8n automatically in Phase 5. Pull-based handoff keeps retry ownership,
+idempotency, and workflow scheduling in n8n while preserving a durable backend
+audit trail.
+
+### Phase 5 Readiness
+
+Default settings:
+
+```text
+MOMENTUM_HANDOFF_MIN_SCORE=80
+MOMENTUM_HANDOFF_MAX_CANDIDATES=10
+MOMENTUM_HANDOFF_PAYLOAD_VERSION=v1
+```
+
+A candidate is eligible when:
+
+- `state = ENTRY_READY`
+- `expiresAt` is null or in the future
+- `totalScore` is at or above the configured handoff score threshold
+- `blockedReason` is null
+- no active `PENDING`, `SENT`, or `ACKNOWLEDGED` scanner handoff already exists
+  for the candidate unless `force = true`
+
+Batch preparation is bounded by `MOMENTUM_HANDOFF_MAX_CANDIDATES` unless a
+smaller request limit is supplied.
+
+### Phase 5 Payload
+
+Payloads use version `v1` by default and are shaped for n8n scanner review:
+
+```text
+type = momentum_candidate.ready
+version = v1
+idempotencyKey = momentum-candidate:<candidateId>:v1
+```
+
+The payload includes:
+
+- candidate id, symbol, state, scores, reason, and timestamps
+- catalyst event and ticker-impact summary when available
+- latest price confirmation check by observed and created timestamp
+- review guidance with `recommendedAction = REVIEW_ONLY`
+- `tradingAllowed = false`
+
+The payload intentionally excludes:
+
+- broker credentials
+- secrets
+- raw vendor payload blobs
+- raw model output blobs
+- signal, order, or broker objects
+
+### Phase 5 Idempotency
+
+Handoff creation is idempotent by:
+
+```text
+momentum-candidate:<candidateId>:<payloadVersion>
+```
+
+Re-running prepare for the same candidate and payload version returns the
+existing handoff. When `force = true`, the same handoff row is refreshed back to
+`PENDING`; a duplicate row is not created for the same idempotency key.
+
+### Phase 5 Statuses
+
+`MomentumScannerHandoffStatus` values:
+
+```text
+PENDING
+SENT
+ACKNOWLEDGED
+FAILED
+CANCELLED
+```
+
+Status behavior:
+
+- `PENDING` means the payload is prepared and ready for n8n review pickup.
+- `SENT` means n8n or an operator marked the payload as received/sent onward.
+- `ACKNOWLEDGED` means the scanner-review workflow accepted the handoff.
+- `FAILED` stores `failedAt` and `lastError` for delivery or workflow failure.
+- `CANCELLED` is reserved for future operator cancellation behavior.
+
+Marking a handoff sent increments `attempts` and sets `sentAt`.
+
+### Phase 5 Admin Endpoints
+
+Protected admin endpoints:
+
+```http
+GET /api/momentum-scanner/handoffs
+GET /api/momentum-scanner/handoffs/:id
+POST /api/momentum-scanner/handoffs/prepare
+POST /api/momentum-scanner/handoffs/:id/mark-sent
+POST /api/momentum-scanner/handoffs/:id/acknowledge
+POST /api/momentum-scanner/handoffs/:id/mark-failed
+```
+
+`POST /api/momentum-scanner/handoffs/prepare` prepares either a bounded batch or
+one specific candidate when `candidateId` is supplied.
+
+Optional prepare fields:
+
+```text
+candidateId
+maxCandidates
+minScore
+force
+now
+payloadVersion
+```
+
+The prepare response includes:
+
+```text
+prepared
+skipped
+handoffs
+skippedReasons
+```
+
+List filters:
+
+```text
+candidateId
+symbol
+status
+limit
+```
+
+`mark-sent`, `acknowledge`, and `mark-failed` accept optional `now` and
+`metadata`. `mark-failed` requires an `error` message.
+
+### Phase 5 Explicit Deferrals
+
+Phase 5 remains review-only. It does not add:
+
+- n8n workflow import or configuration
+- backend outbound webhook pushing
+- Slack alerts directly from the backend
+- signal creation
+- trading subscriptions
+- order intents
+- broker orders
+- Alpaca calls
+- paper or live trading behavior
+- automatic buying
+- admin UI pages
+
 ## Future Sources
 
 The schema is source-flexible. Planned or reserved sources include:
@@ -401,14 +579,14 @@ dedupe.
 
 ## Deferred Work
 
-The following remain intentionally out of scope after Phase 4:
+The following remain intentionally out of scope after Phase 5:
 
-- n8n webhook triggers
+- n8n workflow import and configuration
+- automatic backend-to-n8n webhook pushing
 - Slack alerts
 - admin UI pages
 - final momentum scoring
 - final relative-volume model
 - final regular-hours entry timing model
-- automated candidate handoff
 - signal creation
 - trading decisions or order behavior
