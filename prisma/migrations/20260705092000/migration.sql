@@ -1,0 +1,2 @@
+-- RenameIndex
+ALTER INDEX "MomentumCandidatePriceCheck_confirmed_totalConfirmationScore_id" RENAME TO "MomentumCandidatePriceCheck_confirmed_totalConfirmationScor_idx";
