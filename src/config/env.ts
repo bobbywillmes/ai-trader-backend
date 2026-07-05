@@ -116,6 +116,19 @@ const envSchema = z.object({
     .number()
     .positive()
     .default(20),
+  MOMENTUM_HANDOFF_MIN_SCORE: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(80),
+  MOMENTUM_HANDOFF_MAX_CANDIDATES: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(10),
+  MOMENTUM_HANDOFF_PAYLOAD_VERSION: z.string().min(1).default('v1'),
 
   AI_TRADER_SIGNAL_API_KEY: z
     .string()
