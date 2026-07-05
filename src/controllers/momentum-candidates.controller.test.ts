@@ -39,7 +39,7 @@ import {
 function response() {
   const res = {
     status: vi.fn(),
-    json: vi.fn(),
+    json: vi.fn((payload: unknown) => JSON.stringify(payload)),
   };
 
   res.status.mockReturnValue(res);
@@ -62,9 +62,23 @@ describe('momentum candidates controller', () => {
     mocks.confirmCandidatePrice.mockResolvedValue({
       candidate: {
         id: 'candidate-1',
+        rawSnapshot: {
+          priceConfirmation: {
+            dayVolume: 1_234_567n,
+            recentVolume: 12_345n,
+          },
+        },
       },
       priceCheck: {
         id: 'price-check-1',
+        dayVolume: 1_234_567n,
+        recentVolume: 12_345n,
+        rawPayload: {
+          nestedVolume: 500n,
+        },
+        metadata: {
+          nestedVolume: 600n,
+        },
       },
     });
     mocks.confirmActiveCandidates.mockResolvedValue({
@@ -74,10 +88,43 @@ describe('momentum candidates controller', () => {
       blocked: 0,
       skipped: 0,
       errors: [],
+      results: [
+        {
+          skipped: false,
+          candidate: {
+            id: 'candidate-1',
+            rawSnapshot: {
+              priceConfirmation: {
+                dayVolume: 1_234_567n,
+                recentVolume: 12_345n,
+              },
+            },
+          },
+          priceCheck: {
+            id: 'price-check-1',
+            dayVolume: 1_234_567n,
+            recentVolume: 12_345n,
+            rawPayload: {
+              nestedVolume: 500n,
+            },
+            metadata: {
+              nestedVolume: 600n,
+            },
+          },
+        },
+      ],
     });
     mocks.listMomentumCandidatePriceChecks.mockResolvedValue([
       {
         id: 'price-check-1',
+        dayVolume: 1_234_567n,
+        recentVolume: null,
+        rawPayload: {
+          nestedVolume: 500n,
+        },
+        metadata: {
+          nestedVolume: 600n,
+        },
       },
     ]);
   });
@@ -254,9 +301,23 @@ describe('momentum candidates controller', () => {
     expect(res.json).toHaveBeenCalledWith({
       candidate: {
         id: 'candidate-1',
+        rawSnapshot: {
+          priceConfirmation: {
+            dayVolume: '1234567',
+            recentVolume: '12345',
+          },
+        },
       },
       priceCheck: {
         id: 'price-check-1',
+        dayVolume: '1234567',
+        recentVolume: '12345',
+        rawPayload: {
+          nestedVolume: '500',
+        },
+        metadata: {
+          nestedVolume: '600',
+        },
       },
     });
     expect(next).not.toHaveBeenCalled();
@@ -293,6 +354,31 @@ describe('momentum candidates controller', () => {
       blocked: 0,
       skipped: 0,
       errors: [],
+      results: [
+        {
+          skipped: false,
+          candidate: {
+            id: 'candidate-1',
+            rawSnapshot: {
+              priceConfirmation: {
+                dayVolume: '1234567',
+                recentVolume: '12345',
+              },
+            },
+          },
+          priceCheck: {
+            id: 'price-check-1',
+            dayVolume: '1234567',
+            recentVolume: '12345',
+            rawPayload: {
+              nestedVolume: '500',
+            },
+            metadata: {
+              nestedVolume: '600',
+            },
+          },
+        },
+      ],
     });
     expect(next).not.toHaveBeenCalled();
   });
@@ -324,6 +410,14 @@ describe('momentum candidates controller', () => {
     expect(res.json).toHaveBeenCalledWith([
       {
         id: 'price-check-1',
+        dayVolume: '1234567',
+        recentVolume: null,
+        rawPayload: {
+          nestedVolume: '500',
+        },
+        metadata: {
+          nestedVolume: '600',
+        },
       },
     ]);
     expect(next).not.toHaveBeenCalled();

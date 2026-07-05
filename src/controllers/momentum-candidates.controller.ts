@@ -17,6 +17,10 @@ import {
   type ConfirmActiveCandidatesOptions,
   type ConfirmCandidatePriceOptions,
 } from '../services/momentum-price-confirmation.service.js';
+import {
+  serializeMomentumCandidatePriceCheck,
+  serializeMomentumPriceConfirmationResponse,
+} from '../serializers/momentum-candidate-price-check.serializer.js';
 import { isObject } from '../utils/type-check.js';
 
 function getQueryString(value: unknown) {
@@ -241,11 +245,16 @@ export async function confirmMomentumCandidatePriceController(
       throw new HttpError(400, 'Momentum price confirmation body must be an object.');
     }
 
+    const result = await confirmCandidatePrice(
+      getCandidateIdParam(req),
+      parsePriceConfirmationOptions(req.body)
+    );
+
     res.status(200).json(
-      await confirmCandidatePrice(
-        getCandidateIdParam(req),
-        parsePriceConfirmationOptions(req.body)
-      )
+      serializeMomentumPriceConfirmationResponse({
+        ...result,
+        priceCheck: serializeMomentumCandidatePriceCheck(result.priceCheck),
+      })
     );
   } catch (error) {
     next(error);
@@ -278,7 +287,17 @@ export async function confirmMomentumCandidatePricesController(
     }
     if (state !== undefined) options.state = state;
 
-    res.status(200).json(await confirmActiveCandidates(options));
+    const summary = await confirmActiveCandidates(options);
+
+    res.status(200).json(
+      serializeMomentumPriceConfirmationResponse({
+        ...summary,
+        results: summary.results.map((result) => ({
+          ...result,
+          priceCheck: serializeMomentumCandidatePriceCheck(result.priceCheck),
+        })),
+      })
+    );
   } catch (error) {
     next(error);
   }
@@ -295,11 +314,13 @@ export async function listMomentumCandidatePriceChecksController(
 
     if (limit !== undefined) options.limit = limit;
 
+    const priceChecks = await listMomentumCandidatePriceChecks(
+      getCandidateIdParam(req),
+      options
+    );
+
     res.status(200).json(
-      await listMomentumCandidatePriceChecks(
-        getCandidateIdParam(req),
-        options
-      )
+      priceChecks.map(serializeMomentumCandidatePriceCheck)
     );
   } catch (error) {
     next(error);
