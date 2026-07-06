@@ -90,11 +90,37 @@ export const ROLE_PERMISSIONS: Record<AdminRole, AdminPermission[]> = {
 };
 
 /**
+ * Check if a role grants owner-level access.
+ * Handles both current "owner" role and legacy "admin" role for backward compatibility.
+ */
+export function isOwnerRole(role: AdminRole | string): boolean {
+  return role === 'owner' || role === 'admin';
+}
+
+/**
+ * Normalize a role string to the current vocabulary.
+ * Legacy "admin" role is normalized to "owner" to preserve access levels.
+ */
+export function normalizeAdminRoleForAccess(role: AdminRole | string): AdminRole | string {
+  if (role === 'admin') {
+    return AdminRole.OWNER;
+  }
+  return role;
+}
+
+/**
  * Get all permissions for a given role.
+ * Legacy "admin" role receives owner-level permissions.
  */
 export function getPermissionsForRole(role: AdminRole | string): AdminPermission[] {
-  const validRole = Object.values(AdminRole).includes(role as AdminRole)
-    ? (role as AdminRole)
+  // Legacy "admin" role is treated as owner
+  let normalizedRole = role;
+  if (role === 'admin') {
+    normalizedRole = AdminRole.OWNER;
+  }
+
+  const validRole = Object.values(AdminRole).includes(normalizedRole as AdminRole)
+    ? (normalizedRole as AdminRole)
     : AdminRole.ACCOUNT_VIEWER;
 
   return ROLE_PERMISSIONS[validRole] || [];
