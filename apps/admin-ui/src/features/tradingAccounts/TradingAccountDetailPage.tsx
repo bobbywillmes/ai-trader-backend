@@ -19,6 +19,7 @@ import {
   Stack,
   Switch,
   Table,
+  Tabs,
   Text,
   Textarea,
   TextInput,
@@ -26,7 +27,7 @@ import {
 } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   CartesianGrid,
   Line,
@@ -147,6 +148,35 @@ type AccountSubscriptionDraft = {
 
 type AccountSubscriptionStatusFilter = "all" | "active" | "disabled";
 type AccountSubscriptionSizingFilter = "all" | PositionSizingType;
+type TradingAccountDetailTab =
+  | "overview"
+  | "positions"
+  | "orders"
+  | "subscriptions"
+  | "risk-health"
+  | "activity";
+
+const tradingAccountDetailTabs: {
+  value: TradingAccountDetailTab;
+  label: string;
+}[] = [
+  { value: "overview", label: "Overview" },
+  { value: "positions", label: "Positions" },
+  { value: "orders", label: "Orders" },
+  { value: "subscriptions", label: "Subscriptions" },
+  { value: "risk-health", label: "Risk Health" },
+  { value: "activity", label: "Activity" },
+];
+
+const tradingAccountDetailTabValues: ReadonlySet<string> = new Set(
+  tradingAccountDetailTabs.map((tab) => tab.value)
+);
+
+function isTradingAccountDetailTab(
+  value: string | null
+): value is TradingAccountDetailTab {
+  return value !== null && tradingAccountDetailTabValues.has(value);
+}
 
 const priceHistoryRangeOptions: {
   value: AccountSubscriptionPriceHistoryRange;
@@ -3669,11 +3699,34 @@ function CredentialManagementCard({
   );
 }
 
+function AccountTabPlaceholder({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <Card withBorder radius="md" p="lg">
+      <Stack gap="xs">
+        <Title order={3}>{title}</Title>
+        <Text size="sm" c="dimmed">
+          {description}
+        </Text>
+      </Stack>
+    </Card>
+  );
+}
+
 export function TradingAccountDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [token] = useState<string | null>(() => getAdminToken());
   const accountId = id ? Number(id) : undefined;
+  const requestedTab = searchParams.get("tab");
+  const activeTab: TradingAccountDetailTab =
+    isTradingAccountDetailTab(requestedTab) ? requestedTab : "overview";
   const validAccountId =
     accountId !== undefined && Number.isInteger(accountId) && accountId > 0
       ? accountId
@@ -3683,6 +3736,22 @@ export function TradingAccountDetailPage() {
     token
   );
   const account = data?.account;
+
+  function setActiveTab(value: string | null) {
+    if (!isTradingAccountDetailTab(value)) return;
+
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+
+      if (value === "overview") {
+        next.delete("tab");
+      } else {
+        next.set("tab", value);
+      }
+
+      return next;
+    });
+  }
 
   if (!validAccountId) {
     return (
@@ -3740,21 +3809,68 @@ export function TradingAccountDetailPage() {
       )}
 
       {account && (
-        <>
-          <AccountSummaryCard account={account} />
-          <BrokerSnapshotCard account={account} />
-          <CredentialStatusCard account={account} />
-          <SafetySettingsCard
-            key={`settings-${account.id}-${account.updatedAt}`}
-            account={account}
-            token={token}
-          />
-          <AccountRiskControlsCard account={account} token={token} />
-          <TradingAccountHealthCard account={account} token={token} />
-          <SizingAndAllocationsSection account={account} token={token} />
-          <CredentialManagementCard account={account} token={token} />
-          <NotesCard account={account} />
-        </>
+        <Tabs value={activeTab} onChange={setActiveTab} keepMounted={false}>
+          <Tabs.List>
+            {tradingAccountDetailTabs.map((tab) => (
+              <Tabs.Tab key={tab.value} value={tab.value}>
+                {tab.label}
+              </Tabs.Tab>
+            ))}
+          </Tabs.List>
+
+          <Tabs.Panel value="overview" pt="lg">
+            <Stack gap="lg">
+              <AccountSummaryCard account={account} />
+              <BrokerSnapshotCard account={account} />
+              <CredentialStatusCard account={account} />
+              <SafetySettingsCard
+                key={`settings-${account.id}-${account.updatedAt}`}
+                account={account}
+                token={token}
+              />
+              <AccountRiskControlsCard account={account} token={token} />
+              <TradingAccountHealthCard account={account} token={token} />
+              <SizingAndAllocationsSection account={account} token={token} />
+              <CredentialManagementCard account={account} token={token} />
+              <NotesCard account={account} />
+            </Stack>
+          </Tabs.Panel>
+
+          <Tabs.Panel value="positions" pt="lg">
+            <AccountTabPlaceholder
+              title="Positions"
+              description="Account-scoped positions will live here once this tab is wired to an existing account-safe data source."
+            />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="orders" pt="lg">
+            <AccountTabPlaceholder
+              title="Orders"
+              description="Account-scoped orders will live here once this tab is wired to an existing account-safe data source."
+            />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="subscriptions" pt="lg">
+            <AccountTabPlaceholder
+              title="Subscriptions"
+              description="Account subscription management will move here from the overview in a follow-up commit."
+            />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="risk-health" pt="lg">
+            <AccountTabPlaceholder
+              title="Risk Health"
+              description="Account readiness diagnostics and risk controls will move here from the overview in a follow-up commit."
+            />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="activity" pt="lg">
+            <AccountTabPlaceholder
+              title="Activity"
+              description="Account-scoped activity will live here once this tab is wired to an existing account-safe data source."
+            />
+          </Tabs.Panel>
+        </Tabs>
       )}
     </Stack>
   );
