@@ -1,14 +1,22 @@
 export type Subscription = {
   id: number;
   key: string;
+  name?: string;
   symbol: string;
   sizingType: string;
   sizingValue: number;
   enabled: boolean;
+  strategyId?: number | null;
+  strategy?: {
+    id: number;
+    key: string;
+    name?: string;
+  } | null;
   exitProfileId?: number | null;
   exitProfile?: {
     id: number;
     key: string;
+    name?: string;
   } | null;
 };
 
