@@ -1,14 +1,25 @@
 export type Subscription = {
   id: number;
   key: string;
+  name?: string;
   symbol: string;
+  broker?: string;
+  brokerMode?: string;
   sizingType: string;
   sizingValue: number;
   enabled: boolean;
+  tradingAccountId?: number | null;
+  strategyId?: number | null;
+  strategy?: {
+    id: number;
+    key: string;
+    name?: string;
+  } | null;
   exitProfileId?: number | null;
   exitProfile?: {
     id: number;
     key: string;
+    name?: string;
   } | null;
 };
 
