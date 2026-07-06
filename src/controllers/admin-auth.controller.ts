@@ -13,6 +13,7 @@ import {
   changeAdminPassword,
   verifyAdminPassword,
 } from '../services/admin-auth.service.js';
+import { getAdminAccessMetadata } from '../services/admin-access.service.js';
 import { HttpError } from '../errors/http-error.js';
 
 function readBearerToken(req: Request) {
@@ -79,11 +80,14 @@ export async function adminLoginController(
       ipAddress: req.ip ?? null,
     });
 
+    const accessMetadata = await getAdminAccessMetadata(adminUser.id);
+
     res.status(200).json({
       ok: true,
       token: rawToken,
       tokenType: 'Bearer',
       adminUser: serializeAdminUser(adminUser),
+      access: accessMetadata,
       session,
     });
   } catch (error) {
@@ -104,9 +108,12 @@ export async function adminMeController(
       throw new HttpError(401, 'Invalid or expired admin session.');
     }
 
+    const accessMetadata = await getAdminAccessMetadata(session.adminUser.id);
+
     res.status(200).json({
       ok: true,
       adminUser: serializeAdminUser(session.adminUser),
+      access: accessMetadata,
       session: {
         id: session.id,
         adminUserId: session.adminUserId,
