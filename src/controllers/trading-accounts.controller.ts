@@ -2,9 +2,11 @@ import type { NextFunction, Request, Response } from 'express';
 import { ZodError } from 'zod';
 
 import { HttpError } from '../errors/http-error.js';
+import { isOwnerRole } from '../types/admin-rbac.js';
 import {
   getTradingAccountForAdmin,
   listTradingAccountsForAdmin,
+  listTradingAccountsForAdminUser,
   updateTradingAccountForAdmin,
 } from '../services/trading-account.service.js';
 import {
@@ -95,7 +97,12 @@ export async function listTradingAccountsController(
   next: NextFunction
 ) {
   try {
-    const accounts = await listTradingAccountsForAdmin();
+    const adminUser = res.locals.adminUser;
+
+    const accounts = await listTradingAccountsForAdminUser({
+      adminUserId: adminUser.id,
+      isOwner: isOwnerRole(adminUser.role) || res.locals.isStaticAdminKey,
+    });
 
     res.status(200).json({ accounts });
   } catch (error) {
