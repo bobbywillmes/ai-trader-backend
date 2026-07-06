@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 
 import { getAdminSessionFromToken } from '../services/admin-auth.service.js';
+import { AdminRole } from '../types/admin-rbac.js';
 
 function readApiKey(req: Request) {
   return req.header('ai-trader-api-key');
@@ -75,8 +76,17 @@ export async function requireAdminAccess(
   const providedApiKey = readApiKey(req);
   const adminApiKey = process.env.AI_TRADER_ADMIN_API_KEY;
 
-  // Static admin API key still works for Postman / maintenance.
+  // Static admin API key: populate owner-equivalent context for backward compatibility with RBAC.
   if (providedApiKey && adminApiKey && providedApiKey === adminApiKey) {
+    res.locals.adminUser = {
+      id: -1, // synthetic id for static admin key
+      email: 'static-admin-key',
+      role: AdminRole.OWNER,
+      enabled: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    res.locals.isStaticAdminKey = true;
     next();
     return;
   }
