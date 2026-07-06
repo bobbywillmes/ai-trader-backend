@@ -8,7 +8,8 @@ import { AdminPermission } from '../types/admin-rbac.js';
 
 const router = Router();
 
-router.get('/', requirePermission(AdminPermission.TRADING_ACCOUNT_READ), positionsController);
+// Default account read requires owner access (no account-scoping)
+router.get('/', requireOwnerAccess, positionsController);
 // Close position on default account requires owner access (no account-scoping yet)
 router.delete('/:symbol', requireOwnerAccess, closePositionController);
 

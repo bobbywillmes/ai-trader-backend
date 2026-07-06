@@ -10,7 +10,8 @@ import { AdminPermission } from '../types/admin-rbac.js';
 
 const router = Router();
 
-router.get('/open', requirePermission(AdminPermission.TRADING_ACCOUNT_READ), openOrdersController);
+// Default account read requires owner access (no account-scoping)
+router.get('/open', requireOwnerAccess, openOrdersController);
 // Default account operations require owner access (no account-scoping yet)
 router.post('/', requireOwnerAccess, placeOrderController);
 router.delete('/', requireOwnerAccess, cancelAllOrdersController);
