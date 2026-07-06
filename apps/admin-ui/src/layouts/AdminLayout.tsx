@@ -15,43 +15,7 @@ import { useDisclosure, useMediaQuery } from "@mantine/hooks";
 import { Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { getAdminToken } from "../lib/api";
 import { useLogout, useMe } from "../features/auth/hooks";
-
-type NavGroup = {
-  label: string;
-  items: { to: string; label: string }[];
-};
-
-const navGroups: NavGroup[] = [
-  {
-    label: "Live Data",
-    items: [
-      { to: "/positions/open", label: "Open Positions" },
-      { to: "/orders/open", label: "Open Orders" },
-    ],
-  },
-  {
-    label: "Trading",
-    items: [
-      { to: "/subscriptions", label: "Subscriptions" },
-      { to: "/exit-profiles", label: "Exit Profiles" },
-      { to: "/securities", label: "Securities" },
-      { to: "/trading-accounts", label: "Trading Accounts" },
-      { to: "/trade-history", label: "Trade History" },
-      { to: "/entry-decisions", label: "Entry Decisions" },
-      { to: "/momentum-scanner", label: "Momentum Scanner" },
-    ],
-  },
-  {
-    label: "System",
-    items: [
-      { to: "/reports", label: "Reports" },
-      { to: "/market-diary", label: "Market Diary" },
-      { to: "/system/events", label: "System Events" },
-      { to: "/system/reconciliation", label: "Reconciliation" },
-      { to: "/settings", label: "Settings" },
-    ],
-  },
-];
+import { adminNavGroups } from "../app/navigation";
 
 export function AdminLayout() {
   const token = getAdminToken();
@@ -113,7 +77,7 @@ export function AdminLayout() {
 
         <AppShell.Section grow component={ScrollArea} p="xs">
           <AppNavLink to="/dashboard" label="Dashboard" onNavigate={close} />
-          {navGroups.map((group) => (
+          {adminNavGroups.map((group) => (
             <div key={group.label}>
               <Text
                 size="xs"
