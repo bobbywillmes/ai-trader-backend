@@ -1,13 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getMe, login, logout, changePassword, verifyPassword } from "./api";
 import { setAdminToken, clearAdminToken } from "../../lib/api";
+import type { MeResponse, LoginResponse } from "./types";
 
 export const authKeys = {
   me: ["me"] as const,
 };
 
 export function useMe(token: string | null) {
-  return useQuery({
+  return useQuery<MeResponse>({
     queryKey: authKeys.me,
     queryFn: () => getMe(token as string),
     enabled: Boolean(token),
@@ -19,12 +20,16 @@ export function useMe(token: string | null) {
 export function useLogin() {
   const queryClient = useQueryClient();
 
-  return useMutation({
+  return useMutation<LoginResponse, Error, { email: string; password: string }>({
     mutationFn: ({ email, password }: { email: string; password: string }) =>
       login(email, password),
     onSuccess: (data) => {
       setAdminToken(data.token);
-      queryClient.setQueryData(authKeys.me, data);
+      queryClient.setQueryData(authKeys.me, {
+        ok: true,
+        adminUser: data.adminUser,
+        access: data.access,
+      } as MeResponse);
     },
   });
 }

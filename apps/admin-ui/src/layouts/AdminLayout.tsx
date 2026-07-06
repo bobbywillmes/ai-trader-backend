@@ -15,15 +15,16 @@ import { useDisclosure, useMediaQuery } from "@mantine/hooks";
 import { Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { getAdminToken } from "../lib/api";
 import { useLogout, useMe } from "../features/auth/hooks";
+import { AuthProvider } from "../features/auth/AuthContext";
+import { useAuth } from "../features/auth/useAuth";
 import { adminNavGroups } from "../app/navigation";
+import { filterNavigationGroups } from "../app/navigationUtils";
 
 export function AdminLayout() {
   const token = getAdminToken();
-  const { isLoading, isError } = useMe(token);
+  const { isLoading, isError, data: meData } = useMe(token);
   const navigate = useNavigate();
   const logoutMutation = useLogout(token);
-  const [opened, { toggle, close }] = useDisclosure();
-  const isMobile = useMediaQuery("(max-width: 48em)") ?? false;
 
   if (!token) return <Navigate to="/login" replace />;
 
@@ -35,11 +36,42 @@ export function AdminLayout() {
     );
   }
 
-  if (isError) return <Navigate to="/login" replace />;
+  if (isError || !meData) return <Navigate to="/login" replace />;
 
   async function handleLogout() {
     await logoutMutation.mutateAsync();
     navigate("/login", { replace: true });
+  }
+
+  return (
+    <AuthProvider
+      adminUser={meData.adminUser}
+      access={meData.access}
+      isLoading={isLoading}
+    >
+      <AdminLayoutContent onLogout={handleLogout} />
+    </AuthProvider>
+  );
+}
+
+function AdminLayoutContent({
+  onLogout,
+}: {
+  onLogout: () => Promise<void>;
+}) {
+  const { access } = useAuth();
+  const logoutMutation = useLogout(getAdminToken());
+  const [opened, { toggle, close }] = useDisclosure();
+  const isMobile = useMediaQuery("(max-width: 48em)") ?? false;
+
+  const filteredNavGroups = filterNavigationGroups(
+    adminNavGroups,
+    access?.role,
+    access?.permissions
+  );
+
+  async function handleLogout() {
+    await onLogout();
   }
 
   return (
@@ -76,7 +108,7 @@ export function AdminLayout() {
         <Divider />
 
         <AppShell.Section grow component={ScrollArea} p="xs">
-          {adminNavGroups.map((group) => (
+          {filteredNavGroups.map((group) => (
             <div key={group.label}>
               <Text
                 size="xs"
