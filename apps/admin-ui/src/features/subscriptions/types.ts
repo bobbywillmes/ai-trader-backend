@@ -3,6 +3,8 @@ export type Subscription = {
   key: string;
   name?: string;
   symbol: string;
+  broker?: string;
+  brokerMode?: string;
   sizingType: string;
   sizingValue: number;
   enabled: boolean;

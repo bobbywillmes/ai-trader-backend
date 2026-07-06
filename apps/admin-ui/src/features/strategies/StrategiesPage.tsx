@@ -1,8 +1,12 @@
 import { useMemo, useState } from "react";
 import {
   Alert,
+  Anchor,
   Badge,
+  Button,
   Card,
+  Divider,
+  Drawer,
   Group,
   Loader,
   ScrollArea,
@@ -14,6 +18,7 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
+import { IconEye } from "@tabler/icons-react";
 import { getAdminToken } from "../../lib/api";
 import { useSubscriptions } from "../subscriptions/hooks";
 import type { Subscription } from "../subscriptions/types";
@@ -29,6 +34,12 @@ type StrategyRow = {
 };
 
 type StatusFilter = "all" | "enabled" | "disabled";
+
+type ExitProfileUsage = {
+  label: string;
+  subscriptionCount: number;
+  symbols: string[];
+};
 
 function getAllowedSymbols(value: unknown) {
   if (!Array.isArray(value)) {
@@ -85,6 +96,45 @@ function formatDateTime(value: string | null | undefined) {
   }).format(new Date(value));
 }
 
+function getSubscriptionExitProfileLabel(subscription: Subscription) {
+  return (
+    subscription.exitProfile?.name ??
+    subscription.exitProfile?.key ??
+    (subscription.exitProfileId
+      ? `Exit profile ${subscription.exitProfileId}`
+      : "Unassigned")
+  );
+}
+
+function getExitProfileUsage(subscriptions: Subscription[]): ExitProfileUsage[] {
+  const usage = new Map<string, { subscriptionIds: Set<number>; symbols: Set<string> }>();
+
+  for (const subscription of subscriptions) {
+    const label = getSubscriptionExitProfileLabel(subscription);
+    const item =
+      usage.get(label) ??
+      {
+        subscriptionIds: new Set<number>(),
+        symbols: new Set<string>(),
+      };
+
+    item.subscriptionIds.add(subscription.id);
+    if (subscription.symbol) {
+      item.symbols.add(subscription.symbol);
+    }
+
+    usage.set(label, item);
+  }
+
+  return Array.from(usage.entries())
+    .map(([label, item]) => ({
+      label,
+      subscriptionCount: item.subscriptionIds.size,
+      symbols: Array.from(item.symbols).sort((a, b) => a.localeCompare(b)),
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
 function SummaryCard({
   label,
   value,
@@ -109,10 +159,197 @@ function SummaryCard({
   );
 }
 
+function StrategyUsageDrawer({
+  row,
+  opened,
+  onClose,
+}: {
+  row: StrategyRow | null;
+  opened: boolean;
+  onClose: () => void;
+}) {
+  const exitProfileUsage = useMemo(
+    () => getExitProfileUsage(row?.subscriptions ?? []),
+    [row]
+  );
+
+  return (
+    <Drawer
+      opened={opened}
+      onClose={onClose}
+      position="right"
+      size="xl"
+      title={row ? row.strategy.name : "Strategy details"}
+      padding="lg"
+    >
+      {row && (
+        <Stack gap="lg">
+          <Stack gap="xs">
+            <Group gap="xs">
+              <Badge color={row.strategy.enabled ? "teal" : "gray"} variant="light">
+                {row.strategy.enabled ? "Enabled" : "Disabled"}
+              </Badge>
+              <Badge color="cyan" variant="light">Read only</Badge>
+            </Group>
+            <Text size="sm" ff="monospace">{row.strategy.key}</Text>
+            <Text size="sm" c={row.strategy.description ? undefined : "dimmed"}>
+              {row.strategy.description ?? "No strategy description is configured."}
+            </Text>
+          </Stack>
+
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+            <Card withBorder radius="md" p="md">
+              <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Subscriptions</Text>
+              <Text size="xl" fw={700}>{row.subscriptions.length.toLocaleString()}</Text>
+            </Card>
+            <Card withBorder radius="md" p="md">
+              <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Symbols</Text>
+              <Text size="xl" fw={700}>{row.symbols.length.toLocaleString()}</Text>
+            </Card>
+            <Card withBorder radius="md" p="md">
+              <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Exit profiles</Text>
+              <Text size="xl" fw={700}>{row.exitProfiles.length.toLocaleString()}</Text>
+            </Card>
+            <Card withBorder radius="md" p="md">
+              <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Updated</Text>
+              <Text size="sm" fw={600}>{formatDateTime(row.strategy.updatedAt)}</Text>
+            </Card>
+          </SimpleGrid>
+
+          <Divider />
+
+          <Stack gap="sm">
+            <Title order={3} size="h5">Linked subscriptions</Title>
+            {row.subscriptions.length === 0 ? (
+              <Text size="sm" c="dimmed">
+                No loaded subscriptions currently use this strategy.
+              </Text>
+            ) : (
+              <ScrollArea>
+                <Table striped highlightOnHover style={{ minWidth: 720 }}>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Subscription</Table.Th>
+                      <Table.Th>Symbol</Table.Th>
+                      <Table.Th>Exit profile</Table.Th>
+                      <Table.Th>Status</Table.Th>
+                      <Table.Th>Trading account</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {row.subscriptions.map((subscription) => (
+                      <Table.Tr key={subscription.id}>
+                        <Table.Td>
+                          <Stack gap={2}>
+                            <Text fw={600}>{subscription.name ?? subscription.key}</Text>
+                            <Text size="xs" c="dimmed" ff="monospace">
+                              {subscription.key}
+                            </Text>
+                          </Stack>
+                        </Table.Td>
+                        <Table.Td>{subscription.symbol}</Table.Td>
+                        <Table.Td>{getSubscriptionExitProfileLabel(subscription)}</Table.Td>
+                        <Table.Td>
+                          <Badge
+                            size="sm"
+                            color={subscription.enabled ? "teal" : "gray"}
+                            variant="light"
+                          >
+                            {subscription.enabled ? "Enabled" : "Disabled"}
+                          </Badge>
+                        </Table.Td>
+                        <Table.Td>
+                          {typeof subscription.tradingAccountId === "number" ? (
+                            <Anchor
+                              size="sm"
+                              href={`/trading-accounts/${subscription.tradingAccountId}?tab=subscriptions`}
+                            >
+                              Account {subscription.tradingAccountId}
+                            </Anchor>
+                          ) : (
+                            <Text size="sm" c="dimmed">Unavailable</Text>
+                          )}
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+            )}
+          </Stack>
+
+          <Divider />
+
+          <Stack gap="sm">
+            <Title order={3} size="h5">Exit profiles paired with this strategy</Title>
+            {exitProfileUsage.length === 0 ? (
+              <Text size="sm" c="dimmed">
+                No exit profile usage is available from loaded subscriptions.
+              </Text>
+            ) : (
+              <Table striped highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Exit profile</Table.Th>
+                    <Table.Th>Subscriptions</Table.Th>
+                    <Table.Th>Symbols</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {exitProfileUsage.map((usage) => (
+                    <Table.Tr key={usage.label}>
+                      <Table.Td>{usage.label}</Table.Td>
+                      <Table.Td>{usage.subscriptionCount.toLocaleString()}</Table.Td>
+                      <Table.Td>{formatList(usage.symbols)}</Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            )}
+          </Stack>
+
+          <Divider />
+
+          <Stack gap="sm">
+            <Title order={3} size="h5">Trading accounts using this strategy</Title>
+            {row.tradingAccountIds.length === 0 ? (
+              <Text size="sm" c="dimmed">
+                Trading account usage is not available from the loaded subscription data.
+              </Text>
+            ) : (
+              <Group gap="xs">
+                {row.tradingAccountIds.map((id) => (
+                  <Anchor key={id} href={`/trading-accounts/${id}?tab=subscriptions`}>
+                    <Badge color="blue" variant="light">Account {id}</Badge>
+                  </Anchor>
+                ))}
+              </Group>
+            )}
+          </Stack>
+
+          <Divider />
+
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+            <div>
+              <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Created</Text>
+              <Text size="sm">{formatDateTime(row.strategy.createdAt)}</Text>
+            </div>
+            <div>
+              <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Updated</Text>
+              <Text size="sm">{formatDateTime(row.strategy.updatedAt)}</Text>
+            </div>
+          </SimpleGrid>
+        </Stack>
+      )}
+    </Drawer>
+  );
+}
+
 export function StrategiesPage() {
   const [token] = useState<string | null>(() => getAdminToken());
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [selectedStrategyId, setSelectedStrategyId] = useState<number | null>(null);
   const {
     data: strategies = [],
     isLoading: isLoadingStrategies,
@@ -227,6 +464,10 @@ export function StrategiesPage() {
   const isLoading = isLoadingStrategies || isLoadingSubscriptions;
   const isError = isStrategiesError || isSubscriptionsError;
   const error = strategiesError ?? subscriptionsError;
+  const selectedRow =
+    selectedStrategyId === null
+      ? null
+      : rows.find((row) => row.strategy.id === selectedStrategyId) ?? null;
 
   return (
     <Stack gap="lg">
@@ -330,12 +571,13 @@ export function StrategiesPage() {
                       <Table.Th>Strategy Key</Table.Th>
                       <Table.Th>Status</Table.Th>
                       <Table.Th>Subscriptions</Table.Th>
-                      <Table.Th>Symbols</Table.Th>
-                      <Table.Th>Exit Profiles Used</Table.Th>
-                      <Table.Th>Updated At</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
+                  <Table.Th>Symbols</Table.Th>
+                  <Table.Th>Exit Profiles Used</Table.Th>
+                  <Table.Th>Updated At</Table.Th>
+                  <Table.Th />
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
                     {filteredRows.map(({ strategy, subscriptions: strategySubscriptions, symbols, exitProfiles }) => (
                       <Table.Tr key={strategy.id}>
                         <Table.Td>
@@ -370,6 +612,18 @@ export function StrategiesPage() {
                         <Table.Td>
                           <Text size="sm">{formatDateTime(strategy.updatedAt)}</Text>
                         </Table.Td>
+                        <Table.Td>
+                          <Group justify="flex-end">
+                            <Button
+                              size="xs"
+                              variant="subtle"
+                              leftSection={<IconEye size={14} />}
+                              onClick={() => setSelectedStrategyId(strategy.id)}
+                            >
+                              Details
+                            </Button>
+                          </Group>
+                        </Table.Td>
                       </Table.Tr>
                     ))}
                   </Table.Tbody>
@@ -379,6 +633,12 @@ export function StrategiesPage() {
           </Stack>
         )}
       </Card>
+
+      <StrategyUsageDrawer
+        row={selectedRow}
+        opened={selectedRow !== null}
+        onClose={() => setSelectedStrategyId(null)}
+      />
     </Stack>
   );
 }
