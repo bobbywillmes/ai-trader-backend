@@ -3828,8 +3828,6 @@ export function TradingAccountDetailPage() {
                 account={account}
                 token={token}
               />
-              <AccountRiskControlsCard account={account} token={token} />
-              <TradingAccountHealthCard account={account} token={token} />
               <SizingAndAllocationsSection account={account} token={token} />
               <CredentialManagementCard account={account} token={token} />
               <NotesCard account={account} />
@@ -3858,10 +3856,10 @@ export function TradingAccountDetailPage() {
           </Tabs.Panel>
 
           <Tabs.Panel value="risk-health" pt="lg">
-            <AccountTabPlaceholder
-              title="Risk Health"
-              description="Account readiness diagnostics and risk controls will move here from the overview in a follow-up commit."
-            />
+            <Stack gap="lg">
+              <AccountRiskControlsCard account={account} token={token} />
+              <TradingAccountHealthCard account={account} token={token} />
+            </Stack>
           </Tabs.Panel>
 
           <Tabs.Panel value="activity" pt="lg">
