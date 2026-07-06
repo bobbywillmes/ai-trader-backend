@@ -12,6 +12,10 @@ export type AdminNavGroup = {
 
 export const adminNavGroups: AdminNavGroup[] = [
   {
+    label: "Dashboard",
+    items: [{ to: "/dashboard", label: "Dashboard" }],
+  },
+  {
     label: "Live Data",
     items: [
       { to: "/positions/open", label: "Open Positions" },
@@ -21,22 +25,37 @@ export const adminNavGroups: AdminNavGroup[] = [
   {
     label: "Trading",
     items: [
-      { to: "/subscriptions", label: "Subscriptions" },
-      { to: "/exit-profiles", label: "Exit Profiles" },
-      { to: "/securities", label: "Securities" },
       { to: "/trading-accounts", label: "Trading Accounts" },
-      { to: "/trade-history", label: "Trade History" },
       { to: "/entry-decisions", label: "Entry Decisions" },
       { to: "/momentum-scanner", label: "Momentum Scanner" },
+      { to: "/subscriptions", label: "Subscriptions" },
+    ],
+  },
+  {
+    label: "Risk & Safety",
+    items: [
+      { to: "/exit-profiles", label: "Exit Profiles" },
+      { to: "/system/reconciliation", label: "Reconciliation" },
+    ],
+  },
+  {
+    label: "Market Intelligence",
+    items: [
+      { to: "/market-diary", label: "Market Diary" },
+      { to: "/system/events", label: "System Events" },
+    ],
+  },
+  {
+    label: "Reports",
+    items: [
+      { to: "/reports", label: "Reports" },
+      { to: "/trade-history", label: "Trade History" },
     ],
   },
   {
     label: "System",
     items: [
-      { to: "/reports", label: "Reports" },
-      { to: "/market-diary", label: "Market Diary" },
-      { to: "/system/events", label: "System Events" },
-      { to: "/system/reconciliation", label: "Reconciliation" },
+      { to: "/securities", label: "Securities" },
       { to: "/settings", label: "Settings" },
     ],
   },

@@ -76,7 +76,6 @@ export function AdminLayout() {
         <Divider />
 
         <AppShell.Section grow component={ScrollArea} p="xs">
-          <AppNavLink to="/dashboard" label="Dashboard" onNavigate={close} />
           {adminNavGroups.map((group) => (
             <div key={group.label}>
               <Text
