@@ -6,6 +6,7 @@ export type Subscription = {
   sizingType: string;
   sizingValue: number;
   enabled: boolean;
+  tradingAccountId?: number | null;
   strategyId?: number | null;
   strategy?: {
     id: number;
