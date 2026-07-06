@@ -1533,7 +1533,7 @@ function SizingAndAllocationsSection({
       <div>
         <Title order={3}>Sizing & Allocations</Title>
         <Text size="sm" c="dimmed">
-          Account-specific capital buckets and subscription sizing settings.
+          Account-specific capital buckets used to group subscription budgets.
         </Text>
       </div>
 
@@ -1545,6 +1545,20 @@ function SizingAndAllocationsSection({
         assigned to that allocation.
       </Alert>
 
+      <AllocationManagementCard account={account} token={token} />
+    </Stack>
+  );
+}
+
+function AccountSubscriptionsSection({
+  account,
+  token,
+}: {
+  account: TradingAccount;
+  token: string | null;
+}) {
+  return (
+    <Stack gap="md">
       <Alert color="cyan" title="Market context note">
         Market context is used to preview share quantities and budget
         thresholds. Runtime entry sizing uses backend-owned market data when
@@ -1552,7 +1566,6 @@ function SizingAndAllocationsSection({
         for new entries assigned to that allocation.
       </Alert>
 
-      <AllocationManagementCard account={account} token={token} />
       <AccountSubscriptionsManagementCard account={account} token={token} />
     </Stack>
   );
@@ -3849,10 +3862,7 @@ export function TradingAccountDetailPage() {
           </Tabs.Panel>
 
           <Tabs.Panel value="subscriptions" pt="lg">
-            <AccountTabPlaceholder
-              title="Subscriptions"
-              description="Account subscription management will move here from the overview in a follow-up commit."
-            />
+            <AccountSubscriptionsSection account={account} token={token} />
           </Tabs.Panel>
 
           <Tabs.Panel value="risk-health" pt="lg">
