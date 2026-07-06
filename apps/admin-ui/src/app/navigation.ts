@@ -28,6 +28,7 @@ export const adminNavGroups: AdminNavGroup[] = [
       { to: "/trading-accounts", label: "Trading Accounts" },
       { to: "/entry-decisions", label: "Entry Decisions" },
       { to: "/momentum-scanner", label: "Momentum Scanner" },
+      { to: "/strategies", label: "Strategies" },
       { to: "/subscriptions", label: "Subscriptions" },
     ],
   },
