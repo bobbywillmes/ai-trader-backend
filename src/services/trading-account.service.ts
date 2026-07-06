@@ -209,6 +209,34 @@ export async function listTradingAccountsForAdmin() {
   );
 }
 
+export async function listTradingAccountsForAdminUser(args: {
+  adminUserId: number;
+  isOwner: boolean;
+}) {
+  let accounts = await listTradingAccountsForAdmin();
+
+  // Owner/static-admin: return all accounts
+  if (args.isOwner) {
+    return accounts;
+  }
+
+  // Non-owner: filter to only accounts they have explicit access to
+  const accessRecords = await prisma.tradingAccountAccess.findMany({
+    where: {
+      adminUserId: args.adminUserId,
+    },
+    select: {
+      tradingAccountId: true,
+    },
+  });
+
+  const allowedAccountIds = new Set(
+    accessRecords.map((r) => r.tradingAccountId)
+  );
+
+  return accounts.filter((account) => allowedAccountIds.has(account.id));
+}
+
 export async function getTradingAccountForAdmin(id: number) {
   const [account, positions] = await Promise.all([
     prisma.tradingAccount.findUnique({
