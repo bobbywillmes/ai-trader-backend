@@ -2,6 +2,8 @@ import type { NextFunction, Request, Response } from 'express';
 import { ZodError } from 'zod';
 
 import { HttpError } from '../errors/http-error.js';
+import { prisma } from '../db/prisma.js';
+import { isOwnerRole } from '../types/admin-rbac.js';
 import {
   getTradingAccountForAdmin,
   listTradingAccountsForAdmin,
@@ -95,7 +97,37 @@ export async function listTradingAccountsController(
   next: NextFunction
 ) {
   try {
-    const accounts = await listTradingAccountsForAdmin();
+    const adminUser = res.locals.adminUser;
+
+    // Owner and static admin key: return all accounts
+    if (isOwnerRole(adminUser.role) || res.locals.isStaticAdminKey) {
+      const accounts = await listTradingAccountsForAdmin();
+      res.status(200).json({ accounts });
+      return;
+    }
+
+    // Non-owner: return only accounts they have explicit access to
+    const accessRecords = await prisma.tradingAccountAccess.findMany({
+      where: {
+        adminUserId: adminUser.id,
+      },
+      select: {
+        tradingAccountId: true,
+      },
+    });
+
+    const allowedAccountIds = accessRecords.map(r => r.tradingAccountId);
+
+    if (allowedAccountIds.length === 0) {
+      res.status(200).json({ accounts: [] });
+      return;
+    }
+
+    // Get the filtered accounts
+    const allAccounts = await listTradingAccountsForAdmin();
+    const accounts = allAccounts.filter(account =>
+      allowedAccountIds.includes(account.id)
+    );
 
     res.status(200).json({ accounts });
   } catch (error) {
