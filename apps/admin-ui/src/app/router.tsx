@@ -20,6 +20,7 @@ import { EntryDecisionsPage } from "../features/entryDecisions/EntryDecisionsPag
 import { TradingAccountsPage } from "../features/tradingAccounts/TradingAccountsPage";
 import { TradingAccountDetailPage } from "../features/tradingAccounts/TradingAccountDetailPage";
 import { MomentumScannerPage } from "../features/momentumScanner/MomentumScannerPage";
+import { StrategiesPage } from "../features/strategies/StrategiesPage";
 
 export const router = createBrowserRouter([
   {
@@ -57,6 +58,10 @@ export const router = createBrowserRouter([
       {
         path: "momentum-scanner",
         element: <MomentumScannerPage />,
+      },
+      {
+        path: "strategies",
+        element: <StrategiesPage />,
       },
       {
         path: "trading-accounts",
