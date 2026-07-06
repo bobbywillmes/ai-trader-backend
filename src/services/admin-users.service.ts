@@ -183,9 +183,9 @@ export async function updateAdminUser(
   }
 
   // Validate role if provided
-  if (updates.role) {
-    const validRoles = ['owner', 'account_manager', 'account_viewer', 'admin'];
-    if (!validRoles.includes(updates.role)) {
+  if (updates.role !== undefined) {
+    const validRoles = ['owner', 'account_manager', 'account_viewer'];
+    if (!updates.role || !validRoles.includes(updates.role)) {
       throw new HttpError(400, `Invalid role: ${updates.role}`);
     }
   }
@@ -195,10 +195,11 @@ export async function updateAdminUser(
     throw new HttpError(400, 'Cannot change your own role');
   }
 
-  // Prevent removing the last owner
-  if (updates.role && updates.role !== 'owner' && user.role === 'owner') {
+  // Prevent removing the last owner (treat 'admin' as owner-equivalent)
+  const userIsOwnerLike = user.role === 'owner' || user.role === 'admin';
+  if (updates.role && updates.role !== 'owner' && userIsOwnerLike) {
     const ownerCount = await prisma.adminUser.count({
-      where: { role: 'owner' },
+      where: { OR: [{ role: 'owner' }, { role: 'admin' }] },
     });
 
     if (ownerCount === 1) {
@@ -206,10 +207,13 @@ export async function updateAdminUser(
     }
   }
 
-  // Prevent disabling the last owner
-  if (updates.enabled === false && user.role === 'owner') {
+  // Prevent disabling the last owner (treat 'admin' as owner-equivalent)
+  if (updates.enabled === false && userIsOwnerLike) {
     const activeOwnerCount = await prisma.adminUser.count({
-      where: { role: 'owner', enabled: true },
+      where: {
+        OR: [{ role: 'owner' }, { role: 'admin' }],
+        enabled: true,
+      },
     });
 
     if (activeOwnerCount === 1) {

@@ -45,15 +45,20 @@ export function AdminUserDetailDrawer({
     enabled: user?.enabled ?? true,
   });
 
-  const ownerCount = allUsers?.filter((u) => u.role === "owner").length ?? 0;
-  const isOnlyOwner = user?.role === "owner" && ownerCount === 1;
+  const ownerCount =
+    allUsers?.filter((u) => u.role === "owner" || u.role === "admin").length ??
+    0;
+  const userIsOwnerLike = user?.role === "owner" || user?.role === "admin";
+  const isOnlyOwner = userIsOwnerLike && ownerCount === 1;
   const roleDisabled = isEditing && isOnlyOwner;
 
   useEffect(() => {
     if (user) {
+      // Sync form with loaded user data
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setFormData({
         name: user.name || "",
-        role: user.role || "",
+        role: user.role === "admin" ? "owner" : user.role || "",
         enabled: user.enabled ?? true,
       });
     }
