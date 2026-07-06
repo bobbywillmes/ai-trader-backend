@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Drawer,
   Stack,
@@ -20,6 +20,7 @@ import {
   useAdminUser,
   useAdminUserTradingAccountAccess,
   useUpdateAdminUser,
+  useAdminUsers,
 } from "./hooks";
 
 interface AdminUserDetailDrawerProps {
@@ -34,6 +35,7 @@ export function AdminUserDetailDrawer({
   const { data: user, isLoading } = useAdminUser(userId);
   const { data: accesses, isLoading: accessesLoading } =
     useAdminUserTradingAccountAccess(userId);
+  const { data: allUsers } = useAdminUsers();
   const updateMutation = useUpdateAdminUser();
 
   const [isEditing, setIsEditing] = useState(false);
@@ -42,6 +44,20 @@ export function AdminUserDetailDrawer({
     role: user?.role || "",
     enabled: user?.enabled ?? true,
   });
+
+  const ownerCount = allUsers?.filter((u) => u.role === "owner").length ?? 0;
+  const isOnlyOwner = user?.role === "owner" && ownerCount === 1;
+  const roleDisabled = isEditing && isOnlyOwner;
+
+  useEffect(() => {
+    if (user) {
+      setFormData({
+        name: user.name || "",
+        role: user.role || "",
+        enabled: user.enabled ?? true,
+      });
+    }
+  }, [user]);
 
   const getRoleBadgeColor = (role: string) => {
     switch (role) {
@@ -73,6 +89,15 @@ export function AdminUserDetailDrawer({
 
   const handleSave = async () => {
     if (!user) return;
+
+    if (!formData.role) {
+      notifications.show({
+        title: "Validation Error",
+        message: "Role is required",
+        color: "red",
+      });
+      return;
+    }
 
     try {
       await updateMutation.mutateAsync({
@@ -112,10 +137,15 @@ export function AdminUserDetailDrawer({
     setIsEditing(false);
   };
 
+  const handleDrawerClose = () => {
+    setIsEditing(false);
+    onClose();
+  };
+
   return (
     <Drawer
       opened={userId !== null}
-      onClose={onClose}
+      onClose={handleDrawerClose}
       title={user?.email || "Loading..."}
       position="right"
       size="lg"
@@ -145,6 +175,12 @@ export function AdminUserDetailDrawer({
                   onChange={(value) =>
                     setFormData({ ...formData, role: value || "" })
                   }
+                  disabled={roleDisabled}
+                  description={
+                    roleDisabled
+                      ? "Cannot demote the last owner"
+                      : undefined
+                  }
                   data={[
                     { value: "owner", label: "Owner" },
                     { value: "account_manager", label: "Manager" },
@@ -160,6 +196,12 @@ export function AdminUserDetailDrawer({
                       ...formData,
                       enabled: e.currentTarget.checked,
                     })
+                  }
+                  disabled={roleDisabled}
+                  description={
+                    roleDisabled
+                      ? "Cannot disable the last active owner"
+                      : undefined
                   }
                 />
 

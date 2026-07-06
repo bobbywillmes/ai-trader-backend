@@ -182,6 +182,14 @@ export async function updateAdminUser(
     throw new HttpError(404, 'Admin user not found');
   }
 
+  // Validate role if provided
+  if (updates.role) {
+    const validRoles = ['owner', 'account_manager', 'account_viewer', 'admin'];
+    if (!validRoles.includes(updates.role)) {
+      throw new HttpError(400, `Invalid role: ${updates.role}`);
+    }
+  }
+
   // Prevent demoting self
   if (updates.role && userId === currentAdminId && updates.role !== user.role) {
     throw new HttpError(400, 'Cannot change your own role');
