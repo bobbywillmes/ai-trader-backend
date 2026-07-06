@@ -21,6 +21,7 @@ import { TradingAccountsPage } from "../features/tradingAccounts/TradingAccounts
 import { TradingAccountDetailPage } from "../features/tradingAccounts/TradingAccountDetailPage";
 import { MomentumScannerPage } from "../features/momentumScanner/MomentumScannerPage";
 import { StrategiesPage } from "../features/strategies/StrategiesPage";
+import { AdminUsersPage } from "../features/adminUsers/AdminUsersPage";
 
 export const router = createBrowserRouter([
   {
@@ -106,6 +107,10 @@ export const router = createBrowserRouter([
       {
         path: "settings",
         element: <SettingsPage />,
+      },
+      {
+        path: "admin-users",
+        element: <AdminUsersPage />,
       },
     ],
   },

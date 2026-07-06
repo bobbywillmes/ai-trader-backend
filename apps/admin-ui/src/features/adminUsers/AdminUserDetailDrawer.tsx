@@ -1,0 +1,189 @@
+import { Drawer, Stack, Text, Badge, Divider, Loader, Table, Card, ScrollArea } from "@mantine/core";
+import { useAdminUser, useAdminUserTradingAccountAccess } from "./hooks";
+
+interface AdminUserDetailDrawerProps {
+  userId: number | null;
+  onClose: () => void;
+}
+
+export function AdminUserDetailDrawer({
+  userId,
+  onClose,
+}: AdminUserDetailDrawerProps) {
+  const { data: user, isLoading } = useAdminUser(userId);
+  const { data: accesses, isLoading: accessesLoading } =
+    useAdminUserTradingAccountAccess(userId);
+
+  const getRoleBadgeColor = (role: string) => {
+    switch (role) {
+      case "owner":
+        return "red";
+      case "account_manager":
+        return "blue";
+      case "account_viewer":
+        return "gray";
+      default:
+        return "gray";
+    }
+  };
+
+  const getRoleLabel = (role: string) => {
+    switch (role) {
+      case "owner":
+        return "Owner";
+      case "account_manager":
+        return "Manager";
+      case "account_viewer":
+        return "Viewer";
+      case "admin":
+        return "Owner";
+      default:
+        return role;
+    }
+  };
+
+  return (
+    <Drawer
+      opened={userId !== null}
+      onClose={onClose}
+      title={user?.email || "Loading..."}
+      position="right"
+      size="lg"
+    >
+      {isLoading ? (
+        <Stack align="center" justify="center" h={300}>
+          <Loader />
+        </Stack>
+      ) : user ? (
+        <Stack gap="lg">
+          <Card withBorder>
+            <Stack gap="sm">
+              <div>
+                <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
+                  Email
+                </Text>
+                <Text size="sm">{user.email}</Text>
+              </div>
+
+              <Divider />
+
+              <div>
+                <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
+                  Name
+                </Text>
+                <Text size="sm">{user.name || "—"}</Text>
+              </div>
+
+              <Divider />
+
+              <div>
+                <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
+                  Role
+                </Text>
+                <Badge color={getRoleBadgeColor(user.role)} variant="light">
+                  {getRoleLabel(user.role)}
+                </Badge>
+              </div>
+
+              <Divider />
+
+              <div>
+                <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
+                  Status
+                </Text>
+                <Badge
+                  color={user.enabled ? "green" : "gray"}
+                  variant="light"
+                >
+                  {user.enabled ? "Enabled" : "Disabled"}
+                </Badge>
+              </div>
+
+              <Divider />
+
+              <div>
+                <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
+                  Email Verified
+                </Text>
+                <Text size="sm">
+                  {user.emailVerifiedAt
+                    ? new Date(user.emailVerifiedAt).toLocaleDateString()
+                    : "Not verified"}
+                </Text>
+              </div>
+
+              <Divider />
+
+              <div>
+                <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
+                  Last Login
+                </Text>
+                <Text size="sm">
+                  {user.lastLoginAt
+                    ? new Date(user.lastLoginAt).toLocaleDateString()
+                    : "Never"}
+                </Text>
+              </div>
+
+              <Divider />
+
+              <div>
+                <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
+                  Created
+                </Text>
+                <Text size="sm">
+                  {new Date(user.createdAt).toLocaleDateString()}
+                </Text>
+              </div>
+            </Stack>
+          </Card>
+
+          <div>
+            <Text size="sm" fw={600} mb="md">
+              Trading Account Access
+            </Text>
+
+            {accessesLoading ? (
+              <Stack align="center" justify="center" h={200}>
+                <Loader size="sm" />
+              </Stack>
+            ) : accesses && accesses.length > 0 ? (
+              <ScrollArea>
+                <Table striped>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Account</Table.Th>
+                      <Table.Th>Access Role</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {accesses.map((access) => (
+                      <Table.Tr key={access.tradingAccountId}>
+                        <Table.Td>
+                          <Text size="sm">{access.displayName}</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Badge
+                            color={getRoleBadgeColor(access.role)}
+                            variant="light"
+                            size="sm"
+                          >
+                            {getRoleLabel(access.role)}
+                          </Badge>
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+            ) : (
+              <Text size="sm" c="dimmed">
+                No trading accounts assigned
+              </Text>
+            )}
+          </div>
+        </Stack>
+      ) : null}
+    </Drawer>
+  );
+}
