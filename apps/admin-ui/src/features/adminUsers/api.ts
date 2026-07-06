@@ -54,3 +54,55 @@ export async function getAdminUserTradingAccountAccess(
 
   return response.json();
 }
+
+export async function updateAdminUser(
+  id: number,
+  data: {
+    name?: string | null;
+    role?: string;
+    enabled?: boolean;
+  }
+): Promise<AdminUser> {
+  const token = getAdminToken();
+  const response = await fetch(`${API_BASE}/admin-users/${id}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.message || `Failed to update admin user`);
+  }
+
+  return response.json();
+}
+
+export async function upsertTradingAccountAccess(
+  userId: number,
+  accountId: number,
+  data: { role: string } | null
+): Promise<AdminUserTradingAccountAccess | null> {
+  const token = getAdminToken();
+  const response = await fetch(
+    `${API_BASE}/admin-users/${userId}/trading-account-access/${accountId}`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.message || `Failed to update trading account access`);
+  }
+
+  return response.json();
+}

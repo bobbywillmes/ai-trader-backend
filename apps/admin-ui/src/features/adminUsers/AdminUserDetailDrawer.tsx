@@ -1,5 +1,26 @@
-import { Drawer, Stack, Text, Badge, Divider, Loader, Table, Card, ScrollArea } from "@mantine/core";
-import { useAdminUser, useAdminUserTradingAccountAccess } from "./hooks";
+import { useState } from "react";
+import {
+  Drawer,
+  Stack,
+  Text,
+  Badge,
+  Divider,
+  Loader,
+  Table,
+  Card,
+  ScrollArea,
+  Group,
+  Button,
+  TextInput,
+  Select,
+  Switch,
+} from "@mantine/core";
+import { notifications } from "@mantine/notifications";
+import {
+  useAdminUser,
+  useAdminUserTradingAccountAccess,
+  useUpdateAdminUser,
+} from "./hooks";
 
 interface AdminUserDetailDrawerProps {
   userId: number | null;
@@ -13,6 +34,14 @@ export function AdminUserDetailDrawer({
   const { data: user, isLoading } = useAdminUser(userId);
   const { data: accesses, isLoading: accessesLoading } =
     useAdminUserTradingAccountAccess(userId);
+  const updateMutation = useUpdateAdminUser();
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [formData, setFormData] = useState({
+    name: user?.name || "",
+    role: user?.role || "",
+    enabled: user?.enabled ?? true,
+  });
 
   const getRoleBadgeColor = (role: string) => {
     switch (role) {
@@ -42,6 +71,47 @@ export function AdminUserDetailDrawer({
     }
   };
 
+  const handleSave = async () => {
+    if (!user) return;
+
+    try {
+      await updateMutation.mutateAsync({
+        id: user.id,
+        data: {
+          name: formData.name || null,
+          role: formData.role,
+          enabled: formData.enabled,
+        },
+      });
+
+      notifications.show({
+        title: "Success",
+        message: "Admin user updated successfully",
+        color: "green",
+      });
+
+      setIsEditing(false);
+    } catch (error) {
+      notifications.show({
+        title: "Error",
+        message:
+          error instanceof Error ? error.message : "Failed to update user",
+        color: "red",
+      });
+    }
+  };
+
+  const handleCancel = () => {
+    if (user) {
+      setFormData({
+        name: user.name || "",
+        role: user.role || "",
+        enabled: user.enabled ?? true,
+      });
+    }
+    setIsEditing(false);
+  };
+
   return (
     <Drawer
       opened={userId !== null}
@@ -57,85 +127,143 @@ export function AdminUserDetailDrawer({
       ) : user ? (
         <Stack gap="lg">
           <Card withBorder>
-            <Stack gap="sm">
-              <div>
-                <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
-                  Email
-                </Text>
-                <Text size="sm">{user.email}</Text>
-              </div>
+            {isEditing ? (
+              <Stack gap="md">
+                <TextInput
+                  label="Name"
+                  placeholder="Enter user name"
+                  value={formData.name}
+                  onChange={(e) =>
+                    setFormData({ ...formData, name: e.currentTarget.value })
+                  }
+                />
 
-              <Divider />
+                <Select
+                  label="Role"
+                  placeholder="Select role"
+                  value={formData.role}
+                  onChange={(value) =>
+                    setFormData({ ...formData, role: value || "" })
+                  }
+                  data={[
+                    { value: "owner", label: "Owner" },
+                    { value: "account_manager", label: "Manager" },
+                    { value: "account_viewer", label: "Viewer" },
+                  ]}
+                />
 
-              <div>
-                <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
-                  Name
-                </Text>
-                <Text size="sm">{user.name || "—"}</Text>
-              </div>
+                <Switch
+                  label="Enabled"
+                  checked={formData.enabled}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      enabled: e.currentTarget.checked,
+                    })
+                  }
+                />
 
-              <Divider />
+                <Group justify="flex-end">
+                  <Button
+                    variant="default"
+                    onClick={handleCancel}
+                    disabled={updateMutation.isPending}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleSave}
+                    loading={updateMutation.isPending}
+                  >
+                    Save Changes
+                  </Button>
+                </Group>
+              </Stack>
+            ) : (
+              <Stack gap="sm">
+                <div>
+                  <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
+                    Email
+                  </Text>
+                  <Text size="sm">{user.email}</Text>
+                </div>
 
-              <div>
-                <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
-                  Role
-                </Text>
-                <Badge color={getRoleBadgeColor(user.role)} variant="light">
-                  {getRoleLabel(user.role)}
-                </Badge>
-              </div>
+                <Divider />
 
-              <Divider />
+                <div>
+                  <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
+                    Name
+                  </Text>
+                  <Text size="sm">{user.name || "—"}</Text>
+                </div>
 
-              <div>
-                <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
-                  Status
-                </Text>
-                <Badge
-                  color={user.enabled ? "green" : "gray"}
-                  variant="light"
-                >
-                  {user.enabled ? "Enabled" : "Disabled"}
-                </Badge>
-              </div>
+                <Divider />
 
-              <Divider />
+                <div>
+                  <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
+                    Role
+                  </Text>
+                  <Badge color={getRoleBadgeColor(user.role)} variant="light">
+                    {getRoleLabel(user.role)}
+                  </Badge>
+                </div>
 
-              <div>
-                <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
-                  Email Verified
-                </Text>
-                <Text size="sm">
-                  {user.emailVerifiedAt
-                    ? new Date(user.emailVerifiedAt).toLocaleDateString()
-                    : "Not verified"}
-                </Text>
-              </div>
+                <Divider />
 
-              <Divider />
+                <div>
+                  <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
+                    Status
+                  </Text>
+                  <Badge
+                    color={user.enabled ? "green" : "gray"}
+                    variant="light"
+                  >
+                    {user.enabled ? "Enabled" : "Disabled"}
+                  </Badge>
+                </div>
 
-              <div>
-                <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
-                  Last Login
-                </Text>
-                <Text size="sm">
-                  {user.lastLoginAt
-                    ? new Date(user.lastLoginAt).toLocaleDateString()
-                    : "Never"}
-                </Text>
-              </div>
+                <Divider />
 
-              <Divider />
+                <div>
+                  <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
+                    Email Verified
+                  </Text>
+                  <Text size="sm">
+                    {user.emailVerifiedAt
+                      ? new Date(user.emailVerifiedAt).toLocaleDateString()
+                      : "Not verified"}
+                  </Text>
+                </div>
 
-              <div>
-                <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
-                  Created
-                </Text>
-                <Text size="sm">
-                  {new Date(user.createdAt).toLocaleDateString()}
-                </Text>
-              </div>
-            </Stack>
+                <Divider />
+
+                <div>
+                  <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
+                    Last Login
+                  </Text>
+                  <Text size="sm">
+                    {user.lastLoginAt
+                      ? new Date(user.lastLoginAt).toLocaleDateString()
+                      : "Never"}
+                  </Text>
+                </div>
+
+                <Divider />
+
+                <div>
+                  <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
+                    Created
+                  </Text>
+                  <Text size="sm">
+                    {new Date(user.createdAt).toLocaleDateString()}
+                  </Text>
+                </div>
+
+                <Group justify="flex-end" mt="md">
+                  <Button onClick={() => setIsEditing(true)}>Edit User</Button>
+                </Group>
+              </Stack>
+            )}
           </Card>
 
           <div>
