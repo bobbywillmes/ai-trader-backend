@@ -19,6 +19,7 @@ import {
   Stack,
   Switch,
   Table,
+  Tabs,
   Text,
   Textarea,
   TextInput,
@@ -26,7 +27,7 @@ import {
 } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   CartesianGrid,
   Line,
@@ -37,6 +38,10 @@ import {
   YAxis,
 } from "recharts";
 import { getAdminToken } from "../../lib/api";
+import { useOpenOrders } from "../orders/hooks";
+import type { OpenOrder } from "../orders/types";
+import { useOpenPositions } from "../positions/hooks";
+import type { TrackedPosition } from "../positions/types";
 import {
   useCreateTradingAccountAllocation,
   usePreviewTradingAccountEntryRisk,
@@ -147,6 +152,35 @@ type AccountSubscriptionDraft = {
 
 type AccountSubscriptionStatusFilter = "all" | "active" | "disabled";
 type AccountSubscriptionSizingFilter = "all" | PositionSizingType;
+type TradingAccountDetailTab =
+  | "overview"
+  | "positions"
+  | "orders"
+  | "subscriptions"
+  | "risk-health"
+  | "activity";
+
+const tradingAccountDetailTabs: {
+  value: TradingAccountDetailTab;
+  label: string;
+}[] = [
+  { value: "overview", label: "Overview" },
+  { value: "positions", label: "Positions" },
+  { value: "orders", label: "Orders" },
+  { value: "subscriptions", label: "Subscriptions" },
+  { value: "risk-health", label: "Risk Health" },
+  { value: "activity", label: "Activity" },
+];
+
+const tradingAccountDetailTabValues: ReadonlySet<string> = new Set(
+  tradingAccountDetailTabs.map((tab) => tab.value)
+);
+
+function isTradingAccountDetailTab(
+  value: string | null
+): value is TradingAccountDetailTab {
+  return value !== null && tradingAccountDetailTabValues.has(value);
+}
 
 const priceHistoryRangeOptions: {
   value: AccountSubscriptionPriceHistoryRange;
@@ -1503,7 +1537,7 @@ function SizingAndAllocationsSection({
       <div>
         <Title order={3}>Sizing & Allocations</Title>
         <Text size="sm" c="dimmed">
-          Account-specific capital buckets and subscription sizing settings.
+          Account-specific capital buckets used to group subscription budgets.
         </Text>
       </div>
 
@@ -1515,6 +1549,20 @@ function SizingAndAllocationsSection({
         assigned to that allocation.
       </Alert>
 
+      <AllocationManagementCard account={account} token={token} />
+    </Stack>
+  );
+}
+
+function AccountSubscriptionsSection({
+  account,
+  token,
+}: {
+  account: TradingAccount;
+  token: string | null;
+}) {
+  return (
+    <Stack gap="md">
       <Alert color="cyan" title="Market context note">
         Market context is used to preview share quantities and budget
         thresholds. Runtime entry sizing uses backend-owned market data when
@@ -1522,7 +1570,6 @@ function SizingAndAllocationsSection({
         for new entries assigned to that allocation.
       </Alert>
 
-      <AllocationManagementCard account={account} token={token} />
       <AccountSubscriptionsManagementCard account={account} token={token} />
     </Stack>
   );
@@ -3669,11 +3716,361 @@ function CredentialManagementCard({
   );
 }
 
+function AccountTabPlaceholder({
+  title,
+  description,
+  actionLabel,
+  actionTo,
+  secondaryActionLabel,
+  secondaryActionTo,
+}: {
+  title: string;
+  description: string;
+  actionLabel?: string;
+  actionTo?: string;
+  secondaryActionLabel?: string;
+  secondaryActionTo?: string;
+}) {
+  return (
+    <Card withBorder radius="md" p="lg">
+      <Stack gap="sm" align="flex-start">
+        <Title order={3}>{title}</Title>
+        <Text size="sm" c="dimmed">
+          {description}
+        </Text>
+        {(actionLabel && actionTo) ||
+        (secondaryActionLabel && secondaryActionTo) ? (
+          <Group gap="xs">
+            {actionLabel && actionTo && (
+              <Button component={Link} to={actionTo} variant="light" size="xs">
+                {actionLabel}
+              </Button>
+            )}
+            {secondaryActionLabel && secondaryActionTo && (
+              <Button
+                component={Link}
+                to={secondaryActionTo}
+                variant="default"
+                size="xs"
+              >
+                {secondaryActionLabel}
+              </Button>
+            )}
+          </Group>
+        ) : null}
+      </Stack>
+    </Card>
+  );
+}
+
+function formatSignedMoney(value: number | null | undefined, currency = "USD") {
+  if (value === null || value === undefined) return "-";
+
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${formatMoney(value, currency)}`;
+}
+
+function formatPercentValue(value: number | null | undefined) {
+  if (value === null || value === undefined) return "-";
+
+  return `${value.toFixed(2)}%`;
+}
+
+function formatOrderValue(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return "-";
+
+  return String(value);
+}
+
+function AccountPositionsSection({
+  account,
+  token,
+}: {
+  account: TradingAccount;
+  token: string | null;
+}) {
+  const { data: positions = [], isLoading, isError, error } =
+    useOpenPositions(token);
+  const accountPositions = positions.filter(
+    (position: TrackedPosition) => position.tradingAccountId === account.id
+  );
+
+  return (
+    <Card withBorder radius="md" p="lg">
+      <Stack gap="md">
+        <Group justify="space-between" align="flex-start">
+          <div>
+            <Title order={3}>Open Positions</Title>
+            <Text size="sm" c="dimmed">
+              Open tracked positions attributed to this trading account.
+            </Text>
+          </div>
+          <Button component={Link} to="/positions/open" variant="light" size="xs">
+            Open global positions
+          </Button>
+        </Group>
+
+        {isError && (
+          <Alert color="red" title="Failed to load open positions">
+            {error instanceof Error ? error.message : "Unknown error."}
+          </Alert>
+        )}
+
+        {isLoading && (
+          <Group gap="sm">
+            <Loader size="sm" color="cyan" />
+            <Text size="sm" c="dimmed">
+              Loading open positions...
+            </Text>
+          </Group>
+        )}
+
+        {!isLoading && !isError && accountPositions.length === 0 && (
+          <Alert color="gray">
+            No open positions are currently attributed to this trading account.
+          </Alert>
+        )}
+
+        {accountPositions.length > 0 && (
+          <ScrollArea>
+            <Table striped highlightOnHover style={{ minWidth: 980 }}>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Symbol</Table.Th>
+                  <Table.Th>Side</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>Qty</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>Avg entry</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>Current</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>Market value</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>P/L</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>P/L %</Table.Th>
+                  <Table.Th>Status</Table.Th>
+                  <Table.Th>Opened</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {accountPositions.map((position) => (
+                  <Table.Tr key={position.id}>
+                    <Table.Td>
+                      <Text fw={700} size="sm">
+                        {position.symbol}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge
+                        size="sm"
+                        color={position.side === "long" ? "teal" : "red"}
+                        variant="light"
+                      >
+                        {position.side}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td style={{ textAlign: "right" }}>
+                      {formatQuantity(position.qty)}
+                    </Table.Td>
+                    <Table.Td style={{ textAlign: "right" }}>
+                      {formatMoney(position.avgEntryPrice, account.baseCurrency)}
+                    </Table.Td>
+                    <Table.Td style={{ textAlign: "right" }}>
+                      {formatMoney(position.currentPrice, account.baseCurrency)}
+                    </Table.Td>
+                    <Table.Td style={{ textAlign: "right" }}>
+                      {formatMoney(position.marketValue, account.baseCurrency)}
+                    </Table.Td>
+                    <Table.Td style={{ textAlign: "right" }}>
+                      <Text
+                        size="sm"
+                        fw={600}
+                        c={
+                          position.unrealizedPnL > 0
+                            ? "teal"
+                            : position.unrealizedPnL < 0
+                              ? "red"
+                              : "dimmed"
+                        }
+                      >
+                        {formatSignedMoney(
+                          position.unrealizedPnL,
+                          account.baseCurrency
+                        )}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td style={{ textAlign: "right" }}>
+                      <Text
+                        size="sm"
+                        fw={600}
+                        c={
+                          position.unrealizedPnLPct > 0
+                            ? "teal"
+                            : position.unrealizedPnLPct < 0
+                              ? "red"
+                              : "dimmed"
+                        }
+                      >
+                        {formatPercentValue(position.unrealizedPnLPct * 100)}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge size="sm" color="teal" variant="light">
+                        {position.status}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="sm" c="dimmed">
+                        {formatDateTime(position.openedAt)}
+                      </Text>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
+function AccountOrdersSection({
+  account,
+  token,
+}: {
+  account: TradingAccount;
+  token: string | null;
+}) {
+  const { data: orders = [], isLoading, isError, error } = useOpenOrders(token);
+  const accountOrders = orders.filter(
+    (order: OpenOrder) => order.tradingAccountId === account.id
+  );
+
+  return (
+    <Card withBorder radius="md" p="lg">
+      <Stack gap="md">
+        <Group justify="space-between" align="flex-start">
+          <div>
+            <Title order={3}>Open Orders</Title>
+            <Text size="sm" c="dimmed">
+              Open broker orders attributed to this trading account.
+            </Text>
+          </div>
+          <Button component={Link} to="/orders/open" variant="light" size="xs">
+            Open global orders
+          </Button>
+        </Group>
+
+        {isError && (
+          <Alert color="red" title="Failed to load open orders">
+            {error instanceof Error ? error.message : "Unknown error."}
+          </Alert>
+        )}
+
+        {isLoading && (
+          <Group gap="sm">
+            <Loader size="sm" color="cyan" />
+            <Text size="sm" c="dimmed">
+              Loading open orders...
+            </Text>
+          </Group>
+        )}
+
+        {!isLoading && !isError && accountOrders.length === 0 && (
+          <Alert color="gray">
+            No open orders are currently attributed to this trading account.
+          </Alert>
+        )}
+
+        {accountOrders.length > 0 && (
+          <ScrollArea>
+            <Table striped highlightOnHover style={{ minWidth: 860 }}>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Symbol</Table.Th>
+                  <Table.Th>Side</Table.Th>
+                  <Table.Th>Type</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>Qty</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>Filled</Table.Th>
+                  <Table.Th style={{ textAlign: "right" }}>Limit</Table.Th>
+                  <Table.Th>Status</Table.Th>
+                  <Table.Th>Submitted</Table.Th>
+                  <Table.Th>Client order id</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {accountOrders.map((order) => {
+                  const filledQty = order.filled_qty ?? order.filledQty ?? "0";
+                  const limitPrice = order.limit_price ?? order.limitPrice ?? null;
+                  const submittedAt = order.submitted_at ?? order.submittedAt;
+                  const clientOrderId =
+                    order.client_order_id ?? order.clientOrderId ?? null;
+
+                  return (
+                    <Table.Tr key={order.id}>
+                      <Table.Td>
+                        <Text fw={700} size="sm">
+                          {order.symbol}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Badge
+                          size="sm"
+                          color={order.side === "buy" ? "teal" : "red"}
+                          variant="light"
+                        >
+                          {order.side}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm" tt="capitalize">
+                          {order.type}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>
+                        {formatOrderValue(order.qty)}
+                      </Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>
+                        {formatOrderValue(filledQty)}
+                      </Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>
+                        {limitPrice !== null && limitPrice !== undefined
+                          ? formatMoney(Number(limitPrice), account.baseCurrency)
+                          : "-"}
+                      </Table.Td>
+                      <Table.Td>
+                        <Badge size="sm" color="yellow" variant="light">
+                          {order.status}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm" c="dimmed">
+                          {formatDateTime(submittedAt)}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="xs" c="dimmed" ff="monospace">
+                          {clientOrderId ?? "-"}
+                        </Text>
+                      </Table.Td>
+                    </Table.Tr>
+                  );
+                })}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
 export function TradingAccountDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [token] = useState<string | null>(() => getAdminToken());
   const accountId = id ? Number(id) : undefined;
+  const requestedTab = searchParams.get("tab");
+  const activeTab: TradingAccountDetailTab =
+    isTradingAccountDetailTab(requestedTab) ? requestedTab : "overview";
   const validAccountId =
     accountId !== undefined && Number.isInteger(accountId) && accountId > 0
       ? accountId
@@ -3683,6 +4080,22 @@ export function TradingAccountDetailPage() {
     token
   );
   const account = data?.account;
+
+  function setActiveTab(value: string | null) {
+    if (!isTradingAccountDetailTab(value)) return;
+
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+
+      if (value === "overview") {
+        next.delete("tab");
+      } else {
+        next.set("tab", value);
+      }
+
+      return next;
+    });
+  }
 
   if (!validAccountId) {
     return (
@@ -3740,21 +4153,61 @@ export function TradingAccountDetailPage() {
       )}
 
       {account && (
-        <>
-          <AccountSummaryCard account={account} />
-          <BrokerSnapshotCard account={account} />
-          <CredentialStatusCard account={account} />
-          <SafetySettingsCard
-            key={`settings-${account.id}-${account.updatedAt}`}
-            account={account}
-            token={token}
-          />
-          <AccountRiskControlsCard account={account} token={token} />
-          <TradingAccountHealthCard account={account} token={token} />
-          <SizingAndAllocationsSection account={account} token={token} />
-          <CredentialManagementCard account={account} token={token} />
-          <NotesCard account={account} />
-        </>
+        <Tabs value={activeTab} onChange={setActiveTab} keepMounted={false}>
+          <Tabs.List>
+            {tradingAccountDetailTabs.map((tab) => (
+              <Tabs.Tab key={tab.value} value={tab.value}>
+                {tab.label}
+              </Tabs.Tab>
+            ))}
+          </Tabs.List>
+
+          <Tabs.Panel value="overview" pt="lg">
+            <Stack gap="lg">
+              <AccountSummaryCard account={account} />
+              <BrokerSnapshotCard account={account} />
+              <CredentialStatusCard account={account} />
+              <SafetySettingsCard
+                key={`settings-${account.id}-${account.updatedAt}`}
+                account={account}
+                token={token}
+              />
+              <SizingAndAllocationsSection account={account} token={token} />
+              <CredentialManagementCard account={account} token={token} />
+              <NotesCard account={account} />
+            </Stack>
+          </Tabs.Panel>
+
+          <Tabs.Panel value="positions" pt="lg">
+            <AccountPositionsSection account={account} token={token} />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="orders" pt="lg">
+            <AccountOrdersSection account={account} token={token} />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="subscriptions" pt="lg">
+            <AccountSubscriptionsSection account={account} token={token} />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="risk-health" pt="lg">
+            <Stack gap="lg">
+              <AccountRiskControlsCard account={account} token={token} />
+              <TradingAccountHealthCard account={account} token={token} />
+            </Stack>
+          </Tabs.Panel>
+
+          <Tabs.Panel value="activity" pt="lg">
+            <AccountTabPlaceholder
+              title="Activity"
+              description="There is not currently an account-scoped activity feed wired for this page. Use the global System Events and Trade History pages for lifecycle and audit review."
+              actionLabel="Open System Events"
+              actionTo="/system/events"
+              secondaryActionLabel="Open Trade History"
+              secondaryActionTo="/trade-history"
+            />
+          </Tabs.Panel>
+        </Tabs>
       )}
     </Stack>
   );
