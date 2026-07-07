@@ -20,6 +20,17 @@ export const adminChangePasswordSchema = z
     path: ['newPassword'],
   });
 
+export const adminSetupPasswordSchema = z
+  .object({
+    password: z.string().min(12, 'Password must be at least 12 characters.'),
+    confirmPassword: z.string().min(1, 'Password confirmation is required.'),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: 'Passwords must match.',
+    path: ['confirmPassword'],
+  });
+
 export type AdminBootstrapInput = z.infer<typeof adminBootstrapSchema>;
 export type AdminLoginInput = z.infer<typeof adminLoginSchema>;
 export type AdminChangePasswordInput = z.infer<typeof adminChangePasswordSchema>;
+export type AdminSetupPasswordInput = z.infer<typeof adminSetupPasswordSchema>;
