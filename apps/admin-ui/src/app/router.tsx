@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import { AdminLayout } from "../layouts/AdminLayout";
 import { HomePage } from "../pages/HomePage";
+import { SetupAccountPage } from "../pages/SetupAccountPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { SubscriptionsPage } from "../features/subscriptions/SubscriptionsPage";
@@ -27,6 +28,10 @@ export const router = createBrowserRouter([
   {
     path: "/login",
     element: <HomePage />,
+  },
+  {
+    path: "/setup-account",
+    element: <SetupAccountPage />,
   },
   {
     path: "/",

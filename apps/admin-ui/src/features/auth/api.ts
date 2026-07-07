@@ -1,5 +1,10 @@
 import { apiRequest } from "../../lib/api";
-import type { LoginResponse, MeResponse } from "./types";
+import type {
+  CompleteSetupAccountResponse,
+  LoginResponse,
+  MeResponse,
+  SetupAccountTokenResponse,
+} from "./types";
 
 export function getMe(token: string) {
   return apiRequest<MeResponse>("/api/admin-auth/me", { token });
@@ -37,4 +42,24 @@ export function changePassword(
     token,
     body: { currentPassword, newPassword },
   });
+}
+
+export function validateSetupAccountToken(token: string) {
+  return apiRequest<SetupAccountTokenResponse>(
+    `/api/admin-auth/setup/${encodeURIComponent(token)}`
+  );
+}
+
+export function completeSetupAccount(
+  token: string,
+  password: string,
+  confirmPassword: string
+) {
+  return apiRequest<CompleteSetupAccountResponse>(
+    `/api/admin-auth/setup/${encodeURIComponent(token)}`,
+    {
+      method: "POST",
+      body: { password, confirmPassword },
+    }
+  );
 }
