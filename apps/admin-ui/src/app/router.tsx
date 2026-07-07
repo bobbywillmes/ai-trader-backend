@@ -159,6 +159,10 @@ export const router = createBrowserRouter([
                 path: "accounts/:accountId/orders",
                 element: <ViewerAccountPage view="orders" />,
               },
+              {
+                path: "accounts/:accountId/trade-history",
+                element: <ViewerAccountPage view="trade-history" />,
+              },
             ],
           },
         ],

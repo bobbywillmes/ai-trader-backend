@@ -19,6 +19,13 @@ import { useTradingAccountOpenOrders } from "../orders/hooks";
 import type { OpenOrder } from "../orders/types";
 import { useTradingAccountOpenPositions } from "../positions/hooks";
 import type { TrackedPosition } from "../positions/types";
+import {
+  formatDate,
+  formatDuration,
+  formatNumber,
+} from "../tradeHistory/formatters";
+import { useTradingAccountTradeCycles } from "../tradeHistory/hooks";
+import type { TradeCycleSummary } from "../tradeHistory/types";
 import { useTradingAccount } from "../tradingAccounts/hooks";
 import type { TradingAccount } from "../tradingAccounts/types";
 
@@ -224,8 +231,82 @@ function ViewerOrdersTable({ orders }: { orders: OpenOrder[] }) {
   );
 }
 
+function statusColor(status: string) {
+  if (status === "closed") return "gray";
+  if (status === "closing") return "yellow";
+  return "teal";
+}
+
+function ViewerTradeHistoryTable({
+  cycles,
+}: {
+  cycles: TradeCycleSummary[];
+}) {
+  if (cycles.length === 0) {
+    return <Text size="sm" c="dimmed">No trade history found.</Text>;
+  }
+
+  return (
+    <ScrollArea>
+      <Table striped highlightOnHover style={{ minWidth: 980 }}>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>Symbol</Table.Th>
+            <Table.Th>Opened</Table.Th>
+            <Table.Th>Closed</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Qty</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Avg Entry</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Avg Exit</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Realized P/L</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Return</Table.Th>
+            <Table.Th>Duration</Table.Th>
+            <Table.Th>Status</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {cycles.map((cycle) => (
+            <Table.Tr key={cycle.id}>
+              <Table.Td>
+                <Text fw={700}>{cycle.symbol}</Text>
+                <Text size="xs" c="dimmed">{cycle.side}</Text>
+              </Table.Td>
+              <Table.Td>{formatDate(cycle.openedAt)}</Table.Td>
+              <Table.Td>{formatDate(cycle.closedAt)}</Table.Td>
+              <Table.Td style={{ textAlign: "right" }}>
+                {formatNumber(cycle.quantity)}
+              </Table.Td>
+              <Table.Td style={{ textAlign: "right" }}>
+                {formatMoney(cycle.avgEntryPrice)}
+              </Table.Td>
+              <Table.Td style={{ textAlign: "right" }}>
+                {formatMoney(cycle.avgExitPrice)}
+              </Table.Td>
+              <Table.Td style={{ textAlign: "right" }}>
+                <Text c={pnlColor(cycle.realizedPnl)} fw={600} size="sm">
+                  {formatMoney(cycle.realizedPnl)}
+                </Text>
+              </Table.Td>
+              <Table.Td style={{ textAlign: "right" }}>
+                <Text c={pnlColor(cycle.returnPct)} fw={600} size="sm">
+                  {formatPercent(cycle.returnPct)}
+                </Text>
+              </Table.Td>
+              <Table.Td>{formatDuration(cycle.holdingDurationMs)}</Table.Td>
+              <Table.Td>
+                <Badge color={statusColor(cycle.status)} variant="light">
+                  {cycle.status}
+                </Badge>
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
+    </ScrollArea>
+  );
+}
+
 type ViewerAccountPageProps = {
-  view?: "overview" | "positions" | "orders";
+  view?: "overview" | "positions" | "orders" | "trade-history";
 };
 
 export function ViewerAccountPage({ view = "overview" }: ViewerAccountPageProps) {
@@ -243,6 +324,11 @@ export function ViewerAccountPage({ view = "overview" }: ViewerAccountPageProps)
   const ordersQuery = useTradingAccountOpenOrders(
     view === "orders" ? id ?? undefined : undefined,
     token
+  );
+  const tradeHistoryQuery = useTradingAccountTradeCycles(
+    token,
+    view === "trade-history" ? id ?? undefined : undefined,
+    { limit: 50, status: "closed" }
   );
 
   if (!id) {
@@ -289,7 +375,9 @@ export function ViewerAccountPage({ view = "overview" }: ViewerAccountPageProps)
               ? "Read-only open positions"
               : view === "orders"
                 ? "Read-only open orders"
-                : "Read-only account overview"}
+                : view === "trade-history"
+                  ? "Read-only trade history"
+                  : "Read-only account overview"}
           </Text>
         </div>
         <Group gap="xs">
@@ -389,6 +477,29 @@ export function ViewerAccountPage({ view = "overview" }: ViewerAccountPageProps)
             <Text size="sm" c="dimmed">Loading orders...</Text>
           ) : (
             <ViewerOrdersTable orders={ordersQuery.data?.orders ?? []} />
+          )}
+        </Card>
+      )}
+
+      {view === "trade-history" && (
+        <Card withBorder radius="md" p="md">
+          <Group justify="space-between" mb="sm">
+            <Text fw={600} size="sm">Trade history</Text>
+            {tradeHistoryQuery.isLoading && <Loader size="xs" color="cyan" />}
+          </Group>
+          {tradeHistoryQuery.isError && (
+            <Alert color="red" mb="md">
+              {tradeHistoryQuery.error instanceof Error
+                ? tradeHistoryQuery.error.message
+                : "Failed to load trade history."}
+            </Alert>
+          )}
+          {tradeHistoryQuery.isLoading ? (
+            <Text size="sm" c="dimmed">Loading trade history...</Text>
+          ) : (
+            <ViewerTradeHistoryTable
+              cycles={tradeHistoryQuery.data?.cycles ?? []}
+            />
           )}
         </Card>
       )}

@@ -1,10 +1,16 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getTradeCycle, getTradeCycles } from "./api";
+import {
+  getTradeCycle,
+  getTradeCycles,
+  getTradingAccountTradeCycles,
+} from "./api";
 import type { TradeCyclesQuery } from "./types";
 
 export const tradeHistoryKeys = {
   list: (query: TradeCyclesQuery) => ["tradeCycles", query] as const,
+  accountList: (tradingAccountId: number, query: TradeCyclesQuery) =>
+    ["tradeCycles", "account", tradingAccountId, query] as const,
   detail: (id: number | null) => ["tradeCycles", "detail", id] as const,
 };
 
@@ -16,6 +22,26 @@ export function useTradeCycles(
     queryKey: tradeHistoryKeys.list(query),
     queryFn: () => getTradeCycles(token as string, query),
     enabled: Boolean(token),
+    staleTime: 15000,
+  });
+}
+
+export function useTradingAccountTradeCycles(
+  token: string | null,
+  tradingAccountId: number | undefined,
+  query: TradeCyclesQuery
+) {
+  return useQuery({
+    queryKey: tradingAccountId
+      ? tradeHistoryKeys.accountList(tradingAccountId, query)
+      : ["tradeCycles", "account", query],
+    queryFn: () =>
+      getTradingAccountTradeCycles(
+        token as string,
+        tradingAccountId as number,
+        query
+      ),
+    enabled: Boolean(token && tradingAccountId),
     staleTime: 15000,
   });
 }

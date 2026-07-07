@@ -257,6 +257,14 @@ export function ViewerPortalShell() {
                   close();
                 }}
               />
+              <NavLink
+                label="Trade History"
+                active={pathname === `${accountBasePath}/trade-history`}
+                onClick={() => {
+                  navigate(`${accountBasePath}/trade-history`);
+                  close();
+                }}
+              />
             </>
           )}
         </AppShell.Section>
