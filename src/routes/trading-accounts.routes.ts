@@ -6,6 +6,8 @@ import {
   getTradingAccountSubscriptionPriceHistoryController,
   getTradingAccountSubscriptionController,
   getTradingAccountController,
+  listTradingAccountOpenOrdersController,
+  listTradingAccountOpenPositionsController,
   getTradingAccountRiskSettingsController,
   listTradingAccountsController,
   listTradingAccountAllocationsController,
@@ -27,6 +29,8 @@ const router = Router();
 
 router.get('/', requirePermission(AdminPermission.TRADING_ACCOUNT_READ), listTradingAccountsController);
 router.get('/:id', requireTradingAccountAccess('id'), requirePermission(AdminPermission.TRADING_ACCOUNT_READ), getTradingAccountController);
+router.get('/:id/positions', requireTradingAccountAccess('id'), requirePermission(AdminPermission.TRADING_ACCOUNT_READ), listTradingAccountOpenPositionsController);
+router.get('/:id/orders', requireTradingAccountAccess('id'), requirePermission(AdminPermission.TRADING_ACCOUNT_READ), listTradingAccountOpenOrdersController);
 router.patch('/:id', requireTradingAccountAccess('id'), requirePermission(AdminPermission.TRADING_ACCOUNT_WRITE), updateTradingAccountController);
 
 router.get('/:id/risk-settings', requireTradingAccountAccess('id'), requirePermission(AdminPermission.TRADING_ACCOUNT_READ), getTradingAccountRiskSettingsController);

@@ -5,10 +5,13 @@ import { HttpError } from '../errors/http-error.js';
 import { isOwnerRole } from '../types/admin-rbac.js';
 import {
   getTradingAccountForAdmin,
+  getTradingAccountSummaryById,
   listTradingAccountsForAdmin,
   listTradingAccountsForAdminUser,
   updateTradingAccountForAdmin,
 } from '../services/trading-account.service.js';
+import { getNormalizedOpenOrders } from '../services/orders.service.js';
+import { getOpenTrackedPositionsForTradingAccount } from '../services/position-tracking.service.js';
 import {
   revokeTradingAccountCredential,
   upsertTradingAccountApiKeyCredential,
@@ -124,6 +127,50 @@ export async function getTradingAccountController(
     }
 
     res.status(200).json({ account });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function listTradingAccountOpenPositionsController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const id = parseTradingAccountId(req.params.id);
+    const positions = await getOpenTrackedPositionsForTradingAccount(id);
+
+    res.status(200).json({ positions });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function listTradingAccountOpenOrdersController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const id = parseTradingAccountId(req.params.id);
+    const tradingAccount = await getTradingAccountSummaryById(id);
+
+    if (!tradingAccount) {
+      throw new HttpError(404, 'Trading account not found.');
+    }
+
+    const orders = await getNormalizedOpenOrders('open_orders_sync', {
+      tradingAccountId: id,
+    });
+
+    res.status(200).json({
+      orders: orders.map((order) => ({
+        ...order,
+        tradingAccountId: id,
+        tradingAccount,
+      })),
+    });
   } catch (error) {
     next(error);
   }
