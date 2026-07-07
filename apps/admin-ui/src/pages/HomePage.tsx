@@ -16,6 +16,7 @@ import {
 } from "@mantine/core";
 import { getAdminToken } from "../lib/api";
 import { useLogin, useMe } from "../features/auth/hooks";
+import { getAuthenticatedHomePath } from "../features/auth/roleUtils";
 
 const features = [
   {
@@ -50,15 +51,18 @@ export function HomePage() {
   }
 
   if (me) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to={getAuthenticatedHomePath(me.access)} replace />;
   }
 
   async function handleLogin(event: React.FormEvent) {
     event.preventDefault();
 
     try {
-      await loginMutation.mutateAsync({ email, password });
-      navigate("/dashboard", { replace: true });
+      const loginResponse = await loginMutation.mutateAsync({
+        email,
+        password,
+      });
+      navigate(getAuthenticatedHomePath(loginResponse.access), { replace: true });
     } catch {
       // error shown via loginMutation.error
     }
