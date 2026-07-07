@@ -1043,3 +1043,57 @@ DEFAULT_TRADING_ACCOUNT_ID=1 npx tsx scripts/bootstrap-trading-account-risk-sett
 ```
 
 In production Docker, confirm the `scripts/` directory exists inside the backend image before running the command. If the image does not include one-off scripts, copy the script into the backend container or run it from a checked-out project directory with the production `DATABASE_URL` available, then remove any temporary copied file after the bootstrap completes.
+
+## 24. Legacy Admin Role Migration
+
+Older production admin users may have `role = "admin"` from before RBAC was introduced. RBAC treats this as owner-equivalent for compatibility, but admin user editing expects the canonical role value `owner`.
+
+If an owner cannot update their profile because the API returns `Cannot change your own role`, check whether the production `AdminUser.role` is still `admin`. If so, update the row directly in the production database.
+
+Run these commands from the production backend directory:
+```bash
+cd /opt/ai-trader
+```
+
+Confirm the production Postgres container is running:
+```bash
+docker compose -f docker-compose.prod.yml ps
+```
+
+Confirm the Postgres container has the expected database environment variables:
+```bash
+docker compose -f docker-compose.prod.yml exec postgres sh -lc 'echo "USER=$POSTGRES_USER DB=$POSTGRES_DB"'
+```
+
+Then update the admin user role using psql inside the Postgres container (using actual email address):
+```bash
+docker compose -f docker-compose.prod.yml exec -T postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+BEGIN;
+
+SELECT id, email, name, role, enabled, "createdAt", "updatedAt"
+FROM "AdminUser"
+WHERE email = 'my_real_email@gmail.com';
+
+UPDATE "AdminUser"
+SET role = 'owner',
+    "updatedAt" = NOW()
+WHERE email = 'my_real_email@gmail.com'
+  AND role = 'admin';
+
+SELECT id, email, name, role, enabled, "createdAt", "updatedAt"
+FROM "AdminUser"
+WHERE email = 'my_real_email@gmail.com';
+
+COMMIT;
+SQL
+```
+
+The first SELECT should show role = admin, and the second SELECT should show role = owner.
+
+After the update:
+
+Sign out of the Admin UI.
+Sign back in.
+Confirm /api/admin-auth/me returns access.role = "owner".
+Confirm the Users & Access page shows Owners: 1.
+Confirm editing the admin user name succeeds.
