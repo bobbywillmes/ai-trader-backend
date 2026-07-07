@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   updateTradingAccountForAdmin: vi.fn(),
   getNormalizedOpenOrders: vi.fn(),
   getOpenTrackedPositionsForTradingAccount: vi.fn(),
+  listTradeCyclesForTradingAccount: vi.fn(),
   getTradingAccountRiskSettingsForAdmin: vi.fn(),
   updateTradingAccountRiskSettingsForAdmin: vi.fn(),
   getTradingAccountRiskHealth: vi.fn(),
@@ -52,6 +53,10 @@ vi.mock('../services/orders.service.js', () => ({
 vi.mock('../services/position-tracking.service.js', () => ({
   getOpenTrackedPositionsForTradingAccount:
     mocks.getOpenTrackedPositionsForTradingAccount,
+}));
+
+vi.mock('../services/trade-cycles.service.js', () => ({
+  listTradeCyclesForTradingAccount: mocks.listTradeCyclesForTradingAccount,
 }));
 
 vi.mock('../services/trading-account-risk-settings.service.js', () => ({
@@ -114,6 +119,7 @@ import {
   getTradingAccountController,
   listTradingAccountOpenOrdersController,
   listTradingAccountOpenPositionsController,
+  listTradingAccountTradeCyclesController,
   listTradingAccountAllocationsController,
   listTradingAccountSubscriptionMarketContextController,
   listTradingAccountSubscriptionsController,
@@ -159,6 +165,9 @@ describe('trading accounts controller', () => {
     mocks.getOpenTrackedPositionsForTradingAccount.mockResolvedValue([
       { id: 101, symbol: 'DIA' },
     ]);
+    mocks.listTradeCyclesForTradingAccount.mockResolvedValue({
+      cycles: [{ id: 101, symbol: 'DIA' }],
+    });
     mocks.getTradingAccountRiskSettingsForAdmin.mockResolvedValue({
       id: 50,
       tradingAccountId: 1,
@@ -397,6 +406,73 @@ describe('trading accounts controller', () => {
       expect.objectContaining({
         statusCode: 404,
         message: 'Trading account not found.',
+      })
+    );
+  });
+
+  it('returns trade cycles scoped to a trading account', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await listTradingAccountTradeCyclesController(
+      {
+        params: {
+          id: '1',
+        },
+        query: {
+          symbol: ' dia ',
+          status: 'closed',
+          dateFrom: '2026-06-01T00:00:00.000Z',
+          limit: '25',
+          strategyId: '5',
+          subscriptionId: '6',
+          exitProfileId: '7',
+          exitReason: 'target_hit',
+          mode: 'paper',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.listTradeCyclesForTradingAccount).toHaveBeenCalledWith(1, {
+      symbol: 'dia',
+      status: 'closed',
+      dateFrom: new Date('2026-06-01T00:00:00.000Z'),
+      limit: 25,
+      strategyId: 5,
+      subscriptionId: 6,
+      exitProfileId: 7,
+      exitReason: 'target_hit',
+      mode: 'paper',
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      cycles: [{ id: 101, symbol: 'DIA' }],
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid trading account ids on account-scoped trade cycle reads', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await listTradingAccountTradeCyclesController(
+      {
+        params: {
+          id: 'nope',
+        },
+        query: {},
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.listTradeCyclesForTradingAccount).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 400,
+        message: 'Invalid trading account id.',
       })
     );
   });

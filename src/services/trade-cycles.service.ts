@@ -384,6 +384,14 @@ const tradeCycleInclude = {
 
 export async function listTradeCycles(filters: TradeCycleFilters = {}) {
   const tradingAccountId = await resolveDefaultTradingAccountId();
+
+  return listTradeCyclesForTradingAccount(tradingAccountId, filters);
+}
+
+export async function listTradeCyclesForTradingAccount(
+  tradingAccountId: number,
+  filters: TradeCycleFilters = {}
+) {
   const take = filters.limit === null ? undefined : filters.limit ?? 50;
   const cycles = await prisma.trackedPosition.findMany({
     where: buildWhere(filters, tradingAccountId),

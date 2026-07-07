@@ -13,6 +13,10 @@ import {
 import { getNormalizedOpenOrders } from '../services/orders.service.js';
 import { getOpenTrackedPositionsForTradingAccount } from '../services/position-tracking.service.js';
 import {
+  listTradeCyclesForTradingAccount,
+  type TradeCycleFilters,
+} from '../services/trade-cycles.service.js';
+import {
   revokeTradingAccountCredential,
   upsertTradingAccountApiKeyCredential,
 } from '../services/trading-account-credential.service.js';
@@ -132,6 +136,69 @@ export async function getTradingAccountController(
   }
 }
 
+function getQueryString(value: unknown) {
+  return typeof value === 'string' && value.trim() !== ''
+    ? value.trim()
+    : undefined;
+}
+
+function getQueryNumber(value: unknown) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function getQueryDate(value: unknown) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return undefined;
+  }
+
+  const parsed = new Date(value);
+
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
+
+function parseTradeCycleStatus(value: unknown): TradeCycleFilters['status'] {
+  const status = getQueryString(value);
+
+  if (status === 'open' || status === 'closed' || status === 'closing') {
+    return status;
+  }
+
+  return undefined;
+}
+
+function parseTradeCycleFilters(query: Request['query']) {
+  const filters: TradeCycleFilters = {};
+  const symbol = getQueryString(query.symbol);
+  const status = parseTradeCycleStatus(query.status);
+  const dateFrom = getQueryDate(query.dateFrom);
+  const dateTo = getQueryDate(query.dateTo);
+  const strategyId = getQueryNumber(query.strategyId);
+  const subscriptionId = getQueryNumber(query.subscriptionId);
+  const exitProfileId = getQueryNumber(query.exitProfileId);
+  const exitReason = getQueryString(query.exitReason);
+  const mode = getQueryString(query.mode);
+  const limit = getQueryNumber(query.limit);
+
+  if (symbol !== undefined) filters.symbol = symbol;
+  if (status !== undefined) filters.status = status;
+  if (dateFrom !== undefined) filters.dateFrom = dateFrom;
+  if (dateTo !== undefined) filters.dateTo = dateTo;
+  if (strategyId !== undefined) filters.strategyId = strategyId;
+  if (subscriptionId !== undefined) filters.subscriptionId = subscriptionId;
+  if (exitProfileId !== undefined) filters.exitProfileId = exitProfileId;
+  if (exitReason !== undefined) filters.exitReason = exitReason;
+  if (mode !== undefined) filters.mode = mode;
+  if (limit !== undefined) filters.limit = limit;
+
+  return filters;
+}
+
 export async function listTradingAccountOpenPositionsController(
   req: Request,
   res: Response,
@@ -171,6 +238,24 @@ export async function listTradingAccountOpenOrdersController(
         tradingAccount,
       })),
     });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function listTradingAccountTradeCyclesController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const id = parseTradingAccountId(req.params.id);
+    const result = await listTradeCyclesForTradingAccount(
+      id,
+      parseTradeCycleFilters(req.query)
+    );
+
+    res.status(200).json(result);
   } catch (error) {
     next(error);
   }
