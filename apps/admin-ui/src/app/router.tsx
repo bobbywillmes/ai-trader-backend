@@ -151,6 +151,14 @@ export const router = createBrowserRouter([
                 path: "accounts/:accountId",
                 element: <ViewerAccountPage />,
               },
+              {
+                path: "accounts/:accountId/positions",
+                element: <ViewerAccountPage view="positions" />,
+              },
+              {
+                path: "accounts/:accountId/orders",
+                element: <ViewerAccountPage view="orders" />,
+              },
             ],
           },
         ],

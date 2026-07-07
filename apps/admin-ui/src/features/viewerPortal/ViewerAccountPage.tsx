@@ -1,8 +1,24 @@
-import { Alert, Badge, Card, Group, Loader, SimpleGrid, Stack, Text, Title } from "@mantine/core";
+import {
+  Alert,
+  Badge,
+  Card,
+  Group,
+  Loader,
+  ScrollArea,
+  SimpleGrid,
+  Stack,
+  Table,
+  Text,
+  Title,
+} from "@mantine/core";
 import { Link, Navigate, useParams } from "react-router-dom";
 
 import { getAdminToken } from "../../lib/api";
 import { useAuth } from "../auth/useAuth";
+import { useTradingAccountOpenOrders } from "../orders/hooks";
+import type { OpenOrder } from "../orders/types";
+import { useTradingAccountOpenPositions } from "../positions/hooks";
+import type { TrackedPosition } from "../positions/types";
 import { useTradingAccount } from "../tradingAccounts/hooks";
 import type { TradingAccount } from "../tradingAccounts/types";
 
@@ -44,6 +60,19 @@ function environmentColor(environment: TradingAccount["environment"]) {
   return environment === "LIVE" ? "red" : "yellow";
 }
 
+function formatPercent(value: number | null | undefined) {
+  if (value === null || value === undefined) return "-";
+
+  return `${(value * 100).toFixed(2)}%`;
+}
+
+function pnlColor(value: number | null | undefined) {
+  if (value === null || value === undefined) return "dimmed";
+  if (value > 0) return "teal";
+  if (value < 0) return "red";
+  return "dimmed";
+}
+
 function StatCard({
   label,
   value,
@@ -68,7 +97,138 @@ function StatCard({
   );
 }
 
-export function ViewerAccountPage() {
+function ViewerPositionsTable({ positions }: { positions: TrackedPosition[] }) {
+  if (positions.length === 0) {
+    return <Text size="sm" c="dimmed">No open positions.</Text>;
+  }
+
+  return (
+    <ScrollArea>
+      <Table striped highlightOnHover style={{ minWidth: 760 }}>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>Symbol</Table.Th>
+            <Table.Th>Side</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Qty</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Avg Entry</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Current</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Market Value</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Unrealized P/L</Table.Th>
+            <Table.Th>Status</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {positions.map((position) => (
+            <Table.Tr key={position.id}>
+              <Table.Td fw={600}>{position.symbol}</Table.Td>
+              <Table.Td>
+                <Badge
+                  size="sm"
+                  color={position.side === "short" ? "red" : "teal"}
+                  variant="light"
+                >
+                  {position.side}
+                </Badge>
+              </Table.Td>
+              <Table.Td style={{ textAlign: "right" }}>{position.qty}</Table.Td>
+              <Table.Td style={{ textAlign: "right" }}>
+                {formatMoney(position.avgEntryPrice)}
+              </Table.Td>
+              <Table.Td style={{ textAlign: "right" }}>
+                {formatMoney(position.currentPrice)}
+              </Table.Td>
+              <Table.Td style={{ textAlign: "right" }}>
+                {formatMoney(position.marketValue)}
+              </Table.Td>
+              <Table.Td style={{ textAlign: "right" }}>
+                <Text c={pnlColor(position.unrealizedPnL)} fw={600} size="sm">
+                  {formatMoney(position.unrealizedPnL)} /{" "}
+                  {formatPercent(position.unrealizedPnLPct)}
+                </Text>
+              </Table.Td>
+              <Table.Td>
+                <Badge size="sm" color="gray" variant="light">
+                  {position.status}
+                </Badge>
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
+    </ScrollArea>
+  );
+}
+
+function ViewerOrdersTable({ orders }: { orders: OpenOrder[] }) {
+  if (orders.length === 0) {
+    return <Text size="sm" c="dimmed">No open orders.</Text>;
+  }
+
+  return (
+    <ScrollArea>
+      <Table striped highlightOnHover style={{ minWidth: 760 }}>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>Symbol</Table.Th>
+            <Table.Th>Side</Table.Th>
+            <Table.Th>Type</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Qty</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Filled</Table.Th>
+            <Table.Th style={{ textAlign: "right" }}>Limit</Table.Th>
+            <Table.Th>Status</Table.Th>
+            <Table.Th>Submitted</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {orders.map((order) => {
+            const filledQty = order.filled_qty ?? order.filledQty ?? "0";
+            const limitPrice = order.limit_price ?? order.limitPrice ?? null;
+            const submittedAt = order.submitted_at ?? order.submittedAt ?? null;
+
+            return (
+              <Table.Tr key={order.id}>
+                <Table.Td fw={600}>{order.symbol}</Table.Td>
+                <Table.Td>
+                  <Badge
+                    size="sm"
+                    color={order.side === "buy" ? "teal" : "red"}
+                    variant="light"
+                  >
+                    {order.side}
+                  </Badge>
+                </Table.Td>
+                <Table.Td>
+                  <Text size="sm" tt="capitalize">{order.type}</Text>
+                </Table.Td>
+                <Table.Td style={{ textAlign: "right" }}>{order.qty ?? "-"}</Table.Td>
+                <Table.Td style={{ textAlign: "right" }}>{filledQty}</Table.Td>
+                <Table.Td style={{ textAlign: "right" }}>
+                  {limitPrice != null ? formatMoney(Number(limitPrice)) : "-"}
+                </Table.Td>
+                <Table.Td>
+                  <Badge size="sm" color="yellow" variant="light">
+                    {order.status}
+                  </Badge>
+                </Table.Td>
+                <Table.Td>
+                  <Text size="sm" c="dimmed">
+                    {submittedAt ? formatDateTime(submittedAt) : "-"}
+                  </Text>
+                </Table.Td>
+              </Table.Tr>
+            );
+          })}
+        </Table.Tbody>
+      </Table>
+    </ScrollArea>
+  );
+}
+
+type ViewerAccountPageProps = {
+  view?: "overview" | "positions" | "orders";
+};
+
+export function ViewerAccountPage({ view = "overview" }: ViewerAccountPageProps) {
   const { accountId } = useParams();
   const id = parseAccountId(accountId);
   const { access } = useAuth();
@@ -76,6 +236,14 @@ export function ViewerAccountPage() {
   const assignedAccountIds = access?.accessibleTradingAccountIds ?? [];
   const assignedAccountIdSet = new Set(assignedAccountIds);
   const { data, isLoading, isError, error } = useTradingAccount(id ?? undefined, token);
+  const positionsQuery = useTradingAccountOpenPositions(
+    view === "positions" ? id ?? undefined : undefined,
+    token
+  );
+  const ordersQuery = useTradingAccountOpenOrders(
+    view === "orders" ? id ?? undefined : undefined,
+    token
+  );
 
   if (!id) {
     return <Navigate to="/portal" replace />;
@@ -117,7 +285,11 @@ export function ViewerAccountPage() {
         <div>
           <Title order={2} size="h3">{account.displayName}</Title>
           <Text size="sm" c="dimmed">
-            Read-only account overview
+            {view === "positions"
+              ? "Read-only open positions"
+              : view === "orders"
+                ? "Read-only open orders"
+                : "Read-only account overview"}
           </Text>
         </div>
         <Group gap="xs">
@@ -130,50 +302,96 @@ export function ViewerAccountPage() {
         </Group>
       </Group>
 
-      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
-        <StatCard label="Portfolio value" value={formatMoney(account.lastPortfolioValue)} />
-        <StatCard label="Equity" value={formatMoney(account.lastEquity)} />
-        <StatCard label="Cash" value={formatMoney(account.lastCash)} />
-        <StatCard label="Buying power" value={formatMoney(account.lastBuyingPower)} />
-      </SimpleGrid>
+      {view === "overview" && (
+        <>
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
+            <StatCard label="Portfolio value" value={formatMoney(account.lastPortfolioValue)} />
+            <StatCard label="Equity" value={formatMoney(account.lastEquity)} />
+            <StatCard label="Cash" value={formatMoney(account.lastCash)} />
+            <StatCard label="Buying power" value={formatMoney(account.lastBuyingPower)} />
+          </SimpleGrid>
 
-      <Card withBorder radius="md" p="md">
-        <Text fw={600} size="sm" mb="sm">Account summary</Text>
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
-          <div>
-            <Text size="xs" c="dimmed">Broker</Text>
-            <Text size="sm" fw={600}>{account.broker}</Text>
-          </div>
-          <div>
-            <Text size="xs" c="dimmed">Account number</Text>
-            <Text size="sm" fw={600}>
-              {account.brokerAccountNumberMasked ?? "-"}
-            </Text>
-          </div>
-          <div>
-            <Text size="xs" c="dimmed">Broker status</Text>
-            <Text size="sm" fw={600}>{account.brokerAccountStatus ?? "-"}</Text>
-          </div>
-          <div>
-            <Text size="xs" c="dimmed">Open position notional</Text>
-            <Text size="sm" fw={600}>
-              {formatMoney(account.totalOpenPositionNotional)}
-            </Text>
-          </div>
-          <div>
-            <Text size="xs" c="dimmed">Estimated trading capital</Text>
-            <Text size="sm" fw={600}>
-              {formatMoney(account.estimatedTradingCapital)}
-            </Text>
-          </div>
-          <div>
-            <Text size="xs" c="dimmed">Last broker sync</Text>
-            <Text size="sm" fw={600}>
-              {formatDateTime(account.lastBrokerSyncAt)}
-            </Text>
-          </div>
-        </SimpleGrid>
-      </Card>
+          <Card withBorder radius="md" p="md">
+            <Text fw={600} size="sm" mb="sm">Account summary</Text>
+            <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
+              <div>
+                <Text size="xs" c="dimmed">Broker</Text>
+                <Text size="sm" fw={600}>{account.broker}</Text>
+              </div>
+              <div>
+                <Text size="xs" c="dimmed">Account number</Text>
+                <Text size="sm" fw={600}>
+                  {account.brokerAccountNumberMasked ?? "-"}
+                </Text>
+              </div>
+              <div>
+                <Text size="xs" c="dimmed">Broker status</Text>
+                <Text size="sm" fw={600}>{account.brokerAccountStatus ?? "-"}</Text>
+              </div>
+              <div>
+                <Text size="xs" c="dimmed">Open position notional</Text>
+                <Text size="sm" fw={600}>
+                  {formatMoney(account.totalOpenPositionNotional)}
+                </Text>
+              </div>
+              <div>
+                <Text size="xs" c="dimmed">Estimated trading capital</Text>
+                <Text size="sm" fw={600}>
+                  {formatMoney(account.estimatedTradingCapital)}
+                </Text>
+              </div>
+              <div>
+                <Text size="xs" c="dimmed">Last broker sync</Text>
+                <Text size="sm" fw={600}>
+                  {formatDateTime(account.lastBrokerSyncAt)}
+                </Text>
+              </div>
+            </SimpleGrid>
+          </Card>
+        </>
+      )}
+
+      {view === "positions" && (
+        <Card withBorder radius="md" p="md">
+          <Group justify="space-between" mb="sm">
+            <Text fw={600} size="sm">Open positions</Text>
+            {positionsQuery.isLoading && <Loader size="xs" color="cyan" />}
+          </Group>
+          {positionsQuery.isError && (
+            <Alert color="red" mb="md">
+              {positionsQuery.error instanceof Error
+                ? positionsQuery.error.message
+                : "Failed to load positions."}
+            </Alert>
+          )}
+          {positionsQuery.isLoading ? (
+            <Text size="sm" c="dimmed">Loading positions...</Text>
+          ) : (
+            <ViewerPositionsTable positions={positionsQuery.data?.positions ?? []} />
+          )}
+        </Card>
+      )}
+
+      {view === "orders" && (
+        <Card withBorder radius="md" p="md">
+          <Group justify="space-between" mb="sm">
+            <Text fw={600} size="sm">Open orders</Text>
+            {ordersQuery.isLoading && <Loader size="xs" color="cyan" />}
+          </Group>
+          {ordersQuery.isError && (
+            <Alert color="red" mb="md">
+              {ordersQuery.error instanceof Error
+                ? ordersQuery.error.message
+                : "Failed to load orders."}
+            </Alert>
+          )}
+          {ordersQuery.isLoading ? (
+            <Text size="sm" c="dimmed">Loading orders...</Text>
+          ) : (
+            <ViewerOrdersTable orders={ordersQuery.data?.orders ?? []} />
+          )}
+        </Card>
+      )}
     </Stack>
   );
 }

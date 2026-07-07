@@ -169,6 +169,8 @@ export function ViewerPortalShell() {
   const isMobile = useMediaQuery("(max-width: 48em)") ?? false;
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const accountMatch = pathname.match(/^\/portal\/accounts\/(\d+)/);
+  const accountBasePath = accountMatch ? `/portal/accounts/${accountMatch[1]}` : null;
 
   async function handleLogout() {
     await logoutMutation.mutateAsync();
@@ -229,6 +231,34 @@ export function ViewerPortalShell() {
               close();
             }}
           />
+          {accountBasePath && (
+            <>
+              <NavLink
+                label="Account"
+                active={pathname === accountBasePath}
+                onClick={() => {
+                  navigate(accountBasePath);
+                  close();
+                }}
+              />
+              <NavLink
+                label="Positions"
+                active={pathname === `${accountBasePath}/positions`}
+                onClick={() => {
+                  navigate(`${accountBasePath}/positions`);
+                  close();
+                }}
+              />
+              <NavLink
+                label="Orders"
+                active={pathname === `${accountBasePath}/orders`}
+                onClick={() => {
+                  navigate(`${accountBasePath}/orders`);
+                  close();
+                }}
+              />
+            </>
+          )}
         </AppShell.Section>
 
         <Divider />
