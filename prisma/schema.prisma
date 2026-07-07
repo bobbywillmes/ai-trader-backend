@@ -24,24 +24,50 @@ model Setting {
 }
 
 model AdminUser {
-  id           Int     @id @default(autoincrement())
+  id                      Int     @id @default(autoincrement())
 
-  email        String  @unique
-  passwordHash String
-  role         String  @default("admin")
-  enabled      Boolean @default(true)
+  email                   String  @unique
+  passwordHash            String?
+  role                    String  @default("account_viewer")
+  enabled                 Boolean @default(true)
 
-  name              String?
-  emailVerifiedAt   DateTime?
+  name                    String?
+  emailVerifiedAt         DateTime?
+  invitedAt               DateTime?
+  invitedByAdminUserId    Int?
+  invitedByAdminUser      AdminUser?  @relation("AdminUserInvites", fields: [invitedByAdminUserId], references: [id], onDelete: SetNull)
+  invitedAdminUsers       AdminUser[] @relation("AdminUserInvites")
+  setupCompletedAt        DateTime?
 
   lastLoginAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
 
-  sessions AdminSession[]
+  sessions                AdminSession[]
+  setupTokens             AdminUserSetupToken[]
 
-  ownedTradingAccounts  TradingAccount[] @relation("TradingAccountOwner")
-  tradingAccountAccess  TradingAccountAccess[]
+  ownedTradingAccounts    TradingAccount[] @relation("TradingAccountOwner")
+  tradingAccountAccess    TradingAccountAccess[]
+}
+
+model AdminUserSetupToken {
+  id                      Int    @id @default(autoincrement())
+  adminUserId             Int
+  tokenHash               String @unique
+
+  expiresAt               DateTime
+  usedAt                  DateTime?
+  revokedAt               DateTime?
+
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  adminUser               AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  @@index([adminUserId])
+  @@index([expiresAt])
+  @@index([usedAt])
+  @@index([revokedAt])
 }
 
 model AdminSession {

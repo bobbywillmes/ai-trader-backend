@@ -163,6 +163,10 @@ export async function adminVerifyPasswordController(
       throw new HttpError(400, 'Password is required.');
     }
 
+    if (!adminUser.passwordHash) {
+      throw new HttpError(400, 'Admin password setup is not complete.');
+    }
+
     const passwordIsValid = await verifyAdminPassword(password, adminUser.passwordHash);
 
     if (!passwordIsValid) {

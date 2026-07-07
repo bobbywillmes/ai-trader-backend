@@ -80,7 +80,7 @@ export async function validateAdminLogin(input: AdminLoginInput) {
     where: { email },
   });
 
-  if (!adminUser || !adminUser.enabled) {
+  if (!adminUser || !adminUser.enabled || !adminUser.passwordHash) {
     throw new HttpError(401, 'Invalid admin login.');
   }
 
@@ -205,6 +205,10 @@ export async function changeAdminPassword(
 
   if (!adminUser) {
     throw new HttpError(404, 'Admin user not found.');
+  }
+
+  if (!adminUser.passwordHash) {
+    throw new HttpError(400, 'Admin password setup is not complete.');
   }
 
   const passwordIsValid = await verifyAdminPassword(
