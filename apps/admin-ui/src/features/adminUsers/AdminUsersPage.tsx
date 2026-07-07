@@ -22,13 +22,14 @@ export function AdminUsersPage() {
   const [inviteModalOpened, setInviteModalOpened] = useState(false);
 
   const stats = useMemo(() => {
-    if (!users) return { total: 0, owners: 0, managers: 0, viewers: 0 };
+    if (!users) return { total: 0, owners: 0, managers: 0, viewers: 0, pending: 0 };
 
     return {
       total: users.length,
       owners: users.filter((u) => u.role === "owner").length,
       managers: users.filter((u) => u.role === "account_manager").length,
       viewers: users.filter((u) => u.role === "account_viewer").length,
+      pending: users.filter((u) => u.pendingSetup).length,
     };
   }, [users]);
 
@@ -97,7 +98,7 @@ export function AdminUsersPage() {
         </Button>
       </Group>
 
-      <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="md">
+      <SimpleGrid cols={{ base: 1, sm: 2, md: 5 }} spacing="md">
         <Card withBorder radius="md" p="md">
           <Text size="xs" c="dimmed" tt="uppercase" fw={700} style={{ letterSpacing: "0.07em" }} mb={6}>
             Total Users
@@ -131,6 +132,15 @@ export function AdminUsersPage() {
           </Text>
           <Text size="xl" fw={700}>
             {stats.viewers}
+          </Text>
+        </Card>
+
+        <Card withBorder radius="md" p="md">
+          <Text size="xs" c="dimmed" tt="uppercase" fw={700} style={{ letterSpacing: "0.07em" }} mb={6}>
+            Pending
+          </Text>
+          <Text size="xl" fw={700}>
+            {stats.pending}
           </Text>
         </Card>
       </SimpleGrid>
@@ -176,12 +186,19 @@ export function AdminUsersPage() {
                       </Badge>
                     </Table.Td>
                     <Table.Td>
-                      <Badge
-                        color={user.enabled ? "green" : "gray"}
-                        variant="light"
-                      >
-                        {user.enabled ? "Enabled" : "Disabled"}
-                      </Badge>
+                      <Group gap="xs">
+                        <Badge
+                          color={user.enabled ? "green" : "gray"}
+                          variant="light"
+                        >
+                          {user.enabled ? "Enabled" : "Disabled"}
+                        </Badge>
+                        {user.pendingSetup ? (
+                          <Badge color="yellow" variant="light">
+                            Pending Setup
+                          </Badge>
+                        ) : null}
+                      </Group>
                     </Table.Td>
                     <Table.Td>
                       <Text size="sm" c="dimmed">

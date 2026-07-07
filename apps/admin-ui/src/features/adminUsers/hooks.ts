@@ -4,6 +4,7 @@ import {
   getAdminUser,
   getAdminUserTradingAccountAccess,
   createAdminUserInvitation,
+  regenerateAdminUserSetupLink,
   updateAdminUser,
   upsertTradingAccountAccess,
 } from "./api";
@@ -65,6 +66,12 @@ export function useCreateAdminUserInvitation() {
       queryClient.invalidateQueries({ queryKey: ["adminUsers"] });
       queryClient.setQueryData(["adminUsers", data.adminUser.id], data.adminUser);
     },
+  });
+}
+
+export function useRegenerateAdminUserSetupLink() {
+  return useMutation({
+    mutationFn: regenerateAdminUserSetupLink,
   });
 }
 

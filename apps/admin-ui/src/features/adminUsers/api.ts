@@ -4,6 +4,7 @@ import type {
   AdminUserTradingAccountAccess,
   CreateAdminUserInvitationInput,
   CreateAdminUserInvitationResponse,
+  AdminUserSetupLink,
 } from "./types";
 
 export async function listAdminUsers(): Promise<AdminUser[]> {
@@ -52,6 +53,19 @@ export async function createAdminUserInvitation(
       method: "POST",
       token,
       body: data,
+    }
+  );
+}
+
+export async function regenerateAdminUserSetupLink(
+  id: number
+): Promise<{ setupLink: AdminUserSetupLink }> {
+  const token = getAdminToken();
+  return apiRequest<{ setupLink: AdminUserSetupLink }>(
+    `/api/admin-users/${id}/setup-link`,
+    {
+      method: "POST",
+      token,
     }
   );
 }

@@ -8,6 +8,8 @@ import {
   Loader,
   Table,
   Card,
+  Code,
+  CopyButton,
   ScrollArea,
   Group,
   Button,
@@ -16,12 +18,15 @@ import {
   Switch,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { IconCheck, IconCopy, IconRefresh } from "@tabler/icons-react";
 import {
   useAdminUser,
   useAdminUserTradingAccountAccess,
+  useRegenerateAdminUserSetupLink,
   useUpdateAdminUser,
   useAdminUsers,
 } from "./hooks";
+import type { AdminUserSetupLink } from "./types";
 
 interface AdminUserDetailDrawerProps {
   userId: number | null;
@@ -37,8 +42,10 @@ export function AdminUserDetailDrawer({
     useAdminUserTradingAccountAccess(userId);
   const { data: allUsers } = useAdminUsers();
   const updateMutation = useUpdateAdminUser();
+  const regenerateSetupLinkMutation = useRegenerateAdminUserSetupLink();
 
   const [isEditing, setIsEditing] = useState(false);
+  const [setupLink, setSetupLink] = useState<AdminUserSetupLink | null>(null);
   const [formData, setFormData] = useState({
     name: user?.name || "",
     role: user?.role || "",
@@ -51,6 +58,9 @@ export function AdminUserDetailDrawer({
   const userIsOwnerLike = user?.role === "owner" || user?.role === "admin";
   const isOnlyOwner = userIsOwnerLike && ownerCount === 1;
   const roleDisabled = isEditing && isOnlyOwner;
+  const setupUrl = setupLink
+    ? new URL(setupLink.setupPath, window.location.origin).toString()
+    : "";
 
   useEffect(() => {
     if (user) {
@@ -144,7 +154,31 @@ export function AdminUserDetailDrawer({
 
   const handleDrawerClose = () => {
     setIsEditing(false);
+    setSetupLink(null);
     onClose();
+  };
+
+  const handleRegenerateSetupLink = async () => {
+    if (!user) return;
+
+    try {
+      const result = await regenerateSetupLinkMutation.mutateAsync(user.id);
+      setSetupLink(result.setupLink);
+      notifications.show({
+        title: "Setup link regenerated",
+        message: "Setup link is ready to copy",
+        color: "green",
+      });
+    } catch (error) {
+      notifications.show({
+        title: "Setup link failed",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to regenerate setup link",
+        color: "red",
+      });
+    }
   };
 
   return (
@@ -267,9 +301,61 @@ export function AdminUserDetailDrawer({
                   >
                     {user.enabled ? "Enabled" : "Disabled"}
                   </Badge>
+                  {user.pendingSetup ? (
+                    <Badge color="yellow" variant="light" ml="xs">
+                      Pending Setup
+                    </Badge>
+                  ) : null}
                 </div>
 
                 <Divider />
+
+                {user.pendingSetup ? (
+                  <>
+                    <div>
+                      <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
+                        Setup Link
+                      </Text>
+                      {setupLink ? (
+                        <Stack gap="xs">
+                          <Code block>{setupUrl}</Code>
+                          <Group justify="flex-end">
+                            <CopyButton value={setupUrl}>
+                              {({ copied, copy }) => (
+                                <Button
+                                  size="xs"
+                                  leftSection={
+                                    copied ? (
+                                      <IconCheck size={14} />
+                                    ) : (
+                                      <IconCopy size={14} />
+                                    )
+                                  }
+                                  color={copied ? "green" : undefined}
+                                  onClick={copy}
+                                >
+                                  {copied ? "Copied" : "Copy Setup Link"}
+                                </Button>
+                              )}
+                            </CopyButton>
+                          </Group>
+                        </Stack>
+                      ) : (
+                        <Button
+                          size="xs"
+                          variant="light"
+                          leftSection={<IconRefresh size={14} />}
+                          onClick={handleRegenerateSetupLink}
+                          loading={regenerateSetupLinkMutation.isPending}
+                        >
+                          Regenerate setup link
+                        </Button>
+                      )}
+                    </div>
+
+                    <Divider />
+                  </>
+                ) : null}
 
                 <div>
                   <Text size="xs" tt="uppercase" fw={700} c="dimmed" mb={4}>
