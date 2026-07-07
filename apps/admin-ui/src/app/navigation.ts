@@ -56,6 +56,7 @@ export const adminNavGroups: AdminNavGroup[] = [
   {
     label: "System",
     items: [
+      { to: "/admin-users", label: "Users & Access", ownerOnly: true },
       { to: "/securities", label: "Securities" },
       { to: "/settings", label: "Settings" },
     ],
