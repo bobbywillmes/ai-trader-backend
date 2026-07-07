@@ -1,5 +1,11 @@
 import { apiRequest, getAdminToken } from "../../lib/api";
-import type { AdminUser, AdminUserTradingAccountAccess } from "./types";
+import type {
+  AdminUser,
+  AdminUserTradingAccountAccess,
+  CreateAdminUserInvitationInput,
+  CreateAdminUserInvitationResponse,
+  AdminUserSetupLink,
+} from "./types";
 
 export async function listAdminUsers(): Promise<AdminUser[]> {
   const token = getAdminToken();
@@ -35,6 +41,33 @@ export async function updateAdminUser(
     token,
     body: data,
   });
+}
+
+export async function createAdminUserInvitation(
+  data: CreateAdminUserInvitationInput
+): Promise<CreateAdminUserInvitationResponse> {
+  const token = getAdminToken();
+  return apiRequest<CreateAdminUserInvitationResponse>(
+    "/api/admin-users/invitations",
+    {
+      method: "POST",
+      token,
+      body: data,
+    }
+  );
+}
+
+export async function regenerateAdminUserSetupLink(
+  id: number
+): Promise<{ setupLink: AdminUserSetupLink }> {
+  const token = getAdminToken();
+  return apiRequest<{ setupLink: AdminUserSetupLink }>(
+    `/api/admin-users/${id}/setup-link`,
+    {
+      method: "POST",
+      token,
+    }
+  );
 }
 
 export async function upsertTradingAccountAccess(

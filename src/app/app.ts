@@ -42,6 +42,17 @@ import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
 import { requireSignalApiKey, requireAdminAccess } from '../middleware/api-key-auth.js';
 
+function redactSensitiveRequestUrl(url?: string) {
+  if (!url) {
+    return url;
+  }
+
+  return url.replace(
+    /(\/api\/admin-auth\/setup\/)[^/?#]+/g,
+    '$1[redacted]',
+  );
+}
+
 export function createApp() {
   const app = express();
 
@@ -51,7 +62,18 @@ export function createApp() {
 
   app.use(
     pinoHttp({
-      logger
+      logger,
+      serializers: {
+        req(req) {
+          return {
+            id: req.id,
+            method: req.method,
+            url: redactSensitiveRequestUrl(req.url),
+            remoteAddress: req.remoteAddress,
+            remotePort: req.remotePort,
+          };
+        },
+      },
     })
   );
 

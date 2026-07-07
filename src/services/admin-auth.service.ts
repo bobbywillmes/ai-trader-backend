@@ -8,6 +8,7 @@ import type {
   AdminBootstrapInput,
   AdminLoginInput,
   AdminChangePasswordInput,
+  AdminSetupPasswordInput,
 } from '../validators/admin-auth.schema.js';
 
 const SESSION_TOKEN_BYTES = 32;
@@ -39,6 +40,36 @@ export function createRawSessionToken() {
 
 export function hashSessionToken(rawToken: string) {
   return crypto.createHash('sha256').update(rawToken).digest('hex');
+}
+
+function hashSetupToken(rawToken: string) {
+  return crypto.createHash('sha256').update(rawToken).digest('hex');
+}
+
+function isPendingAdminSetup(adminUser: {
+  invitedAt: Date | null;
+  setupCompletedAt: Date | null;
+  passwordHash: string | null;
+}) {
+  return Boolean(
+    adminUser.invitedAt && !adminUser.setupCompletedAt && !adminUser.passwordHash,
+  );
+}
+
+function serializeSetupTokenAdminUser(adminUser: {
+  id: number;
+  email: string;
+  name: string | null;
+  role: string;
+  enabled: boolean;
+}) {
+  return {
+    id: adminUser.id,
+    email: adminUser.email,
+    name: adminUser.name,
+    role: adminUser.role,
+    enabled: adminUser.enabled,
+  };
 }
 
 export async function getAdminUserCount() {
@@ -80,7 +111,7 @@ export async function validateAdminLogin(input: AdminLoginInput) {
     where: { email },
   });
 
-  if (!adminUser || !adminUser.enabled) {
+  if (!adminUser || !adminUser.enabled || !adminUser.passwordHash) {
     throw new HttpError(401, 'Invalid admin login.');
   }
 
@@ -207,6 +238,10 @@ export async function changeAdminPassword(
     throw new HttpError(404, 'Admin user not found.');
   }
 
+  if (!adminUser.passwordHash) {
+    throw new HttpError(400, 'Admin password setup is not complete.');
+  }
+
   const passwordIsValid = await verifyAdminPassword(
     input.currentPassword,
     adminUser.passwordHash,
@@ -240,4 +275,141 @@ export async function changeAdminPassword(
     message: 'Admin password changed',
     payload: { currentSessionId },
   });
+}
+
+export async function validateAdminSetupToken(rawToken: string) {
+  const tokenHash = hashSetupToken(rawToken);
+
+  const setupToken = await prisma.adminUserSetupToken.findUnique({
+    where: { tokenHash },
+    include: {
+      adminUser: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+          enabled: true,
+          invitedAt: true,
+          setupCompletedAt: true,
+          passwordHash: true,
+        },
+      },
+    },
+  });
+
+  if (
+    !setupToken ||
+    setupToken.usedAt ||
+    setupToken.revokedAt ||
+    setupToken.expiresAt <= new Date() ||
+    !setupToken.adminUser.enabled ||
+    !isPendingAdminSetup(setupToken.adminUser)
+  ) {
+    throw new HttpError(400, 'Invalid or expired setup token.');
+  }
+
+  return {
+    adminUser: serializeSetupTokenAdminUser(setupToken.adminUser),
+    expiresAt: setupToken.expiresAt,
+  };
+}
+
+export async function completeAdminSetup(
+  rawToken: string,
+  input: AdminSetupPasswordInput,
+) {
+  const tokenHash = hashSetupToken(rawToken);
+
+  const setupToken = await prisma.adminUserSetupToken.findUnique({
+    where: { tokenHash },
+    include: {
+      adminUser: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+          enabled: true,
+          invitedAt: true,
+          setupCompletedAt: true,
+          passwordHash: true,
+        },
+      },
+    },
+  });
+
+  if (
+    !setupToken ||
+    setupToken.usedAt ||
+    setupToken.revokedAt ||
+    setupToken.expiresAt <= new Date() ||
+    !setupToken.adminUser.enabled ||
+    !isPendingAdminSetup(setupToken.adminUser)
+  ) {
+    throw new HttpError(400, 'Invalid or expired setup token.');
+  }
+
+  const passwordHash = await hashAdminPassword(input.password);
+  const completedAt = new Date();
+
+  const updatedUser = await prisma.$transaction(async (tx) => {
+    const claimedToken = await tx.adminUserSetupToken.updateMany({
+      where: {
+        id: setupToken.id,
+        usedAt: null,
+        revokedAt: null,
+      },
+      data: { usedAt: completedAt },
+    });
+
+    if (claimedToken.count !== 1) {
+      throw new HttpError(400, 'Invalid or expired setup token.');
+    }
+
+    await tx.adminUserSetupToken.updateMany({
+      where: {
+        adminUserId: setupToken.adminUserId,
+        id: { not: setupToken.id },
+        usedAt: null,
+        revokedAt: null,
+      },
+      data: { revokedAt: completedAt },
+    });
+
+    return tx.adminUser.update({
+      where: {
+        id: setupToken.adminUserId,
+        setupCompletedAt: null,
+        passwordHash: null,
+      },
+      data: {
+        passwordHash,
+        setupCompletedAt: completedAt,
+        emailVerifiedAt: completedAt,
+      },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        enabled: true,
+      },
+    });
+  });
+
+  await createAdminAuditEvent({
+    eventType: 'admin_user_setup_completed',
+    entityType: 'admin_user',
+    entityId: updatedUser.id,
+    message: 'Admin user setup completed',
+    payload: {
+      setupTokenId: setupToken.id,
+    },
+  });
+
+  return {
+    adminUser: serializeSetupTokenAdminUser(updatedUser),
+    setupCompletedAt: completedAt,
+  };
 }

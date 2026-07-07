@@ -6,6 +6,8 @@ import {
   adminMeController,
   adminChangePasswordController,
   adminVerifyPasswordController,
+  adminCompleteSetupController,
+  adminValidateSetupTokenController,
 } from '../controllers/admin-auth.controller.js';
 import { requireAdminAccess } from '../middleware/api-key-auth.js';
 import { requireOwnerAccess } from '../middleware/rbac.js';
@@ -14,6 +16,8 @@ const router = Router();
 
 router.post('/bootstrap', requireAdminAccess, requireOwnerAccess, adminBootstrapController);
 router.post('/login', adminLoginController);
+router.get('/setup/:token', adminValidateSetupTokenController);
+router.post('/setup/:token', adminCompleteSetupController);
 router.get('/me', adminMeController);
 router.post('/logout', adminLogoutController);
 router.post('/verify-password', requireAdminAccess, requireOwnerAccess, adminVerifyPasswordController);

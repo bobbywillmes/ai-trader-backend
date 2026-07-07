@@ -1,10 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getMe, login, logout, changePassword, verifyPassword } from "./api";
+import {
+  getMe,
+  login,
+  logout,
+  changePassword,
+  completeSetupAccount,
+  validateSetupAccountToken,
+  verifyPassword,
+} from "./api";
 import { setAdminToken, clearAdminToken } from "../../lib/api";
 import type { MeResponse, LoginResponse } from "./types";
 
 export const authKeys = {
   me: ["me"] as const,
+  setupAccount: (token: string | null) => ["setupAccount", token] as const,
 };
 
 export function useMe(token: string | null) {
@@ -61,5 +70,26 @@ export function useChangePassword(token: string) {
       currentPassword: string;
       newPassword: string;
     }) => changePassword(token, currentPassword, newPassword),
+  });
+}
+
+export function useSetupAccountToken(token: string | null) {
+  return useQuery({
+    queryKey: authKeys.setupAccount(token),
+    queryFn: () => validateSetupAccountToken(token as string),
+    enabled: Boolean(token),
+    retry: false,
+  });
+}
+
+export function useCompleteSetupAccount(token: string) {
+  return useMutation({
+    mutationFn: ({
+      password,
+      confirmPassword,
+    }: {
+      password: string;
+      confirmPassword: string;
+    }) => completeSetupAccount(token, password, confirmPassword),
   });
 }

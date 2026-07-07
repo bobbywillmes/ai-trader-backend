@@ -3,6 +3,8 @@ import {
   listAdminUsers,
   getAdminUser,
   getAdminUserTradingAccountAccess,
+  createAdminUserInvitation,
+  regenerateAdminUserSetupLink,
   updateAdminUser,
   upsertTradingAccountAccess,
 } from "./api";
@@ -52,6 +54,24 @@ export function useUpdateAdminUser() {
       queryClient.invalidateQueries({ queryKey: ["adminUsers"] });
       queryClient.invalidateQueries({ queryKey: ["adminUsers", data.id] });
     },
+  });
+}
+
+export function useCreateAdminUserInvitation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: createAdminUserInvitation,
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["adminUsers"] });
+      queryClient.setQueryData(["adminUsers", data.adminUser.id], data.adminUser);
+    },
+  });
+}
+
+export function useRegenerateAdminUserSetupLink() {
+  return useMutation({
+    mutationFn: regenerateAdminUserSetupLink,
   });
 }
 

@@ -3,6 +3,7 @@ import {
   adminBootstrapSchema,
   adminLoginSchema,
   adminChangePasswordSchema,
+  adminSetupPasswordSchema,
 } from '../validators/admin-auth.schema.js';
 import {
   bootstrapFirstAdminUser,
@@ -11,6 +12,8 @@ import {
   revokeAdminSession,
   validateAdminLogin,
   changeAdminPassword,
+  completeAdminSetup,
+  validateAdminSetupToken,
   verifyAdminPassword,
 } from '../services/admin-auth.service.js';
 import { getAdminAccessMetadata } from '../services/admin-access.service.js';
@@ -25,6 +28,17 @@ function readBearerToken(req: Request) {
   }
 
   return token.trim();
+}
+
+function readSetupTokenParam(req: Request) {
+  const tokenParam = req.params.token;
+  const token = Array.isArray(tokenParam) ? tokenParam[0] : tokenParam;
+
+  if (!token) {
+    throw new HttpError(400, 'Setup token is required.');
+  }
+
+  return token;
 }
 
 function serializeAdminUser(adminUser: {
@@ -146,6 +160,43 @@ export async function adminLogoutController(
   }
 }
 
+export async function adminValidateSetupTokenController(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    const token = readSetupTokenParam(req);
+    const setup = await validateAdminSetupToken(token);
+
+    res.status(200).json({
+      ok: true,
+      ...setup,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function adminCompleteSetupController(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    const token = readSetupTokenParam(req);
+    const input = adminSetupPasswordSchema.parse(req.body);
+    const setup = await completeAdminSetup(token, input);
+
+    res.status(200).json({
+      ok: true,
+      ...setup,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function adminVerifyPasswordController(
   req: Request,
   res: Response,
@@ -161,6 +212,10 @@ export async function adminVerifyPasswordController(
     const password = req.body.password;
     if (!password || typeof password !== 'string') {
       throw new HttpError(400, 'Password is required.');
+    }
+
+    if (!adminUser.passwordHash) {
+      throw new HttpError(400, 'Admin password setup is not complete.');
     }
 
     const passwordIsValid = await verifyAdminPassword(password, adminUser.passwordHash);

@@ -1,7 +1,9 @@
 import { useState, useMemo } from "react";
 import {
   Badge,
+  Button,
   Card,
+  Group,
   Loader,
   SimpleGrid,
   Stack,
@@ -9,21 +11,25 @@ import {
   Text,
   Title,
 } from "@mantine/core";
+import { IconPlus } from "@tabler/icons-react";
 import { useAdminUsers } from "./hooks";
 import { AdminUserDetailDrawer } from "./AdminUserDetailDrawer";
+import { CreateAdminInviteModal } from "./CreateAdminInviteModal";
 
 export function AdminUsersPage() {
   const { data: users, isLoading, error } = useAdminUsers();
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+  const [inviteModalOpened, setInviteModalOpened] = useState(false);
 
   const stats = useMemo(() => {
-    if (!users) return { total: 0, owners: 0, managers: 0, viewers: 0 };
+    if (!users) return { total: 0, owners: 0, managers: 0, viewers: 0, pending: 0 };
 
     return {
       total: users.length,
       owners: users.filter((u) => u.role === "owner").length,
       managers: users.filter((u) => u.role === "account_manager").length,
       viewers: users.filter((u) => u.role === "account_viewer").length,
+      pending: users.filter((u) => u.pendingSetup).length,
     };
   }, [users]);
 
@@ -76,14 +82,23 @@ export function AdminUsersPage() {
 
   return (
     <Stack gap="lg">
-      <div>
-        <Title order={2}>Users & Access</Title>
-        <Text c="dimmed" size="sm" mt={4}>
-          Manage human admin users and their trading account access assignments.
-        </Text>
-      </div>
+      <Group justify="space-between" align="flex-start">
+        <div>
+          <Title order={2}>Users & Access</Title>
+          <Text c="dimmed" size="sm" mt={4}>
+            Manage human admin users and their trading account access assignments.
+          </Text>
+        </div>
 
-      <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="md">
+        <Button
+          leftSection={<IconPlus size={16} />}
+          onClick={() => setInviteModalOpened(true)}
+        >
+          Create Invite
+        </Button>
+      </Group>
+
+      <SimpleGrid cols={{ base: 1, sm: 2, md: 5 }} spacing="md">
         <Card withBorder radius="md" p="md">
           <Text size="xs" c="dimmed" tt="uppercase" fw={700} style={{ letterSpacing: "0.07em" }} mb={6}>
             Total Users
@@ -117,6 +132,15 @@ export function AdminUsersPage() {
           </Text>
           <Text size="xl" fw={700}>
             {stats.viewers}
+          </Text>
+        </Card>
+
+        <Card withBorder radius="md" p="md">
+          <Text size="xs" c="dimmed" tt="uppercase" fw={700} style={{ letterSpacing: "0.07em" }} mb={6}>
+            Pending
+          </Text>
+          <Text size="xl" fw={700}>
+            {stats.pending}
           </Text>
         </Card>
       </SimpleGrid>
@@ -162,12 +186,19 @@ export function AdminUsersPage() {
                       </Badge>
                     </Table.Td>
                     <Table.Td>
-                      <Badge
-                        color={user.enabled ? "green" : "gray"}
-                        variant="light"
-                      >
-                        {user.enabled ? "Enabled" : "Disabled"}
-                      </Badge>
+                      <Group gap="xs">
+                        <Badge
+                          color={user.enabled ? "green" : "gray"}
+                          variant="light"
+                        >
+                          {user.enabled ? "Enabled" : "Disabled"}
+                        </Badge>
+                        {user.pendingSetup ? (
+                          <Badge color="yellow" variant="light">
+                            Pending Setup
+                          </Badge>
+                        ) : null}
+                      </Group>
                     </Table.Td>
                     <Table.Td>
                       <Text size="sm" c="dimmed">
@@ -195,6 +226,10 @@ export function AdminUsersPage() {
       <AdminUserDetailDrawer
         userId={selectedUserId}
         onClose={() => setSelectedUserId(null)}
+      />
+      <CreateAdminInviteModal
+        opened={inviteModalOpened}
+        onClose={() => setInviteModalOpened(false)}
       />
     </Stack>
   );

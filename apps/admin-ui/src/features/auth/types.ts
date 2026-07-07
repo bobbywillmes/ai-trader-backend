@@ -27,3 +27,23 @@ export type MeResponse = {
   adminUser: AdminUser;
   access: AdminAccess;
 };
+
+export type SetupAccountAdminUser = {
+  id: number;
+  email: string;
+  name: string | null;
+  role: string;
+  enabled: boolean;
+};
+
+export type SetupAccountTokenResponse = {
+  ok: true;
+  adminUser: SetupAccountAdminUser;
+  expiresAt: string;
+};
+
+export type CompleteSetupAccountResponse = {
+  ok: true;
+  adminUser: SetupAccountAdminUser;
+  setupCompletedAt: string;
+};
