@@ -35,12 +35,12 @@ router.get('/:id/orders', requireTradingAccountAccess('id'), requirePermission(A
 router.get('/:id/trade-cycles', requireTradingAccountAccess('id'), requirePermission(AdminPermission.REPORTS_READ), listTradingAccountTradeCyclesController);
 router.patch('/:id', requireTradingAccountAccess('id'), requirePermission(AdminPermission.TRADING_ACCOUNT_WRITE), updateTradingAccountController);
 
-router.get('/:id/risk-settings', requireTradingAccountAccess('id'), requirePermission(AdminPermission.TRADING_ACCOUNT_READ), getTradingAccountRiskSettingsController);
+router.get('/:id/risk-settings', requireTradingAccountAccess('id'), requirePermission(AdminPermission.TRADING_ACCOUNT_RISK_WRITE), getTradingAccountRiskSettingsController);
 router.patch('/:id/risk-settings', requireTradingAccountAccess('id'), requirePermission(AdminPermission.TRADING_ACCOUNT_RISK_WRITE), updateTradingAccountRiskSettingsController);
-router.get('/:id/risk-health', requireTradingAccountAccess('id'), requirePermission(AdminPermission.TRADING_ACCOUNT_READ), getTradingAccountRiskHealthController);
-router.post('/:id/entry-risk-preview', requireTradingAccountAccess('id'), requirePermission(AdminPermission.TRADING_ACCOUNT_READ), previewTradingAccountEntryRiskController);
+router.get('/:id/risk-health', requireTradingAccountAccess('id'), requirePermission(AdminPermission.TRADING_ACCOUNT_RISK_WRITE), getTradingAccountRiskHealthController);
+router.post('/:id/entry-risk-preview', requireTradingAccountAccess('id'), requirePermission(AdminPermission.TRADING_ACCOUNT_RISK_WRITE), previewTradingAccountEntryRiskController);
 
-router.get('/:id/allocations', requireTradingAccountAccess('id'), requirePermission(AdminPermission.TRADING_ACCOUNT_READ), listTradingAccountAllocationsController);
+router.get('/:id/allocations', requireTradingAccountAccess('id'), requirePermission(AdminPermission.TRADING_ACCOUNT_WRITE), listTradingAccountAllocationsController);
 router.post('/:id/allocations', requireTradingAccountAccess('id'), requirePermission(AdminPermission.TRADING_ACCOUNT_WRITE), createTradingAccountAllocationController);
 router.patch('/:id/allocations/:allocationId', requireTradingAccountAccess('id'), requirePermission(AdminPermission.TRADING_ACCOUNT_WRITE), updateTradingAccountAllocationController);
 
