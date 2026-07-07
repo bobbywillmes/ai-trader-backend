@@ -1,7 +1,9 @@
 import { useState, useMemo } from "react";
 import {
   Badge,
+  Button,
   Card,
+  Group,
   Loader,
   SimpleGrid,
   Stack,
@@ -9,12 +11,15 @@ import {
   Text,
   Title,
 } from "@mantine/core";
+import { IconPlus } from "@tabler/icons-react";
 import { useAdminUsers } from "./hooks";
 import { AdminUserDetailDrawer } from "./AdminUserDetailDrawer";
+import { CreateAdminInviteModal } from "./CreateAdminInviteModal";
 
 export function AdminUsersPage() {
   const { data: users, isLoading, error } = useAdminUsers();
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+  const [inviteModalOpened, setInviteModalOpened] = useState(false);
 
   const stats = useMemo(() => {
     if (!users) return { total: 0, owners: 0, managers: 0, viewers: 0 };
@@ -76,12 +81,21 @@ export function AdminUsersPage() {
 
   return (
     <Stack gap="lg">
-      <div>
-        <Title order={2}>Users & Access</Title>
-        <Text c="dimmed" size="sm" mt={4}>
-          Manage human admin users and their trading account access assignments.
-        </Text>
-      </div>
+      <Group justify="space-between" align="flex-start">
+        <div>
+          <Title order={2}>Users & Access</Title>
+          <Text c="dimmed" size="sm" mt={4}>
+            Manage human admin users and their trading account access assignments.
+          </Text>
+        </div>
+
+        <Button
+          leftSection={<IconPlus size={16} />}
+          onClick={() => setInviteModalOpened(true)}
+        >
+          Create Invite
+        </Button>
+      </Group>
 
       <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="md">
         <Card withBorder radius="md" p="md">
@@ -195,6 +209,10 @@ export function AdminUsersPage() {
       <AdminUserDetailDrawer
         userId={selectedUserId}
         onClose={() => setSelectedUserId(null)}
+      />
+      <CreateAdminInviteModal
+        opened={inviteModalOpened}
+        onClose={() => setInviteModalOpened(false)}
       />
     </Stack>
   );
