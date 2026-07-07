@@ -30,6 +30,7 @@ import { TradingAccountDetailPage } from "../features/tradingAccounts/TradingAcc
 import { MomentumScannerPage } from "../features/momentumScanner/MomentumScannerPage";
 import { StrategiesPage } from "../features/strategies/StrategiesPage";
 import { AdminUsersPage } from "../features/adminUsers/AdminUsersPage";
+import { ViewerAccountPage } from "../features/viewerPortal/ViewerAccountPage";
 import { ViewerPortalPage } from "../features/viewerPortal/ViewerPortalPage";
 
 export const router = createBrowserRouter([
@@ -145,6 +146,10 @@ export const router = createBrowserRouter([
               {
                 index: true,
                 element: <ViewerPortalPage />,
+              },
+              {
+                path: "accounts/:accountId",
+                element: <ViewerAccountPage />,
               },
             ],
           },
