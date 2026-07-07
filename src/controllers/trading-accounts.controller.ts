@@ -101,7 +101,7 @@ export async function listTradingAccountsController(
 
     const accounts = await listTradingAccountsForAdminUser({
       adminUserId: adminUser.id,
-      isOwner: isOwnerRole(adminUser.role) || res.locals.isStaticAdminKey,
+      isOwner: isOwnerRole(adminUser.role) || Boolean(res.locals.isStaticAdminKey),
     });
 
     res.status(200).json({ accounts });

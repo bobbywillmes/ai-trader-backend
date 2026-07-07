@@ -4,6 +4,7 @@ import type { NextFunction, Request, Response } from 'express';
 const mocks = vi.hoisted(() => ({
   getTradingAccountForAdmin: vi.fn(),
   listTradingAccountsForAdmin: vi.fn(),
+  listTradingAccountsForAdminUser: vi.fn(),
   updateTradingAccountForAdmin: vi.fn(),
   getTradingAccountRiskSettingsForAdmin: vi.fn(),
   updateTradingAccountRiskSettingsForAdmin: vi.fn(),
@@ -36,6 +37,7 @@ vi.mock('../services/trading-account-credential-verification.service.js', () => 
 vi.mock('../services/trading-account.service.js', () => ({
   getTradingAccountForAdmin: mocks.getTradingAccountForAdmin,
   listTradingAccountsForAdmin: mocks.listTradingAccountsForAdmin,
+  listTradingAccountsForAdminUser: mocks.listTradingAccountsForAdminUser,
   updateTradingAccountForAdmin: mocks.updateTradingAccountForAdmin,
 }));
 
@@ -129,6 +131,7 @@ describe('trading accounts controller', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.listTradingAccountsForAdmin.mockResolvedValue([{ id: 1 }]);
+    mocks.listTradingAccountsForAdminUser.mockResolvedValue([{ id: 1 }]);
     mocks.getTradingAccountForAdmin.mockResolvedValue({ id: 1 });
     mocks.getTradingAccountRiskSettingsForAdmin.mockResolvedValue({
       id: 50,
@@ -190,11 +193,52 @@ describe('trading accounts controller', () => {
     const res = response();
     const next = vi.fn() as NextFunction;
 
-    await listTradingAccountsController({} as Request, res, next);
+    await listTradingAccountsController(
+      {} as Request,
+      {
+        ...res,
+        locals: {
+          adminUser: {
+            id: 42,
+            role: 'account_viewer',
+          },
+        },
+      } as unknown as Response,
+      next
+    );
 
-    expect(mocks.listTradingAccountsForAdmin).toHaveBeenCalledWith();
+    expect(mocks.listTradingAccountsForAdminUser).toHaveBeenCalledWith({
+      adminUserId: 42,
+      isOwner: false,
+    });
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ accounts: [{ id: 1 }] });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('treats owner trading account list requests as unrestricted', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await listTradingAccountsController(
+      {} as Request,
+      {
+        ...res,
+        locals: {
+          adminUser: {
+            id: 1,
+            role: 'owner',
+          },
+        },
+      } as unknown as Response,
+      next
+    );
+
+    expect(mocks.listTradingAccountsForAdminUser).toHaveBeenCalledWith({
+      adminUserId: 1,
+      isOwner: true,
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
     expect(next).not.toHaveBeenCalled();
   });
 
