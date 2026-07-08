@@ -1,15 +1,8 @@
 # AI Trader Backend
 
-Backend service for the AI Trader system.
+AI Trader Backend is the broker/control layer between the n8n AI Trader workflows, the Admin UI, and Alpaca paper/live brokerage accounts.
 
-This project is the control layer between the n8n market scanner and Alpaca broker. n8n is responsible for market scanning and signal generation. The backend is responsible for risk-gate enforcement, signal/subscription/order resolution, order intent logging, broker submission, tracked position lifecycle management, exit evaluation, account snapshots, broker activity imports, runtime trading controls, and production audit visibility.
-
-The design goal is simple:
-- n8n watches the market and decides when to buy
-- The backend decides whether it is allowed, and how much to buy
-- Alpaca executes approved broker orders
-- The backend records the full position lifecycle
-
+n8n decides what it wants to do. The backend decides whether that request is allowed, records the intent, submits approved orders to Alpaca, tracks the resulting position, imports broker-confirmed activity, evaluates exits, and records a durable audit trail.
 
 ## 🧭 System Overview
 
@@ -57,6 +50,88 @@ The backend currently handles:
 - System event audit logging
 - Admin UI authentication and controls
 - Production readiness checks
+
+## 🔐 Access control
+
+AI Trader separates machine access from human access.
+
+### Machine access
+
+n8n uses the signal API key and is limited to signal/client workflows. It should not use the admin API key, broker credentials, or human Admin UI sessions.
+
+```text
+AI_TRADER_SIGNAL_API_KEY -> n8n / automation routes
+```
+
+### Human access
+
+Human users log in through the Admin UI and receive an admin session bearer token.
+
+```text
+owner          -> full Admin Console
+account_viewer -> read-only Account Portal scoped to assigned trading accounts
+account_manager -> reserved for expanded account management
+```
+
+Owners can invite users from **System → Users & Access**. Invite links are one-time setup links. Until email delivery exists, owners copy setup links manually.
+
+For the full model, see [Access Control & RBAC](docs/security/README.md).
+
+
+## 🖥️ Admin UI experiences
+
+The React Admin UI now has two role-based experiences.
+
+### Owner Admin Console
+
+Owners can access the full operational console:
+
+- Dashboard
+- Trading Accounts
+- Entry Decisions
+- Momentum Scanner
+- Strategies
+- Subscriptions
+- Exit Profiles
+- Reports
+- Market Diary
+- System Events
+- Reconciliation
+- Securities
+- Settings
+- Users & Access
+
+### Account Viewer Portal
+
+Account viewers are routed to `/portal` and can only see read-only data for assigned trading accounts:
+
+- Dashboard
+- Accounts
+- Positions
+- Orders
+- Trade History
+
+Viewers cannot change settings, manage users, place orders, cancel orders, close positions, trigger broker syncs, or access owner/admin tool routes.
+
+## 🧯 Production safety layer
+
+The backend includes a centralized entry-risk gate that sits between signal/order creation and broker submission. It answers one question:
+
+```text
+Even if this signal is valid, is the system allowed to enter this trade right now?
+```
+
+Entry orders are blocked when runtime safety, account, subscription, symbol, strategy, exit-profile, exposure, or session checks fail.
+
+Important production controls:
+
+```text
+tradingEnabled=false  -> broad automated trading shutdown
+killSwitchEnabled=true -> entry-only pause while monitoring/syncing continues
+paperMode=true         -> paper-mode runtime posture
+```
+
+For trading safety design, see [Risk & Safety](docs/architecture/risk-and-safety.md).
 
 ## 🧱 Tech Stack
 - Node.js
@@ -204,6 +279,105 @@ Work locally
 For more about production workflow, see:
 [Production Workflow](docs/production/production-workflow.md)
 
+
+## ⚙️ Background workers
+
+The backend runs workers for:
+
+- pending order processing
+- broker order synchronization
+- tracked-position synchronization
+- exit evaluation
+- account snapshots
+- broker activity/fill imports
+- worker health reporting
+
+Workers are guarded to avoid overlapping ticks and duplicate lifecycle events.
+
+
+## 🚀 Local validation
+
+Before committing backend/admin UI changes:
+
+```bash
+npm run check
+npm run build
+cd apps/admin-ui
+npm run lint
+npm run build
+cd ../..
+```
+
+If the update includes Prisma changes, generate and commit the migration locally, then deploy with `prisma migrate deploy` in production.
+
+
+## 🏁 Production deployment
+
+Production runs on a Hostinger VPS through Docker Compose:
+
+```text
+Caddy reverse proxy / HTTPS
+React Admin UI static build
+Node/Express backend
+PostgreSQL
+Prisma migrations
+Alpaca paper/live integration
+background workers
+```
+
+Routine deployment summary:
+
+```bash
+ssh root@srv1700402.hstgr.cloud
+cd /opt/ai-trader
+git pull origin main
+docker compose -f docker-compose.prod.yml build backend caddy
+docker compose -f docker-compose.prod.yml run --rm backend npx prisma migrate deploy
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Use the detailed [Production Deployment Checklist](docs/production/deployment.md) for the full workflow and smoke tests.
+
+---
+
+## 🔑 Authentication summary
+
+```text
+Signal API key
+  Used by n8n and automation clients.
+  Limited to signal/client routes.
+
+Admin session bearer token
+  Used by the Admin UI after human login.
+  RBAC controls owner vs account viewer access.
+
+Static admin API key
+  Owner-equivalent maintenance key for trusted admin/API operations.
+  Not for n8n.
+```
+
+---
+
+## 🧪 Production smoke-test baseline
+
+After production deploys, verify:
+
+```text
+/health returns ok
+owner login works
+/api/admin-auth/me returns access.role = owner
+Users & Access loads
+Create Invite opens
+viewer login lands on /portal
+viewer cannot access owner/admin pages
+Dashboard / Trading Accounts / Settings load for owner
+n8n signal smoke test passes
+```
+
+Automated trading should only be enabled deliberately after production health, broker mode, runtime settings, and n8n behavior are verified.
+
+
+
 ## 📚 Documentation
 
 ### Start here:
@@ -227,6 +401,9 @@ For more about production workflow, see:
 - [Production Workflow](docs/production/production-workflow.md)
 - [Database Migrations](docs/production/database-migrations.md)
 - [Troubleshooting](docs/production/troubleshooting.md)
+
+### Access Contol / RBAC
+- [Access Control & RBAC](docs/security/README.md)
 
 
 ## 🔌 Key API Areas

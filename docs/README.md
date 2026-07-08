@@ -23,7 +23,26 @@ Use this index to find the right document for the task at hand.
 | Manage trading accounts and broker credentials          | [Trading Account Admin API](api/trading-accounts.md) |
 | Understand Alpaca broker API observability              | [Alpaca Integration](integrations/alpaca.md) |
 | Database visualisation                                  | [Database Readme](database/README.md) |
+ Understand roles, permissions, onboarding, and viewer portal access | [Access Control & RBAC](security/README.md) |
 
+## 🔐 Security Docs
+
+### [Access Control & RBAC](security/README.md)
+
+Documents human admin authentication, machine authentication, roles, permissions, trading account access, owner onboarding, setup links, and the read-only account viewer portal.
+
+Use this doc when changing:
+
+- `AdminUser`
+- `AdminSession`
+- `AdminUserSetupToken`
+- `TradingAccountAccess`
+- admin authentication routes
+- RBAC middleware
+- Users & Access
+- invite/setup onboarding
+- `/portal` viewer routing
+- account-scoped viewer API routes
 
 
 ## 🏗️ Architecture Docs
@@ -89,15 +108,14 @@ and trading behavior.
 
 Documents recurring worker inventory, cadence, health status derivation, persistence, System Status fields, transition events, and troubleshooting.
 
-## API Docs
+## 🌐 API Docs
 
-API docs describe backend HTTP surfaces that are stable enough to call from
-admin tools, automation, or future UI work.
+API docs describe backend HTTP surfaces that are stable enough to call from admin tools, automation, or future UI work.
 
 ### [Trading Account Admin API](api/trading-accounts.md)
 
-Documents admin-only trading account read/update endpoints and account-scoped
-broker credential upsert, verification, and revocation behavior.
+Documents trading account read/update endpoints, account-scoped broker credential behavior, account-subscription management, risk settings, readiness checks, and account-scoped viewer read endpoints.
+
 
 ## 🔌 Integration Docs
 
@@ -123,6 +141,12 @@ Use this doc when modifying the n8n workflow or backend signal routes.
 Documents the backend-owned Alpaca REST integration, request metadata requirements, API usage tracking, rate-limit backoff behavior, persistence, and the Admin UI usage panel.
 
 Use this doc when adding Alpaca adapter calls, changing broker polling behavior, or investigating Alpaca rate-limit pressure.
+
+## 🔐 Security Docs
+
+### [Access Control & RBAC](security/README.md)
+
+Documents human admin auth, roles, permissions, account-scoped access, invite/setup onboarding, and the account viewer portal.
 
 ## 🏭 Production Docs
 
@@ -219,6 +243,7 @@ docs/
   architecture/     System design and lifecycle explanations
   integrations/     External system contracts and workflows
   production/       Deployment, migrations, workflows and troubleshooting
+  security/         Authentication, RBAC, account access, onboarding
 ```
 Guidelines:
 

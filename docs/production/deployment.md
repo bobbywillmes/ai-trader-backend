@@ -1097,3 +1097,16 @@ Sign back in.
 Confirm /api/admin-auth/me returns access.role = "owner".
 Confirm the Users & Access page shows Owners: 1.
 Confirm editing the admin user name succeeds.
+
+## 25. Verify Access Control
+
+After auth/RBAC/onboarding changes:
+
+- Owner can sign in.
+- `/api/admin-auth/me` returns `access.role = "owner"`.
+- Users & Access loads.
+- Create Invite panel opens.
+- Test viewer can sign in and lands on `/portal`.
+- Viewer sees only assigned-account portal navigation.
+- Viewer cannot access `/admin-users`, `/settings`, or global admin routes.
+- n8n smoke test still passes.
