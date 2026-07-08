@@ -2,17 +2,72 @@ import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  confirmActiveCandidates: vi.fn(),
+  generateMomentumCandidatesFromCatalysts: vi.fn(),
   listMomentumScannerHandoffs: vi.fn(),
+  markMomentumScannerHandoffFailed: vi.fn(),
+  markMomentumScannerHandoffSent: vi.fn(),
+  prepareReadyMomentumScannerHandoffs: vi.fn(),
+  recordEntryDecision: vi.fn(),
+  runMassiveNewsWorkerOnce: vi.fn(),
+  submitOrder: vi.fn(),
+}));
+
+vi.mock('../workers/massive-news.worker.js', () => ({
+  runMassiveNewsWorkerOnce: mocks.runMassiveNewsWorkerOnce,
+}));
+
+vi.mock('../services/momentum-candidates.service.js', () => ({
+  generateMomentumCandidatesFromCatalysts:
+    mocks.generateMomentumCandidatesFromCatalysts,
+}));
+
+vi.mock('../services/momentum-price-confirmation.service.js', () => ({
+  confirmActiveCandidates: mocks.confirmActiveCandidates,
 }));
 
 vi.mock('../services/momentum-scanner-handoff.service.js', () => ({
   getMomentumScannerHandoffById: vi.fn(),
   listMomentumScannerHandoffs: mocks.listMomentumScannerHandoffs,
   markMomentumScannerHandoffAcknowledged: vi.fn(),
-  markMomentumScannerHandoffFailed: vi.fn(),
-  markMomentumScannerHandoffSent: vi.fn(),
-  prepareReadyMomentumScannerHandoffs: vi.fn(),
+  markMomentumScannerHandoffFailed: mocks.markMomentumScannerHandoffFailed,
+  markMomentumScannerHandoffSent: mocks.markMomentumScannerHandoffSent,
+  prepareReadyMomentumScannerHandoffs:
+    mocks.prepareReadyMomentumScannerHandoffs,
 }));
+
+vi.mock('../services/place-order.service.js', () => ({
+  submitOrder: mocks.submitOrder,
+}));
+
+vi.mock('../services/entry-decision.service.js', () => ({
+  recordEntryDecision: mocks.recordEntryDecision,
+}));
+
+const SIGNAL_KEY = 'test-signal-key-123456';
+const ADMIN_KEY = 'test-admin-key-123456';
+
+function handoff(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'handoff-1',
+    momentumCandidateId: 'candidate-1',
+    symbol: 'AAPL',
+    status: 'PENDING',
+    lastError: null,
+    payload: {
+      type: 'momentum_candidate.ready',
+      symbol: 'AAPL',
+      review: {
+        headline: 'AAPL momentum catalyst',
+      },
+    },
+    ...overrides,
+  };
+}
+
+async function jsonResponse(response: Response) {
+  return response.json() as Promise<Record<string, unknown>>;
+}
 
 describe('momentum scanner routes', () => {
   let server: Server | null = null;
@@ -28,9 +83,57 @@ describe('momentum scanner routes', () => {
       ALPACA_API_KEY: 'test-alpaca-key',
       ALPACA_API_SECRET: 'test-alpaca-secret',
       MASSIVE_API_KEY: 'test-massive-key',
-      AI_TRADER_SIGNAL_API_KEY: 'test-signal-key-123456',
-      AI_TRADER_ADMIN_API_KEY: 'test-admin-key-123456',
+      AI_TRADER_SIGNAL_API_KEY: SIGNAL_KEY,
+      AI_TRADER_ADMIN_API_KEY: ADMIN_KEY,
     };
+
+    mocks.runMassiveNewsWorkerOnce.mockResolvedValue({
+      enabled: true,
+      skipped: false,
+      symbolsProcessed: 1,
+    });
+    mocks.generateMomentumCandidatesFromCatalysts.mockResolvedValue({
+      created: 1,
+      updated: 0,
+      skipped: 0,
+      candidates: [{ id: 'candidate-1', symbol: 'AAPL' }],
+    });
+    mocks.confirmActiveCandidates.mockResolvedValue({
+      checked: 1,
+      confirmed: 1,
+      skipped: 0,
+      failed: 0,
+      results: [
+        {
+          candidateId: 'candidate-1',
+          symbol: 'AAPL',
+          action: 'confirmed',
+          priceCheck: {
+            id: 'price-check-1',
+            dayVolume: 123n,
+            recentVolume: 45n,
+            rawPayload: { nestedVolume: 678n },
+            metadata: { scoreVolume: 90n },
+          },
+        },
+      ],
+    });
+    mocks.prepareReadyMomentumScannerHandoffs.mockResolvedValue({
+      prepared: 1,
+      skipped: 0,
+      handoffs: [handoff()],
+      results: [{ candidateId: 'candidate-1', handoff: handoff() }],
+    });
+    mocks.listMomentumScannerHandoffs.mockResolvedValue([handoff()]);
+    mocks.markMomentumScannerHandoffSent.mockResolvedValue(
+      handoff({ status: 'SENT', attempts: 1 })
+    );
+    mocks.markMomentumScannerHandoffFailed.mockResolvedValue(
+      handoff({
+        status: 'FAILED',
+        lastError: 'n8n momentum scanner workflow reported failure',
+      })
+    );
   });
 
   afterEach(async () => {
@@ -66,16 +169,272 @@ describe('momentum scanner routes', () => {
     return `http://127.0.0.1:${address.port}`;
   }
 
-  it('requires admin access before scanner handoff endpoints can be read', async () => {
+  function signalHeaders() {
+    return {
+      'ai-trader-api-key': SIGNAL_KEY,
+      'content-type': 'application/json',
+    };
+  }
+
+  it('requires a valid signal API key for scanner signal routes', async () => {
     const baseUrl = await listen();
 
-    const response = await fetch(`${baseUrl}/api/momentum-scanner/handoffs`);
+    const missingKey = await fetch(
+      `${baseUrl}/api/signals/momentum-scanner/run-news-worker`,
+      { method: 'POST' }
+    );
+    const invalidKey = await fetch(
+      `${baseUrl}/api/signals/momentum-scanner/run-news-worker`,
+      {
+        method: 'POST',
+        headers: { 'ai-trader-api-key': 'wrong-key' },
+      }
+    );
 
-    expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toMatchObject({
+    expect(missingKey.status).toBe(401);
+    await expect(jsonResponse(missingKey)).resolves.toMatchObject({
+      error: 'Unauthorized',
+      message: 'Missing or invalid API key.',
+    });
+    expect(invalidKey.status).toBe(401);
+    expect(mocks.runMassiveNewsWorkerOnce).not.toHaveBeenCalled();
+  });
+
+  it('accepts the signal API key without admin auth for scanner signal routes', async () => {
+    const baseUrl = await listen();
+
+    const response = await fetch(
+      `${baseUrl}/api/signals/momentum-scanner/run-news-worker`,
+      {
+        method: 'POST',
+        headers: { 'ai-trader-api-key': SIGNAL_KEY },
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(jsonResponse(response)).resolves.toMatchObject({
+      ok: true,
+      result: {
+        enabled: true,
+        skipped: false,
+        symbolsProcessed: 1,
+      },
+    });
+    expect(mocks.runMassiveNewsWorkerOnce).toHaveBeenCalledWith({
+      enabled: true,
+    });
+  });
+
+  it('keeps existing admin scanner endpoints behind admin auth', async () => {
+    const baseUrl = await listen();
+
+    const missingAdmin = await fetch(`${baseUrl}/api/momentum-scanner/handoffs`);
+    const signalKeyOnly = await fetch(
+      `${baseUrl}/api/momentum-scanner/handoffs`,
+      { headers: { 'ai-trader-api-key': SIGNAL_KEY } }
+    );
+
+    expect(missingAdmin.status).toBe(401);
+    await expect(jsonResponse(missingAdmin)).resolves.toMatchObject({
       error: 'Unauthorized',
       message: 'Admin API key or admin session token required.',
     });
-    expect(mocks.listMomentumScannerHandoffs).not.toHaveBeenCalled();
+    expect(signalKeyOnly.status).toBe(401);
+  });
+
+  it('generates candidates with empty and explicit workflow options', async () => {
+    const baseUrl = await listen();
+
+    const emptyOptions = await fetch(
+      `${baseUrl}/api/signals/momentum-scanner/generate-candidates`,
+      {
+        method: 'POST',
+        headers: signalHeaders(),
+        body: JSON.stringify({}),
+      }
+    );
+    const explicitOptions = await fetch(
+      `${baseUrl}/api/signals/momentum-scanner/generate-candidates`,
+      {
+        method: 'POST',
+        headers: signalHeaders(),
+        body: JSON.stringify({
+          minCatalystScore: 70,
+          take: 5,
+          expiresInHours: 12,
+        }),
+      }
+    );
+
+    expect(emptyOptions.status).toBe(200);
+    expect(explicitOptions.status).toBe(200);
+    expect(mocks.generateMomentumCandidatesFromCatalysts).toHaveBeenNthCalledWith(
+      1,
+      {}
+    );
+    expect(mocks.generateMomentumCandidatesFromCatalysts).toHaveBeenNthCalledWith(
+      2,
+      {
+        minCatalystScore: 70,
+        take: 5,
+        expiresInHours: 12,
+      }
+    );
+  });
+
+  it('confirms prices with empty options and returns BigInt-safe JSON', async () => {
+    const baseUrl = await listen();
+
+    const response = await fetch(
+      `${baseUrl}/api/signals/momentum-scanner/confirm-prices`,
+      {
+        method: 'POST',
+        headers: { 'ai-trader-api-key': SIGNAL_KEY },
+      }
+    );
+    const body = await jsonResponse(response);
+
+    expect(response.status).toBe(200);
+    expect(mocks.confirmActiveCandidates).toHaveBeenCalledWith({});
+    expect(body).toMatchObject({
+      checked: 1,
+      results: [
+        {
+          priceCheck: {
+            dayVolume: '123',
+            recentVolume: '45',
+            rawPayload: { nestedVolume: '678' },
+            metadata: { scoreVolume: '90' },
+          },
+        },
+      ],
+    });
+  });
+
+  it('prepares handoffs with empty options and returns the handoff summary', async () => {
+    const baseUrl = await listen();
+
+    const response = await fetch(
+      `${baseUrl}/api/signals/momentum-scanner/prepare-handoffs`,
+      {
+        method: 'POST',
+        headers: { 'ai-trader-api-key': SIGNAL_KEY },
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(jsonResponse(response)).resolves.toMatchObject({
+      prepared: 1,
+      skipped: 0,
+      handoffs: [{ id: 'handoff-1', status: 'PENDING' }],
+    });
+    expect(mocks.prepareReadyMomentumScannerHandoffs).toHaveBeenCalledWith({});
+  });
+
+  it('defaults handoff listing to pending handoffs for n8n polling', async () => {
+    const baseUrl = await listen();
+
+    const response = await fetch(
+      `${baseUrl}/api/signals/momentum-scanner/handoffs?take=3&symbol=AAPL`,
+      { headers: { 'ai-trader-api-key': SIGNAL_KEY } }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject([
+      { id: 'handoff-1', status: 'PENDING' },
+    ]);
+    expect(mocks.listMomentumScannerHandoffs).toHaveBeenCalledWith({
+      status: 'PENDING',
+      limit: 3,
+      symbol: 'AAPL',
+    });
+  });
+
+  it('marks handoffs sent with optional metadata', async () => {
+    const baseUrl = await listen();
+
+    const response = await fetch(
+      `${baseUrl}/api/signals/momentum-scanner/handoffs/handoff-1/mark-sent`,
+      {
+        method: 'POST',
+        headers: signalHeaders(),
+        body: JSON.stringify({ metadata: { slackTs: '123.456' } }),
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(jsonResponse(response)).resolves.toMatchObject({
+      id: 'handoff-1',
+      status: 'SENT',
+    });
+    expect(mocks.markMomentumScannerHandoffSent).toHaveBeenCalledWith(
+      'handoff-1',
+      { metadata: { slackTs: '123.456' } }
+    );
+  });
+
+  it('marks handoffs failed with a safe default error', async () => {
+    const baseUrl = await listen();
+
+    const response = await fetch(
+      `${baseUrl}/api/signals/momentum-scanner/handoffs/handoff-1/mark-failed`,
+      {
+        method: 'POST',
+        headers: { 'ai-trader-api-key': SIGNAL_KEY },
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(jsonResponse(response)).resolves.toMatchObject({
+      id: 'handoff-1',
+      status: 'FAILED',
+      lastError: 'n8n momentum scanner workflow reported failure',
+    });
+    expect(mocks.markMomentumScannerHandoffFailed).toHaveBeenCalledWith(
+      'handoff-1',
+      'n8n momentum scanner workflow reported failure',
+      {}
+    );
+  });
+
+  it('does not invoke entry signal, order, or broker-facing behavior', async () => {
+    const baseUrl = await listen();
+
+    await fetch(`${baseUrl}/api/signals/momentum-scanner/run-news-worker`, {
+      method: 'POST',
+      headers: { 'ai-trader-api-key': SIGNAL_KEY },
+    });
+    await fetch(`${baseUrl}/api/signals/momentum-scanner/generate-candidates`, {
+      method: 'POST',
+      headers: { 'ai-trader-api-key': SIGNAL_KEY },
+    });
+    await fetch(`${baseUrl}/api/signals/momentum-scanner/confirm-prices`, {
+      method: 'POST',
+      headers: { 'ai-trader-api-key': SIGNAL_KEY },
+    });
+    await fetch(`${baseUrl}/api/signals/momentum-scanner/prepare-handoffs`, {
+      method: 'POST',
+      headers: { 'ai-trader-api-key': SIGNAL_KEY },
+    });
+    await fetch(`${baseUrl}/api/signals/momentum-scanner/handoffs`, {
+      headers: { 'ai-trader-api-key': SIGNAL_KEY },
+    });
+    await fetch(
+      `${baseUrl}/api/signals/momentum-scanner/handoffs/handoff-1/mark-sent`,
+      {
+        method: 'POST',
+        headers: { 'ai-trader-api-key': SIGNAL_KEY },
+      }
+    );
+    await fetch(
+      `${baseUrl}/api/signals/momentum-scanner/handoffs/handoff-1/mark-failed`,
+      {
+        method: 'POST',
+        headers: { 'ai-trader-api-key': SIGNAL_KEY },
+      }
+    );
+
+    expect(mocks.submitOrder).not.toHaveBeenCalled();
+    expect(mocks.recordEntryDecision).not.toHaveBeenCalled();
   });
 });
