@@ -67,7 +67,7 @@ https://srv1700402.hstgr.cloud
 n8n should use the signal API key only:
 
 ```
-ai-trader-api-key: AI_TRADER_SIGNAL_API_KEY
+signal-key: AI_TRADER_SIGNAL_API_KEY
 ```
 
 n8n should not use the admin API key.

@@ -566,8 +566,10 @@ These routes are protected by the existing signal API key middleware and require
 the n8n/client automation header:
 
 ```http
-ai-trader-api-key: <SIGNAL_API_KEY>
+signal-key: <AI_TRADER_SIGNAL_API_KEY>
 ```
+
+Admin endpoints remain admin-protected and do not use `signal-key`.
 
 Review-only Momentum Scanner signal-route endpoints:
 

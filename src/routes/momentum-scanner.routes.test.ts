@@ -171,7 +171,7 @@ describe('momentum scanner routes', () => {
 
   function signalHeaders() {
     return {
-      'ai-trader-api-key': SIGNAL_KEY,
+      'signal-key': SIGNAL_KEY,
       'content-type': 'application/json',
     };
   }
@@ -187,7 +187,7 @@ describe('momentum scanner routes', () => {
       `${baseUrl}/api/signals/momentum-scanner/run-news-worker`,
       {
         method: 'POST',
-        headers: { 'ai-trader-api-key': 'wrong-key' },
+        headers: { 'signal-key': 'wrong-key' },
       }
     );
 
@@ -207,7 +207,7 @@ describe('momentum scanner routes', () => {
       `${baseUrl}/api/signals/momentum-scanner/run-news-worker`,
       {
         method: 'POST',
-        headers: { 'ai-trader-api-key': SIGNAL_KEY },
+        headers: { 'signal-key': SIGNAL_KEY },
       }
     );
 
@@ -225,13 +225,36 @@ describe('momentum scanner routes', () => {
     });
   });
 
+  it('rejects ai-trader-api-key for signal routes when signal-key is missing', async () => {
+    const baseUrl = await listen();
+
+    const response = await fetch(
+      `${baseUrl}/api/signals/momentum-scanner/run-news-worker`,
+      {
+        method: 'POST',
+        headers: { 'ai-trader-api-key': SIGNAL_KEY },
+      }
+    );
+
+    expect(response.status).toBe(401);
+    await expect(jsonResponse(response)).resolves.toMatchObject({
+      error: 'Unauthorized',
+      message: 'Missing or invalid API key.',
+    });
+    expect(mocks.runMassiveNewsWorkerOnce).not.toHaveBeenCalled();
+  });
+
   it('keeps existing admin scanner endpoints behind admin auth', async () => {
     const baseUrl = await listen();
 
     const missingAdmin = await fetch(`${baseUrl}/api/momentum-scanner/handoffs`);
     const signalKeyOnly = await fetch(
       `${baseUrl}/api/momentum-scanner/handoffs`,
-      { headers: { 'ai-trader-api-key': SIGNAL_KEY } }
+      { headers: { 'signal-key': SIGNAL_KEY } }
+    );
+    const adminKey = await fetch(
+      `${baseUrl}/api/momentum-scanner/handoffs`,
+      { headers: { 'ai-trader-api-key': ADMIN_KEY } }
     );
 
     expect(missingAdmin.status).toBe(401);
@@ -240,6 +263,7 @@ describe('momentum scanner routes', () => {
       message: 'Admin API key or admin session token required.',
     });
     expect(signalKeyOnly.status).toBe(401);
+    expect(adminKey.status).toBe(200);
   });
 
   it('generates candidates with empty and explicit workflow options', async () => {
@@ -289,7 +313,7 @@ describe('momentum scanner routes', () => {
       `${baseUrl}/api/signals/momentum-scanner/confirm-prices`,
       {
         method: 'POST',
-        headers: { 'ai-trader-api-key': SIGNAL_KEY },
+        headers: { 'signal-key': SIGNAL_KEY },
       }
     );
     const body = await jsonResponse(response);
@@ -318,7 +342,7 @@ describe('momentum scanner routes', () => {
       `${baseUrl}/api/signals/momentum-scanner/prepare-handoffs`,
       {
         method: 'POST',
-        headers: { 'ai-trader-api-key': SIGNAL_KEY },
+        headers: { 'signal-key': SIGNAL_KEY },
       }
     );
 
@@ -336,7 +360,7 @@ describe('momentum scanner routes', () => {
 
     const response = await fetch(
       `${baseUrl}/api/signals/momentum-scanner/handoffs?take=3&symbol=AAPL`,
-      { headers: { 'ai-trader-api-key': SIGNAL_KEY } }
+      { headers: { 'signal-key': SIGNAL_KEY } }
     );
 
     expect(response.status).toBe(200);
@@ -380,7 +404,7 @@ describe('momentum scanner routes', () => {
       `${baseUrl}/api/signals/momentum-scanner/handoffs/handoff-1/mark-failed`,
       {
         method: 'POST',
-        headers: { 'ai-trader-api-key': SIGNAL_KEY },
+        headers: { 'signal-key': SIGNAL_KEY },
       }
     );
 
@@ -402,35 +426,35 @@ describe('momentum scanner routes', () => {
 
     await fetch(`${baseUrl}/api/signals/momentum-scanner/run-news-worker`, {
       method: 'POST',
-      headers: { 'ai-trader-api-key': SIGNAL_KEY },
+      headers: { 'signal-key': SIGNAL_KEY },
     });
     await fetch(`${baseUrl}/api/signals/momentum-scanner/generate-candidates`, {
       method: 'POST',
-      headers: { 'ai-trader-api-key': SIGNAL_KEY },
+      headers: { 'signal-key': SIGNAL_KEY },
     });
     await fetch(`${baseUrl}/api/signals/momentum-scanner/confirm-prices`, {
       method: 'POST',
-      headers: { 'ai-trader-api-key': SIGNAL_KEY },
+      headers: { 'signal-key': SIGNAL_KEY },
     });
     await fetch(`${baseUrl}/api/signals/momentum-scanner/prepare-handoffs`, {
       method: 'POST',
-      headers: { 'ai-trader-api-key': SIGNAL_KEY },
+      headers: { 'signal-key': SIGNAL_KEY },
     });
     await fetch(`${baseUrl}/api/signals/momentum-scanner/handoffs`, {
-      headers: { 'ai-trader-api-key': SIGNAL_KEY },
+      headers: { 'signal-key': SIGNAL_KEY },
     });
     await fetch(
       `${baseUrl}/api/signals/momentum-scanner/handoffs/handoff-1/mark-sent`,
       {
         method: 'POST',
-        headers: { 'ai-trader-api-key': SIGNAL_KEY },
+        headers: { 'signal-key': SIGNAL_KEY },
       }
     );
     await fetch(
       `${baseUrl}/api/signals/momentum-scanner/handoffs/handoff-1/mark-failed`,
       {
         method: 'POST',
-        headers: { 'ai-trader-api-key': SIGNAL_KEY },
+        headers: { 'signal-key': SIGNAL_KEY },
       }
     );
 
