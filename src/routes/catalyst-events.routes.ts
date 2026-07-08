@@ -5,18 +5,17 @@ import {
   listCatalystEventsController,
   runMassiveNewsWorkerOnceController,
 } from '../controllers/catalyst-events.controller.js';
-import { requirePermission } from '../middleware/rbac.js';
-import { AdminPermission } from '../types/admin-rbac.js';
+import { requireOwnerAccess } from '../middleware/rbac.js';
 
 const router = Router();
 
-router.get('/', requirePermission(AdminPermission.TRADING_ACCOUNT_READ), listCatalystEventsController);
-router.post('/ingest/massive-news', requirePermission(AdminPermission.TRADING_ACCOUNT_READ), ingestMassiveNewsController);
+router.get('/', requireOwnerAccess, listCatalystEventsController);
+router.post('/ingest/massive-news', requireOwnerAccess, ingestMassiveNewsController);
 router.post(
   '/workers/massive-news/run-once',
-  requirePermission(AdminPermission.TRADING_ACCOUNT_READ),
+  requireOwnerAccess,
   runMassiveNewsWorkerOnceController
 );
-router.get('/:id', requirePermission(AdminPermission.TRADING_ACCOUNT_READ), getCatalystEventController);
+router.get('/:id', requireOwnerAccess, getCatalystEventController);
 
 export default router;

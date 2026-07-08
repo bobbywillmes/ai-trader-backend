@@ -30,7 +30,11 @@ vi.mock('./trading-account.service.js', () => ({
   },
 }));
 
-import { getTradeCycleById, listTradeCycles } from './trade-cycles.service.js';
+import {
+  getTradeCycleById,
+  listTradeCycles,
+  listTradeCyclesForTradingAccount,
+} from './trade-cycles.service.js';
 
 function buildCycle(overrides: Record<string, unknown> = {}) {
   return {
@@ -183,6 +187,41 @@ describe('trade cycle service', () => {
     );
     expect(result.cycles[0]?.realizedPnl).toBeCloseTo(14);
     expect(result.cycles[0]?.returnPct).toBeCloseTo(0.04666666666666671);
+  });
+
+  it('lists trade cycles for an explicit trading account without resolving the default account', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([buildCycle({ tradingAccountId: 7 })]);
+
+    await listTradeCyclesForTradingAccount(7, {
+      status: 'open',
+      limit: 10,
+    });
+
+    expect(mocks.resolveDefaultTradingAccountId).not.toHaveBeenCalled();
+    expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith({
+      where: {
+        status: 'open',
+        tradingAccountId: 7,
+      },
+      include: expect.any(Object),
+      orderBy: {
+        openedAt: 'desc',
+      },
+      take: 10,
+    });
+    expect(mocks.systemEventFindMany).toHaveBeenCalledWith({
+      where: {
+        entityType: 'trackedPosition',
+        entityId: {
+          in: ['101'],
+        },
+        tradingAccountId: 7,
+        type: 'position.closed',
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+    });
   });
 
   it('uses position.closed event payloads as a legacy close summary fallback', async () => {

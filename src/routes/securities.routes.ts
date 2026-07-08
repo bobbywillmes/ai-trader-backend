@@ -6,15 +6,14 @@ import {
   addSecurityController,
   updateSecurityController,
 } from '../controllers/securities.controller.js';
-import { requirePermission } from '../middleware/rbac.js';
-import { AdminPermission } from '../types/admin-rbac.js';
+import { requireOwnerAccess } from '../middleware/rbac.js';
 
 const router = Router();
 
-router.get('/summary', requirePermission(AdminPermission.TRADING_ACCOUNT_READ), getSecuritiesSummaryController);
-router.get('/', requirePermission(AdminPermission.TRADING_ACCOUNT_READ), getAllSecuritiesController);
-router.get('/:symbol', requirePermission(AdminPermission.TRADING_ACCOUNT_READ), findSecurityController);
-router.post('/', requirePermission(AdminPermission.STRATEGY_WRITE), addSecurityController);
-router.patch('/:symbol', requirePermission(AdminPermission.STRATEGY_WRITE), updateSecurityController);
+router.get('/summary', requireOwnerAccess, getSecuritiesSummaryController);
+router.get('/', requireOwnerAccess, getAllSecuritiesController);
+router.get('/:symbol', requireOwnerAccess, findSecurityController);
+router.post('/', requireOwnerAccess, addSecurityController);
+router.patch('/:symbol', requireOwnerAccess, updateSecurityController);
 
 export default router;

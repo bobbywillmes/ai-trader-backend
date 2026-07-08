@@ -601,6 +601,12 @@ export async function getTrackedPositions() {
 export async function getOpenTrackedPositions() {
   const tradingAccountId = await resolveDefaultTradingAccountId();
 
+  return getOpenTrackedPositionsForTradingAccount(tradingAccountId);
+}
+
+export async function getOpenTrackedPositionsForTradingAccount(
+  tradingAccountId: number
+) {
   return prisma.trackedPosition.findMany({
     where: {
       tradingAccountId,

@@ -3,12 +3,11 @@ import {
   getCurrentMarketStateController,
   updateCurrentMarketStateController,
 } from '../controllers/market-state.controller.js';
-import { requirePermission } from '../middleware/rbac.js';
-import { AdminPermission } from '../types/admin-rbac.js';
+import { requireOwnerAccess } from '../middleware/rbac.js';
 
 const router = Router();
 
-router.get('/current', requirePermission(AdminPermission.TRADING_ACCOUNT_READ), getCurrentMarketStateController);
-router.patch('/current', requirePermission(AdminPermission.TRADING_ACCOUNT_READ), updateCurrentMarketStateController);
+router.get('/current', requireOwnerAccess, getCurrentMarketStateController);
+router.patch('/current', requireOwnerAccess, updateCurrentMarketStateController);
 
 export default router;

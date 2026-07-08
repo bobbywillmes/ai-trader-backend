@@ -3,8 +3,13 @@ import type { NextFunction, Request, Response } from 'express';
 
 const mocks = vi.hoisted(() => ({
   getTradingAccountForAdmin: vi.fn(),
+  getTradingAccountSummaryById: vi.fn(),
   listTradingAccountsForAdmin: vi.fn(),
+  listTradingAccountsForAdminUser: vi.fn(),
   updateTradingAccountForAdmin: vi.fn(),
+  getNormalizedOpenOrders: vi.fn(),
+  getOpenTrackedPositionsForTradingAccount: vi.fn(),
+  listTradeCyclesForTradingAccount: vi.fn(),
   getTradingAccountRiskSettingsForAdmin: vi.fn(),
   updateTradingAccountRiskSettingsForAdmin: vi.fn(),
   getTradingAccountRiskHealth: vi.fn(),
@@ -35,8 +40,23 @@ vi.mock('../services/trading-account-credential-verification.service.js', () => 
 
 vi.mock('../services/trading-account.service.js', () => ({
   getTradingAccountForAdmin: mocks.getTradingAccountForAdmin,
+  getTradingAccountSummaryById: mocks.getTradingAccountSummaryById,
   listTradingAccountsForAdmin: mocks.listTradingAccountsForAdmin,
+  listTradingAccountsForAdminUser: mocks.listTradingAccountsForAdminUser,
   updateTradingAccountForAdmin: mocks.updateTradingAccountForAdmin,
+}));
+
+vi.mock('../services/orders.service.js', () => ({
+  getNormalizedOpenOrders: mocks.getNormalizedOpenOrders,
+}));
+
+vi.mock('../services/position-tracking.service.js', () => ({
+  getOpenTrackedPositionsForTradingAccount:
+    mocks.getOpenTrackedPositionsForTradingAccount,
+}));
+
+vi.mock('../services/trade-cycles.service.js', () => ({
+  listTradeCyclesForTradingAccount: mocks.listTradeCyclesForTradingAccount,
 }));
 
 vi.mock('../services/trading-account-risk-settings.service.js', () => ({
@@ -97,6 +117,9 @@ import {
   getTradingAccountSubscriptionPriceHistoryController,
   getTradingAccountSubscriptionController,
   getTradingAccountController,
+  listTradingAccountOpenOrdersController,
+  listTradingAccountOpenPositionsController,
+  listTradingAccountTradeCyclesController,
   listTradingAccountAllocationsController,
   listTradingAccountSubscriptionMarketContextController,
   listTradingAccountSubscriptionsController,
@@ -129,7 +152,22 @@ describe('trading accounts controller', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.listTradingAccountsForAdmin.mockResolvedValue([{ id: 1 }]);
+    mocks.listTradingAccountsForAdminUser.mockResolvedValue([{ id: 1 }]);
     mocks.getTradingAccountForAdmin.mockResolvedValue({ id: 1 });
+    mocks.getTradingAccountSummaryById.mockResolvedValue({
+      id: 1,
+      displayName: 'Bobby Paper',
+      broker: 'ALPACA',
+      environment: 'PAPER',
+      status: 'ACTIVE',
+    });
+    mocks.getNormalizedOpenOrders.mockResolvedValue([{ id: 'order-1' }]);
+    mocks.getOpenTrackedPositionsForTradingAccount.mockResolvedValue([
+      { id: 101, symbol: 'DIA' },
+    ]);
+    mocks.listTradeCyclesForTradingAccount.mockResolvedValue({
+      cycles: [{ id: 101, symbol: 'DIA' }],
+    });
     mocks.getTradingAccountRiskSettingsForAdmin.mockResolvedValue({
       id: 50,
       tradingAccountId: 1,
@@ -190,11 +228,52 @@ describe('trading accounts controller', () => {
     const res = response();
     const next = vi.fn() as NextFunction;
 
-    await listTradingAccountsController({} as Request, res, next);
+    await listTradingAccountsController(
+      {} as Request,
+      {
+        ...res,
+        locals: {
+          adminUser: {
+            id: 42,
+            role: 'account_viewer',
+          },
+        },
+      } as unknown as Response,
+      next
+    );
 
-    expect(mocks.listTradingAccountsForAdmin).toHaveBeenCalledWith();
+    expect(mocks.listTradingAccountsForAdminUser).toHaveBeenCalledWith({
+      adminUserId: 42,
+      isOwner: false,
+    });
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ accounts: [{ id: 1 }] });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('treats owner trading account list requests as unrestricted', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await listTradingAccountsController(
+      {} as Request,
+      {
+        ...res,
+        locals: {
+          adminUser: {
+            id: 1,
+            role: 'owner',
+          },
+        },
+      } as unknown as Response,
+      next
+    );
+
+    expect(mocks.listTradingAccountsForAdminUser).toHaveBeenCalledWith({
+      adminUserId: 1,
+      isOwner: true,
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
     expect(next).not.toHaveBeenCalled();
   });
 
@@ -216,6 +295,186 @@ describe('trading accounts controller', () => {
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ account: { id: 1 } });
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it('returns open positions scoped to a trading account', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await listTradingAccountOpenPositionsController(
+      {
+        params: {
+          id: '1',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(
+      mocks.getOpenTrackedPositionsForTradingAccount
+    ).toHaveBeenCalledWith(1);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      positions: [{ id: 101, symbol: 'DIA' }],
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid trading account ids on account-scoped position reads', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await listTradingAccountOpenPositionsController(
+      {
+        params: {
+          id: 'nope',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(
+      mocks.getOpenTrackedPositionsForTradingAccount
+    ).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 400,
+        message: 'Invalid trading account id.',
+      })
+    );
+  });
+
+  it('returns open orders scoped to a trading account', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await listTradingAccountOpenOrdersController(
+      {
+        params: {
+          id: '1',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.getNormalizedOpenOrders).toHaveBeenCalledWith(
+      'open_orders_sync',
+      {
+        tradingAccountId: 1,
+      }
+    );
+    expect(mocks.getTradingAccountSummaryById).toHaveBeenCalledWith(1);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      orders: [
+        {
+          id: 'order-1',
+          tradingAccountId: 1,
+          tradingAccount: {
+            id: 1,
+            displayName: 'Bobby Paper',
+            broker: 'ALPACA',
+            environment: 'PAPER',
+            status: 'ACTIVE',
+          },
+        },
+      ],
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('returns not found when account-scoped order reads target a missing account', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+    mocks.getTradingAccountSummaryById.mockResolvedValue(null);
+
+    await listTradingAccountOpenOrdersController(
+      {
+        params: {
+          id: '404',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.getNormalizedOpenOrders).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 404,
+        message: 'Trading account not found.',
+      })
+    );
+  });
+
+  it('returns trade cycles scoped to a trading account', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await listTradingAccountTradeCyclesController(
+      {
+        params: {
+          id: '1',
+        },
+        query: {
+          symbol: ' dia ',
+          status: 'closed',
+          dateFrom: '2026-06-01T00:00:00.000Z',
+          limit: '25',
+          strategyId: '5',
+          subscriptionId: '6',
+          exitProfileId: '7',
+          exitReason: 'target_hit',
+          mode: 'paper',
+        },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.listTradeCyclesForTradingAccount).toHaveBeenCalledWith(1, {
+      symbol: 'dia',
+      status: 'closed',
+      dateFrom: new Date('2026-06-01T00:00:00.000Z'),
+      limit: 25,
+      strategyId: 5,
+      subscriptionId: 6,
+      exitProfileId: 7,
+      exitReason: 'target_hit',
+      mode: 'paper',
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      cycles: [{ id: 101, symbol: 'DIA' }],
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid trading account ids on account-scoped trade cycle reads', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await listTradingAccountTradeCyclesController(
+      {
+        params: {
+          id: 'nope',
+        },
+        query: {},
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.listTradeCyclesForTradingAccount).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 400,
+        message: 'Invalid trading account id.',
+      })
+    );
   });
 
   it('rejects invalid trading account ids', async () => {

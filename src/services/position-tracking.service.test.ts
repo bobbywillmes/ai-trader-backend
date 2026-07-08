@@ -104,6 +104,7 @@ vi.mock('./trading-account.service.js', () => ({
 
 import {
   getOpenTrackedPositions,
+  getOpenTrackedPositionsForTradingAccount,
   getTrackedPositions,
   syncTrackedPositions,
 } from './position-tracking.service.js';
@@ -267,6 +268,34 @@ describe('position tracking subscription recovery', () => {
     expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith({
       where: {
         tradingAccountId: 1,
+        status: {
+          in: ['open', 'closing'],
+        },
+      },
+      orderBy: { symbol: 'asc' },
+      include: expect.objectContaining({
+        tradingAccount: {
+          select: {
+            id: true,
+            displayName: true,
+            broker: true,
+            environment: true,
+            status: true,
+          },
+        },
+      }),
+    });
+  });
+
+  it('returns open tracked positions for an explicit trading account', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([]);
+
+    await getOpenTrackedPositionsForTradingAccount(7);
+
+    expect(mocks.resolveDefaultTradingAccountId).not.toHaveBeenCalled();
+    expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith({
+      where: {
+        tradingAccountId: 7,
         status: {
           in: ['open', 'closing'],
         },

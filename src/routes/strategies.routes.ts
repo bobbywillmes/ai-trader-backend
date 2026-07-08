@@ -1,10 +1,9 @@
 import { Router } from 'express';
 import { strategiesController } from '../controllers/subscription.controller.js';
-import { requirePermission } from '../middleware/rbac.js';
-import { AdminPermission } from '../types/admin-rbac.js';
+import { requireOwnerAccess } from '../middleware/rbac.js';
 
 const router = Router();
 
-router.get('/', requirePermission(AdminPermission.STRATEGY_READ), strategiesController);
+router.get('/', requireOwnerAccess, strategiesController);
 
 export default router;

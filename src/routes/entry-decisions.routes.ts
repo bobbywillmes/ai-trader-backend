@@ -3,12 +3,11 @@ import {
   entryDecisionByIdController,
   entryDecisionsController,
 } from '../controllers/entry-decisions.controller.js';
-import { requirePermission } from '../middleware/rbac.js';
-import { AdminPermission } from '../types/admin-rbac.js';
+import { requireOwnerAccess } from '../middleware/rbac.js';
 
 const router = Router();
 
-router.get('/', requirePermission(AdminPermission.TRADING_ACCOUNT_READ), entryDecisionsController);
-router.get('/:id', requirePermission(AdminPermission.TRADING_ACCOUNT_READ), entryDecisionByIdController);
+router.get('/', requireOwnerAccess, entryDecisionsController);
+router.get('/:id', requireOwnerAccess, entryDecisionByIdController);
 
 export default router;

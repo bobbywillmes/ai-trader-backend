@@ -5,10 +5,17 @@ import { HttpError } from '../errors/http-error.js';
 import { isOwnerRole } from '../types/admin-rbac.js';
 import {
   getTradingAccountForAdmin,
+  getTradingAccountSummaryById,
   listTradingAccountsForAdmin,
   listTradingAccountsForAdminUser,
   updateTradingAccountForAdmin,
 } from '../services/trading-account.service.js';
+import { getNormalizedOpenOrders } from '../services/orders.service.js';
+import { getOpenTrackedPositionsForTradingAccount } from '../services/position-tracking.service.js';
+import {
+  listTradeCyclesForTradingAccount,
+  type TradeCycleFilters,
+} from '../services/trade-cycles.service.js';
 import {
   revokeTradingAccountCredential,
   upsertTradingAccountApiKeyCredential,
@@ -101,7 +108,7 @@ export async function listTradingAccountsController(
 
     const accounts = await listTradingAccountsForAdminUser({
       adminUserId: adminUser.id,
-      isOwner: isOwnerRole(adminUser.role) || res.locals.isStaticAdminKey,
+      isOwner: isOwnerRole(adminUser.role) || Boolean(res.locals.isStaticAdminKey),
     });
 
     res.status(200).json({ accounts });
@@ -124,6 +131,131 @@ export async function getTradingAccountController(
     }
 
     res.status(200).json({ account });
+  } catch (error) {
+    next(error);
+  }
+}
+
+function getQueryString(value: unknown) {
+  return typeof value === 'string' && value.trim() !== ''
+    ? value.trim()
+    : undefined;
+}
+
+function getQueryNumber(value: unknown) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function getQueryDate(value: unknown) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return undefined;
+  }
+
+  const parsed = new Date(value);
+
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
+
+function parseTradeCycleStatus(value: unknown): TradeCycleFilters['status'] {
+  const status = getQueryString(value);
+
+  if (status === 'open' || status === 'closed' || status === 'closing') {
+    return status;
+  }
+
+  return undefined;
+}
+
+function parseTradeCycleFilters(query: Request['query']) {
+  const filters: TradeCycleFilters = {};
+  const symbol = getQueryString(query.symbol);
+  const status = parseTradeCycleStatus(query.status);
+  const dateFrom = getQueryDate(query.dateFrom);
+  const dateTo = getQueryDate(query.dateTo);
+  const strategyId = getQueryNumber(query.strategyId);
+  const subscriptionId = getQueryNumber(query.subscriptionId);
+  const exitProfileId = getQueryNumber(query.exitProfileId);
+  const exitReason = getQueryString(query.exitReason);
+  const mode = getQueryString(query.mode);
+  const limit = getQueryNumber(query.limit);
+
+  if (symbol !== undefined) filters.symbol = symbol;
+  if (status !== undefined) filters.status = status;
+  if (dateFrom !== undefined) filters.dateFrom = dateFrom;
+  if (dateTo !== undefined) filters.dateTo = dateTo;
+  if (strategyId !== undefined) filters.strategyId = strategyId;
+  if (subscriptionId !== undefined) filters.subscriptionId = subscriptionId;
+  if (exitProfileId !== undefined) filters.exitProfileId = exitProfileId;
+  if (exitReason !== undefined) filters.exitReason = exitReason;
+  if (mode !== undefined) filters.mode = mode;
+  if (limit !== undefined) filters.limit = limit;
+
+  return filters;
+}
+
+export async function listTradingAccountOpenPositionsController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const id = parseTradingAccountId(req.params.id);
+    const positions = await getOpenTrackedPositionsForTradingAccount(id);
+
+    res.status(200).json({ positions });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function listTradingAccountOpenOrdersController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const id = parseTradingAccountId(req.params.id);
+    const tradingAccount = await getTradingAccountSummaryById(id);
+
+    if (!tradingAccount) {
+      throw new HttpError(404, 'Trading account not found.');
+    }
+
+    const orders = await getNormalizedOpenOrders('open_orders_sync', {
+      tradingAccountId: id,
+    });
+
+    res.status(200).json({
+      orders: orders.map((order) => ({
+        ...order,
+        tradingAccountId: id,
+        tradingAccount,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function listTradingAccountTradeCyclesController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const id = parseTradingAccountId(req.params.id);
+    const result = await listTradeCyclesForTradingAccount(
+      id,
+      parseTradeCycleFilters(req.query)
+    );
+
+    res.status(200).json(result);
   } catch (error) {
     next(error);
   }
