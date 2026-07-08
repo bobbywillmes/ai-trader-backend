@@ -7,6 +7,10 @@ function readApiKey(req: Request) {
   return req.header('ai-trader-api-key');
 }
 
+function readSignalKey(req: Request) {
+  return req.header('signal-key');
+}
+
 function readBearerToken(req: Request) {
   const authHeader = req.header('authorization') ?? '';
   const [scheme, token] = authHeader.split(' ');
@@ -23,7 +27,7 @@ export function requireSignalApiKey(
   res: Response,
   next: NextFunction
 ) {
-  const providedKey = readApiKey(req);
+  const providedKey = readSignalKey(req);
 
   const signalKey = process.env.AI_TRADER_SIGNAL_API_KEY;
   const adminKey = process.env.AI_TRADER_ADMIN_API_KEY;

@@ -553,6 +553,58 @@ limit
 `mark-sent`, `acknowledge`, and `mark-failed` accept optional `now` and
 `metadata`. `mark-failed` requires an `error` message.
 
+### Phase 5 Signal Automation Endpoints
+
+The admin endpoints remain admin-only. n8n Momentum Scanner automation uses the
+existing signal route group instead:
+
+```text
+/api/signals
+```
+
+These routes are protected by the existing signal API key middleware and require
+the n8n/client automation header:
+
+```http
+signal-key: <AI_TRADER_SIGNAL_API_KEY>
+```
+
+Admin endpoints remain admin-protected and do not use `signal-key`.
+
+Review-only Momentum Scanner signal-route endpoints:
+
+```http
+POST /api/signals/momentum-scanner/run-news-worker
+POST /api/signals/momentum-scanner/generate-candidates
+POST /api/signals/momentum-scanner/confirm-prices
+POST /api/signals/momentum-scanner/prepare-handoffs
+GET /api/signals/momentum-scanner/handoffs
+POST /api/signals/momentum-scanner/handoffs/:id/mark-sent
+POST /api/signals/momentum-scanner/handoffs/:id/mark-failed
+```
+
+These endpoints exist only because `/api/signals` is the established n8n
+automation route group. They are not entry-signal endpoints.
+
+Workflow behavior:
+
+- `run-news-worker` runs one Massive news worker cycle.
+- `generate-candidates` accepts `minCatalystScore`, `take`, and
+  `expiresInHours`.
+- `confirm-prices` accepts `maxCandidates` and returns BigInt-safe serialized
+  price confirmation responses.
+- `prepare-handoffs` accepts `maxCandidates`, `minScore`, and supported
+  `force` refreshes.
+- `GET /handoffs` defaults to `PENDING` when no `status` query is supplied and
+  also supports `status`, `take`, and `symbol`.
+- `mark-sent` accepts optional `metadata`.
+- `mark-failed` accepts optional `error` and `metadata`; omitted `error` uses a
+  safe n8n workflow failure message.
+
+The signal automation endpoints are review-only. They do not create entry
+signals, order intents, broker orders, Alpaca calls, broker activity, paper or
+live trading behavior, or automatic buying.
+
 ## Momentum Scanner Admin UI
 
 The Admin UI exposes a review-only `Momentum Scanner` page at:

@@ -754,6 +754,7 @@ n8n should call the signal endpoint with the signal API key:
 
 ```http
 POST /api/signals/entry
+signal-key: AI_TRADER_SIGNAL_API_KEY
 ```
 
 Use:
