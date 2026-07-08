@@ -164,13 +164,24 @@ export function AdminConsoleShell() {
 }
 
 export function ViewerPortalShell() {
+  const { access } = useAuth();
   const logoutMutation = useLogout(getAdminToken());
   const [opened, { toggle, close }] = useDisclosure();
   const isMobile = useMediaQuery("(max-width: 48em)") ?? false;
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const accountMatch = pathname.match(/^\/portal\/accounts\/(\d+)/);
-  const accountBasePath = accountMatch ? `/portal/accounts/${accountMatch[1]}` : null;
+  const routeAccountId = accountMatch?.[1] ?? null;
+  const assignedAccountIds = access?.accessibleTradingAccountIds ?? [];
+  const defaultAccountId =
+    assignedAccountIds.length === 1 ? String(assignedAccountIds[0]) : null;
+  const activeAccountId = routeAccountId ?? defaultAccountId;
+  const accountBasePath = activeAccountId
+    ? `/portal/accounts/${activeAccountId}`
+    : null;
+  const accountsActive =
+    pathname === "/portal/accounts" ||
+    (routeAccountId !== null && pathname === accountBasePath);
 
   async function handleLogout() {
     await logoutMutation.mutateAsync();
@@ -231,16 +242,16 @@ export function ViewerPortalShell() {
               close();
             }}
           />
+          <NavLink
+            label="Accounts"
+            active={accountsActive}
+            onClick={() => {
+              navigate("/portal/accounts");
+              close();
+            }}
+          />
           {accountBasePath && (
             <>
-              <NavLink
-                label="Account"
-                active={pathname === accountBasePath}
-                onClick={() => {
-                  navigate(accountBasePath);
-                  close();
-                }}
-              />
               <NavLink
                 label="Positions"
                 active={pathname === `${accountBasePath}/positions`}

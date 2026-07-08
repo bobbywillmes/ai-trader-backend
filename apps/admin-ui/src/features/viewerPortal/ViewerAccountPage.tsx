@@ -1,6 +1,7 @@
 import {
   Alert,
   Badge,
+  Button,
   Card,
   Group,
   Loader,
@@ -80,7 +81,7 @@ function pnlColor(value: number | null | undefined) {
   return "dimmed";
 }
 
-function StatCard({
+function DetailItem({
   label,
   value,
 }: {
@@ -88,20 +89,18 @@ function StatCard({
   value: React.ReactNode;
 }) {
   return (
-    <Card withBorder radius="md" p="md">
-      <Text
-        size="xs"
-        c="dimmed"
-        tt="uppercase"
-        fw={700}
-        style={{ letterSpacing: "0.07em" }}
-        mb={6}
-      >
+    <div>
+      <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
         {label}
       </Text>
-      <Text size="xl" fw={700}>{value}</Text>
-    </Card>
+      <Text size="sm" fw={600}>{value}</Text>
+    </div>
   );
+}
+
+function statusLabel(value: string | null | undefined) {
+  if (!value) return "-";
+  return value.replace(/_/g, " ");
 }
 
 function ViewerPositionsTable({ positions }: { positions: TrackedPosition[] }) {
@@ -369,15 +368,27 @@ export function ViewerAccountPage({ view = "overview" }: ViewerAccountPageProps)
     <Stack gap="lg">
       <Group justify="space-between" align="flex-start">
         <div>
+          {view === "overview" && (
+            <Button
+              component={Link}
+              to="/portal/accounts"
+              size="xs"
+              variant="outline"
+              color="gray"
+              mb="sm"
+            >
+              Back to Accounts
+            </Button>
+          )}
           <Title order={2} size="h3">{account.displayName}</Title>
           <Text size="sm" c="dimmed">
-            {view === "positions"
-              ? "Read-only open positions"
-              : view === "orders"
-                ? "Read-only open orders"
-                : view === "trade-history"
-                  ? "Read-only trade history"
-                  : "Read-only account overview"}
+            {view === "overview"
+              ? "Read-only broker metadata, account status, and latest balances"
+              : view === "positions"
+                ? "Read-only open positions"
+                : view === "orders"
+                  ? "Read-only open orders"
+                  : "Read-only trade history"}
           </Text>
         </div>
         <Group gap="xs">
@@ -392,48 +403,149 @@ export function ViewerAccountPage({ view = "overview" }: ViewerAccountPageProps)
 
       {view === "overview" && (
         <>
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
-            <StatCard label="Portfolio value" value={formatMoney(account.lastPortfolioValue)} />
-            <StatCard label="Equity" value={formatMoney(account.lastEquity)} />
-            <StatCard label="Cash" value={formatMoney(account.lastCash)} />
-            <StatCard label="Buying power" value={formatMoney(account.lastBuyingPower)} />
-          </SimpleGrid>
+          <Card withBorder radius="md" p="md">
+            <Group justify="space-between" align="flex-start" mb="md">
+              <div>
+                <Text fw={700} size="lg">Account Summary</Text>
+                <Text size="sm" c="dimmed">
+                  Broker identity and account-level status.
+                </Text>
+              </div>
+              <Group gap="xs">
+                <Badge color={environmentColor(account.environment)} variant="light">
+                  {account.environment}
+                </Badge>
+                <Badge color="gray" variant="light">
+                  {account.status}
+                </Badge>
+              </Group>
+            </Group>
+            <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="lg">
+              <DetailItem label="Display name" value={account.displayName} />
+              <DetailItem label="Broker" value={account.broker} />
+              <DetailItem label="Environment" value={account.environment} />
+              <DetailItem label="Status" value={statusLabel(account.status)} />
+              <DetailItem
+                label="Trading enabled"
+                value={
+                  <Badge
+                    size="sm"
+                    color={account.tradingEnabled ? "teal" : "gray"}
+                    variant="light"
+                  >
+                    {account.tradingEnabled ? "Enabled" : "Disabled"}
+                  </Badge>
+                }
+              />
+              <DetailItem
+                label="Kill switch"
+                value={
+                  <Badge
+                    size="sm"
+                    color={account.killSwitchEnabled ? "orange" : "teal"}
+                    variant="light"
+                  >
+                    {account.killSwitchEnabled ? "Enabled" : "Off"}
+                  </Badge>
+                }
+              />
+              <DetailItem
+                label="Estimated capital"
+                value={formatMoney(account.estimatedTradingCapital)}
+              />
+              <DetailItem label="Base currency" value={account.baseCurrency} />
+            </SimpleGrid>
+          </Card>
 
           <Card withBorder radius="md" p="md">
-            <Text fw={600} size="sm" mb="sm">Account summary</Text>
-            <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
+            <Text fw={700} size="lg">Broker Account Snapshot</Text>
+            <Text size="sm" c="dimmed" mb="md">
+              Latest metadata and balances synced from the broker.
+            </Text>
+            <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="lg">
+              <DetailItem
+                label="Broker account id"
+                value={account.brokerAccountId ?? "-"}
+              />
+              <DetailItem
+                label="Account number"
+                value={account.brokerAccountNumberMasked ?? "-"}
+              />
+              <DetailItem
+                label="Broker status"
+                value={account.brokerAccountStatus ?? "-"}
+              />
+              <DetailItem
+                label="Last broker sync"
+                value={formatDateTime(account.lastBrokerSyncAt)}
+              />
+              <DetailItem label="Cash" value={formatMoney(account.lastCash)} />
+              <DetailItem
+                label="Buying power"
+                value={formatMoney(account.lastBuyingPower)}
+              />
+              <DetailItem label="Equity" value={formatMoney(account.lastEquity)} />
+              <DetailItem
+                label="Portfolio value"
+                value={formatMoney(account.lastPortfolioValue)}
+              />
+              <DetailItem
+                label="Open position notional"
+                value={formatMoney(account.totalOpenPositionNotional)}
+              />
+            </SimpleGrid>
+          </Card>
+
+          <Card withBorder radius="md" p="md">
+            <Group justify="space-between" align="flex-start" mb="md">
               <div>
-                <Text size="xs" c="dimmed">Broker</Text>
-                <Text size="sm" fw={600}>{account.broker}</Text>
-              </div>
-              <div>
-                <Text size="xs" c="dimmed">Account number</Text>
-                <Text size="sm" fw={600}>
-                  {account.brokerAccountNumberMasked ?? "-"}
+                <Text fw={700} size="lg">Credential Status</Text>
+                <Text size="sm" c="dimmed">
+                  Safe credential summary only. Secrets are never displayed.
                 </Text>
               </div>
-              <div>
-                <Text size="xs" c="dimmed">Broker status</Text>
-                <Text size="sm" fw={600}>{account.brokerAccountStatus ?? "-"}</Text>
-              </div>
-              <div>
-                <Text size="xs" c="dimmed">Open position notional</Text>
-                <Text size="sm" fw={600}>
-                  {formatMoney(account.totalOpenPositionNotional)}
-                </Text>
-              </div>
-              <div>
-                <Text size="xs" c="dimmed">Estimated trading capital</Text>
-                <Text size="sm" fw={600}>
-                  {formatMoney(account.estimatedTradingCapital)}
-                </Text>
-              </div>
-              <div>
-                <Text size="xs" c="dimmed">Last broker sync</Text>
-                <Text size="sm" fw={600}>
-                  {formatDateTime(account.lastBrokerSyncAt)}
-                </Text>
-              </div>
+              <Badge
+                color={account.credential.status === "ACTIVE" ? "teal" : "gray"}
+                variant="light"
+              >
+                {account.credential.exists
+                  ? statusLabel(account.credential.status)
+                  : "No credentials"}
+              </Badge>
+            </Group>
+            <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="lg">
+              <DetailItem
+                label="Exists"
+                value={account.credential.exists ? "Yes" : "No"}
+              />
+              <DetailItem
+                label="Status"
+                value={statusLabel(account.credential.status)}
+              />
+              <DetailItem
+                label="Auth type"
+                value={account.credential.authType ?? "-"}
+              />
+              <DetailItem
+                label="Key fingerprint"
+                value={account.credential.keyFingerprint ?? "-"}
+              />
+              <DetailItem
+                label="Verified at"
+                value={formatDateTime(account.credential.verifiedAt)}
+              />
+              <DetailItem
+                label="Last used"
+                value={formatDateTime(account.credential.lastUsedAt)}
+              />
+              <DetailItem
+                label="Last failed"
+                value={formatDateTime(account.credential.lastFailedAt)}
+              />
+              <DetailItem
+                label="Revoked at"
+                value={formatDateTime(account.credential.revokedAt)}
+              />
             </SimpleGrid>
           </Card>
         </>
