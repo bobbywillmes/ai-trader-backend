@@ -27,12 +27,32 @@ export type ListMomentumScannerHandoffsFilters = {
   symbol?: string;
   status?: MomentumScannerHandoffStatus;
   limit?: number;
+  currentlyEligibleOnly?: boolean;
 };
 
 export type MarkMomentumScannerHandoffOptions = {
   now?: Date;
   metadata?: Prisma.InputJsonValue;
 };
+
+export type MomentumScannerHandoffEligibilityOptions = {
+  minScore?: number;
+  now?: Date;
+};
+
+export type CancelStalePendingHandoffsOptions =
+  MomentumScannerHandoffEligibilityOptions & {
+    candidateId?: string;
+    symbol?: string;
+    limit?: number;
+  };
+
+export type MomentumScannerHandoffStaleReason =
+  | 'CANDIDATE_NO_LONGER_ENTRY_READY'
+  | 'CANDIDATE_EXPIRED'
+  | 'CANDIDATE_BLOCKED'
+  | 'SCORE_BELOW_HANDOFF_THRESHOLD'
+  | 'CANDIDATE_MISSING';
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
@@ -143,8 +163,27 @@ type CandidateForHandoff = Prisma.MomentumCandidateGetPayload<{
   include: ReturnType<typeof candidateInclude>;
 }>;
 
+type HandoffForEligibility = Prisma.MomentumScannerHandoffGetPayload<{
+  include: ReturnType<typeof scannerHandoffInclude>;
+}>;
+
 function buildIdempotencyKey(candidateId: string, payloadVersion: string) {
   return `momentum-candidate:${candidateId}:${payloadVersion}`;
+}
+
+function payloadTradingAllowedIsFalse(payload: Prisma.JsonValue) {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+    return false;
+  }
+
+  const reviewGuidance = payload.reviewGuidance;
+
+  return (
+    reviewGuidance !== null &&
+    typeof reviewGuidance === 'object' &&
+    !Array.isArray(reviewGuidance) &&
+    reviewGuidance.tradingAllowed === false
+  );
 }
 
 function latestPriceCheck(candidate: CandidateForHandoff) {
@@ -265,6 +304,71 @@ function getIneligibilityReason(
   }
 
   return null;
+}
+
+function getStalePendingReason(
+  handoff: HandoffForEligibility,
+  options: {
+    minScore: number;
+    now: Date;
+  }
+): MomentumScannerHandoffStaleReason | null {
+  const candidate = handoff.momentumCandidate;
+
+  if (!candidate) {
+    return 'CANDIDATE_MISSING';
+  }
+
+  if (candidate.blockedReason !== null) {
+    return 'CANDIDATE_BLOCKED';
+  }
+
+  if (candidate.state !== MomentumCandidateState.ENTRY_READY) {
+    return 'CANDIDATE_NO_LONGER_ENTRY_READY';
+  }
+
+  if (candidate.expiresAt !== null && candidate.expiresAt <= options.now) {
+    return 'CANDIDATE_EXPIRED';
+  }
+
+  if (candidate.totalScore < options.minScore) {
+    return 'SCORE_BELOW_HANDOFF_THRESHOLD';
+  }
+
+  return null;
+}
+
+function buildStaleCancellationMetadata(
+  handoff: HandoffForEligibility,
+  reason: MomentumScannerHandoffStaleReason,
+  now: Date
+) {
+  const base =
+    handoff.metadata !== null &&
+    typeof handoff.metadata === 'object' &&
+    !Array.isArray(handoff.metadata)
+      ? handoff.metadata
+      : {};
+
+  return {
+    ...base,
+    staleCancellationReason: reason,
+    staleCancelledAt: now.toISOString(),
+  } satisfies Prisma.InputJsonObject;
+}
+
+export function isHandoffCurrentlyEligible(
+  handoff: HandoffForEligibility,
+  options: MomentumScannerHandoffEligibilityOptions = {}
+) {
+  const now = options.now ?? new Date();
+  const minScore = normalizeScore(options.minScore);
+
+  return (
+    handoff.status === MomentumScannerHandoffStatus.PENDING &&
+    getStalePendingReason(handoff, { minScore, now }) === null &&
+    payloadTradingAllowedIsFalse(handoff.payload)
+  );
 }
 
 export async function buildMomentumScannerPayload(
@@ -390,6 +494,8 @@ export async function prepareMomentumScannerHandoff(
 export async function prepareReadyMomentumScannerHandoffs(
   options: PrepareReadyMomentumScannerHandoffsOptions = {}
 ) {
+  await cancelStalePendingHandoffs(options);
+
   if (options.candidateId !== undefined) {
     const result = await prepareMomentumScannerHandoff(
       options.candidateId,
@@ -508,6 +614,71 @@ export async function prepareReadyMomentumScannerHandoffs(
   return summary;
 }
 
+export async function cancelStalePendingHandoffs(
+  options: CancelStalePendingHandoffsOptions = {}
+) {
+  const now = options.now ?? new Date();
+  const minScore = normalizeScore(options.minScore);
+  const where: Prisma.MomentumScannerHandoffWhereInput = {
+    status: MomentumScannerHandoffStatus.PENDING,
+  };
+  const symbol = normalizeSymbol(options.symbol);
+
+  if (options.candidateId !== undefined) {
+    where.momentumCandidateId = normalizeId(
+      options.candidateId,
+      'Momentum candidate id'
+    );
+  }
+
+  if (symbol !== undefined) {
+    where.symbol = symbol;
+  }
+
+  const handoffs = await prisma.momentumScannerHandoff.findMany({
+    where,
+    orderBy: [
+      {
+        preparedAt: 'desc',
+      },
+      {
+        createdAt: 'desc',
+      },
+    ],
+    take: normalizePositiveInteger(options.limit, MAX_LIMIT),
+    include: scannerHandoffInclude(),
+  });
+  const cancelled = [];
+
+  for (const handoff of handoffs) {
+    const reason = getStalePendingReason(handoff, { minScore, now });
+
+    if (reason === null) {
+      continue;
+    }
+
+    cancelled.push(
+      await prisma.momentumScannerHandoff.update({
+        where: {
+          id: handoff.id,
+        },
+        data: {
+          status: MomentumScannerHandoffStatus.CANCELLED,
+          lastError: reason,
+          metadata: buildStaleCancellationMetadata(handoff, reason, now),
+        },
+        include: scannerHandoffInclude(),
+      })
+    );
+  }
+
+  return {
+    scanned: handoffs.length,
+    cancelled: cancelled.length,
+    handoffs: cancelled,
+  };
+}
+
 export async function listMomentumScannerHandoffs(
   filters: ListMomentumScannerHandoffsFilters = {}
 ) {
@@ -529,7 +700,7 @@ export async function listMomentumScannerHandoffs(
     where.status = filters.status;
   }
 
-  return prisma.momentumScannerHandoff.findMany({
+  const handoffs = await prisma.momentumScannerHandoff.findMany({
     where,
     orderBy: [
       {
@@ -542,6 +713,10 @@ export async function listMomentumScannerHandoffs(
     take: normalizePositiveInteger(filters.limit, DEFAULT_LIMIT),
     include: scannerHandoffInclude(),
   });
+
+  return filters.currentlyEligibleOnly
+    ? handoffs.filter((handoff) => isHandoffCurrentlyEligible(handoff))
+    : handoffs;
 }
 
 export async function getMomentumScannerHandoffById(id: string) {

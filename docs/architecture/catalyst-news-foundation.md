@@ -463,6 +463,10 @@ The payload includes:
 - review guidance with `recommendedAction = REVIEW_ONLY`
 - `tradingAllowed = false`
 
+The payload is a point-in-time snapshot from when the backend prepared the
+handoff. n8n must treat it as review context, not as proof that the candidate is
+still currently eligible.
+
 The payload intentionally excludes:
 
 - broker credentials
@@ -497,13 +501,20 @@ CANCELLED
 
 Status behavior:
 
-- `PENDING` means the payload is prepared and ready for n8n review pickup.
+- `PENDING` means the payload is prepared for n8n review pickup, but it is
+  deliverable only while the current candidate still remains `ENTRY_READY`,
+  unblocked, unexpired, and at or above the handoff score threshold.
 - `SENT` means n8n or an operator marked the payload as received/sent onward.
 - `ACKNOWLEDGED` means the scanner-review workflow accepted the handoff.
 - `FAILED` stores `failedAt` and `lastError` for delivery or workflow failure.
-- `CANCELLED` is reserved for future operator cancellation behavior.
+- `CANCELLED` means a pending handoff was invalidated before delivery, usually
+  because the current candidate moved out of `ENTRY_READY`, expired, became
+  blocked, fell below the score threshold, or could not be found.
 
-Marking a handoff sent increments `attempts` and sets `sentAt`.
+Before preparing new handoffs, the backend cancels stale pending handoffs.
+Before the n8n polling route returns pending handoffs, it cancels or excludes
+stale rows so old snapshots are not delivered after the underlying candidate has
+changed. Marking a handoff sent increments `attempts` and sets `sentAt`.
 
 ### Phase 5 Admin Endpoints
 
@@ -595,8 +606,9 @@ Workflow behavior:
   price confirmation responses.
 - `prepare-handoffs` accepts `maxCandidates`, `minScore`, and supported
   `force` refreshes.
-- `GET /handoffs` defaults to `PENDING` when no `status` query is supplied and
-  also supports `status`, `take`, and `symbol`.
+- `GET /handoffs` defaults to currently valid `PENDING` handoffs when no
+  `status` query is supplied. It cancels or excludes stale pending handoffs
+  before returning rows and also supports `status`, `take`, and `symbol`.
 - `mark-sent` accepts optional `metadata`.
 - `mark-failed` accepts optional `error` and `metadata`; omitted `error` uses a
   safe n8n workflow failure message.

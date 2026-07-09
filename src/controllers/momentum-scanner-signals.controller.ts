@@ -11,10 +11,12 @@ import {
   type ConfirmActiveCandidatesOptions,
 } from '../services/momentum-price-confirmation.service.js';
 import {
+  cancelStalePendingHandoffs,
   listMomentumScannerHandoffs,
   markMomentumScannerHandoffFailed,
   markMomentumScannerHandoffSent,
   prepareReadyMomentumScannerHandoffs,
+  type CancelStalePendingHandoffsOptions,
   type ListMomentumScannerHandoffsFilters,
   type MarkMomentumScannerHandoffOptions,
   type PrepareReadyMomentumScannerHandoffsOptions,
@@ -289,6 +291,17 @@ export async function listMomentumScannerHandoffsSignalController(
     filters.status = status;
     if (take !== undefined) filters.limit = take;
     if (symbol !== undefined) filters.symbol = symbol;
+
+    const cancelOptions: CancelStalePendingHandoffsOptions = {};
+
+    if (take !== undefined) cancelOptions.limit = take;
+    if (symbol !== undefined) cancelOptions.symbol = symbol;
+
+    await cancelStalePendingHandoffs(cancelOptions);
+
+    if (status === MomentumScannerHandoffStatus.PENDING) {
+      filters.currentlyEligibleOnly = true;
+    }
 
     res.status(200).json(await listMomentumScannerHandoffs(filters));
   } catch (error) {

@@ -2,6 +2,7 @@ import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  cancelStalePendingHandoffs: vi.fn(),
   confirmActiveCandidates: vi.fn(),
   generateMomentumCandidatesFromCatalysts: vi.fn(),
   listMomentumScannerHandoffs: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock('../services/momentum-price-confirmation.service.js', () => ({
 }));
 
 vi.mock('../services/momentum-scanner-handoff.service.js', () => ({
+  cancelStalePendingHandoffs: mocks.cancelStalePendingHandoffs,
   getMomentumScannerHandoffById: vi.fn(),
   listMomentumScannerHandoffs: mocks.listMomentumScannerHandoffs,
   markMomentumScannerHandoffAcknowledged: vi.fn(),
@@ -125,6 +127,11 @@ describe('momentum scanner routes', () => {
       results: [{ candidateId: 'candidate-1', handoff: handoff() }],
     });
     mocks.listMomentumScannerHandoffs.mockResolvedValue([handoff()]);
+    mocks.cancelStalePendingHandoffs.mockResolvedValue({
+      scanned: 0,
+      cancelled: 0,
+      handoffs: [],
+    });
     mocks.markMomentumScannerHandoffSent.mockResolvedValue(
       handoff({ status: 'SENT', attempts: 1 })
     );
@@ -355,7 +362,7 @@ describe('momentum scanner routes', () => {
     expect(mocks.prepareReadyMomentumScannerHandoffs).toHaveBeenCalledWith({});
   });
 
-  it('defaults handoff listing to pending handoffs for n8n polling', async () => {
+  it('defaults handoff listing to currently valid pending handoffs for n8n polling', async () => {
     const baseUrl = await listen();
 
     const response = await fetch(
@@ -369,6 +376,11 @@ describe('momentum scanner routes', () => {
     ]);
     expect(mocks.listMomentumScannerHandoffs).toHaveBeenCalledWith({
       status: 'PENDING',
+      limit: 3,
+      symbol: 'AAPL',
+      currentlyEligibleOnly: true,
+    });
+    expect(mocks.cancelStalePendingHandoffs).toHaveBeenCalledWith({
       limit: 3,
       symbol: 'AAPL',
     });

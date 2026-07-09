@@ -49,6 +49,8 @@ vi.mock('./place-order.service.js', () => ({
 
 import {
   buildMomentumScannerPayload,
+  cancelStalePendingHandoffs,
+  isHandoffCurrentlyEligible,
   listMomentumScannerHandoffs,
   markMomentumScannerHandoffAcknowledged,
   markMomentumScannerHandoffFailed,
@@ -187,6 +189,10 @@ function handoff(overrides: Record<string, unknown> = {}) {
     type: 'momentum_candidate.ready',
     version: 'v1',
     idempotencyKey: 'momentum-candidate:candidate-1:v1',
+    reviewGuidance: {
+      recommendedAction: 'REVIEW_ONLY',
+      tradingAllowed: false,
+    },
   };
 
   return {
@@ -396,6 +402,178 @@ describe('momentum scanner handoff service', () => {
     );
   });
 
+  it('keeps a pending handoff eligible when the current candidate is still entry-ready', async () => {
+    const row = handoff({
+      momentumCandidate: candidate({
+        state: MomentumCandidateState.ENTRY_READY,
+        blockedReason: null,
+        expiresAt: null,
+        totalScore: 87,
+      }),
+    });
+
+    expect(
+      isHandoffCurrentlyEligible(row, {
+        now: new Date('2026-07-04T16:00:00.000Z'),
+      })
+    ).toBe(true);
+
+    mocks.handoffFindMany.mockResolvedValue([row]);
+
+    await expect(
+      listMomentumScannerHandoffs({
+        status: MomentumScannerHandoffStatus.PENDING,
+        currentlyEligibleOnly: true,
+      })
+    ).resolves.toEqual([row]);
+  });
+
+  it('cancels stale pending handoffs for non-ready, blocked, expired, low-score, and missing candidates', async () => {
+    const now = new Date('2026-07-04T16:00:00.000Z');
+    const rows = [
+      handoff({
+        id: 'handoff-watching',
+        momentumCandidate: candidate({ state: MomentumCandidateState.WATCHING }),
+      }),
+      handoff({
+        id: 'handoff-blocked',
+        momentumCandidate: candidate({
+          state: MomentumCandidateState.ENTRY_BLOCKED,
+          blockedReason: 'PRICE_BELOW_MINIMUM',
+        }),
+      }),
+      handoff({
+        id: 'handoff-expired',
+        momentumCandidate: candidate({
+          expiresAt: new Date('2026-07-04T15:59:00.000Z'),
+        }),
+      }),
+      handoff({
+        id: 'handoff-low-score',
+        momentumCandidate: candidate({ totalScore: 79 }),
+      }),
+      handoff({
+        id: 'handoff-missing',
+        momentumCandidate: null,
+      }),
+      handoff({
+        id: 'handoff-valid',
+        momentumCandidate: candidate(),
+      }),
+    ];
+
+    mocks.handoffFindMany.mockResolvedValue(rows);
+
+    await expect(cancelStalePendingHandoffs({ now })).resolves.toMatchObject({
+      scanned: 6,
+      cancelled: 5,
+    });
+
+    expect(mocks.handoffUpdate).toHaveBeenCalledTimes(5);
+    expect(mocks.handoffUpdate).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: { id: 'handoff-watching' },
+        data: expect.objectContaining({
+          status: MomentumScannerHandoffStatus.CANCELLED,
+          lastError: 'CANDIDATE_NO_LONGER_ENTRY_READY',
+        }),
+      })
+    );
+    expect(mocks.handoffUpdate).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: { id: 'handoff-blocked' },
+        data: expect.objectContaining({
+          status: MomentumScannerHandoffStatus.CANCELLED,
+          lastError: 'CANDIDATE_BLOCKED',
+        }),
+      })
+    );
+    expect(mocks.handoffUpdate).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        where: { id: 'handoff-expired' },
+        data: expect.objectContaining({
+          status: MomentumScannerHandoffStatus.CANCELLED,
+          lastError: 'CANDIDATE_EXPIRED',
+        }),
+      })
+    );
+    expect(mocks.handoffUpdate).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({
+        where: { id: 'handoff-low-score' },
+        data: expect.objectContaining({
+          status: MomentumScannerHandoffStatus.CANCELLED,
+          lastError: 'SCORE_BELOW_HANDOFF_THRESHOLD',
+        }),
+      })
+    );
+    expect(mocks.handoffUpdate).toHaveBeenNthCalledWith(
+      5,
+      expect.objectContaining({
+        where: { id: 'handoff-missing' },
+        data: expect.objectContaining({
+          status: MomentumScannerHandoffStatus.CANCELLED,
+          lastError: 'CANDIDATE_MISSING',
+        }),
+      })
+    );
+  });
+
+  it('excludes stale pending and sent handoffs from currently eligible lists', async () => {
+    const rows = [
+      handoff({
+        id: 'handoff-valid',
+        momentumCandidate: candidate({ expiresAt: null }),
+      }),
+      handoff({
+        id: 'handoff-stale',
+        momentumCandidate: candidate({ state: MomentumCandidateState.WATCHING }),
+      }),
+      handoff({
+        id: 'handoff-sent',
+        status: MomentumScannerHandoffStatus.SENT,
+      }),
+    ];
+
+    mocks.handoffFindMany.mockResolvedValue(rows);
+
+    await expect(
+      listMomentumScannerHandoffs({
+        status: MomentumScannerHandoffStatus.PENDING,
+        currentlyEligibleOnly: true,
+      })
+    ).resolves.toMatchObject([{ id: 'handoff-valid' }]);
+  });
+
+  it('excludes handoffs whose snapshot allows trading', async () => {
+    const row = handoff({
+      momentumCandidate: candidate({ expiresAt: null }),
+      payload: {
+        type: 'momentum_candidate.ready',
+        version: 'v1',
+        idempotencyKey: 'momentum-candidate:candidate-1:v1',
+        reviewGuidance: {
+          recommendedAction: 'REVIEW_ONLY',
+          tradingAllowed: true,
+        },
+      },
+    });
+
+    expect(isHandoffCurrentlyEligible(row)).toBe(false);
+
+    mocks.handoffFindMany.mockResolvedValue([row]);
+
+    await expect(
+      listMomentumScannerHandoffs({
+        status: MomentumScannerHandoffStatus.PENDING,
+        currentlyEligibleOnly: true,
+      })
+    ).resolves.toEqual([]);
+  });
+
   it('marks sent, acknowledged, and failed handoff statuses', async () => {
     const now = new Date('2026-07-04T16:00:00.000Z');
 
@@ -469,6 +647,24 @@ describe('momentum scanner handoff service', () => {
       take: 25,
       include: expect.any(Object),
     });
+  });
+
+  it('cancels stale pending handoffs before preparing a new batch', async () => {
+    mocks.momentumCandidateFindMany.mockResolvedValue([]);
+    mocks.handoffFindMany.mockResolvedValue([]);
+
+    await prepareReadyMomentumScannerHandoffs({
+      maxCandidates: 2,
+      now: new Date('2026-07-04T16:00:00.000Z'),
+    });
+
+    expect(mocks.handoffFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          status: MomentumScannerHandoffStatus.PENDING,
+        },
+      })
+    );
   });
 
   it('does not invoke trading order behavior during handoff preparation', async () => {
