@@ -798,7 +798,7 @@ function ScannerHandoffsSection({
     >
       {handoffs.length > 0 && (
         <ScrollArea>
-          <Table striped highlightOnHover withTableBorder miw={1280}>
+          <Table striped highlightOnHover withTableBorder miw={1180}>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Symbol</Table.Th>
@@ -806,7 +806,6 @@ function ScannerHandoffsSection({
                 <Table.Th>Payload</Table.Th>
                 <Table.Th>Prepared</Table.Th>
                 <Table.Th>Sent</Table.Th>
-                <Table.Th>Ack</Table.Th>
                 <Table.Th>Failed</Table.Th>
                 <Table.Th ta="right">Attempts</Table.Th>
                 <Table.Th>Error</Table.Th>
@@ -830,7 +829,6 @@ function ScannerHandoffsSection({
                   <Table.Td>{handoff.payloadVersion}</Table.Td>
                   <Table.Td>{formatDate(handoff.preparedAt)}</Table.Td>
                   <Table.Td>{formatDate(handoff.sentAt)}</Table.Td>
-                  <Table.Td>{formatDate(handoff.acknowledgedAt)}</Table.Td>
                   <Table.Td>{formatDate(handoff.failedAt)}</Table.Td>
                   <Table.Td ta="right">{handoff.attempts}</Table.Td>
                   <Table.Td maw={320}>
