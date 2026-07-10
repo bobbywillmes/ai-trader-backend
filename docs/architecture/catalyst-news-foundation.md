@@ -1,279 +1,299 @@
-# Catalyst News Foundation
+# Momentum Scanner Architecture
 
-Phase 1 added backend storage and manual ingestion for market catalysts and
-news.
+The Momentum Scanner is a review-only market/news pipeline. It collects catalyst-style news, scores ticker-specific impacts, checks whether price and volume confirm the catalyst, and prepares durable handoffs for n8n to review in Slack.
 
-Phase 2 added an optional backend worker for polling Massive reference news for
-watched stock symbols.
+This document describes the current system state. It is not a phase log.
 
-Phase 3 adds backend-only `MomentumCandidate` storage and candidate generation
-from existing catalyst ticker impacts. At the time it was added, it did not add
-n8n triggers, admin UI pages, price or volume confirmation, final scoring,
-broker behavior, or trading behavior.
+## 🎯 Purpose
 
-Phase 4 adds backend-only manual price and volume confirmation for existing
-`MomentumCandidate` rows. At the time it was added, it did not add n8n
-triggers, Slack alerts, signal creation, trade creation, broker/order behavior,
-admin UI pages, or automatic buying.
+The scanner is designed to help identify stocks with possible short-term momentum after a catalyst appears in the market/news flow.
 
-Phase 5 adds backend-to-n8n scanner handoff plumbing for review-only momentum
-candidate payloads. It does not add signal creation, trade creation,
-broker/order behavior, automatic webhook pushing, or automatic buying.
+The current foundation supports:
 
-The admin UI now includes a `Momentum Scanner` page for manual review and
-testing of the backend pipeline. The page is visibility and operator testing
-only; it does not create signals, orders, broker activity, n8n workflow changes,
-or automatic buying behavior.
+- Massive news ingestion
+- source-level catalyst storage
+- per-ticker catalyst impact scoring
+- momentum candidate generation
+- price and volume confirmation
+- handoff queue records for n8n
+- review-only Slack alerts through n8n
+- Admin UI inspection and manual smoke testing
 
-## Purpose
+The system is intentionally conservative. It surfaces review candidates; it does not trade them.
 
-The catalyst foundation gives the backend a durable place to store market news
-from multiple sources before that data is used by future scanner, ranking, or
-review workflows.
+## 🛡️ Safety Boundaries
 
-Initial ingestion supports Massive `/v2/reference/news` payloads through a
-protected admin endpoint:
+The Momentum Scanner is review-only.
 
-```http
-POST /api/catalyst-events/ingest/massive-news
+It does **not**:
+
+- create entry signals
+- create order intents
+- submit broker orders
+- call Alpaca for order placement
+- create broker activity
+- change trading settings
+- enable paper or live trading
+- automatically buy or sell anything
+
+The Admin UI pipeline controls are smoke-test controls only.
+
+The n8n Momentum Scanner workflow uses the signal automation route group and the `signal-key` header. It does not use admin credentials.
+
+## 🧭 Pipeline Overview
+
+```text
+NewsPullCursor
+  -> Massive news worker
+  -> CatalystEvent
+  -> CatalystTickerImpact
+  -> MomentumCandidate
+  -> MomentumCandidatePriceCheck
+  -> MomentumScannerHandoff
+  -> n8n Momentum Scanner Review
+  -> Slack review alert
+  -> mark handoff SENT / FAILED
 ```
 
-Phase 2 can also pull Massive news through the disabled-by-default worker. A
-protected admin endpoint can run one worker cycle manually for testing:
+High-level flow:
 
-```http
-POST /api/catalyst-events/workers/massive-news/run-once
+1. `NewsPullCursor` tells the news worker which source + symbol pairs are due.
+2. The Massive news worker pulls recent news for due symbols.
+3. News articles are normalized into `CatalystEvent` rows.
+4. Per-symbol article insights become `CatalystTickerImpact` rows.
+5. Strong positive impacts generate or refresh `MomentumCandidate` rows.
+6. Price confirmation checks Massive market data and writes `MomentumCandidatePriceCheck` history.
+7. Candidates that remain strong enough become `ENTRY_READY`.
+8. `ENTRY_READY` candidates can be prepared as `MomentumScannerHandoff` queue records.
+9. n8n pulls currently valid `PENDING` handoffs, sends Slack review alerts, and marks successful deliveries as `SENT`.
+
+## 🧱 Data Model Roles
+
+### `NewsPullCursor`
+
+`NewsPullCursor` is internal worker state. It is not a catalyst, candidate, or review artifact.
+
+It answers:
+
+```text
+For this source + symbol, when should the worker pull news again, and where did it leave off?
 ```
 
-The payload is stored as `CatalystEvent` records with related
-`CatalystTickerImpact` rows. Events dedupe on:
+It tracks:
+
+- source
+- symbol
+- enabled flag
+- priority
+- pull interval
+- last pulled timestamp
+- last published timestamp
+- last source cursor
+- consecutive error count
+- last error
+- metadata
+
+This keeps source-specific polling state out of `Security` and out of the catalyst/candidate domain chain.
+
+### `CatalystEvent`
+
+`CatalystEvent` stores a normalized source-level news/catalyst record.
+
+It includes:
+
+- source and external source id
+- source URL
+- publisher and author
+- title, summary, body excerpt, and language
+- published and received timestamps
+- catalyst type, tier, sentiment, and confidence placeholders
+- duplicate tracking
+- raw source payload
+- metadata
+
+Massive news articles dedupe on:
 
 ```text
 CatalystSource.MASSIVE_NEWS + article.id
 ```
 
-The list and detail endpoints expose stored events with ticker impacts:
+### `CatalystTickerImpact`
 
-```http
-GET /api/catalyst-events
-GET /api/catalyst-events/:id
-```
+`CatalystTickerImpact` stores per-symbol interpretation of a catalyst event.
 
-Supported list filters include `symbol`, `source`, `eventType`, `eventTier`,
-and `limit`.
-
-## Data Model
-
-`CatalystEvent` stores source-level article data:
-
-- source and source external id
-- source URL, publisher, and author
-- title, summary, excerpt, and language
-- published and received timestamps
-- catalyst type, tier, sentiment, and confidence placeholders
-- raw source payload and metadata
-
-`CatalystTickerImpact` stores per-symbol context:
+It includes:
 
 - symbol
-- sentiment and sentiment reasoning
-- simple Phase 1 scores
+- sentiment
+- catalyst role
+- sentiment reasoning
+- freshness, relevance, actionability, source-quality, and total catalyst scores
 - primary/company/market/sector flags
-- catalyst role and blocked reason placeholders
-- raw source insight and metadata
+- blocked reason placeholders
+- raw insight
+- metadata
 
-`NewsPullCursor` stores future worker state:
+This table is the bridge between source-level news and symbol-level momentum review.
 
-- source and symbol
-- enabled flag and priority
-- pull interval
-- last pulled and last published timestamps
-- last source cursor
-- error counters and metadata
+### `MomentumCandidate`
 
-`MomentumCandidate` stores catalyst-backed momentum opportunities for operator
-review:
+`MomentumCandidate` stores the current review summary for one catalyst-backed momentum opportunity.
 
-- symbol and candidate state
+It includes:
+
+- symbol
+- candidate state
 - optional links to `CatalystEvent` and `CatalystTickerImpact`
 - catalyst, price action, volume, risk, and total scores
-- reason and blocked reason fields
+- reason and blocked reason
 - discovered, evaluated, and expiration timestamps
-- raw snapshot and metadata
+- latest raw snapshot
+- metadata
 
-Phase 3 candidate scoring is intentionally simple. `catalystScore` is copied
-from `CatalystTickerImpact.totalCatalystScore`; `totalScore` currently equals
-`catalystScore`; `priceActionScore`, `volumeScore`, and `riskScore` remain `0`
-until a later confirmation phase.
+This is a summary table. It reflects the latest candidate state, not every historical evaluation.
 
-`MomentumCandidatePriceCheck` stores append-only price/volume confirmation
-history:
+### `MomentumCandidatePriceCheck`
 
-- linked `MomentumCandidate`
-- symbol and observed timestamp
-- last price, previous close, percent move from previous close
-- intraday high/low and distance from high
+`MomentumCandidatePriceCheck` stores append-only price and volume confirmation history.
+
+It includes:
+
+- linked candidate
+- symbol
+- observed timestamp
+- last price
+- previous close
+- percent move from previous close
+- intraday high and low
+- distance from high
 - session VWAP and above-VWAP flag
-- day volume, dollar volume, relative volume placeholder
+- day volume and dollar volume
+- relative-volume placeholder
 - recent move and recent volume
 - price action, volume, risk, and total confirmation scores
-- confirmed flag, decision, blocked reason
-- raw Massive payload and metadata
+- confirmed flag
+- decision and blocked reason
+- raw Massive payload
+- metadata
 
-`MomentumCandidate` remains the latest summary table. Phase 4 updates its
-`priceActionScore`, `volumeScore`, `riskScore`, `totalScore`,
-`lastEvaluatedAt`, `state`, `blockedReason`, and `rawSnapshot` from the most
-recent manual confirmation run while preserving detailed check history in
-`MomentumCandidatePriceCheck`.
+Each confirmation creates a history row. The related `MomentumCandidate` stores only the latest summary fields.
 
-`MomentumScannerHandoff` stores scanner-review handoff audit records:
+### `MomentumScannerHandoff`
+
+`MomentumScannerHandoff` is the durable review/delivery queue for n8n.
+
+It includes:
 
 - linked `MomentumCandidate`
 - symbol
 - handoff status
-- payload version and prepared payload
+- payload version
+- prepared payload snapshot
 - prepared, sent, acknowledged, and failed timestamps
-- attempts and last error
+- attempts
+- last error
 - idempotency key
 - metadata
 
-The handoff table is the audit source for whether a candidate has been prepared
-or sent to a scanner-review workflow. `MomentumCandidate` remains the candidate
-summary table and is not used as the delivery ledger.
+The payload is a point-in-time snapshot. Current candidate eligibility is still checked before delivery to prevent stale alerts.
 
-## Phase 2 Massive News Worker
+## 📰 Massive News Ingestion
 
-The Massive news worker polls `/v2/reference/news` for watched stock symbols and
-passes the raw Massive payload into the same `ingestMassiveNewsPayload` service
-used by manual ingestion.
+The Massive news worker pulls `/v2/reference/news` for watched stock symbols and sends the raw Massive response through the same ingestion service used by manual ingestion.
 
-The worker is registered as `massive_news_ingestion` in worker health and is
-informational. It is disabled by default and must be enabled explicitly with:
+The worker:
+
+- ensures watched `NewsPullCursor` rows for `CatalystSource.MASSIVE_NEWS`
+- selects enabled due cursors
+- bounds work by max symbols per run
+- uses `lastPublishedAt` when available
+- otherwise falls back to a configured lookback window
+- requests Massive news sorted by `published_utc` ascending
+- ingests returned articles into `CatalystEvent` and `CatalystTickerImpact`
+- updates cursor success/error state per symbol
+
+The worker is idempotent because article storage dedupes on source + external id, and ticker impacts upsert by catalyst event + symbol.
+
+### Worker Settings
 
 ```text
-MASSIVE_NEWS_WORKER_ENABLED=true
-```
-
-Other worker settings:
-
-```text
+MASSIVE_NEWS_WORKER_ENABLED=false
 MASSIVE_NEWS_WORKER_INTERVAL_MS=60000
 MASSIVE_NEWS_LOOKBACK_MINUTES=240
 MASSIVE_NEWS_LIMIT_PER_SYMBOL=50
 MASSIVE_NEWS_MAX_SYMBOLS_PER_RUN=5
 ```
 
-Each run:
+The worker can also be run manually through admin or signal automation routes.
 
-- ensures watched `NewsPullCursor` rows for `CatalystSource.MASSIVE_NEWS`
-- selects enabled due cursors
-- bounds work by `MASSIVE_NEWS_MAX_SYMBOLS_PER_RUN`
-- uses `lastPublishedAt` when present
-- otherwise falls back to `now - MASSIVE_NEWS_LOOKBACK_MINUTES`
-- requests Massive news sorted by `published_utc` ascending
-- ingests returned articles through the existing catalyst ingestion service
-- updates cursor success or error state per symbol
+### Initial Watched Symbols
 
-The worker is idempotent because article storage dedupes on
-`CatalystSource.MASSIVE_NEWS + article.id` and ticker impacts upsert by
-`catalystEventId + symbol`.
+The worker seeds a conservative watched universe that includes major tech/momentum names and selected stock symbols from active system context.
 
-## News Pull Cursor Behavior
+The watched set includes:
 
-A cursor is due when:
-
-- `enabled = true`
-- `lastPulledAt` is null, or the configured `pullIntervalMin` has elapsed
-
-Due cursors are ordered by:
-
-- `priority` descending
-- `lastPulledAt` ascending with nulls first
-- `symbol` ascending as a stable tie-breaker
-
-After a successful pull:
-
-- `lastPulledAt` is set to the run timestamp
-- `lastPublishedAt` is updated to the newest returned article timestamp when
-  articles are returned
-- `consecutiveErrors` is reset to `0`
-- `lastError` is cleared
-
-After a failed per-symbol pull:
-
-- `consecutiveErrors` increments
-- `lastError` stores a concise message
-- `lastPulledAt` is left unchanged
-
-Ensuring cursors creates missing rows but does not re-enable an existing cursor
-that an operator has disabled.
-
-## Initial Watched Symbols
-
-The worker seeds a small static stock watch universe:
-
-```text
-AAPL, AMZN, GOOG, GOOGL, META, MSFT, NVDA, TSLA, AMD, MU, DELL, AVGO, PLTR, SOFI, SNOW
-```
-
-It also includes:
-
+- static stock symbols such as AAPL, AMZN, GOOG, GOOGL, META, MSFT, NVDA, TSLA, AMD, MU, DELL, AVGO, PLTR, SOFI, and SNOW
 - symbols from open or closing tracked positions
 - symbols from enabled stock subscriptions
 
-ETFs are not included by default unless they appear through open/closing
-tracked positions. Enabled subscription expansion is limited to `AssetType.STOCK`.
+ETFs are not included by default unless they appear through open/closing tracked positions.
 
-## Phase 1 Scoring
+## 🔎 Catalyst Events and Ticker Impacts
 
-Scoring is intentionally simple. The ingestion service currently assigns basic
-source quality, freshness, relevance, and actionability scores so records are
-usable for review and early sorting.
+Catalyst ingestion stores the article once and creates one impact row per symbol found in the source payload.
 
-The final momentum scoring algorithm is deferred.
+Early scoring is intentionally simple. It gives records enough structure for review and sorting, but it is not the final momentum model.
 
-## Phase 3 Momentum Candidates
+Current scoring fields include:
 
-Momentum candidates identify catalyst-backed symbols that may deserve follow-up
-review. They are generated only from existing `CatalystTickerImpact` rows and do
-not call n8n, create signals, create trades, submit orders, or interact with the
-broker.
+- source quality
+- freshness
+- relevance
+- actionability
+- total catalyst score
 
-Generation starts conservatively:
+Only positive and sufficiently scored impacts are eligible for candidate generation.
 
-- only `CatalystSentiment.POSITIVE` impacts are eligible
-- `totalCatalystScore` must meet the configured threshold
+## 🚀 Momentum Candidates
+
+Momentum candidates are generated from existing `CatalystTickerImpact` rows.
+
+Generation is conservative:
+
+- impact sentiment must be positive
+- total catalyst score must meet the configured threshold
 - symbol must be present
-- `CatalystTickerRole.TANGENTIAL_MENTION` is skipped
-- impacts with `blockedReason` are skipped
+- tangential mentions are skipped
+- blocked impacts are skipped
 
-Generation is idempotent by upserting candidates on `symbol + catalystImpactId`.
-Re-running generation refreshes the candidate score snapshot and expiration
-timestamp instead of creating duplicate candidates for the same catalyst impact.
+Generation is idempotent by:
 
-Candidates default to expiring after 24 hours. Expiration marks stale active
-records as `EXPIRED`; records are not deleted.
-
-Protected admin endpoints:
-
-```http
-GET /api/momentum-candidates
-GET /api/momentum-candidates/:id
-POST /api/momentum-candidates/generate-from-catalysts
-POST /api/momentum-candidates/expire-stale
+```text
+symbol + catalystImpactId
 ```
 
-These endpoints are for backend verification and review workflows only. There is
-now a review-only Admin UI page for this pipeline; Phase 3 itself only added
-the backend endpoints and storage.
+Re-running generation refreshes the candidate snapshot and expiration timestamp instead of creating duplicate candidates for the same symbol/catalyst impact.
 
-## Phase 4 Price And Volume Confirmation
+Candidates default to expiring after 24 hours. Expiration marks stale active records as `EXPIRED`; records are not deleted.
 
-Price confirmation answers whether an existing catalyst-backed candidate has
-enough market confirmation to keep watching or mark as entry-ready for a future
-handoff phase. It is manual and backend-only.
+Candidate states include:
 
-The confirmation service evaluates active candidates in these states:
+```text
+DISCOVERED
+WATCHING
+ENTRY_READY
+ENTRY_BLOCKED
+EXPIRED
+DISMISSED
+```
+
+`ENTRY_READY` is still review-only. It does not create a signal, trade, order intent, broker order, n8n webhook, or automatic alert by itself.
+
+## 📈 Price and Volume Confirmation
+
+Price confirmation checks whether a candidate has enough market confirmation to keep watching or prepare for review.
+
+The service evaluates active candidates in these states:
 
 ```text
 DISCOVERED
@@ -293,59 +313,61 @@ Each confirmation run:
 
 - fetches a Massive ticker snapshot
 - fetches current-day one-minute aggregates for the configured lookback window
-- builds a normalized price confirmation snapshot
-- writes a new `MomentumCandidatePriceCheck`
-- updates the candidate latest summary fields and state
+- normalizes price and volume data
+- writes a `MomentumCandidatePriceCheck` history row
+- updates the latest summary fields on `MomentumCandidate`
 
-The Massive helper normalizes:
+### Confirmation Snapshot Fields
+
+The Massive price helper normalizes:
 
 - last price
 - previous close
 - percent move from previous close
 - intraday high and low
 - distance from high
-- session VWAP and above-VWAP status
-- day volume and dollar volume
-- recent move and recent volume
+- session VWAP
+- above-VWAP status
+- day volume
+- dollar volume
+- recent move
+- recent volume
+- relative-volume placeholder
 
-Relative volume is intentionally left null in Phase 4 unless a reliable
-historical-volume baseline is added later.
+Relative volume remains basic until the system has a reliable historical-volume baseline.
 
-### Phase 4 Scoring
+### Confirmation Scoring
 
-Scoring is deliberately simple and adjustable.
+Scoring is simple and adjustable.
 
 `priceActionScore` is 0-100:
 
-- `+25` when percent from previous close is at least 2%
-- `+25` when price is above session VWAP
-- `+25` when price is within 1.5% of intraday high
-- `+25` when the recent move is positive
+- +25 when percent from previous close is at least 2%
+- +25 when price is above session VWAP
+- +25 when price is within 1.5% of intraday high
+- +25 when the recent move is positive
 
 `volumeScore` is 0-100:
 
-- `+30` when day volume is positive
-- `+30` when dollar volume meets `MOMENTUM_CONFIRMATION_MIN_DOLLAR_VOLUME`
-- `+20` when recent volume is positive
-- `+20` when relative volume is at least 2, when available
+- +30 when day volume is positive
+- +30 when dollar volume meets `MOMENTUM_CONFIRMATION_MIN_DOLLAR_VOLUME`
+- +20 when recent volume is positive
+- +20 when relative volume is at least 2, when available
 
-`riskScore` is a risk quality score, not a penalty:
+`riskScore` is a quality score:
 
-- `+25` when last price is at least `MOMENTUM_CONFIRMATION_MIN_PRICE`
-- `+25` when percent from previous close is not overextended above 15%
-- `+25` when price is not more than 6% above VWAP
-- `+25` as a neutral timing placeholder
+- +25 when last price is at least `MOMENTUM_CONFIRMATION_MIN_PRICE`
+- +25 when percent from previous close is not overextended above 15%
+- +25 when price is not more than 6% above VWAP
+- +25 as a neutral timing placeholder
 
-Phase 4 does not call a regular-hours timing helper. It therefore does not
-enforce the first-30-minutes-after-open entry-ready rule yet.
-
-The weighted score is:
+Weighted total score:
 
 ```text
 round(catalystScore * 0.45 + priceActionScore * 0.30 + volumeScore * 0.20 + riskScore * 0.05)
 ```
 
-### Phase 4 State Transitions
+### Confirmation State Transitions
 
 Default thresholds:
 
@@ -357,12 +379,11 @@ MOMENTUM_CONFIRMATION_ENTRY_READY_THRESHOLD=80
 State rules:
 
 - hard blocks set `ENTRY_BLOCKED`
-- score at or above the entry-ready threshold sets `ENTRY_READY`
-- score at or above the watching threshold sets `WATCHING`
-- lower scores keep `DISCOVERED` candidates discovered and move other active
-  candidates back to `WATCHING`
+- score at or above entry-ready threshold sets `ENTRY_READY`
+- score at or above watching threshold sets `WATCHING`
+- lower scores keep discovered candidates discovered and move other active candidates back to `WATCHING`
 
-Hard blocks:
+Hard blocks include:
 
 - expired candidate
 - missing last price
@@ -371,61 +392,21 @@ Hard blocks:
 - percent from previous close above `MOMENTUM_CONFIRMATION_MAX_PCT_FROM_PREV_CLOSE`
 - stale or empty aggregate data
 
-`ENTRY_READY` is only a review state in Phase 4. It does not create a signal,
-trade, order intent, broker order, n8n webhook, or alert.
+The current model does not yet enforce a first-30-minutes-after-open entry-ready rule.
 
-### Phase 4 Admin Endpoints
+## 📬 Scanner Handoffs
 
-Protected admin endpoints:
+Scanner handoffs are durable queue records for n8n review.
 
-```http
-POST /api/momentum-candidates/:id/confirm-price
-POST /api/momentum-candidates/confirm-prices
-GET /api/momentum-candidates/:id/price-checks
-```
+A candidate is eligible for handoff when:
 
-Single-candidate confirmation returns the updated candidate and latest price
-check.
+- candidate state is `ENTRY_READY`
+- candidate is not expired
+- candidate total score meets the configured handoff threshold
+- candidate has no blocked reason
+- no active handoff already exists for the candidate and payload version, unless `force` is used
 
-Batch confirmation evaluates a bounded active-candidate batch and returns:
-
-```text
-evaluated
-entryReady
-watching
-blocked
-skipped
-errors
-```
-
-Optional batch fields:
-
-```text
-maxCandidates
-state
-minCatalystScore
-now
-recentWindowMinutes
-lookbackMinutes
-```
-
-The price-check history endpoint returns recent checks newest first.
-
-## Phase 5 Momentum Scanner Handoffs
-
-Phase 5 prepares `MomentumCandidate` rows for n8n scanner review after catalyst
-generation and price confirmation have already marked a candidate
-`ENTRY_READY`.
-
-The backend exposes a protected handoff queue. n8n pulls scanner-ready payloads
-from the backend and can post back delivery state. The backend does not push to
-n8n automatically in Phase 5. Pull-based handoff keeps retry ownership,
-idempotency, and workflow scheduling in n8n while preserving a durable backend
-audit trail.
-
-### Phase 5 Readiness
-
-Default settings:
+Default handoff settings:
 
 ```text
 MOMENTUM_HANDOFF_MIN_SCORE=80
@@ -433,63 +414,29 @@ MOMENTUM_HANDOFF_MAX_CANDIDATES=10
 MOMENTUM_HANDOFF_PAYLOAD_VERSION=v1
 ```
 
-A candidate is eligible when:
+### Handoff Payload
 
-- `state = ENTRY_READY`
-- `expiresAt` is null or in the future
-- `totalScore` is at or above the configured handoff score threshold
-- `blockedReason` is null
-- no active `PENDING`, `SENT`, or `ACKNOWLEDGED` scanner handoff already exists
-  for the candidate unless `force = true`
-
-Batch preparation is bounded by `MOMENTUM_HANDOFF_MAX_CANDIDATES` unless a
-smaller request limit is supplied.
-
-### Phase 5 Payload
-
-Payloads use version `v1` by default and are shaped for n8n scanner review:
-
-```text
-type = momentum_candidate.ready
-version = v1
-idempotencyKey = momentum-candidate:<candidateId>:v1
-```
-
-The payload includes:
+Payload version `v1` includes:
 
 - candidate id, symbol, state, scores, reason, and timestamps
-- catalyst event and ticker-impact summary when available
-- latest price confirmation check by observed and created timestamp
-- review guidance with `recommendedAction = REVIEW_ONLY`
+- catalyst event summary
+- ticker impact summary
+- latest price confirmation summary
+- review guidance
+- `recommendedAction = REVIEW_ONLY`
 - `tradingAllowed = false`
 
-The payload is a point-in-time snapshot from when the backend prepared the
-handoff. n8n must treat it as review context, not as proof that the candidate is
-still currently eligible.
-
-The payload intentionally excludes:
+Payloads intentionally exclude:
 
 - broker credentials
 - secrets
-- raw vendor payload blobs
+- raw vendor blobs
 - raw model output blobs
-- signal, order, or broker objects
+- signal objects
+- order objects
+- broker objects
 
-### Phase 5 Idempotency
-
-Handoff creation is idempotent by:
-
-```text
-momentum-candidate:<candidateId>:<payloadVersion>
-```
-
-Re-running prepare for the same candidate and payload version returns the
-existing handoff. When `force = true`, the same handoff row is refreshed back to
-`PENDING`; a duplicate row is not created for the same idempotency key.
-
-### Phase 5 Statuses
-
-`MomentumScannerHandoffStatus` values:
+### Handoff Statuses
 
 ```text
 PENDING
@@ -501,154 +448,43 @@ CANCELLED
 
 Status behavior:
 
-- `PENDING` means the payload is prepared for n8n review pickup, but it is
-  deliverable only while the current candidate still remains `ENTRY_READY`,
-  unblocked, unexpired, and at or above the handoff score threshold.
-- `SENT` means n8n or an operator marked the payload as received/sent onward.
-- `ACKNOWLEDGED` means the scanner-review workflow accepted the handoff.
-- `FAILED` stores `failedAt` and `lastError` for delivery or workflow failure.
-- `CANCELLED` means a pending handoff was invalidated before delivery, usually
-  because the current candidate moved out of `ENTRY_READY`, expired, became
-  blocked, fell below the score threshold, or could not be found.
+- `PENDING` means the handoff is prepared for delivery, but it is deliverable only while the current candidate remains eligible.
+- `SENT` means n8n/Slack delivery succeeded and the workflow marked the handoff sent.
+- `ACKNOWLEDGED` exists in the backend model but is not currently used by the Slack review workflow.
+- `FAILED` stores delivery/workflow failure details.
+- `CANCELLED` means a stale pending handoff was invalidated before delivery.
 
-Before preparing new handoffs, the backend cancels stale pending handoffs.
-Before the n8n polling route returns pending handoffs, it cancels or excludes
-stale rows so old snapshots are not delivered after the underlying candidate has
-changed. Marking a handoff sent increments `attempts` and sets `sentAt`.
+A pending handoff is cancelled when the current candidate:
 
-### Phase 5 Admin Endpoints
+- is no longer `ENTRY_READY`
+- expires
+- becomes blocked
+- falls below the handoff score threshold
+- cannot be found
 
-Protected admin endpoints:
+The backend cancels stale pending handoffs before preparing new handoffs and before the n8n polling route returns pending handoffs.
 
-```http
-GET /api/momentum-scanner/handoffs
-GET /api/momentum-scanner/handoffs/:id
-POST /api/momentum-scanner/handoffs/prepare
-POST /api/momentum-scanner/handoffs/:id/mark-sent
-POST /api/momentum-scanner/handoffs/:id/acknowledge
-POST /api/momentum-scanner/handoffs/:id/mark-failed
-```
+This prevents old point-in-time payload snapshots from being delivered after the underlying candidate has cooled off or become invalid.
 
-`POST /api/momentum-scanner/handoffs/prepare` prepares either a bounded batch or
-one specific candidate when `candidateId` is supplied.
+## 🧑‍💻 Admin UI
 
-Optional prepare fields:
-
-```text
-candidateId
-maxCandidates
-minScore
-force
-now
-payloadVersion
-```
-
-The prepare response includes:
-
-```text
-prepared
-skipped
-handoffs
-skippedReasons
-```
-
-List filters:
-
-```text
-candidateId
-symbol
-status
-limit
-```
-
-`mark-sent`, `acknowledge`, and `mark-failed` accept optional `now` and
-`metadata`. `mark-failed` requires an `error` message.
-
-### Phase 5 Signal Automation Endpoints
-
-The admin endpoints remain admin-only. n8n Momentum Scanner automation uses the
-existing signal route group instead:
-
-```text
-/api/signals
-```
-
-These routes are protected by the existing signal API key middleware and require
-the n8n/client automation header:
-
-```http
-signal-key: <AI_TRADER_SIGNAL_API_KEY>
-```
-
-Admin endpoints remain admin-protected and do not use `signal-key`.
-
-Review-only Momentum Scanner signal-route endpoints:
-
-```http
-POST /api/signals/momentum-scanner/run-news-worker
-POST /api/signals/momentum-scanner/generate-candidates
-POST /api/signals/momentum-scanner/confirm-prices
-POST /api/signals/momentum-scanner/prepare-handoffs
-GET /api/signals/momentum-scanner/handoffs
-POST /api/signals/momentum-scanner/handoffs/:id/mark-sent
-POST /api/signals/momentum-scanner/handoffs/:id/mark-failed
-```
-
-These endpoints exist only because `/api/signals` is the established n8n
-automation route group. They are not entry-signal endpoints.
-
-Workflow behavior:
-
-- `run-news-worker` runs one Massive news worker cycle.
-- `generate-candidates` accepts `minCatalystScore`, `take`, and
-  `expiresInHours`.
-- `confirm-prices` accepts `maxCandidates` and returns BigInt-safe serialized
-  price confirmation responses.
-- `prepare-handoffs` accepts `maxCandidates`, `minScore`, and supported
-  `force` refreshes.
-- `GET /handoffs` defaults to currently valid `PENDING` handoffs when no
-  `status` query is supplied. It cancels or excludes stale pending handoffs
-  before returning rows and also supports `status`, `take`, and `symbol`.
-- `mark-sent` accepts optional `metadata`.
-- `mark-failed` accepts optional `error` and `metadata`; omitted `error` uses a
-  safe n8n workflow failure message.
-
-The signal automation endpoints are review-only. They do not create entry
-signals, order intents, broker orders, Alpaca calls, broker activity, paper or
-live trading behavior, or automatic buying.
-
-## Momentum Scanner Admin UI
-
-The Admin UI exposes a review-only `Momentum Scanner` page at:
+The Admin UI exposes a review-only page at:
 
 ```text
 /momentum-scanner
 ```
 
-The page is intended for operator smoke testing and inspection of the catalyst
-news momentum pipeline. It is deliberately not a trading console.
+The page is for operator smoke testing and inspection.
 
-Manual testing sequence:
-
-1. Run Massive news worker.
-2. Review recent `CatalystEvent` rows and ticker impacts.
-3. Generate `MomentumCandidate` rows from catalyst impacts.
-4. Review candidate state and scores.
-5. Confirm candidate prices.
-6. Review latest and historical price-confirmation results.
-7. Prepare scanner handoffs.
-8. Review `MomentumScannerHandoff` payloads and delivery status.
-
-The page shows:
+It shows:
 
 - review-only status badges
 - manual pipeline action buttons
 - catalyst event overview and details
 - momentum candidate overview and details
-- price-check history for selected candidates
+- price-check history
 - scanner handoff overview and payload details
-- summary counts for recent events, candidates, entry-ready candidates,
-  blocked candidates, and handoffs
+- summary counts for recent events, candidates, entry-ready candidates, blocked candidates, and handoffs
 
 The page intentionally does not include:
 
@@ -660,46 +496,134 @@ The page intentionally does not include:
 - automatic buying behavior
 - handoff mark-sent, acknowledge, or failed controls
 
-Those delivery-state endpoints remain backend/admin API capabilities for future
-workflow testing, but the UI currently keeps the handoff detail drawer view-only.
+Manual testing sequence:
 
-### Phase 5 Explicit Deferrals
+1. Run Massive news worker.
+2. Review catalyst events and ticker impacts.
+3. Generate momentum candidates.
+4. Confirm candidate prices.
+5. Prepare scanner handoffs.
+6. Review handoff queue state.
 
-Phase 5 remains review-only. It does not add:
+## 🔌 API Routes
 
-- n8n workflow import or configuration
-- backend outbound webhook pushing
-- Slack alerts directly from the backend
-- signal creation
-- trading subscriptions
-- order intents
-- broker orders
-- Alpaca calls
-- paper or live trading behavior
-- automatic buying
+### Admin Routes
 
-## Future Sources
+Admin routes require admin auth.
 
-The schema is source-flexible. Planned or reserved sources include:
+Catalyst events:
 
-- `MASSIVE_BENZINGA`
-- `SEC_EDGAR`
-- `COMPANY_IR`
-- `MANUAL`
+```http
+GET /api/catalyst-events
+GET /api/catalyst-events/:id
+POST /api/catalyst-events/ingest/massive-news
+POST /api/catalyst-events/workers/massive-news/run-once
+```
 
-Future ingestion should keep raw source payloads intact, avoid guessing
-ambiguous ticker attribution, and prefer explicit source identifiers for
-dedupe.
+Momentum candidates:
 
-## Deferred Work
+```http
+GET /api/momentum-candidates
+GET /api/momentum-candidates/:id
+POST /api/momentum-candidates/generate-from-catalysts
+POST /api/momentum-candidates/expire-stale
+POST /api/momentum-candidates/:id/confirm-price
+POST /api/momentum-candidates/confirm-prices
+GET /api/momentum-candidates/:id/price-checks
+```
 
-The following remain intentionally out of scope after Phase 5:
+Scanner handoffs:
 
-- n8n workflow import and configuration
-- automatic backend-to-n8n webhook pushing
-- Slack alerts
-- final momentum scoring
-- final relative-volume model
-- final regular-hours entry timing model
-- signal creation
-- trading decisions or order behavior
+```http
+GET /api/momentum-scanner/handoffs
+GET /api/momentum-scanner/handoffs/:id
+POST /api/momentum-scanner/handoffs/prepare
+POST /api/momentum-scanner/handoffs/:id/mark-sent
+POST /api/momentum-scanner/handoffs/:id/acknowledge
+POST /api/momentum-scanner/handoffs/:id/mark-failed
+```
+
+### Signal / n8n Routes
+
+n8n uses the existing signal automation route group:
+
+```text
+/api/signals
+```
+
+Signal automation routes require:
+
+```http
+signal-key: <AI_TRADER_SIGNAL_API_KEY>
+```
+
+Momentum Scanner signal routes:
+
+```http
+POST /api/signals/momentum-scanner/run-news-worker
+POST /api/signals/momentum-scanner/generate-candidates
+POST /api/signals/momentum-scanner/confirm-prices
+POST /api/signals/momentum-scanner/prepare-handoffs
+GET /api/signals/momentum-scanner/handoffs
+POST /api/signals/momentum-scanner/handoffs/:id/mark-sent
+POST /api/signals/momentum-scanner/handoffs/:id/mark-failed
+```
+
+These are review-only automation routes. They do not create entry signals, order intents, broker orders, Alpaca calls, broker activity, paper trading, live trading, or automatic buying.
+
+## ⚙️ Configuration
+
+Relevant environment variables include:
+
+```text
+MASSIVE_NEWS_WORKER_ENABLED
+MASSIVE_NEWS_WORKER_INTERVAL_MS
+MASSIVE_NEWS_LOOKBACK_MINUTES
+MASSIVE_NEWS_LIMIT_PER_SYMBOL
+MASSIVE_NEWS_MAX_SYMBOLS_PER_RUN
+
+MOMENTUM_CONFIRMATION_WATCHING_THRESHOLD
+MOMENTUM_CONFIRMATION_ENTRY_READY_THRESHOLD
+MOMENTUM_CONFIRMATION_MIN_DOLLAR_VOLUME
+MOMENTUM_CONFIRMATION_MIN_PRICE
+MOMENTUM_CONFIRMATION_MAX_PCT_FROM_PREV_CLOSE
+
+MOMENTUM_HANDOFF_MIN_SCORE
+MOMENTUM_HANDOFF_MAX_CANDIDATES
+MOMENTUM_HANDOFF_PAYLOAD_VERSION
+
+AI_TRADER_SIGNAL_API_KEY
+```
+
+## ⚠️ Current Limitations
+
+Known limitations:
+
+- Massive news quality is noisy and includes many broad Motley Fool-style articles.
+- Source quality scoring is still basic.
+- Catalyst classification is not final.
+- Relative volume does not yet use a robust historical baseline.
+- Regular-hours timing rules are not fully modeled in the confirmation service.
+- There is no final momentum entry scoring model.
+- There is no momentum exit strategy.
+- There is no buy/sell automation.
+- There is no SEC/EDGAR ingestion yet.
+- There is no Benzinga ingestion yet.
+- n8n schedule timing does not yet account for market holidays or early closes beyond normal weekday scheduling.
+
+## 🧭 Future Work
+
+Likely next phases:
+
+- improve source quality filtering
+- add Benzinga or another higher-signal news source
+- add SEC/EDGAR watcher
+- add relative-volume baselines
+- improve catalyst type/tier classification
+- add candidate dismissal/review actions
+- tune scoring thresholds after observing alerts
+- design a momentum-specific exit strategy
+- add holiday and early-close awareness
+- consider future signal/order integration only after a review period
+
+Any future trading integration should remain behind explicit safety gates and should not be added until review-only alerts have been evaluated across multiple market sessions.

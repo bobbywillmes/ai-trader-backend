@@ -1,28 +1,44 @@
 # n8n Integration
 
-This doc covers how n8n connects to the AI Trader backend — the proof-of-concept workflow that was tested, how to expose the local backend to n8n via ngrok during development, and how the production n8n workflow is configured for dry-run operation.
+This doc covers the shared n8n → AI Trader backend contract.
 
----
+For the Momentum Scanner review workflow specifically, see:
 
-## ✔️ Proof of Concept
+- [Momentum Scanner Review Workflow](n8n/momentum-scanner-review.md)
 
-The backend has been successfully tested with a small n8n proof-of-concept workflow that sends trading signals into the Node API and reads current open positions back from the backend.
+## ✅ Current Integration Principles
 
-This confirms that n8n can communicate with the local development backend through a public ngrok tunnel, using signal-level authentication that will later be used in production.
+n8n is an automation client, not an admin user.
 
-### What Was Tested
+n8n should:
 
-The proof-of-concept workflow includes:
+- use signal-level authentication
+- call only `/api/signals/...` routes unless a specific exception is intentionally designed
+- avoid admin API keys and admin session cookies
+- avoid direct broker or Alpaca calls
+- avoid creating orders except through explicitly approved signal workflows
 
-1. Manual trigger node
-2. Setup node storing backend URL and API key
-3. Code node building a sample entry signal payload
-4. HTTP Request node sending the signal to `POST /api/signals/entry`
-5. Response parser node normalizing success/failure responses
-6. HTTP Request node reading open tracked positions from `GET /api/tracked-positions/open`
-7. Response parser node for open position results
+Admin routes remain admin-only.
 
-### Local Development Tunnel
+## 🔐 Signal-Level API Access
+
+Signal routes are mounted under:
+
+```text
+/api/signals
+```
+
+Signal routes require:
+
+```http
+signal-key: <AI_TRADER_SIGNAL_API_KEY>
+```
+
+Do not use `ai-trader-api-key` for signal routes.
+
+Admin routes use admin auth and are separate from n8n signal automation routes.
+
+## 🧪 Local Development Tunnel
 
 During local development, the backend can be exposed to n8n through ngrok.
 
@@ -48,54 +64,48 @@ npm run dev:tunnel
 
 The ngrok URL is then used by n8n as the backend base URL.
 
-### Signal-Level API Access
-
-The n8n workflow uses the signal-level API key. This allows n8n to perform only signal/client-level actions, such as sending entry signals and reading current open positions.
-
-Admin-level actions remain protected and are not exposed to the n8n signal workflow.
-
----
-
-## 🏭 Production n8n Workflow
+## 🚢 Production n8n Base URL
 
 The hosted n8n workflow should use the production backend base URL:
 
-```
+```text
 https://srv1700402.hstgr.cloud
 ```
 
 n8n should use the signal API key only:
 
-```
-signal-key: AI_TRADER_SIGNAL_API_KEY
+```http
+signal-key: <AI_TRADER_SIGNAL_API_KEY>
 ```
 
 n8n should not use the admin API key.
 
 n8n should not talk directly to Alpaca.
 
-The lean ETF watcher production dry-run should remain configured as:
+## 📈 Lean ETF Watcher
 
-```
+The Lean ETF Watcher workflow sends review/decision context and, when enabled, entry signals to the backend signal route group.
+
+Production dry-run settings should remain conservative while testing:
+
+```text
 DRY_RUN=true
 FORCE_MARKET_OPEN_FOR_TESTING=false
 ```
 
 Expected dry-run behavior:
 
-```
+```text
 n8n gets ETF watch context from backend
 n8n pulls ETF snapshots
 n8n decision engine evaluates candidates
 n8n posts diary events to backend
 backend stores Market Diary events
-admin UI displays Market Diary results
+Admin UI displays Market Diary results
 no live order is submitted
 ```
 
 Before enabling any real paper-order workflow, confirm the dry-run system has behaved correctly across multiple market sessions.
-
----
 
 ## ➡️ Signal API
 
@@ -105,9 +115,13 @@ Before enabling any real paper-order workflow, confirm the dry-run system has be
 POST /api/signals/entry-decisions
 ```
 
-Records a durable snapshot for an ETF decision engine evaluation. n8n should use this endpoint for meaningful decisions, including skipped or idle opportunities that should remain analyzable without creating an order.
+Records a durable snapshot for an ETF decision engine evaluation.
 
-The backend uses `decisionKey` for idempotency. Re-sending the same decision key returns the existing decision instead of creating a duplicate. Repeated unchanged idle decisions may be accepted but skipped according to the backend persistence policy.
+n8n should use this endpoint for meaningful decisions, including skipped or idle opportunities that should remain analyzable without creating an order.
+
+The backend uses `decisionKey` for idempotency. Re-sending the same decision key returns the existing decision instead of creating a duplicate.
+
+Repeated unchanged idle decisions may be accepted but skipped according to the backend persistence policy.
 
 Admin/operator review is available through:
 
@@ -168,12 +182,7 @@ POST /api/signals/entry
 
 Primary endpoint for n8n-driven entry signals.
 
-Instead of n8n sending full order instructions, it sends a subscription key and
-signal metadata. The backend resolves the subscription and the
-account-specific `TradingAccountSubscription`, validates entry gates, determines
-whole-share sizing from account-subscription configuration and backend-owned
-market data when needed, creates an order intent, and submits the order
-asynchronously.
+Instead of n8n sending full order instructions, it sends a subscription key and signal metadata. The backend resolves the subscription, validates the request, determines sizing, creates an order intent, and submits the order asynchronously.
 
 Example request:
 
@@ -212,10 +221,56 @@ Example response:
 }
 ```
 
+### ETF Watch Context
+
+```http
+GET /api/signals/etf-watch/context
+```
+
+Returns backend-owned ETF watch context for n8n decision logic.
+
+### Market State
+
+```http
+GET /api/signals/market-state/current
+POST /api/signals/market-state/current
+```
+
+Allows n8n to read and update current market-state context through signal-level authentication.
+
+### Market Diary Events
+
+```http
+GET /api/signals/market-diary/events
+POST /api/signals/market-diary/events
+```
+
+Allows n8n to persist market diary events without admin credentials.
+
 ### Open Positions
 
 ```http
-GET /api/tracked-positions/open
+GET /api/signals/tracked-positions/open
 ```
 
-Returns active tracked positions. Accessible with the signal API key.
+Returns active tracked positions through signal-level authentication.
+
+## 🚀 Momentum Scanner Review Routes
+
+The Momentum Scanner uses review-only signal automation routes:
+
+```http
+POST /api/signals/momentum-scanner/run-news-worker
+POST /api/signals/momentum-scanner/generate-candidates
+POST /api/signals/momentum-scanner/confirm-prices
+POST /api/signals/momentum-scanner/prepare-handoffs
+GET /api/signals/momentum-scanner/handoffs
+POST /api/signals/momentum-scanner/handoffs/:id/mark-sent
+POST /api/signals/momentum-scanner/handoffs/:id/mark-failed
+```
+
+These routes are not entry-signal routes. They support the review-only Slack workflow and must not create orders or broker activity.
+
+See the dedicated workflow doc:
+
+- [Momentum Scanner Review Workflow](n8n/momentum-scanner-review.md)
