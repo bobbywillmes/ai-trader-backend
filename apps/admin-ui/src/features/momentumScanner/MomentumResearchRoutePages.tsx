@@ -40,16 +40,6 @@ function ResearchRouteShell({
   );
 }
 
-export function MomentumResearchDashboardPage() {
-  return (
-    <ResearchRouteShell
-      eyebrow="Momentum Scanner"
-      title="Momentum Research"
-      description="Review active catalyst-backed momentum opportunities and understand why the scanner is interested in each symbol."
-    />
-  );
-}
-
 export function MomentumCandidatesPage() {
   return (
     <ResearchRouteShell

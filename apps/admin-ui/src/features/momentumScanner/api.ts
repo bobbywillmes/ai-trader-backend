@@ -19,7 +19,15 @@ import type {
   MomentumUniverseResponse,
   CreateMomentumUniverseMemberRequest,
   UpdateMomentumUniverseMemberRequest,
+  MomentumResearchOverview,
 } from "./types";
+
+export function getMomentumResearchOverview(token: string) {
+  return apiRequest<MomentumResearchOverview>(
+    "/api/momentum-scanner/research/overview",
+    { token }
+  );
+}
 
 const DEFAULT_GENERATE_REQUEST: Required<
   Pick<GenerateMomentumCandidatesRequest, "minCatalystScore" | "take" | "expiresInHours">

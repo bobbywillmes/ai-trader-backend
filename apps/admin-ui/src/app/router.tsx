@@ -33,9 +33,9 @@ import {
   MomentumCandidateDetailPage,
   MomentumCandidatesPage,
   MomentumCatalystsPage,
-  MomentumResearchDashboardPage,
   MomentumSymbolResearchPage,
 } from "../features/momentumScanner/MomentumResearchRoutePages";
+import { MomentumResearchDashboardPage } from "../features/momentumScanner/MomentumResearchDashboardPage";
 import { StrategiesPage } from "../features/strategies/StrategiesPage";
 import { AdminUsersPage } from "../features/adminUsers/AdminUsersPage";
 import { ViewerAccountPage } from "../features/viewerPortal/ViewerAccountPage";

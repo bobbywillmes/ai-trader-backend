@@ -15,6 +15,7 @@ import {
   createMomentumUniverseMember,
   updateMomentumUniverseMember,
   deleteMomentumUniverseMember,
+  getMomentumResearchOverview,
 } from "./api";
 import type {
   CatalystEventQuery,
@@ -46,7 +47,18 @@ export const momentumScannerKeys = {
     [...momentumScannerKeys.all, "handoffs", "detail", id] as const,
   universe: (query: MomentumUniverseQuery) =>
     [...momentumScannerKeys.all, "universe", query] as const,
+  researchOverview: () =>
+    [...momentumScannerKeys.all, "research", "overview"] as const,
 };
+
+export function useMomentumResearchOverview(token: string | null) {
+  return useQuery({
+    queryKey: momentumScannerKeys.researchOverview(),
+    queryFn: () => getMomentumResearchOverview(token as string),
+    enabled: Boolean(token),
+    staleTime: 15000,
+  });
+}
 
 function invalidateMomentumScanner(queryClient: ReturnType<typeof useQueryClient>) {
   return queryClient.invalidateQueries({ queryKey: momentumScannerKeys.all });

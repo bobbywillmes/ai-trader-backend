@@ -276,6 +276,110 @@ export type MomentumUniverseResponse = {
   };
 };
 
+export type MomentumResearchCandidateRow = {
+  id: string;
+  symbol: string;
+  state: MomentumCandidateState;
+  scores: {
+    catalyst: number;
+    priceAction: number;
+    volume: number;
+    risk: number;
+    total: number;
+  };
+  reason: string | null;
+  blockedReason: string | null;
+  discoveredAt: string;
+  lastEvaluatedAt: string | null;
+  updatedAt: string;
+  activityAt: string;
+  expiresAt: string | null;
+  entryReady: boolean;
+  blocked: boolean;
+  catalyst: {
+    id: string;
+    title: string;
+    source: string;
+    sourcePublisher: string | null;
+    sourceUrl: string | null;
+    publishedAt: string | null;
+    eventType: string;
+    eventTier: string;
+    sentiment: string;
+  } | null;
+  latestPriceCheck: MomentumCandidatePriceCheck | null;
+  latestHandoff: {
+    id: string;
+    status: MomentumScannerHandoffStatus;
+    preparedAt: string;
+  } | null;
+  security: {
+    id: number;
+    symbol: string;
+    name: string;
+    assetType: AssetType;
+    enabled: boolean;
+  } | null;
+  universe: {
+    id: string;
+    enabled: boolean;
+    newsEnabled: boolean;
+    priceScanningEnabled: boolean;
+  } | null;
+  tradingAvailability: {
+    subscriptionCount: number;
+    enabledSubscriptionCount: number;
+  };
+};
+
+export type MomentumResearchCatalystRow = {
+  id: string;
+  title: string;
+  source: string;
+  sourceUrl: string | null;
+  sourcePublisher: string | null;
+  publishedAt: string | null;
+  receivedAt: string;
+  eventType: string;
+  eventTier: string;
+  sentiment: string;
+  impactedSymbols: string[];
+  candidateCount: number;
+  momentumCandidates: Array<{
+    id: string;
+    symbol: string;
+    state: MomentumCandidateState;
+  }>;
+};
+
+export type MomentumResearchOverview = {
+  windows: {
+    recentCatalystsSince: string;
+    recentCandidateActivitySince: string;
+    asOf: string;
+  };
+  summary: {
+    activeCandidates: number;
+    entryReadyCandidates: number;
+    blockedCandidates: number;
+    recentCatalysts: number;
+    preparedHandoffs: number;
+    enabledUniverseMembers: number;
+  };
+  topCandidates: MomentumResearchCandidateRow[];
+  recentCatalysts: MomentumResearchCatalystRow[];
+  recentCandidateActivity: MomentumResearchCandidateRow[];
+  scannerHealth: {
+    enabledCursorCount: number;
+    healthyCursorCount: number;
+    errorCursorCount: number;
+    dueCursorCount: number;
+    lastNewsPullAt: string | null;
+    lastCandidateGenerationActivityAt: string | null;
+    lastPriceConfirmationActivityAt: string | null;
+  };
+};
+
 export type CreateMomentumUniverseMemberRequest = {
   securityId: number;
 };
