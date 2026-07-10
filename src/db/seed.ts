@@ -107,6 +107,24 @@ const curatedSubscriptionSecurities = securities.filter((security) =>
   curatedSubscriptionSymbols.has(security.symbol)
 );
 
+const initialMomentumUniverseSymbols = [
+  'AAPL',
+  'AMZN',
+  'GOOG',
+  'GOOGL',
+  'META',
+  'MSFT',
+  'NVDA',
+  'TSLA',
+  'AMD',
+  'MU',
+  'DELL',
+  'AVGO',
+  'PLTR',
+  'SOFI',
+  'SNOW',
+] as const;
+
 const subscriptionSourceSecurities: SeedSecurity[] = seedAllSecuritySubscriptions
   ? securities
   : curatedSubscriptionSecurities;
@@ -171,6 +189,24 @@ async function main() {
       where: { key: setting.key },
       update: {},
       create: setting
+    });
+  }
+
+  for (const symbol of initialMomentumUniverseSymbols) {
+    const security = await prisma.security.findUniqueOrThrow({
+      where: { symbol }
+    });
+
+    await prisma.momentumUniverseMember.upsert({
+      where: { securityId: security.id },
+      update: {},
+      create: {
+        securityId: security.id,
+        addedReason: 'IMPORTED',
+        metadata: {
+          seedUniverse: 'initial_massive_news_symbols'
+        }
+      }
     });
   }
 
@@ -239,6 +275,7 @@ for (const subscription of subscriptions) {
     [
       'Database seed completed successfully:',
       `- securities upserted: ${securities.length}`,
+      `- momentum universe members ensured: ${initialMomentumUniverseSymbols.length}`,
       `- settings upserted: ${runtimeSettings.length}`,
       `- strategies upserted: ${strategies.length}`,
       `- exit profiles upserted: ${exitProfiles.length}`,

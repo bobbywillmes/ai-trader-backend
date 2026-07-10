@@ -380,13 +380,48 @@ model Security {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  subscriptions    Subscription[]
-  trackedPositions TrackedPosition[]
-  brokerOrders     BrokerOrder[]
-  entryDecisions   EntryDecision[]
+  subscriptions          Subscription[]
+  trackedPositions       TrackedPosition[]
+  brokerOrders           BrokerOrder[]
+  entryDecisions         EntryDecision[]
+  momentumUniverseMember MomentumUniverseMember?
 
   @@index([enabled])
   @@index([assetType])
+}
+
+enum MomentumUniverseReason {
+  MANUAL
+  SUBSCRIPTION
+  OPEN_POSITION
+  DISCOVERY
+  IMPORTED
+}
+
+model MomentumUniverseMember {
+  id String @id @default(cuid())
+
+  securityId Int      @unique
+  security   Security @relation(fields: [securityId], references: [id], onDelete: Cascade)
+
+  enabled  Boolean @default(true)
+  priority Int     @default(0)
+
+  newsEnabled          Boolean @default(true)
+  priceScanningEnabled Boolean @default(true)
+
+  pullIntervalMin Int @default(15)
+
+  addedReason MomentumUniverseReason @default(MANUAL)
+  notes       String?
+  metadata    Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([enabled])
+  @@index([priority])
+  @@index([addedReason])
 }
 
 model OrderIntent {
