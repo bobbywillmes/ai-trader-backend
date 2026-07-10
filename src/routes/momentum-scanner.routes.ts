@@ -10,6 +10,13 @@ import {
 } from '../controllers/momentum-scanner-handoffs.controller.js';
 import { requireOwnerAccess } from '../middleware/rbac.js';
 import {
+  getMomentumResearchOverviewController,
+  getMomentumResearchCandidateController,
+  getMomentumSymbolResearchController,
+  listMomentumResearchCandidatesController,
+  listMomentumResearchCatalystsController,
+} from '../controllers/momentum-research.controller.js';
+import {
   createMomentumUniverseController,
   deleteMomentumUniverseController,
   listMomentumUniverseController,
@@ -17,6 +24,12 @@ import {
 } from '../controllers/momentum-universe.controller.js';
 
 const router = Router();
+
+router.get('/research/overview', requireOwnerAccess, getMomentumResearchOverviewController);
+router.get('/research/candidates', requireOwnerAccess, listMomentumResearchCandidatesController);
+router.get('/research/candidates/:candidateId', requireOwnerAccess, getMomentumResearchCandidateController);
+router.get('/research/catalysts', requireOwnerAccess, listMomentumResearchCatalystsController);
+router.get('/research/symbols/:symbol', requireOwnerAccess, getMomentumSymbolResearchController);
 
 router.get('/universe', requireOwnerAccess, listMomentumUniverseController);
 router.post('/universe', requireOwnerAccess, createMomentumUniverseController);

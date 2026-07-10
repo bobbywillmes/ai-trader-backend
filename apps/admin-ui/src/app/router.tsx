@@ -27,8 +27,13 @@ import { TradeHistoryPage } from "../features/tradeHistory/TradeHistoryPage";
 import { EntryDecisionsPage } from "../features/entryDecisions/EntryDecisionsPage";
 import { TradingAccountsPage } from "../features/tradingAccounts/TradingAccountsPage";
 import { TradingAccountDetailPage } from "../features/tradingAccounts/TradingAccountDetailPage";
-import { MomentumScannerPage } from "../features/momentumScanner/MomentumScannerPage";
+import { MomentumScannerPipelinePage } from "../features/momentumScanner/MomentumScannerPage";
 import { MomentumUniversePage } from "../features/momentumScanner/MomentumUniversePage";
+import { MomentumSymbolResearchPage } from "../features/momentumScanner/MomentumSymbolResearchPage";
+import { MomentumResearchDashboardPage } from "../features/momentumScanner/MomentumResearchDashboardPage";
+import { MomentumCandidatesPage } from "../features/momentumScanner/MomentumCandidatesPage";
+import { MomentumCatalystsPage } from "../features/momentumScanner/MomentumCatalystsPage";
+import { MomentumCandidateDetailPage } from "../features/momentumScanner/MomentumCandidateDetailPage";
 import { StrategiesPage } from "../features/strategies/StrategiesPage";
 import { AdminUsersPage } from "../features/adminUsers/AdminUsersPage";
 import { ViewerAccountPage } from "../features/viewerPortal/ViewerAccountPage";
@@ -82,11 +87,31 @@ export const router = createBrowserRouter([
               },
               {
                 path: "momentum-scanner",
-                element: <MomentumScannerPage />,
+                element: <MomentumResearchDashboardPage />,
+              },
+              {
+                path: "momentum-scanner/pipeline",
+                element: <MomentumScannerPipelinePage />,
               },
               {
                 path: "momentum-scanner/universe",
                 element: <MomentumUniversePage />,
+              },
+              {
+                path: "momentum-scanner/candidates",
+                element: <MomentumCandidatesPage />,
+              },
+              {
+                path: "momentum-scanner/candidates/:candidateId",
+                element: <MomentumCandidateDetailPage />,
+              },
+              {
+                path: "momentum-scanner/catalysts",
+                element: <MomentumCatalystsPage />,
+              },
+              {
+                path: "momentum-scanner/symbols/:symbol",
+                element: <MomentumSymbolResearchPage />,
               },
               {
                 path: "strategies",

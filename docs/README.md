@@ -83,7 +83,8 @@ Documents the review-only momentum scanner foundation:
 - `MomentumCandidate`
 - price and volume confirmation
 - `MomentumScannerHandoff`
-- Admin UI pipeline review and universe management pages
+- Admin UI research dashboard, candidate/catalyst browsing, symbol research,
+  pipeline review, and universe management pages
 - n8n signal routes
 - Slack review alerts
 - safety boundaries and future work

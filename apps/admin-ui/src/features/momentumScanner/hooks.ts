@@ -15,6 +15,11 @@ import {
   createMomentumUniverseMember,
   updateMomentumUniverseMember,
   deleteMomentumUniverseMember,
+  getMomentumResearchOverview,
+  listMomentumResearchCandidates,
+  listMomentumResearchCatalysts,
+  getMomentumResearchCandidate,
+  getMomentumSymbolResearch,
 } from "./api";
 import type {
   CatalystEventQuery,
@@ -26,6 +31,8 @@ import type {
   MomentumUniverseQuery,
   CreateMomentumUniverseMemberRequest,
   UpdateMomentumUniverseMemberRequest,
+  MomentumResearchCandidatesQuery,
+  MomentumResearchCatalystsQuery,
 } from "./types";
 
 export const momentumScannerKeys = {
@@ -46,7 +53,69 @@ export const momentumScannerKeys = {
     [...momentumScannerKeys.all, "handoffs", "detail", id] as const,
   universe: (query: MomentumUniverseQuery) =>
     [...momentumScannerKeys.all, "universe", query] as const,
+  researchOverview: () =>
+    [...momentumScannerKeys.all, "research", "overview"] as const,
+  researchCandidates: (query: MomentumResearchCandidatesQuery) =>
+    [...momentumScannerKeys.all, "research", "candidates", query] as const,
+  researchCatalysts: (query: MomentumResearchCatalystsQuery) =>
+    [...momentumScannerKeys.all, "research", "catalysts", query] as const,
+  researchCandidate: (candidateId: string | null) =>
+    [...momentumScannerKeys.all, "research", "candidate", candidateId] as const,
+  symbolResearch: (symbol: string | null) =>
+    [...momentumScannerKeys.all, "research", "symbol", symbol] as const,
 };
+
+export function useMomentumResearchOverview(token: string | null) {
+  return useQuery({
+    queryKey: momentumScannerKeys.researchOverview(),
+    queryFn: () => getMomentumResearchOverview(token as string),
+    enabled: Boolean(token),
+    staleTime: 15000,
+  });
+}
+
+export function useMomentumResearchCandidates(
+  token: string | null,
+  query: MomentumResearchCandidatesQuery
+) {
+  return useQuery({
+    queryKey: momentumScannerKeys.researchCandidates(query),
+    queryFn: () => listMomentumResearchCandidates(token as string, query),
+    enabled: Boolean(token),
+    placeholderData: (previous) => previous,
+  });
+}
+
+export function useMomentumResearchCatalysts(
+  token: string | null,
+  query: MomentumResearchCatalystsQuery
+) {
+  return useQuery({
+    queryKey: momentumScannerKeys.researchCatalysts(query),
+    queryFn: () => listMomentumResearchCatalysts(token as string, query),
+    enabled: Boolean(token),
+    placeholderData: (previous) => previous,
+  });
+}
+
+export function useMomentumResearchCandidate(
+  token: string | null,
+  candidateId: string | null
+) {
+  return useQuery({
+    queryKey: momentumScannerKeys.researchCandidate(candidateId),
+    queryFn: () => getMomentumResearchCandidate(token as string, candidateId as string),
+    enabled: Boolean(token) && Boolean(candidateId),
+  });
+}
+
+export function useMomentumSymbolResearch(token: string | null, symbol: string | null) {
+  return useQuery({
+    queryKey: momentumScannerKeys.symbolResearch(symbol),
+    queryFn: () => getMomentumSymbolResearch(token as string, symbol as string),
+    enabled: Boolean(token) && Boolean(symbol),
+  });
+}
 
 function invalidateMomentumScanner(queryClient: ReturnType<typeof useQueryClient>) {
   return queryClient.invalidateQueries({ queryKey: momentumScannerKeys.all });

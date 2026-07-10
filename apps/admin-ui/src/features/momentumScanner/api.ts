@@ -19,7 +19,55 @@ import type {
   MomentumUniverseResponse,
   CreateMomentumUniverseMemberRequest,
   UpdateMomentumUniverseMemberRequest,
+  MomentumResearchOverview,
+  MomentumResearchCandidatesQuery,
+  MomentumResearchCandidatesResponse,
+  MomentumResearchCatalystsQuery,
+  MomentumResearchCatalystsResponse,
+  MomentumResearchCandidateDetail,
+  MomentumSymbolResearch,
 } from "./types";
+
+export function getMomentumResearchOverview(token: string) {
+  return apiRequest<MomentumResearchOverview>(
+    "/api/momentum-scanner/research/overview",
+    { token }
+  );
+}
+
+export function listMomentumResearchCandidates(
+  token: string,
+  query: MomentumResearchCandidatesQuery
+) {
+  return apiRequest<MomentumResearchCandidatesResponse>(
+    `/api/momentum-scanner/research/candidates${buildQuery(query)}`,
+    { token }
+  );
+}
+
+export function listMomentumResearchCatalysts(
+  token: string,
+  query: MomentumResearchCatalystsQuery
+) {
+  return apiRequest<MomentumResearchCatalystsResponse>(
+    `/api/momentum-scanner/research/catalysts${buildQuery(query)}`,
+    { token }
+  );
+}
+
+export function getMomentumResearchCandidate(token: string, candidateId: string) {
+  return apiRequest<MomentumResearchCandidateDetail>(
+    `/api/momentum-scanner/research/candidates/${encodeURIComponent(candidateId)}`,
+    { token }
+  );
+}
+
+export function getMomentumSymbolResearch(token: string, symbol: string) {
+  return apiRequest<MomentumSymbolResearch>(
+    `/api/momentum-scanner/research/symbols/${encodeURIComponent(symbol)}`,
+    { token }
+  );
+}
 
 const DEFAULT_GENERATE_REQUEST: Required<
   Pick<GenerateMomentumCandidatesRequest, "minCatalystScore" | "take" | "expiresInHours">

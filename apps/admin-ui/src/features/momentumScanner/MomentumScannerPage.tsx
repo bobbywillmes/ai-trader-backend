@@ -212,7 +212,7 @@ function SummaryCard({
   );
 }
 
-export function MomentumScannerPage() {
+export function MomentumScannerPipelinePage() {
   const [token] = useState(() => getAdminToken());
   const [minCatalystScore, setMinCatalystScore] = useState(60);
   const [candidateTake, setCandidateTake] = useState(20);
