@@ -11,6 +11,10 @@ import {
   listMomentumScannerHandoffs,
   prepareMomentumScannerHandoffs,
   runMassiveNewsWorker,
+  listMomentumUniverse,
+  createMomentumUniverseMember,
+  updateMomentumUniverseMember,
+  deleteMomentumUniverseMember,
 } from "./api";
 import type {
   CatalystEventQuery,
@@ -19,6 +23,9 @@ import type {
   MomentumCandidateQuery,
   MomentumScannerHandoffQuery,
   PrepareMomentumScannerHandoffsRequest,
+  MomentumUniverseQuery,
+  CreateMomentumUniverseMemberRequest,
+  UpdateMomentumUniverseMemberRequest,
 } from "./types";
 
 export const momentumScannerKeys = {
@@ -37,6 +44,8 @@ export const momentumScannerKeys = {
     [...momentumScannerKeys.all, "handoffs", query] as const,
   handoff: (id: string | null) =>
     [...momentumScannerKeys.all, "handoffs", "detail", id] as const,
+  universe: (query: MomentumUniverseQuery) =>
+    [...momentumScannerKeys.all, "universe", query] as const,
 };
 
 function invalidateMomentumScanner(queryClient: ReturnType<typeof useQueryClient>) {
@@ -159,6 +168,52 @@ export function usePrepareMomentumScannerHandoffs(token: string | null) {
   return useMutation({
     mutationFn: (request?: PrepareMomentumScannerHandoffsRequest) =>
       prepareMomentumScannerHandoffs(token as string, request),
+    onSuccess: () => invalidateMomentumScanner(queryClient),
+  });
+}
+
+export function useMomentumUniverse(
+  token: string | null,
+  query: MomentumUniverseQuery
+) {
+  return useQuery({
+    queryKey: momentumScannerKeys.universe(query),
+    queryFn: () => listMomentumUniverse(token as string, query),
+    enabled: Boolean(token),
+    placeholderData: (previous) => previous,
+  });
+}
+
+export function useCreateMomentumUniverseMember(token: string | null) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (request: CreateMomentumUniverseMemberRequest) =>
+      createMomentumUniverseMember(token as string, request),
+    onSuccess: () => invalidateMomentumScanner(queryClient),
+  });
+}
+
+export function useUpdateMomentumUniverseMember(token: string | null) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      id,
+      request,
+    }: {
+      id: string;
+      request: UpdateMomentumUniverseMemberRequest;
+    }) => updateMomentumUniverseMember(token as string, id, request),
+    onSuccess: () => invalidateMomentumScanner(queryClient),
+  });
+}
+
+export function useDeleteMomentumUniverseMember(token: string | null) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => deleteMomentumUniverseMember(token as string, id),
     onSuccess: () => invalidateMomentumScanner(queryClient),
   });
 }

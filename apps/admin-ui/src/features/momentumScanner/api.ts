@@ -14,6 +14,11 @@ import type {
   PrepareMomentumScannerHandoffsRequest,
   PrepareMomentumScannerHandoffsResponse,
   RunMassiveNewsWorkerResponse,
+  MomentumUniverseMember,
+  MomentumUniverseQuery,
+  MomentumUniverseResponse,
+  CreateMomentumUniverseMemberRequest,
+  UpdateMomentumUniverseMemberRequest,
 } from "./types";
 
 const DEFAULT_GENERATE_REQUEST: Required<
@@ -153,5 +158,44 @@ export function prepareMomentumScannerHandoffs(
       token,
       body: request,
     }
+  );
+}
+
+export function listMomentumUniverse(
+  token: string,
+  query: MomentumUniverseQuery = {}
+) {
+  return apiRequest<MomentumUniverseResponse>(
+    `/api/momentum-scanner/universe${buildQuery(query)}`,
+    { token }
+  );
+}
+
+export function createMomentumUniverseMember(
+  token: string,
+  request: CreateMomentumUniverseMemberRequest
+) {
+  return apiRequest<MomentumUniverseMember>("/api/momentum-scanner/universe", {
+    method: "POST",
+    token,
+    body: request,
+  });
+}
+
+export function updateMomentumUniverseMember(
+  token: string,
+  id: string,
+  request: UpdateMomentumUniverseMemberRequest
+) {
+  return apiRequest<MomentumUniverseMember>(
+    `/api/momentum-scanner/universe/${encodeURIComponent(id)}`,
+    { method: "PATCH", token, body: request }
+  );
+}
+
+export function deleteMomentumUniverseMember(token: string, id: string) {
+  return apiRequest<MomentumUniverseMember>(
+    `/api/momentum-scanner/universe/${encodeURIComponent(id)}`,
+    { method: "DELETE", token }
   );
 }
