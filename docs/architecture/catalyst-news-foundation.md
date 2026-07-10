@@ -69,6 +69,20 @@ High-level flow:
 
 ## 🧱 Data Model Roles
 
+### `MomentumUniverseMember`
+
+`MomentumUniverseMember` is the explicit, database-backed research universe for the Momentum Scanner.
+
+It answers:
+
+```text
+Should the Momentum Scanner actively research this Security?
+```
+
+Each member has a unique relation to `Security` and stores independent controls for overall membership, news coverage, price scanning, polling priority, pull interval, reason, and operator notes.
+
+This model is intentionally separate from `Subscription`. A subscription answers whether a configured strategy exists through which a security can be traded. Universe membership answers whether the scanner should research it. A security can therefore be researched without any subscription, and adding universe membership does not make it tradable.
+
 ### `NewsPullCursor`
 
 `NewsPullCursor` is internal worker state. It is not a catalyst, candidate, or review artifact.
@@ -94,6 +108,8 @@ It tracks:
 - metadata
 
 This keeps source-specific polling state out of `Security` and out of the catalyst/candidate domain chain.
+
+`NewsPullCursor` is not the owner of research membership. Universe synchronization creates, enables, updates, or disables the required cursor rows while preserving ordinary polling progress, source checkpoints, and error state.
 
 ### `CatalystEvent`
 
@@ -226,17 +242,28 @@ MASSIVE_NEWS_MAX_SYMBOLS_PER_RUN=5
 
 The worker can also be run manually through admin or signal automation routes.
 
-### Initial Watched Symbols
+### Research Universe And Operational Coverage
 
-The worker seeds a conservative watched universe that includes major tech/momentum names and selected stock symbols from active system context.
+The normal research universe comes from enabled `MomentumUniverseMember` rows whose `newsEnabled` flag is also enabled. Symbols are resolved through the related `Security`; there is no hard-coded application ticker list.
 
-The watched set includes:
+Cursor synchronization combines three coverage sources:
 
-- static stock symbols such as AAPL, AMZN, GOOG, GOOGL, META, MSFT, NVDA, TSLA, AMD, MU, DELL, AVGO, PLTR, SOFI, and SNOW
-- symbols from open or closing tracked positions
-- symbols from enabled stock subscriptions
+- explicit database universe membership, which is the canonical permanent research universe
+- enabled stock subscriptions, retained as derived runtime coverage for compatibility with existing scanner behavior
+- open or closing tracked positions, retained as temporary operational coverage even without explicit membership
 
-ETFs are not included by default unless they appear through open/closing tracked positions.
+Subscription-derived and position-derived coverage do not create hidden `MomentumUniverseMember` rows. When sources overlap, synchronization creates only one source/symbol cursor and uses the highest priority and shortest required pull interval. Disabling or removing explicit membership disables its managed cursor only when no subscription or open/closing position still requires coverage.
+
+Synchronization updates cursor enablement, priority, interval, and coverage metadata. It does not reset `lastPulledAt`, `lastPublishedAt`, `lastSourceCursor`, `consecutiveErrors`, or `lastError`. Cursors that are no longer covered are disabled rather than deleted.
+
+The original 15-symbol application list was migrated as `IMPORTED` universe membership:
+
+```text
+AAPL, AMZN, GOOG, GOOGL, META, MSFT, NVDA, TSLA,
+AMD, MU, DELL, AVGO, PLTR, SOFI, SNOW
+```
+
+The migration reuses existing `Security` records. `SOFI` and `SNOW`, which were absent from the repository security seed, are inserted idempotently before membership is created. The development seed mirrors this initialization for new databases.
 
 ## 🔎 Catalyst Events and Ticker Impacts
 
@@ -505,6 +532,14 @@ Manual testing sequence:
 5. Prepare scanner handoffs.
 6. Review handoff queue state.
 
+Universe management is available at:
+
+```text
+/momentum-scanner/universe
+```
+
+Admin owners can search and filter membership, add an existing `Security`, enable or disable membership, independently control news and price scanning, edit priority/pull interval/notes, inspect related subscription count and cursor health, or explicitly remove membership. Disabling is the preferred routine operation; hard deletion removes only the research membership. Neither operation changes subscriptions, risk-gate behavior, orders, or broker activity.
+
 ## 🔌 API Routes
 
 ### Admin Routes
@@ -542,6 +577,17 @@ POST /api/momentum-scanner/handoffs/:id/mark-sent
 POST /api/momentum-scanner/handoffs/:id/acknowledge
 POST /api/momentum-scanner/handoffs/:id/mark-failed
 ```
+
+Momentum research universe:
+
+```http
+GET /api/momentum-scanner/universe
+POST /api/momentum-scanner/universe
+PATCH /api/momentum-scanner/universe/:id
+DELETE /api/momentum-scanner/universe/:id
+```
+
+Universe routes require admin authentication and owner access. Creation accepts only an existing `Security` id and rejects duplicate membership.
 
 ### Signal / n8n Routes
 
@@ -610,6 +656,8 @@ Known limitations:
 - There is no SEC/EDGAR ingestion yet.
 - There is no Benzinga ingestion yet.
 - n8n schedule timing does not yet account for market holidays or early closes beyond normal weekday scheduling.
+- Universe management does not discover arbitrary new securities; securities must already exist.
+- This foundation does not include symbol research pages, charts, catalyst timelines, candidate evaluation history, scoring-version history, forward-return analysis, or MFE/MAE analysis.
 
 ## 🧭 Future Work
 
@@ -625,5 +673,6 @@ Likely next phases:
 - design a momentum-specific exit strategy
 - add holiday and early-close awareness
 - consider future signal/order integration only after a review period
+- add dedicated symbol research and candidate analysis surfaces after the universe workflow has operational history
 
 Any future trading integration should remain behind explicit safety gates and should not be added until review-only alerts have been evaluated across multiple market sessions.
