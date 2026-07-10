@@ -98,6 +98,20 @@
     "industry": "Interactive Media & Services"
   },
   {
+    "symbol": "SOFI",
+    "name": "SoFi Technologies Inc",
+    "assetType": "STOCK",
+    "sector": "Financials",
+    "industry": "Consumer Finance"
+  },
+  {
+    "symbol": "SNOW",
+    "name": "Snowflake Inc",
+    "assetType": "STOCK",
+    "sector": "Information Technology",
+    "industry": "Application Software"
+  },
+  {
     "symbol": "WMT",
     "name": "Walmart Inc",
     "assetType": "STOCK",

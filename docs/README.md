@@ -77,12 +77,13 @@ Use this doc when changing signal handling, tracked positions, exit profiles, br
 Documents the review-only momentum scanner foundation:
 
 - Massive news ingestion
+- database-backed `MomentumUniverseMember` research coverage
 - `NewsPullCursor` worker checkpoints
 - `CatalystEvent` and `CatalystTickerImpact`
 - `MomentumCandidate`
 - price and volume confirmation
 - `MomentumScannerHandoff`
-- Admin UI review page
+- Admin UI pipeline review and universe management pages
 - n8n signal routes
 - Slack review alerts
 - safety boundaries and future work

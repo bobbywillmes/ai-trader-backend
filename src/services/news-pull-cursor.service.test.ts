@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   newsPullCursorFindMany: vi.fn(),
   newsPullCursorUpdate: vi.fn(),
   newsPullCursorUpsert: vi.fn(),
+  momentumUniverseMemberFindMany: vi.fn(),
   subscriptionFindMany: vi.fn(),
   trackedPositionFindMany: vi.fn(),
 }));
@@ -15,6 +16,9 @@ vi.mock('../db/prisma.js', () => ({
       findMany: mocks.newsPullCursorFindMany,
       update: mocks.newsPullCursorUpdate,
       upsert: mocks.newsPullCursorUpsert,
+    },
+    momentumUniverseMember: {
+      findMany: mocks.momentumUniverseMemberFindMany,
     },
     subscription: {
       findMany: mocks.subscriptionFindMany,
@@ -58,11 +62,27 @@ function cursor(overrides: Record<string, unknown>) {
 describe('news pull cursor service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.newsPullCursorFindMany.mockResolvedValue([]);
     mocks.newsPullCursorUpsert.mockResolvedValue({});
     mocks.newsPullCursorUpdate.mockResolvedValue({});
+    mocks.momentumUniverseMemberFindMany.mockResolvedValue([]);
+    mocks.subscriptionFindMany.mockResolvedValue([]);
+    mocks.trackedPositionFindMany.mockResolvedValue([]);
   });
 
-  it('ensures initial Massive news cursors from static symbols, open positions, and active stock subscriptions', async () => {
+  it('ensures Massive news cursors from universe, open positions, and active stock subscriptions', async () => {
+    mocks.momentumUniverseMemberFindMany.mockResolvedValue([
+      {
+        priority: 7,
+        pullIntervalMin: 30,
+        security: { symbol: 'aapl' },
+      },
+      {
+        priority: 3,
+        pullIntervalMin: 10,
+        security: { symbol: 'nvda' },
+      },
+    ]);
     mocks.trackedPositionFindMany.mockResolvedValue([
       { symbol: 'qqq' },
       { symbol: 'AAPL' },
@@ -74,9 +94,26 @@ describe('news pull cursor service', () => {
 
     await expect(ensureMassiveNewsPullCursors()).resolves.toMatchObject({
       source: CatalystSource.MASSIVE_NEWS,
+      ensured: 4,
+      disabled: 0,
       symbols: expect.arrayContaining(['AAPL', 'CRM', 'NVDA', 'QQQ']),
     });
 
+    expect(mocks.momentumUniverseMemberFindMany).toHaveBeenCalledWith({
+      where: {
+        enabled: true,
+        newsEnabled: true,
+      },
+      select: {
+        priority: true,
+        pullIntervalMin: true,
+        security: {
+          select: {
+            symbol: true,
+          },
+        },
+      },
+    });
     expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith({
       where: {
         status: {
@@ -112,10 +149,130 @@ describe('news pull cursor service', () => {
           pullIntervalMin: 15,
         }),
         update: {
+          enabled: true,
+          priority: 0,
+          pullIntervalMin: 15,
           metadata: {
-            seedUniverse: 'phase_2_massive_news_worker',
+            coverageOwner: 'momentum_universe_sync',
+            coverageSources: ['subscription'],
           },
         },
+      })
+    );
+  });
+
+  it('uses the shortest interval and highest priority for overlapping coverage', async () => {
+    mocks.momentumUniverseMemberFindMany.mockResolvedValue([
+      {
+        priority: 8,
+        pullIntervalMin: 30,
+        security: { symbol: 'AAPL' },
+      },
+    ]);
+    mocks.trackedPositionFindMany.mockResolvedValue([{ symbol: 'AAPL' }]);
+
+    await ensureMassiveNewsPullCursors();
+
+    expect(mocks.newsPullCursorUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          symbol: 'AAPL',
+          priority: 8,
+          pullIntervalMin: 15,
+          metadata: {
+            coverageOwner: 'momentum_universe_sync',
+            coverageSources: ['position', 'universe'],
+          },
+        }),
+      })
+    );
+  });
+
+  it('preserves existing cursor progress and errors while updating polling configuration', async () => {
+    mocks.momentumUniverseMemberFindMany.mockResolvedValue([
+      {
+        priority: 9,
+        pullIntervalMin: 5,
+        security: { symbol: 'MSFT' },
+      },
+    ]);
+    mocks.newsPullCursorFindMany.mockResolvedValue([
+      cursor({
+        symbol: 'MSFT',
+        lastPulledAt: new Date('2026-07-04T14:00:00Z'),
+        consecutiveErrors: 2,
+        lastError: 'rate limited',
+        metadata: { coverageOwner: 'momentum_universe_sync' },
+      }),
+    ]);
+
+    await ensureMassiveNewsPullCursors();
+
+    expect(mocks.newsPullCursorUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: {
+          enabled: true,
+          priority: 9,
+          pullIntervalMin: 5,
+          metadata: {
+            coverageOwner: 'momentum_universe_sync',
+            coverageSources: ['universe'],
+          },
+        },
+      })
+    );
+  });
+
+  it('disables an uncovered managed cursor without deleting its state', async () => {
+    mocks.newsPullCursorFindMany.mockResolvedValue([
+      cursor({
+        symbol: 'SNOW',
+        consecutiveErrors: 3,
+        lastError: 'provider unavailable',
+        metadata: { coverageOwner: 'momentum_universe_sync' },
+      }),
+      cursor({
+        id: 'manual-cursor',
+        symbol: 'MANUAL',
+        metadata: { createdBy: 'admin' },
+      }),
+    ]);
+
+    await expect(ensureMassiveNewsPullCursors()).resolves.toMatchObject({
+      ensured: 0,
+      disabled: 1,
+      symbols: [],
+    });
+
+    expect(mocks.newsPullCursorUpdate).toHaveBeenCalledTimes(1);
+    expect(mocks.newsPullCursorUpdate).toHaveBeenCalledWith({
+      where: { id: 'cursor-1' },
+      data: {
+        enabled: false,
+        metadata: {
+          coverageOwner: 'momentum_universe_sync',
+          coverageSources: [],
+        },
+      },
+    });
+  });
+
+  it('keeps temporary position coverage when no universe membership is enabled', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([{ symbol: 'sofi' }]);
+
+    await expect(ensureMassiveNewsPullCursors()).resolves.toMatchObject({
+      symbols: ['SOFI'],
+    });
+
+    expect(mocks.newsPullCursorUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          symbol: 'SOFI',
+          metadata: {
+            coverageOwner: 'momentum_universe_sync',
+            coverageSources: ['position'],
+          },
+        }),
       })
     );
   });

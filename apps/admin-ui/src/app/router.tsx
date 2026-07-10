@@ -28,6 +28,7 @@ import { EntryDecisionsPage } from "../features/entryDecisions/EntryDecisionsPag
 import { TradingAccountsPage } from "../features/tradingAccounts/TradingAccountsPage";
 import { TradingAccountDetailPage } from "../features/tradingAccounts/TradingAccountDetailPage";
 import { MomentumScannerPage } from "../features/momentumScanner/MomentumScannerPage";
+import { MomentumUniversePage } from "../features/momentumScanner/MomentumUniversePage";
 import { StrategiesPage } from "../features/strategies/StrategiesPage";
 import { AdminUsersPage } from "../features/adminUsers/AdminUsersPage";
 import { ViewerAccountPage } from "../features/viewerPortal/ViewerAccountPage";
@@ -82,6 +83,10 @@ export const router = createBrowserRouter([
               {
                 path: "momentum-scanner",
                 element: <MomentumScannerPage />,
+              },
+              {
+                path: "momentum-scanner/universe",
+                element: <MomentumUniversePage />,
               },
               {
                 path: "strategies",

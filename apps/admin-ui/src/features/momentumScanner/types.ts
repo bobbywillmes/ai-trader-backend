@@ -217,3 +217,77 @@ export type PrepareMomentumScannerHandoffsResponse = {
     reason: string;
   }>;
 };
+import type { AssetType } from "../securities/types";
+
+export type MomentumUniverseReason =
+  | "MANUAL"
+  | "SUBSCRIPTION"
+  | "OPEN_POSITION"
+  | "DISCOVERY"
+  | "IMPORTED";
+
+export type MomentumUniverseCursor = {
+  source: "MASSIVE_NEWS";
+  enabled: boolean;
+  lastPulledAt: string | null;
+  lastPublishedAt: string | null;
+  consecutiveErrors: number;
+  lastError: string | null;
+};
+
+export type MomentumUniverseMember = {
+  id: string;
+  securityId: number;
+  enabled: boolean;
+  priority: number;
+  newsEnabled: boolean;
+  priceScanningEnabled: boolean;
+  pullIntervalMin: number;
+  addedReason: MomentumUniverseReason;
+  notes: string | null;
+  metadata: unknown;
+  createdAt: string;
+  updatedAt: string;
+  security: {
+    id: number;
+    symbol: string;
+    name: string;
+    enabled: boolean;
+    assetType: AssetType;
+  };
+  subscriptionCount: number;
+  cursor: MomentumUniverseCursor | null;
+};
+
+export type MomentumUniverseQuery = {
+  enabled?: boolean;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+};
+
+export type MomentumUniverseResponse = {
+  data: MomentumUniverseMember[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+  };
+};
+
+export type CreateMomentumUniverseMemberRequest = {
+  securityId: number;
+};
+
+export type UpdateMomentumUniverseMemberRequest = Partial<
+  Pick<
+    MomentumUniverseMember,
+    | "enabled"
+    | "priority"
+    | "newsEnabled"
+    | "priceScanningEnabled"
+    | "pullIntervalMin"
+    | "notes"
+  >
+>;

@@ -48,6 +48,7 @@ import type {
   MomentumScannerHandoff,
   PrepareMomentumScannerHandoffsRequest,
 } from "./types";
+import { MomentumScannerNavigation } from "./MomentumScannerNavigation";
 
 type ActionSummary = {
   label: string;
@@ -335,6 +336,7 @@ export function MomentumScannerPage() {
 
   return (
     <Stack gap="lg">
+      <MomentumScannerNavigation />
       <Group justify="space-between" align="flex-start">
         <div>
           <Group gap="sm" mb={4}>
