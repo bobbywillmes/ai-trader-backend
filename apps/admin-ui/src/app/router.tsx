@@ -30,12 +30,12 @@ import { TradingAccountDetailPage } from "../features/tradingAccounts/TradingAcc
 import { MomentumScannerPipelinePage } from "../features/momentumScanner/MomentumScannerPage";
 import { MomentumUniversePage } from "../features/momentumScanner/MomentumUniversePage";
 import {
-  MomentumCandidateDetailPage,
   MomentumSymbolResearchPage,
 } from "../features/momentumScanner/MomentumResearchRoutePages";
 import { MomentumResearchDashboardPage } from "../features/momentumScanner/MomentumResearchDashboardPage";
 import { MomentumCandidatesPage } from "../features/momentumScanner/MomentumCandidatesPage";
 import { MomentumCatalystsPage } from "../features/momentumScanner/MomentumCatalystsPage";
+import { MomentumCandidateDetailPage } from "../features/momentumScanner/MomentumCandidateDetailPage";
 import { StrategiesPage } from "../features/strategies/StrategiesPage";
 import { AdminUsersPage } from "../features/adminUsers/AdminUsersPage";
 import { ViewerAccountPage } from "../features/viewerPortal/ViewerAccountPage";

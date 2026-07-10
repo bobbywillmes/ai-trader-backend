@@ -24,6 +24,7 @@ import type {
   MomentumResearchCandidatesResponse,
   MomentumResearchCatalystsQuery,
   MomentumResearchCatalystsResponse,
+  MomentumResearchCandidateDetail,
 } from "./types";
 
 export function getMomentumResearchOverview(token: string) {
@@ -49,6 +50,13 @@ export function listMomentumResearchCatalysts(
 ) {
   return apiRequest<MomentumResearchCatalystsResponse>(
     `/api/momentum-scanner/research/catalysts${buildQuery(query)}`,
+    { token }
+  );
+}
+
+export function getMomentumResearchCandidate(token: string, candidateId: string) {
+  return apiRequest<MomentumResearchCandidateDetail>(
+    `/api/momentum-scanner/research/candidates/${encodeURIComponent(candidateId)}`,
     { token }
   );
 }

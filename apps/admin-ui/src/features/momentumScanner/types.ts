@@ -133,6 +133,10 @@ export type MomentumCandidatePriceCheck = {
   relativeVolume: string | number | null;
   recentMovePct: string | number | null;
   recentVolume: string | number | null;
+  priceActionScore: number;
+  volumeScore: number;
+  riskScore: number;
+  totalConfirmationScore: number;
   confirmed: boolean;
   decision: string;
   blockedReason: string | null;
@@ -425,6 +429,66 @@ export type MomentumResearchCatalystsQuery = {
 export type MomentumResearchCatalystsResponse = {
   data: MomentumResearchCatalystRow[];
   pagination: ResearchPagination;
+};
+
+export type MomentumResearchCandidateDetail = {
+  candidate: MomentumCandidate & {
+    catalystEvent: (CatalystEvent & {
+      sourceAuthor?: string | null;
+      bodyExcerpt?: string | null;
+      confidence?: number | null;
+    }) | null;
+    catalystImpact: CatalystTickerImpact | null;
+    priceChecks: MomentumCandidatePriceCheck[];
+    scannerHandoffs: Array<{
+      id: string;
+      symbol: string;
+      status: MomentumScannerHandoffStatus;
+      payloadVersion: string;
+      preparedAt: string;
+      sentAt: string | null;
+      acknowledgedAt: string | null;
+      failedAt: string | null;
+      attempts: number;
+      lastError: string | null;
+      idempotencyKey: string;
+      metadata: unknown;
+      createdAt: string;
+      updatedAt: string;
+    }>;
+  };
+  security: {
+    id: number;
+    symbol: string;
+    name: string;
+    assetType: AssetType;
+    enabled: boolean;
+    sector: string | null;
+    industry: string | null;
+  } | null;
+  universeMembership: {
+    id: string;
+    enabled: boolean;
+    newsEnabled: boolean;
+    priceScanningEnabled: boolean;
+    priority: number;
+    pullIntervalMin: number;
+    addedReason: MomentumUniverseReason;
+    notes: string | null;
+  } | null;
+  subscriptions: Array<{
+    id: number;
+    key: string;
+    name: string;
+    broker: string;
+    brokerMode: string;
+    enabled: boolean;
+  }>;
+  tradingContext: {
+    hasEnabledSubscription: boolean;
+    openPositions: Array<{ id: number; status: string; qty: number; avgEntryPrice: number }>;
+  };
+  cursorHealth: string | null;
 };
 
 export type CreateMomentumUniverseMemberRequest = {

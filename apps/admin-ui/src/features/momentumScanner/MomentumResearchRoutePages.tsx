@@ -40,17 +40,6 @@ function ResearchRouteShell({
   );
 }
 
-export function MomentumCandidateDetailPage() {
-  const { candidateId } = useParams();
-  return (
-    <ResearchRouteShell
-      eyebrow="Candidate case file"
-      title={`Candidate ${candidateId ?? ""}`.trim()}
-      description="Review the candidate's stored score, catalyst, price checks, and prepared handoffs."
-    />
-  );
-}
-
 export function MomentumSymbolResearchPage() {
   const { symbol } = useParams();
   return (

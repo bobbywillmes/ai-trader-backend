@@ -18,6 +18,7 @@ import {
   getMomentumResearchOverview,
   listMomentumResearchCandidates,
   listMomentumResearchCatalysts,
+  getMomentumResearchCandidate,
 } from "./api";
 import type {
   CatalystEventQuery,
@@ -57,6 +58,8 @@ export const momentumScannerKeys = {
     [...momentumScannerKeys.all, "research", "candidates", query] as const,
   researchCatalysts: (query: MomentumResearchCatalystsQuery) =>
     [...momentumScannerKeys.all, "research", "catalysts", query] as const,
+  researchCandidate: (candidateId: string | null) =>
+    [...momentumScannerKeys.all, "research", "candidate", candidateId] as const,
 };
 
 export function useMomentumResearchOverview(token: string | null) {
@@ -89,6 +92,17 @@ export function useMomentumResearchCatalysts(
     queryFn: () => listMomentumResearchCatalysts(token as string, query),
     enabled: Boolean(token),
     placeholderData: (previous) => previous,
+  });
+}
+
+export function useMomentumResearchCandidate(
+  token: string | null,
+  candidateId: string | null
+) {
+  return useQuery({
+    queryKey: momentumScannerKeys.researchCandidate(candidateId),
+    queryFn: () => getMomentumResearchCandidate(token as string, candidateId as string),
+    enabled: Boolean(token) && Boolean(candidateId),
   });
 }
 
