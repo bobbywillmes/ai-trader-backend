@@ -40,16 +40,6 @@ function ResearchRouteShell({
   );
 }
 
-export function MomentumCandidatesPage() {
-  return (
-    <ResearchRouteShell
-      eyebrow="Research candidates"
-      title="Momentum Candidates"
-      description="Browse and filter the scanner's stored momentum candidates."
-    />
-  );
-}
-
 export function MomentumCandidateDetailPage() {
   const { candidateId } = useParams();
   return (
@@ -57,16 +47,6 @@ export function MomentumCandidateDetailPage() {
       eyebrow="Candidate case file"
       title={`Candidate ${candidateId ?? ""}`.trim()}
       description="Review the candidate's stored score, catalyst, price checks, and prepared handoffs."
-    />
-  );
-}
-
-export function MomentumCatalystsPage() {
-  return (
-    <ResearchRouteShell
-      eyebrow="Catalyst research"
-      title="Catalyst Events"
-      description="Browse meaningful news and catalyst events observed by the scanner."
     />
   );
 }

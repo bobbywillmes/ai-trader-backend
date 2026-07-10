@@ -16,6 +16,8 @@ import {
   updateMomentumUniverseMember,
   deleteMomentumUniverseMember,
   getMomentumResearchOverview,
+  listMomentumResearchCandidates,
+  listMomentumResearchCatalysts,
 } from "./api";
 import type {
   CatalystEventQuery,
@@ -27,6 +29,8 @@ import type {
   MomentumUniverseQuery,
   CreateMomentumUniverseMemberRequest,
   UpdateMomentumUniverseMemberRequest,
+  MomentumResearchCandidatesQuery,
+  MomentumResearchCatalystsQuery,
 } from "./types";
 
 export const momentumScannerKeys = {
@@ -49,6 +53,10 @@ export const momentumScannerKeys = {
     [...momentumScannerKeys.all, "universe", query] as const,
   researchOverview: () =>
     [...momentumScannerKeys.all, "research", "overview"] as const,
+  researchCandidates: (query: MomentumResearchCandidatesQuery) =>
+    [...momentumScannerKeys.all, "research", "candidates", query] as const,
+  researchCatalysts: (query: MomentumResearchCatalystsQuery) =>
+    [...momentumScannerKeys.all, "research", "catalysts", query] as const,
 };
 
 export function useMomentumResearchOverview(token: string | null) {
@@ -57,6 +65,30 @@ export function useMomentumResearchOverview(token: string | null) {
     queryFn: () => getMomentumResearchOverview(token as string),
     enabled: Boolean(token),
     staleTime: 15000,
+  });
+}
+
+export function useMomentumResearchCandidates(
+  token: string | null,
+  query: MomentumResearchCandidatesQuery
+) {
+  return useQuery({
+    queryKey: momentumScannerKeys.researchCandidates(query),
+    queryFn: () => listMomentumResearchCandidates(token as string, query),
+    enabled: Boolean(token),
+    placeholderData: (previous) => previous,
+  });
+}
+
+export function useMomentumResearchCatalysts(
+  token: string | null,
+  query: MomentumResearchCatalystsQuery
+) {
+  return useQuery({
+    queryKey: momentumScannerKeys.researchCatalysts(query),
+    queryFn: () => listMomentumResearchCatalysts(token as string, query),
+    enabled: Boolean(token),
+    placeholderData: (previous) => previous,
   });
 }
 

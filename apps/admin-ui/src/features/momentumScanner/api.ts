@@ -20,11 +20,35 @@ import type {
   CreateMomentumUniverseMemberRequest,
   UpdateMomentumUniverseMemberRequest,
   MomentumResearchOverview,
+  MomentumResearchCandidatesQuery,
+  MomentumResearchCandidatesResponse,
+  MomentumResearchCatalystsQuery,
+  MomentumResearchCatalystsResponse,
 } from "./types";
 
 export function getMomentumResearchOverview(token: string) {
   return apiRequest<MomentumResearchOverview>(
     "/api/momentum-scanner/research/overview",
+    { token }
+  );
+}
+
+export function listMomentumResearchCandidates(
+  token: string,
+  query: MomentumResearchCandidatesQuery
+) {
+  return apiRequest<MomentumResearchCandidatesResponse>(
+    `/api/momentum-scanner/research/candidates${buildQuery(query)}`,
+    { token }
+  );
+}
+
+export function listMomentumResearchCatalysts(
+  token: string,
+  query: MomentumResearchCatalystsQuery
+) {
+  return apiRequest<MomentumResearchCatalystsResponse>(
+    `/api/momentum-scanner/research/catalysts${buildQuery(query)}`,
     { token }
   );
 }

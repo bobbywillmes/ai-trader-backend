@@ -380,6 +380,53 @@ export type MomentumResearchOverview = {
   };
 };
 
+export type ResearchPagination = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+};
+
+export type MomentumResearchCandidatesQuery = {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  state?: MomentumCandidateState;
+  minTotalScore?: number;
+  catalystType?: string;
+  entryReady?: boolean;
+  blocked?: boolean;
+  from?: string;
+  to?: string;
+  sortBy?: "lastEvaluatedAt" | "updatedAt" | "discoveredAt" | "totalScore" | "symbol";
+  sortDirection?: "asc" | "desc";
+};
+
+export type MomentumResearchCandidatesResponse = {
+  data: MomentumResearchCandidateRow[];
+  pagination: ResearchPagination;
+};
+
+export type MomentumResearchCatalystsQuery = {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  publisher?: string;
+  source?: string;
+  catalystType?: string;
+  tier?: string;
+  sentiment?: string;
+  from?: string;
+  to?: string;
+  sortBy?: "publishedAt" | "receivedAt" | "updatedAt";
+  sortDirection?: "asc" | "desc";
+};
+
+export type MomentumResearchCatalystsResponse = {
+  data: MomentumResearchCatalystRow[];
+  pagination: ResearchPagination;
+};
+
 export type CreateMomentumUniverseMemberRequest = {
   securityId: number;
 };

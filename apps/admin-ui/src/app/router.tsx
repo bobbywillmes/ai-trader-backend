@@ -31,11 +31,11 @@ import { MomentumScannerPipelinePage } from "../features/momentumScanner/Momentu
 import { MomentumUniversePage } from "../features/momentumScanner/MomentumUniversePage";
 import {
   MomentumCandidateDetailPage,
-  MomentumCandidatesPage,
-  MomentumCatalystsPage,
   MomentumSymbolResearchPage,
 } from "../features/momentumScanner/MomentumResearchRoutePages";
 import { MomentumResearchDashboardPage } from "../features/momentumScanner/MomentumResearchDashboardPage";
+import { MomentumCandidatesPage } from "../features/momentumScanner/MomentumCandidatesPage";
+import { MomentumCatalystsPage } from "../features/momentumScanner/MomentumCatalystsPage";
 import { StrategiesPage } from "../features/strategies/StrategiesPage";
 import { AdminUsersPage } from "../features/adminUsers/AdminUsersPage";
 import { ViewerAccountPage } from "../features/viewerPortal/ViewerAccountPage";
