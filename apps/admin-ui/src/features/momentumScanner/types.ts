@@ -491,6 +491,76 @@ export type MomentumResearchCandidateDetail = {
   cursorHealth: string | null;
 };
 
+export type MomentumSymbolResearch = {
+  security: NonNullable<MomentumResearchCandidateDetail["security"]>;
+  researchStatus: {
+    universeMember: boolean;
+    universeEnabled: boolean;
+    newsEnabled: boolean;
+    priceScanningEnabled: boolean;
+    cursorHealth: string | null;
+    lastNewsPullAt: string | null;
+    universeMembership: MomentumResearchCandidateDetail["universeMembership"];
+    newsCursors: Array<{
+      id: string;
+      source: string;
+      enabled: boolean;
+      priority: number;
+      pullIntervalMin: number;
+      lastPulledAt: string | null;
+      lastPublishedAt: string | null;
+      consecutiveErrors: number;
+      lastError: string | null;
+      updatedAt: string;
+    }>;
+  };
+  tradingContext: {
+    subscriptions: MomentumResearchCandidateDetail["subscriptions"];
+    hasEnabledSubscription: boolean;
+    openPositions: Array<{
+      id: number;
+      broker: string;
+      symbol: string;
+      side: string;
+      qty: number;
+      avgEntryPrice: number;
+      currentPrice: number;
+      marketValue: number;
+      unrealizedPnL: number;
+      unrealizedPnLPct: number;
+      status: string;
+      openedAt: string;
+      lastSyncedAt: string;
+    }>;
+    hasOpenPosition: boolean;
+  };
+  currentCandidate: MomentumResearchCandidateDetail["candidate"] | null;
+  recentCandidates: MomentumResearchCandidateDetail["candidate"][];
+  recentCatalysts: Array<{
+    id: string;
+    source: string;
+    sourceUrl: string | null;
+    sourcePublisher: string | null;
+    title: string;
+    summary: string | null;
+    publishedAt: string | null;
+    receivedAt: string;
+    eventType: string;
+    eventTier: string;
+    sentiment: string;
+    confidence: number | null;
+    tickerImpacts: CatalystTickerImpact[];
+    momentumCandidates: Array<{
+      id: string;
+      state: MomentumCandidateState;
+      totalScore: number;
+      discoveredAt: string;
+    }>;
+  }>;
+  priceChecks: MomentumCandidatePriceCheck[];
+  handoffs: MomentumResearchCandidateDetail["candidate"]["scannerHandoffs"];
+};
+
 export type CreateMomentumUniverseMemberRequest = {
   securityId: number;
 };

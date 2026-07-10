@@ -651,7 +651,21 @@ export async function getMomentumSymbolResearch(symbol: string) {
         { receivedAt: 'desc' },
       ],
       take: 50,
-      include: {
+      select: {
+        id: true,
+        source: true,
+        sourceUrl: true,
+        sourcePublisher: true,
+        title: true,
+        summary: true,
+        publishedAt: true,
+        receivedAt: true,
+        eventType: true,
+        eventTier: true,
+        sentiment: true,
+        confidence: true,
+        createdAt: true,
+        updatedAt: true,
         tickerImpacts: {
           where: { symbol },
           orderBy: { totalCatalystScore: 'desc' },

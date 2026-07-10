@@ -25,6 +25,7 @@ import type {
   MomentumResearchCatalystsQuery,
   MomentumResearchCatalystsResponse,
   MomentumResearchCandidateDetail,
+  MomentumSymbolResearch,
 } from "./types";
 
 export function getMomentumResearchOverview(token: string) {
@@ -57,6 +58,13 @@ export function listMomentumResearchCatalysts(
 export function getMomentumResearchCandidate(token: string, candidateId: string) {
   return apiRequest<MomentumResearchCandidateDetail>(
     `/api/momentum-scanner/research/candidates/${encodeURIComponent(candidateId)}`,
+    { token }
+  );
+}
+
+export function getMomentumSymbolResearch(token: string, symbol: string) {
+  return apiRequest<MomentumSymbolResearch>(
+    `/api/momentum-scanner/research/symbols/${encodeURIComponent(symbol)}`,
     { token }
   );
 }

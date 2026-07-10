@@ -19,6 +19,7 @@ import {
   listMomentumResearchCandidates,
   listMomentumResearchCatalysts,
   getMomentumResearchCandidate,
+  getMomentumSymbolResearch,
 } from "./api";
 import type {
   CatalystEventQuery,
@@ -60,6 +61,8 @@ export const momentumScannerKeys = {
     [...momentumScannerKeys.all, "research", "catalysts", query] as const,
   researchCandidate: (candidateId: string | null) =>
     [...momentumScannerKeys.all, "research", "candidate", candidateId] as const,
+  symbolResearch: (symbol: string | null) =>
+    [...momentumScannerKeys.all, "research", "symbol", symbol] as const,
 };
 
 export function useMomentumResearchOverview(token: string | null) {
@@ -103,6 +106,14 @@ export function useMomentumResearchCandidate(
     queryKey: momentumScannerKeys.researchCandidate(candidateId),
     queryFn: () => getMomentumResearchCandidate(token as string, candidateId as string),
     enabled: Boolean(token) && Boolean(candidateId),
+  });
+}
+
+export function useMomentumSymbolResearch(token: string | null, symbol: string | null) {
+  return useQuery({
+    queryKey: momentumScannerKeys.symbolResearch(symbol),
+    queryFn: () => getMomentumSymbolResearch(token as string, symbol as string),
+    enabled: Boolean(token) && Boolean(symbol),
   });
 }
 

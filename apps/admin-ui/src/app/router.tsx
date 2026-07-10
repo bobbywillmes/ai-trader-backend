@@ -29,9 +29,7 @@ import { TradingAccountsPage } from "../features/tradingAccounts/TradingAccounts
 import { TradingAccountDetailPage } from "../features/tradingAccounts/TradingAccountDetailPage";
 import { MomentumScannerPipelinePage } from "../features/momentumScanner/MomentumScannerPage";
 import { MomentumUniversePage } from "../features/momentumScanner/MomentumUniversePage";
-import {
-  MomentumSymbolResearchPage,
-} from "../features/momentumScanner/MomentumResearchRoutePages";
+import { MomentumSymbolResearchPage } from "../features/momentumScanner/MomentumSymbolResearchPage";
 import { MomentumResearchDashboardPage } from "../features/momentumScanner/MomentumResearchDashboardPage";
 import { MomentumCandidatesPage } from "../features/momentumScanner/MomentumCandidatesPage";
 import { MomentumCatalystsPage } from "../features/momentumScanner/MomentumCatalystsPage";
