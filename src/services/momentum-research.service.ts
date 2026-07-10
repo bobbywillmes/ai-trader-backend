@@ -5,6 +5,7 @@ import {
 } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
+import { HttpError } from '../errors/http-error.js';
 import { serializeMomentumCandidatePriceCheck } from '../serializers/momentum-candidate-price-check.serializer.js';
 import type {
   MomentumResearchCandidatesQuery,
@@ -389,5 +390,315 @@ export async function getMomentumResearchOverview(now = new Date()) {
       lastCandidateGenerationActivityAt: lastCandidate?.lastEvaluatedAt ?? null,
       lastPriceConfirmationActivityAt: lastPriceCheck?.observedAt ?? null,
     },
+  };
+}
+
+const candidateDetailInclude = {
+  catalystEvent: {
+    select: {
+      id: true,
+      source: true,
+      sourceExternalId: true,
+      sourceUrl: true,
+      sourcePublisher: true,
+      sourceAuthor: true,
+      title: true,
+      summary: true,
+      bodyExcerpt: true,
+      language: true,
+      publishedAt: true,
+      receivedAt: true,
+      eventType: true,
+      eventTier: true,
+      sentiment: true,
+      confidence: true,
+      isDuplicate: true,
+      duplicateOfId: true,
+      createdAt: true,
+      updatedAt: true,
+      tickerImpacts: {
+        orderBy: [{ totalCatalystScore: 'desc' as const }, { symbol: 'asc' as const }],
+        select: {
+          id: true,
+          symbol: true,
+          sentiment: true,
+          sentimentReasoning: true,
+          relevanceScore: true,
+          actionabilityScore: true,
+          freshnessScore: true,
+          sourceQualityScore: true,
+          totalCatalystScore: true,
+          isPrimaryTicker: true,
+          isCompanySpecific: true,
+          isMarketWide: true,
+          isSectorWide: true,
+          catalystRole: true,
+          blockedReason: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      },
+    },
+  },
+  catalystImpact: {
+    select: {
+      id: true,
+      symbol: true,
+      sentiment: true,
+      sentimentReasoning: true,
+      relevanceScore: true,
+      actionabilityScore: true,
+      freshnessScore: true,
+      sourceQualityScore: true,
+      totalCatalystScore: true,
+      isPrimaryTicker: true,
+      isCompanySpecific: true,
+      isMarketWide: true,
+      isSectorWide: true,
+      catalystRole: true,
+      blockedReason: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  },
+  priceChecks: {
+    orderBy: { observedAt: 'asc' as const },
+  },
+  scannerHandoffs: {
+    orderBy: { preparedAt: 'asc' as const },
+    select: {
+      id: true,
+      symbol: true,
+      status: true,
+      payloadVersion: true,
+      preparedAt: true,
+      sentAt: true,
+      acknowledgedAt: true,
+      failedAt: true,
+      attempts: true,
+      lastError: true,
+      idempotencyKey: true,
+      metadata: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  },
+} satisfies Prisma.MomentumCandidateInclude;
+
+const researchSecuritySelect = {
+  id: true,
+  symbol: true,
+  name: true,
+  assetType: true,
+  enabled: true,
+  sector: true,
+  industry: true,
+  momentumUniverseMember: true,
+  subscriptions: {
+    orderBy: { name: 'asc' as const },
+    select: {
+      id: true,
+      key: true,
+      name: true,
+      symbol: true,
+      broker: true,
+      brokerMode: true,
+      enabled: true,
+      strategy: { select: { id: true, key: true, name: true, enabled: true } },
+      exitProfile: { select: { id: true, key: true, name: true, enabled: true } },
+      tradingAccount: {
+        select: {
+          id: true,
+          displayName: true,
+          broker: true,
+          environment: true,
+          status: true,
+          tradingEnabled: true,
+        },
+      },
+    },
+  },
+  trackedPositions: {
+    where: { status: { in: ['open', 'closing'], mode: 'insensitive' as const } },
+    orderBy: { openedAt: 'desc' as const },
+    select: {
+      id: true,
+      broker: true,
+      symbol: true,
+      side: true,
+      qty: true,
+      avgEntryPrice: true,
+      currentPrice: true,
+      marketValue: true,
+      unrealizedPnL: true,
+      unrealizedPnLPct: true,
+      status: true,
+      openedAt: true,
+      lastSyncedAt: true,
+      subscriptionId: true,
+      tradingAccountId: true,
+    },
+  },
+} satisfies Prisma.SecuritySelect;
+
+async function getResearchSecurity(symbol: string) {
+  return prisma.security.findUnique({
+    where: { symbol },
+    select: researchSecuritySelect,
+  });
+}
+
+async function getSymbolCursors(symbol: string) {
+  return prisma.newsPullCursor.findMany({
+    where: { symbol },
+    orderBy: { source: 'asc' },
+    select: {
+      id: true,
+      source: true,
+      enabled: true,
+      priority: true,
+      pullIntervalMin: true,
+      lastPulledAt: true,
+      lastPublishedAt: true,
+      consecutiveErrors: true,
+      lastError: true,
+      updatedAt: true,
+    },
+  });
+}
+
+function cursorHealth(cursors: Awaited<ReturnType<typeof getSymbolCursors>>) {
+  if (cursors.length === 0) return null;
+  if (cursors.some((cursor) => cursor.consecutiveErrors > 0)) return 'ERROR';
+  if (cursors.some((cursor) => cursor.enabled)) return 'HEALTHY';
+  return 'DISABLED';
+}
+
+function serializeFullCandidate<T extends {
+  priceChecks: Array<Parameters<typeof serializeMomentumCandidatePriceCheck>[0]>;
+}>(candidate: T) {
+  return {
+    ...candidate,
+    priceChecks: candidate.priceChecks.map(serializeMomentumCandidatePriceCheck),
+  };
+}
+
+export async function getMomentumResearchCandidate(candidateId: string) {
+  const candidate = await prisma.momentumCandidate.findUnique({
+    where: { id: candidateId },
+    include: candidateDetailInclude,
+  });
+
+  if (!candidate) throw new HttpError(404, 'Momentum candidate not found.');
+
+  const [security, cursors] = await Promise.all([
+    getResearchSecurity(candidate.symbol),
+    getSymbolCursors(candidate.symbol),
+  ]);
+
+  return {
+    candidate: serializeFullCandidate(candidate),
+    security: security
+      ? {
+          id: security.id,
+          symbol: security.symbol,
+          name: security.name,
+          assetType: security.assetType,
+          enabled: security.enabled,
+          sector: security.sector,
+          industry: security.industry,
+        }
+      : null,
+    universeMembership: security?.momentumUniverseMember ?? null,
+    subscriptions: security?.subscriptions ?? [],
+    tradingContext: {
+      hasEnabledSubscription: security?.subscriptions.some((item) => item.enabled) ?? false,
+      openPositions: security?.trackedPositions ?? [],
+    },
+    newsCursors: cursors,
+    cursorHealth: cursorHealth(cursors),
+  };
+}
+
+export async function getMomentumSymbolResearch(symbol: string) {
+  const security = await getResearchSecurity(symbol);
+  if (!security) throw new HttpError(404, 'Security not found.');
+
+  const activeWhere: Prisma.MomentumCandidateWhereInput = {
+    symbol,
+    state: { in: [...MOMENTUM_RESEARCH_ACTIVE_STATES] },
+  };
+  const [cursors, currentCandidate, recentCandidates, recentCatalysts] = await Promise.all([
+    getSymbolCursors(symbol),
+    prisma.momentumCandidate.findFirst({
+      where: activeWhere,
+      include: candidateDetailInclude,
+      orderBy: [
+        { lastEvaluatedAt: { sort: 'desc', nulls: 'last' } },
+        { updatedAt: 'desc' },
+      ],
+    }),
+    prisma.momentumCandidate.findMany({
+      where: { symbol },
+      include: candidateDetailInclude,
+      orderBy: [{ discoveredAt: 'desc' }, { id: 'asc' }],
+      take: 25,
+    }),
+    prisma.catalystEvent.findMany({
+      where: { tickerImpacts: { some: { symbol } } },
+      orderBy: [
+        { publishedAt: { sort: 'desc', nulls: 'last' } },
+        { receivedAt: 'desc' },
+      ],
+      take: 50,
+      include: {
+        tickerImpacts: {
+          where: { symbol },
+          orderBy: { totalCatalystScore: 'desc' },
+        },
+        momentumCandidates: {
+          where: { symbol },
+          select: { id: true, state: true, totalScore: true, discoveredAt: true },
+          orderBy: { discoveredAt: 'desc' },
+        },
+      },
+    }),
+  ]);
+  const serializedCandidates = recentCandidates.map(serializeFullCandidate);
+
+  return {
+    security: {
+      id: security.id,
+      symbol: security.symbol,
+      name: security.name,
+      assetType: security.assetType,
+      enabled: security.enabled,
+      sector: security.sector,
+      industry: security.industry,
+    },
+    researchStatus: {
+      universeMember: security.momentumUniverseMember !== null,
+      universeEnabled: security.momentumUniverseMember?.enabled ?? false,
+      newsEnabled: security.momentumUniverseMember?.newsEnabled ?? false,
+      priceScanningEnabled: security.momentumUniverseMember?.priceScanningEnabled ?? false,
+      cursorHealth: cursorHealth(cursors),
+      lastNewsPullAt: cursors.reduce<Date | null>(
+        (latest, cursor) => !cursor.lastPulledAt || (latest && latest >= cursor.lastPulledAt) ? latest : cursor.lastPulledAt,
+        null
+      ),
+      universeMembership: security.momentumUniverseMember,
+      newsCursors: cursors,
+    },
+    tradingContext: {
+      subscriptions: security.subscriptions,
+      hasEnabledSubscription: security.subscriptions.some((item) => item.enabled),
+      openPositions: security.trackedPositions,
+      hasOpenPosition: security.trackedPositions.length > 0,
+    },
+    currentCandidate: currentCandidate ? serializeFullCandidate(currentCandidate) : null,
+    recentCandidates: serializedCandidates,
+    recentCatalysts,
+    priceChecks: serializedCandidates.flatMap((candidate) => candidate.priceChecks),
+    handoffs: serializedCandidates.flatMap((candidate) => candidate.scannerHandoffs),
   };
 }

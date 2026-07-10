@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   updateMomentumUniverseMember: vi.fn(),
   deleteMomentumUniverseMember: vi.fn(),
   getMomentumResearchOverview: vi.fn(),
+  getMomentumResearchCandidate: vi.fn(),
+  getMomentumSymbolResearch: vi.fn(),
   listMomentumResearchCandidates: vi.fn(),
   listMomentumResearchCatalysts: vi.fn(),
   prepareReadyMomentumScannerHandoffs: vi.fn(),
@@ -54,6 +56,8 @@ vi.mock('../services/momentum-universe.service.js', () => ({
 
 vi.mock('../services/momentum-research.service.js', () => ({
   getMomentumResearchOverview: mocks.getMomentumResearchOverview,
+  getMomentumResearchCandidate: mocks.getMomentumResearchCandidate,
+  getMomentumSymbolResearch: mocks.getMomentumSymbolResearch,
   listMomentumResearchCandidates: mocks.listMomentumResearchCandidates,
   listMomentumResearchCatalysts: mocks.listMomentumResearchCatalysts,
 }));
@@ -173,6 +177,12 @@ describe('momentum scanner routes', () => {
     mocks.deleteMomentumUniverseMember.mockResolvedValue({ id: 'member-1' });
     mocks.getMomentumResearchOverview.mockResolvedValue({
       summary: { activeCandidates: 0 },
+    });
+    mocks.getMomentumResearchCandidate.mockResolvedValue({
+      candidate: { id: 'candidate-1', symbol: 'AAPL' },
+    });
+    mocks.getMomentumSymbolResearch.mockResolvedValue({
+      security: { id: 1, symbol: 'AAPL' },
     });
     mocks.listMomentumResearchCandidates.mockResolvedValue({
       data: [],
@@ -435,6 +445,25 @@ describe('momentum scanner routes', () => {
     expect(invalidCatalystDate.status).toBe(400);
     expect(mocks.listMomentumResearchCandidates).not.toHaveBeenCalled();
     expect(mocks.listMomentumResearchCatalysts).not.toHaveBeenCalled();
+  });
+
+  it('provides owner-only candidate and normalized symbol research details', async () => {
+    const baseUrl = await listen();
+    const headers = { 'ai-trader-api-key': ADMIN_KEY };
+
+    const candidate = await fetch(
+      `${baseUrl}/api/momentum-scanner/research/candidates/candidate-1`,
+      { headers }
+    );
+    const symbol = await fetch(
+      `${baseUrl}/api/momentum-scanner/research/symbols/aapl`,
+      { headers }
+    );
+
+    expect(candidate.status).toBe(200);
+    expect(symbol.status).toBe(200);
+    expect(mocks.getMomentumResearchCandidate).toHaveBeenCalledWith('candidate-1');
+    expect(mocks.getMomentumSymbolResearch).toHaveBeenCalledWith('AAPL');
   });
 
   it('rejects invalid momentum universe CRUD input', async () => {

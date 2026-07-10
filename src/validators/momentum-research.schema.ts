@@ -66,6 +66,14 @@ export const momentumResearchCatalystsQuerySchema = z
     path: ['from'],
   });
 
+export const momentumResearchCandidateIdSchema = z.string().trim().min(1).max(100);
+export const momentumResearchSymbolSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(20)
+  .transform((value) => value.toUpperCase());
+
 export type MomentumResearchCandidatesQuery = z.infer<
   typeof momentumResearchCandidatesQuerySchema
 >;

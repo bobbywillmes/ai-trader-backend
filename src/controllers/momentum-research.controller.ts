@@ -3,12 +3,16 @@ import { ZodError } from 'zod';
 
 import {
   getMomentumResearchOverview,
+  getMomentumResearchCandidate,
+  getMomentumSymbolResearch,
   listMomentumResearchCandidates,
   listMomentumResearchCatalysts,
 } from '../services/momentum-research.service.js';
 import {
   momentumResearchCandidatesQuerySchema,
+  momentumResearchCandidateIdSchema,
   momentumResearchCatalystsQuerySchema,
+  momentumResearchSymbolSchema,
 } from '../validators/momentum-research.schema.js';
 
 function handleControllerError(error: unknown, res: Response, next: NextFunction) {
@@ -22,6 +26,38 @@ function handleControllerError(error: unknown, res: Response, next: NextFunction
   }
 
   next(error);
+}
+
+export async function getMomentumResearchCandidateController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    res.status(200).json(
+      await getMomentumResearchCandidate(
+        momentumResearchCandidateIdSchema.parse(req.params.candidateId)
+      )
+    );
+  } catch (error) {
+    handleControllerError(error, res, next);
+  }
+}
+
+export async function getMomentumSymbolResearchController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    res.status(200).json(
+      await getMomentumSymbolResearch(
+        momentumResearchSymbolSchema.parse(req.params.symbol)
+      )
+    );
+  } catch (error) {
+    handleControllerError(error, res, next);
+  }
 }
 
 export async function getMomentumResearchOverviewController(

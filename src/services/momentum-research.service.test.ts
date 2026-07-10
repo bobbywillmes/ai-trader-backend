@@ -6,26 +6,26 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn((operations: Array<Promise<unknown>>) => Promise.all(operations)),
-  candidateCount: vi.fn(), candidateFindMany: vi.fn(), candidateFindFirst: vi.fn(),
+  candidateCount: vi.fn(), candidateFindMany: vi.fn(), candidateFindFirst: vi.fn(), candidateFindUnique: vi.fn(),
   catalystCount: vi.fn(), catalystFindMany: vi.fn(), handoffCount: vi.fn(),
-  universeCount: vi.fn(), securityFindMany: vi.fn(), cursorFindMany: vi.fn(),
+  universeCount: vi.fn(), securityFindMany: vi.fn(), securityFindUnique: vi.fn(), cursorFindMany: vi.fn(),
   priceCheckFindFirst: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
   prisma: {
     $transaction: mocks.transaction,
-    momentumCandidate: { count: mocks.candidateCount, findMany: mocks.candidateFindMany, findFirst: mocks.candidateFindFirst },
+    momentumCandidate: { count: mocks.candidateCount, findMany: mocks.candidateFindMany, findFirst: mocks.candidateFindFirst, findUnique: mocks.candidateFindUnique },
     catalystEvent: { count: mocks.catalystCount, findMany: mocks.catalystFindMany },
     momentumScannerHandoff: { count: mocks.handoffCount },
     momentumUniverseMember: { count: mocks.universeCount },
-    security: { findMany: mocks.securityFindMany },
+    security: { findMany: mocks.securityFindMany, findUnique: mocks.securityFindUnique },
     newsPullCursor: { findMany: mocks.cursorFindMany },
     momentumCandidatePriceCheck: { findFirst: mocks.priceCheckFindFirst },
   },
 }));
 
-import { getMomentumResearchOverview, listMomentumResearchCandidates, listMomentumResearchCatalysts } from './momentum-research.service.js';
+import { getMomentumResearchCandidate, getMomentumResearchOverview, getMomentumSymbolResearch, listMomentumResearchCandidates, listMomentumResearchCatalysts } from './momentum-research.service.js';
 
 const now = new Date('2026-07-10T18:00:00.000Z');
 
@@ -55,9 +55,9 @@ describe('momentum research service', () => {
     vi.clearAllMocks();
     mocks.transaction.mockImplementation((operations) => Promise.all(operations));
     mocks.candidateCount.mockResolvedValue(0); mocks.candidateFindMany.mockResolvedValue([]);
-    mocks.candidateFindFirst.mockResolvedValue(null); mocks.catalystCount.mockResolvedValue(0);
+    mocks.candidateFindFirst.mockResolvedValue(null); mocks.candidateFindUnique.mockResolvedValue(null); mocks.catalystCount.mockResolvedValue(0);
     mocks.catalystFindMany.mockResolvedValue([]); mocks.handoffCount.mockResolvedValue(0);
-    mocks.universeCount.mockResolvedValue(0); mocks.securityFindMany.mockResolvedValue([]);
+    mocks.universeCount.mockResolvedValue(0); mocks.securityFindMany.mockResolvedValue([]); mocks.securityFindUnique.mockResolvedValue(null);
     mocks.cursorFindMany.mockResolvedValue([]); mocks.priceCheckFindFirst.mockResolvedValue(null);
   });
 
@@ -97,5 +97,66 @@ describe('momentum research service', () => {
     const result = await listMomentumResearchCatalysts({ page: 1, pageSize: 20, search: 'AAPL', publisher: 'wire', source: CatalystSource.MASSIVE_NEWS, catalystType: CatalystEventType.PARTNERSHIP, tier: CatalystTier.HIGH, sentiment: CatalystSentiment.POSITIVE, sortBy: 'receivedAt', sortDirection: 'asc' });
     expect(mocks.catalystFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ sourcePublisher: { contains: 'wire', mode: 'insensitive' }, source: CatalystSource.MASSIVE_NEWS, eventType: CatalystEventType.PARTNERSHIP, eventTier: CatalystTier.HIGH, sentiment: CatalystSentiment.POSITIVE }), orderBy: [{ receivedAt: 'asc' }, { id: 'asc' }], skip: 0, take: 20 }));
     expect(result.data[0]).toMatchObject({ impactedSymbols: ['AAPL'], candidateCount: 1 });
+  });
+
+  it('returns a complete candidate case file with chronological relationships', async () => {
+    mocks.candidateFindUnique.mockResolvedValue(candidate({
+      priceChecks: [{ id: 'check-1', observedAt: now, dayVolume: 123n, recentVolume: 45n }],
+      scannerHandoffs: [{ id: 'handoff-1', status: 'PENDING', preparedAt: now }],
+    }));
+    mocks.securityFindUnique.mockResolvedValue({
+      id: 1, symbol: 'AAPL', name: 'Apple Inc.', assetType: 'STOCK', enabled: true,
+      sector: 'Technology', industry: null,
+      momentumUniverseMember: { id: 'member-1', enabled: true },
+      subscriptions: [{ id: 1, enabled: true }], trackedPositions: [],
+    });
+
+    const result = await getMomentumResearchCandidate('candidate-1');
+
+    expect(mocks.candidateFindUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'candidate-1' },
+      include: expect.objectContaining({ priceChecks: { orderBy: { observedAt: 'asc' } }, scannerHandoffs: expect.any(Object) }),
+    }));
+    expect(result).toMatchObject({
+      candidate: { id: 'candidate-1', priceChecks: [{ dayVolume: '123', recentVolume: '45' }], scannerHandoffs: [{ id: 'handoff-1' }] },
+      security: { symbol: 'AAPL', name: 'Apple Inc.' },
+      universeMembership: { id: 'member-1' },
+      tradingContext: { hasEnabledSubscription: true, openPositions: [] },
+    });
+  });
+
+  it('returns not found for a missing candidate', async () => {
+    await expect(getMomentumResearchCandidate('missing')).rejects.toMatchObject({ statusCode: 404 });
+    expect(mocks.securityFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('returns not found for a symbol without a Security record', async () => {
+    await expect(getMomentumSymbolResearch('MISSING')).rejects.toMatchObject({ statusCode: 404 });
+    expect(mocks.candidateFindMany).not.toHaveBeenCalled();
+  });
+
+  it('separates research, subscription, position, and candidate status', async () => {
+    mocks.securityFindUnique.mockResolvedValue({
+      id: 2, symbol: 'MSFT', name: 'Microsoft Corp.', assetType: 'STOCK', enabled: true,
+      sector: 'Technology', industry: 'Software', momentumUniverseMember: null,
+      subscriptions: [{ id: 2, enabled: true }],
+      trackedPositions: [{ id: 3, status: 'open' }],
+    });
+    mocks.candidateFindMany.mockResolvedValue([
+      candidate({ id: 'candidate-new', symbol: 'MSFT', state: MomentumCandidateState.EXPIRED }),
+      candidate({ id: 'candidate-old', symbol: 'MSFT', state: MomentumCandidateState.DISMISSED }),
+    ]);
+
+    const result = await getMomentumSymbolResearch('MSFT');
+
+    expect(result).toMatchObject({
+      researchStatus: { universeMember: false, universeEnabled: false, newsEnabled: false, priceScanningEnabled: false },
+      tradingContext: { hasEnabledSubscription: true, hasOpenPosition: true },
+      currentCandidate: null,
+      recentCandidates: [{ id: 'candidate-new' }, { id: 'candidate-old' }],
+    });
+    expect(mocks.candidateFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { symbol: 'MSFT', state: { in: [MomentumCandidateState.DISCOVERED, MomentumCandidateState.WATCHING, MomentumCandidateState.ENTRY_READY, MomentumCandidateState.ENTRY_BLOCKED] } },
+    }));
   });
 });
