@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => ({
   listMomentumScannerHandoffs: vi.fn(),
   markMomentumScannerHandoffFailed: vi.fn(),
   markMomentumScannerHandoffSent: vi.fn(),
+  listMomentumUniverseMembers: vi.fn(),
+  createMomentumUniverseMember: vi.fn(),
+  updateMomentumUniverseMember: vi.fn(),
+  deleteMomentumUniverseMember: vi.fn(),
   prepareReadyMomentumScannerHandoffs: vi.fn(),
   recordEntryDecision: vi.fn(),
   runMassiveNewsWorkerOnce: vi.fn(),
@@ -36,6 +40,13 @@ vi.mock('../services/momentum-scanner-handoff.service.js', () => ({
   markMomentumScannerHandoffSent: mocks.markMomentumScannerHandoffSent,
   prepareReadyMomentumScannerHandoffs:
     mocks.prepareReadyMomentumScannerHandoffs,
+}));
+
+vi.mock('../services/momentum-universe.service.js', () => ({
+  listMomentumUniverseMembers: mocks.listMomentumUniverseMembers,
+  createMomentumUniverseMember: mocks.createMomentumUniverseMember,
+  updateMomentumUniverseMember: mocks.updateMomentumUniverseMember,
+  deleteMomentumUniverseMember: mocks.deleteMomentumUniverseMember,
 }));
 
 vi.mock('../services/place-order.service.js', () => ({
@@ -141,6 +152,16 @@ describe('momentum scanner routes', () => {
         lastError: 'n8n momentum scanner workflow reported failure',
       })
     );
+    mocks.listMomentumUniverseMembers.mockResolvedValue({
+      data: [],
+      pagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 },
+    });
+    mocks.createMomentumUniverseMember.mockResolvedValue({ id: 'member-1' });
+    mocks.updateMomentumUniverseMember.mockResolvedValue({
+      id: 'member-1',
+      enabled: false,
+    });
+    mocks.deleteMomentumUniverseMember.mockResolvedValue({ id: 'member-1' });
   });
 
   afterEach(async () => {
@@ -271,6 +292,89 @@ describe('momentum scanner routes', () => {
     });
     expect(signalKeyOnly.status).toBe(401);
     expect(adminKey.status).toBe(200);
+  });
+
+  it('provides owner-protected momentum universe CRUD endpoints', async () => {
+    const baseUrl = await listen();
+
+    const unauthorized = await fetch(`${baseUrl}/api/momentum-scanner/universe`);
+    const listed = await fetch(
+      `${baseUrl}/api/momentum-scanner/universe?enabled=true&search=aapl&page=2&pageSize=10`,
+      { headers: { 'ai-trader-api-key': ADMIN_KEY } }
+    );
+    const created = await fetch(`${baseUrl}/api/momentum-scanner/universe`, {
+      method: 'POST',
+      headers: {
+        'ai-trader-api-key': ADMIN_KEY,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ securityId: 1, pullIntervalMin: 30 }),
+    });
+    const updated = await fetch(
+      `${baseUrl}/api/momentum-scanner/universe/member-1`,
+      {
+        method: 'PATCH',
+        headers: {
+          'ai-trader-api-key': ADMIN_KEY,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ enabled: false }),
+      }
+    );
+    const deleted = await fetch(
+      `${baseUrl}/api/momentum-scanner/universe/member-1`,
+      {
+        method: 'DELETE',
+        headers: { 'ai-trader-api-key': ADMIN_KEY },
+      }
+    );
+
+    expect(unauthorized.status).toBe(401);
+    expect(listed.status).toBe(200);
+    expect(created.status).toBe(201);
+    expect(updated.status).toBe(200);
+    expect(deleted.status).toBe(200);
+    expect(mocks.listMomentumUniverseMembers).toHaveBeenCalledWith({
+      enabled: true,
+      search: 'aapl',
+      page: 2,
+      pageSize: 10,
+    });
+    expect(mocks.createMomentumUniverseMember).toHaveBeenCalledWith({
+      securityId: 1,
+      pullIntervalMin: 30,
+    });
+    expect(mocks.updateMomentumUniverseMember).toHaveBeenCalledWith('member-1', {
+      enabled: false,
+    });
+    expect(mocks.deleteMomentumUniverseMember).toHaveBeenCalledWith('member-1');
+  });
+
+  it('rejects invalid momentum universe CRUD input', async () => {
+    const baseUrl = await listen();
+    const headers = {
+      'ai-trader-api-key': ADMIN_KEY,
+      'content-type': 'application/json',
+    };
+
+    const invalidCreate = await fetch(`${baseUrl}/api/momentum-scanner/universe`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ securityId: 0 }),
+    });
+    const invalidUpdate = await fetch(
+      `${baseUrl}/api/momentum-scanner/universe/member-1`,
+      {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ pullIntervalMin: 0 }),
+      }
+    );
+
+    expect(invalidCreate.status).toBe(400);
+    expect(invalidUpdate.status).toBe(400);
+    expect(mocks.createMomentumUniverseMember).not.toHaveBeenCalled();
+    expect(mocks.updateMomentumUniverseMember).not.toHaveBeenCalled();
   });
 
   it('generates candidates with empty and explicit workflow options', async () => {
