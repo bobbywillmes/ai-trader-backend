@@ -1,25 +1,17 @@
 import { CatalystSource, type NewsPullCursor, type Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 
-export const INITIAL_MASSIVE_NEWS_SYMBOLS = [
-  'AAPL',
-  'AMZN',
-  'GOOG',
-  'GOOGL',
-  'META',
-  'MSFT',
-  'NVDA',
-  'TSLA',
-  'AMD',
-  'MU',
-  'DELL',
-  'AVGO',
-  'PLTR',
-  'SOFI',
-  'SNOW',
-] as const;
-
 const MAX_CURSOR_ERROR_LENGTH = 500;
+const DEFAULT_PULL_INTERVAL_MIN = 15;
+const MASSIVE_NEWS_COVERAGE_OWNER = 'momentum_universe_sync';
+const LEGACY_MASSIVE_NEWS_SEED = 'phase_2_massive_news_worker';
+
+type MassiveNewsCoverage = {
+  symbol: string;
+  priority: number;
+  pullIntervalMin: number;
+  sources: Array<'universe' | 'subscription' | 'position'>;
+};
 
 type EnsureNewsPullCursorsArgs = {
   source: CatalystSource;
@@ -138,7 +130,28 @@ export function getNewestPublishedAtFromMassiveNewsPayload(payload: {
 }
 
 export async function getMassiveNewsSeedSymbols() {
-  const [openPositions, activeStockSubscriptions] = await Promise.all([
+  const coverage = await getMassiveNewsCoverage();
+
+  return coverage.map((item) => item.symbol);
+}
+
+export async function getMassiveNewsCoverage(): Promise<MassiveNewsCoverage[]> {
+  const [universeMembers, openPositions, activeStockSubscriptions] = await Promise.all([
+    prisma.momentumUniverseMember.findMany({
+      where: {
+        enabled: true,
+        newsEnabled: true,
+      },
+      select: {
+        priority: true,
+        pullIntervalMin: true,
+        security: {
+          select: {
+            symbol: true,
+          },
+        },
+      },
+    }),
     prisma.trackedPosition.findMany({
       where: {
         status: {
@@ -162,11 +175,65 @@ export async function getMassiveNewsSeedSymbols() {
     }),
   ]);
 
-  return uniqueNormalizedSymbols([
-    ...INITIAL_MASSIVE_NEWS_SYMBOLS,
-    ...openPositions.map((position) => position.symbol),
-    ...activeStockSubscriptions.map((subscription) => subscription.symbol),
-  ]);
+  const coverageBySymbol = new Map<string, MassiveNewsCoverage>();
+
+  function addCoverage(
+    rawSymbol: string,
+    source: MassiveNewsCoverage['sources'][number],
+    options: { priority?: number; pullIntervalMin?: number } = {}
+  ) {
+    const symbol = normalizeSymbol(rawSymbol);
+
+    if (!symbol) {
+      return;
+    }
+
+    const priority = options.priority ?? 0;
+    const pullIntervalMin = Math.max(
+      1,
+      options.pullIntervalMin ?? DEFAULT_PULL_INTERVAL_MIN
+    );
+    const existing = coverageBySymbol.get(symbol);
+
+    if (!existing) {
+      coverageBySymbol.set(symbol, {
+        symbol,
+        priority,
+        pullIntervalMin,
+        sources: [source],
+      });
+      return;
+    }
+
+    existing.priority = Math.max(existing.priority, priority);
+    existing.pullIntervalMin = Math.min(existing.pullIntervalMin, pullIntervalMin);
+
+    if (!existing.sources.includes(source)) {
+      existing.sources.push(source);
+    }
+  }
+
+  for (const member of universeMembers) {
+    addCoverage(member.security.symbol, 'universe', {
+      priority: member.priority,
+      pullIntervalMin: member.pullIntervalMin,
+    });
+  }
+
+  for (const subscription of activeStockSubscriptions) {
+    addCoverage(subscription.symbol, 'subscription');
+  }
+
+  for (const position of openPositions) {
+    addCoverage(position.symbol, 'position');
+  }
+
+  return [...coverageBySymbol.values()]
+    .map((item) => ({
+      ...item,
+      sources: [...item.sources].sort() as MassiveNewsCoverage['sources'],
+    }))
+    .sort((a, b) => a.symbol.localeCompare(b.symbol));
 }
 
 export async function ensureNewsPullCursors(args: EnsureNewsPullCursorsArgs) {
@@ -204,15 +271,86 @@ export async function ensureNewsPullCursors(args: EnsureNewsPullCursorsArgs) {
 }
 
 export async function ensureMassiveNewsPullCursors() {
-  const symbols = await getMassiveNewsSeedSymbols();
-
-  return ensureNewsPullCursors({
-    source: CatalystSource.MASSIVE_NEWS,
-    symbols,
-    metadata: {
-      seedUniverse: 'phase_2_massive_news_worker',
+  const coverage = await getMassiveNewsCoverage();
+  const desiredSymbols = new Set(coverage.map((item) => item.symbol));
+  const existingCursors = await prisma.newsPullCursor.findMany({
+    where: {
+      source: CatalystSource.MASSIVE_NEWS,
     },
   });
+
+  await Promise.all([
+    ...coverage.map((item) =>
+      prisma.newsPullCursor.upsert({
+        where: {
+          source_symbol: {
+            source: CatalystSource.MASSIVE_NEWS,
+            symbol: item.symbol,
+          },
+        },
+        create: {
+          source: CatalystSource.MASSIVE_NEWS,
+          symbol: item.symbol,
+          enabled: true,
+          priority: item.priority,
+          pullIntervalMin: item.pullIntervalMin,
+          metadata: {
+            coverageOwner: MASSIVE_NEWS_COVERAGE_OWNER,
+            coverageSources: item.sources,
+          },
+        },
+        update: {
+          enabled: true,
+          priority: item.priority,
+          pullIntervalMin: item.pullIntervalMin,
+          metadata: {
+            coverageOwner: MASSIVE_NEWS_COVERAGE_OWNER,
+            coverageSources: item.sources,
+          },
+        },
+      })
+    ),
+    ...existingCursors
+      .filter(
+        (cursor) =>
+          isManagedMassiveNewsCursor(cursor.metadata) &&
+          !desiredSymbols.has(cursor.symbol)
+      )
+      .map((cursor) =>
+        prisma.newsPullCursor.update({
+          where: { id: cursor.id },
+          data: {
+            enabled: false,
+            metadata: {
+              coverageOwner: MASSIVE_NEWS_COVERAGE_OWNER,
+              coverageSources: [],
+            },
+          },
+        })
+      ),
+  ]);
+
+  return {
+    source: CatalystSource.MASSIVE_NEWS,
+    ensured: coverage.length,
+    disabled: existingCursors.filter(
+      (cursor) =>
+        isManagedMassiveNewsCursor(cursor.metadata) &&
+        !desiredSymbols.has(cursor.symbol)
+    ).length,
+    symbols: coverage.map((item) => item.symbol),
+  };
+}
+
+function isManagedMassiveNewsCursor(metadata: Prisma.JsonValue | null) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return false;
+  }
+
+  return (
+    metadata.coverageOwner === MASSIVE_NEWS_COVERAGE_OWNER ||
+    metadata.seedUniverse === LEGACY_MASSIVE_NEWS_SEED
+  );
 }
 
 export async function listDueNewsPullCursors(args: ListDueNewsPullCursorsArgs) {
