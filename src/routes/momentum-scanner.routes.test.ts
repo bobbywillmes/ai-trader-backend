@@ -12,6 +12,9 @@ const mocks = vi.hoisted(() => ({
   createMomentumUniverseMember: vi.fn(),
   updateMomentumUniverseMember: vi.fn(),
   deleteMomentumUniverseMember: vi.fn(),
+  getMomentumResearchOverview: vi.fn(),
+  listMomentumResearchCandidates: vi.fn(),
+  listMomentumResearchCatalysts: vi.fn(),
   prepareReadyMomentumScannerHandoffs: vi.fn(),
   recordEntryDecision: vi.fn(),
   runMassiveNewsWorkerOnce: vi.fn(),
@@ -47,6 +50,12 @@ vi.mock('../services/momentum-universe.service.js', () => ({
   createMomentumUniverseMember: mocks.createMomentumUniverseMember,
   updateMomentumUniverseMember: mocks.updateMomentumUniverseMember,
   deleteMomentumUniverseMember: mocks.deleteMomentumUniverseMember,
+}));
+
+vi.mock('../services/momentum-research.service.js', () => ({
+  getMomentumResearchOverview: mocks.getMomentumResearchOverview,
+  listMomentumResearchCandidates: mocks.listMomentumResearchCandidates,
+  listMomentumResearchCatalysts: mocks.listMomentumResearchCatalysts,
 }));
 
 vi.mock('../services/place-order.service.js', () => ({
@@ -162,6 +171,17 @@ describe('momentum scanner routes', () => {
       enabled: false,
     });
     mocks.deleteMomentumUniverseMember.mockResolvedValue({ id: 'member-1' });
+    mocks.getMomentumResearchOverview.mockResolvedValue({
+      summary: { activeCandidates: 0 },
+    });
+    mocks.listMomentumResearchCandidates.mockResolvedValue({
+      data: [],
+      pagination: { page: 1, pageSize: 25, total: 0, totalPages: 1 },
+    });
+    mocks.listMomentumResearchCatalysts.mockResolvedValue({
+      data: [],
+      pagination: { page: 1, pageSize: 25, total: 0, totalPages: 1 },
+    });
   });
 
   afterEach(async () => {
@@ -348,6 +368,73 @@ describe('momentum scanner routes', () => {
       enabled: false,
     });
     expect(mocks.deleteMomentumUniverseMember).toHaveBeenCalledWith('member-1');
+  });
+
+  it('provides owner-only read-only momentum research endpoints', async () => {
+    const baseUrl = await listen();
+    const headers = { 'ai-trader-api-key': ADMIN_KEY };
+
+    const unauthorized = await fetch(
+      `${baseUrl}/api/momentum-scanner/research/overview`
+    );
+    const overview = await fetch(
+      `${baseUrl}/api/momentum-scanner/research/overview`,
+      { headers }
+    );
+    const candidates = await fetch(
+      `${baseUrl}/api/momentum-scanner/research/candidates?page=2&pageSize=10&search=aapl&minTotalScore=80&entryReady=true&sortBy=totalScore&sortDirection=asc`,
+      { headers }
+    );
+    const catalysts = await fetch(
+      `${baseUrl}/api/momentum-scanner/research/catalysts?pageSize=15&publisher=wire&sentiment=POSITIVE&sortBy=receivedAt`,
+      { headers }
+    );
+
+    expect(unauthorized.status).toBe(401);
+    expect(overview.status).toBe(200);
+    expect(candidates.status).toBe(200);
+    expect(catalysts.status).toBe(200);
+    expect(mocks.getMomentumResearchOverview).toHaveBeenCalledOnce();
+    expect(mocks.listMomentumResearchCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        page: 2,
+        pageSize: 10,
+        search: 'aapl',
+        minTotalScore: 80,
+        entryReady: true,
+        sortBy: 'totalScore',
+        sortDirection: 'asc',
+      })
+    );
+    expect(mocks.listMomentumResearchCatalysts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        page: 1,
+        pageSize: 15,
+        publisher: 'wire',
+        sentiment: 'POSITIVE',
+        sortBy: 'receivedAt',
+        sortDirection: 'desc',
+      })
+    );
+  });
+
+  it('rejects unsupported momentum research filters and sort fields', async () => {
+    const baseUrl = await listen();
+    const headers = { 'ai-trader-api-key': ADMIN_KEY };
+
+    const invalidCandidateSort = await fetch(
+      `${baseUrl}/api/momentum-scanner/research/candidates?sortBy=rawSql`,
+      { headers }
+    );
+    const invalidCatalystDate = await fetch(
+      `${baseUrl}/api/momentum-scanner/research/catalysts?from=not-a-date`,
+      { headers }
+    );
+
+    expect(invalidCandidateSort.status).toBe(400);
+    expect(invalidCatalystDate.status).toBe(400);
+    expect(mocks.listMomentumResearchCandidates).not.toHaveBeenCalled();
+    expect(mocks.listMomentumResearchCatalysts).not.toHaveBeenCalled();
   });
 
   it('rejects invalid momentum universe CRUD input', async () => {
