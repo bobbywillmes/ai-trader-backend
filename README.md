@@ -89,7 +89,8 @@ Owners can access the full operational console:
 - Dashboard
 - Trading Accounts
 - Entry Decisions
-- Momentum Scanner
+- Momentum Scanner research dashboard, candidate/catalyst browsing, symbol research,
+  research-universe management, and manual pipeline inspection
 - Strategies
 - Subscriptions
 - Exit Profiles

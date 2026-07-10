@@ -495,50 +495,82 @@ This prevents old point-in-time payload snapshots from being delivered after the
 
 ## 🧑‍💻 Admin UI
 
-The Admin UI exposes a review-only page at:
+The Admin UI exposes a review-only Momentum Research section under the existing
+route family:
 
 ```text
 /momentum-scanner
-```
-
-The page is for operator smoke testing and inspection.
-
-It shows:
-
-- review-only status badges
-- manual pipeline action buttons
-- catalyst event overview and details
-- momentum candidate overview and details
-- price-check history
-- scanner handoff overview and payload details
-- summary counts for recent events, candidates, entry-ready candidates, blocked candidates, and handoffs
-
-The page intentionally does not include:
-
-- trading buttons
-- signal creation controls
-- order creation controls
-- broker or Alpaca actions
-- n8n workflow editing
-- automatic buying behavior
-- handoff mark-sent, acknowledge, or failed controls
-
-Manual testing sequence:
-
-1. Run Massive news worker.
-2. Review catalyst events and ticker impacts.
-3. Generate momentum candidates.
-4. Confirm candidate prices.
-5. Prepare scanner handoffs.
-6. Review handoff queue state.
-
-Universe management is available at:
-
-```text
+/momentum-scanner/candidates
+/momentum-scanner/candidates/:candidateId
+/momentum-scanner/catalysts
+/momentum-scanner/symbols/:symbol
 /momentum-scanner/universe
+/momentum-scanner/pipeline
 ```
 
-Admin owners can search and filter membership, add an existing `Security`, enable or disable membership, independently control news and price scanning, edit priority/pull interval/notes, inspect related subscription count and cursor health, or explicitly remove membership. Disabling is the preferred routine operation; hard deletion removes only the research membership. Neither operation changes subscriptions, risk-gate behavior, orders, or broker activity.
+Shared compact navigation links Overview, Candidates, Catalysts, Research
+Universe, and Scanner Pipeline. Deep candidate and symbol pages retain that
+navigation without adding another sidebar section.
+
+### Momentum Research Dashboard
+
+`/momentum-scanner` is the default destination. It summarizes active,
+entry-ready, and blocked candidates; catalyst events received during the
+previous 24 hours; prepared handoffs; enabled universe membership; top active
+candidates; recently evaluated or updated candidates; and cursor-derived health.
+
+There is no candidate transition-audit model. The dashboard therefore labels
+recent records as recently updated candidates instead of claiming a complete
+transition history.
+
+### Candidate Research
+
+`/momentum-scanner/candidates` provides database-backed pagination and filters
+for symbol, state, minimum score, catalyst type, readiness, discovery date, and
+safe sorting. It does not fetch the full candidate table for client filtering.
+
+`/momentum-scanner/candidates/:candidateId` is a read-only case file with the
+candidate state and timestamps, raw stored score components, linked catalyst and
+ticker reasoning, chronological price checks, prepared handoffs, and related
+Security/universe/subscription context. The UI does not invent score denominators
+because the schema does not formally persist a maximum for every component.
+
+### Catalyst Browsing
+
+`/momentum-scanner/catalysts` supports database-backed symbol/headline,
+publisher, source, type, tier, sentiment, publication-date, and sort filters.
+Impacted symbols and candidate relationships are rendered as links rather than
+raw arrays.
+
+### Symbol Research
+
+`/momentum-scanner/symbols/:symbol` aggregates stored scanner context for an
+existing `Security`. Explicit universe membership, news and price-scanning
+configuration, cursor state, subscription availability, open positions, and
+candidate state remain separate concepts. The page shows stored score reasoning,
+catalyst history, price checks, handoffs, and candidate history without claiming
+trade outcomes.
+
+### Research Universe
+
+Universe management remains at `/momentum-scanner/universe`. Owners can manage
+explicit membership and inspect subscription and cursor context. Disabling or
+deleting membership does not change subscriptions, risk behavior, orders, or
+broker activity.
+
+### Scanner Pipeline
+
+The original smoke-test and raw inspection page is preserved at
+`/momentum-scanner/pipeline`. It retains manual news ingestion, candidate
+generation, price confirmation, handoff preparation, raw record inspection, and
+existing warnings. Research pages do not duplicate those controls.
+
+The manual test sequence remains: run the Massive news worker, inspect catalyst
+impacts, generate candidates, confirm prices, prepare handoffs, and inspect the
+handoff queue.
+
+No Momentum Research page includes trading buttons, signal or order creation,
+broker actions, n8n editing, or automatic buying behavior.
 
 ## 🔌 API Routes
 
@@ -588,6 +620,25 @@ DELETE /api/momentum-scanner/universe/:id
 ```
 
 Universe routes require admin authentication and owner access. Creation accepts only an existing `Security` id and rejects duplicate membership.
+
+Momentum research views:
+
+```http
+GET /api/momentum-scanner/research/overview
+GET /api/momentum-scanner/research/candidates
+GET /api/momentum-scanner/research/candidates/:candidateId
+GET /api/momentum-scanner/research/catalysts
+GET /api/momentum-scanner/research/symbols/:symbol
+```
+
+Research routes require admin authentication and owner access and are read-only.
+List routes use paginated database queries, validated filters, and safe sort
+whitelists. Detail routes aggregate bounded existing records and omit large
+catalyst ingestion payloads by default.
+
+The overview returns its time-window boundaries. Recent catalysts and recent
+candidate activity both cover the previous 24 hours. Active candidate counts use
+`DISCOVERED`, `WATCHING`, `ENTRY_READY`, and `ENTRY_BLOCKED`.
 
 ### Signal / n8n Routes
 
@@ -657,7 +708,15 @@ Known limitations:
 - There is no Benzinga ingestion yet.
 - n8n schedule timing does not yet account for market holidays or early closes beyond normal weekday scheduling.
 - Universe management does not discover arbitrary new securities; securities must already exist.
-- This foundation does not include symbol research pages, charts, catalyst timelines, candidate evaluation history, scoring-version history, forward-return analysis, or MFE/MAE analysis.
+- Research pages visualize stored candidates, catalysts, price checks, handoffs,
+  universe membership, cursors, subscriptions, and positions. They do not add
+  OHLC storage, live chart fetching, or decision behavior.
+- Full candlestick and volume charts remain deferred because the application
+  does not store the required OHLC history and this phase does not add large
+  aggregate market-data requests.
+- There is no candidate state-transition audit, `MomentumCandidateEvaluation`,
+  scoring-version history, forward-return analysis, outcome grading, or MFE/MAE
+  analysis.
 
 ## 🧭 Future Work
 
@@ -673,6 +732,11 @@ Likely next phases:
 - design a momentum-specific exit strategy
 - add holiday and early-close awareness
 - consider future signal/order integration only after a review period
-- add dedicated symbol research and candidate analysis surfaces after the universe workflow has operational history
+- add candidate evaluation snapshots and a state-transition audit when the
+  operational value justifies new persistence
+- add forward-return, MFE/MAE, and candidate outcome analysis after evaluation
+  records and scoring versions are defined
+- consider stored OHLC data and charts as a separate market-data design rather
+  than coupling chart fetching to page loads
 
 Any future trading integration should remain behind explicit safety gates and should not be added until review-only alerts have been evaluated across multiple market sessions.
