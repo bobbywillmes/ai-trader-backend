@@ -142,20 +142,20 @@ Use this doc when adding Alpaca adapter calls, changing broker polling behavior,
 
 ### [Access Control & RBAC](security/README.md)
 
-Documents human admin authentication, machine authentication, roles, permissions, trading account access, owner onboarding, setup links, and the read-only account viewer portal.
+Documents human authentication, machine authentication, Platform Roles, Platform Permissions, Trading Account memberships, System Owner onboarding, setup links, and the Account Portal.
 
 Use this doc when changing:
 
-- `AdminUser`
-- `AdminSession`
-- `AdminUserSetupToken`
-- `TradingAccountAccess`
-- admin authentication routes
+- `User`
+- `UserSession`
+- `UserSetupToken`
+- `TradingAccountMembership`
+- `/api/auth` routes
 - RBAC middleware
 - Users & Access
 - invite/setup onboarding
-- `/portal` viewer routing
-- account-scoped viewer API routes
+- `/portal` Account User routing
+- membership-scoped Trading Account API routes
 
 ## 🚢 Production Docs
 

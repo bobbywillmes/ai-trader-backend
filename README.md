@@ -65,12 +65,12 @@ AI_TRADER_SIGNAL_API_KEY -> n8n / automation routes
 
 ### Human access
 
-Human users log in through the Admin UI and receive an admin session bearer token.
+Human users log in through the Admin UI and receive a User session bearer token.
 
 ```text
-owner          -> full Admin Console
-account_viewer -> read-only Account Portal scoped to assigned trading accounts
-account_manager -> reserved for expanded account management
+SYSTEM_OWNER -> full Admin Console with unrestricted Trading Account scope
+OPERATOR     -> permission-driven Admin Console with membership-scoped accounts
+ACCOUNT_USER -> read-only Account Portal with membership-scoped accounts
 ```
 
 Owners can invite users from **System → Users & Access**. Invite links are one-time setup links. Until email delivery exists, owners copy setup links manually.
@@ -82,9 +82,9 @@ For the full model, see [Access Control & RBAC](docs/security/README.md).
 
 The React Admin UI now has two role-based experiences.
 
-### Owner Admin Console
+### Admin Console
 
-Owners can access the full operational console:
+System Owners can access the full operational console. Operators see the subset allowed by their Platform Permissions:
 
 - Dashboard
 - Trading Accounts
@@ -102,9 +102,9 @@ Owners can access the full operational console:
 - Settings
 - Users & Access
 
-### Account Viewer Portal
+### Account Portal
 
-Account viewers are routed to `/portal` and can only see read-only data for assigned trading accounts:
+Account Users are routed to `/portal` and can only see read-only data for Trading Accounts assigned through explicit memberships:
 
 - Dashboard
 - Accounts
@@ -112,7 +112,7 @@ Account viewers are routed to `/portal` and can only see read-only data for assi
 - Orders
 - Trade History
 
-Viewers cannot change settings, manage users, place orders, cancel orders, close positions, trigger broker syncs, or access owner/admin tool routes.
+Account Users cannot change settings, manage users, place orders, cancel orders, close positions, trigger broker syncs, or access Admin Console routes.
 
 ## 🧯 Production safety layer
 
@@ -350,7 +350,8 @@ Signal API key
 
 Admin session bearer token
   Used by the Admin UI after human login.
-  RBAC controls owner vs account viewer access.
+  Platform roles select the application surface, permissions select console features,
+  and memberships determine Trading Account scope.
 
 Static admin API key
   Owner-equivalent maintenance key for trusted admin/API operations.
@@ -365,13 +366,13 @@ After production deploys, verify:
 
 ```text
 /health returns ok
-owner login works
-/api/admin-auth/me returns access.role = owner
+System Owner login works
+/api/auth/me returns user and access.platformRole = SYSTEM_OWNER
 Users & Access loads
 Create Invite opens
-viewer login lands on /portal
-viewer cannot access owner/admin pages
-Dashboard / Trading Accounts / Settings load for owner
+Account User login lands on /portal
+Account User cannot access Admin Console pages
+Dashboard / Trading Accounts / Settings load for System Owner
 n8n signal smoke test passes
 ```
 
