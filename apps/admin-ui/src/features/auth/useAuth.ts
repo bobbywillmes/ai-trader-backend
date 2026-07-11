@@ -1,5 +1,6 @@
 import { useContext } from "react";
 import { AuthContext } from "./context";
+import { type PlatformPermission, type PlatformRole } from "./types";
 
 export function useAuth() {
   const context = useContext(AuthContext);
@@ -10,8 +11,8 @@ export function useAuth() {
 }
 
 export function useCurrentUser() {
-  const { adminUser, access } = useAuth();
-  return { user: adminUser, access };
+  const { user, access } = useAuth();
+  return { user, access };
 }
 
 export function usePermissions() {
@@ -22,12 +23,12 @@ export function usePermissions() {
   return access.permissions;
 }
 
-export function useHasPermission(permission: string): boolean {
+export function useHasPermission(permission: PlatformPermission): boolean {
   const permissions = usePermissions();
   return permissions.includes(permission);
 }
 
-export function useIsOwner(): boolean {
+export function useIsSystemOwner(): boolean {
   const { access } = useAuth();
-  return access?.role === "owner" || false;
+  return access?.platformRole === ("SYSTEM_OWNER" satisfies PlatformRole);
 }

@@ -17,7 +17,7 @@ import { adminNavGroups } from "../app/navigation";
 import { filterNavigationGroups } from "../app/navigationUtils";
 import { AuthProvider } from "../features/auth/AuthContext";
 import { useLogout, useMe } from "../features/auth/hooks";
-import { isAccountViewerRole } from "../features/auth/roleUtils";
+import { isAccountPortalRole } from "../features/auth/roleUtils";
 import { useAuth } from "../features/auth/useAuth";
 import { getAdminToken } from "../lib/api";
 
@@ -39,7 +39,7 @@ export function AdminLayout() {
 
   return (
     <AuthProvider
-      adminUser={meData.adminUser}
+      user={meData.user}
       access={meData.access}
       isLoading={isLoading}
     >
@@ -51,7 +51,7 @@ export function AdminLayout() {
 export function AdminConsoleGuard() {
   const { access } = useAuth();
 
-  if (isAccountViewerRole(access?.role)) {
+  if (isAccountPortalRole(access?.platformRole)) {
     return <Navigate to="/portal" replace />;
   }
 
@@ -61,7 +61,7 @@ export function AdminConsoleGuard() {
 export function ViewerPortalGuard() {
   const { access } = useAuth();
 
-  if (!isAccountViewerRole(access?.role)) {
+  if (!isAccountPortalRole(access?.platformRole)) {
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -77,7 +77,7 @@ export function AdminConsoleShell() {
 
   const filteredNavGroups = filterNavigationGroups(
     adminNavGroups,
-    access?.role,
+    access?.platformRole,
     access?.permissions
   );
 

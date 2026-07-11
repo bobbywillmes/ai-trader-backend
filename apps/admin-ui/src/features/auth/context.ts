@@ -1,9 +1,9 @@
 import { createContext } from "react";
-import type { AdminUser, AdminAccess } from "./types";
+import type { AccessMetadata, User } from "./types";
 
 export type AuthContextType = {
-  adminUser: AdminUser | null;
-  access: AdminAccess | null;
+  user: User | null;
+  access: AccessMetadata | null;
   isLoading: boolean;
 };
 

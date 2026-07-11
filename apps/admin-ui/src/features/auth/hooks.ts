@@ -36,8 +36,9 @@ export function useLogin() {
       setAdminToken(data.token);
       queryClient.setQueryData(authKeys.me, {
         ok: true,
-        adminUser: data.adminUser,
+        user: data.user,
         access: data.access,
+        session: data.session,
       } as MeResponse);
     },
   });

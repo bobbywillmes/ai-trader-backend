@@ -1,49 +1,71 @@
-export type AdminUser = {
+export type PlatformRole = "SYSTEM_OWNER" | "OPERATOR" | "ACCOUNT_USER";
+
+export type PlatformPermission =
+  | "system.settings.read"
+  | "system.settings.write"
+  | "system.security.read"
+  | "system.security.write"
+  | "tradingAccount.read"
+  | "tradingAccount.write"
+  | "tradingAccount.risk.write"
+  | "subscription.read"
+  | "subscription.write"
+  | "strategy.read"
+  | "strategy.write"
+  | "exitProfile.read"
+  | "exitProfile.write"
+  | "reports.read"
+  | "systemEvents.read";
+
+export type User = {
   id: number;
   email: string;
-  role: string;
+  name: string | null;
+  platformRole: PlatformRole;
   enabled: boolean;
   lastLoginAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
 
-export type AdminAccess = {
-  role: string;
-  permissions: string[];
+export type AccessMetadata = {
+  platformRole: PlatformRole;
+  permissions: PlatformPermission[];
   accessibleTradingAccountIds: number[] | null;
+};
+
+export type UserSession = {
+  id: number;
+  userId: number;
+  expiresAt: string;
+  lastSeenAt: string;
+  createdAt: string;
 };
 
 export type LoginResponse = {
   ok: true;
   token: string;
   tokenType: 'Bearer';
-  adminUser: AdminUser;
-  access: AdminAccess;
+  user: User;
+  access: AccessMetadata;
+  session: UserSession;
 };
 
 export type MeResponse = {
   ok: true;
-  adminUser: AdminUser;
-  access: AdminAccess;
-};
-
-export type SetupAccountAdminUser = {
-  id: number;
-  email: string;
-  name: string | null;
-  role: string;
-  enabled: boolean;
+  user: User;
+  access: AccessMetadata;
+  session: UserSession;
 };
 
 export type SetupAccountTokenResponse = {
   ok: true;
-  adminUser: SetupAccountAdminUser;
+  user: Pick<User, "id" | "email" | "name" | "platformRole" | "enabled">;
   expiresAt: string;
 };
 
 export type CompleteSetupAccountResponse = {
   ok: true;
-  adminUser: SetupAccountAdminUser;
+  user: Pick<User, "id" | "email" | "name" | "platformRole" | "enabled">;
   setupCompletedAt: string;
 };

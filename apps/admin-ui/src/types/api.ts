@@ -1,35 +1,3 @@
-export type AdminUser = {
-  id: number;
-  email: string;
-  role: string;
-  enabled: boolean;
-  lastLoginAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type AdminSession = {
-  id: number;
-  adminUserId: number;
-  expiresAt: string;
-  lastSeenAt: string;
-  createdAt: string;
-};
-
-export type LoginResponse = {
-  ok: true;
-  token: string;
-  tokenType: 'Bearer';
-  adminUser: AdminUser;
-  session: AdminSession;
-};
-
-export type MeResponse = {
-  ok: true;
-  adminUser: AdminUser;
-  session: AdminSession;
-};
-
 export type Strategy = {
   id: number;
   key: string;

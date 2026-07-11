@@ -7,25 +7,25 @@ import type {
 } from "./types";
 
 export function getMe(token: string) {
-  return apiRequest<MeResponse>("/api/admin-auth/me", { token });
+  return apiRequest<MeResponse>("/api/auth/me", { token });
 }
 
 export function login(email: string, password: string) {
-  return apiRequest<LoginResponse>("/api/admin-auth/login", {
+  return apiRequest<LoginResponse>("/api/auth/login", {
     method: "POST",
     body: { email, password },
   });
 }
 
 export function logout(token: string) {
-  return apiRequest<void>("/api/admin-auth/logout", {
+  return apiRequest<void>("/api/auth/logout", {
     method: "POST",
     token,
   });
 }
 
 export function verifyPassword(token: string, password: string) {
-  return apiRequest<{ ok: boolean }>("/api/admin-auth/verify-password", {
+  return apiRequest<{ ok: boolean }>("/api/auth/verify-password", {
     method: "POST",
     token,
     body: { password },
@@ -37,7 +37,7 @@ export function changePassword(
   currentPassword: string,
   newPassword: string,
 ) {
-  return apiRequest<{ ok: boolean }>("/api/admin-auth/change-password", {
+  return apiRequest<{ ok: boolean }>("/api/auth/change-password", {
     method: "POST",
     token,
     body: { currentPassword, newPassword },
@@ -46,7 +46,7 @@ export function changePassword(
 
 export function validateSetupAccountToken(token: string) {
   return apiRequest<SetupAccountTokenResponse>(
-    `/api/admin-auth/setup/${encodeURIComponent(token)}`
+    `/api/auth/setup/${encodeURIComponent(token)}`
   );
 }
 
@@ -56,7 +56,7 @@ export function completeSetupAccount(
   confirmPassword: string
 ) {
   return apiRequest<CompleteSetupAccountResponse>(
-    `/api/admin-auth/setup/${encodeURIComponent(token)}`,
+    `/api/auth/setup/${encodeURIComponent(token)}`,
     {
       method: "POST",
       body: { password, confirmPassword },

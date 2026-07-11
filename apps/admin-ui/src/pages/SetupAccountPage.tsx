@@ -33,8 +33,8 @@ export function SetupAccountPage() {
 
   const setupComplete = completeSetupMutation.isSuccess;
   const invitedEmail =
-    completeSetupMutation.data?.adminUser.email ??
-    setupQuery.data?.adminUser.email ??
+    completeSetupMutation.data?.user.email ??
+    setupQuery.data?.user.email ??
     "";
 
   async function handleSubmit(event: React.FormEvent) {

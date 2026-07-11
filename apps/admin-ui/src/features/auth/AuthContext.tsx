@@ -1,28 +1,28 @@
 import { useMemo } from "react";
 import type { ReactNode } from "react";
 import { AuthContext } from "./context";
-import type { AdminUser, AdminAccess } from "./types";
+import type { AccessMetadata, User } from "./types";
 
 type AuthProviderProps = {
   children: ReactNode;
-  adminUser: AdminUser | null;
-  access: AdminAccess | null;
+  user: User | null;
+  access: AccessMetadata | null;
   isLoading?: boolean;
 };
 
 export function AuthProvider({
   children,
-  adminUser,
+  user,
   access,
   isLoading = false,
 }: AuthProviderProps) {
   const value = useMemo(
     () => ({
-      adminUser,
+      user,
       access,
       isLoading,
     }),
-    [adminUser, access, isLoading]
+    [user, access, isLoading]
   );
 
   return (

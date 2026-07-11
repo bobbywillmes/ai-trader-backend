@@ -1,11 +1,11 @@
-import type { AdminAccess } from "./types";
+import type { AccessMetadata, PlatformRole } from "./types";
 
-export function isAccountViewerRole(role: string | null | undefined) {
-  return role === "account_viewer";
+export function isAccountPortalRole(role: PlatformRole | null | undefined) {
+  return role === "ACCOUNT_USER";
 }
 
 export function getAuthenticatedHomePath(
-  access: AdminAccess | null | undefined
+  access: AccessMetadata | null | undefined
 ) {
-  return isAccountViewerRole(access?.role) ? "/portal" : "/dashboard";
+  return isAccountPortalRole(access?.platformRole) ? "/portal" : "/dashboard";
 }
