@@ -49,7 +49,7 @@ import {
 function tradingAccount(overrides: Partial<TradingAccount> = {}): TradingAccount {
   return {
     id: 1,
-    ownerAdminUserId: 1,
+    accountHolderUserId: 1,
     displayName: 'Bobby Paper',
     broker: TradingBroker.ALPACA,
     environment: TradingAccountEnvironment.PAPER,
