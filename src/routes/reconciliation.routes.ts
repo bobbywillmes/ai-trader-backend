@@ -1,10 +1,10 @@
 import { Router } from 'express';
 
 import { runReconciliationController } from '../controllers/reconciliation.controller.js';
-import { requireOwnerAccess } from '../middleware/rbac.js';
+import { requireSystemOwnerAccess } from '../middleware/rbac.js';
 
 const router = Router();
 
-router.post('/run', requireOwnerAccess, runReconciliationController);
+router.post('/run', requireSystemOwnerAccess, runReconciliationController);
 
 export default router;

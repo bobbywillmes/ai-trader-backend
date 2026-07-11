@@ -3,11 +3,11 @@ import {
   tradeCycleByIdController,
   tradeCyclesController,
 } from '../controllers/trade-cycles.controller.js';
-import { requireOwnerAccess } from '../middleware/rbac.js';
+import { requireSystemOwnerAccess } from '../middleware/rbac.js';
 
 const router = Router();
 
-router.get('/', requireOwnerAccess, tradeCyclesController);
-router.get('/:id', requireOwnerAccess, tradeCycleByIdController);
+router.get('/', requireSystemOwnerAccess, tradeCyclesController);
+router.get('/:id', requireSystemOwnerAccess, tradeCycleByIdController);
 
 export default router;

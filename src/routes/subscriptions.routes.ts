@@ -5,13 +5,13 @@ import {
   subscriptionsController,
   updateSubscriptionController
 } from '../controllers/subscription.controller.js';
-import { requireOwnerAccess } from '../middleware/rbac.js';
+import { requireSystemOwnerAccess } from '../middleware/rbac.js';
 
 const router = Router();
 
-router.get('/', requireOwnerAccess, subscriptionsController);
-router.post('/', requireOwnerAccess, createSubscriptionController);
-router.get('/:key', requireOwnerAccess, subscriptionByKeyController);
-router.patch('/:id', requireOwnerAccess, updateSubscriptionController);
+router.get('/', requireSystemOwnerAccess, subscriptionsController);
+router.post('/', requireSystemOwnerAccess, createSubscriptionController);
+router.get('/:key', requireSystemOwnerAccess, subscriptionByKeyController);
+router.patch('/:id', requireSystemOwnerAccess, updateSubscriptionController);
 
 export default router;

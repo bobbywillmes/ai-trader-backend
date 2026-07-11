@@ -209,21 +209,20 @@ export async function listTradingAccountsForAdmin() {
   );
 }
 
-export async function listTradingAccountsForAdminUser(args: {
-  adminUserId: number;
-  isOwner: boolean;
+export async function listTradingAccountsForUser(args: {
+  userId: number;
+  isSystemOwner: boolean;
 }) {
-  let accounts = await listTradingAccountsForAdmin();
+  const accounts = await listTradingAccountsForAdmin();
 
-  // Owner/static-admin: return all accounts
-  if (args.isOwner) {
+  // System owners, including the static admin context, can see all accounts.
+  if (args.isSystemOwner) {
     return accounts;
   }
 
-  // Non-owner: filter to only accounts they have explicit access to
-  const accessRecords = await prisma.tradingAccountAccess.findMany({
+  const memberships = await prisma.tradingAccountMembership.findMany({
     where: {
-      adminUserId: args.adminUserId,
+      userId: args.userId,
     },
     select: {
       tradingAccountId: true,
@@ -231,7 +230,7 @@ export async function listTradingAccountsForAdminUser(args: {
   });
 
   const allowedAccountIds = new Set(
-    accessRecords.map((r) => r.tradingAccountId)
+    memberships.map((membership) => membership.tradingAccountId)
   );
 
   return accounts.filter((account) => allowedAccountIds.has(account.id));

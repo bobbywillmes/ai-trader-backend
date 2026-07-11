@@ -16,7 +16,7 @@ import {
   validateSetupToken,
   verifyPassword,
 } from '../services/auth.service.js';
-import { getAdminAccessMetadata } from '../services/admin-access.service.js';
+import { getUserAccessMetadata } from '../services/user-access.service.js';
 import { HttpError } from '../errors/http-error.js';
 
 function readBearerToken(req: Request) {
@@ -96,7 +96,7 @@ export async function loginController(
       ipAddress: req.ip ?? null,
     });
 
-    const accessMetadata = await getAdminAccessMetadata(user.id);
+    const accessMetadata = await getUserAccessMetadata(user.id);
 
     res.status(200).json({
       ok: true,
@@ -124,7 +124,7 @@ export async function meController(
       throw new HttpError(401, 'Invalid or expired session.');
     }
 
-    const accessMetadata = await getAdminAccessMetadata(session.user.id);
+    const accessMetadata = await getUserAccessMetadata(session.user.id);
 
     res.status(200).json({
       ok: true,

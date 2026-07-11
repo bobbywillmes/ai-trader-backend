@@ -3,11 +3,11 @@ import {
   getIndexIntradayController,
   getIndexPerformanceController,
 } from '../controllers/dashboard.controller.js';
-import { requireOwnerAccess } from '../middleware/rbac.js';
+import { requireSystemOwnerAccess } from '../middleware/rbac.js';
 
 const router = Router();
 
-router.get('/index-performance', requireOwnerAccess, getIndexPerformanceController);
-router.get('/index-intraday', requireOwnerAccess, getIndexIntradayController);
+router.get('/index-performance', requireSystemOwnerAccess, getIndexPerformanceController);
+router.get('/index-intraday', requireSystemOwnerAccess, getIndexIntradayController);
 
 export default router;

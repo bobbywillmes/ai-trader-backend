@@ -3,11 +3,11 @@ import {
   getConfigController,
   updateSettingsController
 } from '../controllers/config.controller.js';
-import { requireOwnerAccess } from '../middleware/rbac.js';
+import { requireSystemOwnerAccess } from '../middleware/rbac.js';
 
 const router = Router();
 
-router.get('/', requireOwnerAccess, getConfigController);
-router.patch('/settings', requireOwnerAccess, updateSettingsController);
+router.get('/', requireSystemOwnerAccess, getConfigController);
+router.patch('/settings', requireSystemOwnerAccess, updateSettingsController);
 
 export default router;

@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   tradingAccountFindMany: vi.fn(),
   tradingAccountFindUnique: vi.fn(),
   tradingAccountUpdate: vi.fn(),
-  tradingAccountAccessFindMany: vi.fn(),
+  tradingAccountMembershipFindMany: vi.fn(),
   trackedPositionFindMany: vi.fn(),
 }));
 
@@ -28,8 +28,8 @@ vi.mock('../db/prisma.js', () => ({
       findUnique: mocks.tradingAccountFindUnique,
       update: mocks.tradingAccountUpdate,
     },
-    tradingAccountAccess: {
-      findMany: mocks.tradingAccountAccessFindMany,
+    tradingAccountMembership: {
+      findMany: mocks.tradingAccountMembershipFindMany,
     },
     trackedPosition: {
       findMany: mocks.trackedPositionFindMany,
@@ -40,7 +40,7 @@ vi.mock('../db/prisma.js', () => ({
 import {
   getTradingAccountForAdmin,
   listTradingAccountsForAdmin,
-  listTradingAccountsForAdminUser,
+  listTradingAccountsForUser,
   resolveDefaultTradingAccount,
   resolveDefaultTradingAccountId,
   updateTradingAccountForAdmin,
@@ -86,7 +86,7 @@ describe('trading account service', () => {
       ...tradingAccount(),
       credential: null,
     });
-    mocks.tradingAccountAccessFindMany.mockResolvedValue([]);
+    mocks.tradingAccountMembershipFindMany.mockResolvedValue([]);
     mocks.trackedPositionFindMany.mockResolvedValue([]);
   });
 
@@ -253,46 +253,46 @@ describe('trading account service', () => {
     });
   });
 
-  it('returns all trading accounts for owner-level users', async () => {
+  it('returns all trading accounts for system owners without querying memberships', async () => {
     mocks.tradingAccountFindMany.mockResolvedValue([
       { ...tradingAccount({ id: 1, displayName: 'Bobby Paper' }), credential: null },
       { ...tradingAccount({ id: 2, displayName: 'Bobby Live' }), credential: null },
     ]);
 
     await expect(
-      listTradingAccountsForAdminUser({
-        adminUserId: 42,
-        isOwner: true,
+      listTradingAccountsForUser({
+        userId: 42,
+        isSystemOwner: true,
       })
     ).resolves.toEqual([
       expect.objectContaining({ id: 1, displayName: 'Bobby Paper' }),
       expect.objectContaining({ id: 2, displayName: 'Bobby Live' }),
     ]);
 
-    expect(mocks.tradingAccountAccessFindMany).not.toHaveBeenCalled();
+    expect(mocks.tradingAccountMembershipFindMany).not.toHaveBeenCalled();
   });
 
-  it('filters trading account lists to explicit access for non-owner users', async () => {
+  it('filters trading account lists to memberships for non-owner users', async () => {
     mocks.tradingAccountFindMany.mockResolvedValue([
       { ...tradingAccount({ id: 1, displayName: 'Bobby Paper' }), credential: null },
       { ...tradingAccount({ id: 2, displayName: 'Unassigned Account' }), credential: null },
     ]);
-    mocks.tradingAccountAccessFindMany.mockResolvedValue([
+    mocks.tradingAccountMembershipFindMany.mockResolvedValue([
       { tradingAccountId: 1 },
     ]);
 
     await expect(
-      listTradingAccountsForAdminUser({
-        adminUserId: 42,
-        isOwner: false,
+      listTradingAccountsForUser({
+        userId: 42,
+        isSystemOwner: false,
       })
     ).resolves.toEqual([
       expect.objectContaining({ id: 1, displayName: 'Bobby Paper' }),
     ]);
 
-    expect(mocks.tradingAccountAccessFindMany).toHaveBeenCalledWith({
+    expect(mocks.tradingAccountMembershipFindMany).toHaveBeenCalledWith({
       where: {
-        adminUserId: 42,
+        userId: 42,
       },
       select: {
         tradingAccountId: true,

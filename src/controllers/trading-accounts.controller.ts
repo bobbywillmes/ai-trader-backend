@@ -7,7 +7,7 @@ import {
   getTradingAccountForAdmin,
   getTradingAccountSummaryById,
   listTradingAccountsForAdmin,
-  listTradingAccountsForAdminUser,
+  listTradingAccountsForUser,
   updateTradingAccountForAdmin,
 } from '../services/trading-account.service.js';
 import { getNormalizedOpenOrders } from '../services/orders.service.js';
@@ -105,10 +105,14 @@ export async function listTradingAccountsController(
 ) {
   try {
     const user = res.locals.user;
+    if (!user) {
+      throw new HttpError(401, 'Authentication required.');
+    }
 
-    const accounts = await listTradingAccountsForAdminUser({
-      adminUserId: user.id,
-      isOwner: isSystemOwnerRole(user.platformRole) || Boolean(res.locals.isStaticAdminKey),
+    const accounts = await listTradingAccountsForUser({
+      userId: user.id,
+      isSystemOwner:
+        isSystemOwnerRole(user.platformRole) || Boolean(res.locals.isStaticAdminKey),
     });
 
     res.status(200).json({ accounts });

@@ -3,11 +3,11 @@ import {
   openTrackedPositionsController,
   trackedPositionsController
 } from '../controllers/tracked-positions.controller.js';
-import { requireOwnerAccess } from '../middleware/rbac.js';
+import { requireSystemOwnerAccess } from '../middleware/rbac.js';
 
 const router = Router();
 
-router.get('/open', requireOwnerAccess, openTrackedPositionsController);
-router.get('/', requireOwnerAccess, trackedPositionsController);
+router.get('/open', requireSystemOwnerAccess, openTrackedPositionsController);
+router.get('/', requireSystemOwnerAccess, trackedPositionsController);
 
 export default router;

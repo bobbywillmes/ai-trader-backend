@@ -6,7 +6,11 @@
 
 import type { Request, Response, NextFunction } from 'express';
 import { HttpError } from '../errors/http-error.js';
-import { platformRoleHasPermission, isSystemOwnerRole } from '../types/platform-rbac.js';
+import {
+  platformRoleHasPermission,
+  isSystemOwnerRole,
+  type PlatformPermission,
+} from '../types/platform-rbac.js';
 import { prisma } from '../db/prisma.js';
 
 /**
@@ -15,7 +19,7 @@ import { prisma } from '../db/prisma.js';
  *
  * Prerequisites: requireAdminAccess must run first to populate res.locals.user
  */
-export function requireOwnerAccess(
+export function requireSystemOwnerAccess(
   req: Request,
   res: Response,
   next: NextFunction,
@@ -23,11 +27,11 @@ export function requireOwnerAccess(
   const user = res.locals.user;
 
   if (!user) {
-    throw new HttpError(401, 'Admin authentication required.');
+    throw new HttpError(401, 'Authentication required.');
   }
 
   if (!isSystemOwnerRole(user.platformRole)) {
-    throw new HttpError(403, 'Owner access required.');
+    throw new HttpError(403, 'System owner access required.');
   }
 
   next();
@@ -41,12 +45,12 @@ export function requireOwnerAccess(
  *
  * Prerequisites: requireAdminAccess must run first to populate res.locals.user
  */
-export function requirePermission(requiredPermission: string) {
+export function requirePermission(requiredPermission: PlatformPermission) {
   return (req: Request, res: Response, next: NextFunction) => {
     const user = res.locals.user;
 
     if (!user) {
-      throw new HttpError(401, 'Admin authentication required.');
+      throw new HttpError(401, 'Authentication required.');
     }
 
     if (!platformRoleHasPermission(user.platformRole, requiredPermission)) {
@@ -62,7 +66,7 @@ export function requirePermission(requiredPermission: string) {
 
 /**
  * Factory to create middleware that requires access to a specific trading account.
- * Owner role can access any account; other roles must have explicit TradingAccountAccess.
+ * System owners can access any account; other users need a membership.
  *
  * Checks a route parameter (e.g., 'tradingAccountId') and verifies the user has access.
  * Sets res.locals.authorizedTradingAccountId on success.
@@ -81,7 +85,7 @@ export function requireTradingAccountAccess(paramName: string) {
       const user = res.locals.user;
 
       if (!user) {
-        throw new HttpError(401, 'Admin authentication required.');
+        throw new HttpError(401, 'Authentication required.');
       }
 
       const accountIdParam = req.params[paramName];
@@ -105,18 +109,17 @@ export function requireTradingAccountAccess(paramName: string) {
         return;
       }
 
-      // Other roles: check explicit access
-      const access = await prisma.tradingAccountAccess.findUnique({
+      const membership = await prisma.tradingAccountMembership.findUnique({
         where: {
-          tradingAccountId_adminUserId: {
+          tradingAccountId_userId: {
             tradingAccountId: accountId,
-            adminUserId: user.id,
+            userId: user.id,
           },
         },
         select: { id: true },
       });
 
-      if (!access) {
+      if (!membership) {
         throw new HttpError(
           403,
           'Access to this trading account is not permitted.',

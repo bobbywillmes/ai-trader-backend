@@ -5,13 +5,13 @@ import {
   createExitProfileController,
   updateExitProfileController
  } from '../controllers/exit-profiles.controller.js';
-import { requireOwnerAccess } from '../middleware/rbac.js';
+import { requireSystemOwnerAccess } from '../middleware/rbac.js';
 
 const router = Router();
 
-router.get('/', requireOwnerAccess, getAllExitProfilesController);
-router.get('/:key', requireOwnerAccess, findExitProfileController);
-router.post('/', requireOwnerAccess, createExitProfileController);
-router.patch('/:key', requireOwnerAccess, updateExitProfileController);
+router.get('/', requireSystemOwnerAccess, getAllExitProfilesController);
+router.get('/:key', requireSystemOwnerAccess, findExitProfileController);
+router.post('/', requireSystemOwnerAccess, createExitProfileController);
+router.patch('/:key', requireSystemOwnerAccess, updateExitProfileController);
 
 export default router;
