@@ -23,57 +23,63 @@ model Setting {
   updatedAt DateTime @updatedAt
 }
 
-model AdminUser {
-  id                      Int     @id @default(autoincrement())
-
-  email                   String  @unique
-  passwordHash            String?
-  role                    String  @default("account_viewer")
-  enabled                 Boolean @default(true)
-
-  name                    String?
-  emailVerifiedAt         DateTime?
-  invitedAt               DateTime?
-  invitedByAdminUserId    Int?
-  invitedByAdminUser      AdminUser?  @relation("AdminUserInvites", fields: [invitedByAdminUserId], references: [id], onDelete: SetNull)
-  invitedAdminUsers       AdminUser[] @relation("AdminUserInvites")
-  setupCompletedAt        DateTime?
-
-  lastLoginAt DateTime?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-
-  sessions                AdminSession[]
-  setupTokens             AdminUserSetupToken[]
-
-  ownedTradingAccounts    TradingAccount[] @relation("TradingAccountOwner")
-  tradingAccountAccess    TradingAccountAccess[]
+enum PlatformRole {
+  SYSTEM_OWNER
+  OPERATOR
+  ACCOUNT_USER
 }
 
-model AdminUserSetupToken {
-  id                      Int    @id @default(autoincrement())
-  adminUserId             Int
-  tokenHash               String @unique
+model User {
+  id                          Int     @id @default(autoincrement())
 
-  expiresAt               DateTime
-  usedAt                  DateTime?
-  revokedAt               DateTime?
+  email                       String  @unique
+  passwordHash                String?
+  platformRole                PlatformRole @default(ACCOUNT_USER)
+  enabled                     Boolean @default(true)
 
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  name                        String?
+  emailVerifiedAt             DateTime?
+  invitedAt                   DateTime?
+  invitedByUserId             Int?
+  invitedByUser               User?      @relation("UserInvites", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+  invitedUsers                User[]     @relation("UserInvites")
+  setupCompletedAt            DateTime?
 
-  adminUser               AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  lastLoginAt DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
 
-  @@index([adminUserId])
+  sessions                    UserSession[]
+  setupTokens                 UserSetupToken[]
+
+  heldTradingAccounts         TradingAccount[]           @relation("TradingAccountHolder")
+  tradingAccountMemberships   TradingAccountMembership[]
+}
+
+model UserSetupToken {
+  id                          Int    @id @default(autoincrement())
+  userId                      Int
+  tokenHash                   String @unique
+
+  expiresAt                   DateTime
+  usedAt                      DateTime?
+  revokedAt                   DateTime?
+
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  user                        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
   @@index([expiresAt])
   @@index([usedAt])
   @@index([revokedAt])
 }
 
-model AdminSession {
-  id          Int    @id @default(autoincrement())
-  adminUserId Int
-  tokenHash   String @unique
+model UserSession {
+  id        Int    @id @default(autoincrement())
+  userId    Int
+  tokenHash String @unique
 
   userAgent String?
   ipAddress String?
@@ -85,9 +91,9 @@ model AdminSession {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  adminUser AdminUser @relation(fields: [adminUserId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 
-  @@index([adminUserId])
+  @@index([userId])
   @@index([expiresAt])
   @@index([revokedAt])
 }
@@ -117,8 +123,10 @@ enum PositionSizingType {
 model TradingAccount {
   id                        Int @id @default(autoincrement())
 
-  ownerAdminUserId          Int
-  ownerAdminUser            AdminUser @relation("TradingAccountOwner", fields: [ownerAdminUserId], references: [id])
+  // Identifies the person whose brokerage account this record represents.
+  // This relationship does not grant authorization by itself.
+  accountHolderUserId Int
+  accountHolder             User @relation("TradingAccountHolder", fields: [accountHolderUserId], references: [id])
 
   displayName               String
 
@@ -148,7 +156,7 @@ model TradingAccount {
 
   credential                TradingAccountCredential?
   riskSettings              TradingAccountRiskSettings?
-  access                    TradingAccountAccess[]
+  memberships               TradingAccountMembership[]
 
   // Future/current trading relations
   subscriptions             Subscription[]
@@ -166,7 +174,7 @@ model TradingAccount {
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
 
-  @@index([ownerAdminUserId])
+  @@index([accountHolderUserId])
   @@index([broker, environment])
   @@index([status])
   @@index([tradingEnabled])
@@ -238,38 +246,22 @@ model TradingAccountCredential {
   @@index([status])
 }
 
-enum TradingAccountAccessRole {
-  OWNER
-  MANAGER
-  VIEWER
-}
+// Membership grants access to an account's scope.
+// Capabilities come from the user's platform role and platform permissions.
+model TradingAccountMembership {
+  id                    Int @id @default(autoincrement())
 
-model TradingAccountAccess {
-  id                        Int @id @default(autoincrement())
+  tradingAccountId      Int
+  tradingAccount        TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Cascade)
 
-  tradingAccountId          Int
-  tradingAccount            TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Cascade)
+  userId Int
+  user                  User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  adminUserId               Int
-  adminUser                 AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
-  role                      TradingAccountAccessRole
-
-  canView                   Boolean @default(true)
-  canPauseTrading           Boolean @default(false)
-  canResumeTrading          Boolean @default(false)
-  canEditRiskSettings       Boolean @default(false)
-  canEditStrategySettings   Boolean @default(false)
-  canEditCredentials        Boolean @default(false)
-  canManageAccess           Boolean @default(false)
-
-  createdAt                 DateTime @default(now())
-  updatedAt                 DateTime @updatedAt
-
-  @@unique([tradingAccountId, adminUserId])
-  @@index([adminUserId])
-  @@index([tradingAccountId])
-  @@index([role])
+  @@unique([tradingAccountId, userId])
+  @@index([userId])
 }
 
 model TradingAccountAllocation {
