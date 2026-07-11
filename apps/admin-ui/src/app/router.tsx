@@ -1,12 +1,19 @@
 import { createBrowserRouter } from "react-router-dom";
+import type { ReactNode } from "react";
 
 import {
   AdminConsoleGuard,
   AdminConsoleShell,
   AdminLayout,
+  PermissionGuard,
   ViewerPortalGuard,
   ViewerPortalShell,
 } from "../layouts/AdminLayout";
+import type { PlatformPermission } from "../features/auth/types";
+
+function requirePermission(permission: PlatformPermission, element: ReactNode) {
+  return <PermissionGuard permission={permission}>{element}</PermissionGuard>;
+}
 import { HomePage } from "../pages/HomePage";
 import { SetupAccountPage } from "../pages/SetupAccountPage";
 import { DashboardPage } from "../pages/DashboardPage";
@@ -67,103 +74,103 @@ export const router = createBrowserRouter([
             children: [
               {
                 path: "dashboard",
-                element: <DashboardPage />,
+                element: requirePermission("reports.read", <DashboardPage />),
               },
               {
                 path: "positions/open",
-                element: <PositionsPage />,
+                element: requirePermission("tradingAccount.read", <PositionsPage />),
               },
               {
                 path: "orders/open",
-                element: <OrdersPage />,
+                element: requirePermission("tradingAccount.read", <OrdersPage />),
               },
               {
                 path: "trade-history",
-                element: <TradeHistoryPage />,
+                element: requirePermission("reports.read", <TradeHistoryPage />),
               },
               {
                 path: "entry-decisions",
-                element: <EntryDecisionsPage />,
+                element: requirePermission("tradingAccount.read", <EntryDecisionsPage />),
               },
               {
                 path: "momentum-scanner",
-                element: <MomentumResearchDashboardPage />,
+                element: requirePermission("strategy.read", <MomentumResearchDashboardPage />),
               },
               {
                 path: "momentum-scanner/pipeline",
-                element: <MomentumScannerPipelinePage />,
+                element: requirePermission("strategy.read", <MomentumScannerPipelinePage />),
               },
               {
                 path: "momentum-scanner/universe",
-                element: <MomentumUniversePage />,
+                element: requirePermission("strategy.read", <MomentumUniversePage />),
               },
               {
                 path: "momentum-scanner/candidates",
-                element: <MomentumCandidatesPage />,
+                element: requirePermission("strategy.read", <MomentumCandidatesPage />),
               },
               {
                 path: "momentum-scanner/candidates/:candidateId",
-                element: <MomentumCandidateDetailPage />,
+                element: requirePermission("strategy.read", <MomentumCandidateDetailPage />),
               },
               {
                 path: "momentum-scanner/catalysts",
-                element: <MomentumCatalystsPage />,
+                element: requirePermission("strategy.read", <MomentumCatalystsPage />),
               },
               {
                 path: "momentum-scanner/symbols/:symbol",
-                element: <MomentumSymbolResearchPage />,
+                element: requirePermission("strategy.read", <MomentumSymbolResearchPage />),
               },
               {
                 path: "strategies",
-                element: <StrategiesPage />,
+                element: requirePermission("strategy.read", <StrategiesPage />),
               },
               {
                 path: "trading-accounts",
-                element: <TradingAccountsPage />,
+                element: requirePermission("tradingAccount.read", <TradingAccountsPage />),
               },
               {
                 path: "trading-accounts/:id",
-                element: <TradingAccountDetailPage />,
+                element: requirePermission("tradingAccount.read", <TradingAccountDetailPage />),
               },
               {
                 path: "subscriptions",
-                element: <SubscriptionsPage />,
+                element: requirePermission("subscription.read", <SubscriptionsPage />),
               },
               {
                 path: "exit-profiles",
-                element: <ExitProfilesPage />,
+                element: requirePermission("exitProfile.read", <ExitProfilesPage />),
               },
               {
                 path: "securities",
-                element: <SecuritiesPage />,
+                element: requirePermission("system.security.read", <SecuritiesPage />),
               },
               {
                 path: "securities/:symbol",
-                element: <SecurityDetailPage />,
+                element: requirePermission("system.security.read", <SecurityDetailPage />),
               },
               {
                 path: "reports",
-                element: <ReportsPage />,
+                element: requirePermission("reports.read", <ReportsPage />),
               },
               {
                 path: "system/events",
-                element: <SystemEventsPage />,
+                element: requirePermission("systemEvents.read", <SystemEventsPage />),
               },
               {
                 path: "system/reconciliation",
-                element: <ReconciliationPage />,
+                element: requirePermission("system.security.read", <ReconciliationPage />),
               },
               {
                 path: "market-diary",
-                element: <MarketDiaryPage />,
+                element: requirePermission("systemEvents.read", <MarketDiaryPage />),
               },
               {
                 path: "settings",
-                element: <SettingsPage />,
+                element: requirePermission("system.settings.read", <SettingsPage />),
               },
               {
                 path: "users",
-                element: <UsersPage />,
+                element: requirePermission("system.settings.read", <UsersPage />),
               },
             ],
           },

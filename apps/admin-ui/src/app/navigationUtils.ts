@@ -1,4 +1,5 @@
 import type { AdminNavGroup, AdminNavItem } from "./navigation";
+import type { PlatformPermission } from "../features/auth/types";
 
 /**
  * Filter navigation groups and items based on user role and permissions.
@@ -7,7 +8,7 @@ import type { AdminNavGroup, AdminNavItem } from "./navigation";
 export function filterNavigationGroups(
   groups: AdminNavGroup[],
   userRole: string | undefined,
-  permissions: string[] | undefined
+  permissions: PlatformPermission[] | undefined
 ): AdminNavGroup[] {
   const isSystemOwner = userRole === "SYSTEM_OWNER";
   const permissionSet = new Set(permissions || []);
@@ -28,7 +29,7 @@ export function filterNavigationGroups(
 export function canAccessNavItem(
   item: AdminNavItem,
   isSystemOwner: boolean,
-  permissions: Set<string>
+  permissions: Set<PlatformPermission>
 ): boolean {
   if (isSystemOwner) {
     return true;

@@ -20,6 +20,8 @@ import { useLogout, useMe } from "../features/auth/hooks";
 import { isAccountPortalRole } from "../features/auth/roleUtils";
 import { useAuth } from "../features/auth/useAuth";
 import { getAdminToken } from "../lib/api";
+import type { PlatformPermission } from "../features/auth/types";
+import type { ReactNode } from "react";
 
 export function AdminLayout() {
   const token = getAdminToken();
@@ -66,6 +68,14 @@ export function ViewerPortalGuard() {
   }
 
   return <Outlet />;
+}
+
+export function PermissionGuard({ permission, children }: { permission: PlatformPermission; children: ReactNode }) {
+  const { access } = useAuth();
+  if (!access?.permissions.includes(permission)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return children;
 }
 
 export function AdminConsoleShell() {
