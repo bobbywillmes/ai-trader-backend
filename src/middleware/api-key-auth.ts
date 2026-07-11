@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 
-import { getAdminSessionFromToken } from '../services/admin-auth.service.js';
+import { getUserSessionFromToken } from '../services/auth.service.js';
 import { PlatformRole } from '../types/platform-rbac.js';
 
 function readApiKey(req: Request) {
@@ -80,12 +80,12 @@ export async function requireAdminAccess(
   const providedApiKey = readApiKey(req);
   const adminApiKey = process.env.AI_TRADER_ADMIN_API_KEY;
 
-  // Static admin API key: populate owner-equivalent context for backward compatibility with RBAC.
+  // Static admin API key: populate synthetic owner-equivalent context.
   if (providedApiKey && adminApiKey && providedApiKey === adminApiKey) {
-    res.locals.adminUser = {
+    res.locals.user = {
       id: -1, // synthetic id for static admin key
       email: 'static-admin-key',
-      role: PlatformRole.SYSTEM_OWNER,
+      platformRole: PlatformRole.SYSTEM_OWNER,
       enabled: true,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -100,23 +100,23 @@ export async function requireAdminAccess(
   if (!bearerToken) {
     res.status(401).json({
       error: 'Unauthorized',
-      message: 'Admin API key or admin session token required.',
+      message: 'Admin API key or user session token required.',
     });
     return;
   }
 
-  const session = await getAdminSessionFromToken(bearerToken);
+  const session = await getUserSessionFromToken(bearerToken);
 
   if (!session) {
     res.status(401).json({
       error: 'Unauthorized',
-      message: 'Invalid or expired admin session.',
+      message: 'Invalid or expired user session.',
     });
     return;
   }
 
-  res.locals.adminUser = session.adminUser;
-  res.locals.adminSession = session;
+  res.locals.user = session.user;
+  res.locals.userSession = session;
 
   next();
 }

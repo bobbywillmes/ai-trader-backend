@@ -10,23 +10,23 @@ import { platformRoleHasPermission, isSystemOwnerRole } from '../types/platform-
 import { prisma } from '../db/prisma.js';
 
 /**
- * Require the authenticated admin user to have owner-level access.
+ * Require the authenticated user to have owner-level access.
  * Use this to protect owner-only operations.
  *
- * Prerequisites: requireAdminAccess must run first to populate res.locals.adminUser
+ * Prerequisites: requireAdminAccess must run first to populate res.locals.user
  */
 export function requireOwnerAccess(
   req: Request,
   res: Response,
   next: NextFunction,
 ) {
-  const adminUser = res.locals.adminUser;
+  const user = res.locals.user;
 
-  if (!adminUser) {
+  if (!user) {
     throw new HttpError(401, 'Admin authentication required.');
   }
 
-  if (!isSystemOwnerRole(adminUser.role)) {
+  if (!isSystemOwnerRole(user.platformRole)) {
     throw new HttpError(403, 'Owner access required.');
   }
 
@@ -39,17 +39,17 @@ export function requireOwnerAccess(
  *
  * Example: router.get('/admin-settings', requirePermission('system.settings.read'), handler)
  *
- * Prerequisites: requireAdminAccess must run first to populate res.locals.adminUser
+ * Prerequisites: requireAdminAccess must run first to populate res.locals.user
  */
 export function requirePermission(requiredPermission: string) {
   return (req: Request, res: Response, next: NextFunction) => {
-    const adminUser = res.locals.adminUser;
+    const user = res.locals.user;
 
-    if (!adminUser) {
+    if (!user) {
       throw new HttpError(401, 'Admin authentication required.');
     }
 
-    if (!platformRoleHasPermission(adminUser.role, requiredPermission)) {
+    if (!platformRoleHasPermission(user.platformRole, requiredPermission)) {
       throw new HttpError(
         403,
         `Permission required: ${requiredPermission}`,
@@ -73,14 +73,14 @@ export function requirePermission(requiredPermission: string) {
  *   handler
  * )
  *
- * Prerequisites: requireAdminAccess must run first to populate res.locals.adminUser
+ * Prerequisites: requireAdminAccess must run first to populate res.locals.user
  */
 export function requireTradingAccountAccess(paramName: string) {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const adminUser = res.locals.adminUser;
+      const user = res.locals.user;
 
-      if (!adminUser) {
+      if (!user) {
         throw new HttpError(401, 'Admin authentication required.');
       }
 
@@ -99,7 +99,7 @@ export function requireTradingAccountAccess(paramName: string) {
       }
 
       // System owners can access any account.
-      if (isSystemOwnerRole(adminUser.role)) {
+      if (isSystemOwnerRole(user.platformRole)) {
         res.locals.authorizedTradingAccountId = accountId;
         next();
         return;
@@ -110,7 +110,7 @@ export function requireTradingAccountAccess(paramName: string) {
         where: {
           tradingAccountId_adminUserId: {
             tradingAccountId: accountId,
-            adminUserId: adminUser.id,
+            adminUserId: user.id,
           },
         },
         select: { id: true },

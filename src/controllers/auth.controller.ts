@@ -1,21 +1,21 @@
 import type { Request, Response, NextFunction } from 'express';
 import {
-  adminBootstrapSchema,
-  adminLoginSchema,
-  adminChangePasswordSchema,
-  adminSetupPasswordSchema,
-} from '../validators/admin-auth.schema.js';
+  bootstrapSchema,
+  loginSchema,
+  changePasswordSchema,
+  setupPasswordSchema,
+} from '../validators/auth.schema.js';
 import {
-  bootstrapFirstAdminUser,
-  createAdminSession,
-  getAdminSessionFromToken,
-  revokeAdminSession,
-  validateAdminLogin,
-  changeAdminPassword,
-  completeAdminSetup,
-  validateAdminSetupToken,
-  verifyAdminPassword,
-} from '../services/admin-auth.service.js';
+  bootstrapFirstUser,
+  createUserSession,
+  getUserSessionFromToken,
+  revokeUserSession,
+  validateLogin,
+  changePassword,
+  completeSetup,
+  validateSetupToken,
+  verifyPassword,
+} from '../services/auth.service.js';
 import { getAdminAccessMetadata } from '../services/admin-access.service.js';
 import { HttpError } from '../errors/http-error.js';
 
@@ -24,7 +24,7 @@ function readBearerToken(req: Request) {
   const [scheme, token] = authHeader.split(' ');
 
   if (scheme?.toLowerCase() !== 'bearer' || !token) {
-    throw new HttpError(401, 'Admin session token required.');
+    throw new HttpError(401, 'Session token required.');
   }
 
   return token.trim();
@@ -41,66 +41,68 @@ function readSetupTokenParam(req: Request) {
   return token;
 }
 
-function serializeAdminUser(adminUser: {
+function serializeUser(user: {
   id: number;
   email: string;
-  role: string;
+  name: string | null;
+  platformRole: string;
   enabled: boolean;
   lastLoginAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }) {
   return {
-    id: adminUser.id,
-    email: adminUser.email,
-    role: adminUser.role,
-    enabled: adminUser.enabled,
-    lastLoginAt: adminUser.lastLoginAt ?? null,
-    createdAt: adminUser.createdAt,
-    updatedAt: adminUser.updatedAt,
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    platformRole: user.platformRole,
+    enabled: user.enabled,
+    lastLoginAt: user.lastLoginAt ?? null,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
   };
 }
 
-export async function adminBootstrapController(
+export async function bootstrapController(
   req: Request,
   res: Response,
   next: NextFunction,
 ) {
   try {
-    const input = adminBootstrapSchema.parse(req.body);
-    const adminUser = await bootstrapFirstAdminUser(input);
+    const input = bootstrapSchema.parse(req.body);
+    const user = await bootstrapFirstUser(input);
 
     res.status(201).json({
       ok: true,
-      adminUser,
+      user,
     });
   } catch (error) {
     next(error);
   }
 }
 
-export async function adminLoginController(
+export async function loginController(
   req: Request,
   res: Response,
   next: NextFunction,
 ) {
   try {
-    const input = adminLoginSchema.parse(req.body);
-    const adminUser = await validateAdminLogin(input);
+    const input = loginSchema.parse(req.body);
+    const user = await validateLogin(input);
 
-    const { rawToken, session } = await createAdminSession({
-      adminUserId: adminUser.id,
+    const { rawToken, session } = await createUserSession({
+      userId: user.id,
       userAgent: req.get('user-agent') ?? null,
       ipAddress: req.ip ?? null,
     });
 
-    const accessMetadata = await getAdminAccessMetadata(adminUser.id);
+    const accessMetadata = await getAdminAccessMetadata(user.id);
 
     res.status(200).json({
       ok: true,
       token: rawToken,
       tokenType: 'Bearer',
-      adminUser: serializeAdminUser(adminUser),
+      user: serializeUser(user),
       access: accessMetadata,
       session,
     });
@@ -109,28 +111,28 @@ export async function adminLoginController(
   }
 }
 
-export async function adminMeController(
+export async function meController(
   req: Request,
   res: Response,
   next: NextFunction,
 ) {
   try {
     const token = readBearerToken(req);
-    const session = await getAdminSessionFromToken(token);
+    const session = await getUserSessionFromToken(token);
 
     if (!session) {
-      throw new HttpError(401, 'Invalid or expired admin session.');
+      throw new HttpError(401, 'Invalid or expired session.');
     }
 
-    const accessMetadata = await getAdminAccessMetadata(session.adminUser.id);
+    const accessMetadata = await getAdminAccessMetadata(session.user.id);
 
     res.status(200).json({
       ok: true,
-      adminUser: serializeAdminUser(session.adminUser),
+      user: serializeUser(session.user),
       access: accessMetadata,
       session: {
         id: session.id,
-        adminUserId: session.adminUserId,
+        userId: session.userId,
         expiresAt: session.expiresAt,
         lastSeenAt: session.lastSeenAt,
         createdAt: session.createdAt,
@@ -141,14 +143,14 @@ export async function adminMeController(
   }
 }
 
-export async function adminLogoutController(
+export async function logoutController(
   req: Request,
   res: Response,
   next: NextFunction,
 ) {
   try {
     const token = readBearerToken(req);
-    const revokedSession = await revokeAdminSession(token);
+    const revokedSession = await revokeUserSession(token);
 
     res.status(200).json({
       ok: true,
@@ -160,14 +162,14 @@ export async function adminLogoutController(
   }
 }
 
-export async function adminValidateSetupTokenController(
+export async function validateSetupTokenController(
   req: Request,
   res: Response,
   next: NextFunction,
 ) {
   try {
     const token = readSetupTokenParam(req);
-    const setup = await validateAdminSetupToken(token);
+    const setup = await validateSetupToken(token);
 
     res.status(200).json({
       ok: true,
@@ -178,15 +180,15 @@ export async function adminValidateSetupTokenController(
   }
 }
 
-export async function adminCompleteSetupController(
+export async function completeSetupController(
   req: Request,
   res: Response,
   next: NextFunction,
 ) {
   try {
     const token = readSetupTokenParam(req);
-    const input = adminSetupPasswordSchema.parse(req.body);
-    const setup = await completeAdminSetup(token, input);
+    const input = setupPasswordSchema.parse(req.body);
+    const setup = await completeSetup(token, input);
 
     res.status(200).json({
       ok: true,
@@ -197,16 +199,16 @@ export async function adminCompleteSetupController(
   }
 }
 
-export async function adminVerifyPasswordController(
+export async function verifyPasswordController(
   req: Request,
   res: Response,
   next: NextFunction,
 ) {
   try {
-    const adminUser = res.locals.adminUser;
+    const user = res.locals.user;
 
-    if (!adminUser) {
-      throw new HttpError(401, 'Admin session required.');
+    if (!user) {
+      throw new HttpError(401, 'Session required.');
     }
 
     const password = req.body.password;
@@ -214,11 +216,11 @@ export async function adminVerifyPasswordController(
       throw new HttpError(400, 'Password is required.');
     }
 
-    if (!adminUser.passwordHash) {
-      throw new HttpError(400, 'Admin password setup is not complete.');
+    if (!user.passwordHash) {
+      throw new HttpError(400, 'Password setup is not complete.');
     }
 
-    const passwordIsValid = await verifyAdminPassword(password, adminUser.passwordHash);
+    const passwordIsValid = await verifyPassword(password, user.passwordHash);
 
     if (!passwordIsValid) {
       throw new HttpError(401, 'Current password is incorrect.');
@@ -232,21 +234,21 @@ export async function adminVerifyPasswordController(
   }
 }
 
-export async function adminChangePasswordController(
+export async function changePasswordController(
   req: Request,
   res: Response,
   next: NextFunction,
 ) {
   try {
-    const input = adminChangePasswordSchema.parse(req.body);
-    const adminUser = res.locals.adminUser;
-    const adminSession = res.locals.adminSession;
+    const input = changePasswordSchema.parse(req.body);
+    const user = res.locals.user;
+    const userSession = res.locals.userSession;
 
-    if (!adminUser || !adminSession) {
-      throw new HttpError(401, 'Admin session required.');
+    if (!user || !userSession) {
+      throw new HttpError(401, 'Session required.');
     }
 
-    await changeAdminPassword(adminUser.id, adminSession.id, input);
+    await changePassword(user.id, userSession.id, input);
 
     res.status(200).json({
       ok: true,

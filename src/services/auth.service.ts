@@ -5,11 +5,11 @@ import { HttpError } from '../errors/http-error.js';
 import { createAdminAuditEvent } from './admin-audit.service.js';
 import { PlatformRole } from '../types/platform-rbac.js';
 import type {
-  AdminBootstrapInput,
-  AdminLoginInput,
-  AdminChangePasswordInput,
-  AdminSetupPasswordInput,
-} from '../validators/admin-auth.schema.js';
+  BootstrapInput,
+  LoginInput,
+  ChangePasswordInput,
+  SetupPasswordInput,
+} from '../validators/auth.schema.js';
 
 const SESSION_TOKEN_BYTES = 32;
 const SESSION_TTL_DAYS = 7;
@@ -24,13 +24,13 @@ function buildSessionExpirationDate() {
   return expiresAt;
 }
 
-export async function hashAdminPassword(password: string) {
+export async function hashPassword(password: string) {
   return argon2.hash(password, {
     type: argon2.argon2id,
   });
 }
 
-export async function verifyAdminPassword(password: string, passwordHash: string) {
+export async function verifyPassword(password: string, passwordHash: string) {
   return argon2.verify(passwordHash, password);
 }
 
@@ -46,57 +46,58 @@ function hashSetupToken(rawToken: string) {
   return crypto.createHash('sha256').update(rawToken).digest('hex');
 }
 
-function isPendingAdminSetup(adminUser: {
+function isPendingUserSetup(user: {
   invitedAt: Date | null;
   setupCompletedAt: Date | null;
   passwordHash: string | null;
 }) {
   return Boolean(
-    adminUser.invitedAt && !adminUser.setupCompletedAt && !adminUser.passwordHash,
+    user.invitedAt && !user.setupCompletedAt && !user.passwordHash,
   );
 }
 
-function serializeSetupTokenAdminUser(adminUser: {
+function serializeSetupTokenUser(user: {
   id: number;
   email: string;
   name: string | null;
-  role: string;
+  platformRole: string;
   enabled: boolean;
 }) {
   return {
-    id: adminUser.id,
-    email: adminUser.email,
-    name: adminUser.name,
-    role: adminUser.role,
-    enabled: adminUser.enabled,
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    platformRole: user.platformRole,
+    enabled: user.enabled,
   };
 }
 
-export async function getAdminUserCount() {
-  return prisma.adminUser.count();
+export async function getUserCount() {
+  return prisma.user.count();
 }
 
-export async function bootstrapFirstAdminUser(input: AdminBootstrapInput) {
-  const existingAdminCount = await getAdminUserCount();
+export async function bootstrapFirstUser(input: BootstrapInput) {
+  const existingUserCount = await getUserCount();
 
-  if (existingAdminCount > 0) {
-    throw new HttpError(409, 'Admin bootstrap is already complete.');
+  if (existingUserCount > 0) {
+    throw new HttpError(409, 'User bootstrap is already complete.');
   }
 
   const email = normalizeEmail(input.email);
-  const passwordHash = await hashAdminPassword(input.password);
+  const passwordHash = await hashPassword(input.password);
 
-  return prisma.adminUser.create({
+  return prisma.user.create({
     data: {
       email,
       passwordHash,
-      role: PlatformRole.SYSTEM_OWNER,
+      platformRole: PlatformRole.SYSTEM_OWNER,
       enabled: true,
     },
     select: {
       id: true,
       email: true,
-      role: true,
+      name: true,
+      platformRole: true,
       enabled: true,
       createdAt: true,
       updatedAt: true,
@@ -104,38 +105,38 @@ export async function bootstrapFirstAdminUser(input: AdminBootstrapInput) {
   });
 }
 
-export async function validateAdminLogin(input: AdminLoginInput) {
+export async function validateLogin(input: LoginInput) {
   const email = normalizeEmail(input.email);
 
-  const adminUser = await prisma.adminUser.findUnique({
+  const user = await prisma.user.findUnique({
     where: { email },
   });
 
-  if (!adminUser || !adminUser.enabled || !adminUser.passwordHash) {
-    throw new HttpError(401, 'Invalid admin login.');
+  if (!user || !user.enabled || !user.passwordHash) {
+    throw new HttpError(401, 'Invalid login.');
   }
 
-  const passwordIsValid = await verifyAdminPassword(
+  const passwordIsValid = await verifyPassword(
     input.password,
-    adminUser.passwordHash,
+    user.passwordHash,
   );
 
   if (!passwordIsValid) {
-    throw new HttpError(401, 'Invalid admin login.');
+    throw new HttpError(401, 'Invalid login.');
   }
 
-  await prisma.adminUser.update({
-    where: { id: adminUser.id },
+  await prisma.user.update({
+    where: { id: user.id },
     data: {
       lastLoginAt: new Date(),
     },
   });
 
-  return adminUser;
+  return user;
 }
 
-export async function createAdminSession(args: {
-  adminUserId: number;
+export async function createUserSession(args: {
+  userId: number;
   userAgent?: string | null;
   ipAddress?: string | null;
 }) {
@@ -143,9 +144,9 @@ export async function createAdminSession(args: {
   const tokenHash = hashSessionToken(rawToken);
   const expiresAt = buildSessionExpirationDate();
 
-  const session = await prisma.adminSession.create({
+  const session = await prisma.userSession.create({
     data: {
-      adminUserId: args.adminUserId,
+      userId: args.userId,
       tokenHash,
       userAgent: args.userAgent ?? null,
       ipAddress: args.ipAddress ?? null,
@@ -153,7 +154,7 @@ export async function createAdminSession(args: {
     },
     select: {
       id: true,
-      adminUserId: true,
+      userId: true,
       expiresAt: true,
       createdAt: true,
     },
@@ -165,13 +166,13 @@ export async function createAdminSession(args: {
   };
 }
 
-export async function getAdminSessionFromToken(rawToken: string) {
+export async function getUserSessionFromToken(rawToken: string) {
   const tokenHash = hashSessionToken(rawToken);
 
-  const session = await prisma.adminSession.findUnique({
+  const session = await prisma.userSession.findUnique({
     where: { tokenHash },
     include: {
-      adminUser: true,
+      user: true,
     },
   });
 
@@ -187,11 +188,11 @@ export async function getAdminSessionFromToken(rawToken: string) {
     return null;
   }
 
-  if (!session.adminUser.enabled) {
+  if (!session.user.enabled) {
     return null;
   }
 
-  await prisma.adminSession.update({
+  await prisma.userSession.update({
     where: { id: session.id },
     data: {
       lastSeenAt: new Date(),
@@ -201,10 +202,10 @@ export async function getAdminSessionFromToken(rawToken: string) {
   return session;
 }
 
-export async function revokeAdminSession(rawToken: string) {
+export async function revokeUserSession(rawToken: string) {
   const tokenHash = hashSessionToken(rawToken);
 
-  const session = await prisma.adminSession.findUnique({
+  const session = await prisma.userSession.findUnique({
     where: { tokenHash },
   });
 
@@ -212,55 +213,55 @@ export async function revokeAdminSession(rawToken: string) {
     return null;
   }
 
-  return prisma.adminSession.update({
+  return prisma.userSession.update({
     where: { id: session.id },
     data: {
       revokedAt: new Date(),
     },
     select: {
       id: true,
-      adminUserId: true,
+      userId: true,
       revokedAt: true,
     },
   });
 }
 
-export async function changeAdminPassword(
-  adminUserId: number,
+export async function changePassword(
+  userId: number,
   currentSessionId: number,
-  input: AdminChangePasswordInput,
+  input: ChangePasswordInput,
 ) {
-  const adminUser = await prisma.adminUser.findUnique({
-    where: { id: adminUserId },
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
   });
 
-  if (!adminUser) {
-    throw new HttpError(404, 'Admin user not found.');
+  if (!user) {
+    throw new HttpError(404, 'User not found.');
   }
 
-  if (!adminUser.passwordHash) {
-    throw new HttpError(400, 'Admin password setup is not complete.');
+  if (!user.passwordHash) {
+    throw new HttpError(400, 'Password setup is not complete.');
   }
 
-  const passwordIsValid = await verifyAdminPassword(
+  const passwordIsValid = await verifyPassword(
     input.currentPassword,
-    adminUser.passwordHash,
+    user.passwordHash,
   );
 
   if (!passwordIsValid) {
     throw new HttpError(401, 'Current password is incorrect.');
   }
 
-  const newPasswordHash = await hashAdminPassword(input.newPassword);
+  const newPasswordHash = await hashPassword(input.newPassword);
 
   await prisma.$transaction([
-    prisma.adminUser.update({
-      where: { id: adminUserId },
+    prisma.user.update({
+      where: { id: userId },
       data: { passwordHash: newPasswordHash },
     }),
-    prisma.adminSession.updateMany({
+    prisma.userSession.updateMany({
       where: {
-        adminUserId,
+        userId,
         id: { not: currentSessionId },
         revokedAt: null,
       },
@@ -269,26 +270,26 @@ export async function changeAdminPassword(
   ]);
 
   await createAdminAuditEvent({
-    eventType: 'admin_password_changed',
-    entityType: 'admin_user',
-    entityId: adminUserId,
-    message: 'Admin password changed',
+    eventType: 'user_password_changed',
+    entityType: 'user',
+    entityId: userId,
+    message: 'User password changed',
     payload: { currentSessionId },
   });
 }
 
-export async function validateAdminSetupToken(rawToken: string) {
+export async function validateSetupToken(rawToken: string) {
   const tokenHash = hashSetupToken(rawToken);
 
-  const setupToken = await prisma.adminUserSetupToken.findUnique({
+  const setupToken = await prisma.userSetupToken.findUnique({
     where: { tokenHash },
     include: {
-      adminUser: {
+      user: {
         select: {
           id: true,
           email: true,
           name: true,
-          role: true,
+          platformRole: true,
           enabled: true,
           invitedAt: true,
           setupCompletedAt: true,
@@ -303,33 +304,33 @@ export async function validateAdminSetupToken(rawToken: string) {
     setupToken.usedAt ||
     setupToken.revokedAt ||
     setupToken.expiresAt <= new Date() ||
-    !setupToken.adminUser.enabled ||
-    !isPendingAdminSetup(setupToken.adminUser)
+    !setupToken.user.enabled ||
+    !isPendingUserSetup(setupToken.user)
   ) {
     throw new HttpError(400, 'Invalid or expired setup token.');
   }
 
   return {
-    adminUser: serializeSetupTokenAdminUser(setupToken.adminUser),
+    user: serializeSetupTokenUser(setupToken.user),
     expiresAt: setupToken.expiresAt,
   };
 }
 
-export async function completeAdminSetup(
+export async function completeSetup(
   rawToken: string,
-  input: AdminSetupPasswordInput,
+  input: SetupPasswordInput,
 ) {
   const tokenHash = hashSetupToken(rawToken);
 
-  const setupToken = await prisma.adminUserSetupToken.findUnique({
+  const setupToken = await prisma.userSetupToken.findUnique({
     where: { tokenHash },
     include: {
-      adminUser: {
+      user: {
         select: {
           id: true,
           email: true,
           name: true,
-          role: true,
+          platformRole: true,
           enabled: true,
           invitedAt: true,
           setupCompletedAt: true,
@@ -344,17 +345,17 @@ export async function completeAdminSetup(
     setupToken.usedAt ||
     setupToken.revokedAt ||
     setupToken.expiresAt <= new Date() ||
-    !setupToken.adminUser.enabled ||
-    !isPendingAdminSetup(setupToken.adminUser)
+    !setupToken.user.enabled ||
+    !isPendingUserSetup(setupToken.user)
   ) {
     throw new HttpError(400, 'Invalid or expired setup token.');
   }
 
-  const passwordHash = await hashAdminPassword(input.password);
+  const passwordHash = await hashPassword(input.password);
   const completedAt = new Date();
 
   const updatedUser = await prisma.$transaction(async (tx) => {
-    const claimedToken = await tx.adminUserSetupToken.updateMany({
+    const claimedToken = await tx.userSetupToken.updateMany({
       where: {
         id: setupToken.id,
         usedAt: null,
@@ -367,9 +368,9 @@ export async function completeAdminSetup(
       throw new HttpError(400, 'Invalid or expired setup token.');
     }
 
-    await tx.adminUserSetupToken.updateMany({
+    await tx.userSetupToken.updateMany({
       where: {
-        adminUserId: setupToken.adminUserId,
+        userId: setupToken.userId,
         id: { not: setupToken.id },
         usedAt: null,
         revokedAt: null,
@@ -377,9 +378,9 @@ export async function completeAdminSetup(
       data: { revokedAt: completedAt },
     });
 
-    return tx.adminUser.update({
+    return tx.user.update({
       where: {
-        id: setupToken.adminUserId,
+        id: setupToken.userId,
         setupCompletedAt: null,
         passwordHash: null,
       },
@@ -392,24 +393,24 @@ export async function completeAdminSetup(
         id: true,
         email: true,
         name: true,
-        role: true,
+        platformRole: true,
         enabled: true,
       },
     });
   });
 
   await createAdminAuditEvent({
-    eventType: 'admin_user_setup_completed',
-    entityType: 'admin_user',
+    eventType: 'user_setup_completed',
+    entityType: 'user',
     entityId: updatedUser.id,
-    message: 'Admin user setup completed',
+    message: 'User setup completed',
     payload: {
       setupTokenId: setupToken.id,
     },
   });
 
   return {
-    adminUser: serializeSetupTokenAdminUser(updatedUser),
+    user: serializeSetupTokenUser(updatedUser),
     setupCompletedAt: completedAt,
   };
 }

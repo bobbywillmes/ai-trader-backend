@@ -104,11 +104,11 @@ export async function listTradingAccountsController(
   next: NextFunction
 ) {
   try {
-    const adminUser = res.locals.adminUser;
+    const user = res.locals.user;
 
     const accounts = await listTradingAccountsForAdminUser({
-      adminUserId: adminUser.id,
-      isOwner: isSystemOwnerRole(adminUser.role) || Boolean(res.locals.isStaticAdminKey),
+      adminUserId: user.id,
+      isOwner: isSystemOwnerRole(user.platformRole) || Boolean(res.locals.isStaticAdminKey),
     });
 
     res.status(200).json({ accounts });

@@ -49,7 +49,7 @@ export async function createAdminUserInvitationController(
   next: NextFunction,
 ) {
   try {
-    const currentAdmin = res.locals.adminUser;
+    const currentAdmin = res.locals.user;
     if (!currentAdmin) {
       throw new HttpError(401, 'Admin authentication required');
     }
@@ -105,7 +105,7 @@ export async function updateAdminUserController(
   try {
     const userId = parseRequiredNumericParam(req.params.id, 'User ID');
 
-    const currentAdmin = res.locals.adminUser;
+    const currentAdmin = res.locals.user;
     if (!currentAdmin) {
       throw new HttpError(401, 'Admin authentication required');
     }
@@ -130,7 +130,7 @@ export async function regenerateAdminUserSetupLinkController(
   next: NextFunction,
 ) {
   try {
-    const currentAdmin = res.locals.adminUser;
+    const currentAdmin = res.locals.user;
     if (!currentAdmin) {
       throw new HttpError(401, 'Admin authentication required');
     }

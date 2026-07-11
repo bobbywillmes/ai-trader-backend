@@ -233,9 +233,9 @@ describe('trading accounts controller', () => {
       {
         ...res,
         locals: {
-          adminUser: {
+          user: {
             id: 42,
-            role: 'account_viewer',
+            platformRole: 'ACCOUNT_USER',
           },
         },
       } as unknown as Response,
@@ -260,9 +260,9 @@ describe('trading accounts controller', () => {
       {
         ...res,
         locals: {
-          adminUser: {
+          user: {
             id: 1,
-            role: 'owner',
+            platformRole: 'SYSTEM_OWNER',
           },
         },
       } as unknown as Response,

@@ -7,7 +7,7 @@ import { getPlatformPermissionsForRole, isSystemOwnerRole } from '../types/platf
 import { prisma } from '../db/prisma.js';
 
 export interface AdminAccessMetadata {
-  role: string;
+  platformRole: string;
   permissions: string[];
   accessibleTradingAccountIds: number[] | null;
 }
@@ -16,25 +16,25 @@ export interface AdminAccessMetadata {
  * Get access metadata for an admin user.
  * Returns the user's role, permissions, and accessible trading accounts.
  *
- * Owner role (including legacy "admin"): unrestricted access to all trading accounts (null signals "all").
+ * System owners have unrestricted access to all trading accounts (null signals "all").
  * Other roles: specific trading account IDs based on TradingAccountAccess records.
  */
-export async function getAdminAccessMetadata(adminUserId: number): Promise<AdminAccessMetadata> {
-  const adminUser = await prisma.adminUser.findUnique({
-    where: { id: adminUserId },
-    select: { id: true, role: true },
+export async function getAdminAccessMetadata(userId: number): Promise<AdminAccessMetadata> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, platformRole: true },
   });
 
-  if (!adminUser) {
-    throw new Error(`Admin user ${adminUserId} not found`);
+  if (!user) {
+    throw new Error(`User ${userId} not found`);
   }
 
-  const permissions = getPlatformPermissionsForRole(adminUser.role);
+  const permissions = getPlatformPermissionsForRole(user.platformRole);
 
   // System owners have unrestricted access (null signals "all trading accounts").
-  if (isSystemOwnerRole(adminUser.role)) {
+  if (isSystemOwnerRole(user.platformRole)) {
     return {
-      role: adminUser.role,
+      platformRole: user.platformRole,
       permissions,
       accessibleTradingAccountIds: null,
     };
@@ -42,14 +42,14 @@ export async function getAdminAccessMetadata(adminUserId: number): Promise<Admin
 
   // For other roles, fetch specific trading accounts this user has access to
   const accessRecords = await prisma.tradingAccountAccess.findMany({
-    where: { adminUserId },
+    where: { adminUserId: userId },
     select: { tradingAccountId: true },
   });
 
   const accessibleTradingAccountIds = accessRecords.map((r) => r.tradingAccountId);
 
   return {
-    role: adminUser.role,
+    platformRole: user.platformRole,
     permissions,
     accessibleTradingAccountIds,
   };
