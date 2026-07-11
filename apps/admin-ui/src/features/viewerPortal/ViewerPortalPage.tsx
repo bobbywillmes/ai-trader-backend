@@ -134,7 +134,7 @@ function EmptyAssignedAccounts() {
     <Card withBorder radius="md" p="md">
       <Text fw={600} size="sm">No assigned accounts</Text>
       <Text size="sm" c="dimmed" mt={4}>
-        No trading accounts are assigned to this viewer yet.
+        No Trading Account memberships are assigned to this user yet.
       </Text>
     </Card>
   );
