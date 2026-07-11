@@ -1,10 +1,14 @@
-import { useMemo } from "react";
-import { Badge, Card, Group, Loader, SimpleGrid, Stack, Table, Text, Title } from "@mantine/core";
+import { useMemo, useState } from "react";
+import { Badge, Button, Card, Group, Loader, SimpleGrid, Stack, Table, Text, Title } from "@mantine/core";
+import { CreateUserInviteModal } from "./CreateUserInviteModal";
+import { UserDetailDrawer } from "./UserDetailDrawer";
 import { getPlatformRoleColor, getPlatformRoleLabel } from "./roleLabels";
 import { useUsers } from "./hooks";
 
 export function UsersPage() {
   const { data: users, isLoading, error } = useUsers();
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+  const [inviteOpened, setInviteOpened] = useState(false);
   const stats = useMemo(() => ({
     total: users?.length ?? 0,
     systemOwners: users?.filter((user) => user.platformRole === "SYSTEM_OWNER").length ?? 0,
@@ -23,12 +27,12 @@ export function UsersPage() {
 
   return (
     <Stack gap="lg">
-      <div>
+      <Group justify="space-between"><div>
         <Title order={2}>Users & Access</Title>
         <Text c="dimmed" size="sm" mt={4}>
           Review platform roles and Trading Account membership scope.
         </Text>
-      </div>
+      </div><Button onClick={() => setInviteOpened(true)}>Create Invite</Button></Group>
 
       <SimpleGrid cols={{ base: 1, sm: 2, md: 5 }} spacing="md">
         {[
@@ -52,7 +56,7 @@ export function UsersPage() {
             <Table.Thead><Table.Tr><Table.Th>Email</Table.Th><Table.Th>Name</Table.Th><Table.Th>Platform Role</Table.Th><Table.Th>Status</Table.Th><Table.Th>Last Login</Table.Th></Table.Tr></Table.Thead>
             <Table.Tbody>
               {users?.length ? users.map((user) => (
-                <Table.Tr key={user.id}>
+                <Table.Tr key={user.id} onClick={() => setSelectedUserId(user.id)} style={{ cursor: "pointer" }}>
                   <Table.Td><Text size="sm" fw={500}>{user.email}</Text></Table.Td>
                   <Table.Td><Text size="sm">{user.name || "—"}</Text></Table.Td>
                   <Table.Td><Badge color={getPlatformRoleColor(user.platformRole)} variant="light">{getPlatformRoleLabel(user.platformRole)}</Badge></Table.Td>
@@ -64,6 +68,8 @@ export function UsersPage() {
           </Table>
         </Card.Section>
       </Card>
+      <UserDetailDrawer userId={selectedUserId} onClose={() => setSelectedUserId(null)} />
+      <CreateUserInviteModal opened={inviteOpened} onClose={() => setInviteOpened(false)} />
     </Stack>
   );
 }
