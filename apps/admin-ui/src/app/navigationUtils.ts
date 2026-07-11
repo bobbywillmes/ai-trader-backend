@@ -2,21 +2,21 @@ import type { AdminNavGroup, AdminNavItem } from "./navigation";
 
 /**
  * Filter navigation groups and items based on user role and permissions.
- * Owner role sees everything; other roles see items they have permission for.
+ * System Owners see everything; other roles see permitted items.
  */
 export function filterNavigationGroups(
   groups: AdminNavGroup[],
   userRole: string | undefined,
   permissions: string[] | undefined
 ): AdminNavGroup[] {
-  const isOwner = userRole === "owner";
+  const isSystemOwner = userRole === "SYSTEM_OWNER";
   const permissionSet = new Set(permissions || []);
 
   return groups
     .map((group) => ({
       ...group,
       items: group.items.filter((item) =>
-        canAccessNavItem(item, isOwner, permissionSet)
+        canAccessNavItem(item, isSystemOwner, permissionSet)
       ),
     }))
     .filter((group) => group.items.length > 0);
@@ -27,16 +27,14 @@ export function filterNavigationGroups(
  */
 export function canAccessNavItem(
   item: AdminNavItem,
-  isOwner: boolean,
+  isSystemOwner: boolean,
   permissions: Set<string>
 ): boolean {
-  // Owner has access to all items
-  if (isOwner) {
+  if (isSystemOwner) {
     return true;
   }
 
-  // If item is owner-only, non-owners cannot access
-  if (item.ownerOnly) {
+  if (item.systemOwnerOnly) {
     return false;
   }
 

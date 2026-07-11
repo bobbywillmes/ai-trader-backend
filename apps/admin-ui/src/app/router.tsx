@@ -35,7 +35,7 @@ import { MomentumCandidatesPage } from "../features/momentumScanner/MomentumCand
 import { MomentumCatalystsPage } from "../features/momentumScanner/MomentumCatalystsPage";
 import { MomentumCandidateDetailPage } from "../features/momentumScanner/MomentumCandidateDetailPage";
 import { StrategiesPage } from "../features/strategies/StrategiesPage";
-import { AdminUsersPage } from "../features/adminUsers/AdminUsersPage";
+import { UsersPage } from "../features/users/UsersPage";
 import { ViewerAccountPage } from "../features/viewerPortal/ViewerAccountPage";
 import {
   ViewerAccountsPage,
@@ -162,8 +162,8 @@ export const router = createBrowserRouter([
                 element: <SettingsPage />,
               },
               {
-                path: "admin-users",
-                element: <AdminUsersPage />,
+                path: "users",
+                element: <UsersPage />,
               },
             ],
           },

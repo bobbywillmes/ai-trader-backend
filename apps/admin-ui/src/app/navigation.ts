@@ -1,7 +1,7 @@
 export type AdminNavItem = {
   to: string;
   label: string;
-  ownerOnly?: boolean;
+  systemOwnerOnly?: boolean;
   requiredPermission?: string;
 };
 
@@ -56,7 +56,7 @@ export const adminNavGroups: AdminNavGroup[] = [
   {
     label: "System",
     items: [
-      { to: "/admin-users", label: "Users & Access", ownerOnly: true },
+      { to: "/users", label: "Users & Access", systemOwnerOnly: true },
       { to: "/securities", label: "Securities" },
       { to: "/settings", label: "Settings" },
     ],
