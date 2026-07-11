@@ -103,7 +103,7 @@ function statusLabel(value: string | null | undefined) {
   return value.replace(/_/g, " ");
 }
 
-function ViewerPositionsTable({ positions }: { positions: TrackedPosition[] }) {
+function AccountPositionsTable({ positions }: { positions: TrackedPosition[] }) {
   if (positions.length === 0) {
     return <Text size="sm" c="dimmed">No open positions.</Text>;
   }
@@ -165,7 +165,7 @@ function ViewerPositionsTable({ positions }: { positions: TrackedPosition[] }) {
   );
 }
 
-function ViewerOrdersTable({ orders }: { orders: OpenOrder[] }) {
+function AccountOrdersTable({ orders }: { orders: OpenOrder[] }) {
   if (orders.length === 0) {
     return <Text size="sm" c="dimmed">No open orders.</Text>;
   }
@@ -236,7 +236,7 @@ function statusColor(status: string) {
   return "teal";
 }
 
-function ViewerTradeHistoryTable({
+function AccountTradeHistoryTable({
   cycles,
 }: {
   cycles: TradeCycleSummary[];
@@ -304,11 +304,11 @@ function ViewerTradeHistoryTable({
   );
 }
 
-type ViewerAccountPageProps = {
+type AccountPageProps = {
   view?: "overview" | "positions" | "orders" | "trade-history";
 };
 
-export function ViewerAccountPage({ view = "overview" }: ViewerAccountPageProps) {
+export function AccountPage({ view = "overview" }: AccountPageProps) {
   const { accountId } = useParams();
   const id = parseAccountId(accountId);
   const { access } = useAuth();
@@ -567,7 +567,7 @@ export function ViewerAccountPage({ view = "overview" }: ViewerAccountPageProps)
           {positionsQuery.isLoading ? (
             <Text size="sm" c="dimmed">Loading positions...</Text>
           ) : (
-            <ViewerPositionsTable positions={positionsQuery.data?.positions ?? []} />
+            <AccountPositionsTable positions={positionsQuery.data?.positions ?? []} />
           )}
         </Card>
       )}
@@ -588,7 +588,7 @@ export function ViewerAccountPage({ view = "overview" }: ViewerAccountPageProps)
           {ordersQuery.isLoading ? (
             <Text size="sm" c="dimmed">Loading orders...</Text>
           ) : (
-            <ViewerOrdersTable orders={ordersQuery.data?.orders ?? []} />
+            <AccountOrdersTable orders={ordersQuery.data?.orders ?? []} />
           )}
         </Card>
       )}
@@ -609,7 +609,7 @@ export function ViewerAccountPage({ view = "overview" }: ViewerAccountPageProps)
           {tradeHistoryQuery.isLoading ? (
             <Text size="sm" c="dimmed">Loading trade history...</Text>
           ) : (
-            <ViewerTradeHistoryTable
+            <AccountTradeHistoryTable
               cycles={tradeHistoryQuery.data?.cycles ?? []}
             />
           )}

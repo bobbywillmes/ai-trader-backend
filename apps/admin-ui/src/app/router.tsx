@@ -6,8 +6,8 @@ import {
   AdminConsoleShell,
   AdminLayout,
   PermissionGuard,
-  ViewerPortalGuard,
-  ViewerPortalShell,
+  AccountPortalGuard,
+  AccountPortalShell,
 } from "../layouts/AdminLayout";
 import type { PlatformPermission } from "../features/auth/types";
 
@@ -43,11 +43,11 @@ import { MomentumCatalystsPage } from "../features/momentumScanner/MomentumCatal
 import { MomentumCandidateDetailPage } from "../features/momentumScanner/MomentumCandidateDetailPage";
 import { StrategiesPage } from "../features/strategies/StrategiesPage";
 import { UsersPage } from "../features/users/UsersPage";
-import { ViewerAccountPage } from "../features/viewerPortal/ViewerAccountPage";
+import { AccountPage } from "../features/accountPortal/AccountPage";
 import {
-  ViewerAccountsPage,
-  ViewerPortalPage,
-} from "../features/viewerPortal/ViewerPortalPage";
+  AccountPortalAccountsPage,
+  AccountPortalPage,
+} from "../features/accountPortal/AccountPortalPage";
 
 export const router = createBrowserRouter([
   {
@@ -177,35 +177,35 @@ export const router = createBrowserRouter([
         ],
       },
       {
-        element: <ViewerPortalGuard />,
+        element: <AccountPortalGuard />,
         children: [
           {
             path: "portal",
-            element: <ViewerPortalShell />,
+            element: <AccountPortalShell />,
             children: [
               {
                 index: true,
-                element: <ViewerPortalPage />,
+                element: <AccountPortalPage />,
               },
               {
                 path: "accounts",
-                element: <ViewerAccountsPage />,
+                element: <AccountPortalAccountsPage />,
               },
               {
                 path: "accounts/:accountId",
-                element: <ViewerAccountPage />,
+                element: <AccountPage />,
               },
               {
                 path: "accounts/:accountId/positions",
-                element: <ViewerAccountPage view="positions" />,
+                element: <AccountPage view="positions" />,
               },
               {
                 path: "accounts/:accountId/orders",
-                element: <ViewerAccountPage view="orders" />,
+                element: <AccountPage view="orders" />,
               },
               {
                 path: "accounts/:accountId/trade-history",
-                element: <ViewerAccountPage view="trade-history" />,
+                element: <AccountPage view="trade-history" />,
               },
             ],
           },

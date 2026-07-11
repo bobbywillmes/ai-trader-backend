@@ -238,7 +238,7 @@ function DashboardOverview({ account }: { account: TradingAccount }) {
   );
 }
 
-export function ViewerPortalPage() {
+export function AccountPortalPage() {
   const {
     assignedAccountIds,
     assignedAccounts,
@@ -276,7 +276,7 @@ export function ViewerPortalPage() {
   );
 }
 
-export function ViewerAccountsPage() {
+export function AccountPortalAccountsPage() {
   const {
     assignedAccountIds,
     assignedAccounts,

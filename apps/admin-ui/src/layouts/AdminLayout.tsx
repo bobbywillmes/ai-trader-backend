@@ -60,7 +60,7 @@ export function AdminConsoleGuard() {
   return <Outlet />;
 }
 
-export function ViewerPortalGuard() {
+export function AccountPortalGuard() {
   const { access } = useAuth();
 
   if (!isAccountPortalRole(access?.platformRole)) {
@@ -173,7 +173,7 @@ export function AdminConsoleShell() {
   );
 }
 
-export function ViewerPortalShell() {
+export function AccountPortalShell() {
   const { access } = useAuth();
   const logoutMutation = useLogout(getAdminToken());
   const [opened, { toggle, close }] = useDisclosure();
