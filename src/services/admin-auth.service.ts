@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import { createAdminAuditEvent } from './admin-audit.service.js';
-import { AdminRole } from '../types/admin-rbac.js';
+import { PlatformRole } from '../types/platform-rbac.js';
 import type {
   AdminBootstrapInput,
   AdminLoginInput,
@@ -90,7 +90,7 @@ export async function bootstrapFirstAdminUser(input: AdminBootstrapInput) {
     data: {
       email,
       passwordHash,
-      role: AdminRole.OWNER,
+      role: PlatformRole.SYSTEM_OWNER,
       enabled: true,
     },
     select: {

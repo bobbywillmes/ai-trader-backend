@@ -6,14 +6,12 @@
 
 import type { Request, Response, NextFunction } from 'express';
 import { HttpError } from '../errors/http-error.js';
-import { roleHasPermission, isOwnerRole } from '../types/admin-rbac.js';
+import { platformRoleHasPermission, isSystemOwnerRole } from '../types/platform-rbac.js';
 import { prisma } from '../db/prisma.js';
 
 /**
  * Require the authenticated admin user to have owner-level access.
  * Use this to protect owner-only operations.
- *
- * Accepts both current "owner" role and legacy "admin" role for backward compatibility.
  *
  * Prerequisites: requireAdminAccess must run first to populate res.locals.adminUser
  */
@@ -28,7 +26,7 @@ export function requireOwnerAccess(
     throw new HttpError(401, 'Admin authentication required.');
   }
 
-  if (!isOwnerRole(adminUser.role)) {
+  if (!isSystemOwnerRole(adminUser.role)) {
     throw new HttpError(403, 'Owner access required.');
   }
 
@@ -51,7 +49,7 @@ export function requirePermission(requiredPermission: string) {
       throw new HttpError(401, 'Admin authentication required.');
     }
 
-    if (!roleHasPermission(adminUser.role, requiredPermission)) {
+    if (!platformRoleHasPermission(adminUser.role, requiredPermission)) {
       throw new HttpError(
         403,
         `Permission required: ${requiredPermission}`,
@@ -100,8 +98,8 @@ export function requireTradingAccountAccess(paramName: string) {
         throw new HttpError(400, `Invalid ${paramName}: must be a number`);
       }
 
-      // Owner (including legacy "admin" role) can access any account
-      if (isOwnerRole(adminUser.role)) {
+      // System owners can access any account.
+      if (isSystemOwnerRole(adminUser.role)) {
         res.locals.authorizedTradingAccountId = accountId;
         next();
         return;

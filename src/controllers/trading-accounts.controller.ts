@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { ZodError } from 'zod';
 
 import { HttpError } from '../errors/http-error.js';
-import { isOwnerRole } from '../types/admin-rbac.js';
+import { isSystemOwnerRole } from '../types/platform-rbac.js';
 import {
   getTradingAccountForAdmin,
   getTradingAccountSummaryById,
@@ -108,7 +108,7 @@ export async function listTradingAccountsController(
 
     const accounts = await listTradingAccountsForAdminUser({
       adminUserId: adminUser.id,
-      isOwner: isOwnerRole(adminUser.role) || Boolean(res.locals.isStaticAdminKey),
+      isOwner: isSystemOwnerRole(adminUser.role) || Boolean(res.locals.isStaticAdminKey),
     });
 
     res.status(200).json({ accounts });

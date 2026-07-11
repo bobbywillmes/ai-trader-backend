@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 
 import { getAdminSessionFromToken } from '../services/admin-auth.service.js';
-import { AdminRole } from '../types/admin-rbac.js';
+import { PlatformRole } from '../types/platform-rbac.js';
 
 function readApiKey(req: Request) {
   return req.header('ai-trader-api-key');
@@ -85,7 +85,7 @@ export async function requireAdminAccess(
     res.locals.adminUser = {
       id: -1, // synthetic id for static admin key
       email: 'static-admin-key',
-      role: AdminRole.OWNER,
+      role: PlatformRole.SYSTEM_OWNER,
       enabled: true,
       createdAt: new Date(),
       updatedAt: new Date(),

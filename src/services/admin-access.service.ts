@@ -3,7 +3,7 @@
  * Computes permissions and accessible resources for admin users.
  */
 
-import { getPermissionsForRole, isOwnerRole } from '../types/admin-rbac.js';
+import { getPlatformPermissionsForRole, isSystemOwnerRole } from '../types/platform-rbac.js';
 import { prisma } from '../db/prisma.js';
 
 export interface AdminAccessMetadata {
@@ -29,12 +29,12 @@ export async function getAdminAccessMetadata(adminUserId: number): Promise<Admin
     throw new Error(`Admin user ${adminUserId} not found`);
   }
 
-  const permissions = getPermissionsForRole(adminUser.role);
+  const permissions = getPlatformPermissionsForRole(adminUser.role);
 
-  // Owner role (including legacy "admin" for backward compatibility) has unrestricted access (null signals "all trading accounts")
-  if (isOwnerRole(adminUser.role)) {
+  // System owners have unrestricted access (null signals "all trading accounts").
+  if (isSystemOwnerRole(adminUser.role)) {
     return {
-      role: 'owner', // Normalize legacy "admin" to "owner" in response
+      role: adminUser.role,
       permissions,
       accessibleTradingAccountIds: null,
     };
