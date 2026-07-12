@@ -6,14 +6,14 @@ import {
   addSecurityController,
   updateSecurityController,
 } from '../controllers/securities.controller.js';
-import { requireOwnerAccess } from '../middleware/rbac.js';
+import { requireSystemOwnerAccess } from '../middleware/rbac.js';
 
 const router = Router();
 
-router.get('/summary', requireOwnerAccess, getSecuritiesSummaryController);
-router.get('/', requireOwnerAccess, getAllSecuritiesController);
-router.get('/:symbol', requireOwnerAccess, findSecurityController);
-router.post('/', requireOwnerAccess, addSecurityController);
-router.patch('/:symbol', requireOwnerAccess, updateSecurityController);
+router.get('/summary', requireSystemOwnerAccess, getSecuritiesSummaryController);
+router.get('/', requireSystemOwnerAccess, getAllSecuritiesController);
+router.get('/:symbol', requireSystemOwnerAccess, findSecurityController);
+router.post('/', requireSystemOwnerAccess, addSecurityController);
+router.patch('/:symbol', requireSystemOwnerAccess, updateSecurityController);
 
 export default router;

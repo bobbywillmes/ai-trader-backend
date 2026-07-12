@@ -3,11 +3,11 @@ import {
   entryDecisionByIdController,
   entryDecisionsController,
 } from '../controllers/entry-decisions.controller.js';
-import { requireOwnerAccess } from '../middleware/rbac.js';
+import { requireSystemOwnerAccess } from '../middleware/rbac.js';
 
 const router = Router();
 
-router.get('/', requireOwnerAccess, entryDecisionsController);
-router.get('/:id', requireOwnerAccess, entryDecisionByIdController);
+router.get('/', requireSystemOwnerAccess, entryDecisionsController);
+router.get('/:id', requireSystemOwnerAccess, entryDecisionByIdController);
 
 export default router;

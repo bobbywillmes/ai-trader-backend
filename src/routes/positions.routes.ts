@@ -3,14 +3,14 @@ import {
   closePositionController,
   positionsController
 } from '../controllers/positions.controller.js';
-import { requirePermission, requireOwnerAccess } from '../middleware/rbac.js';
-import { AdminPermission } from '../types/admin-rbac.js';
+import { requirePermission, requireSystemOwnerAccess } from '../middleware/rbac.js';
+import { PlatformPermission } from '../types/platform-rbac.js';
 
 const router = Router();
 
 // Default account read requires owner access (no account-scoping)
-router.get('/', requireOwnerAccess, positionsController);
+router.get('/', requireSystemOwnerAccess, positionsController);
 // Close position on default account requires owner access (no account-scoping yet)
-router.delete('/:symbol', requireOwnerAccess, closePositionController);
+router.delete('/:symbol', requireSystemOwnerAccess, closePositionController);
 
 export default router;

@@ -1,6 +1,6 @@
 # Production Deployment Checklist
 
-This doc covers the production launch and routine production update flow for the AI Trader backend and admin UI.
+This doc covers the production launch and routine production update flow for the AI Trader backend and web UI.
 
 The goal is to make production startup conservative, repeatable, and easy to verify before n8n is connected to the production backend or before paper-order workflows are enabled.
 
@@ -8,7 +8,7 @@ The goal is to make production startup conservative, repeatable, and easy to ver
 
 ## 1. Production Launch Philosophy
 
-The AI Trader backend is the broker/control layer between n8n, the admin UI, and Alpaca.
+The AI Trader backend is the broker/control layer between n8n, the web UI, and Alpaca.
 
 Production launch should follow this order:
 
@@ -78,7 +78,7 @@ AI_TRADER_ADMIN_API_KEY=
 ALLOW_LIVE_TRADING=false
 ALLOW_TRADING_ENABLED_ON_START=false
 
-CORS_ALLOWED_ORIGINS=https://your-admin-ui-domain.com
+CORS_ALLOWED_ORIGINS=https://your-web-ui-domain.com
 ```
 
 ### Backend Environment Notes
@@ -124,18 +124,18 @@ AI_TRADER_ADMIN_API_KEY
 
 `CORS_ALLOWED_ORIGINS` must be explicit in production. Do not use `*`, `localhost`, or `127.0.0.1` for production.
 
-### Admin UI `.env`
+### Web UI `.env`
 
 Create:
 
 ```text
-apps/admin-ui/.env
+apps/web/.env
 ```
 
 From:
 
 ```text
-apps/admin-ui/.env.example
+apps/web/.env.example
 ```
 
 Example:
@@ -144,7 +144,7 @@ Example:
 VITE_API_BASE_URL=https://your-backend-domain.com
 ```
 
-The admin UI does not need broker secrets or backend API keys. It authenticates through the backend login/session flow.
+The web UI does not need broker secrets or backend API keys. It authenticates through the backend login/session flow.
 
 ---
 
@@ -156,7 +156,7 @@ Before pushing production updates, validate locally from the project root:
 npm run check
 npm run build
 
-cd apps/admin-ui
+cd apps/web
 npm run build
 cd ../..
 ```
@@ -181,7 +181,7 @@ git push origin main
 Use conventional commit-style prefixes where practical:
 
 ```text
-feat(admin-ui): ...
+feat(web): ...
 feat(api): ...
 fix(worker): ...
 refactor(db): ...
@@ -193,7 +193,7 @@ chore(deploy): ...
 
 ## 4. Routine Production Update Flow
 
-Use this flow for normal production updates, especially when the update includes backend code, admin UI changes, Prisma schema changes, or new Prisma migrations.
+Use this flow for normal production updates, especially when the update includes backend code, web changes, Prisma schema changes, or new Prisma migrations.
 
 SSH into the AI Trader VPS:
 
@@ -228,7 +228,7 @@ Apply pending migrations:
 docker compose -f docker-compose.prod.yml run --rm backend npx prisma migrate deploy
 ```
 
-For changes that touch both backend and admin UI, rebuild both runtime images:
+For changes that touch both backend and web UI, rebuild both runtime images:
 
 ```bash
 docker compose -f docker-compose.prod.yml build backend caddy
@@ -242,7 +242,7 @@ docker compose -f docker-compose.prod.yml build backend
 docker compose -f docker-compose.prod.yml up -d backend
 ```
 
-For admin UI-only changes, rebuild Caddy because the React static build is bundled into the Caddy image:
+For web-only changes, rebuild Caddy because the React static build is bundled into the Caddy image:
 
 ```bash
 docker compose -f docker-compose.prod.yml build caddy
@@ -353,7 +353,7 @@ paperMode=true
 killSwitchEnabled=false
 ```
 
-Before connecting n8n or enabling order-entry workflows, verify runtime settings from the admin UI:
+Before connecting n8n or enabling order-entry workflows, verify runtime settings from the web UI:
 
 ```text
 Settings → Trading Controls
@@ -442,7 +442,7 @@ Preferred recovery flow:
 1. Keep `ALLOW_TRADING_ENABLED_ON_START=false`.
 2. Update the production database setting directly to `tradingEnabled=false`.
 3. Restart the backend.
-4. Verify `/health` and the Admin UI.
+4. Verify `/health` and the web UI.
 5. Re-enable trading manually from Settings only when ready.
 
 Check the runtime settings directly in production Postgres:
@@ -562,7 +562,7 @@ docker compose -f docker-compose.prod.yml logs --tail=100 backend
 
 ## 10. Verify System Status
 
-Admin-protected status check:
+Privileged status check:
 
 ```bash
 set -a
@@ -585,7 +585,7 @@ pendingOrderCount=0
 submittingOrderCount=0
 ```
 
-In the admin UI, verify:
+In the web UI, verify:
 
 ```text
 Settings → System Status
@@ -604,7 +604,7 @@ Check:
 
 ## 11. Verify Runtime Trading Controls
 
-In the admin UI:
+In the web UI:
 
 ```text
 Settings → Trading Controls
@@ -624,7 +624,7 @@ For a paper-trading smoke test, turn on Automated Trading only after all status 
 
 ## 12. Verify Entry Risk Limits
 
-In the admin UI:
+In the web UI:
 
 ```text
 Settings → Entry Risk Limits
@@ -645,9 +645,9 @@ Adjust these based on the production paper test plan.
 
 ---
 
-## 13. Verify Admin UI
+## 13. Verify Web UI
 
-Open the deployed admin UI:
+Open the deployed web UI:
 
 ```text
 https://srv1700402.hstgr.cloud/login
@@ -744,7 +744,7 @@ Only connect n8n after:
 ```text
 /health passes
 /api/system-status passes
-admin UI loads
+web UI loads
 risk limits are reviewed
 audit layer is verified
 paper mode is confirmed
@@ -789,8 +789,8 @@ n8n decision engine evaluates candidates
 n8n records durable entry decision snapshots for meaningful evaluations
 n8n posts diary events to backend
 backend stores Market Diary events
-admin UI displays Entry Decisions results
-admin UI displays Market Diary results
+web UI displays Entry Decisions results
+web UI displays Market Diary results
 no live order is submitted
 ```
 
@@ -880,7 +880,7 @@ Use the Kill Switch:
 Settings → Trading Controls → Kill Switch On
 ```
 
-This blocks new entries while keeping the system online for monitoring, syncing, position tracking, exit workflows, reports, and admin visibility.
+This blocks new entries while keeping the system online for monitoring, syncing, position tracking, exit workflows, reports, and web visibility.
 
 ### Stop automated trading broadly
 
@@ -910,19 +910,19 @@ Before enabling n8n production signals or paper-order workflows:
 
 ```text
 [ ] Backend build succeeded
-[ ] Admin UI build succeeded
+[ ] Web UI build succeeded
 [ ] Prisma migrations committed
 [ ] Prisma migrations deployed
 [ ] .env configured
-[ ] apps/admin-ui/.env configured
+[ ] apps/web/.env configured
 [ ] NODE_ENV=production
 [ ] ALPACA_BASE_URL points to paper API
 [ ] ALLOW_LIVE_TRADING=false
 [ ] ALLOW_TRADING_ENABLED_ON_START=false
-[ ] CORS_ALLOWED_ORIGINS uses production admin UI origin
+[ ] CORS_ALLOWED_ORIGINS uses production web UI origin
 [ ] /health returns ok=true
 [ ] /api/system-status reviewed
-[ ] Admin UI login works
+[ ] Web UI login works
 [ ] Dashboard loads
 [ ] Open Positions loads
 [ ] Open Orders loads
@@ -975,10 +975,10 @@ The signal API key is for n8n and automation clients.
 
 The admin API key is for protected admin HTTP requests and operational checks.
 
-The admin UI login uses an admin email/password account created through:
+The web UI login uses a User email/password account. Initial bootstrap uses:
 
 ```http
-POST /api/admin-auth/bootstrap
+POST /api/auth/bootstrap
 ```
 
 These are separate authentication paths.
@@ -1009,14 +1009,14 @@ At minimum, live trading should require:
 
 After the trading account schema foundation migration has been applied, run the one-time default trading account bootstrap script.
 
-This script creates the initial legacy single-account trading account, grants the current admin user owner access, and backfills existing single-account trading records with the new `tradingAccountId`.
+This script creates the initial legacy single-account trading account, establishes its enabled User as both account holder and explicit member, and backfills existing single-account trading records with the new `tradingAccountId`.
 
 The script is intentionally not added to `package.json` because it should only be run manually when bootstrapping an environment.
 
 Run from the project root:
 
 ```bash
-DEFAULT_TRADING_ACCOUNT_OWNER_EMAIL="your-admin-email@example.com" \
+DEFAULT_TRADING_ACCOUNT_HOLDER_EMAIL="your-user-email@example.com" \
 DEFAULT_TRADING_ACCOUNT_DISPLAY_NAME="Bobby Paper" \
 DEFAULT_TRADING_ACCOUNT_CAPITAL="10000" \
 DEFAULT_TRADING_ACCOUNT_ENVIRONMENT="PAPER" \
@@ -1045,69 +1045,22 @@ DEFAULT_TRADING_ACCOUNT_ID=1 npx tsx scripts/bootstrap-trading-account-risk-sett
 
 In production Docker, confirm the `scripts/` directory exists inside the backend image before running the command. If the image does not include one-off scripts, copy the script into the backend container or run it from a checked-out project directory with the production `DATABASE_URL` available, then remove any temporary copied file after the bootstrap completes.
 
-## 24. Legacy Admin Role Migration
+## 24. User access model migration
 
-Older production admin users may have `role = "admin"` from before RBAC was introduced. RBAC treats this as owner-equivalent for compatibility, but admin user editing expects the canonical role value `owner`.
+The User access refactor is delivered through the committed Prisma migration. Do not update historical user-access rows manually unless a reviewed recovery procedure explicitly requires it.
 
-If an owner cannot update their profile because the API returns `Cannot change your own role`, check whether the production `AdminUser.role` is still `admin`. If so, update the row directly in the production database.
-
-Run these commands from the production backend directory:
-```bash
-cd /opt/ai-trader
-```
-
-Confirm the production Postgres container is running:
-```bash
-docker compose -f docker-compose.prod.yml ps
-```
-
-Confirm the Postgres container has the expected database environment variables:
-```bash
-docker compose -f docker-compose.prod.yml exec postgres sh -lc 'echo "USER=$POSTGRES_USER DB=$POSTGRES_DB"'
-```
-
-Then update the admin user role using psql inside the Postgres container (using actual email address):
-```bash
-docker compose -f docker-compose.prod.yml exec -T postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
-BEGIN;
-
-SELECT id, email, name, role, enabled, "createdAt", "updatedAt"
-FROM "AdminUser"
-WHERE email = 'my_real_email@gmail.com';
-
-UPDATE "AdminUser"
-SET role = 'owner',
-    "updatedAt" = NOW()
-WHERE email = 'my_real_email@gmail.com'
-  AND role = 'admin';
-
-SELECT id, email, name, role, enabled, "createdAt", "updatedAt"
-FROM "AdminUser"
-WHERE email = 'my_real_email@gmail.com';
-
-COMMIT;
-SQL
-```
-
-The first SELECT should show role = admin, and the second SELECT should show role = owner.
-
-After the update:
-
-Sign out of the Admin UI.
-Sign back in.
-Confirm /api/admin-auth/me returns access.role = "owner".
-Confirm the Users & Access page shows Owners: 1.
-Confirm editing the admin user name succeeds.
+After pulling the release, apply the production migrations with the production compose file, rebuild the backend and web UI, and verify the access-control checklist below. The canonical models are `User`, `UserSession`, `UserSetupToken`, and `TradingAccountMembership`; the platform role field is `platformRole`.
 
 ## 25. Verify Access Control
 
 After auth/RBAC/onboarding changes:
 
-- Owner can sign in.
-- `/api/admin-auth/me` returns `access.role = "owner"`.
+- System admin can sign in and enters the admin Console.
+- `/api/auth/me` returns `user`, `access`, and `session`, with `access.platformRole = "SYSTEM_OWNER"`.
 - Users & Access loads.
 - Create Invite panel opens.
-- Test viewer can sign in and lands on `/portal`.
-- Viewer sees only assigned-account portal navigation.
-- Viewer cannot access `/admin-users`, `/settings`, or global admin routes.
+- Operator enters the admin console and sees only permission-authorized features.
+- Account User lands on `/portal` and sees only membership-scoped Trading Accounts.
+- Account User cannot access `/users`, `/settings`, or other admin console routes.
+- Membership replacement does not show or submit account roles or capability flags.
 - n8n smoke test still passes.

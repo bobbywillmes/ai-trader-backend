@@ -5,14 +5,14 @@ import {
   getAccountSnapshotsController,
   getLatestAccountSnapshotController,
 } from '../controllers/account-snapshots.controller.js';
-import { requireOwnerAccess } from '../middleware/rbac.js';
+import { requireSystemOwnerAccess } from '../middleware/rbac.js';
 
 const router = Router();
 
-router.get('/trends', requireOwnerAccess, getAccountSnapshotTrendsController);
-router.get('/latest', requireOwnerAccess, getLatestAccountSnapshotController);
-router.get('/', requireOwnerAccess, getAccountSnapshotsController);
+router.get('/trends', requireSystemOwnerAccess, getAccountSnapshotTrendsController);
+router.get('/latest', requireSystemOwnerAccess, getLatestAccountSnapshotController);
+router.get('/', requireSystemOwnerAccess, getAccountSnapshotsController);
 // Manual snapshots require owner access (mutating operation)
-router.post('/manual', requireOwnerAccess, createManualAccountSnapshotController);
+router.post('/manual', requireSystemOwnerAccess, createManualAccountSnapshotController);
 
 export default router;

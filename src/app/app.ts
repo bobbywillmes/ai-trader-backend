@@ -20,7 +20,7 @@ import strategiesRoutes from '../routes/strategies.routes.js';
 import exitProfilesRoutes from '../routes/exit-profiles.routes.js';
 import subscriptionsRoutes from '../routes/subscriptions.routes.js';
 import signalsRoutes from '../routes/signals.routes.js';
-import adminAuthRoutes from '../routes/admin-auth.routes.js';
+import authRoutes from '../routes/auth.routes.js';
 import securitiesRoutes from '../routes/securities.routes.js';
 import accountSnapshotsRoutes from '../routes/account-snapshots.routes.js';
 import brokerActivitiesRoutes from '../routes/broker-activities.routes.js';
@@ -36,7 +36,7 @@ import tradeCyclesRoutes from '../routes/trade-cycles.routes.js';
 import tradePerformanceRoutes from '../routes/trade-performance.routes.js';
 import entryDecisionsRoutes from '../routes/entry-decisions.routes.js';
 import tradingAccountsRoutes from '../routes/trading-accounts.routes.js';
-import adminUsersRoutes from '../routes/admin-users.routes.js';
+import usersRoutes from '../routes/users.routes.js';
 
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
@@ -48,7 +48,7 @@ function redactSensitiveRequestUrl(url?: string) {
   }
 
   return url.replace(
-    /(\/api\/admin-auth\/setup\/)[^/?#]+/g,
+    /(\/api\/auth\/setup\/)[^/?#]+/g,
     '$1[redacted]',
   );
 }
@@ -86,8 +86,8 @@ export function createApp() {
 
   app.use('/health', healthRoutes);
   
-  // Admin auth routes
-  app.use('/api/admin-auth', adminAuthRoutes);
+  // Human authentication routes
+  app.use('/api/auth', authRoutes);
 
   // Client / n8n signal routes
   app.use('/api/signals', requireSignalApiKey, signalsRoutes);
@@ -109,7 +109,7 @@ export function createApp() {
   app.use('/api/trade-cycles', requireAdminAccess, tradeCyclesRoutes);
   app.use('/api/trade-performance', requireAdminAccess, tradePerformanceRoutes);
   app.use('/api/trading-accounts', requireAdminAccess, tradingAccountsRoutes);
-  app.use('/api/admin-users', requireAdminAccess, adminUsersRoutes);
+  app.use('/api/users', usersRoutes);
   app.use('/api/config', requireAdminAccess, configRoutes);
   app.use('/api/strategies', requireAdminAccess, strategiesRoutes);
   app.use('/api/exit-profiles', requireAdminAccess, exitProfilesRoutes);

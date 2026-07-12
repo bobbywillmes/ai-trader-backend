@@ -19,7 +19,7 @@ The root `README.md` is the project front door. These docs are the working manua
 | Run or debug Prisma migrations                          | [Database Migrations](production/database-migrations.md) |
 | Diagnose production problems                            | [Troubleshooting](production/troubleshooting.md) |
 | Understand the n8n → backend contract                   | [n8n Integration](integrations/n8n.md) |
-| Manage trading accounts and broker credentials          | [Trading Account Admin API](api/trading-accounts.md) |
+| Manage trading accounts and broker credentials          | [Trading Account API](api/trading-accounts.md) |
 | Understand Alpaca broker API observability              | [Alpaca Integration](integrations/alpaca.md) |
 | Generate and view the database diagram                  | [Database Visualization](database/README.md) |
 
@@ -83,13 +83,13 @@ Documents the review-only momentum scanner foundation:
 - `MomentumCandidate`
 - price and volume confirmation
 - `MomentumScannerHandoff`
-- Admin UI research dashboard, candidate/catalyst browsing, symbol research,
+- Web UI research dashboard, candidate/catalyst browsing, symbol research,
   pipeline review, and universe management pages
 - n8n signal routes
 - Slack review alerts
 - safety boundaries and future work
 
-Use this doc when changing catalyst/news ingestion, candidate generation, price confirmation, scanner handoffs, or Momentum Scanner Admin UI behavior.
+Use this doc when changing catalyst/news ingestion, candidate generation, price confirmation, scanner handoffs, or Momentum Scanner web UI behavior.
 
 ### [Worker Health](architecture/workers.md)
 
@@ -97,11 +97,11 @@ Documents recurring worker inventory, cadence, health status derivation, persist
 
 ## 🔌 API Docs
 
-API docs describe backend HTTP surfaces that are stable enough to call from admin tools, automation, or future UI work.
+API docs describe backend HTTP surfaces that are stable enough to call from operational tools, automation, or future UI work.
 
-### [Trading Account Admin API](api/trading-accounts.md)
+### [Trading Account API](api/trading-accounts.md)
 
-Documents admin-only trading account read/update endpoints and account-scoped broker credential upsert, verification, and revocation behavior.
+Documents permission-protected trading account read/update endpoints and account-scoped broker credential upsert, verification, and revocation behavior.
 
 ## 🔁 Integration Docs
 
@@ -134,7 +134,7 @@ Use this doc when editing or debugging the `AI Trader - Momentum Scanner Review`
 
 ### [Alpaca Integration](integrations/alpaca.md)
 
-Documents the backend-owned Alpaca REST integration, request metadata requirements, API usage tracking, rate-limit backoff behavior, persistence, and the Admin UI usage panel.
+Documents the backend-owned Alpaca REST integration, request metadata requirements, API usage tracking, rate-limit backoff behavior, persistence, and the web UI usage panel.
 
 Use this doc when adding Alpaca adapter calls, changing broker polling behavior, or investigating Alpaca rate-limit pressure.
 
@@ -142,20 +142,20 @@ Use this doc when adding Alpaca adapter calls, changing broker polling behavior,
 
 ### [Access Control & RBAC](security/README.md)
 
-Documents human admin authentication, machine authentication, roles, permissions, trading account access, owner onboarding, setup links, and the read-only account viewer portal.
+Documents human authentication, machine authentication, Platform Roles, Platform Permissions, Trading Account memberships, System Owner onboarding, setup links, and the Account Portal.
 
 Use this doc when changing:
 
-- `AdminUser`
-- `AdminSession`
-- `AdminUserSetupToken`
-- `TradingAccountAccess`
-- admin authentication routes
+- `User`
+- `UserSession`
+- `UserSetupToken`
+- `TradingAccountMembership`
+- `/api/auth` routes
 - RBAC middleware
 - Users & Access
 - invite/setup onboarding
-- `/portal` viewer routing
-- account-scoped viewer API routes
+- `/portal` Account User routing
+- membership-scoped Trading Account API routes
 
 ## 🚢 Production Docs
 
@@ -163,7 +163,7 @@ Production docs are operational runbooks. They should be accurate, practical, an
 
 ### [Production Deployment](production/deployment.md)
 
-Initial and routine production deployment checklist for the backend and admin UI.
+Initial and routine production deployment checklist for the backend and web UI.
 
 Use this when setting up production or walking through a full deployment verification.
 
@@ -228,7 +228,7 @@ backend health
   -> broker mode
   -> runtime settings
   -> risk gate behavior
-  -> admin UI
+  -> web UI
   -> n8n dry run
   -> n8n signal handling
 ```
@@ -271,7 +271,6 @@ docs/api/signals.md
 docs/api/settings.md
 docs/api/tracked-positions.md
 docs/api/market-diary.md
-docs/integrations/admin-ui.md
 docs/architecture/data-models.md
 docs/decisions/
 ```

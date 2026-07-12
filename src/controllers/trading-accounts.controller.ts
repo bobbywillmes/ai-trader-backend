@@ -2,12 +2,12 @@ import type { NextFunction, Request, Response } from 'express';
 import { ZodError } from 'zod';
 
 import { HttpError } from '../errors/http-error.js';
-import { isOwnerRole } from '../types/admin-rbac.js';
+import { isSystemOwnerRole } from '../types/platform-rbac.js';
 import {
   getTradingAccountForAdmin,
   getTradingAccountSummaryById,
   listTradingAccountsForAdmin,
-  listTradingAccountsForAdminUser,
+  listTradingAccountsForUser,
   updateTradingAccountForAdmin,
 } from '../services/trading-account.service.js';
 import { getNormalizedOpenOrders } from '../services/orders.service.js';
@@ -104,11 +104,15 @@ export async function listTradingAccountsController(
   next: NextFunction
 ) {
   try {
-    const adminUser = res.locals.adminUser;
+    const user = res.locals.user;
+    if (!user) {
+      throw new HttpError(401, 'Authentication required.');
+    }
 
-    const accounts = await listTradingAccountsForAdminUser({
-      adminUserId: adminUser.id,
-      isOwner: isOwnerRole(adminUser.role) || Boolean(res.locals.isStaticAdminKey),
+    const accounts = await listTradingAccountsForUser({
+      userId: user.id,
+      isSystemOwner:
+        isSystemOwnerRole(user.platformRole) || Boolean(res.locals.isStaticAdminKey),
     });
 
     res.status(200).json({ accounts });

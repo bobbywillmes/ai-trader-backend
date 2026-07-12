@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   getTradingAccountForAdmin: vi.fn(),
   getTradingAccountSummaryById: vi.fn(),
   listTradingAccountsForAdmin: vi.fn(),
-  listTradingAccountsForAdminUser: vi.fn(),
+  listTradingAccountsForUser: vi.fn(),
   updateTradingAccountForAdmin: vi.fn(),
   getNormalizedOpenOrders: vi.fn(),
   getOpenTrackedPositionsForTradingAccount: vi.fn(),
@@ -42,7 +42,7 @@ vi.mock('../services/trading-account.service.js', () => ({
   getTradingAccountForAdmin: mocks.getTradingAccountForAdmin,
   getTradingAccountSummaryById: mocks.getTradingAccountSummaryById,
   listTradingAccountsForAdmin: mocks.listTradingAccountsForAdmin,
-  listTradingAccountsForAdminUser: mocks.listTradingAccountsForAdminUser,
+  listTradingAccountsForUser: mocks.listTradingAccountsForUser,
   updateTradingAccountForAdmin: mocks.updateTradingAccountForAdmin,
 }));
 
@@ -152,7 +152,7 @@ describe('trading accounts controller', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.listTradingAccountsForAdmin.mockResolvedValue([{ id: 1 }]);
-    mocks.listTradingAccountsForAdminUser.mockResolvedValue([{ id: 1 }]);
+    mocks.listTradingAccountsForUser.mockResolvedValue([{ id: 1 }]);
     mocks.getTradingAccountForAdmin.mockResolvedValue({ id: 1 });
     mocks.getTradingAccountSummaryById.mockResolvedValue({
       id: 1,
@@ -233,18 +233,18 @@ describe('trading accounts controller', () => {
       {
         ...res,
         locals: {
-          adminUser: {
+          user: {
             id: 42,
-            role: 'account_viewer',
+            platformRole: 'ACCOUNT_USER',
           },
         },
       } as unknown as Response,
       next
     );
 
-    expect(mocks.listTradingAccountsForAdminUser).toHaveBeenCalledWith({
-      adminUserId: 42,
-      isOwner: false,
+    expect(mocks.listTradingAccountsForUser).toHaveBeenCalledWith({
+      userId: 42,
+      isSystemOwner: false,
     });
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ accounts: [{ id: 1 }] });
@@ -260,18 +260,18 @@ describe('trading accounts controller', () => {
       {
         ...res,
         locals: {
-          adminUser: {
+          user: {
             id: 1,
-            role: 'owner',
+            platformRole: 'SYSTEM_OWNER',
           },
         },
       } as unknown as Response,
       next
     );
 
-    expect(mocks.listTradingAccountsForAdminUser).toHaveBeenCalledWith({
-      adminUserId: 1,
-      isOwner: true,
+    expect(mocks.listTradingAccountsForUser).toHaveBeenCalledWith({
+      userId: 1,
+      isSystemOwner: true,
     });
     expect(res.status).toHaveBeenCalledWith(200);
     expect(next).not.toHaveBeenCalled();

@@ -318,7 +318,7 @@ describe('momentum scanner routes', () => {
     expect(missingAdmin.status).toBe(401);
     await expect(jsonResponse(missingAdmin)).resolves.toMatchObject({
       error: 'Unauthorized',
-      message: 'Admin API key or admin session token required.',
+      message: 'Admin API key or user session token required.',
     });
     expect(signalKeyOnly.status).toBe(401);
     expect(adminKey.status).toBe(200);

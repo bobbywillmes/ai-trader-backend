@@ -3,7 +3,6 @@
 import "dotenv/config";
 import {
   PrismaClient,
-  TradingAccountAccessRole,
   TradingAccountEnvironment,
   TradingAccountStatus,
   TradingBroker,
@@ -76,7 +75,7 @@ function optionalTradingEnvironment(
 }
 
 async function main() {
-  const ownerEmail = requireEnv("DEFAULT_TRADING_ACCOUNT_OWNER_EMAIL");
+  const accountHolderEmail = requireEnv("DEFAULT_TRADING_ACCOUNT_HOLDER_EMAIL");
   const displayName = optionalString(
     "DEFAULT_TRADING_ACCOUNT_DISPLAY_NAME",
     "Bobby Paper",
@@ -91,67 +90,84 @@ async function main() {
   );
 
   console.log("Bootstrapping default trading account...");
-  console.log(`Owner email: ${ownerEmail}`);
+  console.log(`Account holder email: ${accountHolderEmail}`);
   console.log(`Display name: ${displayName}`);
   console.log(`Broker: ${TradingBroker.ALPACA}`);
   console.log(`Environment: ${environment}`);
   console.log(`Estimated trading capital: ${estimatedTradingCapital}`);
 
-  const owner = await prisma.adminUser.findFirst({
+  const accountHolder = await prisma.user.findFirst({
     where: {
       email: {
-        equals: ownerEmail,
+        equals: accountHolderEmail,
         mode: "insensitive",
       },
       enabled: true,
     },
   });
 
-  if (!owner) {
+  if (!accountHolder) {
     throw new Error(
-      `No enabled AdminUser found for DEFAULT_TRADING_ACCOUNT_OWNER_EMAIL=${ownerEmail}`,
+      `No enabled User found for DEFAULT_TRADING_ACCOUNT_HOLDER_EMAIL=${accountHolderEmail}`,
     );
   }
 
-  console.log(`Found owner AdminUser id=${owner.id}`);
+  console.log(`Found account holder User id=${accountHolder.id}`);
 
-  const existingTradingAccount = await prisma.tradingAccount.findFirst({
-    where: {
-      ownerAdminUserId: owner.id,
-      displayName,
-      broker: TradingBroker.ALPACA,
-      environment,
-    },
-  });
-
-  const tradingAccount = existingTradingAccount
-    ? await prisma.tradingAccount.update({
+  const { tradingAccount, existingTradingAccount, membership } =
+    await prisma.$transaction(async (tx) => {
+      const existingTradingAccount = await tx.tradingAccount.findFirst({
         where: {
-          id: existingTradingAccount.id,
-        },
-        data: {
-          estimatedTradingCapital,
-          notes: existingTradingAccount.notes ?? BOOTSTRAP_NOTES,
-        },
-      })
-    : await prisma.tradingAccount.create({
-        data: {
-          ownerAdminUserId: owner.id,
+          accountHolderUserId: accountHolder.id,
           displayName,
           broker: TradingBroker.ALPACA,
           environment,
-          status: TradingAccountStatus.ACTIVE,
-
-          // Safety defaults. The account exists, but the account-scoped runtime
-          // should not be allowed to trade until explicitly enabled later.
-          tradingEnabled: false,
-          killSwitchEnabled: true,
-
-          estimatedTradingCapital,
-          baseCurrency: "USD",
-          notes: BOOTSTRAP_NOTES,
         },
       });
+
+      const tradingAccount = existingTradingAccount
+        ? await tx.tradingAccount.update({
+            where: { id: existingTradingAccount.id },
+            data: {
+              estimatedTradingCapital,
+              notes: existingTradingAccount.notes ?? BOOTSTRAP_NOTES,
+            },
+          })
+        : await tx.tradingAccount.create({
+            data: {
+              accountHolderUserId: accountHolder.id,
+              displayName,
+              broker: TradingBroker.ALPACA,
+              environment,
+              status: TradingAccountStatus.ACTIVE,
+
+              // Safety defaults. The account exists, but the account-scoped runtime
+              // should not be allowed to trade until explicitly enabled later.
+              tradingEnabled: false,
+              killSwitchEnabled: true,
+
+              estimatedTradingCapital,
+              baseCurrency: "USD",
+              notes: BOOTSTRAP_NOTES,
+            },
+          });
+
+      const membership = await tx.tradingAccountMembership.upsert({
+        where: {
+          tradingAccountId_userId: {
+            tradingAccountId: tradingAccount.id,
+            userId: accountHolder.id,
+          },
+        },
+        update: {},
+        create: {
+          tradingAccountId: tradingAccount.id,
+          userId: accountHolder.id,
+        },
+      });
+
+      return { tradingAccount, existingTradingAccount, membership };
+    });
 
   console.log(
     existingTradingAccount
@@ -159,46 +175,7 @@ async function main() {
       : `Created TradingAccount id=${tradingAccount.id}`,
   );
 
-  const existingAccess = await prisma.tradingAccountAccess.findUnique({
-    where: {
-      tradingAccountId_adminUserId: {
-        tradingAccountId: tradingAccount.id,
-        adminUserId: owner.id,
-      },
-    },
-  });
-
-  const accessData = {
-    role: TradingAccountAccessRole.OWNER,
-    canView: true,
-    canPauseTrading: true,
-    canResumeTrading: true,
-    canEditRiskSettings: true,
-    canEditStrategySettings: true,
-    canEditCredentials: true,
-    canManageAccess: true,
-  };
-
-  if (existingAccess) {
-    await prisma.tradingAccountAccess.update({
-      where: {
-        id: existingAccess.id,
-      },
-      data: accessData,
-    });
-
-    console.log(`Updated TradingAccountAccess id=${existingAccess.id}`);
-  } else {
-    const access = await prisma.tradingAccountAccess.create({
-      data: {
-        tradingAccountId: tradingAccount.id,
-        adminUserId: owner.id,
-        ...accessData,
-      },
-    });
-
-    console.log(`Created TradingAccountAccess id=${access.id}`);
-  }
+  console.log(`Ensured TradingAccountMembership id=${membership.id}`);
 
   console.log("Backfilling existing single-account trading records...");
 

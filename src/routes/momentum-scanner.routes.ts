@@ -8,7 +8,7 @@ import {
   markMomentumScannerHandoffSentController,
   prepareMomentumScannerHandoffsController,
 } from '../controllers/momentum-scanner-handoffs.controller.js';
-import { requireOwnerAccess } from '../middleware/rbac.js';
+import { requireSystemOwnerAccess } from '../middleware/rbac.js';
 import {
   getMomentumResearchOverviewController,
   getMomentumResearchCandidateController,
@@ -25,22 +25,22 @@ import {
 
 const router = Router();
 
-router.get('/research/overview', requireOwnerAccess, getMomentumResearchOverviewController);
-router.get('/research/candidates', requireOwnerAccess, listMomentumResearchCandidatesController);
-router.get('/research/candidates/:candidateId', requireOwnerAccess, getMomentumResearchCandidateController);
-router.get('/research/catalysts', requireOwnerAccess, listMomentumResearchCatalystsController);
-router.get('/research/symbols/:symbol', requireOwnerAccess, getMomentumSymbolResearchController);
+router.get('/research/overview', requireSystemOwnerAccess, getMomentumResearchOverviewController);
+router.get('/research/candidates', requireSystemOwnerAccess, listMomentumResearchCandidatesController);
+router.get('/research/candidates/:candidateId', requireSystemOwnerAccess, getMomentumResearchCandidateController);
+router.get('/research/catalysts', requireSystemOwnerAccess, listMomentumResearchCatalystsController);
+router.get('/research/symbols/:symbol', requireSystemOwnerAccess, getMomentumSymbolResearchController);
 
-router.get('/universe', requireOwnerAccess, listMomentumUniverseController);
-router.post('/universe', requireOwnerAccess, createMomentumUniverseController);
-router.patch('/universe/:id', requireOwnerAccess, updateMomentumUniverseController);
-router.delete('/universe/:id', requireOwnerAccess, deleteMomentumUniverseController);
+router.get('/universe', requireSystemOwnerAccess, listMomentumUniverseController);
+router.post('/universe', requireSystemOwnerAccess, createMomentumUniverseController);
+router.patch('/universe/:id', requireSystemOwnerAccess, updateMomentumUniverseController);
+router.delete('/universe/:id', requireSystemOwnerAccess, deleteMomentumUniverseController);
 
-router.get('/handoffs', requireOwnerAccess, listMomentumScannerHandoffsController);
-router.post('/handoffs/prepare', requireOwnerAccess, prepareMomentumScannerHandoffsController);
-router.post('/handoffs/:id/mark-sent', requireOwnerAccess, markMomentumScannerHandoffSentController);
-router.post('/handoffs/:id/acknowledge', requireOwnerAccess, acknowledgeMomentumScannerHandoffController);
-router.post('/handoffs/:id/mark-failed', requireOwnerAccess, markMomentumScannerHandoffFailedController);
-router.get('/handoffs/:id', requireOwnerAccess, getMomentumScannerHandoffController);
+router.get('/handoffs', requireSystemOwnerAccess, listMomentumScannerHandoffsController);
+router.post('/handoffs/prepare', requireSystemOwnerAccess, prepareMomentumScannerHandoffsController);
+router.post('/handoffs/:id/mark-sent', requireSystemOwnerAccess, markMomentumScannerHandoffSentController);
+router.post('/handoffs/:id/acknowledge', requireSystemOwnerAccess, acknowledgeMomentumScannerHandoffController);
+router.post('/handoffs/:id/mark-failed', requireSystemOwnerAccess, markMomentumScannerHandoffFailedController);
+router.get('/handoffs/:id', requireSystemOwnerAccess, getMomentumScannerHandoffController);
 
 export default router;
