@@ -13,7 +13,7 @@ npm run start        # Run compiled production server
 npm run dev:tunnel   # Start ngrok tunnel for local n8n access
 ```
 
-**Admin UI (`apps/admin-ui/`):**
+**Web UI (`apps/web/`):**
 ```bash
 npm run dev          # Vite dev server on port 5173
 npm run build        # Production build
@@ -28,23 +28,21 @@ npx prisma generate               # Regenerate Prisma client after schema change
 npx tsx src/db/seed.ts            # Seed initial data
 ```
 
-There are no automated tests in this repository.
-
 ## Architecture
 
 ### Overview
 
 This is a Node.js/Express backend that bridges automation signals (from n8n) to the Alpaca brokerage API. It manages the full order lifecycle: receiving signals → creating order intents → submitting to Alpaca → tracking positions → evaluating exit conditions.
 
-The Admin UI (`apps/admin-ui/`) is a separate React/Vite app that communicates with the backend over HTTP using an admin bearer token session.
+The web UI (`apps/web/`) is a separate React/Vite app that communicates with the backend over HTTP using a User session bearer token.
 
 ### Authentication (Dual-Key System)
 
 Two API keys control access:
 - **Signal Key** (`AI_TRADER_SIGNAL_API_KEY`): For automation clients (n8n). Can submit entry signals and read open positions only.
-- **Admin Key** (`AI_TRADER_ADMIN_API_KEY`): Full access. Also used to bootstrap and authenticate admin UI sessions.
+- Admin Key (`AI_TRADER_ADMIN_API_KEY`): Full static access for trusted maintenance and operational requests. It is separate from human User sessions.
 
-Middleware lives in `src/middleware/`. Admin UI sessions use bearer tokens stored in `AdminSession`.
+Middleware lives in `src/middleware/`. Web UI sessions use bearer tokens stored in `UserSession`.
 
 ### Order Lifecycle (Async Two-Phase)
 
@@ -83,9 +81,9 @@ Four continuous 2-second loops run on server startup:
 
 All significant state transitions are written to `SystemEvent` via `src/services/system-event.service.ts`. This is the audit log — use it for debugging and tracing order/position lifecycle.
 
-### Admin UI
+### Web UI
 
-React 19 + Vite at `apps/admin-ui/`. Uses TanStack Query for all server state. Feature code lives under `src/features/` organized by domain (subscriptions, exitProfiles, etc.). The app connects to the backend on port 3000; the session token is persisted in localStorage.
+React 19 + Vite at `apps/web/`. Uses TanStack Query for all server state. Feature code lives under `src/features/` organized by domain (subscriptions, exitProfiles, etc.). The app connects to the backend on port 3000; the session token is persisted in localStorage.
 
 ### Environment
 

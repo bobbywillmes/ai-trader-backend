@@ -1,6 +1,6 @@
 # AI Trader Backend
 
-AI Trader Backend is the broker/control layer between the n8n AI Trader workflows, the Admin UI, and Alpaca paper/live brokerage accounts.
+AI Trader Backend is the broker/control layer between the n8n AI Trader workflows, the web UI, and Alpaca paper/live brokerage accounts.
 
 n8n decides what it wants to do. The backend decides whether that request is allowed, records the intent, submits approved orders to Alpaca, tracks the resulting position, imports broker-confirmed activity, evaluates exits, and records a durable audit trail.
 
@@ -48,7 +48,7 @@ The backend currently handles:
 - Account snapshot history
 - Performance reporting from closed trade cycles
 - System event audit logging
-- Admin UI authentication and controls
+- Web UI authentication and controls
 - Production readiness checks
 
 ## 🔐 Access control
@@ -57,7 +57,7 @@ AI Trader separates machine access from human access.
 
 ### Machine access
 
-n8n uses the signal API key and is limited to signal/client workflows. It should not use the admin API key, broker credentials, or human Admin UI sessions.
+n8n uses the signal API key and is limited to signal/client workflows. It should not use the admin API key, broker credentials, or human User session tokens.
 
 ```text
 AI_TRADER_SIGNAL_API_KEY -> n8n / automation routes
@@ -65,11 +65,11 @@ AI_TRADER_SIGNAL_API_KEY -> n8n / automation routes
 
 ### Human access
 
-Human users log in through the Admin UI and receive a User session bearer token.
+Human users log in through the web UI and receive a User session bearer token.
 
 ```text
-SYSTEM_OWNER -> full Admin Console with unrestricted Trading Account scope
-OPERATOR     -> permission-driven Admin Console with membership-scoped accounts
+SYSTEM_OWNER -> full admin console with unrestricted Trading Account scope
+OPERATOR     -> permission-driven admin console with membership-scoped accounts
 ACCOUNT_USER -> read-only Account Portal with membership-scoped accounts
 ```
 
@@ -78,13 +78,13 @@ Owners can invite users from **System → Users & Access**. Invite links are one
 For the full model, see [Access Control & RBAC](docs/security/README.md).
 
 
-## 🖥️ Admin UI experiences
+## 🖥️ Web UI experiences
 
-The React Admin UI now has two role-based experiences.
+The React UI now has two role-based experiences.
 
 ### Admin Console
 
-System Owners can access the full operational console. Operators see the subset allowed by their Platform Permissions:
+System owners can access the full operational console. Operators see the subset allowed by their Platform Permissions:
 
 - Dashboard
 - Trading Accounts
@@ -142,14 +142,14 @@ For trading safety design, see [Risk & Safety](docs/architecture/risk-and-safety
 - Prisma
 - Docker Compose
 - Alpaca Trading API
-- React / Vite admin UI
+- React / Vite web UI
 - Mantine
 - TanStack Query
 
 ## 📁 Project Structure
 ```
 apps/
-  admin-ui/               React admin UI
+  web/                    React web app
 
 src/
   app.ts                  Express app setup
@@ -199,10 +199,10 @@ Start the backend:
 npm run dev
 ```
 
-Start the admin UI:
+Start the web UI:
 
 ```bash
-cd apps/admin-ui
+cd apps/web
 npm install
 npm run dev
 ```
@@ -215,10 +215,10 @@ From the repo root:
 npm run check
 npm run build
 ```
-Build the admin UI:
+Build the web app:
 
 ```bash
-cd apps/admin-ui
+cd apps/web
 npm run build
 cd ../..
 ```
@@ -274,7 +274,7 @@ Work locally
 → run migrations if needed
 → rebuild/restart containers
 → verify health
-→ verify admin UI
+→ verify web UI
 → verify n8n behavior
 ```
 For more about production workflow, see:
@@ -298,12 +298,12 @@ Workers are guarded to avoid overlapping ticks and duplicate lifecycle events.
 
 ## 🚀 Local validation
 
-Before committing backend/admin UI changes:
+Before committing backend/web app changes:
 
 ```bash
 npm run check
 npm run build
-cd apps/admin-ui
+cd apps/web
 npm run lint
 npm run build
 cd ../..
@@ -318,7 +318,7 @@ Production runs on a Hostinger VPS through Docker Compose:
 
 ```text
 Caddy reverse proxy / HTTPS
-React Admin UI static build
+React web UI static build
 Node/Express backend
 PostgreSQL
 Prisma migrations
@@ -348,8 +348,8 @@ Signal API key
   Used by n8n and automation clients.
   Limited to signal/client routes.
 
-Admin session bearer token
-  Used by the Admin UI after human login.
+User session bearer token
+  Used by the web UI after human login.
   Platform roles select the application surface, permissions select console features,
   and memberships determine Trading Account scope.
 
@@ -371,8 +371,8 @@ System Owner login works
 Users & Access loads
 Create Invite opens
 Account User login lands on /portal
-Account User cannot access Admin Console pages
-Dashboard / Trading Accounts / Settings load for System Owner
+Account User cannot access admin console pages
+Dashboard / Trading Accounts / Settings load for system owner
 n8n signal smoke test passes
 ```
 
@@ -448,7 +448,7 @@ Automated paper trading should only be enabled deliberately after confirming:
 - backend health
 - database migration status
 - broker mode alignment
-- admin UI status
+- web UI status
 - Alpaca API Usage status
 - n8n dry-run behavior
 - risk settings

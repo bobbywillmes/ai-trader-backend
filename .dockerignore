@@ -9,5 +9,5 @@ dist
 !.env.example
 !.env.production.example
 
-apps/admin-ui/node_modules
-apps/admin-ui/dist
+apps/web/node_modules
+apps/web/dist

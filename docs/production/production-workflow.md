@@ -11,7 +11,7 @@ The hosted production-like environment runs on Hostinger VPS using Docker Compos
 ```text
 Hostinger VPS
   → Caddy reverse proxy / HTTPS
-  → React admin UI static build
+  → React web UI static build
   → Node/Express backend
   → PostgreSQL
   → Prisma migrations
@@ -22,7 +22,7 @@ Hostinger VPS
 Current production URL pattern:
 
 ```http
-https://srv1700402.hstgr.cloud/        → Admin UI
+https://srv1700402.hstgr.cloud/        → Web UI
 https://srv1700402.hstgr.cloud/health  → Public health check
 https://srv1700402.hstgr.cloud/api/*   → Backend API
 ```
@@ -39,7 +39,7 @@ Recommended local validation before committing:
 npm run check
 npm run build
 
-cd apps/admin-ui
+cd apps/web
 npm run build
 cd ../..
 ```
@@ -55,7 +55,7 @@ git push origin main
 Use conventional commit-style prefixes where practical:
 
 ```text
-feat(admin-ui): ...
+feat(web): ...
 feat(api): ...
 fix(worker): ...
 refactor(db): ...
@@ -103,14 +103,14 @@ For backend-only changes:
 docker compose -f docker-compose.prod.yml up -d backend
 ```
 
-For admin UI changes, rebuild Caddy because the React static build is bundled into the Caddy image:
+For web UI changes, rebuild Caddy because the React static build is bundled into the Caddy image:
 
 ```bash
 docker compose -f docker-compose.prod.yml build caddy
 docker compose -f docker-compose.prod.yml up -d caddy
 ```
 
-For changes that touch both backend and admin UI:
+For changes that touch both backend and web UI:
 
 ```bash
 docker compose -f docker-compose.prod.yml build backend caddy
@@ -170,7 +170,7 @@ account-scoped broker credentials. It is required to decrypt stored
 `TradingAccountCredential` values and should stay stable for the environment
 until a deliberate key-rotation workflow exists.
 
-Runtime database settings should also remain conservative unless deliberately changed from the admin UI:
+Runtime database settings should also remain conservative unless deliberately changed from the web UI:
 
 ```text
 tradingEnabled=false
@@ -206,7 +206,7 @@ Use the Kill Switch:
 Settings → Trading Controls → Kill Switch On
 ```
 
-This blocks new entries while keeping the system online for monitoring, syncing, position tracking, exit workflows, reports, and admin visibility.
+This blocks new entries while keeping the system online for monitoring, syncing, position tracking, exit workflows, reports, and web visibility.
 
 ### Stop automated trading broadly
 

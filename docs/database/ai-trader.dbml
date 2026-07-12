@@ -15,43 +15,43 @@ Table Setting {
   updatedAt DateTime [not null]
 }
 
-Table AdminUser {
+Table User {
   id Int [pk, increment]
   email String [unique, not null]
   passwordHash String
-  role String [not null, default: 'account_viewer']
+  platformRole PlatformRole [not null, default: 'ACCOUNT_USER']
   enabled Boolean [not null, default: true]
   name String
   emailVerifiedAt DateTime
   invitedAt DateTime
-  invitedByAdminUserId Int
-  invitedByAdminUser AdminUser
-  invitedAdminUsers AdminUser [not null]
+  invitedByUserId Int
+  invitedByUser User
+  invitedUsers User [not null]
   setupCompletedAt DateTime
   lastLoginAt DateTime
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
-  sessions AdminSession [not null]
-  setupTokens AdminUserSetupToken [not null]
-  ownedTradingAccounts TradingAccount [not null]
-  tradingAccountAccess TradingAccountAccess [not null]
+  sessions UserSession [not null]
+  setupTokens UserSetupToken [not null]
+  heldTradingAccounts TradingAccount [not null]
+  tradingAccountMemberships TradingAccountMembership [not null]
 }
 
-Table AdminUserSetupToken {
+Table UserSetupToken {
   id Int [pk, increment]
-  adminUserId Int [not null]
+  userId Int [not null]
   tokenHash String [unique, not null]
   expiresAt DateTime [not null]
   usedAt DateTime
   revokedAt DateTime
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
-  adminUser AdminUser [not null]
+  user User [not null]
 }
 
-Table AdminSession {
+Table UserSession {
   id Int [pk, increment]
-  adminUserId Int [not null]
+  userId Int [not null]
   tokenHash String [unique, not null]
   userAgent String
   ipAddress String
@@ -60,13 +60,13 @@ Table AdminSession {
   lastSeenAt DateTime [default: `now()`, not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
-  adminUser AdminUser [not null]
+  user User [not null]
 }
 
 Table TradingAccount {
   id Int [pk, increment]
-  ownerAdminUserId Int [not null]
-  ownerAdminUser AdminUser [not null]
+  accountHolderUserId Int [not null]
+  accountHolder User [not null]
   displayName String [not null]
   broker TradingBroker [not null, default: 'ALPACA']
   environment TradingAccountEnvironment [not null, default: 'PAPER']
@@ -88,7 +88,7 @@ Table TradingAccount {
   notes String
   credential TradingAccountCredential
   riskSettings TradingAccountRiskSettings
-  access TradingAccountAccess [not null]
+  memberships TradingAccountMembership [not null]
   subscriptions Subscription [not null]
   allocations TradingAccountAllocation [not null]
   accountSubscriptions TradingAccountSubscription [not null]
@@ -144,25 +144,17 @@ Table TradingAccountCredential {
   updatedAt DateTime [not null]
 }
 
-Table TradingAccountAccess {
+Table TradingAccountMembership {
   id Int [pk, increment]
   tradingAccountId Int [not null]
   tradingAccount TradingAccount [not null]
-  adminUserId Int [not null]
-  adminUser AdminUser [not null]
-  role TradingAccountAccessRole [not null]
-  canView Boolean [not null, default: true]
-  canPauseTrading Boolean [not null, default: false]
-  canResumeTrading Boolean [not null, default: false]
-  canEditRiskSettings Boolean [not null, default: false]
-  canEditStrategySettings Boolean [not null, default: false]
-  canEditCredentials Boolean [not null, default: false]
-  canManageAccess Boolean [not null, default: false]
+  userId Int [not null]
+  user User [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 
   indexes {
-    (tradingAccountId, adminUserId) [unique]
+    (tradingAccountId, userId) [unique]
   }
 }
 
@@ -821,6 +813,12 @@ Table Subscription {
   tradingAccount TradingAccount
 }
 
+Enum PlatformRole {
+  SYSTEM_OWNER
+  OPERATOR
+  ACCOUNT_USER
+}
+
 Enum TradingBroker {
   ALPACA
 }
@@ -853,12 +851,6 @@ Enum BrokerCredentialStatus {
   ACTIVE
   INVALID
   REVOKED
-}
-
-Enum TradingAccountAccessRole {
-  OWNER
-  MANAGER
-  VIEWER
 }
 
 Enum AssetType {
@@ -952,21 +944,21 @@ Enum MomentumScannerHandoffStatus {
   CANCELLED
 }
 
-Ref: AdminUser.invitedByAdminUserId - AdminUser.id [delete: Set Null]
+Ref: User.invitedByUserId - User.id [delete: Set Null]
 
-Ref: AdminUserSetupToken.adminUserId > AdminUser.id [delete: Cascade]
+Ref: UserSetupToken.userId > User.id [delete: Cascade]
 
-Ref: AdminSession.adminUserId > AdminUser.id
+Ref: UserSession.userId > User.id
 
-Ref: TradingAccount.ownerAdminUserId > AdminUser.id
+Ref: TradingAccount.accountHolderUserId > User.id
 
 Ref: TradingAccountRiskSettings.tradingAccountId - TradingAccount.id [delete: Cascade]
 
 Ref: TradingAccountCredential.tradingAccountId - TradingAccount.id [delete: Cascade]
 
-Ref: TradingAccountAccess.tradingAccountId > TradingAccount.id [delete: Cascade]
+Ref: TradingAccountMembership.tradingAccountId > TradingAccount.id [delete: Cascade]
 
-Ref: TradingAccountAccess.adminUserId > AdminUser.id [delete: Cascade]
+Ref: TradingAccountMembership.userId > User.id [delete: Cascade]
 
 Ref: TradingAccountAllocation.tradingAccountId > TradingAccount.id [delete: Cascade]
 

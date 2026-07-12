@@ -19,9 +19,9 @@ The backend owns:
 - exit evaluation
 - account snapshots
 - system event audit trails
-- admin UI APIs and authentication
+- web UI APIs and authentication
 
-The admin UI lives in `apps/admin-ui/` and is a React/Vite app that talks to the backend HTTP API.
+The web UI lives in `apps/web/` and is a React/Vite app that talks to the backend HTTP API.
 
 The Prisma schema in `prisma/schema.prisma` is the source of truth for the database model.
 
@@ -123,7 +123,7 @@ npm.cmd test
 npm.cmd run build
 ```
 
-Admin UI commands from `apps/admin-ui/`:
+Web UI commands from `apps/web/`:
 
 ```bash
 npm run dev
@@ -152,10 +152,10 @@ npm run test
 npm run build
 ```
 
-For admin UI changes, run the relevant UI checks:
+For web UI changes, run the relevant UI checks:
 
 ```bash
-cd apps/admin-ui
+cd apps/web
 npm run build
 npm run lint
 ```
@@ -253,18 +253,20 @@ Do not run `prisma format` in this repository. The Prisma schema intentionally u
 
 Do not backfill production data casually. Treat historical trading data as audit-sensitive.
 
-## Admin UI Guidance
+## Web UI Guidance
 
-The admin UI is an operational console, not a marketing site.
+The web UI is an operational console, not a marketing site.
 
 Keep UI changes:
 
 - dense but readable
 - predictable for repeated use
-- consistent with existing feature folders under `apps/admin-ui/src/features/`
+- consistent with existing feature folders under `apps/web/src/features/`
 - connected to backend APIs through feature-specific `api.ts`, `hooks.ts`, and `types.ts`
 
-Only rebuild the admin UI when UI code changes.
+Only rebuild the web UI when UI code changes.
+
+When building apps/web, Vite may report a large-chunk warning. This is expected for this internal web application and does not need to be highlighted unless the build fails or the warning materially changes.
 
 ## Documentation Rules
 
@@ -305,7 +307,7 @@ create feature branch from main
 -> run migrations if needed
 -> rebuild/restart containers
 -> verify health
--> verify admin UI
+-> verify web UI
 -> verify n8n behavior
 ```
 

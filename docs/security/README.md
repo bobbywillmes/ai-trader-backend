@@ -8,7 +8,7 @@ AI Trader separates machine authentication, human sessions, platform permissions
 - Human users authenticate through `/api/auth` and use a User session bearer token.
 - The static admin API key is reserved for trusted maintenance operations and is not an n8n credential.
 
-There is no public registration. A System Owner creates invitations in **System → Users & Access**, then shares the generated one-time setup link manually. Setup tokens are hashed in the database, expire after seven days, and are invalidated when regenerated.
+There is no public registration. A system owner creates invitations in **System → Users & Access**, then shares the generated one-time setup link manually. Setup tokens are hashed in the database, expire after seven days, and are invalidated when regenerated.
 
 ## Platform roles and application surfaces
 
@@ -18,11 +18,11 @@ There is no public registration. A System Owner creates invitations in **System 
 | `OPERATOR` | Admin Console | Explicit `TradingAccountMembership` records |
 | `ACCOUNT_USER` | Account Portal at `/portal` | Explicit `TradingAccountMembership` records |
 
-Platform role selects the application surface. Platform permissions control features within the Admin Console. Trading Account memberships determine which accounts a non-System-Owner user may access.
+Platform role selects the application surface. Platform permissions control features within the admin console. Trading account memberships determine which accounts a non-system-owner user may access.
 
 `accessibleTradingAccountIds` semantics:
 
-- `null`: unrestricted System Owner scope
+- `null`: unrestricted System owner scope
 - `[]`: no assigned Trading Accounts
 - `number[]`: explicit membership scope
 
@@ -39,7 +39,7 @@ Memberships do not contain account-level roles or capability flags.
 - `reports.read`
 - `systemEvents.read`
 
-System Owners receive every permission. Operators receive operational trading, risk, subscription, strategy-read, exit-profile-read, and reporting permissions. Account Users receive the read permissions required by the Account Portal, subject to membership scope.
+System owners receive every permission. Operators receive operational trading, risk, subscription, strategy-read, exit-profile-read, and reporting permissions. Account Users receive the read permissions required by the Account Portal, subject to membership scope.
 
 ## Enforcement and validation
 
@@ -47,9 +47,9 @@ The backend validates the session, platform permission, and Trading Account memb
 
 Disabled users and users with incomplete setup cannot sign in. The backend prevents demoting the final System Owner, disabling the final enabled System Owner, changing one's own platform role, and removing a membership required by an account-holder assignment.
 
-- Confirm System Owner login enters the full Admin Console and can open `/users`.
-- Confirm Operator login enters the Admin Console and only sees permitted features.
-- Confirm Account User login enters `/portal` and only sees membership-scoped accounts.
+- Confirm system owner login enters the full owner console and can open `/users`.
+- Confirm Operator login enters the owner console and only sees permitted features.
+- Confirm account user login enters `/portal` and only sees membership-scoped accounts.
 - Confirm direct unauthorized routes and API requests are rejected.
 - Confirm invitation, setup completion, setup-link regeneration, and membership replacement.
 - Confirm n8n continues to authenticate only with its signal API key.
