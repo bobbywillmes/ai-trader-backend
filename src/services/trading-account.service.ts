@@ -8,6 +8,10 @@ import {
 import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
 import type { UpdateTradingAccountInput } from '../validators/trading-account.schema.js';
+import {
+  assertAccountRiskConfiguration,
+  withAccountRiskConfigurationTransaction,
+} from './trading-account-risk-configuration.service.js';
 
 const LEGACY_DEFAULT_TRADING_ACCOUNT = {
   broker: TradingBroker.ALPACA,
@@ -26,6 +30,7 @@ const TRADING_ACCOUNT_ADMIN_SELECT = {
   tradingEnabled: true,
   killSwitchEnabled: true,
   estimatedTradingCapital: true,
+  maxDeployableNotional: true,
   baseCurrency: true,
   brokerAccountId: true,
   brokerAccountNumberMasked: true,
@@ -49,6 +54,10 @@ const TRADING_ACCOUNT_ADMIN_SELECT = {
       lastFailedAt: true,
       revokedAt: true,
     },
+  },
+  allocations: {
+    where: { enabled: true },
+    select: { maxAllocatedNotional: true },
   },
 } satisfies Prisma.TradingAccountSelect;
 
@@ -95,6 +104,14 @@ export function serializeTradingAccountForAdmin(
   totalOpenPositionNotional = 0
 ) {
   const credential = account.credential;
+  const enabledAllocatedNotional = (account.allocations ?? []).reduce(
+    (total, allocation) => total + (allocation.maxAllocatedNotional ?? 0),
+    0
+  );
+  const remainingDeployableNotional =
+    account.maxDeployableNotional === null
+      ? null
+      : account.maxDeployableNotional - enabledAllocatedNotional;
 
   return {
     id: account.id,
@@ -105,6 +122,9 @@ export function serializeTradingAccountForAdmin(
     tradingEnabled: account.tradingEnabled,
     killSwitchEnabled: account.killSwitchEnabled,
     estimatedTradingCapital: account.estimatedTradingCapital,
+    maxDeployableNotional: account.maxDeployableNotional,
+    enabledAllocatedNotional,
+    remainingDeployableNotional,
     baseCurrency: account.baseCurrency,
     brokerAccountId: account.brokerAccountId,
     brokerAccountNumberMasked: account.brokerAccountNumberMasked,
@@ -276,19 +296,13 @@ export async function updateTradingAccountForAdmin(
   id: number,
   input: UpdateTradingAccountInput
 ) {
-  const existing = await prisma.tradingAccount.findUnique({
-    where: { id },
-    select: { id: true },
-  });
-
-  if (!existing) {
-    return null;
-  }
-
   const data: Prisma.TradingAccountUpdateInput = {
     ...(input.displayName !== undefined && { displayName: input.displayName }),
     ...(input.estimatedTradingCapital !== undefined && {
       estimatedTradingCapital: input.estimatedTradingCapital,
+    }),
+    ...(input.maxDeployableNotional !== undefined && {
+      maxDeployableNotional: input.maxDeployableNotional,
     }),
     ...(input.status !== undefined && { status: input.status }),
     ...(input.tradingEnabled !== undefined && {
@@ -303,13 +317,26 @@ export async function updateTradingAccountForAdmin(
     ...(input.notes !== undefined && { notes: input.notes }),
   };
 
-  const account = await prisma.tradingAccount.update({
-    where: { id },
-    data,
-    select: TRADING_ACCOUNT_ADMIN_SELECT,
-  });
+  return withAccountRiskConfigurationTransaction(async (tx) => {
+    const existing = await tx.tradingAccount.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!existing) return null;
 
-  return serializeTradingAccountForAdmin(account);
+    if (input.maxDeployableNotional !== undefined) {
+      await assertAccountRiskConfiguration(tx, id, {
+        account: { maxDeployableNotional: input.maxDeployableNotional },
+      });
+    }
+
+    const account = await tx.tradingAccount.update({
+      where: { id },
+      data,
+      select: TRADING_ACCOUNT_ADMIN_SELECT,
+    });
+    return serializeTradingAccountForAdmin(account);
+  });
 }
 
 export async function resolveDefaultTradingAccount(): Promise<TradingAccount> {

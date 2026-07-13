@@ -23,6 +23,20 @@ vi.mock('../db/prisma.js', () => ({
   },
 }));
 
+vi.mock('./trading-account-risk-configuration.service.js', () => ({
+  assertAccountRiskConfiguration: vi.fn().mockResolvedValue(true),
+  withAccountRiskConfigurationTransaction: vi.fn((operation) =>
+    operation({
+      tradingAccount: { findUnique: mocks.tradingAccountFindUnique },
+      tradingAccountAllocation: {
+        create: mocks.allocationCreate,
+        findFirst: mocks.allocationFindFirst,
+        update: mocks.allocationUpdate,
+      },
+    })
+  ),
+}));
+
 import {
   createTradingAccountAllocationForAdmin,
   listTradingAccountAllocationsForAdmin,
@@ -50,6 +64,10 @@ function allocationRecord(overrides: Record<string, unknown> = {}) {
     _count: {
       accountSubscriptions: 2,
     },
+    accountSubscriptions: [
+      { reservedNotional: 2_000 },
+      { reservedNotional: 1_500 },
+    ],
     ...overrides,
   };
 }
@@ -110,7 +128,13 @@ describe('trading account allocation service', () => {
     vi.clearAllMocks();
     mocks.tradingAccountFindUnique.mockResolvedValue({ id: 1 });
     mocks.allocationFindMany.mockResolvedValue([]);
-    mocks.allocationFindFirst.mockResolvedValue({ id: 10 });
+    mocks.allocationFindFirst.mockResolvedValue({
+      id: 10,
+      enabled: true,
+      maxAllocatedNotional: 10_000,
+      maxOpenPositions: 4,
+      maxPositionNotional: 2_500,
+    });
     mocks.allocationCreate.mockResolvedValue(allocationRecord());
     mocks.allocationUpdate.mockResolvedValue(allocationRecord());
   });
@@ -126,6 +150,9 @@ describe('trading account allocation service', () => {
         tradingAccountId: 1,
         key: 'swing',
         accountSubscriptionCount: 3,
+        reservedNotional: 3_500,
+        remainingAllocatedNotional: 6_500,
+        entryEnabledSubscriptionCount: 2,
       }),
     ]);
 
@@ -230,7 +257,13 @@ describe('trading account allocation service', () => {
         id: 10,
         tradingAccountId: 1,
       },
-      select: { id: true },
+      select: {
+        id: true,
+        enabled: true,
+        maxAllocatedNotional: true,
+        maxOpenPositions: true,
+        maxPositionNotional: true,
+      },
     });
     expect(mocks.allocationUpdate).toHaveBeenCalledWith({
       where: { id: 10 },

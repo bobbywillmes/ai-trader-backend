@@ -22,6 +22,7 @@ export const updateTradingAccountSchema = z
   .strictObject({
     displayName: z.string().trim().min(1).optional(),
     estimatedTradingCapital: z.coerce.number().nonnegative().nullable().optional(),
+    maxDeployableNotional: z.coerce.number().positive().nullable().optional(),
     status: z.enum(TradingAccountStatus).optional(),
     tradingEnabled: z.boolean().optional(),
     killSwitchEnabled: z.boolean().optional(),
@@ -119,6 +120,7 @@ const accountSubscriptionBaseSchema = {
   sizingType: z.enum(PositionSizingType).optional(),
   fixedQty: z.coerce.number().positive().nullable().optional(),
   maxPositionNotional: z.coerce.number().positive().nullable().optional(),
+  reservedNotional: z.coerce.number().positive().nullable().optional(),
   minPositionNotional: z.coerce.number().nonnegative().nullable().optional(),
   maxQty: z.coerce.number().positive().nullable().optional(),
   notes: z.string().trim().nullable().optional(),

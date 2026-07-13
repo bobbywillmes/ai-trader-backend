@@ -37,6 +37,18 @@ vi.mock('../db/prisma.js', () => ({
   },
 }));
 
+vi.mock('./trading-account-risk-configuration.service.js', () => ({
+  assertAccountRiskConfiguration: vi.fn().mockResolvedValue(true),
+  withAccountRiskConfigurationTransaction: vi.fn((operation) =>
+    operation({
+      tradingAccount: {
+        findUnique: mocks.tradingAccountFindUnique,
+        update: mocks.tradingAccountUpdate,
+      },
+    })
+  ),
+}));
+
 import {
   getTradingAccountForAdmin,
   listTradingAccountsForAdmin,
@@ -57,6 +69,7 @@ function tradingAccount(overrides: Partial<TradingAccount> = {}): TradingAccount
     tradingEnabled: false,
     killSwitchEnabled: true,
     estimatedTradingCapital: null,
+    maxDeployableNotional: null,
     baseCurrency: 'USD',
     brokerAccountId: null,
     brokerAccountNumberMasked: null,
@@ -200,8 +213,12 @@ describe('trading account service', () => {
 
   it('returns a safe empty credential summary when no credential exists', async () => {
     mocks.tradingAccountFindUnique.mockResolvedValue({
-      ...tradingAccount(),
+      ...tradingAccount({ maxDeployableNotional: 20_000 }),
       credential: null,
+      allocations: [
+        { maxAllocatedNotional: 7_500 },
+        { maxAllocatedNotional: 2_500 },
+      ],
     });
     mocks.trackedPositionFindMany.mockResolvedValue([
       {
@@ -214,6 +231,9 @@ describe('trading account service', () => {
     await expect(getTradingAccountForAdmin(1)).resolves.toEqual(
       expect.objectContaining({
         id: 1,
+        maxDeployableNotional: 20_000,
+        enabledAllocatedNotional: 10_000,
+        remainingDeployableNotional: 10_000,
         totalOpenPositionNotional: 750,
         credential: {
           exists: false,
@@ -309,6 +329,7 @@ describe('trading account service', () => {
         tradingEnabled: false,
         killSwitchEnabled: true,
         estimatedTradingCapital: 25_000,
+        maxDeployableNotional: 20_000,
         pausedReason: 'credential rotation',
         notes: null,
       }),
@@ -321,6 +342,7 @@ describe('trading account service', () => {
       tradingEnabled: false,
       killSwitchEnabled: true,
       estimatedTradingCapital: 25_000,
+      maxDeployableNotional: 20_000,
       pausedReason: 'credential rotation',
       notes: null,
     });
@@ -333,6 +355,7 @@ describe('trading account service', () => {
         tradingEnabled: false,
         killSwitchEnabled: true,
         estimatedTradingCapital: 25_000,
+        maxDeployableNotional: 20_000,
         pausedReason: 'credential rotation',
         notes: null,
       },

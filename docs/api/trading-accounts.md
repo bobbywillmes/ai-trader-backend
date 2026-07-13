@@ -29,11 +29,19 @@ lastBuyingPower
 lastEquity
 lastPortfolioValue
 totalOpenPositionNotional
+maxDeployableNotional
+enabledAllocatedNotional
+remainingDeployableNotional
 ```
 
 `totalOpenPositionNotional` is derived from open/closing tracked positions for
 the trading account using the same market-value-with-cost-basis-fallback
 exposure convention used by runtime risk checks.
+
+`maxDeployableNotional` is the persisted account capital ceiling.
+`enabledAllocatedNotional` is the sum of known budgets for enabled allocations,
+and `remainingDeployableNotional` is the account ceiling minus that sum. The
+summary fields are computed and are not persisted.
 
 Credential summary fields:
 
@@ -73,6 +81,7 @@ Allowed fields:
 ```text
 displayName
 estimatedTradingCapital
+maxDeployableNotional
 status
 tradingEnabled
 killSwitchEnabled
@@ -275,6 +284,11 @@ unassigned active subscriptions, active subscriptions assigned to disabled
 allocations, invalid active subscription sizing, and planned exposure totals
 above broker portfolio value.
 
+Capital-hierarchy violations affecting enabled, entry-enabled subscriptions are
+readiness blockers for both PAPER and LIVE profiles. Risk Health obtains these
+findings from the same centralized configuration validator used by admin
+writes. Dormant legacy findings may be reported as warnings.
+
 ## Preview Entry Risk
 
 Entry risk preview is an admin-only dry-run endpoint for checking account
@@ -358,7 +372,8 @@ Response envelope:
       "entriesEnabled": true,
       "exitsEnabled": true,
       "allocationId": 7,
-      "sizingType": "MAX_NOTIONAL"
+      "sizingType": "MAX_NOTIONAL",
+      "reservedNotional": 1500
     },
     "allocation": {
       "id": 7,
@@ -455,6 +470,9 @@ Response envelope:
       "maxAllocatedNotional": 10000,
       "maxOpenPositions": 4,
       "maxPositionNotional": 2500,
+      "reservedNotional": 4000,
+      "remainingAllocatedNotional": 6000,
+      "entryEnabledSubscriptionCount": 2,
       "notes": null,
       "createdAt": "2026-06-30T00:00:00.000Z",
       "updatedAt": "2026-06-30T00:00:00.000Z",
@@ -507,6 +525,12 @@ notes
 Allocation keys are trimmed, lowercased, and must contain only letters,
 numbers, hyphens, and underscores. Duplicate keys within the same trading
 account return `409`.
+
+Account, allocation, and account-subscription hierarchy conflicts return `409`
+with stable machine-readable violations under `details.violations`. Each
+violation includes a `code`, human-readable `message`, entity identifiers, a
+field `path`, and actual or limit values when useful. Validation evaluates the
+candidate configuration and persistence in the same serializable transaction.
 
 Use `enabled=false` to disable an allocation. Hard delete is intentionally not
 available.
@@ -589,6 +613,7 @@ Response envelope:
     "sizingType": "FIXED_QTY",
     "fixedQty": 1,
     "maxPositionNotional": null,
+    "reservedNotional": 2500,
     "minPositionNotional": null,
     "maxQty": null,
     "notes": null,
@@ -614,7 +639,10 @@ Response envelope:
       "id": 1,
       "key": "momentum",
       "name": "Momentum",
-      "enabled": true
+      "enabled": true,
+      "maxAllocatedNotional": 10000,
+      "maxOpenPositions": 4,
+      "maxPositionNotional": 2500
     }
   }
 }
@@ -637,6 +665,7 @@ Payload:
   "exitsEnabled": true,
   "sizingType": "FIXED_QTY",
   "fixedQty": 1,
+  "reservedNotional": 2500,
   "minPositionNotional": null,
   "maxQty": null,
   "notes": null
@@ -659,6 +688,7 @@ exitsEnabled
 sizingType
 fixedQty
 maxPositionNotional
+reservedNotional
 minPositionNotional
 maxQty
 notes

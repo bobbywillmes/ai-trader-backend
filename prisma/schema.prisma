@@ -138,6 +138,10 @@ model TradingAccount {
   killSwitchEnabled         Boolean @default(true)
 
   estimatedTradingCapital   Float?
+
+  // Authoritative ceiling for the total capital controlled by enabled allocations.
+  // Nullable while legacy account risk configuration is identified and corrected.
+  maxDeployableNotional     Float?
   baseCurrency              String @default("USD")
 
   brokerAccountId           String?
@@ -276,15 +280,14 @@ model TradingAccountAllocation {
 
   enabled                 Boolean @default(true)
 
-  // Total dollars allowed/reserved for this allocation bucket.
-  // Optional for the foundation migration so existing data can be backfilled safely.
+  // Maximum capital this enabled allocation may control within the account ceiling.
+  // Nullable while legacy allocation configuration is identified and corrected.
   maxAllocatedNotional    Float?
 
   // Useful for shared buckets like momentum.
   maxOpenPositions        Int?
 
-  // Optional default per-position cap for subscriptions assigned to this bucket.
-  // TradingAccountSubscription.maxPositionNotional can override this.
+  // Authoritative per-position ceiling for subscriptions assigned to this allocation.
   maxPositionNotional     Float?
 
   notes String?
@@ -325,6 +328,10 @@ model TradingAccountSubscription {
 
   // Used when sizingType = MAX_NOTIONAL.
   maxPositionNotional   Float?
+
+  // Capital reserved inside the assigned allocation, independent of sizing type.
+  // Nullable while legacy account subscriptions are identified and corrected.
+  reservedNotional      Float?
 
   // Optional guardrails.
   minPositionNotional   Float?

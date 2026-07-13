@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   securityFindUnique: vi.fn(),
   subscriptionFindUnique: vi.fn(),
   subscriptionFindFirst: vi.fn(),
+  tradingAccountFindUnique: vi.fn(),
   tradingAccountRiskSettingsFindUnique: vi.fn(),
   tradingAccountSubscriptionFindFirst: vi.fn(),
   trackedPositionFindMany: vi.fn(),
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../db/prisma.js', () => ({
   prisma: {
+    tradingAccount: { findUnique: mocks.tradingAccountFindUnique },
     security: { findUnique: mocks.securityFindUnique },
     subscription: {
       findUnique: mocks.subscriptionFindUnique,
@@ -156,6 +158,9 @@ describe('risk gate entry session integration', () => {
     mocks.trackedPositionFindMany.mockResolvedValue([]);
     mocks.orderIntentFindMany.mockResolvedValue([]);
     mocks.tradingAccountRiskSettingsFindUnique.mockResolvedValue(null);
+    mocks.tradingAccountFindUnique.mockResolvedValue({
+      maxDeployableNotional: 100_000,
+    });
     mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue(null);
     mocks.evaluateEntrySessionGuard.mockResolvedValue({
       allowed: true,
@@ -1143,5 +1148,207 @@ describe('risk gate entry session integration', () => {
         pendingEntryNotional: 800,
       }),
     });
+  });
+
+  it('fails closed when the trading account deployable ceiling is missing', async () => {
+    mocks.subscriptionFindFirst.mockResolvedValue(subscriptionRecord());
+    mocks.tradingAccountFindUnique.mockResolvedValue({
+      maxDeployableNotional: null,
+    });
+
+    const result = await evaluateOrderRisk({
+      symbol: 'SPY',
+      side: 'buy',
+      orderType: 'market',
+      timeInForce: 'day',
+      qty: 1,
+      extendedHours: false,
+      signalType: 'entry',
+      subscriptionId: 22,
+    });
+
+    expect(result).toMatchObject({
+      allowed: false,
+      details: { rule: 'account_max_deployable_notional_required' },
+    });
+  });
+
+  it('fails closed for a legacy entry-enabled unassigned subscription', async () => {
+    mocks.subscriptionFindFirst.mockResolvedValue(subscriptionRecord());
+    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue({
+      id: 44,
+      subscriptionId: 22,
+      allocationId: null,
+      enabled: true,
+      entriesEnabled: true,
+      reservedNotional: 1_000,
+      allocation: null,
+    });
+
+    const result = await evaluateOrderRisk(
+      {
+        symbol: 'SPY',
+        side: 'buy',
+        orderType: 'market',
+        timeInForce: 'day',
+        qty: 1,
+        extendedHours: false,
+        signalType: 'entry',
+        subscriptionId: 22,
+      },
+      { requestedNotionalOverride: 500 }
+    );
+
+    expect(result).toMatchObject({
+      allowed: false,
+      details: { rule: 'account_subscription_allocation_required' },
+    });
+  });
+
+  it('fails closed when the assigned allocation limits are incomplete', async () => {
+    mocks.subscriptionFindFirst.mockResolvedValue(subscriptionRecord());
+    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue({
+      id: 44,
+      subscriptionId: 22,
+      allocationId: 7,
+      enabled: true,
+      entriesEnabled: true,
+      reservedNotional: 1_000,
+      allocation: {
+        id: 7,
+        key: 'core_etf',
+        name: 'Core ETF',
+        enabled: true,
+        maxAllocatedNotional: 5_000,
+        maxOpenPositions: null,
+        maxPositionNotional: 1_500,
+      },
+    });
+
+    const result = await evaluateOrderRisk(
+      {
+        symbol: 'SPY',
+        side: 'buy',
+        orderType: 'market',
+        timeInForce: 'day',
+        qty: 1,
+        extendedHours: false,
+        signalType: 'entry',
+        subscriptionId: 22,
+      },
+      { requestedNotionalOverride: 500 }
+    );
+
+    expect(result).toMatchObject({
+      allowed: false,
+      details: { rule: 'allocation_limits_incomplete' },
+    });
+  });
+
+  it('fails closed when an entry-enabled subscription has no reservation', async () => {
+    mocks.subscriptionFindFirst.mockResolvedValue(subscriptionRecord());
+    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue({
+      id: 44,
+      subscriptionId: 22,
+      allocationId: 7,
+      enabled: true,
+      entriesEnabled: true,
+      reservedNotional: null,
+      allocation: {
+        id: 7,
+        key: 'core_etf',
+        name: 'Core ETF',
+        enabled: true,
+        maxAllocatedNotional: 5_000,
+        maxOpenPositions: 3,
+        maxPositionNotional: 1_500,
+      },
+    });
+
+    const result = await evaluateOrderRisk(
+      {
+        symbol: 'SPY',
+        side: 'buy',
+        orderType: 'market',
+        timeInForce: 'day',
+        qty: 1,
+        extendedHours: false,
+        signalType: 'entry',
+        subscriptionId: 22,
+      },
+      { requestedNotionalOverride: 500 }
+    );
+
+    expect(result).toMatchObject({
+      allowed: false,
+      details: { rule: 'account_subscription_reservation_required' },
+    });
+  });
+
+  it('blocks FIXED_QTY proposed notional above its reservation', async () => {
+    mocks.subscriptionFindFirst.mockResolvedValue(subscriptionRecord());
+    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue({
+      id: 44,
+      subscriptionId: 22,
+      allocationId: 7,
+      enabled: true,
+      entriesEnabled: true,
+      reservedNotional: 1_000,
+      allocation: {
+        id: 7,
+        key: 'core_etf',
+        name: 'Core ETF',
+        enabled: true,
+        maxAllocatedNotional: 5_000,
+        maxOpenPositions: 3,
+        maxPositionNotional: 1_500,
+      },
+    });
+
+    const result = await evaluateOrderRisk(
+      {
+        symbol: 'SPY',
+        side: 'buy',
+        orderType: 'market',
+        timeInForce: 'day',
+        qty: 3,
+        extendedHours: false,
+        signalType: 'entry',
+        subscriptionId: 22,
+      },
+      { requestedNotionalOverride: 1_200 }
+    );
+
+    expect(result).toMatchObject({
+      allowed: false,
+      reason: 'Proposed entry notional exceeds the account subscription reservation.',
+      details: {
+        rule: 'account_subscription_reserved_notional_exceeded',
+        requestedNotional: 1_200,
+        reservedNotional: 1_000,
+      },
+    });
+  });
+
+  it('keeps sell-side exit operations independent of entry hierarchy configuration', async () => {
+    mocks.tradingAccountFindUnique.mockResolvedValue({
+      maxDeployableNotional: null,
+    });
+
+    const result = await evaluateOrderRisk({
+      symbol: 'SPY',
+      side: 'sell',
+      orderType: 'market',
+      timeInForce: 'day',
+      qty: 1,
+      extendedHours: false,
+      signalType: 'exit',
+    });
+
+    expect(result).toMatchObject({
+      allowed: true,
+      details: { orderType: 'non_entry' },
+    });
+    expect(mocks.tradingAccountFindUnique).not.toHaveBeenCalled();
   });
 });

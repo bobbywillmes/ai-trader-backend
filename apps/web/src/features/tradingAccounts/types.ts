@@ -39,6 +39,9 @@ export type TradingAccount = {
   tradingEnabled: boolean;
   killSwitchEnabled: boolean;
   estimatedTradingCapital: number | null;
+  maxDeployableNotional: number | null;
+  enabledAllocatedNotional: number;
+  remainingDeployableNotional: number | null;
   baseCurrency: string;
   brokerAccountId: string | null;
   brokerAccountNumberMasked: string | null;
@@ -129,6 +132,7 @@ export type TradingAccountRiskHealth = {
     brokerCash: number | null;
     brokerBuyingPower: number | null;
     estimatedTradingCapital: number | null;
+    maxDeployableNotional: number | null;
     openPositionNotional: number;
     allocationBudgetTotal: number;
     activeSubscriptionBudgetTotal: number;
@@ -166,6 +170,9 @@ export type TradingAccountAllocation = {
   maxAllocatedNotional: number | null;
   maxOpenPositions: number | null;
   maxPositionNotional: number | null;
+  reservedNotional: number;
+  remainingAllocatedNotional: number | null;
+  entryEnabledSubscriptionCount: number;
   notes: string | null;
   accountSubscriptionCount?: number;
   createdAt: string;
@@ -202,6 +209,9 @@ export type TradingAccountSubscriptionAllocation = {
   key: string;
   name: string;
   enabled: boolean;
+  maxAllocatedNotional: number | null;
+  maxOpenPositions: number | null;
+  maxPositionNotional: number | null;
 };
 
 export type TradingAccountSubscription = {
@@ -215,6 +225,7 @@ export type TradingAccountSubscription = {
   sizingType: PositionSizingType;
   fixedQty: number | null;
   maxPositionNotional: number | null;
+  reservedNotional: number | null;
   minPositionNotional: number | null;
   maxQty: number | null;
   notes: string | null;
@@ -264,6 +275,7 @@ export type EntryRiskPreview = {
     exitsEnabled: boolean;
     allocationId: number | null;
     sizingType: PositionSizingType;
+    reservedNotional: number | null;
   } | null;
   allocation: {
     id: number;
@@ -393,6 +405,7 @@ export type AccountSubscriptionPriceHistoryResponse = {
 export type UpdateTradingAccountPayload = Partial<{
   displayName: string;
   estimatedTradingCapital: number | null;
+  maxDeployableNotional: number | null;
   status: TradingAccountStatus;
   tradingEnabled: boolean;
   killSwitchEnabled: boolean;
@@ -436,6 +449,7 @@ export type TradingAccountSubscriptionInput = {
   sizingType?: PositionSizingType;
   fixedQty?: number | null;
   maxPositionNotional?: number | null;
+  reservedNotional?: number | null;
   minPositionNotional?: number | null;
   maxQty?: number | null;
   notes?: string | null;

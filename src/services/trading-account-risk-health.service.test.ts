@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   trackedPositionFindMany: vi.fn(),
   getRuntimeTradingConfig: vi.fn(),
   getTickerLatestPrice: vi.fn(),
+  validateAccountRiskConfiguration: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -34,6 +35,10 @@ vi.mock('./massive-market-data.service.js', () => ({
   getTickerLatestPrice: mocks.getTickerLatestPrice,
 }));
 
+vi.mock('./trading-account-risk-configuration.service.js', () => ({
+  validateAccountRiskConfiguration: mocks.validateAccountRiskConfiguration,
+}));
+
 import { getTradingAccountRiskHealth } from './trading-account-risk-health.service.js';
 
 const NOW = new Date('2026-07-04T16:00:00.000Z');
@@ -49,6 +54,7 @@ function accountRecord(overrides: Record<string, unknown> = {}) {
     tradingEnabled: true,
     killSwitchEnabled: false,
     estimatedTradingCapital: 50_000,
+    maxDeployableNotional: 10_000,
     brokerAccountId: 'broker-account-id',
     brokerAccountStatus: 'ACTIVE',
     lastBrokerSyncAt: RECENT_SYNC,
@@ -98,6 +104,7 @@ function subscriptionRecord(overrides: Record<string, unknown> = {}) {
     sizingType: 'MAX_NOTIONAL',
     fixedQty: null,
     maxPositionNotional: 1_500,
+    reservedNotional: 1_500,
     minPositionNotional: null,
     maxQty: null,
     notes: null,
@@ -178,6 +185,7 @@ describe('trading account risk health service', () => {
       args.where.tradingAccountId === null ? Promise.resolve([]) : Promise.resolve([])
     );
     mocks.getRuntimeTradingConfig.mockResolvedValue(globalConfig());
+    mocks.validateAccountRiskConfiguration.mockResolvedValue([]);
     mocks.getTickerLatestPrice.mockResolvedValue({
       symbol: 'SPY',
       latestPrice: 100,
@@ -494,5 +502,42 @@ describe('trading account risk health service', () => {
     expect(result?.warnings.map((check) => check.id)).toContain(
       'account_subscription_20_allocation_enabled'
     );
+  });
+
+  it('blocks PAPER and LIVE readiness with centralized hierarchy violations', async () => {
+    mocks.validateAccountRiskConfiguration.mockResolvedValue([
+      {
+        code: 'ACCOUNT_SUBSCRIPTION_ALLOCATION_REQUIRED',
+        message: 'An enabled, entry-enabled account subscription requires an allocation.',
+        entityType: 'TradingAccountSubscription',
+        entityId: 20,
+        path: 'allocationId',
+        tradingAccountId: 1,
+        accountSubscriptionId: 20,
+        actualValue: null,
+      },
+    ]);
+
+    const paper = await getTradingAccountRiskHealth(1, { now: NOW });
+    expect(paper).toMatchObject({
+      status: 'BLOCKED',
+      readyForEntries: false,
+      blockers: expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'blocker',
+          message:
+            'An enabled, entry-enabled account subscription requires an allocation.',
+          details: expect.objectContaining({
+            code: 'ACCOUNT_SUBSCRIPTION_ALLOCATION_REQUIRED',
+          }),
+        }),
+      ]),
+    });
+
+    mocks.tradingAccountFindUnique.mockResolvedValue(
+      accountRecord({ environment: 'LIVE' })
+    );
+    const live = await getTradingAccountRiskHealth(1, { now: NOW });
+    expect(live).toMatchObject({ status: 'BLOCKED', readyForEntries: false });
   });
 });

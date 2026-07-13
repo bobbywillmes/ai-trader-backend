@@ -49,6 +49,9 @@ const ALLOCATION_RISK_ACCOUNT_SUBSCRIPTION_SELECT = {
   id: true,
   subscriptionId: true,
   allocationId: true,
+  enabled: true,
+  entriesEnabled: true,
+  reservedNotional: true,
   allocation: {
     select: {
       id: true,
@@ -91,6 +94,91 @@ type AllocationRiskDetails = {
   requestedNotional: number | null;
   usage: AllocationRiskUsage;
 };
+
+function isCompleteAllocation(
+  allocation: AllocationRiskAccountSubscription['allocation']
+) {
+  return (
+    allocation !== null &&
+    isLimitEnabled(allocation.maxAllocatedNotional) &&
+    isLimitEnabled(allocation.maxOpenPositions) &&
+    isLimitEnabled(allocation.maxPositionNotional)
+  );
+}
+
+function evaluateConfiguredHierarchyRisk(args: {
+  tradingAccountId: number;
+  maxDeployableNotional: number | null;
+  accountSubscription: AllocationRiskAccountSubscription | null;
+  requestedNotional: number | null;
+}): RiskGateBlocked | null {
+  if (!isLimitEnabled(args.maxDeployableNotional)) {
+    return block(409, 'Trading account max deployable notional is not configured. New entries are blocked.', {
+      rule: 'account_max_deployable_notional_required',
+      tradingAccountId: args.tradingAccountId,
+      maxDeployableNotional: args.maxDeployableNotional,
+    });
+  }
+
+  const accountSubscription = args.accountSubscription;
+  if (!accountSubscription?.enabled || !accountSubscription.entriesEnabled) {
+    return null;
+  }
+
+  if (!accountSubscription.allocation) {
+    return block(409, 'Entry-enabled account subscription is not assigned to an allocation. New entries are blocked.', {
+      rule: 'account_subscription_allocation_required',
+      tradingAccountId: args.tradingAccountId,
+      tradingAccountSubscriptionId: accountSubscription.id,
+      allocationId: accountSubscription.allocationId,
+    });
+  }
+
+  // Preserve the established allocation-disabled block and its response details.
+  if (!accountSubscription.allocation.enabled) {
+    return null;
+  }
+
+  if (!isCompleteAllocation(accountSubscription.allocation)) {
+    return block(409, 'Assigned allocation has incomplete risk limits. New entries are blocked.', {
+      rule: 'allocation_limits_incomplete',
+      tradingAccountId: args.tradingAccountId,
+      tradingAccountSubscriptionId: accountSubscription.id,
+      allocationId: accountSubscription.allocation.id,
+      maxAllocatedNotional:
+        accountSubscription.allocation.maxAllocatedNotional,
+      maxOpenPositions: accountSubscription.allocation.maxOpenPositions,
+      maxPositionNotional:
+        accountSubscription.allocation.maxPositionNotional,
+    });
+  }
+
+  if (!isLimitEnabled(accountSubscription.reservedNotional)) {
+    return block(409, 'Entry-enabled account subscription has no reserved notional. New entries are blocked.', {
+      rule: 'account_subscription_reservation_required',
+      tradingAccountId: args.tradingAccountId,
+      tradingAccountSubscriptionId: accountSubscription.id,
+      allocationId: accountSubscription.allocation.id,
+      reservedNotional: accountSubscription.reservedNotional,
+    });
+  }
+
+  if (
+    args.requestedNotional !== null &&
+    args.requestedNotional > accountSubscription.reservedNotional
+  ) {
+    return block(409, 'Proposed entry notional exceeds the account subscription reservation.', {
+      rule: 'account_subscription_reserved_notional_exceeded',
+      tradingAccountId: args.tradingAccountId,
+      tradingAccountSubscriptionId: accountSubscription.id,
+      allocationId: accountSubscription.allocation.id,
+      requestedNotional: args.requestedNotional,
+      reservedNotional: accountSubscription.reservedNotional,
+    });
+  }
+
+  return null;
+}
 
 function isEntryOrder(input: ResolvedPlaceOrderInput): boolean {
   return input.side === 'buy' && (input.signalType ?? 'entry') === 'entry';
@@ -938,8 +1026,23 @@ export async function evaluateOrderRisk(
     }
   }
 
-  const allocationAccountSubscription =
-    await getAllocationRiskAccountSubscription(input, tradingAccountId);
+  const [riskConfigurationAccount, allocationAccountSubscription] =
+    await Promise.all([
+      prisma.tradingAccount.findUnique({
+        where: { id: tradingAccountId },
+        select: { maxDeployableNotional: true },
+      }),
+      getAllocationRiskAccountSubscription(input, tradingAccountId),
+    ]);
+  const configuredHierarchyRisk = evaluateConfiguredHierarchyRisk({
+    tradingAccountId,
+    maxDeployableNotional:
+      riskConfigurationAccount?.maxDeployableNotional ?? null,
+    accountSubscription: allocationAccountSubscription,
+    requestedNotional,
+  });
+  if (configuredHierarchyRisk) return configuredHierarchyRisk;
+
   const allocationRisk = await getAllocationRiskDetails({
     accountSubscription: allocationAccountSubscription,
     tradingAccountId,

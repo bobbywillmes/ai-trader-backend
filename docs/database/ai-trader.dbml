@@ -74,6 +74,7 @@ Table TradingAccount {
   tradingEnabled Boolean [not null, default: false]
   killSwitchEnabled Boolean [not null, default: true]
   estimatedTradingCapital Float
+  maxDeployableNotional Float
   baseCurrency String [not null, default: 'USD']
   brokerAccountId String
   brokerAccountNumberMasked String
@@ -193,6 +194,7 @@ Table TradingAccountSubscription {
   sizingType PositionSizingType [not null, default: 'FIXED_QTY']
   fixedQty Float
   maxPositionNotional Float
+  reservedNotional Float
   minPositionNotional Float
   maxQty Float
   notes String

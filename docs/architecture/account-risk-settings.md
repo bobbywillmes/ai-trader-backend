@@ -36,6 +36,24 @@ The account-scoped model now also includes:
 - `TradingAccountAllocation` buckets with enforced notional and position limits for assigned account subscriptions.
 - `TradingAccountSubscription` entry/exit gates and account-specific sizing.
 
+The authoritative configured-capital hierarchy is:
+
+```text
+TradingAccount.maxDeployableNotional
+-> enabled TradingAccountAllocation.maxAllocatedNotional budgets
+-> enabled, entry-enabled TradingAccountSubscription.reservedNotional reservations
+```
+
+Enabled allocations require complete total, open-position, and per-position
+limits. Active entry subscriptions require an enabled same-account allocation
+and reserved capital. Their reservations cannot exceed either the allocation
+per-position ceiling individually or its total budget in aggregate.
+
+Admin writes construct candidate hierarchy state and validate it inside the
+same serializable database transaction used for persistence. Conflicts return
+all relevant structured violations. Dormant or entries-disabled legacy
+subscriptions may remain unassigned while they are corrected.
+
 Important paper/live design constraint: paper and live trading should not be treated as one either/or global mode long term. They should be independently controllable account lanes, such as paper trading enabled while live trading remains disabled.
 
 ## Current Global Settings Fields

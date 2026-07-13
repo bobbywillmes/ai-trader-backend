@@ -94,7 +94,7 @@ export async function apiRequest<T>(
         ? data.message
         : `Request failed with status ${response.status}`;
 
-    throw new Error(message);
+    throw new ApiError(response.status, message, data);
   }
 
   return data as T;

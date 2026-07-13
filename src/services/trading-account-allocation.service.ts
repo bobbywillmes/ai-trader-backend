@@ -6,6 +6,10 @@ import type {
   CreateTradingAccountAllocationInput,
   UpdateTradingAccountAllocationInput,
 } from '../validators/trading-account.schema.js';
+import {
+  assertAccountRiskConfiguration,
+  withAccountRiskConfigurationTransaction,
+} from './trading-account-risk-configuration.service.js';
 
 const TRADING_ACCOUNT_ALLOCATION_SELECT = {
   id: true,
@@ -23,6 +27,15 @@ const TRADING_ACCOUNT_ALLOCATION_SELECT = {
   _count: {
     select: {
       accountSubscriptions: true,
+    },
+  },
+  accountSubscriptions: {
+    where: {
+      enabled: true,
+      entriesEnabled: true,
+    },
+    select: {
+      reservedNotional: true,
     },
   },
 } satisfies Prisma.TradingAccountAllocationSelect;
@@ -62,6 +75,12 @@ async function tradingAccountExists(tradingAccountId: number) {
 export function serializeTradingAccountAllocationForAdmin(
   allocation: TradingAccountAllocationAdminRecord
 ) {
+  const reservedNotional = allocation.accountSubscriptions.reduce(
+    (total, accountSubscription) =>
+      total + (accountSubscription.reservedNotional ?? 0),
+    0
+  );
+
   return {
     id: allocation.id,
     tradingAccountId: allocation.tradingAccountId,
@@ -72,6 +91,12 @@ export function serializeTradingAccountAllocationForAdmin(
     maxAllocatedNotional: allocation.maxAllocatedNotional,
     maxOpenPositions: allocation.maxOpenPositions,
     maxPositionNotional: allocation.maxPositionNotional,
+    reservedNotional,
+    remainingAllocatedNotional:
+      allocation.maxAllocatedNotional === null
+        ? null
+        : allocation.maxAllocatedNotional - reservedNotional,
+    entryEnabledSubscriptionCount: allocation.accountSubscriptions.length,
     notes: allocation.notes,
     createdAt: allocation.createdAt,
     updatedAt: allocation.updatedAt,
@@ -99,35 +124,40 @@ export async function createTradingAccountAllocationForAdmin(
   tradingAccountId: number,
   input: CreateTradingAccountAllocationInput
 ) {
-  if (!(await tradingAccountExists(tradingAccountId))) {
-    return null;
-  }
-
   try {
-    const allocation = await prisma.tradingAccountAllocation.create({
-      data: {
-        tradingAccountId,
-        key: input.key,
-        name: input.name,
-        enabled: input.enabled ?? true,
-        ...(input.description !== undefined && {
-          description: input.description,
-        }),
-        ...(input.maxAllocatedNotional !== undefined && {
-          maxAllocatedNotional: input.maxAllocatedNotional,
-        }),
-        ...(input.maxOpenPositions !== undefined && {
-          maxOpenPositions: input.maxOpenPositions,
-        }),
-        ...(input.maxPositionNotional !== undefined && {
-          maxPositionNotional: input.maxPositionNotional,
-        }),
-        ...(input.notes !== undefined && { notes: input.notes }),
-      },
-      select: TRADING_ACCOUNT_ALLOCATION_SELECT,
-    });
+    return await withAccountRiskConfigurationTransaction(async (tx) => {
+      const exists = await tx.tradingAccount.findUnique({
+        where: { id: tradingAccountId },
+        select: { id: true },
+      });
+      if (!exists) return null;
 
-    return serializeTradingAccountAllocationForAdmin(allocation);
+      await assertAccountRiskConfiguration(tx, tradingAccountId, {
+        allocation: {
+          id: null,
+          enabled: input.enabled ?? true,
+          maxAllocatedNotional: input.maxAllocatedNotional ?? null,
+          maxOpenPositions: input.maxOpenPositions ?? null,
+          maxPositionNotional: input.maxPositionNotional ?? null,
+        },
+      });
+
+      const allocation = await tx.tradingAccountAllocation.create({
+        data: {
+          tradingAccountId,
+          key: input.key,
+          name: input.name,
+          enabled: input.enabled ?? true,
+          ...(input.description !== undefined && { description: input.description }),
+          ...(input.maxAllocatedNotional !== undefined && { maxAllocatedNotional: input.maxAllocatedNotional }),
+          ...(input.maxOpenPositions !== undefined && { maxOpenPositions: input.maxOpenPositions }),
+          ...(input.maxPositionNotional !== undefined && { maxPositionNotional: input.maxPositionNotional }),
+          ...(input.notes !== undefined && { notes: input.notes }),
+        },
+        select: TRADING_ACCOUNT_ALLOCATION_SELECT,
+      });
+      return serializeTradingAccountAllocationForAdmin(allocation);
+    });
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw allocationConflictError();
@@ -142,24 +172,40 @@ export async function updateTradingAccountAllocationForAdmin(
   allocationId: number,
   input: UpdateTradingAccountAllocationInput
 ) {
-  if (!(await tradingAccountExists(tradingAccountId))) {
-    return null;
-  }
-
-  const existing = await prisma.tradingAccountAllocation.findFirst({
-    where: {
-      id: allocationId,
-      tradingAccountId,
-    },
-    select: { id: true },
-  });
-
-  if (!existing) {
-    return null;
-  }
-
   try {
-    const allocation = await prisma.tradingAccountAllocation.update({
+    return await withAccountRiskConfigurationTransaction(async (tx) => {
+      const existing = await tx.tradingAccountAllocation.findFirst({
+        where: { id: allocationId, tradingAccountId },
+        select: {
+          id: true,
+          enabled: true,
+          maxAllocatedNotional: true,
+          maxOpenPositions: true,
+          maxPositionNotional: true,
+        },
+      });
+      if (!existing) return null;
+
+      await assertAccountRiskConfiguration(tx, tradingAccountId, {
+        allocation: {
+          id: allocationId,
+          enabled: input.enabled ?? existing.enabled,
+          maxAllocatedNotional:
+            input.maxAllocatedNotional !== undefined
+              ? input.maxAllocatedNotional
+              : existing.maxAllocatedNotional,
+          maxOpenPositions:
+            input.maxOpenPositions !== undefined
+              ? input.maxOpenPositions
+              : existing.maxOpenPositions,
+          maxPositionNotional:
+            input.maxPositionNotional !== undefined
+              ? input.maxPositionNotional
+              : existing.maxPositionNotional,
+        },
+      });
+
+      const allocation = await tx.tradingAccountAllocation.update({
       where: { id: allocationId },
       data: {
         ...(input.key !== undefined && { key: input.key }),
@@ -180,9 +226,9 @@ export async function updateTradingAccountAllocationForAdmin(
         ...(input.notes !== undefined && { notes: input.notes }),
       },
       select: TRADING_ACCOUNT_ALLOCATION_SELECT,
+      });
+      return serializeTradingAccountAllocationForAdmin(allocation);
     });
-
-    return serializeTradingAccountAllocationForAdmin(allocation);
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw allocationConflictError();

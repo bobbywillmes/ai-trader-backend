@@ -9,6 +9,7 @@ import {
 import { prisma } from '../db/prisma.js';
 import { getRuntimeTradingConfig } from './config.service.js';
 import { getTickerLatestPrice } from './massive-market-data.service.js';
+import { validateAccountRiskConfiguration } from './trading-account-risk-configuration.service.js';
 
 const ACTIVE_POSITION_STATUSES = ['open', 'closing'];
 const BROKER_SYNC_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
@@ -22,6 +23,7 @@ const RISK_HEALTH_ACCOUNT_SELECT = {
   tradingEnabled: true,
   killSwitchEnabled: true,
   estimatedTradingCapital: true,
+  maxDeployableNotional: true,
   brokerAccountId: true,
   brokerAccountStatus: true,
   lastBrokerSyncAt: true,
@@ -932,6 +934,7 @@ export async function getTradingAccountRiskHealth(
     openPositions,
     unattributedOpenPositions,
     globalConfig,
+    hierarchyViolations,
   ] = await Promise.all([
     prisma.tradingAccount.findUnique({
       where: { id: tradingAccountId },
@@ -976,6 +979,7 @@ export async function getTradingAccountRiskHealth(
       },
     }),
     getRuntimeTradingConfig(),
+    validateAccountRiskConfiguration(prisma, tradingAccountId),
   ]);
 
   if (!account) {
@@ -983,10 +987,30 @@ export async function getTradingAccountRiskHealth(
   }
 
   const checks: TradingAccountRiskHealthCheck[] = [];
+  const activeSubscriptions = activeAccountSubscriptions(accountSubscriptions);
+  for (const hierarchyViolation of hierarchyViolations ?? []) {
+    const affectsActiveEntries =
+      hierarchyViolation.entityType === 'TradingAccountSubscription' ||
+      (hierarchyViolation.entityType === 'TradingAccountAllocation'
+        ? activeSubscriptions.some(
+            (item) => item.allocationId === hierarchyViolation.allocationId
+          )
+        : activeSubscriptions.length > 0);
+    const severity = affectsActiveEntries ? 'blocker' : 'warning';
+    checks.push(
+      createCheck({
+        id: `account_risk_configuration_${hierarchyViolation.code.toLowerCase()}_${hierarchyViolation.entityId ?? 'new'}`,
+        label: 'Account capital hierarchy is valid',
+        severity,
+        status: affectsActiveEntries ? 'fail' : 'warn',
+        message: hierarchyViolation.message,
+        details: hierarchyViolation,
+      })
+    );
+  }
   const enabledAllocations = allocations.filter(
     (allocation) => allocation.enabled
   );
-  const activeSubscriptions = activeAccountSubscriptions(accountSubscriptions);
   const allocationBudgetTotal = enabledAllocations.reduce(
     (total, allocation) =>
       total + (isPositiveFiniteNumber(allocation.maxAllocatedNotional)
@@ -1061,6 +1085,7 @@ export async function getTradingAccountRiskHealth(
       brokerCash: account.lastCash,
       brokerBuyingPower: account.lastBuyingPower,
       estimatedTradingCapital: account.estimatedTradingCapital,
+      maxDeployableNotional: account.maxDeployableNotional,
       openPositionNotional,
       allocationBudgetTotal,
       activeSubscriptionBudgetTotal,

@@ -59,6 +59,7 @@ const PREVIEW_ACCOUNT_SUBSCRIPTION_SELECT = {
   sizingType: true,
   fixedQty: true,
   maxPositionNotional: true,
+  reservedNotional: true,
   minPositionNotional: true,
   maxQty: true,
   allocation: {
@@ -605,6 +606,7 @@ function serializeAccountSubscription(
         exitsEnabled: accountSubscription.exitsEnabled,
         allocationId: accountSubscription.allocationId,
         sizingType: accountSubscription.sizingType,
+        reservedNotional: accountSubscription.reservedNotional,
       }
     : null;
 }

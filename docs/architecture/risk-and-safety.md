@@ -43,10 +43,21 @@ Entry orders are blocked when any of the following conditions apply:
 - Account total open notional limit would be exceeded.
 - Account symbol exposure limit would be exceeded.
 - Account subscription exposure limit would be exceeded.
+- Trading account max deployable notional is missing.
+- An enabled, entry-enabled account subscription is unassigned or lacks a
+  reservation.
+- The assigned allocation has incomplete required limits.
+- Proposed entry notional exceeds the account-subscription reservation.
 - Assigned allocation bucket is disabled.
 - Assigned allocation per-position notional limit would be exceeded.
 - Assigned allocation maximum open position count would be exceeded.
 - Assigned allocation allocated notional limit would be exceeded.
+
+Account capital hierarchy checks fail closed without silently clamping sizing.
+For `FIXED_QTY`, the calculated proposed order notional is compared with
+`reservedNotional`. These checks remain entry-only: sell-side exits, protective
+order work, broker synchronization, reconciliation, and position closure remain
+available when entry configuration is invalid.
 
 ### Trading Enabled vs Kill Switch
 

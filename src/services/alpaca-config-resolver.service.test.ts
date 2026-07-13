@@ -43,6 +43,7 @@ function tradingAccount(overrides: Partial<TradingAccount> = {}): TradingAccount
     tradingEnabled: false,
     killSwitchEnabled: true,
     estimatedTradingCapital: null,
+    maxDeployableNotional: null,
     baseCurrency: 'USD',
     brokerAccountId: null,
     brokerAccountNumberMasked: null,

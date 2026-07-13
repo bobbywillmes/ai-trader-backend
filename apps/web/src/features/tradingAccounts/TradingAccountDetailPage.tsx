@@ -37,7 +37,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { getAdminToken } from "../../lib/api";
+import { ApiError, getAdminToken } from "../../lib/api";
 import { useOpenOrders } from "../orders/hooks";
 import type { OpenOrder } from "../orders/types";
 import { useOpenPositions } from "../positions/hooks";
@@ -89,6 +89,7 @@ type DetailItemProps = {
 type AccountSettingsDraft = {
   displayName: string;
   estimatedTradingCapital: number | null;
+  maxDeployableNotional: number | null;
   status: TradingAccountStatus;
   tradingEnabled: boolean;
   killSwitchEnabled: boolean;
@@ -145,6 +146,7 @@ type AccountSubscriptionDraft = {
   sizingType: PositionSizingType;
   fixedQty: number | null;
   maxPositionNotional: number | null;
+  reservedNotional: number | null;
   minPositionNotional: number | null;
   maxQty: number | null;
   notes: string;
@@ -217,6 +219,7 @@ function accountToSettingsDraft(account: TradingAccount): AccountSettingsDraft {
   return {
     displayName: account.displayName,
     estimatedTradingCapital: account.estimatedTradingCapital,
+    maxDeployableNotional: account.maxDeployableNotional,
     status: account.status,
     tradingEnabled: account.tradingEnabled,
     killSwitchEnabled: account.killSwitchEnabled,
@@ -250,6 +253,57 @@ function normalizeNumberInput(value: string | number) {
 
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function actionableErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof ApiError && error.data && typeof error.data === "object") {
+    const details = "details" in error.data ? error.data.details : null;
+    if (details && typeof details === "object" && "violations" in details) {
+      const violations = Array.isArray(details.violations)
+        ? details.violations
+        : [];
+      const messages = violations.flatMap((item) =>
+        item && typeof item === "object" && "message" in item &&
+        typeof item.message === "string"
+          ? [item.message]
+          : []
+      );
+      if (messages.length > 0) return messages.join(" ");
+    }
+  }
+  return error instanceof Error ? error.message : fallback;
+}
+
+function accountSubscriptionHierarchyWarning(
+  accountSubscription: TradingAccountSubscription
+) {
+  if (!accountSubscription.enabled || !accountSubscription.entriesEnabled) {
+    return null;
+  }
+  const allocation = accountSubscription.allocation;
+  if (!allocation) return "Assign an allocation before allowing new entries.";
+  if (!allocation.enabled) return "Assigned allocation is disabled.";
+  if (
+    allocation.maxAllocatedNotional === null ||
+    allocation.maxOpenPositions === null ||
+    allocation.maxPositionNotional === null
+  ) {
+    return "Assigned allocation has incomplete limits.";
+  }
+  if (accountSubscription.reservedNotional === null) {
+    return "Reserved capital is required for new entries.";
+  }
+  if (accountSubscription.reservedNotional > allocation.maxPositionNotional) {
+    return "Reservation exceeds the allocation per-position ceiling.";
+  }
+  if (
+    accountSubscription.sizingType === "MAX_NOTIONAL" &&
+    accountSubscription.maxPositionNotional !== null &&
+    accountSubscription.maxPositionNotional > accountSubscription.reservedNotional
+  ) {
+    return "MAX_NOTIONAL sizing exceeds reserved capital.";
+  }
+  return null;
 }
 
 function suggestAllocationKey(name: string) {
@@ -319,6 +373,21 @@ function validateAllocationDraft(draft: AllocationDraft) {
   ) {
     return "Max open positions must be empty or a positive whole number.";
   }
+  if (
+    draft.enabled &&
+    (draft.maxAllocatedNotional === null ||
+      draft.maxOpenPositions === null ||
+      draft.maxPositionNotional === null)
+  ) {
+    return "Enabled allocations require a total budget, max open positions, and per-position ceiling.";
+  }
+  if (
+    draft.maxAllocatedNotional !== null &&
+    draft.maxPositionNotional !== null &&
+    draft.maxPositionNotional > draft.maxAllocatedNotional
+  ) {
+    return "Per-position ceiling cannot exceed the allocation budget.";
+  }
 
   return null;
 }
@@ -334,6 +403,7 @@ function accountSubscriptionToDraft(
     sizingType: accountSubscription.sizingType,
     fixedQty: accountSubscription.fixedQty,
     maxPositionNotional: accountSubscription.maxPositionNotional,
+    reservedNotional: accountSubscription.reservedNotional,
     minPositionNotional: accountSubscription.minPositionNotional,
     maxQty: accountSubscription.maxQty,
     notes: accountSubscription.notes ?? "",
@@ -352,13 +422,38 @@ function accountSubscriptionDraftToPayload(
     fixedQty: draft.sizingType === "FIXED_QTY" ? draft.fixedQty : null,
     maxPositionNotional:
       draft.sizingType === "MAX_NOTIONAL" ? draft.maxPositionNotional : null,
+    reservedNotional: draft.reservedNotional,
     minPositionNotional: draft.minPositionNotional,
     maxQty: draft.maxQty,
     notes: normalizeOptionalText(draft.notes),
   };
 }
 
-function validateAccountSubscriptionDraft(draft: AccountSubscriptionDraft) {
+function validateAccountSubscriptionDraft(
+  draft: AccountSubscriptionDraft,
+  allocations: TradingAccountAllocation[],
+  editing: TradingAccountSubscription | null
+) {
+  const entryActive = draft.enabled && draft.entriesEnabled;
+  const allocation = allocations.find((item) => item.id === draft.allocationId);
+  if (entryActive && !allocation) {
+    return "Active subscriptions that allow entries require an allocation.";
+  }
+  if (entryActive && (draft.reservedNotional === null || draft.reservedNotional <= 0)) {
+    return "Active subscriptions that allow entries require reserved capital.";
+  }
+  if (entryActive && allocation && !allocation.enabled) {
+    return "The selected allocation is disabled for new entries.";
+  }
+  if (
+    entryActive &&
+    allocation &&
+    (allocation.maxAllocatedNotional === null ||
+      allocation.maxOpenPositions === null ||
+      allocation.maxPositionNotional === null)
+  ) {
+    return "The selected allocation is missing required limits.";
+  }
   if (draft.sizingType === "FIXED_QTY") {
     if (draft.fixedQty === null || draft.fixedQty <= 0) {
       return "Fixed quantity is required and must be greater than zero.";
@@ -372,6 +467,40 @@ function validateAccountSubscriptionDraft(draft: AccountSubscriptionDraft) {
     ) {
       return "Max position dollars is required and must be greater than zero.";
     }
+    if (
+      draft.reservedNotional !== null &&
+      draft.maxPositionNotional > draft.reservedNotional
+    ) {
+      return "Max position dollars cannot exceed reserved capital.";
+    }
+  }
+
+  if (
+    entryActive &&
+    allocation?.maxPositionNotional !== null &&
+    allocation?.maxPositionNotional !== undefined &&
+    draft.reservedNotional !== null &&
+    draft.reservedNotional > allocation.maxPositionNotional
+  ) {
+    return "Reserved capital cannot exceed the allocation per-position ceiling.";
+  }
+
+  const editableReservation =
+    editing?.allocationId === allocation?.id
+      ? editing?.reservedNotional ?? 0
+      : 0;
+  const availableReservation =
+    allocation?.remainingAllocatedNotional === null ||
+    allocation?.remainingAllocatedNotional === undefined
+      ? null
+      : allocation.remainingAllocatedNotional + editableReservation;
+  if (
+    entryActive &&
+    availableReservation !== null &&
+    draft.reservedNotional !== null &&
+    draft.reservedNotional > availableReservation
+  ) {
+    return "Reserved capital would exceed the allocation's remaining capacity.";
   }
 
   if (
@@ -465,6 +594,7 @@ function settingsDraftChanged(
   return (
     account.displayName !== draft.displayName ||
     account.estimatedTradingCapital !== draft.estimatedTradingCapital ||
+    account.maxDeployableNotional !== draft.maxDeployableNotional ||
     account.status !== draft.status ||
     account.tradingEnabled !== draft.tradingEnabled ||
     account.killSwitchEnabled !== draft.killSwitchEnabled ||
@@ -1593,8 +1723,26 @@ function AllocationManagementCard({
   const updateMutation = useUpdateTradingAccountAllocation(token);
   const allocations = data?.allocations ?? [];
   const saving = createMutation.isPending || updateMutation.isPending;
+  const candidateEnabledAllocatedNotional = modalState
+    ? allocations.reduce(
+        (total, allocation) =>
+          total +
+          (modalState.mode === "edit" && allocation.id === modalState.allocation.id
+            ? 0
+            : allocation.enabled
+              ? allocation.maxAllocatedNotional ?? 0
+              : 0),
+        modalState.draft.enabled
+          ? modalState.draft.maxAllocatedNotional ?? 0
+          : 0
+      )
+    : account.enabledAllocatedNotional;
   const draftError = modalState
-    ? validateAllocationDraft(modalState.draft)
+    ? validateAllocationDraft(modalState.draft) ??
+      (account.maxDeployableNotional !== null &&
+      candidateEnabledAllocatedNotional > account.maxDeployableNotional
+        ? "Enabled allocation budgets would exceed account deployable capital."
+        : null)
     : null;
 
   function startCreate() {
@@ -1707,8 +1855,7 @@ function AllocationManagementCard({
       setModalState(null);
     } catch (error) {
       notifications.show({
-        message:
-          error instanceof Error ? error.message : "Failed to save allocation.",
+        message: actionableErrorMessage(error, "Failed to save allocation."),
         color: "red",
       });
     }
@@ -1762,6 +1909,9 @@ function AllocationManagementCard({
                       Max allocated dollars
                     </Table.Th>
                     <Table.Th style={{ textAlign: "right" }}>
+                      Reserved / remaining
+                    </Table.Th>
+                    <Table.Th style={{ textAlign: "right" }}>
                       Max open positions
                     </Table.Th>
                     <Table.Th style={{ textAlign: "right" }}>
@@ -1812,6 +1962,17 @@ function AllocationManagementCard({
                         )}
                       </Table.Td>
                       <Table.Td style={{ textAlign: "right" }}>
+                        <Text size="sm">
+                          {formatMoney(allocation.reservedNotional, account.baseCurrency)}
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          {formatMoney(
+                            allocation.remainingAllocatedNotional,
+                            account.baseCurrency
+                          )} remaining
+                        </Text>
+                      </Table.Td>
+                      <Table.Td style={{ textAlign: "right" }}>
                         {allocation.maxOpenPositions ?? "-"}
                       </Table.Td>
                       <Table.Td style={{ textAlign: "right" }}>
@@ -1821,7 +1982,10 @@ function AllocationManagementCard({
                         )}
                       </Table.Td>
                       <Table.Td style={{ textAlign: "right" }}>
-                        {allocation.accountSubscriptionCount ?? 0}
+                        {allocation.entryEnabledSubscriptionCount} entry-enabled
+                        <Text size="xs" c="dimmed">
+                          {allocation.accountSubscriptionCount ?? 0} assigned total
+                        </Text>
                       </Table.Td>
                       <Table.Td>{formatDateTime(allocation.updatedAt)}</Table.Td>
                       <Table.Td>
@@ -1977,6 +2141,25 @@ function AllocationManagementCard({
                 disabled={saving}
               />
             </SimpleGrid>
+
+            <Alert color={draftError ? "yellow" : "blue"} title="Resulting capacity">
+              Account enabled allocation total: {formatMoney(
+                candidateEnabledAllocatedNotional,
+                account.baseCurrency
+              )} of {formatMoney(account.maxDeployableNotional, account.baseCurrency)}.
+              {modalState.mode === "edit" && (
+                <> This allocation currently reserves {formatMoney(
+                  modalState.allocation.reservedNotional,
+                  account.baseCurrency
+                )}; resulting remaining allocation capacity is {formatMoney(
+                  modalState.draft.maxAllocatedNotional === null
+                    ? null
+                    : modalState.draft.maxAllocatedNotional -
+                        modalState.allocation.reservedNotional,
+                  account.baseCurrency
+                )}.</>
+              )}
+            </Alert>
 
             <Textarea
               label="Notes"
@@ -2248,7 +2431,15 @@ function AccountSubscriptionsManagementCard({
       item,
     ])
   );
-  const draftError = draft ? validateAccountSubscriptionDraft(draft) : null;
+  const draftError = draft
+    ? validateAccountSubscriptionDraft(draft, allocations, editing)
+    : null;
+  const selectedDraftAllocation = allocations.find(
+    (allocation) => allocation.id === draft?.allocationId
+  );
+  const invalidHierarchyCount = accountSubscriptions.filter(
+    accountSubscriptionHierarchyWarning
+  ).length;
   const filteredAccountSubscriptions = accountSubscriptions.filter(
     (accountSubscription) => {
       if (!accountSubscriptionMatchesSearch(accountSubscription, search)) {
@@ -2338,7 +2529,11 @@ function AccountSubscriptionsManagementCard({
   async function saveAccountSubscription() {
     if (!editing || !draft) return;
 
-    const validationError = validateAccountSubscriptionDraft(draft);
+    const validationError = validateAccountSubscriptionDraft(
+      draft,
+      allocations,
+      editing
+    );
     if (validationError) {
       notifications.show({
         message: validationError,
@@ -2361,10 +2556,10 @@ function AccountSubscriptionsManagementCard({
       closeModal();
     } catch (error) {
       notifications.show({
-        message:
-          error instanceof Error
-            ? error.message
-            : "Failed to save account subscription settings.",
+        message: actionableErrorMessage(
+          error,
+          "Failed to save account subscription settings."
+        ),
         color: "red",
       });
     }
@@ -2468,6 +2663,15 @@ function AccountSubscriptionsManagementCard({
             </SimpleGrid>
           )}
 
+          {invalidHierarchyCount > 0 && (
+            <Alert color="yellow" title="Legacy configuration needs attention">
+              {invalidHierarchyCount} active account subscription
+              {invalidHierarchyCount === 1 ? " has" : "s have"} incomplete or
+              invalid capital hierarchy settings. These rows remain visible and
+              editable, but new entries are blocked until corrected.
+            </Alert>
+          )}
+
           {isError && (
             <Alert color="red" title="Failed to load account subscriptions">
               {error instanceof Error ? error.message : "Unknown error."}
@@ -2520,6 +2724,7 @@ function AccountSubscriptionsManagementCard({
                     <Table.Th>Entries</Table.Th>
                     <Table.Th>Exits</Table.Th>
                     <Table.Th>Sizing</Table.Th>
+                    <Table.Th>Reserved capital</Table.Th>
                     <Table.Th>Market context</Table.Th>
                     <Table.Th>Limits</Table.Th>
                     <Table.Th>Updated</Table.Th>
@@ -2645,7 +2850,25 @@ function AccountSubscriptionsManagementCard({
                               account.baseCurrency
                             )}
                           </Text>
+                          {accountSubscriptionHierarchyWarning(accountSubscription) && (
+                            <Badge color="yellow" variant="light" size="xs">
+                              Needs correction
+                            </Badge>
+                          )}
                         </Stack>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm">
+                          {formatMoney(
+                            accountSubscription.reservedNotional,
+                            account.baseCurrency
+                          )}
+                        </Text>
+                        {accountSubscriptionHierarchyWarning(accountSubscription) && (
+                          <Text size="xs" c="orange">
+                            {accountSubscriptionHierarchyWarning(accountSubscription)}
+                          </Text>
+                        )}
                       </Table.Td>
                       <Table.Td style={{ minWidth: 230 }}>
                         <MarketContextCell
@@ -2738,7 +2961,36 @@ function AccountSubscriptionsManagementCard({
                 })),
               ]}
               disabled={updateMutation.isPending}
+              required={draft.enabled && draft.entriesEnabled}
+              error={
+                draft.enabled && draft.entriesEnabled && draft.allocationId === null
+                  ? "Allocation is required for new entries."
+                  : undefined
+              }
             />
+
+            {selectedDraftAllocation && (
+              <Alert
+                color={selectedDraftAllocation.enabled ? "blue" : "yellow"}
+                title="Selected allocation capacity"
+              >
+                Budget {formatMoney(
+                  selectedDraftAllocation.maxAllocatedNotional,
+                  account.baseCurrency
+                )}; reserved {formatMoney(
+                  selectedDraftAllocation.reservedNotional,
+                  account.baseCurrency
+                )}; remaining {formatMoney(
+                  selectedDraftAllocation.remainingAllocatedNotional,
+                  account.baseCurrency
+                )}; per-position ceiling {formatMoney(
+                  selectedDraftAllocation.maxPositionNotional,
+                  account.baseCurrency
+                )}; max open positions {formatQuantity(
+                  selectedDraftAllocation.maxOpenPositions
+                )}.
+              </Alert>
+            )}
 
             <SimpleGrid cols={{ base: 1, md: 3 }}>
               <Group justify="space-between" align="flex-start" wrap="nowrap">
@@ -2844,6 +3096,26 @@ function AccountSubscriptionsManagementCard({
             />
 
             <SimpleGrid cols={{ base: 1, sm: 2 }}>
+              <NumberInput
+                label="Reserved capital"
+                description="Capital reserved inside the allocation; separate from MAX_NOTIONAL sizing."
+                value={draft.reservedNotional ?? ""}
+                onChange={(value) =>
+                  updateDraft({ reservedNotional: normalizeNumberInput(value) })
+                }
+                min={0}
+                thousandSeparator=","
+                prefix="$"
+                error={
+                  draft.enabled && draft.entriesEnabled &&
+                  (draft.reservedNotional === null || draft.reservedNotional <= 0)
+                    ? "Reserved capital is required for new entries."
+                    : undefined
+                }
+                disabled={updateMutation.isPending}
+                required={draft.enabled && draft.entriesEnabled}
+              />
+
               {draft.sizingType === "FIXED_QTY" ? (
                 <NumberInput
                   label="Fixed quantity"
@@ -2970,6 +3242,10 @@ function SafetySettingsCard({
   const displayNameValid = draft.displayName.trim().length > 0;
   const capitalValid =
     draft.estimatedTradingCapital === null || draft.estimatedTradingCapital >= 0;
+  const deployableCapitalValid =
+    draft.maxDeployableNotional !== null
+      ? draft.maxDeployableNotional > 0
+      : account.enabledAllocatedNotional === 0;
 
   function resetDraft() {
     setDraft(accountToSettingsDraft(account));
@@ -2991,6 +3267,13 @@ function SafetySettingsCard({
       });
       return;
     }
+    if (!deployableCapitalValid) {
+      notifications.show({
+        message: "Max deployable notional must be empty or greater than zero.",
+        color: "red",
+      });
+      return;
+    }
 
     try {
       await updateMutation.mutateAsync({
@@ -2998,6 +3281,7 @@ function SafetySettingsCard({
         payload: {
           displayName: draft.displayName.trim(),
           estimatedTradingCapital: draft.estimatedTradingCapital,
+          maxDeployableNotional: draft.maxDeployableNotional,
           status: draft.status,
           tradingEnabled: draft.tradingEnabled,
           killSwitchEnabled: draft.killSwitchEnabled,
@@ -3012,10 +3296,10 @@ function SafetySettingsCard({
       });
     } catch (error) {
       notifications.show({
-        message:
-          error instanceof Error
-            ? error.message
-            : "Failed to save trading account settings.",
+        message: actionableErrorMessage(
+          error,
+          "Failed to save trading account settings."
+        ),
         color: "red",
       });
     }
@@ -3050,7 +3334,12 @@ function SafetySettingsCard({
             <Button
               onClick={saveSettings}
               loading={updateMutation.isPending}
-              disabled={!hasChanges || !displayNameValid || !capitalValid}
+              disabled={
+                !hasChanges ||
+                !displayNameValid ||
+                !capitalValid ||
+                !deployableCapitalValid
+              }
             >
               Save Settings
             </Button>
@@ -3095,6 +3384,41 @@ function SafetySettingsCard({
             error={capitalValid ? undefined : "Must be zero or greater."}
             disabled={updateMutation.isPending}
           />
+
+          <NumberInput
+            label="Max deployable notional"
+            description="Authoritative ceiling for enabled allocation budgets."
+            value={draft.maxDeployableNotional ?? ""}
+            onChange={(value) =>
+              setDraft((current) => ({
+                ...current,
+                maxDeployableNotional: normalizeNumberInput(value),
+              }))
+            }
+            min={0}
+            thousandSeparator=","
+            prefix="$"
+            error={deployableCapitalValid ? undefined : "Must be greater than zero."}
+            disabled={updateMutation.isPending}
+          />
+
+          <Alert
+            color={
+              account.remainingDeployableNotional !== null &&
+              account.remainingDeployableNotional < 0
+                ? "red"
+                : "blue"
+            }
+            title="Allocation capacity"
+          >
+            Enabled allocation budgets: {formatMoney(
+              account.enabledAllocatedNotional,
+              account.baseCurrency
+            )}. Remaining deployable capacity: {formatMoney(
+              account.remainingDeployableNotional,
+              account.baseCurrency
+            )}.
+          </Alert>
 
           <Select
             label="Status"

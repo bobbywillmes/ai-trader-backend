@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   accountSubscriptionFindFirst: vi.fn(),
   accountSubscriptionFindMany: vi.fn(),
   accountSubscriptionUpdate: vi.fn(),
+  assertAccountRiskConfiguration: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -29,6 +30,22 @@ vi.mock('../db/prisma.js', () => ({
       update: mocks.accountSubscriptionUpdate,
     },
   },
+}));
+
+vi.mock('./trading-account-risk-configuration.service.js', () => ({
+  assertAccountRiskConfiguration: mocks.assertAccountRiskConfiguration,
+  withAccountRiskConfigurationTransaction: vi.fn((operation) =>
+    operation({
+      tradingAccount: { findUnique: mocks.tradingAccountFindUnique },
+      subscription: { findUnique: mocks.subscriptionFindUnique },
+      tradingAccountAllocation: { findFirst: mocks.allocationFindFirst },
+      tradingAccountSubscription: {
+        create: mocks.accountSubscriptionCreate,
+        findFirst: mocks.accountSubscriptionFindFirst,
+        update: mocks.accountSubscriptionUpdate,
+      },
+    })
+  ),
 }));
 
 import {
@@ -54,6 +71,7 @@ function accountSubscriptionRecord(overrides: Record<string, unknown> = {}) {
     sizingType: PositionSizingType.FIXED_QTY,
     fixedQty: 1,
     maxPositionNotional: null,
+    reservedNotional: 2_000,
     minPositionNotional: null,
     maxQty: null,
     notes: null,
@@ -80,6 +98,9 @@ function accountSubscriptionRecord(overrides: Record<string, unknown> = {}) {
       key: 'momentum',
       name: 'Momentum',
       enabled: true,
+      maxAllocatedNotional: 10_000,
+      maxOpenPositions: 4,
+      maxPositionNotional: 2_500,
     },
     ...overrides,
   };
@@ -102,12 +123,14 @@ describe('trading account subscription validators', () => {
         subscriptionId: '30',
         allocationId: '10',
         fixedQty: '2',
+        reservedNotional: '5000',
         minPositionNotional: '0',
       })
     ).toEqual({
       subscriptionId: 30,
       allocationId: 10,
       fixedQty: 2,
+      reservedNotional: 5000,
       minPositionNotional: 0,
     });
   });
@@ -152,12 +175,17 @@ describe('trading account subscription service', () => {
     mocks.accountSubscriptionFindMany.mockResolvedValue([]);
     mocks.accountSubscriptionFindFirst.mockResolvedValue({
       id: 20,
+      allocationId: 10,
+      enabled: true,
+      entriesEnabled: true,
       sizingType: PositionSizingType.FIXED_QTY,
       fixedQty: 1,
       maxPositionNotional: null,
+      reservedNotional: 2_000,
     });
     mocks.accountSubscriptionCreate.mockResolvedValue(accountSubscriptionRecord());
     mocks.accountSubscriptionUpdate.mockResolvedValue(accountSubscriptionRecord());
+    mocks.assertAccountRiskConfiguration.mockResolvedValue(true);
   });
 
   it('lists account subscriptions with joined subscription and allocation context', async () => {
@@ -169,6 +197,7 @@ describe('trading account subscription service', () => {
       expect.objectContaining({
         id: 20,
         tradingAccountId: 1,
+        reservedNotional: 2_000,
         subscription: {
           id: 30,
           key: 'spy-swing',
@@ -190,6 +219,9 @@ describe('trading account subscription service', () => {
           key: 'momentum',
           name: 'Momentum',
           enabled: true,
+          maxAllocatedNotional: 10_000,
+          maxOpenPositions: 4,
+          maxPositionNotional: 2_500,
         },
       }),
     ]);
@@ -238,6 +270,7 @@ describe('trading account subscription service', () => {
       allocationId: 10,
       fixedQty: 2,
       maxPositionNotional: 5_000,
+      reservedNotional: 4_000,
       maxQty: 10,
       notes: 'Initial account subscription.',
     });
@@ -253,6 +286,7 @@ describe('trading account subscription service', () => {
         entriesEnabled: true,
         exitsEnabled: true,
         allocationId: 10,
+        reservedNotional: 4_000,
         maxQty: 10,
         notes: 'Initial account subscription.',
       },
@@ -263,6 +297,7 @@ describe('trading account subscription service', () => {
         sizingType: PositionSizingType.FIXED_QTY,
         fixedQty: 1,
         maxPositionNotional: null,
+        reservedNotional: 2_000,
       })
     );
   });
@@ -319,7 +354,16 @@ describe('trading account subscription service', () => {
   });
 
   it('rejects allocations from another trading account', async () => {
-    mocks.allocationFindFirst.mockResolvedValue(null);
+    mocks.assertAccountRiskConfiguration.mockRejectedValue(
+      Object.assign(new Error('Account risk configuration is invalid.'), {
+        statusCode: 409,
+        details: {
+          violations: [
+            { code: 'ACCOUNT_SUBSCRIPTION_ALLOCATION_ACCOUNT_MISMATCH' },
+          ],
+        },
+      })
+    );
 
     await expect(
       createTradingAccountSubscriptionForAdmin(1, {
@@ -328,8 +372,12 @@ describe('trading account subscription service', () => {
         fixedQty: 1,
       })
     ).rejects.toMatchObject({
-      statusCode: 400,
-      message: 'Allocation must belong to the same trading account.',
+      statusCode: 409,
+      details: {
+        violations: [
+          { code: 'ACCOUNT_SUBSCRIPTION_ALLOCATION_ACCOUNT_MISMATCH' },
+        ],
+      },
     });
   });
 
