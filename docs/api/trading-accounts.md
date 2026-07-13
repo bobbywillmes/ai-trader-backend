@@ -284,6 +284,11 @@ unassigned active subscriptions, active subscriptions assigned to disabled
 allocations, invalid active subscription sizing, and planned exposure totals
 above broker portfolio value.
 
+Capital-hierarchy violations affecting enabled, entry-enabled subscriptions are
+readiness blockers for both PAPER and LIVE profiles. Risk Health obtains these
+findings from the same centralized configuration validator used by admin
+writes. Dormant legacy findings may be reported as warnings.
+
 ## Preview Entry Risk
 
 Entry risk preview is an admin-only dry-run endpoint for checking account
@@ -367,7 +372,8 @@ Response envelope:
       "entriesEnabled": true,
       "exitsEnabled": true,
       "allocationId": 7,
-      "sizingType": "MAX_NOTIONAL"
+      "sizingType": "MAX_NOTIONAL",
+      "reservedNotional": 1500
     },
     "allocation": {
       "id": 7,

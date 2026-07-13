@@ -132,6 +132,7 @@ export type TradingAccountRiskHealth = {
     brokerCash: number | null;
     brokerBuyingPower: number | null;
     estimatedTradingCapital: number | null;
+    maxDeployableNotional: number | null;
     openPositionNotional: number;
     allocationBudgetTotal: number;
     activeSubscriptionBudgetTotal: number;
@@ -274,6 +275,7 @@ export type EntryRiskPreview = {
     exitsEnabled: boolean;
     allocationId: number | null;
     sizingType: PositionSizingType;
+    reservedNotional: number | null;
   } | null;
   allocation: {
     id: number;
