@@ -80,6 +80,46 @@ export type TradingAccountRiskSettings = {
   notes: string | null;
   createdAt: string;
   updatedAt: string;
+  effectiveEntryLimits: EffectiveAccountEntryLimits;
+};
+
+export type EffectiveAccountEntryLimitSource =
+  | "ACCOUNT"
+  | "LEGACY_GLOBAL_FALLBACK";
+
+export type EffectiveAccountEntryLimits = {
+  tradingAccountId: number;
+  accountRiskSettingsEnabled: boolean;
+  usingLegacyGlobalFallback: boolean;
+  limits: {
+    maxDailyEntryOrders: {
+      value: number | null;
+      source: EffectiveAccountEntryLimitSource;
+    };
+    maxDailyEntryNotional: {
+      value: number | null;
+      source: EffectiveAccountEntryLimitSource;
+    };
+    maxOpenPositions: {
+      value: number | null;
+      source: EffectiveAccountEntryLimitSource;
+    };
+    maxSymbolOpenNotional: {
+      value: number | null;
+      source: EffectiveAccountEntryLimitSource;
+    };
+  };
+  authoritativeTotalExposure: {
+    field: "maxDeployableNotional";
+    value: number | null;
+    source: "TRADING_ACCOUNT";
+  };
+  superseded: {
+    accountMaxTotalOpenNotional: number | null;
+    globalMaxTotalOpenNotional: number | null;
+    accountMaxSubscriptionOpenNotional: number | null;
+    globalMaxSubscriptionOpenNotional: number | null;
+  };
 };
 
 export type TradingAccountRiskSettingsResponse = {

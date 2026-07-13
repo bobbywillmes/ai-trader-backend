@@ -123,10 +123,37 @@ Response envelope:
     "maxSubscriptionOpenNotional": 5000,
     "notes": null,
     "createdAt": "2026-07-02T00:00:00.000Z",
-    "updatedAt": "2026-07-02T00:00:00.000Z"
+    "updatedAt": "2026-07-02T00:00:00.000Z",
+    "effectiveEntryLimits": {
+      "tradingAccountId": 1,
+      "accountRiskSettingsEnabled": true,
+      "usingLegacyGlobalFallback": false,
+      "limits": {
+        "maxDailyEntryOrders": { "value": 5, "source": "ACCOUNT" },
+        "maxDailyEntryNotional": { "value": 10000, "source": "ACCOUNT" },
+        "maxOpenPositions": { "value": 5, "source": "ACCOUNT" },
+        "maxSymbolOpenNotional": { "value": 2000, "source": "ACCOUNT" }
+      },
+      "authoritativeTotalExposure": {
+        "field": "maxDeployableNotional",
+        "value": 25000,
+        "source": "TRADING_ACCOUNT"
+      },
+      "superseded": {
+        "accountMaxTotalOpenNotional": 25000,
+        "globalMaxTotalOpenNotional": 25000,
+        "accountMaxSubscriptionOpenNotional": 5000,
+        "globalMaxSubscriptionOpenNotional": 5000
+      }
+    }
   }
 }
 ```
+
+Each routine limit reports whether its effective value comes from the enabled
+account settings row (`ACCOUNT`) or the temporary global compatibility value
+(`LEGACY_GLOBAL_FALLBACK`). The effective structure is diagnostic in this
+transition slice; runtime enforcement changes are delivered separately.
 
 Update account risk settings:
 

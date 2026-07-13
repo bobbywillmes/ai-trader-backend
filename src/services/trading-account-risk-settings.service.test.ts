@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   tradingAccountFindUnique: vi.fn(),
   tradingAccountRiskSettingsUpsert: vi.fn(),
+  getRuntimeTradingConfig: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -14,6 +15,10 @@ vi.mock('../db/prisma.js', () => ({
       upsert: mocks.tradingAccountRiskSettingsUpsert,
     },
   },
+}));
+
+vi.mock('./config.service.js', () => ({
+  getRuntimeTradingConfig: mocks.getRuntimeTradingConfig,
 }));
 
 import {
@@ -42,18 +47,35 @@ function riskSettings(overrides: Record<string, unknown> = {}) {
 describe('trading account risk settings service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.tradingAccountFindUnique.mockResolvedValue({ id: 1 });
+    mocks.tradingAccountFindUnique.mockResolvedValue({
+      id: 1,
+      maxDeployableNotional: 50_000,
+    });
     mocks.tradingAccountRiskSettingsUpsert.mockResolvedValue(riskSettings());
+    mocks.getRuntimeTradingConfig.mockResolvedValue({
+      maxDailyEntryOrders: 7,
+      maxDailyEntryNotional: 12_000,
+      maxOpenPositions: 6,
+      maxTotalOpenNotional: 30_000,
+      maxSymbolOpenNotional: 6_000,
+      maxSubscriptionOpenNotional: 6_000,
+    });
   });
 
   it('gets or creates default risk settings for an existing account', async () => {
-    await expect(getTradingAccountRiskSettingsForAdmin(1)).resolves.toEqual(
-      riskSettings()
-    );
+    await expect(getTradingAccountRiskSettingsForAdmin(1)).resolves.toEqual({
+      ...riskSettings(),
+      effectiveEntryLimits: expect.objectContaining({
+        tradingAccountId: 1,
+        limits: expect.objectContaining({
+          maxDailyEntryOrders: { value: 5, source: 'ACCOUNT' },
+        }),
+      }),
+    });
 
     expect(mocks.tradingAccountFindUnique).toHaveBeenCalledWith({
       where: { id: 1 },
-      select: { id: true },
+      select: { id: true, maxDeployableNotional: true },
     });
     expect(mocks.tradingAccountRiskSettingsUpsert).toHaveBeenCalledWith({
       where: { tradingAccountId: 1 },
@@ -126,6 +148,15 @@ describe('trading account risk settings service', () => {
         maxDailyEntryOrders: 3,
         maxSubscriptionOpenNotional: null,
         notes: 'Account cap',
+        effectiveEntryLimits: expect.objectContaining({
+          accountRiskSettingsEnabled: false,
+          limits: expect.objectContaining({
+            maxDailyEntryOrders: {
+              value: 7,
+              source: 'LEGACY_GLOBAL_FALLBACK',
+            },
+          }),
+        }),
       })
     );
   });

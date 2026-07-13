@@ -268,7 +268,13 @@ maxSymbolOpenNotional
 maxSubscriptionOpenNotional
 ```
 
-The one-time `scripts/bootstrap-trading-account-risk-settings.ts` script copies current global entry risk limits into the default account. Avoid casual historical data backfills because trading records are audit-sensitive.
+The repeatable `scripts/bootstrap-trading-account-risk-settings.ts` transition
+script reports missing routine account limits for every Trading Account. It is a
+dry run by default; `--apply` creates missing settings rows and fills only null
+`maxDailyEntryOrders`, `maxDailyEntryNotional`, `maxOpenPositions`, and
+`maxSymbolOpenNotional` values from the current legacy global fallbacks. It
+does not overwrite configured values or change account, allocation,
+subscription, reservation, credential, or broker metadata.
 
 ### Phase C - Risk Gate Uses TradingAccount Limits
 
