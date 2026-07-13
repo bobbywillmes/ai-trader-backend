@@ -54,6 +54,7 @@ function accountSubscriptionRecord(overrides: Record<string, unknown> = {}) {
     sizingType: PositionSizingType.FIXED_QTY,
     fixedQty: 1,
     maxPositionNotional: null,
+    reservedNotional: 2_000,
     minPositionNotional: null,
     maxQty: null,
     notes: null,
@@ -80,6 +81,9 @@ function accountSubscriptionRecord(overrides: Record<string, unknown> = {}) {
       key: 'momentum',
       name: 'Momentum',
       enabled: true,
+      maxAllocatedNotional: 10_000,
+      maxOpenPositions: 4,
+      maxPositionNotional: 2_500,
     },
     ...overrides,
   };
@@ -102,12 +106,14 @@ describe('trading account subscription validators', () => {
         subscriptionId: '30',
         allocationId: '10',
         fixedQty: '2',
+        reservedNotional: '5000',
         minPositionNotional: '0',
       })
     ).toEqual({
       subscriptionId: 30,
       allocationId: 10,
       fixedQty: 2,
+      reservedNotional: 5000,
       minPositionNotional: 0,
     });
   });
@@ -169,6 +175,7 @@ describe('trading account subscription service', () => {
       expect.objectContaining({
         id: 20,
         tradingAccountId: 1,
+        reservedNotional: 2_000,
         subscription: {
           id: 30,
           key: 'spy-swing',
@@ -190,6 +197,9 @@ describe('trading account subscription service', () => {
           key: 'momentum',
           name: 'Momentum',
           enabled: true,
+          maxAllocatedNotional: 10_000,
+          maxOpenPositions: 4,
+          maxPositionNotional: 2_500,
         },
       }),
     ]);
@@ -238,6 +248,7 @@ describe('trading account subscription service', () => {
       allocationId: 10,
       fixedQty: 2,
       maxPositionNotional: 5_000,
+      reservedNotional: 4_000,
       maxQty: 10,
       notes: 'Initial account subscription.',
     });
@@ -253,6 +264,7 @@ describe('trading account subscription service', () => {
         entriesEnabled: true,
         exitsEnabled: true,
         allocationId: 10,
+        reservedNotional: 4_000,
         maxQty: 10,
         notes: 'Initial account subscription.',
       },
@@ -263,6 +275,7 @@ describe('trading account subscription service', () => {
         sizingType: PositionSizingType.FIXED_QTY,
         fixedQty: 1,
         maxPositionNotional: null,
+        reservedNotional: 2_000,
       })
     );
   });

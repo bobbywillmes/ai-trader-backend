@@ -25,6 +25,15 @@ const TRADING_ACCOUNT_ALLOCATION_SELECT = {
       accountSubscriptions: true,
     },
   },
+  accountSubscriptions: {
+    where: {
+      enabled: true,
+      entriesEnabled: true,
+    },
+    select: {
+      reservedNotional: true,
+    },
+  },
 } satisfies Prisma.TradingAccountAllocationSelect;
 
 type TradingAccountAllocationAdminRecord =
@@ -62,6 +71,12 @@ async function tradingAccountExists(tradingAccountId: number) {
 export function serializeTradingAccountAllocationForAdmin(
   allocation: TradingAccountAllocationAdminRecord
 ) {
+  const reservedNotional = allocation.accountSubscriptions.reduce(
+    (total, accountSubscription) =>
+      total + (accountSubscription.reservedNotional ?? 0),
+    0
+  );
+
   return {
     id: allocation.id,
     tradingAccountId: allocation.tradingAccountId,
@@ -72,6 +87,12 @@ export function serializeTradingAccountAllocationForAdmin(
     maxAllocatedNotional: allocation.maxAllocatedNotional,
     maxOpenPositions: allocation.maxOpenPositions,
     maxPositionNotional: allocation.maxPositionNotional,
+    reservedNotional,
+    remainingAllocatedNotional:
+      allocation.maxAllocatedNotional === null
+        ? null
+        : allocation.maxAllocatedNotional - reservedNotional,
+    entryEnabledSubscriptionCount: allocation.accountSubscriptions.length,
     notes: allocation.notes,
     createdAt: allocation.createdAt,
     updatedAt: allocation.updatedAt,

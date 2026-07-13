@@ -50,6 +50,10 @@ function allocationRecord(overrides: Record<string, unknown> = {}) {
     _count: {
       accountSubscriptions: 2,
     },
+    accountSubscriptions: [
+      { reservedNotional: 2_000 },
+      { reservedNotional: 1_500 },
+    ],
     ...overrides,
   };
 }
@@ -126,6 +130,9 @@ describe('trading account allocation service', () => {
         tradingAccountId: 1,
         key: 'swing',
         accountSubscriptionCount: 3,
+        reservedNotional: 3_500,
+        remainingAllocatedNotional: 6_500,
+        entryEnabledSubscriptionCount: 2,
       }),
     ]);
 

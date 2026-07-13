@@ -29,11 +29,19 @@ lastBuyingPower
 lastEquity
 lastPortfolioValue
 totalOpenPositionNotional
+maxDeployableNotional
+enabledAllocatedNotional
+remainingDeployableNotional
 ```
 
 `totalOpenPositionNotional` is derived from open/closing tracked positions for
 the trading account using the same market-value-with-cost-basis-fallback
 exposure convention used by runtime risk checks.
+
+`maxDeployableNotional` is the persisted account capital ceiling.
+`enabledAllocatedNotional` is the sum of known budgets for enabled allocations,
+and `remainingDeployableNotional` is the account ceiling minus that sum. The
+summary fields are computed and are not persisted.
 
 Credential summary fields:
 
@@ -73,6 +81,7 @@ Allowed fields:
 ```text
 displayName
 estimatedTradingCapital
+maxDeployableNotional
 status
 tradingEnabled
 killSwitchEnabled
@@ -455,6 +464,9 @@ Response envelope:
       "maxAllocatedNotional": 10000,
       "maxOpenPositions": 4,
       "maxPositionNotional": 2500,
+      "reservedNotional": 4000,
+      "remainingAllocatedNotional": 6000,
+      "entryEnabledSubscriptionCount": 2,
       "notes": null,
       "createdAt": "2026-06-30T00:00:00.000Z",
       "updatedAt": "2026-06-30T00:00:00.000Z",
@@ -589,6 +601,7 @@ Response envelope:
     "sizingType": "FIXED_QTY",
     "fixedQty": 1,
     "maxPositionNotional": null,
+    "reservedNotional": 2500,
     "minPositionNotional": null,
     "maxQty": null,
     "notes": null,
@@ -614,7 +627,10 @@ Response envelope:
       "id": 1,
       "key": "momentum",
       "name": "Momentum",
-      "enabled": true
+      "enabled": true,
+      "maxAllocatedNotional": 10000,
+      "maxOpenPositions": 4,
+      "maxPositionNotional": 2500
     }
   }
 }
@@ -637,6 +653,7 @@ Payload:
   "exitsEnabled": true,
   "sizingType": "FIXED_QTY",
   "fixedQty": 1,
+  "reservedNotional": 2500,
   "minPositionNotional": null,
   "maxQty": null,
   "notes": null
@@ -659,6 +676,7 @@ exitsEnabled
 sizingType
 fixedQty
 maxPositionNotional
+reservedNotional
 minPositionNotional
 maxQty
 notes

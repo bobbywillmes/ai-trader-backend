@@ -18,6 +18,7 @@ const TRADING_ACCOUNT_SUBSCRIPTION_SELECT = {
   sizingType: true,
   fixedQty: true,
   maxPositionNotional: true,
+  reservedNotional: true,
   minPositionNotional: true,
   maxQty: true,
   notes: true,
@@ -51,6 +52,9 @@ const TRADING_ACCOUNT_SUBSCRIPTION_SELECT = {
       key: true,
       name: true,
       enabled: true,
+      maxAllocatedNotional: true,
+      maxOpenPositions: true,
+      maxPositionNotional: true,
     },
   },
 } satisfies Prisma.TradingAccountSubscriptionSelect;
@@ -192,6 +196,7 @@ export function serializeTradingAccountSubscriptionForAdmin(
     sizingType: accountSubscription.sizingType,
     fixedQty: accountSubscription.fixedQty,
     maxPositionNotional: accountSubscription.maxPositionNotional,
+    reservedNotional: accountSubscription.reservedNotional,
     minPositionNotional: accountSubscription.minPositionNotional,
     maxQty: accountSubscription.maxQty,
     notes: accountSubscription.notes,
@@ -204,6 +209,11 @@ export function serializeTradingAccountSubscriptionForAdmin(
           key: accountSubscription.allocation.key,
           name: accountSubscription.allocation.name,
           enabled: accountSubscription.allocation.enabled,
+          maxAllocatedNotional:
+            accountSubscription.allocation.maxAllocatedNotional,
+          maxOpenPositions: accountSubscription.allocation.maxOpenPositions,
+          maxPositionNotional:
+            accountSubscription.allocation.maxPositionNotional,
         }
       : null,
   };
@@ -280,6 +290,9 @@ export async function createTradingAccountSubscriptionForAdmin(
         }),
         ...(input.minPositionNotional !== undefined && {
           minPositionNotional: input.minPositionNotional,
+        }),
+        ...(input.reservedNotional !== undefined && {
+          reservedNotional: input.reservedNotional,
         }),
         ...(input.maxQty !== undefined && { maxQty: input.maxQty }),
         ...(input.notes !== undefined && { notes: input.notes }),
@@ -358,6 +371,9 @@ export async function updateTradingAccountSubscriptionForAdmin(
         }),
         ...(input.minPositionNotional !== undefined && {
           minPositionNotional: input.minPositionNotional,
+        }),
+        ...(input.reservedNotional !== undefined && {
+          reservedNotional: input.reservedNotional,
         }),
         ...(input.maxQty !== undefined && { maxQty: input.maxQty }),
         ...(input.notes !== undefined && { notes: input.notes }),

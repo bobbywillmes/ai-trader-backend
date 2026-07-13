@@ -26,6 +26,7 @@ const TRADING_ACCOUNT_ADMIN_SELECT = {
   tradingEnabled: true,
   killSwitchEnabled: true,
   estimatedTradingCapital: true,
+  maxDeployableNotional: true,
   baseCurrency: true,
   brokerAccountId: true,
   brokerAccountNumberMasked: true,
@@ -49,6 +50,10 @@ const TRADING_ACCOUNT_ADMIN_SELECT = {
       lastFailedAt: true,
       revokedAt: true,
     },
+  },
+  allocations: {
+    where: { enabled: true },
+    select: { maxAllocatedNotional: true },
   },
 } satisfies Prisma.TradingAccountSelect;
 
@@ -95,6 +100,14 @@ export function serializeTradingAccountForAdmin(
   totalOpenPositionNotional = 0
 ) {
   const credential = account.credential;
+  const enabledAllocatedNotional = (account.allocations ?? []).reduce(
+    (total, allocation) => total + (allocation.maxAllocatedNotional ?? 0),
+    0
+  );
+  const remainingDeployableNotional =
+    account.maxDeployableNotional === null
+      ? null
+      : account.maxDeployableNotional - enabledAllocatedNotional;
 
   return {
     id: account.id,
@@ -105,6 +118,9 @@ export function serializeTradingAccountForAdmin(
     tradingEnabled: account.tradingEnabled,
     killSwitchEnabled: account.killSwitchEnabled,
     estimatedTradingCapital: account.estimatedTradingCapital,
+    maxDeployableNotional: account.maxDeployableNotional,
+    enabledAllocatedNotional,
+    remainingDeployableNotional,
     baseCurrency: account.baseCurrency,
     brokerAccountId: account.brokerAccountId,
     brokerAccountNumberMasked: account.brokerAccountNumberMasked,
@@ -289,6 +305,9 @@ export async function updateTradingAccountForAdmin(
     ...(input.displayName !== undefined && { displayName: input.displayName }),
     ...(input.estimatedTradingCapital !== undefined && {
       estimatedTradingCapital: input.estimatedTradingCapital,
+    }),
+    ...(input.maxDeployableNotional !== undefined && {
+      maxDeployableNotional: input.maxDeployableNotional,
     }),
     ...(input.status !== undefined && { status: input.status }),
     ...(input.tradingEnabled !== undefined && {
