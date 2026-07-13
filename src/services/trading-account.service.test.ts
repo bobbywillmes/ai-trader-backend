@@ -37,6 +37,18 @@ vi.mock('../db/prisma.js', () => ({
   },
 }));
 
+vi.mock('./trading-account-risk-configuration.service.js', () => ({
+  assertAccountRiskConfiguration: vi.fn().mockResolvedValue(true),
+  withAccountRiskConfigurationTransaction: vi.fn((operation) =>
+    operation({
+      tradingAccount: {
+        findUnique: mocks.tradingAccountFindUnique,
+        update: mocks.tradingAccountUpdate,
+      },
+    })
+  ),
+}));
+
 import {
   getTradingAccountForAdmin,
   listTradingAccountsForAdmin,

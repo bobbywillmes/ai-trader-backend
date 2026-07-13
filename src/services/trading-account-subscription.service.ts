@@ -6,6 +6,10 @@ import type {
   CreateTradingAccountSubscriptionInput,
   UpdateTradingAccountSubscriptionInput,
 } from '../validators/trading-account.schema.js';
+import {
+  assertAccountRiskConfiguration,
+  withAccountRiskConfigurationTransaction,
+} from './trading-account-risk-configuration.service.js';
 
 const TRADING_ACCOUNT_SUBSCRIPTION_SELECT = {
   id: true,
@@ -95,39 +99,6 @@ async function tradingAccountExists(tradingAccountId: number) {
   });
 
   return account !== null;
-}
-
-async function subscriptionExists(subscriptionId: number) {
-  const subscription = await prisma.subscription.findUnique({
-    where: { id: subscriptionId },
-    select: { id: true },
-  });
-
-  return subscription !== null;
-}
-
-async function validateAllocationForAccount(
-  tradingAccountId: number,
-  allocationId: number | null | undefined
-) {
-  if (allocationId === undefined || allocationId === null) {
-    return;
-  }
-
-  const allocation = await prisma.tradingAccountAllocation.findFirst({
-    where: {
-      id: allocationId,
-      tradingAccountId,
-    },
-    select: { id: true },
-  });
-
-  if (!allocation) {
-    throw new HttpError(
-      400,
-      'Allocation must belong to the same trading account.'
-    );
-  }
 }
 
 function normalizeSizing(input: SizingInput) {
@@ -260,16 +231,6 @@ export async function createTradingAccountSubscriptionForAdmin(
   tradingAccountId: number,
   input: CreateTradingAccountSubscriptionInput
 ) {
-  if (!(await tradingAccountExists(tradingAccountId))) {
-    return null;
-  }
-
-  if (!(await subscriptionExists(input.subscriptionId))) {
-    throw new HttpError(404, 'Subscription not found.');
-  }
-
-  await validateAllocationForAccount(tradingAccountId, input.allocationId);
-
   const sizing = normalizeSizing({
     sizingType: input.sizingType ?? PositionSizingType.FIXED_QTY,
     fixedQty: input.fixedQty,
@@ -277,7 +238,26 @@ export async function createTradingAccountSubscriptionForAdmin(
   });
 
   try {
-    const accountSubscription = await prisma.tradingAccountSubscription.create({
+    return await withAccountRiskConfigurationTransaction(async (tx) => {
+      const account = await tx.tradingAccount.findUnique({ where: { id: tradingAccountId }, select: { id: true } });
+      if (!account) return null;
+      const subscription = await tx.subscription.findUnique({ where: { id: input.subscriptionId }, select: { id: true } });
+      if (!subscription) throw new HttpError(404, 'Subscription not found.');
+
+      await assertAccountRiskConfiguration(tx, tradingAccountId, {
+        accountSubscription: {
+          id: null,
+          allocationId: input.allocationId ?? null,
+          enabled: input.enabled ?? true,
+          entriesEnabled: input.entriesEnabled ?? true,
+          sizingType: sizing.sizingType,
+          fixedQty: sizing.fixedQty,
+          maxPositionNotional: sizing.maxPositionNotional,
+          reservedNotional: input.reservedNotional ?? null,
+        },
+      });
+
+      const accountSubscription = await tx.tradingAccountSubscription.create({
       data: {
         tradingAccountId,
         subscriptionId: input.subscriptionId,
@@ -298,9 +278,9 @@ export async function createTradingAccountSubscriptionForAdmin(
         ...(input.notes !== undefined && { notes: input.notes }),
       },
       select: TRADING_ACCOUNT_SUBSCRIPTION_SELECT,
+      });
+      return serializeTradingAccountSubscriptionForAdmin(accountSubscription);
     });
-
-    return serializeTradingAccountSubscriptionForAdmin(accountSubscription);
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw accountSubscriptionConflictError();
@@ -315,50 +295,53 @@ export async function updateTradingAccountSubscriptionForAdmin(
   accountSubscriptionId: number,
   input: UpdateTradingAccountSubscriptionInput
 ) {
-  if (!(await tradingAccountExists(tradingAccountId))) {
-    return null;
-  }
-
-  const existing = await prisma.tradingAccountSubscription.findFirst({
-    where: {
-      id: accountSubscriptionId,
-      tradingAccountId,
-    },
-    select: {
-      id: true,
-      sizingType: true,
-      fixedQty: true,
-      maxPositionNotional: true,
-    },
-  });
-
-  if (!existing) {
-    return null;
-  }
-
-  await validateAllocationForAccount(tradingAccountId, input.allocationId);
-
-  const shouldUpdateSizing =
-    input.sizingType !== undefined ||
-    input.fixedQty !== undefined ||
-    input.maxPositionNotional !== undefined;
-  const sizing = shouldUpdateSizing
-    ? normalizeSizing({
-        sizingType: input.sizingType ?? existing.sizingType,
-        fixedQty:
-          input.fixedQty !== undefined ? input.fixedQty : existing.fixedQty,
-        maxPositionNotional:
-          input.maxPositionNotional !== undefined
-            ? input.maxPositionNotional
-            : existing.maxPositionNotional,
-      })
-    : {};
-
   try {
-    const accountSubscription = await prisma.tradingAccountSubscription.update({
+    return await withAccountRiskConfigurationTransaction(async (tx) => {
+      const existing = await tx.tradingAccountSubscription.findFirst({
+        where: { id: accountSubscriptionId, tradingAccountId },
+        select: {
+          id: true,
+          allocationId: true,
+          enabled: true,
+          entriesEnabled: true,
+          sizingType: true,
+          fixedQty: true,
+          maxPositionNotional: true,
+          reservedNotional: true,
+        },
+      });
+      if (!existing) return null;
+
+      const shouldUpdateSizing = input.sizingType !== undefined || input.fixedQty !== undefined || input.maxPositionNotional !== undefined;
+      const sizing = shouldUpdateSizing
+        ? normalizeSizing({
+            sizingType: input.sizingType ?? existing.sizingType,
+            fixedQty: input.fixedQty !== undefined ? input.fixedQty : existing.fixedQty,
+            maxPositionNotional: input.maxPositionNotional !== undefined ? input.maxPositionNotional : existing.maxPositionNotional,
+          })
+        : {
+            sizingType: existing.sizingType,
+            fixedQty: existing.fixedQty,
+            maxPositionNotional: existing.maxPositionNotional,
+          };
+
+      await assertAccountRiskConfiguration(tx, tradingAccountId, {
+        accountSubscription: {
+          id: accountSubscriptionId,
+          allocationId: input.allocationId !== undefined ? input.allocationId : existing.allocationId,
+          enabled: input.enabled ?? existing.enabled,
+          entriesEnabled: input.entriesEnabled ?? existing.entriesEnabled,
+          sizingType: sizing.sizingType,
+          fixedQty: sizing.fixedQty,
+          maxPositionNotional: sizing.maxPositionNotional,
+          reservedNotional: input.reservedNotional !== undefined ? input.reservedNotional : existing.reservedNotional,
+        },
+      });
+
+      const accountSubscription = await tx.tradingAccountSubscription.update({
       where: { id: accountSubscriptionId },
       data: {
-        ...sizing,
+        ...(shouldUpdateSizing ? sizing : {}),
         ...(input.allocationId !== undefined && {
           allocationId: input.allocationId,
         }),
@@ -379,9 +362,9 @@ export async function updateTradingAccountSubscriptionForAdmin(
         ...(input.notes !== undefined && { notes: input.notes }),
       },
       select: TRADING_ACCOUNT_SUBSCRIPTION_SELECT,
+      });
+      return serializeTradingAccountSubscriptionForAdmin(accountSubscription);
     });
-
-    return serializeTradingAccountSubscriptionForAdmin(accountSubscription);
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw accountSubscriptionConflictError();

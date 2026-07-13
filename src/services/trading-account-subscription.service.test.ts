@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   accountSubscriptionFindFirst: vi.fn(),
   accountSubscriptionFindMany: vi.fn(),
   accountSubscriptionUpdate: vi.fn(),
+  assertAccountRiskConfiguration: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -29,6 +30,22 @@ vi.mock('../db/prisma.js', () => ({
       update: mocks.accountSubscriptionUpdate,
     },
   },
+}));
+
+vi.mock('./trading-account-risk-configuration.service.js', () => ({
+  assertAccountRiskConfiguration: mocks.assertAccountRiskConfiguration,
+  withAccountRiskConfigurationTransaction: vi.fn((operation) =>
+    operation({
+      tradingAccount: { findUnique: mocks.tradingAccountFindUnique },
+      subscription: { findUnique: mocks.subscriptionFindUnique },
+      tradingAccountAllocation: { findFirst: mocks.allocationFindFirst },
+      tradingAccountSubscription: {
+        create: mocks.accountSubscriptionCreate,
+        findFirst: mocks.accountSubscriptionFindFirst,
+        update: mocks.accountSubscriptionUpdate,
+      },
+    })
+  ),
 }));
 
 import {
@@ -158,12 +175,17 @@ describe('trading account subscription service', () => {
     mocks.accountSubscriptionFindMany.mockResolvedValue([]);
     mocks.accountSubscriptionFindFirst.mockResolvedValue({
       id: 20,
+      allocationId: 10,
+      enabled: true,
+      entriesEnabled: true,
       sizingType: PositionSizingType.FIXED_QTY,
       fixedQty: 1,
       maxPositionNotional: null,
+      reservedNotional: 2_000,
     });
     mocks.accountSubscriptionCreate.mockResolvedValue(accountSubscriptionRecord());
     mocks.accountSubscriptionUpdate.mockResolvedValue(accountSubscriptionRecord());
+    mocks.assertAccountRiskConfiguration.mockResolvedValue(true);
   });
 
   it('lists account subscriptions with joined subscription and allocation context', async () => {
@@ -332,7 +354,16 @@ describe('trading account subscription service', () => {
   });
 
   it('rejects allocations from another trading account', async () => {
-    mocks.allocationFindFirst.mockResolvedValue(null);
+    mocks.assertAccountRiskConfiguration.mockRejectedValue(
+      Object.assign(new Error('Account risk configuration is invalid.'), {
+        statusCode: 409,
+        details: {
+          violations: [
+            { code: 'ACCOUNT_SUBSCRIPTION_ALLOCATION_ACCOUNT_MISMATCH' },
+          ],
+        },
+      })
+    );
 
     await expect(
       createTradingAccountSubscriptionForAdmin(1, {
@@ -341,8 +372,12 @@ describe('trading account subscription service', () => {
         fixedQty: 1,
       })
     ).rejects.toMatchObject({
-      statusCode: 400,
-      message: 'Allocation must belong to the same trading account.',
+      statusCode: 409,
+      details: {
+        violations: [
+          { code: 'ACCOUNT_SUBSCRIPTION_ALLOCATION_ACCOUNT_MISMATCH' },
+        ],
+      },
     });
   });
 

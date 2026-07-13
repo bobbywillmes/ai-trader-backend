@@ -520,6 +520,12 @@ Allocation keys are trimmed, lowercased, and must contain only letters,
 numbers, hyphens, and underscores. Duplicate keys within the same trading
 account return `409`.
 
+Account, allocation, and account-subscription hierarchy conflicts return `409`
+with stable machine-readable violations under `details.violations`. Each
+violation includes a `code`, human-readable `message`, entity identifiers, a
+field `path`, and actual or limit values when useful. Validation evaluates the
+candidate configuration and persistence in the same serializable transaction.
+
 Use `enabled=false` to disable an allocation. Hard delete is intentionally not
 available.
 
