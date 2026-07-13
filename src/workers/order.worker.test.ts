@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   getNormalizedOpenOrders: vi.fn(),
   getRuntimeTradingConfig: vi.fn(),
   evaluateEntrySessionGuard: vi.fn(),
+  evaluateOrderRisk: vi.fn(),
+  logRiskGateBlockedOrder: vi.fn(),
   createSystemEvent: vi.fn(),
   syncTrailingStopOrderStatus: vi.fn(),
   linkEntryDecisionToBrokerOrder: vi.fn(),
@@ -46,6 +48,11 @@ vi.mock('../services/entry-session-guard.service.js', () => ({
   evaluateEntrySessionGuard: mocks.evaluateEntrySessionGuard,
   entrySessionDetailsAsJson: (decision: { details: unknown }) => decision.details,
   isEntrySessionBlocked: (decision: { allowed: boolean }) => !decision.allowed,
+}));
+
+vi.mock('../services/risk-gate.service.js', () => ({
+  evaluateOrderRisk: mocks.evaluateOrderRisk,
+  logRiskGateBlockedOrder: mocks.logRiskGateBlockedOrder,
 }));
 
 vi.mock('../services/system-event.service.js', () => ({
@@ -119,6 +126,10 @@ describe('order worker entry-session recheck', () => {
       degraded: false,
       details: { status: 'allowed' },
     });
+    mocks.evaluateOrderRisk.mockResolvedValue({
+      allowed: true,
+      details: { orderType: 'entry' },
+    });
     mocks.submitOrderToBroker.mockResolvedValue({
       duplicate: false,
       order: {
@@ -140,7 +151,7 @@ describe('order worker entry-session recheck', () => {
 
   it('blocks an entry intent at worker-time without submitting to Alpaca', async () => {
     mocks.orderIntentFindMany.mockResolvedValue([baseIntent]);
-    mocks.evaluateEntrySessionGuard.mockResolvedValue({
+    mocks.evaluateOrderRisk.mockResolvedValue({
       allowed: false,
       statusCode: 409,
       reason: 'Pre-close entry cutoff is active. New entries are blocked.',
@@ -169,11 +180,20 @@ describe('order worker entry-session recheck', () => {
         blockReason: 'Pre-close entry cutoff is active. New entries are blocked.',
       },
     });
-    expect(mocks.createSystemEvent).toHaveBeenCalledWith(
+    expect(mocks.logRiskGateBlockedOrder).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'order_intent.blocked.entry_session',
-        entityType: 'orderIntent',
-        entityId: '101',
+        orderIntentId: 101,
+        tradingAccountId: 1,
+        result: expect.objectContaining({
+          details: expect.objectContaining({ rule: 'entry_close_buffer_active' }),
+        }),
+      })
+    );
+    expect(mocks.evaluateOrderRisk).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: 'SPY', side: 'buy' }),
+      expect.objectContaining({
+        tradingAccountId: 1,
+        excludeOrderIntentId: 101,
       })
     );
   });
@@ -200,7 +220,7 @@ describe('order worker entry-session recheck', () => {
 
     await processPendingOrders();
 
-    expect(mocks.evaluateEntrySessionGuard).not.toHaveBeenCalled();
+    expect(mocks.evaluateOrderRisk).not.toHaveBeenCalled();
     expect(mocks.submitOrderToBroker).toHaveBeenCalledWith(
       expect.objectContaining({
         symbol: 'SPY',

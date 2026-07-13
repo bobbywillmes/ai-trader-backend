@@ -198,8 +198,8 @@ export function getNewYorkDailyEntryWindow(now: Date = new Date()) {
 }
 
 type EntryIntentLifecycleInput = {
-  side: string;
-  status: string;
+  side?: string;
+  status?: string;
   blockReason?: string | null;
   trackedPositionId?: number | null;
   brokerOrderCount?: number;
@@ -208,12 +208,12 @@ type EntryIntentLifecycleInput = {
 export function representsDailyEntryActivity(
   intent: EntryIntentLifecycleInput
 ) {
-  if (intent.side.toLowerCase() !== 'buy' || intent.blockReason) {
+  if (intent.side?.toLowerCase() !== 'buy' || intent.blockReason) {
     return false;
   }
 
   return (
-    DAILY_ENTRY_ACTIVITY_STATUSES.has(intent.status.toLowerCase()) ||
+    DAILY_ENTRY_ACTIVITY_STATUSES.has(intent.status?.toLowerCase() ?? '') ||
     (intent.brokerOrderCount ?? 0) > 0
   );
 }
@@ -222,9 +222,9 @@ export function representsPendingEntryExposure(
   intent: EntryIntentLifecycleInput
 ) {
   return (
-    intent.side.toLowerCase() === 'buy' &&
+    intent.side?.toLowerCase() === 'buy' &&
     intent.trackedPositionId == null &&
     !intent.blockReason &&
-    PENDING_ENTRY_EXPOSURE_STATUSES.has(intent.status.toLowerCase())
+    PENDING_ENTRY_EXPOSURE_STATUSES.has(intent.status?.toLowerCase() ?? '')
   );
 }

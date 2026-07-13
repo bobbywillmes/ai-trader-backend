@@ -9,12 +9,6 @@ import {
   submitOrderToBroker,
   type BrokerOrderSubmissionInput,
 } from '../services/place-order.service.js';
-import { getRuntimeTradingConfig } from '../services/config.service.js';
-import {
-  entrySessionDetailsAsJson,
-  evaluateEntrySessionGuard,
-  isEntrySessionBlocked,
-} from '../services/entry-session-guard.service.js';
 import { createSystemEvent } from '../services/system-event.service.js';
 import { syncTrailingStopOrderStatus } from '../services/position-exit-state.service.js';
 import {
@@ -23,6 +17,11 @@ import {
 } from '../services/adaptive-polling.service.js';
 import { linkEntryDecisionToBrokerOrder } from '../services/entry-decision.service.js';
 import { resolveDefaultTradingAccountId } from '../services/trading-account.service.js';
+import {
+  evaluateOrderRisk,
+  logRiskGateBlockedOrder,
+} from '../services/risk-gate.service.js';
+import { getSizingEstimatedNotional } from '../services/trading-account-entry-risk-usage.service.js';
 
 export type SubmittedOrderSyncResult = {
   found: number;
@@ -102,38 +101,35 @@ export async function processPendingOrders() {
       }
 
       if (isEntryOrder(resolvedInput)) {
-        const config = await getRuntimeTradingConfig();
-        const entrySession = await evaluateEntrySessionGuard(config, new Date(), {
-          tradingAccountId,
+        const requestedNotionalOverride = getSizingEstimatedNotional(
+          intent.rawRequestJson
+        );
+        const riskResult = await evaluateOrderRisk(resolvedInput, {
+          tradingAccountId: intent.tradingAccountId ?? tradingAccountId,
+          excludeOrderIntentId: intent.id,
+          ...(requestedNotionalOverride !== null
+            ? { requestedNotionalOverride }
+            : {}),
         });
 
-        if (isEntrySessionBlocked(entrySession)) {
+        if (!riskResult.allowed) {
           await prisma.orderIntent.update({
             where: { id: intent.id },
             data: {
               status: 'blocked',
-              blockReason: entrySession.reason,
+              blockReason: riskResult.reason,
             },
           });
 
-          await createSystemEvent({
-            type: 'order_intent.blocked.entry_session',
-            entityType: 'orderIntent',
-            entityId: String(intent.id),
+          await logRiskGateBlockedOrder({
+            orderIntentId: intent.id,
             tradingAccountId: intent.tradingAccountId,
-            payloadJson: {
-              orderIntentId: intent.id,
-              symbol: resolvedInput.symbol,
-              side: resolvedInput.side,
-              subscriptionKey: resolvedInput.subscriptionKey ?? null,
-              reason: entrySession.reason,
-              statusCode: entrySession.statusCode,
-              details: entrySessionDetailsAsJson(entrySession),
-            } as Prisma.InputJsonValue,
+            input: resolvedInput,
+            result: riskResult,
           });
 
           console.log(
-            `Intent (${intent.id}) blocked by entry session guard: ${entrySession.details.rule}`
+            `Intent (${intent.id}) blocked by worker-time risk recheck: ${riskResult.reason}`
           );
 
           continue;
