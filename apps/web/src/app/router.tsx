@@ -33,7 +33,7 @@ import { ReconciliationPage } from "../features/reconciliation/ReconciliationPag
 import { TradeHistoryPage } from "../features/tradeHistory/TradeHistoryPage";
 import { EntryDecisionsPage } from "../features/entryDecisions/EntryDecisionsPage";
 import { TradingAccountsPage } from "../features/tradingAccounts/TradingAccountsPage";
-import { TradingAccountDetailPage } from "../features/tradingAccounts/TradingAccountDetailPage";
+import { TradingAccountDetailPage } from "../features/tradingAccounts/detail/TradingAccountDetailPage";
 import { MomentumScannerPipelinePage } from "../features/momentumScanner/MomentumScannerPage";
 import { MomentumUniversePage } from "../features/momentumScanner/MomentumUniversePage";
 import { MomentumSymbolResearchPage } from "../features/momentumScanner/MomentumSymbolResearchPage";

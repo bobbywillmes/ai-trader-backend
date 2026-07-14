@@ -37,11 +37,11 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ApiError, getAdminToken } from "../../lib/api";
-import { useOpenOrders } from "../orders/hooks";
-import type { OpenOrder } from "../orders/types";
-import { useOpenPositions } from "../positions/hooks";
-import type { TrackedPosition } from "../positions/types";
+import { ApiError, getAdminToken } from "../../../lib/api";
+import { useOpenOrders } from "../../orders/hooks";
+import type { OpenOrder } from "../../orders/types";
+import { useOpenPositions } from "../../positions/hooks";
+import type { TrackedPosition } from "../../positions/types";
 import {
   useCreateTradingAccountAllocation,
   usePreviewTradingAccountEntryRisk,
@@ -59,7 +59,7 @@ import {
   useUpdateTradingAccountSubscription,
   useUpsertTradingAccountCredential,
   useVerifyTradingAccountCredential,
-} from "./hooks";
+} from "../hooks";
 import type {
   AccountSubscriptionMarketContextItem,
   AccountSubscriptionPriceHistoryRange,
@@ -79,12 +79,24 @@ import type {
   TradingAccountSubscription,
   TradingAccountSubscriptionInput,
   TradingAccountStatus,
-} from "./types";
-
-type DetailItemProps = {
-  label: string;
-  value: ReactNode;
-};
+} from "../types";
+import { AccountDetailHeader } from "./components/AccountDetailHeader";
+import { AccountTabPlaceholder } from "./components/AccountTabPlaceholder";
+import { DetailItem } from "./components/DetailItem";
+import type { TradingAccountDetailTab } from "./types";
+import {
+  isTradingAccountDetailTab,
+  tradingAccountDetailTabs,
+} from "./utils/tabRouting";
+import {
+  formatDateTime,
+  formatMoney,
+  formatOrderValue,
+  formatPercentValue,
+  formatQuantity,
+  formatSignedMoney,
+  formatStatus,
+} from "./utils/formatters";
 
 type AccountSettingsDraft = {
   displayName: string;
@@ -154,35 +166,6 @@ type AccountSubscriptionDraft = {
 
 type AccountSubscriptionStatusFilter = "all" | "active" | "disabled";
 type AccountSubscriptionSizingFilter = "all" | PositionSizingType;
-type TradingAccountDetailTab =
-  | "overview"
-  | "positions"
-  | "orders"
-  | "subscriptions"
-  | "risk-health"
-  | "activity";
-
-const tradingAccountDetailTabs: {
-  value: TradingAccountDetailTab;
-  label: string;
-}[] = [
-  { value: "overview", label: "Overview" },
-  { value: "positions", label: "Positions" },
-  { value: "orders", label: "Orders" },
-  { value: "subscriptions", label: "Subscriptions" },
-  { value: "risk-health", label: "Risk Health" },
-  { value: "activity", label: "Activity" },
-];
-
-const tradingAccountDetailTabValues: ReadonlySet<string> = new Set(
-  tradingAccountDetailTabs.map((tab) => tab.value)
-);
-
-function isTradingAccountDetailTab(
-  value: string | null
-): value is TradingAccountDetailTab {
-  return value !== null && tradingAccountDetailTabValues.has(value);
-}
 
 const priceHistoryRangeOptions: {
   value: AccountSubscriptionPriceHistoryRange;
@@ -517,11 +500,6 @@ function validateAccountSubscriptionDraft(
   return null;
 }
 
-function formatQuantity(value: number | null | undefined) {
-  if (value === null || value === undefined) return "-";
-  return value.toLocaleString();
-}
-
 function formatSizing(
   accountSubscription: TradingAccountSubscription,
   currency: string
@@ -663,28 +641,6 @@ function riskSettingsDraftToPayload(
     maxSubscriptionOpenNotional: draft.maxSubscriptionOpenNotional,
     notes: normalizeOptionalText(draft.notes),
   };
-}
-
-function formatDateTime(value: string | null | undefined) {
-  if (!value) return "-";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
-}
-
-function formatMoney(value: number | null | undefined, currency = "USD") {
-  if (value === null || value === undefined) return "-";
-
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency,
-    maximumFractionDigits: 2,
-  }).format(value);
 }
 
 function formatMarketDate(value: string | null | undefined) {
@@ -1116,11 +1072,6 @@ function MarketContextPanel({
   );
 }
 
-function formatStatus(value: string | null | undefined) {
-  if (!value) return "-";
-  return value.replace(/_/g, " ");
-}
-
 function accountStatusColor(status: TradingAccountStatus) {
   switch (status) {
     case "ACTIVE":
@@ -1189,19 +1140,6 @@ function formatSurplus(value: number | null | undefined, currency = "USD") {
   const formatted = formatMoney(Math.abs(value), currency);
 
   return value >= 0 ? `${formatted} surplus` : `${formatted} deficit`;
-}
-
-function DetailItem({ label, value }: DetailItemProps) {
-  return (
-    <Stack gap={2}>
-      <Text size="xs" c="dimmed" tt="uppercase">
-        {label}
-      </Text>
-      <Text size="sm" fw={600}>
-        {value ?? "-"}
-      </Text>
-    </Stack>
-  );
 }
 
 function HealthCheckList({
@@ -4153,72 +4091,6 @@ function CredentialManagementCard({
   );
 }
 
-function AccountTabPlaceholder({
-  title,
-  description,
-  actionLabel,
-  actionTo,
-  secondaryActionLabel,
-  secondaryActionTo,
-}: {
-  title: string;
-  description: string;
-  actionLabel?: string;
-  actionTo?: string;
-  secondaryActionLabel?: string;
-  secondaryActionTo?: string;
-}) {
-  return (
-    <Card withBorder radius="md" p="lg">
-      <Stack gap="sm" align="flex-start">
-        <Title order={3}>{title}</Title>
-        <Text size="sm" c="dimmed">
-          {description}
-        </Text>
-        {(actionLabel && actionTo) ||
-        (secondaryActionLabel && secondaryActionTo) ? (
-          <Group gap="xs">
-            {actionLabel && actionTo && (
-              <Button component={Link} to={actionTo} variant="light" size="xs">
-                {actionLabel}
-              </Button>
-            )}
-            {secondaryActionLabel && secondaryActionTo && (
-              <Button
-                component={Link}
-                to={secondaryActionTo}
-                variant="default"
-                size="xs"
-              >
-                {secondaryActionLabel}
-              </Button>
-            )}
-          </Group>
-        ) : null}
-      </Stack>
-    </Card>
-  );
-}
-
-function formatSignedMoney(value: number | null | undefined, currency = "USD") {
-  if (value === null || value === undefined) return "-";
-
-  const sign = value > 0 ? "+" : "";
-  return `${sign}${formatMoney(value, currency)}`;
-}
-
-function formatPercentValue(value: number | null | undefined) {
-  if (value === null || value === undefined) return "-";
-
-  return `${value.toFixed(2)}%`;
-}
-
-function formatOrderValue(value: string | number | null | undefined) {
-  if (value === null || value === undefined || value === "") return "-";
-
-  return String(value);
-}
-
 function AccountPositionsSection({
   account,
   token,
@@ -4547,26 +4419,7 @@ export function TradingAccountDetailPage() {
 
   return (
     <Stack gap="lg">
-      <Group justify="space-between" align="flex-start">
-        <div>
-          <Button
-            component={Link}
-            to="/trading-accounts"
-            variant="subtle"
-            size="xs"
-            mb="xs"
-          >
-            Back to Trading Accounts
-          </Button>
-          <Title order={2} size="h3">
-            {account?.displayName ?? "Trading Account"}
-          </Title>
-          <Text size="sm" c="dimmed">
-            Account-scoped broker metadata, credential status, and safety
-            controls.
-          </Text>
-        </div>
-      </Group>
+      <AccountDetailHeader displayName={account?.displayName} />
 
       {isError && (
         <Alert color="red" title="Failed to load trading account">
