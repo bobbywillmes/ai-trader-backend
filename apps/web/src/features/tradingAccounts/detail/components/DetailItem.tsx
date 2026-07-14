@@ -13,7 +13,7 @@ export function DetailItem({
       <Text size="xs" c="dimmed" tt="uppercase">
         {label}
       </Text>
-      <Text size="sm" fw={600}>
+      <Text component="div" size="sm" fw={600}>
         {value ?? "-"}
       </Text>
     </Stack>
