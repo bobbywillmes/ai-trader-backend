@@ -40,6 +40,7 @@ import {
   formatMoney,
   formatQuantity,
 } from "../../utils/formatters";
+import { normalizeNumberInput } from "../../utils/formValues";
 import { EntryRiskPreviewModal } from "./EntryRiskPreviewModal";
 import {
   MarketContextCell,
@@ -59,7 +60,6 @@ import {
   actionableErrorMessage,
   formatLimits,
   formatSizing,
-  normalizeNumberInput,
   sizingTypeLabel,
   validateAccountSubscriptionDraft,
 } from "./utils";

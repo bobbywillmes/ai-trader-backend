@@ -20,11 +20,13 @@ import { useUpdateTradingAccount } from "../../../hooks";
 import type { TradingAccount, TradingAccountStatus } from "../../../types";
 import { actionableErrorMessage } from "../../utils/errors";
 import { formatMoney } from "../../utils/formatters";
+import {
+  normalizeNumberInput,
+  normalizeOptionalText,
+} from "../../utils/formValues";
 import type { AccountSettingsDraft } from "./types";
 import {
   accountToSettingsDraft,
-  normalizeNumberInput,
-  normalizeOptionalText,
   settingsDraftChanged,
   tradingAccountStatusOptions,
 } from "./utils";

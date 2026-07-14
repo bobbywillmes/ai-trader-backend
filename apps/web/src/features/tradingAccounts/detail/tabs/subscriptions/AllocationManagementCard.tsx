@@ -26,13 +26,13 @@ import {
 } from "../../../hooks";
 import type { TradingAccount, TradingAccountAllocation } from "../../../types";
 import { formatDateTime, formatMoney } from "../../utils/formatters";
+import { normalizeNumberInput } from "../../utils/formValues";
 import type { AllocationDraft, AllocationModalState } from "./types";
 import {
   actionableErrorMessage,
   allocationDraftToPayload,
   allocationToDraft,
   emptyAllocationDraft,
-  normalizeNumberInput,
   suggestAllocationKey,
   validateAllocationDraft,
 } from "./utils";

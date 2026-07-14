@@ -27,5 +27,3 @@ export function SafetyNotesCard({ account }: { account: TradingAccount }) {
     </Card>
   );
 }
-
-

@@ -22,7 +22,9 @@ import { SubscriptionsTab } from "./tabs/subscriptions/SubscriptionsTab";
 import type { TradingAccountDetailTab } from "./types";
 import {
   isTradingAccountDetailTab,
+  resolveTradingAccountDetailTab,
   tradingAccountDetailTabs,
+  updateTradingAccountDetailTabSearchParams,
 } from "./utils/tabRouting";
 
 export function TradingAccountDetailPage() {
@@ -33,7 +35,7 @@ export function TradingAccountDetailPage() {
   const accountId = id ? Number(id) : undefined;
   const requestedTab = searchParams.get("tab");
   const activeTab: TradingAccountDetailTab =
-    isTradingAccountDetailTab(requestedTab) ? requestedTab : "overview";
+    resolveTradingAccountDetailTab(requestedTab);
   const validAccountId =
     accountId !== undefined && Number.isInteger(accountId) && accountId > 0
       ? accountId
@@ -47,17 +49,9 @@ export function TradingAccountDetailPage() {
   function setActiveTab(value: string | null) {
     if (!isTradingAccountDetailTab(value)) return;
 
-    setSearchParams((current) => {
-      const next = new URLSearchParams(current);
-
-      if (value === "overview") {
-        next.delete("tab");
-      } else {
-        next.set("tab", value);
-      }
-
-      return next;
-    });
+    setSearchParams((current) =>
+      updateTradingAccountDetailTabSearchParams(current, value)
+    );
   }
 
   if (!validAccountId) {

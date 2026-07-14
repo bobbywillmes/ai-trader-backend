@@ -29,9 +29,9 @@ import {
   formatQuantity,
   formatStatus,
 } from "../../utils/formatters";
+import { normalizeNumberInput } from "../../utils/formValues";
 import {
   type AccountRiskSettingsDraft,
-  normalizeNumberInput,
   riskSettingsDraftChanged,
   riskSettingsDraftToPayload,
   riskSettingsToDraft,
