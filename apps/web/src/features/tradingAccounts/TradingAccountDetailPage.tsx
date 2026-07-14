@@ -1449,6 +1449,27 @@ function TradingAccountHealthCard({
         ),
       },
       {
+        label: "Pending entry notional",
+        value: formatMoney(
+          health.capital.pendingEntryNotional,
+          account.baseCurrency
+        ),
+      },
+      {
+        label: "Current account exposure",
+        value: formatMoney(
+          health.capital.currentAccountExposure,
+          account.baseCurrency
+        ),
+      },
+      {
+        label: "Remaining deployable capacity",
+        value: formatSurplus(
+          health.capital.remainingDeployableNotional,
+          account.baseCurrency
+        ),
+      },
+      {
         label: "Allocation budget total",
         value: formatMoney(
           health.capital.allocationBudgetTotal,
@@ -1500,7 +1521,8 @@ function TradingAccountHealthCard({
           <div>
             <Title order={3}>Entry Readiness</Title>
             <Text size="sm" c="dimmed">
-              Read-only account configuration and planned exposure diagnostics.
+              Read-only ownership, configuration, and projected exposure
+              diagnostics. Pending entries consume capital and position capacity.
             </Text>
           </div>
           <Group gap="xs">
@@ -1594,6 +1616,13 @@ function TradingAccountHealthCard({
                 value={formatStatus(riskHealth.capital.capitalSource)}
               />
             </SimpleGrid>
+
+            {riskHealth.effectiveEntryLimits.usingLegacyGlobalFallback && (
+              <Alert color="yellow" title="Routine limits use legacy fallback">
+                Configure all four routine fields in Account Risk Controls to
+                remove global fallback ownership for this account.
+              </Alert>
+            )}
 
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
               {metricItems(riskHealth).map((item) => (
@@ -2202,9 +2231,11 @@ function EntryRiskPreviewModal({
 }) {
   const allowed = preview?.ok ?? false;
   const blockingLayer =
+    preview?.blockingLayer ??
     preview?.risk.layer ??
     (preview && !preview.allocationRisk.ok ? preview.allocationRisk.layer : null);
   const blockingCode =
+    preview?.blockingCode ??
     preview?.risk.code ??
     (preview && !preview.allocationRisk.ok ? preview.allocationRisk.code : null);
   const blockingMessage =
@@ -2278,6 +2309,70 @@ function EntryRiskPreviewModal({
               }
             />
           </SimpleGrid>
+
+          {preview.accountUsage && (
+            <>
+              <Text fw={600}>Account exposure</Text>
+              <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
+                <PreviewMetric
+                  label="Open exposure"
+                  value={formatMoney(
+                    preview.accountUsage.openPositionNotional,
+                    currency
+                  )}
+                />
+                <PreviewMetric
+                  label="Pending entry exposure"
+                  value={formatMoney(
+                    preview.accountUsage.pendingEntryNotional,
+                    currency
+                  )}
+                />
+                <PreviewMetric
+                  label="Current account exposure"
+                  value={formatMoney(
+                    preview.accountUsage.currentAccountExposure,
+                    currency
+                  )}
+                />
+                <PreviewMetric
+                  label="Projected account exposure"
+                  value={formatMoney(
+                    preview.accountUsage.projectedAccountExposure,
+                    currency
+                  )}
+                />
+              </SimpleGrid>
+            </>
+          )}
+
+          {preview.effectiveEntryLimits && (
+            <>
+              <Text fw={600}>Effective account limits</Text>
+              <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                {Object.entries(preview.effectiveEntryLimits.limits).map(
+                  ([field, limit]) => (
+                    <PreviewMetric
+                      key={field}
+                      label={`${formatStatus(field)} (${limit.source === "ACCOUNT" ? "Account" : "Legacy fallback"})`}
+                      value={
+                        field === "maxDailyEntryOrders" || field === "maxOpenPositions"
+                          ? formatQuantity(limit.value)
+                          : formatMoney(limit.value, currency)
+                      }
+                    />
+                  )
+                )}
+                <PreviewMetric
+                  label="Max deployable notional (Trading Account)"
+                  value={formatMoney(
+                    preview.effectiveEntryLimits.authoritativeTotalExposure.value,
+                    currency
+                  )}
+                />
+              </SimpleGrid>
+            </>
+          )}
 
           <SimpleGrid cols={{ base: 1, sm: 2 }}>
             <PreviewMetric
@@ -3592,9 +3687,10 @@ function AccountRiskControlsForm({
             )}
           </Group>
           <Text size="sm" c="dimmed">
-            These limits apply only to this TradingAccount. Global Settings
-            still act as backend-wide emergency caps. Allocation bucket limits
-            are configured separately and enforced for assigned new entries.
+            These are the primary routine entry limits for this Trading Account.
+            A blank field temporarily uses the matching legacy global fallback.
+            Allocation and account-subscription controls remain enforced beneath
+            this account layer.
           </Text>
         </div>
         <Group>
@@ -3621,14 +3717,53 @@ function AccountRiskControlsForm({
         </Alert>
       )}
 
+      {riskSettings.effectiveEntryLimits.usingLegacyGlobalFallback && (
+        <Alert color="yellow" title="Legacy fallback is active">
+          One or more routine limits are inherited from Global Settings. PAPER
+          accounts receive a readiness warning; LIVE accounts remain blocked
+          until all four account-owned fields are configured.
+        </Alert>
+      )}
+
+      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
+        <DetailItem
+          label="Authoritative account exposure ceiling"
+          value={formatMoney(account.maxDeployableNotional, account.baseCurrency)}
+        />
+        {Object.entries(riskSettings.effectiveEntryLimits.limits).map(
+          ([field, limit]) => (
+            <DetailItem
+              key={field}
+              label={formatStatus(field)}
+              value={
+                <Stack gap={2}>
+                  <Text size="sm" fw={600}>
+                    {field === "maxDailyEntryOrders" || field === "maxOpenPositions"
+                      ? formatQuantity(limit.value)
+                      : formatMoney(limit.value, account.baseCurrency)}
+                  </Text>
+                  <Badge
+                    size="xs"
+                    color={limit.source === "ACCOUNT" ? "teal" : "yellow"}
+                    variant="light"
+                  >
+                    {limit.source === "ACCOUNT" ? "Account" : "Legacy fallback"}
+                  </Badge>
+                </Stack>
+              }
+            />
+          )
+        )}
+      </SimpleGrid>
+
       <Group justify="space-between" align="flex-start" wrap="nowrap">
         <div>
           <Text fw={600} size="sm">
             Account risk controls enabled
           </Text>
           <Text size="sm" c="dimmed">
-            Turn off only to skip account-specific caps. Global emergency caps
-            still apply.
+            When disabled, account-specific values are ignored and all four
+            routine limits use their legacy global fallbacks.
           </Text>
         </div>
         <Switch
@@ -3643,7 +3778,8 @@ function AccountRiskControlsForm({
 
       <SimpleGrid cols={{ base: 1, md: 2 }}>
         <NumberInput
-          label="Account max daily entry orders"
+          label="Max daily entry orders"
+          description="Counted by America/New_York trading date."
           value={draft.maxDailyEntryOrders ?? ""}
           onChange={(value) =>
             updateDraft({ maxDailyEntryOrders: normalizeNumberInput(value) })
@@ -3662,7 +3798,8 @@ function AccountRiskControlsForm({
         />
 
         <NumberInput
-          label="Account max daily entry dollars"
+          label="Max daily entry notional"
+          description="Accepted entries count even after they fill."
           value={draft.maxDailyEntryNotional ?? ""}
           onChange={(value) =>
             updateDraft({ maxDailyEntryNotional: normalizeNumberInput(value) })
@@ -3680,7 +3817,8 @@ function AccountRiskControlsForm({
         />
 
         <NumberInput
-          label="Account max open positions"
+          label="Max open positions"
+          description="Active positions and unmaterialized pending entries consume slots."
           value={draft.maxOpenPositions ?? ""}
           onChange={(value) =>
             updateDraft({ maxOpenPositions: normalizeNumberInput(value) })
@@ -3699,25 +3837,8 @@ function AccountRiskControlsForm({
         />
 
         <NumberInput
-          label="Account max total open dollars"
-          value={draft.maxTotalOpenNotional ?? ""}
-          onChange={(value) =>
-            updateDraft({ maxTotalOpenNotional: normalizeNumberInput(value) })
-          }
-          min={1}
-          thousandSeparator=","
-          prefix="$"
-          error={
-            draft.maxTotalOpenNotional === null ||
-            draft.maxTotalOpenNotional > 0
-              ? undefined
-              : "Must be greater than zero."
-          }
-          disabled={updateMutation.isPending}
-        />
-
-        <NumberInput
-          label="Account max symbol open dollars"
+          label="Max symbol open notional"
+          description="Open, pending, and proposed exposure for the symbol."
           value={draft.maxSymbolOpenNotional ?? ""}
           onChange={(value) =>
             updateDraft({ maxSymbolOpenNotional: normalizeNumberInput(value) })
@@ -3734,26 +3855,18 @@ function AccountRiskControlsForm({
           disabled={updateMutation.isPending}
         />
 
-        <NumberInput
-          label="Account max subscription open dollars"
-          value={draft.maxSubscriptionOpenNotional ?? ""}
-          onChange={(value) =>
-            updateDraft({
-              maxSubscriptionOpenNotional: normalizeNumberInput(value),
-            })
-          }
-          min={1}
-          thousandSeparator=","
-          prefix="$"
-          error={
-            draft.maxSubscriptionOpenNotional === null ||
-            draft.maxSubscriptionOpenNotional > 0
-              ? undefined
-              : "Must be greater than zero."
-          }
-          disabled={updateMutation.isPending}
-        />
       </SimpleGrid>
+
+      <Alert color="blue" title="Superseded account fields">
+        maxTotalOpenNotional ({formatMoney(
+          riskSettings.maxTotalOpenNotional,
+          account.baseCurrency
+        )}) and maxSubscriptionOpenNotional ({formatMoney(
+          riskSettings.maxSubscriptionOpenNotional,
+          account.baseCurrency
+        )}) remain stored for Phase 2B compatibility. maxDeployableNotional and
+        resolved subscription reservations are authoritative for normal entries.
+      </Alert>
 
       <Textarea
         label="Notes"

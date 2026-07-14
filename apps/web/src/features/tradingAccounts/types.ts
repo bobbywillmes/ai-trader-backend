@@ -174,6 +174,9 @@ export type TradingAccountRiskHealth = {
     estimatedTradingCapital: number | null;
     maxDeployableNotional: number | null;
     openPositionNotional: number;
+    pendingEntryNotional: number;
+    currentAccountExposure: number;
+    remainingDeployableNotional: number | null;
     allocationBudgetTotal: number;
     activeSubscriptionBudgetTotal: number;
     maxSimultaneousAllocationExposure: number;
@@ -185,6 +188,7 @@ export type TradingAccountRiskHealth = {
       | "ESTIMATED_TRADING_CAPITAL"
       | "UNAVAILABLE";
   };
+  effectiveEntryLimits: EffectiveAccountEntryLimits;
   checks: TradingAccountRiskHealthCheck[];
   blockers: TradingAccountRiskHealthCheck[];
   warnings: TradingAccountRiskHealthCheck[];
@@ -348,6 +352,19 @@ export type EntryRiskPreview = {
     message: string | null;
     details: unknown;
   };
+  effectiveEntryLimits: EffectiveAccountEntryLimits | null;
+  accountUsage: {
+    openPositionNotional?: number;
+    pendingEntryNotional?: number;
+    currentAccountExposure?: number;
+    projectedAccountExposure?: number;
+    activePositionCount?: number;
+    pendingEntryPositionCount?: number;
+    currentAccountPositionSlots?: number;
+    projectedSymbolExposure?: number;
+  } | null;
+  blockingLayer: EntryRiskPreviewLayer;
+  blockingCode: string | null;
   allocationRisk: {
     checked: boolean;
     ok: boolean;

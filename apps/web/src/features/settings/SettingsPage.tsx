@@ -62,49 +62,49 @@ const riskLimitDefinitions: {
   {
     key: "maxDailyEntryOrders",
     label: "Max Daily Entry Orders",
-    badge: "daily count",
+    badge: "legacy fallback",
     description:
-      "Global maximum number of buy-side entry orders the backend may create in one UTC day.",
+      "Compatibility fallback for accounts without maxDailyEntryOrders. Usage follows the America/New_York trading date.",
     placeholder: "Example: 5",
   },
   {
     key: "maxDailyEntryNotional",
     label: "Max Daily Entry Notional",
-    badge: "daily dollars",
+    badge: "legacy fallback",
     description:
-      "Global maximum total dollar value of entry orders allowed in one UTC day. Runtime-sized market orders count using their estimated notional snapshot.",
+      "Compatibility fallback for accounts without maxDailyEntryNotional. Configured account values replace this value.",
     placeholder: "Example: 10000",
   },
   {
     key: "maxOpenPositions",
     label: "Max Open Positions",
-    badge: "portfolio count",
+    badge: "legacy fallback",
     description:
-      "Global maximum number of active tracked positions allowed at the same time.",
+      "Compatibility fallback for accounts without maxOpenPositions. Pending entries also consume account position slots.",
     placeholder: "Example: 5",
   },
   {
     key: "maxTotalOpenNotional",
     label: "Max Total Open Notional",
-    badge: "portfolio dollars",
+    badge: "superseded",
     description:
-      "Global projected open exposure cap after a new entry. Account- and allocation-scoped limits are planned separately.",
+      "Stored for compatibility. TradingAccount.maxDeployableNotional owns total exposure for resolved account-subscription entries.",
     placeholder: "Example: 25000",
   },
   {
     key: "maxSymbolOpenNotional",
     label: "Max Symbol Open Notional",
-    badge: "ticker dollars",
+    badge: "legacy fallback",
     description:
-      "Global maximum dollar exposure allowed for a single ticker.",
+      "Compatibility fallback for accounts without maxSymbolOpenNotional. Configured account values replace this value.",
     placeholder: "Example: 5000",
   },
   {
     key: "maxSubscriptionOpenNotional",
     label: "Max Subscription Open Notional",
-    badge: "strategy dollars",
+    badge: "superseded",
     description:
-      "Legacy global cap for one subscription. Account-subscription sizing now controls new entry size; this cap remains an emergency guardrail until account-scoped risk settings replace it.",
+      "Stored for compatibility. Resolved account subscriptions use reservations and sizing controls instead.",
     placeholder: "Example: 5000",
   },
 ];
@@ -2293,14 +2293,16 @@ export function SettingsPage() {
             <Stack gap="md">
               <Group justify="space-between" align="flex-start">
                 <div>
-                  <Title order={3}>Entry Risk Limits</Title>
+                  <Title order={3}>Legacy Entry Risk Fallbacks</Title>
                   <Text c="dimmed" size="sm">
-                    These are global emergency entry caps checked only after
-                    trading is enabled and the kill switch is off.
-                    Account-specific sizing lives on trading account
-                    subscriptions. Allocation bucket limits are configured on
-                    trading account allocations but are not enforced yet.
-                    Clearing a value removes that specific global cap.
+                    These numerical values temporarily support Trading Accounts
+                    whose account-owned routine fields are missing or disabled.
+                    A configured account value replaces its matching fallback;
+                    maxDeployableNotional owns total account exposure, while
+                    resolved subscriptions use reservations. Global automated
+                    trading, kill switch, paper-mode compatibility, and session
+                    policy remain system-wide controls. This fallback section is
+                    scheduled for removal in a later phase.
                   </Text>
                 </div>
 
