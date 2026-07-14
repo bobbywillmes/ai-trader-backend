@@ -777,6 +777,23 @@ export async function evaluateOrderRisk(
     accountRiskSettings,
     globalConfig: config,
   });
+  const accountRiskDiagnostics = {
+    effectiveEntryLimits: effective,
+    usage: {
+      dailyWindow: usage.dailyWindow,
+      dailyEntryOrderCount: usage.dailyEntryOrderCount,
+      dailyEntryNotional: usage.dailyEntryNotional,
+      activePositionCount: usage.activePositionCount,
+      pendingEntryPositionCount: usage.pendingEntryPositionCount,
+      currentAccountPositionSlots: usage.currentAccountPositionSlots,
+      openPositionNotional: usage.openPositionNotional,
+      pendingEntryNotional: usage.pendingEntryNotional,
+      currentAccountExposure: usage.currentAccountExposure,
+      symbolOpenNotional: usage.symbolOpenNotional,
+      symbolPendingEntryNotional: usage.symbolPendingEntryNotional,
+      currentSymbolExposure: usage.currentSymbolExposure,
+    },
+  };
 
   const existingSymbolPosition = usage.activePositions.find(
     (position) => position.symbol === input.symbol
@@ -787,6 +804,7 @@ export async function evaluateOrderRisk(
       409,
       `Entry signal blocked because ${input.symbol} already has an open or closing tracked position.`,
       {
+        ...accountRiskDiagnostics,
         rule: 'one_active_position_per_symbol',
         symbol: input.symbol,
         trackedPositionId: existingSymbolPosition.id,
@@ -801,6 +819,7 @@ export async function evaluateOrderRisk(
     usage.dailyEntryOrderCount + 1 > dailyOrderLimit.value
   ) {
     return block(409, 'Account daily entry order limit would be exceeded.', {
+      ...accountRiskDiagnostics,
       rule: 'account_max_daily_entry_orders_exceeded',
       layer: 'account',
       tradingAccountId,
@@ -820,6 +839,7 @@ export async function evaluateOrderRisk(
     usage.currentAccountPositionSlots + 1 > positionLimit.value
   ) {
     return block(409, 'Account maximum position capacity would be exceeded.', {
+      ...accountRiskDiagnostics,
       rule: 'account_max_open_positions_exceeded',
       layer: 'account',
       tradingAccountId,
@@ -839,6 +859,7 @@ export async function evaluateOrderRisk(
   const maxDeployableNotional = effective.authoritativeTotalExposure.value;
   if (!isLimitEnabled(maxDeployableNotional)) {
     return block(409, 'Trading account max deployable notional is not configured. New entries are blocked.', {
+      ...accountRiskDiagnostics,
       rule: 'account_max_deployable_notional_required',
       layer: 'account',
       tradingAccountId,
@@ -849,6 +870,7 @@ export async function evaluateOrderRisk(
 
   if (requestedNotional === null) {
     return block(409, 'Proposed entry notional is required for account risk evaluation.', {
+      ...accountRiskDiagnostics,
       rule: 'account_entry_notional_required',
       layer: 'account',
       tradingAccountId,
@@ -863,6 +885,7 @@ export async function evaluateOrderRisk(
     usage.dailyEntryNotional + requestedNotional > dailyNotionalLimit.value
   ) {
     return block(409, 'Account daily entry notional limit would be exceeded.', {
+      ...accountRiskDiagnostics,
       rule: 'account_max_daily_entry_notional_exceeded',
       layer: 'account',
       tradingAccountId,
@@ -882,6 +905,7 @@ export async function evaluateOrderRisk(
     projectedAccountExposure > maxDeployableNotional
   ) {
     return block(409, 'Trading account deployable exposure would be exceeded.', {
+      ...accountRiskDiagnostics,
       rule: 'account_max_deployable_notional_exceeded',
       layer: 'account',
       tradingAccountId,
@@ -904,6 +928,7 @@ export async function evaluateOrderRisk(
     projectedSymbolExposure > symbolLimit.value
   ) {
     return block(409, `Account symbol exposure limit would be exceeded for ${input.symbol}.`, {
+      ...accountRiskDiagnostics,
       rule: 'account_max_symbol_open_notional_exceeded',
       layer: 'account',
       tradingAccountId,

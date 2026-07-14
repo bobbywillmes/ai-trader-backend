@@ -1,12 +1,14 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { getRuntimeTradingConfig } from './config.service.js';
+import { resolveEffectiveAccountEntryLimits } from './trading-account-entry-risk-limits.service.js';
 
 type BuildSnapshotArgs = {
   broker: string;
   symbol: string;
   securityId: number;
   subscriptionId: number | null;
+  tradingAccountId?: number | null;
   source: 'position_opened' | 'subscription_recovered';
   subscriptionResolutionSource?:
     | 'local_order_intent'
@@ -21,7 +23,7 @@ function toIso(value: Date | null | undefined) {
 export async function buildTradeCycleConfigSnapshot(
   args: BuildSnapshotArgs
 ): Promise<Prisma.InputJsonValue> {
-  const [security, subscription, runtimeConfig] = await Promise.all([
+  const [security, subscription, runtimeConfig, tradingAccount] = await Promise.all([
     prisma.security.findUnique({
       where: { id: args.securityId },
     }),
@@ -36,10 +38,38 @@ export async function buildTradeCycleConfigSnapshot(
           },
         }),
     getRuntimeTradingConfig(),
+    args.tradingAccountId == null
+      ? Promise.resolve(null)
+      : prisma.tradingAccount.findUnique({
+          where: { id: args.tradingAccountId },
+          select: {
+            id: true,
+            maxDeployableNotional: true,
+            riskSettings: {
+              select: {
+                enabled: true,
+                maxDailyEntryOrders: true,
+                maxDailyEntryNotional: true,
+                maxOpenPositions: true,
+                maxTotalOpenNotional: true,
+                maxSymbolOpenNotional: true,
+                maxSubscriptionOpenNotional: true,
+              },
+            },
+          },
+        }),
   ]);
+  const effectiveEntryLimits = tradingAccount
+    ? resolveEffectiveAccountEntryLimits({
+        tradingAccountId: tradingAccount.id,
+        maxDeployableNotional: tradingAccount.maxDeployableNotional,
+        accountRiskSettings: tradingAccount.riskSettings,
+        globalConfig: runtimeConfig,
+      })
+    : null;
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     capturedAt: new Date().toISOString(),
     source: args.source,
     subscriptionResolutionSource: args.subscriptionResolutionSource ?? null,
@@ -110,6 +140,7 @@ export async function buildTradeCycleConfigSnapshot(
       maxTotalOpenNotional: runtimeConfig.maxTotalOpenNotional,
       maxSymbolOpenNotional: runtimeConfig.maxSymbolOpenNotional,
       maxSubscriptionOpenNotional: runtimeConfig.maxSubscriptionOpenNotional,
+      effectiveEntryLimits,
     },
   } as Prisma.InputJsonValue;
 }
@@ -130,6 +161,7 @@ export async function captureTrackedPositionConfigSnapshot(args: {
       symbol: true,
       securityId: true,
       subscriptionId: true,
+      tradingAccountId: true,
       configSnapshotJson: true,
     },
   });
@@ -143,6 +175,7 @@ export async function captureTrackedPositionConfigSnapshot(args: {
     symbol: position.symbol,
     securityId: position.securityId,
     subscriptionId: position.subscriptionId,
+    tradingAccountId: position.tradingAccountId,
     source: args.source,
   };
 

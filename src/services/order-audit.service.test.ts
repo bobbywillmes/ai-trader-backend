@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   orderIntentCreate: vi.fn(),
   orderIntentFindMany: vi.fn(),
   orderIntentFindFirst: vi.fn(),
+  orderIntentFindUnique: vi.fn(),
   orderIntentUpdate: vi.fn(),
   brokerOrderCreate: vi.fn(),
   securityFindUnique: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock('../db/prisma.js', () => ({
       create: mocks.orderIntentCreate,
       findMany: mocks.orderIntentFindMany,
       findFirst: mocks.orderIntentFindFirst,
+      findUnique: mocks.orderIntentFindUnique,
       update: mocks.orderIntentUpdate,
     },
     brokerOrder: {
@@ -39,7 +41,11 @@ vi.mock('./trading-account.service.js', () => ({
   },
 }));
 
-import { createOrderIntent, getRecentOrderIntents } from './order-audit.service.js';
+import {
+  createOrderIntent,
+  getRecentOrderIntents,
+  recordOrderIntentRiskEvaluation,
+} from './order-audit.service.js';
 
 describe('order audit service', () => {
   beforeEach(() => {
@@ -120,6 +126,41 @@ describe('order audit service', () => {
           },
         },
         brokerOrders: true,
+      },
+    });
+  });
+
+  it('records effective risk diagnostics in the existing intent JSON snapshot', async () => {
+    mocks.orderIntentFindUnique.mockResolvedValue({
+      rawRequestJson: { symbol: 'SPY', accountSubscriptionSizing: { estimatedNotional: 1_500 } },
+    });
+
+    await recordOrderIntentRiskEvaluation({
+      orderIntentId: 55,
+      allowed: true,
+      details: {
+        effectiveEntryLimits: {
+          limits: {
+            maxSymbolOpenNotional: { value: 10_000, source: 'ACCOUNT' },
+          },
+        },
+      },
+    });
+
+    expect(mocks.orderIntentUpdate).toHaveBeenCalledWith({
+      where: { id: 55 },
+      data: {
+        rawRequestJson: expect.objectContaining({
+          symbol: 'SPY',
+          accountSubscriptionSizing: { estimatedNotional: 1_500 },
+          riskEvaluation: expect.objectContaining({
+            allowed: true,
+            reason: null,
+            details: expect.objectContaining({
+              effectiveEntryLimits: expect.any(Object),
+            }),
+          }),
+        }),
       },
     });
   });

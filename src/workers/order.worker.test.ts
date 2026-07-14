@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   adaptiveRecordSuccess: vi.fn(),
   adaptiveRecordFailure: vi.fn(),
   adaptiveRecordRateLimitDeferred: vi.fn(),
+  recordOrderIntentRiskEvaluation: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -53,6 +54,10 @@ vi.mock('../services/entry-session-guard.service.js', () => ({
 vi.mock('../services/risk-gate.service.js', () => ({
   evaluateOrderRisk: mocks.evaluateOrderRisk,
   logRiskGateBlockedOrder: mocks.logRiskGateBlockedOrder,
+}));
+
+vi.mock('../services/order-audit.service.js', () => ({
+  recordOrderIntentRiskEvaluation: mocks.recordOrderIntentRiskEvaluation,
 }));
 
 vi.mock('../services/system-event.service.js', () => ({

@@ -172,6 +172,22 @@ describe('trading account entry risk preview service', () => {
       allowed: true,
       details: {
         orderType: 'entry',
+        effectiveEntryLimits: {
+          tradingAccountId: 1,
+          limits: {
+            maxDailyEntryOrders: { value: 10, source: 'ACCOUNT' },
+            maxDailyEntryNotional: {
+              value: 25_000,
+              source: 'LEGACY_GLOBAL_FALLBACK',
+            },
+          },
+        },
+        usage: {
+          openPositionNotional: 2_000,
+          pendingEntryNotional: 500,
+          currentAccountExposure: 2_500,
+          projectedAccountExposure: 3_925,
+        },
       },
     });
   });
@@ -239,6 +255,23 @@ describe('trading account entry risk preview service', () => {
       risk: {
         ok: true,
       },
+      effectiveEntryLimits: {
+        tradingAccountId: 1,
+        limits: {
+          maxDailyEntryOrders: { value: 10, source: 'ACCOUNT' },
+          maxDailyEntryNotional: {
+            value: 25_000,
+            source: 'LEGACY_GLOBAL_FALLBACK',
+          },
+        },
+      },
+      accountUsage: {
+        openPositionNotional: 2_000,
+        pendingEntryNotional: 500,
+        projectedAccountExposure: 3_925,
+      },
+      blockingLayer: null,
+      blockingCode: null,
       session: {
         checked: true,
         marketOpen: false,

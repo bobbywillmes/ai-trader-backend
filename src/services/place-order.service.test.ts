@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   resolveSubscriptionOrderInput: vi.fn(),
   resolveDefaultTradingAccountId: vi.fn(),
   updateOrderIntentStatus: vi.fn(),
+  recordOrderIntentRiskEvaluation: vi.fn(),
 }));
 
 vi.mock('../integrations/alpaca/orders.adapter.js', () => ({
@@ -36,6 +37,7 @@ vi.mock('./entry-decision.service.js', () => ({
 vi.mock('./order-audit.service.js', () => ({
   createOrderIntent: mocks.createOrderIntent,
   updateOrderIntentStatus: mocks.updateOrderIntentStatus,
+  recordOrderIntentRiskEvaluation: mocks.recordOrderIntentRiskEvaluation,
 }));
 
 vi.mock('./risk-gate.service.js', () => ({

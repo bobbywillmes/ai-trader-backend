@@ -657,6 +657,12 @@ function serializePreviewBase(args: {
   session: Awaited<ReturnType<typeof getSessionPreview>>;
 }) {
   const ok = args.sizing.ok && args.risk.ok && args.allocationRisk.ok;
+  const riskDetails =
+    args.risk.details &&
+    typeof args.risk.details === 'object' &&
+    !Array.isArray(args.risk.details)
+      ? (args.risk.details as Record<string, unknown>)
+      : null;
 
   return {
     ok,
@@ -672,6 +678,10 @@ function serializePreviewBase(args: {
     allocation: serializeAllocation(args.accountSubscription),
     sizing: args.sizing,
     risk: args.risk,
+    effectiveEntryLimits: riskDetails?.effectiveEntryLimits ?? null,
+    accountUsage: riskDetails?.usage ?? null,
+    blockingLayer: args.risk.ok ? null : args.risk.layer,
+    blockingCode: args.risk.ok ? null : args.risk.code,
     allocationRisk: args.allocationRisk,
     session: args.session,
     wouldCreateOrderIntent: false,

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   getRuntimeTradingConfig: vi.fn(),
   getTickerLatestPrice: vi.fn(),
   validateAccountRiskConfiguration: vi.fn(),
+  getTradingAccountEntryRiskUsage: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -37,6 +38,10 @@ vi.mock('./massive-market-data.service.js', () => ({
 
 vi.mock('./trading-account-risk-configuration.service.js', () => ({
   validateAccountRiskConfiguration: mocks.validateAccountRiskConfiguration,
+}));
+
+vi.mock('./trading-account-entry-risk-usage.service.js', () => ({
+  getTradingAccountEntryRiskUsage: mocks.getTradingAccountEntryRiskUsage,
 }));
 
 import { getTradingAccountRiskHealth } from './trading-account-risk-health.service.js';
@@ -186,6 +191,11 @@ describe('trading account risk health service', () => {
     );
     mocks.getRuntimeTradingConfig.mockResolvedValue(globalConfig());
     mocks.validateAccountRiskConfiguration.mockResolvedValue([]);
+    mocks.getTradingAccountEntryRiskUsage.mockResolvedValue({
+      openPositionNotional: 0,
+      pendingEntryNotional: 0,
+      currentAccountExposure: 0,
+    });
     mocks.getTickerLatestPrice.mockResolvedValue({
       symbol: 'SPY',
       latestPrice: 100,
@@ -539,5 +549,93 @@ describe('trading account risk health service', () => {
     );
     const live = await getTradingAccountRiskHealth(1, { now: NOW });
     expect(live).toMatchObject({ status: 'BLOCKED', readyForEntries: false });
+  });
+
+  it('warns PAPER accounts when routine fields use legacy fallback values', async () => {
+    mocks.tradingAccountFindUnique.mockResolvedValue(
+      accountRecord({
+        riskSettings: {
+          ...accountRecord().riskSettings,
+          maxSymbolOpenNotional: null,
+        },
+      })
+    );
+
+    const result = await getTradingAccountRiskHealth(1, { now: NOW });
+
+    expect(result).toMatchObject({
+      status: 'READY_WITH_WARNINGS',
+      effectiveEntryLimits: {
+        limits: {
+          maxSymbolOpenNotional: {
+            value: 5_000,
+            source: 'LEGACY_GLOBAL_FALLBACK',
+          },
+        },
+      },
+      warnings: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'account_entry_limits_use_legacy_fallback',
+          details: expect.objectContaining({
+            fallbackFields: ['maxSymbolOpenNotional'],
+          }),
+        }),
+      ]),
+    });
+  });
+
+  it('blocks LIVE accounts that use routine legacy fallbacks', async () => {
+    mocks.tradingAccountFindUnique.mockResolvedValue(
+      accountRecord({
+        environment: 'LIVE',
+        riskSettings: {
+          ...accountRecord().riskSettings,
+          maxOpenPositions: null,
+        },
+      })
+    );
+
+    const result = await getTradingAccountRiskHealth(1, { now: NOW });
+
+    expect(result).toMatchObject({
+      status: 'BLOCKED',
+      blockers: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'account_entry_limits_use_legacy_fallback',
+          severity: 'blocker',
+        }),
+      ]),
+    });
+  });
+
+  it('blocks new entries when open and pending exposure exceeds deployable capital', async () => {
+    mocks.getTradingAccountEntryRiskUsage.mockResolvedValue({
+      openPositionNotional: 8_000,
+      pendingEntryNotional: 3_000,
+      currentAccountExposure: 11_000,
+    });
+
+    const result = await getTradingAccountRiskHealth(1, { now: NOW });
+
+    expect(result).toMatchObject({
+      status: 'BLOCKED',
+      capital: {
+        openPositionNotional: 8_000,
+        pendingEntryNotional: 3_000,
+        currentAccountExposure: 11_000,
+        remainingDeployableNotional: -1_000,
+      },
+      blockers: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'account_current_exposure_within_deployable_notional',
+          details: {
+            openPositionNotional: 8_000,
+            pendingEntryNotional: 3_000,
+            currentAccountExposure: 11_000,
+            maxDeployableNotional: 10_000,
+          },
+        }),
+      ]),
+    });
   });
 });

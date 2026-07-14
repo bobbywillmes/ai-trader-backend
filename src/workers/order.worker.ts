@@ -22,6 +22,7 @@ import {
   logRiskGateBlockedOrder,
 } from '../services/risk-gate.service.js';
 import { getSizingEstimatedNotional } from '../services/trading-account-entry-risk-usage.service.js';
+import { recordOrderIntentRiskEvaluation } from '../services/order-audit.service.js';
 
 export type SubmittedOrderSyncResult = {
   found: number;
@@ -110,6 +111,12 @@ export async function processPendingOrders() {
           ...(requestedNotionalOverride !== null
             ? { requestedNotionalOverride }
             : {}),
+        });
+        await recordOrderIntentRiskEvaluation({
+          orderIntentId: intent.id,
+          allowed: riskResult.allowed,
+          reason: riskResult.allowed ? null : riskResult.reason,
+          details: riskResult.details,
         });
 
         if (!riskResult.allowed) {

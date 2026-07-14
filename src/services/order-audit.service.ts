@@ -71,6 +71,41 @@ export async function updateOrderIntentStatus(
   });
 }
 
+export async function recordOrderIntentRiskEvaluation(args: {
+  orderIntentId: number;
+  allowed: boolean;
+  reason?: string | null;
+  details?: Prisma.InputJsonValue | null;
+}) {
+  const intent = await prisma.orderIntent.findUnique({
+    where: { id: args.orderIntentId },
+    select: { rawRequestJson: true },
+  });
+
+  if (!intent) return null;
+  const rawRequest =
+    intent.rawRequestJson &&
+    typeof intent.rawRequestJson === 'object' &&
+    !Array.isArray(intent.rawRequestJson)
+      ? intent.rawRequestJson
+      : {};
+
+  return prisma.orderIntent.update({
+    where: { id: args.orderIntentId },
+    data: {
+      rawRequestJson: {
+        ...rawRequest,
+        riskEvaluation: {
+          evaluatedAt: new Date().toISOString(),
+          allowed: args.allowed,
+          reason: args.reason ?? null,
+          details: args.details ?? null,
+        },
+      } as Prisma.InputJsonValue,
+    },
+  });
+}
+
 export async function createBrokerOrder(args: {
   orderIntentId: number;
   tradingAccountId?: number | null;

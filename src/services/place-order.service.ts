@@ -5,6 +5,7 @@ import {
 } from '../integrations/alpaca/orders.adapter.js';
 import {
   createOrderIntent,
+  recordOrderIntentRiskEvaluation,
   updateOrderIntentStatus,
 } from './order-audit.service.js';
 import {
@@ -114,6 +115,12 @@ export async function submitOrder(
   const riskResult = await evaluateOrderRisk(resolvedInput, {
     requestedNotionalOverride:
       runtimeSizing.sizing?.estimatedNotional ?? null,
+  });
+  await recordOrderIntentRiskEvaluation({
+    orderIntentId: intent.id,
+    allowed: riskResult.allowed,
+    reason: riskResult.allowed ? null : riskResult.reason,
+    details: riskResult.details,
   });
 
   if (!riskResult.allowed) {
