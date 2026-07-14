@@ -2,6 +2,11 @@ import { Prisma } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
 import type { UpdateTradingAccountRiskSettingsInput } from '../validators/trading-account.schema.js';
+import { getRuntimeTradingConfig } from './config.service.js';
+import {
+  resolveEffectiveAccountEntryLimits,
+  type EffectiveAccountEntryLimits,
+} from './trading-account-entry-risk-limits.service.js';
 
 const TRADING_ACCOUNT_RISK_SETTINGS_SELECT = {
   id: true,
@@ -25,15 +30,13 @@ type TradingAccountRiskSettingsRecord =
 
 export type TradingAccountRiskSettingsResponse = ReturnType<
   typeof serializeTradingAccountRiskSettings
->;
+> & { effectiveEntryLimits: EffectiveAccountEntryLimits };
 
-async function tradingAccountExists(tradingAccountId: number) {
-  const account = await prisma.tradingAccount.findUnique({
+async function getTradingAccountContext(tradingAccountId: number) {
+  return prisma.tradingAccount.findUnique({
     where: { id: tradingAccountId },
-    select: { id: true },
+    select: { id: true, maxDeployableNotional: true },
   });
-
-  return account !== null;
 }
 
 export function serializeTradingAccountRiskSettings(
@@ -58,7 +61,9 @@ export function serializeTradingAccountRiskSettings(
 export async function getTradingAccountRiskSettingsForAdmin(
   tradingAccountId: number
 ) {
-  if (!(await tradingAccountExists(tradingAccountId))) {
+  const account = await getTradingAccountContext(tradingAccountId);
+
+  if (!account) {
     return null;
   }
 
@@ -71,14 +76,26 @@ export async function getTradingAccountRiskSettingsForAdmin(
     select: TRADING_ACCOUNT_RISK_SETTINGS_SELECT,
   });
 
-  return serializeTradingAccountRiskSettings(settings);
+  const globalConfig = await getRuntimeTradingConfig();
+
+  return {
+    ...serializeTradingAccountRiskSettings(settings),
+    effectiveEntryLimits: resolveEffectiveAccountEntryLimits({
+      tradingAccountId,
+      maxDeployableNotional: account.maxDeployableNotional,
+      accountRiskSettings: settings,
+      globalConfig,
+    }),
+  };
 }
 
 export async function updateTradingAccountRiskSettingsForAdmin(
   tradingAccountId: number,
   input: UpdateTradingAccountRiskSettingsInput
 ) {
-  if (!(await tradingAccountExists(tradingAccountId))) {
+  const account = await getTradingAccountContext(tradingAccountId);
+
+  if (!account) {
     return null;
   }
 
@@ -132,5 +149,15 @@ export async function updateTradingAccountRiskSettingsForAdmin(
     select: TRADING_ACCOUNT_RISK_SETTINGS_SELECT,
   });
 
-  return serializeTradingAccountRiskSettings(settings);
+  const globalConfig = await getRuntimeTradingConfig();
+
+  return {
+    ...serializeTradingAccountRiskSettings(settings),
+    effectiveEntryLimits: resolveEffectiveAccountEntryLimits({
+      tradingAccountId,
+      maxDeployableNotional: account.maxDeployableNotional,
+      accountRiskSettings: settings,
+      globalConfig,
+    }),
+  };
 }

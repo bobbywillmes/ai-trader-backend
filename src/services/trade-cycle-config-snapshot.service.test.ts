@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   trackedPositionFindUnique: vi.fn(),
   trackedPositionUpdate: vi.fn(),
   settingFindMany: vi.fn(),
+  tradingAccountFindUnique: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -22,6 +23,9 @@ vi.mock('../db/prisma.js', () => ({
     },
     setting: {
       findMany: mocks.settingFindMany,
+    },
+    tradingAccount: {
+      findUnique: mocks.tradingAccountFindUnique,
     },
   },
 }));
@@ -103,7 +107,7 @@ describe('trade cycle config snapshot service', () => {
 
     expect(snapshot).toEqual(
       expect.objectContaining({
-        schemaVersion: 1,
+        schemaVersion: 2,
         source: 'position_opened',
         subscriptionResolutionSource: null,
         broker: 'alpaca',
@@ -146,6 +150,7 @@ describe('trade cycle config snapshot service', () => {
       symbol: 'SPY',
       securityId: 11,
       subscriptionId: null,
+      tradingAccountId: 1,
       configSnapshotJson: null,
     });
     mocks.securityFindUnique.mockResolvedValue({
@@ -158,6 +163,19 @@ describe('trade cycle config snapshot service', () => {
       enabled: true,
     });
     mocks.subscriptionFindUnique.mockResolvedValue(null);
+    mocks.tradingAccountFindUnique.mockResolvedValue({
+      id: 1,
+      maxDeployableNotional: 20_000,
+      riskSettings: {
+        enabled: true,
+        maxDailyEntryOrders: 10,
+        maxDailyEntryNotional: null,
+        maxOpenPositions: null,
+        maxTotalOpenNotional: null,
+        maxSymbolOpenNotional: null,
+        maxSubscriptionOpenNotional: null,
+      },
+    });
     mocks.trackedPositionUpdate.mockResolvedValue({});
 
     await captureTrackedPositionConfigSnapshot({
@@ -172,6 +190,14 @@ describe('trade cycle config snapshot service', () => {
           source: 'position_opened',
           symbol: 'SPY',
           subscription: null,
+          runtimeRisk: expect.objectContaining({
+            effectiveEntryLimits: expect.objectContaining({
+              tradingAccountId: 1,
+              authoritativeTotalExposure: expect.objectContaining({
+                value: 20_000,
+              }),
+            }),
+          }),
         }),
         configSnapshotCapturedAt: expect.any(Date),
       },
@@ -190,6 +216,7 @@ describe('trade cycle config snapshot service', () => {
       symbol: 'DIA',
       securityId: 11,
       subscriptionId: 22,
+      tradingAccountId: 1,
       configSnapshotJson: existingSnapshot,
     });
 

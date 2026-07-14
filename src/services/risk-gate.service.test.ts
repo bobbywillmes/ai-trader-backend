@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   getNormalizedAccount: vi.fn(),
   evaluateEntrySessionGuard: vi.fn(),
   resolveDefaultTradingAccountId: vi.fn(),
+  getTradingAccountEntryRiskUsage: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -56,6 +57,10 @@ vi.mock('./entry-session-guard.service.js', () => ({
 
 vi.mock('./trading-account.service.js', () => ({
   resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
+}));
+
+vi.mock('./trading-account-entry-risk-usage.service.js', () => ({
+  getTradingAccountEntryRiskUsage: mocks.getTradingAccountEntryRiskUsage,
 }));
 
 const config: RuntimeTradingConfig = {
@@ -141,6 +146,55 @@ function activePosition(
   };
 }
 
+function riskUsage(overrides: Record<string, unknown> = {}) {
+  return {
+    dailyWindow: {
+      timeZone: 'America/New_York',
+      date: '2026-07-15',
+      start: new Date('2026-07-15T04:00:00.000Z'),
+      nextStart: new Date('2026-07-16T04:00:00.000Z'),
+    },
+    activePositions: [],
+    dailyEntryOrders: [],
+    pendingEntryOrders: [],
+    dailyEntryOrderCount: 0,
+    dailyEntryNotional: 0,
+    activePositionCount: 0,
+    pendingEntryPositionCount: 0,
+    currentAccountPositionSlots: 0,
+    openPositionNotional: 0,
+    pendingEntryNotional: 0,
+    currentAccountExposure: 0,
+    symbolOpenNotional: 0,
+    symbolPendingEntryNotional: 0,
+    currentSymbolExposure: 0,
+    activeSymbols: [],
+    pendingSymbols: [],
+    pendingEntryNotionalBySubscriptionId: new Map(),
+    ...overrides,
+  };
+}
+
+function resolvedAccountSubscription() {
+  return {
+    id: 44,
+    subscriptionId: 22,
+    allocationId: 7,
+    enabled: true,
+    entriesEnabled: true,
+    reservedNotional: 20_000,
+    allocation: {
+      id: 7,
+      key: 'core_etf',
+      name: 'Core ETF',
+      enabled: true,
+      maxAllocatedNotional: 100_000,
+      maxOpenPositions: 20,
+      maxPositionNotional: 20_000,
+    },
+  };
+}
+
 describe('risk gate entry session integration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -157,6 +211,7 @@ describe('risk gate entry session integration', () => {
     });
     mocks.trackedPositionFindMany.mockResolvedValue([]);
     mocks.orderIntentFindMany.mockResolvedValue([]);
+    mocks.getTradingAccountEntryRiskUsage.mockResolvedValue(riskUsage());
     mocks.tradingAccountRiskSettingsFindUnique.mockResolvedValue(null);
     mocks.tradingAccountFindUnique.mockResolvedValue({
       maxDeployableNotional: 100_000,
@@ -184,20 +239,10 @@ describe('risk gate entry session integration', () => {
 
     expect(result.allowed).toBe(true);
     expect(mocks.evaluateEntrySessionGuard).toHaveBeenCalledOnce();
-    expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          tradingAccountId: 1,
-        }),
-      })
-    );
-    expect(mocks.orderIntentFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          tradingAccountId: 1,
-        }),
-      })
-    );
+    expect(mocks.getTradingAccountEntryRiskUsage).toHaveBeenCalledWith({
+      tradingAccountId: 1,
+      symbol: 'SPY',
+    });
   });
 
   it('bypasses the entry-session guard for non-entry orders', async () => {
@@ -236,9 +281,10 @@ describe('risk gate entry session integration', () => {
 
     expect(result).toMatchObject({
       allowed: false,
-      reason: 'Symbol exposure limit would be exceeded for SPY.',
+      reason: 'Account symbol exposure limit would be exceeded for SPY.',
       details: expect.objectContaining({
-        rule: 'maxSymbolOpenNotional',
+        rule: 'account_max_symbol_open_notional_exceeded',
+        source: 'LEGACY_GLOBAL_FALLBACK',
         requestedNotional: 6_000,
       }),
     });
@@ -246,22 +292,16 @@ describe('risk gate entry session integration', () => {
 
   it('counts account subscription sizing snapshots for pending entry notional usage', async () => {
     mocks.subscriptionFindFirst.mockResolvedValue(subscriptionRecord());
-    mocks.orderIntentFindMany.mockResolvedValue([
-      {
-        id: 55,
-        symbol: 'QQQ',
-        subscriptionId: 23,
-        notional: null,
-        qty: 3,
-        limitPrice: null,
-        rawRequestJson: {
-          accountSubscriptionSizing: {
-            estimatedNotional: 8_000,
-          },
-        },
-        status: 'pending',
-      },
-    ]);
+    mocks.getTradingAccountEntryRiskUsage.mockResolvedValue(
+      riskUsage({
+        dailyEntryOrderCount: 1,
+        dailyEntryNotional: 8_000,
+        pendingEntryPositionCount: 1,
+        currentAccountPositionSlots: 1,
+        pendingEntryNotional: 8_000,
+        currentAccountExposure: 8_000,
+      })
+    );
 
     const result = await evaluateOrderRisk(
       {
@@ -281,12 +321,12 @@ describe('risk gate entry session integration', () => {
 
     expect(result).toMatchObject({
       allowed: false,
-      reason: 'Daily entry notional limit would be exceeded.',
+      reason: 'Account daily entry notional limit would be exceeded.',
       details: expect.objectContaining({
-        rule: 'maxDailyEntryNotional',
-        dailyEntryNotional: 8_000,
-        requestedNotional: 3_000,
-        projectedDailyEntryNotional: 11_000,
+        rule: 'account_max_daily_entry_notional_exceeded',
+        current: 8_000,
+        requested: 3_000,
+        projected: 11_000,
       }),
     });
   });
@@ -339,18 +379,9 @@ describe('risk gate entry session integration', () => {
       maxDailyEntryOrders: 1,
     });
     mocks.tradingAccountRiskSettingsFindUnique.mockResolvedValue(null);
-    mocks.orderIntentFindMany.mockResolvedValue([
-      {
-        id: 55,
-        symbol: 'QQQ',
-        subscriptionId: 23,
-        notional: 100,
-        qty: null,
-        limitPrice: null,
-        rawRequestJson: {},
-        status: 'pending',
-      },
-    ]);
+    mocks.getTradingAccountEntryRiskUsage.mockResolvedValue(
+      riskUsage({ dailyEntryOrderCount: 1 })
+    );
 
     const result = await evaluateOrderRisk({
       symbol: 'SPY',
@@ -364,9 +395,10 @@ describe('risk gate entry session integration', () => {
 
     expect(result).toMatchObject({
       allowed: false,
-      reason: 'Daily entry order limit reached.',
+      reason: 'Account daily entry order limit would be exceeded.',
       details: expect.objectContaining({
-        rule: 'maxDailyEntryOrders',
+        rule: 'account_max_daily_entry_orders_exceeded',
+        source: 'LEGACY_GLOBAL_FALLBACK',
       }),
     });
   });
@@ -381,18 +413,9 @@ describe('risk gate entry session integration', () => {
         maxDailyEntryOrders: 1,
       })
     );
-    mocks.orderIntentFindMany.mockResolvedValue([
-      {
-        id: 55,
-        symbol: 'QQQ',
-        subscriptionId: 23,
-        notional: 100,
-        qty: null,
-        limitPrice: null,
-        rawRequestJson: {},
-        status: 'pending',
-      },
-    ]);
+    mocks.getTradingAccountEntryRiskUsage.mockResolvedValue(
+      riskUsage({ dailyEntryOrderCount: 1 })
+    );
 
     const result = await evaluateOrderRisk({
       symbol: 'SPY',
@@ -406,12 +429,14 @@ describe('risk gate entry session integration', () => {
 
     expect(result).toMatchObject({
       allowed: false,
-      reason: 'Account daily entry order limit reached.',
+      reason: 'Account daily entry order limit would be exceeded.',
       details: expect.objectContaining({
         rule: 'account_max_daily_entry_orders_exceeded',
         tradingAccountId: 1,
-        maxDailyEntryOrders: 1,
-        dailyEntryOrderCount: 1,
+        source: 'ACCOUNT',
+        current: 1,
+        projected: 2,
+        limit: 1,
       }),
     });
   });
@@ -429,22 +454,16 @@ describe('risk gate entry session integration', () => {
         maxDailyEntryNotional: 10_000,
       })
     );
-    mocks.orderIntentFindMany.mockResolvedValue([
-      {
-        id: 55,
-        symbol: 'QQQ',
-        subscriptionId: 23,
-        notional: null,
-        qty: 3,
-        limitPrice: null,
-        rawRequestJson: {
-          accountSubscriptionSizing: {
-            estimatedNotional: 8_000,
-          },
-        },
-        status: 'pending',
-      },
-    ]);
+    mocks.getTradingAccountEntryRiskUsage.mockResolvedValue(
+      riskUsage({
+        dailyEntryOrderCount: 1,
+        dailyEntryNotional: 8_000,
+        pendingEntryPositionCount: 1,
+        currentAccountPositionSlots: 1,
+        pendingEntryNotional: 8_000,
+        currentAccountExposure: 8_000,
+      })
+    );
 
     const result = await evaluateOrderRisk(
       {
@@ -467,9 +486,10 @@ describe('risk gate entry session integration', () => {
       reason: 'Account daily entry notional limit would be exceeded.',
       details: expect.objectContaining({
         rule: 'account_max_daily_entry_notional_exceeded',
-        dailyEntryNotional: 8_000,
-        requestedNotional: 3_000,
-        projectedDailyEntryNotional: 11_000,
+        source: 'ACCOUNT',
+        current: 8_000,
+        requested: 3_000,
+        projected: 11_000,
       }),
     });
   });
@@ -485,6 +505,16 @@ describe('risk gate entry session integration', () => {
       })
     );
     mocks.trackedPositionFindMany.mockResolvedValue([activePosition()]);
+    mocks.getTradingAccountEntryRiskUsage.mockResolvedValue(
+      riskUsage({
+        activePositions: [activePosition()],
+        activePositionCount: 1,
+        currentAccountPositionSlots: 1,
+        openPositionNotional: 1_000,
+        currentAccountExposure: 1_000,
+        activeSymbols: ['QQQ'],
+      })
+    );
 
     const result = await evaluateOrderRisk({
       symbol: 'SPY',
@@ -498,16 +528,74 @@ describe('risk gate entry session integration', () => {
 
     expect(result).toMatchObject({
       allowed: false,
-      reason: 'Account maximum open position limit reached.',
+      reason: 'Account maximum position capacity would be exceeded.',
       details: expect.objectContaining({
         rule: 'account_max_open_positions_exceeded',
-        maxOpenPositions: 1,
+        limit: 1,
         activePositionCount: 1,
       }),
     });
   });
 
-  it('blocks when account total open notional would be exceeded', async () => {
+  it('counts unmaterialized pending entries against account position capacity', async () => {
+    mocks.tradingAccountRiskSettingsFindUnique.mockResolvedValue(
+      accountRiskSettings({ maxOpenPositions: 1 })
+    );
+    mocks.getTradingAccountEntryRiskUsage.mockResolvedValue(
+      riskUsage({
+        pendingEntryPositionCount: 1,
+        currentAccountPositionSlots: 1,
+        pendingEntryNotional: 400,
+        currentAccountExposure: 400,
+      })
+    );
+
+    const result = await evaluateOrderRisk({
+      symbol: 'SPY', side: 'buy', orderType: 'market', timeInForce: 'day',
+      notional: 100, extendedHours: false, signalType: 'entry',
+    });
+
+    expect(result).toMatchObject({
+      allowed: false,
+      details: expect.objectContaining({
+        rule: 'account_max_open_positions_exceeded',
+        pendingEntryPositionCount: 1,
+        projected: 2,
+      }),
+    });
+  });
+
+  it('includes active, pending, and proposed notional in deployable exposure', async () => {
+    mocks.tradingAccountFindUnique.mockResolvedValue({
+      maxDeployableNotional: 5_000,
+    });
+    mocks.getTradingAccountEntryRiskUsage.mockResolvedValue(
+      riskUsage({
+        openPositionNotional: 3_000,
+        pendingEntryNotional: 1_500,
+        currentAccountExposure: 4_500,
+      })
+    );
+
+    const result = await evaluateOrderRisk({
+      symbol: 'SPY', side: 'buy', orderType: 'market', timeInForce: 'day',
+      notional: 600, extendedHours: false, signalType: 'entry',
+    });
+
+    expect(result).toMatchObject({
+      allowed: false,
+      details: expect.objectContaining({
+        rule: 'account_max_deployable_notional_exceeded',
+        openPositionNotional: 3_000,
+        pendingEntryNotional: 1_500,
+        requestedNotional: 600,
+        projectedAccountExposure: 5_100,
+        maxDeployableNotional: 5_000,
+      }),
+    });
+  });
+
+  it('does not enforce superseded account total open notional for normal entries', async () => {
     mocks.getRuntimeTradingConfig.mockResolvedValue({
       ...config,
       maxTotalOpenNotional: 50_000,
@@ -517,9 +605,13 @@ describe('risk gate entry session integration', () => {
         maxTotalOpenNotional: 2_000,
       })
     );
-    mocks.trackedPositionFindMany.mockResolvedValue([
-      activePosition({ marketValue: 1_500, costBasis: 1_400 }),
-    ]);
+    mocks.subscriptionFindFirst.mockResolvedValue(subscriptionRecord());
+    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue(
+      resolvedAccountSubscription()
+    );
+    mocks.getTradingAccountEntryRiskUsage.mockResolvedValue(
+      riskUsage({ openPositionNotional: 1_500, currentAccountExposure: 1_500 })
+    );
 
     const result = await evaluateOrderRisk({
       symbol: 'SPY',
@@ -529,18 +621,10 @@ describe('risk gate entry session integration', () => {
       notional: 600,
       extendedHours: false,
       signalType: 'entry',
+      subscriptionId: 22,
     });
 
-    expect(result).toMatchObject({
-      allowed: false,
-      reason: 'Account total open notional limit would be exceeded.',
-      details: expect.objectContaining({
-        rule: 'account_max_total_open_notional_exceeded',
-        totalOpenNotional: 1_500,
-        requestedNotional: 600,
-        projectedTotalOpenNotional: 2_100,
-      }),
-    });
+    expect(result.allowed).toBe(true);
   });
 
   it('blocks when account symbol open notional would be exceeded', async () => {
@@ -570,14 +654,47 @@ describe('risk gate entry session integration', () => {
       details: expect.objectContaining({
         rule: 'account_max_symbol_open_notional_exceeded',
         symbol: 'SPY',
-        symbolOpenNotional: 0,
+        openSymbolNotional: 0,
         requestedNotional: 600,
-        projectedSymbolOpenNotional: 600,
+        projectedSymbolExposure: 600,
       }),
     });
   });
 
-  it('blocks when account subscription open notional would be exceeded', async () => {
+  it('includes pending same-symbol exposure in the effective symbol limit', async () => {
+    mocks.tradingAccountRiskSettingsFindUnique.mockResolvedValue(
+      accountRiskSettings({ maxSymbolOpenNotional: 1_000 })
+    );
+    mocks.getTradingAccountEntryRiskUsage.mockResolvedValue(
+      riskUsage({
+        symbolOpenNotional: 200,
+        symbolPendingEntryNotional: 600,
+        currentSymbolExposure: 800,
+        pendingEntryPositionCount: 1,
+        currentAccountPositionSlots: 1,
+        pendingEntryNotional: 600,
+        currentAccountExposure: 600,
+      })
+    );
+
+    const result = await evaluateOrderRisk({
+      symbol: 'SPY', side: 'buy', orderType: 'market', timeInForce: 'day',
+      notional: 300, extendedHours: false, signalType: 'entry',
+    });
+
+    expect(result).toMatchObject({
+      allowed: false,
+      details: expect.objectContaining({
+        rule: 'account_max_symbol_open_notional_exceeded',
+        source: 'ACCOUNT',
+        openSymbolNotional: 200,
+        pendingSymbolNotional: 600,
+        projectedSymbolExposure: 1_100,
+      }),
+    });
+  });
+
+  it('does not enforce superseded account subscription notional for resolved subscription entries', async () => {
     mocks.getRuntimeTradingConfig.mockResolvedValue({
       ...config,
       maxSubscriptionOpenNotional: 50_000,
@@ -588,14 +705,12 @@ describe('risk gate entry session integration', () => {
         maxSubscriptionOpenNotional: 2_000,
       })
     );
-    mocks.trackedPositionFindMany.mockResolvedValue([
-      activePosition({
-        symbol: 'QQQ',
-        subscriptionId: 22,
-        marketValue: 1_500,
-        costBasis: 1_400,
-      }),
-    ]);
+    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue(
+      resolvedAccountSubscription()
+    );
+    mocks.getTradingAccountEntryRiskUsage.mockResolvedValue(
+      riskUsage({ openPositionNotional: 1_500, currentAccountExposure: 1_500 })
+    );
 
     const result = await evaluateOrderRisk({
       symbol: 'SPY',
@@ -608,17 +723,7 @@ describe('risk gate entry session integration', () => {
       subscriptionId: 22,
     });
 
-    expect(result).toMatchObject({
-      allowed: false,
-      reason: 'Account subscription exposure limit would be exceeded for 22.',
-      details: expect.objectContaining({
-        rule: 'account_max_subscription_open_notional_exceeded',
-        subscriptionId: 22,
-        subscriptionOpenNotional: 1_500,
-        requestedNotional: 600,
-        projectedSubscriptionOpenNotional: 2_100,
-      }),
-    });
+    expect(result.allowed).toBe(true);
   });
 
   it('includes assigned allocation exposure details on allowed entry risk results', async () => {
@@ -644,9 +749,7 @@ describe('risk gate entry session integration', () => {
         maxPositionNotional: 1_500,
       },
     });
-    mocks.trackedPositionFindMany
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
+    mocks.trackedPositionFindMany.mockResolvedValue([
         activePosition({
           id: 201,
           symbol: 'QQQ',
@@ -654,9 +757,7 @@ describe('risk gate entry session integration', () => {
           costBasis: 1_100,
         }),
       ]);
-    mocks.orderIntentFindMany
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
+    mocks.orderIntentFindMany.mockResolvedValue([
         {
           id: 301,
           symbol: 'DIA',
@@ -716,8 +817,8 @@ describe('risk gate entry session integration', () => {
         },
       }),
     });
-    expect(mocks.trackedPositionFindMany).toHaveBeenCalledTimes(2);
-    expect(mocks.orderIntentFindMany).toHaveBeenCalledTimes(2);
+    expect(mocks.trackedPositionFindMany).toHaveBeenCalledTimes(1);
+    expect(mocks.orderIntentFindMany).toHaveBeenCalledTimes(1);
     expect(mocks.tradingAccountSubscriptionFindFirst).toHaveBeenCalledWith({
       where: {
         tradingAccountId: 1,
@@ -765,8 +866,8 @@ describe('risk gate entry session integration', () => {
         allocationRisk: null,
       }),
     });
-    expect(mocks.trackedPositionFindMany).toHaveBeenCalledTimes(1);
-    expect(mocks.orderIntentFindMany).toHaveBeenCalledTimes(1);
+    expect(mocks.trackedPositionFindMany).not.toHaveBeenCalled();
+    expect(mocks.orderIntentFindMany).not.toHaveBeenCalled();
   });
 
   it('keeps global caps ahead of allocation checks', async () => {
@@ -791,6 +892,9 @@ describe('risk gate entry session integration', () => {
         status: 'pending',
       },
     ]);
+    mocks.getTradingAccountEntryRiskUsage.mockResolvedValue(
+      riskUsage({ dailyEntryOrderCount: 1 })
+    );
     mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue({
       id: 44,
       subscriptionId: 22,
@@ -819,12 +923,12 @@ describe('risk gate entry session integration', () => {
 
     expect(result).toMatchObject({
       allowed: false,
-      reason: 'Daily entry order limit reached.',
+      reason: 'Account daily entry order limit would be exceeded.',
       details: expect.objectContaining({
-        rule: 'maxDailyEntryOrders',
+        rule: 'account_max_daily_entry_orders_exceeded',
+        source: 'LEGACY_GLOBAL_FALLBACK',
       }),
     });
-    expect(mocks.tradingAccountSubscriptionFindFirst).not.toHaveBeenCalled();
   });
 
   it('keeps account caps ahead of allocation checks', async () => {
@@ -854,6 +958,9 @@ describe('risk gate entry session integration', () => {
         status: 'pending',
       },
     ]);
+    mocks.getTradingAccountEntryRiskUsage.mockResolvedValue(
+      riskUsage({ dailyEntryOrderCount: 1 })
+    );
     mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue({
       id: 44,
       subscriptionId: 22,
@@ -882,12 +989,11 @@ describe('risk gate entry session integration', () => {
 
     expect(result).toMatchObject({
       allowed: false,
-      reason: 'Account daily entry order limit reached.',
+      reason: 'Account daily entry order limit would be exceeded.',
       details: expect.objectContaining({
         rule: 'account_max_daily_entry_orders_exceeded',
       }),
     });
-    expect(mocks.tradingAccountSubscriptionFindFirst).not.toHaveBeenCalled();
   });
 
   it('blocks entries assigned to disabled allocations', async () => {
@@ -1024,9 +1130,7 @@ describe('risk gate entry session integration', () => {
         maxPositionNotional: null,
       },
     });
-    mocks.trackedPositionFindMany
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
+    mocks.trackedPositionFindMany.mockResolvedValue([
         activePosition({ id: 201, symbol: 'QQQ' }),
         activePosition({ id: 202, symbol: 'DIA' }),
         activePosition({ id: 203, symbol: 'IWM' }),
@@ -1089,9 +1193,7 @@ describe('risk gate entry session integration', () => {
         maxPositionNotional: null,
       },
     });
-    mocks.trackedPositionFindMany
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
+    mocks.trackedPositionFindMany.mockResolvedValue([
         activePosition({
           id: 201,
           symbol: 'QQQ',
@@ -1099,9 +1201,7 @@ describe('risk gate entry session integration', () => {
           costBasis: 3_400,
         }),
       ]);
-    mocks.orderIntentFindMany
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
+    mocks.orderIntentFindMany.mockResolvedValue([
         {
           id: 301,
           symbol: 'DIA',

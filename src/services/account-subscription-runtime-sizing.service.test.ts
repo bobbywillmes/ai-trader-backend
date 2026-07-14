@@ -74,7 +74,7 @@ describe('account subscription runtime sizing service', () => {
     mocks.getTickerLatestPrice.mockResolvedValue(latestPrice());
   });
 
-  it('resolves FIXED_QTY sizing without fetching latest price when no notional guardrail is configured', async () => {
+  it('prices FIXED_QTY sizing so projected exposure can be enforced', async () => {
     const result = await resolveRuntimeAccountSubscriptionSizing({
       tradingAccountId: 1,
       subscriptionId: 30,
@@ -88,19 +88,19 @@ describe('account subscription runtime sizing service', () => {
       },
       select: expect.any(Object),
     });
-    expect(mocks.getTickerLatestPrice).not.toHaveBeenCalled();
+    expect(mocks.getTickerLatestPrice).toHaveBeenCalledWith('DIA');
     expect(result).toEqual(
       expect.objectContaining({
         tradingAccountSubscriptionId: 20,
         qty: 1,
-        estimatedNotional: null,
+        estimatedNotional: 522.67,
         snapshot: expect.objectContaining({
           tradingAccountSubscriptionId: 20,
           sizingType: PositionSizingType.FIXED_QTY,
           fixedQty: 1,
-          latestPrice: null,
+          latestPrice: 522.67,
           calculatedQty: 1,
-          estimatedNotional: null,
+          estimatedNotional: 522.67,
         }),
       })
     );

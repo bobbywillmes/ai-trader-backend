@@ -94,9 +94,10 @@ by this generic update endpoint.
 
 ## Manage Account Risk Settings
 
-Account risk settings are per-`TradingAccount` entry caps. Global Settings still
-act as backend-wide emergency caps. Allocation bucket limits are configured
-separately and enforced for assigned new entries after account caps pass.
+Account risk settings own routine numerical entry limits. An enabled non-null
+account value replaces its matching legacy global fallback. Global system
+controls remain backend-wide; allocation and subscription limits are enforced
+beneath the account layer.
 
 Read account risk settings:
 
@@ -123,10 +124,37 @@ Response envelope:
     "maxSubscriptionOpenNotional": 5000,
     "notes": null,
     "createdAt": "2026-07-02T00:00:00.000Z",
-    "updatedAt": "2026-07-02T00:00:00.000Z"
+    "updatedAt": "2026-07-02T00:00:00.000Z",
+    "effectiveEntryLimits": {
+      "tradingAccountId": 1,
+      "accountRiskSettingsEnabled": true,
+      "usingLegacyGlobalFallback": false,
+      "limits": {
+        "maxDailyEntryOrders": { "value": 5, "source": "ACCOUNT" },
+        "maxDailyEntryNotional": { "value": 10000, "source": "ACCOUNT" },
+        "maxOpenPositions": { "value": 5, "source": "ACCOUNT" },
+        "maxSymbolOpenNotional": { "value": 2000, "source": "ACCOUNT" }
+      },
+      "authoritativeTotalExposure": {
+        "field": "maxDeployableNotional",
+        "value": 25000,
+        "source": "TRADING_ACCOUNT"
+      },
+      "superseded": {
+        "accountMaxTotalOpenNotional": 25000,
+        "globalMaxTotalOpenNotional": 25000,
+        "accountMaxSubscriptionOpenNotional": 5000,
+        "globalMaxSubscriptionOpenNotional": 5000
+      }
+    }
   }
 }
 ```
+
+Each routine limit reports whether its effective value comes from the enabled
+account settings row (`ACCOUNT`) or the temporary global compatibility value
+(`LEGACY_GLOBAL_FALLBACK`). The runtime gate, preview, Risk Health, and audit
+snapshots use this same effective structure.
 
 Update account risk settings:
 
@@ -156,8 +184,9 @@ notional limits must be positive numbers or null
 notes may be string or null
 ```
 
-`enabled=false` skips only account-specific risk caps. Global emergency caps
-still apply.
+`enabled=false` ignores account-specific numerical fields and selects legacy
+global fallbacks for all four routine limits. `maxDeployableNotional` remains
+the authoritative total account exposure ceiling.
 
 ## Read Account Risk Health
 
@@ -197,7 +226,11 @@ Response envelope:
       "brokerCash": 8000,
       "brokerBuyingPower": 20000,
       "estimatedTradingCapital": 50000,
+      "maxDeployableNotional": 10000,
       "openPositionNotional": 1500,
+      "pendingEntryNotional": 500,
+      "currentAccountExposure": 2000,
+      "remainingDeployableNotional": 8000,
       "allocationBudgetTotal": 12000,
       "activeSubscriptionBudgetTotal": 9000,
       "maxSimultaneousAllocationExposure": 7000,
@@ -205,6 +238,17 @@ Response envelope:
       "activeSubscriptionBudgetSurplus": 1000,
       "maxSimultaneousExposureSurplus": 3000,
       "capitalSource": "BROKER_PORTFOLIO_VALUE"
+    },
+    "effectiveEntryLimits": {
+      "tradingAccountId": 1,
+      "accountRiskSettingsEnabled": true,
+      "usingLegacyGlobalFallback": false,
+      "limits": {
+        "maxDailyEntryOrders": { "value": 5, "source": "ACCOUNT" },
+        "maxDailyEntryNotional": { "value": 10000, "source": "ACCOUNT" },
+        "maxOpenPositions": { "value": 5, "source": "ACCOUNT" },
+        "maxSymbolOpenNotional": { "value": 5000, "source": "ACCOUNT" }
+      }
     },
     "checks": [],
     "blockers": [],
@@ -288,6 +332,11 @@ Capital-hierarchy violations affecting enabled, entry-enabled subscriptions are
 readiness blockers for both PAPER and LIVE profiles. Risk Health obtains these
 findings from the same centralized configuration validator used by admin
 writes. Dormant legacy findings may be reported as warnings.
+
+Routine legacy fallback use is a warning for `PAPER` and a blocker for `LIVE`.
+Missing `maxDeployableNotional` for an entry-enabled account and current
+open-plus-pending exposure above that ceiling are blockers for new entries.
+Superseded total/subscription settings may be returned as informational checks.
 
 ## Preview Entry Risk
 
@@ -405,6 +454,30 @@ Response envelope:
       "message": "Allocation maximum open position limit reached.",
       "details": {}
     },
+    "effectiveEntryLimits": {
+      "tradingAccountId": 1,
+      "accountRiskSettingsEnabled": true,
+      "usingLegacyGlobalFallback": false,
+      "limits": {
+        "maxDailyEntryOrders": { "value": 5, "source": "ACCOUNT" },
+        "maxDailyEntryNotional": { "value": 10000, "source": "ACCOUNT" },
+        "maxOpenPositions": { "value": 5, "source": "ACCOUNT" },
+        "maxSymbolOpenNotional": { "value": 5000, "source": "ACCOUNT" }
+      },
+      "authoritativeTotalExposure": {
+        "field": "maxDeployableNotional",
+        "value": 25000,
+        "source": "TRADING_ACCOUNT"
+      }
+    },
+    "accountUsage": {
+      "openPositionNotional": 3500,
+      "pendingEntryNotional": 900,
+      "currentAccountExposure": 4400,
+      "projectedAccountExposure": 5825
+    },
+    "blockingLayer": "allocation",
+    "blockingCode": "allocation_max_open_positions_exceeded",
     "allocationRisk": {
       "checked": true,
       "ok": false,
@@ -538,12 +611,12 @@ available.
 Runtime allocation enforcement:
 
 ```text
-Global emergency caps apply first.
-TradingAccountRiskSettings account caps apply next.
+Global system controls apply first.
+Effective TradingAccount routine limits and maxDeployableNotional apply next.
 TradingAccountAllocation caps apply for assigned account subscriptions.
 TradingAccountSubscription sizing and gates still control final entry
 eligibility and quantity.
-Unassigned account subscriptions skip allocation checks.
+Enabled, entry-enabled account subscriptions fail closed when unassigned.
 ```
 
 Allocation block rules:

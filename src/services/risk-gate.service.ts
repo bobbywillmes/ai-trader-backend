@@ -11,6 +11,8 @@ import {
   type EntrySessionDecision,
 } from './entry-session-guard.service.js';
 import { resolveDefaultTradingAccountId } from './trading-account.service.js';
+import { resolveEffectiveAccountEntryLimits } from './trading-account-entry-risk-limits.service.js';
+import { getTradingAccountEntryRiskUsage } from './trading-account-entry-risk-usage.service.js';
 
 type RiskGateAllowed = {
   allowed: true;
@@ -27,12 +29,23 @@ export type RiskGateBlocked = {
 export type RiskGateResult = RiskGateAllowed | RiskGateBlocked;
 
 const ACTIVE_POSITION_STATUSES = ['open', 'closing'];
-const ENTRY_ORDER_STATUSES = ['pending', 'submitted', 'filled'];
+const ENTRY_ORDER_STATUSES = [
+  'pending',
+  'submitting',
+  'submitted',
+  'new',
+  'accepted',
+  'accepted_for_bidding',
+  'pending_new',
+  'partially_filled',
+  'filled',
+];
 
 type EvaluateOrderRiskOptions = {
   requestedNotionalOverride?: number | null;
   tradingAccountId?: number;
   enforceEntrySessionGuard?: boolean;
+  excludeOrderIntentId?: number;
 };
 
 type AccountRiskSettings = {
@@ -184,12 +197,6 @@ function isEntryOrder(input: ResolvedPlaceOrderInput): boolean {
   return input.side === 'buy' && (input.signalType ?? 'entry') === 'entry';
 }
 
-function startOfUtcDay(date = new Date()) {
-  return new Date(
-    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
-  );
-}
-
 function isLimitEnabled(value: number | null): value is number {
   return value !== null && Number.isFinite(value);
 }
@@ -308,6 +315,7 @@ async function getAllocationRiskUsage(args: {
   tradingAccountId: number;
   allocationId: number;
   requestedNotional: number | null;
+  excludeOrderIntentId?: number;
 }): Promise<AllocationRiskUsage> {
   const [activePositions, pendingEntryOrders] = await Promise.all([
     prisma.trackedPosition.findMany({
@@ -336,9 +344,13 @@ async function getAllocationRiskUsage(args: {
       where: {
         tradingAccountId: args.tradingAccountId,
         side: 'buy',
+        trackedPositionId: null,
         status: {
           in: ENTRY_ORDER_STATUSES,
         },
+        ...(args.excludeOrderIntentId
+          ? { id: { not: args.excludeOrderIntentId } }
+          : {}),
         tradingAccountSubscription: {
           is: {
             allocationId: args.allocationId,
@@ -389,6 +401,7 @@ async function getAllocationRiskDetails(args: {
   accountSubscription: AllocationRiskAccountSubscription | null;
   tradingAccountId: number;
   requestedNotional: number | null;
+  excludeOrderIntentId?: number;
 }): Promise<AllocationRiskDetails | null> {
   const accountSubscription = args.accountSubscription;
 
@@ -402,6 +415,9 @@ async function getAllocationRiskDetails(args: {
     tradingAccountId: args.tradingAccountId,
     allocationId: allocation.id,
     requestedNotional: args.requestedNotional,
+    ...(args.excludeOrderIntentId !== undefined
+      ? { excludeOrderIntentId: args.excludeOrderIntentId }
+      : {}),
   });
 
   return {
@@ -579,73 +595,6 @@ async function findSubscriptionForInput(
   return null;
 }
 
-async function getRiskUsage(tradingAccountId: number) {
-  const todayStart = startOfUtcDay();
-
-  const [activePositions, dailyEntryOrders] = await Promise.all([
-    prisma.trackedPosition.findMany({
-      where: {
-        tradingAccountId,
-        status: {
-          in: ACTIVE_POSITION_STATUSES,
-        },
-      },
-      select: {
-        id: true,
-        symbol: true,
-        subscriptionId: true,
-        marketValue: true,
-        costBasis: true,
-        status: true,
-      },
-    }),
-
-    prisma.orderIntent.findMany({
-      where: {
-        tradingAccountId,
-        side: 'buy',
-        status: {
-          in: ENTRY_ORDER_STATUSES,
-        },
-        createdAt: {
-          gte: todayStart,
-        },
-      },
-      select: {
-        id: true,
-        symbol: true,
-        subscriptionId: true,
-        notional: true,
-        qty: true,
-        limitPrice: true,
-        rawRequestJson: true,
-        status: true,
-      },
-    }),
-  ]);
-
-  const totalOpenNotional = activePositions.reduce(
-    (total, position) => total + getPositionExposure(position),
-    0
-  );
-
-  const dailyEntryNotional = dailyEntryOrders.reduce((total, order) => {
-    return total + (getOrderIntentEstimatedNotional(order) ?? 0);
-  }, 0);
-
-  return {
-    activePositions,
-    dailyEntryOrders,
-    dailyEntryOrderCount: dailyEntryOrders.length,
-    dailyEntryNotional,
-    totalOpenNotional,
-    activePositionCount: activePositions.length,
-    activeSymbols: Array.from(
-      new Set(activePositions.map((position) => position.symbol))
-    ),
-  };
-}
-
 async function getAccountRiskSettings(
   tradingAccountId: number
 ): Promise<AccountRiskSettings | null> {
@@ -801,7 +750,50 @@ export async function evaluateOrderRisk(
   }
 
   const requestedNotional = getRequestedNotional(input, options);
-  const usage = await getRiskUsage(tradingAccountId);
+  const [
+    usage,
+    accountRiskSettings,
+    riskConfigurationAccount,
+    allocationAccountSubscription,
+  ] = await Promise.all([
+    getTradingAccountEntryRiskUsage({
+      tradingAccountId,
+      symbol: input.symbol,
+      ...(options.excludeOrderIntentId !== undefined
+        ? { excludeOrderIntentId: options.excludeOrderIntentId }
+        : {}),
+    }),
+    getAccountRiskSettings(tradingAccountId),
+    prisma.tradingAccount.findUnique({
+      where: { id: tradingAccountId },
+      select: { maxDeployableNotional: true },
+    }),
+    getAllocationRiskAccountSubscription(input, tradingAccountId),
+  ]);
+  const effective = resolveEffectiveAccountEntryLimits({
+    tradingAccountId,
+    maxDeployableNotional:
+      riskConfigurationAccount?.maxDeployableNotional ?? null,
+    accountRiskSettings,
+    globalConfig: config,
+  });
+  const accountRiskDiagnostics = {
+    effectiveEntryLimits: effective,
+    usage: {
+      dailyWindow: usage.dailyWindow,
+      dailyEntryOrderCount: usage.dailyEntryOrderCount,
+      dailyEntryNotional: usage.dailyEntryNotional,
+      activePositionCount: usage.activePositionCount,
+      pendingEntryPositionCount: usage.pendingEntryPositionCount,
+      currentAccountPositionSlots: usage.currentAccountPositionSlots,
+      openPositionNotional: usage.openPositionNotional,
+      pendingEntryNotional: usage.pendingEntryNotional,
+      currentAccountExposure: usage.currentAccountExposure,
+      symbolOpenNotional: usage.symbolOpenNotional,
+      symbolPendingEntryNotional: usage.symbolPendingEntryNotional,
+      currentSymbolExposure: usage.currentSymbolExposure,
+    },
+  };
 
   const existingSymbolPosition = usage.activePositions.find(
     (position) => position.symbol === input.symbol
@@ -812,6 +804,7 @@ export async function evaluateOrderRisk(
       409,
       `Entry signal blocked because ${input.symbol} already has an open or closing tracked position.`,
       {
+        ...accountRiskDiagnostics,
         rule: 'one_active_position_per_symbol',
         symbol: input.symbol,
         trackedPositionId: existingSymbolPosition.id,
@@ -820,220 +813,219 @@ export async function evaluateOrderRisk(
     );
   }
 
+  const dailyOrderLimit = effective.limits.maxDailyEntryOrders;
   if (
-    isLimitEnabled(config.maxDailyEntryOrders) &&
-    usage.dailyEntryOrderCount >= config.maxDailyEntryOrders
+    isLimitEnabled(dailyOrderLimit.value) &&
+    usage.dailyEntryOrderCount + 1 > dailyOrderLimit.value
   ) {
-    return block(409, 'Daily entry order limit reached.', {
-      rule: 'maxDailyEntryOrders',
-      maxDailyEntryOrders: config.maxDailyEntryOrders,
-      dailyEntryOrderCount: usage.dailyEntryOrderCount,
+    return block(409, 'Account daily entry order limit would be exceeded.', {
+      ...accountRiskDiagnostics,
+      rule: 'account_max_daily_entry_orders_exceeded',
+      layer: 'account',
+      tradingAccountId,
+      field: 'maxDailyEntryOrders',
+      source: dailyOrderLimit.source,
+      current: usage.dailyEntryOrderCount,
+      requested: 1,
+      projected: usage.dailyEntryOrderCount + 1,
+      limit: dailyOrderLimit.value,
+      dailyWindow: usage.dailyWindow,
     });
   }
 
+  const positionLimit = effective.limits.maxOpenPositions;
   if (
-    isLimitEnabled(config.maxOpenPositions) &&
-    usage.activePositionCount >= config.maxOpenPositions
+    isLimitEnabled(positionLimit.value) &&
+    usage.currentAccountPositionSlots + 1 > positionLimit.value
   ) {
-    return block(409, 'Maximum open position limit reached.', {
-      rule: 'maxOpenPositions',
-      maxOpenPositions: config.maxOpenPositions,
+    return block(409, 'Account maximum position capacity would be exceeded.', {
+      ...accountRiskDiagnostics,
+      rule: 'account_max_open_positions_exceeded',
+      layer: 'account',
+      tradingAccountId,
+      field: 'maxOpenPositions',
+      source: positionLimit.source,
       activePositionCount: usage.activePositionCount,
+      pendingEntryPositionCount: usage.pendingEntryPositionCount,
+      current: usage.currentAccountPositionSlots,
+      requested: 1,
+      projected: usage.currentAccountPositionSlots + 1,
+      limit: positionLimit.value,
       activeSymbols: usage.activeSymbols,
+      pendingSymbols: usage.pendingSymbols,
     });
   }
 
-  if (
-    requestedNotional !== null &&
-    isLimitEnabled(config.maxDailyEntryNotional) &&
-    usage.dailyEntryNotional + requestedNotional > config.maxDailyEntryNotional
-  ) {
-    return block(409, 'Daily entry notional limit would be exceeded.', {
-      rule: 'maxDailyEntryNotional',
-      maxDailyEntryNotional: config.maxDailyEntryNotional,
-      dailyEntryNotional: usage.dailyEntryNotional,
+  const maxDeployableNotional = effective.authoritativeTotalExposure.value;
+  if (!isLimitEnabled(maxDeployableNotional)) {
+    return block(409, 'Trading account max deployable notional is not configured. New entries are blocked.', {
+      ...accountRiskDiagnostics,
+      rule: 'account_max_deployable_notional_required',
+      layer: 'account',
+      tradingAccountId,
+      field: 'maxDeployableNotional',
+      maxDeployableNotional,
+    });
+  }
+
+  if (requestedNotional === null) {
+    return block(409, 'Proposed entry notional is required for account risk evaluation.', {
+      ...accountRiskDiagnostics,
+      rule: 'account_entry_notional_required',
+      layer: 'account',
+      tradingAccountId,
+      field: 'requestedNotional',
       requestedNotional,
-      projectedDailyEntryNotional: usage.dailyEntryNotional + requestedNotional,
     });
   }
 
+  const dailyNotionalLimit = effective.limits.maxDailyEntryNotional;
   if (
-    requestedNotional !== null &&
-    isLimitEnabled(config.maxTotalOpenNotional) &&
-    usage.totalOpenNotional + requestedNotional > config.maxTotalOpenNotional
+    isLimitEnabled(dailyNotionalLimit.value) &&
+    usage.dailyEntryNotional + requestedNotional > dailyNotionalLimit.value
   ) {
-    return block(409, 'Total open notional limit would be exceeded.', {
-      rule: 'maxTotalOpenNotional',
-      maxTotalOpenNotional: config.maxTotalOpenNotional,
-      totalOpenNotional: usage.totalOpenNotional,
+    return block(409, 'Account daily entry notional limit would be exceeded.', {
+      ...accountRiskDiagnostics,
+      rule: 'account_max_daily_entry_notional_exceeded',
+      layer: 'account',
+      tradingAccountId,
+      field: 'maxDailyEntryNotional',
+      source: dailyNotionalLimit.source,
+      current: usage.dailyEntryNotional,
+      requested: requestedNotional,
+      projected: usage.dailyEntryNotional + requestedNotional,
+      limit: dailyNotionalLimit.value,
+      dailyWindow: usage.dailyWindow,
+    });
+  }
+
+  const projectedAccountExposure =
+    usage.currentAccountExposure + requestedNotional;
+  if (
+    projectedAccountExposure > maxDeployableNotional
+  ) {
+    return block(409, 'Trading account deployable exposure would be exceeded.', {
+      ...accountRiskDiagnostics,
+      rule: 'account_max_deployable_notional_exceeded',
+      layer: 'account',
+      tradingAccountId,
+      field: 'maxDeployableNotional',
+      source: 'TRADING_ACCOUNT',
+      openPositionNotional: usage.openPositionNotional,
+      pendingEntryNotional: usage.pendingEntryNotional,
+      currentAccountExposure: usage.currentAccountExposure,
       requestedNotional,
-      projectedTotalOpenNotional: usage.totalOpenNotional + requestedNotional,
+      projectedAccountExposure,
+      maxDeployableNotional,
     });
   }
 
+  const symbolLimit = effective.limits.maxSymbolOpenNotional;
+  const projectedSymbolExposure =
+    usage.currentSymbolExposure + requestedNotional;
   if (
-    requestedNotional !== null &&
-    isLimitEnabled(config.maxSymbolOpenNotional) &&
-    requestedNotional > config.maxSymbolOpenNotional
+    isLimitEnabled(symbolLimit.value) &&
+    projectedSymbolExposure > symbolLimit.value
   ) {
-    return block(409, `Symbol exposure limit would be exceeded for ${input.symbol}.`, {
-      rule: 'maxSymbolOpenNotional',
+    return block(409, `Account symbol exposure limit would be exceeded for ${input.symbol}.`, {
+      ...accountRiskDiagnostics,
+      rule: 'account_max_symbol_open_notional_exceeded',
+      layer: 'account',
+      tradingAccountId,
+      field: 'maxSymbolOpenNotional',
+      source: symbolLimit.source,
       symbol: input.symbol,
-      maxSymbolOpenNotional: config.maxSymbolOpenNotional,
+      openSymbolNotional: usage.symbolOpenNotional,
+      pendingSymbolNotional: usage.symbolPendingEntryNotional,
+      currentSymbolExposure: usage.currentSymbolExposure,
       requestedNotional,
+      projectedSymbolExposure,
+      maxSymbolOpenNotional: symbolLimit.value,
     });
   }
 
+  // Compatibility-only limits remain for an entry that cannot resolve an
+  // account subscription. Resolved subscriptions use deployable capital,
+  // allocation limits, reservation, and sizing as their authoritative layers.
+  const unresolvedAccountSubscription = !allocationAccountSubscription;
+  const legacyAccountTotalLimit =
+    accountRiskSettings?.enabled &&
+    isLimitEnabled(accountRiskSettings.maxTotalOpenNotional)
+      ? {
+          value: accountRiskSettings.maxTotalOpenNotional,
+          source: 'ACCOUNT' as const,
+        }
+      : {
+          value: config.maxTotalOpenNotional,
+          source: 'LEGACY_GLOBAL_FALLBACK' as const,
+        };
   if (
-    requestedNotional !== null &&
-    input.subscriptionId !== undefined &&
-    isLimitEnabled(config.maxSubscriptionOpenNotional) &&
-    requestedNotional > config.maxSubscriptionOpenNotional
+    unresolvedAccountSubscription &&
+    isLimitEnabled(legacyAccountTotalLimit.value) &&
+    projectedAccountExposure > legacyAccountTotalLimit.value
   ) {
-    return block(
-      409,
-      `Subscription exposure limit would be exceeded for ${input.subscriptionKey ?? input.subscriptionId}.`,
-      {
-        rule: 'maxSubscriptionOpenNotional',
-        subscriptionId: input.subscriptionId,
-        subscriptionKey: input.subscriptionKey ?? null,
-        maxSubscriptionOpenNotional: config.maxSubscriptionOpenNotional,
-        requestedNotional,
-      }
-    );
+    return block(409, 'Legacy total open notional fallback would be exceeded.', {
+      rule: 'maxTotalOpenNotional',
+      layer: 'legacy_compatibility',
+      tradingAccountId,
+      field: 'maxTotalOpenNotional',
+      source: legacyAccountTotalLimit.source,
+      current: usage.currentAccountExposure,
+      requested: requestedNotional,
+      projected: projectedAccountExposure,
+      limit: legacyAccountTotalLimit.value,
+    });
   }
 
-  const accountRiskSettings = await getAccountRiskSettings(tradingAccountId);
-
-  if (accountRiskSettings?.enabled) {
-    if (
-      isLimitEnabled(accountRiskSettings.maxDailyEntryOrders) &&
-      usage.dailyEntryOrderCount >= accountRiskSettings.maxDailyEntryOrders
-    ) {
-      return block(409, 'Account daily entry order limit reached.', {
-        rule: 'account_max_daily_entry_orders_exceeded',
-        tradingAccountId,
-        maxDailyEntryOrders: accountRiskSettings.maxDailyEntryOrders,
-        dailyEntryOrderCount: usage.dailyEntryOrderCount,
-      });
-    }
-
-    if (
-      isLimitEnabled(accountRiskSettings.maxOpenPositions) &&
-      usage.activePositionCount >= accountRiskSettings.maxOpenPositions
-    ) {
-      return block(409, 'Account maximum open position limit reached.', {
-        rule: 'account_max_open_positions_exceeded',
-        tradingAccountId,
-        maxOpenPositions: accountRiskSettings.maxOpenPositions,
-        activePositionCount: usage.activePositionCount,
-        activeSymbols: usage.activeSymbols,
-      });
-    }
-
-    if (
-      requestedNotional !== null &&
-      isLimitEnabled(accountRiskSettings.maxDailyEntryNotional) &&
-      usage.dailyEntryNotional + requestedNotional >
-        accountRiskSettings.maxDailyEntryNotional
-    ) {
-      return block(409, 'Account daily entry notional limit would be exceeded.', {
-        rule: 'account_max_daily_entry_notional_exceeded',
-        tradingAccountId,
-        maxDailyEntryNotional: accountRiskSettings.maxDailyEntryNotional,
-        dailyEntryNotional: usage.dailyEntryNotional,
-        requestedNotional,
-        projectedDailyEntryNotional:
-          usage.dailyEntryNotional + requestedNotional,
-      });
-    }
-
-    if (
-      requestedNotional !== null &&
-      isLimitEnabled(accountRiskSettings.maxTotalOpenNotional) &&
-      usage.totalOpenNotional + requestedNotional >
-        accountRiskSettings.maxTotalOpenNotional
-    ) {
-      return block(409, 'Account total open notional limit would be exceeded.', {
-        rule: 'account_max_total_open_notional_exceeded',
-        tradingAccountId,
-        maxTotalOpenNotional: accountRiskSettings.maxTotalOpenNotional,
-        totalOpenNotional: usage.totalOpenNotional,
-        requestedNotional,
-        projectedTotalOpenNotional:
-          usage.totalOpenNotional + requestedNotional,
-      });
-    }
-
-    const symbolOpenNotional = getSymbolOpenNotional(
+  const subscriptionId = input.subscriptionId;
+  if (unresolvedAccountSubscription && subscriptionId !== undefined) {
+    const legacySubscriptionLimit =
+      accountRiskSettings?.enabled &&
+      isLimitEnabled(accountRiskSettings.maxSubscriptionOpenNotional)
+        ? {
+            value: accountRiskSettings.maxSubscriptionOpenNotional,
+            source: 'ACCOUNT' as const,
+          }
+        : {
+            value: config.maxSubscriptionOpenNotional,
+            source: 'LEGACY_GLOBAL_FALLBACK' as const,
+          };
+    const openSubscriptionNotional = getSubscriptionOpenNotional(
       usage.activePositions,
-      input.symbol
+      subscriptionId
     );
+    const pendingSubscriptionNotional =
+      usage.pendingEntryNotionalBySubscriptionId.get(subscriptionId) ?? 0;
+    const currentSubscriptionExposure =
+      openSubscriptionNotional + pendingSubscriptionNotional;
+    const projectedSubscriptionExposure =
+      currentSubscriptionExposure + requestedNotional;
 
     if (
-      requestedNotional !== null &&
-      isLimitEnabled(accountRiskSettings.maxSymbolOpenNotional) &&
-      symbolOpenNotional + requestedNotional >
-        accountRiskSettings.maxSymbolOpenNotional
+      isLimitEnabled(legacySubscriptionLimit.value) &&
+      projectedSubscriptionExposure > legacySubscriptionLimit.value
     ) {
       return block(
         409,
-        `Account symbol exposure limit would be exceeded for ${input.symbol}.`,
+        'Legacy subscription open notional fallback would be exceeded.',
         {
-          rule: 'account_max_symbol_open_notional_exceeded',
+          rule: 'maxSubscriptionOpenNotional',
+          layer: 'legacy_compatibility',
           tradingAccountId,
-          symbol: input.symbol,
-          maxSymbolOpenNotional: accountRiskSettings.maxSymbolOpenNotional,
-          symbolOpenNotional,
-          requestedNotional,
-          projectedSymbolOpenNotional:
-            symbolOpenNotional + requestedNotional,
+          subscriptionId,
+          field: 'maxSubscriptionOpenNotional',
+          source: legacySubscriptionLimit.source,
+          openSubscriptionNotional,
+          pendingSubscriptionNotional,
+          current: currentSubscriptionExposure,
+          requested: requestedNotional,
+          projected: projectedSubscriptionExposure,
+          limit: legacySubscriptionLimit.value,
         }
       );
     }
-
-    if (
-      requestedNotional !== null &&
-      input.subscriptionId !== undefined &&
-      isLimitEnabled(accountRiskSettings.maxSubscriptionOpenNotional)
-    ) {
-      const subscriptionOpenNotional = getSubscriptionOpenNotional(
-        usage.activePositions,
-        input.subscriptionId
-      );
-
-      if (
-        subscriptionOpenNotional + requestedNotional >
-        accountRiskSettings.maxSubscriptionOpenNotional
-      ) {
-        return block(
-          409,
-          `Account subscription exposure limit would be exceeded for ${input.subscriptionKey ?? input.subscriptionId}.`,
-          {
-            rule: 'account_max_subscription_open_notional_exceeded',
-            tradingAccountId,
-            subscriptionId: input.subscriptionId,
-            subscriptionKey: input.subscriptionKey ?? null,
-            maxSubscriptionOpenNotional:
-              accountRiskSettings.maxSubscriptionOpenNotional,
-            subscriptionOpenNotional,
-            requestedNotional,
-            projectedSubscriptionOpenNotional:
-              subscriptionOpenNotional + requestedNotional,
-          }
-        );
-      }
-    }
   }
 
-  const [riskConfigurationAccount, allocationAccountSubscription] =
-    await Promise.all([
-      prisma.tradingAccount.findUnique({
-        where: { id: tradingAccountId },
-        select: { maxDeployableNotional: true },
-      }),
-      getAllocationRiskAccountSubscription(input, tradingAccountId),
-    ]);
   const configuredHierarchyRisk = evaluateConfiguredHierarchyRisk({
     tradingAccountId,
     maxDeployableNotional:
@@ -1047,6 +1039,9 @@ export async function evaluateOrderRisk(
     accountSubscription: allocationAccountSubscription,
     tradingAccountId,
     requestedNotional,
+    ...(options.excludeOrderIntentId !== undefined
+      ? { excludeOrderIntentId: options.excludeOrderIntentId }
+      : {}),
   });
   const allocationRiskResult = evaluateAllocationRisk(allocationRisk);
 
@@ -1071,9 +1066,18 @@ export async function evaluateOrderRisk(
         dailyEntryOrderCount: usage.dailyEntryOrderCount,
         dailyEntryNotional: usage.dailyEntryNotional,
         activePositionCount: usage.activePositionCount,
-        totalOpenNotional: usage.totalOpenNotional,
+        pendingEntryPositionCount: usage.pendingEntryPositionCount,
+        currentAccountPositionSlots: usage.currentAccountPositionSlots,
+        openPositionNotional: usage.openPositionNotional,
+        pendingEntryNotional: usage.pendingEntryNotional,
+        currentAccountExposure: usage.currentAccountExposure,
+        projectedAccountExposure,
+        symbolOpenNotional: usage.symbolOpenNotional,
+        symbolPendingEntryNotional: usage.symbolPendingEntryNotional,
+        projectedSymbolExposure,
         activeSymbols: usage.activeSymbols,
       },
+      effectiveEntryLimits: effective,
       allocationRisk,
     } as Prisma.InputJsonValue,
   };
@@ -1108,7 +1112,10 @@ export async function getRiskStatus() {
   const account = await getNormalizedAccount('risk_gate_account_check', {
     tradingAccountId,
   });
-  const usage = await getRiskUsage(tradingAccountId);
+  const usage = await getTradingAccountEntryRiskUsage({
+    tradingAccountId,
+    symbol: '',
+  });
 
   const expectedMode = config.paperMode ? 'paper' : 'live';
   const reasons: string[] = [];
@@ -1163,7 +1170,7 @@ export async function getRiskStatus() {
 
   if (
     isLimitEnabled(config.maxTotalOpenNotional) &&
-    usage.totalOpenNotional >= config.maxTotalOpenNotional
+    usage.currentAccountExposure >= config.maxTotalOpenNotional
   ) {
     reasons.push('Total open notional limit reached.');
   }
@@ -1209,7 +1216,7 @@ export async function getRiskStatus() {
       dailyEntryOrderCount: usage.dailyEntryOrderCount,
       dailyEntryNotional: usage.dailyEntryNotional,
       activePositionCount: usage.activePositionCount,
-      totalOpenNotional: usage.totalOpenNotional,
+      totalOpenNotional: usage.currentAccountExposure,
       activeSymbols: usage.activeSymbols,
     },
   };

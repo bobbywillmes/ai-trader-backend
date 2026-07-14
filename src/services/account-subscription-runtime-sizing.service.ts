@@ -188,19 +188,12 @@ async function resolveLatestPriceIfNeeded(args: {
   accountSubscription: RuntimeAccountSubscriptionRecord;
   symbol: string;
 }) {
-  if (
-    args.accountSubscription.sizingType === PositionSizingType.MAX_NOTIONAL ||
-    args.accountSubscription.minPositionNotional !== null
-  ) {
-    return getRequiredLatestPrice({
-      symbol: args.symbol,
-      tradingAccountId: args.accountSubscription.tradingAccountId,
-      subscriptionId: args.accountSubscription.subscriptionId,
-      tradingAccountSubscriptionId: args.accountSubscription.id,
-    });
-  }
-
-  return null;
+  return getRequiredLatestPrice({
+    symbol: args.symbol,
+    tradingAccountId: args.accountSubscription.tradingAccountId,
+    subscriptionId: args.accountSubscription.subscriptionId,
+    tradingAccountSubscriptionId: args.accountSubscription.id,
+  });
 }
 
 export async function resolveRuntimeAccountSubscriptionSizing(

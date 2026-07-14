@@ -10,6 +10,8 @@ import { prisma } from '../db/prisma.js';
 import { getRuntimeTradingConfig } from './config.service.js';
 import { getTickerLatestPrice } from './massive-market-data.service.js';
 import { validateAccountRiskConfiguration } from './trading-account-risk-configuration.service.js';
+import { resolveEffectiveAccountEntryLimits } from './trading-account-entry-risk-limits.service.js';
+import { getTradingAccountEntryRiskUsage } from './trading-account-entry-risk-usage.service.js';
 
 const ACTIVE_POSITION_STATUSES = ['open', 'closing'];
 const BROKER_SYNC_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
@@ -546,30 +548,6 @@ function addSharedChecks(args: {
     );
   }
 
-  if (profile === TradingAccountEnvironment.LIVE && args.account.riskSettings) {
-    const requiredCaps = [
-      ['maxDailyEntryNotional', args.account.riskSettings.maxDailyEntryNotional],
-      ['maxOpenPositions', args.account.riskSettings.maxOpenPositions],
-      ['maxTotalOpenNotional', args.account.riskSettings.maxTotalOpenNotional],
-    ] as const;
-    const missingCaps = requiredCaps
-      .filter(([, value]) => !isPositiveFiniteNumber(value))
-      .map(([key]) => key);
-
-    if (missingCaps.length > 0) {
-      args.checks.push(
-        createCheck({
-          id: 'live_account_risk_caps_configured',
-          label: 'Live account key risk caps are configured',
-          severity: 'blocker',
-          status: 'fail',
-          message: 'Live accounts require key account risk caps before entries.',
-          details: { missingCaps },
-        })
-      );
-    }
-  }
-
   if (activeSubscriptions.length === 0) {
     args.checks.push(
       createCheck({
@@ -988,6 +966,100 @@ export async function getTradingAccountRiskHealth(
 
   const checks: TradingAccountRiskHealthCheck[] = [];
   const activeSubscriptions = activeAccountSubscriptions(accountSubscriptions);
+  const effectiveEntryLimits = resolveEffectiveAccountEntryLimits({
+    tradingAccountId,
+    maxDeployableNotional: account.maxDeployableNotional,
+    accountRiskSettings: account.riskSettings,
+    globalConfig,
+  });
+  const accountUsage = await getTradingAccountEntryRiskUsage({
+    tradingAccountId,
+    symbol: '',
+    now,
+  });
+
+  if (effectiveEntryLimits.usingLegacyGlobalFallback) {
+    const severity = liveSeverity(account.environment);
+    const fallbackFields = Object.entries(effectiveEntryLimits.limits)
+      .filter(([, limit]) => limit.source === 'LEGACY_GLOBAL_FALLBACK')
+      .map(([field]) => field);
+    checks.push(
+      createCheck({
+        id: 'account_entry_limits_use_legacy_fallback',
+        label: 'Routine entry limits are account-owned',
+        severity,
+        status: failingStatus(severity),
+        message: `${account.environment} account uses legacy global fallback values for routine entry limits.`,
+        details: { fallbackFields, effectiveEntryLimits },
+      })
+    );
+  } else {
+    checks.push(
+      createCheck({
+        id: 'account_entry_limits_account_owned',
+        label: 'Routine entry limits are account-owned',
+        severity: 'info',
+        status: 'pass',
+        message: 'All routine entry limits are configured on this Trading Account.',
+        details: { effectiveEntryLimits },
+      })
+    );
+  }
+
+  if (
+    activeSubscriptions.length > 0 &&
+    !isPositiveFiniteNumber(account.maxDeployableNotional)
+  ) {
+    checks.push(
+      createCheck({
+        id: 'account_max_deployable_notional_configured',
+        label: 'Account deployable ceiling is configured',
+        severity: 'blocker',
+        status: 'fail',
+        message: 'Entry-enabled subscriptions require maxDeployableNotional.',
+        details: { maxDeployableNotional: account.maxDeployableNotional },
+      })
+    );
+  }
+
+  if (
+    isPositiveFiniteNumber(account.maxDeployableNotional) &&
+    accountUsage.currentAccountExposure > account.maxDeployableNotional
+  ) {
+    checks.push(
+      createCheck({
+        id: 'account_current_exposure_within_deployable_notional',
+        label: 'Current account exposure fits deployable capital',
+        severity: 'blocker',
+        status: 'fail',
+        message: 'Open and pending entry exposure exceeds maxDeployableNotional.',
+        details: {
+          openPositionNotional: accountUsage.openPositionNotional,
+          pendingEntryNotional: accountUsage.pendingEntryNotional,
+          currentAccountExposure: accountUsage.currentAccountExposure,
+          maxDeployableNotional: account.maxDeployableNotional,
+        },
+      })
+    );
+  }
+
+  for (const [field, value] of Object.entries({
+    maxTotalOpenNotional: account.riskSettings?.maxTotalOpenNotional ?? null,
+    maxSubscriptionOpenNotional:
+      account.riskSettings?.maxSubscriptionOpenNotional ?? null,
+  })) {
+    if (value === null) continue;
+    checks.push(
+      createCheck({
+        id: `account_${field}_superseded`,
+        label: `${field} is superseded`,
+        severity: 'info',
+        status: 'info',
+        message: `${field} remains stored for compatibility but is not authoritative for resolved account-subscription entries.`,
+        details: { field, value },
+      })
+    );
+  }
   for (const hierarchyViolation of hierarchyViolations ?? []) {
     const affectsActiveEntries =
       hierarchyViolation.entityType === 'TradingAccountSubscription' ||
@@ -1030,11 +1102,6 @@ export async function getTradingAccountRiskHealth(
       exposures: plannedExposures,
     });
   const brokerPortfolioValue = getBrokerPortfolioValue(account);
-  const openPositionNotional = openPositions.reduce(
-    (total, position) => total + getPositionExposure(position),
-    0
-  );
-
   addSharedChecks({
     account,
     accountSubscriptions,
@@ -1086,7 +1153,13 @@ export async function getTradingAccountRiskHealth(
       brokerBuyingPower: account.lastBuyingPower,
       estimatedTradingCapital: account.estimatedTradingCapital,
       maxDeployableNotional: account.maxDeployableNotional,
-      openPositionNotional,
+      openPositionNotional: accountUsage.openPositionNotional,
+      pendingEntryNotional: accountUsage.pendingEntryNotional,
+      currentAccountExposure: accountUsage.currentAccountExposure,
+      remainingDeployableNotional:
+        account.maxDeployableNotional === null
+          ? null
+          : account.maxDeployableNotional - accountUsage.currentAccountExposure,
       allocationBudgetTotal,
       activeSubscriptionBudgetTotal,
       maxSimultaneousAllocationExposure,
@@ -1109,6 +1182,7 @@ export async function getTradingAccountRiskHealth(
             ? 'ESTIMATED_TRADING_CAPITAL'
             : 'UNAVAILABLE',
     },
+    effectiveEntryLimits,
     checks,
     blockers,
     warnings,

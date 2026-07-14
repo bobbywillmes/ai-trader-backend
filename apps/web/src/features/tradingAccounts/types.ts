@@ -80,6 +80,46 @@ export type TradingAccountRiskSettings = {
   notes: string | null;
   createdAt: string;
   updatedAt: string;
+  effectiveEntryLimits: EffectiveAccountEntryLimits;
+};
+
+export type EffectiveAccountEntryLimitSource =
+  | "ACCOUNT"
+  | "LEGACY_GLOBAL_FALLBACK";
+
+export type EffectiveAccountEntryLimits = {
+  tradingAccountId: number;
+  accountRiskSettingsEnabled: boolean;
+  usingLegacyGlobalFallback: boolean;
+  limits: {
+    maxDailyEntryOrders: {
+      value: number | null;
+      source: EffectiveAccountEntryLimitSource;
+    };
+    maxDailyEntryNotional: {
+      value: number | null;
+      source: EffectiveAccountEntryLimitSource;
+    };
+    maxOpenPositions: {
+      value: number | null;
+      source: EffectiveAccountEntryLimitSource;
+    };
+    maxSymbolOpenNotional: {
+      value: number | null;
+      source: EffectiveAccountEntryLimitSource;
+    };
+  };
+  authoritativeTotalExposure: {
+    field: "maxDeployableNotional";
+    value: number | null;
+    source: "TRADING_ACCOUNT";
+  };
+  superseded: {
+    accountMaxTotalOpenNotional: number | null;
+    globalMaxTotalOpenNotional: number | null;
+    accountMaxSubscriptionOpenNotional: number | null;
+    globalMaxSubscriptionOpenNotional: number | null;
+  };
 };
 
 export type TradingAccountRiskSettingsResponse = {
@@ -134,6 +174,9 @@ export type TradingAccountRiskHealth = {
     estimatedTradingCapital: number | null;
     maxDeployableNotional: number | null;
     openPositionNotional: number;
+    pendingEntryNotional: number;
+    currentAccountExposure: number;
+    remainingDeployableNotional: number | null;
     allocationBudgetTotal: number;
     activeSubscriptionBudgetTotal: number;
     maxSimultaneousAllocationExposure: number;
@@ -145,6 +188,7 @@ export type TradingAccountRiskHealth = {
       | "ESTIMATED_TRADING_CAPITAL"
       | "UNAVAILABLE";
   };
+  effectiveEntryLimits: EffectiveAccountEntryLimits;
   checks: TradingAccountRiskHealthCheck[];
   blockers: TradingAccountRiskHealthCheck[];
   warnings: TradingAccountRiskHealthCheck[];
@@ -308,6 +352,19 @@ export type EntryRiskPreview = {
     message: string | null;
     details: unknown;
   };
+  effectiveEntryLimits: EffectiveAccountEntryLimits | null;
+  accountUsage: {
+    openPositionNotional?: number;
+    pendingEntryNotional?: number;
+    currentAccountExposure?: number;
+    projectedAccountExposure?: number;
+    activePositionCount?: number;
+    pendingEntryPositionCount?: number;
+    currentAccountPositionSlots?: number;
+    projectedSymbolExposure?: number;
+  } | null;
+  blockingLayer: EntryRiskPreviewLayer;
+  blockingCode: string | null;
   allocationRisk: {
     checked: boolean;
     ok: boolean;
