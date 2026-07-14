@@ -31,18 +31,13 @@ Entry orders are blocked when any of the following conditions apply:
   the opening buffer is active, the pre-close cutoff is active, or session data
   is unavailable while fail-closed behavior is enabled.
 - Symbol already has an open or closing tracked position.
-- Daily entry order limit has been reached.
-- Daily entry notional limit would be exceeded.
-- Maximum open position count would be exceeded.
-- Total open notional limit would be exceeded.
-- Per-symbol exposure limit would be exceeded.
-- Per-subscription exposure limit would be exceeded.
-- Account daily entry order limit has been reached.
-- Account daily entry notional limit would be exceeded.
-- Account maximum open position count would be exceeded.
-- Account total open notional limit would be exceeded.
-- Account symbol exposure limit would be exceeded.
-- Account subscription exposure limit would be exceeded.
+- Effective account daily entry order or notional limit would be exceeded.
+- Effective account position capacity, including pending entries, would be
+  exceeded.
+- Effective account symbol exposure, including pending entries, would be
+  exceeded.
+- Projected open-plus-pending account exposure would exceed
+  `maxDeployableNotional`.
 - Trading account max deployable notional is missing.
 - An enabled, entry-enabled account subscription is unassigned or lacks a
   reservation.
@@ -81,7 +76,9 @@ Kill Switch On
 
 ### Entry Risk Settings
 
-Global runtime risk settings are stored in the `Setting` table and managed from the admin UI Settings page. These settings remain backend-wide emergency caps.
+Global runtime settings are stored in the `Setting` table and managed from the
+admin UI Settings page. System controls remain backend-wide. Numerical entry
+limits are temporary compatibility fallbacks for missing account-owned fields.
 
 Global runtime risk settings:
 
@@ -116,9 +113,27 @@ maxSubscriptionOpenNotional
 notes
 ```
 
-When `TradingAccountRiskSettings.enabled=false`, only account-specific caps are skipped. Global emergency caps still apply. If an account has no risk settings row yet, the runtime risk gate also skips account-specific caps while keeping global caps active.
+For `maxDailyEntryOrders`, `maxDailyEntryNotional`, `maxOpenPositions`, and
+`maxSymbolOpenNotional`, an enabled non-null account value replaces the matching
+global value. Missing fields, missing rows, and disabled account settings use
+the legacy global fallback field by field.
 
-Allocation bucket risk settings are stored in `TradingAccountAllocation` and apply to new entries whose `TradingAccountSubscription` is assigned to that allocation. Unassigned account subscriptions skip allocation-specific checks. Allocation checks run after global and account caps, and before broker submission, using the new order's estimated notional.
+`TradingAccount.maxDeployableNotional` is authoritative for projected total
+account exposure. Account/global `maxTotalOpenNotional` and
+`maxSubscriptionOpenNotional` are superseded for resolved account-subscription
+entries. They remain stored for compatibility and for genuinely unresolved
+legacy entry paths.
+
+Allocation bucket risk settings apply beneath account limits. Enabled,
+entry-enabled subscriptions must resolve an enabled same-account allocation
+with complete limits and a reservation; legacy unassigned entry configuration
+fails closed.
+
+Account usage includes active/closing position exposure plus unmaterialized
+pending buy intents. A linked intent is not counted again after its tracked
+position exists. Pending entries consume total exposure, symbol exposure, and
+position slots. Daily usage uses the `America/New_York` calendar date with EST
+and EDT-aware half-open UTC boundaries.
 
 ### Regular-session entry guard
 
@@ -183,7 +198,7 @@ The guard is enforced twice:
 
 1. Signal-time risk evaluation checks the session window before entry exposure
    limits are finalized.
-2. The order worker rechecks the same policy after claiming a pending
+2. The order worker repeats the complete entry-risk evaluation after claiming a pending
    `OrderIntent` and immediately before broker submission. If the worker-time
    recheck blocks, the intent is marked `blocked`, no Alpaca order is submitted,
    and a structured `SystemEvent` is written.
@@ -201,7 +216,9 @@ but it does not create `OrderIntent`, `BrokerOrder`, `TrackedPosition`,
 By default, preview ignores market/session timing as a blocker so admins can
 inspect deeper sizing, account, allocation, and subscription risk layers while
 markets are closed. Session state may still be returned as informational
-context showing whether a real entry would be blocked now.
+context showing whether a real entry would be blocked now. The response also
+returns effective account values and sources, open and pending usage, proposed
+and projected exposure, and the exact blocking layer and code.
 
 ### Trading account risk health
 
@@ -214,19 +231,18 @@ Risk health is diagnostic only. It does not change runtime enforcement, create
 change n8n payload behavior. The real entry path remains:
 
 ```text
-global emergency controls
--> global entry risk caps
--> TradingAccount risk controls
+global system controls
+-> effective TradingAccount routine limits and maxDeployableNotional
 -> TradingAccountAllocation bucket limits
 -> TradingAccountSubscription sizing/gates
 -> broker execution
 ```
 
 The health check has different expectations for `PAPER` and `LIVE` accounts.
-Paper accounts can be ready with warnings for incomplete planning information.
-Live accounts are stricter: missing or stale broker portfolio value, missing
-live risk caps, unassigned active subscriptions, disabled allocation
-assignments, and planned exposure above broker portfolio value are blockers.
+Paper accounts may use legacy numerical fallbacks with a warning. Legacy
+fallback use is a blocker for live accounts. Missing deployable capital for an
+entry-enabled account and current open-plus-pending exposure above deployable
+capital block readiness for new entries without affecting exits.
 
 Broker-synced capital is the primary source for health checks:
 
@@ -279,18 +295,11 @@ The backend currently protects trading and configuration changes with:
 - Account-subscription entry gates and runtime sizing validation
 - Strategy enable/disable checks
 - Exit profile enable/disable checks
-- Daily entry order limit
-- Daily entry notional limit
-- Max open position limit
-- Total open notional limit
-- Per-symbol exposure limit
-- Per-subscription exposure limit
-- Account daily entry order limit
-- Account daily entry notional limit
-- Account max open position limit
-- Account total open notional limit
-- Account symbol open notional limit
-- Account subscription open notional limit
+- Account-owned daily order and daily notional limits with legacy fallback
+- Account position capacity including pending entries
+- Account symbol exposure including pending entries
+- Authoritative `maxDeployableNotional` projected exposure limit
+- Account-subscription reservation and sizing limits
 - Allocation disabled block
 - Allocation max position notional limit
 - Allocation max open position limit
