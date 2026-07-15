@@ -458,6 +458,26 @@ Impacts for unknown, ambiguous, out-of-universe, or disabled-universe symbols re
 
 Candidates default to expiring after 24 hours. Expiration marks stale active records as `EXPIRED`; records are not deleted.
 
+### Eligibility Reconciliation Command
+
+Historical momentum ownership and lifecycle can be audited without changing data:
+
+```bash
+npm run momentum:reconcile-eligibility -- --dry-run
+```
+
+After reviewing the report, apply the deterministic plan explicitly:
+
+```bash
+npm run momentum:reconcile-eligibility -- --apply
+```
+
+The command reads candidates, ticker impacts, and securities in bounded batches. It resolves only unique case- and whitespace-normalized Security matches and reports unmatched, ambiguous, and conflicting identity separately. It never creates securities or deletes catalyst history.
+
+Apply mode links uniquely resolvable candidates and ticker impacts. It marks active candidates `EXPIRED` when their expiration has elapsed, identity is unresolved/ambiguous/conflicting, universe membership is missing, or universe membership is disabled. Terminal historical rows remain unchanged. Research-only in-universe candidates are reported as not momentum-subscription eligible but are not expired solely for lacking a subscription.
+
+The operation is idempotent: conditional link updates affect only rows whose `securityId` remains null, and expiration updates affect only active states. A dry run after apply should therefore report zero pending links and zero candidates awaiting expiration.
+
 Candidate states include:
 
 ```text

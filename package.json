@@ -13,6 +13,7 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc --noEmit",
     "prisma:generate": "prisma generate",
+    "momentum:reconcile-eligibility": "tsx scripts/reconcile-momentum-eligibility.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
