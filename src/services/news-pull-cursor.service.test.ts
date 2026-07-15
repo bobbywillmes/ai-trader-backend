@@ -6,7 +6,6 @@ const mocks = vi.hoisted(() => ({
   newsPullCursorUpdate: vi.fn(),
   newsPullCursorUpsert: vi.fn(),
   momentumUniverseMemberFindMany: vi.fn(),
-  subscriptionFindMany: vi.fn(),
   trackedPositionFindMany: vi.fn(),
 }));
 
@@ -19,9 +18,6 @@ vi.mock('../db/prisma.js', () => ({
     },
     momentumUniverseMember: {
       findMany: mocks.momentumUniverseMemberFindMany,
-    },
-    subscription: {
-      findMany: mocks.subscriptionFindMany,
     },
     trackedPosition: {
       findMany: mocks.trackedPositionFindMany,
@@ -66,11 +62,10 @@ describe('news pull cursor service', () => {
     mocks.newsPullCursorUpsert.mockResolvedValue({});
     mocks.newsPullCursorUpdate.mockResolvedValue({});
     mocks.momentumUniverseMemberFindMany.mockResolvedValue([]);
-    mocks.subscriptionFindMany.mockResolvedValue([]);
     mocks.trackedPositionFindMany.mockResolvedValue([]);
   });
 
-  it('ensures Massive news cursors from universe, open positions, and active stock subscriptions', async () => {
+  it('ensures Massive news cursors from the universe and open positions', async () => {
     mocks.momentumUniverseMemberFindMany.mockResolvedValue([
       {
         priority: 7,
@@ -87,16 +82,11 @@ describe('news pull cursor service', () => {
       { symbol: 'qqq' },
       { symbol: 'AAPL' },
     ]);
-    mocks.subscriptionFindMany.mockResolvedValue([
-      { symbol: 'crm' },
-      { symbol: 'NVDA' },
-    ]);
-
     await expect(ensureMassiveNewsPullCursors()).resolves.toMatchObject({
       source: CatalystSource.MASSIVE_NEWS,
-      ensured: 4,
+      ensured: 3,
       disabled: 0,
-      symbols: expect.arrayContaining(['AAPL', 'CRM', 'NVDA', 'QQQ']),
+      symbols: expect.arrayContaining(['AAPL', 'NVDA', 'QQQ']),
     });
 
     expect(mocks.momentumUniverseMemberFindMany).toHaveBeenCalledWith({
@@ -124,41 +114,6 @@ describe('news pull cursor service', () => {
         symbol: true,
       },
     });
-    expect(mocks.subscriptionFindMany).toHaveBeenCalledWith({
-      where: {
-        enabled: true,
-        security: {
-          assetType: 'STOCK',
-        },
-      },
-      select: {
-        symbol: true,
-      },
-    });
-    expect(mocks.newsPullCursorUpsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          source_symbol: {
-            source: CatalystSource.MASSIVE_NEWS,
-            symbol: 'CRM',
-          },
-        },
-        create: expect.objectContaining({
-          enabled: true,
-          priority: 0,
-          pullIntervalMin: 15,
-        }),
-        update: {
-          enabled: true,
-          priority: 0,
-          pullIntervalMin: 15,
-          metadata: {
-            coverageOwner: 'momentum_universe_sync',
-            coverageSources: ['subscription'],
-          },
-        },
-      })
-    );
   });
 
   it('uses the shortest interval and highest priority for overlapping coverage', async () => {

@@ -10,7 +10,7 @@ type MassiveNewsCoverage = {
   symbol: string;
   priority: number;
   pullIntervalMin: number;
-  sources: Array<'universe' | 'subscription' | 'position'>;
+  sources: Array<'universe' | 'position'>;
 };
 
 type EnsureNewsPullCursorsArgs = {
@@ -136,7 +136,7 @@ export async function getMassiveNewsSeedSymbols() {
 }
 
 export async function getMassiveNewsCoverage(): Promise<MassiveNewsCoverage[]> {
-  const [universeMembers, openPositions, activeStockSubscriptions] = await Promise.all([
+  const [universeMembers, openPositions] = await Promise.all([
     prisma.momentumUniverseMember.findMany({
       where: {
         enabled: true,
@@ -156,17 +156,6 @@ export async function getMassiveNewsCoverage(): Promise<MassiveNewsCoverage[]> {
       where: {
         status: {
           in: ['open', 'closing'],
-        },
-      },
-      select: {
-        symbol: true,
-      },
-    }),
-    prisma.subscription.findMany({
-      where: {
-        enabled: true,
-        security: {
-          assetType: 'STOCK',
         },
       },
       select: {
@@ -218,10 +207,6 @@ export async function getMassiveNewsCoverage(): Promise<MassiveNewsCoverage[]> {
       priority: member.priority,
       pullIntervalMin: member.pullIntervalMin,
     });
-  }
-
-  for (const subscription of activeStockSubscriptions) {
-    addCoverage(subscription.symbol, 'subscription');
   }
 
   for (const position of openPositions) {

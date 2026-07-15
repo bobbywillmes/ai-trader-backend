@@ -29,6 +29,12 @@ vi.mock('../db/prisma.js', () => ({
   },
 }));
 
+vi.mock('../config/logger.js', () => ({
+  logger: {
+    info: vi.fn(),
+  },
+}));
+
 vi.mock('./place-order.service.js', () => ({
   placeOrder: mocks.placeOrder,
 }));
@@ -58,6 +64,15 @@ function catalystImpact(overrides: Record<string, unknown> = {}) {
     id: 'impact-1',
     catalystEventId: 'catalyst-event-1',
     catalystEvent: catalystEvent(),
+    securityId: 1,
+    security: {
+      id: 1,
+      symbol: 'AAPL',
+      momentumUniverseMember: {
+        id: 'member-1',
+        enabled: true,
+      },
+    },
     symbol: 'aapl',
     sentiment: CatalystSentiment.POSITIVE,
     sentimentReasoning: 'The partnership expands a growth catalyst.',
@@ -83,6 +98,7 @@ function catalystImpact(overrides: Record<string, unknown> = {}) {
 function candidate(overrides: Record<string, unknown> = {}) {
   return {
     id: 'candidate-1',
+    securityId: 1,
     symbol: 'AAPL',
     state: MomentumCandidateState.DISCOVERED,
     catalystEventId: 'catalyst-event-1',
@@ -142,6 +158,7 @@ describe('momentum candidates service', () => {
         },
       },
       create: expect.objectContaining({
+        securityId: 1,
         symbol: 'AAPL',
         state: MomentumCandidateState.DISCOVERED,
         catalystEventId: 'catalyst-event-1',
@@ -160,15 +177,18 @@ describe('momentum candidates service', () => {
         },
       }),
       update: expect.objectContaining({
+        securityId: 1,
         catalystScore: 85,
         priceActionScore: 0,
         volumeScore: 0,
         riskScore: 0,
         totalScore: 85,
         lastEvaluatedAt: now,
-        expiresAt: new Date('2026-07-05T15:00:00Z'),
       }),
     });
+    expect(mocks.momentumCandidateUpsert.mock.calls[0]?.[0].update).not.toHaveProperty(
+      'expiresAt'
+    );
   });
 
   it('filters to positive catalyst impacts above the configured threshold', async () => {
@@ -218,40 +238,82 @@ describe('momentum candidates service', () => {
     );
   });
 
-  it('does not duplicate candidates and updates an existing candidate by impact key', async () => {
+  it('does not create a second active candidate for the same security', async () => {
     const now = new Date('2026-07-04T16:00:00Z');
     const updatedImpact = catalystImpact({
       totalCatalystScore: 90,
       sentimentReasoning: 'Updated catalyst strength.',
     });
     mocks.catalystTickerImpactFindMany.mockResolvedValue([updatedImpact]);
-    mocks.momentumCandidateUpsert.mockResolvedValue(
-      candidate({
-        catalystScore: 90,
-        totalScore: 90,
-        reason: 'Updated catalyst strength.',
-      })
-    );
+    mocks.momentumCandidateFindMany.mockResolvedValue([{ securityId: 1 }]);
 
     const result = await generateMomentumCandidatesFromCatalysts({ now });
 
-    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates).toHaveLength(0);
+    expect(result.skipCounts.DUPLICATE_ACTIVE_CANDIDATE).toBe(1);
+    expect(mocks.momentumCandidateUpsert).not.toHaveBeenCalled();
+  });
+
+  it('creates at most one active candidate per security within a batch', async () => {
+    const now = new Date('2026-07-04T16:00:00Z');
+    mocks.catalystTickerImpactFindMany.mockResolvedValue([
+      catalystImpact({ id: 'impact-1' }),
+      catalystImpact({ id: 'impact-2' }),
+    ]);
+
+    const result = await generateMomentumCandidatesFromCatalysts({ now });
+
+    expect(result.generatedCandidates).toBe(1);
+    expect(result.skipCounts.DUPLICATE_ACTIVE_CANDIDATE).toBe(1);
     expect(mocks.momentumCandidateUpsert).toHaveBeenCalledTimes(1);
-    expect(mocks.momentumCandidateUpsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          symbol_catalystImpactId: {
-            symbol: 'AAPL',
-            catalystImpactId: 'impact-1',
-          },
+  });
+
+  it.each([
+    ['UNKNOWN_SECURITY', { security: null }],
+    [
+      'OUTSIDE_RESEARCH_UNIVERSE',
+      {
+        security: {
+          id: 1,
+          symbol: 'AAPL',
+          momentumUniverseMember: null,
         },
-        update: expect.objectContaining({
-          catalystScore: 90,
-          totalScore: 90,
-          reason: 'Updated catalyst strength.',
-        }),
-      })
-    );
+      },
+    ],
+    [
+      'UNIVERSE_DISABLED',
+      {
+        security: {
+          id: 1,
+          symbol: 'AAPL',
+          momentumUniverseMember: { id: 'member-1', enabled: false },
+        },
+      },
+    ],
+  ])('skips candidate discovery with %s', async (reason, overrides) => {
+    const now = new Date('2026-07-04T16:00:00Z');
+    mocks.catalystTickerImpactFindMany.mockResolvedValue([
+      catalystImpact(overrides),
+    ]);
+
+    const result = await generateMomentumCandidatesFromCatalysts({ now });
+
+    expect(result.generatedCandidates).toBe(0);
+    expect(result.skipCounts[reason as keyof typeof result.skipCounts]).toBe(1);
+    expect(mocks.momentumCandidateUpsert).not.toHaveBeenCalled();
+  });
+
+  it('defensively skips a stale catalyst returned by the eligibility query', async () => {
+    const now = new Date('2026-07-06T16:00:00Z');
+    mocks.catalystTickerImpactFindMany.mockResolvedValue([catalystImpact()]);
+
+    const result = await generateMomentumCandidatesFromCatalysts({
+      now,
+      recentSince: new Date('2026-07-05T16:00:00Z'),
+    });
+
+    expect(result.skipCounts.STALE_CATALYST).toBe(1);
+    expect(mocks.momentumCandidateUpsert).not.toHaveBeenCalled();
   });
 
   it('expires stale active candidates without deleting them', async () => {

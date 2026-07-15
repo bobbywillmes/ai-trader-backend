@@ -288,6 +288,7 @@ CatalystSource.MASSIVE_NEWS + article.id
 
 It includes:
 
+- nullable canonical `Security` relation when exactly one normalized match exists
 - symbol
 - sentiment
 - catalyst role
@@ -306,6 +307,7 @@ This table is the bridge between source-level news and symbol-level momentum rev
 
 It includes:
 
+- nullable canonical `Security` relation for historical compatibility
 - symbol
 - candidate state
 - optional links to `CatalystEvent` and `CatalystTickerImpact`
@@ -395,13 +397,12 @@ The worker can also be run manually through admin or signal automation routes.
 
 The normal research universe comes from enabled `MomentumUniverseMember` rows whose `newsEnabled` flag is also enabled. Symbols are resolved through the related `Security`; there is no hard-coded application ticker list.
 
-Cursor synchronization combines three coverage sources:
+Cursor synchronization combines two coverage sources:
 
 - explicit database universe membership, which is the canonical permanent research universe
-- enabled stock subscriptions, retained as derived runtime coverage for compatibility with existing scanner behavior
 - open or closing tracked positions, retained as temporary operational coverage even without explicit membership
 
-Subscription-derived and position-derived coverage do not create hidden `MomentumUniverseMember` rows. When sources overlap, synchronization creates only one source/symbol cursor and uses the highest priority and shortest required pull interval. Disabling or removing explicit membership disables its managed cursor only when no subscription or open/closing position still requires coverage.
+Subscriptions do not expand news-research coverage. Position-derived coverage does not create hidden `MomentumUniverseMember` rows. When sources overlap, synchronization creates only one source/symbol cursor and uses the highest priority and shortest required pull interval. Disabling or removing explicit membership disables its managed cursor unless an open or closing position still requires temporary coverage.
 
 Synchronization updates cursor enablement, priority, interval, and coverage metadata. It does not reset `lastPulledAt`, `lastPublishedAt`, `lastSourceCursor`, `consecutiveErrors`, or `lastError`. Cursors that are no longer covered are disabled rather than deleted.
 
@@ -439,8 +440,11 @@ Generation is conservative:
 - impact sentiment must be positive
 - total catalyst score must meet the configured threshold
 - symbol must be present
+- the impact must resolve to exactly one existing `Security`
+- the security must have enabled `MomentumUniverseMember` membership
 - tangential mentions are skipped
 - blocked impacts are skipped
+- no unexpired active candidate may already exist for the security
 
 Generation is idempotent by:
 
@@ -448,7 +452,9 @@ Generation is idempotent by:
 symbol + catalystImpactId
 ```
 
-Re-running generation refreshes the candidate snapshot and expiration timestamp instead of creating duplicate candidates for the same symbol/catalyst impact.
+The impact-level unique key remains for historical idempotency, while discovery also prevents more than one unexpired active candidate per security. Re-running generation does not extend an existing opportunity's expiration timestamp.
+
+Impacts for unknown, ambiguous, out-of-universe, or disabled-universe symbols remain stored. Candidate generation skips them with structured reason codes rather than deleting catalyst history or creating securities implicitly.
 
 Candidates default to expiring after 24 hours. Expiration marks stale active records as `EXPIRED`; records are not deleted.
 

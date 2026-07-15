@@ -7,6 +7,7 @@ import {
 } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
+import { logger } from '../config/logger.js';
 import { HttpError } from '../errors/http-error.js';
 import { ACTIVE_MOMENTUM_CANDIDATE_STATES } from './momentum-candidate-lifecycle.js';
 
@@ -33,6 +34,17 @@ const MAX_LIMIT = 500;
 const DEFAULT_MIN_CATALYST_SCORE = 60;
 const DEFAULT_RECENT_LOOKBACK_HOURS = 24;
 const DEFAULT_EXPIRES_IN_HOURS = 24;
+
+export const MOMENTUM_CANDIDATE_DISCOVERY_SKIP_REASONS = {
+  UNKNOWN_SECURITY: 'UNKNOWN_SECURITY',
+  OUTSIDE_RESEARCH_UNIVERSE: 'OUTSIDE_RESEARCH_UNIVERSE',
+  UNIVERSE_DISABLED: 'UNIVERSE_DISABLED',
+  DUPLICATE_ACTIVE_CANDIDATE: 'DUPLICATE_ACTIVE_CANDIDATE',
+  STALE_CATALYST: 'STALE_CATALYST',
+} as const;
+
+type MomentumCandidateDiscoverySkipReason =
+  (typeof MOMENTUM_CANDIDATE_DISCOVERY_SKIP_REASONS)[keyof typeof MOMENTUM_CANDIDATE_DISCOVERY_SKIP_REASONS];
 function normalizeLimit(limit: number | undefined) {
   if (!Number.isInteger(limit) || limit === undefined || limit <= 0) {
     return DEFAULT_LIMIT;
@@ -204,7 +216,7 @@ export async function generateMomentumCandidatesFromCatalysts(
         createdAt: 'desc',
       },
     ],
-    take: args.take ?? MAX_LIMIT,
+    take: args.take === undefined ? MAX_LIMIT : normalizeLimit(args.take),
     include: {
       catalystEvent: {
         select: {
@@ -217,15 +229,114 @@ export async function generateMomentumCandidatesFromCatalysts(
           receivedAt: true,
         },
       },
+      security: {
+        select: {
+          id: true,
+          symbol: true,
+          momentumUniverseMember: {
+            select: {
+              id: true,
+              enabled: true,
+            },
+          },
+        },
+      },
     },
   });
 
+  const eligibleSecurityIds = [
+    ...new Set(
+      impacts.flatMap((impact) =>
+        impact.security?.momentumUniverseMember?.enabled
+          ? [impact.security.id]
+          : []
+      )
+    ),
+  ];
+  const existingActiveCandidates =
+    eligibleSecurityIds.length === 0
+      ? []
+      : await prisma.momentumCandidate.findMany({
+          where: {
+            securityId: { in: eligibleSecurityIds },
+            state: { in: [...ACTIVE_MOMENTUM_CANDIDATE_STATES] },
+            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+          },
+          select: { securityId: true },
+        });
+  const activeSecurityIds = new Set(
+    existingActiveCandidates.flatMap((candidate) =>
+      candidate.securityId === null ? [] : [candidate.securityId]
+    )
+  );
   const candidates: MomentumCandidate[] = [];
+  const skippedImpacts: Array<{
+    catalystImpactId: string;
+    symbol: string;
+    reason: MomentumCandidateDiscoverySkipReason;
+  }> = [];
+  const skipCounts = Object.fromEntries(
+    Object.values(MOMENTUM_CANDIDATE_DISCOVERY_SKIP_REASONS).map((reason) => [
+      reason,
+      0,
+    ])
+  ) as Record<MomentumCandidateDiscoverySkipReason, number>;
+
+  function skipImpact(
+    impact: { id: string; symbol: string },
+    reason: MomentumCandidateDiscoverySkipReason
+  ) {
+    skipCounts[reason] += 1;
+    skippedImpacts.push({
+      catalystImpactId: impact.id,
+      symbol: impact.symbol,
+      reason,
+    });
+    logger.info(
+      {
+        catalystImpactId: impact.id,
+        symbol: impact.symbol,
+        reason,
+      },
+      'Momentum candidate discovery skipped catalyst impact.'
+    );
+  }
 
   for (const impact of impacts) {
     const symbol = normalizeSymbol(impact.symbol);
 
     if (!symbol) {
+      continue;
+    }
+
+    if (impact.createdAt < recentSince) {
+      skipImpact(impact, MOMENTUM_CANDIDATE_DISCOVERY_SKIP_REASONS.STALE_CATALYST);
+      continue;
+    }
+
+    if (impact.security === null) {
+      skipImpact(impact, MOMENTUM_CANDIDATE_DISCOVERY_SKIP_REASONS.UNKNOWN_SECURITY);
+      continue;
+    }
+
+    if (impact.security.momentumUniverseMember === null) {
+      skipImpact(
+        impact,
+        MOMENTUM_CANDIDATE_DISCOVERY_SKIP_REASONS.OUTSIDE_RESEARCH_UNIVERSE
+      );
+      continue;
+    }
+
+    if (!impact.security.momentumUniverseMember.enabled) {
+      skipImpact(impact, MOMENTUM_CANDIDATE_DISCOVERY_SKIP_REASONS.UNIVERSE_DISABLED);
+      continue;
+    }
+
+    if (activeSecurityIds.has(impact.security.id)) {
+      skipImpact(
+        impact,
+        MOMENTUM_CANDIDATE_DISCOVERY_SKIP_REASONS.DUPLICATE_ACTIVE_CANDIDATE
+      );
       continue;
     }
 
@@ -254,6 +365,7 @@ export async function generateMomentumCandidatesFromCatalysts(
         },
       },
       create: {
+        securityId: impact.security.id,
         symbol,
         state: MomentumCandidateState.DISCOVERED,
         catalystEventId: impact.catalystEventId,
@@ -268,22 +380,26 @@ export async function generateMomentumCandidatesFromCatalysts(
         metadata,
       },
       update: {
+        securityId: impact.security.id,
         catalystEventId: impact.catalystEventId,
         ...scores,
         reason,
         lastEvaluatedAt: now,
-        expiresAt,
         rawSnapshot,
         metadata,
       },
     });
 
     candidates.push(candidate);
+    activeSecurityIds.add(impact.security.id);
   }
 
   return {
     evaluatedImpacts: impacts.length,
     generatedCandidates: candidates.length,
+    skippedCandidates: skippedImpacts.length,
+    skipCounts,
+    skippedImpacts,
     minCatalystScore,
     recentSince,
     expiresAt,
