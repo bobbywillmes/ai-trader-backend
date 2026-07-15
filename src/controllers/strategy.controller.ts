@@ -89,7 +89,13 @@ export async function updateStrategyController(
   try {
     const id = parseStrategyId(req.params.id);
     const input = parseUpdateStrategyEnabledBody(req.body);
-    res.status(200).json(await updateStrategyEnabled(id, input));
+    const actor = res.locals.user;
+
+    if (!actor) {
+      throw new HttpError(401, 'Authentication required.');
+    }
+
+    res.status(200).json(await updateStrategyEnabled(id, input, actor.id));
   } catch (error) {
     next(error);
   }

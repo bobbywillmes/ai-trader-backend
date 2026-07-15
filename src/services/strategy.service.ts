@@ -195,6 +195,7 @@ function serializeStrategyRecord(strategy: StrategyWithUsage) {
 export async function updateStrategyEnabled(
   id: number,
   input: UpdateStrategyEnabledInput,
+  actorUserId: number,
 ) {
   const current = await findStrategyWithUsage(id);
 
@@ -206,20 +207,94 @@ export async function updateStrategyEnabled(
     };
   }
 
-  const updated = await prisma.strategy.update({
-    where: { id },
-    data: { enabled: input.enabled },
-  });
-  const updatedWithUsage: StrategyWithUsage = {
-    ...updated,
-    subscriptions: current.subscriptions,
-  };
+  return prisma.$transaction(async (transaction) => {
+    const updateResult = await transaction.strategy.updateMany({
+      where: {
+        id,
+        enabled: current.enabled,
+      },
+      data: { enabled: input.enabled },
+    });
 
-  return {
-    strategy: updated,
-    changed: true,
-    impact: buildStrategyChangeImpact(updatedWithUsage),
-  };
+    if (updateResult.count === 0) {
+      const latest = await transaction.strategy.findUnique({
+        where: { id },
+        include: strategyListInclude,
+      });
+
+      if (!latest) {
+        throw new HttpError(404, `Strategy id ${id} was not found.`);
+      }
+
+      if (latest.enabled === input.enabled) {
+        return {
+          strategy: serializeStrategyRecord(latest),
+          changed: false,
+          impact: buildStrategyChangeImpact(latest),
+        };
+      }
+
+      throw new HttpError(
+        409,
+        'Strategy state changed concurrently. Review the latest impact and retry.',
+      );
+    }
+
+    const updated = await transaction.strategy.findUnique({
+      where: { id },
+      include: strategyListInclude,
+    });
+
+    if (!updated) {
+      throw new HttpError(404, `Strategy id ${id} was not found.`);
+    }
+
+    const usage = summarizeUsage(updated);
+    const momentumStrategy = isMomentumContinuationStrategyKey(updated.key);
+    let qualifyingMomentumSubscriptions = 0;
+
+    if (momentumStrategy) {
+      const eligibilityRows = await transaction.subscription.findMany({
+        where: { strategyId: id, enabled: true },
+        select: momentumSubscriptionEligibilitySelect,
+        orderBy: { id: 'asc' },
+      });
+      qualifyingMomentumSubscriptions = eligibilityRows.filter(
+        (subscription) =>
+          evaluateMomentumSubscriptionEligibility([subscription]).eligible,
+      ).length;
+    }
+
+    await transaction.systemEvent.create({
+      data: {
+        type: updated.enabled ? 'strategy_enabled' : 'strategy_disabled',
+        entityType: 'strategy',
+        entityId: String(updated.id),
+        message: `Strategy ${updated.key} was ${
+          updated.enabled ? 'enabled' : 'disabled'
+        }.`,
+        payloadJson: {
+          strategyId: updated.id,
+          strategyKey: updated.key,
+          strategyName: updated.name,
+          previousEnabled: current.enabled,
+          enabled: updated.enabled,
+          totalSubscriptions: usage.totalSubscriptions,
+          enabledSubscriptions: usage.enabledSubscriptions,
+          distinctSymbols: usage.symbols.length,
+          distinctTradingAccounts: usage.tradingAccounts.length,
+          qualifyingMomentumSubscriptions,
+          actorUserId,
+        },
+      },
+    });
+
+    return {
+      strategy: serializeStrategyRecord(updated),
+      changed: true,
+      impact: buildStrategyChangeImpact(updated),
+    };
+  });
 }
 
 export async function getStrategy(id: number, query: StrategyDetailQuery) {

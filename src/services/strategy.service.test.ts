@@ -3,21 +3,37 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   strategyFindMany: vi.fn(),
   strategyFindUnique: vi.fn(),
-  strategyUpdate: vi.fn(),
+  strategyUpdateMany: vi.fn(),
   subscriptionFindMany: vi.fn(),
+  systemEventCreate: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
-  prisma: {
+  prisma: (() => {
+    const transaction = {
+      strategy: {
+        findUnique: mocks.strategyFindUnique,
+        updateMany: mocks.strategyUpdateMany,
+      },
+      subscription: {
+        findMany: mocks.subscriptionFindMany,
+      },
+      systemEvent: {
+        create: mocks.systemEventCreate,
+      },
+    };
+
+    return {
     strategy: {
       findMany: mocks.strategyFindMany,
       findUnique: mocks.strategyFindUnique,
-      update: mocks.strategyUpdate,
     },
     subscription: {
       findMany: mocks.subscriptionFindMany,
     },
-  },
+      $transaction: vi.fn((callback) => callback(transaction)),
+    };
+  })(),
 }));
 
 import {
@@ -174,28 +190,92 @@ describe('strategy service', () => {
       enabled: true,
       updatedAt: new Date('2026-07-03T00:00:00.000Z'),
     };
-    mocks.strategyFindUnique.mockResolvedValue(current);
-    mocks.strategyUpdate.mockResolvedValue(updated);
+    mocks.strategyFindUnique
+      .mockResolvedValueOnce(current)
+      .mockResolvedValueOnce({ ...updated, subscriptions: current.subscriptions });
+    mocks.strategyUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.subscriptionFindMany.mockResolvedValue([]);
+    mocks.systemEventCreate.mockResolvedValue({ id: 20 });
 
-    await expect(updateStrategyEnabled(1, { enabled: true })).resolves.toMatchObject({
+    await expect(updateStrategyEnabled(1, { enabled: true }, 7)).resolves.toMatchObject({
       changed: true,
       strategy: { id: 1, enabled: true },
       impact: { currentEnabled: true },
     });
-    expect(mocks.strategyUpdate).toHaveBeenCalledWith({
-      where: { id: 1 },
+    expect(mocks.strategyUpdateMany).toHaveBeenCalledWith({
+      where: { id: 1, enabled: false },
       data: { enabled: true },
     });
-    expect(mocks.subscriptionFindMany).not.toHaveBeenCalled();
+    expect(mocks.systemEventCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        type: 'strategy_enabled',
+        entityType: 'strategy',
+        entityId: '1',
+        payloadJson: expect.objectContaining({
+          previousEnabled: false,
+          enabled: true,
+          actorUserId: 7,
+          totalSubscriptions: 2,
+          enabledSubscriptions: 1,
+          distinctSymbols: 2,
+          distinctTradingAccounts: 2,
+          qualifyingMomentumSubscriptions: 0,
+        }),
+      }),
+    });
   });
 
   it('returns an idempotent response without writing when state already matches', async () => {
     mocks.strategyFindUnique.mockResolvedValue(strategy());
 
-    await expect(updateStrategyEnabled(1, { enabled: false })).resolves.toMatchObject({
+    await expect(updateStrategyEnabled(1, { enabled: false }, 7)).resolves.toMatchObject({
       changed: false,
       strategy: { id: 1, enabled: false },
     });
-    expect(mocks.strategyUpdate).not.toHaveBeenCalled();
+    expect(mocks.strategyUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.systemEventCreate).not.toHaveBeenCalled();
+  });
+
+  it('records a strategy_disabled event for a real disable', async () => {
+    const current = strategy({ enabled: true });
+    mocks.strategyFindUnique
+      .mockResolvedValueOnce(current)
+      .mockResolvedValueOnce({ ...current, enabled: false });
+    mocks.strategyUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.subscriptionFindMany.mockResolvedValue([]);
+    mocks.systemEventCreate.mockResolvedValue({ id: 21 });
+
+    await expect(updateStrategyEnabled(1, { enabled: false }, 8)).resolves.toMatchObject({
+      changed: true,
+      strategy: { enabled: false },
+    });
+    expect(mocks.systemEventCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        type: 'strategy_disabled',
+        payloadJson: expect.objectContaining({
+          previousEnabled: true,
+          enabled: false,
+          actorUserId: 8,
+        }),
+      }),
+    });
+  });
+
+  it('treats a concurrent identical update as an idempotent no-op without an event', async () => {
+    const current = strategy();
+    mocks.strategyFindUnique
+      .mockResolvedValueOnce(current)
+      .mockResolvedValueOnce({
+        ...current,
+        enabled: true,
+        subscriptions: current.subscriptions,
+      });
+    mocks.strategyUpdateMany.mockResolvedValue({ count: 0 });
+
+    await expect(updateStrategyEnabled(1, { enabled: true }, 7)).resolves.toMatchObject({
+      changed: false,
+      strategy: { enabled: true },
+    });
+    expect(mocks.systemEventCreate).not.toHaveBeenCalled();
   });
 });
