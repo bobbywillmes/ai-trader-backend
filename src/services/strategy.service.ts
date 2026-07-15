@@ -7,7 +7,10 @@ import {
   momentumSubscriptionEligibilitySelect,
 } from './momentum-subscription-eligibility.service.js';
 import { isMomentumContinuationStrategyKey } from '../types/strategies.js';
-import type { StrategyDetailQuery } from '../validators/strategy.validator.js';
+import type {
+  StrategyDetailQuery,
+  UpdateStrategyEnabledInput,
+} from '../validators/strategy.validator.js';
 
 const strategyUsageSubscriptionSelect = {
   id: true,
@@ -143,6 +146,10 @@ export async function getStrategies() {
 
 export async function getStrategyChangeImpact(id: number) {
   const strategy = await findStrategyWithUsage(id);
+  return buildStrategyChangeImpact(strategy);
+}
+
+function buildStrategyChangeImpact(strategy: StrategyWithUsage) {
   const usage = summarizeUsage(strategy);
   const momentumStrategy = isMomentumContinuationStrategyKey(strategy.key);
   const enabledMomentumSubscriptions = momentumStrategy
@@ -177,6 +184,41 @@ export async function getStrategyChangeImpact(id: number) {
     disablingMakesEnabledMomentumSubscriptionsIneligible:
       momentumStrategy && strategy.enabled && enabledMomentumSubscriptions > 0,
     effects,
+  };
+}
+
+function serializeStrategyRecord(strategy: StrategyWithUsage) {
+  const { subscriptions: _subscriptions, ...record } = strategy;
+  return record;
+}
+
+export async function updateStrategyEnabled(
+  id: number,
+  input: UpdateStrategyEnabledInput,
+) {
+  const current = await findStrategyWithUsage(id);
+
+  if (current.enabled === input.enabled) {
+    return {
+      strategy: serializeStrategyRecord(current),
+      changed: false,
+      impact: buildStrategyChangeImpact(current),
+    };
+  }
+
+  const updated = await prisma.strategy.update({
+    where: { id },
+    data: { enabled: input.enabled },
+  });
+  const updatedWithUsage: StrategyWithUsage = {
+    ...updated,
+    subscriptions: current.subscriptions,
+  };
+
+  return {
+    strategy: updated,
+    changed: true,
+    impact: buildStrategyChangeImpact(updatedWithUsage),
   };
 }
 

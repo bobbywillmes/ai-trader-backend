@@ -8,3 +8,13 @@ export const strategyDetailQuerySchema = z
   .strict();
 
 export type StrategyDetailQuery = z.infer<typeof strategyDetailQuerySchema>;
+
+export const updateStrategyEnabledSchema = z
+  .object({
+    enabled: z.boolean(),
+  })
+  .strict();
+
+export type UpdateStrategyEnabledInput = z.infer<
+  typeof updateStrategyEnabledSchema
+>;

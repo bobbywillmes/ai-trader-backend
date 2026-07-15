@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   strategyFindMany: vi.fn(),
   strategyFindUnique: vi.fn(),
+  strategyUpdate: vi.fn(),
   subscriptionFindMany: vi.fn(),
 }));
 
@@ -11,6 +12,7 @@ vi.mock('../db/prisma.js', () => ({
     strategy: {
       findMany: mocks.strategyFindMany,
       findUnique: mocks.strategyFindUnique,
+      update: mocks.strategyUpdate,
     },
     subscription: {
       findMany: mocks.subscriptionFindMany,
@@ -22,6 +24,7 @@ import {
   getStrategies,
   getStrategy,
   getStrategyChangeImpact,
+  updateStrategyEnabled,
 } from './strategy.service.js';
 
 function strategy(overrides: Record<string, unknown> = {}) {
@@ -162,5 +165,37 @@ describe('strategy service', () => {
       statusCode: 404,
       message: 'Strategy id 999 was not found.',
     });
+  });
+
+  it('changes only the strategy enabled state', async () => {
+    const current = strategy();
+    const { subscriptions: _subscriptions, ...updated } = {
+      ...current,
+      enabled: true,
+      updatedAt: new Date('2026-07-03T00:00:00.000Z'),
+    };
+    mocks.strategyFindUnique.mockResolvedValue(current);
+    mocks.strategyUpdate.mockResolvedValue(updated);
+
+    await expect(updateStrategyEnabled(1, { enabled: true })).resolves.toMatchObject({
+      changed: true,
+      strategy: { id: 1, enabled: true },
+      impact: { currentEnabled: true },
+    });
+    expect(mocks.strategyUpdate).toHaveBeenCalledWith({
+      where: { id: 1 },
+      data: { enabled: true },
+    });
+    expect(mocks.subscriptionFindMany).not.toHaveBeenCalled();
+  });
+
+  it('returns an idempotent response without writing when state already matches', async () => {
+    mocks.strategyFindUnique.mockResolvedValue(strategy());
+
+    await expect(updateStrategyEnabled(1, { enabled: false })).resolves.toMatchObject({
+      changed: false,
+      strategy: { id: 1, enabled: false },
+    });
+    expect(mocks.strategyUpdate).not.toHaveBeenCalled();
   });
 });

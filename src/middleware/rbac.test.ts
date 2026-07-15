@@ -10,7 +10,10 @@ vi.mock('../db/prisma.js', () => ({
   },
 }));
 
-import { requireTradingAccountAccess } from './rbac.js';
+import {
+  requireSystemOwnerAccess,
+  requireTradingAccountAccess,
+} from './rbac.js';
 
 function context(platformRole: PlatformRole, id = 2, param = '12') {
   const next = vi.fn() as NextFunction;
@@ -84,5 +87,38 @@ describe('trading account membership authorization', () => {
       expect.objectContaining({ statusCode: 400, message }),
     );
     expect(mocks.membershipFindUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe('system owner authorization', () => {
+  it('allows a system owner', () => {
+    const { req, res, next } = context(PlatformRole.SYSTEM_OWNER);
+
+    requireSystemOwnerAccess(req, res, next);
+
+    expect(next).toHaveBeenCalledWith();
+  });
+
+  it.each([PlatformRole.OPERATOR, PlatformRole.ACCOUNT_USER])(
+    'rejects a non-owner %s',
+    (platformRole) => {
+      const { req, res, next } = context(platformRole);
+
+      expect(() => requireSystemOwnerAccess(req, res, next)).toThrow(
+        expect.objectContaining({ statusCode: 403 }),
+      );
+      expect(next).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects an unauthenticated request', () => {
+    const next = vi.fn() as NextFunction;
+    const req = { params: {} } as unknown as Request;
+    const res = { locals: {} } as unknown as Response;
+
+    expect(() => requireSystemOwnerAccess(req, res, next)).toThrow(
+      expect.objectContaining({ statusCode: 401 }),
+    );
+    expect(next).not.toHaveBeenCalled();
   });
 });

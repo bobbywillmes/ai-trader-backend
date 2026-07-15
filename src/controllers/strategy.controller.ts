@@ -4,9 +4,13 @@ import { getStrategies } from '../services/strategy.service.js';
 import {
   getStrategy,
   getStrategyChangeImpact,
+  updateStrategyEnabled,
 } from '../services/strategy.service.js';
 import { HttpError } from '../errors/http-error.js';
-import { strategyDetailQuerySchema } from '../validators/strategy.validator.js';
+import {
+  strategyDetailQuerySchema,
+  updateStrategyEnabledSchema,
+} from '../validators/strategy.validator.js';
 
 function parseStrategyId(value: unknown) {
   const id = typeof value === 'string' ? Number(value) : Number.NaN;
@@ -23,6 +27,16 @@ function parseStrategyDetailQuery(value: unknown) {
 
   if (!result.success) {
     throw new HttpError(400, 'Invalid strategy detail query.', result.error.issues);
+  }
+
+  return result.data;
+}
+
+function parseUpdateStrategyEnabledBody(value: unknown) {
+  const result = updateStrategyEnabledSchema.safeParse(value);
+
+  if (!result.success) {
+    throw new HttpError(400, 'Invalid strategy update.', result.error.issues);
   }
 
   return result.data;
@@ -62,6 +76,20 @@ export async function strategyChangeImpactController(
   try {
     const id = parseStrategyId(req.params.id);
     res.status(200).json(await getStrategyChangeImpact(id));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function updateStrategyController(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    const id = parseStrategyId(req.params.id);
+    const input = parseUpdateStrategyEnabledBody(req.body);
+    res.status(200).json(await updateStrategyEnabled(id, input));
   } catch (error) {
     next(error);
   }
