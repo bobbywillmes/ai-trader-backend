@@ -22,6 +22,11 @@ import {
   type PrepareReadyMomentumScannerHandoffsOptions,
 } from '../services/momentum-scanner-handoff.service.js';
 import {
+  serializeMomentumScannerHandoff,
+  serializeMomentumScannerHandoffPreparation,
+  serializeMomentumScannerHandoffs,
+} from '../serializers/momentum-scanner-handoff.serializer.js';
+import {
   serializeMomentumCandidatePriceCheck,
   serializeMomentumPriceConfirmationResponse,
 } from '../serializers/momentum-candidate-price-check.serializer.js';
@@ -269,7 +274,11 @@ export async function prepareMomentumScannerHandoffsSignalController(
     if (minScore !== undefined) options.minScore = minScore;
     if (force !== undefined) options.force = force;
 
-    res.status(200).json(await prepareReadyMomentumScannerHandoffs(options));
+    res.status(200).json(
+      serializeMomentumScannerHandoffPreparation(
+        await prepareReadyMomentumScannerHandoffs(options)
+      )
+    );
   } catch (error) {
     next(error);
   }
@@ -303,7 +312,13 @@ export async function listMomentumScannerHandoffsSignalController(
       filters.currentlyEligibleOnly = true;
     }
 
-    res.status(200).json(await listMomentumScannerHandoffs(filters));
+    res
+      .status(200)
+      .json(
+        serializeMomentumScannerHandoffs(
+          await listMomentumScannerHandoffs(filters)
+        )
+      );
   } catch (error) {
     next(error);
   }
@@ -318,9 +333,11 @@ export async function markMomentumScannerHandoffSentSignalController(
     const body = getRequestBody(req, 'Momentum scanner mark-sent');
 
     res.status(200).json(
-      await markMomentumScannerHandoffSent(
-        getHandoffIdParam(req),
-        parseMarkOptions(body)
+      serializeMomentumScannerHandoff(
+        await markMomentumScannerHandoffSent(
+          getHandoffIdParam(req),
+          parseMarkOptions(body)
+        )
       )
     );
   } catch (error) {
@@ -338,10 +355,12 @@ export async function markMomentumScannerHandoffFailedSignalController(
     const reportedError = getBodyString(body, 'error');
 
     res.status(200).json(
-      await markMomentumScannerHandoffFailed(
-        getHandoffIdParam(req),
-        reportedError ?? DEFAULT_MARK_FAILED_ERROR,
-        parseMarkOptions(body)
+      serializeMomentumScannerHandoff(
+        await markMomentumScannerHandoffFailed(
+          getHandoffIdParam(req),
+          reportedError ?? DEFAULT_MARK_FAILED_ERROR,
+          parseMarkOptions(body)
+        )
       )
     );
   } catch (error) {

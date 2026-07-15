@@ -271,6 +271,11 @@ POST /api/signals/momentum-scanner/handoffs/:id/mark-failed
 
 These routes are not entry-signal routes. They support the review-only Slack workflow and must not create orders or broker activity.
 
+Handoff responses expose `momentumCandidate.priceChecks[].dayVolume` and
+`momentumCandidate.priceChecks[].recentVolume` as decimal strings. The database
+columns are BigInt values, so the string API type preserves values beyond
+JavaScript's safe integer range.
+
 See the dedicated workflow doc:
 
 - [Momentum Scanner Review Workflow](n8n/momentum-scanner-review.md)
