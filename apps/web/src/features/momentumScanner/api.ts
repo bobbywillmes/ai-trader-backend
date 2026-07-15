@@ -26,7 +26,20 @@ import type {
   MomentumResearchCatalystsResponse,
   MomentumResearchCandidateDetail,
   MomentumSymbolResearch,
+  MomentumMarketChartQuery,
+  MomentumMarketChartResponse,
 } from "./types";
+
+export function getMomentumMarketChart(
+  token: string,
+  symbol: string,
+  query: MomentumMarketChartQuery
+) {
+  return apiRequest<MomentumMarketChartResponse>(
+    `/api/momentum-scanner/research/symbols/${encodeURIComponent(symbol)}/chart${buildQuery(query)}`,
+    { token }
+  );
+}
 
 export function getMomentumResearchOverview(token: string) {
   return apiRequest<MomentumResearchOverview>(

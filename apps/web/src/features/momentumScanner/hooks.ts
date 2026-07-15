@@ -20,6 +20,7 @@ import {
   listMomentumResearchCatalysts,
   getMomentumResearchCandidate,
   getMomentumSymbolResearch,
+  getMomentumMarketChart,
 } from "./api";
 import type {
   CatalystEventQuery,
@@ -33,6 +34,7 @@ import type {
   UpdateMomentumUniverseMemberRequest,
   MomentumResearchCandidatesQuery,
   MomentumResearchCatalystsQuery,
+  MomentumMarketChartQuery,
 } from "./types";
 
 export const momentumScannerKeys = {
@@ -63,6 +65,8 @@ export const momentumScannerKeys = {
     [...momentumScannerKeys.all, "research", "candidate", candidateId] as const,
   symbolResearch: (symbol: string | null) =>
     [...momentumScannerKeys.all, "research", "symbol", symbol] as const,
+  marketChart: (symbol: string | null, query: MomentumMarketChartQuery) =>
+    [...momentumScannerKeys.all, "research", "marketChart", symbol, query] as const,
 };
 
 export function useMomentumResearchOverview(token: string | null) {
@@ -114,6 +118,20 @@ export function useMomentumSymbolResearch(token: string | null, symbol: string |
     queryKey: momentumScannerKeys.symbolResearch(symbol),
     queryFn: () => getMomentumSymbolResearch(token as string, symbol as string),
     enabled: Boolean(token) && Boolean(symbol),
+  });
+}
+
+export function useMomentumMarketChart(
+  token: string | null,
+  symbol: string | null,
+  query: MomentumMarketChartQuery
+) {
+  return useQuery({
+    queryKey: momentumScannerKeys.marketChart(symbol, query),
+    queryFn: () => getMomentumMarketChart(token as string, symbol as string, query),
+    enabled: Boolean(token) && Boolean(symbol),
+    staleTime: query.interval === "1m" ? 15_000 : 60_000,
+    placeholderData: (previous) => previous,
   });
 }
 
