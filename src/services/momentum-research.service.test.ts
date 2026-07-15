@@ -82,6 +82,49 @@ describe('momentum research service', () => {
     expect(result.scannerHealth).toMatchObject({ enabledCursorCount: 3, healthyCursorCount: 2, errorCursorCount: 1, dueCursorCount: 2, lastNewsPullAt: new Date('2026-07-10T17:50:00.000Z') });
   });
 
+  it('returns bounded momentum eligibility mismatch diagnostics', async () => {
+    const qualifyingSubscription = {
+      id: 9, key: 'aapl-momentum', enabled: true,
+      strategy: { id: 4, key: 'momentum_stock', enabled: true },
+      accountSubscriptions: [{
+        id: 11, enabled: true, entriesEnabled: true,
+        tradingAccount: { id: 7, status: 'ACTIVE' },
+        allocation: { id: 5, enabled: true },
+      }],
+    };
+    mocks.securityFindMany.mockResolvedValue([
+      { id: 1, momentumUniverseMember: { enabled: true, newsEnabled: true, priceScanningEnabled: true }, subscriptions: [qualifyingSubscription] },
+      { id: 2, momentumUniverseMember: { enabled: true, newsEnabled: true, priceScanningEnabled: true }, subscriptions: [] },
+      { id: 3, momentumUniverseMember: null, subscriptions: [qualifyingSubscription] },
+    ]);
+    mocks.candidateFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{
+        id: 'eligible', state: MomentumCandidateState.WATCHING, expiresAt: new Date('2026-07-11T00:00:00.000Z'), blockedReason: null,
+        security: { id: 1, momentumUniverseMember: { enabled: true, priceScanningEnabled: true }, subscriptions: [qualifyingSubscription] },
+        priceChecks: [],
+      }, {
+        id: 'missing', state: MomentumCandidateState.WATCHING, expiresAt: new Date('2026-07-11T00:00:00.000Z'), blockedReason: null,
+        security: null, priceChecks: [],
+      }]);
+
+    const result = await getMomentumResearchOverview(now);
+
+    expect(result.eligibilitySummary).toMatchObject({
+      universeMembersEnabled: 2,
+      universeMembersWithActiveMomentumSubscriptions: 1,
+      researchOnlyMembers: 1,
+      enabledMomentumSubscriptionsOutsideUniverse: 1,
+      activeCandidatesWithoutValidSecurities: 1,
+      activeCandidatesWithoutMomentumSubscriptions: 1,
+      priceConfirmationEligibleCandidates: 1,
+      handoffEligibleCandidates: 0,
+      bounded: { limit: 1000, securitiesTruncated: false, candidatesTruncated: false },
+    });
+    expect(mocks.securityFindMany).toHaveBeenCalledWith(expect.objectContaining({ take: 1001 }));
+  });
+
   it('paginates and filters candidates, then batch-loads symbol context', async () => {
     mocks.candidateFindMany.mockResolvedValue([candidate()]); mocks.candidateCount.mockResolvedValue(1);
     mocks.securityFindMany.mockResolvedValue([{ id: 1, symbol: 'AAPL', name: 'Apple Inc.', assetType: 'STOCK', enabled: true, momentumUniverseMember: { id: 'member-1', enabled: true, newsEnabled: true, priceScanningEnabled: true }, subscriptions: [{ enabled: true }, { enabled: false }] }]);
@@ -139,7 +182,12 @@ describe('momentum research service', () => {
     mocks.securityFindUnique.mockResolvedValue({
       id: 2, symbol: 'MSFT', name: 'Microsoft Corp.', assetType: 'STOCK', enabled: true,
       sector: 'Technology', industry: 'Software', momentumUniverseMember: null,
-      subscriptions: [{ id: 2, enabled: true }],
+      subscriptions: [{
+        id: 2, key: 'msft-momentum', name: 'MSFT momentum', symbol: 'MSFT',
+        broker: 'ALPACA', brokerMode: 'PAPER', enabled: true,
+        strategy: { id: 4, key: 'momentum_stock', name: 'Momentum Stock', enabled: true },
+        exitProfile: null, tradingAccount: null, accountSubscriptions: [],
+      }],
       trackedPositions: [{ id: 3, status: 'open' }],
     });
     mocks.candidateFindMany.mockResolvedValue([
@@ -152,6 +200,17 @@ describe('momentum research service', () => {
     expect(result).toMatchObject({
       researchStatus: { universeMember: false, universeEnabled: false, newsEnabled: false, priceScanningEnabled: false },
       tradingContext: { hasEnabledSubscription: true, hasOpenPosition: true },
+      eligibility: {
+        researchEligibility: { eligible: false, reasons: ['OUTSIDE_RESEARCH_UNIVERSE'] },
+        momentumSubscriptionEligibility: { eligible: false, reasons: ['NO_TRADING_ACCOUNT'] },
+        candidateEligibility: {
+          discoveryEligible: false,
+          priceConfirmationEligible: false,
+          handoffEligible: false,
+          priceConfirmationReasons: ['NO_ACTIVE_CANDIDATE'],
+          handoffReasons: ['NO_ACTIVE_CANDIDATE'],
+        },
+      },
       currentCandidate: null,
       recentCandidates: [{ id: 'candidate-new' }, { id: 'candidate-old' }],
     });

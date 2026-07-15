@@ -933,3 +933,11 @@ Likely next phases:
   than coupling chart fetching to page loads
 
 Any future trading integration should remain behind explicit safety gates and should not be added until review-only alerts have been evaluated across multiple market sessions.
+### Eligibility diagnostics
+
+The existing owner-only research endpoints expose configuration health without changing their established fields:
+
+- `GET /api/momentum-scanner/research/overview` includes `eligibilitySummary`, with research-only universe members, qualifying momentum ownership, subscription-without-universe mismatches, invalid active candidates, price-confirmation readiness, handoff readiness, and stale-candidate counts. Diagnostic scans are capped at 1,000 securities and 1,000 active candidates, and the response reports whether either result was truncated.
+- `GET /api/momentum-scanner/research/symbols/:symbol` includes `eligibility`, which separates research inclusion, authoritative momentum-subscription eligibility, and the current candidate's price-confirmation and handoff eligibility. Each level includes machine-readable reasons from the shared resolvers.
+
+These diagnostics are informational. They do not create subscriptions, candidates, signals, handoffs, orders, or broker activity. A handoff-eligible result only means a stored downstream payload may be prepared; it is not order approval or submission.

@@ -8,6 +8,14 @@ import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import { serializeMomentumCandidatePriceCheck } from '../serializers/momentum-candidate-price-check.serializer.js';
 import { ACTIVE_MOMENTUM_CANDIDATE_STATES } from './momentum-candidate-lifecycle.js';
+import {
+  evaluateMomentumHandoffEligibility,
+  evaluateMomentumPriceConfirmationEligibility,
+} from './momentum-candidate-eligibility.service.js';
+import {
+  evaluateMomentumSubscriptionEligibility,
+  momentumSubscriptionEligibilitySelect,
+} from './momentum-subscription-eligibility.service.js';
 import type {
   MomentumResearchCandidatesQuery,
   MomentumResearchCatalystsQuery,
@@ -351,6 +359,67 @@ export async function getMomentumResearchOverview(now = new Date()) {
   ]);
   const symbols = [...new Set([...topRows, ...recentCandidateRows].map((row) => row.symbol))];
   const context = await loadSymbolContext(symbols);
+  const [eligibilitySecurities, diagnosticCandidates] = await Promise.all([
+    prisma.security.findMany({
+      where: {
+        OR: [
+          { momentumUniverseMember: { isNot: null } },
+          { subscriptions: { some: { enabled: true } } },
+        ],
+      },
+      select: {
+        id: true,
+        momentumUniverseMember: {
+          select: { enabled: true, newsEnabled: true, priceScanningEnabled: true },
+        },
+        subscriptions: { select: momentumSubscriptionEligibilitySelect },
+      },
+      orderBy: { id: 'asc' },
+      take: 1001,
+    }),
+    prisma.momentumCandidate.findMany({
+      where: activeWhere,
+      select: {
+        id: true,
+        state: true,
+        expiresAt: true,
+        blockedReason: true,
+        security: {
+          select: {
+            id: true,
+            momentumUniverseMember: {
+              select: { enabled: true, priceScanningEnabled: true },
+            },
+            subscriptions: { select: momentumSubscriptionEligibilitySelect },
+          },
+        },
+        priceChecks: {
+          select: { confirmed: true },
+          orderBy: { observedAt: 'desc' },
+          take: 1,
+        },
+      },
+      orderBy: { id: 'asc' },
+      take: 1001,
+    }),
+  ]);
+  const boundedSecurities = eligibilitySecurities.slice(0, 1000);
+  const boundedCandidates = diagnosticCandidates.slice(0, 1000);
+  const securityDiagnostics = boundedSecurities.map((security) => ({
+    ...security,
+    subscriptionEligibility: evaluateMomentumSubscriptionEligibility(security.subscriptions),
+  }));
+  const candidateDiagnostics = boundedCandidates.map((candidate) => {
+    const candidateContext = {
+      ...candidate,
+      latestPriceCheck: candidate.priceChecks[0] ?? null,
+    };
+    return {
+      candidate,
+      price: evaluateMomentumPriceConfirmationEligibility(candidateContext, now),
+      handoff: evaluateMomentumHandoffEligibility(candidateContext, now),
+    };
+  });
   const lastNewsPullAt = cursors.reduce<Date | null>(
     (latest, cursor) => !cursor.lastPulledAt || (latest && latest >= cursor.lastPulledAt) ? latest : cursor.lastPulledAt,
     null
@@ -369,6 +438,37 @@ export async function getMomentumResearchOverview(now = new Date()) {
       recentCatalysts,
       preparedHandoffs,
       enabledUniverseMembers,
+    },
+    eligibilitySummary: {
+      universeMembersEnabled: securityDiagnostics.filter((item) => item.momentumUniverseMember?.enabled).length,
+      universeMembersWithActiveMomentumSubscriptions: securityDiagnostics.filter(
+        (item) => item.momentumUniverseMember?.enabled && item.subscriptionEligibility.eligible
+      ).length,
+      researchOnlyMembers: securityDiagnostics.filter(
+        (item) => item.momentumUniverseMember?.enabled && !item.subscriptionEligibility.eligible
+      ).length,
+      enabledMomentumSubscriptionsOutsideUniverse: securityDiagnostics.filter(
+        (item) => item.momentumUniverseMember === null && item.subscriptionEligibility.eligible
+      ).length,
+      activeCandidatesOutsideUniverse: candidateDiagnostics.filter(
+        ({ candidate }) => candidate.security?.momentumUniverseMember === null
+      ).length,
+      activeCandidatesWithoutValidSecurities: candidateDiagnostics.filter(
+        ({ candidate }) => candidate.security === null
+      ).length,
+      activeCandidatesWithoutMomentumSubscriptions: candidateDiagnostics.filter(
+        ({ price }) => !price.momentumSubscriptionEligibility.eligible
+      ).length,
+      priceConfirmationEligibleCandidates: candidateDiagnostics.filter(({ price }) => price.eligible).length,
+      handoffEligibleCandidates: candidateDiagnostics.filter(({ handoff }) => handoff.eligible).length,
+      staleCandidatesAwaitingExpiration: candidateDiagnostics.filter(
+        ({ price }) => price.reasons.includes('CANDIDATE_EXPIRED')
+      ).length,
+      bounded: {
+        limit: 1000,
+        securitiesTruncated: eligibilitySecurities.length > 1000,
+        candidatesTruncated: diagnosticCandidates.length > 1000,
+      },
     },
     topCandidates: topRows.map((row) => serializeCandidate(row, context.get(row.symbol))),
     recentCatalysts: recentCatalystRows.map((row) => ({
@@ -512,6 +612,7 @@ const researchSecuritySelect = {
           tradingEnabled: true,
         },
       },
+      accountSubscriptions: momentumSubscriptionEligibilitySelect.accountSubscriptions,
     },
   },
   trackedPositions: {
@@ -675,6 +776,33 @@ export async function getMomentumSymbolResearch(symbol: string) {
     }),
   ]);
   const serializedCandidates = recentCandidates.map(serializeFullCandidate);
+  const momentumSubscriptionEligibility = evaluateMomentumSubscriptionEligibility(
+    security.subscriptions
+  );
+  const researchReasons = [
+    ...(security.momentumUniverseMember === null ? ['OUTSIDE_RESEARCH_UNIVERSE'] : []),
+    ...(security.momentumUniverseMember !== null && !security.momentumUniverseMember.enabled ? ['UNIVERSE_DISABLED'] : []),
+    ...(security.momentumUniverseMember !== null && !security.momentumUniverseMember.newsEnabled ? ['NEWS_DISABLED'] : []),
+  ];
+  const candidateContext = currentCandidate
+    ? {
+        state: currentCandidate.state,
+        expiresAt: currentCandidate.expiresAt,
+        blockedReason: currentCandidate.blockedReason,
+        latestPriceCheck: currentCandidate.priceChecks.at(-1) ?? null,
+        security: {
+          id: security.id,
+          momentumUniverseMember: security.momentumUniverseMember,
+          subscriptions: security.subscriptions,
+        },
+      }
+    : null;
+  const priceConfirmationEligibility = candidateContext
+    ? evaluateMomentumPriceConfirmationEligibility(candidateContext)
+    : { eligible: false, reasons: ['NO_ACTIVE_CANDIDATE'], momentumSubscriptionEligibility };
+  const handoffEligibility = candidateContext
+    ? evaluateMomentumHandoffEligibility(candidateContext)
+    : { eligible: false, reasons: ['NO_ACTIVE_CANDIDATE'], momentumSubscriptionEligibility };
 
   return {
     security: {
@@ -698,6 +826,24 @@ export async function getMomentumSymbolResearch(symbol: string) {
       ),
       universeMembership: security.momentumUniverseMember,
       newsCursors: cursors,
+    },
+    eligibility: {
+      researchEligibility: {
+        eligible: researchReasons.length === 0,
+        inUniverse: security.momentumUniverseMember !== null,
+        universeEnabled: security.momentumUniverseMember?.enabled ?? false,
+        newsEnabled: security.momentumUniverseMember?.newsEnabled ?? false,
+        priceScanningEnabled: security.momentumUniverseMember?.priceScanningEnabled ?? false,
+        reasons: researchReasons.length > 0 ? researchReasons : ['ELIGIBLE'],
+      },
+      momentumSubscriptionEligibility,
+      candidateEligibility: {
+        discoveryEligible: security.momentumUniverseMember?.enabled === true,
+        priceConfirmationEligible: priceConfirmationEligibility.eligible,
+        handoffEligible: handoffEligibility.eligible,
+        priceConfirmationReasons: priceConfirmationEligibility.reasons,
+        handoffReasons: handoffEligibility.reasons,
+      },
     },
     tradingContext: {
       subscriptions: security.subscriptions,
