@@ -205,6 +205,31 @@ export function MomentumResearchDashboardPage() {
             <SummaryCard label="Prepared handoffs" value={data.summary.preparedHandoffs} />
             <SummaryCard label="Research universe" value={data.summary.enabledUniverseMembers} />
           </SimpleGrid>
+          <Card withBorder radius="md" p="lg">
+            <Stack gap="md">
+              <Group justify="space-between">
+                <div>
+                  <Title order={3}>Eligibility and configuration health</Title>
+                  <Text size="sm" c="dimmed">Research inclusion and momentum trading ownership are evaluated separately.</Text>
+                </div>
+                <Button component={Link} to="/momentum-scanner/universe" variant="subtle" size="compact-sm">Open universe</Button>
+              </Group>
+              <SimpleGrid cols={{ base: 2, sm: 3, lg: 6 }}>
+                <SummaryCard label="Research universe" value={data.eligibilitySummary.universeMembersEnabled} />
+                <SummaryCard label="Momentum eligible" value={data.eligibilitySummary.universeMembersWithActiveMomentumSubscriptions} color="teal" />
+                <SummaryCard label="Research only" value={data.eligibilitySummary.researchOnlyMembers} color={data.eligibilitySummary.researchOnlyMembers ? "yellow" : undefined} />
+                <SummaryCard label="Subscription mismatch" value={data.eligibilitySummary.enabledMomentumSubscriptionsOutsideUniverse} color={data.eligibilitySummary.enabledMomentumSubscriptionsOutsideUniverse ? "orange" : undefined} />
+                <SummaryCard label="Price eligible" value={data.eligibilitySummary.priceConfirmationEligibleCandidates} color="blue" />
+                <SummaryCard label="Handoff eligible" value={data.eligibilitySummary.handoffEligibleCandidates} color="violet" />
+              </SimpleGrid>
+              {(data.eligibilitySummary.activeCandidatesOutsideUniverse > 0 || data.eligibilitySummary.activeCandidatesWithoutValidSecurities > 0 || data.eligibilitySummary.staleCandidatesAwaitingExpiration > 0) && (
+                <Alert color="orange" title="Candidate configuration needs attention">
+                  {data.eligibilitySummary.activeCandidatesOutsideUniverse} outside the universe; {data.eligibilitySummary.activeCandidatesWithoutValidSecurities} without a valid security; {data.eligibilitySummary.staleCandidatesAwaitingExpiration} stale.
+                </Alert>
+              )}
+              {(data.eligibilitySummary.bounded.securitiesTruncated || data.eligibilitySummary.bounded.candidatesTruncated) && <Text size="xs" c="dimmed">Diagnostics reached the {data.eligibilitySummary.bounded.limit.toLocaleString()}-record safety limit.</Text>}
+            </Stack>
+          </Card>
           <TopCandidates rows={data.topCandidates} />
           <SimpleGrid cols={{ base: 1, xl: 2 }}>
             <RecentCatalysts data={data.recentCatalysts} />
