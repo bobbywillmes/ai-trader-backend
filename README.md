@@ -33,6 +33,7 @@ The backend currently handles:
 - Signal ingestion from n8n
 - Entry decision snapshot ingestion and review
 - Subscription-driven order resolution
+- Dedicated strategy management with owner-only enabled-state changes
 - Centralized entry risk-gate enforcement
 - Runtime trading controls
 - Paper/live broker mode validation
@@ -133,6 +134,10 @@ paperMode=true         -> paper-mode runtime posture
 ```
 
 For trading safety design, see [Risk & Safety](docs/architecture/risk-and-safety.md).
+
+For strategy ownership, independent enablement controls, audit behavior, and the
+controlled momentum pilot, see
+[Strategy Management](docs/architecture/strategy-management.md).
 
 ## 🧱 Tech Stack
 - Node.js
