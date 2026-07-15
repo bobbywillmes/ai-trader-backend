@@ -224,6 +224,8 @@ Table Security {
   brokerOrders BrokerOrder [not null]
   entryDecisions EntryDecision [not null]
   momentumUniverseMember MomentumUniverseMember
+  catalystTickerImpacts CatalystTickerImpact [not null]
+  momentumCandidates MomentumCandidate [not null]
 }
 
 Table MomentumUniverseMember {
@@ -431,6 +433,8 @@ Table CatalystTickerImpact {
   id String [pk]
   catalystEventId String [not null]
   catalystEvent CatalystEvent [not null]
+  securityId Int
+  security Security
   symbol String [not null]
   sentiment CatalystSentiment [not null, default: 'UNKNOWN']
   sentimentReasoning String
@@ -479,6 +483,8 @@ Table NewsPullCursor {
 
 Table MomentumCandidate {
   id String [pk]
+  securityId Int
+  security Security
   symbol String [not null]
   state MomentumCandidateState [not null, default: 'DISCOVERED']
   catalystEventId String
@@ -993,6 +999,10 @@ Ref: SystemEvent.tradingAccountId > TradingAccount.id [delete: Set Null]
 Ref: AlpacaApiUsageBucket.tradingAccountId > TradingAccount.id [delete: Set Null]
 
 Ref: CatalystTickerImpact.catalystEventId > CatalystEvent.id [delete: Cascade]
+
+Ref: CatalystTickerImpact.securityId > Security.id [delete: Set Null]
+
+Ref: MomentumCandidate.securityId > Security.id [delete: Set Null]
 
 Ref: MomentumCandidate.catalystEventId > CatalystEvent.id [delete: Set Null]
 

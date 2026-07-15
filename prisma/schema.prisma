@@ -384,6 +384,8 @@ model Security {
   brokerOrders           BrokerOrder[]
   entryDecisions         EntryDecision[]
   momentumUniverseMember MomentumUniverseMember?
+  catalystTickerImpacts  CatalystTickerImpact[] @relation("SecurityCatalystTickerImpacts")
+  momentumCandidates     MomentumCandidate[] @relation("SecurityMomentumCandidates")
 
   @@index([enabled])
   @@index([assetType])
@@ -728,6 +730,9 @@ model CatalystTickerImpact {
   catalystEventId    String
   catalystEvent      CatalystEvent @relation(fields: [catalystEventId], references: [id], onDelete: Cascade)
 
+  securityId         Int?
+  security           Security? @relation("SecurityCatalystTickerImpacts", fields: [securityId], references: [id], onDelete: SetNull)
+
   symbol             String
 
   sentiment          CatalystSentiment @default(UNKNOWN)
@@ -759,6 +764,7 @@ model CatalystTickerImpact {
   @@index([symbol, totalCatalystScore])
   @@index([symbol, createdAt])
   @@index([totalCatalystScore])
+  @@index([securityId])
 }
 
 model NewsPullCursor {
@@ -809,6 +815,9 @@ enum MomentumScannerHandoffStatus {
 model MomentumCandidate {
   id                 String @id @default(cuid())
 
+  securityId         Int?
+  security           Security? @relation("SecurityMomentumCandidates", fields: [securityId], references: [id], onDelete: SetNull)
+
   symbol             String
   state              MomentumCandidateState @default(DISCOVERED)
 
@@ -846,6 +855,8 @@ model MomentumCandidate {
   @@index([expiresAt])
   @@index([catalystEventId])
   @@index([catalystImpactId])
+  @@index([securityId])
+  @@index([securityId, state, expiresAt])
 }
 
 model MomentumCandidatePriceCheck {

@@ -93,6 +93,7 @@ function catalystImpact(overrides: Record<string, unknown> = {}) {
   return {
     id: 'impact-1',
     catalystEventId: 'catalyst-event-1',
+    securityId: null,
     symbol: 'MU',
     sentiment: CatalystSentiment.POSITIVE,
     sentimentReasoning: 'Direct beneficiary from AI memory demand.',
@@ -156,6 +157,7 @@ function priceCheck(overrides: Record<string, unknown> = {}) {
 function candidate(overrides: Record<string, unknown> = {}) {
   return {
     id: 'candidate-1',
+    securityId: null,
     symbol: 'MU',
     state: MomentumCandidateState.ENTRY_READY,
     catalystEventId: 'catalyst-event-1',
