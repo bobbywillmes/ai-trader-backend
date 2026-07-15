@@ -532,6 +532,42 @@ Each confirmation run:
 - writes a `MomentumCandidatePriceCheck` history row
 - updates the latest summary fields on `MomentumCandidate`
 
+### Current Massive Request And Session Semantics
+
+Price confirmation currently makes two Massive requests for each candidate that
+passes the local eligibility checks:
+
+1. `GET /v2/snapshot/locale/us/markets/stocks/tickers/:symbol`
+2. `GET /v2/aggs/ticker/:symbol/range/1/minute/:from/:to?adjusted=true&sort=asc&limit=50000`
+
+The aggregate request uses one-minute bars. `from` and `to` are New York calendar
+dates derived from the confirmation time and the configured lookback, which
+defaults to 390 elapsed minutes. Because the provider path accepts dates rather
+than exact instants in this flow, it can return all eligible bars on the covered
+calendar date or dates; the service only applies an exact timestamp cutoff when
+it selects the recent-window bars.
+
+Massive custom stock aggregates cover premarket, regular-market, and after-hours
+trading. The current confirmation service does not filter bars by market session,
+so extended-hours bars are included when the requested date and provider data
+contain them. Snapshot `day` values can also begin updating with premarket data.
+Consequently, the current `intradayHigh`, `intradayLow`, aggregate fallback VWAP,
+aggregate fallback day volume, recent move, and recent volume are not guaranteed
+to represent regular hours only.
+
+Massive aggregate timestamps are Unix milliseconds for the start of each bar.
+The backend normalizes them to UTC ISO strings. New York time is used only to
+derive market-date request boundaries; stored `observedAt` and normalized bar
+timestamps remain UTC instants. The `America/New_York` IANA timezone is used, so
+date-boundary conversion follows EST and EDT rather than the server timezone.
+
+The aggregate request is explicitly split-adjusted and ascending. The current
+Massive market-data client adds a cache-busting query parameter and sends
+`Cache-Control: no-cache`; it has no application cache, request timeout, retry,
+backoff, or special rate-limit response mapping. Any non-successful upstream
+response currently becomes a `502` `HttpError` containing sanitized selected
+provider fields, although the message may still originate from the provider.
+
 ### Confirmation Snapshot Fields
 
 The Massive price helper normalizes:
@@ -550,6 +586,40 @@ The Massive price helper normalizes:
 - relative-volume placeholder
 
 Relative volume remains basic until the system has a reliable historical-volume baseline.
+
+The precise current derivations are:
+
+- `lastPrice`: snapshot last-trade price, then latest-minute close, then day close.
+- `previousClose`: snapshot `prevDay.c`. No separate previous-day request is made.
+- `intradayHigh` and `intradayLow`: the extrema across snapshot `day` and every
+  returned one-minute bar.
+- `sessionVwap`: snapshot `day.vw`, falling back to a volume-weighted mean of the
+  provider-supplied VWAP on returned one-minute bars. This is provider aggregate
+  VWAP data, not a VWAP reconstructed from typical price.
+- `dayVolume`: snapshot `day.v`, falling back to the sum of every returned
+  one-minute bar with positive volume.
+- `recentVolume`: the sum of positive-volume one-minute bars whose UTC timestamp
+  is within the configured recent window, defaulting to the last 15 elapsed
+  minutes. Missing aggregate intervals are not synthesized.
+- `recentMovePct`: percentage change from the first selected recent bar's open to
+  the last selected recent bar's close.
+- `dollarVolume`: `lastPrice * dayVolume`.
+- `relativeVolume`: always `null` in the current builder.
+
+The UI correctly renders the stored nullable `relativeVolume` value. A candidate
+can still receive a nonzero or high `volumeScore` while RVOL displays as missing:
+positive day volume awards 30 points, sufficient dollar volume awards 30 points,
+and positive recent volume awards 20 points. The unavailable RVOL component is
+only the final 20 points. There is no historical time-of-day volume baseline in
+the current schema or confirmation service, so displaying a calculated RVOL
+would require a separate data and scoring design and is deferred.
+
+Market-data bars are contextual and are not an audit record of exactly which
+candles the scanner used. Stored `MomentumCandidatePriceCheck` rows remain the
+authority for the values observed and decisions made at confirmation time.
+Provider-adjusted or corrected bars fetched later can differ from those original
+observations. This phase does not require an OHLC warehouse or immutable chart
+snapshot; that decision should be revisited with candidate outcome analytics.
 
 ### Confirmation Scoring
 
