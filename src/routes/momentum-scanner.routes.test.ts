@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   getMomentumResearchOverview: vi.fn(),
   getMomentumResearchCandidate: vi.fn(),
   getMomentumSymbolResearch: vi.fn(),
+  getMomentumMarketChart: vi.fn(),
   listMomentumResearchCandidates: vi.fn(),
   listMomentumResearchCatalysts: vi.fn(),
   prepareReadyMomentumScannerHandoffs: vi.fn(),
@@ -60,6 +61,10 @@ vi.mock('../services/momentum-research.service.js', () => ({
   getMomentumSymbolResearch: mocks.getMomentumSymbolResearch,
   listMomentumResearchCandidates: mocks.listMomentumResearchCandidates,
   listMomentumResearchCatalysts: mocks.listMomentumResearchCatalysts,
+}));
+
+vi.mock('../services/momentum-market-chart.service.js', () => ({
+  getMomentumMarketChart: mocks.getMomentumMarketChart,
 }));
 
 vi.mock('../services/place-order.service.js', () => ({
@@ -196,6 +201,15 @@ describe('momentum scanner routes', () => {
     });
     mocks.getMomentumSymbolResearch.mockResolvedValue({
       security: { id: 1, symbol: 'AAPL' },
+    });
+    mocks.getMomentumMarketChart.mockResolvedValue({
+      security: { id: '1', symbol: 'AAPL', name: 'Apple Inc.' },
+      query: {
+        interval: '5m', from: '2026-07-10T13:30:00.000Z',
+        to: '2026-07-10T20:00:00.000Z', timezone: 'America/New_York', adjusted: true,
+      },
+      bars: [], referenceLevels: {}, markers: [],
+      source: { provider: 'MASSIVE', fetchedAt: '2026-07-10T20:00:00.000Z', cached: false },
     });
     mocks.listMomentumResearchCandidates.mockResolvedValue({
       data: [],
@@ -477,6 +491,28 @@ describe('momentum scanner routes', () => {
     expect(symbol.status).toBe(200);
     expect(mocks.getMomentumResearchCandidate).toHaveBeenCalledWith('candidate-1');
     expect(mocks.getMomentumSymbolResearch).toHaveBeenCalledWith('AAPL');
+  });
+
+  it('provides an owner-only validated symbol chart endpoint', async () => {
+    const baseUrl = await listen();
+    const path = '/api/momentum-scanner/research/symbols/aapl/chart?interval=5m&from=2026-07-10T13%3A30%3A00.000Z&to=2026-07-10T20%3A00%3A00.000Z';
+    const unauthorized = await fetch(`${baseUrl}${path}`);
+    const authorized = await fetch(`${baseUrl}${path}`, {
+      headers: { 'ai-trader-api-key': ADMIN_KEY },
+    });
+    const invalid = await fetch(
+      `${baseUrl}/api/momentum-scanner/research/symbols/AAPL/chart?interval=30s`,
+      { headers: { 'ai-trader-api-key': ADMIN_KEY } }
+    );
+
+    expect(unauthorized.status).toBe(401);
+    expect(authorized.status).toBe(200);
+    expect(invalid.status).toBe(400);
+    expect(mocks.getMomentumMarketChart).toHaveBeenCalledWith('AAPL', {
+      interval: '5m',
+      from: new Date('2026-07-10T13:30:00.000Z'),
+      to: new Date('2026-07-10T20:00:00.000Z'),
+    });
   });
 
   it('rejects invalid momentum universe CRUD input', async () => {

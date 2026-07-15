@@ -22,6 +22,7 @@ import {
   listMomentumUniverseController,
   updateMomentumUniverseController,
 } from '../controllers/momentum-universe.controller.js';
+import { getMomentumMarketChartController } from '../controllers/momentum-market-chart.controller.js';
 
 const router = Router();
 
@@ -30,6 +31,7 @@ router.get('/research/candidates', requireSystemOwnerAccess, listMomentumResearc
 router.get('/research/candidates/:candidateId', requireSystemOwnerAccess, getMomentumResearchCandidateController);
 router.get('/research/catalysts', requireSystemOwnerAccess, listMomentumResearchCatalystsController);
 router.get('/research/symbols/:symbol', requireSystemOwnerAccess, getMomentumSymbolResearchController);
+router.get('/research/symbols/:symbol/chart', requireSystemOwnerAccess, getMomentumMarketChartController);
 
 router.get('/universe', requireSystemOwnerAccess, listMomentumUniverseController);
 router.post('/universe', requireSystemOwnerAccess, createMomentumUniverseController);
