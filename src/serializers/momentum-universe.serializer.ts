@@ -1,4 +1,8 @@
 import type { CatalystSource, Prisma } from '@prisma/client';
+import {
+  evaluateMomentumSubscriptionEligibility,
+  momentumSubscriptionEligibilitySelect,
+} from '../services/momentum-subscription-eligibility.service.js';
 
 type UniverseMemberRecord = Prisma.MomentumUniverseMemberGetPayload<{
   include: {
@@ -7,6 +11,7 @@ type UniverseMemberRecord = Prisma.MomentumUniverseMemberGetPayload<{
         _count: {
           select: { subscriptions: true };
         };
+        subscriptions: { select: typeof momentumSubscriptionEligibilitySelect };
       };
     };
   };
@@ -25,12 +30,14 @@ export function serializeMomentumUniverseMember(
   member: UniverseMemberRecord,
   cursor: CursorSummary | null
 ) {
-  const { _count, ...security } = member.security;
+  const { _count, subscriptions, ...security } = member.security;
+  const momentumSubscriptionEligibility = evaluateMomentumSubscriptionEligibility(subscriptions);
 
   return {
     ...member,
     security,
     subscriptionCount: _count.subscriptions,
+    momentumSubscriptionEligibility,
     cursor,
   };
 }

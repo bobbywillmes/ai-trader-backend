@@ -269,7 +269,7 @@ export function MomentumUniversePage() {
                   <Table.Th>Priority</Table.Th>
                   <Table.Th>Interval</Table.Th>
                   <Table.Th>Reason</Table.Th>
-                  <Table.Th>Subscriptions</Table.Th>
+                  <Table.Th>Momentum eligibility</Table.Th>
                   <Table.Th>Cursor health</Table.Th>
                   <Table.Th>Updated</Table.Th>
                   <Table.Th>Actions</Table.Th>
@@ -312,7 +312,7 @@ export function MomentumUniversePage() {
                     <Table.Td>{member.priority}</Table.Td>
                     <Table.Td>{member.pullIntervalMin} min</Table.Td>
                     <Table.Td>{member.addedReason}</Table.Td>
-                    <Table.Td>{member.subscriptionCount}</Table.Td>
+                    <Table.Td><Stack gap={3}><Badge color={member.momentumSubscriptionEligibility.eligible ? "teal" : "yellow"} variant="light">{member.momentumSubscriptionEligibility.eligible ? "Momentum enabled" : "Research only"}</Badge><Text size="xs" c="dimmed">{member.momentumSubscriptionEligibility.qualifyingSubscriptionIds.length} qualifying of {member.subscriptionCount}</Text></Stack></Table.Td>
                     <Table.Td>
                       {member.cursor ? (
                         <Stack gap={2}>

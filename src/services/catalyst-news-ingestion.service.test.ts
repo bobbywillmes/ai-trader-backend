@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   catalystEventUpsert: vi.fn(),
   catalystTickerImpactUpsert: vi.fn(),
+  securityFindMany: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -17,6 +18,9 @@ vi.mock('../db/prisma.js', () => ({
     },
     catalystTickerImpact: {
       upsert: mocks.catalystTickerImpactUpsert,
+    },
+    security: {
+      findMany: mocks.securityFindMany,
     },
   },
 }));
@@ -62,6 +66,10 @@ describe('catalyst news ingestion service', () => {
       id: 'catalyst-event-1',
     });
     mocks.catalystTickerImpactUpsert.mockResolvedValue({});
+    mocks.securityFindMany.mockResolvedValue([
+      { id: 1, symbol: 'AAPL' },
+      { id: 2, symbol: 'MSFT' },
+    ]);
   });
 
   it('maps Massive sentiment strings to CatalystSentiment values', () => {
@@ -200,6 +208,7 @@ describe('catalyst news ingestion service', () => {
           },
         },
         create: expect.objectContaining({
+          securityId: 1,
           symbol: 'AAPL',
           sentiment: CatalystSentiment.POSITIVE,
           sentimentReasoning: 'Partnership expands a core growth theme.',
@@ -216,6 +225,31 @@ describe('catalyst news ingestion service', () => {
         }),
       })
     );
+  });
+
+  it('preserves unknown ticker impacts without inventing a Security relation', async () => {
+    mocks.securityFindMany.mockResolvedValue([{ id: 1, symbol: 'AAPL' }]);
+
+    await ingestMassiveNewsPayload({ results: [massiveArticle()] });
+
+    const msftInput = mocks.catalystTickerImpactUpsert.mock.calls[1]?.[0];
+    expect(msftInput.create.symbol).toBe('MSFT');
+    expect(msftInput.create).not.toHaveProperty('securityId');
+    expect(msftInput.update).not.toHaveProperty('securityId');
+  });
+
+  it('does not choose arbitrarily between normalized Security matches', async () => {
+    mocks.securityFindMany.mockResolvedValue([
+      { id: 1, symbol: 'AAPL' },
+      { id: 2, symbol: 'aapl' },
+      { id: 3, symbol: 'MSFT' },
+    ]);
+
+    await ingestMassiveNewsPayload({ results: [massiveArticle()] });
+
+    const aaplInput = mocks.catalystTickerImpactUpsert.mock.calls[0]?.[0];
+    expect(aaplInput.create).not.toHaveProperty('securityId');
+    expect(aaplInput.update).not.toHaveProperty('securityId');
   });
 
   it('creates fallback ticker impacts when insights are missing', async () => {

@@ -274,6 +274,26 @@ async function ingestMassiveArticle(article: MassiveNewsArticle) {
   const publisherName = toNonEmptyString(article.publisher?.name);
   const publishedAt = parseDate(article.published_utc);
   const impacts = normalizeTickerImpacts(article);
+  const securities = await prisma.security.findMany({
+    where: {
+      symbol: {
+        in: impacts.map((impact) => impact.symbol),
+        mode: 'insensitive',
+      },
+    },
+    select: {
+      id: true,
+      symbol: true,
+    },
+  });
+  const securitiesBySymbol = new Map<string, Array<{ id: number }>>();
+
+  for (const security of securities) {
+    const symbol = security.symbol.trim().toUpperCase();
+    const matches = securitiesBySymbol.get(symbol) ?? [];
+    matches.push({ id: security.id });
+    securitiesBySymbol.set(symbol, matches);
+  }
 
   const event = await prisma.catalystEvent.upsert({
     where: {
@@ -312,6 +332,9 @@ async function ingestMassiveArticle(article: MassiveNewsArticle) {
   let tickerImpacts = 0;
 
   for (const impact of impacts) {
+    const securityMatches = securitiesBySymbol.get(impact.symbol) ?? [];
+    const securityId =
+      securityMatches.length === 1 ? securityMatches[0]?.id : undefined;
     const scores = buildImpactScores(
       impact.symbol,
       article,
@@ -329,6 +352,7 @@ async function ingestMassiveArticle(article: MassiveNewsArticle) {
       },
       create: {
         catalystEventId: event.id,
+        ...(securityId === undefined ? {} : { securityId }),
         symbol: impact.symbol,
         sentiment: impact.sentiment,
         sentimentReasoning: impact.sentimentReasoning,
@@ -342,6 +366,7 @@ async function ingestMassiveArticle(article: MassiveNewsArticle) {
         ...scores,
       },
       update: {
+        ...(securityId === undefined ? {} : { securityId }),
         sentiment: impact.sentiment,
         sentimentReasoning: impact.sentimentReasoning,
         rawInsight: impact.rawInsight ?? Prisma.JsonNull,

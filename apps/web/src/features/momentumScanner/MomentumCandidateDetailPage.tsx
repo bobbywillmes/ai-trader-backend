@@ -65,6 +65,7 @@ export function MomentumCandidateDetailPage() {
         const latestCheck = candidate.priceChecks.at(-1) ?? null;
         const latestHandoff = candidate.scannerHandoffs.at(-1) ?? null;
         return <>
+          <Card withBorder radius="md" p="lg"><Stack gap="md"><Group justify="space-between"><Title order={2}>Eligibility</Title><Badge color={data.eligibility.momentumSubscriptionEligibility.eligible ? "teal" : "yellow"} variant="light">{data.eligibility.momentumSubscriptionEligibility.eligible ? "Momentum enabled" : "Research only"}</Badge></Group><SimpleGrid cols={{ base: 1, sm: 2 }}><Info label="Price confirmation" value={data.eligibility.priceConfirmationEligible ? "Eligible" : `Blocked — ${data.eligibility.priceConfirmationReasons.join(", ").replaceAll("_", " ").toLowerCase()}`} /><Info label="Handoff" value={data.eligibility.handoffEligible ? "Eligible" : `Blocked — ${data.eligibility.handoffReasons.join(", ").replaceAll("_", " ").toLowerCase()}`} /></SimpleGrid><Text size="xs" c="dimmed">Configuration eligibility is separate from the stored candidate state. Handoff eligibility does not approve or submit an order.</Text></Stack></Card>
           <Group justify="space-between" align="flex-start">
             <div>
               <Text size="xs" fw={700} c="dimmed" tt="uppercase">Candidate case file</Text>

@@ -61,6 +61,7 @@ function member(overrides: Record<string, unknown> = {}) {
       createdAt: new Date('2026-01-01T00:00:00Z'),
       updatedAt: new Date('2026-01-01T00:00:00Z'),
       _count: { subscriptions: 2 },
+      subscriptions: [],
     },
     ...overrides,
   };
@@ -104,6 +105,7 @@ describe('momentum universe service', () => {
         {
           id: 'member-1',
           subscriptionCount: 2,
+          momentumSubscriptionEligibility: { eligible: false, reasons: ['NO_SUBSCRIPTION'] },
           security: { symbol: 'AAPL', name: 'Apple Inc' },
           cursor: { source: CatalystSource.MASSIVE_NEWS, enabled: true },
         },

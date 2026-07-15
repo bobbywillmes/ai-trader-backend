@@ -67,6 +67,155 @@ High-level flow:
 8. `ENTRY_READY` candidates can be prepared as `MomentumScannerHandoff` queue records.
 9. n8n pulls currently valid `PENDING` handoffs, sends Slack review alerts, and marks successful deliveries as `SENT`.
 
+## Pre-Implementation Ownership And Eligibility Audit
+
+This section records the behavior found before the security-ownership and
+eligibility work began. It is deliberately descriptive: behavior listed here
+as a gap is not a statement of the intended final design.
+
+### Identity
+
+`Security` already has a globally unique normalized symbol and is the identity
+used by subscriptions and universe membership. The momentum pipeline does not
+currently carry that identity through its stored records:
+
+- `CatalystTickerImpact` stores only `symbol`.
+- `MomentumCandidate` stores only `symbol`.
+- `MomentumCandidatePriceCheck` derives its opportunity from the candidate but
+  also stores only a symbol snapshot.
+- `MomentumScannerHandoff` derives its opportunity from the candidate but also
+  stores only a symbol and payload snapshot.
+
+Candidate and research queries consequently recover `Security`, universe, and
+subscription context by matching symbol strings. Candidate creation does not
+require a matching `Security`.
+
+The target ownership boundary is:
+
+```text
+Security                 owns instrument identity
+MomentumUniverseMember   owns persistent research inclusion
+Subscription             owns strategy eligibility
+TradingAccountSubscription owns account assignment for entry-capable use
+```
+
+Impact, candidate, price-check, and handoff symbol fields may remain as
+immutable or denormalized historical snapshots. They are not intended to remain
+the authoritative identity for active opportunities.
+
+### News Research Eligibility
+
+Normal configured research coverage currently includes three sources:
+
+- enabled universe members with `newsEnabled = true`
+- every enabled stock subscription, regardless of strategy
+- open or closing positions
+
+Subscription-derived coverage does not create a `MomentumUniverseMember`, but
+it does keep news cursors enabled. This means subscription ownership currently
+expands news research beyond the explicit universe.
+
+The intended boundary is that normal persistent research requires an enabled,
+news-enabled universe member. Temporary open/closing-position coverage may
+remain for operational safety, but a subscription must not silently become
+persistent research membership.
+
+### Candidate Discovery Eligibility
+
+Candidate generation currently selects recent positive ticker impacts meeting
+the catalyst threshold. It also rejects blank symbols, blocked impacts, and
+tangential mentions. It does not require:
+
+- a matching `Security`
+- an enabled `Security`
+- universe membership
+- enabled universe membership
+- a momentum subscription
+
+Every qualifying impact can therefore create a candidate outside the research
+universe. The unique constraint is `symbol + catalystImpactId`, so separate
+impacts for the same symbol can create multiple simultaneously active
+candidates. Rerunning generation for the same impact refreshes the candidate's
+expiration timestamp.
+
+Ticker impacts must continue to be retained even when their symbols are
+unknown or outside the universe. The intended discovery boundary is narrower:
+only a valid `Security` with enabled universe membership may become a new active
+candidate, and only one active opportunity per security may exist at a time.
+
+### Price-Confirmation Eligibility
+
+Bulk price confirmation currently queries a bounded number of candidates in
+`DISCOVERED`, `WATCHING`, `ENTRY_READY`, or `ENTRY_BLOCKED`, ordered by score and
+discovery time. It then requests market data before checking any research or
+subscription configuration.
+
+It does not currently require a valid security, enabled universe membership,
+`priceScanningEnabled`, or a momentum-specific subscription. Terminal
+`EXPIRED` and `DISMISSED` candidates are skipped, while an elapsed `expiresAt`
+is handled only after market data has been fetched and scored.
+
+The intended selection boundary requires all configuration and expiration
+checks before any market-data request. Momentum subscription eligibility must
+use stable strategy keys classified as the `MOMENTUM_CONTINUATION` family;
+generic stock subscriptions and the `quick_test_momentum` system-test strategy
+do not qualify.
+
+### Handoff Eligibility
+
+Handoff preparation currently requires `ENTRY_READY`, an unelapsed expiration,
+the configured score threshold, no `blockedReason`, and no conflicting active
+handoff unless forced. It does not check security identity, universe state,
+price-scanning state, momentum strategy ownership, account assignment, or
+allocation state.
+
+A handoff is a stored review payload and never an order. The intended handoff
+boundary additionally requires current research and momentum-subscription
+eligibility plus an enabled entry-capable `TradingAccountSubscription`, an
+eligible trading account, and an enabled allocation when one is assigned. This
+is configuration readiness, not a duplicate of the central risk gate.
+
+### Candidate Lifecycle And Expiration
+
+The current candidate states are:
+
+| State | Active today | Terminal | Price checked today | Handoff capable |
+| --- | --- | --- | --- | --- |
+| `DISCOVERED` | Yes | No | Yes | No |
+| `WATCHING` | Yes | No | Yes | No |
+| `ENTRY_READY` | Yes | No | Yes | Yes, subject to current checks |
+| `ENTRY_BLOCKED` | Yes | No | Yes | No |
+| `EXPIRED` | No | Yes | No | No |
+| `DISMISSED` | No | Yes | No | No |
+
+The active-state list is currently duplicated in candidate generation,
+price-confirmation, and research services. Research counts test state only and
+do not exclude candidates whose `expiresAt` has elapsed.
+
+Candidates default to a 24-hour expiration, but expiration is enforced as a
+state transition only when the owner-only `expire-stale` endpoint is explicitly
+called. There is no scheduled expiration worker. Old `DISCOVERED` rows may
+therefore remain visible as active indefinitely, and regeneration can extend
+the opportunity by refreshing `expiresAt`.
+
+The intended lifecycle uses one shared state helper. Elapsed candidates are
+ineligible immediately at query time, even before reconciliation persists the
+`EXPIRED` state. The initial deterministic lifetime remains 24 hours from the
+stable discovery timestamp; repeated processing must not extend it. This branch
+does not introduce market-session expiration rules.
+
+### Observed Dashboard Symptoms
+
+The research dashboard can show substantially more active candidates than
+universe members because candidate discovery is not universe-bounded, multiple
+active candidates can exist per symbol, and elapsed candidates remain counted
+until explicit expiration runs.
+
+Candidates commonly show a catalyst score such as 80 with zero price-action,
+volume, and risk scores because creation copies the catalyst score into the
+candidate and initializes the deferred confirmation components to zero. Those
+rows have not completed a successful price-confirmation evaluation.
+
 ## 🧱 Data Model Roles
 
 ### `MomentumUniverseMember`
@@ -139,6 +288,7 @@ CatalystSource.MASSIVE_NEWS + article.id
 
 It includes:
 
+- nullable canonical `Security` relation when exactly one normalized match exists
 - symbol
 - sentiment
 - catalyst role
@@ -157,6 +307,7 @@ This table is the bridge between source-level news and symbol-level momentum rev
 
 It includes:
 
+- nullable canonical `Security` relation for historical compatibility
 - symbol
 - candidate state
 - optional links to `CatalystEvent` and `CatalystTickerImpact`
@@ -246,13 +397,12 @@ The worker can also be run manually through admin or signal automation routes.
 
 The normal research universe comes from enabled `MomentumUniverseMember` rows whose `newsEnabled` flag is also enabled. Symbols are resolved through the related `Security`; there is no hard-coded application ticker list.
 
-Cursor synchronization combines three coverage sources:
+Cursor synchronization combines two coverage sources:
 
 - explicit database universe membership, which is the canonical permanent research universe
-- enabled stock subscriptions, retained as derived runtime coverage for compatibility with existing scanner behavior
 - open or closing tracked positions, retained as temporary operational coverage even without explicit membership
 
-Subscription-derived and position-derived coverage do not create hidden `MomentumUniverseMember` rows. When sources overlap, synchronization creates only one source/symbol cursor and uses the highest priority and shortest required pull interval. Disabling or removing explicit membership disables its managed cursor only when no subscription or open/closing position still requires coverage.
+Subscriptions do not expand news-research coverage. Position-derived coverage does not create hidden `MomentumUniverseMember` rows. When sources overlap, synchronization creates only one source/symbol cursor and uses the highest priority and shortest required pull interval. Disabling or removing explicit membership disables its managed cursor unless an open or closing position still requires temporary coverage.
 
 Synchronization updates cursor enablement, priority, interval, and coverage metadata. It does not reset `lastPulledAt`, `lastPublishedAt`, `lastSourceCursor`, `consecutiveErrors`, or `lastError`. Cursors that are no longer covered are disabled rather than deleted.
 
@@ -290,8 +440,11 @@ Generation is conservative:
 - impact sentiment must be positive
 - total catalyst score must meet the configured threshold
 - symbol must be present
+- the impact must resolve to exactly one existing `Security`
+- the security must have enabled `MomentumUniverseMember` membership
 - tangential mentions are skipped
 - blocked impacts are skipped
+- no unexpired active candidate may already exist for the security
 
 Generation is idempotent by:
 
@@ -299,9 +452,31 @@ Generation is idempotent by:
 symbol + catalystImpactId
 ```
 
-Re-running generation refreshes the candidate snapshot and expiration timestamp instead of creating duplicate candidates for the same symbol/catalyst impact.
+The impact-level unique key remains for historical idempotency, while discovery also prevents more than one unexpired active candidate per security. Re-running generation does not extend an existing opportunity's expiration timestamp.
+
+Impacts for unknown, ambiguous, out-of-universe, or disabled-universe symbols remain stored. Candidate generation skips them with structured reason codes rather than deleting catalyst history or creating securities implicitly.
 
 Candidates default to expiring after 24 hours. Expiration marks stale active records as `EXPIRED`; records are not deleted.
+
+### Eligibility Reconciliation Command
+
+Historical momentum ownership and lifecycle can be audited without changing data:
+
+```bash
+npm run momentum:reconcile-eligibility -- --dry-run
+```
+
+After reviewing the report, apply the deterministic plan explicitly:
+
+```bash
+npm run momentum:reconcile-eligibility -- --apply
+```
+
+The command reads candidates, ticker impacts, and securities in bounded batches. It resolves only unique case- and whitespace-normalized Security matches and reports unmatched, ambiguous, and conflicting identity separately. It never creates securities or deletes catalyst history.
+
+Apply mode links uniquely resolvable candidates and ticker impacts. It marks active candidates `EXPIRED` when their expiration has elapsed, identity is unresolved/ambiguous/conflicting, universe membership is missing, or universe membership is disabled. Terminal historical rows remain unchanged. Research-only in-universe candidates are reported as not momentum-subscription eligible but are not expired solely for lacking a subscription.
+
+The operation is idempotent: conditional link updates affect only rows whose `securityId` remains null, and expiration updates affect only active states. A dry run after apply should therefore report zero pending links and zero candidates awaiting expiration.
 
 Candidate states include:
 
@@ -319,6 +494,19 @@ DISMISSED
 ## 📈 Price and Volume Confirmation
 
 Price confirmation checks whether a candidate has enough market confirmation to keep watching or prepare for review.
+
+Before requesting market data, the shared eligibility evaluator requires:
+
+- an active, unexpired candidate
+- a valid `Security` relation
+- enabled universe membership
+- `priceScanningEnabled = true`
+- at least one enabled production momentum subscription
+- an enabled entry-capable `TradingAccountSubscription`
+- an active assigned trading account
+- an enabled allocation when an allocation is assigned
+
+The candidate scan is bounded and may inspect a small bounded multiple of the requested confirmation limit so configuration-ineligible candidates do not crowd out eligible candidates. Ineligible candidates are skipped before Massive market-data calls and are counted by structured reason code.
 
 The service evaluates active candidates in these states:
 
@@ -428,10 +616,15 @@ Scanner handoffs are durable queue records for n8n review.
 A candidate is eligible for handoff when:
 
 - candidate state is `ENTRY_READY`
+- the latest stored price check is confirmed
 - candidate is not expired
 - candidate total score meets the configured handoff threshold
 - candidate has no blocked reason
+- the Security remains in the enabled, price-scanning research universe
+- the Security retains an eligible momentum subscription and account assignment
 - no active handoff already exists for the candidate and payload version, unless `force` is used
+
+These checks establish configuration readiness for a stored review payload. They do not duplicate the central risk gate, inspect broker buying power, or permit trading. Pending handoffs are also cancelled when this current eligibility is lost.
 
 Default handoff settings:
 
@@ -518,6 +711,9 @@ navigation without adding another sidebar section.
 entry-ready, and blocked candidates; catalyst events received during the
 previous 24 hours; prepared handoffs; enabled universe membership; top active
 candidates; recently evaluated or updated candidates; and cursor-derived health.
+It also shows compact configuration-health counts for momentum-eligible,
+research-only, and mismatched ownership plus price-confirmation and handoff
+readiness. Diagnostic scans are bounded and disclose truncation.
 
 There is no candidate transition-audit model. The dashboard therefore labels
 recent records as recently updated candidates instead of claiming a complete
@@ -527,13 +723,17 @@ transition history.
 
 `/momentum-scanner/candidates` provides database-backed pagination and filters
 for symbol, state, minimum score, catalyst type, readiness, discovery date, and
-safe sorting. It does not fetch the full candidate table for client filtering.
+safe sorting. A compact page summary distinguishes momentum-enabled,
+research-only, and price-confirmation-eligible rows. It does not fetch the full
+candidate table for client filtering.
 
 `/momentum-scanner/candidates/:candidateId` is a read-only case file with the
 candidate state and timestamps, raw stored score components, linked catalyst and
 ticker reasoning, chronological price checks, prepared handoffs, and related
 Security/universe/subscription context. The UI does not invent score denominators
 because the schema does not formally persist a maximum for every component.
+Configuration eligibility and its reasons are displayed separately from the
+stored candidate lifecycle state; a handoff-eligible label is not order approval.
 
 ### Catalyst Browsing
 
@@ -546,10 +746,15 @@ raw arrays.
 
 `/momentum-scanner/symbols/:symbol` aggregates stored scanner context for an
 existing `Security`. Explicit universe membership, news and price-scanning
-configuration, cursor state, subscription availability, open positions, and
+configuration, momentum-specific subscription eligibility, cursor state, open positions, and
 candidate state remain separate concepts. The page shows stored score reasoning,
 catalyst history, price checks, handoffs, and candidate history without claiming
 trade outcomes.
+
+The Research Universe table labels each member as `MOMENTUM ENABLED` or
+`RESEARCH ONLY` using the shared subscription resolver and reports qualifying
+subscriptions separately from total subscriptions. It does not mutate
+subscriptions.
 
 ### Research Universe
 
@@ -740,3 +945,11 @@ Likely next phases:
   than coupling chart fetching to page loads
 
 Any future trading integration should remain behind explicit safety gates and should not be added until review-only alerts have been evaluated across multiple market sessions.
+### Eligibility diagnostics
+
+The existing owner-only research endpoints expose configuration health without changing their established fields:
+
+- `GET /api/momentum-scanner/research/overview` includes `eligibilitySummary`, with research-only universe members, qualifying momentum ownership, subscription-without-universe mismatches, invalid active candidates, price-confirmation readiness, handoff readiness, and stale-candidate counts. Diagnostic scans are capped at 1,000 securities and 1,000 active candidates, and the response reports whether either result was truncated.
+- `GET /api/momentum-scanner/research/symbols/:symbol` includes `eligibility`, which separates research inclusion, authoritative momentum-subscription eligibility, and the current candidate's price-confirmation and handoff eligibility. Each level includes machine-readable reasons from the shared resolvers.
+
+These diagnostics are informational. They do not create subscriptions, candidates, signals, handoffs, orders, or broker activity. A handoff-eligible result only means a stored downstream payload may be prepared; it is not order approval or submission.

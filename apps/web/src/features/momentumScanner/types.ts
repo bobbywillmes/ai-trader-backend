@@ -260,6 +260,13 @@ export type MomentumUniverseMember = {
     assetType: AssetType;
   };
   subscriptionCount: number;
+  momentumSubscriptionEligibility: {
+    eligible: boolean;
+    subscriptionCount: number;
+    enabledSubscriptionCount: number;
+    qualifyingSubscriptionIds: number[];
+    reasons: string[];
+  };
   cursor: MomentumUniverseCursor | null;
 };
 
@@ -334,6 +341,17 @@ export type MomentumResearchCandidateRow = {
     subscriptionCount: number;
     enabledSubscriptionCount: number;
   };
+  eligibility: {
+    momentumSubscriptionEligibility: {
+      eligible: boolean;
+      qualifyingSubscriptionIds: number[];
+      reasons: string[];
+    };
+    priceConfirmationEligible: boolean;
+    handoffEligible: boolean;
+    priceConfirmationReasons: string[];
+    handoffReasons: string[];
+  };
 };
 
 export type MomentumResearchCatalystRow = {
@@ -369,6 +387,19 @@ export type MomentumResearchOverview = {
     recentCatalysts: number;
     preparedHandoffs: number;
     enabledUniverseMembers: number;
+  };
+  eligibilitySummary: {
+    universeMembersEnabled: number;
+    universeMembersWithActiveMomentumSubscriptions: number;
+    researchOnlyMembers: number;
+    enabledMomentumSubscriptionsOutsideUniverse: number;
+    activeCandidatesOutsideUniverse: number;
+    activeCandidatesWithoutValidSecurities: number;
+    activeCandidatesWithoutMomentumSubscriptions: number;
+    priceConfirmationEligibleCandidates: number;
+    handoffEligibleCandidates: number;
+    staleCandidatesAwaitingExpiration: number;
+    bounded: { limit: number; securitiesTruncated: boolean; candidatesTruncated: boolean };
   };
   topCandidates: MomentumResearchCandidateRow[];
   recentCatalysts: MomentumResearchCatalystRow[];
@@ -457,6 +488,7 @@ export type MomentumResearchCandidateDetail = {
       updatedAt: string;
     }>;
   };
+  eligibility: MomentumResearchCandidateRow["eligibility"];
   security: {
     id: number;
     symbol: string;
@@ -513,6 +545,30 @@ export type MomentumSymbolResearch = {
       lastError: string | null;
       updatedAt: string;
     }>;
+  };
+  eligibility: {
+    researchEligibility: {
+      eligible: boolean;
+      inUniverse: boolean;
+      universeEnabled: boolean;
+      newsEnabled: boolean;
+      priceScanningEnabled: boolean;
+      reasons: string[];
+    };
+    momentumSubscriptionEligibility: {
+      eligible: boolean;
+      subscriptionCount: number;
+      enabledSubscriptionCount: number;
+      qualifyingSubscriptionIds: number[];
+      reasons: string[];
+    };
+    candidateEligibility: {
+      discoveryEligible: boolean;
+      priceConfirmationEligible: boolean;
+      handoffEligible: boolean;
+      priceConfirmationReasons: string[];
+      handoffReasons: string[];
+    };
   };
   tradingContext: {
     subscriptions: MomentumResearchCandidateDetail["subscriptions"];
