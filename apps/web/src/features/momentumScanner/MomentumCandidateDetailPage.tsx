@@ -3,12 +3,63 @@ import {
   ScrollArea, SimpleGrid, Stack, Table, Text, Title,
 } from "@mantine/core";
 import { IconExternalLink } from "@tabler/icons-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { getAdminToken } from "../../lib/api";
-import { useMomentumResearchCandidate } from "./hooks";
+import { MomentumMarketChart } from "./components/MomentumMarketChart";
+import { useMomentumMarketChart, useMomentumResearchCandidate } from "./hooks";
 import { MomentumScannerNavigation } from "./MomentumScannerNavigation";
-import type { MomentumCandidateState } from "./types";
+import type { MomentumCandidateState, MomentumMarketChartInterval, MomentumResearchCandidateDetail } from "./types";
+
+const intervalRangeMs: Record<MomentumMarketChartInterval, number> = {
+  "1m": 24 * 60 * 60 * 1000,
+  "5m": 7 * 24 * 60 * 60 * 1000,
+  "15m": 14 * 24 * 60 * 60 * 1000,
+  "1d": 183 * 24 * 60 * 60 * 1000,
+};
+
+function lifecycleTimes(detail: MomentumResearchCandidateDetail) {
+  const { candidate } = detail;
+  const values = [
+    candidate.catalystEvent?.publishedAt,
+    candidate.catalystEvent?.receivedAt,
+    candidate.discoveredAt,
+    candidate.lastEvaluatedAt,
+    ...candidate.priceChecks.map((check) => check.observedAt),
+    ...candidate.scannerHandoffs.flatMap((handoff) => [
+      handoff.preparedAt, handoff.sentAt, handoff.acknowledgedAt,
+      handoff.failedAt, handoff.updatedAt,
+    ]),
+  ].flatMap((value) => {
+    if (!value) return [];
+    const timestamp = new Date(value).getTime();
+    return Number.isNaN(timestamp) ? [] : [timestamp];
+  });
+
+  return values.length ? values : [new Date(candidate.discoveredAt).getTime()];
+}
+
+function recommendedInterval(detail: MomentumResearchCandidateDetail) {
+  const times = lifecycleTimes(detail);
+  const spanWithContext = Math.max(...times) - Math.min(...times) + 2 * 60 * 60 * 1000;
+  return (["1m", "5m", "15m", "1d"] as MomentumMarketChartInterval[])
+    .find((interval) => spanWithContext <= intervalRangeMs[interval]) ?? "1d";
+}
+
+function lifecycleRange(detail: MomentumResearchCandidateDetail, interval: MomentumMarketChartInterval) {
+  const times = lifecycleTimes(detail);
+  const desiredFrom = Math.min(...times) - 60 * 60 * 1000;
+  const desiredTo = Math.max(...times) + 60 * 60 * 1000;
+  const maximum = intervalRangeMs[interval];
+
+  if (desiredTo - desiredFrom <= maximum) {
+    return { from: new Date(desiredFrom).toISOString(), to: new Date(desiredTo).toISOString() };
+  }
+
+  const from = new Date(detail.candidate.discoveredAt).getTime() - 60 * 60 * 1000;
+  return { from: new Date(from).toISOString(), to: new Date(from + maximum).toISOString() };
+}
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "Not available";
@@ -50,8 +101,30 @@ function JsonValue({ value }: { value: unknown }) {
 
 export function MomentumCandidateDetailPage() {
   const { candidateId } = useParams();
-  const detail = useMomentumResearchCandidate(getAdminToken(), candidateId ?? null);
+  const token = getAdminToken();
+  const detail = useMomentumResearchCandidate(token, candidateId ?? null);
   const data = detail.data;
+  const [chartInterval, setChartInterval] = useState<MomentumMarketChartInterval>("1m");
+  const initializedCandidate = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (data && initializedCandidate.current !== data.candidate.id) {
+      initializedCandidate.current = data.candidate.id;
+      setChartInterval(recommendedInterval(data));
+    }
+  }, [data]);
+
+  const chartRange = useMemo(
+    () => data ? lifecycleRange(data, chartInterval) : undefined,
+    [chartInterval, data]
+  );
+  const chartQuery = useMemo(() => ({
+    interval: chartInterval,
+    candidateId: candidateId ?? undefined,
+    from: chartRange?.from,
+    to: chartRange?.to,
+  }), [candidateId, chartInterval, chartRange]);
+  const chart = useMomentumMarketChart(token, data?.candidate.symbol ?? null, chartQuery);
 
   return (
     <Stack gap="lg">
@@ -83,6 +156,16 @@ export function MomentumCandidateDetailPage() {
             <Info label="Entry status" value={candidate.state === "ENTRY_READY" ? "Entry ready" : candidate.state === "ENTRY_BLOCKED" ? "Entry blocked" : "Not entry ready"} />
             <Info label="Handoff" value={latestHandoff?.status ?? "Not prepared"} />
           </SimpleGrid>{candidate.blockedReason && <Alert color="red" title="Blocked reason" mt="md">{candidate.blockedReason}</Alert>}</Card>
+
+          <MomentumMarketChart
+            data={chart.data}
+            interval={chartInterval}
+            onIntervalChange={setChartInterval}
+            isLoading={chart.isLoading}
+            isFetching={chart.isFetching}
+            error={chart.error instanceof Error ? chart.error : null}
+            title="Decision-linked market context"
+          />
 
           <Stack gap="sm"><Title order={2}>Score breakdown</Title><SimpleGrid cols={{ base: 2, sm: 5 }}><ScoreCard label="Catalyst" value={candidate.catalystScore} /><ScoreCard label="Price action" value={candidate.priceActionScore} /><ScoreCard label="Volume" value={candidate.volumeScore} /><ScoreCard label="Risk" value={candidate.riskScore} /><ScoreCard label="Total" value={candidate.totalScore} /></SimpleGrid><Text size="sm" c="dimmed">Scores are shown as stored raw values because the data model does not formally persist a maximum for every component.</Text></Stack>
 
