@@ -9,57 +9,9 @@ import { Link, useParams } from "react-router-dom";
 import { getAdminToken } from "../../lib/api";
 import { MomentumMarketChart } from "./components/MomentumMarketChart";
 import { useMomentumMarketChart, useMomentumResearchCandidate } from "./hooks";
+import { momentumCandidateChartRange, recommendedMarketChartInterval } from "./marketChartRange";
 import { MomentumScannerNavigation } from "./MomentumScannerNavigation";
-import type { MomentumCandidateState, MomentumMarketChartInterval, MomentumResearchCandidateDetail } from "./types";
-
-const intervalRangeMs: Record<MomentumMarketChartInterval, number> = {
-  "1m": 24 * 60 * 60 * 1000,
-  "5m": 7 * 24 * 60 * 60 * 1000,
-  "15m": 14 * 24 * 60 * 60 * 1000,
-  "1d": 183 * 24 * 60 * 60 * 1000,
-};
-
-function lifecycleTimes(detail: MomentumResearchCandidateDetail) {
-  const { candidate } = detail;
-  const values = [
-    candidate.catalystEvent?.publishedAt,
-    candidate.catalystEvent?.receivedAt,
-    candidate.discoveredAt,
-    candidate.lastEvaluatedAt,
-    ...candidate.priceChecks.map((check) => check.observedAt),
-    ...candidate.scannerHandoffs.flatMap((handoff) => [
-      handoff.preparedAt, handoff.sentAt, handoff.acknowledgedAt,
-      handoff.failedAt, handoff.updatedAt,
-    ]),
-  ].flatMap((value) => {
-    if (!value) return [];
-    const timestamp = new Date(value).getTime();
-    return Number.isNaN(timestamp) ? [] : [timestamp];
-  });
-
-  return values.length ? values : [new Date(candidate.discoveredAt).getTime()];
-}
-
-function recommendedInterval(detail: MomentumResearchCandidateDetail) {
-  const times = lifecycleTimes(detail);
-  const spanWithContext = Math.max(...times) - Math.min(...times) + 2 * 60 * 60 * 1000;
-  return (["1m", "5m", "15m", "1d"] as MomentumMarketChartInterval[])
-    .find((interval) => spanWithContext <= intervalRangeMs[interval]) ?? "1d";
-}
-
-function lifecycleRange(detail: MomentumResearchCandidateDetail, interval: MomentumMarketChartInterval) {
-  const times = lifecycleTimes(detail);
-  const desiredFrom = Math.min(...times) - 60 * 60 * 1000;
-  const desiredTo = Math.max(...times) + 60 * 60 * 1000;
-  const maximum = intervalRangeMs[interval];
-
-  if (desiredTo - desiredFrom <= maximum) {
-    return { from: new Date(desiredFrom).toISOString(), to: new Date(desiredTo).toISOString() };
-  }
-
-  const from = new Date(detail.candidate.discoveredAt).getTime() - 60 * 60 * 1000;
-  return { from: new Date(from).toISOString(), to: new Date(from + maximum).toISOString() };
-}
+import type { MomentumCandidateState, MomentumMarketChartInterval } from "./types";
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "Not available";
@@ -110,12 +62,12 @@ export function MomentumCandidateDetailPage() {
   useEffect(() => {
     if (data && initializedCandidate.current !== data.candidate.id) {
       initializedCandidate.current = data.candidate.id;
-      setChartInterval(recommendedInterval(data));
+      setChartInterval(recommendedMarketChartInterval(data.candidate));
     }
   }, [data]);
 
   const chartRange = useMemo(
-    () => data ? lifecycleRange(data, chartInterval) : undefined,
+    () => data ? momentumCandidateChartRange(data.candidate, chartInterval) : undefined,
     [chartInterval, data]
   );
   const chartQuery = useMemo(() => ({
