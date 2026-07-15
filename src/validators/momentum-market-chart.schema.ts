@@ -18,6 +18,7 @@ export const momentumMarketChartQuerySchema = z
     interval: z.enum(['1m', '5m', '15m', '1d']).default('1m'),
     from: chartTimestamp.optional(),
     to: chartTimestamp.optional(),
+    candidateId: z.string().trim().min(1).max(100).optional(),
   })
   .refine(
     (value) => !value.from || !value.to || value.from <= value.to,

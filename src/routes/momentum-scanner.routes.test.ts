@@ -495,7 +495,7 @@ describe('momentum scanner routes', () => {
 
   it('provides an owner-only validated symbol chart endpoint', async () => {
     const baseUrl = await listen();
-    const path = '/api/momentum-scanner/research/symbols/aapl/chart?interval=5m&from=2026-07-10T13%3A30%3A00.000Z&to=2026-07-10T20%3A00%3A00.000Z';
+    const path = '/api/momentum-scanner/research/symbols/aapl/chart?interval=5m&candidateId=candidate-1&from=2026-07-10T13%3A30%3A00.000Z&to=2026-07-10T20%3A00%3A00.000Z';
     const unauthorized = await fetch(`${baseUrl}${path}`);
     const authorized = await fetch(`${baseUrl}${path}`, {
       headers: { 'ai-trader-api-key': ADMIN_KEY },
@@ -510,6 +510,7 @@ describe('momentum scanner routes', () => {
     expect(invalid.status).toBe(400);
     expect(mocks.getMomentumMarketChart).toHaveBeenCalledWith('AAPL', {
       interval: '5m',
+      candidateId: 'candidate-1',
       from: new Date('2026-07-10T13:30:00.000Z'),
       to: new Date('2026-07-10T20:00:00.000Z'),
     });
