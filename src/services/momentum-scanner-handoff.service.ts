@@ -9,9 +9,10 @@ import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import {
-  canPrepareMomentumHandoffState,
-  isMomentumCandidateExpired,
-} from './momentum-candidate-lifecycle.js';
+  MOMENTUM_CANDIDATE_ELIGIBILITY_REASONS,
+  evaluateMomentumHandoffEligibility,
+} from './momentum-candidate-eligibility.service.js';
+import { momentumSubscriptionEligibilitySelect } from './momentum-subscription-eligibility.service.js';
 
 export type PrepareMomentumScannerHandoffOptions = {
   force?: boolean;
@@ -56,6 +57,7 @@ export type MomentumScannerHandoffStaleReason =
   | 'CANDIDATE_EXPIRED'
   | 'CANDIDATE_BLOCKED'
   | 'SCORE_BELOW_HANDOFF_THRESHOLD'
+  | 'CANDIDATE_INELIGIBLE'
   | 'CANDIDATE_MISSING';
 
 const DEFAULT_LIMIT = 100;
@@ -66,6 +68,7 @@ const ACTIVE_HANDOFF_STATUSES = [
   MomentumScannerHandoffStatus.ACKNOWLEDGED,
 ] as const;
 const MAX_ERROR_LENGTH = 1_000;
+const MAX_ELIGIBILITY_SCAN_MULTIPLIER = 5;
 
 function normalizeId(value: string, field: string) {
   const id = value.trim();
@@ -129,6 +132,22 @@ function scannerHandoffInclude() {
       include: {
         catalystEvent: true,
         catalystImpact: true,
+        priceChecks: {
+          orderBy: { observedAt: 'desc' as const },
+          take: 1,
+        },
+        security: {
+          select: {
+            id: true,
+            momentumUniverseMember: {
+              select: { enabled: true, priceScanningEnabled: true },
+            },
+            subscriptions: {
+              select: momentumSubscriptionEligibilitySelect,
+              orderBy: { id: 'asc' as const },
+            },
+          },
+        },
       },
     },
   } satisfies Prisma.MomentumScannerHandoffInclude;
@@ -160,6 +179,18 @@ function candidateInclude() {
       },
       take: 1,
     },
+    security: {
+      select: {
+        id: true,
+        momentumUniverseMember: {
+          select: { enabled: true, priceScanningEnabled: true },
+        },
+        subscriptions: {
+          select: momentumSubscriptionEligibilitySelect,
+          orderBy: { id: 'asc' as const },
+        },
+      },
+    },
   } satisfies Prisma.MomentumCandidateInclude;
 }
 
@@ -170,6 +201,20 @@ type CandidateForHandoff = Prisma.MomentumCandidateGetPayload<{
 type HandoffForEligibility = Prisma.MomentumScannerHandoffGetPayload<{
   include: ReturnType<typeof scannerHandoffInclude>;
 }>;
+
+function handoffEligibilityContext(
+  candidate:
+    | CandidateForHandoff
+    | NonNullable<HandoffForEligibility['momentumCandidate']>
+) {
+  return {
+    state: candidate.state,
+    expiresAt: candidate.expiresAt,
+    blockedReason: candidate.blockedReason,
+    latestPriceCheck: candidate.priceChecks[0] ?? null,
+    security: candidate.security,
+  };
+}
 
 function buildIdempotencyKey(candidateId: string, payloadVersion: string) {
   return `momentum-candidate:${candidateId}:${payloadVersion}`;
@@ -287,20 +332,15 @@ function getIneligibilityReason(
     now: Date;
   }
 ) {
-  if (!canPrepareMomentumHandoffState(candidate.state)) {
-    return `Candidate state ${candidate.state} is not scanner-ready.`;
-  }
+  const eligibility = evaluateMomentumHandoffEligibility(
+    handoffEligibilityContext(candidate),
+    options.now
+  );
 
-  if (isMomentumCandidateExpired(candidate.expiresAt, options.now)) {
-    return 'Candidate is expired.';
-  }
+  if (!eligibility.eligible) return eligibility.reasons.join(', ');
 
   if (candidate.totalScore < options.minScore) {
     return `Candidate totalScore ${candidate.totalScore} is below minimum ${options.minScore}.`;
-  }
-
-  if (candidate.blockedReason !== null) {
-    return `Candidate is blocked: ${candidate.blockedReason}.`;
   }
 
   if (!options.force && candidate.scannerHandoffs.length > 0) {
@@ -323,16 +363,37 @@ function getStalePendingReason(
     return 'CANDIDATE_MISSING';
   }
 
-  if (candidate.blockedReason !== null) {
-    return 'CANDIDATE_BLOCKED';
-  }
+  const eligibility = evaluateMomentumHandoffEligibility(
+    handoffEligibilityContext(candidate),
+    options.now
+  );
 
-  if (!canPrepareMomentumHandoffState(candidate.state)) {
-    return 'CANDIDATE_NO_LONGER_ENTRY_READY';
-  }
-
-  if (isMomentumCandidateExpired(candidate.expiresAt, options.now)) {
-    return 'CANDIDATE_EXPIRED';
+  if (!eligibility.eligible) {
+    if (
+      eligibility.reasons.includes(
+        MOMENTUM_CANDIDATE_ELIGIBILITY_REASONS.CANDIDATE_BLOCKED
+      )
+    ) {
+      return 'CANDIDATE_BLOCKED';
+    }
+    if (
+      eligibility.reasons.includes(
+        MOMENTUM_CANDIDATE_ELIGIBILITY_REASONS.CANDIDATE_EXPIRED
+      )
+    ) {
+      return 'CANDIDATE_EXPIRED';
+    }
+    if (
+      eligibility.reasons.includes(
+        MOMENTUM_CANDIDATE_ELIGIBILITY_REASONS.CANDIDATE_INACTIVE
+      ) ||
+      eligibility.reasons.includes(
+        MOMENTUM_CANDIDATE_ELIGIBILITY_REASONS.CANDIDATE_UNCONFIRMED
+      )
+    ) {
+      return 'CANDIDATE_NO_LONGER_ENTRY_READY';
+    }
+    return 'CANDIDATE_INELIGIBLE';
   }
 
   if (candidate.totalScore < options.minScore) {
@@ -420,6 +481,10 @@ export async function prepareMomentumScannerHandoff(
     minScore,
     now,
   });
+  const eligibility = evaluateMomentumHandoffEligibility(
+    handoffEligibilityContext(candidate),
+    now
+  );
 
   if (skippedReason !== null) {
     return {
@@ -427,6 +492,7 @@ export async function prepareMomentumScannerHandoff(
       reason: skippedReason,
       handoff: null,
       candidate,
+      eligibility,
     };
   }
 
@@ -447,6 +513,7 @@ export async function prepareMomentumScannerHandoff(
       reason: null,
       handoff: existing,
       candidate,
+      eligibility,
     };
   }
 
@@ -492,6 +559,7 @@ export async function prepareMomentumScannerHandoff(
     reason: null,
     handoff,
     candidate,
+    eligibility,
   };
 }
 
@@ -510,6 +578,9 @@ export async function prepareReadyMomentumScannerHandoffs(
       prepared: result.skipped ? 0 : 1,
       skipped: result.skipped ? 1 : 0,
       handoffs: result.handoff ? [result.handoff] : [],
+      skipCounts: result.skipped
+        ? Object.fromEntries(result.eligibility.reasons.map((reason) => [reason, 1]))
+        : {},
       skippedReasons: result.skipped
         ? [
             {
@@ -572,7 +643,7 @@ export async function prepareReadyMomentumScannerHandoffs(
         discoveredAt: 'asc',
       },
     ],
-    take: maxCandidates,
+    take: Math.min(maxCandidates * MAX_ELIGIBILITY_SCAN_MULTIPLIER, MAX_LIMIT),
     include: candidateInclude(),
   });
   const summary = {
@@ -588,9 +659,31 @@ export async function prepareReadyMomentumScannerHandoffs(
       symbol: string;
       reason: string;
     }>,
+    skipCounts: {} as Record<string, number>,
   };
+  let selectedForHandoff = 0;
 
   for (const candidate of candidates) {
+    const eligibility = evaluateMomentumHandoffEligibility(
+      handoffEligibilityContext(candidate),
+      now
+    );
+
+    if (!eligibility.eligible) {
+      summary.skipped += 1;
+      summary.skippedReasons.push({
+        candidateId: candidate.id,
+        symbol: candidate.symbol,
+        reason: eligibility.reasons.join(', '),
+      });
+      for (const reason of eligibility.reasons) {
+        summary.skipCounts[reason] = (summary.skipCounts[reason] ?? 0) + 1;
+      }
+      continue;
+    }
+
+    if (selectedForHandoff >= maxCandidates) break;
+    selectedForHandoff += 1;
     const { maxCandidates: _maxCandidates, candidateId: _candidateId, ...prepareOptions } =
       options;
     const result = await prepareMomentumScannerHandoff(candidate.id, {

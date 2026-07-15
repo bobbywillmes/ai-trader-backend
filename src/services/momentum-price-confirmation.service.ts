@@ -6,8 +6,9 @@ import { HttpError } from '../errors/http-error.js';
 import {
   ACTIVE_MOMENTUM_CANDIDATE_STATES,
   isMomentumCandidateExpired,
-  isTerminalMomentumCandidateState,
 } from './momentum-candidate-lifecycle.js';
+import { evaluateMomentumPriceConfirmationEligibility } from './momentum-candidate-eligibility.service.js';
+import { momentumSubscriptionEligibilitySelect } from './momentum-subscription-eligibility.service.js';
 import {
   getTickerPriceConfirmationMarketData,
   type TickerPriceConfirmationMarketData,
@@ -57,6 +58,39 @@ export type PriceConfirmationScores = {
   decision: string;
   blockedReason: string | null;
 };
+
+const priceEligibilityInclude = {
+  security: {
+    select: {
+      id: true,
+      momentumUniverseMember: {
+        select: {
+          enabled: true,
+          priceScanningEnabled: true,
+        },
+      },
+      subscriptions: {
+        select: momentumSubscriptionEligibilitySelect,
+        orderBy: { id: 'asc' as const },
+      },
+    },
+  },
+} satisfies Prisma.MomentumCandidateInclude;
+const MAX_ELIGIBILITY_SCAN_MULTIPLIER = 5;
+const MAX_ELIGIBILITY_SCAN_CANDIDATES = 500;
+
+type PriceEligibilityCandidate = Prisma.MomentumCandidateGetPayload<{
+  include: typeof priceEligibilityInclude;
+}>;
+
+function priceEligibilityContext(candidate: PriceEligibilityCandidate) {
+  return {
+    state: candidate.state,
+    expiresAt: candidate.expiresAt,
+    blockedReason: candidate.blockedReason,
+    security: candidate.security,
+  };
+}
 
 function normalizePositiveInteger(
   value: number | undefined,
@@ -507,16 +541,23 @@ export async function confirmCandidatePrice(
 
   const candidate = await prisma.momentumCandidate.findUnique({
     where: { id },
+    include: priceEligibilityInclude,
   });
 
   if (!candidate) {
     throw new HttpError(404, 'Momentum candidate not found.');
   }
 
-  if (isTerminalMomentumCandidateState(candidate.state)) {
+  const eligibility = evaluateMomentumPriceConfirmationEligibility(
+    priceEligibilityContext(candidate),
+    options.now ?? new Date()
+  );
+
+  if (!eligibility.eligible) {
     return {
       skipped: true,
-      reason: `Candidate state ${candidate.state} is not eligible for price confirmation.`,
+      reason: eligibility.reasons.join(', '),
+      eligibility,
       candidate,
       priceCheck: null,
     };
@@ -539,6 +580,7 @@ export async function confirmCandidatePrice(
 
   return {
     skipped: false,
+    eligibility,
     ...result,
   };
 }
@@ -575,7 +617,11 @@ export async function confirmActiveCandidates(
         discoveredAt: 'asc',
       },
     ],
-    take: maxCandidates,
+    take: Math.min(
+      maxCandidates * MAX_ELIGIBILITY_SCAN_MULTIPLIER,
+      MAX_ELIGIBILITY_SCAN_CANDIDATES
+    ),
+    include: priceEligibilityInclude,
   });
   const summary = {
     evaluated: 0,
@@ -583,12 +629,37 @@ export async function confirmActiveCandidates(
     watching: 0,
     blocked: 0,
     skipped: 0,
+    skipCounts: {} as Record<string, number>,
     errors: [] as Array<{ candidateId: string; symbol: string; message: string }>,
     results: [] as Awaited<ReturnType<typeof confirmCandidatePrice>>[],
   };
+  let selectedForConfirmation = 0;
 
   for (const candidate of candidates) {
     try {
+      const eligibility = evaluateMomentumPriceConfirmationEligibility(
+        priceEligibilityContext(candidate),
+        options.now ?? new Date()
+      );
+
+      if (!eligibility.eligible) {
+        summary.skipped += 1;
+        for (const reason of eligibility.reasons) {
+          summary.skipCounts[reason] = (summary.skipCounts[reason] ?? 0) + 1;
+        }
+        summary.results.push({
+          skipped: true,
+          reason: eligibility.reasons.join(', '),
+          eligibility,
+          candidate,
+          priceCheck: null,
+        });
+        continue;
+      }
+
+      if (selectedForConfirmation >= maxCandidates) break;
+      selectedForConfirmation += 1;
+
       const result = await confirmCandidatePrice(candidate.id, options);
       summary.results.push(result);
 

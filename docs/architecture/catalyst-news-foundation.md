@@ -475,6 +475,19 @@ DISMISSED
 
 Price confirmation checks whether a candidate has enough market confirmation to keep watching or prepare for review.
 
+Before requesting market data, the shared eligibility evaluator requires:
+
+- an active, unexpired candidate
+- a valid `Security` relation
+- enabled universe membership
+- `priceScanningEnabled = true`
+- at least one enabled production momentum subscription
+- an enabled entry-capable `TradingAccountSubscription`
+- an active assigned trading account
+- an enabled allocation when an allocation is assigned
+
+The candidate scan is bounded and may inspect a small bounded multiple of the requested confirmation limit so configuration-ineligible candidates do not crowd out eligible candidates. Ineligible candidates are skipped before Massive market-data calls and are counted by structured reason code.
+
 The service evaluates active candidates in these states:
 
 ```text
@@ -583,10 +596,15 @@ Scanner handoffs are durable queue records for n8n review.
 A candidate is eligible for handoff when:
 
 - candidate state is `ENTRY_READY`
+- the latest stored price check is confirmed
 - candidate is not expired
 - candidate total score meets the configured handoff threshold
 - candidate has no blocked reason
+- the Security remains in the enabled, price-scanning research universe
+- the Security retains an eligible momentum subscription and account assignment
 - no active handoff already exists for the candidate and payload version, unless `force` is used
+
+These checks establish configuration readiness for a stored review payload. They do not duplicate the central risk gate, inspect broker buying power, or permit trading. Pending handoffs are also cancelled when this current eligibility is lost.
 
 Default handoff settings:
 

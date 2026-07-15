@@ -18,7 +18,7 @@ export const MOMENTUM_SUBSCRIPTION_ELIGIBILITY_REASONS = {
 export type MomentumSubscriptionEligibilityReason =
   (typeof MOMENTUM_SUBSCRIPTION_ELIGIBILITY_REASONS)[keyof typeof MOMENTUM_SUBSCRIPTION_ELIGIBILITY_REASONS];
 
-const momentumSubscriptionSelect = {
+export const momentumSubscriptionEligibilitySelect = {
   id: true,
   key: true,
   enabled: true,
@@ -52,7 +52,9 @@ const momentumSubscriptionSelect = {
 } satisfies Prisma.SubscriptionSelect;
 
 export type MomentumSubscriptionEligibilityRecord =
-  Prisma.SubscriptionGetPayload<{ select: typeof momentumSubscriptionSelect }>;
+  Prisma.SubscriptionGetPayload<{
+    select: typeof momentumSubscriptionEligibilitySelect;
+  }>;
 
 export type QualifyingMomentumSubscription = {
   subscriptionId: number;
@@ -186,7 +188,7 @@ export async function resolveActiveMomentumSubscriptionsForSecurity(
 ) {
   const subscriptions = await prisma.subscription.findMany({
     where: { securityId },
-    select: momentumSubscriptionSelect,
+    select: momentumSubscriptionEligibilitySelect,
     orderBy: { id: 'asc' },
   });
 

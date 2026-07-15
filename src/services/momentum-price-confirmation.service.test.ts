@@ -1,4 +1,4 @@
-import { MomentumCandidateState } from '@prisma/client';
+import { MomentumCandidateState, TradingAccountStatus } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -51,6 +51,31 @@ import {
 function candidate(overrides: Record<string, unknown> = {}) {
   return {
     id: 'candidate-1',
+    securityId: 1,
+    security: {
+      id: 1,
+      momentumUniverseMember: {
+        enabled: true,
+        priceScanningEnabled: true,
+      },
+      subscriptions: [
+        {
+          id: 1,
+          key: 'aapl-momentum',
+          enabled: true,
+          strategy: { id: 1, key: 'momentum_stock', enabled: true },
+          accountSubscriptions: [
+            {
+              id: 1,
+              enabled: true,
+              entriesEnabled: true,
+              tradingAccount: { id: 1, status: TradingAccountStatus.ACTIVE },
+              allocation: { id: 1, enabled: true },
+            },
+          ],
+        },
+      ],
+    },
     symbol: 'AAPL',
     state: MomentumCandidateState.DISCOVERED,
     catalystEventId: 'catalyst-event-1',
@@ -64,7 +89,7 @@ function candidate(overrides: Record<string, unknown> = {}) {
     blockedReason: null,
     discoveredAt: new Date('2026-07-04T14:00:00.000Z'),
     lastEvaluatedAt: new Date('2026-07-04T14:00:00.000Z'),
-    expiresAt: new Date('2026-07-05T14:00:00.000Z'),
+    expiresAt: new Date('2099-07-05T14:00:00.000Z'),
     rawSnapshot: {
       catalystEvent: {
         id: 'catalyst-event-1',
@@ -344,6 +369,21 @@ describe('momentum price confirmation service', () => {
     }
   });
 
+  it('does not request market data for a configuration-ineligible candidate', async () => {
+    mocks.momentumCandidateFindUnique.mockResolvedValue(
+      candidate({ security: { ...candidate().security, subscriptions: [] } })
+    );
+
+    await expect(confirmCandidatePrice('candidate-1')).resolves.toMatchObject({
+      skipped: true,
+      eligibility: { eligible: false, reasons: ['NO_SUBSCRIPTION'] },
+      priceCheck: null,
+    });
+
+    expect(mocks.getTickerPriceConfirmationMarketData).not.toHaveBeenCalled();
+    expect(mocks.priceCheckCreate).not.toHaveBeenCalled();
+  });
+
   it('respects the configured max candidate limit when confirming a batch', async () => {
     mocks.momentumCandidateFindMany.mockResolvedValue([
       candidate({ id: 'candidate-1', symbol: 'AAPL' }),
@@ -358,7 +398,7 @@ describe('momentum price confirmation service', () => {
       minCatalystScore: 80,
     });
 
-    expect(mocks.momentumCandidateFindMany).toHaveBeenCalledWith({
+    expect(mocks.momentumCandidateFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: {
         state: {
           in: [
@@ -380,8 +420,8 @@ describe('momentum price confirmation service', () => {
           discoveredAt: 'asc',
         },
       ],
-      take: 2,
-    });
+      take: 10,
+    }));
   });
 
   it('repeated confirmation keeps candidate raw snapshots shallow', async () => {

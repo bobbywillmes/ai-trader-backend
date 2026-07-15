@@ -7,6 +7,7 @@ import {
   MomentumCandidateState,
   MomentumScannerHandoffStatus,
   Prisma,
+  TradingAccountStatus,
 } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -157,7 +158,31 @@ function priceCheck(overrides: Record<string, unknown> = {}) {
 function candidate(overrides: Record<string, unknown> = {}) {
   return {
     id: 'candidate-1',
-    securityId: null,
+    securityId: 1,
+    security: {
+      id: 1,
+      momentumUniverseMember: {
+        enabled: true,
+        priceScanningEnabled: true,
+      },
+      subscriptions: [
+        {
+          id: 1,
+          key: 'mu-momentum',
+          enabled: true,
+          strategy: { id: 1, key: 'momentum_stock', enabled: true },
+          accountSubscriptions: [
+            {
+              id: 1,
+              enabled: true,
+              entriesEnabled: true,
+              tradingAccount: { id: 1, status: TradingAccountStatus.ACTIVE },
+              allocation: { id: 1, enabled: true },
+            },
+          ],
+        },
+      ],
+    },
     symbol: 'MU',
     state: MomentumCandidateState.ENTRY_READY,
     catalystEventId: 'catalyst-event-1',
@@ -286,6 +311,26 @@ describe('momentum scanner handoff service', () => {
     }
   });
 
+  it('does not prepare a handoff without an eligible momentum subscription', async () => {
+    mocks.momentumCandidateFindUnique.mockResolvedValue(
+      candidate({
+        security: { ...candidate().security, subscriptions: [] },
+      })
+    );
+
+    await expect(
+      prepareMomentumScannerHandoff('candidate-1', {
+        now: new Date('2026-07-04T15:32:00.000Z'),
+      })
+    ).resolves.toMatchObject({
+      skipped: true,
+      eligibility: { eligible: false, reasons: ['NO_SUBSCRIPTION'] },
+      handoff: null,
+    });
+
+    expect(mocks.handoffCreate).not.toHaveBeenCalled();
+  });
+
   it('builds a review-only payload with candidate, catalyst, and latest price data only', async () => {
     const payload = await buildMomentumScannerPayload('candidate-1');
 
@@ -399,7 +444,7 @@ describe('momentum scanner handoff service', () => {
           },
           blockedReason: null,
         }),
-        take: 2,
+        take: 10,
       })
     );
   });
