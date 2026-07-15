@@ -1,7 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 
 import {
-  getStrategies,
   getSubscriptionByKey,
   getSubscriptions
 } from '../services/subscription.service.js';
@@ -27,18 +26,6 @@ function parsePositiveId(value: string) {
 
 function getRouteParam(value: unknown) {
   return typeof value === 'string' && value.trim() ? value : undefined;
-}
-
-export async function strategiesController(
-  _req: Request,
-  res: Response,
-  next: NextFunction
-) {
-  try {
-    res.status(200).json(await getStrategies());
-  } catch (error) {
-    next(error);
-  }
 }
 
 export async function subscriptionsController(

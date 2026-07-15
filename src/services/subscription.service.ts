@@ -14,12 +14,6 @@ import type {
 } from '../validators/algo-admin.schema.js';
 import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
-export async function getStrategies() {
-  return prisma.strategy.findMany({
-    orderBy: { key: 'asc' }
-  });
-}
-
 export async function getSubscriptions() {
   const tradingAccountId = await resolveDefaultTradingAccountId();
 
