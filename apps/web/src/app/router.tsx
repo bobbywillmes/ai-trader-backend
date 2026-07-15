@@ -42,6 +42,7 @@ import { MomentumCandidatesPage } from "../features/momentumScanner/MomentumCand
 import { MomentumCatalystsPage } from "../features/momentumScanner/MomentumCatalystsPage";
 import { MomentumCandidateDetailPage } from "../features/momentumScanner/MomentumCandidateDetailPage";
 import { StrategiesPage } from "../features/strategies/StrategiesPage";
+import { StrategyDetailPage } from "../features/strategies/StrategyDetailPage";
 import { UsersPage } from "../features/users/UsersPage";
 import { AccountPage } from "../features/accountPortal/AccountPage";
 import {
@@ -123,6 +124,10 @@ export const router = createBrowserRouter([
               {
                 path: "strategies",
                 element: requirePermission("strategy.read", <StrategiesPage />),
+              },
+              {
+                path: "strategies/:strategyId",
+                element: requirePermission("strategy.read", <StrategyDetailPage />),
               },
               {
                 path: "trading-accounts",
