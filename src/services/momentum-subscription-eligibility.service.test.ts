@@ -120,6 +120,44 @@ describe('momentum subscription eligibility', () => {
     });
   });
 
+  it('reacts to strategy state while preserving subscription and account controls', () => {
+    const record = subscription({
+      strategy: { id: 30, key: 'momentum_stock', enabled: false },
+      accountSubscriptions: [
+        assignment({ allocation: { id: 20, enabled: false } }),
+      ],
+    });
+    const subscriptionState = {
+      id: record.id,
+      key: record.key,
+      enabled: record.enabled,
+      accountSubscriptions: structuredClone(record.accountSubscriptions),
+    };
+
+    expect(evaluateMomentumSubscriptionEligibility([record])).toMatchObject({
+      eligible: false,
+      reasons: [REASON.STRATEGY_DISABLED],
+    });
+
+    record.strategy.enabled = true;
+    const enabledResult = evaluateMomentumSubscriptionEligibility([record]);
+    expect(enabledResult.eligible).toBe(false);
+    expect(enabledResult.reasons).not.toContain(REASON.STRATEGY_DISABLED);
+    expect(enabledResult.reasons).toContain(REASON.ALLOCATION_DISABLED);
+
+    record.strategy.enabled = false;
+    expect(evaluateMomentumSubscriptionEligibility([record])).toMatchObject({
+      eligible: false,
+      reasons: [REASON.STRATEGY_DISABLED],
+    });
+    expect({
+      id: record.id,
+      key: record.key,
+      enabled: record.enabled,
+      accountSubscriptions: record.accountSubscriptions,
+    }).toEqual(subscriptionState);
+  });
+
   it('requires a modern trading-account assignment', () => {
     expect(
       evaluateMomentumSubscriptionEligibility([
