@@ -8,6 +8,10 @@ import {
 import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
+import {
+  canPrepareMomentumHandoffState,
+  isMomentumCandidateExpired,
+} from './momentum-candidate-lifecycle.js';
 
 export type PrepareMomentumScannerHandoffOptions = {
   force?: boolean;
@@ -283,11 +287,11 @@ function getIneligibilityReason(
     now: Date;
   }
 ) {
-  if (candidate.state !== MomentumCandidateState.ENTRY_READY) {
+  if (!canPrepareMomentumHandoffState(candidate.state)) {
     return `Candidate state ${candidate.state} is not scanner-ready.`;
   }
 
-  if (candidate.expiresAt !== null && candidate.expiresAt <= options.now) {
+  if (isMomentumCandidateExpired(candidate.expiresAt, options.now)) {
     return 'Candidate is expired.';
   }
 
@@ -323,11 +327,11 @@ function getStalePendingReason(
     return 'CANDIDATE_BLOCKED';
   }
 
-  if (candidate.state !== MomentumCandidateState.ENTRY_READY) {
+  if (!canPrepareMomentumHandoffState(candidate.state)) {
     return 'CANDIDATE_NO_LONGER_ENTRY_READY';
   }
 
-  if (candidate.expiresAt !== null && candidate.expiresAt <= options.now) {
+  if (isMomentumCandidateExpired(candidate.expiresAt, options.now)) {
     return 'CANDIDATE_EXPIRED';
   }
 

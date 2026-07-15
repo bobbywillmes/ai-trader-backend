@@ -7,18 +7,14 @@ import {
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import { serializeMomentumCandidatePriceCheck } from '../serializers/momentum-candidate-price-check.serializer.js';
+import { ACTIVE_MOMENTUM_CANDIDATE_STATES } from './momentum-candidate-lifecycle.js';
 import type {
   MomentumResearchCandidatesQuery,
   MomentumResearchCatalystsQuery,
 } from '../validators/momentum-research.schema.js';
 
 export const MOMENTUM_RESEARCH_RECENT_HOURS = 24;
-export const MOMENTUM_RESEARCH_ACTIVE_STATES = [
-  MomentumCandidateState.DISCOVERED,
-  MomentumCandidateState.WATCHING,
-  MomentumCandidateState.ENTRY_READY,
-  MomentumCandidateState.ENTRY_BLOCKED,
-] as const;
+export const MOMENTUM_RESEARCH_ACTIVE_STATES = ACTIVE_MOMENTUM_CANDIDATE_STATES;
 
 const candidateResearchInclude = {
   catalystEvent: {

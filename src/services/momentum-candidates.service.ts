@@ -8,6 +8,7 @@ import {
 
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
+import { ACTIVE_MOMENTUM_CANDIDATE_STATES } from './momentum-candidate-lifecycle.js';
 
 export type MomentumCandidateFilters = {
   symbol?: string;
@@ -32,13 +33,6 @@ const MAX_LIMIT = 500;
 const DEFAULT_MIN_CATALYST_SCORE = 60;
 const DEFAULT_RECENT_LOOKBACK_HOURS = 24;
 const DEFAULT_EXPIRES_IN_HOURS = 24;
-const ACTIVE_CANDIDATE_STATES = [
-  MomentumCandidateState.DISCOVERED,
-  MomentumCandidateState.WATCHING,
-  MomentumCandidateState.ENTRY_READY,
-  MomentumCandidateState.ENTRY_BLOCKED,
-] as const;
-
 function normalizeLimit(limit: number | undefined) {
   if (!Number.isInteger(limit) || limit === undefined || limit <= 0) {
     return DEFAULT_LIMIT;
@@ -304,7 +298,7 @@ export async function expireStaleMomentumCandidates(
   const result = await prisma.momentumCandidate.updateMany({
     where: {
       state: {
-        in: [...ACTIVE_CANDIDATE_STATES],
+        in: [...ACTIVE_MOMENTUM_CANDIDATE_STATES],
       },
       expiresAt: {
         lte: now,

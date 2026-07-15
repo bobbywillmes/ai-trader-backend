@@ -114,3 +114,11 @@ export function getStrategyDefinition(
 ): StrategyDefinition {
   return STRATEGY_DEFINITIONS[strategyKey];
 }
+
+export function isMomentumContinuationStrategyKey(value: string) {
+  return (
+    isStrategyKey(value) &&
+    STRATEGY_DEFINITIONS[value].family ===
+      STRATEGY_FAMILIES.MOMENTUM_CONTINUATION
+  );
+}

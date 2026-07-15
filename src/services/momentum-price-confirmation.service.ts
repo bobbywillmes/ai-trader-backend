@@ -4,6 +4,11 @@ import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import {
+  ACTIVE_MOMENTUM_CANDIDATE_STATES,
+  isMomentumCandidateExpired,
+  isTerminalMomentumCandidateState,
+} from './momentum-candidate-lifecycle.js';
+import {
   getTickerPriceConfirmationMarketData,
   type TickerPriceConfirmationMarketData,
 } from './massive-market-data.service.js';
@@ -52,18 +57,6 @@ export type PriceConfirmationScores = {
   decision: string;
   blockedReason: string | null;
 };
-
-const ACTIVE_CANDIDATE_STATES = [
-  MomentumCandidateState.DISCOVERED,
-  MomentumCandidateState.WATCHING,
-  MomentumCandidateState.ENTRY_READY,
-  MomentumCandidateState.ENTRY_BLOCKED,
-] as const;
-
-const SKIPPED_CANDIDATE_STATES: readonly MomentumCandidateState[] = [
-  MomentumCandidateState.EXPIRED,
-  MomentumCandidateState.DISMISSED,
-] as const;
 
 function normalizePositiveInteger(
   value: number | undefined,
@@ -226,7 +219,7 @@ function getHardBlockReason(
   snapshot: PriceConfirmationSnapshot,
   now: Date
 ) {
-  if (candidate.expiresAt !== null && candidate.expiresAt <= now) {
+  if (isMomentumCandidateExpired(candidate.expiresAt, now)) {
     return 'CANDIDATE_EXPIRED';
   }
 
@@ -520,7 +513,7 @@ export async function confirmCandidatePrice(
     throw new HttpError(404, 'Momentum candidate not found.');
   }
 
-  if (SKIPPED_CANDIDATE_STATES.includes(candidate.state)) {
+  if (isTerminalMomentumCandidateState(candidate.state)) {
     return {
       skipped: true,
       reason: `Candidate state ${candidate.state} is not eligible for price confirmation.`,
@@ -559,7 +552,7 @@ export async function confirmActiveCandidates(
   );
   const states = options.state
     ? [options.state]
-    : [...ACTIVE_CANDIDATE_STATES];
+    : [...ACTIVE_MOMENTUM_CANDIDATE_STATES];
   const where: Prisma.MomentumCandidateWhereInput = {
     state: {
       in: states,
