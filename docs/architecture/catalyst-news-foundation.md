@@ -67,7 +67,7 @@ High-level flow:
 8. `ENTRY_READY` candidates can be prepared as `MomentumScannerHandoff` queue records.
 9. n8n pulls currently valid `PENDING` handoffs, sends Slack review alerts, and marks successful deliveries as `SENT`.
 
-## Current Ownership And Eligibility Audit
+## Pre-Implementation Ownership And Eligibility Audit
 
 This section records the behavior found before the security-ownership and
 eligibility work began. It is deliberately descriptive: behavior listed here
@@ -711,6 +711,9 @@ navigation without adding another sidebar section.
 entry-ready, and blocked candidates; catalyst events received during the
 previous 24 hours; prepared handoffs; enabled universe membership; top active
 candidates; recently evaluated or updated candidates; and cursor-derived health.
+It also shows compact configuration-health counts for momentum-eligible,
+research-only, and mismatched ownership plus price-confirmation and handoff
+readiness. Diagnostic scans are bounded and disclose truncation.
 
 There is no candidate transition-audit model. The dashboard therefore labels
 recent records as recently updated candidates instead of claiming a complete
@@ -720,13 +723,17 @@ transition history.
 
 `/momentum-scanner/candidates` provides database-backed pagination and filters
 for symbol, state, minimum score, catalyst type, readiness, discovery date, and
-safe sorting. It does not fetch the full candidate table for client filtering.
+safe sorting. A compact page summary distinguishes momentum-enabled,
+research-only, and price-confirmation-eligible rows. It does not fetch the full
+candidate table for client filtering.
 
 `/momentum-scanner/candidates/:candidateId` is a read-only case file with the
 candidate state and timestamps, raw stored score components, linked catalyst and
 ticker reasoning, chronological price checks, prepared handoffs, and related
 Security/universe/subscription context. The UI does not invent score denominators
 because the schema does not formally persist a maximum for every component.
+Configuration eligibility and its reasons are displayed separately from the
+stored candidate lifecycle state; a handoff-eligible label is not order approval.
 
 ### Catalyst Browsing
 
@@ -739,10 +746,15 @@ raw arrays.
 
 `/momentum-scanner/symbols/:symbol` aggregates stored scanner context for an
 existing `Security`. Explicit universe membership, news and price-scanning
-configuration, cursor state, subscription availability, open positions, and
+configuration, momentum-specific subscription eligibility, cursor state, open positions, and
 candidate state remain separate concepts. The page shows stored score reasoning,
 catalyst history, price checks, handoffs, and candidate history without claiming
 trade outcomes.
+
+The Research Universe table labels each member as `MOMENTUM ENABLED` or
+`RESEARCH ONLY` using the shared subscription resolver and reports qualifying
+subscriptions separately from total subscriptions. It does not mutate
+subscriptions.
 
 ### Research Universe
 
