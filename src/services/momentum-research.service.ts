@@ -721,9 +721,29 @@ export async function getMomentumResearchCandidate(candidateId: string) {
     getResearchSecurity(candidate.symbol),
     getSymbolCursors(candidate.symbol),
   ]);
+  const candidateEligibilityContext = {
+    state: candidate.state,
+    expiresAt: candidate.expiresAt,
+    blockedReason: candidate.blockedReason,
+    latestPriceCheck: candidate.priceChecks.at(-1) ?? null,
+    security: security ? {
+      id: security.id,
+      momentumUniverseMember: security.momentumUniverseMember,
+      subscriptions: security.subscriptions,
+    } : null,
+  };
+  const priceConfirmationEligibility = evaluateMomentumPriceConfirmationEligibility(candidateEligibilityContext);
+  const handoffEligibility = evaluateMomentumHandoffEligibility(candidateEligibilityContext);
 
   return {
     candidate: serializeFullCandidate(candidate),
+    eligibility: {
+      momentumSubscriptionEligibility: priceConfirmationEligibility.momentumSubscriptionEligibility,
+      priceConfirmationEligible: priceConfirmationEligibility.eligible,
+      handoffEligible: handoffEligibility.eligible,
+      priceConfirmationReasons: priceConfirmationEligibility.reasons,
+      handoffReasons: handoffEligibility.reasons,
+    },
     security: security
       ? {
           id: security.id,

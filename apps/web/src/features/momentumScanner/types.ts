@@ -488,6 +488,7 @@ export type MomentumResearchCandidateDetail = {
       updatedAt: string;
     }>;
   };
+  eligibility: MomentumResearchCandidateRow["eligibility"];
   security: {
     id: number;
     symbol: string;

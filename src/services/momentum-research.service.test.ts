@@ -151,7 +151,7 @@ describe('momentum research service', () => {
       id: 1, symbol: 'AAPL', name: 'Apple Inc.', assetType: 'STOCK', enabled: true,
       sector: 'Technology', industry: null,
       momentumUniverseMember: { id: 'member-1', enabled: true },
-      subscriptions: [{ id: 1, enabled: true }], trackedPositions: [],
+      subscriptions: [{ id: 1, key: 'aapl-momentum', name: 'AAPL momentum', symbol: 'AAPL', broker: 'ALPACA', brokerMode: 'PAPER', enabled: true, strategy: { id: 4, key: 'momentum_stock', name: 'Momentum Stock', enabled: true }, exitProfile: null, tradingAccount: null, accountSubscriptions: [] }], trackedPositions: [],
     });
 
     const result = await getMomentumResearchCandidate('candidate-1');
@@ -165,6 +165,7 @@ describe('momentum research service', () => {
       security: { symbol: 'AAPL', name: 'Apple Inc.' },
       universeMembership: { id: 'member-1' },
       tradingContext: { hasEnabledSubscription: true, openPositions: [] },
+      eligibility: { momentumSubscriptionEligibility: { eligible: false, reasons: ['NO_TRADING_ACCOUNT'] }, priceConfirmationEligible: false, handoffEligible: false },
     });
   });
 
