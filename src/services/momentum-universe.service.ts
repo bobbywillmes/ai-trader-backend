@@ -3,6 +3,7 @@ import { CatalystSource, Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import { serializeMomentumUniverseMember } from '../serializers/momentum-universe.serializer.js';
+import { momentumSubscriptionEligibilitySelect } from './momentum-subscription-eligibility.service.js';
 import type {
   CreateMomentumUniverseMemberInput,
   ListMomentumUniverseInput,
@@ -15,6 +16,7 @@ const memberInclude = {
       _count: {
         select: { subscriptions: true },
       },
+      subscriptions: { select: momentumSubscriptionEligibilitySelect },
     },
   },
 } as const satisfies Prisma.MomentumUniverseMemberInclude;

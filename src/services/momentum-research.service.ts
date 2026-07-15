@@ -99,7 +99,7 @@ async function loadSymbolContext(symbols: string[]) {
         },
       },
       subscriptions: {
-        select: { enabled: true },
+        select: momentumSubscriptionEligibilitySelect,
       },
     },
   });
@@ -120,6 +120,7 @@ async function loadSymbolContext(symbols: string[]) {
           subscriptionCount: security.subscriptions.length,
           enabledSubscriptionCount: security.subscriptions.filter((item) => item.enabled).length,
         },
+        subscriptions: security.subscriptions,
       },
     ])
   );
@@ -131,6 +132,27 @@ function serializeCandidate(
 ) {
   const latestPriceCheck = candidate.priceChecks[0] ?? null;
   const latestHandoff = candidate.scannerHandoffs[0] ?? null;
+
+  const candidateContext = context && typeof context === 'object'
+    ? context as {
+        security: { id: number } | null;
+        universe: { enabled: boolean; priceScanningEnabled: boolean } | null;
+        subscriptions: Parameters<typeof evaluateMomentumSubscriptionEligibility>[0];
+      }
+    : null;
+  const eligibilityInput = {
+    state: candidate.state,
+    expiresAt: candidate.expiresAt,
+    blockedReason: candidate.blockedReason,
+    latestPriceCheck,
+    security: candidateContext?.security ? {
+      id: candidateContext.security.id,
+      momentumUniverseMember: candidateContext.universe,
+      subscriptions: candidateContext.subscriptions,
+    } : null,
+  };
+  const priceEligibility = evaluateMomentumPriceConfirmationEligibility(eligibilityInput);
+  const handoffEligibility = evaluateMomentumHandoffEligibility(eligibilityInput);
 
   return {
     id: candidate.id,
@@ -156,6 +178,13 @@ function serializeCandidate(
     catalystImpact: candidate.catalystImpact,
     latestPriceCheck: serializeMomentumCandidatePriceCheck(latestPriceCheck),
     latestHandoff,
+    eligibility: {
+      momentumSubscriptionEligibility: priceEligibility.momentumSubscriptionEligibility,
+      priceConfirmationEligible: priceEligibility.eligible,
+      handoffEligible: handoffEligibility.eligible,
+      priceConfirmationReasons: priceEligibility.reasons,
+      handoffReasons: handoffEligibility.reasons,
+    },
     ...(context && typeof context === 'object' ? context : {
       security: null,
       universe: null,

@@ -127,11 +127,11 @@ describe('momentum research service', () => {
 
   it('paginates and filters candidates, then batch-loads symbol context', async () => {
     mocks.candidateFindMany.mockResolvedValue([candidate()]); mocks.candidateCount.mockResolvedValue(1);
-    mocks.securityFindMany.mockResolvedValue([{ id: 1, symbol: 'AAPL', name: 'Apple Inc.', assetType: 'STOCK', enabled: true, momentumUniverseMember: { id: 'member-1', enabled: true, newsEnabled: true, priceScanningEnabled: true }, subscriptions: [{ enabled: true }, { enabled: false }] }]);
+    mocks.securityFindMany.mockResolvedValue([{ id: 1, symbol: 'AAPL', name: 'Apple Inc.', assetType: 'STOCK', enabled: true, momentumUniverseMember: { id: 'member-1', enabled: true, newsEnabled: true, priceScanningEnabled: true }, subscriptions: [{ id: 1, key: 'momentum', enabled: true, strategy: { id: 1, key: 'momentum_stock', enabled: true }, accountSubscriptions: [] }, { id: 2, key: 'disabled', enabled: false, strategy: { id: 1, key: 'momentum_stock', enabled: true }, accountSubscriptions: [] }] }]);
     const result = await listMomentumResearchCandidates({ page: 2, pageSize: 10, search: 'aap', minTotalScore: 80, catalystType: CatalystEventType.PARTNERSHIP, entryReady: true, sortBy: 'totalScore', sortDirection: 'desc' });
     expect(mocks.candidateFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { symbol: { contains: 'AAP', mode: 'insensitive' }, totalScore: { gte: 80 }, catalystEvent: { eventType: CatalystEventType.PARTNERSHIP }, state: MomentumCandidateState.ENTRY_READY }, skip: 10, take: 10, orderBy: [{ totalScore: 'desc' }, { id: 'asc' }] }));
     expect(mocks.securityFindMany).toHaveBeenCalledTimes(1);
-    expect(result).toMatchObject({ data: [{ symbol: 'AAPL', security: { name: 'Apple Inc.' }, tradingAvailability: { subscriptionCount: 2, enabledSubscriptionCount: 1 } }], pagination: { page: 2, pageSize: 10, total: 1, totalPages: 1 } });
+    expect(result).toMatchObject({ data: [{ symbol: 'AAPL', security: { name: 'Apple Inc.' }, tradingAvailability: { subscriptionCount: 2, enabledSubscriptionCount: 1 }, eligibility: { momentumSubscriptionEligibility: { eligible: false, reasons: ['NO_TRADING_ACCOUNT'] }, priceConfirmationEligible: false } }], pagination: { page: 2, pageSize: 10, total: 1, totalPages: 1 } });
   });
 
   it('paginates and filters catalysts with a safe sort field', async () => {

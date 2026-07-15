@@ -260,6 +260,13 @@ export type MomentumUniverseMember = {
     assetType: AssetType;
   };
   subscriptionCount: number;
+  momentumSubscriptionEligibility: {
+    eligible: boolean;
+    subscriptionCount: number;
+    enabledSubscriptionCount: number;
+    qualifyingSubscriptionIds: number[];
+    reasons: string[];
+  };
   cursor: MomentumUniverseCursor | null;
 };
 
@@ -333,6 +340,17 @@ export type MomentumResearchCandidateRow = {
   tradingAvailability: {
     subscriptionCount: number;
     enabledSubscriptionCount: number;
+  };
+  eligibility: {
+    momentumSubscriptionEligibility: {
+      eligible: boolean;
+      qualifyingSubscriptionIds: number[];
+      reasons: string[];
+    };
+    priceConfirmationEligible: boolean;
+    handoffEligible: boolean;
+    priceConfirmationReasons: string[];
+    handoffReasons: string[];
   };
 };
 
