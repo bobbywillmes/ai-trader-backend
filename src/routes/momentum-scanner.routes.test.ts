@@ -87,6 +87,18 @@ function handoff(overrides: Record<string, unknown> = {}) {
         headline: 'AAPL momentum catalyst',
       },
     },
+    momentumCandidate: {
+      id: 'candidate-1',
+      priceChecks: [
+        {
+          id: 'price-check-1',
+          dayVolume: 9_007_199_254_740_993n,
+          recentVolume: 250_000n,
+          rawPayload: { vendor: 'massive' },
+          metadata: null,
+        },
+      ],
+    },
     ...overrides,
   };
 }
@@ -148,7 +160,8 @@ describe('momentum scanner routes', () => {
       prepared: 1,
       skipped: 0,
       handoffs: [handoff()],
-      results: [{ candidateId: 'candidate-1', handoff: handoff() }],
+      skipCounts: {},
+      skippedReasons: [],
     });
     mocks.listMomentumScannerHandoffs.mockResolvedValue([handoff()]);
     mocks.cancelStalePendingHandoffs.mockResolvedValue({
@@ -577,9 +590,62 @@ describe('momentum scanner routes', () => {
     await expect(jsonResponse(response)).resolves.toMatchObject({
       prepared: 1,
       skipped: 0,
-      handoffs: [{ id: 'handoff-1', status: 'PENDING' }],
+      handoffs: [
+        {
+          id: 'handoff-1',
+          status: 'PENDING',
+          momentumCandidate: {
+            priceChecks: [
+              {
+                dayVolume: '9007199254740993',
+                recentVolume: '250000',
+              },
+            ],
+          },
+        },
+      ],
     });
     expect(mocks.prepareReadyMomentumScannerHandoffs).toHaveBeenCalledWith({});
+  });
+
+  it('returns skipped handoff results as JSON without changing diagnostics', async () => {
+    mocks.prepareReadyMomentumScannerHandoffs.mockResolvedValueOnce({
+      prepared: 0,
+      skipped: 1,
+      handoffs: [],
+      skipCounts: { NO_TRADING_ACCOUNT: 1 },
+      skippedReasons: [
+        {
+          candidateId: 'candidate-1',
+          symbol: 'AAPL',
+          reason: 'NO_TRADING_ACCOUNT',
+        },
+      ],
+    });
+    const baseUrl = await listen();
+
+    const response = await fetch(
+      `${baseUrl}/api/signals/momentum-scanner/prepare-handoffs`,
+      {
+        method: 'POST',
+        headers: { 'signal-key': SIGNAL_KEY },
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(jsonResponse(response)).resolves.toMatchObject({
+      prepared: 0,
+      skipped: 1,
+      handoffs: [],
+      skipCounts: { NO_TRADING_ACCOUNT: 1 },
+      skippedReasons: [
+        {
+          candidateId: 'candidate-1',
+          symbol: 'AAPL',
+          reason: 'NO_TRADING_ACCOUNT',
+        },
+      ],
+    });
   });
 
   it('defaults handoff listing to currently valid pending handoffs for n8n polling', async () => {

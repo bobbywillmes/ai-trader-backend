@@ -13,6 +13,11 @@ import {
   type MarkMomentumScannerHandoffOptions,
   type PrepareReadyMomentumScannerHandoffsOptions,
 } from '../services/momentum-scanner-handoff.service.js';
+import {
+  serializeMomentumScannerHandoff,
+  serializeMomentumScannerHandoffPreparation,
+  serializeMomentumScannerHandoffs,
+} from '../serializers/momentum-scanner-handoff.serializer.js';
 import { isObject } from '../utils/type-check.js';
 
 function getQueryString(value: unknown) {
@@ -175,7 +180,13 @@ export async function listMomentumScannerHandoffsController(
     if (limit !== undefined) filters.limit = limit;
     if (status !== undefined) filters.status = status;
 
-    res.status(200).json(await listMomentumScannerHandoffs(filters));
+    res
+      .status(200)
+      .json(
+        serializeMomentumScannerHandoffs(
+          await listMomentumScannerHandoffs(filters)
+        )
+      );
   } catch (error) {
     next(error);
   }
@@ -188,7 +199,9 @@ export async function getMomentumScannerHandoffController(
 ) {
   try {
     res.status(200).json(
-      await getMomentumScannerHandoffById(getHandoffIdParam(req))
+      serializeMomentumScannerHandoff(
+        await getMomentumScannerHandoffById(getHandoffIdParam(req))
+      )
     );
   } catch (error) {
     next(error);
@@ -220,7 +233,11 @@ export async function prepareMomentumScannerHandoffsController(
     if (now !== undefined) options.now = now;
     if (payloadVersion !== undefined) options.payloadVersion = payloadVersion;
 
-    res.status(200).json(await prepareReadyMomentumScannerHandoffs(options));
+    res.status(200).json(
+      serializeMomentumScannerHandoffPreparation(
+        await prepareReadyMomentumScannerHandoffs(options)
+      )
+    );
   } catch (error) {
     next(error);
   }
@@ -237,9 +254,11 @@ export async function markMomentumScannerHandoffSentController(
     }
 
     res.status(200).json(
-      await markMomentumScannerHandoffSent(
-        getHandoffIdParam(req),
-        parseMarkOptions(req.body)
+      serializeMomentumScannerHandoff(
+        await markMomentumScannerHandoffSent(
+          getHandoffIdParam(req),
+          parseMarkOptions(req.body)
+        )
       )
     );
   } catch (error) {
@@ -258,9 +277,11 @@ export async function acknowledgeMomentumScannerHandoffController(
     }
 
     res.status(200).json(
-      await markMomentumScannerHandoffAcknowledged(
-        getHandoffIdParam(req),
-        parseMarkOptions(req.body)
+      serializeMomentumScannerHandoff(
+        await markMomentumScannerHandoffAcknowledged(
+          getHandoffIdParam(req),
+          parseMarkOptions(req.body)
+        )
       )
     );
   } catch (error) {
@@ -285,10 +306,12 @@ export async function markMomentumScannerHandoffFailedController(
     }
 
     res.status(200).json(
-      await markMomentumScannerHandoffFailed(
-        getHandoffIdParam(req),
-        error,
-        parseMarkOptions(req.body)
+      serializeMomentumScannerHandoff(
+        await markMomentumScannerHandoffFailed(
+          getHandoffIdParam(req),
+          error,
+          parseMarkOptions(req.body)
+        )
       )
     );
   } catch (caught) {
