@@ -24,6 +24,7 @@ import {
   getLatestMomentumPipelineRuns,
   listMomentumPipelineRuns,
   expireMomentumCandidates,
+  runFullMomentumPipeline,
 } from "./api";
 import type {
   CatalystEventQuery,
@@ -38,6 +39,7 @@ import type {
   MomentumResearchCandidatesQuery,
   MomentumResearchCatalystsQuery,
   MomentumMarketChartQuery,
+  FullMomentumPipelineRequest,
 } from "./types";
 
 export const momentumScannerKeys = {
@@ -89,6 +91,15 @@ export function useExpireMomentumCandidates(token: string | null) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => expireMomentumCandidates(token as string),
+    onSuccess: () => invalidateMomentumScanner(queryClient),
+  });
+}
+
+export function useRunFullMomentumPipeline(token: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (request: FullMomentumPipelineRequest) =>
+      runFullMomentumPipeline(token as string, request),
     onSuccess: () => invalidateMomentumScanner(queryClient),
   });
 }

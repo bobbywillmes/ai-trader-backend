@@ -42,6 +42,7 @@ import {
   useLatestMomentumPipelineRuns,
   useMomentumPipelineRuns,
   useExpireMomentumCandidates,
+  useRunFullMomentumPipeline,
 } from "./hooks";
 import type {
   CatalystEvent,
@@ -256,6 +257,7 @@ export function MomentumScannerPipelinePage() {
   const latestPipelineRuns = useLatestMomentumPipelineRuns(token);
   const pipelineRuns = useMomentumPipelineRuns(token, 10);
   const expireCandidates = useExpireMomentumCandidates(token);
+  const runFullPipeline = useRunFullMomentumPipeline(token);
 
   const catalystEvents = useMemo(
     () => catalystEventsQuery.data ?? [],
@@ -272,6 +274,7 @@ export function MomentumScannerPipelinePage() {
   const isActionPending =
     runNewsWorker.isPending ||
     expireCandidates.isPending ||
+    runFullPipeline.isPending ||
     generateCandidates.isPending ||
     confirmPrices.isPending ||
     prepareHandoffs.isPending;
@@ -350,6 +353,38 @@ export function MomentumScannerPipelinePage() {
     );
   }
 
+  function handleRunFullPipeline() {
+    void (async () => {
+      try {
+        const result = await runFullPipeline.mutateAsync({
+        metadata: { requestedFrom: "scanner-pipeline-ui" },
+        minCatalystScore,
+        candidateTake,
+        expiresInHours,
+        maxCandidates,
+        minHandoffScore,
+        });
+        const details = [
+        `run ${result.runId}`,
+        result.status.toLowerCase(),
+        result.failedStage ? `failed at ${result.failedStage.replaceAll("_", " ").toLowerCase()}` : "core stages recorded",
+        ];
+        setLastAction({ label: "Full pipeline run", details });
+        notifications.show({
+          title: "Full pipeline run",
+          message: details.join(" | "),
+          color: result.status === "FAILED" ? "red" : result.status === "PARTIAL" ? "yellow" : "teal",
+        });
+      } catch (error) {
+        notifications.show({
+          title: "Unable to start full pipeline",
+          message: error instanceof Error ? error.message : "Unknown error.",
+          color: "red",
+        });
+      }
+    })();
+  }
+
   function handlePrepareHandoffs() {
     const request: PrepareMomentumScannerHandoffsRequest = {
       maxCandidates,
@@ -413,6 +448,24 @@ export function MomentumScannerPipelinePage() {
       </SimpleGrid>
 
       <Card withBorder radius="md" p="lg">
+        <Group justify="space-between" align="center">
+          <div>
+            <Title order={3}>Full pipeline run</Title>
+            <Text size="sm" c="dimmed">
+              Runs news, expiration, candidate generation, price confirmation, and handoff preparation as one durable ADMIN MANUAL run. Slack delivery is not included.
+            </Text>
+          </div>
+          <Button
+            leftSection={<IconBolt size={16} />}
+            onClick={handleRunFullPipeline}
+            loading={runFullPipeline.isPending}
+          >
+            Run full pipeline
+          </Button>
+        </Group>
+      </Card>
+
+      <Card withBorder radius="md" p="lg">
         <Stack gap="md">
           <Title order={3}>Recent pipeline runs</Title>
           {pipelineRuns.isError ? <Alert color="red">Recent run history could not be loaded.</Alert> : pipelineRuns.data?.data.length ? <ScrollArea>
@@ -428,9 +481,9 @@ export function MomentumScannerPipelinePage() {
         <Stack gap="md">
           <Group justify="space-between" align="flex-start">
             <div>
-              <Title order={3}>Manual Workflow Actions</Title>
+              <Title order={3}>Standalone stage actions</Title>
               <Text size="sm" c="dimmed">
-                Testing controls for the non-trading pipeline sequence.
+                Runs one stage only for testing. These calls do not create or complete a MomentumPipelineRun.
               </Text>
             </div>
             {isActionPending && <Loader size="sm" />}

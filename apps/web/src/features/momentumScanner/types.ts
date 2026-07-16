@@ -743,3 +743,24 @@ export type MomentumPipelineRunsResponse = {
   data: MomentumPipelineRun[];
   pagination: { page: number; pageSize: number; total: number; totalPages: number };
 };
+
+export type FullMomentumPipelineRequest = {
+  metadata?: Record<string, unknown>;
+  expirationLimit?: number;
+  minCatalystScore?: number;
+  candidateTake?: number;
+  expiresInHours?: number;
+  maxCandidates?: number;
+  minHandoffScore?: number;
+};
+
+export type FullMomentumPipelineResponse = {
+  runId: string;
+  status: MomentumPipelineRunStatus;
+  startedAt: string;
+  completedAt: string;
+  failedStage?: MomentumPipelineStage;
+  errorCode?: string;
+  errorMessage?: string;
+  stages: Partial<Record<MomentumPipelineStage, Record<string, unknown>>>;
+};

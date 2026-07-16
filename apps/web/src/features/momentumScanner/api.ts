@@ -31,7 +31,19 @@ import type {
   MomentumPipelineLatestResponse,
   MomentumPipelineRunsResponse,
   ExpireMomentumCandidatesResponse,
+  FullMomentumPipelineRequest,
+  FullMomentumPipelineResponse,
 } from "./types";
+
+export function runFullMomentumPipeline(
+  token: string,
+  request: FullMomentumPipelineRequest = {}
+) {
+  return apiRequest<FullMomentumPipelineResponse>(
+    "/api/momentum-scanner/pipeline/run",
+    { method: "POST", token, body: request }
+  );
+}
 
 export function getLatestMomentumPipelineRuns(token: string) {
   return apiRequest<MomentumPipelineLatestResponse>(

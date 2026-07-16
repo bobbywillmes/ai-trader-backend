@@ -28,6 +28,7 @@ import {
   failMomentumPipelineRunController,
   recordMomentumPipelineStageController,
   startMomentumPipelineRunController,
+  runFullMomentumPipelineSignalController,
 } from '../controllers/momentum-pipeline-runs.controller.js';
 
 const router = Router();
@@ -45,6 +46,7 @@ router.get('/market-diary/events', getMarketDiaryEventsController);
 router.post('/market-diary/events', createMarketDiaryEventController);
 
 router.post('/momentum-scanner/run-news-worker', runMomentumScannerNewsWorkerSignalController);
+router.post('/momentum-scanner/run', runFullMomentumPipelineSignalController);
 router.post('/momentum-scanner/runs', startMomentumPipelineRunController);
 router.patch('/momentum-scanner/runs/:runId/stages/:stage', recordMomentumPipelineStageController);
 router.post('/momentum-scanner/runs/:runId/complete', completeMomentumPipelineRunController);

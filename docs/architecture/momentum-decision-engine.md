@@ -4,18 +4,21 @@ This document describes the versioned, review-only Momentum Scanner implemented 
 
 ## Pipeline lifecycle
 
-The normal n8n sequence is:
+The backend-orchestrated core sequence is:
 
 ```text
-Start pipeline run
+Create pipeline run
 -> Run news worker
 -> Expire stale candidates
 -> Generate candidates
 -> Confirm prices
 -> Prepare handoffs
--> Deliver review notifications
 -> Complete pipeline run
 ```
+
+`POST /api/signals/momentum-scanner/run` and owner-only `POST /api/momentum-scanner/pipeline/run` call the same orchestrator with `N8N_*` and `ADMIN_MANUAL` sources respectively. Recoverable item-level failures complete the core run as `PARTIAL`; thrown stage failures record the failed stage and finish `FAILED`. Backend orchestration ends at handoff preparation. n8n review delivery remains post-run unless n8n uses the supported explicit start/stage/complete contract.
+
+Standalone stage routes and UI buttons do not create run records. They are diagnostic controls, not full pipeline executions.
 
 Expiration runs before generation so stale active rows cannot suppress a replacement candidate. It examines a bounded active set, expires candidates at the inclusive `expiresAt <= asOf` boundary, preserves all related history, and is idempotent. `activeCandidates` are candidates in active enum states; `staleCandidatesAwaitingExpiration` are active candidates already past `expiresAt`; historical `EXPIRED` rows are not active problems. A successful workflow should normally leave `staleCandidatesAwaitingExpiration` at zero; a positive `staleRemaining` means the bounded stage should run again or its operational limit should be reviewed.
 

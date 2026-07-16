@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   submitOrder: vi.fn(),
   startMomentumPipelineRun: vi.fn(),
   getLatestMomentumPipelineRuns: vi.fn(),
+  runFullMomentumPipeline: vi.fn(),
 }));
 
 vi.mock('../workers/massive-news.worker.js', () => ({
@@ -48,6 +49,10 @@ vi.mock('../services/momentum-pipeline-run.service.js', () => ({
   listMomentumPipelineRuns: vi.fn(),
   recordMomentumPipelineStage: vi.fn(),
   startMomentumPipelineRun: mocks.startMomentumPipelineRun,
+}));
+
+vi.mock('../services/momentum-pipeline-orchestrator.service.js', () => ({
+  runFullMomentumPipeline: mocks.runFullMomentumPipeline,
 }));
 
 vi.mock('../services/momentum-price-confirmation.service.js', () => ({
@@ -179,6 +184,12 @@ describe('momentum scanner routes', () => {
       latestSuccessful: null,
       currentRun: null,
     });
+    mocks.runFullMomentumPipeline.mockImplementation((options) => Promise.resolve({
+      runId: 'run-full-1',
+      status: 'SUCCEEDED',
+      source: options.source,
+      stages: {},
+    }));
     mocks.confirmActiveCandidates.mockResolvedValue({
       checked: 1,
       confirmed: 1,
@@ -667,6 +678,49 @@ describe('momentum scanner routes', () => {
     expect(mocks.startMomentumPipelineRun).toHaveBeenCalledWith({
       source: 'N8N_SCHEDULED',
       metadata: { executionId: '123' },
+    });
+  });
+
+  it('runs the full pipeline through signal-key auth with an n8n source', async () => {
+    const baseUrl = await listen();
+    const unauthorized = await fetch(`${baseUrl}/api/signals/momentum-scanner/run`, {
+      method: 'POST',
+      headers: { 'ai-trader-api-key': ADMIN_KEY, 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const response = await fetch(`${baseUrl}/api/signals/momentum-scanner/run`, {
+      method: 'POST',
+      headers: signalHeaders(),
+      body: JSON.stringify({ source: 'N8N_MANUAL', maxCandidates: 5 }),
+    });
+
+    expect(unauthorized.status).toBe(401);
+    expect(response.status).toBe(200);
+    expect(mocks.runFullMomentumPipeline).toHaveBeenCalledWith({
+      source: 'N8N_MANUAL',
+      maxCandidates: 5,
+    });
+  });
+
+  it('runs the full pipeline through owner auth with a fixed admin source', async () => {
+    const baseUrl = await listen();
+    const unauthorized = await fetch(`${baseUrl}/api/momentum-scanner/pipeline/run`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const response = await fetch(`${baseUrl}/api/momentum-scanner/pipeline/run`, {
+      method: 'POST',
+      headers: { 'ai-trader-api-key': ADMIN_KEY, 'content-type': 'application/json' },
+      body: JSON.stringify({ minCatalystScore: 70, metadata: { requestedFrom: 'web' } }),
+    });
+
+    expect(unauthorized.status).toBe(401);
+    expect(response.status).toBe(200);
+    expect(mocks.runFullMomentumPipeline).toHaveBeenCalledWith({
+      source: 'ADMIN_MANUAL',
+      minCatalystScore: 70,
+      metadata: { requestedFrom: 'web' },
     });
   });
 

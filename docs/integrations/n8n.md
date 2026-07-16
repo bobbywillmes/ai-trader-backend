@@ -260,6 +260,7 @@ Returns active tracked positions through signal-level authentication.
 The Momentum Scanner uses review-only signal automation routes:
 
 ```http
+POST /api/signals/momentum-scanner/run
 POST /api/signals/momentum-scanner/run-news-worker
 POST /api/signals/momentum-scanner/generate-candidates
 POST /api/signals/momentum-scanner/confirm-prices
@@ -268,6 +269,8 @@ GET /api/signals/momentum-scanner/handoffs
 POST /api/signals/momentum-scanner/handoffs/:id/mark-sent
 POST /api/signals/momentum-scanner/handoffs/:id/mark-failed
 ```
+
+Use `/run` for one backend-orchestrated core pipeline that creates its own durable run. The other stage routes are standalone calls and do not create a `MomentumPipelineRun` unless n8n explicitly uses the `/runs` plus stage-update contract documented in the workflow guide.
 
 These routes are not entry-signal routes. They support the review-only Slack workflow and must not create orders or broker activity.
 

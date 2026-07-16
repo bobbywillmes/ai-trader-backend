@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import { MomentumPipelineRunSource } from '@prisma/client';
 
 import {
   completeMomentumPipelineRun,
@@ -18,6 +19,28 @@ import {
   recordMomentumPipelineStageSchema,
   startMomentumPipelineRunSchema,
 } from '../validators/momentum-pipeline-run.schema.js';
+import { runFullMomentumPipeline } from '../services/momentum-pipeline-orchestrator.service.js';
+import {
+  fullMomentumPipelineSchema,
+  signalFullMomentumPipelineSchema,
+} from '../validators/momentum-pipeline-orchestrator.schema.js';
+
+export async function runFullMomentumPipelineSignalController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const body = signalFullMomentumPipelineSchema.parse(req.body ?? {});
+    res.status(200).json(await runFullMomentumPipeline(body));
+  } catch (error) { next(error); }
+}
+
+export async function runFullMomentumPipelineAdminController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const body = fullMomentumPipelineSchema.parse(req.body ?? {});
+    res.status(200).json(await runFullMomentumPipeline({
+      ...body,
+      source: MomentumPipelineRunSource.ADMIN_MANUAL,
+    }));
+  } catch (error) { next(error); }
+}
 
 export async function startMomentumPipelineRunController(req: Request, res: Response, next: NextFunction) {
   try {

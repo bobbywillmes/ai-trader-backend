@@ -27,11 +27,13 @@ import {
   getMomentumPipelineRunController,
   latestMomentumPipelineRunsController,
   listMomentumPipelineRunsController,
+  runFullMomentumPipelineAdminController,
 } from '../controllers/momentum-pipeline-runs.controller.js';
 
 const router = Router();
 
 router.get('/research/overview', requireSystemOwnerAccess, getMomentumResearchOverviewController);
+router.post('/pipeline/run', requireSystemOwnerAccess, runFullMomentumPipelineAdminController);
 router.get('/research/pipeline-runs/latest', requireSystemOwnerAccess, latestMomentumPipelineRunsController);
 router.get('/research/pipeline-runs', requireSystemOwnerAccess, listMomentumPipelineRunsController);
 router.get('/research/pipeline-runs/:runId', requireSystemOwnerAccess, getMomentumPipelineRunController);

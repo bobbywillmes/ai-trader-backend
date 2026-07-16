@@ -122,9 +122,59 @@ return [
 
 Use `signalKey`, not `adminToken`, so the workflow clearly reflects the auth boundary.
 
-## 🔁 Node Sequence
+## Recommended backend-orchestrated sequence
 
-Recommended sequence:
+New workflows should use the shared backend orchestrator for the five core stages:
+
+```text
+Manual Trigger / Schedule Trigger
+  -> Config
+  -> Run Full Momentum Pipeline
+  -> Full Run Succeeded Or Partial?
+  -> Get Pending Handoffs
+  -> Extract Pending Handoffs
+  -> Format Slack Message
+  -> Send Slack Review Message
+  -> Mark Handoff Sent or Failed
+```
+
+Add `Run Full Momentum Pipeline` after `Config`:
+
+```http
+POST /api/signals/momentum-scanner/run
+signal-key: ={{ $('Config').first().json.signalKey }}
+Content-Type: application/json
+```
+
+JSON body:
+
+```js
+={{ {
+  source: $('Config').first().json.runSource,
+  metadata: {
+    workflowName: $('Config').first().json.workflowName,
+    executionId: $('Config').first().json.executionId,
+    executionMode: $execution.mode,
+  },
+  minCatalystScore: $('Config').first().json.minCatalystScore,
+  candidateTake: $('Config').first().json.take,
+  expiresInHours: $('Config').first().json.expiresInHours,
+  maxCandidates: $('Config').first().json.confirmMaxCandidates,
+  minHandoffScore: $('Config').first().json.minHandoffScore,
+} }}
+```
+
+The response contains `runId`, `status`, and bounded stage summaries. `SUCCEEDED` means all five core stages completed cleanly. `PARTIAL` means all core stages completed but recoverable item-level failures occurred, such as failed news symbols or price-confirmation errors. `FAILED` contains `failedStage`, `errorCode`, and a safe `errorMessage`; stop before delivery or route to an operator alert.
+
+The backend full run completes before Slack delivery and records `deliveryIncluded: false`. Slack delivery and mark-sent/failed calls remain standalone n8n work and cannot change the completed core-run status. If delivery must be represented inside the same run, retain the explicit-stage workflow below.
+
+Do not also call Start Run, individual core stage routes, or Complete Run in the backend-orchestrated path. That would create duplicate work and more than one run record.
+
+## Advanced explicit-stage sequence
+
+The older explicit-stage workflow remains supported when n8n must own every stage, including delivery.
+
+Explicit sequence:
 
 ```text
 Manual Trigger / Schedule Trigger
