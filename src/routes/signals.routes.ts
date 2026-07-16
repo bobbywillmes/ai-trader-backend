@@ -23,6 +23,12 @@ import {
   prepareMomentumScannerHandoffsSignalController,
   runMomentumScannerNewsWorkerSignalController,
 } from '../controllers/momentum-scanner-signals.controller.js';
+import {
+  completeMomentumPipelineRunController,
+  failMomentumPipelineRunController,
+  recordMomentumPipelineStageController,
+  startMomentumPipelineRunController,
+} from '../controllers/momentum-pipeline-runs.controller.js';
 
 const router = Router();
 
@@ -39,6 +45,10 @@ router.get('/market-diary/events', getMarketDiaryEventsController);
 router.post('/market-diary/events', createMarketDiaryEventController);
 
 router.post('/momentum-scanner/run-news-worker', runMomentumScannerNewsWorkerSignalController);
+router.post('/momentum-scanner/runs', startMomentumPipelineRunController);
+router.patch('/momentum-scanner/runs/:runId/stages/:stage', recordMomentumPipelineStageController);
+router.post('/momentum-scanner/runs/:runId/complete', completeMomentumPipelineRunController);
+router.post('/momentum-scanner/runs/:runId/fail', failMomentumPipelineRunController);
 router.post('/momentum-scanner/expire-candidates', expireMomentumScannerCandidatesSignalController);
 router.post('/momentum-scanner/generate-candidates', generateMomentumScannerCandidatesSignalController);
 router.post('/momentum-scanner/confirm-prices', confirmMomentumScannerPricesSignalController);

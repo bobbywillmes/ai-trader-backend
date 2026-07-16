@@ -23,10 +23,18 @@ import {
   updateMomentumUniverseController,
 } from '../controllers/momentum-universe.controller.js';
 import { getMomentumMarketChartController } from '../controllers/momentum-market-chart.controller.js';
+import {
+  getMomentumPipelineRunController,
+  latestMomentumPipelineRunsController,
+  listMomentumPipelineRunsController,
+} from '../controllers/momentum-pipeline-runs.controller.js';
 
 const router = Router();
 
 router.get('/research/overview', requireSystemOwnerAccess, getMomentumResearchOverviewController);
+router.get('/research/pipeline-runs/latest', requireSystemOwnerAccess, latestMomentumPipelineRunsController);
+router.get('/research/pipeline-runs', requireSystemOwnerAccess, listMomentumPipelineRunsController);
+router.get('/research/pipeline-runs/:runId', requireSystemOwnerAccess, getMomentumPipelineRunController);
 router.get('/research/candidates', requireSystemOwnerAccess, listMomentumResearchCandidatesController);
 router.get('/research/candidates/:candidateId', requireSystemOwnerAccess, getMomentumResearchCandidateController);
 router.get('/research/catalysts', requireSystemOwnerAccess, listMomentumResearchCatalystsController);

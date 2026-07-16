@@ -23,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   recordEntryDecision: vi.fn(),
   runMassiveNewsWorkerOnce: vi.fn(),
   submitOrder: vi.fn(),
+  startMomentumPipelineRun: vi.fn(),
+  getLatestMomentumPipelineRuns: vi.fn(),
 }));
 
 vi.mock('../workers/massive-news.worker.js', () => ({
@@ -36,6 +38,16 @@ vi.mock('../services/momentum-candidates.service.js', () => ({
 
 vi.mock('../services/momentum-candidate-expiration.service.js', () => ({
   expireStaleMomentumCandidates: mocks.expireStaleMomentumCandidates,
+}));
+
+vi.mock('../services/momentum-pipeline-run.service.js', () => ({
+  completeMomentumPipelineRun: vi.fn(),
+  failMomentumPipelineRun: vi.fn(),
+  getLatestMomentumPipelineRuns: mocks.getLatestMomentumPipelineRuns,
+  getMomentumPipelineRun: vi.fn(),
+  listMomentumPipelineRuns: vi.fn(),
+  recordMomentumPipelineStage: vi.fn(),
+  startMomentumPipelineRun: mocks.startMomentumPipelineRun,
 }));
 
 vi.mock('../services/momentum-price-confirmation.service.js', () => ({
@@ -156,6 +168,16 @@ describe('momentum scanner routes', () => {
       expiredCandidateIdsTruncated: false,
       reasonCounts: { EXPIRES_AT_REACHED: 1 },
       asOf: new Date('2026-07-16T14:00:00.000Z'),
+    });
+    mocks.startMomentumPipelineRun.mockResolvedValue({
+      id: 'run-1',
+      status: 'RUNNING',
+      startedAt: new Date('2026-07-16T14:00:00.000Z'),
+    });
+    mocks.getLatestMomentumPipelineRuns.mockResolvedValue({
+      latestAttempt: null,
+      latestSuccessful: null,
+      currentRun: null,
     });
     mocks.confirmActiveCandidates.mockResolvedValue({
       checked: 1,
@@ -630,6 +652,34 @@ describe('momentum scanner routes', () => {
       expired: 1,
       staleRemaining: 0,
     });
+  });
+
+  it('starts pipeline runs with signal-key auth only', async () => {
+    const baseUrl = await listen();
+    const response = await fetch(`${baseUrl}/api/signals/momentum-scanner/runs`, {
+      method: 'POST',
+      headers: signalHeaders(),
+      body: JSON.stringify({ source: 'N8N_SCHEDULED', metadata: { executionId: '123' } }),
+    });
+
+    expect(response.status).toBe(201);
+    await expect(jsonResponse(response)).resolves.toMatchObject({ runId: 'run-1', status: 'RUNNING' });
+    expect(mocks.startMomentumPipelineRun).toHaveBeenCalledWith({
+      source: 'N8N_SCHEDULED',
+      metadata: { executionId: '123' },
+    });
+  });
+
+  it('protects pipeline run reads with owner authorization', async () => {
+    const baseUrl = await listen();
+    const unauthorized = await fetch(`${baseUrl}/api/momentum-scanner/research/pipeline-runs/latest`);
+    const authorized = await fetch(`${baseUrl}/api/momentum-scanner/research/pipeline-runs/latest`, {
+      headers: { 'ai-trader-api-key': ADMIN_KEY },
+    });
+
+    expect(unauthorized.status).toBe(401);
+    expect(authorized.status).toBe(200);
+    expect(mocks.getLatestMomentumPipelineRuns).toHaveBeenCalledOnce();
   });
 
   it('confirms prices with empty options and returns BigInt-safe JSON', async () => {
