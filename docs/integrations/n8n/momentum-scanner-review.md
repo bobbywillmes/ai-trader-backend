@@ -129,10 +129,17 @@ Recommended sequence:
 ```text
 Manual Trigger / Schedule Trigger
   -> Config
+  -> Start Pipeline Run
   -> Run Massive News Worker
+  -> Record News Stage
+  -> Expire Candidates
+  -> Record Expiration Stage
   -> Generate Momentum Candidates
+  -> Record Candidate Stage
   -> Confirm Candidate Prices
+  -> Record Price Stage
   -> Prepare Scanner Handoffs
+  -> Record Handoff Stage
   -> Get Pending Handoffs
   -> Extract Pending Handoffs
   -> Format Slack Message
@@ -140,7 +147,243 @@ Manual Trigger / Schedule Trigger
   -> Slack Send Succeeded?
       true  -> Mark Handoff Sent
       false -> Mark Handoff Failed
+  -> Record Delivery Stage
+  -> Complete Pipeline Run
+
+Every stage node's error output must lead to `Record Pipeline Failure`. Do not rely only on an n8n error workflow because a separate error execution cannot reliably read the run ID created inside the failed execution.
 ```
+
+## Pipeline run context
+
+### Config additions
+
+Add these fields to the existing `Config` Code node:
+
+```js
+workflowName: 'AI Trader - Momentum Scanner Review',
+executionId: $execution.id,
+runSource: $execution.mode === 'manual' ? 'N8N_MANUAL' : 'N8N_SCHEDULED',
+```
+
+### Start Pipeline Run
+
+Add an HTTP Request node immediately after `Config`:
+
+```http
+POST /api/signals/momentum-scanner/runs
+signal-key: ={{ $('Config').first().json.signalKey }}
+Content-Type: application/json
+```
+
+JSON body:
+
+```js
+={{ {
+  source: $('Config').first().json.runSource,
+  metadata: {
+    workflowName: $('Config').first().json.workflowName,
+    executionId: $('Config').first().json.executionId,
+    executionMode: $execution.mode,
+  },
+} }}
+```
+
+The response contains `runId`. All later run-recording nodes must use this named expression:
+
+```js
+{{ $('Start Pipeline Run').first().json.runId }}
+```
+
+This is execution-scoped data and does not depend on input item positions. Do not use workflow static data, which can leak a run ID across overlapping executions.
+
+Set `Retry On Fail` off for start-run creation. Retrying this POST could create two run rows. If start creation fails, stop the workflow; there is no run ID to mark failed.
+
+## Stage recording nodes
+
+For every backend stage, add an HTTP Request node immediately after its success output. Use:
+
+```http
+PATCH /api/signals/momentum-scanner/runs/{{runId}}/stages/{{stage}}
+signal-key: ={{ $('Config').first().json.signalKey }}
+Content-Type: application/json
+```
+
+The exact nodes and bodies are below. Expressions reference nodes by name so inserting or reordering nodes does not change the contract.
+
+### Record News Stage
+
+URL stage: `NEWS`
+
+```js
+={{ {
+  status: 'SUCCEEDED',
+  result: {
+    skipped: $('Run Massive News Worker').first().json.result?.skipped ?? false,
+    reason: $('Run Massive News Worker').first().json.result?.reason ?? null,
+    dueCursorCount: $('Run Massive News Worker').first().json.result?.dueCursorCount ?? 0,
+    pulledSymbols: $('Run Massive News Worker').first().json.result?.pulledSymbols ?? 0,
+    successfulSymbols: $('Run Massive News Worker').first().json.result?.successfulSymbols ?? 0,
+    failedSymbols: $('Run Massive News Worker').first().json.result?.failedSymbols ?? 0,
+    processedArticles: $('Run Massive News Worker').first().json.result?.processedArticles ?? 0,
+    upsertedEvents: $('Run Massive News Worker').first().json.result?.upsertedEvents ?? 0,
+    upsertedTickerImpacts: $('Run Massive News Worker').first().json.result?.upsertedTickerImpacts ?? 0,
+  },
+} }}
+```
+
+### Expire Candidates
+
+Insert this backend stage before candidate generation:
+
+```http
+POST /api/signals/momentum-scanner/expire-candidates
+```
+
+Body:
+
+```json
+{
+  "limit": 500
+}
+```
+
+### Record Expiration Stage
+
+URL stage: `EXPIRATION`
+
+```js
+={{ {
+  status: 'SUCCEEDED',
+  result: {
+    inspected: $('Expire Candidates').first().json.inspected,
+    expired: $('Expire Candidates').first().json.expired,
+    unchanged: $('Expire Candidates').first().json.unchanged,
+    skipped: $('Expire Candidates').first().json.skipped,
+    staleRemaining: $('Expire Candidates').first().json.staleRemaining,
+    reasonCounts: $('Expire Candidates').first().json.reasonCounts,
+  },
+} }}
+```
+
+If `staleRemaining` is nonzero because the inspection bound was reached, do not report a successful complete run. Route to `Record Pipeline Failure` with stage `EXPIRATION` and code `STALE_CANDIDATES_REMAIN`.
+
+### Record Candidate Stage
+
+URL stage: `CANDIDATE_GENERATION`
+
+```js
+={{ {
+  status: 'SUCCEEDED',
+  result: {
+    impactsEvaluated: $('Generate Momentum Candidates').first().json.evaluatedImpacts,
+    created: $('Generate Momentum Candidates').first().json.generatedCandidates,
+    skipped: $('Generate Momentum Candidates').first().json.skippedCandidates,
+    skipCounts: $('Generate Momentum Candidates').first().json.skipCounts,
+  },
+} }}
+```
+
+### Record Price Stage
+
+URL stage: `PRICE_CONFIRMATION`
+
+```js
+={{ {
+  status: 'SUCCEEDED',
+  result: {
+    evaluated: $('Confirm Candidate Prices').first().json.evaluated,
+    watching: $('Confirm Candidate Prices').first().json.watching,
+    entryReady: $('Confirm Candidate Prices').first().json.entryReady,
+    blocked: $('Confirm Candidate Prices').first().json.blocked,
+    skipped: $('Confirm Candidate Prices').first().json.skipped,
+    skipCounts: $('Confirm Candidate Prices').first().json.skipCounts,
+    errors: ($('Confirm Candidate Prices').first().json.errors || []).slice(0, 20),
+  },
+} }}
+```
+
+If the response has nonempty `errors`, route to pipeline failure instead of silently recording success.
+
+### Record Handoff Stage
+
+URL stage: `HANDOFF_PREPARATION`
+
+```js
+={{ {
+  status: 'SUCCEEDED',
+  result: {
+    prepared: $('Prepare Scanner Handoffs').first().json.prepared,
+    skipped: $('Prepare Scanner Handoffs').first().json.skipped,
+    skipCounts: $('Prepare Scanner Handoffs').first().json.skipCounts,
+  },
+} }}
+```
+
+Do not send complete candidate or handoff arrays to stage records.
+
+### Record Delivery Stage
+
+After all selected handoffs have reached either `Mark Handoff Sent` or `Mark Handoff Failed`, aggregate delivery counts in a Code node named `Summarize Delivery` and record stage `HANDOFF_DELIVERY`:
+
+```js
+={{ {
+  status: $('Summarize Delivery').first().json.failed > 0 ? 'FAILED' : 'SUCCEEDED',
+  result: {
+    attempted: $('Summarize Delivery').first().json.attempted,
+    sent: $('Summarize Delivery').first().json.sent,
+    failed: $('Summarize Delivery').first().json.failed,
+  },
+} }}
+```
+
+An empty pending queue is a successful delivery stage with all counts zero.
+
+## Complete Pipeline Run
+
+Add an HTTP Request node after delivery aggregation:
+
+```http
+POST /api/signals/momentum-scanner/runs/{{ $('Start Pipeline Run').first().json.runId }}/complete
+```
+
+Body:
+
+```js
+={{ {
+  status: $('Summarize Delivery').first().json.failed > 0 ? 'PARTIAL' : 'SUCCEEDED',
+} }}
+```
+
+The backend rejects successful completion until news, expiration, candidate generation, price confirmation, and handoff preparation summaries exist. Slack failure therefore produces `PARTIAL`; it does not erase successful market evaluation.
+
+## Failure branches
+
+For `Run Massive News Worker`, `Expire Candidates`, `Generate Momentum Candidates`, `Confirm Candidate Prices`, `Prepare Scanner Handoffs`, `Get Pending Handoffs`, Slack, and every mark/record request:
+
+1. Set `On Error` to `Continue (using error output)`.
+2. Connect the normal output to the next success node.
+3. Connect the error output to a Set node that emits `stage`, `errorCode`, and `errorMessage`.
+4. Connect that Set node to the single `Record Pipeline Failure` HTTP node.
+
+`Record Pipeline Failure`:
+
+```http
+POST /api/signals/momentum-scanner/runs/{{ $('Start Pipeline Run').first().json.runId }}/fail
+```
+
+```js
+={{ {
+  stage: $json.stage,
+  errorCode: $json.errorCode || 'N8N_STAGE_ERROR',
+  errorMessage: String($json.errorMessage || 'Momentum scanner stage failed').slice(0, 1000),
+} }}
+```
+
+Use these stage values: `NEWS`, `EXPIRATION`, `CANDIDATE_GENERATION`, `PRICE_CONFIRMATION`, `HANDOFF_PREPARATION`, or `HANDOFF_DELIVERY`. Never pass headers, credentials, provider payloads, response stacks, or the complete n8n error object.
+
+After `Record Pipeline Failure`, terminate that execution branch. Do not continue to candidate generation, delivery, or completion.
+
+An optional workflow-level Error Trigger may still notify operators about infrastructure failures. It is not the authoritative pipeline failure writer because it cannot safely assume access to `Start Pipeline Run` output from another execution.
 
 ## 🌐 Backend Nodes
 
@@ -407,12 +650,22 @@ Before activation, run the workflow manually and confirm:
 
 ```text
 Run Massive News Worker returns 200
+Start Pipeline Run returns one runId
+Record News Stage returns 200
+Expire Candidates returns 200 and staleRemaining = 0
+Record Expiration Stage returns 200
 Generate Momentum Candidates returns 200
+Record Candidate Stage returns 200
 Confirm Candidate Prices returns 200
+Record Price Stage returns 200
 Prepare Scanner Handoffs returns 200
+Record Handoff Stage returns 200
 Get Pending Handoffs returns valid current PENDING rows
 Slack sends review messages
 Mark Handoff Sent returns 200
+Record Delivery Stage returns 200
+Complete Pipeline Run returns SUCCEEDED
+Admin latest-run API shows the same runId and stage summaries
 Admin UI shows SENT with sentAt and attempts = 1
 Re-running does not resend SENT handoffs
 Stale pending handoffs become CANCELLED
