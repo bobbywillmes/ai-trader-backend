@@ -405,19 +405,28 @@ describe('momentum price confirmation service', () => {
     }
   });
 
-  it('does not request market data for a configuration-ineligible candidate', async () => {
+  it('evaluates a research candidate without a trading subscription', async () => {
     mocks.momentumCandidateFindUnique.mockResolvedValue(
       candidate({ security: { ...candidate().security, subscriptions: [] } })
     );
 
-    await expect(confirmCandidatePrice('candidate-1')).resolves.toMatchObject({
-      skipped: true,
-      eligibility: { eligible: false, reasons: ['NO_SUBSCRIPTION'] },
-      priceCheck: null,
+    await expect(confirmCandidatePrice('candidate-1', {
+      now: new Date('2026-07-04T15:31:00.000Z'),
+    })).resolves.toMatchObject({
+      skipped: false,
+      eligibility: {
+        eligible: true,
+        reasons: ['ELIGIBLE'],
+        momentumSubscriptionEligibility: {
+          eligible: false,
+          reasons: ['NO_SUBSCRIPTION'],
+        },
+      },
+      priceCheck: { scoringVersion: 'momentum_confirmation_v5' },
     });
 
-    expect(mocks.getTickerPriceConfirmationMarketData).not.toHaveBeenCalled();
-    expect(mocks.priceCheckCreate).not.toHaveBeenCalled();
+    expect(mocks.getTickerPriceConfirmationMarketData).toHaveBeenCalledTimes(1);
+    expect(mocks.priceCheckCreate).toHaveBeenCalledTimes(1);
   });
 
   it('respects the configured max candidate limit when confirming a batch', async () => {
