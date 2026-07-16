@@ -210,7 +210,7 @@ describe('momentum price confirmation service', () => {
         dayVolume: 100000n,
         dollarVolume: 10_300_000,
         recentVolume: 70000n,
-        scoringVersion: 'momentum_confirmation_v1',
+        scoringVersion: 'momentum_confirmation_v2',
         scoringInputs: expect.objectContaining({
           lastPrice: 103,
           dayVolume: '100000',
@@ -219,7 +219,7 @@ describe('momentum price confirmation service', () => {
           observedAt: now.toISOString(),
         }),
         scoreExplanation: expect.objectContaining({
-          scoringVersion: 'momentum_confirmation_v1',
+          scoringVersion: 'momentum_confirmation_v2',
           componentScores: {
             priceAction: 100,
             volume: 80,
@@ -306,7 +306,7 @@ describe('momentum price confirmation service', () => {
 
     expect(result.candidate).toMatchObject({
       state: MomentumCandidateState.WATCHING,
-      totalScore: 69,
+      totalScore: 74,
     });
     expect(result.priceCheck).toMatchObject({
       confirmed: false,
@@ -342,9 +342,9 @@ describe('momentum price confirmation service', () => {
       confirmed: false,
       decision: 'PRICE_BELOW_MINIMUM',
       blockedReason: 'PRICE_BELOW_MINIMUM',
-      scoringVersion: 'momentum_confirmation_v1',
+      scoringVersion: 'momentum_confirmation_v2',
       scoreExplanation: {
-        hardBlocks: ['PRICE_BELOW_MINIMUM'],
+        hardBlocks: ['PRICE_BELOW_MINIMUM', 'TOO_FAR_FROM_INTRADAY_HIGH'],
       },
     });
   });

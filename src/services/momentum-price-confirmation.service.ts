@@ -13,6 +13,7 @@ import {
   getTickerPriceConfirmationMarketData,
   type TickerPriceConfirmationMarketData,
 } from './massive-market-data.service.js';
+import { getNewYorkMarketTiming, scoreMomentumPriceAction } from './momentum-scoring/momentum-price-score.js';
 
 export type ConfirmCandidatePriceOptions = {
   now?: Date;
@@ -33,6 +34,7 @@ export type ListMomentumCandidatePriceChecksOptions = {
 export type PriceConfirmationSnapshot = {
   symbol: string;
   observedAt: Date;
+  sourceObservedAt: Date | null;
   lastPrice: number | null;
   previousClose: number | null;
   pctFromPreviousClose: number | null;
@@ -57,9 +59,11 @@ export type PriceConfirmationScores = {
   confirmed: boolean;
   decision: string;
   blockedReason: string | null;
+  hardBlocks: string[];
+  reasons: string[];
 };
 
-export const MOMENTUM_CONFIRMATION_SCORING_VERSION = 'momentum_confirmation_v1';
+export const MOMENTUM_CONFIRMATION_SCORING_VERSION = 'momentum_confirmation_v2';
 
 const priceEligibilityInclude = {
   security: {
@@ -161,34 +165,6 @@ function filterRecentBars(
 
     return !Number.isNaN(timestamp) && timestamp >= cutoff;
   });
-}
-
-function scorePriceAction(snapshot: PriceConfirmationSnapshot) {
-  let score = 0;
-
-  if (
-    snapshot.pctFromPreviousClose !== null &&
-    snapshot.pctFromPreviousClose >= 2
-  ) {
-    score += 25;
-  }
-
-  if (snapshot.aboveVwap === true) {
-    score += 25;
-  }
-
-  if (
-    snapshot.distanceFromHighPct !== null &&
-    snapshot.distanceFromHighPct <= 1.5
-  ) {
-    score += 25;
-  }
-
-  if (snapshot.recentMovePct !== null && snapshot.recentMovePct > 0) {
-    score += 25;
-  }
-
-  return score;
 }
 
 function scoreVolume(snapshot: PriceConfirmationSnapshot) {
@@ -419,6 +395,9 @@ export async function buildPriceConfirmationSnapshot(
   return {
     symbol: data.symbol,
     observedAt: now,
+    sourceObservedAt: data.snapshot.updatedTime === null
+      ? null
+      : new Date(data.snapshot.updatedTime),
     lastPrice,
     previousClose,
     pctFromPreviousClose,
@@ -442,7 +421,20 @@ export function scorePriceConfirmation(
   snapshot: PriceConfirmationSnapshot,
   now = new Date()
 ): PriceConfirmationScores {
-  const priceActionScore = scorePriceAction(snapshot);
+  const extensionFromVwapPct = snapshot.lastPrice !== null && snapshot.sessionVwap !== null && snapshot.sessionVwap > 0
+    ? ((snapshot.lastPrice - snapshot.sessionVwap) / snapshot.sessionVwap) * 100
+    : null;
+  const priceResult = scoreMomentumPriceAction({
+    percentFromPreviousClose: snapshot.pctFromPreviousClose,
+    aboveVwap: snapshot.aboveVwap,
+    distanceFromHighPct: snapshot.distanceFromHighPct,
+    recentMovePct: snapshot.recentMovePct,
+    extensionFromVwapPct,
+    observedAt: now,
+    sourceObservedAt: snapshot.sourceObservedAt,
+    ...getNewYorkMarketTiming(now),
+  });
+  const priceActionScore = priceResult.score;
   const volumeScore = scoreVolume(snapshot);
   const riskScore = scoreRiskQuality(snapshot);
   const totalConfirmationScore = Math.round(
@@ -451,7 +443,12 @@ export function scorePriceConfirmation(
       volumeScore * 0.2 +
       riskScore * 0.05
   );
-  const blockedReason = getHardBlockReason(candidate, snapshot, now);
+  const legacyBlock = getHardBlockReason(candidate, snapshot, now);
+  const hardBlocks = [...new Set([
+    ...(legacyBlock === null ? [] : [legacyBlock]),
+    ...priceResult.hardBlocks,
+  ])];
+  const blockedReason = hardBlocks[0] ?? null;
   const confirmed =
     blockedReason === null &&
     totalConfirmationScore >= env.MOMENTUM_CONFIRMATION_ENTRY_READY_THRESHOLD;
@@ -464,10 +461,13 @@ export function scorePriceConfirmation(
     confirmed,
     decision: blockedReason ?? (confirmed ? 'ENTRY_READY' : 'PRICE_CONFIRMED'),
     blockedReason,
+    hardBlocks,
+    reasons: priceResult.reasons,
   };
 }
 
 function buildScoringInputs(snapshot: PriceConfirmationSnapshot): Prisma.InputJsonValue {
+  const marketTiming = getNewYorkMarketTiming(snapshot.observedAt);
   return {
     lastPrice: snapshot.lastPrice,
     previousClose: snapshot.previousClose,
@@ -483,6 +483,9 @@ function buildScoringInputs(snapshot: PriceConfirmationSnapshot): Prisma.InputJs
     relativeVolume: snapshot.relativeVolume,
     dollarVolume: snapshot.dollarVolume,
     observedAt: snapshot.observedAt.toISOString(),
+    sourceObservedAt: snapshot.sourceObservedAt?.toISOString() ?? null,
+    marketSession: marketTiming.marketSession,
+    newYorkMinuteOfDay: marketTiming.newYorkMinuteOfDay,
   };
 }
 
@@ -531,8 +534,8 @@ function buildScoreExplanation(
       setupQuality: scores.riskScore,
       totalConfirmation: scores.totalConfirmationScore,
     },
-    hardBlocks: scores.blockedReason === null ? [] : [scores.blockedReason],
-    reasons: buildScoreReasons(snapshot, scores),
+    hardBlocks: scores.hardBlocks,
+    reasons: [...scores.reasons, ...buildScoreReasons(snapshot, scores)],
     decision: scores.decision,
     confirmed: scores.confirmed,
     dataCompleteness: {
