@@ -39,6 +39,8 @@ import {
   useMomentumScannerHandoffs,
   usePrepareMomentumScannerHandoffs,
   useRunMassiveNewsWorker,
+  useLatestMomentumPipelineRuns,
+  useMomentumPipelineRuns,
 } from "./hooks";
 import type {
   CatalystEvent,
@@ -49,6 +51,7 @@ import type {
   PrepareMomentumScannerHandoffsRequest,
 } from "./types";
 import { MomentumScannerNavigation } from "./MomentumScannerNavigation";
+import { MomentumPipelineRunSummary } from "./components/MomentumPipelineRunSummary";
 
 type ActionSummary = {
   label: string;
@@ -76,6 +79,17 @@ function formatDate(value: string | null | undefined) {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+}
+
+function formatPipelineDate(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    month: "short",
+    day: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(new Date(value));
 }
 
 function formatNumber(value: string | number | null | undefined) {
@@ -238,6 +252,8 @@ export function MomentumScannerPipelinePage() {
   const generateCandidates = useGenerateMomentumCandidates(token);
   const confirmPrices = useConfirmMomentumCandidatePrices(token);
   const prepareHandoffs = usePrepareMomentumScannerHandoffs(token);
+  const latestPipelineRuns = useLatestMomentumPipelineRuns(token);
+  const pipelineRuns = useMomentumPipelineRuns(token, 10);
 
   const catalystEvents = useMemo(
     () => catalystEventsQuery.data ?? [],
@@ -269,6 +285,8 @@ export function MomentumScannerPipelinePage() {
       catalystEventsQuery.refetch(),
       candidatesQuery.refetch(),
       handoffsQuery.refetch(),
+      latestPipelineRuns.refetch(),
+      pipelineRuns.refetch(),
     ]);
     notifications.show({
       message: "Momentum scanner data refreshed.",
@@ -371,6 +389,25 @@ export function MomentumScannerPipelinePage() {
           Refresh
         </Button>
       </Group>
+
+      {latestPipelineRuns.isError && <Alert color="red" title="Unable to load pipeline status">{latestPipelineRuns.error instanceof Error ? latestPipelineRuns.error.message : "Pipeline status could not be loaded."}</Alert>}
+      {latestPipelineRuns.data?.currentRun && <MomentumPipelineRunSummary run={latestPipelineRuns.data.currentRun} title="Currently running" />}
+      <SimpleGrid cols={{ base: 1, xl: 2 }}>
+        <MomentumPipelineRunSummary run={latestPipelineRuns.data?.latestAttempt ?? null} title="Latest attempted run" />
+        <MomentumPipelineRunSummary run={latestPipelineRuns.data?.latestSuccessful ?? null} title="Latest successful run" />
+      </SimpleGrid>
+
+      <Card withBorder radius="md" p="lg">
+        <Stack gap="md">
+          <Title order={3}>Recent pipeline runs</Title>
+          {pipelineRuns.isError ? <Alert color="red">Recent run history could not be loaded.</Alert> : pipelineRuns.data?.data.length ? <ScrollArea>
+            <Table striped highlightOnHover>
+              <Table.Thead><Table.Tr><Table.Th>Status</Table.Th><Table.Th>Started</Table.Th><Table.Th>Source</Table.Th><Table.Th>Last stage</Table.Th><Table.Th>Duration</Table.Th></Table.Tr></Table.Thead>
+              <Table.Tbody>{pipelineRuns.data.data.map((run) => <Table.Tr key={run.id}><Table.Td><Badge variant="light" color={run.status === "SUCCEEDED" ? "teal" : run.status === "RUNNING" ? "blue" : run.status === "PARTIAL" ? "yellow" : "red"}>{run.status}</Badge></Table.Td><Table.Td>{formatPipelineDate(run.startedAt)}</Table.Td><Table.Td>{run.source.replaceAll("_", " ")}</Table.Td><Table.Td>{run.currentStage?.replaceAll("_", " ") ?? "—"}</Table.Td><Table.Td>{run.durationMs === null ? "—" : `${(run.durationMs / 1000).toFixed(1)}s`}</Table.Td></Table.Tr>)}</Table.Tbody>
+            </Table>
+          </ScrollArea> : <Text c="dimmed">No pipeline runs recorded.</Text>}
+        </Stack>
+      </Card>
 
       <Card withBorder radius="md" p="lg">
         <Stack gap="md">

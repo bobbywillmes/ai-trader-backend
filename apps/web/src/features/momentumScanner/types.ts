@@ -693,3 +693,37 @@ export type MomentumMarketChartResponse = {
     cached: boolean;
   };
 };
+
+export type MomentumPipelineRunStatus = "RUNNING" | "SUCCEEDED" | "PARTIAL" | "FAILED" | "ABANDONED";
+export type MomentumPipelineRunSource = "N8N_SCHEDULED" | "N8N_MANUAL" | "ADMIN_MANUAL";
+export type MomentumPipelineStage = "NEWS" | "EXPIRATION" | "CANDIDATE_GENERATION" | "PRICE_CONFIRMATION" | "HANDOFF_PREPARATION" | "HANDOFF_DELIVERY";
+
+export type MomentumPipelineRun = {
+  id: string;
+  source: MomentumPipelineRunSource;
+  status: MomentumPipelineRunStatus;
+  startedAt: string;
+  completedAt: string | null;
+  durationMs: number | null;
+  currentStage: MomentumPipelineStage | null;
+  errorStage: MomentumPipelineStage | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  newsResult: unknown;
+  expirationResult: unknown;
+  candidateResult: unknown;
+  priceResult: unknown;
+  handoffResult: unknown;
+  deliveryResult: unknown;
+};
+
+export type MomentumPipelineLatestResponse = {
+  latestAttempt: MomentumPipelineRun | null;
+  latestSuccessful: MomentumPipelineRun | null;
+  currentRun: MomentumPipelineRun | null;
+};
+
+export type MomentumPipelineRunsResponse = {
+  data: MomentumPipelineRun[];
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
+};

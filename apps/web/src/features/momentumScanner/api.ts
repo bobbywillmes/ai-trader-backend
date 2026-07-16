@@ -28,7 +28,23 @@ import type {
   MomentumSymbolResearch,
   MomentumMarketChartQuery,
   MomentumMarketChartResponse,
+  MomentumPipelineLatestResponse,
+  MomentumPipelineRunsResponse,
 } from "./types";
+
+export function getLatestMomentumPipelineRuns(token: string) {
+  return apiRequest<MomentumPipelineLatestResponse>(
+    "/api/momentum-scanner/research/pipeline-runs/latest",
+    { token }
+  );
+}
+
+export function listMomentumPipelineRuns(token: string, pageSize = 10) {
+  return apiRequest<MomentumPipelineRunsResponse>(
+    `/api/momentum-scanner/research/pipeline-runs?page=1&pageSize=${pageSize}`,
+    { token }
+  );
+}
 
 export function getMomentumMarketChart(
   token: string,

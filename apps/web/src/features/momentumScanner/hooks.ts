@@ -21,6 +21,8 @@ import {
   getMomentumResearchCandidate,
   getMomentumSymbolResearch,
   getMomentumMarketChart,
+  getLatestMomentumPipelineRuns,
+  listMomentumPipelineRuns,
 } from "./api";
 import type {
   CatalystEventQuery,
@@ -67,7 +69,29 @@ export const momentumScannerKeys = {
     [...momentumScannerKeys.all, "research", "symbol", symbol] as const,
   marketChart: (symbol: string | null, query: MomentumMarketChartQuery) =>
     [...momentumScannerKeys.all, "research", "marketChart", symbol, query] as const,
+  pipelineRunsLatest: () =>
+    [...momentumScannerKeys.all, "research", "pipelineRuns", "latest"] as const,
+  pipelineRuns: (pageSize: number) =>
+    [...momentumScannerKeys.all, "research", "pipelineRuns", pageSize] as const,
 };
+
+export function useLatestMomentumPipelineRuns(token: string | null) {
+  return useQuery({
+    queryKey: momentumScannerKeys.pipelineRunsLatest(),
+    queryFn: () => getLatestMomentumPipelineRuns(token as string),
+    enabled: Boolean(token),
+    refetchInterval: 15_000,
+  });
+}
+
+export function useMomentumPipelineRuns(token: string | null, pageSize = 10) {
+  return useQuery({
+    queryKey: momentumScannerKeys.pipelineRuns(pageSize),
+    queryFn: () => listMomentumPipelineRuns(token as string, pageSize),
+    enabled: Boolean(token),
+    refetchInterval: 30_000,
+  });
+}
 
 export function useMomentumResearchOverview(token: string | null) {
   return useQuery({

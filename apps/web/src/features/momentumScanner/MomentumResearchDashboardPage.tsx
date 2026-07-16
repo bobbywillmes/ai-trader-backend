@@ -17,8 +17,9 @@ import { IconArrowRight, IconExternalLink } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 
 import { getAdminToken } from "../../lib/api";
-import { useMomentumResearchOverview } from "./hooks";
+import { useLatestMomentumPipelineRuns, useMomentumResearchOverview } from "./hooks";
 import { MomentumScannerNavigation } from "./MomentumScannerNavigation";
+import { MomentumPipelineRunSummary } from "./components/MomentumPipelineRunSummary";
 import type {
   MomentumCandidateState,
   MomentumResearchCandidateRow,
@@ -179,6 +180,7 @@ function RecentCatalysts({ data }: { data: MomentumResearchOverview["recentCatal
 export function MomentumResearchDashboardPage() {
   const token = getAdminToken();
   const overview = useMomentumResearchOverview(token);
+  const pipelineRuns = useLatestMomentumPipelineRuns(token);
   const data = overview.data;
 
   return (
@@ -194,6 +196,8 @@ export function MomentumResearchDashboardPage() {
       </Group>
 
       {overview.isError && <Alert color="red" title="Unable to load momentum research">{overview.error instanceof Error ? overview.error.message : "The research overview could not be loaded."}</Alert>}
+      {pipelineRuns.isError && <Alert color="red" title="Unable to load pipeline status">{pipelineRuns.error instanceof Error ? pipelineRuns.error.message : "Pipeline status could not be loaded."}</Alert>}
+      <MomentumPipelineRunSummary run={pipelineRuns.data?.latestAttempt ?? null} />
 
       {data && (
         <>
