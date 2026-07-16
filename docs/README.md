@@ -12,6 +12,7 @@ The root `README.md` is the project front door. These docs are the working manua
 | Audit global vs account-scoped risk settings            | [Account Risk Settings](architecture/account-risk-settings.md) |
 | Understand how a signal becomes a full trade cycle      | [Trading Lifecycle](architecture/trading-lifecycle.md) |
 | Understand the momentum scanner catalyst/news pipeline  | [Momentum Scanner Architecture](architecture/catalyst-news-foundation.md) |
+| Review momentum decisions and durable pipeline runs      | [Momentum Decision Engine](architecture/momentum-decision-engine.md) |
 | Run or debug the n8n Momentum Scanner Review workflow   | [Momentum Scanner Review Workflow](integrations/n8n/momentum-scanner-review.md) |
 | Understand background worker health and stale detection | [Worker Health](architecture/workers.md) |
 | Deploy or update production                             | [Production Deployment](production/deployment.md) |
