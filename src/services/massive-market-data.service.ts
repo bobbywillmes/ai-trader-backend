@@ -139,6 +139,17 @@ export type TickerPriceConfirmationBar = {
   vwap: number | null;
 };
 
+export type TickerAggregateBar = TickerPriceConfirmationBar & {
+  transactions: number | null;
+};
+
+export type GetTickerAggregateBarsArgs = {
+  multiplier: number;
+  timespan: 'minute' | 'day';
+  from: string;
+  to: string;
+};
+
 export type TickerPriceConfirmationMarketData = {
   symbol: string;
   from: string | null;
@@ -196,6 +207,7 @@ type MassiveAggregateBar = {
   t?: unknown;
   v?: unknown;
   vw?: unknown;
+  n?: unknown;
 };
 
 type MassiveAggregatesResponse = {
@@ -603,6 +615,30 @@ export function normalizeTickerPriceConfirmationBars(
   });
 }
 
+function normalizeTickerAggregateBars(
+  bars: MassiveAggregateBar[] | undefined
+): TickerAggregateBar[] {
+  return (bars ?? []).flatMap((bar) => {
+    const normalized = normalizeTickerPriceConfirmationBars([bar])[0];
+
+    if (!normalized) {
+      return [];
+    }
+
+    const transactions = toFiniteNumber(bar.n);
+
+    return [{
+      ...normalized,
+      transactions:
+        transactions !== null &&
+        Number.isInteger(transactions) &&
+        transactions >= 0
+          ? transactions
+          : null,
+    }];
+  });
+}
+
 async function getMarketStatus() {
   const status = await massiveGet<MassiveMarketStatus>('/v1/marketstatus/now');
 
@@ -765,8 +801,24 @@ async function getAggregateBars(
   to: string
 ) {
   return massiveGet<MassiveAggregatesResponse>(
-    `/v2/aggs/ticker/${symbol}/range/${config.multiplier}/${config.timespan}/${from}/${to}?adjusted=true&sort=asc&limit=50000`
+    `/v2/aggs/ticker/${encodeURIComponent(symbol)}/range/${config.multiplier}/${config.timespan}/${from}/${to}?adjusted=true&sort=asc&limit=50000`
   );
+}
+
+export async function getTickerAggregateBars(
+  symbol: string,
+  args: GetTickerAggregateBarsArgs
+): Promise<TickerAggregateBar[]> {
+  const normalizedSymbol = symbol.trim().toUpperCase();
+  const response = await getAggregateBars(
+    normalizedSymbol,
+    { multiplier: args.multiplier, timespan: args.timespan },
+    args.from,
+    args.to
+  );
+
+  return normalizeTickerAggregateBars(response.results)
+    .sort((a, b) => a.time.localeCompare(b.time));
 }
 
 function normalizeDailyCandles(

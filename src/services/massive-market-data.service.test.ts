@@ -10,6 +10,7 @@ vi.mock('../config/env.js', () => ({
 }));
 
 import {
+  getTickerAggregateBars,
   getTickerDailyCandles,
   getIndexIntraday,
   getIndexPerformance,
@@ -20,6 +21,113 @@ import {
   normalizeTickerLatestPrice,
   parseIndexChartRange,
 } from './massive-market-data.service.js';
+
+describe('getTickerAggregateBars', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('fetches adjusted aggregates and normalizes chart fields', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      const parsed = new URL(url);
+
+      expect(parsed.pathname).toBe(
+        '/v2/aggs/ticker/BRK.B/range/5/minute/1781357400000/1781368200000'
+      );
+      expect(parsed.searchParams.get('adjusted')).toBe('true');
+      expect(parsed.searchParams.get('sort')).toBe('asc');
+      expect(parsed.searchParams.get('limit')).toBe('50000');
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          results: [
+            {
+              c: 501.5,
+              h: 502,
+              l: 499,
+              n: 1234,
+              o: 500,
+              t: 1781357700000,
+              v: 987654,
+              vw: 500.75,
+            },
+          ],
+        }),
+      };
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      getTickerAggregateBars(' brk.b ', {
+        multiplier: 5,
+        timespan: 'minute',
+        from: '1781357400000',
+        to: '1781368200000',
+      })
+    ).resolves.toEqual([
+      {
+        time: '2026-06-13T13:35:00.000Z',
+        open: 500,
+        high: 502,
+        low: 499,
+        close: 501.5,
+        volume: 987654,
+        vwap: 500.75,
+        transactions: 1234,
+      },
+    ]);
+  });
+
+  it('drops malformed bars and safely normalizes optional values', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          results: [
+            {
+              c: null,
+              h: 102,
+              l: 99,
+              n: 12,
+              o: 100,
+              t: 1781357400000,
+            },
+            {
+              c: 101,
+              h: 102,
+              l: 99,
+              n: -1,
+              o: 100,
+              t: 1781357460000,
+              v: -5,
+            },
+          ],
+        }),
+      }))
+    );
+
+    await expect(
+      getTickerAggregateBars('AAPL', {
+        multiplier: 1,
+        timespan: 'minute',
+        from: '1781357400000',
+        to: '1781368200000',
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        time: '2026-06-13T13:31:00.000Z',
+        volume: null,
+        vwap: null,
+        transactions: null,
+      }),
+    ]);
+  });
+});
 
 describe('normalizeMassiveSnapshotTicker', () => {
   it('maps Massive snapshot fields into dashboard index performance', () => {

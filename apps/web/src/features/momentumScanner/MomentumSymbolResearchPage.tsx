@@ -1,11 +1,14 @@
 import { Alert, Anchor, Badge, Button, Card, Divider, Group, Loader, ScrollArea, SimpleGrid, Stack, Table, Text, Title } from "@mantine/core";
 import { IconExternalLink } from "@tabler/icons-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { getAdminToken } from "../../lib/api";
-import { useMomentumSymbolResearch } from "./hooks";
+import { MomentumMarketChart } from "./components/MomentumMarketChart";
+import { useMomentumMarketChart, useMomentumSymbolResearch } from "./hooks";
+import { momentumCandidateChartRange, recommendedMarketChartInterval } from "./marketChartRange";
 import { MomentumScannerNavigation } from "./MomentumScannerNavigation";
-import type { MomentumCandidateState, MomentumResearchCandidateDetail } from "./types";
+import type { MomentumCandidateState, MomentumMarketChartInterval, MomentumResearchCandidateDetail } from "./types";
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "Not available";
@@ -52,8 +55,36 @@ function CandidateSummary({ candidate }: { candidate: MomentumResearchCandidateD
 export function MomentumSymbolResearchPage() {
   const { symbol: routeSymbol } = useParams();
   const symbol = routeSymbol?.toUpperCase() ?? null;
-  const research = useMomentumSymbolResearch(getAdminToken(), symbol);
+  const token = getAdminToken();
+  const research = useMomentumSymbolResearch(token, symbol);
   const data = research.data;
+  const [chartInterval, setChartInterval] = useState<MomentumMarketChartInterval>("1m");
+  const initializedContext = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!data) return;
+    const context = `${data.security.symbol}:${data.currentCandidate?.id ?? "current-session"}`;
+    if (initializedContext.current !== context) {
+      initializedContext.current = context;
+      setChartInterval(data.currentCandidate
+        ? recommendedMarketChartInterval(data.currentCandidate)
+        : "1m");
+    }
+  }, [data]);
+
+  const chartRange = useMemo(
+    () => data?.currentCandidate
+      ? momentumCandidateChartRange(data.currentCandidate, chartInterval)
+      : undefined,
+    [chartInterval, data]
+  );
+  const chartQuery = useMemo(() => ({
+    interval: chartInterval,
+    candidateId: data?.currentCandidate?.id,
+    from: chartRange?.from,
+    to: chartRange?.to,
+  }), [chartInterval, chartRange, data?.currentCandidate?.id]);
+  const chart = useMomentumMarketChart(token, data?.security.symbol ?? null, chartQuery);
 
   return <Stack gap="lg"><MomentumScannerNavigation />
     {research.isLoading && <Group><Loader size="sm" /><Text c="dimmed">Loading symbol research…</Text></Group>}
@@ -64,6 +95,17 @@ export function MomentumSymbolResearchPage() {
       <Group gap="xs"><StatusBadge active={data.eligibility.momentumSubscriptionEligibility.eligible} activeLabel="Active momentum subscription" inactiveLabel="Research only" /><StatusBadge active={data.eligibility.candidateEligibility.priceConfirmationEligible} activeLabel="Price confirmation eligible" inactiveLabel="Price confirmation blocked" color="blue" /><StatusBadge active={data.eligibility.candidateEligibility.handoffEligible} activeLabel="Handoff eligible" inactiveLabel="Handoff ineligible" color="violet" /></Group>
 
       {data.currentCandidate ? <CandidateSummary candidate={data.currentCandidate} /> : <Card withBorder radius="md" p="lg"><Title order={2}>No current momentum candidate</Title><Text c="dimmed">The scanner has no active stored candidate for this symbol. Historical research remains available below.</Text></Card>}
+
+      <MomentumMarketChart
+        data={chart.data}
+        candidate={Boolean(data.currentCandidate)}
+        interval={chartInterval}
+        onIntervalChange={setChartInterval}
+        isLoading={chart.isLoading}
+        isFetching={chart.isFetching}
+        error={chart.error instanceof Error ? chart.error : null}
+        title="Market context"
+      />
 
       <Card withBorder radius="md" p="lg"><Stack gap="md"><Title order={2}>Eligibility</Title><SimpleGrid cols={{ base: 1, md: 3 }}><div><Text fw={700}>Research eligibility</Text><Text size="sm" c={data.eligibility.researchEligibility.eligible ? "teal" : "dimmed"}>{data.eligibility.researchEligibility.eligible ? "Eligible" : `Blocked — ${data.eligibility.researchEligibility.reasons.join(", ").replaceAll("_", " ").toLowerCase()}`}</Text></div><div><Text fw={700}>Price confirmation</Text><Text size="sm" c={data.eligibility.candidateEligibility.priceConfirmationEligible ? "teal" : "dimmed"}>{data.eligibility.candidateEligibility.priceConfirmationEligible ? "Eligible" : `Blocked — ${data.eligibility.candidateEligibility.priceConfirmationReasons.join(", ").replaceAll("_", " ").toLowerCase()}`}</Text></div><div><Text fw={700}>Handoff</Text><Text size="sm" c={data.eligibility.candidateEligibility.handoffEligible ? "teal" : "dimmed"}>{data.eligibility.candidateEligibility.handoffEligible ? "Eligible" : `Blocked — ${data.eligibility.candidateEligibility.handoffReasons.join(", ").replaceAll("_", " ").toLowerCase()}`}</Text></div></SimpleGrid><Text size="xs" c="dimmed">{data.eligibility.momentumSubscriptionEligibility.qualifyingSubscriptionIds.length} qualifying momentum subscription{data.eligibility.momentumSubscriptionEligibility.qualifyingSubscriptionIds.length === 1 ? "" : "s"}. Handoff eligibility does not approve or submit an order.</Text></Stack></Card>
 

@@ -632,3 +632,64 @@ export type UpdateMomentumUniverseMemberRequest = Partial<
     | "notes"
   >
 >;
+
+export type MomentumMarketChartInterval = "1m" | "5m" | "15m" | "1d";
+
+export type MomentumMarketChartQuery = {
+  interval: MomentumMarketChartInterval;
+  from?: string;
+  to?: string;
+  candidateId?: string;
+};
+
+export type MomentumMarketChartMarkerType =
+  | "CATALYST_PUBLISHED"
+  | "CATALYST_RECEIVED"
+  | "CANDIDATE_DISCOVERED"
+  | "PRICE_CHECK"
+  | "ENTRY_READY"
+  | "ENTRY_BLOCKED"
+  | "HANDOFF_PREPARED"
+  | "HANDOFF_SENT"
+  | "HANDOFF_CANCELLED";
+
+export type MomentumMarketChartResponse = {
+  security: { id: string; symbol: string; name: string };
+  query: {
+    interval: MomentumMarketChartInterval;
+    from: string;
+    to: string;
+    timezone: "America/New_York";
+    adjusted: boolean;
+  };
+  bars: Array<{
+    timestamp: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: string | null;
+    vwap: number | null;
+    transactions: number | null;
+  }>;
+  referenceLevels: {
+    previousClose: number | null;
+    sessionVwap: number | null;
+    premarketHigh: number | null;
+    regularSessionHigh: number | null;
+  };
+  markers: Array<{
+    id: string;
+    type: MomentumMarketChartMarkerType;
+    timestamp: string;
+    price: number | null;
+    label: string;
+    candidateId: string | null;
+    metadata?: Record<string, unknown>;
+  }>;
+  source: {
+    provider: "MASSIVE";
+    fetchedAt: string;
+    cached: boolean;
+  };
+};

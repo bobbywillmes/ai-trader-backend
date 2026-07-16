@@ -532,6 +532,42 @@ Each confirmation run:
 - writes a `MomentumCandidatePriceCheck` history row
 - updates the latest summary fields on `MomentumCandidate`
 
+### Current Massive Request And Session Semantics
+
+Price confirmation currently makes two Massive requests for each candidate that
+passes the local eligibility checks:
+
+1. `GET /v2/snapshot/locale/us/markets/stocks/tickers/:symbol`
+2. `GET /v2/aggs/ticker/:symbol/range/1/minute/:from/:to?adjusted=true&sort=asc&limit=50000`
+
+The aggregate request uses one-minute bars. `from` and `to` are New York calendar
+dates derived from the confirmation time and the configured lookback, which
+defaults to 390 elapsed minutes. Because the provider path accepts dates rather
+than exact instants in this flow, it can return all eligible bars on the covered
+calendar date or dates; the service only applies an exact timestamp cutoff when
+it selects the recent-window bars.
+
+Massive custom stock aggregates cover premarket, regular-market, and after-hours
+trading. The current confirmation service does not filter bars by market session,
+so extended-hours bars are included when the requested date and provider data
+contain them. Snapshot `day` values can also begin updating with premarket data.
+Consequently, the current `intradayHigh`, `intradayLow`, aggregate fallback VWAP,
+aggregate fallback day volume, recent move, and recent volume are not guaranteed
+to represent regular hours only.
+
+Massive aggregate timestamps are Unix milliseconds for the start of each bar.
+The backend normalizes them to UTC ISO strings. New York time is used only to
+derive market-date request boundaries; stored `observedAt` and normalized bar
+timestamps remain UTC instants. The `America/New_York` IANA timezone is used, so
+date-boundary conversion follows EST and EDT rather than the server timezone.
+
+The aggregate request is explicitly split-adjusted and ascending. The current
+Massive market-data client adds a cache-busting query parameter and sends
+`Cache-Control: no-cache`; it has no application cache, request timeout, retry,
+backoff, or special rate-limit response mapping. Any non-successful upstream
+response currently becomes a `502` `HttpError` containing sanitized selected
+provider fields, although the message may still originate from the provider.
+
 ### Confirmation Snapshot Fields
 
 The Massive price helper normalizes:
@@ -550,6 +586,40 @@ The Massive price helper normalizes:
 - relative-volume placeholder
 
 Relative volume remains basic until the system has a reliable historical-volume baseline.
+
+The precise current derivations are:
+
+- `lastPrice`: snapshot last-trade price, then latest-minute close, then day close.
+- `previousClose`: snapshot `prevDay.c`. No separate previous-day request is made.
+- `intradayHigh` and `intradayLow`: the extrema across snapshot `day` and every
+  returned one-minute bar.
+- `sessionVwap`: snapshot `day.vw`, falling back to a volume-weighted mean of the
+  provider-supplied VWAP on returned one-minute bars. This is provider aggregate
+  VWAP data, not a VWAP reconstructed from typical price.
+- `dayVolume`: snapshot `day.v`, falling back to the sum of every returned
+  one-minute bar with positive volume.
+- `recentVolume`: the sum of positive-volume one-minute bars whose UTC timestamp
+  is within the configured recent window, defaulting to the last 15 elapsed
+  minutes. Missing aggregate intervals are not synthesized.
+- `recentMovePct`: percentage change from the first selected recent bar's open to
+  the last selected recent bar's close.
+- `dollarVolume`: `lastPrice * dayVolume`.
+- `relativeVolume`: always `null` in the current builder.
+
+The UI correctly renders the stored nullable `relativeVolume` value. A candidate
+can still receive a nonzero or high `volumeScore` while RVOL displays as missing:
+positive day volume awards 30 points, sufficient dollar volume awards 30 points,
+and positive recent volume awards 20 points. The unavailable RVOL component is
+only the final 20 points. There is no historical time-of-day volume baseline in
+the current schema or confirmation service, so displaying a calculated RVOL
+would require a separate data and scoring design and is deferred.
+
+Market-data bars are contextual and are not an audit record of exactly which
+candles the scanner used. Stored `MomentumCandidatePriceCheck` rows remain the
+authority for the values observed and decisions made at confirmation time.
+Provider-adjusted or corrected bars fetched later can differ from those original
+observations. This phase does not require an OHLC warehouse or immutable chart
+snapshot; that decision should be revisited with candidate outcome analytics.
 
 ### Confirmation Scoring
 
@@ -751,6 +821,129 @@ candidate state remain separate concepts. The page shows stored score reasoning,
 catalyst history, price checks, handoffs, and candidate history without claiming
 trade outcomes.
 
+### Decision-Linked Market Visualization
+
+Candidate case files and symbol research include a read-only candlestick and
+volume chart backed by Massive custom stock aggregates. The chart is research
+context only. It does not create signals, order intents, broker orders, broker
+activity, subscriptions, or automated entries.
+
+The owner-only endpoint is:
+
+```text
+GET /api/momentum-scanner/research/symbols/:symbol/chart
+```
+
+Supported query fields are:
+
+- `interval=1m|5m|15m|1d`, defaulting to `1m`
+- `from=<ISO timestamp with UTC offset>`
+- `to=<ISO timestamp with UTC offset>`
+- `candidateId=<optional stored MomentumCandidate id>`
+
+The endpoint requires an existing stock or ETF `Security`. Symbols are
+normalized, allow only the repository's safe symbol characters, and are URL
+encoded before provider use. The route is authenticated, owner-only, and
+read-only. It does not expose the Massive API key or accept an upstream URL.
+
+Ranges are bounded by interval:
+
+| Interval | Maximum range | Default behavior |
+| --- | ---: | --- |
+| `1m` | 1 day | Current New York extended session beginning at 4:00 AM |
+| `5m` | 7 calendar days | Recent seven-day context |
+| `15m` | 14 calendar days | Recent fourteen-day context |
+| `1d` | 183 calendar days | Approximately six months |
+
+Candidate pages derive a padded range from stored catalyst, discovery,
+price-check, evaluation, and handoff timestamps. They select the finest interval
+that contains the lifecycle. Symbol pages use the current candidate when one
+exists and otherwise request the current-session default. Selecting an interval
+too narrow for the complete lifecycle recenters the bounded range around
+candidate discovery rather than making an excessive request.
+
+Each uncached chart request makes two Massive aggregate requests in parallel:
+
+1. requested OHLC bars
+2. a short daily lookup used to locate the prior completed close
+
+Bars are adjusted for splits, sorted ascending, and normalized to UTC ISO
+timestamps. The API declares `timezone = America/New_York` separately for market
+interpretation. The IANA timezone conversion handles EST and EDT without using
+the server's local timezone.
+
+Bar volume is returned as a decimal string when available. Missing provider
+volume remains `null`; the UI does not display it as zero. Aggregate transaction
+count and aggregate VWAP remain nullable numbers. Stored price-check
+`dayVolume` and `recentVolume` marker metadata are also decimal strings, avoiding
+JavaScript `BigInt` serialization and safe-integer ambiguity.
+
+Reference levels use the chart's reference New York date:
+
+- `previousClose`: latest available completed daily close before that date
+- `sessionVwap`: volume-weighted mean of Massive-provided aggregate VWAP values
+  across displayed bars on that date, including extended hours
+- `premarketHigh`: highest displayed bar from 4:00 AM through 9:29 AM ET
+- `regularSessionHigh`: highest displayed bar from 9:30 AM through 3:59 PM ET
+
+The per-bar blue overlay is labeled `Aggregate VWAP`. The horizontal calculated
+level is labeled `Session VWAP (extended)`. Neither is presented as the stored
+scanner check VWAP. Stored check VWAP remains in price-check marker metadata and
+the price-check tables.
+
+Decision markers are loaded fresh from stored records even when market bars are
+cached:
+
+- `CATALYST_PUBLISHED` and `CATALYST_RECEIVED` from `CatalystEvent`
+- `CANDIDATE_DISCOVERED` from `MomentumCandidate.discoveredAt`
+- `PRICE_CHECK`, `ENTRY_READY`, and `ENTRY_BLOCKED` from each stored
+  `MomentumCandidatePriceCheck`
+- `HANDOFF_PREPARED`, `HANDOFF_SENT`, and `HANDOFF_CANCELLED` from
+  `MomentumScannerHandoff`
+
+Every stored price check remains visible; every check whose stored decision is
+`ENTRY_READY` receives an entry-ready marker. The chart does not infer a unique
+transition that was never stored. Repeated checks omit persistent text labels to
+reduce clutter while retaining hover details. Marker visuals snap to the nearest
+displayed candle, but tooltips retain the exact stored event timestamp. Because
+handoffs do not have `cancelledAt`, cancellation uses `updatedAt` and exposes
+`timestampSource = updatedAt` in marker metadata.
+
+Provider bar inputs and previous-close daily inputs use a process-local cache:
+
+| Interval | TTL |
+| --- | ---: |
+| `1m` | 30 seconds |
+| `5m` | 5 minutes |
+| `15m` | 5 minutes |
+| `1d` | 30 minutes |
+
+Cache keys include symbol, interval, normalized range, and adjusted mode. The
+cache is capped at 250 entries, evicts the oldest entry at capacity, deduplicates
+identical in-flight requests, and never stores failed requests. Structured logs
+distinguish cache hits, misses, joined requests, Massive requests, rate limits,
+and other upstream failures. Browser responses receive a sanitized provider
+unavailable error rather than raw upstream payloads.
+
+The web component uses Lightweight Charts 5 for native candlesticks, volume,
+line overlays, time-scale markers, responsive resizing, and TypeScript support.
+It uses semantic Mantine theme colors, avoids animation, supports expansion, and
+shows explicit loading, no-data, and provider-error states. Mounting the library
+adds approximately 62 kB gzip to the current single web bundle; the existing
+large-chunk advisory remains non-blocking for this internal console.
+
+Historical provider bars can be adjusted or corrected after the scanner made a
+decision. They are therefore visual context, not proof of the precise candles
+available to the scanner at that moment. Stored price checks remain authoritative
+for observed values and decisions. This phase intentionally adds neither an OHLC
+warehouse nor an immutable chart snapshot model. Candidate outcome analytics,
+forward returns, MFE/MAE, and outcome grading remain deferred.
+
+Relative volume remains honestly nullable. The current scanner has no historical
+time-of-day volume baseline, while its volume score separately awards day-volume,
+dollar-volume, and recent-volume points. The chart does not fabricate RVOL or
+change the scoring model.
+
 The Research Universe table labels each member as `MOMENTUM ENABLED` or
 `RESEARCH ONLY` using the shared subscription resolver and reports qualifying
 subscriptions separately from total subscriptions. It does not mutate
@@ -834,6 +1027,7 @@ GET /api/momentum-scanner/research/candidates
 GET /api/momentum-scanner/research/candidates/:candidateId
 GET /api/momentum-scanner/research/catalysts
 GET /api/momentum-scanner/research/symbols/:symbol
+GET /api/momentum-scanner/research/symbols/:symbol/chart
 ```
 
 Research routes require admin authentication and owner access and are read-only.
@@ -953,3 +1147,8 @@ The existing owner-only research endpoints expose configuration health without c
 - `GET /api/momentum-scanner/research/symbols/:symbol` includes `eligibility`, which separates research inclusion, authoritative momentum-subscription eligibility, and the current candidate's price-confirmation and handoff eligibility. Each level includes machine-readable reasons from the shared resolvers.
 
 These diagnostics are informational. They do not create subscriptions, candidates, signals, handoffs, orders, or broker activity. A handoff-eligible result only means a stored downstream payload may be prepared; it is not order approval or submission.
+### Momentum market chart presentation
+
+Momentum candidate and symbol-research charts share a client-side presentation system. The Layers menu independently controls stored lifecycle markers, all stored price checks, provider-derived VWAP, reference levels, and volume. The default view emphasizes catalyst and decision events while leaving intermediate checks and noisier overlays available on demand.
+
+The chart defaults to a candidate decision window when candidate context exists and provides local shortcuts for the latest session and all loaded bars. Extended-hours filtering uses America/New_York market boundaries and never changes or discards the fetched response. Presentation preferences are stored under the versioned browser key `momentum-market-chart-preferences:v1`; symbols, candidate identifiers, bars, and marker payloads are not persisted.
