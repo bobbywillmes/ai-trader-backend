@@ -812,6 +812,29 @@ enum MomentumScannerHandoffStatus {
   CANCELLED
 }
 
+enum MomentumPipelineRunSource {
+  N8N_SCHEDULED
+  N8N_MANUAL
+  ADMIN_MANUAL
+}
+
+enum MomentumPipelineRunStatus {
+  RUNNING
+  SUCCEEDED
+  PARTIAL
+  FAILED
+  ABANDONED
+}
+
+enum MomentumPipelineStage {
+  NEWS
+  EXPIRATION
+  CANDIDATE_GENERATION
+  PRICE_CONFIRMATION
+  HANDOFF_PREPARATION
+  HANDOFF_DELIVERY
+}
+
 model MomentumCandidate {
   id                 String @id @default(cuid())
 
@@ -895,6 +918,10 @@ model MomentumCandidatePriceCheck {
   decision               String?
   blockedReason          String?
 
+  scoringVersion         String?
+  scoringInputs          Json?
+  scoreExplanation       Json?
+
   rawPayload             Json?
   metadata               Json?
 
@@ -904,6 +931,38 @@ model MomentumCandidatePriceCheck {
   @@index([momentumCandidateId, observedAt])
   @@index([symbol, observedAt])
   @@index([confirmed, totalConfirmationScore])
+  @@index([scoringVersion, observedAt])
+}
+
+model MomentumPipelineRun {
+  id                String @id @default(cuid())
+
+  source            MomentumPipelineRunSource
+  status            MomentumPipelineRunStatus @default(RUNNING)
+
+  startedAt         DateTime @default(now())
+  completedAt       DateTime?
+
+  currentStage      MomentumPipelineStage?
+  errorStage        MomentumPipelineStage?
+  errorCode         String?
+  errorMessage      String?
+
+  newsResult        Json?
+  expirationResult  Json?
+  candidateResult   Json?
+  priceResult       Json?
+  handoffResult     Json?
+  deliveryResult    Json?
+
+  metadata          Json?
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([startedAt])
+  @@index([status, startedAt])
+  @@index([source, startedAt])
 }
 
 model MomentumScannerHandoff {
