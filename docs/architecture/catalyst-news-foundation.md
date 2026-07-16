@@ -1147,3 +1147,8 @@ The existing owner-only research endpoints expose configuration health without c
 - `GET /api/momentum-scanner/research/symbols/:symbol` includes `eligibility`, which separates research inclusion, authoritative momentum-subscription eligibility, and the current candidate's price-confirmation and handoff eligibility. Each level includes machine-readable reasons from the shared resolvers.
 
 These diagnostics are informational. They do not create subscriptions, candidates, signals, handoffs, orders, or broker activity. A handoff-eligible result only means a stored downstream payload may be prepared; it is not order approval or submission.
+### Momentum market chart presentation
+
+Momentum candidate and symbol-research charts share a client-side presentation system. The Layers menu independently controls stored lifecycle markers, all stored price checks, provider-derived VWAP, reference levels, and volume. The default view emphasizes catalyst and decision events while leaving intermediate checks and noisier overlays available on demand.
+
+The chart defaults to a candidate decision window when candidate context exists and provides local shortcuts for the latest session and all loaded bars. Extended-hours filtering uses America/New_York market boundaries and never changes or discards the fetched response. Presentation preferences are stored under the versioned browser key `momentum-market-chart-preferences:v1`; symbols, candidate identifiers, bars, and marker payloads are not persisted.

@@ -111,6 +111,7 @@ export function MomentumCandidateDetailPage() {
 
           <MomentumMarketChart
             data={chart.data}
+            candidate
             interval={chartInterval}
             onIntervalChange={setChartInterval}
             isLoading={chart.isLoading}

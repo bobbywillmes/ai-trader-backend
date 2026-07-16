@@ -98,6 +98,7 @@ export function MomentumSymbolResearchPage() {
 
       <MomentumMarketChart
         data={chart.data}
+        candidate={Boolean(data.currentCandidate)}
         interval={chartInterval}
         onIntervalChange={setChartInterval}
         isLoading={chart.isLoading}
