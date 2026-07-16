@@ -16,6 +16,7 @@ import {
 import { getNewYorkMarketTiming, scoreMomentumPriceAction } from './momentum-scoring/momentum-price-score.js';
 import { scoreMomentumVolume } from './momentum-scoring/momentum-volume-score.js';
 import { scoreMomentumSetupQuality } from './momentum-scoring/momentum-setup-quality-score.js';
+import { decideMomentumConfirmation } from './momentum-scoring/momentum-confirmation-decision.js';
 
 export type ConfirmCandidatePriceOptions = {
   now?: Date;
@@ -65,9 +66,10 @@ export type PriceConfirmationScores = {
   reasons: string[];
   volumeMetricType: string;
   volumeIntensity: number | null;
+  state: MomentumCandidateState;
 };
 
-export const MOMENTUM_CONFIRMATION_SCORING_VERSION = 'momentum_confirmation_v4';
+export const MOMENTUM_CONFIRMATION_SCORING_VERSION = 'momentum_confirmation_v5';
 
 const priceEligibilityInclude = {
   security: {
@@ -207,27 +209,6 @@ function getHardBlockReason(
   }
 
   return null;
-}
-
-function nextStateForDecision(
-  currentState: MomentumCandidateState,
-  scores: PriceConfirmationScores
-) {
-  if (scores.blockedReason !== null) {
-    return MomentumCandidateState.ENTRY_BLOCKED;
-  }
-
-  if (scores.totalConfirmationScore >= env.MOMENTUM_CONFIRMATION_ENTRY_READY_THRESHOLD) {
-    return MomentumCandidateState.ENTRY_READY;
-  }
-
-  if (scores.totalConfirmationScore >= env.MOMENTUM_CONFIRMATION_WATCHING_THRESHOLD) {
-    return MomentumCandidateState.WATCHING;
-  }
-
-  return currentState === MomentumCandidateState.DISCOVERED
-    ? MomentumCandidateState.DISCOVERED
-    : MomentumCandidateState.WATCHING;
 }
 
 function isJsonObject(value: Prisma.JsonValue | null): value is Prisma.JsonObject {
@@ -400,12 +381,6 @@ export function scorePriceConfirmation(
     minimumDollarVolume: env.MOMENTUM_CONFIRMATION_MIN_DOLLAR_VOLUME,
   });
   const riskScore = setupResult.score;
-  const totalConfirmationScore = Math.round(
-    candidate.catalystScore * 0.45 +
-      priceActionScore * 0.3 +
-      volumeScore * 0.2 +
-      riskScore * 0.05
-  );
   const legacyBlock = getHardBlockReason(candidate, snapshot, now);
   const hardBlocks = [...new Set([
     ...(legacyBlock === null ? [] : [legacyBlock]),
@@ -413,24 +388,52 @@ export function scorePriceConfirmation(
     ...volumeResult.hardBlocks,
     ...setupResult.hardBlocks,
   ])];
-  const blockedReason = hardBlocks[0] ?? null;
-  const confirmed =
-    blockedReason === null &&
-    totalConfirmationScore >= env.MOMENTUM_CONFIRMATION_ENTRY_READY_THRESHOLD;
+  const dataComplete = confirmationMissingInputs(snapshot).length === 0;
+  const confirmation = decideMomentumConfirmation({
+    catalystScore: candidate.catalystScore,
+    priceActionScore,
+    volumeScore,
+    setupQualityScore: riskScore,
+    hardBlocks,
+    dataComplete,
+    currentState: candidate.state,
+    expired: isMomentumCandidateExpired(candidate.expiresAt, now),
+    entryReadyThreshold: env.MOMENTUM_CONFIRMATION_ENTRY_READY_THRESHOLD,
+  });
+  const blockedReason = confirmation.hardBlocks[0] ?? null;
 
   return {
     priceActionScore,
     volumeScore,
     riskScore,
-    totalConfirmationScore,
-    confirmed,
-    decision: blockedReason ?? (confirmed ? 'ENTRY_READY' : 'PRICE_CONFIRMED'),
+    totalConfirmationScore: confirmation.totalConfirmationScore,
+    confirmed: confirmation.confirmed,
+    decision: confirmation.decision,
     blockedReason,
     hardBlocks,
-    reasons: [...priceResult.reasons, ...volumeResult.reasons, ...setupResult.reasons],
+    reasons: [
+      ...priceResult.reasons,
+      ...volumeResult.reasons,
+      ...setupResult.reasons,
+      ...confirmation.reasons,
+    ],
     volumeMetricType: volumeResult.volumeMetricType,
     volumeIntensity: volumeResult.volumeIntensity,
+    state: confirmation.state,
   };
+}
+
+function confirmationMissingInputs(snapshot: PriceConfirmationSnapshot) {
+  return Object.entries({
+    lastPrice: snapshot.lastPrice,
+    previousClose: snapshot.previousClose,
+    percentFromPreviousClose: snapshot.pctFromPreviousClose,
+    storedVwap: snapshot.sessionVwap,
+    intradayHigh: snapshot.intradayHigh,
+    recentMovePct: snapshot.recentMovePct,
+    dayVolume: snapshot.dayVolume,
+    recentVolume: snapshot.recentVolume,
+  }).flatMap(([field, value]) => value === null ? [field] : []);
 }
 
 function buildScoringInputs(candidate: MomentumCandidate, snapshot: PriceConfirmationSnapshot): Prisma.InputJsonValue {
@@ -483,16 +486,7 @@ function buildScoreExplanation(
   snapshot: PriceConfirmationSnapshot,
   scores: PriceConfirmationScores
 ): Prisma.InputJsonValue {
-  const missingInputs = Object.entries({
-    lastPrice: snapshot.lastPrice,
-    previousClose: snapshot.previousClose,
-    percentFromPreviousClose: snapshot.pctFromPreviousClose,
-    storedVwap: snapshot.sessionVwap,
-    intradayHigh: snapshot.intradayHigh,
-    recentMovePct: snapshot.recentMovePct,
-    dayVolume: snapshot.dayVolume,
-    recentVolume: snapshot.recentVolume,
-  }).flatMap(([field, value]) => value === null ? [field] : []);
+  const missingInputs = confirmationMissingInputs(snapshot);
 
   return {
     scoringVersion: MOMENTUM_CONFIRMATION_SCORING_VERSION,
@@ -538,7 +532,7 @@ export async function applyPriceConfirmationDecision(
   snapshot: PriceConfirmationSnapshot,
   scores: PriceConfirmationScores
 ) {
-  const state = nextStateForDecision(candidate.state, scores);
+  const state = scores.state;
   const check = await prisma.momentumCandidatePriceCheck.create({
     data: {
       momentumCandidateId: candidate.id,
