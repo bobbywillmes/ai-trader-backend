@@ -698,6 +698,18 @@ export type MomentumMarketChartResponse = {
   };
 };
 
+export type ExpireMomentumCandidatesResponse = {
+  inspected: number;
+  expired: number;
+  unchanged: number;
+  skipped: number;
+  staleRemaining: number;
+  expiredCandidateIds: string[];
+  expiredCandidateIdsTruncated: boolean;
+  reasonCounts: Record<string, number>;
+  asOf: string;
+};
+
 export type MomentumPipelineRunStatus = "RUNNING" | "SUCCEEDED" | "PARTIAL" | "FAILED" | "ABANDONED";
 export type MomentumPipelineRunSource = "N8N_SCHEDULED" | "N8N_MANUAL" | "ADMIN_MANUAL";
 export type MomentumPipelineStage = "NEWS" | "EXPIRATION" | "CANDIDATE_GENERATION" | "PRICE_CONFIRMATION" | "HANDOFF_PREPARATION" | "HANDOFF_DELIVERY";

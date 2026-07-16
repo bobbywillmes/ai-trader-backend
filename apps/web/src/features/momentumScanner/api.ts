@@ -30,6 +30,7 @@ import type {
   MomentumMarketChartResponse,
   MomentumPipelineLatestResponse,
   MomentumPipelineRunsResponse,
+  ExpireMomentumCandidatesResponse,
 } from "./types";
 
 export function getLatestMomentumPipelineRuns(token: string) {
@@ -145,6 +146,13 @@ export function runMassiveNewsWorker(token: string) {
       token,
       body: {},
     }
+  );
+}
+
+export function expireMomentumCandidates(token: string) {
+  return apiRequest<ExpireMomentumCandidatesResponse>(
+    "/api/momentum-candidates/expire-stale",
+    { method: "POST", token, body: {} }
   );
 }
 

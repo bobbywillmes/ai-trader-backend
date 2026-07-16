@@ -23,6 +23,7 @@ import {
   getMomentumMarketChart,
   getLatestMomentumPipelineRuns,
   listMomentumPipelineRuns,
+  expireMomentumCandidates,
 } from "./api";
 import type {
   CatalystEventQuery,
@@ -81,6 +82,14 @@ export function useLatestMomentumPipelineRuns(token: string | null) {
     queryFn: () => getLatestMomentumPipelineRuns(token as string),
     enabled: Boolean(token),
     refetchInterval: 15_000,
+  });
+}
+
+export function useExpireMomentumCandidates(token: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => expireMomentumCandidates(token as string),
+    onSuccess: () => invalidateMomentumScanner(queryClient),
   });
 }
 

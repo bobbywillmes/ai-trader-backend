@@ -41,6 +41,7 @@ import {
   useRunMassiveNewsWorker,
   useLatestMomentumPipelineRuns,
   useMomentumPipelineRuns,
+  useExpireMomentumCandidates,
 } from "./hooks";
 import type {
   CatalystEvent,
@@ -254,6 +255,7 @@ export function MomentumScannerPipelinePage() {
   const prepareHandoffs = usePrepareMomentumScannerHandoffs(token);
   const latestPipelineRuns = useLatestMomentumPipelineRuns(token);
   const pipelineRuns = useMomentumPipelineRuns(token, 10);
+  const expireCandidates = useExpireMomentumCandidates(token);
 
   const catalystEvents = useMemo(
     () => catalystEventsQuery.data ?? [],
@@ -269,6 +271,7 @@ export function MomentumScannerPipelinePage() {
   );
   const isActionPending =
     runNewsWorker.isPending ||
+    expireCandidates.isPending ||
     generateCandidates.isPending ||
     confirmPrices.isPending ||
     prepareHandoffs.isPending;
@@ -331,6 +334,18 @@ export function MomentumScannerPipelinePage() {
         `${result.generatedCandidates} generated`,
         `${result.evaluatedImpacts} impacts evaluated`,
         `score >= ${result.minCatalystScore}`,
+      ]
+    );
+  }
+
+  function handleExpireCandidates() {
+    void runAction(
+      "Expired stale candidates",
+      () => expireCandidates.mutateAsync(),
+      (result) => [
+        `${result.inspected} inspected`,
+        `${result.expired} expired`,
+        `${result.staleRemaining} stale remaining`,
       ]
     );
   }
@@ -422,6 +437,14 @@ export function MomentumScannerPipelinePage() {
           </Group>
 
           <Group align="flex-end">
+            <Button
+              variant="light"
+              color="orange"
+              onClick={handleExpireCandidates}
+              loading={expireCandidates.isPending}
+            >
+              Expire stale candidates
+            </Button>
             <NumberInput
               label="Min catalyst score"
               min={1}
