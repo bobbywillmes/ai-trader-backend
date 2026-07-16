@@ -10,7 +10,6 @@ const mocks = vi.hoisted(() => ({
   catalystTickerImpactFindMany: vi.fn(),
   momentumCandidateFindMany: vi.fn(),
   momentumCandidateFindUnique: vi.fn(),
-  momentumCandidateUpdateMany: vi.fn(),
   momentumCandidateUpsert: vi.fn(),
   placeOrder: vi.fn(),
 }));
@@ -23,7 +22,6 @@ vi.mock('../db/prisma.js', () => ({
     momentumCandidate: {
       findMany: mocks.momentumCandidateFindMany,
       findUnique: mocks.momentumCandidateFindUnique,
-      updateMany: mocks.momentumCandidateUpdateMany,
       upsert: mocks.momentumCandidateUpsert,
     },
   },
@@ -40,7 +38,6 @@ vi.mock('./place-order.service.js', () => ({
 }));
 
 import {
-  expireStaleMomentumCandidates,
   generateMomentumCandidatesFromCatalysts,
   getMomentumCandidateById,
   listMomentumCandidates,
@@ -127,7 +124,6 @@ describe('momentum candidates service', () => {
     mocks.catalystTickerImpactFindMany.mockResolvedValue([]);
     mocks.momentumCandidateFindMany.mockResolvedValue([]);
     mocks.momentumCandidateFindUnique.mockResolvedValue(null);
-    mocks.momentumCandidateUpdateMany.mockResolvedValue({ count: 0 });
     mocks.momentumCandidateUpsert.mockImplementation(({ create }) =>
       Promise.resolve(candidate(create))
     );
@@ -314,36 +310,6 @@ describe('momentum candidates service', () => {
 
     expect(result.skipCounts.STALE_CATALYST).toBe(1);
     expect(mocks.momentumCandidateUpsert).not.toHaveBeenCalled();
-  });
-
-  it('expires stale active candidates without deleting them', async () => {
-    const now = new Date('2026-07-05T15:01:00Z');
-    mocks.momentumCandidateUpdateMany.mockResolvedValue({ count: 2 });
-
-    await expect(expireStaleMomentumCandidates({ now })).resolves.toEqual({
-      expired: 2,
-      asOf: now,
-    });
-
-    expect(mocks.momentumCandidateUpdateMany).toHaveBeenCalledWith({
-      where: {
-        state: {
-          in: [
-            MomentumCandidateState.DISCOVERED,
-            MomentumCandidateState.WATCHING,
-            MomentumCandidateState.ENTRY_READY,
-            MomentumCandidateState.ENTRY_BLOCKED,
-          ],
-        },
-        expiresAt: {
-          lte: now,
-        },
-      },
-      data: {
-        state: MomentumCandidateState.EXPIRED,
-        lastEvaluatedAt: now,
-      },
-    });
   });
 
   it('lists and fetches candidate details with catalyst context', async () => {

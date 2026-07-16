@@ -51,7 +51,7 @@ function ineligible(
   return { eligible: false, reasons, momentumSubscriptionEligibility };
 }
 
-function configurationEligibility(
+function researchConfigurationEligibility(
   candidate: MomentumCandidateEligibilityContext,
   now: Date
 ) {
@@ -84,10 +84,6 @@ function configurationEligibility(
     candidate.security?.subscriptions ?? []
   );
 
-  if (!subscriptionEligibility.eligible) {
-    reasons.push(...subscriptionEligibility.reasons);
-  }
-
   return { reasons: [...new Set(reasons)], subscriptionEligibility };
 }
 
@@ -95,7 +91,7 @@ export function evaluateMomentumPriceConfirmationEligibility(
   candidate: MomentumCandidateEligibilityContext,
   now = new Date()
 ): MomentumCandidateEligibility {
-  const { reasons, subscriptionEligibility } = configurationEligibility(
+  const { reasons, subscriptionEligibility } = researchConfigurationEligibility(
     candidate,
     now
   );
@@ -113,10 +109,14 @@ export function evaluateMomentumHandoffEligibility(
   candidate: MomentumCandidateEligibilityContext,
   now = new Date()
 ): MomentumCandidateEligibility {
-  const { reasons, subscriptionEligibility } = configurationEligibility(
+  const { reasons, subscriptionEligibility } = researchConfigurationEligibility(
     candidate,
     now
   );
+
+  if (!subscriptionEligibility.eligible) {
+    reasons.push(...subscriptionEligibility.reasons);
+  }
 
   if (!canPrepareMomentumHandoffState(candidate.state)) {
     reasons.push(MOMENTUM_CANDIDATE_ELIGIBILITY_REASONS.CANDIDATE_UNCONFIRMED);

@@ -145,6 +145,9 @@ function priceCheck(overrides: Record<string, unknown> = {}) {
     confirmed: true,
     decision: 'ENTRY_READY',
     blockedReason: null,
+    scoringVersion: null,
+    scoringInputs: null,
+    scoreExplanation: null,
     rawPayload: {
       vendorRaw: true,
     },

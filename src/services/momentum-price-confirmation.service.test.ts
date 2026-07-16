@@ -181,9 +181,9 @@ describe('momentum price confirmation service', () => {
       candidate: {
         state: MomentumCandidateState.ENTRY_READY,
         priceActionScore: 100,
-        volumeScore: 80,
+        volumeScore: 90,
         riskScore: 100,
-        totalScore: 92,
+        totalScore: 94,
         blockedReason: null,
       },
       priceCheck: {
@@ -191,9 +191,9 @@ describe('momentum price confirmation service', () => {
         symbol: 'AAPL',
         observedAt: now,
         priceActionScore: 100,
-        volumeScore: 80,
+        volumeScore: 90,
         riskScore: 100,
-        totalConfirmationScore: 92,
+        totalConfirmationScore: 94,
         confirmed: true,
         decision: 'ENTRY_READY',
         blockedReason: null,
@@ -210,6 +210,30 @@ describe('momentum price confirmation service', () => {
         dayVolume: 100000n,
         dollarVolume: 10_300_000,
         recentVolume: 70000n,
+        scoringVersion: 'momentum_confirmation_v5',
+        scoringInputs: expect.objectContaining({
+          lastPrice: 103,
+          dayVolume: '100000',
+          recentVolume: '70000',
+          relativeVolume: null,
+          observedAt: now.toISOString(),
+        }),
+        scoreExplanation: expect.objectContaining({
+          scoringVersion: 'momentum_confirmation_v5',
+          componentScores: {
+            priceAction: 100,
+            volume: 90,
+            setupQuality: 100,
+            totalConfirmation: 94,
+          },
+          hardBlocks: [],
+          decision: 'ENTRY_READY',
+          confirmed: true,
+          dataCompleteness: {
+            complete: true,
+            missingInputs: [],
+          },
+        }),
       }),
     });
     expect(mocks.momentumCandidateUpdate).toHaveBeenCalledWith({
@@ -219,9 +243,9 @@ describe('momentum price confirmation service', () => {
       data: expect.objectContaining({
         state: MomentumCandidateState.ENTRY_READY,
         priceActionScore: 100,
-        volumeScore: 80,
+        volumeScore: 90,
         riskScore: 100,
-        totalScore: 92,
+        totalScore: 94,
         lastEvaluatedAt: now,
         rawSnapshot: expect.objectContaining({
           catalystEvent: {
@@ -243,7 +267,7 @@ describe('momentum price confirmation service', () => {
     expect(updatePayload.rawSnapshot).not.toHaveProperty('priceConfirmation');
   });
 
-  it('keeps a moderate score in WATCHING state', async () => {
+  it('blocks a moderate price setup when dollar liquidity is insufficient', async () => {
     mocks.momentumCandidateFindUnique.mockResolvedValue(
       candidate({
         catalystScore: 70,
@@ -281,12 +305,20 @@ describe('momentum price confirmation service', () => {
     });
 
     expect(result.candidate).toMatchObject({
-      state: MomentumCandidateState.WATCHING,
-      totalScore: 69,
+      state: MomentumCandidateState.ENTRY_BLOCKED,
+      totalScore: 73,
+      blockedReason: 'INSUFFICIENT_DOLLAR_LIQUIDITY',
     });
     expect(result.priceCheck).toMatchObject({
       confirmed: false,
-      blockedReason: null,
+      blockedReason: 'INSUFFICIENT_DOLLAR_LIQUIDITY',
+      scoreExplanation: expect.objectContaining({
+        componentScores: expect.objectContaining({
+          setupQuality: 70,
+        }),
+        hardBlocks: expect.arrayContaining(['INSUFFICIENT_DOLLAR_LIQUIDITY']),
+        reasons: expect.arrayContaining(['BELOW_TARGET_DOLLAR_LIQUIDITY']),
+      }),
     });
   });
 
@@ -316,8 +348,12 @@ describe('momentum price confirmation service', () => {
     });
     expect(result.priceCheck).toMatchObject({
       confirmed: false,
-      decision: 'PRICE_BELOW_MINIMUM',
+      decision: 'ENTRY_BLOCKED',
       blockedReason: 'PRICE_BELOW_MINIMUM',
+      scoringVersion: 'momentum_confirmation_v5',
+      scoreExplanation: {
+        hardBlocks: ['PRICE_BELOW_MINIMUM', 'TOO_FAR_FROM_INTRADAY_HIGH'],
+      },
     });
   });
 
@@ -369,19 +405,28 @@ describe('momentum price confirmation service', () => {
     }
   });
 
-  it('does not request market data for a configuration-ineligible candidate', async () => {
+  it('evaluates a research candidate without a trading subscription', async () => {
     mocks.momentumCandidateFindUnique.mockResolvedValue(
       candidate({ security: { ...candidate().security, subscriptions: [] } })
     );
 
-    await expect(confirmCandidatePrice('candidate-1')).resolves.toMatchObject({
-      skipped: true,
-      eligibility: { eligible: false, reasons: ['NO_SUBSCRIPTION'] },
-      priceCheck: null,
+    await expect(confirmCandidatePrice('candidate-1', {
+      now: new Date('2026-07-04T15:31:00.000Z'),
+    })).resolves.toMatchObject({
+      skipped: false,
+      eligibility: {
+        eligible: true,
+        reasons: ['ELIGIBLE'],
+        momentumSubscriptionEligibility: {
+          eligible: false,
+          reasons: ['NO_SUBSCRIPTION'],
+        },
+      },
+      priceCheck: { scoringVersion: 'momentum_confirmation_v5' },
     });
 
-    expect(mocks.getTickerPriceConfirmationMarketData).not.toHaveBeenCalled();
-    expect(mocks.priceCheckCreate).not.toHaveBeenCalled();
+    expect(mocks.getTickerPriceConfirmationMarketData).toHaveBeenCalledTimes(1);
+    expect(mocks.priceCheckCreate).toHaveBeenCalledTimes(1);
   });
 
   it('respects the configured max candidate limit when confirming a batch', async () => {

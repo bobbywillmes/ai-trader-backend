@@ -94,10 +94,30 @@ describe('momentum candidate eligibility', () => {
     ).toMatchObject({ eligible: false, reasons: expect.arrayContaining([reason]) });
   });
 
-  it('includes momentum subscription reasons in price eligibility', () => {
+  it('allows research price confirmation without a trading subscription', () => {
     expect(
       evaluateMomentumPriceConfirmationEligibility(
         candidate({
+          security: { ...candidate().security!, subscriptions: [] },
+        }),
+        now
+      )
+    ).toMatchObject({
+      eligible: true,
+      reasons: [REASON.ELIGIBLE],
+      momentumSubscriptionEligibility: {
+        eligible: false,
+        reasons: ['NO_SUBSCRIPTION'],
+      },
+    });
+  });
+
+  it('retains subscription eligibility as a handoff requirement', () => {
+    expect(
+      evaluateMomentumHandoffEligibility(
+        candidate({
+          state: MomentumCandidateState.ENTRY_READY,
+          latestPriceCheck: { confirmed: true },
           security: { ...candidate().security!, subscriptions: [] },
         }),
         now

@@ -28,7 +28,36 @@ import type {
   MomentumSymbolResearch,
   MomentumMarketChartQuery,
   MomentumMarketChartResponse,
+  MomentumPipelineLatestResponse,
+  MomentumPipelineRunsResponse,
+  ExpireMomentumCandidatesResponse,
+  FullMomentumPipelineRequest,
+  FullMomentumPipelineResponse,
 } from "./types";
+
+export function runFullMomentumPipeline(
+  token: string,
+  request: FullMomentumPipelineRequest = {}
+) {
+  return apiRequest<FullMomentumPipelineResponse>(
+    "/api/momentum-scanner/pipeline/run",
+    { method: "POST", token, body: request }
+  );
+}
+
+export function getLatestMomentumPipelineRuns(token: string) {
+  return apiRequest<MomentumPipelineLatestResponse>(
+    "/api/momentum-scanner/research/pipeline-runs/latest",
+    { token }
+  );
+}
+
+export function listMomentumPipelineRuns(token: string, pageSize = 10) {
+  return apiRequest<MomentumPipelineRunsResponse>(
+    `/api/momentum-scanner/research/pipeline-runs?page=1&pageSize=${pageSize}`,
+    { token }
+  );
+}
 
 export function getMomentumMarketChart(
   token: string,
@@ -129,6 +158,13 @@ export function runMassiveNewsWorker(token: string) {
       token,
       body: {},
     }
+  );
+}
+
+export function expireMomentumCandidates(token: string) {
+  return apiRequest<ExpireMomentumCandidatesResponse>(
+    "/api/momentum-candidates/expire-stale",
+    { method: "POST", token, body: {} }
   );
 }
 

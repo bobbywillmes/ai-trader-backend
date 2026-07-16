@@ -140,6 +140,9 @@ export type MomentumCandidatePriceCheck = {
   confirmed: boolean;
   decision: string;
   blockedReason: string | null;
+  scoringVersion: string | null;
+  scoringInputs: unknown;
+  scoreExplanation: unknown;
   rawPayload: unknown;
   metadata: unknown;
   createdAt: string;
@@ -293,11 +296,12 @@ export type MomentumResearchCandidateRow = {
   state: MomentumCandidateState;
   scores: {
     catalyst: number;
-    priceAction: number;
-    volume: number;
-    risk: number;
+    priceAction: number | null;
+    volume: number | null;
+    risk: number | null;
     total: number;
   };
+  evaluated: boolean;
   reason: string | null;
   blockedReason: string | null;
   discoveredAt: string;
@@ -692,4 +696,71 @@ export type MomentumMarketChartResponse = {
     fetchedAt: string;
     cached: boolean;
   };
+};
+
+export type ExpireMomentumCandidatesResponse = {
+  inspected: number;
+  expired: number;
+  unchanged: number;
+  skipped: number;
+  staleRemaining: number;
+  expiredCandidateIds: string[];
+  expiredCandidateIdsTruncated: boolean;
+  reasonCounts: Record<string, number>;
+  asOf: string;
+};
+
+export type MomentumPipelineRunStatus = "RUNNING" | "SUCCEEDED" | "PARTIAL" | "FAILED" | "ABANDONED";
+export type MomentumPipelineRunSource = "N8N_SCHEDULED" | "N8N_MANUAL" | "ADMIN_MANUAL";
+export type MomentumPipelineStage = "NEWS" | "EXPIRATION" | "CANDIDATE_GENERATION" | "PRICE_CONFIRMATION" | "HANDOFF_PREPARATION" | "HANDOFF_DELIVERY";
+
+export type MomentumPipelineRun = {
+  id: string;
+  source: MomentumPipelineRunSource;
+  status: MomentumPipelineRunStatus;
+  startedAt: string;
+  completedAt: string | null;
+  durationMs: number | null;
+  currentStage: MomentumPipelineStage | null;
+  errorStage: MomentumPipelineStage | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  newsResult: unknown;
+  expirationResult: unknown;
+  candidateResult: unknown;
+  priceResult: unknown;
+  handoffResult: unknown;
+  deliveryResult: unknown;
+};
+
+export type MomentumPipelineLatestResponse = {
+  latestAttempt: MomentumPipelineRun | null;
+  latestSuccessful: MomentumPipelineRun | null;
+  currentRun: MomentumPipelineRun | null;
+};
+
+export type MomentumPipelineRunsResponse = {
+  data: MomentumPipelineRun[];
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
+};
+
+export type FullMomentumPipelineRequest = {
+  metadata?: Record<string, unknown>;
+  expirationLimit?: number;
+  minCatalystScore?: number;
+  candidateTake?: number;
+  expiresInHours?: number;
+  maxCandidates?: number;
+  minHandoffScore?: number;
+};
+
+export type FullMomentumPipelineResponse = {
+  runId: string;
+  status: MomentumPipelineRunStatus;
+  startedAt: string;
+  completedAt: string;
+  failedStage?: MomentumPipelineStage;
+  errorCode?: string;
+  errorMessage?: string;
+  stages: Partial<Record<MomentumPipelineStage, Record<string, unknown>>>;
 };

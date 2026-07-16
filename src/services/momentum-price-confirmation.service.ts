@@ -13,6 +13,10 @@ import {
   getTickerPriceConfirmationMarketData,
   type TickerPriceConfirmationMarketData,
 } from './massive-market-data.service.js';
+import { getNewYorkMarketTiming, scoreMomentumPriceAction } from './momentum-price-score.js';
+import { scoreMomentumVolume } from './momentum-volume-score.js';
+import { scoreMomentumSetupQuality } from './momentum-setup-quality-score.js';
+import { decideMomentumConfirmation } from './momentum-confirmation-decision.js';
 
 export type ConfirmCandidatePriceOptions = {
   now?: Date;
@@ -33,6 +37,7 @@ export type ListMomentumCandidatePriceChecksOptions = {
 export type PriceConfirmationSnapshot = {
   symbol: string;
   observedAt: Date;
+  sourceObservedAt: Date | null;
   lastPrice: number | null;
   previousClose: number | null;
   pctFromPreviousClose: number | null;
@@ -57,7 +62,14 @@ export type PriceConfirmationScores = {
   confirmed: boolean;
   decision: string;
   blockedReason: string | null;
+  hardBlocks: string[];
+  reasons: string[];
+  volumeMetricType: string;
+  volumeIntensity: number | null;
+  state: MomentumCandidateState;
 };
+
+export const MOMENTUM_CONFIRMATION_SCORING_VERSION = 'momentum_confirmation_v5';
 
 const priceEligibilityInclude = {
   security: {
@@ -161,93 +173,6 @@ function filterRecentBars(
   });
 }
 
-function scorePriceAction(snapshot: PriceConfirmationSnapshot) {
-  let score = 0;
-
-  if (
-    snapshot.pctFromPreviousClose !== null &&
-    snapshot.pctFromPreviousClose >= 2
-  ) {
-    score += 25;
-  }
-
-  if (snapshot.aboveVwap === true) {
-    score += 25;
-  }
-
-  if (
-    snapshot.distanceFromHighPct !== null &&
-    snapshot.distanceFromHighPct <= 1.5
-  ) {
-    score += 25;
-  }
-
-  if (snapshot.recentMovePct !== null && snapshot.recentMovePct > 0) {
-    score += 25;
-  }
-
-  return score;
-}
-
-function scoreVolume(snapshot: PriceConfirmationSnapshot) {
-  let score = 0;
-
-  if (snapshot.dayVolume !== null && snapshot.dayVolume > 0) {
-    score += 30;
-  }
-
-  if (
-    snapshot.dollarVolume !== null &&
-    snapshot.dollarVolume >= env.MOMENTUM_CONFIRMATION_MIN_DOLLAR_VOLUME
-  ) {
-    score += 30;
-  }
-
-  if (snapshot.recentVolume !== null && snapshot.recentVolume > 0) {
-    score += 20;
-  }
-
-  if (snapshot.relativeVolume !== null && snapshot.relativeVolume >= 2) {
-    score += 20;
-  }
-
-  return score;
-}
-
-function scoreRiskQuality(snapshot: PriceConfirmationSnapshot) {
-  let score = 0;
-
-  if (
-    snapshot.lastPrice !== null &&
-    snapshot.lastPrice >= env.MOMENTUM_CONFIRMATION_MIN_PRICE
-  ) {
-    score += 25;
-  }
-
-  if (
-    snapshot.pctFromPreviousClose !== null &&
-    snapshot.pctFromPreviousClose <= 15
-  ) {
-    score += 25;
-  }
-
-  if (
-    snapshot.lastPrice !== null &&
-    snapshot.sessionVwap !== null &&
-    snapshot.sessionVwap > 0 &&
-    ((snapshot.lastPrice - snapshot.sessionVwap) / snapshot.sessionVwap) *
-      100 <=
-      6
-  ) {
-    score += 25;
-  }
-
-  // Phase 4 does not yet call a regular-hours helper. Keep timing neutral.
-  score += 25;
-
-  return score;
-}
-
 function getHardBlockReason(
   candidate: MomentumCandidate,
   snapshot: PriceConfirmationSnapshot,
@@ -284,27 +209,6 @@ function getHardBlockReason(
   }
 
   return null;
-}
-
-function nextStateForDecision(
-  currentState: MomentumCandidateState,
-  scores: PriceConfirmationScores
-) {
-  if (scores.blockedReason !== null) {
-    return MomentumCandidateState.ENTRY_BLOCKED;
-  }
-
-  if (scores.totalConfirmationScore >= env.MOMENTUM_CONFIRMATION_ENTRY_READY_THRESHOLD) {
-    return MomentumCandidateState.ENTRY_READY;
-  }
-
-  if (scores.totalConfirmationScore >= env.MOMENTUM_CONFIRMATION_WATCHING_THRESHOLD) {
-    return MomentumCandidateState.WATCHING;
-  }
-
-  return currentState === MomentumCandidateState.DISCOVERED
-    ? MomentumCandidateState.DISCOVERED
-    : MomentumCandidateState.WATCHING;
 }
 
 function isJsonObject(value: Prisma.JsonValue | null): value is Prisma.JsonObject {
@@ -417,6 +321,9 @@ export async function buildPriceConfirmationSnapshot(
   return {
     symbol: data.symbol,
     observedAt: now,
+    sourceObservedAt: data.snapshot.updatedTime === null
+      ? null
+      : new Date(data.snapshot.updatedTime),
     lastPrice,
     previousClose,
     pctFromPreviousClose,
@@ -440,28 +347,183 @@ export function scorePriceConfirmation(
   snapshot: PriceConfirmationSnapshot,
   now = new Date()
 ): PriceConfirmationScores {
-  const priceActionScore = scorePriceAction(snapshot);
-  const volumeScore = scoreVolume(snapshot);
-  const riskScore = scoreRiskQuality(snapshot);
-  const totalConfirmationScore = Math.round(
-    candidate.catalystScore * 0.45 +
-      priceActionScore * 0.3 +
-      volumeScore * 0.2 +
-      riskScore * 0.05
-  );
-  const blockedReason = getHardBlockReason(candidate, snapshot, now);
-  const confirmed =
-    blockedReason === null &&
-    totalConfirmationScore >= env.MOMENTUM_CONFIRMATION_ENTRY_READY_THRESHOLD;
+  const extensionFromVwapPct = snapshot.lastPrice !== null && snapshot.sessionVwap !== null && snapshot.sessionVwap > 0
+    ? ((snapshot.lastPrice - snapshot.sessionVwap) / snapshot.sessionVwap) * 100
+    : null;
+  const priceResult = scoreMomentumPriceAction({
+    percentFromPreviousClose: snapshot.pctFromPreviousClose,
+    aboveVwap: snapshot.aboveVwap,
+    distanceFromHighPct: snapshot.distanceFromHighPct,
+    recentMovePct: snapshot.recentMovePct,
+    extensionFromVwapPct,
+    observedAt: now,
+    sourceObservedAt: snapshot.sourceObservedAt,
+    ...getNewYorkMarketTiming(now),
+  });
+  const priceActionScore = priceResult.score;
+  const volumeResult = scoreMomentumVolume({
+    dayVolume: snapshot.dayVolume,
+    recentVolume: snapshot.recentVolume,
+    dollarVolume: snapshot.dollarVolume,
+    relativeVolume: snapshot.relativeVolume,
+    minimumDollarVolume: env.MOMENTUM_CONFIRMATION_MIN_DOLLAR_VOLUME,
+  });
+  const volumeScore = volumeResult.score;
+  const marketTiming = getNewYorkMarketTiming(now);
+  const setupResult = scoreMomentumSetupQuality({
+    extensionFromVwapPct,
+    distanceFromHighPct: snapshot.distanceFromHighPct,
+    recentMovePct: snapshot.recentMovePct,
+    candidateAgeMinutes: Math.max(0, (now.getTime() - candidate.discoveredAt.getTime()) / 60_000),
+    marketSession: marketTiming.marketSession,
+    newYorkMinuteOfDay: marketTiming.newYorkMinuteOfDay,
+    dollarVolume: snapshot.dollarVolume,
+    minimumDollarVolume: env.MOMENTUM_CONFIRMATION_MIN_DOLLAR_VOLUME,
+  });
+  const riskScore = setupResult.score;
+  const legacyBlock = getHardBlockReason(candidate, snapshot, now);
+  const hardBlocks = [...new Set([
+    ...(legacyBlock === null ? [] : [legacyBlock]),
+    ...priceResult.hardBlocks,
+    ...volumeResult.hardBlocks,
+    ...setupResult.hardBlocks,
+  ])];
+  const dataComplete = confirmationMissingInputs(snapshot).length === 0;
+  const confirmation = decideMomentumConfirmation({
+    catalystScore: candidate.catalystScore,
+    priceActionScore,
+    volumeScore,
+    setupQualityScore: riskScore,
+    hardBlocks,
+    dataComplete,
+    currentState: candidate.state,
+    expired: isMomentumCandidateExpired(candidate.expiresAt, now),
+    entryReadyThreshold: env.MOMENTUM_CONFIRMATION_ENTRY_READY_THRESHOLD,
+  });
+  const blockedReason = confirmation.hardBlocks[0] ?? null;
 
   return {
     priceActionScore,
     volumeScore,
     riskScore,
-    totalConfirmationScore,
-    confirmed,
-    decision: blockedReason ?? (confirmed ? 'ENTRY_READY' : 'PRICE_CONFIRMED'),
+    totalConfirmationScore: confirmation.totalConfirmationScore,
+    confirmed: confirmation.confirmed,
+    decision: confirmation.decision,
     blockedReason,
+    hardBlocks,
+    reasons: [
+      ...priceResult.reasons,
+      ...volumeResult.reasons,
+      ...setupResult.reasons,
+      ...confirmation.reasons,
+    ],
+    volumeMetricType: volumeResult.volumeMetricType,
+    volumeIntensity: volumeResult.volumeIntensity,
+    state: confirmation.state,
+  };
+}
+
+function confirmationMissingInputs(snapshot: PriceConfirmationSnapshot) {
+  return Object.entries({
+    lastPrice: snapshot.lastPrice,
+    previousClose: snapshot.previousClose,
+    percentFromPreviousClose: snapshot.pctFromPreviousClose,
+    storedVwap: snapshot.sessionVwap,
+    intradayHigh: snapshot.intradayHigh,
+    recentMovePct: snapshot.recentMovePct,
+    dayVolume: snapshot.dayVolume,
+    recentVolume: snapshot.recentVolume,
+  }).flatMap(([field, value]) => value === null ? [field] : []);
+}
+
+function buildScoringInputs(candidate: MomentumCandidate, snapshot: PriceConfirmationSnapshot): Prisma.InputJsonValue {
+  const marketTiming = getNewYorkMarketTiming(snapshot.observedAt);
+  return {
+    lastPrice: snapshot.lastPrice,
+    previousClose: snapshot.previousClose,
+    percentFromPreviousClose: snapshot.pctFromPreviousClose,
+    storedVwap: snapshot.sessionVwap,
+    aboveVwap: snapshot.aboveVwap,
+    intradayHigh: snapshot.intradayHigh,
+    intradayLow: snapshot.intradayLow,
+    distanceFromHighPct: snapshot.distanceFromHighPct,
+    recentMovePct: snapshot.recentMovePct,
+    dayVolume: snapshot.dayVolume?.toString() ?? null,
+    recentVolume: snapshot.recentVolume?.toString() ?? null,
+    relativeVolume: snapshot.relativeVolume,
+    volumeIntensity: snapshot.dayVolume !== null && snapshot.dayVolume > 0 && snapshot.recentVolume !== null
+      ? snapshot.recentVolume / snapshot.dayVolume
+      : null,
+    volumeMetricType: 'VOLUME_INTENSITY_V1',
+    dollarVolume: snapshot.dollarVolume,
+    observedAt: snapshot.observedAt.toISOString(),
+    sourceObservedAt: snapshot.sourceObservedAt?.toISOString() ?? null,
+    marketSession: marketTiming.marketSession,
+    newYorkMinuteOfDay: marketTiming.newYorkMinuteOfDay,
+    candidateAgeMinutes: Math.max(
+      0,
+      (snapshot.observedAt.getTime() - candidate.discoveredAt.getTime()) / 60_000
+    ),
+  };
+}
+
+function buildScoreReasons(snapshot: PriceConfirmationSnapshot, scores: PriceConfirmationScores) {
+  const reasons: string[] = [];
+  if (snapshot.pctFromPreviousClose !== null && snapshot.pctFromPreviousClose >= 2) reasons.push('Positive move from previous close contributed to price action.');
+  if (snapshot.aboveVwap === true) reasons.push('Price above session VWAP contributed to price action.');
+  if (snapshot.distanceFromHighPct !== null && snapshot.distanceFromHighPct <= 1.5) reasons.push('Price near the intraday high contributed to price action.');
+  if (snapshot.recentMovePct !== null && snapshot.recentMovePct > 0) reasons.push('Positive recent move contributed to price action.');
+  if (snapshot.dayVolume !== null && snapshot.dayVolume > 0) reasons.push('Positive cumulative day volume contributed to volume confirmation.');
+  if (snapshot.dollarVolume !== null && snapshot.dollarVolume >= env.MOMENTUM_CONFIRMATION_MIN_DOLLAR_VOLUME) reasons.push('Dollar volume met the configured liquidity threshold.');
+  if (snapshot.recentVolume !== null && snapshot.recentVolume > 0) reasons.push('Positive recent volume contributed to volume confirmation.');
+  if (snapshot.relativeVolume === null) reasons.push('Relative volume was unavailable and contributed no points.');
+  if (scores.blockedReason !== null) reasons.push(`Hard block applied: ${scores.blockedReason}.`);
+  if (reasons.length === 0) reasons.push('Available observations did not satisfy a scoring rule.');
+  return reasons;
+}
+
+function buildScoreExplanation(
+  snapshot: PriceConfirmationSnapshot,
+  scores: PriceConfirmationScores
+): Prisma.InputJsonValue {
+  const missingInputs = confirmationMissingInputs(snapshot);
+
+  return {
+    scoringVersion: MOMENTUM_CONFIRMATION_SCORING_VERSION,
+    scoreRanges: {
+      catalyst: { min: 0, max: 90 },
+      priceAction: { min: 0, max: 100 },
+      volume: { min: 0, max: 100, currentlyAttainableMax: 90 },
+      setupQuality: { min: 0, max: 100, storedField: 'riskScore' },
+      totalConfirmation: { min: 0, max: 96 },
+    },
+    componentScores: {
+      priceAction: scores.priceActionScore,
+      volume: scores.volumeScore,
+      setupQuality: scores.riskScore,
+      totalConfirmation: scores.totalConfirmationScore,
+    },
+    volumeMetric: {
+      type: scores.volumeMetricType,
+      intensity: scores.volumeIntensity,
+      relativeVolume: snapshot.relativeVolume,
+      relativeVolumeImplemented: snapshot.relativeVolume !== null,
+    },
+    hardBlocks: scores.hardBlocks,
+    reasons: [...scores.reasons, ...buildScoreReasons(snapshot, scores)],
+    decision: scores.decision,
+    confirmed: scores.confirmed,
+    dataCompleteness: {
+      complete: missingInputs.length === 0,
+      missingInputs,
+    },
+    formula: {
+      catalystWeight: 0.45,
+      priceActionWeight: 0.3,
+      volumeWeight: 0.2,
+      setupQualityWeight: 0.05,
+      rounding: 'nearest_integer',
+    },
   };
 }
 
@@ -470,7 +532,7 @@ export async function applyPriceConfirmationDecision(
   snapshot: PriceConfirmationSnapshot,
   scores: PriceConfirmationScores
 ) {
-  const state = nextStateForDecision(candidate.state, scores);
+  const state = scores.state;
   const check = await prisma.momentumCandidatePriceCheck.create({
     data: {
       momentumCandidateId: candidate.id,
@@ -496,6 +558,9 @@ export async function applyPriceConfirmationDecision(
       confirmed: scores.confirmed,
       decision: scores.decision,
       blockedReason: scores.blockedReason,
+      scoringVersion: MOMENTUM_CONFIRMATION_SCORING_VERSION,
+      scoringInputs: buildScoringInputs(candidate, snapshot),
+      scoreExplanation: buildScoreExplanation(snapshot, scores),
       rawPayload: snapshot.rawPayload as Prisma.InputJsonValue,
       metadata: {
         phase: 'momentum_price_confirmation_phase_4',

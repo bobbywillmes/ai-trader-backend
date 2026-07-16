@@ -21,6 +21,10 @@ import {
   getMomentumResearchCandidate,
   getMomentumSymbolResearch,
   getMomentumMarketChart,
+  getLatestMomentumPipelineRuns,
+  listMomentumPipelineRuns,
+  expireMomentumCandidates,
+  runFullMomentumPipeline,
 } from "./api";
 import type {
   CatalystEventQuery,
@@ -35,6 +39,7 @@ import type {
   MomentumResearchCandidatesQuery,
   MomentumResearchCatalystsQuery,
   MomentumMarketChartQuery,
+  FullMomentumPipelineRequest,
 } from "./types";
 
 export const momentumScannerKeys = {
@@ -67,7 +72,46 @@ export const momentumScannerKeys = {
     [...momentumScannerKeys.all, "research", "symbol", symbol] as const,
   marketChart: (symbol: string | null, query: MomentumMarketChartQuery) =>
     [...momentumScannerKeys.all, "research", "marketChart", symbol, query] as const,
+  pipelineRunsLatest: () =>
+    [...momentumScannerKeys.all, "research", "pipelineRuns", "latest"] as const,
+  pipelineRuns: (pageSize: number) =>
+    [...momentumScannerKeys.all, "research", "pipelineRuns", pageSize] as const,
 };
+
+export function useLatestMomentumPipelineRuns(token: string | null) {
+  return useQuery({
+    queryKey: momentumScannerKeys.pipelineRunsLatest(),
+    queryFn: () => getLatestMomentumPipelineRuns(token as string),
+    enabled: Boolean(token),
+    refetchInterval: 15_000,
+  });
+}
+
+export function useExpireMomentumCandidates(token: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => expireMomentumCandidates(token as string),
+    onSuccess: () => invalidateMomentumScanner(queryClient),
+  });
+}
+
+export function useRunFullMomentumPipeline(token: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (request: FullMomentumPipelineRequest) =>
+      runFullMomentumPipeline(token as string, request),
+    onSuccess: () => invalidateMomentumScanner(queryClient),
+  });
+}
+
+export function useMomentumPipelineRuns(token: string | null, pageSize = 10) {
+  return useQuery({
+    queryKey: momentumScannerKeys.pipelineRuns(pageSize),
+    queryFn: () => listMomentumPipelineRuns(token as string, pageSize),
+    enabled: Boolean(token),
+    refetchInterval: 30_000,
+  });
+}
 
 export function useMomentumResearchOverview(token: string | null) {
   return useQuery({

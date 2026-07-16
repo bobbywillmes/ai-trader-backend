@@ -539,7 +539,31 @@ Table MomentumCandidatePriceCheck {
   confirmed Boolean [not null, default: false]
   decision String
   blockedReason String
+  scoringVersion String
+  scoringInputs Json
+  scoreExplanation Json
   rawPayload Json
+  metadata Json
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+}
+
+Table MomentumPipelineRun {
+  id String [pk]
+  source MomentumPipelineRunSource [not null]
+  status MomentumPipelineRunStatus [not null, default: 'RUNNING']
+  startedAt DateTime [default: `now()`, not null]
+  completedAt DateTime
+  currentStage MomentumPipelineStage
+  errorStage MomentumPipelineStage
+  errorCode String
+  errorMessage String
+  newsResult Json
+  expirationResult Json
+  candidateResult Json
+  priceResult Json
+  handoffResult Json
+  deliveryResult Json
   metadata Json
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
@@ -950,6 +974,29 @@ Enum MomentumScannerHandoffStatus {
   ACKNOWLEDGED
   FAILED
   CANCELLED
+}
+
+Enum MomentumPipelineRunSource {
+  N8N_SCHEDULED
+  N8N_MANUAL
+  ADMIN_MANUAL
+}
+
+Enum MomentumPipelineRunStatus {
+  RUNNING
+  SUCCEEDED
+  PARTIAL
+  FAILED
+  ABANDONED
+}
+
+Enum MomentumPipelineStage {
+  NEWS
+  EXPIRATION
+  CANDIDATE_GENERATION
+  PRICE_CONFIRMATION
+  HANDOFF_PREPARATION
+  HANDOFF_DELIVERY
 }
 
 Ref: User.invitedByUserId - User.id [delete: Set Null]

@@ -25,10 +25,6 @@ export type GenerateMomentumCandidatesArgs = {
   take?: number;
 };
 
-export type ExpireStaleMomentumCandidatesArgs = {
-  now?: Date;
-};
-
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
 const DEFAULT_MIN_CATALYST_SCORE = 60;
@@ -404,30 +400,5 @@ export async function generateMomentumCandidatesFromCatalysts(
     recentSince,
     expiresAt,
     candidates,
-  };
-}
-
-export async function expireStaleMomentumCandidates(
-  args: ExpireStaleMomentumCandidatesArgs = {}
-) {
-  const now = args.now ?? new Date();
-  const result = await prisma.momentumCandidate.updateMany({
-    where: {
-      state: {
-        in: [...ACTIVE_MOMENTUM_CANDIDATE_STATES],
-      },
-      expiresAt: {
-        lte: now,
-      },
-    },
-    data: {
-      state: MomentumCandidateState.EXPIRED,
-      lastEvaluatedAt: now,
-    },
-  });
-
-  return {
-    expired: result.count,
-    asOf: now,
   };
 }

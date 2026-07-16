@@ -39,6 +39,10 @@ import {
   useMomentumScannerHandoffs,
   usePrepareMomentumScannerHandoffs,
   useRunMassiveNewsWorker,
+  useLatestMomentumPipelineRuns,
+  useMomentumPipelineRuns,
+  useExpireMomentumCandidates,
+  useRunFullMomentumPipeline,
 } from "./hooks";
 import type {
   CatalystEvent,
@@ -49,6 +53,7 @@ import type {
   PrepareMomentumScannerHandoffsRequest,
 } from "./types";
 import { MomentumScannerNavigation } from "./MomentumScannerNavigation";
+import { MomentumPipelineRunSummary } from "./components/MomentumPipelineRunSummary";
 
 type ActionSummary = {
   label: string;
@@ -76,6 +81,17 @@ function formatDate(value: string | null | undefined) {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+}
+
+function formatPipelineDate(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    month: "short",
+    day: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(new Date(value));
 }
 
 function formatNumber(value: string | number | null | undefined) {
@@ -238,6 +254,10 @@ export function MomentumScannerPipelinePage() {
   const generateCandidates = useGenerateMomentumCandidates(token);
   const confirmPrices = useConfirmMomentumCandidatePrices(token);
   const prepareHandoffs = usePrepareMomentumScannerHandoffs(token);
+  const latestPipelineRuns = useLatestMomentumPipelineRuns(token);
+  const pipelineRuns = useMomentumPipelineRuns(token, 10);
+  const expireCandidates = useExpireMomentumCandidates(token);
+  const runFullPipeline = useRunFullMomentumPipeline(token);
 
   const catalystEvents = useMemo(
     () => catalystEventsQuery.data ?? [],
@@ -253,6 +273,8 @@ export function MomentumScannerPipelinePage() {
   );
   const isActionPending =
     runNewsWorker.isPending ||
+    expireCandidates.isPending ||
+    runFullPipeline.isPending ||
     generateCandidates.isPending ||
     confirmPrices.isPending ||
     prepareHandoffs.isPending;
@@ -269,6 +291,8 @@ export function MomentumScannerPipelinePage() {
       catalystEventsQuery.refetch(),
       candidatesQuery.refetch(),
       handoffsQuery.refetch(),
+      latestPipelineRuns.refetch(),
+      pipelineRuns.refetch(),
     ]);
     notifications.show({
       message: "Momentum scanner data refreshed.",
@@ -315,6 +339,50 @@ export function MomentumScannerPipelinePage() {
         `score >= ${result.minCatalystScore}`,
       ]
     );
+  }
+
+  function handleExpireCandidates() {
+    void runAction(
+      "Expired stale candidates",
+      () => expireCandidates.mutateAsync(),
+      (result) => [
+        `${result.inspected} inspected`,
+        `${result.expired} expired`,
+        `${result.staleRemaining} stale remaining`,
+      ]
+    );
+  }
+
+  function handleRunFullPipeline() {
+    void (async () => {
+      try {
+        const result = await runFullPipeline.mutateAsync({
+        metadata: { requestedFrom: "scanner-pipeline-ui" },
+        minCatalystScore,
+        candidateTake,
+        expiresInHours,
+        maxCandidates,
+        minHandoffScore,
+        });
+        const details = [
+        `run ${result.runId}`,
+        result.status.toLowerCase(),
+        result.failedStage ? `failed at ${result.failedStage.replaceAll("_", " ").toLowerCase()}` : "core stages recorded",
+        ];
+        setLastAction({ label: "Full pipeline run", details });
+        notifications.show({
+          title: "Full pipeline run",
+          message: details.join(" | "),
+          color: result.status === "FAILED" ? "red" : result.status === "PARTIAL" ? "yellow" : "teal",
+        });
+      } catch (error) {
+        notifications.show({
+          title: "Unable to start full pipeline",
+          message: error instanceof Error ? error.message : "Unknown error.",
+          color: "red",
+        });
+      }
+    })();
   }
 
   function handlePrepareHandoffs() {
@@ -372,19 +440,64 @@ export function MomentumScannerPipelinePage() {
         </Button>
       </Group>
 
+      {latestPipelineRuns.isError && <Alert color="red" title="Unable to load pipeline status">{latestPipelineRuns.error instanceof Error ? latestPipelineRuns.error.message : "Pipeline status could not be loaded."}</Alert>}
+      {latestPipelineRuns.data?.currentRun && <MomentumPipelineRunSummary run={latestPipelineRuns.data.currentRun} title="Currently running" />}
+      <SimpleGrid cols={{ base: 1, xl: 2 }}>
+        <MomentumPipelineRunSummary run={latestPipelineRuns.data?.latestAttempt ?? null} title="Latest attempted run" />
+        <MomentumPipelineRunSummary run={latestPipelineRuns.data?.latestSuccessful ?? null} title="Latest successful run" />
+      </SimpleGrid>
+
+      <Card withBorder radius="md" p="lg">
+        <Group justify="space-between" align="center">
+          <div>
+            <Title order={3}>Full pipeline run</Title>
+            <Text size="sm" c="dimmed">
+              Runs news, expiration, candidate generation, price confirmation, and handoff preparation as one durable ADMIN MANUAL run. Slack delivery is not included.
+            </Text>
+          </div>
+          <Button
+            leftSection={<IconBolt size={16} />}
+            onClick={handleRunFullPipeline}
+            loading={runFullPipeline.isPending}
+          >
+            Run full pipeline
+          </Button>
+        </Group>
+      </Card>
+
+      <Card withBorder radius="md" p="lg">
+        <Stack gap="md">
+          <Title order={3}>Recent pipeline runs</Title>
+          {pipelineRuns.isError ? <Alert color="red">Recent run history could not be loaded.</Alert> : pipelineRuns.data?.data.length ? <ScrollArea>
+            <Table striped highlightOnHover>
+              <Table.Thead><Table.Tr><Table.Th>Status</Table.Th><Table.Th>Started</Table.Th><Table.Th>Source</Table.Th><Table.Th>Last stage</Table.Th><Table.Th>Duration</Table.Th></Table.Tr></Table.Thead>
+              <Table.Tbody>{pipelineRuns.data.data.map((run) => <Table.Tr key={run.id}><Table.Td><Badge variant="light" color={run.status === "SUCCEEDED" ? "teal" : run.status === "RUNNING" ? "blue" : run.status === "PARTIAL" ? "yellow" : "red"}>{run.status}</Badge></Table.Td><Table.Td>{formatPipelineDate(run.startedAt)}</Table.Td><Table.Td>{run.source.replaceAll("_", " ")}</Table.Td><Table.Td>{run.currentStage?.replaceAll("_", " ") ?? "—"}</Table.Td><Table.Td>{run.durationMs === null ? "—" : `${(run.durationMs / 1000).toFixed(1)}s`}</Table.Td></Table.Tr>)}</Table.Tbody>
+            </Table>
+          </ScrollArea> : <Text c="dimmed">No pipeline runs recorded.</Text>}
+        </Stack>
+      </Card>
+
       <Card withBorder radius="md" p="lg">
         <Stack gap="md">
           <Group justify="space-between" align="flex-start">
             <div>
-              <Title order={3}>Manual Workflow Actions</Title>
+              <Title order={3}>Standalone stage actions</Title>
               <Text size="sm" c="dimmed">
-                Testing controls for the non-trading pipeline sequence.
+                Runs one stage only for testing. These calls do not create or complete a MomentumPipelineRun.
               </Text>
             </div>
             {isActionPending && <Loader size="sm" />}
           </Group>
 
           <Group align="flex-end">
+            <Button
+              variant="light"
+              color="orange"
+              onClick={handleExpireCandidates}
+              loading={expireCandidates.isPending}
+            >
+              Expire stale candidates
+            </Button>
             <NumberInput
               label="Min catalyst score"
               min={1}
