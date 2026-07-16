@@ -14,6 +14,7 @@ import {
   type TickerPriceConfirmationMarketData,
 } from './massive-market-data.service.js';
 import { getNewYorkMarketTiming, scoreMomentumPriceAction } from './momentum-scoring/momentum-price-score.js';
+import { scoreMomentumVolume } from './momentum-scoring/momentum-volume-score.js';
 
 export type ConfirmCandidatePriceOptions = {
   now?: Date;
@@ -61,9 +62,11 @@ export type PriceConfirmationScores = {
   blockedReason: string | null;
   hardBlocks: string[];
   reasons: string[];
+  volumeMetricType: string;
+  volumeIntensity: number | null;
 };
 
-export const MOMENTUM_CONFIRMATION_SCORING_VERSION = 'momentum_confirmation_v2';
+export const MOMENTUM_CONFIRMATION_SCORING_VERSION = 'momentum_confirmation_v3';
 
 const priceEligibilityInclude = {
   security: {
@@ -165,31 +168,6 @@ function filterRecentBars(
 
     return !Number.isNaN(timestamp) && timestamp >= cutoff;
   });
-}
-
-function scoreVolume(snapshot: PriceConfirmationSnapshot) {
-  let score = 0;
-
-  if (snapshot.dayVolume !== null && snapshot.dayVolume > 0) {
-    score += 30;
-  }
-
-  if (
-    snapshot.dollarVolume !== null &&
-    snapshot.dollarVolume >= env.MOMENTUM_CONFIRMATION_MIN_DOLLAR_VOLUME
-  ) {
-    score += 30;
-  }
-
-  if (snapshot.recentVolume !== null && snapshot.recentVolume > 0) {
-    score += 20;
-  }
-
-  if (snapshot.relativeVolume !== null && snapshot.relativeVolume >= 2) {
-    score += 20;
-  }
-
-  return score;
 }
 
 function scoreRiskQuality(snapshot: PriceConfirmationSnapshot) {
@@ -435,7 +413,14 @@ export function scorePriceConfirmation(
     ...getNewYorkMarketTiming(now),
   });
   const priceActionScore = priceResult.score;
-  const volumeScore = scoreVolume(snapshot);
+  const volumeResult = scoreMomentumVolume({
+    dayVolume: snapshot.dayVolume,
+    recentVolume: snapshot.recentVolume,
+    dollarVolume: snapshot.dollarVolume,
+    relativeVolume: snapshot.relativeVolume,
+    minimumDollarVolume: env.MOMENTUM_CONFIRMATION_MIN_DOLLAR_VOLUME,
+  });
+  const volumeScore = volumeResult.score;
   const riskScore = scoreRiskQuality(snapshot);
   const totalConfirmationScore = Math.round(
     candidate.catalystScore * 0.45 +
@@ -447,6 +432,7 @@ export function scorePriceConfirmation(
   const hardBlocks = [...new Set([
     ...(legacyBlock === null ? [] : [legacyBlock]),
     ...priceResult.hardBlocks,
+    ...volumeResult.hardBlocks,
   ])];
   const blockedReason = hardBlocks[0] ?? null;
   const confirmed =
@@ -462,7 +448,9 @@ export function scorePriceConfirmation(
     decision: blockedReason ?? (confirmed ? 'ENTRY_READY' : 'PRICE_CONFIRMED'),
     blockedReason,
     hardBlocks,
-    reasons: priceResult.reasons,
+    reasons: [...priceResult.reasons, ...volumeResult.reasons],
+    volumeMetricType: volumeResult.volumeMetricType,
+    volumeIntensity: volumeResult.volumeIntensity,
   };
 }
 
@@ -481,6 +469,10 @@ function buildScoringInputs(snapshot: PriceConfirmationSnapshot): Prisma.InputJs
     dayVolume: snapshot.dayVolume?.toString() ?? null,
     recentVolume: snapshot.recentVolume?.toString() ?? null,
     relativeVolume: snapshot.relativeVolume,
+    volumeIntensity: snapshot.dayVolume !== null && snapshot.dayVolume > 0 && snapshot.recentVolume !== null
+      ? snapshot.recentVolume / snapshot.dayVolume
+      : null,
+    volumeMetricType: 'VOLUME_INTENSITY_V1',
     dollarVolume: snapshot.dollarVolume,
     observedAt: snapshot.observedAt.toISOString(),
     sourceObservedAt: snapshot.sourceObservedAt?.toISOString() ?? null,
@@ -524,7 +516,7 @@ function buildScoreExplanation(
     scoreRanges: {
       catalyst: { min: 0, max: 90 },
       priceAction: { min: 0, max: 100 },
-      volume: { min: 0, max: 100, currentlyAttainableMax: 80 },
+      volume: { min: 0, max: 100, currentlyAttainableMax: 90 },
       setupQuality: { min: 0, max: 100, storedField: 'riskScore' },
       totalConfirmation: { min: 0, max: 96 },
     },
@@ -533,6 +525,12 @@ function buildScoreExplanation(
       volume: scores.volumeScore,
       setupQuality: scores.riskScore,
       totalConfirmation: scores.totalConfirmationScore,
+    },
+    volumeMetric: {
+      type: scores.volumeMetricType,
+      intensity: scores.volumeIntensity,
+      relativeVolume: snapshot.relativeVolume,
+      relativeVolumeImplemented: snapshot.relativeVolume !== null,
     },
     hardBlocks: scores.hardBlocks,
     reasons: [...scores.reasons, ...buildScoreReasons(snapshot, scores)],

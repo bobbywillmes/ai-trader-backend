@@ -181,9 +181,9 @@ describe('momentum price confirmation service', () => {
       candidate: {
         state: MomentumCandidateState.ENTRY_READY,
         priceActionScore: 100,
-        volumeScore: 80,
+        volumeScore: 90,
         riskScore: 100,
-        totalScore: 92,
+        totalScore: 94,
         blockedReason: null,
       },
       priceCheck: {
@@ -191,9 +191,9 @@ describe('momentum price confirmation service', () => {
         symbol: 'AAPL',
         observedAt: now,
         priceActionScore: 100,
-        volumeScore: 80,
+        volumeScore: 90,
         riskScore: 100,
-        totalConfirmationScore: 92,
+        totalConfirmationScore: 94,
         confirmed: true,
         decision: 'ENTRY_READY',
         blockedReason: null,
@@ -210,7 +210,7 @@ describe('momentum price confirmation service', () => {
         dayVolume: 100000n,
         dollarVolume: 10_300_000,
         recentVolume: 70000n,
-        scoringVersion: 'momentum_confirmation_v2',
+        scoringVersion: 'momentum_confirmation_v3',
         scoringInputs: expect.objectContaining({
           lastPrice: 103,
           dayVolume: '100000',
@@ -219,12 +219,12 @@ describe('momentum price confirmation service', () => {
           observedAt: now.toISOString(),
         }),
         scoreExplanation: expect.objectContaining({
-          scoringVersion: 'momentum_confirmation_v2',
+          scoringVersion: 'momentum_confirmation_v3',
           componentScores: {
             priceAction: 100,
-            volume: 80,
+            volume: 90,
             setupQuality: 100,
-            totalConfirmation: 92,
+            totalConfirmation: 94,
           },
           hardBlocks: [],
           decision: 'ENTRY_READY',
@@ -243,9 +243,9 @@ describe('momentum price confirmation service', () => {
       data: expect.objectContaining({
         state: MomentumCandidateState.ENTRY_READY,
         priceActionScore: 100,
-        volumeScore: 80,
+        volumeScore: 90,
         riskScore: 100,
-        totalScore: 92,
+        totalScore: 94,
         lastEvaluatedAt: now,
         rawSnapshot: expect.objectContaining({
           catalystEvent: {
@@ -267,7 +267,7 @@ describe('momentum price confirmation service', () => {
     expect(updatePayload.rawSnapshot).not.toHaveProperty('priceConfirmation');
   });
 
-  it('keeps a moderate score in WATCHING state', async () => {
+  it('blocks a moderate price setup when dollar liquidity is insufficient', async () => {
     mocks.momentumCandidateFindUnique.mockResolvedValue(
       candidate({
         catalystScore: 70,
@@ -305,12 +305,13 @@ describe('momentum price confirmation service', () => {
     });
 
     expect(result.candidate).toMatchObject({
-      state: MomentumCandidateState.WATCHING,
-      totalScore: 74,
+      state: MomentumCandidateState.ENTRY_BLOCKED,
+      totalScore: 75,
+      blockedReason: 'INSUFFICIENT_DOLLAR_LIQUIDITY',
     });
     expect(result.priceCheck).toMatchObject({
       confirmed: false,
-      blockedReason: null,
+      blockedReason: 'INSUFFICIENT_DOLLAR_LIQUIDITY',
     });
   });
 
@@ -342,7 +343,7 @@ describe('momentum price confirmation service', () => {
       confirmed: false,
       decision: 'PRICE_BELOW_MINIMUM',
       blockedReason: 'PRICE_BELOW_MINIMUM',
-      scoringVersion: 'momentum_confirmation_v2',
+      scoringVersion: 'momentum_confirmation_v3',
       scoreExplanation: {
         hardBlocks: ['PRICE_BELOW_MINIMUM', 'TOO_FAR_FROM_INTRADAY_HIGH'],
       },
