@@ -13,10 +13,10 @@ import {
   getTickerPriceConfirmationMarketData,
   type TickerPriceConfirmationMarketData,
 } from './massive-market-data.service.js';
-import { getNewYorkMarketTiming, scoreMomentumPriceAction } from './momentum-scoring/momentum-price-score.js';
-import { scoreMomentumVolume } from './momentum-scoring/momentum-volume-score.js';
-import { scoreMomentumSetupQuality } from './momentum-scoring/momentum-setup-quality-score.js';
-import { decideMomentumConfirmation } from './momentum-scoring/momentum-confirmation-decision.js';
+import { getNewYorkMarketTiming, scoreMomentumPriceAction } from './momentum-price-score.js';
+import { scoreMomentumVolume } from './momentum-volume-score.js';
+import { scoreMomentumSetupQuality } from './momentum-setup-quality-score.js';
+import { decideMomentumConfirmation } from './momentum-confirmation-decision.js';
 
 export type ConfirmCandidatePriceOptions = {
   now?: Date;
