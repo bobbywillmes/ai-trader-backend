@@ -210,6 +210,30 @@ describe('momentum price confirmation service', () => {
         dayVolume: 100000n,
         dollarVolume: 10_300_000,
         recentVolume: 70000n,
+        scoringVersion: 'momentum_confirmation_v1',
+        scoringInputs: expect.objectContaining({
+          lastPrice: 103,
+          dayVolume: '100000',
+          recentVolume: '70000',
+          relativeVolume: null,
+          observedAt: now.toISOString(),
+        }),
+        scoreExplanation: expect.objectContaining({
+          scoringVersion: 'momentum_confirmation_v1',
+          componentScores: {
+            priceAction: 100,
+            volume: 80,
+            setupQuality: 100,
+            totalConfirmation: 92,
+          },
+          hardBlocks: [],
+          decision: 'ENTRY_READY',
+          confirmed: true,
+          dataCompleteness: {
+            complete: true,
+            missingInputs: [],
+          },
+        }),
       }),
     });
     expect(mocks.momentumCandidateUpdate).toHaveBeenCalledWith({
@@ -318,6 +342,10 @@ describe('momentum price confirmation service', () => {
       confirmed: false,
       decision: 'PRICE_BELOW_MINIMUM',
       blockedReason: 'PRICE_BELOW_MINIMUM',
+      scoringVersion: 'momentum_confirmation_v1',
+      scoreExplanation: {
+        hardBlocks: ['PRICE_BELOW_MINIMUM'],
+      },
     });
   });
 

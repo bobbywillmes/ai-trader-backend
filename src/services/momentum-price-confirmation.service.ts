@@ -59,6 +59,8 @@ export type PriceConfirmationScores = {
   blockedReason: string | null;
 };
 
+export const MOMENTUM_CONFIRMATION_SCORING_VERSION = 'momentum_confirmation_v1';
+
 const priceEligibilityInclude = {
   security: {
     select: {
@@ -465,6 +467,88 @@ export function scorePriceConfirmation(
   };
 }
 
+function buildScoringInputs(snapshot: PriceConfirmationSnapshot): Prisma.InputJsonValue {
+  return {
+    lastPrice: snapshot.lastPrice,
+    previousClose: snapshot.previousClose,
+    percentFromPreviousClose: snapshot.pctFromPreviousClose,
+    storedVwap: snapshot.sessionVwap,
+    aboveVwap: snapshot.aboveVwap,
+    intradayHigh: snapshot.intradayHigh,
+    intradayLow: snapshot.intradayLow,
+    distanceFromHighPct: snapshot.distanceFromHighPct,
+    recentMovePct: snapshot.recentMovePct,
+    dayVolume: snapshot.dayVolume?.toString() ?? null,
+    recentVolume: snapshot.recentVolume?.toString() ?? null,
+    relativeVolume: snapshot.relativeVolume,
+    dollarVolume: snapshot.dollarVolume,
+    observedAt: snapshot.observedAt.toISOString(),
+  };
+}
+
+function buildScoreReasons(snapshot: PriceConfirmationSnapshot, scores: PriceConfirmationScores) {
+  const reasons: string[] = [];
+  if (snapshot.pctFromPreviousClose !== null && snapshot.pctFromPreviousClose >= 2) reasons.push('Positive move from previous close contributed to price action.');
+  if (snapshot.aboveVwap === true) reasons.push('Price above session VWAP contributed to price action.');
+  if (snapshot.distanceFromHighPct !== null && snapshot.distanceFromHighPct <= 1.5) reasons.push('Price near the intraday high contributed to price action.');
+  if (snapshot.recentMovePct !== null && snapshot.recentMovePct > 0) reasons.push('Positive recent move contributed to price action.');
+  if (snapshot.dayVolume !== null && snapshot.dayVolume > 0) reasons.push('Positive cumulative day volume contributed to volume confirmation.');
+  if (snapshot.dollarVolume !== null && snapshot.dollarVolume >= env.MOMENTUM_CONFIRMATION_MIN_DOLLAR_VOLUME) reasons.push('Dollar volume met the configured liquidity threshold.');
+  if (snapshot.recentVolume !== null && snapshot.recentVolume > 0) reasons.push('Positive recent volume contributed to volume confirmation.');
+  if (snapshot.relativeVolume === null) reasons.push('Relative volume was unavailable and contributed no points.');
+  if (scores.blockedReason !== null) reasons.push(`Hard block applied: ${scores.blockedReason}.`);
+  if (reasons.length === 0) reasons.push('Available observations did not satisfy a scoring rule.');
+  return reasons;
+}
+
+function buildScoreExplanation(
+  snapshot: PriceConfirmationSnapshot,
+  scores: PriceConfirmationScores
+): Prisma.InputJsonValue {
+  const missingInputs = Object.entries({
+    lastPrice: snapshot.lastPrice,
+    previousClose: snapshot.previousClose,
+    percentFromPreviousClose: snapshot.pctFromPreviousClose,
+    storedVwap: snapshot.sessionVwap,
+    intradayHigh: snapshot.intradayHigh,
+    recentMovePct: snapshot.recentMovePct,
+    dayVolume: snapshot.dayVolume,
+    recentVolume: snapshot.recentVolume,
+  }).flatMap(([field, value]) => value === null ? [field] : []);
+
+  return {
+    scoringVersion: MOMENTUM_CONFIRMATION_SCORING_VERSION,
+    scoreRanges: {
+      catalyst: { min: 0, max: 90 },
+      priceAction: { min: 0, max: 100 },
+      volume: { min: 0, max: 100, currentlyAttainableMax: 80 },
+      setupQuality: { min: 0, max: 100, storedField: 'riskScore' },
+      totalConfirmation: { min: 0, max: 96 },
+    },
+    componentScores: {
+      priceAction: scores.priceActionScore,
+      volume: scores.volumeScore,
+      setupQuality: scores.riskScore,
+      totalConfirmation: scores.totalConfirmationScore,
+    },
+    hardBlocks: scores.blockedReason === null ? [] : [scores.blockedReason],
+    reasons: buildScoreReasons(snapshot, scores),
+    decision: scores.decision,
+    confirmed: scores.confirmed,
+    dataCompleteness: {
+      complete: missingInputs.length === 0,
+      missingInputs,
+    },
+    formula: {
+      catalystWeight: 0.45,
+      priceActionWeight: 0.3,
+      volumeWeight: 0.2,
+      setupQualityWeight: 0.05,
+      rounding: 'nearest_integer',
+    },
+  };
+}
+
 export async function applyPriceConfirmationDecision(
   candidate: MomentumCandidate,
   snapshot: PriceConfirmationSnapshot,
@@ -496,6 +580,9 @@ export async function applyPriceConfirmationDecision(
       confirmed: scores.confirmed,
       decision: scores.decision,
       blockedReason: scores.blockedReason,
+      scoringVersion: MOMENTUM_CONFIRMATION_SCORING_VERSION,
+      scoringInputs: buildScoringInputs(snapshot),
+      scoreExplanation: buildScoreExplanation(snapshot, scores),
       rawPayload: snapshot.rawPayload as Prisma.InputJsonValue,
       metadata: {
         phase: 'momentum_price_confirmation_phase_4',
