@@ -15,6 +15,7 @@ import {
 } from './massive-market-data.service.js';
 import { getNewYorkMarketTiming, scoreMomentumPriceAction } from './momentum-scoring/momentum-price-score.js';
 import { scoreMomentumVolume } from './momentum-scoring/momentum-volume-score.js';
+import { scoreMomentumSetupQuality } from './momentum-scoring/momentum-setup-quality-score.js';
 
 export type ConfirmCandidatePriceOptions = {
   now?: Date;
@@ -66,7 +67,7 @@ export type PriceConfirmationScores = {
   volumeIntensity: number | null;
 };
 
-export const MOMENTUM_CONFIRMATION_SCORING_VERSION = 'momentum_confirmation_v3';
+export const MOMENTUM_CONFIRMATION_SCORING_VERSION = 'momentum_confirmation_v4';
 
 const priceEligibilityInclude = {
   security: {
@@ -168,40 +169,6 @@ function filterRecentBars(
 
     return !Number.isNaN(timestamp) && timestamp >= cutoff;
   });
-}
-
-function scoreRiskQuality(snapshot: PriceConfirmationSnapshot) {
-  let score = 0;
-
-  if (
-    snapshot.lastPrice !== null &&
-    snapshot.lastPrice >= env.MOMENTUM_CONFIRMATION_MIN_PRICE
-  ) {
-    score += 25;
-  }
-
-  if (
-    snapshot.pctFromPreviousClose !== null &&
-    snapshot.pctFromPreviousClose <= 15
-  ) {
-    score += 25;
-  }
-
-  if (
-    snapshot.lastPrice !== null &&
-    snapshot.sessionVwap !== null &&
-    snapshot.sessionVwap > 0 &&
-    ((snapshot.lastPrice - snapshot.sessionVwap) / snapshot.sessionVwap) *
-      100 <=
-      6
-  ) {
-    score += 25;
-  }
-
-  // Phase 4 does not yet call a regular-hours helper. Keep timing neutral.
-  score += 25;
-
-  return score;
 }
 
 function getHardBlockReason(
@@ -421,7 +388,18 @@ export function scorePriceConfirmation(
     minimumDollarVolume: env.MOMENTUM_CONFIRMATION_MIN_DOLLAR_VOLUME,
   });
   const volumeScore = volumeResult.score;
-  const riskScore = scoreRiskQuality(snapshot);
+  const marketTiming = getNewYorkMarketTiming(now);
+  const setupResult = scoreMomentumSetupQuality({
+    extensionFromVwapPct,
+    distanceFromHighPct: snapshot.distanceFromHighPct,
+    recentMovePct: snapshot.recentMovePct,
+    candidateAgeMinutes: Math.max(0, (now.getTime() - candidate.discoveredAt.getTime()) / 60_000),
+    marketSession: marketTiming.marketSession,
+    newYorkMinuteOfDay: marketTiming.newYorkMinuteOfDay,
+    dollarVolume: snapshot.dollarVolume,
+    minimumDollarVolume: env.MOMENTUM_CONFIRMATION_MIN_DOLLAR_VOLUME,
+  });
+  const riskScore = setupResult.score;
   const totalConfirmationScore = Math.round(
     candidate.catalystScore * 0.45 +
       priceActionScore * 0.3 +
@@ -433,6 +411,7 @@ export function scorePriceConfirmation(
     ...(legacyBlock === null ? [] : [legacyBlock]),
     ...priceResult.hardBlocks,
     ...volumeResult.hardBlocks,
+    ...setupResult.hardBlocks,
   ])];
   const blockedReason = hardBlocks[0] ?? null;
   const confirmed =
@@ -448,13 +427,13 @@ export function scorePriceConfirmation(
     decision: blockedReason ?? (confirmed ? 'ENTRY_READY' : 'PRICE_CONFIRMED'),
     blockedReason,
     hardBlocks,
-    reasons: [...priceResult.reasons, ...volumeResult.reasons],
+    reasons: [...priceResult.reasons, ...volumeResult.reasons, ...setupResult.reasons],
     volumeMetricType: volumeResult.volumeMetricType,
     volumeIntensity: volumeResult.volumeIntensity,
   };
 }
 
-function buildScoringInputs(snapshot: PriceConfirmationSnapshot): Prisma.InputJsonValue {
+function buildScoringInputs(candidate: MomentumCandidate, snapshot: PriceConfirmationSnapshot): Prisma.InputJsonValue {
   const marketTiming = getNewYorkMarketTiming(snapshot.observedAt);
   return {
     lastPrice: snapshot.lastPrice,
@@ -478,6 +457,10 @@ function buildScoringInputs(snapshot: PriceConfirmationSnapshot): Prisma.InputJs
     sourceObservedAt: snapshot.sourceObservedAt?.toISOString() ?? null,
     marketSession: marketTiming.marketSession,
     newYorkMinuteOfDay: marketTiming.newYorkMinuteOfDay,
+    candidateAgeMinutes: Math.max(
+      0,
+      (snapshot.observedAt.getTime() - candidate.discoveredAt.getTime()) / 60_000
+    ),
   };
 }
 
@@ -582,7 +565,7 @@ export async function applyPriceConfirmationDecision(
       decision: scores.decision,
       blockedReason: scores.blockedReason,
       scoringVersion: MOMENTUM_CONFIRMATION_SCORING_VERSION,
-      scoringInputs: buildScoringInputs(snapshot),
+      scoringInputs: buildScoringInputs(candidate, snapshot),
       scoreExplanation: buildScoreExplanation(snapshot, scores),
       rawPayload: snapshot.rawPayload as Prisma.InputJsonValue,
       metadata: {

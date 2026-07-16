@@ -210,7 +210,7 @@ describe('momentum price confirmation service', () => {
         dayVolume: 100000n,
         dollarVolume: 10_300_000,
         recentVolume: 70000n,
-        scoringVersion: 'momentum_confirmation_v3',
+        scoringVersion: 'momentum_confirmation_v4',
         scoringInputs: expect.objectContaining({
           lastPrice: 103,
           dayVolume: '100000',
@@ -219,7 +219,7 @@ describe('momentum price confirmation service', () => {
           observedAt: now.toISOString(),
         }),
         scoreExplanation: expect.objectContaining({
-          scoringVersion: 'momentum_confirmation_v3',
+          scoringVersion: 'momentum_confirmation_v4',
           componentScores: {
             priceAction: 100,
             volume: 90,
@@ -306,12 +306,19 @@ describe('momentum price confirmation service', () => {
 
     expect(result.candidate).toMatchObject({
       state: MomentumCandidateState.ENTRY_BLOCKED,
-      totalScore: 75,
+      totalScore: 73,
       blockedReason: 'INSUFFICIENT_DOLLAR_LIQUIDITY',
     });
     expect(result.priceCheck).toMatchObject({
       confirmed: false,
       blockedReason: 'INSUFFICIENT_DOLLAR_LIQUIDITY',
+      scoreExplanation: expect.objectContaining({
+        componentScores: expect.objectContaining({
+          setupQuality: 70,
+        }),
+        hardBlocks: expect.arrayContaining(['INSUFFICIENT_DOLLAR_LIQUIDITY']),
+        reasons: expect.arrayContaining(['BELOW_TARGET_DOLLAR_LIQUIDITY']),
+      }),
     });
   });
 
@@ -343,7 +350,7 @@ describe('momentum price confirmation service', () => {
       confirmed: false,
       decision: 'PRICE_BELOW_MINIMUM',
       blockedReason: 'PRICE_BELOW_MINIMUM',
-      scoringVersion: 'momentum_confirmation_v3',
+      scoringVersion: 'momentum_confirmation_v4',
       scoreExplanation: {
         hardBlocks: ['PRICE_BELOW_MINIMUM', 'TOO_FAR_FROM_INTRADAY_HIGH'],
       },
