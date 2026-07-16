@@ -135,9 +135,9 @@ function TopCandidates({ rows }: { rows: MomentumResearchCandidateRow[] }) {
                     <Table.Td><Badge color={stateColor(row.state)} variant="light">{row.state.replaceAll("_", " ")}</Badge></Table.Td>
                     <Table.Td><Score value={row.scores.total} label="total" /></Table.Td>
                     <Table.Td><Score value={row.scores.catalyst} label={row.catalyst?.eventType ?? "catalyst"} /></Table.Td>
-                    <Table.Td ta="right">{row.scores.priceAction}</Table.Td>
-                    <Table.Td ta="right">{row.scores.volume}</Table.Td>
-                    <Table.Td ta="right">{row.scores.risk}</Table.Td>
+                    <Table.Td ta="right">{row.scores.priceAction ?? <Text size="xs" c="dimmed">Not evaluated</Text>}</Table.Td>
+                    <Table.Td ta="right">{row.scores.volume ?? <Text size="xs" c="dimmed">Not evaluated</Text>}</Table.Td>
+                    <Table.Td ta="right">{row.scores.risk ?? <Text size="xs" c="dimmed">Not evaluated</Text>}</Table.Td>
                     <Table.Td title={formatDate(row.latestPriceCheck?.observedAt)}>{formatRelative(row.latestPriceCheck?.observedAt)}</Table.Td>
                     <Table.Td>{row.latestHandoff ? <Badge variant="outline">{row.latestHandoff.status}</Badge> : <Text size="sm" c="dimmed">None</Text>}</Table.Td>
                   </Table.Tr>

@@ -140,6 +140,9 @@ export type MomentumCandidatePriceCheck = {
   confirmed: boolean;
   decision: string;
   blockedReason: string | null;
+  scoringVersion: string | null;
+  scoringInputs: unknown;
+  scoreExplanation: unknown;
   rawPayload: unknown;
   metadata: unknown;
   createdAt: string;
@@ -293,11 +296,12 @@ export type MomentumResearchCandidateRow = {
   state: MomentumCandidateState;
   scores: {
     catalyst: number;
-    priceAction: number;
-    volume: number;
-    risk: number;
+    priceAction: number | null;
+    volume: number | null;
+    risk: number | null;
     total: number;
   };
+  evaluated: boolean;
   reason: string | null;
   blockedReason: string | null;
   discoveredAt: string;
