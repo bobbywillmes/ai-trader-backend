@@ -13,11 +13,14 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../services/momentum-candidates.service.js', () => ({
-  expireStaleMomentumCandidates: mocks.expireStaleMomentumCandidates,
   generateMomentumCandidatesFromCatalysts:
     mocks.generateMomentumCandidatesFromCatalysts,
   getMomentumCandidateById: mocks.getMomentumCandidateById,
   listMomentumCandidates: mocks.listMomentumCandidates,
+}));
+
+vi.mock('../services/momentum-candidate-expiration.service.js', () => ({
+  expireStaleMomentumCandidates: mocks.expireStaleMomentumCandidates,
 }));
 
 vi.mock('../services/momentum-price-confirmation.service.js', () => ({

@@ -15,6 +15,7 @@ import {
 import { getEtfWatchContextController } from '../controllers/etf-watch-context.controller.js';
 import {
   confirmMomentumScannerPricesSignalController,
+  expireMomentumScannerCandidatesSignalController,
   generateMomentumScannerCandidatesSignalController,
   listMomentumScannerHandoffsSignalController,
   markMomentumScannerHandoffFailedSignalController,
@@ -38,6 +39,7 @@ router.get('/market-diary/events', getMarketDiaryEventsController);
 router.post('/market-diary/events', createMarketDiaryEventController);
 
 router.post('/momentum-scanner/run-news-worker', runMomentumScannerNewsWorkerSignalController);
+router.post('/momentum-scanner/expire-candidates', expireMomentumScannerCandidatesSignalController);
 router.post('/momentum-scanner/generate-candidates', generateMomentumScannerCandidatesSignalController);
 router.post('/momentum-scanner/confirm-prices', confirmMomentumScannerPricesSignalController);
 router.post('/momentum-scanner/prepare-handoffs', prepareMomentumScannerHandoffsSignalController);

@@ -6,6 +6,7 @@ import {
   generateMomentumCandidatesFromCatalysts,
   type GenerateMomentumCandidatesArgs,
 } from '../services/momentum-candidates.service.js';
+import { expireStaleMomentumCandidates } from '../services/momentum-candidate-expiration.service.js';
 import {
   confirmActiveCandidates,
   type ConfirmActiveCandidatesOptions,
@@ -225,6 +226,23 @@ export async function generateMomentumScannerCandidatesSignalController(
     if (expiresInHours !== undefined) args.expiresInHours = expiresInHours;
 
     res.status(200).json(await generateMomentumCandidatesFromCatalysts(args));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function expireMomentumScannerCandidatesSignalController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const body = getRequestBody(req, 'Momentum scanner candidate expiration');
+    const limit = getBodyNumber(body, 'limit');
+
+    res.status(200).json(
+      await expireStaleMomentumCandidates(limit === undefined ? {} : { limit })
+    );
   } catch (error) {
     next(error);
   }

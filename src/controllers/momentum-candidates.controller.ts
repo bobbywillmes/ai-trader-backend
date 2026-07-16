@@ -3,13 +3,13 @@ import type { NextFunction, Request, Response } from 'express';
 
 import { HttpError } from '../errors/http-error.js';
 import {
-  expireStaleMomentumCandidates,
   generateMomentumCandidatesFromCatalysts,
   getMomentumCandidateById,
   listMomentumCandidates,
   type GenerateMomentumCandidatesArgs,
   type MomentumCandidateFilters,
 } from '../services/momentum-candidates.service.js';
+import { expireStaleMomentumCandidates } from '../services/momentum-candidate-expiration.service.js';
 import {
   confirmActiveCandidates,
   confirmCandidatePrice,

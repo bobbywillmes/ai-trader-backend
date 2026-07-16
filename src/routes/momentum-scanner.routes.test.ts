@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   cancelStalePendingHandoffs: vi.fn(),
   confirmActiveCandidates: vi.fn(),
+  expireStaleMomentumCandidates: vi.fn(),
   generateMomentumCandidatesFromCatalysts: vi.fn(),
   listMomentumScannerHandoffs: vi.fn(),
   markMomentumScannerHandoffFailed: vi.fn(),
@@ -31,6 +32,10 @@ vi.mock('../workers/massive-news.worker.js', () => ({
 vi.mock('../services/momentum-candidates.service.js', () => ({
   generateMomentumCandidatesFromCatalysts:
     mocks.generateMomentumCandidatesFromCatalysts,
+}));
+
+vi.mock('../services/momentum-candidate-expiration.service.js', () => ({
+  expireStaleMomentumCandidates: mocks.expireStaleMomentumCandidates,
 }));
 
 vi.mock('../services/momentum-price-confirmation.service.js', () => ({
@@ -140,6 +145,17 @@ describe('momentum scanner routes', () => {
       updated: 0,
       skipped: 0,
       candidates: [{ id: 'candidate-1', symbol: 'AAPL' }],
+    });
+    mocks.expireStaleMomentumCandidates.mockResolvedValue({
+      inspected: 2,
+      expired: 1,
+      unchanged: 1,
+      skipped: 0,
+      staleRemaining: 0,
+      expiredCandidateIds: ['candidate-stale'],
+      expiredCandidateIdsTruncated: false,
+      reasonCounts: { EXPIRES_AT_REACHED: 1 },
+      asOf: new Date('2026-07-16T14:00:00.000Z'),
     });
     mocks.confirmActiveCandidates.mockResolvedValue({
       checked: 1,
@@ -581,6 +597,39 @@ describe('momentum scanner routes', () => {
         expiresInHours: 12,
       }
     );
+  });
+
+  it('expires candidates through signal-key auth with a bounded limit', async () => {
+    const baseUrl = await listen();
+
+    const unauthorized = await fetch(
+      `${baseUrl}/api/signals/momentum-scanner/expire-candidates`,
+      {
+        method: 'POST',
+        headers: {
+          'ai-trader-api-key': ADMIN_KEY,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      }
+    );
+    const response = await fetch(
+      `${baseUrl}/api/signals/momentum-scanner/expire-candidates`,
+      {
+        method: 'POST',
+        headers: signalHeaders(),
+        body: JSON.stringify({ limit: 25 }),
+      }
+    );
+
+    expect(unauthorized.status).toBe(401);
+    expect(response.status).toBe(200);
+    expect(mocks.expireStaleMomentumCandidates).toHaveBeenCalledWith({ limit: 25 });
+    await expect(jsonResponse(response)).resolves.toMatchObject({
+      inspected: 2,
+      expired: 1,
+      staleRemaining: 0,
+    });
   });
 
   it('confirms prices with empty options and returns BigInt-safe JSON', async () => {
