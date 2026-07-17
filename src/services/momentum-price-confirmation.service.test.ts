@@ -87,9 +87,9 @@ function candidate(overrides: Record<string, unknown> = {}) {
     totalScore: 90,
     reason: 'Strong catalyst.',
     blockedReason: null,
-    discoveredAt: new Date('2026-07-04T14:00:00.000Z'),
-    lastEvaluatedAt: new Date('2026-07-04T14:00:00.000Z'),
-    expiresAt: new Date('2099-07-05T14:00:00.000Z'),
+    discoveredAt: new Date('2026-07-06T14:00:00.000Z'),
+    lastEvaluatedAt: new Date('2026-07-06T14:00:00.000Z'),
+    expiresAt: new Date('2099-07-07T14:00:00.000Z'),
     rawSnapshot: {
       catalystEvent: {
         id: 'catalyst-event-1',
@@ -100,8 +100,8 @@ function candidate(overrides: Record<string, unknown> = {}) {
       },
     },
     metadata: null,
-    createdAt: new Date('2026-07-04T14:00:00.000Z'),
-    updatedAt: new Date('2026-07-04T14:00:00.000Z'),
+    createdAt: new Date('2026-07-06T14:00:00.000Z'),
+    updatedAt: new Date('2026-07-06T14:00:00.000Z'),
     ...overrides,
   };
 }
@@ -109,8 +109,8 @@ function candidate(overrides: Record<string, unknown> = {}) {
 function marketData(overrides: Record<string, unknown> = {}) {
   return {
     symbol: 'AAPL',
-    from: '2026-07-04',
-    to: '2026-07-04',
+    from: '2026-07-06',
+    to: '2026-07-06',
     snapshot: {
       symbol: 'AAPL',
       lastPrice: 103,
@@ -119,11 +119,12 @@ function marketData(overrides: Record<string, unknown> = {}) {
       intradayLow: 98,
       dayVolume: 100_000,
       sessionVwap: 100,
-      updatedTime: '2026-07-04T15:31:00.000Z',
+      updatedTime: '2026-07-06T15:31:00.000Z',
+      observationSource: 'LAST_TRADE',
     },
     minuteBars: [
       {
-        time: '2026-07-04T15:00:00.000Z',
+        time: '2026-07-06T15:00:00.000Z',
         open: 101,
         high: 102,
         low: 100.5,
@@ -132,7 +133,7 @@ function marketData(overrides: Record<string, unknown> = {}) {
         vwap: 101,
       },
       {
-        time: '2026-07-04T15:30:00.000Z',
+        time: '2026-07-06T15:30:00.000Z',
         open: 101.5,
         high: 103.5,
         low: 101,
@@ -141,6 +142,7 @@ function marketData(overrides: Record<string, unknown> = {}) {
         vwap: 102,
       },
     ],
+    extendedHoursRequested: true,
     rawPayload: {
       snapshot: {
         ticker: 'AAPL',
@@ -172,7 +174,7 @@ describe('momentum price confirmation service', () => {
   });
 
   it('creates a price check and updates latest candidate scores', async () => {
-    const now = new Date('2026-07-04T15:31:00.000Z');
+    const now = new Date('2026-07-06T15:31:00.000Z');
 
     await expect(
       confirmCandidatePrice('candidate-1', { now })
@@ -210,7 +212,7 @@ describe('momentum price confirmation service', () => {
         dayVolume: 100000n,
         dollarVolume: 10_300_000,
         recentVolume: 70000n,
-        scoringVersion: 'momentum_confirmation_v5',
+        scoringVersion: 'momentum_confirmation_v6',
         scoringInputs: expect.objectContaining({
           lastPrice: 103,
           dayVolume: '100000',
@@ -219,7 +221,7 @@ describe('momentum price confirmation service', () => {
           observedAt: now.toISOString(),
         }),
         scoreExplanation: expect.objectContaining({
-          scoringVersion: 'momentum_confirmation_v5',
+          scoringVersion: 'momentum_confirmation_v6',
           componentScores: {
             priceAction: 100,
             volume: 90,
@@ -284,11 +286,11 @@ describe('momentum price confirmation service', () => {
           intradayLow: 99,
           dayVolume: 100,
           sessionVwap: 102,
-          updatedTime: '2026-07-04T15:31:00.000Z',
+          updatedTime: '2026-07-06T15:31:00.000Z',
         },
         minuteBars: [
           {
-            time: '2026-07-04T15:30:00.000Z',
+            time: '2026-07-06T15:30:00.000Z',
             open: 101,
             high: 102.5,
             low: 100.5,
@@ -301,7 +303,7 @@ describe('momentum price confirmation service', () => {
     );
 
     const result = await confirmCandidatePrice('candidate-1', {
-      now: new Date('2026-07-04T15:31:00.000Z'),
+      now: new Date('2026-07-06T15:31:00.000Z'),
     });
 
     expect(result.candidate).toMatchObject({
@@ -333,13 +335,13 @@ describe('momentum price confirmation service', () => {
           intradayLow: 4.3,
           dayVolume: 1_000_000,
           sessionVwap: 4.45,
-          updatedTime: '2026-07-04T15:31:00.000Z',
+          updatedTime: '2026-07-06T15:31:00.000Z',
         },
       })
     );
 
     const result = await confirmCandidatePrice('candidate-1', {
-      now: new Date('2026-07-04T15:31:00.000Z'),
+      now: new Date('2026-07-06T15:31:00.000Z'),
     });
 
     expect(result.candidate).toMatchObject({
@@ -350,14 +352,14 @@ describe('momentum price confirmation service', () => {
       confirmed: false,
       decision: 'ENTRY_BLOCKED',
       blockedReason: 'PRICE_BELOW_MINIMUM',
-      scoringVersion: 'momentum_confirmation_v5',
+      scoringVersion: 'momentum_confirmation_v6',
       scoreExplanation: {
         hardBlocks: ['PRICE_BELOW_MINIMUM', 'TOO_FAR_FROM_INTRADAY_HIGH'],
       },
     });
   });
 
-  it('handles missing price data gracefully with a stored blocked check', async () => {
+  it('handles missing price data as an incomplete watching check', async () => {
     mocks.getTickerPriceConfirmationMarketData.mockResolvedValue(
       marketData({
         snapshot: {
@@ -369,20 +371,27 @@ describe('momentum price confirmation service', () => {
           dayVolume: null,
           sessionVwap: null,
           updatedTime: null,
+          observationSource: 'UNKNOWN',
         },
         minuteBars: [],
       })
     );
 
     const result = await confirmCandidatePrice('candidate-1', {
-      now: new Date('2026-07-04T15:31:00.000Z'),
+      now: new Date('2026-07-06T15:31:00.000Z'),
     });
 
     expect(result.candidate).toMatchObject({
-      state: MomentumCandidateState.ENTRY_BLOCKED,
-      blockedReason: 'MISSING_LAST_PRICE',
+      state: MomentumCandidateState.WATCHING,
+      blockedReason: null,
     });
     expect(mocks.priceCheckCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.priceCheckCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        decision: 'WATCHING',
+        blockedReason: 'AWAITING_FRESH_PRICE_DATA',
+      }),
+    });
   });
 
   it('skips expired and dismissed candidates without writing price checks', async () => {
@@ -411,7 +420,7 @@ describe('momentum price confirmation service', () => {
     );
 
     await expect(confirmCandidatePrice('candidate-1', {
-      now: new Date('2026-07-04T15:31:00.000Z'),
+      now: new Date('2026-07-06T15:31:00.000Z'),
     })).resolves.toMatchObject({
       skipped: false,
       eligibility: {
@@ -422,7 +431,7 @@ describe('momentum price confirmation service', () => {
           reasons: ['NO_SUBSCRIPTION'],
         },
       },
-      priceCheck: { scoringVersion: 'momentum_confirmation_v5' },
+      priceCheck: { scoringVersion: 'momentum_confirmation_v6' },
     });
 
     expect(mocks.getTickerPriceConfirmationMarketData).toHaveBeenCalledTimes(1);
@@ -555,6 +564,49 @@ describe('momentum price confirmation service', () => {
     await confirmCandidatePrice('candidate-1');
 
     expect(mocks.priceCheckCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it('recovers a stale watching candidate to entry ready without rewriting history', async () => {
+    mocks.momentumCandidateFindUnique
+      .mockResolvedValueOnce(candidate({ state: MomentumCandidateState.ENTRY_BLOCKED, blockedReason: 'STALE_PRICE_DATA' }))
+      .mockResolvedValueOnce(candidate({ state: MomentumCandidateState.WATCHING, blockedReason: 'AWAITING_FRESH_PRICE_DATA' }));
+    mocks.getTickerPriceConfirmationMarketData
+      .mockResolvedValueOnce(marketData({ snapshot: { ...marketData().snapshot, updatedTime: '2026-07-03T19:59:00.000Z' }, minuteBars: [] }))
+      .mockResolvedValueOnce(marketData());
+
+    const now = new Date('2026-07-06T15:31:00.000Z');
+    await confirmCandidatePrice('candidate-1', { now });
+    await confirmCandidatePrice('candidate-1', { now });
+
+    expect(mocks.priceCheckCreate).toHaveBeenCalledTimes(2);
+    expect(mocks.momentumCandidateUpdate.mock.calls[0]![0].data).toMatchObject({ state: MomentumCandidateState.WATCHING, blockedReason: null });
+    expect(mocks.momentumCandidateUpdate.mock.calls[1]![0].data).toMatchObject({ state: MomentumCandidateState.ENTRY_READY, blockedReason: null });
+  });
+
+  it('can replace a stale watching result with a genuine fresh setup block', async () => {
+    mocks.momentumCandidateFindUnique.mockResolvedValue(candidate({ state: MomentumCandidateState.WATCHING, blockedReason: 'AWAITING_FRESH_PRICE_DATA' }));
+    mocks.getTickerPriceConfirmationMarketData.mockResolvedValue(marketData({
+      snapshot: { ...marketData().snapshot, lastPrice: 4 },
+      minuteBars: marketData().minuteBars.map((bar) => ({
+        ...bar,
+        open: 4,
+        high: 4.1,
+        low: 3.9,
+        close: 4,
+      })),
+    }));
+
+    const result = await confirmCandidatePrice('candidate-1', { now: new Date('2026-07-06T15:31:00.000Z') });
+
+    expect(result.candidate).toMatchObject({ state: MomentumCandidateState.ENTRY_BLOCKED, blockedReason: 'PRICE_BELOW_MINIMUM' });
+  });
+
+  it('separates incomplete batch results from blocked setups', async () => {
+    mocks.momentumCandidateFindMany.mockResolvedValue([candidate()]);
+    const summary = await confirmActiveCandidates({ maxCandidates: 1, now: new Date('2026-07-06T15:40:01.000Z') });
+
+    expect(summary).toMatchObject({ evaluated: 1, watching: 1, blocked: 0, incomplete: 1 });
+    expect(summary.reasonCounts.AWAITING_FRESH_PRICE_DATA).toBe(1);
   });
 
   it('lists recent price checks for a candidate newest first', async () => {

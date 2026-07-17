@@ -17,8 +17,6 @@ export type MomentumPriceScoreResult = {
   inputs: MomentumPriceScoreInput;
 };
 
-const STALE_AFTER_MS = 5 * 60_000;
-
 export function getNewYorkMarketTiming(date: Date): Pick<MomentumPriceScoreInput, 'marketSession' | 'newYorkMinuteOfDay'> {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
@@ -32,7 +30,8 @@ export function getNewYorkMarketTiming(date: Date): Pick<MomentumPriceScoreInput
   const weekday = value.weekday;
   const weekdayOpen = weekday !== 'Sat' && weekday !== 'Sun';
   const marketSession = !weekdayOpen ? 'CLOSED'
-    : minute < 9 * 60 + 30 ? 'PREMARKET'
+    : minute < 4 * 60 ? 'CLOSED'
+      : minute < 9 * 60 + 30 ? 'PREMARKET'
       : minute < 16 * 60 ? 'REGULAR'
         : minute < 20 * 60 ? 'AFTER_HOURS'
           : 'CLOSED';
@@ -51,11 +50,6 @@ export function scoreMomentumPriceAction(input: MomentumPriceScoreInput): Moment
     input.recentMovePct === null ||
     input.extensionFromVwapPct === null
   ) hardBlocks.push('MISSING_PRICE_CONTEXT');
-
-  if (
-    input.sourceObservedAt === null ||
-    input.observedAt.getTime() - input.sourceObservedAt.getTime() > STALE_AFTER_MS
-  ) hardBlocks.push('STALE_PRICE_DATA');
 
   if (input.aboveVwap === false) hardBlocks.push('BELOW_VWAP');
   if (input.extensionFromVwapPct !== null && input.extensionFromVwapPct > 8) hardBlocks.push('EXCESSIVELY_EXTENDED');

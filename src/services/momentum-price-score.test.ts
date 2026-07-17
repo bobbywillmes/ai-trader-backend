@@ -25,7 +25,7 @@ describe('momentum price-action scoring v2', () => {
     ['sharp fade', { distanceFromHighPct: 7 }, 75, ['TOO_FAR_FROM_INTRADAY_HIGH']],
     ['negative recent move', { recentMovePct: -1.2 }, 80, ['NEGATIVE_RECENT_MOMENTUM']],
     ['missing context', { percentFromPreviousClose: null }, 80, ['MISSING_PRICE_CONTEXT']],
-    ['stale observation', { sourceObservedAt: new Date('2026-07-16T14:20:00.000Z') }, 100, ['STALE_PRICE_DATA']],
+    ['stale observation is classified outside setup scoring', { sourceObservedAt: new Date('2026-07-16T14:20:00.000Z') }, 100, []],
     ['late session', { newYorkMinuteOfDay: 15 * 60 + 45 }, 90, []],
   ])('%s', (_label, overrides, expectedScore, expectedBlocks) => {
     const result = scoreMomentumPriceAction(input(overrides));

@@ -38,7 +38,7 @@ Overview displays the latest attempted run. Scanner Pipeline separately displays
 
 ## Versioned confirmation model
 
-New checks use `momentum_confirmation_v5`. Every check stores `scoringVersion`, the inputs that actually existed, component scores, formal ranges, reasons, hard blocks, data completeness, and the final decision. Historical null versions remain `Legacy / unversioned`; no historical rows are rescored.
+New checks use `momentum_confirmation_v6`. Every check stores `scoringVersion`, the inputs that actually existed, component scores, formal ranges, reasons, hard blocks, data completeness, and the final decision. Historical null versions remain `Legacy / unversioned`; no historical rows are rescored.
 
 Score direction is consistent:
 

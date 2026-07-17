@@ -1,6 +1,7 @@
 import { MomentumCandidateState, Prisma, type MomentumCandidate } from '@prisma/client';
 
 import { env } from '../config/env.js';
+import { logger } from '../config/logger.js';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import {
@@ -17,6 +18,7 @@ import { getNewYorkMarketTiming, scoreMomentumPriceAction } from './momentum-pri
 import { scoreMomentumVolume } from './momentum-volume-score.js';
 import { scoreMomentumSetupQuality } from './momentum-setup-quality-score.js';
 import { decideMomentumConfirmation } from './momentum-confirmation-decision.js';
+import { evaluateMarketFreshness, type MarketObservationSource } from './momentum-market-freshness.js';
 
 export type ConfirmCandidatePriceOptions = {
   now?: Date;
@@ -38,6 +40,8 @@ export type PriceConfirmationSnapshot = {
   symbol: string;
   observedAt: Date;
   sourceObservedAt: Date | null;
+  sourceObservedSource: MarketObservationSource;
+  extendedHoursRequested: boolean;
   lastPrice: number | null;
   previousClose: number | null;
   pctFromPreviousClose: number | null;
@@ -67,9 +71,11 @@ export type PriceConfirmationScores = {
   volumeMetricType: string;
   volumeIntensity: number | null;
   state: MomentumCandidateState;
+  incompleteReason: string | null;
+  freshness: ReturnType<typeof evaluateMarketFreshness>;
 };
 
-export const MOMENTUM_CONFIRMATION_SCORING_VERSION = 'momentum_confirmation_v5';
+export const MOMENTUM_CONFIRMATION_SCORING_VERSION = 'momentum_confirmation_v6';
 
 const priceEligibilityInclude = {
   security: {
@@ -284,7 +290,12 @@ export async function buildPriceConfirmationSnapshot(
       env.MOMENTUM_CONFIRMATION_LOOKBACK_MINUTES
     ),
   });
-  const lastPrice = data.snapshot.lastPrice;
+  const latestBar = data.minuteBars.at(-1);
+  const snapshotObservedAt = data.snapshot.updatedTime === null ? null : new Date(data.snapshot.updatedTime);
+  const aggregateObservedAt = latestBar ? new Date(latestBar.time) : null;
+  const aggregateIsNewer = aggregateObservedAt !== null &&
+    (snapshotObservedAt === null || aggregateObservedAt > snapshotObservedAt);
+  const lastPrice = aggregateIsNewer ? latestBar!.close : data.snapshot.lastPrice;
   const previousClose = data.snapshot.previousClose;
   const pctFromPreviousClose = pctChange(lastPrice, previousClose);
   const barHighs = data.minuteBars.map((bar) => bar.high);
@@ -321,9 +332,9 @@ export async function buildPriceConfirmationSnapshot(
   return {
     symbol: data.symbol,
     observedAt: now,
-    sourceObservedAt: data.snapshot.updatedTime === null
-      ? null
-      : new Date(data.snapshot.updatedTime),
+    sourceObservedAt: aggregateIsNewer ? aggregateObservedAt : snapshotObservedAt,
+    sourceObservedSource: aggregateIsNewer ? 'AGGREGATE' : data.snapshot.observationSource,
+    extendedHoursRequested: data.extendedHoursRequested,
     lastPrice,
     previousClose,
     pctFromPreviousClose,
@@ -347,6 +358,12 @@ export function scorePriceConfirmation(
   snapshot: PriceConfirmationSnapshot,
   now = new Date()
 ): PriceConfirmationScores {
+  const freshness = evaluateMarketFreshness({
+    evaluatedAt: now,
+    marketObservationAt: snapshot.sourceObservedAt,
+    marketObservationSource: snapshot.sourceObservedSource,
+    extendedHoursRequested: snapshot.extendedHoursRequested,
+  });
   const extensionFromVwapPct = snapshot.lastPrice !== null && snapshot.sessionVwap !== null && snapshot.sessionVwap > 0
     ? ((snapshot.lastPrice - snapshot.sessionVwap) / snapshot.sessionVwap) * 100
     : null;
@@ -382,13 +399,24 @@ export function scorePriceConfirmation(
   });
   const riskScore = setupResult.score;
   const legacyBlock = getHardBlockReason(candidate, snapshot, now);
-  const hardBlocks = [...new Set([
+  const incompleteBlockCodes = new Set([
+    'MISSING_LAST_PRICE', 'MISSING_PREVIOUS_CLOSE', 'STALE_OR_EMPTY_AGGREGATE_DATA',
+    'MISSING_PRICE_CONTEXT', 'MISSING_VOLUME_CONTEXT', 'MISSING_SETUP_CONTEXT',
+  ]);
+  const allBlocks = [...new Set([
     ...(legacyBlock === null ? [] : [legacyBlock]),
     ...priceResult.hardBlocks,
     ...volumeResult.hardBlocks,
     ...setupResult.hardBlocks,
   ])];
-  const dataComplete = confirmationMissingInputs(snapshot).length === 0;
+  const missingInputs = confirmationMissingInputs(snapshot);
+  const incompleteReason = freshness.incompleteReason ??
+    (missingInputs.length > 0 || allBlocks.some((reason) => incompleteBlockCodes.has(reason))
+      ? 'AWAITING_COMPLETE_MARKET_DATA' : null);
+  const hardBlocks = incompleteReason === null
+    ? allBlocks.filter((reason) => !incompleteBlockCodes.has(reason))
+    : allBlocks.filter((reason) => reason === 'CANDIDATE_EXPIRED');
+  const dataComplete = incompleteReason === null;
   const confirmation = decideMomentumConfirmation({
     catalystScore: candidate.catalystScore,
     priceActionScore,
@@ -420,6 +448,8 @@ export function scorePriceConfirmation(
     volumeMetricType: volumeResult.volumeMetricType,
     volumeIntensity: volumeResult.volumeIntensity,
     state: confirmation.state,
+    incompleteReason,
+    freshness,
   };
 }
 
@@ -458,6 +488,12 @@ function buildScoringInputs(candidate: MomentumCandidate, snapshot: PriceConfirm
     dollarVolume: snapshot.dollarVolume,
     observedAt: snapshot.observedAt.toISOString(),
     sourceObservedAt: snapshot.sourceObservedAt?.toISOString() ?? null,
+    ...evaluateMarketFreshness({
+      evaluatedAt: snapshot.observedAt,
+      marketObservationAt: snapshot.sourceObservedAt,
+      marketObservationSource: snapshot.sourceObservedSource,
+      extendedHoursRequested: snapshot.extendedHoursRequested,
+    }),
     marketSession: marketTiming.marketSession,
     newYorkMinuteOfDay: marketTiming.newYorkMinuteOfDay,
     candidateAgeMinutes: Math.max(
@@ -510,6 +546,8 @@ function buildScoreExplanation(
       relativeVolumeImplemented: snapshot.relativeVolume !== null,
     },
     hardBlocks: scores.hardBlocks,
+    incompleteReason: scores.incompleteReason,
+    freshness: scores.freshness,
     reasons: [...scores.reasons, ...buildScoreReasons(snapshot, scores)],
     decision: scores.decision,
     confirmed: scores.confirmed,
@@ -532,6 +570,18 @@ export async function applyPriceConfirmationDecision(
   snapshot: PriceConfirmationSnapshot,
   scores: PriceConfirmationScores
 ) {
+  if (scores.incompleteReason === 'AWAITING_FRESH_PRICE_DATA') {
+    logger.warn({
+      symbol: snapshot.symbol,
+      candidateId: candidate.id,
+      evaluatedAt: scores.freshness.evaluatedAt,
+      marketObservationAt: scores.freshness.marketObservationAt,
+      observationAgeSeconds: scores.freshness.marketObservationAgeSeconds,
+      maxAllowedAgeSeconds: scores.freshness.maxAllowedAgeSeconds,
+      marketSession: scores.freshness.marketSession,
+      observationSource: scores.freshness.marketObservationSource,
+    }, 'Momentum confirmation is awaiting a fresh market observation.');
+  }
   const state = scores.state;
   const check = await prisma.momentumCandidatePriceCheck.create({
     data: {
@@ -557,7 +607,7 @@ export async function applyPriceConfirmationDecision(
       totalConfirmationScore: scores.totalConfirmationScore,
       confirmed: scores.confirmed,
       decision: scores.decision,
-      blockedReason: scores.blockedReason,
+      blockedReason: scores.blockedReason ?? scores.incompleteReason,
       scoringVersion: MOMENTUM_CONFIRMATION_SCORING_VERSION,
       scoringInputs: buildScoringInputs(candidate, snapshot),
       scoreExplanation: buildScoreExplanation(snapshot, scores),
@@ -693,7 +743,9 @@ export async function confirmActiveCandidates(
     entryReady: 0,
     watching: 0,
     blocked: 0,
+    incomplete: 0,
     skipped: 0,
+    reasonCounts: {} as Record<string, number>,
     skipCounts: {} as Record<string, number>,
     errors: [] as Array<{ candidateId: string; symbol: string; message: string }>,
     results: [] as Awaited<ReturnType<typeof confirmCandidatePrice>>[],
@@ -734,6 +786,12 @@ export async function confirmActiveCandidates(
       }
 
       summary.evaluated += 1;
+      const incompleteReason = result.priceCheck?.blockedReason?.startsWith('AWAITING_')
+        ? result.priceCheck.blockedReason : null;
+      if (incompleteReason) {
+        summary.incomplete += 1;
+        summary.reasonCounts[incompleteReason] = (summary.reasonCounts[incompleteReason] ?? 0) + 1;
+      }
 
       if (result.candidate.state === MomentumCandidateState.ENTRY_READY) {
         summary.entryReady += 1;
