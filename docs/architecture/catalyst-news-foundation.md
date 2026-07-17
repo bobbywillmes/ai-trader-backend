@@ -534,6 +534,37 @@ Each confirmation run:
 
 ### Current Massive Request And Session Semantics
 
+Before the price-freshness hotfix, `MomentumCandidatePriceCheck.observedAt` was
+the evaluation/row time and freshness compared it with the snapshot helper's
+`updatedTime`. That helper selected the newest timestamp among valid last-trade,
+minute, and day snapshot fields, while `lastPrice` used fixed last-trade,
+minute-close, then day-close priority. A single five-minute limit applied in all
+sessions. Missing or old timestamps produced `STALE_PRICE_DATA` in the setup
+hard-block list and therefore `ENTRY_BLOCKED`; row creation time was never the
+provider observation time.
+
+The versioned confirmation now records `evaluatedAt`, the authoritative market
+observation timestamp and source, age, allowed age, New York session, and
+extended-hours request/availability diagnostics. The newest timestamped source
+supporting confirmation is used: a newer returned aggregate bar supersedes the
+snapshot observation; otherwise the snapshot identifies last trade or snapshot
+fallback. Aggregate requests include eligible extended-hours data.
+
+Freshness limits are five minutes in the regular session and fifteen minutes in
+premarket/after-hours. An observation must be from the current New York market
+date, preventing a prior close from appearing current in premarket. Weekends,
+midnight-to-4:00 AM ET, and 8:00 PM-to-midnight ET are closed. Closed sessions
+produce `AWAITING_MARKET_SESSION`; missing, old, or prior-session observations
+produce `AWAITING_FRESH_PRICE_DATA`. Both remain `WATCHING` and never relax the
+freshness gate. Genuine failures evaluated from current data remain hard blocks.
+
+Timestamp inventory: `createdAt` is Prisma row insertion time and `observedAt`
+is evaluation time. Massive `ticker.updated` is a snapshot-level fallback;
+`lastTrade.t`, `min.t`, and `day.t` are candidate snapshot observation times;
+aggregate `t` is the start of its one-minute bar. This confirmation request does
+not normalize a quote timestamp, so quotes are not authoritative and the source
+will not claim `QUOTE`. Raw provider payloads remain stored for audit.
+
 Price confirmation currently makes two Massive requests for each candidate that
 passes the local eligibility checks:
 

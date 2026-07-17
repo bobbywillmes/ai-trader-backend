@@ -90,6 +90,10 @@ Monday-Friday
 
 This avoids the first 15 minutes after the regular market open and avoids running at or after the regular close.
 
+Accordingly, the documented production workflow is intended for regular hours
+only, not premarket or after hours. The backend nevertheless classifies all New
+York sessions safely; this hotfix does not modify the hosted n8n schedule.
+
 This schedule does not account for market holidays or early closes. Add a market-calendar gate later if the workflow becomes noisy on non-trading days.
 
 ## ⚙️ Config Node

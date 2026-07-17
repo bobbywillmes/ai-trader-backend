@@ -127,6 +127,7 @@ export type TickerPriceConfirmationSnapshot = {
   dayVolume: number | null;
   sessionVwap: number | null;
   updatedTime: string | null;
+  observationSource: 'LAST_TRADE' | 'SNAPSHOT' | 'UNKNOWN';
 };
 
 export type TickerPriceConfirmationBar = {
@@ -156,6 +157,7 @@ export type TickerPriceConfirmationMarketData = {
   to: string | null;
   snapshot: TickerPriceConfirmationSnapshot;
   minuteBars: TickerPriceConfirmationBar[];
+  extendedHoursRequested: boolean;
   rawPayload: {
     snapshot: unknown;
     aggregates: unknown;
@@ -456,20 +458,10 @@ export function normalizeMassiveSnapshotTicker(
     lastTradePrice !== null ? snapshot?.lastTrade?.t : null,
     minuteClose !== null ? snapshot?.min?.t : null,
     dayClose !== null ? snapshot?.day?.t : null,
-  ]
-    .map((value) => ({
-      raw: value,
-      milliseconds: toMillisFromMassiveTimestamp(value),
-    }))
-    .filter(
-      (candidate): candidate is { raw: unknown; milliseconds: number } =>
-        candidate.milliseconds !== null
-    )
+  ].map((value) => ({ raw: value, milliseconds: toMillisFromMassiveTimestamp(value) }))
+    .filter((candidate): candidate is { raw: unknown; milliseconds: number } => candidate.milliseconds !== null)
     .sort((a, b) => b.milliseconds - a.milliseconds);
-  const priceUpdatedTimestamp =
-    validPriceTimestampCandidates[0]?.raw ??
-    snapshot?.prevDay?.t ??
-    snapshot?.updated;
+  const priceUpdatedTimestamp = validPriceTimestampCandidates[0]?.raw ?? snapshot?.prevDay?.t ?? snapshot?.updated;
   const hasValidCurrentPrice =
     lastTradePrice !== null ||
     minuteClose !== null ||
@@ -548,22 +540,10 @@ export function normalizeTickerPriceConfirmationSnapshot(
   const dayLow = toPositiveFiniteNumber(snapshot?.day?.l);
   const dayVolume = toFiniteNumber(snapshot?.day?.v);
   const sessionVwap = toPositiveFiniteNumber(snapshot?.day?.vw);
-  const validPriceTimestampCandidates = [
-    lastTradePrice !== null ? snapshot?.lastTrade?.t : null,
-    minuteClose !== null ? snapshot?.min?.t : null,
-    dayClose !== null ? snapshot?.day?.t : null,
-  ]
-    .map((value) => ({
-      raw: value,
-      milliseconds: toMillisFromMassiveTimestamp(value),
-    }))
-    .filter(
-      (candidate): candidate is { raw: unknown; milliseconds: number } =>
-        candidate.milliseconds !== null
-    )
-    .sort((a, b) => b.milliseconds - a.milliseconds);
   const priceUpdatedTimestamp =
-    validPriceTimestampCandidates[0]?.raw ??
+    (lastTradePrice !== null ? snapshot?.lastTrade?.t : null) ??
+    (minuteClose !== null ? snapshot?.min?.t : null) ??
+    (dayClose !== null ? snapshot?.day?.t : null) ??
     snapshot?.prevDay?.t ??
     snapshot?.updated;
 
@@ -576,6 +556,11 @@ export function normalizeTickerPriceConfirmationSnapshot(
     dayVolume: dayVolume !== null && dayVolume >= 0 ? dayVolume : null,
     sessionVwap,
     updatedTime: toIsoFromMassiveTimestamp(priceUpdatedTimestamp),
+    observationSource: lastTradePrice !== null
+      ? 'LAST_TRADE'
+      : minuteClose !== null || dayClose !== null
+        ? 'SNAPSHOT'
+        : 'UNKNOWN',
   };
 }
 
@@ -699,6 +684,7 @@ export async function getTickerPriceConfirmationMarketData(
       to,
       snapshot,
       minuteBars: [],
+      extendedHoursRequested: true,
       rawPayload: {
         snapshot: snapshotResponse,
         aggregates: null,
@@ -721,6 +707,7 @@ export async function getTickerPriceConfirmationMarketData(
     minuteBars: normalizeTickerPriceConfirmationBars(
       aggregateResponse.results
     ),
+    extendedHoursRequested: true,
     rawPayload: {
       snapshot: snapshotResponse,
       aggregates: aggregateResponse,

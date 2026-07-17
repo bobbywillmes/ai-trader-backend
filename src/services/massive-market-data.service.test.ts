@@ -323,6 +323,7 @@ describe('ticker price confirmation normalization', () => {
       dayVolume: 1234567,
       sessionVwap: 100.5,
       updatedTime: '2026-07-04T15:30:00.000Z',
+      observationSource: 'LAST_TRADE',
     });
   });
 
