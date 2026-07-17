@@ -107,15 +107,13 @@ function TopCandidates({ rows }: { rows: MomentumResearchCandidateRow[] }) {
               Active opportunities ranked by stored total score.
             </Text>
           </div>
-          <Button component={Link} to="/momentum-scanner/candidates" variant="subtle" rightSection={<IconArrowRight size={15} />}>
-            Browse all
-          </Button>
+          <Group gap="xs"><Badge color="gray" variant="light">{rows.length.toLocaleString()}</Badge><Button component={Link} to="/momentum-scanner/candidates" variant="subtle" rightSection={<IconArrowRight size={15} />}>Browse all</Button></Group>
         </Group>
         {rows.length === 0 ? (
           <EmptyState>No active momentum opportunities are currently stored.</EmptyState>
         ) : (
-          <ScrollArea type="auto">
-            <Table highlightOnHover miw={960}>
+          <ScrollArea.Autosize mah={460} type="auto" offsetScrollbars>
+            <Table highlightOnHover miw={960} stickyHeader>
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>Symbol</Table.Th><Table.Th>State</Table.Th><Table.Th ta="right">Total</Table.Th>
@@ -144,7 +142,7 @@ function TopCandidates({ rows }: { rows: MomentumResearchCandidateRow[] }) {
                 ))}
               </Table.Tbody>
             </Table>
-          </ScrollArea>
+          </ScrollArea.Autosize>
         )}
       </Stack>
     </Card>
@@ -155,8 +153,8 @@ function RecentCatalysts({ data }: { data: MomentumResearchOverview["recentCatal
   return (
     <Card withBorder radius="md" p="lg">
       <Stack gap="md">
-        <Title order={3}>Recent catalysts</Title>
-        {data.length === 0 ? <EmptyState>No catalyst events were received in the last 24 hours.</EmptyState> : data.map((event) => (
+        <Group justify="space-between"><Title order={3}>Recent catalysts</Title><Badge color="gray" variant="light">{data.length.toLocaleString()}</Badge></Group>
+        {data.length === 0 ? <EmptyState>No catalyst events were received in the last 24 hours.</EmptyState> : <ScrollArea.Autosize mah={600} type="auto" offsetScrollbars>{data.map((event) => (
           <Stack key={event.id} gap={5} pb="sm" style={{ borderBottom: "1px solid var(--mantine-color-default-border)" }}>
             <Group justify="space-between" align="flex-start" wrap="nowrap">
               <div>
@@ -171,7 +169,7 @@ function RecentCatalysts({ data }: { data: MomentumResearchOverview["recentCatal
             </Group>
             <Group gap="xs"><Badge variant="light">{event.eventType.replaceAll("_", " ")}</Badge><Badge variant="outline">{event.eventTier}</Badge><Badge color={sentimentColor(event.sentiment)} variant="light">{event.sentiment}</Badge><Badge color={event.candidateCount > 0 ? "blue" : "gray"} variant="dot">{event.candidateCount} candidate{event.candidateCount === 1 ? "" : "s"}</Badge></Group>
           </Stack>
-        ))}
+        ))}</ScrollArea.Autosize>}
       </Stack>
     </Card>
   );
@@ -239,7 +237,7 @@ export function MomentumResearchDashboardPage() {
             <RecentCatalysts data={data.recentCatalysts} />
             <Stack gap="lg">
               <Card withBorder radius="md" p="lg">
-                <Stack gap="md"><Title order={3}>Recently updated candidates</Title>{data.recentCandidateActivity.length === 0 ? <EmptyState>No candidates were evaluated or updated in the last 24 hours.</EmptyState> : data.recentCandidateActivity.map((candidate) => <Group key={candidate.id} justify="space-between" wrap="nowrap"><div><Anchor component={Link} to={`/momentum-scanner/candidates/${encodeURIComponent(candidate.id)}`} fw={700}>{candidate.symbol}</Anchor><Text size="xs" c="dimmed" lineClamp={1}>{candidate.reason ?? "No stored explanation."}</Text></div><Stack gap={2} align="flex-end"><Badge color={stateColor(candidate.state)} variant="light">{candidate.state.replaceAll("_", " ")}</Badge><Text size="xs" c="dimmed" title={formatDate(candidate.activityAt)}>{formatRelative(candidate.activityAt)}</Text></Stack></Group>)}</Stack>
+                <Stack gap="md"><Group justify="space-between"><Title order={3}>Recently updated candidates</Title><Badge color="gray" variant="light">{data.recentCandidateActivity.length.toLocaleString()}</Badge></Group>{data.recentCandidateActivity.length === 0 ? <EmptyState>No candidates were evaluated or updated in the last 24 hours.</EmptyState> : <ScrollArea.Autosize mah={460} type="auto" offsetScrollbars>{data.recentCandidateActivity.map((candidate) => <Group key={candidate.id} justify="space-between" wrap="nowrap"><div><Anchor component={Link} to={`/momentum-scanner/candidates/${encodeURIComponent(candidate.id)}`} fw={700}>{candidate.symbol}</Anchor><Text size="xs" c="dimmed" lineClamp={1}>{candidate.reason ?? "No stored explanation."}</Text></div><Stack gap={2} align="flex-end"><Badge color={stateColor(candidate.state)} variant="light">{candidate.state.replaceAll("_", " ")}</Badge><Text size="xs" c="dimmed" title={formatDate(candidate.activityAt)}>{formatRelative(candidate.activityAt)}</Text></Stack></Group>)}</ScrollArea.Autosize>}</Stack>
               </Card>
               <Card withBorder radius="md" p="lg">
                 <Stack gap="md"><Group justify="space-between"><Title order={3}>Scanner health</Title><Button component={Link} to="/momentum-scanner/pipeline" variant="subtle" size="compact-sm">Open pipeline</Button></Group><SimpleGrid cols={2}><SummaryCard label="Healthy cursors" value={data.scannerHealth.healthyCursorCount} color="teal" /><SummaryCard label="Error cursors" value={data.scannerHealth.errorCursorCount} color={data.scannerHealth.errorCursorCount ? "red" : undefined} /><SummaryCard label="Due cursors" value={data.scannerHealth.dueCursorCount} /><SummaryCard label="Enabled cursors" value={data.scannerHealth.enabledCursorCount} /></SimpleGrid><Stack gap={4}><Text size="sm">Last news pull: <b>{formatDate(data.scannerHealth.lastNewsPullAt)}</b></Text><Text size="sm">Last candidate activity: <b>{formatDate(data.scannerHealth.lastCandidateGenerationActivityAt)}</b></Text><Text size="sm">Last price confirmation: <b>{formatDate(data.scannerHealth.lastPriceConfirmationActivityAt)}</b></Text></Stack></Stack>

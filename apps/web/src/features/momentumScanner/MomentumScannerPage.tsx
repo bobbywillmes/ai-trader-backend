@@ -163,6 +163,7 @@ function SectionShell({
   isError,
   errorTitle,
   empty,
+  count,
   children,
 }: {
   title: string;
@@ -171,6 +172,7 @@ function SectionShell({
   isError: boolean;
   errorTitle: string;
   empty: boolean;
+  count: number;
   children: ReactNode;
 }) {
   return (
@@ -183,7 +185,7 @@ function SectionShell({
               {subtitle}
             </Text>
           </div>
-          {isLoading && <Loader size="sm" />}
+          <Group gap="xs"><Badge color="gray" variant="light">{count.toLocaleString()}</Badge>{isLoading && <Loader size="sm" />}</Group>
         </Group>
 
         {isError && (
@@ -467,13 +469,13 @@ export function MomentumScannerPipelinePage() {
 
       <Card withBorder radius="md" p="lg">
         <Stack gap="md">
-          <Title order={3}>Recent pipeline runs</Title>
-          {pipelineRuns.isError ? <Alert color="red">Recent run history could not be loaded.</Alert> : pipelineRuns.data?.data.length ? <ScrollArea>
-            <Table striped highlightOnHover>
+          <Group justify="space-between"><Title order={3}>Recent pipeline runs</Title><Badge color="gray" variant="light">{(pipelineRuns.data?.data.length ?? 0).toLocaleString()}</Badge></Group>
+          {pipelineRuns.isError ? <Alert color="red">Recent run history could not be loaded.</Alert> : pipelineRuns.data?.data.length ? <ScrollArea.Autosize mah={460} type="auto" offsetScrollbars>
+            <Table striped highlightOnHover stickyHeader>
               <Table.Thead><Table.Tr><Table.Th>Status</Table.Th><Table.Th>Started</Table.Th><Table.Th>Source</Table.Th><Table.Th>Last stage</Table.Th><Table.Th>Duration</Table.Th></Table.Tr></Table.Thead>
               <Table.Tbody>{pipelineRuns.data.data.map((run) => <Table.Tr key={run.id}><Table.Td><Badge variant="light" color={run.status === "SUCCEEDED" ? "teal" : run.status === "RUNNING" ? "blue" : run.status === "PARTIAL" ? "yellow" : "red"}>{run.status}</Badge></Table.Td><Table.Td>{formatPipelineDate(run.startedAt)}</Table.Td><Table.Td>{run.source.replaceAll("_", " ")}</Table.Td><Table.Td>{run.currentStage?.replaceAll("_", " ") ?? "—"}</Table.Td><Table.Td>{run.durationMs === null ? "—" : `${(run.durationMs / 1000).toFixed(1)}s`}</Table.Td></Table.Tr>)}</Table.Tbody>
             </Table>
-          </ScrollArea> : <Text c="dimmed">No pipeline runs recorded.</Text>}
+          </ScrollArea.Autosize> : <Text c="dimmed">No pipeline runs recorded.</Text>}
         </Stack>
       </Card>
 
@@ -717,10 +719,11 @@ function CatalystEventsSection({
       isError={isError}
       errorTitle="Failed to load catalyst events"
       empty={events.length === 0}
+      count={events.length}
     >
       {events.length > 0 && (
-        <ScrollArea>
-          <Table striped highlightOnHover withTableBorder miw={1180}>
+        <ScrollArea.Autosize mah={460} type="auto" offsetScrollbars>
+          <Table striped highlightOnHover withTableBorder miw={1180} stickyHeader>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Received</Table.Th>
@@ -791,7 +794,7 @@ function CatalystEventsSection({
               ))}
             </Table.Tbody>
           </Table>
-        </ScrollArea>
+        </ScrollArea.Autosize>
       )}
     </SectionShell>
   );
@@ -816,10 +819,11 @@ function MomentumCandidatesSection({
       isError={isError}
       errorTitle="Failed to load momentum candidates"
       empty={candidates.length === 0}
+      count={candidates.length}
     >
       {candidates.length > 0 && (
-        <ScrollArea>
-          <Table striped highlightOnHover withTableBorder miw={1420}>
+        <ScrollArea.Autosize mah={460} type="auto" offsetScrollbars>
+          <Table striped highlightOnHover withTableBorder miw={1420} stickyHeader>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Symbol</Table.Th>
@@ -885,7 +889,7 @@ function MomentumCandidatesSection({
               ))}
             </Table.Tbody>
           </Table>
-        </ScrollArea>
+        </ScrollArea.Autosize>
       )}
     </SectionShell>
   );
@@ -910,10 +914,11 @@ function ScannerHandoffsSection({
       isError={isError}
       errorTitle="Failed to load scanner handoffs"
       empty={handoffs.length === 0}
+      count={handoffs.length}
     >
       {handoffs.length > 0 && (
-        <ScrollArea>
-          <Table striped highlightOnHover withTableBorder miw={1180}>
+        <ScrollArea.Autosize mah={460} type="auto" offsetScrollbars>
+          <Table striped highlightOnHover withTableBorder miw={1180} stickyHeader>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Symbol</Table.Th>
@@ -964,7 +969,7 @@ function ScannerHandoffsSection({
               ))}
             </Table.Tbody>
           </Table>
-        </ScrollArea>
+        </ScrollArea.Autosize>
       )}
     </SectionShell>
   );
