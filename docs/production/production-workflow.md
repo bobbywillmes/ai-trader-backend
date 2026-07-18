@@ -89,6 +89,10 @@ Rebuild the backend image before running Prisma migration commands when the rele
 
 For releases with Prisma changes:
 
+First, [backup the production database](./production-database-backup.md)
+
+Then, build the backend & run migrations
+
 ```bash
 docker compose -f docker-compose.prod.yml build backend
 docker compose -f docker-compose.prod.yml run --rm backend npx prisma migrate status
