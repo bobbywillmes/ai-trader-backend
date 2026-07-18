@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  Prisma,
   TradingAccountEnvironment,
   TradingAccountStatus,
   TradingBroker,
@@ -12,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   tradingAccountFindMany: vi.fn(),
   tradingAccountFindUnique: vi.fn(),
   tradingAccountUpdate: vi.fn(),
+  tradingAccountCreate: vi.fn(),
+  userFindUnique: vi.fn(),
+  transaction: vi.fn(),
   tradingAccountMembershipFindMany: vi.fn(),
   trackedPositionFindMany: vi.fn(),
 }));
@@ -22,7 +26,12 @@ vi.mock('../config/env.js', () => ({
 
 vi.mock('../db/prisma.js', () => ({
   prisma: {
+    $transaction: mocks.transaction,
+    user: {
+      findUnique: mocks.userFindUnique,
+    },
     tradingAccount: {
+      create: mocks.tradingAccountCreate,
       findFirst: mocks.tradingAccountFindFirst,
       findMany: mocks.tradingAccountFindMany,
       findUnique: mocks.tradingAccountFindUnique,
@@ -50,6 +59,7 @@ vi.mock('./trading-account-risk-configuration.service.js', () => ({
 }));
 
 import {
+  createTradingAccountForAdmin,
   getTradingAccountForAdmin,
   listTradingAccountsForAdmin,
   listTradingAccountsForUser,
@@ -101,6 +111,17 @@ describe('trading account service', () => {
     });
     mocks.tradingAccountMembershipFindMany.mockResolvedValue([]);
     mocks.trackedPositionFindMany.mockResolvedValue([]);
+    mocks.userFindUnique.mockResolvedValue({ id: 1, enabled: true });
+    mocks.tradingAccountCreate.mockResolvedValue({ id: 10 });
+    mocks.transaction.mockImplementation((operation) =>
+      operation({
+        user: { findUnique: mocks.userFindUnique },
+        tradingAccount: {
+          findFirst: mocks.tradingAccountFindFirst,
+          create: mocks.tradingAccountCreate,
+        },
+      })
+    );
   });
 
   it('resolves the configured default trading account id first', async () => {
@@ -339,7 +360,6 @@ describe('trading account service', () => {
       accountHolder: { name: 'Bobby W' },
       credential: null,
     });
-
     const result = await updateTradingAccountForAdmin(1, {
       displayName: 'Updated Paper',
       status: TradingAccountStatus.PAUSED,
@@ -372,6 +392,126 @@ describe('trading account service', () => {
         credential: expect.objectContaining({ exists: false }),
       })
     );
+  });
+
+  describe('creation', () => {
+    function createdAccount(environment: TradingAccountEnvironment) {
+      return {
+        ...tradingAccount({
+          id: 10,
+          environment,
+          status: TradingAccountStatus.NEEDS_CREDENTIALS,
+          displayName: environment === TradingAccountEnvironment.PAPER ? 'Bobby Paper' : 'Bobby Live',
+        }),
+        accountHolder: { name: 'Bobby W' },
+        credential: null,
+        allocations: [],
+      };
+    }
+
+    async function create(environment: TradingAccountEnvironment) {
+      mocks.tradingAccountFindUnique.mockResolvedValue(createdAccount(environment));
+      return createTradingAccountForAdmin({
+        accountHolderUserId: 1,
+        displayName: environment === TradingAccountEnvironment.PAPER ? 'Bobby Paper' : 'Bobby Live',
+        environment,
+        estimatedTradingCapital: 5_000,
+        maxDeployableNotional: 5_000,
+        notes: 'Initial account',
+      });
+    }
+
+    it.each([TradingAccountEnvironment.PAPER, TradingAccountEnvironment.LIVE])(
+      'allows a System Owner service caller to provision an Alpaca %s account with safe defaults',
+      async (environment) => {
+        await expect(create(environment)).resolves.toEqual(
+          expect.objectContaining({ environment, status: TradingAccountStatus.NEEDS_CREDENTIALS })
+        );
+        expect(mocks.tradingAccountCreate).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            accountHolderUserId: 1,
+            broker: TradingBroker.ALPACA,
+            environment,
+            status: TradingAccountStatus.NEEDS_CREDENTIALS,
+            tradingEnabled: false,
+            killSwitchEnabled: true,
+            baseCurrency: 'USD',
+            memberships: { create: { userId: 1 } },
+          }),
+          select: { id: true },
+        });
+      }
+    );
+
+    it('rejects a missing account holder before creating anything', async () => {
+      mocks.userFindUnique.mockResolvedValue(null);
+      await expect(create(TradingAccountEnvironment.PAPER)).rejects.toMatchObject({ statusCode: 404 });
+      expect(mocks.tradingAccountCreate).not.toHaveBeenCalled();
+    });
+
+    it('rejects a disabled account holder before creating anything', async () => {
+      mocks.userFindUnique.mockResolvedValue({ id: 1, enabled: false });
+      await expect(create(TradingAccountEnvironment.PAPER)).rejects.toMatchObject({ statusCode: 400 });
+      expect(mocks.tradingAccountCreate).not.toHaveBeenCalled();
+    });
+
+    it('creates the account-holder membership atomically in the account transaction', async () => {
+      await create(TradingAccountEnvironment.PAPER);
+      expect(mocks.transaction).toHaveBeenCalledOnce();
+      expect(mocks.tradingAccountCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ memberships: { create: { userId: 1 } } }) })
+      );
+    });
+
+    it('propagates provisioning failures without returning a partially created account', async () => {
+      mocks.tradingAccountCreate.mockRejectedValue(new Error('membership insert failed'));
+      await expect(create(TradingAccountEnvironment.PAPER)).rejects.toThrow('membership insert failed');
+      expect(mocks.tradingAccountFindUnique).not.toHaveBeenCalled();
+    });
+
+    it.each([TradingAccountEnvironment.PAPER, TradingAccountEnvironment.LIVE])(
+      'returns a readable conflict for a duplicate Alpaca %s account',
+      async (environment) => {
+        mocks.tradingAccountFindFirst.mockResolvedValue({ id: 9 });
+        await expect(create(environment)).rejects.toMatchObject({
+          statusCode: 409,
+          message: expect.stringContaining(environment === TradingAccountEnvironment.PAPER ? 'Paper' : 'Live'),
+        });
+        expect(mocks.tradingAccountCreate).not.toHaveBeenCalled();
+      }
+    );
+
+    it('permits one Paper and one Live account for the same holder', async () => {
+      await create(TradingAccountEnvironment.PAPER);
+      await create(TradingAccountEnvironment.LIVE);
+      expect(mocks.tradingAccountCreate).toHaveBeenCalledTimes(2);
+      expect(mocks.tradingAccountFindFirst.mock.calls.map(([query]) => query.where.environment)).toEqual([
+        TradingAccountEnvironment.PAPER,
+        TradingAccountEnvironment.LIVE,
+      ]);
+    });
+
+    it('checks holder identity rather than membership access for duplicates', async () => {
+      await create(TradingAccountEnvironment.PAPER);
+      expect(mocks.tradingAccountFindFirst).toHaveBeenCalledWith({
+        where: { accountHolderUserId: 1, broker: TradingBroker.ALPACA, environment: TradingAccountEnvironment.PAPER },
+        select: { id: true },
+      });
+      expect(mocks.tradingAccountMembershipFindMany).not.toHaveBeenCalled();
+    });
+
+    it('translates a concurrent Prisma unique violation into the domain conflict', async () => {
+      const error = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: '7.8.0',
+        meta: { target: 'TradingAccount_holder_broker_environment_key' },
+      });
+      mocks.tradingAccountCreate.mockRejectedValue(error);
+      await expect(create(TradingAccountEnvironment.LIVE)).rejects.toMatchObject({
+        statusCode: 409,
+        message: expect.stringContaining('Alpaca Live'),
+      });
+    });
   });
 
   it('returns null instead of updating a missing trading account', async () => {
