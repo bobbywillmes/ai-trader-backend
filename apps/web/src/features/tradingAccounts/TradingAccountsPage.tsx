@@ -221,6 +221,7 @@ export function TradingAccountsPage() {
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>Account</Table.Th>
+                  <Table.Th>Account Holder</Table.Th>
                   <Table.Th>Broker</Table.Th>
                   <Table.Th>Environment</Table.Th>
                   <Table.Th>Status</Table.Th>
@@ -251,6 +252,9 @@ export function TradingAccountsPage() {
                         <Text size="xs" c="dimmed">
                           ID {account.id}
                         </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm">{account.accountHolderName || "—"}</Text>
                       </Table.Td>
                       <Table.Td>{account.broker}</Table.Td>
                       <Table.Td>

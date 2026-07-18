@@ -148,6 +148,7 @@ describe('trading account service', () => {
     const verifiedAt = new Date('2026-06-27T01:00:00.000Z');
     const account = {
       ...tradingAccount({ brokerAccountId: 'account-1' }),
+      accountHolder: { name: 'Bobby W' },
       credential: {
         status: 'ACTIVE',
         authType: 'API_KEY',
@@ -177,6 +178,7 @@ describe('trading account service', () => {
     await expect(listTradingAccountsForAdmin()).resolves.toEqual([
       expect.objectContaining({
         id: 1,
+        accountHolderName: 'Bobby W',
         brokerAccountId: 'account-1',
         totalOpenPositionNotional: 1_500,
         credential: {
@@ -214,6 +216,7 @@ describe('trading account service', () => {
   it('returns a safe empty credential summary when no credential exists', async () => {
     mocks.tradingAccountFindUnique.mockResolvedValue({
       ...tradingAccount({ maxDeployableNotional: 20_000 }),
+      accountHolder: { name: 'Bobby W' },
       credential: null,
       allocations: [
         { maxAllocatedNotional: 7_500 },
@@ -275,8 +278,8 @@ describe('trading account service', () => {
 
   it('returns all trading accounts for system owners without querying memberships', async () => {
     mocks.tradingAccountFindMany.mockResolvedValue([
-      { ...tradingAccount({ id: 1, displayName: 'Bobby Paper' }), credential: null },
-      { ...tradingAccount({ id: 2, displayName: 'Bobby Live' }), credential: null },
+      { ...tradingAccount({ id: 1, displayName: 'Bobby Paper' }), accountHolder: { name: 'Bobby W' }, credential: null },
+      { ...tradingAccount({ id: 2, displayName: 'Bobby Live' }), accountHolder: { name: 'Bobby W' }, credential: null },
     ]);
 
     await expect(
@@ -294,8 +297,8 @@ describe('trading account service', () => {
 
   it('filters trading account lists to memberships for non-owner users', async () => {
     mocks.tradingAccountFindMany.mockResolvedValue([
-      { ...tradingAccount({ id: 1, displayName: 'Bobby Paper' }), credential: null },
-      { ...tradingAccount({ id: 2, displayName: 'Unassigned Account' }), credential: null },
+      { ...tradingAccount({ id: 1, displayName: 'Bobby Paper' }), accountHolder: { name: 'Bobby W' }, credential: null },
+      { ...tradingAccount({ id: 2, displayName: 'Unassigned Account' }), accountHolder: { name: null }, credential: null },
     ]);
     mocks.tradingAccountMembershipFindMany.mockResolvedValue([
       { tradingAccountId: 1 },
@@ -333,6 +336,7 @@ describe('trading account service', () => {
         pausedReason: 'credential rotation',
         notes: null,
       }),
+      accountHolder: { name: 'Bobby W' },
       credential: null,
     });
 

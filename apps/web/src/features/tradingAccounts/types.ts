@@ -33,6 +33,7 @@ export type TradingAccountCredentialSummary = {
 export type TradingAccount = {
   id: number;
   accountHolderUserId: number;
+  accountHolderName: string | null;
   displayName: string;
   broker: TradingBroker;
   environment: TradingAccountEnvironment;

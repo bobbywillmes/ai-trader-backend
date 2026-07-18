@@ -25,6 +25,11 @@ const ACTIVE_POSITION_STATUSES = ['open', 'closing'];
 const TRADING_ACCOUNT_ADMIN_SELECT = {
   id: true,
   accountHolderUserId: true,
+  accountHolder: {
+    select: {
+      name: true,
+    },
+  },
   displayName: true,
   broker: true,
   environment: true,
@@ -118,6 +123,7 @@ export function serializeTradingAccountForAdmin(
   return {
     id: account.id,
     accountHolderUserId: account.accountHolderUserId,
+    accountHolderName: account.accountHolder.name,
     displayName: account.displayName,
     broker: account.broker,
     environment: account.environment,
