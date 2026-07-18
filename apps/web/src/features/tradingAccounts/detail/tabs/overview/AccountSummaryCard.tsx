@@ -34,8 +34,8 @@ export function AccountSummaryCard({ account }: { account: TradingAccount }) {
 
         <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
           <DetailItem label="Display name" value={account.displayName} />
-          <DetailItem label="Broker" value={account.broker} />
-          <DetailItem label="Environment" value={account.environment} />
+          <DetailItem label="Broker" value={<Stack gap={0}><Text>{account.broker}</Text><Text size="xs" c="dimmed">Permanent — cannot be changed after creation.</Text></Stack>} />
+          <DetailItem label="Environment" value={<Stack gap={0}><Text>{account.environment}</Text><Text size="xs" c="dimmed">Permanent — cannot be changed after creation.</Text></Stack>} />
           <DetailItem label="Status" value={formatStatus(account.status)} />
           <DetailItem
             label="Trading enabled"

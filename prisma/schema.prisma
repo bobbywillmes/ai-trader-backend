@@ -183,6 +183,7 @@ model TradingAccount {
   @@index([status])
   @@index([tradingEnabled])
   @@index([killSwitchEnabled])
+  @@unique([accountHolderUserId, broker, environment], map: "TradingAccount_holder_broker_environment_key")
   @@unique([broker, environment, brokerAccountId])
 }
 

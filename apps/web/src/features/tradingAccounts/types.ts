@@ -32,6 +32,7 @@ export type TradingAccountCredentialSummary = {
 
 export type TradingAccount = {
   id: number;
+  accountHolderUserId: number;
   displayName: string;
   broker: TradingBroker;
   environment: TradingAccountEnvironment;
@@ -65,6 +66,15 @@ export type TradingAccountsListResponse = {
 
 export type TradingAccountResponse = {
   account: TradingAccount;
+};
+
+export type CreateTradingAccountPayload = {
+  accountHolderUserId: number;
+  displayName: string;
+  environment: TradingAccountEnvironment;
+  estimatedTradingCapital?: number | null;
+  maxDeployableNotional?: number | null;
+  notes?: string | null;
 };
 
 export type TradingAccountRiskSettings = {

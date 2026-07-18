@@ -5,6 +5,7 @@ import type {
   AccountSubscriptionPriceHistoryRange,
   AccountSubscriptionPriceHistoryResponse,
   CreateTradingAccountSubscriptionInput,
+  CreateTradingAccountPayload,
   EntryRiskPreviewInput,
   EntryRiskPreviewResponse,
   RevokeTradingAccountCredentialResponse,
@@ -31,6 +32,14 @@ type ListMarketContextOptions = {
 export function getTradingAccounts(token: string) {
   return apiRequest<TradingAccountsListResponse>("/api/trading-accounts", {
     token,
+  });
+}
+
+export function createTradingAccount(payload: CreateTradingAccountPayload, token: string) {
+  return apiRequest<TradingAccountResponse>("/api/trading-accounts", {
+    method: "POST",
+    token,
+    body: payload,
   });
 }
 

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   createTradingAccountAllocationController,
+  createTradingAccountController,
   createTradingAccountSubscriptionController,
   getTradingAccountRiskHealthController,
   getTradingAccountSubscriptionPriceHistoryController,
@@ -23,12 +24,13 @@ import {
   revokeTradingAccountCredentialController,
   verifyTradingAccountCredentialController,
 } from '../controllers/trading-accounts.controller.js';
-import { requirePermission, requireTradingAccountAccess } from '../middleware/rbac.js';
+import { requirePermission, requireSystemOwnerAccess, requireTradingAccountAccess } from '../middleware/rbac.js';
 import { PlatformPermission } from '../types/platform-rbac.js';
 
 const router = Router();
 
 router.get('/', requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), listTradingAccountsController);
+router.post('/', requireSystemOwnerAccess, createTradingAccountController);
 router.get('/:id', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), getTradingAccountController);
 router.get('/:id/positions', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), listTradingAccountOpenPositionsController);
 router.get('/:id/orders', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), listTradingAccountOpenOrdersController);

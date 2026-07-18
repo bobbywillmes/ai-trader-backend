@@ -5,6 +5,7 @@ import { HttpError } from '../errors/http-error.js';
 import { isSystemOwnerRole } from '../types/platform-rbac.js';
 import {
   getTradingAccountForAdmin,
+  createTradingAccountForAdmin,
   getTradingAccountSummaryById,
   listTradingAccountsForAdmin,
   listTradingAccountsForUser,
@@ -39,6 +40,7 @@ import {
 } from '../services/account-subscription-market-context.service.js';
 import {
   createTradingAccountAllocationSchema,
+  createTradingAccountSchema,
   createTradingAccountSubscriptionSchema,
   entryRiskPreviewSchema,
   updateTradingAccountRiskSettingsSchema,
@@ -63,6 +65,20 @@ function parseTradingAccountId(value: unknown) {
   }
 
   return id;
+}
+
+export async function createTradingAccountController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const input = createTradingAccountSchema.parse(req.body);
+    const account = await createTradingAccountForAdmin(input);
+    res.status(201).json({ account });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      next(new HttpError(400, 'Invalid trading account creation request.', error.flatten()));
+      return;
+    }
+    next(error);
+  }
 }
 
 function parseAllocationId(value: unknown) {

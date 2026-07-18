@@ -105,6 +105,7 @@ Table TradingAccount {
   updatedAt DateTime [not null]
 
   indexes {
+    (accountHolderUserId, broker, environment) [unique]
     (broker, environment, brokerAccountId) [unique]
   }
 }

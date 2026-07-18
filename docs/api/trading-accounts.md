@@ -9,6 +9,22 @@ All routes are mounted under:
 /api/trading-accounts
 ```
 
+## Account identity and provisioning
+
+A User may hold at most one Trading Account for each broker/environment pair.
+Alpaca Paper and Alpaca Live are separate accounts, and an account's broker,
+environment, account holder, and broker account identity cannot be changed through
+the application API. Membership grants access to an account but does not represent
+ownership and does not count toward the holder uniqueness rule.
+
+`POST /api/trading-accounts` is restricted to `SYSTEM_OWNER`. It accepts an enabled
+`accountHolderUserId`, display name, explicit `PAPER` or `LIVE` environment, optional
+estimated capital, maximum deployable notional, and notes. The account and its
+account-holder membership are created in one transaction. New accounts always use
+Alpaca and USD, begin in `NEEDS_CREDENTIALS`, have trading disabled and the kill
+switch enabled, and have no credentials, broker balances, allocations, or account
+subscriptions.
+
 They require the normal admin auth path:
 
 ```text
