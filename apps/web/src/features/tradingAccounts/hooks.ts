@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 import {
   createTradingAccountAllocation,
+  createTradingAccount,
   createTradingAccountSubscription,
   getTradingAccount,
   getTradingAccounts,
@@ -29,6 +30,7 @@ import type {
   AccountSubscriptionMarketContextStatus,
   AccountSubscriptionPriceHistoryRange,
   CreateTradingAccountSubscriptionInput,
+  CreateTradingAccountPayload,
   EntryRiskPreviewInput,
   TradingAccountAllocationInput,
   TradingAccountRiskSettingsInput,
@@ -83,6 +85,20 @@ export function useTradingAccounts(token: string | null) {
     queryKey: tradingAccountKeys.lists(),
     queryFn: () => getTradingAccounts(token as string),
     enabled: Boolean(token),
+  });
+}
+
+export function useCreateTradingAccount(token: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: CreateTradingAccountPayload) => {
+      if (!token) throw new Error("Admin session is missing. Please log in again.");
+      return createTradingAccount(payload, token);
+    },
+    onSuccess: ({ account }) => {
+      queryClient.invalidateQueries({ queryKey: tradingAccountKeys.lists() });
+      queryClient.setQueryData(tradingAccountKeys.detail(account.id), { account });
+    },
   });
 }
 

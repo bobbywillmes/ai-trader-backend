@@ -1,9 +1,21 @@
 import {
   BrokerCredentialAuthType,
   PositionSizingType,
+  TradingAccountEnvironment,
   TradingAccountStatus,
 } from '@prisma/client';
 import { z } from 'zod';
+
+export const createTradingAccountSchema = z.strictObject({
+  accountHolderUserId: z.coerce.number().int().positive(),
+  displayName: z.string().trim().min(1),
+  environment: z.enum(TradingAccountEnvironment),
+  estimatedTradingCapital: z.coerce.number().nonnegative().nullable().optional(),
+  maxDeployableNotional: z.coerce.number().positive().nullable().optional(),
+  notes: z.string().trim().nullable().optional(),
+});
+
+export type CreateTradingAccountInput = z.infer<typeof createTradingAccountSchema>;
 
 const allocationKeySchema = z
   .string()

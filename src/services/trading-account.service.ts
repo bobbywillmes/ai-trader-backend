@@ -7,7 +7,8 @@ import {
 } from '@prisma/client';
 import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
-import type { UpdateTradingAccountInput } from '../validators/trading-account.schema.js';
+import type { CreateTradingAccountInput, UpdateTradingAccountInput } from '../validators/trading-account.schema.js';
+import { HttpError } from '../errors/http-error.js';
 import {
   assertAccountRiskConfiguration,
   withAccountRiskConfigurationTransaction,
@@ -23,6 +24,12 @@ const ACTIVE_POSITION_STATUSES = ['open', 'closing'];
 
 const TRADING_ACCOUNT_ADMIN_SELECT = {
   id: true,
+  accountHolderUserId: true,
+  accountHolder: {
+    select: {
+      name: true,
+    },
+  },
   displayName: true,
   broker: true,
   environment: true,
@@ -115,6 +122,8 @@ export function serializeTradingAccountForAdmin(
 
   return {
     id: account.id,
+    accountHolderUserId: account.accountHolderUserId,
+    accountHolderName: account.accountHolder.name,
     displayName: account.displayName,
     broker: account.broker,
     environment: account.environment,
@@ -150,6 +159,53 @@ export function serializeTradingAccountForAdmin(
       revokedAt: credential?.revokedAt ?? null,
     },
   };
+}
+
+function duplicateTradingAccountError(environment: TradingAccountEnvironment) {
+  return new HttpError(409, `The selected User already has an Alpaca ${environment === TradingAccountEnvironment.PAPER ? 'Paper' : 'Live'} Trading Account.`);
+}
+
+export async function createTradingAccountForAdmin(input: CreateTradingAccountInput) {
+  try {
+    const accountId = await prisma.$transaction(async (tx) => {
+      const holder = await tx.user.findUnique({ where: { id: input.accountHolderUserId }, select: { id: true, enabled: true } });
+      if (!holder) throw new HttpError(404, 'Account holder User not found.');
+      if (!holder.enabled) throw new HttpError(400, 'Account holder User must be enabled.');
+
+      const duplicate = await tx.tradingAccount.findFirst({
+        where: { accountHolderUserId: input.accountHolderUserId, broker: TradingBroker.ALPACA, environment: input.environment },
+        select: { id: true },
+      });
+      if (duplicate) throw duplicateTradingAccountError(input.environment);
+
+      const created = await tx.tradingAccount.create({
+        data: {
+          accountHolderUserId: input.accountHolderUserId,
+          displayName: input.displayName,
+          broker: TradingBroker.ALPACA,
+          environment: input.environment,
+          status: TradingAccountStatus.NEEDS_CREDENTIALS,
+          tradingEnabled: false,
+          killSwitchEnabled: true,
+          baseCurrency: 'USD',
+          ...(input.estimatedTradingCapital !== undefined && { estimatedTradingCapital: input.estimatedTradingCapital }),
+          ...(input.maxDeployableNotional !== undefined && { maxDeployableNotional: input.maxDeployableNotional }),
+          ...(input.notes !== undefined && { notes: input.notes }),
+          memberships: { create: { userId: input.accountHolderUserId } },
+        },
+        select: { id: true },
+      });
+      return created.id;
+    });
+    const account = await getTradingAccountForAdmin(accountId);
+    if (!account) throw new Error('Created Trading Account could not be loaded.');
+    return account;
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      throw duplicateTradingAccountError(input.environment);
+    }
+    throw error;
+  }
 }
 
 function getPositionExposure(position: {

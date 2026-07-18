@@ -14,6 +14,8 @@ import {
 } from "@mantine/core";
 import { useNavigate } from "react-router-dom";
 import { getAdminToken } from "../../lib/api";
+import { useIsSystemOwner } from "../auth/useAuth";
+import { CreateTradingAccountModal } from "./CreateTradingAccountModal";
 import {
   useTradingAccountRiskHealthSummaries,
   useTradingAccounts,
@@ -164,6 +166,8 @@ function EntryReadinessBadge({
 export function TradingAccountsPage() {
   const [token] = useState<string | null>(() => getAdminToken());
   const navigate = useNavigate();
+  const isSystemOwner = useIsSystemOwner();
+  const [createOpened, setCreateOpened] = useState(false);
   const { data, isLoading, isError, error } = useTradingAccounts(token);
   const accounts = data?.accounts ?? [];
   const riskHealthQueries = useTradingAccountRiskHealthSummaries(
@@ -173,6 +177,7 @@ export function TradingAccountsPage() {
 
   return (
     <Stack gap="lg">
+      <Group justify="space-between" align="flex-start">
       <div>
         <Title order={2} size="h3">
           Trading Accounts
@@ -181,6 +186,10 @@ export function TradingAccountsPage() {
           View broker account scope, safety posture, and credential status.
         </Text>
       </div>
+        {isSystemOwner && <Button onClick={() => setCreateOpened(true)}>New Trading Account</Button>}
+      </Group>
+
+      <CreateTradingAccountModal opened={createOpened} onClose={() => setCreateOpened(false)} token={token} accounts={accounts} />
 
       <Card withBorder radius="md" p="md">
         {isError && (
@@ -212,6 +221,7 @@ export function TradingAccountsPage() {
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>Account</Table.Th>
+                  <Table.Th>Account Holder</Table.Th>
                   <Table.Th>Broker</Table.Th>
                   <Table.Th>Environment</Table.Th>
                   <Table.Th>Status</Table.Th>
@@ -242,6 +252,9 @@ export function TradingAccountsPage() {
                         <Text size="xs" c="dimmed">
                           ID {account.id}
                         </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm">{account.accountHolderName || "—"}</Text>
                       </Table.Td>
                       <Table.Td>{account.broker}</Table.Td>
                       <Table.Td>
