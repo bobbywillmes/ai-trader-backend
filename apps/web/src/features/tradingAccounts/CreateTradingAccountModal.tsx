@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Alert, Button, Checkbox, Group, Modal, NumberInput, Radio, Select, Stack, Text, TextInput, Textarea } from "@mantine/core";
+import { Alert, Badge, Box, Button, Checkbox, Group, Modal, NumberInput, Paper, Radio, Select, Stack, Text, TextInput, Textarea } from "@mantine/core";
 import { useNavigate } from "react-router-dom";
 import { useUsers } from "../users/hooks";
 import type { TradingAccount, TradingAccountEnvironment } from "./types";
@@ -56,12 +56,83 @@ export function CreateTradingAccountModal({ opened, onClose, token, accounts }: 
       <TextInput label="Display name" required value={displayName} onChange={(event) => setDisplayName(event.currentTarget.value)} />
       <TextInput label="Broker" value="Alpaca" readOnly />
       <Radio.Group label="Environment" required value={environment ?? ""} onChange={(value) => { setEnvironment(value as TradingAccountEnvironment); if (value !== "LIVE") setLiveAcknowledged(false); }}>
-        <Stack mt="xs">
-          {(["PAPER", "LIVE"] as const).map((value) => { const existing = occupied(value); return <Radio key={value} value={value} disabled={!holderId || Boolean(existing)} label={`${value === "PAPER" ? "Paper" : "Live"} — ${existing ? `Already created: ${existing.displayName}` : "Available"}`} />; })}
+        <Stack mt="xs" gap="sm">
+          {(["PAPER", "LIVE"] as const).map((value) => {
+            const existing = occupied(value);
+            const disabled = !holderId || Boolean(existing);
+            const selected = environment === value;
+            const isLive = value === "LIVE";
+
+            return (
+              <Paper
+                key={value}
+                component="label"
+                withBorder
+                radius="md"
+                p="md"
+                style={{
+                  cursor: disabled ? "not-allowed" : "pointer",
+                  borderColor: selected ? (isLive ? "var(--mantine-color-red-6)" : "var(--mantine-color-cyan-6)") : undefined,
+                  backgroundColor: selected ? (isLive ? "var(--mantine-color-red-light)" : "var(--mantine-color-cyan-light)") : undefined,
+                  opacity: disabled ? 0.55 : 1,
+                  transition: "border-color 120ms ease, background-color 120ms ease",
+                }}
+              >
+                <Group align="flex-start" wrap="nowrap">
+                  <Radio
+                    value={value}
+                    disabled={disabled}
+                    aria-label={`${isLive ? "Live" : "Paper"} environment`}
+                    styles={{ root: { position: "absolute", opacity: 0, pointerEvents: "none" } }}
+                  />
+                  <Box
+                    mt={2}
+                    mr="xs"
+                    aria-hidden="true"
+                    style={{
+                      width: 22,
+                      height: 22,
+                      flex: "0 0 22px",
+                      borderRadius: "50%",
+                      border: `2px solid ${selected ? (isLive ? "var(--mantine-color-red-6)" : "var(--mantine-color-cyan-6)") : "var(--mantine-color-dark-3)"}`,
+                      backgroundColor: selected ? (isLive ? "var(--mantine-color-red-6)" : "var(--mantine-color-cyan-6)") : "transparent",
+                      display: "grid",
+                      placeItems: "center",
+                    }}
+                  >
+                    {selected && (
+                      <Box
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          backgroundColor: "var(--mantine-color-white)",
+                        }}
+                      />
+                    )}
+                  </Box>
+                  <Stack gap={4} style={{ flex: 1 }}>
+                    <Group justify="space-between" gap="xs">
+                      <Text fw={600}>{isLive ? "Live" : "Paper"}</Text>
+                      <Badge color={existing ? "gray" : isLive ? "red" : "cyan"} variant={selected ? "filled" : "light"}>
+                        {existing ? "Already created" : holderId ? "Available" : "Select a holder"}
+                      </Badge>
+                    </Group>
+                    <Text size="sm" c="dimmed">
+                      {existing
+                        ? `${existing.displayName} already uses this environment.`
+                        : isLive
+                          ? "Funded brokerage environment for real-money trading after configuration and deliberate enablement."
+                          : "Simulated Alpaca environment for paper trading without real funds."}
+                    </Text>
+                  </Stack>
+                </Group>
+              </Paper>
+            );
+          })}
         </Stack>
       </Radio.Group>
       <Alert color="blue" title="Permanent selection">A Trading Account cannot be changed between Paper and Live after it is created. To use the other environment, create a separate Trading Account.</Alert>
-      <Text size="sm" c="dimmed">Paper uses Alpaca’s simulated paper-trading environment. Live uses a funded Alpaca brokerage account and can submit real-money orders after the account is fully configured and trading is deliberately enabled.</Text>
       {bothOccupied && <Alert color="orange">This User already has both available Alpaca TradingAccounts.</Alert>}
       {environment === "LIVE" && <Checkbox checked={liveAcknowledged} onChange={(event) => setLiveAcknowledged(event.currentTarget.checked)} label="I understand that this account uses live brokerage credentials, the environment cannot be changed, and live orders can use real funds." />}
       <NumberInput label="Estimated trading capital" min={0} decimalScale={2} value={capital} onChange={setCapital} />
