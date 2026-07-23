@@ -652,28 +652,32 @@ exposure for the allocation plus the new order's estimated notional.
 
 ## Manage Account Subscriptions
 
-Account subscriptions attach a trading account to an existing legacy
-`Subscription` and store account-specific sizing configuration. Runtime entry
-order sizing now uses `TradingAccountSubscription` as the source of truth. The
-legacy `Subscription.sizingType` / `Subscription.sizingValue` fields still
-exist, but they are no longer the source of truth for new entry sizing. The n8n
-signal request/response contract remains unchanged.
+Account subscriptions deploy a reusable catalog `Subscription` to one
+TradingAccount and store all account-specific allocation, sizing, and
+operational controls. `TradingAccountSubscription` is the only source of truth
+for runtime entry sizing. Legacy account ownership, broker mode, and sizing
+fields have been removed from `Subscription`.
+
+Order-capable n8n and external signal payloads must provide
+`tradingAccountSubscriptionId`. `subscriptionKey` may be included only as a
+consistency assertion and is never used to choose an account.
 
 At entry signal time, the backend resolves:
 
 ```text
-TradingAccount + Subscription
--> TradingAccountSubscription
+TradingAccountSubscription
+-> TradingAccount
+-> TradingAccountAllocation
+-> Subscription
 -> enabled / entriesEnabled gates
 -> sizingType / fixedQty / maxPositionNotional
 -> backend-owned latest price when required
 -> whole-share quantity
 ```
 
-If the account subscription is missing or disabled for entries, the entry is
-rejected before an `OrderIntent` is created. The backend does not fall back to
-legacy `Subscription.sizingType` / `Subscription.sizingValue` for new entry
-orders.
+If the account subscription identity is missing, invalid, mismatched, or
+disabled for entries, the entry is rejected before an `OrderIntent` is created.
+There is no default-account or Subscription-level sizing fallback.
 
 List account subscriptions:
 
