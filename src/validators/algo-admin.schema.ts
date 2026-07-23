@@ -135,5 +135,26 @@ export const updateExitProfileSchema = z.object({
 export type CreateSubscriptionInput = z.infer<typeof createSubscriptionSchema>;
 export type UpdateSubscriptionInput = z.infer<typeof updateSubscriptionSchema>;
 
+export const subscriptionCatalogQuerySchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  pageSize: z.coerce.number().int().min(1).max(250).default(50),
+  search: z.string().trim().max(200).optional(),
+  enabled: z.enum(['true', 'false']).transform((value) => value === 'true').optional(),
+  assignmentStatus: z.enum(['all', 'assigned', 'unassigned']).default('all'),
+  assignmentEnabled: z.enum(['true', 'false']).transform((value) => value === 'true').optional(),
+  entriesEnabled: z.enum(['true', 'false']).transform((value) => value === 'true').optional(),
+  exitsEnabled: z.enum(['true', 'false']).transform((value) => value === 'true').optional(),
+  tradingAccountId: z.coerce.number().int().positive().optional(),
+  securityId: z.coerce.number().int().positive().optional(),
+  strategyId: z.coerce.number().int().positive().optional(),
+  exitProfileId: z.coerce.number().int().positive().optional(),
+  sortBy: z.enum(['key', 'name', 'symbol', 'enabled', 'assignmentCount']).default('key'),
+  sortDirection: z.enum(['asc', 'desc']).default('asc'),
+});
+
+export type SubscriptionCatalogQuery = z.infer<
+  typeof subscriptionCatalogQuerySchema
+>;
+
 export type CreateExitProfileInput = z.infer<typeof createExitProfileSchema>;
 export type UpdateExitProfileInput = z.infer<typeof updateExitProfileSchema>;

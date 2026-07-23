@@ -6,6 +6,7 @@ import {
 } from '../services/subscription.service.js';
 import {
   createSubscriptionSchema,
+  subscriptionCatalogQuerySchema,
   updateSubscriptionSchema,
 } from '../validators/algo-admin.schema.js';
 
@@ -29,12 +30,13 @@ function getRouteParam(value: unknown) {
 }
 
 export async function subscriptionsController(
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction
 ) {
   try {
-    res.status(200).json(await getSubscriptions());
+    const query = subscriptionCatalogQuerySchema.parse(req.query);
+    res.status(200).json(await getSubscriptions(query));
   } catch (error) {
     next(error);
   }

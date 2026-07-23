@@ -1,8 +1,35 @@
 import { apiRequest } from "../../lib/api";
-import type { Subscription, CreateSubscriptionPayload, UpdateSubscriptionPayload } from "./types";
+import type {
+  Subscription,
+  CreateSubscriptionPayload,
+  SubscriptionCatalogQuery,
+  SubscriptionCatalogResponse,
+  UpdateSubscriptionPayload,
+} from "./types";
 
-export function getSubscriptions(token: string) {
-  return apiRequest<Subscription[]>("/api/subscriptions", {
+function catalogUrl(query: SubscriptionCatalogQuery) {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== "" && value !== "all") {
+      params.set(key, String(value));
+    }
+  });
+  return `/api/subscriptions?${params.toString()}`;
+}
+
+export async function getSubscriptions(token: string) {
+  const response = await apiRequest<SubscriptionCatalogResponse>(
+    catalogUrl({ page: 1, pageSize: 250 }),
+    { token }
+  );
+  return response.data;
+}
+
+export function getSubscriptionCatalog(
+  query: SubscriptionCatalogQuery,
+  token: string
+) {
+  return apiRequest<SubscriptionCatalogResponse>(catalogUrl(query), {
     token,
   });
 }

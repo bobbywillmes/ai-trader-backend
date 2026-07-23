@@ -14,35 +14,165 @@ import type {
   CreateSubscriptionInput,
   UpdateSubscriptionInput,
   CreateExitProfileInput,
+  SubscriptionCatalogQuery,
   UpdateExitProfileInput,
 } from '../validators/algo-admin.schema.js';
 
-export async function getSubscriptions() {
-  return prisma.subscription.findMany({
-    orderBy: { key: 'asc' },
-    include: {
-      security: true,
-      strategy: true,
-      exitProfile: true,
-      accountSubscriptions: {
+const catalogInclude = {
+  security: true,
+  strategy: true,
+  exitProfile: true,
+  accountSubscriptions: {
+    select: {
+      id: true,
+      enabled: true,
+      entriesEnabled: true,
+      exitsEnabled: true,
+      tradingAccount: {
         select: {
           id: true,
-          enabled: true,
-          entriesEnabled: true,
-          exitsEnabled: true,
-          tradingAccount: {
-            select: {
-              id: true,
-              displayName: true,
-              environment: true,
-              status: true,
-            },
-          },
+          displayName: true,
+          environment: true,
+          status: true,
         },
-        orderBy: { tradingAccountId: 'asc' },
       },
-    }
-  });
+    },
+    orderBy: { tradingAccountId: 'asc' as const },
+  },
+} satisfies Prisma.SubscriptionInclude;
+
+function catalogWhere(query: SubscriptionCatalogQuery) {
+  const assignmentFilter: Prisma.TradingAccountSubscriptionWhereInput = {
+    ...(query.tradingAccountId !== undefined && {
+      tradingAccountId: query.tradingAccountId,
+    }),
+    ...(query.assignmentEnabled !== undefined && {
+      enabled: query.assignmentEnabled,
+    }),
+    ...(query.entriesEnabled !== undefined && {
+      entriesEnabled: query.entriesEnabled,
+    }),
+    ...(query.exitsEnabled !== undefined && {
+      exitsEnabled: query.exitsEnabled,
+    }),
+  };
+  const hasAssignmentFilter = Object.keys(assignmentFilter).length > 0;
+  const where: Prisma.SubscriptionWhereInput = {
+    ...(query.search && {
+      OR: [
+        { key: { contains: query.search, mode: 'insensitive' } },
+        { name: { contains: query.search, mode: 'insensitive' } },
+        { description: { contains: query.search, mode: 'insensitive' } },
+        { symbol: { contains: query.search, mode: 'insensitive' } },
+        { security: { name: { contains: query.search, mode: 'insensitive' } } },
+        { strategy: { name: { contains: query.search, mode: 'insensitive' } } },
+        { strategy: { key: { contains: query.search, mode: 'insensitive' } } },
+        { exitProfile: { name: { contains: query.search, mode: 'insensitive' } } },
+        { exitProfile: { key: { contains: query.search, mode: 'insensitive' } } },
+      ],
+    }),
+    ...(query.enabled !== undefined && { enabled: query.enabled }),
+    ...(query.securityId !== undefined && { securityId: query.securityId }),
+    ...(query.strategyId !== undefined && { strategyId: query.strategyId }),
+    ...(query.exitProfileId !== undefined && {
+      exitProfileId: query.exitProfileId,
+    }),
+  };
+
+  if (query.assignmentStatus === 'unassigned') {
+    where.accountSubscriptions = { none: assignmentFilter };
+  } else if (query.assignmentStatus === 'assigned' || hasAssignmentFilter) {
+    where.accountSubscriptions = { some: assignmentFilter };
+  }
+
+  return where;
+}
+
+function catalogOrderBy(query: SubscriptionCatalogQuery) {
+  const direction = query.sortDirection;
+  if (query.sortBy === 'assignmentCount') {
+    return [{ accountSubscriptions: { _count: direction } }, { key: 'asc' }] satisfies Prisma.SubscriptionOrderByWithRelationInput[];
+  }
+
+  return [
+    { [query.sortBy]: direction },
+    ...(query.sortBy === 'key' ? [] : [{ key: 'asc' as const }]),
+  ] satisfies Prisma.SubscriptionOrderByWithRelationInput[];
+}
+
+export async function getSubscriptions(query: SubscriptionCatalogQuery) {
+  const where = catalogWhere(query);
+  const skip = (query.page - 1) * query.pageSize;
+  const [
+    subscriptions,
+    total,
+    totalCatalog,
+    globallyEnabled,
+    assigned,
+    tradingAccounts,
+    securities,
+    strategies,
+    exitProfiles,
+  ] = await prisma.$transaction([
+    prisma.subscription.findMany({
+      where,
+      orderBy: catalogOrderBy(query),
+      skip,
+      take: query.pageSize,
+      include: catalogInclude,
+    }),
+    prisma.subscription.count({ where }),
+    prisma.subscription.count(),
+    prisma.subscription.count({ where: { enabled: true } }),
+    prisma.subscription.count({
+      where: { accountSubscriptions: { some: {} } },
+    }),
+    prisma.tradingAccount.findMany({
+      select: {
+        id: true,
+        displayName: true,
+        environment: true,
+        status: true,
+      },
+      orderBy: { displayName: 'asc' },
+    }),
+    prisma.security.findMany({
+      select: { id: true, symbol: true, name: true },
+      orderBy: { symbol: 'asc' },
+    }),
+    prisma.strategy.findMany({
+      select: { id: true, key: true, name: true },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.exitProfile.findMany({
+      select: { id: true, key: true, name: true },
+      orderBy: { name: 'asc' },
+    }),
+  ]);
+
+  return {
+    subscriptions,
+    data: subscriptions,
+    pagination: {
+      page: query.page,
+      pageSize: query.pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / query.pageSize)),
+    },
+    summary: {
+      total: totalCatalog,
+      globallyEnabled,
+      globallyRetired: totalCatalog - globallyEnabled,
+      assigned,
+      unassigned: totalCatalog - assigned,
+    },
+    filters: {
+      tradingAccounts,
+      securities,
+      strategies,
+      exitProfiles,
+    },
+  };
 }
 
 export async function getSubscriptionByKey(key: string) {
