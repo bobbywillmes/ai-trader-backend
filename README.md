@@ -470,10 +470,8 @@ The backend is currently focused on hosted paper-production testing, operational
 
 ### 🧭 Longer-Term
 
-- Replace more Google Sheet state with database-backed market memory.
 - Add historical audit dashboard.
 - Add AI-assisted profit-protection workflows.
-- Add multi-account support.
 - Add live-trading deployment checklist and approval workflow.
 
 ## 📝 Documentation Rule
