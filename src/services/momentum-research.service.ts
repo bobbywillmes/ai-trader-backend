@@ -630,7 +630,29 @@ const researchSecuritySelect = {
       enabled: true,
       strategy: { select: { id: true, key: true, name: true, enabled: true } },
       exitProfile: { select: { id: true, key: true, name: true, enabled: true } },
-      accountSubscriptions: momentumSubscriptionEligibilitySelect.accountSubscriptions,
+      accountSubscriptions: {
+        select: {
+          id: true,
+          enabled: true,
+          entriesEnabled: true,
+          exitsEnabled: true,
+          tradingAccount: {
+            select: {
+              id: true,
+              displayName: true,
+              environment: true,
+              status: true,
+            },
+          },
+          allocation: {
+            select: {
+              id: true,
+              enabled: true,
+            },
+          },
+        },
+        orderBy: { id: 'asc' as const },
+      },
     },
   },
   trackedPositions: {
