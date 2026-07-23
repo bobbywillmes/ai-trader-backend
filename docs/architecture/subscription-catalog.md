@@ -80,10 +80,14 @@ Before production migration, run:
 npx tsx scripts/diagnose-subscription-catalog-migration.ts
 ```
 
-The diagnostic fails unless Bobby Paper has 25 valid assignments, Bobby Live
-has zero, and all assignments have valid allocation and sizing. The SQL
-migration independently aborts if any legacy account-owned Subscription lacks a
-deterministic assignment or migrated sizing is invalid.
+The diagnostic derives the expected legacy assignment count from the database.
+It fails if any account-owned legacy Subscription lacks its deterministic
+same-account assignment, any mapped assignment has invalid migrated sizing,
+Bobby Live has any assignments, or an active entry assignment lacks complete
+allocation, reservation, sizing, and risk configuration. Retired or
+entry-disabled assignments may intentionally have no allocation. The SQL
+migration independently aborts if any legacy account-owned Subscription lacks
+a deterministic assignment or migrated sizing is invalid.
 
 After the diagnostic succeeds, back up the database, deploy the migration,
 regenerate/rebuild the application, and verify health, catalog assignment

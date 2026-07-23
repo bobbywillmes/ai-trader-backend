@@ -1,8 +1,12 @@
 /// <reference types="node" />
 
 import "dotenv/config";
-import { PrismaClient, TradingAccountEnvironment } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import {
+  buildSubscriptionCatalogMigrationDiagnostic,
+  type LegacySubscriptionMapping,
+} from "../src/services/subscription-catalog-migration-diagnostic.js";
 
 const databaseUrl = process.env.DATABASE_URL?.trim();
 if (!databaseUrl) {
@@ -19,73 +23,62 @@ async function main() {
       id: true,
       displayName: true,
       environment: true,
-      _count: { select: { accountSubscriptions: true } },
+      maxDeployableNotional: true,
     },
     orderBy: { id: "asc" },
   });
 
-  const invalidAssignments = await prisma.tradingAccountSubscription.findMany({
-    where: {
-      OR: [
-        { allocationId: null },
-        { allocation: { enabled: false } },
-        {
-          sizingType: "FIXED_QTY",
-          OR: [{ fixedQty: null }, { fixedQty: { lte: 0 } }],
-        },
-        {
-          sizingType: "MAX_NOTIONAL",
-          OR: [
-            { maxPositionNotional: null },
-            { maxPositionNotional: { lte: 0 } },
-          ],
-        },
-      ],
-    },
+  const legacySubscriptions = await prisma.$queryRaw<LegacySubscriptionMapping[]>`
+    SELECT id, "tradingAccountId", enabled, key
+    FROM "Subscription"
+    WHERE "tradingAccountId" IS NOT NULL
+    ORDER BY id ASC
+  `;
+
+  const assignments = await prisma.tradingAccountSubscription.findMany({
     select: {
       id: true,
       tradingAccountId: true,
       subscriptionId: true,
       allocationId: true,
+      enabled: true,
+      entriesEnabled: true,
+      exitsEnabled: true,
       sizingType: true,
       fixedQty: true,
       maxPositionNotional: true,
+      reservedNotional: true,
+      subscription: {
+        select: {
+          key: true,
+          enabled: true,
+        },
+      },
+      allocation: {
+        select: {
+          id: true,
+          tradingAccountId: true,
+          key: true,
+          name: true,
+          enabled: true,
+          maxAllocatedNotional: true,
+          maxOpenPositions: true,
+          maxPositionNotional: true,
+        },
+      },
     },
+    orderBy: { id: "asc" },
   });
 
-  const liveAssignmentCount = accounts
-    .filter((account) => account.environment === TradingAccountEnvironment.LIVE)
-    .reduce((total, account) => total + account._count.accountSubscriptions, 0);
-  const bobbyPaper = accounts.find(
-    (account) =>
-      account.displayName === "Bobby Paper" &&
-      account.environment === TradingAccountEnvironment.PAPER
-  );
-  const bobbyLive = accounts.find(
-    (account) =>
-      account.displayName === "Bobby Live" &&
-      account.environment === TradingAccountEnvironment.LIVE
-  );
-  const bobbyPaperAssignmentCount =
-    bobbyPaper?._count.accountSubscriptions ?? null;
-  const bobbyLiveAssignmentCount =
-    bobbyLive?._count.accountSubscriptions ?? null;
-  const productionBaselineValid =
-    bobbyPaperAssignmentCount === 25 &&
-    bobbyLiveAssignmentCount === 0;
-
-  console.log(JSON.stringify({
+  const result = buildSubscriptionCatalogMigrationDiagnostic({
     accounts,
-    invalidAssignments,
-    liveAssignmentCount,
-    bobbyPaperAssignmentCount,
-    bobbyLiveAssignmentCount,
-    productionBaselineValid,
-    safeToDropLegacyFields:
-      invalidAssignments.length === 0 && productionBaselineValid,
-  }, null, 2));
+    legacySubscriptions,
+    assignments,
+  });
 
-  if (invalidAssignments.length > 0 || !productionBaselineValid) {
+  console.log(JSON.stringify({ accounts, ...result }, null, 2));
+
+  if (!result.productionBaselineValid || !result.entryConfigurationValid) {
     process.exitCode = 1;
   }
 }
