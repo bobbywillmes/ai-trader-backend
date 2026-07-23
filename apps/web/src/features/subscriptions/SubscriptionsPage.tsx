@@ -50,6 +50,28 @@ function toOptionalBoolean(value: BooleanFilter) {
   return value === "all" ? undefined : value === "true";
 }
 
+function assignmentState(
+  assignments: Subscription["accountSubscriptions"],
+  field: "enabled" | "entriesEnabled" | "exitsEnabled"
+) {
+  if (assignments.length === 0) {
+    return { label: "Not assigned", color: "gray" };
+  }
+
+  const enabledCount = assignments.filter((assignment) => assignment[field]).length;
+  if (assignments.length === 1) {
+    return {
+      label: enabledCount === 1 ? "Enabled" : "Disabled",
+      color: enabledCount === 1 ? "teal" : "gray",
+    };
+  }
+
+  return {
+    label: `${enabledCount} of ${assignments.length}`,
+    color: enabledCount === assignments.length ? "teal" : enabledCount === 0 ? "gray" : "yellow",
+  };
+}
+
 export function SubscriptionsPage() {
   const [params, setParams] = useSearchParams();
   const [token] = useState(() => getAdminToken());
@@ -132,12 +154,6 @@ export function SubscriptionsPage() {
   }, [page, pageSize, search, globalStatus, assignmentStatus,
     assignmentEnabled, entriesEnabled, exitsEnabled, accountId, securityId,
     strategyId, exitProfileId, sortBy, sortDirection, setParams]);
-
-  useEffect(() => {
-    if (pagination && page > pagination.totalPages) {
-      setPage(pagination.totalPages);
-    }
-  }, [page, pagination]);
 
   function resetPage() {
     setPage(1);
@@ -245,12 +261,12 @@ export function SubscriptionsPage() {
             <Select searchable clearable label="Security" placeholder="All securities" data={(filters?.securities ?? []).map((item) => ({ value: String(item.id), label: `${item.symbol} — ${item.name}` }))} value={securityId} onChange={(value) => { resetPage(); setSecurityId(value); }} />
             <Select searchable clearable label="Strategy" placeholder="All strategies" data={(filters?.strategies ?? []).map((item) => ({ value: String(item.id), label: `${item.key} — ${item.name}` }))} value={strategyId} onChange={(value) => { resetPage(); setStrategyId(value); }} />
             <Select searchable clearable label="Exit Profile" placeholder="All exit profiles" data={(filters?.exitProfiles ?? []).map((item) => ({ value: String(item.id), label: `${item.key} — ${item.name}` }))} value={exitProfileId} onChange={(value) => { resetPage(); setExitProfileId(value); }} />
-            <Select label="Global status" data={[{ value: "all", label: "All global statuses" }, { value: "true", label: "Globally enabled" }, { value: "false", label: "Retired" }]} value={globalStatus} onChange={(value) => { resetPage(); setGlobalStatus((value ?? "all") as BooleanFilter); }} />
-            <Select label="Assignment status" data={[{ value: "all", label: "Assigned or unassigned" }, { value: "assigned", label: "Assigned" }, { value: "unassigned", label: accountId ? "Not assigned to selected account" : "Unassigned to every account" }]} value={assignmentStatus} onChange={(value) => { resetPage(); setAssignmentStatus((value ?? "all") as SubscriptionAssignmentStatus); }} />
+            <Select label="Catalog status" description="Global availability across every account" data={[{ value: "all", label: "All catalog statuses" }, { value: "true", label: "Globally enabled" }, { value: "false", label: "Retired" }]} value={globalStatus} onChange={(value) => { resetPage(); setGlobalStatus((value ?? "all") as BooleanFilter); }} />
+            <Select label="Account assignment" description="Whether the catalog definition is deployed" data={[{ value: "all", label: "Assigned or unassigned" }, { value: "assigned", label: "Assigned" }, { value: "unassigned", label: accountId ? "Not assigned to selected account" : "Unassigned to every account" }]} value={assignmentStatus} onChange={(value) => { resetPage(); setAssignmentStatus((value ?? "all") as SubscriptionAssignmentStatus); }} />
             <Select searchable clearable label="Trading Account" placeholder="All accounts" data={(filters?.tradingAccounts ?? []).map((item) => ({ value: String(item.id), label: `${item.displayName} · ${item.environment}` }))} value={accountId} onChange={(value) => { resetPage(); setAccountId(value); }} />
-            <Select label="Assignment enabled" data={booleanOptions} value={assignmentEnabled} onChange={(value) => { resetPage(); setAssignmentEnabled((value ?? "all") as BooleanFilter); }} />
-            <Select label="Entries enabled" data={booleanOptions} value={entriesEnabled} onChange={(value) => { resetPage(); setEntriesEnabled((value ?? "all") as BooleanFilter); }} />
-            <Select label="Exits enabled" data={booleanOptions} value={exitsEnabled} onChange={(value) => { resetPage(); setExitsEnabled((value ?? "all") as BooleanFilter); }} />
+            <Select label="Assignment master switch" description="Account-level deployment control" data={booleanOptions} value={assignmentEnabled} onChange={(value) => { resetPage(); setAssignmentEnabled((value ?? "all") as BooleanFilter); }} />
+            <Select label="Account entries" description="Permission to open new positions" data={booleanOptions} value={entriesEnabled} onChange={(value) => { resetPage(); setEntriesEnabled((value ?? "all") as BooleanFilter); }} />
+            <Select label="Account exits" description="Permission to manage or close positions" data={booleanOptions} value={exitsEnabled} onChange={(value) => { resetPage(); setExitsEnabled((value ?? "all") as BooleanFilter); }} />
             <Select label="Rows per page" data={PAGE_SIZE_OPTIONS} value={String(pageSize)} onChange={(value) => { setPage(1); setPageSize(Number(value ?? 50)); }} />
             <Group align="end">
               <Button onClick={() => { resetPage(); setSearch(searchInput.trim()); }}>Apply</Button>
@@ -260,39 +276,54 @@ export function SubscriptionsPage() {
 
           {catalogQuery.isError && <Alert color="red">{catalogQuery.error.message}</Alert>}
           <ScrollArea>
-            <Table striped highlightOnHover miw={1050}>
+            <Table striped highlightOnHover miw={1320}>
               <Table.Thead><Table.Tr>
                 <Table.Th><Button variant="subtle" size="compact-sm" onClick={() => handleSort("key")}>Definition{sortLabel("key")}</Button></Table.Th>
                 <Table.Th><Button variant="subtle" size="compact-sm" onClick={() => handleSort("symbol")}>Security{sortLabel("symbol")}</Button></Table.Th>
                 <Table.Th>Strategy</Table.Th><Table.Th>Exit profile</Table.Th>
-                <Table.Th><Button variant="subtle" size="compact-sm" onClick={() => handleSort("enabled")}>Global{sortLabel("enabled")}</Button></Table.Th>
+                <Table.Th><Button variant="subtle" size="compact-sm" onClick={() => handleSort("enabled")}>Catalog status{sortLabel("enabled")}</Button></Table.Th>
                 <Table.Th><Button variant="subtle" size="compact-sm" onClick={() => handleSort("assignmentCount")}>Assignments{sortLabel("assignmentCount")}</Button></Table.Th>
+                <Table.Th>Master switch</Table.Th>
+                <Table.Th>Account entries</Table.Th>
+                <Table.Th>Account exits</Table.Th>
                 <Table.Th />
               </Table.Tr></Table.Thead>
               <Table.Tbody>
                 {catalogQuery.isLoading ? (
-                  <Table.Tr><Table.Td colSpan={7}><Text c="dimmed">Loading catalog…</Text></Table.Td></Table.Tr>
+                  <Table.Tr><Table.Td colSpan={10}><Text c="dimmed">Loading catalog…</Text></Table.Td></Table.Tr>
                 ) : rows.length === 0 ? (
-                  <Table.Tr><Table.Td colSpan={7}><Text c="dimmed">No catalog entries match these filters.</Text></Table.Td></Table.Tr>
-                ) : rows.map((item) => (
-                  <Table.Tr key={item.id}>
+                  <Table.Tr><Table.Td colSpan={10}><Text c="dimmed">No catalog entries match these filters.</Text></Table.Td></Table.Tr>
+                ) : rows.map((item) => {
+                  const displayedAssignments = accountId
+                    ? item.accountSubscriptions.filter(
+                        (assignment) => assignment.tradingAccount.id === Number(accountId)
+                      )
+                    : item.accountSubscriptions;
+                  const masterState = assignmentState(displayedAssignments, "enabled");
+                  const entryState = assignmentState(displayedAssignments, "entriesEnabled");
+                  const exitState = assignmentState(displayedAssignments, "exitsEnabled");
+
+                  return <Table.Tr key={item.id}>
                     <Table.Td><Text fw={600}>{item.name}</Text><Text size="xs" ff="monospace">{item.key}</Text></Table.Td>
                     <Table.Td><Text fw={600}>{item.symbol}</Text><Text size="xs" c="dimmed">{item.security.name}</Text></Table.Td>
                     <Table.Td><Text>{item.strategy.name}</Text><Text size="xs" ff="monospace">{item.strategy.key}</Text></Table.Td>
                     <Table.Td><Text>{item.exitProfile.name}</Text><Text size="xs" ff="monospace">{item.exitProfile.key}</Text></Table.Td>
                     <Table.Td><Badge color={item.enabled ? "teal" : "gray"}>{item.enabled ? "Enabled" : "Retired"}</Badge></Table.Td>
                     <Table.Td>
-                      <Text size="sm">{item.accountSubscriptions.length} account{item.accountSubscriptions.length === 1 ? "" : "s"}</Text>
-                      {item.accountSubscriptions.map((assignment) => (
-                        <Text key={assignment.id} size="xs" c="dimmed">{assignment.tradingAccount.displayName}: assignment {assignment.enabled ? "on" : "off"}, entries {assignment.entriesEnabled ? "on" : "off"}, exits {assignment.exitsEnabled ? "on" : "off"}</Text>
+                      <Text size="sm">{displayedAssignments.length} account{displayedAssignments.length === 1 ? "" : "s"}</Text>
+                      {displayedAssignments.map((assignment) => (
+                        <Text key={assignment.id} size="xs" c="dimmed">{assignment.tradingAccount.displayName}</Text>
                       ))}
                     </Table.Td>
+                    <Table.Td><Badge color={masterState.color}>{masterState.label}</Badge></Table.Td>
+                    <Table.Td><Badge color={entryState.color}>{entryState.label}</Badge></Table.Td>
+                    <Table.Td><Badge color={exitState.color}>{exitState.label}</Badge></Table.Td>
                     <Table.Td><Group gap="xs" justify="flex-end" wrap="nowrap">
                       <Button size="xs" variant="subtle" onClick={() => openEdit(item)}>Edit</Button>
                       <Button size="xs" variant="subtle" color={item.enabled ? "orange" : "teal"} loading={toggleMutation.isPending && toggleMutation.variables?.id === item.id} onClick={() => toggleMutation.mutate({ id: item.id, enabled: !item.enabled })}>{item.enabled ? "Retire" : "Enable"}</Button>
                     </Group></Table.Td>
-                  </Table.Tr>
-                ))}
+                  </Table.Tr>;
+                })}
               </Table.Tbody>
             </Table>
           </ScrollArea>
