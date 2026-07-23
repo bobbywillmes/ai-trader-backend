@@ -28,6 +28,7 @@ import {
 } from '../services/trading-account-allocation.service.js';
 import {
   createTradingAccountSubscriptionForAdmin,
+  deleteTradingAccountSubscriptionForAdmin,
   getTradingAccountSubscriptionForAdmin,
   listTradingAccountSubscriptionsForAdmin,
   updateTradingAccountSubscriptionForAdmin,
@@ -667,6 +668,31 @@ export async function updateTradingAccountSubscriptionController(
       return;
     }
 
+    next(error);
+  }
+}
+
+export async function deleteTradingAccountSubscriptionController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const accountId = parseTradingAccountId(req.params.id);
+    const accountSubscriptionId = parseAccountSubscriptionId(
+      req.params.accountSubscriptionId
+    );
+    const deleted = await deleteTradingAccountSubscriptionForAdmin(
+      accountId,
+      accountSubscriptionId
+    );
+
+    if (!deleted) {
+      throw new HttpError(404, 'Trading account subscription not found.');
+    }
+
+    res.status(204).send();
+  } catch (error) {
     next(error);
   }
 }

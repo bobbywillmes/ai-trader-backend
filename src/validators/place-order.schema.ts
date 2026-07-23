@@ -15,18 +15,19 @@ export const placeOrderSchema = z
     notional: z.coerce.number().positive().optional(),
     limitPrice: z.coerce.number().positive().optional(),
     extendedHours: z.boolean().default(false),
+    tradingAccountSubscriptionId: z.coerce.number().int().positive(),
     subscriptionKey: z.string().trim().min(1).optional(),
     signalType: z.enum(['entry', 'exit']).default('entry').optional(),
     signalMetadata: z.record(z.string(), z.unknown()).optional(),
   })
   .superRefine((data, ctx) => {
-    const usingSubscription = !!data.subscriptionKey;
+    const usingSubscription = data.tradingAccountSubscriptionId !== undefined;
 
     if (!usingSubscription) {
       if (!data.symbol) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: 'symbol is required when not using subscriptionKey',
+          message: 'symbol is required when not using tradingAccountSubscriptionId',
           path: ['symbol']
         });
       }
@@ -34,7 +35,7 @@ export const placeOrderSchema = z
       if (!data.side) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: 'side is required when not using subscriptionKey',
+          message: 'side is required when not using tradingAccountSubscriptionId',
           path: ['side']
         });
       }
@@ -42,7 +43,7 @@ export const placeOrderSchema = z
       if (data.orderType === undefined) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: 'orderType is required when not using subscriptionKey',
+          message: 'orderType is required when not using tradingAccountSubscriptionId',
           path: ['orderType']
         });
       }
@@ -50,7 +51,7 @@ export const placeOrderSchema = z
       if (data.timeInForce === undefined) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: 'timeInForce is required when not using subscriptionKey',
+          message: 'timeInForce is required when not using tradingAccountSubscriptionId',
           path: ['timeInForce']
         });
       }
@@ -110,10 +111,15 @@ export const placeOrderSchema = z
 
 export type PlaceOrderInput = z.infer<typeof placeOrderSchema>;
 
-export type ResolvedPlaceOrderInput = PlaceOrderInput & {
+export type ResolvedPlaceOrderInput = Omit<
+  PlaceOrderInput,
+  'tradingAccountSubscriptionId'
+> & {
   symbol: string;
   side: 'buy' | 'sell';
   orderType: 'market' | 'limit';
   timeInForce: 'day' | 'gtc';
   subscriptionId?: number;
+  tradingAccountId?: number;
+  tradingAccountSubscriptionId?: number;
 };

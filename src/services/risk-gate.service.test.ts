@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { evaluateOrderRisk } from './risk-gate.service.js';
+import {
+  evaluateOrderRisk as evaluateOrderRiskService,
+} from './risk-gate.service.js';
+import type { ResolvedPlaceOrderInput } from '../validators/place-order.schema.js';
 import type { RuntimeTradingConfig } from './config.service.js';
 
 const mocks = vi.hoisted(() => ({
@@ -80,6 +83,20 @@ const config: RuntimeTradingConfig = {
   reconciliationWorkerEnabled: false,
   reconciliationWorkerIntervalMinutes: 15,
 };
+
+function evaluateOrderRisk(
+  input: ResolvedPlaceOrderInput,
+  options: Parameters<typeof evaluateOrderRiskService>[1] = {}
+) {
+  return evaluateOrderRiskService(
+    {
+      subscriptionId: 22,
+      tradingAccountSubscriptionId: 44,
+      ...input,
+    },
+    { tradingAccountId: 1, ...options }
+  );
+}
 
 function subscriptionRecord() {
   return {
@@ -216,7 +233,10 @@ describe('risk gate entry session integration', () => {
     mocks.tradingAccountFindUnique.mockResolvedValue({
       maxDeployableNotional: 100_000,
     });
-    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue(null);
+    mocks.subscriptionFindFirst.mockResolvedValue(subscriptionRecord());
+    mocks.tradingAccountSubscriptionFindFirst.mockResolvedValue(
+      resolvedAccountSubscription()
+    );
     mocks.evaluateEntrySessionGuard.mockResolvedValue({
       allowed: true,
       degraded: false,
@@ -821,6 +841,7 @@ describe('risk gate entry session integration', () => {
     expect(mocks.orderIntentFindMany).toHaveBeenCalledTimes(1);
     expect(mocks.tradingAccountSubscriptionFindFirst).toHaveBeenCalledWith({
       where: {
+        id: 44,
         tradingAccountId: 1,
         subscriptionId: 22,
       },

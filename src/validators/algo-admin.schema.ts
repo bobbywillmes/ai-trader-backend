@@ -19,16 +19,11 @@ const nullableNonNegativeNumber = z.coerce.number().nonnegative().nullable().opt
 const nullablePositiveInt = z.coerce.number().int().positive().nullable().optional();
 
 export const createSubscriptionSchema = z
-  .object({
-    key: keySchema,
-    name: z.string().trim().min(1),
-    symbol: symbolSchema,
-
-    broker: z.string().trim().min(1).default('alpaca'),
-    brokerMode: z.string().trim().min(1).default('paper'),
-
-    sizingType: z.enum(['fixed_qty', 'dollar_amount']),
-    sizingValue: z.coerce.number().positive(),
+    .object({
+      key: keySchema,
+      name: z.string().trim().min(1),
+      symbol: symbolSchema,
+      description: z.string().trim().max(2000).nullable().optional(),
 
     strategyId: z.coerce.number().int().positive().optional(),
     strategyKey: keySchema.optional(),
@@ -73,16 +68,11 @@ export const createSubscriptionSchema = z
   });
 
 export const updateSubscriptionSchema = z
-  .object({
-    key: keySchema.optional(),
-    name: z.string().trim().min(1).optional(),
-    symbol: symbolSchema.optional(),
-
-    broker: z.string().trim().min(1).optional(),
-    brokerMode: z.string().trim().min(1).optional(),
-
-    sizingType: z.enum(['fixed_qty', 'dollar_amount']).optional(),
-    sizingValue: z.coerce.number().positive().optional(),
+    .object({
+      key: keySchema.optional(),
+      name: z.string().trim().min(1).optional(),
+      symbol: symbolSchema.optional(),
+      description: z.string().trim().max(2000).nullable().optional(),
 
     strategyId: z.coerce.number().int().positive().optional(),
     strategyKey: keySchema.optional(),

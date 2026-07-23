@@ -4,17 +4,15 @@ import {
   TradingBroker,
   type TradingAccount,
 } from '@prisma/client';
-import { env } from '../config/env.js';
 import {
   getTradingAccountById,
-  resolveDefaultTradingAccountId,
 } from './trading-account.service.js';
 import { loadTradingAccountApiKeyCredential } from './trading-account-credential.service.js';
 
 const ALPACA_PAPER_BASE_URL = 'https://paper-api.alpaca.markets';
 const ALPACA_LIVE_BASE_URL = 'https://api.alpaca.markets';
 
-export type AlpacaCredentialSource = 'trading_account_credential' | 'legacy_env';
+export type AlpacaCredentialSource = 'trading_account_credential';
 
 export type AlpacaResolvedConfig = {
   tradingAccountId: number;
@@ -42,20 +40,8 @@ function unsupportedBrokerError(account: TradingAccount) {
 
 function missingAccountCredentialsError(tradingAccountId: number) {
   return new Error(
-    `Trading account ${tradingAccountId} does not have active Alpaca credentials. Add an ACTIVE TradingAccountCredential before using this non-default trading account.`
+    `Trading account ${tradingAccountId} does not have active Alpaca credentials. Add and verify an ACTIVE TradingAccountCredential before broker access.`
   );
-}
-
-function legacyEnvCredentialConfig(account: TradingAccount): AlpacaResolvedConfig {
-  return {
-    tradingAccountId: account.id,
-    baseUrl: env.ALPACA_BASE_URL,
-    apiKey: env.ALPACA_API_KEY,
-    apiSecret: env.ALPACA_API_SECRET,
-    source: 'legacy_env',
-    credentialId: null,
-    keyFingerprint: null,
-  };
 }
 
 function baseUrlForAccountEnvironment(environment: TradingAccountEnvironment) {
@@ -93,12 +79,6 @@ export async function resolveAlpacaConfigForTradingAccount(
       credentialId: credential.credentialId,
       keyFingerprint: credential.keyFingerprint,
     };
-  }
-
-  const defaultTradingAccountId = await resolveDefaultTradingAccountId();
-
-  if (tradingAccountId === defaultTradingAccountId) {
-    return legacyEnvCredentialConfig(account);
   }
 
   throw missingAccountCredentialsError(tradingAccountId);

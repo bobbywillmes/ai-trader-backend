@@ -23,6 +23,7 @@ import {
 } from '../services/risk-gate.service.js';
 import { getSizingEstimatedNotional } from '../services/trading-account-entry-risk-usage.service.js';
 import { recordOrderIntentRiskEvaluation } from '../services/order-audit.service.js';
+import { resolveSubscriptionOrderInput } from '../services/subscription.service.js';
 
 export type SubmittedOrderSyncResult = {
   found: number;
@@ -46,9 +47,8 @@ function isEntryOrder(input: BrokerOrderSubmissionInput): boolean {
 }
 
 export async function processPendingOrders() {
-  const tradingAccountId = await resolveDefaultTradingAccountId();
   const pending = await prisma.orderIntent.findMany({
-    where: { status: 'pending', tradingAccountId },
+    where: { status: 'pending' },
     take: 5,
     orderBy: { createdAt: 'asc' },
   });
@@ -85,8 +85,26 @@ export async function processPendingOrders() {
           `OrderIntent ${intent.id} is missing clientOrderId. Cannot submit safely.`
         );
       }
+      if (
+        intent.tradingAccountId === null ||
+        intent.tradingAccountSubscriptionId === null
+      ) {
+        throw new Error(
+          `OrderIntent ${intent.id} is missing explicit trading account assignment identity.`
+        );
+      }
 
       const rawInput = placeOrderSchema.parse(intent.rawRequestJson);
+      const currentAssignmentInput = await resolveSubscriptionOrderInput(rawInput);
+      if (
+        currentAssignmentInput.tradingAccountId !== intent.tradingAccountId ||
+        currentAssignmentInput.tradingAccountSubscriptionId !==
+          intent.tradingAccountSubscriptionId
+      ) {
+        throw new Error(
+          `OrderIntent ${intent.id} account assignment no longer matches its recorded routing identity.`
+        );
+      }
 
       const resolvedInput: BrokerOrderSubmissionInput = {
         ...rawInput,
@@ -94,6 +112,9 @@ export async function processPendingOrders() {
         side: intent.side as 'buy' | 'sell',
         orderType: intent.orderType as 'market' | 'limit',
         timeInForce: intent.timeInForce as 'day' | 'gtc',
+        tradingAccountId: intent.tradingAccountId,
+        tradingAccountSubscriptionId:
+          intent.tradingAccountSubscriptionId,
         clientOrderId: intent.clientOrderId,
       };
 
@@ -106,7 +127,7 @@ export async function processPendingOrders() {
           intent.rawRequestJson
         );
         const riskResult = await evaluateOrderRisk(resolvedInput, {
-          tradingAccountId: intent.tradingAccountId ?? tradingAccountId,
+          tradingAccountId: intent.tradingAccountId,
           excludeOrderIntentId: intent.id,
           ...(requestedNotionalOverride !== null
             ? { requestedNotionalOverride }
@@ -144,7 +165,7 @@ export async function processPendingOrders() {
       }
 
       const result = await submitOrderToBroker(resolvedInput, {
-        tradingAccountId: intent.tradingAccountId ?? tradingAccountId,
+        tradingAccountId: intent.tradingAccountId,
       });
       const brokerOrder = result.order;
 
@@ -152,7 +173,7 @@ export async function processPendingOrders() {
         where: {
           broker: 'alpaca',
           brokerOrderId: brokerOrder.id,
-          tradingAccountId,
+          tradingAccountId: intent.tradingAccountId,
         },
       });
 

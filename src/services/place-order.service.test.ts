@@ -72,6 +72,8 @@ class TestHttpError extends Error {
 }
 
 const resolvedInput = {
+  tradingAccountId: 1,
+  tradingAccountSubscriptionId: 25,
   subscriptionKey: 'spy_dip_core',
   subscriptionId: 22,
   symbol: 'SPY',
@@ -84,6 +86,8 @@ const resolvedInput = {
 };
 
 const runtimeSizedInput = {
+  tradingAccountId: 1,
+  tradingAccountSubscriptionId: 25,
   subscriptionKey: 'spy_dip_core',
   subscriptionId: 22,
   symbol: 'SPY',
@@ -121,6 +125,7 @@ describe('place order service entry decision attribution', () => {
   it('preflights and links entry decisions before marking an allowed intent pending', async () => {
     const result = await submitOrder(
       {
+        tradingAccountSubscriptionId: 25,
         subscriptionKey: 'spy_dip_core',
         signalType: 'entry',
         extendedHours: false,
@@ -134,6 +139,7 @@ describe('place order service entry decision attribution', () => {
       'decision-101'
     );
     expect(mocks.resolveRuntimeAccountSubscriptionSizing).toHaveBeenCalledWith({
+      tradingAccountSubscriptionId: 25,
       tradingAccountId: 1,
       subscriptionId: 22,
       symbol: 'SPY',
@@ -154,6 +160,7 @@ describe('place order service entry decision attribution', () => {
       }
     );
     expect(mocks.evaluateOrderRisk).toHaveBeenCalledWith(runtimeSizedInput, {
+      tradingAccountId: 1,
       requestedNotionalOverride: 1500,
     });
     expect(mocks.linkEntryDecisionToOrderIntent).toHaveBeenCalledWith({
@@ -184,8 +191,9 @@ describe('place order service entry decision attribution', () => {
 
     await expect(
       submitOrder(
-        {
-          subscriptionKey: 'spy_dip_core',
+      {
+        tradingAccountSubscriptionId: 25,
+        subscriptionKey: 'spy_dip_core',
           signalType: 'entry',
           extendedHours: false,
         },
@@ -230,6 +238,7 @@ describe('place order service entry decision attribution', () => {
     });
 
     await submitOrder({
+      tradingAccountSubscriptionId: 25,
       subscriptionKey: 'spy_dip_core',
       signalType: 'entry',
       extendedHours: false,
@@ -258,8 +267,9 @@ describe('place order service entry decision attribution', () => {
     mocks.evaluateOrderRisk.mockResolvedValue(riskResult);
 
     await expect(
-      submitOrder({
-        subscriptionKey: 'spy_dip_core',
+    submitOrder({
+      tradingAccountSubscriptionId: 25,
+      subscriptionKey: 'spy_dip_core',
         signalType: 'entry',
         extendedHours: false,
       })
@@ -286,6 +296,7 @@ describe('place order service entry decision attribution', () => {
       }
     );
     expect(mocks.evaluateOrderRisk).toHaveBeenCalledWith(runtimeSizedInput, {
+      tradingAccountId: 1,
       requestedNotionalOverride: 1500,
     });
 
@@ -310,6 +321,7 @@ describe('place order service entry decision attribution', () => {
     mocks.resolveSubscriptionOrderInput.mockResolvedValue(exitInput);
 
     await submitOrder({
+      tradingAccountSubscriptionId: 25,
       subscriptionKey: 'spy_dip_core',
       signalType: 'exit',
       extendedHours: false,
@@ -344,8 +356,9 @@ describe('place order service entry decision attribution', () => {
       );
 
       await expect(
-        submitOrder({
-          subscriptionKey: 'spy_dip_core',
+    submitOrder({
+      tradingAccountSubscriptionId: 25,
+      subscriptionKey: 'spy_dip_core',
           signalType: 'entry',
           extendedHours: false,
         })

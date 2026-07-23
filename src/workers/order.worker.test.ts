@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   adaptiveRecordFailure: vi.fn(),
   adaptiveRecordRateLimitDeferred: vi.fn(),
   recordOrderIntentRiskEvaluation: vi.fn(),
+  resolveSubscriptionOrderInput: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -90,6 +91,10 @@ vi.mock('../services/trading-account.service.js', () => ({
   resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
 }));
 
+vi.mock('../services/subscription.service.js', () => ({
+  resolveSubscriptionOrderInput: mocks.resolveSubscriptionOrderInput,
+}));
+
 const baseIntent = {
   id: 101,
   source: 'api',
@@ -111,18 +116,25 @@ const baseIntent = {
     timeInForce: 'day',
     notional: 100,
     extendedHours: false,
+    tradingAccountSubscriptionId: 44,
+    subscriptionKey: 'spy_dip_core',
     signalType: 'entry',
   },
-  subscriptionId: null,
-  subscriptionKey: null,
+  subscriptionId: 22,
+  subscriptionKey: 'spy_dip_core',
   trackedPositionId: null,
   tradingAccountId: 1,
+  tradingAccountSubscriptionId: 44,
 };
 
 describe('order worker entry-session recheck', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
+    mocks.resolveSubscriptionOrderInput.mockResolvedValue({
+      tradingAccountId: 1,
+      tradingAccountSubscriptionId: 44,
+    });
     mocks.orderIntentUpdateMany.mockResolvedValue({ count: 1 });
     mocks.brokerOrderFindFirst.mockResolvedValue(null);
     mocks.getRuntimeTradingConfig.mockResolvedValue({});
@@ -173,7 +185,6 @@ describe('order worker entry-session recheck', () => {
       expect.objectContaining({
         where: {
           status: 'pending',
-          tradingAccountId: 1,
         },
       })
     );
@@ -217,6 +228,8 @@ describe('order worker entry-session recheck', () => {
         timeInForce: 'day',
         qty: 1,
         extendedHours: false,
+        tradingAccountSubscriptionId: 44,
+        subscriptionKey: 'spy_dip_core',
         signalType: 'exit',
       },
     };

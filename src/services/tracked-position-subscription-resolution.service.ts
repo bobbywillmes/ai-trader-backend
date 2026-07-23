@@ -54,8 +54,6 @@ function getModeFromRuntimeConfig(config: { paperMode: boolean }) {
 
 function isCompatibleSubscription(subscription: {
   symbol: string;
-  broker: string;
-  brokerMode: string;
   enabled: boolean;
   strategy?: { enabled: boolean } | null;
   exitProfile?: { enabled: boolean } | null;
@@ -66,8 +64,6 @@ function isCompatibleSubscription(subscription: {
 }) {
   return (
     normalizeSymbol(subscription.symbol) === normalizeSymbol(args.symbol) &&
-    subscription.broker.toLowerCase() === args.broker.toLowerCase() &&
-    subscription.brokerMode.toLowerCase() === args.mode.toLowerCase() &&
     subscription.enabled &&
     subscription.strategy?.enabled !== false &&
     subscription.exitProfile?.enabled !== false
@@ -206,7 +202,9 @@ async function resolveFromBrokerClientOrderId(args: {
   const subscription = await prisma.subscription.findFirst({
     where: {
       key: subscriptionKey,
-      tradingAccountId: args.tradingAccountId,
+      accountSubscriptions: {
+        some: { tradingAccountId: args.tradingAccountId },
+      },
     },
     include: {
       strategy: true,

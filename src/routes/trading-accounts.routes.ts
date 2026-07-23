@@ -3,6 +3,7 @@ import {
   createTradingAccountAllocationController,
   createTradingAccountController,
   createTradingAccountSubscriptionController,
+  deleteTradingAccountSubscriptionController,
   getTradingAccountRiskHealthController,
   getTradingAccountSubscriptionPriceHistoryController,
   getTradingAccountSubscriptionController,
@@ -50,8 +51,9 @@ router.get('/:id/account-subscriptions', requireTradingAccountAccess('id'), requ
 router.get('/:id/account-subscriptions/market-context', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.SUBSCRIPTION_READ), listTradingAccountSubscriptionMarketContextController);
 router.get('/:id/account-subscriptions/:accountSubscriptionId', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.SUBSCRIPTION_READ), getTradingAccountSubscriptionController);
 router.get('/:id/account-subscriptions/:accountSubscriptionId/price-history', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.SUBSCRIPTION_READ), getTradingAccountSubscriptionPriceHistoryController);
-router.post('/:id/account-subscriptions', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.SUBSCRIPTION_WRITE), createTradingAccountSubscriptionController);
-router.patch('/:id/account-subscriptions/:accountSubscriptionId', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.SUBSCRIPTION_WRITE), updateTradingAccountSubscriptionController);
+router.post('/:id/account-subscriptions', requireSystemOwnerAccess, createTradingAccountSubscriptionController);
+router.patch('/:id/account-subscriptions/:accountSubscriptionId', requireSystemOwnerAccess, updateTradingAccountSubscriptionController);
+router.delete('/:id/account-subscriptions/:accountSubscriptionId', requireSystemOwnerAccess, deleteTradingAccountSubscriptionController);
 
 router.put('/:id/credentials', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE), upsertTradingAccountCredentialController);
 router.post('/:id/credentials/verify', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE), verifyTradingAccountCredentialController);

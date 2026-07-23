@@ -163,7 +163,6 @@ model TradingAccount {
   memberships               TradingAccountMembership[]
 
   // Future/current trading relations
-  subscriptions             Subscription[]
   allocations               TradingAccountAllocation[]
   accountSubscriptions      TradingAccountSubscription[]
   orderIntents              OrderIntent[]
@@ -1343,11 +1342,8 @@ model Subscription {
   id          Int      @id @default(autoincrement())
   key         String   @unique
   name        String
+  description String?
   symbol      String
-  broker      String   @default("alpaca")
-  brokerMode  String   @default("paper")
-  sizingType  String
-  sizingValue Float
   enabled     Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -1366,13 +1362,7 @@ model Subscription {
   entryDecisions          EntryDecision[]
   accountSubscriptions    TradingAccountSubscription[]
 
-  tradingAccountId  Int?
-  tradingAccount    TradingAccount? @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
-
   @@index([symbol])
   @@index([strategyId])
   @@index([exitProfileId])
-  @@index([tradingAccountId])
-  @@index([tradingAccountId, enabled])
-  @@index([tradingAccountId, symbol])
 }

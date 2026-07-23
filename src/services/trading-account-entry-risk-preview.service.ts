@@ -630,11 +630,15 @@ function serializeAllocation(
 }
 
 function buildRiskInput(args: {
+  tradingAccountId: number;
   subscription: PreviewSubscription;
   sizing: RuntimeAccountSubscriptionSizingResult;
   subscriptionKey: string;
 }): ResolvedPlaceOrderInput {
   return {
+    tradingAccountSubscriptionId:
+      args.sizing.tradingAccountSubscriptionId,
+    tradingAccountId: args.tradingAccountId,
     subscriptionKey: args.subscriptionKey,
     subscriptionId: args.subscription.id,
     symbol: args.subscription.symbol,
@@ -729,7 +733,14 @@ export async function previewTradingAccountEntryRisk(
   let sizingError: unknown = null;
 
   try {
+    if (!accountSubscription) {
+      throw new HttpError(
+        409,
+        'Trading account subscription assignment is required for risk preview.'
+      );
+    }
     sizing = await resolveRuntimeAccountSubscriptionSizing({
+      tradingAccountSubscriptionId: accountSubscription.id,
       tradingAccountId,
       subscriptionId: subscription.id,
       symbol: subscription.symbol,
@@ -760,6 +771,7 @@ export async function previewTradingAccountEntryRisk(
   }
 
   const riskInput = buildRiskInput({
+    tradingAccountId,
     subscription,
     sizing,
     subscriptionKey: input.subscriptionKey,

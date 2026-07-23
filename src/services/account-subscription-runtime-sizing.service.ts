@@ -55,6 +55,7 @@ export type RuntimeAccountSubscriptionSizingResult = {
 };
 
 type ResolveRuntimeAccountSubscriptionSizingArgs = {
+  tradingAccountSubscriptionId?: number;
   tradingAccountId: number;
   subscriptionId: number;
   symbol: string;
@@ -199,9 +200,16 @@ async function resolveLatestPriceIfNeeded(args: {
 export async function resolveRuntimeAccountSubscriptionSizing(
   args: ResolveRuntimeAccountSubscriptionSizingArgs
 ): Promise<RuntimeAccountSubscriptionSizingResult> {
+  if (args.tradingAccountSubscriptionId === undefined) {
+    throw runtimeSizingError(400, 'account_subscription_identity_required', {
+      tradingAccountId: args.tradingAccountId,
+      subscriptionId: args.subscriptionId,
+    });
+  }
   const accountSubscription =
     await prisma.tradingAccountSubscription.findFirst({
       where: {
+        id: args.tradingAccountSubscriptionId,
         tradingAccountId: args.tradingAccountId,
         subscriptionId: args.subscriptionId,
       },

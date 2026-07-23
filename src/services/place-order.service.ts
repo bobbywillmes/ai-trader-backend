@@ -23,7 +23,6 @@ import {
   ensureEntryDecisionCanLink,
   linkEntryDecisionToOrderIntent,
 } from './entry-decision.service.js';
-import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 import {
   resolveRuntimeAccountSubscriptionSizing,
   type RuntimeAccountSubscriptionSizingResult,
@@ -35,9 +34,13 @@ type SubmitOrderOptions = {
 
 function isEntrySubscriptionOrder(
   input: ResolvedPlaceOrderInput
-): input is ResolvedPlaceOrderInput & { subscriptionId: number } {
+): input is ResolvedPlaceOrderInput & {
+  subscriptionId: number;
+  tradingAccountSubscriptionId: number;
+} {
   return (
     input.subscriptionId !== undefined &&
+    input.tradingAccountSubscriptionId !== undefined &&
     input.side === 'buy' &&
     (input.signalType ?? 'entry') === 'entry'
   );
@@ -55,6 +58,7 @@ async function applyRuntimeAccountSubscriptionSizing(
   }
 
   const sizing = await resolveRuntimeAccountSubscriptionSizing({
+    tradingAccountSubscriptionId: input.tradingAccountSubscriptionId,
     tradingAccountId,
     subscriptionId: input.subscriptionId,
     symbol: input.symbol,
@@ -74,8 +78,11 @@ export async function submitOrder(
   input: PlaceOrderInput,
   options: SubmitOrderOptions = {}
 ) {
-  const tradingAccountId = await resolveDefaultTradingAccountId();
   const subscriptionResolvedInput = await resolveSubscriptionOrderInput(input);
+  const tradingAccountId = subscriptionResolvedInput.tradingAccountId;
+  if (tradingAccountId === undefined) {
+    throw new HttpError(400, 'Resolved order is missing tradingAccountId.');
+  }
 
   if (options.entryDecisionKey) {
     await ensureEntryDecisionCanLink(options.entryDecisionKey);
@@ -113,6 +120,7 @@ export async function submitOrder(
   }
 
   const riskResult = await evaluateOrderRisk(resolvedInput, {
+    tradingAccountId,
     requestedNotionalOverride:
       runtimeSizing.sizing?.estimatedNotional ?? null,
   });
