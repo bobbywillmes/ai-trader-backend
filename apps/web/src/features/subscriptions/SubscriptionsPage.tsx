@@ -233,7 +233,10 @@ export function SubscriptionsPage() {
       notifications.show({ color: "red", message: "Complete all required catalog fields." });
       return;
     }
-    if (!/^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(draft.key.trim())) {
+    if (
+      editing === "new" &&
+      !/^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(draft.key.trim())
+    ) {
       notifications.show({
         color: "red",
         message: "Subscription ID must use lowercase snake_case, such as aapl_dip_core.",
@@ -241,13 +244,18 @@ export function SubscriptionsPage() {
       return;
     }
     const payload = {
-      key: draft.key.trim().toLowerCase(), name: draft.name.trim(),
+      name: draft.name.trim(),
       description: draft.description.trim() || null, symbol: draft.symbol,
       strategyId: Number(draft.strategyId),
       exitProfileId: Number(draft.exitProfileId), enabled: draft.enabled,
     };
     try {
-      if (editing === "new") await createMutation.mutateAsync(payload);
+      if (editing === "new") {
+        await createMutation.mutateAsync({
+          ...payload,
+          key: draft.key.trim().toLowerCase(),
+        });
+      }
       else if (editing) await updateMutation.mutateAsync({ id: editing.id, payload });
       notifications.show({ color: "teal", message: "Subscription catalog saved." });
       setEditing(null);
@@ -388,16 +396,35 @@ export function SubscriptionsPage() {
               value={draft.name}
               onChange={(event) => updateName(event.currentTarget.value)}
             />
-            <TextInput
-              required
-              label="ID"
-              description={editing === "new" && autoPopulateId
-                ? "Generated from the name; edit to override"
-                : "Stable, unique snake_case identifier"}
-              placeholder="aapl_dip_core"
-              value={draft.key}
-              onChange={(event) => updateId(event.currentTarget.value)}
-            />
+            {editing === "new" ? (
+              <TextInput
+                required
+                label="ID"
+                description={autoPopulateId
+                  ? "Generated from the name; edit to override"
+                  : "Stable, unique snake_case identifier"}
+                placeholder="aapl_dip_core"
+                value={draft.key}
+                onChange={(event) => updateId(event.currentTarget.value)}
+              />
+            ) : (
+              <Stack gap={4}>
+                <Text size="sm" fw={500}>ID</Text>
+                <Text size="xs" c="dimmed">
+                  Stable identifier; it cannot be changed after creation
+                </Text>
+                <Card
+                  withBorder
+                  padding="sm"
+                  radius="sm"
+                  bg="var(--mantine-color-default-hover)"
+                >
+                  <Text ff="monospace" size="sm" fw={600}>
+                    {draft.key}
+                  </Text>
+                </Card>
+              </Stack>
+            )}
           </Group>
           <Select searchable required label="Security" data={(filters?.securities ?? []).map((item) => ({ value: item.symbol, label: `${item.symbol} — ${item.name}` }))} value={draft.symbol || null} onChange={(value) => setDraft({ ...draft, symbol: value ?? "" })} />
           <Group grow>
