@@ -95,10 +95,13 @@ Before legacy columns are dropped, production diagnostics must prove:
 
 1. Every legacy account-owned Subscription has exactly one deterministic
    TradingAccountSubscription mapping for its prior account.
-2. Every enabled legacy Subscription intended for Bobby Paper has a Bobby Paper
-   assignment with allocation and valid sizing.
-3. No enabled assignment has missing/disabled allocation or invalid sizing.
-4. The expected 25 Bobby Paper assignments are present.
+2. Every mapped legacy assignment has valid migrated sizing.
+3. Only globally enabled, assignment-enabled, entry-enabled deployments require
+   an enabled same-account allocation, reserved notional, valid sizing, and
+   complete risk configuration. Retired or entry-disabled assignments may have
+   no allocation.
+4. The expected mapping count is derived from account-owned legacy
+   Subscriptions; it is not a hardcoded catalog count.
 5. Bobby Live has no assignments.
 6. No entry-capable API, worker, signal, momentum, fixture, or script routes by
    `subscriptionKey` or default account.
