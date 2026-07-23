@@ -50,6 +50,14 @@ function toOptionalBoolean(value: BooleanFilter) {
   return value === "all" ? undefined : value === "true";
 }
 
+function subscriptionIdFromName(name: string) {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
 function assignmentState(
   assignments: Subscription["accountSubscriptions"],
   field: "enabled" | "entriesEnabled" | "exitsEnabled"
@@ -101,6 +109,7 @@ export function SubscriptionsPage() {
   );
   const [editing, setEditing] = useState<Subscription | "new" | null>(null);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
+  const [autoPopulateId, setAutoPopulateId] = useState(true);
 
   const query = useMemo<SubscriptionCatalogQuery>(() => ({
     page, pageSize, search: search || undefined,
@@ -189,6 +198,7 @@ export function SubscriptionsPage() {
 
   function openCreate() {
     setDraft(emptyDraft);
+    setAutoPopulateId(true);
     setEditing("new");
   }
 
@@ -198,13 +208,36 @@ export function SubscriptionsPage() {
       symbol: item.security.symbol, strategyId: String(item.strategy.id),
       exitProfileId: String(item.exitProfile.id), enabled: item.enabled,
     });
+    setAutoPopulateId(false);
     setEditing(item);
+  }
+
+  function updateName(name: string) {
+    setDraft((current) => ({
+      ...current,
+      name,
+      key: editing === "new" && autoPopulateId
+        ? subscriptionIdFromName(name)
+        : current.key,
+    }));
+  }
+
+  function updateId(key: string) {
+    setAutoPopulateId(false);
+    setDraft((current) => ({ ...current, key }));
   }
 
   async function save() {
     if (!draft.key.trim() || !draft.name.trim() || !draft.symbol ||
         !draft.strategyId || !draft.exitProfileId) {
       notifications.show({ color: "red", message: "Complete all required catalog fields." });
+      return;
+    }
+    if (!/^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(draft.key.trim())) {
+      notifications.show({
+        color: "red",
+        message: "Subscription ID must use lowercase snake_case, such as aapl_dip_core.",
+      });
       return;
     }
     const payload = {
@@ -341,7 +374,31 @@ export function SubscriptionsPage() {
 
       <Modal opened={editing !== null} onClose={() => setEditing(null)} title={editing === "new" ? "Create catalog Subscription" : "Edit catalog Subscription"} size="lg">
         <Stack>
-          <Group grow><TextInput required label="Key" value={draft.key} onChange={(e) => setDraft({ ...draft, key: e.currentTarget.value })} /><TextInput required label="Name" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.currentTarget.value })} /></Group>
+          <Alert color="blue">
+            Use a readable name that identifies the security, strategy, and variant,
+            such as <strong>AAPL Dip Core</strong>. Its stable ID uses lowercase
+            snake_case, such as <strong>aapl_dip_core</strong>.
+          </Alert>
+          <Group grow align="start">
+            <TextInput
+              required
+              label="Name"
+              description="Human-readable catalog name, conventionally: TICKER Strategy Variant"
+              placeholder="AAPL Dip Core"
+              value={draft.name}
+              onChange={(event) => updateName(event.currentTarget.value)}
+            />
+            <TextInput
+              required
+              label="ID"
+              description={editing === "new" && autoPopulateId
+                ? "Generated from the name; edit to override"
+                : "Stable, unique snake_case identifier"}
+              placeholder="aapl_dip_core"
+              value={draft.key}
+              onChange={(event) => updateId(event.currentTarget.value)}
+            />
+          </Group>
           <Select searchable required label="Security" data={(filters?.securities ?? []).map((item) => ({ value: item.symbol, label: `${item.symbol} — ${item.name}` }))} value={draft.symbol || null} onChange={(value) => setDraft({ ...draft, symbol: value ?? "" })} />
           <Group grow>
             <Select searchable required label="Strategy" data={(strategiesQuery.data ?? []).map((item) => ({ value: String(item.id), label: `${item.key} — ${item.name}` }))} value={draft.strategyId} onChange={(value) => setDraft({ ...draft, strategyId: value })} />
