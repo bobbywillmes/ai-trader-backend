@@ -12,6 +12,7 @@ COPY tsconfig.build.json ./
 COPY prisma.config.ts ./
 COPY prisma ./prisma
 COPY src ./src
+COPY scripts ./scripts
 
 RUN npm ci
 
