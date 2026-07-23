@@ -138,6 +138,7 @@ Example request:
   "evaluatedAt": "2026-06-25T15:00:00.000Z",
   "source": "n8n-ai-trader",
   "symbol": "SPY",
+  "tradingAccountSubscriptionId": 25,
   "subscriptionKey": "spy_dip_core",
   "decisionState": "idle",
   "decisionReason": "above_dip_threshold",
@@ -182,12 +183,17 @@ POST /api/signals/entry
 
 Primary endpoint for n8n-driven entry signals.
 
-Instead of n8n sending full order instructions, it sends a subscription key and signal metadata. The backend resolves the subscription, validates the request, determines sizing, creates an order intent, and submits the order asynchronously.
+Instead of n8n sending full order instructions, it sends one explicit
+`tradingAccountSubscriptionId` and signal metadata. An optional
+`subscriptionKey` is a consistency assertion, not routing identity. The backend
+resolves the account assignment, validates it, determines account-specific
+sizing, creates an order intent, and submits asynchronously.
 
 Example request:
 
 ```json
 {
+  "tradingAccountSubscriptionId": 25,
   "subscriptionKey": "spy_dip_core",
   "decisionKey": "n8n:etf-watch:spy_dip_core:2026-06-25T15:00Z",
   "reason": "SPY dip signal triggered",
@@ -207,6 +213,7 @@ Example response:
 {
   "ok": true,
   "signal": {
+    "tradingAccountSubscriptionId": 25,
     "subscriptionKey": "spy_dip_core",
     "signalType": "entry",
     "source": "n8n-ai-trader",
