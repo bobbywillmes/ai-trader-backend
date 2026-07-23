@@ -22,12 +22,15 @@ import {
 import { notifications } from "@mantine/notifications";
 import {
   usePreviewTradingAccountEntryRisk,
+  useCreateTradingAccountSubscription,
+  useDeleteTradingAccountSubscription,
   useTradingAccountAllocations,
   useTradingAccountSubscriptionMarketContext,
   useTradingAccountSubscriptionPriceHistory,
   useTradingAccountSubscriptions,
   useUpdateTradingAccountSubscription,
 } from "../../../hooks";
+import { useSubscriptions } from "../../../../subscriptions/hooks";
 import type {
   AccountSubscriptionPriceHistoryRange,
   EntryRiskPreview,
@@ -74,6 +77,12 @@ export function SubscriptionManagementCard({
   const [editing, setEditing] = useState<TradingAccountSubscription | null>(
     null
   );
+  const [adding, setAdding] = useState(false);
+  const [newSubscriptionId, setNewSubscriptionId] = useState<string | null>(null);
+  const [newAllocationId, setNewAllocationId] = useState<string | null>(null);
+  const [newSizingType, setNewSizingType] =
+    useState<PositionSizingType>("FIXED_QTY");
+  const [newSizingValue, setNewSizingValue] = useState<string | number>(1);
   const [draft, setDraft] = useState<AccountSubscriptionDraft | null>(null);
   const [preview, setPreview] = useState<EntryRiskPreview | null>(null);
   const [search, setSearch] = useState("");
@@ -113,9 +122,18 @@ export function SubscriptionManagementCard({
     priceHistoryRange
   );
   const updateMutation = useUpdateTradingAccountSubscription(token);
+  const createMutation = useCreateTradingAccountSubscription(token);
+  const deleteMutation = useDeleteTradingAccountSubscription(token);
+  const { data: catalog = [] } = useSubscriptions(token);
   const previewMutation = usePreviewTradingAccountEntryRisk(token);
   const accountSubscriptions = data?.accountSubscriptions ?? [];
   const allocations = allocationData?.allocations ?? [];
+  const assignedSubscriptionIds = new Set(
+    accountSubscriptions.map((item) => item.subscriptionId)
+  );
+  const availableCatalog = catalog.filter(
+    (item) => !assignedSubscriptionIds.has(item.id)
+  );
   const marketContextByAccountSubscriptionId = new Map(
     (marketContextData?.items ?? []).map((item) => [
       item.accountSubscriptionId,
@@ -279,6 +297,39 @@ export function SubscriptionManagementCard({
     }
   }
 
+  async function createAssignment() {
+    if (!newSubscriptionId || !newAllocationId) {
+      notifications.show({ color: "red", message: "Select a catalog Subscription and allocation." });
+      return;
+    }
+    const value = Number(newSizingValue);
+    if (!Number.isFinite(value) || value <= 0) {
+      notifications.show({ color: "red", message: "Sizing must be greater than zero." });
+      return;
+    }
+    try {
+      await createMutation.mutateAsync({
+        id: account.id,
+        payload: {
+          subscriptionId: Number(newSubscriptionId),
+          allocationId: Number(newAllocationId),
+          enabled: false,
+          entriesEnabled: false,
+          exitsEnabled: true,
+          sizingType: newSizingType,
+          fixedQty: newSizingType === "FIXED_QTY" ? value : null,
+          maxPositionNotional: newSizingType === "MAX_NOTIONAL" ? value : null,
+        },
+      });
+      notifications.show({ color: "teal", message: "Disabled account assignment created." });
+      setAdding(false);
+      setNewSubscriptionId(null);
+      setNewAllocationId(null);
+    } catch (error) {
+      notifications.show({ color: "red", message: actionableErrorMessage(error, "Failed to create assignment.") });
+    }
+  }
+
   return (
     <>
       <Card withBorder radius="md" p="lg">
@@ -291,10 +342,13 @@ export function SubscriptionManagementCard({
                 and sizing configuration.
               </Text>
             </div>
-            <Badge color="blue" variant="light">
-              {filteredAccountSubscriptions.length.toLocaleString()} of{" "}
-              {accountSubscriptions.length.toLocaleString()} subscriptions
-            </Badge>
+            <Group>
+              <Badge color="blue" variant="light">
+                {filteredAccountSubscriptions.length.toLocaleString()} of{" "}
+                {accountSubscriptions.length.toLocaleString()} subscriptions
+              </Badge>
+              <Button size="xs" onClick={() => setAdding(true)}>Add from Catalog</Button>
+            </Group>
           </Group>
 
           {accountSubscriptions.length > 0 && (
@@ -603,6 +657,23 @@ export function SubscriptionManagementCard({
                           >
                             Edit
                           </Button>
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            color="red"
+                            loading={deleteMutation.isPending}
+                            onClick={async () => {
+                              if (!window.confirm(`Remove ${accountSubscription.subscription.key} from ${account.displayName}? Referenced operational assignments cannot be removed.`)) return;
+                              try {
+                                await deleteMutation.mutateAsync({ id: account.id, accountSubscriptionId: accountSubscription.id });
+                                notifications.show({ color: "teal", message: "Account assignment removed." });
+                              } catch (error) {
+                                notifications.show({ color: "red", message: actionableErrorMessage(error, "Assignment could not be removed.") });
+                              }
+                            }}
+                          >
+                            Remove
+                          </Button>
                         </Group>
                       </Table.Td>
                     </Table.Tr>
@@ -613,6 +684,17 @@ export function SubscriptionManagementCard({
           )}
         </Stack>
       </Card>
+
+      <Modal opened={adding} onClose={() => setAdding(false)} title={`Assign Subscription to ${account.displayName}`}>
+        <Stack>
+          <Select searchable required label="Catalog Subscription" placeholder={availableCatalog.length ? "Search unassigned catalog entries" : "No unassigned catalog entries"} data={availableCatalog.map((item) => ({ value: String(item.id), label: `${item.symbol} · ${item.name} (${item.key})` }))} value={newSubscriptionId} onChange={setNewSubscriptionId} />
+          <Select searchable required label="Allocation" data={allocations.map((item) => ({ value: String(item.id), label: `${item.name}${item.enabled ? "" : " (disabled)"}` }))} value={newAllocationId} onChange={setNewAllocationId} />
+          <Select label="Sizing type" data={[{ value: "FIXED_QTY", label: "Fixed share quantity" }, { value: "MAX_NOTIONAL", label: "Maximum position notional" }]} value={newSizingType} onChange={(value) => setNewSizingType((value ?? "FIXED_QTY") as PositionSizingType)} />
+          <NumberInput required min={0.01} label={newSizingType === "FIXED_QTY" ? "Shares" : "Maximum notional"} value={newSizingValue} onChange={setNewSizingValue} />
+          <Alert color="blue">The assignment will start disabled with entries disabled and exits enabled.</Alert>
+          <Group justify="flex-end"><Button variant="default" onClick={() => setAdding(false)}>Cancel</Button><Button loading={createMutation.isPending} onClick={createAssignment}>Create Assignment</Button></Group>
+        </Stack>
+      </Modal>
 
       <EntryRiskPreviewModal
         currency={account.baseCurrency}

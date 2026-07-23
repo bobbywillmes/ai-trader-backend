@@ -130,19 +130,12 @@ describe('Alpaca config resolver', () => {
     });
   });
 
-  it('falls back to legacy env credentials for the default Bobby Paper account', async () => {
+  it('does not fall back to legacy env credentials for Bobby Paper', async () => {
     mocks.getTradingAccountById.mockResolvedValue(tradingAccount({ id: 1 }));
-    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
 
-    await expect(resolveAlpacaConfigForTradingAccount(1)).resolves.toEqual({
-      tradingAccountId: 1,
-      baseUrl: 'https://paper-api.alpaca.markets',
-      apiKey: 'legacy-key',
-      apiSecret: 'legacy-secret',
-      source: 'legacy_env',
-      credentialId: null,
-      keyFingerprint: null,
-    });
+    await expect(resolveAlpacaConfigForTradingAccount(1)).rejects.toThrow(
+      'Trading account 1 does not have active Alpaca credentials'
+    );
   });
 
   it('throws a clear missing-credentials error for non-default accounts without active credentials', async () => {

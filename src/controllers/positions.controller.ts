@@ -25,13 +25,13 @@ export async function closePositionController(
   next: NextFunction
 ) {
   try {
-    const symbol = req.params.symbol as string;
-    if (!symbol) {
-      res.status(400).json({ error: 'Symbol is required' });
+    const trackedPositionId = Number(req.params.trackedPositionId);
+    if (!Number.isInteger(trackedPositionId) || trackedPositionId <= 0) {
+      res.status(400).json({ error: 'A valid trackedPositionId is required' });
       return;
     }
 
-    const result = await closePosition(symbol);
+    const result = await closePosition(trackedPositionId);
 
     res.status(200).json(result);
   } catch (error) {

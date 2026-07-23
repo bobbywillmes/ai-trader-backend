@@ -104,10 +104,6 @@ export type SecuritySubscription = {
   key: string;
   name: string;
   symbol: string;
-  broker: string;
-  brokerMode: string;
-  sizingType: 'fixed_qty' | 'dollar_amount';
-  sizingValue: number;
   enabled: boolean;
   strategy: SecurityStrategy | null;
   exitProfile: SecurityExitProfile | null;

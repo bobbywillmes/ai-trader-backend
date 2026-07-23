@@ -284,6 +284,8 @@ describe('trading account entry risk preview service', () => {
     });
     expect(mocks.evaluateOrderRisk).toHaveBeenCalledWith(
       {
+        tradingAccountId: 1,
+        tradingAccountSubscriptionId: 40,
         subscriptionKey: 'dia_dip_core',
         subscriptionId: 30,
         symbol: 'DIA',

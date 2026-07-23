@@ -21,12 +21,8 @@ export type SubscriptionSeed = {
   key: string;
   name: string;
   symbol: string;
-  broker: 'alpaca';
-  brokerMode: 'paper';
   strategyKey: StrategyKey;
   exitProfileKey: ExitProfileKey;
-  sizingType: 'fixed_qty';
-  sizingValue: number;
   enabled: boolean;
 };
 
@@ -57,12 +53,8 @@ function buildBaseSubscription({
     key: `${toSymbolKey(symbol)}_${keySuffix}`,
     name: formatSymbolName(symbol, nameLabel),
     symbol,
-    broker: 'alpaca',
-    brokerMode: 'paper',
     strategyKey,
     exitProfileKey,
-    sizingType: 'fixed_qty',
-    sizingValue: 1,
     enabled,
   };
 }

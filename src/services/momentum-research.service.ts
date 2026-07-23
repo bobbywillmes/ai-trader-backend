@@ -627,22 +627,32 @@ const researchSecuritySelect = {
       key: true,
       name: true,
       symbol: true,
-      broker: true,
-      brokerMode: true,
       enabled: true,
       strategy: { select: { id: true, key: true, name: true, enabled: true } },
       exitProfile: { select: { id: true, key: true, name: true, enabled: true } },
-      tradingAccount: {
+      accountSubscriptions: {
         select: {
           id: true,
-          displayName: true,
-          broker: true,
-          environment: true,
-          status: true,
-          tradingEnabled: true,
+          enabled: true,
+          entriesEnabled: true,
+          exitsEnabled: true,
+          tradingAccount: {
+            select: {
+              id: true,
+              displayName: true,
+              environment: true,
+              status: true,
+            },
+          },
+          allocation: {
+            select: {
+              id: true,
+              enabled: true,
+            },
+          },
         },
+        orderBy: { id: 'asc' as const },
       },
-      accountSubscriptions: momentumSubscriptionEligibilitySelect.accountSubscriptions,
     },
   },
   trackedPositions: {

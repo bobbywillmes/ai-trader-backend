@@ -10,6 +10,7 @@ The root `README.md` is the project front door. These docs are the working manua
 | --- | --- |
 | Understand the backend safety model	                    | [Risk & Safety](architecture/risk-and-safety.md) |
 | Audit global vs account-scoped risk settings            | [Account Risk Settings](architecture/account-risk-settings.md) |
+| Understand Subscription Catalog and account deployment  | [Subscription Catalog](architecture/subscription-catalog.md) |
 | Understand how a signal becomes a full trade cycle      | [Trading Lifecycle](architecture/trading-lifecycle.md) |
 | Understand the momentum scanner catalyst/news pipeline  | [Momentum Scanner Architecture](architecture/catalyst-news-foundation.md) |
 | Review momentum decisions and durable pipeline runs      | [Momentum Decision Engine](architecture/momentum-decision-engine.md) |
@@ -52,6 +53,22 @@ Audits current global Settings fields against the account-scoped trading model, 
 - migration phases before live multi-account trading
 
 Use this doc when changing global Settings, account-level risk limits, allocation bucket enforcement, or paper/live safety behavior.
+
+### [Subscription Catalog](architecture/subscription-catalog.md)
+
+Explains the global catalog and account-deployment model, including:
+
+- reusable `Subscription` definitions
+- account-specific `TradingAccountSubscription` controls
+- global, assignment, entry, and exit enablement
+- explicit account-targeted execution identity
+- PAPER and LIVE account isolation
+- account-holder onboarding and production migration checks
+
+Use this doc when changing catalog definitions, account assignments, sizing,
+entry routing, momentum execution, or external signal contracts. For the
+historical field and caller audit, see the
+[Subscription Catalog Migration Map](architecture/subscription-catalog-migration-map.md).
 
 ### [Trading Lifecycle](architecture/trading-lifecycle.md)
 

@@ -248,8 +248,8 @@ export async function createTradingAccountSubscriptionForAdmin(
         accountSubscription: {
           id: null,
           allocationId: input.allocationId ?? null,
-          enabled: input.enabled ?? true,
-          entriesEnabled: input.entriesEnabled ?? true,
+          enabled: input.enabled ?? false,
+          entriesEnabled: input.entriesEnabled ?? false,
           sizingType: sizing.sizingType,
           fixedQty: sizing.fixedQty,
           maxPositionNotional: sizing.maxPositionNotional,
@@ -262,8 +262,8 @@ export async function createTradingAccountSubscriptionForAdmin(
         tradingAccountId,
         subscriptionId: input.subscriptionId,
         ...sizing,
-        enabled: input.enabled ?? true,
-        entriesEnabled: input.entriesEnabled ?? true,
+        enabled: input.enabled ?? false,
+        entriesEnabled: input.entriesEnabled ?? false,
         exitsEnabled: input.exitsEnabled ?? true,
         ...(input.allocationId !== undefined && {
           allocationId: input.allocationId,
@@ -288,6 +288,47 @@ export async function createTradingAccountSubscriptionForAdmin(
 
     throw error;
   }
+}
+
+export async function deleteTradingAccountSubscriptionForAdmin(
+  tradingAccountId: number,
+  accountSubscriptionId: number
+) {
+  return withAccountRiskConfigurationTransaction(async (tx) => {
+    const existing = await tx.tradingAccountSubscription.findFirst({
+      where: { id: accountSubscriptionId, tradingAccountId },
+      select: {
+        id: true,
+        subscription: { select: { key: true } },
+        _count: {
+          select: {
+            orderIntents: true,
+            trackedPositions: true,
+            entryDecisions: true,
+          },
+        },
+      },
+    });
+
+    if (!existing) return null;
+
+    const referenceCount =
+      existing._count.orderIntents +
+      existing._count.trackedPositions +
+      existing._count.entryDecisions;
+    if (referenceCount > 0) {
+      throw new HttpError(
+        409,
+        `Cannot remove assignment for ${existing.subscription.key} because operational records reference it. Disable entries instead.`
+      );
+    }
+
+    await tx.tradingAccountSubscription.delete({
+      where: { id: existing.id },
+    });
+
+    return { id: existing.id };
+  });
 }
 
 export async function updateTradingAccountSubscriptionForAdmin(

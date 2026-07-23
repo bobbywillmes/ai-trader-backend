@@ -43,7 +43,9 @@ export async function buildTradeCycleConfigSnapshot(
       : prisma.tradingAccount.findUnique({
           where: { id: args.tradingAccountId },
           select: {
-            id: true,
+          id: true,
+            broker: true,
+            environment: true,
             maxDeployableNotional: true,
             riskSettings: {
               select: {
@@ -92,10 +94,6 @@ export async function buildTradeCycleConfigSnapshot(
           key: subscription.key,
           name: subscription.name,
           symbol: subscription.symbol,
-          broker: subscription.broker,
-          brokerMode: subscription.brokerMode,
-          sizingType: subscription.sizingType,
-          sizingValue: subscription.sizingValue,
           enabled: subscription.enabled,
           createdAt: toIso(subscription.createdAt),
           updatedAt: toIso(subscription.updatedAt),

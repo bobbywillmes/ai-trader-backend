@@ -10,7 +10,11 @@ const router = Router();
 
 // Default account read requires owner access (no account-scoping)
 router.get('/', requireSystemOwnerAccess, positionsController);
-// Close position on default account requires owner access (no account-scoping yet)
-router.delete('/:symbol', requireSystemOwnerAccess, closePositionController);
+// The tracked-position identity resolves exactly one account and assignment.
+router.delete(
+  '/:trackedPositionId',
+  requireSystemOwnerAccess,
+  closePositionController
+);
 
 export default router;

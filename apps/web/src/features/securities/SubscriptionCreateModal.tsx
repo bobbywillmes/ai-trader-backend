@@ -7,9 +7,6 @@ import type { CreateSubscriptionPayload } from '../subscriptions/types';
 type CreateForm = {
   key: string;
   name: string;
-  brokerMode: string;
-  sizingType: 'fixed_qty' | 'dollar_amount';
-  sizingValue: string;
   strategyId: string;
   exitProfileId: string;
 };
@@ -17,9 +14,6 @@ type CreateForm = {
 const EMPTY_FORM: CreateForm = {
   key: '',
   name: '',
-  brokerMode: 'paper',
-  sizingType: 'dollar_amount',
-  sizingValue: '1000',
   strategyId: '',
   exitProfileId: '',
 };
@@ -70,8 +64,7 @@ function SubscriptionCreateModalContent({
     form.key.trim() &&
     form.name.trim() &&
     form.strategyId &&
-    form.exitProfileId &&
-    parseFloat(form.sizingValue) > 0;
+    form.exitProfileId;
 
   function handleSave() {
     if (!isValid) return;
@@ -79,10 +72,6 @@ function SubscriptionCreateModalContent({
       key: form.key.trim(),
       name: form.name.trim(),
       symbol,
-      broker: 'alpaca',
-      brokerMode: form.brokerMode,
-      sizingType: form.sizingType,
-      sizingValue: parseFloat(form.sizingValue),
       strategyId: Number(form.strategyId),
       exitProfileId: Number(form.exitProfileId),
     });
@@ -122,36 +111,6 @@ function SubscriptionCreateModalContent({
                 value={form.name}
                 placeholder="e.g. AAPL Trend Strategy"
                 onChange={(e) => set('name', e.target.value)}
-              />
-            </label>
-          </div>
-        </div>
-
-        <div className="sub-edit-divider" />
-
-        <div className="sub-edit-section">
-          <div className="sub-edit-section-title">Sizing</div>
-          <div className="sub-edit-row">
-            <label className="sub-edit-label">
-              Type
-              <select
-                className="sub-edit-select"
-                value={form.sizingType}
-                onChange={(e) => set('sizingType', e.target.value)}
-              >
-                <option value="dollar_amount">Dollar Amount</option>
-                <option value="fixed_qty">Fixed Quantity</option>
-              </select>
-            </label>
-            <label className="sub-edit-label">
-              {form.sizingType === 'dollar_amount' ? 'Amount ($)' : 'Quantity'}
-              <input
-                type="number"
-                className="sub-edit-input"
-                value={form.sizingValue}
-                min="0"
-                step={form.sizingType === 'dollar_amount' ? '100' : '1'}
-                onChange={(e) => set('sizingValue', e.target.value)}
               />
             </label>
           </div>
@@ -213,23 +172,6 @@ function SubscriptionCreateModalContent({
               )}
             </div>
           )}
-        </div>
-
-        <div className="sub-edit-divider" />
-
-        <div className="sub-edit-section">
-          <div className="sub-edit-section-title">Settings</div>
-          {/* TODO: remove `disabled` and re-enable the Live option once live trading is supported */}
-          <label className="sub-edit-label" style={{ width: 'calc(50% - 0.375rem)' }}>
-            Broker Mode
-            <select
-              className="sub-edit-select"
-              value={form.brokerMode}
-              disabled
-            >
-              <option value="paper">Paper</option>
-            </select>
-          </label>
         </div>
 
         <div className="sub-edit-divider" />

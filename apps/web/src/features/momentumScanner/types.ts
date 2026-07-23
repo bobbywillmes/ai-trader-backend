@@ -516,9 +516,23 @@ export type MomentumResearchCandidateDetail = {
     id: number;
     key: string;
     name: string;
-    broker: string;
-    brokerMode: string;
     enabled: boolean;
+    accountSubscriptions: Array<{
+      id: number;
+      enabled: boolean;
+      entriesEnabled: boolean;
+      exitsEnabled: boolean;
+      tradingAccount: {
+        id: number;
+        displayName: string;
+        environment: "PAPER" | "LIVE";
+        status: string;
+      };
+      allocation: {
+        id: number;
+        enabled: boolean;
+      } | null;
+    }>;
   }>;
   tradingContext: {
     hasEnabledSubscription: boolean;

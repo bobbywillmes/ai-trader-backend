@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   entryDecisionUpdateMany: vi.fn(),
   securityFindUnique: vi.fn(),
   subscriptionFindUnique: vi.fn(),
+  tradingAccountSubscriptionFindUnique: vi.fn(),
   resolveDefaultTradingAccountId: vi.fn(),
 }));
 
@@ -25,6 +26,9 @@ vi.mock('../db/prisma.js', () => ({
     },
     subscription: {
       findUnique: mocks.subscriptionFindUnique,
+    },
+    tradingAccountSubscription: {
+      findUnique: mocks.tradingAccountSubscriptionFindUnique,
     },
   },
 }));
@@ -68,6 +72,8 @@ function input(overrides: Record<string, unknown> = {}) {
     rawDecisionJson: {
       raw: true,
     },
+    tradingAccountId: 1,
+    tradingAccountSubscriptionId: 44,
     ...overrides,
   };
 }
@@ -101,6 +107,10 @@ describe('entry decision service', () => {
     mocks.entryDecisionUpdateMany.mockResolvedValue({ count: 1 });
     mocks.securityFindUnique.mockResolvedValue({ id: 11, symbol: 'SPY' });
     mocks.subscriptionFindUnique.mockResolvedValue(null);
+    mocks.tradingAccountSubscriptionFindUnique.mockResolvedValue({
+      tradingAccountId: 1,
+      subscriptionId: 22,
+    });
     mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.entryDecisionCreate.mockImplementation(({ data }) =>
       Promise.resolve({

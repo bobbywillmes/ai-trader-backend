@@ -120,8 +120,6 @@ describe('trade cycle config snapshot service', () => {
         subscription: expect.objectContaining({
           id: 22,
           key: 'spy_dip_core',
-          sizingType: 'fixed_qty',
-          sizingValue: 1,
         }),
         strategy: expect.objectContaining({
           id: 33,

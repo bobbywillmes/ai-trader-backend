@@ -185,9 +185,22 @@ describe('momentum research service', () => {
       sector: 'Technology', industry: 'Software', momentumUniverseMember: null,
       subscriptions: [{
         id: 2, key: 'msft-momentum', name: 'MSFT momentum', symbol: 'MSFT',
-        broker: 'ALPACA', brokerMode: 'PAPER', enabled: true,
+        enabled: true,
         strategy: { id: 4, key: 'momentum_stock', name: 'Momentum Stock', enabled: true },
-        exitProfile: null, tradingAccount: null, accountSubscriptions: [],
+        exitProfile: null,
+        accountSubscriptions: [{
+          id: 42,
+          enabled: true,
+          entriesEnabled: true,
+          exitsEnabled: true,
+          tradingAccount: {
+            id: 7,
+            displayName: 'Bobby Paper',
+            environment: 'PAPER',
+            status: 'ACTIVE',
+          },
+          allocation: { id: 9, enabled: true },
+        }],
       }],
       trackedPositions: [{ id: 3, status: 'open' }],
     });
@@ -200,10 +213,23 @@ describe('momentum research service', () => {
 
     expect(result).toMatchObject({
       researchStatus: { universeMember: false, universeEnabled: false, newsEnabled: false, priceScanningEnabled: false },
-      tradingContext: { hasEnabledSubscription: true, hasOpenPosition: true },
+      tradingContext: {
+        hasEnabledSubscription: true,
+        hasOpenPosition: true,
+        subscriptions: [{
+          accountSubscriptions: [{
+            id: 42,
+            tradingAccount: {
+              id: 7,
+              displayName: 'Bobby Paper',
+              environment: 'PAPER',
+            },
+          }],
+        }],
+      },
       eligibility: {
         researchEligibility: { eligible: false, reasons: ['OUTSIDE_RESEARCH_UNIVERSE'] },
-        momentumSubscriptionEligibility: { eligible: false, reasons: ['NO_TRADING_ACCOUNT'] },
+        momentumSubscriptionEligibility: { eligible: true, reasons: ['ELIGIBLE'] },
         candidateEligibility: {
           discoveryEligible: false,
           priceConfirmationEligible: false,

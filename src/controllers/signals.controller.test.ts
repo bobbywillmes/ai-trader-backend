@@ -170,6 +170,7 @@ describe('signals controller entry signals', () => {
     await entrySignalController(
       {
         body: {
+          tradingAccountSubscriptionId: 44,
           subscriptionKey: 'spy_dip_core',
           decisionKey: 'decision-101',
           source: 'n8n-ai-trader',
@@ -181,6 +182,7 @@ describe('signals controller entry signals', () => {
 
     expect(mocks.submitOrder).toHaveBeenCalledWith(
       expect.objectContaining({
+        tradingAccountSubscriptionId: 44,
         subscriptionKey: 'spy_dip_core',
         signalType: 'entry',
       }),
@@ -192,6 +194,7 @@ describe('signals controller entry signals', () => {
     expect(res.json).toHaveBeenCalledWith({
       ok: true,
       signal: {
+        tradingAccountSubscriptionId: 44,
         subscriptionKey: 'spy_dip_core',
         signalType: 'entry',
         source: 'n8n-ai-trader',

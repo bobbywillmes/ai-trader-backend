@@ -267,6 +267,17 @@ export function updateTradingAccountSubscription(
   );
 }
 
+export function deleteTradingAccountSubscription(
+  id: number,
+  accountSubscriptionId: number,
+  token: string
+) {
+  return apiRequest<void>(
+    `/api/trading-accounts/${id}/account-subscriptions/${accountSubscriptionId}`,
+    { method: "DELETE", token }
+  );
+}
+
 export function previewTradingAccountEntryRisk(
   id: number,
   payload: EntryRiskPreviewInput,

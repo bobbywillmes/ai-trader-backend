@@ -23,12 +23,6 @@ const strategyUsageSubscriptionSelect = {
       name: true,
     },
   },
-  tradingAccount: {
-    select: {
-      id: true,
-      displayName: true,
-    },
-  },
   accountSubscriptions: {
     select: {
       tradingAccount: {
@@ -62,10 +56,9 @@ function summarizeUsage(strategy: StrategyWithUsage) {
   const symbols = [...new Set(strategy.subscriptions.map((item) => item.symbol))]
     .sort((left, right) => left.localeCompare(right));
   const tradingAccounts = uniqueById(
-    strategy.subscriptions.flatMap((subscription) => [
-      ...(subscription.tradingAccount ? [subscription.tradingAccount] : []),
-      ...subscription.accountSubscriptions.map((item) => item.tradingAccount),
-    ]),
+    strategy.subscriptions.flatMap((subscription) =>
+      subscription.accountSubscriptions.map((item) => item.tradingAccount)
+    ),
   );
   const exitProfilesById = new Map<
     number,
@@ -312,16 +305,11 @@ export async function getStrategy(id: number, query: StrategyDetailQuery) {
       name: true,
       symbol: true,
       enabled: true,
-      sizingType: true,
-      sizingValue: true,
       security: {
         select: { name: true },
       },
       exitProfile: {
         select: { id: true, key: true, name: true },
-      },
-      tradingAccount: {
-        select: { id: true, displayName: true },
       },
       accountSubscriptions: {
         orderBy: { id: 'asc' },

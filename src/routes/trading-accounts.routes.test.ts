@@ -10,6 +10,7 @@ vi.mock('../controllers/trading-accounts.controller.js', () => ({
   createTradingAccountController: mocks.createTradingAccountController,
   createTradingAccountAllocationController: vi.fn(),
   createTradingAccountSubscriptionController: vi.fn(),
+  deleteTradingAccountSubscriptionController: vi.fn(),
   getTradingAccountRiskHealthController: vi.fn(),
   getTradingAccountSubscriptionPriceHistoryController: vi.fn(),
   getTradingAccountSubscriptionController: vi.fn(),

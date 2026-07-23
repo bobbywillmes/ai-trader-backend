@@ -18,7 +18,18 @@ vi.mock('./massive-market-data.service.js', () => ({
   getTickerLatestPrice: mocks.getTickerLatestPrice,
 }));
 
-import { resolveRuntimeAccountSubscriptionSizing } from './account-subscription-runtime-sizing.service.js';
+import {
+  resolveRuntimeAccountSubscriptionSizing as resolveSizingService,
+} from './account-subscription-runtime-sizing.service.js';
+
+function resolveRuntimeAccountSubscriptionSizing(
+  args: Omit<Parameters<typeof resolveSizingService>[0], 'tradingAccountSubscriptionId'>
+) {
+  return resolveSizingService({
+    tradingAccountSubscriptionId: 20,
+    ...args,
+  });
+}
 
 function accountSubscriptionRecord(overrides: Record<string, unknown> = {}) {
   return {
@@ -83,6 +94,7 @@ describe('account subscription runtime sizing service', () => {
 
     expect(mocks.accountSubscriptionFindFirst).toHaveBeenCalledWith({
       where: {
+        id: 20,
         tradingAccountId: 1,
         subscriptionId: 30,
       },

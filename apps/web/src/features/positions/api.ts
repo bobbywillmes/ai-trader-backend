@@ -15,8 +15,8 @@ export function getTradingAccountOpenPositions(
   );
 }
 
-export function closePosition(symbol: string, token: string) {
-  return apiRequest<void>(`/api/positions/${encodeURIComponent(symbol)}`, {
+export function closePosition(trackedPositionId: number, token: string) {
+  return apiRequest<void>(`/api/positions/${trackedPositionId}`, {
     method: "DELETE",
     token,
   });

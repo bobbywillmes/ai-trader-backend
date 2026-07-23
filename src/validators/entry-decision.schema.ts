@@ -68,12 +68,22 @@ export const entryDecisionSchema = z.object({
   rawDecisionJson: jsonObject.nullable().optional(),
 
   securityId: optionalPositiveInt,
+  tradingAccountId: optionalPositiveInt,
+  tradingAccountSubscriptionId: optionalPositiveInt,
   subscriptionId: optionalPositiveInt,
   subscriptionKey: optionalString,
   strategyId: optionalPositiveInt,
   strategyKey: optionalString,
   exitProfileId: optionalPositiveInt,
   exitProfileKey: optionalString,
+}).superRefine((data, ctx) => {
+  if (data.signalCreated && !data.tradingAccountSubscriptionId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['tradingAccountSubscriptionId'],
+      message: 'tradingAccountSubscriptionId is required when signalCreated is true.',
+    });
+  }
 });
 
 export type EntryDecisionInput = z.infer<typeof entryDecisionSchema>;

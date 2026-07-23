@@ -1,11 +1,13 @@
 import { z } from 'zod';
 
 export const entrySignalSchema = z.object({
+  tradingAccountSubscriptionId: z.coerce.number().int().positive(),
   subscriptionKey: z
     .string()
     .trim()
     .min(1)
-    .transform((value) => value.toLowerCase()),
+    .transform((value) => value.toLowerCase())
+    .optional(),
 
   signalType: z.literal('entry').default('entry'),
 

@@ -12,14 +12,6 @@ import type { CreateSubscriptionPayload } from '../subscriptions/types';
 import { useSecurityActivity } from '../systemEvents/hooks';
 import './SecurityDetailPage.css';
 
-function formatSizing(type: string, value: number) {
-  if (type === 'dollar_amount') {
-    return `$${value.toLocaleString()}`;
-  }
-
-  return value.toLocaleString();
-}
-
 function formatPct(value: number | null) {
   if (value === null) {
     return '-';
@@ -148,8 +140,6 @@ export function SecurityDetailPage() {
 
   function handleSaveEdit(data: {
     subscriptionId: number;
-    sizingType: 'fixed_qty' | 'dollar_amount';
-    sizingValue: number;
     exitProfileId: number;
   }) {
     editSubscriptionMutation.mutate(data, {
@@ -325,9 +315,6 @@ export function SecurityDetailPage() {
               <tr>
                 <th>Key</th>
                 <th>Name</th>
-                <th>Broker</th>
-                <th>Mode</th>
-                <th>Sizing</th>
                 <th>Strategy</th>
                 <th>Exit Profile</th>
                 <th>Target</th>
@@ -342,14 +329,6 @@ export function SecurityDetailPage() {
                 <tr key={subscription.id}>
                   <td className="mono-cell">{subscription.key}</td>
                   <td>{subscription.name}</td>
-                  <td>{subscription.broker}</td>
-                  <td>{subscription.brokerMode}</td>
-                  <td>
-                    {formatSizing(
-                      subscription.sizingType,
-                      subscription.sizingValue
-                    )}
-                  </td>
                   <td>{subscription.strategy?.key ?? '-'}</td>
                   <td>{subscription.exitProfile?.key ?? '-'}</td>
                   <td>{formatPct(subscription.exitProfile?.targetPct ?? null)}</td>

@@ -289,7 +289,30 @@ export async function recordEntryDecision(
     };
   }
 
-  const tradingAccountId = await resolveDefaultTradingAccountId();
+  const assignment = input.tradingAccountSubscriptionId
+    ? await prisma.tradingAccountSubscription.findUnique({
+        where: { id: input.tradingAccountSubscriptionId },
+        select: { tradingAccountId: true, subscriptionId: true },
+      })
+    : null;
+  if (input.tradingAccountSubscriptionId && !assignment) {
+    throw new HttpError(404, 'Trading account subscription was not found.');
+  }
+  if (
+    assignment &&
+    input.tradingAccountId &&
+    assignment.tradingAccountId !== input.tradingAccountId
+  ) {
+    throw new HttpError(409, 'Entry decision account does not match its assignment.');
+  }
+  const tradingAccountId =
+    assignment?.tradingAccountId ?? input.tradingAccountId;
+  if (!tradingAccountId) {
+    throw new HttpError(
+      400,
+      'tradingAccountId or tradingAccountSubscriptionId is required for an entry decision.'
+    );
+  }
 
   const [previous, context] = await Promise.all([
     prisma.entryDecision.findFirst({
@@ -367,6 +390,7 @@ export async function recordEntryDecision(
       rawDecisionJson: (input.rawDecisionJson ?? inputAsJson(input)) as
         Prisma.InputJsonValue,
       tradingAccountId,
+      tradingAccountSubscriptionId: input.tradingAccountSubscriptionId ?? null,
       securityId: context.securityId,
       subscriptionId: context.subscriptionId,
       subscriptionKey: context.subscriptionKey,

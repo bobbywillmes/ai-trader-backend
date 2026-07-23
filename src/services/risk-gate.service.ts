@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { HttpError } from '../errors/http-error.js';
 import { prisma } from '../db/prisma.js';
 import { getNormalizedAccount } from './account.service.js';
 import { getRuntimeTradingConfig } from './config.service.js';
@@ -298,7 +299,10 @@ async function getAllocationRiskAccountSubscription(
   input: ResolvedPlaceOrderInput,
   tradingAccountId: number
 ): Promise<AllocationRiskAccountSubscription | null> {
-  if (input.subscriptionId === undefined) {
+  if (
+    input.subscriptionId === undefined ||
+    input.tradingAccountSubscriptionId === undefined
+  ) {
     return null;
   }
 
@@ -306,6 +310,7 @@ async function getAllocationRiskAccountSubscription(
     where: {
       tradingAccountId,
       subscriptionId: input.subscriptionId,
+      id: input.tradingAccountSubscriptionId,
     },
     select: ALLOCATION_RISK_ACCOUNT_SUBSCRIPTION_SELECT,
   });
@@ -576,10 +581,18 @@ async function findSubscriptionForInput(
   };
 
   if (input.subscriptionId !== undefined) {
+    if (input.tradingAccountSubscriptionId === undefined) {
+      return null;
+    }
     return prisma.subscription.findFirst({
       where: {
         id: input.subscriptionId,
-        tradingAccountId,
+        accountSubscriptions: {
+          some: {
+            id: input.tradingAccountSubscriptionId,
+            tradingAccountId,
+          },
+        },
       },
       include,
     });
@@ -618,8 +631,13 @@ export async function evaluateOrderRisk(
   input: ResolvedPlaceOrderInput,
   options: EvaluateOrderRiskOptions = {}
 ): Promise<RiskGateResult> {
-  const tradingAccountId =
-    options.tradingAccountId ?? (await resolveDefaultTradingAccountId());
+  if (options.tradingAccountId === undefined) {
+    throw new HttpError(
+      400,
+      'tradingAccountId is required for order risk evaluation.'
+    );
+  }
+  const tradingAccountId = options.tradingAccountId;
   const config = await getRuntimeTradingConfig();
 
   if (!config.tradingEnabled) {
@@ -944,86 +962,18 @@ export async function evaluateOrderRisk(
     });
   }
 
-  // Compatibility-only limits remain for an entry that cannot resolve an
-  // account subscription. Resolved subscriptions use deployable capital,
-  // allocation limits, reservation, and sizing as their authoritative layers.
-  const unresolvedAccountSubscription = !allocationAccountSubscription;
-  const legacyAccountTotalLimit =
-    accountRiskSettings?.enabled &&
-    isLimitEnabled(accountRiskSettings.maxTotalOpenNotional)
-      ? {
-          value: accountRiskSettings.maxTotalOpenNotional,
-          source: 'ACCOUNT' as const,
-        }
-      : {
-          value: config.maxTotalOpenNotional,
-          source: 'LEGACY_GLOBAL_FALLBACK' as const,
-        };
-  if (
-    unresolvedAccountSubscription &&
-    isLimitEnabled(legacyAccountTotalLimit.value) &&
-    projectedAccountExposure > legacyAccountTotalLimit.value
-  ) {
-    return block(409, 'Legacy total open notional fallback would be exceeded.', {
-      rule: 'maxTotalOpenNotional',
-      layer: 'legacy_compatibility',
-      tradingAccountId,
-      field: 'maxTotalOpenNotional',
-      source: legacyAccountTotalLimit.source,
-      current: usage.currentAccountExposure,
-      requested: requestedNotional,
-      projected: projectedAccountExposure,
-      limit: legacyAccountTotalLimit.value,
-    });
-  }
-
-  const subscriptionId = input.subscriptionId;
-  if (unresolvedAccountSubscription && subscriptionId !== undefined) {
-    const legacySubscriptionLimit =
-      accountRiskSettings?.enabled &&
-      isLimitEnabled(accountRiskSettings.maxSubscriptionOpenNotional)
-        ? {
-            value: accountRiskSettings.maxSubscriptionOpenNotional,
-            source: 'ACCOUNT' as const,
-          }
-        : {
-            value: config.maxSubscriptionOpenNotional,
-            source: 'LEGACY_GLOBAL_FALLBACK' as const,
-          };
-    const openSubscriptionNotional = getSubscriptionOpenNotional(
-      usage.activePositions,
-      subscriptionId
+  if (!allocationAccountSubscription) {
+    return block(
+      409,
+      'Trading account subscription identity is required for entry risk evaluation.',
+      {
+        rule: 'account_subscription_identity_required',
+        tradingAccountId,
+        tradingAccountSubscriptionId:
+          input.tradingAccountSubscriptionId ?? null,
+        subscriptionId: input.subscriptionId ?? null,
+      }
     );
-    const pendingSubscriptionNotional =
-      usage.pendingEntryNotionalBySubscriptionId.get(subscriptionId) ?? 0;
-    const currentSubscriptionExposure =
-      openSubscriptionNotional + pendingSubscriptionNotional;
-    const projectedSubscriptionExposure =
-      currentSubscriptionExposure + requestedNotional;
-
-    if (
-      isLimitEnabled(legacySubscriptionLimit.value) &&
-      projectedSubscriptionExposure > legacySubscriptionLimit.value
-    ) {
-      return block(
-        409,
-        'Legacy subscription open notional fallback would be exceeded.',
-        {
-          rule: 'maxSubscriptionOpenNotional',
-          layer: 'legacy_compatibility',
-          tradingAccountId,
-          subscriptionId,
-          field: 'maxSubscriptionOpenNotional',
-          source: legacySubscriptionLimit.source,
-          openSubscriptionNotional,
-          pendingSubscriptionNotional,
-          current: currentSubscriptionExposure,
-          requested: requestedNotional,
-          projected: projectedSubscriptionExposure,
-          limit: legacySubscriptionLimit.value,
-        }
-      );
-    }
   }
 
   const configuredHierarchyRisk = evaluateConfiguredHierarchyRisk({

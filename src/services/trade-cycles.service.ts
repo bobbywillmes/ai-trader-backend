@@ -268,7 +268,7 @@ function buildCycleSummary(
           id: position.subscription.id,
           key: position.subscription.key,
           name: position.subscription.name,
-          brokerMode: position.subscription.brokerMode,
+          brokerMode: position.tradingAccount?.environment.toLowerCase() ?? null,
         }
       : null,
     exitProfile: snapshotExitProfile

@@ -39,11 +39,11 @@ export function useClosePosition(token: string | null) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (symbol: string) => {
+    mutationFn: (trackedPositionId: number) => {
       if (!token) {
         throw new Error("Admin session is missing. Please log in again.");
       }
-      return closePosition(symbol, token);
+      return closePosition(trackedPositionId, token);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: positionKeys.open });

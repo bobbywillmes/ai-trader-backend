@@ -40,6 +40,7 @@ export async function entrySignalController(
 
     const result = await submitOrder(
       {
+        tradingAccountSubscriptionId: signal.tradingAccountSubscriptionId,
         subscriptionKey: signal.subscriptionKey,
         signalType: 'entry',
         orderType: 'market',
@@ -61,7 +62,8 @@ export async function entrySignalController(
     res.status(201).json({
       ok: true,
       signal: {
-        subscriptionKey: signal.subscriptionKey,
+        tradingAccountSubscriptionId: signal.tradingAccountSubscriptionId,
+        subscriptionKey: signal.subscriptionKey ?? null,
         signalType: signal.signalType,
         source: signal.source,
         decisionKey: signal.decisionKey ?? null,
