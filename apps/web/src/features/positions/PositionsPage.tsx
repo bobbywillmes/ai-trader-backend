@@ -213,19 +213,19 @@ export function PositionsPage() {
   const tradeCycleDrawer = useTradeCycleDrawer(token);
   const attentionPositions = positions.filter(positionNeedsAttention);
 
-  function handleClosePosition(symbol: string) {
+  function handleClosePosition(position: TrackedPosition) {
     modals.openConfirmModal({
       title: "Close position",
-      children: <Text size="sm">Submit a sell order to close <strong>{symbol}</strong>?</Text>,
+      children: <Text size="sm">Submit a close order for <strong>{position.symbol}</strong> in <strong>{position.tradingAccount?.displayName ?? `account ${position.tradingAccountId}`}</strong>?</Text>,
       labels: { confirm: "Close position", cancel: "Cancel" },
       confirmProps: { color: "red" },
       onConfirm: async () => {
         try {
-          await closePositionMutation.mutateAsync(symbol);
-          notifications.show({ message: `Close order submitted for ${symbol}.`, color: "teal" });
+          await closePositionMutation.mutateAsync(position.id);
+          notifications.show({ message: `Close order submitted for ${position.symbol}.`, color: "teal" });
         } catch (err) {
           notifications.show({
-            message: err instanceof Error ? err.message : `Failed to close ${symbol}.`,
+            message: err instanceof Error ? err.message : `Failed to close ${position.symbol}.`,
             color: "red",
           });
         }
@@ -301,7 +301,7 @@ export function PositionsPage() {
                 {positions.map((position) => {
                   const isClosing =
                     closePositionMutation.isPending &&
-                    closePositionMutation.variables === position.symbol;
+                    closePositionMutation.variables === position.id;
 
                   return (
                     <Table.Tr key={position.id}>
@@ -391,7 +391,7 @@ export function PositionsPage() {
                             variant="subtle"
                             loading={isClosing}
                             disabled={isClosing}
-                            onClick={() => handleClosePosition(position.symbol)}
+                            onClick={() => handleClosePosition(position)}
                           >
                             Close
                           </Button>

@@ -294,7 +294,7 @@ export async function evaluateExits() {
 
     console.log(`Exit triggered for ${position.symbol} (${reason})`);
 
-    await closePosition(position.symbol);
+    await closePosition(position.id);
 
     await createSystemEvent({
       type: 'exit.triggered',

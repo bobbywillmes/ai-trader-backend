@@ -4,7 +4,6 @@ import { createSystemEvent } from './system-event.service.js';
 import { closeAlpacaPosition } from '../integrations/alpaca/positions.adapter.js';
 import { HttpError } from '../errors/http-error.js';
 import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
-import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -37,32 +36,50 @@ function getCloseOrderFromBrokerResult(result: unknown) {
   };
 }
 
-export async function closePosition(symbol: string) {
-  const upperSymbol = symbol.toUpperCase();
-  const defaultTradingAccountId = await resolveDefaultTradingAccountId();
-
-  const trackedPosition = await prisma.trackedPosition.findFirst({
+export async function closePosition(trackedPositionId: number) {
+  const trackedPosition = await prisma.trackedPosition.findUnique({
     where: {
-      symbol: upperSymbol,
-      tradingAccountId: defaultTradingAccountId,
-      status: {
-        in: ['open', 'closing'],
-      },
+      id: trackedPositionId,
     },
-    orderBy: {
-      openedAt: 'desc',
+    include: {
+      tradingAccountSubscription: {
+        select: {
+          id: true,
+          exitsEnabled: true,
+        },
+      },
     },
   });
 
-  if (!trackedPosition) {
+  if (
+    !trackedPosition ||
+    !['open', 'closing'].includes(trackedPosition.status.toLowerCase())
+  ) {
     throw new HttpError(
       404,
-      `No active tracked position was found for ${upperSymbol}.`
+      `Active tracked position ${trackedPositionId} was not found.`
     );
   }
 
-  const tradingAccountId =
-    trackedPosition.tradingAccountId ?? defaultTradingAccountId;
+  if (trackedPosition.tradingAccountId === null) {
+    throw new HttpError(
+      409,
+      `Tracked position ${trackedPosition.id} has no TradingAccount identity.`
+    );
+  }
+
+  if (
+    trackedPosition.tradingAccountSubscription &&
+    !trackedPosition.tradingAccountSubscription.exitsEnabled
+  ) {
+    throw new HttpError(
+      409,
+      `TradingAccountSubscription ${trackedPosition.tradingAccountSubscription.id} has exits disabled.`
+    );
+  }
+
+  const upperSymbol = trackedPosition.symbol.toUpperCase();
+  const tradingAccountId = trackedPosition.tradingAccountId;
   const result = await closeAlpacaPosition(upperSymbol, 'position_close', {
     tradingAccountId,
   });
@@ -100,6 +117,8 @@ export async function closePosition(symbol: string) {
         extendedHours: false,
         clientOrderId: closeOrder.clientOrderId,
         tradingAccountId,
+        tradingAccountSubscriptionId:
+          trackedPosition.tradingAccountSubscriptionId,
         status: 'submitted',
         subscriptionId: trackedPosition.subscriptionId,
         subscriptionKey: null,
@@ -107,6 +126,8 @@ export async function closePosition(symbol: string) {
         rawRequestJson: {
           source: 'close-position',
           trackedPositionId: trackedPosition.id,
+          tradingAccountSubscriptionId:
+            trackedPosition.tradingAccountSubscriptionId,
           brokerResult: result,
         } as Prisma.InputJsonValue,
       },
