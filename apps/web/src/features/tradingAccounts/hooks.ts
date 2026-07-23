@@ -8,6 +8,7 @@ import {
   createTradingAccountAllocation,
   createTradingAccount,
   createTradingAccountSubscription,
+  deleteTradingAccountSubscription,
   getTradingAccount,
   getTradingAccounts,
   getTradingAccountRiskHealth,
@@ -564,6 +565,21 @@ export function useUpdateTradingAccountSubscription(token: string | null) {
           accountSubscription.tradingAccountId
         ),
       });
+    },
+  });
+}
+
+export function useDeleteTradingAccountSubscription(token: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, accountSubscriptionId }: { id: number; accountSubscriptionId: number }) => {
+      if (!token) throw new Error("Admin session is missing. Please log in again.");
+      return deleteTradingAccountSubscription(id, accountSubscriptionId, token);
+    },
+    onSuccess: (_result, variables) => {
+      queryClient.invalidateQueries({ queryKey: tradingAccountKeys.accountSubscriptions(variables.id) });
+      queryClient.invalidateQueries({ queryKey: tradingAccountKeys.riskHealth(variables.id) });
+      queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
     },
   });
 }

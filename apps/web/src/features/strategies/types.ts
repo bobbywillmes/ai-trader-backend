@@ -46,11 +46,8 @@ export type StrategySubscription = {
   name: string;
   symbol: string;
   enabled: boolean;
-  sizingType: string;
-  sizingValue: number;
   security: { name: string };
   exitProfile: { id: number; key: string; name: string };
-  tradingAccount: StrategyTradingAccount | null;
   accountSubscriptions: Array<{
     id: number;
     enabled: boolean;

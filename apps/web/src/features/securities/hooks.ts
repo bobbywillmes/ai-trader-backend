@@ -113,8 +113,6 @@ export function useEditSecuritySubscription(symbol: string | undefined) {
   return useMutation({
     mutationFn: (input: {
       subscriptionId: number;
-      sizingType: 'fixed_qty' | 'dollar_amount';
-      sizingValue: number;
       exitProfileId: number;
     }) => {
       const token = getAdminToken();
@@ -122,8 +120,6 @@ export function useEditSecuritySubscription(symbol: string | undefined) {
         throw new Error('Admin session is missing. Please log in again.');
       }
       return updateSubscription(input.subscriptionId, {
-        sizingType: input.sizingType,
-        sizingValue: input.sizingValue,
         exitProfileId: input.exitProfileId,
       }, token);
     },

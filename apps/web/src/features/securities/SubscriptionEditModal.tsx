@@ -4,8 +4,6 @@ import type { SecuritySubscription } from './types';
 import type { ExitProfile } from '../exitProfiles/types';
 
 type EditForm = {
-  sizingType: 'fixed_qty' | 'dollar_amount';
-  sizingValue: string;
   exitProfileId: string;
 };
 
@@ -16,8 +14,6 @@ type Props = {
   onClose: () => void;
   onSave: (data: {
     subscriptionId: number;
-    sizingType: 'fixed_qty' | 'dollar_amount';
-    sizingValue: number;
     exitProfileId: number;
   }) => void;
   isPending: boolean;
@@ -50,8 +46,6 @@ function SubscriptionEditModalContent({
   isPending,
 }: EditModalContentProps) {
   const [form, setForm] = useState<EditForm>(() => ({
-    sizingType: subscription.sizingType,
-    sizingValue: subscription.sizingValue.toString(),
     exitProfileId: subscription.exitProfile?.id?.toString() ?? '',
   }));
 
@@ -61,12 +55,8 @@ function SubscriptionEditModalContent({
 
   function handleSave() {
     if (!form.exitProfileId) return;
-    const sizingValue = parseFloat(form.sizingValue);
-    if (isNaN(sizingValue) || sizingValue <= 0) return;
     onSave({
       subscriptionId: subscription.id,
-      sizingType: form.sizingType,
-      sizingValue,
       exitProfileId: Number(form.exitProfileId),
     });
   }
@@ -80,43 +70,6 @@ function SubscriptionEditModalContent({
       centered
     >
       <div className="sub-edit-form">
-        <div className="sub-edit-section">
-          <div className="sub-edit-section-title">Sizing</div>
-          <div className="sub-edit-row">
-            <label className="sub-edit-label">
-              Type
-              <select
-                className="sub-edit-select"
-                value={form.sizingType}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    sizingType: e.target.value as 'fixed_qty' | 'dollar_amount',
-                  }))
-                }
-              >
-                <option value="fixed_qty">Fixed Quantity</option>
-                <option value="dollar_amount">Dollar Amount</option>
-              </select>
-            </label>
-            <label className="sub-edit-label">
-              {form.sizingType === 'dollar_amount' ? 'Amount ($)' : 'Quantity'}
-              <input
-                type="number"
-                className="sub-edit-input"
-                value={form.sizingValue}
-                min="0"
-                step={form.sizingType === 'dollar_amount' ? '100' : '1'}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, sizingValue: e.target.value }))
-                }
-              />
-            </label>
-          </div>
-        </div>
-
-        <div className="sub-edit-divider" />
-
         <div className="sub-edit-section">
           <div className="sub-edit-section-title">Exit Profile</div>
           <label className="sub-edit-label sub-edit-label--full">
