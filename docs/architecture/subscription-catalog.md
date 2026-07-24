@@ -80,11 +80,16 @@ Before production migration, run:
 npx tsx scripts/diagnose-subscription-catalog-migration.ts
 ```
 
-The diagnostic prints three independent conclusions:
+The diagnostic prints independent conclusions:
 
-- `schemaDropSafe` proves exact legacy mapping, enablement, sizing, broker and
-  environment fidelity, plus lifecycle reference consistency. Unknown legacy
-  sizing conversions fail this gate.
+- `initialBootstrapFidelityValid` is a time-bounded exact-parity assertion for
+  an immediate post-bootstrap run. Its immutable output is the strongest proof
+  that enablement and sizing were initially copied exactly.
+- `legacyMigrationProvenanceValid` proves durable mapping, routing, lifecycle,
+  conversion, and divergence provenance. Later writer-valid assignment changes
+  are classified and do not fail this gate; unexplained or malformed states do.
+- `schemaDropSafe` requires durable migration provenance, no unknown initial
+  conversion, no unexplained divergence, and no malformed current assignment.
 - `productionBaselineValid` proves that the discovered Bobby Paper account has
   exactly the authoritative curated key set and that the discovered Bobby Live
   account has zero assignments. Missing or ambiguous account discovery fails
@@ -95,16 +100,26 @@ The diagnostic prints three independent conclusions:
 
 These conclusions are deliberately not interchangeable. `schemaDropSafe` does
 not mean an account is ready to trade, and `runtimeEntryReady` does not prove
-that legacy values were migrated faithfully. `overallDiagnosticPassed` requires
-all three conclusions and is the command's success condition. Retired,
+that legacy values were migrated faithfully. Exact enablement and sizing parity
+remain visible evidence, but editable authoritative account assignments may
+legitimately diverge after bootstrap. `overallDiagnosticPassed` requires
+`schemaDropSafe`, `productionBaselineValid`, and `runtimeEntryReady`. Retired,
 assignment-disabled, or entry-disabled deployments may intentionally retain
 null allocation and reservation fields.
+
+Assignment-specific administrative changes did not historically emit dedicated
+`SystemEvent` audit records. Provenance classification therefore uses assignment
+timestamps, the bootstrap note and inferred batch, writer-valid state, and
+catalog-level event chronology without claiming actor-level proof.
 
 Retain the complete JSON output as migration evidence before dropping the
 legacy columns. A successful result is a prerequisite to the destructive
 migration, not a claim that production has already been verified. The SQL
 migration currently contains narrower defensive assertions and must not be used
 as a substitute for this preflight.
+
+Retain both the restored-backup diagnostic JSON and its reviewed row-level
+provenance report as migration evidence.
 
 After the diagnostic succeeds, back up the database, deploy the migration,
 regenerate/rebuild the application, and verify health, catalog assignment

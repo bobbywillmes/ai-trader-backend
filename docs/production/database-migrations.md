@@ -296,8 +296,13 @@ npx tsx scripts/diagnose-subscription-catalog-migration.ts
 Archive the complete JSON output with the deployment record. The command exits
 successfully only when all of these independent conclusions are true:
 
-- `schemaDropSafe`: legacy assignment mapping, enablement, sizing, routing, and
-  lifecycle references are faithful.
+- `initialBootstrapFidelityValid`: exact enablement and sizing parity at the
+  immediate post-bootstrap point in time. Preserve that output immutably.
+- `legacyMigrationProvenanceValid`: later parity differences are completely
+  classified, current states are writer-valid, and no unexplained or malformed
+  divergence remains.
+- `schemaDropSafe`: mapping, routing, lifecycle, conversion, and durable
+  provenance are safe for legacy-column removal.
 - `productionBaselineValid`: Bobby Paper has the exact authoritative curated
   catalog key set, Bobby Live has no assignments, and both accounts are
   discovered unambiguously.
@@ -310,6 +315,13 @@ One conclusion cannot substitute for another. In particular,
 `runtimeEntryReady=true` does not prove legacy migration fidelity. Do not run
 `prisma migrate deploy` for the legacy-column removal unless
 `overallDiagnosticPassed=true` and the diagnostic process exits zero.
+
+Editable `TradingAccountSubscription` configuration may legitimately diverge
+from stale legacy values after bootstrap. Exact parity remains reported as
+evidence but is not a permanent schema-drop requirement when chronology and
+writer-valid state classify the difference. Historical assignment changes lack
+dedicated actor-level `SystemEvent` records, so retain the restored-backup
+diagnostic JSON and reviewed row-level provenance report with the deployment.
 
 Running the command against a database where the legacy columns were already
 removed produces a structured `LEGACY_SOURCE_UNAVAILABLE` failure. This is not

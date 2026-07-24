@@ -117,7 +117,9 @@ historical migration fidelity with current trading readiness:
 
 | Conclusion | What it proves |
 | --- | --- |
-| `schemaDropSafe` | Exact legacy mapping, bootstrap enablement policy, normalized sizing values, broker/environment routing, lifecycle reference consistency, and no unknown sizing conversions. |
+| `initialBootstrapFidelityValid` | Immediate post-bootstrap exact mapping, enablement, normalized sizing, routing, conversion, and lifecycle fidelity. Preserve the immutable output; this is not permanent current-state truth after assignments become editable. |
+| `legacyMigrationProvenanceValid` | Durable mapping, routing, lifecycle consistency, known initial conversion, complete divergence classification, and no unexplained or malformed current state. |
+| `schemaDropSafe` | Durable migration provenance with no unknown initial conversion, unexplained divergence, or malformed assignment. Legitimate post-bootstrap edits do not fail it. |
 | `productionBaselineValid` | Unambiguous Bobby Paper and Bobby Live discovery, the exact authoritative Bobby Paper curated key set, and zero Bobby Live assignments. |
 | `runtimeEntryReady` | Every currently active entry-capable assignment has complete valid account, allocation, reservation, sizing, capacity, and entry-risk configuration. |
 | `overallDiagnosticPassed` | All three definitive conclusions are true. The script exits nonzero otherwise. |
@@ -126,6 +128,14 @@ historical migration fidelity with current trading readiness:
 `runtimeEntryReady` does not certify that legacy data was copied faithfully.
 The full JSON result, including detailed failure arrays, must be retained as
 deployment evidence before removing legacy columns.
+
+Exact enablement and sizing differences remain reported. They are classified as
+unchanged, confirmed post-creation divergence, likely authorized divergence,
+preexisting assignment, legacy-side change, unexplained divergence, or
+malformed current state. Because assignment updates historically lacked
+dedicated audit events, likely-authorized classifications do not claim
+actor-level proof. Retain the restored-backup JSON and reviewed provenance
+report together.
 
 The diagnostic must be run while the legacy `Subscription` source columns still
 exist:
