@@ -26,6 +26,36 @@ export type SubscriptionSeed = {
   enabled: boolean;
 };
 
+export const CURATED_SUBSCRIPTION_SYMBOLS = [
+  'SPY',
+  'QQQ',
+  'DIA',
+  'IWM',
+  'RSP',
+  'AAPL',
+  'AMZN',
+  'GOOG',
+  'META',
+  'MSFT',
+  'NVDA',
+  'TSLA',
+  'AMD',
+  'INTC',
+  'NFLX',
+] as const;
+
+export function buildCuratedSubscriptionKeys(
+  securities: readonly SubscriptionTemplateInput[],
+) {
+  const curatedSymbols = new Set<string>(CURATED_SUBSCRIPTION_SYMBOLS);
+
+  return securities
+    .filter((security) => curatedSymbols.has(security.symbol))
+    .flatMap(buildSubscriptionsForSecurity)
+    .map((subscription) => subscription.key)
+    .sort();
+}
+
 function toSymbolKey(symbol: string) {
   return symbol.toLowerCase();
 }

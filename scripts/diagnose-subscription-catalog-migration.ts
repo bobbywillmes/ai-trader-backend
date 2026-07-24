@@ -6,7 +6,11 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import {
   buildSubscriptionCatalogMigrationDiagnostic,
   type LegacySubscriptionMapping,
+  type MigrationDiagnosticLifecycleReference,
 } from "../src/services/subscription-catalog-migration-diagnostic.js";
+import { buildCuratedSubscriptionKeys } from "../src/types/subscriptionTemplates.js";
+import type { SeedSecurity } from "../src/types/securities.js";
+import securitiesData from "../src/db/securities.json" with { type: "json" };
 
 const databaseUrl = process.env.DATABASE_URL?.trim();
 if (!databaseUrl) {
@@ -22,14 +26,35 @@ async function main() {
     select: {
       id: true,
       displayName: true,
+      broker: true,
       environment: true,
       maxDeployableNotional: true,
+      riskSettings: {
+        select: {
+          enabled: true,
+          maxDailyEntryOrders: true,
+          maxDailyEntryNotional: true,
+          maxOpenPositions: true,
+          maxTotalOpenNotional: true,
+          maxSymbolOpenNotional: true,
+          maxSubscriptionOpenNotional: true,
+        },
+      },
     },
     orderBy: { id: "asc" },
   });
 
   const legacySubscriptions = await prisma.$queryRaw<LegacySubscriptionMapping[]>`
-    SELECT id, "tradingAccountId", enabled, key
+    SELECT
+      id,
+      key,
+      "tradingAccountId",
+      enabled,
+      broker,
+      "brokerMode",
+      "sizingType",
+      "sizingValue",
+      "sizingValue"::text AS "sizingValueRaw"
     FROM "Subscription"
     WHERE "tradingAccountId" IS NOT NULL
     ORDER BY id ASC
@@ -70,15 +95,90 @@ async function main() {
     orderBy: { id: "asc" },
   });
 
+  const [orderIntents, trackedPositions, entryDecisions] = await Promise.all([
+    prisma.orderIntent.findMany({
+      where: { tradingAccountSubscriptionId: { not: null } },
+      select: {
+        id: true,
+        tradingAccountSubscriptionId: true,
+        tradingAccountId: true,
+        subscriptionId: true,
+      },
+    }),
+    prisma.trackedPosition.findMany({
+      where: { tradingAccountSubscriptionId: { not: null } },
+      select: {
+        id: true,
+        tradingAccountSubscriptionId: true,
+        tradingAccountId: true,
+        subscriptionId: true,
+      },
+    }),
+    prisma.entryDecision.findMany({
+      where: { tradingAccountSubscriptionId: { not: null } },
+      select: {
+        id: true,
+        tradingAccountSubscriptionId: true,
+        tradingAccountId: true,
+        subscriptionId: true,
+      },
+    }),
+  ]);
+
+  const lifecycleReferences: MigrationDiagnosticLifecycleReference[] = [
+    ...orderIntents.map((record) => ({
+      model: "OrderIntent" as const,
+      id: record.id,
+      tradingAccountSubscriptionId: record.tradingAccountSubscriptionId!,
+      tradingAccountId: record.tradingAccountId,
+      subscriptionId: record.subscriptionId,
+    })),
+    ...trackedPositions.map((record) => ({
+      model: "TrackedPosition" as const,
+      id: record.id,
+      tradingAccountSubscriptionId: record.tradingAccountSubscriptionId!,
+      tradingAccountId: record.tradingAccountId,
+      subscriptionId: record.subscriptionId,
+    })),
+    ...entryDecisions.map((record) => ({
+      model: "EntryDecision" as const,
+      id: record.id,
+      tradingAccountSubscriptionId: record.tradingAccountSubscriptionId!,
+      tradingAccountId: record.tradingAccountId,
+      subscriptionId: record.subscriptionId,
+    })),
+  ];
+
+  const expectedBobbyPaperKeys = buildCuratedSubscriptionKeys(
+    securitiesData as SeedSecurity[]
+  );
+
   const result = buildSubscriptionCatalogMigrationDiagnostic({
     accounts,
     legacySubscriptions,
     assignments,
+    expectedBobbyPaperKeys,
+    lifecycleReferences,
   });
 
-  console.log(JSON.stringify({ accounts, ...result }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        conclusions: {
+          schemaDropSafe: result.schemaDropSafe,
+          productionBaselineValid: result.productionBaselineValid,
+          runtimeEntryReady: result.runtimeEntryReady,
+          overallDiagnosticPassed: result.overallDiagnosticPassed,
+        },
+        accounts,
+        ...result,
+      },
+      null,
+      2
+    )
+  );
 
-  if (!result.productionBaselineValid || !result.entryConfigurationValid) {
+  if (!result.overallDiagnosticPassed) {
     process.exitCode = 1;
   }
 }
