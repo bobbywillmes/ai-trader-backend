@@ -24,6 +24,43 @@ const prisma = new PrismaClient({
 });
 
 async function main() {
+  const [allocationOwnershipConstraint] = await prisma.$queryRaw<
+    { constraintName: string; constraintDefinition: string }[]
+  >`
+    SELECT
+      constraint_name AS "constraintName",
+      pg_get_constraintdef(pg_constraint.oid) AS "constraintDefinition"
+    FROM information_schema.table_constraints
+    INNER JOIN pg_constraint
+      ON pg_constraint.conname = constraint_name
+      AND pg_constraint.conrelid = '"TradingAccountSubscription"'::regclass
+    WHERE table_schema = current_schema()
+      AND table_name = 'TradingAccountSubscription'
+      AND constraint_name =
+        'TradingAccountSubscription_allocationId_tradingAccountId_fkey'
+  `;
+  const [{ invalidAllocationOwnershipCount }] = await prisma.$queryRaw<
+    { invalidAllocationOwnershipCount: bigint }[]
+  >`
+    SELECT COUNT(*) AS "invalidAllocationOwnershipCount"
+    FROM "TradingAccountSubscription" AS assignment
+    LEFT JOIN "TradingAccountAllocation" AS allocation
+      ON allocation.id = assignment."allocationId"
+    WHERE assignment."allocationId" IS NOT NULL
+      AND (
+        allocation.id IS NULL
+        OR allocation."tradingAccountId" <> assignment."tradingAccountId"
+      )
+  `;
+  const allocationOwnershipIntegrity = {
+    databaseConstraintPresent: allocationOwnershipConstraint !== undefined,
+    constraintName: allocationOwnershipConstraint?.constraintName ?? null,
+    constraintDefinition:
+      allocationOwnershipConstraint?.constraintDefinition ?? null,
+    currentDataValid: invalidAllocationOwnershipCount === 0n,
+    invalidReferenceCount: Number(invalidAllocationOwnershipCount),
+  };
+
   const subscriptionColumns = await prisma.$queryRaw<{ columnName: string }[]>`
     SELECT column_name AS "columnName"
     FROM information_schema.columns
@@ -48,6 +85,7 @@ async function main() {
             runtimeEntryReady: null,
             overallDiagnosticPassed: false,
           },
+          allocationOwnershipIntegrity,
           gateEvaluation: {
             schemaDropSafe:
               "FAILED: exact legacy-to-assignment fidelity cannot be reconstructed after source columns are removed.",
@@ -278,6 +316,7 @@ async function main() {
           runtimeEntryReady: result.runtimeEntryReady,
           overallDiagnosticPassed: result.overallDiagnosticPassed,
         },
+        allocationOwnershipIntegrity,
         accounts,
         ...result,
       },

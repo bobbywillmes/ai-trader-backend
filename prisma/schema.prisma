@@ -292,12 +292,13 @@ model TradingAccountAllocation {
 
   notes String?
 
-  accountSubscriptions    TradingAccountSubscription[]
+  accountSubscriptions    TradingAccountSubscription[] @relation("TradingAccountAllocationSubscriptions")
 
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 
   @@unique([tradingAccountId, key])
+  @@unique([id, tradingAccountId], map: "TradingAccountAllocation_id_tradingAccountId_key")
   @@index([tradingAccountId])
   @@index([enabled])
 }
@@ -312,7 +313,7 @@ model TradingAccountSubscription {
   subscription          Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 
   allocationId          Int?
-  allocation            TradingAccountAllocation? @relation(fields: [allocationId], references: [id], onDelete: SetNull)
+  allocation            TradingAccountAllocation? @relation("TradingAccountAllocationSubscriptions", fields: [allocationId, tradingAccountId], references: [id, tradingAccountId], onDelete: Restrict, onUpdate: Restrict)
 
   // Master account-subscription switch.
   enabled               Boolean @default(true)
