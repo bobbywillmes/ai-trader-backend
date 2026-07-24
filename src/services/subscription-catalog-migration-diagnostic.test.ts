@@ -11,6 +11,7 @@ import {
   type LegacySubscriptionMapping,
   type MigrationDiagnosticAccount,
   type MigrationDiagnosticAssignment,
+  type MigrationDiagnosticCatalogEvent,
   type MigrationDiagnosticLifecycleReference,
 } from './subscription-catalog-migration-diagnostic.js';
 
@@ -40,6 +41,7 @@ const live: MigrationDiagnosticAccount = {
   maxDeployableNotional: null,
   riskSettings: null,
 };
+const bootstrapCreatedAt = new Date('2026-06-30T18:57:06.500Z');
 
 function legacy(
   id: number,
@@ -75,6 +77,10 @@ function assignment(
     fixedQty: 1,
     maxPositionNotional: null,
     reservedNotional: null,
+    notes:
+      'Bootstrapped from legacy Subscription sizing fields. Allocation intentionally left unset.',
+    createdAt: bootstrapCreatedAt,
+    updatedAt: bootstrapCreatedAt,
     subscription: {
       key: `subscription-${id}`,
       enabled: false,
@@ -110,6 +116,7 @@ function diagnose(input: {
   assignments?: MigrationDiagnosticAssignment[];
   expectedBobbyPaperKeys?: string[];
   lifecycleReferences?: MigrationDiagnosticLifecycleReference[];
+  catalogEvents?: MigrationDiagnosticCatalogEvent[];
 }) {
   const assignments = input.assignments ?? [assignment(1)];
   return buildSubscriptionCatalogMigrationDiagnostic({
@@ -122,6 +129,7 @@ function diagnose(input: {
         .filter((item) => item.tradingAccountId === paper.id)
         .map((item) => item.subscription.key),
     lifecycleReferences: input.lifecycleReferences ?? [],
+    catalogEvents: input.catalogEvents ?? [],
   });
 }
 
@@ -445,6 +453,200 @@ describe('subscription catalog migration diagnostic', () => {
     expect(result.runtimeEntryReady).toBe(true);
     expect(result.schemaDropSafe).toBe(false);
     expect(result.overallDiagnosticPassed).toBe(false);
+  });
+
+  it('classifies unchanged immediate post-bootstrap state with exact fidelity', () => {
+    const result = diagnose({});
+    expect(result.initialBootstrapFidelityValid).toBe(true);
+    expect(result.legacyMigrationProvenanceValid).toBe(true);
+    expect(result.parityClassifications[0]).toMatchObject({
+      classification: 'UNCHANGED_FROM_BOOTSTRAP',
+    });
+  });
+
+  it('accepts confirmed post-creation divergence without preserving exact parity', () => {
+    const result = diagnose({
+      assignments: [
+        assignment(1, {
+          enabled: true,
+          entriesEnabled: false,
+          updatedAt: new Date('2026-07-02T18:00:00.000Z'),
+        }),
+      ],
+    });
+    expect(result.initialBootstrapFidelityValid).toBe(false);
+    expect(result.parityClassifications[0]).toMatchObject({
+      classification: 'CONFIRMED_POST_CREATION_DIVERGENCE',
+    });
+    expect(result.legacyMigrationProvenanceValid).toBe(true);
+    expect(result.schemaDropSafe).toBe(true);
+  });
+
+  it('accepts likely authorized divergence when the bootstrap note was cleared', () => {
+    const result = diagnose({
+      assignments: [
+        assignment(1, {
+          notes: null,
+          enabled: true,
+          entriesEnabled: false,
+          updatedAt: new Date('2026-07-13T21:45:09.296Z'),
+        }),
+      ],
+    });
+    expect(result.parityClassifications[0]).toMatchObject({
+      classification: 'LIKELY_AUTHORIZED_DIVERGENCE',
+      evidence: {
+        hasBootstrapProvenance: false,
+        updatedAfterCreation: true,
+        currentStateWriterValid: true,
+      },
+    });
+    expect(result.schemaDropSafe).toBe(true);
+  });
+
+  it('rejects unexplained divergence', () => {
+    const result = diagnose({
+      assignments: [
+        assignment(1, { enabled: true, entriesEnabled: false }),
+      ],
+    });
+    expect(result.parityClassifications[0]).toMatchObject({
+      classification: 'UNEXPLAINED',
+    });
+    expect(result.legacyMigrationProvenanceValid).toBe(false);
+    expect(result.schemaDropSafe).toBe(false);
+  });
+
+  it('rejects malformed current sizing independently of entry readiness', () => {
+    const result = diagnose({
+      assignments: [
+        assignment(1, {
+          sizingType: PositionSizingType.MAX_NOTIONAL,
+          fixedQty: 1,
+          maxPositionNotional: 1_000,
+          updatedAt: new Date('2026-07-02T18:00:00.000Z'),
+        }),
+      ],
+    });
+    expect(result.parityClassifications[0]).toMatchObject({
+      classification: 'MALFORMED_CURRENT_STATE',
+      evidence: {
+        currentStateWriterValid: false,
+        currentStateReasons: [
+          'MAX_NOTIONAL_REQUIRES_NULL_FIXED_QTY',
+        ],
+      },
+    });
+    expect(result.runtimeEntryReady).toBe(true);
+    expect(result.schemaDropSafe).toBe(false);
+  });
+
+  it('accepts the established restored-backup provenance shape', () => {
+    const legacies = Array.from({ length: 100 }, (_, index) =>
+      legacy(index + 1)
+    );
+    const assignments = legacies.map((item) => assignment(item.id));
+    const later = new Date('2026-07-18T00:22:38.140Z');
+    const allocation = {
+      id: 10,
+      tradingAccountId: paper.id,
+      key: 'configured',
+      name: 'Configured',
+      enabled: true,
+      maxAllocatedNotional: 100_000,
+      maxOpenPositions: 100,
+      maxPositionNotional: 10_000,
+    };
+
+    for (const id of [1, 2, 3, 4, 5]) {
+      Object.assign(assignments[id - 1]!, {
+        enabled: true,
+        entriesEnabled: true,
+        sizingType: PositionSizingType.MAX_NOTIONAL,
+        fixedQty: null,
+        maxPositionNotional: 2_500,
+        allocationId: allocation.id,
+        allocation,
+        reservedNotional: 2_500,
+        updatedAt: later,
+        subscription: { key: `subscription-${id}`, enabled: true },
+      });
+      legacies[id - 1]!.enabled = true;
+    }
+    for (const id of [6, 7, 8, 9, 10, 11]) {
+      Object.assign(assignments[id - 1]!, {
+        enabled: true,
+        entriesEnabled: true,
+        sizingType: PositionSizingType.MAX_NOTIONAL,
+        fixedQty: null,
+        maxPositionNotional: 1_000,
+        allocationId: allocation.id,
+        allocation,
+        reservedNotional: 1_000,
+        updatedAt: later,
+        subscription: { key: `subscription-${id}`, enabled: true },
+      });
+    }
+    Object.assign(assignments[11]!, {
+      enabled: true,
+      entriesEnabled: true,
+      sizingType: PositionSizingType.MAX_NOTIONAL,
+      fixedQty: null,
+      maxPositionNotional: 1_000,
+      allocationId: allocation.id,
+      allocation,
+      reservedNotional: 1_000,
+      updatedAt: later,
+      subscription: { key: 'subscription-12', enabled: true },
+    });
+    legacies[11]!.enabled = true;
+    for (const id of [13, 14, 15, 16, 17, 18, 19, 20, 21]) {
+      legacies[id - 1]!.enabled = true;
+      Object.assign(assignments[id - 1]!, {
+        enabled: false,
+        entriesEnabled: true,
+        updatedAt: later,
+        subscription: { key: `subscription-${id}`, enabled: true },
+      });
+    }
+    Object.assign(assignments[21]!, {
+      notes: null,
+      enabled: true,
+      entriesEnabled: true,
+      sizingType: PositionSizingType.MAX_NOTIONAL,
+      fixedQty: null,
+      maxPositionNotional: 1_000,
+      allocationId: allocation.id,
+      allocation,
+      reservedNotional: 1_000,
+      updatedAt: later,
+      subscription: { key: 'subscription-22', enabled: true },
+    });
+    legacies[21]!.enabled = true;
+
+    const result = diagnose({
+      legacySubscriptions: legacies,
+      assignments,
+      expectedBobbyPaperKeys: legacies.map((item) => item.key),
+    });
+
+    expect(result.summary).toMatchObject({
+      exactEnablementParityDifferenceCount: 21,
+      exactSizingParityDifferenceCount: 13,
+      uniqueDivergentAssignmentCount: 22,
+    });
+    expect(result.divergenceClassificationCounts).toMatchObject({
+      CONFIRMED_POST_CREATION_DIVERGENCE: 21,
+      LIKELY_AUTHORIZED_DIVERGENCE: 1,
+      UNEXPLAINED: 0,
+      MALFORMED_CURRENT_STATE: 0,
+    });
+    expect(result.initialBootstrapFidelityValid).toBe(false);
+    expect(result.legacyMigrationProvenanceValid).toBe(true);
+    expect(result.schemaDropSafe).toBe(true);
+    expect(result.productionBaselineValid).toBe(true);
+    expect(result.runtimeEntryReady).toBe(true);
+    expect(result.overallDiagnosticPassed).toBe(true);
   });
 
   it.each([
