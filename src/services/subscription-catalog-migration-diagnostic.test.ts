@@ -1,6 +1,7 @@
 import {
   PositionSizingType,
   TradingAccountEnvironment,
+  TradingBroker,
 } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 
@@ -9,27 +10,51 @@ import {
   type LegacySubscriptionMapping,
   type MigrationDiagnosticAccount,
   type MigrationDiagnosticAssignment,
+  type MigrationDiagnosticLifecycleReference,
 } from './subscription-catalog-migration-diagnostic.js';
+
+const completeRiskSettings = {
+  enabled: true,
+  maxDailyEntryOrders: 5,
+  maxDailyEntryNotional: 10_000,
+  maxOpenPositions: 5,
+  maxTotalOpenNotional: 25_000,
+  maxSymbolOpenNotional: 5_000,
+  maxSubscriptionOpenNotional: 5_000,
+};
 
 const paper: MigrationDiagnosticAccount = {
   id: 1,
   displayName: 'Bobby Paper',
+  broker: TradingBroker.ALPACA,
   environment: TradingAccountEnvironment.PAPER,
   maxDeployableNotional: 100_000,
+  riskSettings: completeRiskSettings,
 };
 const live: MigrationDiagnosticAccount = {
   id: 2,
   displayName: 'Bobby Live',
+  broker: TradingBroker.ALPACA,
   environment: TradingAccountEnvironment.LIVE,
   maxDeployableNotional: null,
+  riskSettings: null,
 };
 
-function legacy(id: number): LegacySubscriptionMapping {
+function legacy(
+  id: number,
+  overrides: Partial<LegacySubscriptionMapping> = {}
+): LegacySubscriptionMapping {
   return {
     id,
-    tradingAccountId: paper.id,
-    enabled: true,
     key: `subscription-${id}`,
+    tradingAccountId: paper.id,
+    enabled: false,
+    broker: 'alpaca',
+    brokerMode: 'paper',
+    sizingType: 'fixed_qty',
+    sizingValue: 1,
+    sizingValueRaw: '1',
+    ...overrides,
   };
 }
 
@@ -51,140 +76,359 @@ function assignment(
     reservedNotional: null,
     subscription: {
       key: `subscription-${id}`,
-      enabled: true,
+      enabled: false,
     },
     allocation: null,
     ...overrides,
   };
 }
 
-function diagnose(values: {
-  legacySubscriptions?: LegacySubscriptionMapping[];
-  assignments?: MigrationDiagnosticAssignment[];
-}) {
-  return buildSubscriptionCatalogMigrationDiagnostic({
-    accounts: [paper, live],
-    legacySubscriptions: values.legacySubscriptions ?? [],
-    assignments: values.assignments ?? [],
+function validActiveAssignment(id: number) {
+  return assignment(id, {
+    allocationId: 10,
+    enabled: true,
+    entriesEnabled: true,
+    reservedNotional: 1_000,
+    subscription: { key: `subscription-${id}`, enabled: true },
+    allocation: {
+      id: 10,
+      tradingAccountId: paper.id,
+      key: 'core',
+      name: 'Core',
+      enabled: true,
+      maxAllocatedNotional: 10_000,
+      maxOpenPositions: 5,
+      maxPositionNotional: 2_000,
+    },
   });
 }
 
-describe('buildSubscriptionCatalogMigrationDiagnostic', () => {
-  it('derives and validates all 100 mapped catalog definitions without a fixed expected count', () => {
-    const legacySubscriptions = Array.from({ length: 100 }, (_, index) =>
-      legacy(index + 1)
-    );
-    const assignments = legacySubscriptions.map((item) =>
-      assignment(item.id)
-    );
+function diagnose(input: {
+  accounts?: MigrationDiagnosticAccount[];
+  legacySubscriptions?: LegacySubscriptionMapping[];
+  assignments?: MigrationDiagnosticAssignment[];
+  expectedBobbyPaperKeys?: string[];
+  lifecycleReferences?: MigrationDiagnosticLifecycleReference[];
+}) {
+  const assignments = input.assignments ?? [assignment(1)];
+  return buildSubscriptionCatalogMigrationDiagnostic({
+    accounts: input.accounts ?? [paper, live],
+    legacySubscriptions: input.legacySubscriptions ?? [legacy(1)],
+    assignments,
+    expectedBobbyPaperKeys:
+      input.expectedBobbyPaperKeys ??
+      assignments
+        .filter((item) => item.tradingAccountId === paper.id)
+        .map((item) => item.subscription.key),
+    lifecycleReferences: input.lifecycleReferences ?? [],
+  });
+}
 
-    const result = diagnose({ legacySubscriptions, assignments });
-
-    expect(result.expectedLegacyMappingCount).toBe(100);
-    expect(result.mappedLegacyAssignmentCount).toBe(100);
-    expect(result.bobbyPaperAssignmentCount).toBe(100);
-    expect(result.safeToDropLegacyFields).toBe(true);
-    expect(result.productionBaselineValid).toBe(true);
+describe('subscription catalog migration diagnostic', () => {
+  it('accepts the exact curated 100-key baseline', () => {
+    const legacies = Array.from({ length: 100 }, (_, index) => legacy(index + 1));
+    const assignments = legacies.map((item) => assignment(item.id));
+    const result = diagnose({
+      legacySubscriptions: legacies,
+      assignments,
+      expectedBobbyPaperKeys: legacies.map((item) => item.key),
+    });
+    expect(result.paperCatalogBaseline).toMatchObject({
+      expectedCount: 100,
+      actualCount: 100,
+      missingKeys: [],
+      unexpectedKeys: [],
+      duplicateKeys: [],
+    });
+    expect(result.overallDiagnosticPassed).toBe(true);
   });
 
-  it('allows retired and disabled assignments to retain valid sizing without an allocation', () => {
+  it('rejects a missing expected key plus unrelated extra while count remains 100', () => {
+    const assignments = Array.from({ length: 100 }, (_, index) =>
+      assignment(index + 1)
+    );
+    assignments[99] = assignment(100, {
+      subscription: { key: 'unrelated-extra', enabled: false },
+    });
     const result = diagnose({
-      legacySubscriptions: [legacy(1), legacy(2)],
+      legacySubscriptions: [],
+      assignments,
+      expectedBobbyPaperKeys: Array.from(
+        { length: 100 },
+        (_, index) => `subscription-${index + 1}`
+      ),
+    });
+    expect(result.paperCatalogBaseline.missingKeys).toEqual(['subscription-100']);
+    expect(result.paperCatalogBaseline.unexpectedKeys).toEqual(['unrelated-extra']);
+    expect(result.expectedCatalogBaselineValid).toBe(false);
+  });
+
+  it('rejects an unexpected Bobby Paper assignment', () => {
+    const result = diagnose({
       assignments: [
-        assignment(1, {
-          subscription: { key: 'retired', enabled: false },
-          enabled: true,
-          entriesEnabled: true,
+        assignment(1),
+        assignment(2, { subscription: { key: 'extra', enabled: false } }),
+      ],
+      expectedBobbyPaperKeys: ['subscription-1'],
+    });
+    expect(result.paperCatalogBaseline.unexpectedKeys).toEqual(['extra']);
+  });
+
+  it('rejects Bobby Live assignments', () => {
+    const result = diagnose({
+      assignments: [
+        assignment(1),
+        assignment(2, {
+          tradingAccountId: live.id,
+          subscription: { key: 'live-key', enabled: false },
         }),
-        assignment(2, { enabled: false, entriesEnabled: false }),
       ],
     });
-
-    expect(result.invalidMigratedSizing).toEqual([]);
-    expect(result.entryCapableAssignmentCount).toBe(0);
-    expect(result.entryConfigurationValid).toBe(true);
-    expect(result.safeToDropLegacyFields).toBe(true);
+    expect(result.liveAccountBaselineValid).toBe(false);
+    expect(result.bobbyLiveAssignmentCount).toBe(1);
   });
 
-  it('requires allocation, reservation, sizing, and risk configuration for active entries', () => {
+  it.each([
+    ['Bobby Paper', [live]],
+    ['Bobby Live', [paper]],
+  ])('reports missing %s discovery', (_name, accounts) => {
+    const result = diagnose({ accounts });
+    expect(
+      _name === 'Bobby Paper'
+        ? result.bobbyPaperAccountDiscovery.status
+        : result.bobbyLiveAccountDiscovery.status
+    ).toBe('MISSING');
+    expect(result.productionBaselineValid).toBe(false);
+  });
+
+  it.each([
+    ['Bobby Paper', [paper, { ...paper, id: 3 }]],
+    ['Bobby Live', [live, { ...live, id: 4 }]],
+  ])('reports ambiguous %s discovery', (_name, accounts) => {
+    const result = diagnose({ accounts: accounts as MigrationDiagnosticAccount[] });
+    expect(
+      _name === 'Bobby Paper'
+        ? result.bobbyPaperAccountDiscovery.status
+        : result.bobbyLiveAccountDiscovery.status
+    ).toBe('AMBIGUOUS');
+  });
+
+  it.each([
+    ['enabled', { enabled: true }],
+    ['entriesEnabled', { entriesEnabled: true }],
+    ['exitsEnabled', { exitsEnabled: false }],
+  ])('rejects %s bootstrap-policy mismatch', (field, overrides) => {
+    const result = diagnose({ assignments: [assignment(1, overrides)] });
+    expect(result.legacyEnablementParityValid).toBe(false);
+    expect(result.legacyEnablementMismatches[0]).toMatchObject({ field });
+    expect(result.schemaDropSafe).toBe(false);
+  });
+
+  it.each([
+    [
+      'FIXED_QTY type',
+      legacy(1),
+      assignment(1, {
+        sizingType: PositionSizingType.MAX_NOTIONAL,
+        fixedQty: null,
+        maxPositionNotional: 1,
+      }),
+    ],
+    ['FIXED_QTY value', legacy(1), assignment(1, { fixedQty: 2 })],
+    [
+      'MAX_NOTIONAL type',
+      legacy(1, { sizingType: 'max_notional', sizingValue: 50, sizingValueRaw: '50' }),
+      assignment(1),
+    ],
+    [
+      'MAX_NOTIONAL value',
+      legacy(1, { sizingType: 'max_notional', sizingValue: 50, sizingValueRaw: '50' }),
+      assignment(1, {
+        sizingType: PositionSizingType.MAX_NOTIONAL,
+        fixedQty: null,
+        maxPositionNotional: 51,
+      }),
+    ],
+  ])('rejects %s mismatch', (_name, legacyRow, migrated) => {
     const result = diagnose({
-      legacySubscriptions: [legacy(1)],
-      assignments: [
-        assignment(1, {
-          enabled: true,
-          entriesEnabled: true,
-          fixedQty: null,
-        }),
+      legacySubscriptions: [legacyRow],
+      assignments: [migrated],
+    });
+    expect(result.legacySizingParityValid).toBe(false);
+    expect(result.legacySizingMismatches).toHaveLength(1);
+  });
+
+  it('reports unknown legacy sizing without certifying fallback', () => {
+    const result = diagnose({
+      legacySubscriptions: [
+        legacy(1, { sizingType: 'mystery', sizingValue: 7, sizingValueRaw: '7' }),
       ],
     });
-
-    expect(result.entryConfigurationValid).toBe(false);
-    expect(result.entryConfigurationFailures[0]).toMatchObject({
-      subscriptionKey: 'subscription-1',
-      globalCatalogEnabled: true,
-      enabled: true,
-      entriesEnabled: true,
-      exitsEnabled: true,
-      allocationId: null,
-      allocation: null,
-      reasons: expect.arrayContaining([
-        'ALLOCATION_REQUIRED',
-        'RESERVED_NOTIONAL_REQUIRED',
-        'FIXED_QTY_REQUIRES_POSITIVE_FIXED_QTY',
-      ]),
+    expect(result.unknownLegacySizingConversions[0]).toMatchObject({
+      rawSizingType: 'mystery',
+      rawSizingValue: 7,
+      rawSizingValueText: '7',
     });
+    expect(result.schemaDropSafe).toBe(false);
   });
 
-  it('reports missing legacy mappings with the account and catalog identity', () => {
+  it.each([
+    ['broker', legacy(1, { broker: 'other' })],
+    ['environment', legacy(1, { brokerMode: 'live' })],
+  ])('rejects legacy %s routing mismatch', (_name, legacyRow) => {
+    const result = diagnose({ legacySubscriptions: [legacyRow] });
+    expect(result.legacyRoutingParityValid).toBe(false);
+  });
+
+  it('reports a missing migrated assignment', () => {
     const result = diagnose({
       legacySubscriptions: [legacy(1), legacy(2)],
       assignments: [assignment(1)],
     });
-
-    expect(result.missingLegacyMappings).toEqual([
-      expect.objectContaining({
-        subscriptionId: 2,
-        subscriptionKey: 'subscription-2',
-        legacyTradingAccountId: paper.id,
-        account: paper,
-        enabled: null,
-        entriesEnabled: null,
-        exitsEnabled: null,
-        allocationId: null,
-        allocation: null,
-      }),
-    ]);
+    expect(result.missingLegacyMappings[0]).toMatchObject({ subscriptionId: 2 });
     expect(result.legacyMappingValid).toBe(false);
-    expect(result.safeToDropLegacyFields).toBe(false);
   });
 
-  it('rejects invalid sizing on mapped legacy assignments even when entries are disabled', () => {
+  it('reports duplicate fixture mappings instead of overwriting them', () => {
     const result = diagnose({
-      legacySubscriptions: [legacy(1)],
-      assignments: [assignment(1, { fixedQty: 0 })],
+      assignments: [assignment(1), assignment(2, { id: 2, subscriptionId: 1 })],
     });
-
-    expect(result.invalidMigratedSizing[0]).toMatchObject({
-      subscriptionKey: 'subscription-1',
-      reasons: ['FIXED_QTY_REQUIRES_POSITIVE_FIXED_QTY'],
+    expect(result.duplicateLegacyMappings[0]).toMatchObject({
+      subscriptionId: 1,
+      assignmentIds: [1, 2],
     });
-    expect(result.migratedSizingValid).toBe(false);
-    expect(result.safeToDropLegacyFields).toBe(false);
+    expect(result.legacyMappingValid).toBe(false);
   });
 
-  it('requires Bobby Live to have zero assignments', () => {
+  it('rejects a cross-account allocation on an active assignment', () => {
+    const active = validActiveAssignment(1);
+    active.allocation = { ...active.allocation!, tradingAccountId: live.id };
     const result = diagnose({
+      legacySubscriptions: [legacy(1, { enabled: true })],
+      assignments: [active],
+    });
+    expect(result.entryConfigurationFailures[0]).toMatchObject({
+      reasons: expect.arrayContaining(['ENABLED_SAME_ACCOUNT_ALLOCATION_REQUIRED']),
+    });
+  });
+
+  it('rejects an active null allocation but allows dormant null allocation', () => {
+    const active = assignment(1, {
+      enabled: true,
+      entriesEnabled: true,
+      subscription: { key: 'subscription-1', enabled: true },
+    });
+    expect(
+      diagnose({
+        legacySubscriptions: [legacy(1, { enabled: true })],
+        assignments: [active],
+      }).runtimeEntryReady
+    ).toBe(false);
+    expect(diagnose({}).runtimeEntryReady).toBe(true);
+  });
+
+  it('rejects invalid reservation and aggregate allocation capacity', () => {
+    const first = validActiveAssignment(1);
+    const second = validActiveAssignment(2);
+    first.reservedNotional = 6_000;
+    second.reservedNotional = 6_000;
+    const result = diagnose({
+      legacySubscriptions: [
+        legacy(1, { enabled: true }),
+        legacy(2, { enabled: true }),
+      ],
+      assignments: [first, second],
+      expectedBobbyPaperKeys: ['subscription-1', 'subscription-2'],
+    });
+    expect(result.entryConfigurationFailures).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          reasons: expect.arrayContaining([
+            'RESERVATION_EXCEEDS_ALLOCATION_POSITION_LIMIT',
+            'ALLOCATION_RESERVATIONS_EXCEED_TOTAL',
+          ]),
+        }),
+      ])
+    );
+  });
+
+  it.each([
+    [
+      'account',
+      {
+        model: 'OrderIntent',
+        id: 20,
+        tradingAccountSubscriptionId: 1,
+        tradingAccountId: live.id,
+        subscriptionId: 1,
+      },
+      'TRADING_ACCOUNT_MISMATCH',
+    ],
+    [
+      'subscription',
+      {
+        model: 'TrackedPosition',
+        id: 21,
+        tradingAccountSubscriptionId: 1,
+        tradingAccountId: paper.id,
+        subscriptionId: 99,
+      },
+      'SUBSCRIPTION_MISMATCH',
+    ],
+  ] as const)('rejects lifecycle assignment/%s mismatch', (_name, reference, reason) => {
+    const result = diagnose({
+      lifecycleReferences: [
+        reference as MigrationDiagnosticLifecycleReference,
+      ],
+    });
+    expect(result.lifecycleReferenceFailures[0]).toMatchObject({
+      reasons: [reason],
+    });
+    expect(result.schemaDropSafe).toBe(false);
+  });
+
+  it('can be schema-drop safe while runtime is not ready', () => {
+    const result = diagnose({
+      legacySubscriptions: [legacy(1, { enabled: true })],
       assignments: [
         assignment(1, {
-          tradingAccountId: live.id,
-          subscriptionId: 20,
-          subscription: { key: 'live-assignment', enabled: false },
+          enabled: true,
+          entriesEnabled: true,
+          subscription: { key: 'subscription-1', enabled: true },
         }),
       ],
     });
+    expect(result.schemaDropSafe).toBe(true);
+    expect(result.runtimeEntryReady).toBe(false);
+    expect(result.overallDiagnosticPassed).toBe(false);
+  });
 
-    expect(result.bobbyLiveAssignmentCount).toBe(1);
-    expect(result.bobbyLiveAssignmentsValid).toBe(false);
-    expect(result.productionBaselineValid).toBe(false);
+  it('can be runtime ready while schema drop is unsafe', () => {
+    const result = diagnose({
+      legacySubscriptions: [legacy(1, { sizingType: 'unknown' })],
+    });
+    expect(result.runtimeEntryReady).toBe(true);
+    expect(result.schemaDropSafe).toBe(false);
+    expect(result.overallDiagnosticPassed).toBe(false);
+  });
+
+  it.each([
+    ['schema', { legacySubscriptions: [legacy(1, { sizingType: 'unknown' })] }],
+    ['baseline', { accounts: [paper] }],
+    [
+      'runtime',
+      {
+        legacySubscriptions: [legacy(1, { enabled: true })],
+        assignments: [
+          assignment(1, {
+            enabled: true,
+            entriesEnabled: true,
+            subscription: { key: 'subscription-1', enabled: true },
+          }),
+        ],
+      },
+    ],
+  ])('makes overall preflight fail when the %s gate fails', (_name, input) => {
+    expect(diagnose(input).overallDiagnosticPassed).toBe(false);
   });
 });
