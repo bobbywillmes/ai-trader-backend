@@ -6,6 +6,7 @@ import { isSystemOwnerRole } from '../types/platform-rbac.js';
 import {
   getTradingAccountForAdmin,
   createTradingAccountForAdmin,
+  deactivateTradingAccountForAdmin,
   getTradingAccountSummaryById,
   listTradingAccountsForAdmin,
   listTradingAccountsForUser,
@@ -43,6 +44,7 @@ import {
   createTradingAccountAllocationSchema,
   createTradingAccountSchema,
   createTradingAccountSubscriptionSchema,
+  deactivateTradingAccountSchema,
   entryRiskPreviewSchema,
   updateTradingAccountRiskSettingsSchema,
   updateTradingAccountSchema,
@@ -66,6 +68,14 @@ function parseTradingAccountId(value: unknown) {
   }
 
   return id;
+}
+
+function requireActorUserId(res: Response) {
+  const user = res.locals.user;
+  if (!user) {
+    throw new HttpError(401, 'Authentication required.');
+  }
+  return user.id;
 }
 
 export async function createTradingAccountController(req: Request, res: Response, next: NextFunction) {
@@ -301,6 +311,41 @@ export async function updateTradingAccountController(
     if (error instanceof ZodError) {
       next(
         new HttpError(400, 'Invalid trading account update request.', error.flatten())
+      );
+      return;
+    }
+
+    next(error);
+  }
+}
+
+export async function deactivateTradingAccountController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const id = parseTradingAccountId(req.params.id);
+    const input = deactivateTradingAccountSchema.parse(req.body);
+    const result = await deactivateTradingAccountForAdmin(
+      id,
+      input,
+      requireActorUserId(res)
+    );
+
+    if (!result) {
+      throw new HttpError(404, 'Trading account not found.');
+    }
+
+    res.status(200).json(result);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      next(
+        new HttpError(
+          400,
+          'Invalid trading account deactivation request.',
+          error.flatten()
+        )
       );
       return;
     }
@@ -705,7 +750,11 @@ export async function upsertTradingAccountCredentialController(
   try {
     const id = parseTradingAccountId(req.params.id);
     const input = upsertTradingAccountCredentialSchema.parse(req.body);
-    const credential = await upsertTradingAccountApiKeyCredential(id, input);
+    const credential = await upsertTradingAccountApiKeyCredential(
+      id,
+      input,
+      requireActorUserId(res)
+    );
 
     if (!credential) {
       throw new HttpError(404, 'Trading account not found.');
@@ -741,7 +790,10 @@ export async function verifyTradingAccountCredentialController(
 ) {
   try {
     const id = parseTradingAccountId(req.params.id);
-    const result = await verifyTradingAccountCredential(id);
+    const result = await verifyTradingAccountCredential(
+      id,
+      requireActorUserId(res)
+    );
 
     if (!result) {
       throw new HttpError(404, 'Trading account not found.');
@@ -769,7 +821,10 @@ export async function revokeTradingAccountCredentialController(
 ) {
   try {
     const id = parseTradingAccountId(req.params.id);
-    const result = await revokeTradingAccountCredential(id);
+    const result = await revokeTradingAccountCredential(
+      id,
+      requireActorUserId(res)
+    );
 
     if (!result) {
       throw new HttpError(404, 'Trading account not found.');

@@ -4,10 +4,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PlatformRole } from '@prisma/client';
 import { HttpError } from '../errors/http-error.js';
 
-const mocks = vi.hoisted(() => ({ createTradingAccountController: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  createTradingAccountController: vi.fn(),
+  deactivateTradingAccountController: vi.fn(),
+}));
 
 vi.mock('../controllers/trading-accounts.controller.js', () => ({
   createTradingAccountController: mocks.createTradingAccountController,
+  deactivateTradingAccountController: mocks.deactivateTradingAccountController,
   createTradingAccountAllocationController: vi.fn(),
   createTradingAccountSubscriptionController: vi.fn(),
   deleteTradingAccountSubscriptionController: vi.fn(),
@@ -37,7 +41,15 @@ import tradingAccountsRouter from './trading-accounts.routes.js';
 
 let server: Server | undefined;
 
-async function postAs(platformRole: PlatformRole) {
+async function postAs(
+  platformRole: PlatformRole,
+  path = '/api/trading-accounts',
+  body: unknown = {
+    accountHolderUserId: 1,
+    displayName: 'Bobby Paper',
+    environment: 'PAPER',
+  }
+) {
   const app = express();
   app.use(express.json());
   app.use((_req, res, next) => {
@@ -65,10 +77,10 @@ async function postAs(platformRole: PlatformRole) {
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('Missing test address');
 
-  return fetch(`http://127.0.0.1:${address.port}/api/trading-accounts`, {
+  return fetch(`http://127.0.0.1:${address.port}${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ accountHolderUserId: 1, displayName: 'Bobby Paper', environment: 'PAPER' }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -95,6 +107,40 @@ describe('POST /api/trading-accounts RBAC', () => {
       expect(response.status).toBe(403);
       await expect(response.json()).resolves.toEqual({ message: 'System owner access required.' });
       expect(mocks.createTradingAccountController).not.toHaveBeenCalled();
+    }
+  );
+});
+
+describe('POST /api/trading-accounts/:id/deactivate RBAC', () => {
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server?.close(() => resolve()));
+    server = undefined;
+    vi.clearAllMocks();
+  });
+
+  it('allows a System Owner to deactivate a Trading Account', async () => {
+    mocks.deactivateTradingAccountController.mockImplementation((_req, res) => {
+      res.status(200).json({ after: { status: 'PAUSED' } });
+    });
+    const response = await postAs(
+      PlatformRole.SYSTEM_OWNER,
+      '/api/trading-accounts/1/deactivate',
+      { reason: 'Emergency pause' }
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.deactivateTradingAccountController).toHaveBeenCalledOnce();
+  });
+
+  it.each([PlatformRole.OPERATOR, PlatformRole.ACCOUNT_USER])(
+    'rejects a %s from deactivating a Trading Account',
+    async (platformRole) => {
+      const response = await postAs(
+        platformRole,
+        '/api/trading-accounts/1/deactivate',
+        { reason: 'Attempted pause' }
+      );
+      expect(response.status).toBe(403);
+      expect(mocks.deactivateTradingAccountController).not.toHaveBeenCalled();
     }
   );
 });

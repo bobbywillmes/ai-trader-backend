@@ -6,10 +6,8 @@ import {
   Card,
   Group,
   NumberInput,
-  Select,
   SimpleGrid,
   Stack,
-  Switch,
   Text,
   Textarea,
   TextInput,
@@ -17,7 +15,7 @@ import {
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useUpdateTradingAccount } from "../../../hooks";
-import type { TradingAccount, TradingAccountStatus } from "../../../types";
+import type { TradingAccount } from "../../../types";
 import { actionableErrorMessage } from "../../utils/errors";
 import { formatMoney } from "../../utils/formatters";
 import {
@@ -26,9 +24,9 @@ import {
 } from "../../utils/formValues";
 import type { AccountSettingsDraft } from "./types";
 import {
+  accountStatusColor,
   accountToSettingsDraft,
   settingsDraftChanged,
-  tradingAccountStatusOptions,
 } from "./utils";
 
 export function SafetySettingsCard({
@@ -86,9 +84,6 @@ export function SafetySettingsCard({
           displayName: draft.displayName.trim(),
           estimatedTradingCapital: draft.estimatedTradingCapital,
           maxDeployableNotional: draft.maxDeployableNotional,
-          status: draft.status,
-          tradingEnabled: draft.tradingEnabled,
-          killSwitchEnabled: draft.killSwitchEnabled,
           pausedReason: normalizeOptionalText(draft.pausedReason),
           notes: normalizeOptionalText(draft.notes),
         },
@@ -150,12 +145,39 @@ export function SafetySettingsCard({
           </Group>
         </Group>
 
-        {account.environment === "LIVE" && draft.tradingEnabled && (
-          <Alert color="red" title="Live trading enablement">
-            This would mark a live account as trading-enabled. Credential
-            verification does not turn this on automatically.
-          </Alert>
-        )}
+        <Alert color="blue" title="Operational state is managed separately">
+          Activation and emergency deactivation use dedicated safety operations.
+          Ordinary account editing cannot change status, trading enablement, or
+          the account kill switch. Activation is intentionally unavailable in
+          this phase.
+        </Alert>
+
+        <SimpleGrid cols={{ base: 1, sm: 3 }}>
+          <div>
+            <Text size="xs" c="dimmed">
+              Status
+            </Text>
+            <Badge color={accountStatusColor(account.status)} variant="light">
+              {account.status.replaceAll("_", " ")}
+            </Badge>
+          </div>
+          <div>
+            <Text size="xs" c="dimmed">
+              Automated trading
+            </Text>
+            <Badge color={account.tradingEnabled ? "teal" : "gray"} variant="light">
+              {account.tradingEnabled ? "Enabled" : "Disabled"}
+            </Badge>
+          </div>
+          <div>
+            <Text size="xs" c="dimmed">
+              Kill switch
+            </Text>
+            <Badge color={account.killSwitchEnabled ? "orange" : "teal"} variant="light">
+              {account.killSwitchEnabled ? "Enabled" : "Off"}
+            </Badge>
+          </div>
+        </SimpleGrid>
 
         <SimpleGrid cols={{ base: 1, md: 2 }}>
           <TextInput
@@ -223,71 +245,6 @@ export function SafetySettingsCard({
               account.baseCurrency
             )}.
           </Alert>
-
-          <Select
-            label="Status"
-            data={tradingAccountStatusOptions}
-            value={draft.status}
-            onChange={(value) => {
-              if (!value) return;
-
-              setDraft((current) => ({
-                ...current,
-                status: value as TradingAccountStatus,
-              }));
-            }}
-            disabled={updateMutation.isPending}
-          />
-
-          <Stack gap="sm">
-            <Group justify="space-between" align="flex-start" wrap="nowrap">
-              <div>
-                <Text fw={600} size="sm">
-                  Automated trading
-                </Text>
-                <Text size="sm" c="dimmed">
-                  Account-level master switch for broker-facing automation.
-                </Text>
-              </div>
-              <Switch
-                checked={draft.tradingEnabled}
-                onChange={(event) => {
-                  const checked = event.currentTarget.checked;
-
-                  setDraft((current) => ({
-                    ...current,
-                    tradingEnabled: checked,
-                  }));
-                }}
-                disabled={updateMutation.isPending}
-                color="teal"
-              />
-            </Group>
-
-            <Group justify="space-between" align="flex-start" wrap="nowrap">
-              <div>
-                <Text fw={600} size="sm">
-                  Kill switch
-                </Text>
-                <Text size="sm" c="dimmed">
-                  Blocks new account-scoped broker access when enabled.
-                </Text>
-              </div>
-              <Switch
-                checked={draft.killSwitchEnabled}
-                onChange={(event) => {
-                  const checked = event.currentTarget.checked;
-
-                  setDraft((current) => ({
-                    ...current,
-                    killSwitchEnabled: checked,
-                  }));
-                }}
-                disabled={updateMutation.isPending}
-                color="orange"
-              />
-            </Group>
-          </Stack>
 
           <Textarea
             label="Paused reason"

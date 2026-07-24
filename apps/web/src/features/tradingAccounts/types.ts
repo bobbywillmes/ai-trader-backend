@@ -7,7 +7,7 @@ export type TradingAccountStatus =
   | "PAUSED"
   | "NEEDS_CREDENTIALS"
   | "ERROR"
-  | "ARCHIVED";
+  | "DISABLED";
 
 export type BrokerCredentialStatus =
   | "ACTIVE"
@@ -474,9 +474,6 @@ export type UpdateTradingAccountPayload = Partial<{
   displayName: string;
   estimatedTradingCapital: number | null;
   maxDeployableNotional: number | null;
-  status: TradingAccountStatus;
-  tradingEnabled: boolean;
-  killSwitchEnabled: boolean;
   pausedReason: string | null;
   notes: string | null;
 }>;

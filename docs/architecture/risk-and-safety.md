@@ -74,6 +74,30 @@ Kill Switch On
   = stop opening new positions, but keep the system awake
 ```
 
+### Trading Account Operational Invariant
+
+Account-scoped operational state is constrained in PostgreSQL:
+
+```text
+ACTIVE / tradingEnabled=true / killSwitchEnabled=false
+non-ACTIVE / tradingEnabled=false / killSwitchEnabled=true
+```
+
+The `TradingAccount_operational_state_check` constraint rejects every other
+tuple. Generic Trading Account updates cannot write any of these three fields.
+Owner-only deactivation atomically selects `PAUSED / false / true`, preserves
+credentials and exit configuration, and blocks only queued buy-side entry
+intents. It does not cancel broker orders or modify positions.
+
+Credential replacement requires prior deactivation. Saving or replacing a
+credential on a dormant account atomically selects
+`NEEDS_CREDENTIALS / false / true` and requires verification. Verification
+success selects `PAUSED / false / true`; verification failure and revocation
+also fail closed.
+
+Live activation is intentionally unavailable until authoritative readiness and
+multi-account lifecycle support are implemented.
+
 ### Entry Risk Settings
 
 Global runtime settings are stored in the `Setting` table and managed from the

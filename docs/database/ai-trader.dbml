@@ -35,6 +35,7 @@ Table User {
   setupTokens UserSetupToken [not null]
   heldTradingAccounts TradingAccount [not null]
   tradingAccountMemberships TradingAccountMembership [not null]
+  systemEventsActed SystemEvent [not null]
 }
 
 Table UserSetupToken {
@@ -315,6 +316,8 @@ Table SystemEvent {
   createdAt DateTime [default: `now()`, not null]
   tradingAccountId Int
   tradingAccount TradingAccount
+  actorUserId Int
+  actorUser User
 }
 
 Table WorkerHealthState {
@@ -1038,6 +1041,8 @@ Ref: BrokerOrder.trackedPositionId > TrackedPosition.id [delete: Set Null]
 Ref: BrokerOrder.tradingAccountId > TradingAccount.id [delete: Set Null]
 
 Ref: SystemEvent.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: SystemEvent.actorUserId > User.id [delete: Set Null]
 
 Ref: AlpacaApiUsageBucket.tradingAccountId > TradingAccount.id [delete: Set Null]
 

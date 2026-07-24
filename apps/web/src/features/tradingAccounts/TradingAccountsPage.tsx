@@ -62,7 +62,7 @@ function accountStatusColor(status: TradingAccountStatus) {
       return "orange";
     case "ERROR":
       return "red";
-    case "ARCHIVED":
+    case "DISABLED":
       return "gray";
     default:
       return "gray";

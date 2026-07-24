@@ -98,15 +98,46 @@ Allowed fields:
 displayName
 estimatedTradingCapital
 maxDeployableNotional
-status
-tradingEnabled
-killSwitchEnabled
 pausedReason
 notes
 ```
 
 Identity fields such as `broker` and `environment` are intentionally rejected
-by this generic update endpoint.
+by this generic update endpoint. Operational fields `status`,
+`tradingEnabled`, and `killSwitchEnabled` are also rejected for every role,
+including `SYSTEM_OWNER`. They cannot be used to activate or deactivate an
+account through ordinary editing.
+
+Valid persisted operational tuples are:
+
+```text
+ACTIVE / tradingEnabled=true / killSwitchEnabled=false
+any non-ACTIVE status / tradingEnabled=false / killSwitchEnabled=true
+```
+
+Activation is intentionally unavailable until the readiness and multi-account
+lifecycle phases are complete.
+
+## Deactivate Account
+
+```http
+POST /api/trading-accounts/:id/deactivate
+```
+
+This operation is restricted to `SYSTEM_OWNER` and requires:
+
+```json
+{
+  "reason": "Emergency pause"
+}
+```
+
+It uses one serializable transaction to set the account to
+`PAUSED / false / true`, block pending buy-side entry intents, and record
+`trading_account.deactivated`. It is idempotent for an already safely paused
+account. Credentials, assignment exit permissions, broker orders, and open
+positions are preserved. The operation does not revoke credentials, cancel
+broker orders, or alter positions.
 
 ## Manage Account Risk Settings
 
@@ -824,7 +855,13 @@ Payload:
 
 The backend encrypts the submitted key and secret before storage, stores a
 non-secret API-key fingerprint, marks the credential `NEEDS_VERIFICATION`, and
-clears prior verification failure or revocation metadata.
+clears prior verification/use/failure or revocation metadata. Credential save
+or replacement is atomic with the account transition to
+`NEEDS_CREDENTIALS / false / true`.
+
+Credential creation or replacement is rejected with `409` while the account is
+`ACTIVE`. Deactivate the account first so active broker access cannot be
+silently replaced.
 
 Do not log plaintext submitted credentials.
 
@@ -847,7 +884,7 @@ sets credential status to ACTIVE
 sets verifiedAt
 clears lastFailedAt and revokedAt
 syncs broker account metadata and balances
-moves NEEDS_CREDENTIALS or ERROR accounts to PAUSED
+sets account status to PAUSED
 keeps tradingEnabled=false
 keeps killSwitchEnabled=true
 ```
@@ -872,6 +909,12 @@ POST /api/trading-accounts/:id/credentials/revoke
 Revocation does not delete the credential row. It marks the credential
 `REVOKED`, sets `revokedAt`, disables trading for the account, enables the
 account kill switch, and moves the account to `NEEDS_CREDENTIALS`.
+
+Credential save, replacement, verification success/failure, and revocation are
+transactional with their account safety state and audit event. Audit payloads
+contain actor/account IDs, safe before/after states, credential ID and
+fingerprint metadata, and changed fields. They never contain plaintext,
+ciphertext, or broker authentication headers.
 
 ## Admin UI Workflow
 
@@ -1047,8 +1090,9 @@ saved, the UI clears the submitted key and secret and displays only the safe
 credential summary returned by the backend.
 
 Credential verification does not enable trading or disable the kill switch.
-Those safety controls must be changed separately through the safe account
-settings form.
+The ordinary account settings form displays operational state read-only.
+Activation and emergency deactivation are dedicated safety operations; no
+activation operation is available in this phase.
 
 ## Safety Notes
 

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   listTradingAccountsForAdmin: vi.fn(),
   listTradingAccountsForUser: vi.fn(),
   updateTradingAccountForAdmin: vi.fn(),
+  deactivateTradingAccountForAdmin: vi.fn(),
   getNormalizedOpenOrders: vi.fn(),
   getOpenTrackedPositionsForTradingAccount: vi.fn(),
   listTradeCyclesForTradingAccount: vi.fn(),
@@ -24,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   getTradingAccountSubscriptionForAdmin: vi.fn(),
   listTradingAccountSubscriptionsForAdmin: vi.fn(),
   updateTradingAccountSubscriptionForAdmin: vi.fn(),
+  deleteTradingAccountSubscriptionForAdmin: vi.fn(),
   getAccountSubscriptionPriceHistoryForAdmin: vi.fn(),
   listAccountSubscriptionMarketContextForAdmin: vi.fn(),
 }));
@@ -44,6 +46,7 @@ vi.mock('../services/trading-account.service.js', () => ({
   listTradingAccountsForAdmin: mocks.listTradingAccountsForAdmin,
   listTradingAccountsForUser: mocks.listTradingAccountsForUser,
   updateTradingAccountForAdmin: mocks.updateTradingAccountForAdmin,
+  deactivateTradingAccountForAdmin: mocks.deactivateTradingAccountForAdmin,
 }));
 
 vi.mock('../services/orders.service.js', () => ({
@@ -92,6 +95,8 @@ vi.mock('../services/trading-account-subscription.service.js', () => ({
     mocks.listTradingAccountSubscriptionsForAdmin,
   updateTradingAccountSubscriptionForAdmin:
     mocks.updateTradingAccountSubscriptionForAdmin,
+  deleteTradingAccountSubscriptionForAdmin:
+    mocks.deleteTradingAccountSubscriptionForAdmin,
 }));
 
 vi.mock('../services/account-subscription-market-context.service.js', async () => {
@@ -112,6 +117,7 @@ vi.mock('../services/account-subscription-market-context.service.js', async () =
 import {
   createTradingAccountAllocationController,
   createTradingAccountSubscriptionController,
+  deactivateTradingAccountController,
   getTradingAccountRiskHealthController,
   getTradingAccountRiskSettingsController,
   getTradingAccountSubscriptionPriceHistoryController,
@@ -138,6 +144,16 @@ function response() {
   const res = {
     status: vi.fn(),
     json: vi.fn(),
+    locals: {
+      user: {
+        id: 7,
+        email: 'owner@example.com',
+        platformRole: 'SYSTEM_OWNER',
+        enabled: true,
+        createdAt: new Date('2026-07-24T00:00:00.000Z'),
+        updatedAt: new Date('2026-07-24T00:00:00.000Z'),
+      },
+    },
   };
 
   res.status.mockReturnValue(res);
@@ -177,6 +193,19 @@ describe('trading accounts controller', () => {
       id: 50,
       tradingAccountId: 1,
       enabled: true,
+    });
+    mocks.deactivateTradingAccountForAdmin.mockResolvedValue({
+      before: {
+        status: 'ACTIVE',
+        tradingEnabled: true,
+        killSwitchEnabled: false,
+      },
+      after: {
+        status: 'PAUSED',
+        tradingEnabled: false,
+        killSwitchEnabled: true,
+      },
+      affectedPendingEntryIntentCount: 1,
     });
     mocks.getTradingAccountRiskHealth.mockResolvedValue({
       tradingAccountId: 1,
@@ -535,9 +564,6 @@ describe('trading accounts controller', () => {
         },
         body: {
           displayName: 'Updated Paper',
-          status: 'PAUSED',
-          tradingEnabled: false,
-          killSwitchEnabled: true,
           estimatedTradingCapital: '25000',
           pausedReason: 'credential rotation',
           notes: null,
@@ -549,15 +575,62 @@ describe('trading accounts controller', () => {
 
     expect(mocks.updateTradingAccountForAdmin).toHaveBeenCalledWith(1, {
       displayName: 'Updated Paper',
-      status: 'PAUSED',
-      tradingEnabled: false,
-      killSwitchEnabled: true,
       estimatedTradingCapital: 25_000,
       pausedReason: 'credential rotation',
       notes: null,
     });
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ account: { id: 1 } });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it.each(['status', 'tradingEnabled', 'killSwitchEnabled'])(
+    'rejects operational field %s in the generic update pathway',
+    async (field) => {
+      const res = response();
+      const next = vi.fn() as NextFunction;
+
+      await updateTradingAccountController(
+        {
+          params: { id: '1' },
+          body: {
+            displayName: 'Attempted bypass',
+            [field]: field === 'status' ? 'ACTIVE' : true,
+          },
+        } as unknown as Request,
+        res,
+        next
+      );
+
+      expect(mocks.updateTradingAccountForAdmin).not.toHaveBeenCalled();
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusCode: 400,
+          message: 'Invalid trading account update request.',
+        })
+      );
+    }
+  );
+
+  it('deactivates a trading account with the authenticated owner as actor', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await deactivateTradingAccountController(
+      {
+        params: { id: '1' },
+        body: { reason: 'Emergency pause' },
+      } as unknown as Request,
+      res,
+      next
+    );
+
+    expect(mocks.deactivateTradingAccountForAdmin).toHaveBeenCalledWith(
+      1,
+      { reason: 'Emergency pause' },
+      7
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
     expect(next).not.toHaveBeenCalled();
   });
 
@@ -1777,11 +1850,15 @@ describe('trading accounts controller', () => {
       next
     );
 
-    expect(mocks.upsertTradingAccountApiKeyCredential).toHaveBeenCalledWith(1, {
-      authType: 'API_KEY',
-      apiKey: 'plain-key',
-      apiSecret: 'plain-secret',
-    });
+    expect(mocks.upsertTradingAccountApiKeyCredential).toHaveBeenCalledWith(
+      1,
+      {
+        authType: 'API_KEY',
+        apiKey: 'plain-key',
+        apiSecret: 'plain-secret',
+      },
+      7
+    );
     expect(res.status).toHaveBeenCalledWith(200);
     expect(JSON.stringify(res.json.mock.calls[0]?.[0])).not.toContain(
       'plain-secret'
@@ -1818,11 +1895,15 @@ describe('trading accounts controller', () => {
       next
     );
 
-    expect(mocks.upsertTradingAccountApiKeyCredential).toHaveBeenCalledWith(1, {
-      authType: 'API_KEY',
-      apiKey: 'plain-key',
-      apiSecret: 'plain-secret',
-    });
+    expect(mocks.upsertTradingAccountApiKeyCredential).toHaveBeenCalledWith(
+      1,
+      {
+        authType: 'API_KEY',
+        apiKey: 'plain-key',
+        apiSecret: 'plain-secret',
+      },
+      7
+    );
   });
 
   it('rejects unsupported credential auth types', async () => {
@@ -1894,7 +1975,7 @@ describe('trading accounts controller', () => {
       next
     );
 
-    expect(mocks.verifyTradingAccountCredential).toHaveBeenCalledWith(1);
+    expect(mocks.verifyTradingAccountCredential).toHaveBeenCalledWith(1, 7);
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ account: { id: 1 } });
     expect(next).not.toHaveBeenCalled();
@@ -1973,7 +2054,7 @@ describe('trading accounts controller', () => {
       next
     );
 
-    expect(mocks.revokeTradingAccountCredential).toHaveBeenCalledWith(1);
+    expect(mocks.revokeTradingAccountCredential).toHaveBeenCalledWith(1, 7);
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({
       revoked: true,

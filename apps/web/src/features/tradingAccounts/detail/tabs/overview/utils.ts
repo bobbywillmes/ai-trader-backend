@@ -6,17 +6,6 @@ import type {
 } from "../../../types";
 import type { AccountSettingsDraft } from "./types";
 
-export const tradingAccountStatusOptions: {
-  value: TradingAccountStatus;
-  label: string;
-}[] = [
-  { value: "ACTIVE", label: "Active" },
-  { value: "PAUSED", label: "Paused" },
-  { value: "NEEDS_CREDENTIALS", label: "Needs credentials" },
-  { value: "ERROR", label: "Error" },
-  { value: "ARCHIVED", label: "Archived" },
-];
-
 export function accountToSettingsDraft(
   account: TradingAccount
 ): AccountSettingsDraft {
@@ -24,9 +13,6 @@ export function accountToSettingsDraft(
     displayName: account.displayName,
     estimatedTradingCapital: account.estimatedTradingCapital,
     maxDeployableNotional: account.maxDeployableNotional,
-    status: account.status,
-    tradingEnabled: account.tradingEnabled,
-    killSwitchEnabled: account.killSwitchEnabled,
     pausedReason: account.pausedReason ?? "",
     notes: account.notes ?? "",
   };
@@ -40,9 +26,6 @@ export function settingsDraftChanged(
     account.displayName !== draft.displayName ||
     account.estimatedTradingCapital !== draft.estimatedTradingCapital ||
     account.maxDeployableNotional !== draft.maxDeployableNotional ||
-    account.status !== draft.status ||
-    account.tradingEnabled !== draft.tradingEnabled ||
-    account.killSwitchEnabled !== draft.killSwitchEnabled ||
     (account.pausedReason ?? "") !== draft.pausedReason ||
     (account.notes ?? "") !== draft.notes
   );
@@ -58,7 +41,7 @@ export function accountStatusColor(status: TradingAccountStatus) {
       return "orange";
     case "ERROR":
       return "red";
-    case "ARCHIVED":
+    case "DISABLED":
       return "gray";
     default:
       return "gray";

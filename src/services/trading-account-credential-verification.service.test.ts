@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   tradingAccountFindUnique: vi.fn(),
   tradingAccountCredentialUpdate: vi.fn(),
   tradingAccountUpdate: vi.fn(),
+  tradingAccountCredentialUpdateMany: vi.fn(),
+  systemEventCreate: vi.fn(),
   transaction: vi.fn(),
   getNormalizedAccount: vi.fn(),
   getTradingAccountForAdmin: vi.fn(),
@@ -21,6 +23,10 @@ vi.mock('../db/prisma.js', () => ({
     },
     tradingAccountCredential: {
       update: mocks.tradingAccountCredentialUpdate,
+      updateMany: mocks.tradingAccountCredentialUpdateMany,
+    },
+    systemEvent: {
+      create: mocks.systemEventCreate,
     },
     $transaction: mocks.transaction,
   },
@@ -42,10 +48,14 @@ describe('trading account credential verification service', () => {
     mocks.tradingAccountFindUnique.mockResolvedValue({
       id: 1,
       status: TradingAccountStatus.NEEDS_CREDENTIALS,
+      tradingEnabled: false,
+      killSwitchEnabled: true,
       credential: {
         id: 10,
         status: BrokerCredentialStatus.NEEDS_VERIFICATION,
+        keyFingerprint: 'sha256:fingerprint',
         revokedAt: null,
+        updatedAt: new Date('2026-07-24T00:00:00.000Z'),
       },
     });
     mocks.getNormalizedAccount.mockResolvedValue({
@@ -66,11 +76,26 @@ describe('trading account credential verification service', () => {
       tradingBlocked: false,
     });
     mocks.getTradingAccountForAdmin.mockResolvedValue({ id: 1 });
-    mocks.transaction.mockResolvedValue([]);
+    mocks.systemEventCreate.mockResolvedValue({ id: 100 });
+    mocks.transaction.mockImplementation(
+      (operation: (tx: unknown) => Promise<unknown>) =>
+        operation({
+          tradingAccount: {
+            findUnique: mocks.tradingAccountFindUnique,
+            update: mocks.tradingAccountUpdate,
+          },
+          tradingAccountCredential: {
+            update: mocks.tradingAccountCredentialUpdate,
+          },
+          systemEvent: {
+            create: mocks.systemEventCreate,
+          },
+        })
+    );
   });
 
   it('marks credentials active and syncs broker account metadata on success', async () => {
-    await expect(verifyTradingAccountCredential(1)).resolves.toEqual({
+    await expect(verifyTradingAccountCredential(1, 7)).resolves.toEqual({
       ok: true,
       account: { id: 1 },
     });
@@ -111,13 +136,20 @@ describe('trading account credential verification service', () => {
         baseCurrency: 'USD',
       }),
     });
+    expect(mocks.systemEventCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        type: 'trading_account.credential_verified',
+        actorUserId: 7,
+        tradingAccountId: 1,
+      }),
+    });
   });
 
   it('marks credentials invalid and keeps trading disabled on verification failure', async () => {
     mocks.getNormalizedAccount.mockRejectedValue(new Error('401 secret rejected'));
     mocks.getTradingAccountForAdmin.mockResolvedValue({ id: 1, status: 'ERROR' });
 
-    await expect(verifyTradingAccountCredential(1)).resolves.toEqual({
+    await expect(verifyTradingAccountCredential(1, 7)).resolves.toEqual({
       ok: false,
       message:
         'Broker credential verification failed. Check the submitted Alpaca credentials and account environment.',
@@ -138,6 +170,13 @@ describe('trading account credential verification service', () => {
         killSwitchEnabled: true,
       },
     });
+    expect(mocks.systemEventCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        type: 'trading_account.credential_verification_failed',
+        actorUserId: 7,
+        tradingAccountId: 1,
+      }),
+    });
   });
 
   it('returns null when the trading account is missing', async () => {
@@ -151,6 +190,8 @@ describe('trading account credential verification service', () => {
     mocks.tradingAccountFindUnique.mockResolvedValue({
       id: 1,
       status: TradingAccountStatus.ACTIVE,
+      tradingEnabled: true,
+      killSwitchEnabled: false,
       credential: null,
     });
     mocks.getTradingAccountForAdmin.mockResolvedValue({ id: 1 });
