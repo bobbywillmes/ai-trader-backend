@@ -7,6 +7,7 @@ import {
   assessLegacySubscriptionSourceColumns,
   buildSubscriptionCatalogMigrationDiagnostic,
   type LegacySubscriptionMapping,
+  type MigrationDiagnosticCatalogEvent,
   type MigrationDiagnosticLifecycleReference,
 } from "../src/services/subscription-catalog-migration-diagnostic.js";
 import { buildCuratedSubscriptionKeys } from "../src/types/subscriptionTemplates.js";
@@ -118,6 +119,9 @@ async function main() {
       fixedQty: true,
       maxPositionNotional: true,
       reservedNotional: true,
+      notes: true,
+      createdAt: true,
+      updatedAt: true,
       subscription: {
         select: {
           key: true,
@@ -140,7 +144,8 @@ async function main() {
     orderBy: { id: "asc" },
   });
 
-  const [orderIntents, trackedPositions, entryDecisions] = await Promise.all([
+  const [orderIntents, trackedPositions, entryDecisions, catalogSystemEvents] =
+    await Promise.all([
     prisma.orderIntent.findMany({
       where: { tradingAccountSubscriptionId: { not: null } },
       select: {
@@ -167,6 +172,17 @@ async function main() {
         tradingAccountId: true,
         subscriptionId: true,
       },
+    }),
+    prisma.systemEvent.findMany({
+      where: { entityType: "subscription" },
+      select: {
+        id: true,
+        entityId: true,
+        type: true,
+        createdAt: true,
+        payloadJson: true,
+      },
+      orderBy: { createdAt: "asc" },
     }),
   ]);
 
@@ -197,6 +213,48 @@ async function main() {
   const expectedBobbyPaperKeys = buildCuratedSubscriptionKeys(
     securitiesData as SeedSecurity[]
   );
+  const catalogEvents: MigrationDiagnosticCatalogEvent[] =
+    catalogSystemEvents.map((event) => {
+      const payload =
+        typeof event.payloadJson === "object" &&
+        event.payloadJson !== null &&
+        !Array.isArray(event.payloadJson)
+          ? event.payloadJson
+          : {};
+      const subscriptionId = Number(
+        payload.subscriptionId ?? event.entityId
+      );
+      return {
+        id: event.id,
+        subscriptionId:
+          Number.isInteger(subscriptionId) && subscriptionId > 0
+            ? subscriptionId
+            : null,
+        subscriptionKey:
+          typeof payload.subscriptionKey === "string"
+            ? payload.subscriptionKey
+            : null,
+        createdAt: event.createdAt,
+        eventType: event.type,
+        changedFields: Array.isArray(payload.changedFields)
+          ? payload.changedFields.filter(
+              (field): field is string => typeof field === "string"
+            )
+          : [],
+        before:
+          typeof payload.before === "object" &&
+          payload.before !== null &&
+          !Array.isArray(payload.before)
+            ? payload.before
+            : null,
+        after:
+          typeof payload.after === "object" &&
+          payload.after !== null &&
+          !Array.isArray(payload.after)
+            ? payload.after
+            : null,
+      };
+    });
 
   const result = buildSubscriptionCatalogMigrationDiagnostic({
     accounts,
@@ -204,6 +262,7 @@ async function main() {
     assignments,
     expectedBobbyPaperKeys,
     lifecycleReferences,
+    catalogEvents,
   });
 
   console.log(
@@ -211,6 +270,10 @@ async function main() {
       {
         conclusions: {
           schemaDropSafe: result.schemaDropSafe,
+          initialBootstrapFidelityValid:
+            result.initialBootstrapFidelityValid,
+          legacyMigrationProvenanceValid:
+            result.legacyMigrationProvenanceValid,
           productionBaselineValid: result.productionBaselineValid,
           runtimeEntryReady: result.runtimeEntryReady,
           overallDiagnosticPassed: result.overallDiagnosticPassed,

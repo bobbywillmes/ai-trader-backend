@@ -84,12 +84,42 @@ export type MigrationDiagnosticAssignment = {
   fixedQty: number | null;
   maxPositionNotional: number | null;
   reservedNotional: number | null;
+  notes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
   subscription: {
     key: string;
     enabled: boolean;
   };
   allocation: MigrationDiagnosticAllocation | null;
 };
+
+export type MigrationDiagnosticCatalogEvent = {
+  id: number;
+  subscriptionId: number | null;
+  subscriptionKey: string | null;
+  createdAt: Date;
+  eventType: string;
+  changedFields: string[];
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+};
+
+export const MIGRATION_DIVERGENCE_CLASSIFICATIONS = {
+  UNCHANGED_FROM_BOOTSTRAP: 'UNCHANGED_FROM_BOOTSTRAP',
+  CONFIRMED_POST_CREATION_DIVERGENCE:
+    'CONFIRMED_POST_CREATION_DIVERGENCE',
+  LIKELY_AUTHORIZED_DIVERGENCE: 'LIKELY_AUTHORIZED_DIVERGENCE',
+  PREEXISTING_ASSIGNMENT_SKIPPED_BY_BOOTSTRAP:
+    'PREEXISTING_ASSIGNMENT_SKIPPED_BY_BOOTSTRAP',
+  LEGACY_SIDE_CHANGED_AFTER_ASSIGNMENT:
+    'LEGACY_SIDE_CHANGED_AFTER_ASSIGNMENT',
+  UNEXPLAINED: 'UNEXPLAINED',
+  MALFORMED_CURRENT_STATE: 'MALFORMED_CURRENT_STATE',
+} as const;
+
+export type MigrationDivergenceClassification =
+  (typeof MIGRATION_DIVERGENCE_CLASSIFICATIONS)[keyof typeof MIGRATION_DIVERGENCE_CLASSIFICATIONS];
 
 export type MigrationDiagnosticLifecycleReference = {
   model: 'OrderIntent' | 'TrackedPosition' | 'EntryDecision';
@@ -245,12 +275,72 @@ function completeRiskSettings(settings: MigrationDiagnosticRiskSettings | null) 
   );
 }
 
+function currentSizingStateReasons(assignment: MigrationDiagnosticAssignment) {
+  if (assignment.sizingType === PositionSizingType.FIXED_QTY) {
+    return [
+      ...(!isPositive(assignment.fixedQty)
+        ? ['FIXED_QTY_REQUIRES_POSITIVE_FIXED_QTY']
+        : []),
+      ...(assignment.maxPositionNotional !== null
+        ? ['FIXED_QTY_REQUIRES_NULL_MAX_POSITION_NOTIONAL']
+        : []),
+    ];
+  }
+  if (assignment.sizingType === PositionSizingType.MAX_NOTIONAL) {
+    return [
+      ...(!isPositive(assignment.maxPositionNotional)
+        ? ['MAX_NOTIONAL_REQUIRES_POSITIVE_MAX_POSITION_NOTIONAL']
+        : []),
+      ...(assignment.fixedQty !== null
+        ? ['MAX_NOTIONAL_REQUIRES_NULL_FIXED_QTY']
+        : []),
+    ];
+  }
+  return ['UNSUPPORTED_CURRENT_SIZING_TYPE'];
+}
+
+function inferBootstrapBatch(assignments: MigrationDiagnosticAssignment[]) {
+  const groups = new Map<number, MigrationDiagnosticAssignment[]>();
+  for (const assignment of assignments) {
+    const second = Math.floor(assignment.createdAt.getTime() / 1_000) * 1_000;
+    groups.set(second, [...(groups.get(second) ?? []), assignment]);
+  }
+  const candidates = [...groups.entries()].sort(
+    ([leftSecond, left], [rightSecond, right]) =>
+      right.length - left.length || leftSecond - rightSecond
+  );
+  const batch = candidates[0]?.[1] ?? [];
+  const timestamps = batch.map((assignment) => assignment.createdAt.getTime());
+  return {
+    inferred: batch.length > 0,
+    count: batch.length,
+    start: timestamps.length > 0 ? new Date(Math.min(...timestamps)) : null,
+    end: timestamps.length > 0 ? new Date(Math.max(...timestamps)) : null,
+    assignmentIds: batch.map((assignment) => assignment.id).sort((a, b) => a - b),
+  };
+}
+
+function eventExplainsParityDifference(args: {
+  event: MigrationDiagnosticCatalogEvent;
+  assignment: MigrationDiagnosticAssignment;
+  enablementMismatchFields: string[];
+  sizingMismatchFields: string[];
+}) {
+  if (args.event.createdAt <= args.assignment.createdAt) return false;
+  const relevantFields = new Set([
+    ...args.enablementMismatchFields.map(() => 'enabled'),
+    ...args.sizingMismatchFields.flatMap(() => ['sizingType', 'sizingValue']),
+  ]);
+  return args.event.changedFields.some((field) => relevantFields.has(field));
+}
+
 export function buildSubscriptionCatalogMigrationDiagnostic(input: {
   accounts: MigrationDiagnosticAccount[];
   legacySubscriptions: LegacySubscriptionMapping[];
   assignments: MigrationDiagnosticAssignment[];
   expectedBobbyPaperKeys: string[];
   lifecycleReferences: MigrationDiagnosticLifecycleReference[];
+  catalogEvents: MigrationDiagnosticCatalogEvent[];
 }) {
   const accountById = new Map(input.accounts.map((account) => [account.id, account]));
   const assignmentGroups = new Map<string, MigrationDiagnosticAssignment[]>();
@@ -275,6 +365,15 @@ export function buildSubscriptionCatalogMigrationDiagnostic(input: {
   const unknownLegacySizingConversions: object[] = [];
   const legacyRoutingMismatches: object[] = [];
   const mappedLegacyAssignments: MigrationDiagnosticAssignment[] = [];
+  const parityByAssignment = new Map<
+    number,
+    {
+      legacy: LegacySubscriptionMapping;
+      enablementMismatchFields: string[];
+      sizingMismatchFields: string[];
+      unknownLegacySizing: boolean;
+    }
+  >();
 
   for (const legacy of input.legacySubscriptions) {
     const mappingKey = `${legacy.tradingAccountId}:${legacy.id}`;
@@ -300,6 +399,9 @@ export function buildSubscriptionCatalogMigrationDiagnostic(input: {
 
     const assignment = matches[0]!;
     mappedLegacyAssignments.push(assignment);
+    const enablementMismatchFields: string[] = [];
+    let sizingMismatchFields: string[] = [];
+    let unknownLegacySizing = false;
     if (
       assignment.tradingAccountId !== legacy.tradingAccountId ||
       assignment.subscriptionId !== legacy.id
@@ -320,6 +422,7 @@ export function buildSubscriptionCatalogMigrationDiagnostic(input: {
       ['exitsEnabled', assignment.exitsEnabled, true],
     ] as const) {
       if (migratedValue !== expectedPolicyValue) {
+        enablementMismatchFields.push(field);
         legacyEnablementMismatches.push({
           subscriptionId: legacy.id,
           subscriptionKey: legacy.key,
@@ -334,6 +437,7 @@ export function buildSubscriptionCatalogMigrationDiagnostic(input: {
 
     const normalizedSizing = normalizeLegacySizing(legacy);
     if (!normalizedSizing.recognized) {
+      unknownLegacySizing = true;
       unknownLegacySizingConversions.push({
         subscriptionId: legacy.id,
         subscriptionKey: legacy.key,
@@ -357,6 +461,7 @@ export function buildSubscriptionCatalogMigrationDiagnostic(input: {
         mismatchedFields.push('maxPositionNotional');
       }
       if (mismatchedFields.length > 0) {
+        sizingMismatchFields = mismatchedFields;
         legacySizingMismatches.push({
           subscriptionId: legacy.id,
           subscriptionKey: legacy.key,
@@ -400,6 +505,12 @@ export function buildSubscriptionCatalogMigrationDiagnostic(input: {
         reasons: routingReasons,
       });
     }
+    parityByAssignment.set(assignment.id, {
+      legacy,
+      enablementMismatchFields,
+      sizingMismatchFields,
+      unknownLegacySizing,
+    });
   }
 
   const lifecycleReferenceFailures: object[] = [];
@@ -427,6 +538,142 @@ export function buildSubscriptionCatalogMigrationDiagnostic(input: {
       lifecycleReferenceFailures.push({ ...reference, assignment, reasons });
     }
   }
+
+  const bootstrapBatch = inferBootstrapBatch(mappedLegacyAssignments);
+  const bootstrapBatchIds = new Set(bootstrapBatch.assignmentIds);
+  const catalogEventsBySubscription = new Map<
+    number,
+    MigrationDiagnosticCatalogEvent[]
+  >();
+  for (const event of input.catalogEvents) {
+    if (event.subscriptionId === null) continue;
+    catalogEventsBySubscription.set(event.subscriptionId, [
+      ...(catalogEventsBySubscription.get(event.subscriptionId) ?? []),
+      event,
+    ]);
+  }
+
+  const parityClassifications = mappedLegacyAssignments.map((assignment) => {
+    const parity = parityByAssignment.get(assignment.id)!;
+    const currentStateReasons = currentSizingStateReasons(assignment);
+    const hasParityDifference =
+      parity.enablementMismatchFields.length > 0 ||
+      parity.sizingMismatchFields.length > 0 ||
+      parity.unknownLegacySizing;
+    const updatedAfterCreation =
+      assignment.updatedAt.getTime() > assignment.createdAt.getTime();
+    const hasBootstrapProvenance =
+      assignment.notes?.includes(
+        'Bootstrapped from legacy Subscription sizing fields.'
+      ) ?? false;
+    const inBootstrapBatch = bootstrapBatchIds.has(assignment.id);
+    const relevantCatalogEvents = (
+      catalogEventsBySubscription.get(assignment.subscriptionId) ?? []
+    ).sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+    const explainingCatalogEvents = relevantCatalogEvents.filter((event) =>
+      eventExplainsParityDifference({
+        event,
+        assignment,
+        enablementMismatchFields: parity.enablementMismatchFields,
+        sizingMismatchFields: parity.sizingMismatchFields,
+      })
+    );
+
+    let classification: MigrationDivergenceClassification;
+    const reasons: string[] = [];
+    if (currentStateReasons.length > 0) {
+      classification =
+        MIGRATION_DIVERGENCE_CLASSIFICATIONS.MALFORMED_CURRENT_STATE;
+      reasons.push(...currentStateReasons);
+    } else if (!hasParityDifference) {
+      classification =
+        MIGRATION_DIVERGENCE_CLASSIFICATIONS.UNCHANGED_FROM_BOOTSTRAP;
+      reasons.push('CURRENT_VALUES_MATCH_BOOTSTRAP_POLICY');
+    } else if (parity.unknownLegacySizing) {
+      classification = MIGRATION_DIVERGENCE_CLASSIFICATIONS.UNEXPLAINED;
+      reasons.push('UNKNOWN_INITIAL_SIZING_CONVERSION');
+    } else if (explainingCatalogEvents.length > 0) {
+      classification =
+        MIGRATION_DIVERGENCE_CLASSIFICATIONS.LEGACY_SIDE_CHANGED_AFTER_ASSIGNMENT;
+      reasons.push('CATALOG_EVENT_EXPLAINS_CURRENT_PARITY_DIFFERENCE');
+    } else if (
+      bootstrapBatch.start !== null &&
+      assignment.createdAt < bootstrapBatch.start
+    ) {
+      classification =
+        MIGRATION_DIVERGENCE_CLASSIFICATIONS.PREEXISTING_ASSIGNMENT_SKIPPED_BY_BOOTSTRAP;
+      reasons.push('ASSIGNMENT_PREDATES_INFERRED_BOOTSTRAP_BATCH');
+    } else if (
+      hasBootstrapProvenance &&
+      inBootstrapBatch &&
+      updatedAfterCreation
+    ) {
+      classification =
+        MIGRATION_DIVERGENCE_CLASSIFICATIONS.CONFIRMED_POST_CREATION_DIVERGENCE;
+      reasons.push(
+        'BOOTSTRAP_PROVENANCE_RETAINED',
+        'UPDATED_AFTER_CREATION',
+        'CURRENT_STATE_WRITER_VALID'
+      );
+    } else if (inBootstrapBatch && updatedAfterCreation) {
+      classification =
+        MIGRATION_DIVERGENCE_CLASSIFICATIONS.LIKELY_AUTHORIZED_DIVERGENCE;
+      reasons.push(
+        'INFERRED_BOOTSTRAP_BATCH_MEMBER',
+        'UPDATED_AFTER_CREATION',
+        'CURRENT_STATE_WRITER_VALID',
+        'ASSIGNMENT_ACTOR_AUDIT_UNAVAILABLE'
+      );
+    } else {
+      classification = MIGRATION_DIVERGENCE_CLASSIFICATIONS.UNEXPLAINED;
+      reasons.push('AVAILABLE_CHRONOLOGY_DOES_NOT_EXPLAIN_PARITY_DIFFERENCE');
+    }
+
+    return {
+      classification,
+      reasons,
+      assignment: {
+        ...failureDetails(assignment),
+        notes: assignment.notes,
+        createdAt: assignment.createdAt,
+        updatedAt: assignment.updatedAt,
+      },
+      legacy: parity.legacy,
+      parity: {
+        enablementMismatchFields: parity.enablementMismatchFields,
+        sizingMismatchFields: parity.sizingMismatchFields,
+        unknownLegacySizing: parity.unknownLegacySizing,
+      },
+      evidence: {
+        updatedAfterCreation,
+        hasBootstrapProvenance,
+        inBootstrapBatch,
+        currentStateWriterValid: currentStateReasons.length === 0,
+        currentStateReasons,
+        relevantCatalogEvents,
+        explainingCatalogEvents,
+        assignmentActorAuditAvailable: false,
+      },
+    };
+  });
+  const divergenceClassificationCounts = Object.fromEntries(
+    Object.values(MIGRATION_DIVERGENCE_CLASSIFICATIONS).map((classification) => [
+      classification,
+      parityClassifications.filter(
+        (item) => item.classification === classification
+      ).length,
+    ])
+  ) as Record<MigrationDivergenceClassification, number>;
+  const unexplainedDivergences = parityClassifications.filter(
+    (item) =>
+      item.classification ===
+      MIGRATION_DIVERGENCE_CLASSIFICATIONS.UNEXPLAINED
+  );
+  const malformedCurrentStates = parityClassifications.filter(
+    (item) =>
+      item.classification ===
+      MIGRATION_DIVERGENCE_CLASSIFICATIONS.MALFORMED_CURRENT_STATE
+  );
 
   const entryConfigurationFailures: MigrationDiagnosticFailure[] = [];
   const entryCapableAssignments = input.assignments.filter(
@@ -605,12 +852,27 @@ export function buildSubscriptionCatalogMigrationDiagnostic(input: {
   const lifecycleReferencesValid = lifecycleReferenceFailures.length === 0;
   const expectedCatalogBaselineValid = bobbyPaperCatalogValid;
   const entryConfigurationValid = entryConfigurationFailures.length === 0;
-  const schemaDropSafe =
+  const initialBootstrapFidelityValid =
     legacyMappingValid &&
     legacyEnablementParityValid &&
     legacySizingParityValid &&
     legacyRoutingParityValid &&
     lifecycleReferencesValid;
+  const legacyMigrationProvenanceValid =
+    legacyMappingValid &&
+    legacyRoutingParityValid &&
+    lifecycleReferencesValid &&
+    unknownLegacySizingConversions.length === 0 &&
+    unexplainedDivergences.length === 0 &&
+    malformedCurrentStates.length === 0;
+  const schemaDropSafe =
+    legacyMappingValid &&
+    legacyRoutingParityValid &&
+    lifecycleReferencesValid &&
+    legacyMigrationProvenanceValid &&
+    unknownLegacySizingConversions.length === 0 &&
+    unexplainedDivergences.length === 0 &&
+    malformedCurrentStates.length === 0;
   const productionBaselineValid =
     expectedCatalogBaselineValid && liveAccountBaselineValid;
   const runtimeEntryReady = entryConfigurationValid;
@@ -625,6 +887,14 @@ export function buildSubscriptionCatalogMigrationDiagnostic(input: {
       entryCapableAssignmentCount: entryCapableAssignments.length,
       lifecycleReferenceCount: input.lifecycleReferences.length,
       lifecycleReferenceFailureCount: lifecycleReferenceFailures.length,
+      exactEnablementParityDifferenceCount:
+        legacyEnablementMismatches.length,
+      exactSizingParityDifferenceCount: legacySizingMismatches.length,
+      uniqueDivergentAssignmentCount: parityClassifications.filter(
+        (item) =>
+          item.classification !==
+          MIGRATION_DIVERGENCE_CLASSIFICATIONS.UNCHANGED_FROM_BOOTSTRAP
+      ).length,
     },
     missingLegacyMappings,
     duplicateLegacyMappings,
@@ -633,6 +903,11 @@ export function buildSubscriptionCatalogMigrationDiagnostic(input: {
     legacySizingMismatches,
     unknownLegacySizingConversions,
     legacyRoutingMismatches,
+    bootstrapBatch,
+    parityClassifications,
+    divergenceClassificationCounts,
+    unexplainedDivergences,
+    malformedCurrentStates,
     lifecycleReferenceFailures,
     entryConfigurationFailures,
     bobbyPaperAccountDiscovery,
@@ -644,6 +919,8 @@ export function buildSubscriptionCatalogMigrationDiagnostic(input: {
     legacySizingParityValid,
     legacyRoutingParityValid,
     lifecycleReferencesValid,
+    initialBootstrapFidelityValid,
+    legacyMigrationProvenanceValid,
     expectedCatalogBaselineValid,
     liveAccountBaselineValid,
     entryConfigurationValid,
