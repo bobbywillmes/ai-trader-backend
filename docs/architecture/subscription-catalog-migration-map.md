@@ -109,3 +109,31 @@ Before legacy columns are dropped, production diagnostics must prove:
 The destructive migration must contain SQL assertions that abort on unmapped
 legacy data. Production deployment must run the diagnostic command before
 `prisma migrate deploy`.
+
+## Authoritative diagnostic conclusions
+
+The preflight reports independent conclusions so a reviewer cannot confuse
+historical migration fidelity with current trading readiness:
+
+| Conclusion | What it proves |
+| --- | --- |
+| `schemaDropSafe` | Exact legacy mapping, bootstrap enablement policy, normalized sizing values, broker/environment routing, lifecycle reference consistency, and no unknown sizing conversions. |
+| `productionBaselineValid` | Unambiguous Bobby Paper and Bobby Live discovery, the exact authoritative Bobby Paper curated key set, and zero Bobby Live assignments. |
+| `runtimeEntryReady` | Every currently active entry-capable assignment has complete valid account, allocation, reservation, sizing, capacity, and entry-risk configuration. |
+| `overallDiagnosticPassed` | All three definitive conclusions are true. The script exits nonzero otherwise. |
+
+`schemaDropSafe` does not certify that the account is ready to trade.
+`runtimeEntryReady` does not certify that legacy data was copied faithfully.
+The full JSON result, including detailed failure arrays, must be retained as
+deployment evidence before removing legacy columns.
+
+The diagnostic must be run while the legacy `Subscription` source columns still
+exist:
+
+```powershell
+npx tsx scripts/diagnose-subscription-catalog-migration.ts
+```
+
+Do not proceed to `prisma migrate deploy` if the command exits nonzero. The SQL
+migration's internal assertions are defense in depth and do not cover every
+authoritative preflight gate.

@@ -80,14 +80,31 @@ Before production migration, run:
 npx tsx scripts/diagnose-subscription-catalog-migration.ts
 ```
 
-The diagnostic derives the expected legacy assignment count from the database.
-It fails if any account-owned legacy Subscription lacks its deterministic
-same-account assignment, any mapped assignment has invalid migrated sizing,
-Bobby Live has any assignments, or an active entry assignment lacks complete
-allocation, reservation, sizing, and risk configuration. Retired or
-entry-disabled assignments may intentionally have no allocation. The SQL
-migration independently aborts if any legacy account-owned Subscription lacks
-a deterministic assignment or migrated sizing is invalid.
+The diagnostic prints three independent conclusions:
+
+- `schemaDropSafe` proves exact legacy mapping, enablement, sizing, broker and
+  environment fidelity, plus lifecycle reference consistency. Unknown legacy
+  sizing conversions fail this gate.
+- `productionBaselineValid` proves that the discovered Bobby Paper account has
+  exactly the authoritative curated key set and that the discovered Bobby Live
+  account has zero assignments. Missing or ambiguous account discovery fails
+  this gate.
+- `runtimeEntryReady` proves that every currently active entry-capable
+  assignment has complete same-account allocation, reservation, sizing,
+  allocation-capacity, account-limit, and entry-risk configuration.
+
+These conclusions are deliberately not interchangeable. `schemaDropSafe` does
+not mean an account is ready to trade, and `runtimeEntryReady` does not prove
+that legacy values were migrated faithfully. `overallDiagnosticPassed` requires
+all three conclusions and is the command's success condition. Retired,
+assignment-disabled, or entry-disabled deployments may intentionally retain
+null allocation and reservation fields.
+
+Retain the complete JSON output as migration evidence before dropping the
+legacy columns. A successful result is a prerequisite to the destructive
+migration, not a claim that production has already been verified. The SQL
+migration currently contains narrower defensive assertions and must not be used
+as a substitute for this preflight.
 
 After the diagnostic succeeds, back up the database, deploy the migration,
 regenerate/rebuild the application, and verify health, catalog assignment

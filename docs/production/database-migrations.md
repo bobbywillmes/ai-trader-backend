@@ -282,3 +282,31 @@ Configurable exit rules attached to subscriptions.
 ### Subscription
 
 Symbol-specific deployment of a strategy and exit profile with sizing and enable/disable state.
+
+## Subscription catalog destructive-migration preflight
+
+Before deploying the migration that removes legacy `Subscription` deployment
+columns, run the authoritative diagnostic against production while those
+columns still exist:
+
+```powershell
+npx tsx scripts/diagnose-subscription-catalog-migration.ts
+```
+
+Archive the complete JSON output with the deployment record. The command exits
+successfully only when all of these independent conclusions are true:
+
+- `schemaDropSafe`: legacy assignment mapping, enablement, sizing, routing, and
+  lifecycle references are faithful.
+- `productionBaselineValid`: Bobby Paper has the exact authoritative curated
+  catalog key set, Bobby Live has no assignments, and both accounts are
+  discovered unambiguously.
+- `runtimeEntryReady`: all currently active entry-capable assignments have
+  complete valid account risk, allocation, reservation, sizing, and capacity
+  configuration.
+
+One conclusion cannot substitute for another. In particular,
+`schemaDropSafe=true` does not mean trading is ready, and
+`runtimeEntryReady=true` does not prove legacy migration fidelity. Do not run
+`prisma migrate deploy` for the legacy-column removal unless
+`overallDiagnosticPassed=true` and the diagnostic process exits zero.
