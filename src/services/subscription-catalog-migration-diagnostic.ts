@@ -4,6 +4,32 @@ import {
   TradingBroker,
 } from '@prisma/client';
 
+export const REQUIRED_LEGACY_SUBSCRIPTION_COLUMNS = [
+  'id',
+  'key',
+  'tradingAccountId',
+  'enabled',
+  'broker',
+  'brokerMode',
+  'sizingType',
+  'sizingValue',
+] as const;
+
+export function assessLegacySubscriptionSourceColumns(columnNames: string[]) {
+  const availableColumns = [...new Set(columnNames)].sort();
+  const availableColumnSet = new Set(availableColumns);
+  const missingColumns = REQUIRED_LEGACY_SUBSCRIPTION_COLUMNS.filter(
+    (columnName) => !availableColumnSet.has(columnName)
+  );
+
+  return {
+    availableColumns,
+    requiredColumns: [...REQUIRED_LEGACY_SUBSCRIPTION_COLUMNS],
+    missingColumns,
+    legacySourceAvailable: missingColumns.length === 0,
+  };
+}
+
 export type LegacySubscriptionMapping = {
   id: number;
   key: string;

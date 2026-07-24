@@ -137,3 +137,10 @@ npx tsx scripts/diagnose-subscription-catalog-migration.ts
 Do not proceed to `prisma migrate deploy` if the command exits nonzero. The SQL
 migration's internal assertions are defense in depth and do not cover every
 authoritative preflight gate.
+
+If the connected database has already removed any required legacy source
+column, the command returns `LEGACY_SOURCE_UNAVAILABLE`, sets
+`schemaDropSafe=false`, leaves the other unevaluated conclusions as `null`, and
+exits nonzero. Fidelity cannot be reconstructed from the post-migration schema;
+use retained pre-migration diagnostic evidence or a verified pre-migration
+backup.

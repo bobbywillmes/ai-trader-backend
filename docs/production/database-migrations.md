@@ -310,3 +310,8 @@ One conclusion cannot substitute for another. In particular,
 `runtimeEntryReady=true` does not prove legacy migration fidelity. Do not run
 `prisma migrate deploy` for the legacy-column removal unless
 `overallDiagnosticPassed=true` and the diagnostic process exits zero.
+
+Running the command against a database where the legacy columns were already
+removed produces a structured `LEGACY_SOURCE_UNAVAILABLE` failure. This is not
+a repair request and must not be bypassed: use retained pre-migration evidence
+or a verified pre-migration backup to establish legacy migration fidelity.

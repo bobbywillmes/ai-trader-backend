@@ -6,6 +6,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import {
+  assessLegacySubscriptionSourceColumns,
   buildSubscriptionCatalogMigrationDiagnostic,
   type LegacySubscriptionMapping,
   type MigrationDiagnosticAccount,
@@ -125,6 +126,40 @@ function diagnose(input: {
 }
 
 describe('subscription catalog migration diagnostic', () => {
+  it('detects a post-migration database before querying legacy source values', () => {
+    const result = assessLegacySubscriptionSourceColumns([
+      'id',
+      'key',
+      'enabled',
+      'description',
+    ]);
+
+    expect(result.legacySourceAvailable).toBe(false);
+    expect(result.missingColumns).toEqual([
+      'tradingAccountId',
+      'broker',
+      'brokerMode',
+      'sizingType',
+      'sizingValue',
+    ]);
+  });
+
+  it('accepts a complete pre-migration legacy source schema', () => {
+    const result = assessLegacySubscriptionSourceColumns([
+      'sizingValue',
+      'brokerMode',
+      'enabled',
+      'id',
+      'tradingAccountId',
+      'key',
+      'sizingType',
+      'broker',
+    ]);
+
+    expect(result.legacySourceAvailable).toBe(true);
+    expect(result.missingColumns).toEqual([]);
+  });
+
   it('accepts the exact curated 100-key baseline', () => {
     const legacies = Array.from({ length: 100 }, (_, index) => legacy(index + 1));
     const assignments = legacies.map((item) => assignment(item.id));

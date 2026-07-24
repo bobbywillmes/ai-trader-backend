@@ -4,6 +4,7 @@ import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import {
+  assessLegacySubscriptionSourceColumns,
   buildSubscriptionCatalogMigrationDiagnostic,
   type LegacySubscriptionMapping,
   type MigrationDiagnosticLifecycleReference,
@@ -22,6 +23,50 @@ const prisma = new PrismaClient({
 });
 
 async function main() {
+  const subscriptionColumns = await prisma.$queryRaw<{ columnName: string }[]>`
+    SELECT column_name AS "columnName"
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'Subscription'
+    ORDER BY ordinal_position ASC
+  `;
+  const legacySource = assessLegacySubscriptionSourceColumns(
+    subscriptionColumns.map((column) => column.columnName)
+  );
+
+  if (!legacySource.legacySourceAvailable) {
+    console.error(
+      JSON.stringify(
+        {
+          diagnosticStatus: "LEGACY_SOURCE_UNAVAILABLE",
+          message:
+            "The connected database no longer contains every legacy Subscription source column required to prove migration fidelity.",
+          conclusions: {
+            schemaDropSafe: false,
+            productionBaselineValid: null,
+            runtimeEntryReady: null,
+            overallDiagnosticPassed: false,
+          },
+          gateEvaluation: {
+            schemaDropSafe:
+              "FAILED: exact legacy-to-assignment fidelity cannot be reconstructed after source columns are removed.",
+            productionBaselineValid:
+              "NOT_EVALUATED: the authoritative preflight stopped at the missing legacy source boundary.",
+            runtimeEntryReady:
+              "NOT_EVALUATED: the authoritative preflight stopped at the missing legacy source boundary.",
+          },
+          legacySource,
+          nextAction:
+            "Run this command against the pre-migration production database before applying the legacy-column removal. Use retained pre-migration diagnostic evidence or a verified pre-migration backup for a database where the columns were already removed.",
+        },
+        null,
+        2
+      )
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   const accounts = await prisma.tradingAccount.findMany({
     select: {
       id: true,
