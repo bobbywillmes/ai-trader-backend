@@ -177,6 +177,7 @@ Table TradingAccountAllocation {
 
   indexes {
     (tradingAccountId, key) [unique]
+    (id, tradingAccountId) [unique]
   }
 }
 
@@ -1016,7 +1017,7 @@ Ref: TradingAccountSubscription.tradingAccountId > TradingAccount.id [delete: Ca
 
 Ref: TradingAccountSubscription.subscriptionId > Subscription.id [delete: Cascade]
 
-Ref: TradingAccountSubscription.allocationId > TradingAccountAllocation.id [delete: Set Null]
+Ref: TradingAccountSubscription.(allocationId, tradingAccountId) > TradingAccountAllocation.(id, tradingAccountId) [delete: Restrict]
 
 Ref: MomentumUniverseMember.securityId - Security.id [delete: Cascade]
 
