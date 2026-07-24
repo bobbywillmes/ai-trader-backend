@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   tradingAccountMembershipFindMany: vi.fn(),
   trackedPositionFindMany: vi.fn(),
+  orderIntentUpdateMany: vi.fn(),
+  systemEventCreate: vi.fn(),
 }));
 
 vi.mock('../config/env.js', () => ({
@@ -43,6 +45,12 @@ vi.mock('../db/prisma.js', () => ({
     trackedPosition: {
       findMany: mocks.trackedPositionFindMany,
     },
+    orderIntent: {
+      updateMany: mocks.orderIntentUpdateMany,
+    },
+    systemEvent: {
+      create: mocks.systemEventCreate,
+    },
   },
 }));
 
@@ -54,12 +62,19 @@ vi.mock('./trading-account-risk-configuration.service.js', () => ({
         findUnique: mocks.tradingAccountFindUnique,
         update: mocks.tradingAccountUpdate,
       },
+      orderIntent: {
+        updateMany: mocks.orderIntentUpdateMany,
+      },
+      systemEvent: {
+        create: mocks.systemEventCreate,
+      },
     })
   ),
 }));
 
 import {
   createTradingAccountForAdmin,
+  deactivateTradingAccountForAdmin,
   getTradingAccountForAdmin,
   listTradingAccountsForAdmin,
   listTradingAccountsForUser,
@@ -111,6 +126,8 @@ describe('trading account service', () => {
     });
     mocks.tradingAccountMembershipFindMany.mockResolvedValue([]);
     mocks.trackedPositionFindMany.mockResolvedValue([]);
+    mocks.orderIntentUpdateMany.mockResolvedValue({ count: 0 });
+    mocks.systemEventCreate.mockResolvedValue({ id: 100 });
     mocks.userFindUnique.mockResolvedValue({ id: 1, enabled: true });
     mocks.tradingAccountCreate.mockResolvedValue({ id: 10 });
     mocks.transaction.mockImplementation((operation) =>
@@ -362,9 +379,6 @@ describe('trading account service', () => {
     });
     const result = await updateTradingAccountForAdmin(1, {
       displayName: 'Updated Paper',
-      status: TradingAccountStatus.PAUSED,
-      tradingEnabled: false,
-      killSwitchEnabled: true,
       estimatedTradingCapital: 25_000,
       maxDeployableNotional: 20_000,
       pausedReason: 'credential rotation',
@@ -375,9 +389,6 @@ describe('trading account service', () => {
       where: { id: 1 },
       data: {
         displayName: 'Updated Paper',
-        status: TradingAccountStatus.PAUSED,
-        tradingEnabled: false,
-        killSwitchEnabled: true,
         estimatedTradingCapital: 25_000,
         maxDeployableNotional: 20_000,
         pausedReason: 'credential rotation',
@@ -392,6 +403,103 @@ describe('trading account service', () => {
         credential: expect.objectContaining({ exists: false }),
       })
     );
+  });
+
+  describe('deactivation', () => {
+    it('atomically pauses an active account and blocks only pending buy intents', async () => {
+      mocks.tradingAccountFindUnique.mockResolvedValue({
+        id: 1,
+        status: TradingAccountStatus.ACTIVE,
+        tradingEnabled: true,
+        killSwitchEnabled: false,
+      });
+      mocks.orderIntentUpdateMany.mockResolvedValue({ count: 2 });
+
+      await expect(
+        deactivateTradingAccountForAdmin(
+          1,
+          { reason: 'Emergency pause' },
+          7
+        )
+      ).resolves.toEqual({
+        before: {
+          status: TradingAccountStatus.ACTIVE,
+          tradingEnabled: true,
+          killSwitchEnabled: false,
+        },
+        after: {
+          status: TradingAccountStatus.PAUSED,
+          tradingEnabled: false,
+          killSwitchEnabled: true,
+        },
+        affectedPendingEntryIntentCount: 2,
+      });
+
+      expect(mocks.tradingAccountUpdate).toHaveBeenCalledWith({
+        where: { id: 1 },
+        data: {
+          status: TradingAccountStatus.PAUSED,
+          tradingEnabled: false,
+          killSwitchEnabled: true,
+        },
+      });
+      expect(mocks.orderIntentUpdateMany).toHaveBeenCalledWith({
+        where: {
+          tradingAccountId: 1,
+          status: 'pending',
+          side: 'buy',
+        },
+        data: {
+          status: 'blocked',
+          blockReason: 'Trading account deactivated: Emergency pause',
+        },
+      });
+      expect(mocks.systemEventCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          type: 'trading_account.deactivated',
+          tradingAccountId: 1,
+          actorUserId: 7,
+          payloadJson: expect.objectContaining({
+            affectedPendingEntryIntentCount: 2,
+          }),
+        }),
+      });
+    });
+
+    it('is idempotent for an already safely paused account', async () => {
+      mocks.tradingAccountFindUnique.mockResolvedValue({
+        id: 1,
+        status: TradingAccountStatus.PAUSED,
+        tradingEnabled: false,
+        killSwitchEnabled: true,
+      });
+
+      const result = await deactivateTradingAccountForAdmin(
+        1,
+        { reason: 'Keep paused' },
+        7
+      );
+
+      expect(result?.before).toEqual(result?.after);
+      expect(result?.affectedPendingEntryIntentCount).toBe(0);
+      expect(mocks.systemEventCreate).toHaveBeenCalledOnce();
+    });
+
+    it('keeps deactivation state and audit writes in the same transaction', async () => {
+      mocks.tradingAccountFindUnique.mockResolvedValue({
+        id: 1,
+        status: TradingAccountStatus.ACTIVE,
+        tradingEnabled: true,
+        killSwitchEnabled: false,
+      });
+      mocks.systemEventCreate.mockRejectedValue(new Error('audit insert failed'));
+
+      await expect(
+        deactivateTradingAccountForAdmin(1, { reason: 'Pause' }, 7)
+      ).rejects.toThrow('audit insert failed');
+      expect(mocks.tradingAccountUpdate).toHaveBeenCalledOnce();
+      expect(mocks.systemEventCreate).toHaveBeenCalledOnce();
+    });
   });
 
   describe('creation', () => {

@@ -3,6 +3,7 @@ import {
   createTradingAccountAllocationController,
   createTradingAccountController,
   createTradingAccountSubscriptionController,
+  deactivateTradingAccountController,
   deleteTradingAccountSubscriptionController,
   getTradingAccountRiskHealthController,
   getTradingAccountSubscriptionPriceHistoryController,
@@ -37,6 +38,7 @@ router.get('/:id/positions', requireTradingAccountAccess('id'), requirePermissio
 router.get('/:id/orders', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), listTradingAccountOpenOrdersController);
 router.get('/:id/trade-cycles', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.REPORTS_READ), listTradingAccountTradeCyclesController);
 router.patch('/:id', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE), updateTradingAccountController);
+router.post('/:id/deactivate', requireSystemOwnerAccess, deactivateTradingAccountController);
 
 router.get('/:id/risk-settings', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_RISK_WRITE), getTradingAccountRiskSettingsController);
 router.patch('/:id/risk-settings', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_RISK_WRITE), updateTradingAccountRiskSettingsController);

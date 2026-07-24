@@ -45,6 +45,14 @@ ALLOW_TRADING_ENABLED_ON_START=false
 
 Runtime trading settings such as `tradingEnabled`, `paperMode`, and `killSwitchEnabled` are database-backed `Setting` values, not `.env` values.
 
+Trading Account operational fields are separate from these global settings.
+Ordinary account updates cannot change account `status`, `tradingEnabled`, or
+`killSwitchEnabled`. The only account-scoped safety operation currently
+available is owner-only deactivation, which preserves credentials, exit
+permissions, broker orders, and open positions. Live activation is
+intentionally unavailable until readiness and multi-account lifecycle work is
+complete.
+
 ---
 
 ## 2. Required Environment Files

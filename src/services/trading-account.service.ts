@@ -7,7 +7,11 @@ import {
 } from '@prisma/client';
 import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
-import type { CreateTradingAccountInput, UpdateTradingAccountInput } from '../validators/trading-account.schema.js';
+import type {
+  CreateTradingAccountInput,
+  DeactivateTradingAccountInput,
+  UpdateTradingAccountInput,
+} from '../validators/trading-account.schema.js';
 import { HttpError } from '../errors/http-error.js';
 import {
   assertAccountRiskConfiguration,
@@ -93,6 +97,16 @@ export type TradingAccountSummaryResponse = Prisma.TradingAccountGetPayload<{
 export type TradingAccountAdminResponse = ReturnType<
   typeof serializeTradingAccountForAdmin
 >;
+
+const TRADING_ACCOUNT_OPERATIONAL_STATE_SELECT = {
+  status: true,
+  tradingEnabled: true,
+  killSwitchEnabled: true,
+} satisfies Prisma.TradingAccountSelect;
+
+type TradingAccountOperationalState = Prisma.TradingAccountGetPayload<{
+  select: typeof TRADING_ACCOUNT_OPERATIONAL_STATE_SELECT;
+}>;
 
 function missingDefaultTradingAccountError() {
   return new Error(
@@ -360,13 +374,6 @@ export async function updateTradingAccountForAdmin(
     ...(input.maxDeployableNotional !== undefined && {
       maxDeployableNotional: input.maxDeployableNotional,
     }),
-    ...(input.status !== undefined && { status: input.status }),
-    ...(input.tradingEnabled !== undefined && {
-      tradingEnabled: input.tradingEnabled,
-    }),
-    ...(input.killSwitchEnabled !== undefined && {
-      killSwitchEnabled: input.killSwitchEnabled,
-    }),
     ...(input.pausedReason !== undefined && {
       pausedReason: input.pausedReason,
     }),
@@ -392,6 +399,87 @@ export async function updateTradingAccountForAdmin(
       select: TRADING_ACCOUNT_ADMIN_SELECT,
     });
     return serializeTradingAccountForAdmin(account);
+  });
+}
+
+function changedOperationalFields(
+  before: TradingAccountOperationalState,
+  after: TradingAccountOperationalState
+) {
+  return (Object.keys(after) as Array<keyof TradingAccountOperationalState>)
+    .filter((field) => before[field] !== after[field]);
+}
+
+export async function deactivateTradingAccountForAdmin(
+  id: number,
+  input: DeactivateTradingAccountInput,
+  actorUserId: number
+) {
+  return withAccountRiskConfigurationTransaction(async (tx) => {
+    const account = await tx.tradingAccount.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        ...TRADING_ACCOUNT_OPERATIONAL_STATE_SELECT,
+      },
+    });
+    if (!account) return null;
+
+    const before: TradingAccountOperationalState = {
+      status: account.status,
+      tradingEnabled: account.tradingEnabled,
+      killSwitchEnabled: account.killSwitchEnabled,
+    };
+    const after: TradingAccountOperationalState = {
+      status: TradingAccountStatus.PAUSED,
+      tradingEnabled: false,
+      killSwitchEnabled: true,
+    };
+
+    await tx.tradingAccount.update({
+      where: { id },
+      data: after,
+    });
+
+    const blockedEntries = await tx.orderIntent.updateMany({
+      where: {
+        tradingAccountId: id,
+        status: 'pending',
+        side: 'buy',
+      },
+      data: {
+        status: 'blocked',
+        blockReason: `Trading account deactivated: ${input.reason}`,
+      },
+    });
+
+    const occurredAt = new Date();
+    await tx.systemEvent.create({
+      data: {
+        type: 'trading_account.deactivated',
+        entityType: 'tradingAccount',
+        entityId: String(id),
+        tradingAccountId: id,
+        actorUserId: actorUserId > 0 ? actorUserId : null,
+        message: `Trading account ${id} was deactivated.`,
+        payloadJson: {
+          actorUserId,
+          tradingAccountId: id,
+          occurredAt: occurredAt.toISOString(),
+          reason: input.reason,
+          before,
+          after,
+          changedFields: changedOperationalFields(before, after),
+          affectedPendingEntryIntentCount: blockedEntries.count,
+        },
+      },
+    });
+
+    return {
+      before,
+      after,
+      affectedPendingEntryIntentCount: blockedEntries.count,
+    };
   });
 }
 

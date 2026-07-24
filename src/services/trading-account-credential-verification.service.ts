@@ -1,11 +1,14 @@
 import {
   BrokerCredentialStatus,
+  Prisma,
   TradingAccountStatus,
 } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
+import { HttpError } from '../errors/http-error.js';
 import { getNormalizedAccount } from './account.service.js';
 import { getTradingAccountForAdmin } from './trading-account.service.js';
 import type { TradingAccountAdminResponse } from './trading-account.service.js';
+import { withAccountRiskConfigurationTransaction } from './trading-account-risk-configuration.service.js';
 
 export type TradingAccountCredentialVerificationResult =
   | {
@@ -36,30 +39,24 @@ function maskBrokerAccountNumber(accountNumber: string | null | undefined) {
   return suffix ? `****${suffix}` : null;
 }
 
-function statusAfterSuccessfulVerification(status: TradingAccountStatus) {
-  if (
-    status === TradingAccountStatus.NEEDS_CREDENTIALS ||
-    status === TradingAccountStatus.ERROR
-  ) {
-    return TradingAccountStatus.PAUSED;
-  }
-
-  return status;
-}
-
 export async function verifyTradingAccountCredential(
-  tradingAccountId: number
+  tradingAccountId: number,
+  actorUserId = -1
 ): Promise<TradingAccountCredentialVerificationResult | null> {
   const account = await prisma.tradingAccount.findUnique({
     where: { id: tradingAccountId },
     select: {
       id: true,
       status: true,
+      tradingEnabled: true,
+      killSwitchEnabled: true,
       credential: {
         select: {
           id: true,
           status: true,
+          keyFingerprint: true,
           revokedAt: true,
+          updatedAt: true,
         },
       },
     },
@@ -77,36 +74,98 @@ export async function verifyTradingAccountCredential(
     };
   }
 
-  const credentialId = account.credential.id;
+  const credentialSnapshot = account.credential;
+  const credentialId = credentialSnapshot.id;
 
   const brokerAccount = await getNormalizedAccount('manual_admin_action', {
     tradingAccountId,
     credentialStatuses: VERIFICATION_CREDENTIAL_STATUSES,
-  }).catch(async () => {
-    const now = new Date();
+  }).catch(() => null);
 
-    await prisma.$transaction([
-      prisma.tradingAccountCredential.update({
+  if (!brokerAccount) {
+    const now = new Date();
+    await withAccountRiskConfigurationTransaction(async (tx) => {
+      const current = await tx.tradingAccount.findUnique({
+        where: { id: tradingAccountId },
+        select: {
+          status: true,
+          tradingEnabled: true,
+          killSwitchEnabled: true,
+          credential: {
+            select: {
+              id: true,
+              status: true,
+              keyFingerprint: true,
+              updatedAt: true,
+            },
+          },
+        },
+      });
+      if (
+        !current?.credential ||
+        current.credential.id !== credentialId ||
+        current.credential.updatedAt.getTime() !==
+          credentialSnapshot.updatedAt.getTime()
+      ) {
+        throw new HttpError(
+          409,
+          'Credential changed while verification was in progress. Verify the current credential again.'
+        );
+      }
+
+      const before = {
+        status: current.status,
+        tradingEnabled: current.tradingEnabled,
+        killSwitchEnabled: current.killSwitchEnabled,
+      };
+      const after = {
+        status: TradingAccountStatus.ERROR,
+        tradingEnabled: false,
+        killSwitchEnabled: true,
+      };
+      await tx.tradingAccountCredential.update({
         where: { id: credentialId },
         data: {
           status: BrokerCredentialStatus.INVALID,
           lastFailedAt: now,
         },
-      }),
-      prisma.tradingAccount.update({
+      });
+      await tx.tradingAccount.update({
         where: { id: tradingAccountId },
+        data: after,
+      });
+      await tx.systemEvent.create({
         data: {
-          status: TradingAccountStatus.ERROR,
-          tradingEnabled: false,
-          killSwitchEnabled: true,
+          type: 'trading_account.credential_verification_failed',
+          entityType: 'tradingAccountCredential',
+          entityId: String(credentialId),
+          tradingAccountId,
+          actorUserId: actorUserId > 0 ? actorUserId : null,
+          message: `Trading account ${tradingAccountId} credential verification failed.`,
+          payloadJson: {
+            actorUserId,
+            tradingAccountId,
+            occurredAt: now.toISOString(),
+            credentialId,
+            keyFingerprint: current.credential.keyFingerprint,
+            beforeCredentialStatus: current.credential.status,
+            afterCredentialStatus: BrokerCredentialStatus.INVALID,
+            before,
+            after,
+            changedFields: [
+              'credential.status',
+              'credential.lastFailedAt',
+              ...Object.keys(after).filter(
+                (field) =>
+                  before[field as keyof typeof before] !==
+                  after[field as keyof typeof after]
+              ),
+            ],
+          } satisfies Prisma.InputJsonValue,
         },
-      }),
-    ]);
+      });
+    });
 
-    return null;
-  });
-
-  if (!brokerAccount) {
     return {
       ok: false,
       message: SAFE_VERIFICATION_FAILURE_MESSAGE,
@@ -115,9 +174,46 @@ export async function verifyTradingAccountCredential(
   }
 
   const now = new Date();
+  await withAccountRiskConfigurationTransaction(async (tx) => {
+    const current = await tx.tradingAccount.findUnique({
+      where: { id: tradingAccountId },
+      select: {
+        status: true,
+        tradingEnabled: true,
+        killSwitchEnabled: true,
+        credential: {
+          select: {
+            id: true,
+            status: true,
+            keyFingerprint: true,
+            updatedAt: true,
+          },
+        },
+      },
+    });
+    if (
+      !current?.credential ||
+      current.credential.id !== credentialId ||
+      current.credential.updatedAt.getTime() !==
+        credentialSnapshot.updatedAt.getTime()
+    ) {
+      throw new HttpError(
+        409,
+        'Credential changed while verification was in progress. Verify the current credential again.'
+      );
+    }
 
-  await prisma.$transaction([
-    prisma.tradingAccountCredential.update({
+    const before = {
+      status: current.status,
+      tradingEnabled: current.tradingEnabled,
+      killSwitchEnabled: current.killSwitchEnabled,
+    };
+    const after = {
+      status: TradingAccountStatus.PAUSED,
+      tradingEnabled: false,
+      killSwitchEnabled: true,
+    };
+    await tx.tradingAccountCredential.update({
       where: { id: credentialId },
       data: {
         status: BrokerCredentialStatus.ACTIVE,
@@ -125,13 +221,11 @@ export async function verifyTradingAccountCredential(
         lastFailedAt: null,
         revokedAt: null,
       },
-    }),
-    prisma.tradingAccount.update({
+    });
+    await tx.tradingAccount.update({
       where: { id: tradingAccountId },
       data: {
-        status: statusAfterSuccessfulVerification(account.status),
-        tradingEnabled: false,
-        killSwitchEnabled: true,
+        ...after,
         brokerAccountId: brokerAccount.accountNumber ?? null,
         brokerAccountNumberMasked: maskBrokerAccountNumber(
           brokerAccount.accountNumber
@@ -145,8 +239,41 @@ export async function verifyTradingAccountCredential(
         tradingBlocked: brokerAccount.tradingBlocked,
         baseCurrency: brokerAccount.currency ?? 'USD',
       },
-    }),
-  ]);
+    });
+    await tx.systemEvent.create({
+      data: {
+        type: 'trading_account.credential_verified',
+        entityType: 'tradingAccountCredential',
+        entityId: String(credentialId),
+        tradingAccountId,
+        actorUserId: actorUserId > 0 ? actorUserId : null,
+        message: `Trading account ${tradingAccountId} credential was verified.`,
+        payloadJson: {
+          actorUserId,
+          tradingAccountId,
+          occurredAt: now.toISOString(),
+          credentialId,
+          keyFingerprint: current.credential.keyFingerprint,
+          beforeCredentialStatus: current.credential.status,
+          afterCredentialStatus: BrokerCredentialStatus.ACTIVE,
+          before,
+          after,
+          changedFields: [
+            'credential.status',
+            'credential.verifiedAt',
+            'brokerAccountId',
+            'brokerAccountStatus',
+            'lastBrokerSyncAt',
+            ...Object.keys(after).filter(
+              (field) =>
+                before[field as keyof typeof before] !==
+                after[field as keyof typeof after]
+            ),
+          ],
+        } satisfies Prisma.InputJsonValue,
+      },
+    });
+  });
 
   const updatedAccount = await getTradingAccountForAdmin(tradingAccountId);
 

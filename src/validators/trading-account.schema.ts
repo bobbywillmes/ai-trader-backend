@@ -2,7 +2,6 @@ import {
   BrokerCredentialAuthType,
   PositionSizingType,
   TradingAccountEnvironment,
-  TradingAccountStatus,
 } from '@prisma/client';
 import { z } from 'zod';
 
@@ -35,9 +34,6 @@ export const updateTradingAccountSchema = z
     displayName: z.string().trim().min(1).optional(),
     estimatedTradingCapital: z.coerce.number().nonnegative().nullable().optional(),
     maxDeployableNotional: z.coerce.number().positive().nullable().optional(),
-    status: z.enum(TradingAccountStatus).optional(),
-    tradingEnabled: z.boolean().optional(),
-    killSwitchEnabled: z.boolean().optional(),
     pausedReason: z.string().trim().nullable().optional(),
     notes: z.string().trim().nullable().optional(),
   })
@@ -47,6 +43,14 @@ export const updateTradingAccountSchema = z
 
 export type UpdateTradingAccountInput = z.infer<
   typeof updateTradingAccountSchema
+>;
+
+export const deactivateTradingAccountSchema = z.strictObject({
+  reason: z.string().trim().min(1, 'A deactivation reason is required.').max(1_000),
+});
+
+export type DeactivateTradingAccountInput = z.infer<
+  typeof deactivateTradingAccountSchema
 >;
 
 const nullablePositiveNumber = z.coerce.number().positive().nullable().optional();

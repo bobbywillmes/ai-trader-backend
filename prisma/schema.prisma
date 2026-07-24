@@ -54,6 +54,7 @@ model User {
 
   heldTradingAccounts         TradingAccount[]           @relation("TradingAccountHolder")
   tradingAccountMemberships   TradingAccountMembership[]
+  systemEventsActed           SystemEvent[]               @relation("SystemEventActor")
 }
 
 model UserSetupToken {
@@ -516,9 +517,12 @@ model SystemEvent {
   createdAt   DateTime @default(now())
   tradingAccountId  Int?
   tradingAccount    TradingAccount? @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
+  actorUserId       Int?
+  actorUser         User? @relation("SystemEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
 
   @@index([tradingAccountId])
   @@index([tradingAccountId, createdAt])
+  @@index([actorUserId])
 }
 
 model WorkerHealthState {

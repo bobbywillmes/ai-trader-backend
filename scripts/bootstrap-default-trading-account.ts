@@ -139,10 +139,10 @@ async function main() {
               displayName,
               broker: TradingBroker.ALPACA,
               environment,
-              status: TradingAccountStatus.ACTIVE,
+              status: TradingAccountStatus.PAUSED,
 
-              // Safety defaults. The account exists, but the account-scoped runtime
-              // should not be allowed to trade until explicitly enabled later.
+              // Safety defaults. Bootstrap provisions a dormant account and cannot
+              // activate it; activation requires a dedicated future operation.
               tradingEnabled: false,
               killSwitchEnabled: true,
 

@@ -21,6 +21,27 @@ npx prisma migrate reset  # destructive — never in production
 
 Production data should be treated as durable, even while using Alpaca paper trading.
 
+### Trading Account operational-state migration
+
+Migration `20260724180000_lock_trading_account_operational_state` adds:
+
+```sql
+CONSTRAINT "TradingAccount_operational_state_check"
+CHECK (
+  ("status" = 'ACTIVE' AND "tradingEnabled" = true AND "killSwitchEnabled" = false)
+  OR
+  ("status" <> 'ACTIVE' AND "tradingEnabled" = false AND "killSwitchEnabled" = true)
+)
+```
+
+Before adding the constraint, its `DO` block counts invalid accounts and raises
+an exception containing that count. It does not update or repair rows. Review
+and resolve any reported inconsistency deliberately before retrying deployment.
+
+The migration also adds nullable `SystemEvent.actorUserId`, index
+`SystemEvent_actorUserId_idx`, and foreign key
+`SystemEvent_actorUserId_fkey`.
+
 ---
 
 ## 🔃 Routine Migration Flow

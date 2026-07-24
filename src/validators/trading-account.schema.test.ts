@@ -15,8 +15,16 @@ describe('Trading Account identity validation', () => {
     (field) => expect(() => createTradingAccountSchema.parse({ accountHolderUserId: 1, displayName: 'Bobby Paper', environment: 'PAPER', [field]: field === 'broker' ? 'ALPACA' : true })).toThrow()
   );
 
-  it.each(['environment', 'broker', 'accountHolderUserId', 'brokerAccountId'])(
-    'rejects immutable update field %s',
+  it.each([
+    'environment',
+    'broker',
+    'accountHolderUserId',
+    'brokerAccountId',
+    'status',
+    'tradingEnabled',
+    'killSwitchEnabled',
+  ])(
+    'rejects immutable or operational update field %s',
     (field) => expect(() => updateTradingAccountSchema.parse({ displayName: 'Updated', [field]: field === 'accountHolderUserId' ? 2 : 'LIVE' })).toThrow()
   );
 
