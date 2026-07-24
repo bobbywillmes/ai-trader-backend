@@ -13,6 +13,20 @@ account-specific notes. A database uniqueness constraint prevents assigning the
 same Subscription twice to one account while allowing independent Paper and
 Live assignments.
 
+When `allocationId` is present, a composite database foreign key requires the
+referenced `TradingAccountAllocation` to have the same `tradingAccountId` as
+the assignment. Dormant or otherwise non-entry-capable assignments may retain
+`allocationId=null`; `tradingAccountId` remains required. Service-layer
+ownership, enablement, reservation, transaction, order-entry, and diagnostic
+checks remain in place as defense in depth.
+
+Allocations are disabled rather than hard-deleted through the administrative
+API. At the database level, referenced allocations cannot be deleted or moved
+to another trading account until assignments are explicitly detached. The
+ownership migration first counts missing and cross-account allocation
+references and aborts with the invalid row count instead of rewriting
+audit-sensitive configuration.
+
 Global enablement controls whether a definition may open new positions anywhere.
 Assignment enablement controls one account deployment. `entriesEnabled` controls
 new buys. `exitsEnabled` remains independent so an entries-disabled assignment
