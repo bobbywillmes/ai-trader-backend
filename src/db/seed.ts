@@ -11,7 +11,10 @@ import {
   EXIT_PROFILE_SEEDS,
   getDipExitProfileForAssetTypeAndRiskMode,
 } from '../types/exitProfiles.js';
-import { buildSubscriptionsForSecurity } from '../types/subscriptionTemplates.js';
+import {
+  buildSubscriptionsForSecurity,
+  CURATED_SUBSCRIPTION_SYMBOLS,
+} from '../types/subscriptionTemplates.js';
 
 import { SUBSCRIPTION_RISK_MODES } from '../types/securityPolicies.js';
 
@@ -85,23 +88,7 @@ const strategies = [
 const exitProfiles = EXIT_PROFILE_SEEDS;
 
 // Seed subscriptions for a curated list of popular stocks and ETFs that are commonly traded and have good liquidity. This will allow us to have a solid set of active subscriptions for testing and demonstration purposes.
-const curatedSubscriptionSymbols = new Set<string>([
-  'SPY',
-  'QQQ',
-  'DIA',
-  'IWM',
-  'RSP',
-  'AAPL',
-  'AMZN',
-  'GOOG',
-  'META',
-  'MSFT',
-  'NVDA',
-  'TSLA',
-  'AMD',
-  'INTC',
-  'NFLX',
-]);
+const curatedSubscriptionSymbols = new Set<string>(CURATED_SUBSCRIPTION_SYMBOLS);
 
 const curatedSubscriptionSecurities = securities.filter((security) =>
   curatedSubscriptionSymbols.has(security.symbol)

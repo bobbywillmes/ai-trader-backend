@@ -109,3 +109,48 @@ Before legacy columns are dropped, production diagnostics must prove:
 The destructive migration must contain SQL assertions that abort on unmapped
 legacy data. Production deployment must run the diagnostic command before
 `prisma migrate deploy`.
+
+## Authoritative diagnostic conclusions
+
+The preflight reports independent conclusions so a reviewer cannot confuse
+historical migration fidelity with current trading readiness:
+
+| Conclusion | What it proves |
+| --- | --- |
+| `initialBootstrapFidelityValid` | Immediate post-bootstrap exact mapping, enablement, normalized sizing, routing, conversion, and lifecycle fidelity. Preserve the immutable output; this is not permanent current-state truth after assignments become editable. |
+| `legacyMigrationProvenanceValid` | Durable mapping, routing, lifecycle consistency, known initial conversion, complete divergence classification, and no unexplained or malformed current state. |
+| `schemaDropSafe` | Durable migration provenance with no unknown initial conversion, unexplained divergence, or malformed assignment. Legitimate post-bootstrap edits do not fail it. |
+| `productionBaselineValid` | Unambiguous Bobby Paper and Bobby Live discovery, the exact authoritative Bobby Paper curated key set, and zero Bobby Live assignments. |
+| `runtimeEntryReady` | Every currently active entry-capable assignment has complete valid account, allocation, reservation, sizing, capacity, and entry-risk configuration. |
+| `overallDiagnosticPassed` | All three definitive conclusions are true. The script exits nonzero otherwise. |
+
+`schemaDropSafe` does not certify that the account is ready to trade.
+`runtimeEntryReady` does not certify that legacy data was copied faithfully.
+The full JSON result, including detailed failure arrays, must be retained as
+deployment evidence before removing legacy columns.
+
+Exact enablement and sizing differences remain reported. They are classified as
+unchanged, confirmed post-creation divergence, likely authorized divergence,
+preexisting assignment, legacy-side change, unexplained divergence, or
+malformed current state. Because assignment updates historically lacked
+dedicated audit events, likely-authorized classifications do not claim
+actor-level proof. Retain the restored-backup JSON and reviewed provenance
+report together.
+
+The diagnostic must be run while the legacy `Subscription` source columns still
+exist:
+
+```powershell
+npx tsx scripts/diagnose-subscription-catalog-migration.ts
+```
+
+Do not proceed to `prisma migrate deploy` if the command exits nonzero. The SQL
+migration's internal assertions are defense in depth and do not cover every
+authoritative preflight gate.
+
+If the connected database has already removed any required legacy source
+column, the command returns `LEGACY_SOURCE_UNAVAILABLE`, sets
+`schemaDropSafe=false`, leaves the other unevaluated conclusions as `null`, and
+exits nonzero. Fidelity cannot be reconstructed from the post-migration schema;
+use retained pre-migration diagnostic evidence or a verified pre-migration
+backup.

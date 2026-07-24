@@ -282,3 +282,48 @@ Configurable exit rules attached to subscriptions.
 ### Subscription
 
 Symbol-specific deployment of a strategy and exit profile with sizing and enable/disable state.
+
+## Subscription catalog destructive-migration preflight
+
+Before deploying the migration that removes legacy `Subscription` deployment
+columns, run the authoritative diagnostic against production while those
+columns still exist:
+
+```powershell
+npx tsx scripts/diagnose-subscription-catalog-migration.ts
+```
+
+Archive the complete JSON output with the deployment record. The command exits
+successfully only when all of these independent conclusions are true:
+
+- `initialBootstrapFidelityValid`: exact enablement and sizing parity at the
+  immediate post-bootstrap point in time. Preserve that output immutably.
+- `legacyMigrationProvenanceValid`: later parity differences are completely
+  classified, current states are writer-valid, and no unexplained or malformed
+  divergence remains.
+- `schemaDropSafe`: mapping, routing, lifecycle, conversion, and durable
+  provenance are safe for legacy-column removal.
+- `productionBaselineValid`: Bobby Paper has the exact authoritative curated
+  catalog key set, Bobby Live has no assignments, and both accounts are
+  discovered unambiguously.
+- `runtimeEntryReady`: all currently active entry-capable assignments have
+  complete valid account risk, allocation, reservation, sizing, and capacity
+  configuration.
+
+One conclusion cannot substitute for another. In particular,
+`schemaDropSafe=true` does not mean trading is ready, and
+`runtimeEntryReady=true` does not prove legacy migration fidelity. Do not run
+`prisma migrate deploy` for the legacy-column removal unless
+`overallDiagnosticPassed=true` and the diagnostic process exits zero.
+
+Editable `TradingAccountSubscription` configuration may legitimately diverge
+from stale legacy values after bootstrap. Exact parity remains reported as
+evidence but is not a permanent schema-drop requirement when chronology and
+writer-valid state classify the difference. Historical assignment changes lack
+dedicated actor-level `SystemEvent` records, so retain the restored-backup
+diagnostic JSON and reviewed row-level provenance report with the deployment.
+
+Running the command against a database where the legacy columns were already
+removed produces a structured `LEGACY_SOURCE_UNAVAILABLE` failure. This is not
+a repair request and must not be bypassed: use retained pre-migration evidence
+or a verified pre-migration backup to establish legacy migration fidelity.
