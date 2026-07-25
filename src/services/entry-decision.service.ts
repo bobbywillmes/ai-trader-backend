@@ -235,6 +235,17 @@ function buildEntryDecisionWhere(
   return where;
 }
 
+function entryDecisionReadScope(
+  defaultTradingAccountId: number
+): Prisma.EntryDecisionWhereInput {
+  return {
+    OR: [
+      { tradingAccountId: null },
+      { tradingAccountId: defaultTradingAccountId },
+    ],
+  };
+}
+
 async function resolveDecisionContext(input: EntryDecisionInput) {
   const [subscription, security] = await Promise.all([
     input.subscriptionKey
@@ -414,7 +425,7 @@ export async function listEntryDecisions(filters: EntryDecisionFilters = {}) {
   const tradingAccountId = await resolveDefaultTradingAccountId();
   const limit = normalizeLimit(filters.limit);
   const where = buildEntryDecisionWhere(filters);
-  where.tradingAccountId = tradingAccountId;
+  Object.assign(where, entryDecisionReadScope(tradingAccountId));
 
   const decisions = await prisma.entryDecision.findMany({
     where,
@@ -484,7 +495,10 @@ export async function getEntryDecisionById(id: number) {
   const tradingAccountId = await resolveDefaultTradingAccountId();
 
   const decision = await prisma.entryDecision.findFirst({
-    where: { id, tradingAccountId },
+    where: {
+      id,
+      ...entryDecisionReadScope(tradingAccountId),
+    },
     include: {
       security: true,
       subscription: true,

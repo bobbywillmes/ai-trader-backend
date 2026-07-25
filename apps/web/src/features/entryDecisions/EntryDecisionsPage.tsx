@@ -16,8 +16,8 @@ import {
   Title,
 } from "@mantine/core";
 import { IconRefresh, IconSearch, IconX } from "@tabler/icons-react";
-import { TradingAccountBadge } from "../../components/TradingAccountBadge";
 import { getAdminToken } from "../../lib/api";
+import { EntryDecisionAccountBadge } from "./EntryDecisionAccountBadge";
 import { EntryDecisionDrawer } from "./EntryDecisionDrawer";
 import { useEntryDecisionDrawer, useEntryDecisions } from "./hooks";
 import type { EntryDecisionQuery, EntryDecisionSummary } from "./types";
@@ -208,10 +208,7 @@ function EntryDecisionRow({
   return (
     <Table.Tr>
       <Table.Td>
-        <TradingAccountBadge
-          account={decision.tradingAccount}
-          tradingAccountId={decision.tradingAccountId}
-        />
+        <EntryDecisionAccountBadge decision={decision} />
       </Table.Td>
       <Table.Td>
         <Stack gap={2}>

@@ -46,6 +46,7 @@ vi.mock('./trading-account.service.js', () => ({
 
 import {
   ensureEntryDecisionCanLink,
+  getEntryDecisionById,
   linkEntryDecisionToBrokerOrder,
   linkEntryDecisionToOrderIntent,
   linkEntryDecisionToTrackedPosition,
@@ -425,7 +426,10 @@ describe('entry decision service', () => {
         symbol: 'SPY',
         decisionState: 'idle',
         subscriptionId: 22,
-        tradingAccountId: 1,
+        OR: [
+          { tradingAccountId: null },
+          { tradingAccountId: 1 },
+        ],
         signalCreated: false,
         evaluatedAt: {
           gte: new Date('2026-06-25T14:00:00.000Z'),
@@ -456,5 +460,73 @@ describe('entry decision service', () => {
       signalCreated: false,
       limit: 500,
     });
+  });
+
+  it('lists global and default-account decisions without exposing other accounts', async () => {
+    mocks.entryDecisionFindMany.mockResolvedValue([
+      decision({ id: 101, tradingAccountId: null }),
+      decision({ id: 102, tradingAccountId: 1 }),
+    ]);
+
+    const result = await listEntryDecisions();
+
+    expect(mocks.entryDecisionFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          OR: [
+            { tradingAccountId: null },
+            { tradingAccountId: 1 },
+          ],
+        },
+      })
+    );
+    expect(result.decisions).toHaveLength(2);
+  });
+
+  it('returns an account-neutral global decision by id', async () => {
+    const globalDecision = decision({ id: 101, tradingAccountId: null });
+    mocks.entryDecisionFindFirst.mockResolvedValue(globalDecision);
+
+    const result = await getEntryDecisionById(101);
+
+    expect(mocks.entryDecisionFindFirst).toHaveBeenCalledWith({
+      where: {
+        id: 101,
+        OR: [
+          { tradingAccountId: null },
+          { tradingAccountId: 1 },
+        ],
+      },
+      include: expect.any(Object),
+    });
+    expect(result.decision).toBe(globalDecision);
+  });
+
+  it('returns a default-account decision by id', async () => {
+    const accountDecision = decision({ id: 102, tradingAccountId: 1 });
+    mocks.entryDecisionFindFirst.mockResolvedValue(accountDecision);
+
+    const result = await getEntryDecisionById(102);
+
+    expect(result.decision).toBe(accountDecision);
+  });
+
+  it('does not expose a decision belonging only to another account', async () => {
+    mocks.entryDecisionFindFirst.mockResolvedValue(null);
+
+    await expect(getEntryDecisionById(103)).rejects.toMatchObject({
+      statusCode: 404,
+    });
+    expect(mocks.entryDecisionFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: 103,
+          OR: [
+            { tradingAccountId: null },
+            { tradingAccountId: 1 },
+          ],
+        },
+      })
+    );
   });
 });

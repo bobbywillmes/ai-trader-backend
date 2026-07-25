@@ -13,7 +13,7 @@ import {
   Title,
 } from "@mantine/core";
 import { IconFileAnalytics } from "@tabler/icons-react";
-import { TradingAccountBadge } from "../../components/TradingAccountBadge";
+import { EntryDecisionAccountBadge } from "./EntryDecisionAccountBadge";
 import type { EntryDecisionDetail, EntryDecisionRelatedRecord } from "./types";
 
 type EntryDecisionDrawerProps = {
@@ -71,10 +71,7 @@ export function EntryDecisionDrawer({
             <Info
               label="Trading Account"
               value={
-                <TradingAccountBadge
-                  account={decision.tradingAccount}
-                  tradingAccountId={decision.tradingAccountId}
-                />
+                <EntryDecisionAccountBadge decision={decision} />
               }
             />
             <Info

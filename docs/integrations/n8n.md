@@ -119,6 +119,13 @@ Records a durable snapshot for an ETF decision engine evaluation.
 
 n8n should use this endpoint for meaningful decisions, including skipped or idle opportunities that should remain analyzable without creating an order.
 
+The normal production decision is catalog-level and account-neutral. Send
+`decisionKey`, `subscriptionKey`, `symbol`, and the decision facts and
+snapshots. Do not normally send `tradingAccountId` or
+`tradingAccountSubscriptionId`. If the decision creates a signal, send the same
+`decisionKey` and `subscriptionKey` to `POST /api/signals/entry`; the backend
+then owns account fan-out.
+
 The backend uses `decisionKey` for idempotency. Re-sending the same decision key returns the existing decision instead of creating a duplicate.
 
 Repeated unchanged idle decisions may be accepted but skipped according to the backend persistence policy.
@@ -138,7 +145,6 @@ Example request:
   "evaluatedAt": "2026-06-25T15:00:00.000Z",
   "source": "n8n-ai-trader",
   "symbol": "SPY",
-  "tradingAccountSubscriptionId": 25,
   "subscriptionKey": "spy_dip_core",
   "decisionState": "idle",
   "decisionReason": "above_dip_threshold",
@@ -262,6 +268,11 @@ Use this signal-authenticated endpoint only for n8n smoke tests, deliberate
 single-deployment replays, and targeted Paper-account testing. The assignment ID
 is required and must be a positive integer. `subscriptionKey` is not accepted
 as an alternative routing identity.
+
+This targeted route may be called without first persisting an `EntryDecision`.
+If a targeted decision snapshot is deliberately recorded, it is
+account-specific and must be treated separately from the normal global
+production decision.
 
 ```json
 {
