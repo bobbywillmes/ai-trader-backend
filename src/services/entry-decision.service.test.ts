@@ -215,6 +215,39 @@ describe('entry decision service', () => {
     expect(result.persistenceReason).toBe('signal_created');
   });
 
+  it('persists one global signal decision without an account assignment', async () => {
+    mocks.subscriptionFindUnique.mockResolvedValue({
+      id: 22,
+      key: 'spy_dip_core',
+      securityId: 11,
+      strategyId: 33,
+      exitProfileId: 44,
+      security: { id: 11, symbol: 'SPY' },
+      strategy: { id: 33, key: 'dip_n_ride_etf' },
+      exitProfile: { id: 44, key: 'quick_exit' },
+    });
+
+    const result = await recordEntryDecision(
+      input({
+        signalCreated: true,
+        decisionState: 'signal_created',
+        tradingAccountId: undefined,
+        tradingAccountSubscriptionId: undefined,
+        subscriptionKey: 'spy_dip_core',
+      })
+    );
+
+    expect(result.persisted).toBe(true);
+    expect(mocks.entryDecisionCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        decisionKey: 'n8n:spy:2026-06-25T15:00',
+        tradingAccountId: null,
+        tradingAccountSubscriptionId: null,
+        subscriptionKey: 'spy_dip_core',
+      }),
+    });
+  });
+
   it('enriches decision context from subscription keys', async () => {
     mocks.subscriptionFindUnique.mockResolvedValue({
       id: 22,
