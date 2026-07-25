@@ -353,18 +353,16 @@ export class AdaptivePollingCoordinator {
     tradingAccountId: number,
     now: Date
   ) => Promise<AdaptivePollingLocalActivitySnapshot>;
-  private readonly states: Record<AdaptiveWorkerKey, WorkerRuntimeState> = {
-    submitted_order_sync: createWorkerState(),
-    tracked_position_sync: createWorkerState(),
-  };
-  private localActivityCache: {
+  private readonly states = new Map<string, WorkerRuntimeState>();
+  private readonly lastAccountByWorker = new Map<AdaptiveWorkerKey, number>();
+  private readonly localActivityCache = new Map<number, {
     capturedAtMs: number;
     promise: Promise<AdaptivePollingLocalActivitySnapshot>;
-  } | null = null;
-  private marketEvaluationCache: {
+  }>();
+  private readonly marketEvaluationCache = new Map<number, {
     capturedAtMs: number;
     promise: Promise<MarketEvaluation>;
-  } | null = null;
+  }>();
   private lastSuccessfulMarketState: AdaptiveMarketState | null = null;
   private lastSuccessfulTradingDate: string | null = null;
   private hadMarketSessionFailure = false;
@@ -394,10 +392,10 @@ export class AdaptivePollingCoordinator {
   }
 
   reset() {
-    this.states.submitted_order_sync = createWorkerState();
-    this.states.tracked_position_sync = createWorkerState();
-    this.localActivityCache = null;
-    this.marketEvaluationCache = null;
+    this.states.clear();
+    this.lastAccountByWorker.clear();
+    this.localActivityCache.clear();
+    this.marketEvaluationCache.clear();
     this.lastSuccessfulMarketState = null;
     this.lastSuccessfulTradingDate = null;
     this.hadMarketSessionFailure = false;
@@ -411,13 +409,25 @@ export class AdaptivePollingCoordinator {
 
   forceSync(
     workers: AdaptiveWorkerKey[],
-    reason: AdaptivePollingForceReason
+    reason: AdaptivePollingForceReason,
+    tradingAccountId?: number
   ) {
     for (const workerKey of workers) {
-      const state = this.states[workerKey];
-      state.forced = true;
-      state.forceReason = state.forceReason ?? reason;
-      state.nextDueAt = this.now();
+      const accountIds =
+        tradingAccountId !== undefined
+          ? [tradingAccountId]
+          : Array.from(this.states.keys())
+              .filter((key) => key.endsWith(`:${workerKey}`))
+              .map((key) => Number(key.split(':')[0]));
+      for (const accountId of accountIds.length > 0 ? accountIds : [0]) {
+        const state = this.stateFor(accountId, workerKey);
+        state.forced = true;
+        state.forceReason =
+          state.forceReason === null || state.forceReason === 'startup'
+            ? reason
+            : state.forceReason;
+        state.nextDueAt = this.now();
+      }
     }
   }
 
@@ -438,6 +448,7 @@ export class AdaptivePollingCoordinator {
     workerKey: AdaptiveWorkerKey
   ): Promise<AdaptivePollingDecision> {
     const now = this.now();
+    this.lastAccountByWorker.set(workerKey, tradingAccountId);
     const [localActivity, market] = await Promise.all([
       this.getLocalActivity(tradingAccountId, now),
       this.evaluateMarket(tradingAccountId, now),
@@ -453,7 +464,7 @@ export class AdaptivePollingCoordinator {
       marketState: market.state,
       active,
     });
-    const state = this.states[workerKey];
+    const state = this.stateFor(tradingAccountId, workerKey);
     const evaluatedAt = now;
     let due = false;
     let reason: AdaptivePollingDecisionReason = 'adaptive_poll_not_due';
@@ -505,17 +516,18 @@ export class AdaptivePollingCoordinator {
     return decision;
   }
 
-  recordAttempt(workerKey: AdaptiveWorkerKey, attemptedAt = this.now()) {
-    const state = this.states[workerKey];
+  recordAttempt(workerKey: AdaptiveWorkerKey, attemptedAt = this.now(), tradingAccountId?: number) {
+    const state = this.stateFor(this.resolveAccountId(workerKey, tradingAccountId), workerKey);
     state.lastAttemptAt = attemptedAt;
   }
 
   recordSuccess(
     workerKey: AdaptiveWorkerKey,
     completedAt = this.now(),
-    nextIntervalMs?: number | null
+    nextIntervalMs?: number | null,
+    tradingAccountId?: number
   ) {
-    const state = this.states[workerKey];
+    const state = this.stateFor(this.resolveAccountId(workerKey, tradingAccountId), workerKey);
     state.lastSuccessAt = completedAt;
     state.forced = false;
     state.forceReason = null;
@@ -531,8 +543,8 @@ export class AdaptivePollingCoordinator {
       interval === null ? null : new Date(completedAt.getTime() + interval);
   }
 
-  recordFailure(workerKey: AdaptiveWorkerKey, failedAt = this.now()) {
-    const state = this.states[workerKey];
+  recordFailure(workerKey: AdaptiveWorkerKey, failedAt = this.now(), tradingAccountId?: number) {
+    const state = this.stateFor(this.resolveAccountId(workerKey, tradingAccountId), workerKey);
     const lastAttemptMs = state.lastAttemptAt?.getTime() ?? failedAt.getTime();
     const elapsedSinceAttempt = Math.max(0, failedAt.getTime() - lastAttemptMs);
     const retryDelayMs = Math.min(
@@ -546,9 +558,10 @@ export class AdaptivePollingCoordinator {
   recordRateLimitDeferred(
     workerKey: AdaptiveWorkerKey,
     backoffUntil: Date | null,
-    deferredAt = this.now()
+    deferredAt = this.now(),
+    tradingAccountId?: number
   ) {
-    const state = this.states[workerKey];
+    const state = this.stateFor(this.resolveAccountId(workerKey, tradingAccountId), workerKey);
     state.nextDueAt =
       backoffUntil && backoffUntil.getTime() > deferredAt.getTime()
         ? backoffUntil
@@ -612,11 +625,13 @@ export class AdaptivePollingCoordinator {
       workers: {
         submittedOrderSync: this.toWorkerSnapshot(
           'submitted_order_sync',
-          activity
+          activity,
+          tradingAccountId
         ),
         trackedPositionSync: this.toWorkerSnapshot(
           'tracked_position_sync',
-          activity
+          activity,
+          tradingAccountId
         ),
       },
     };
@@ -624,9 +639,10 @@ export class AdaptivePollingCoordinator {
 
   private toWorkerSnapshot(
     workerKey: AdaptiveWorkerKey,
-    activity: AdaptivePollingLocalActivitySnapshot
+    activity: AdaptivePollingLocalActivitySnapshot,
+    tradingAccountId: number
   ): AdaptiveWorkerSnapshot {
-    const state = this.states[workerKey];
+    const state = this.stateFor(tradingAccountId, workerKey);
     const decision = state.lastDecision;
     const localActivity =
       workerKey === 'submitted_order_sync'
@@ -663,21 +679,21 @@ export class AdaptivePollingCoordinator {
     const nowMs = now.getTime();
 
     if (
-      this.localActivityCache &&
-      nowMs - this.localActivityCache.capturedAtMs <=
+      this.localActivityCache.get(tradingAccountId) &&
+      nowMs - this.localActivityCache.get(tradingAccountId)!.capturedAtMs <=
         LOCAL_ACTIVITY_CACHE_TTL_MS
     ) {
-      return this.localActivityCache.promise;
+      return this.localActivityCache.get(tradingAccountId)!.promise;
     }
 
     const promise = this.localActivityProvider(tradingAccountId, now).catch((error) => {
       logger.warn({ error }, 'Adaptive polling local activity lookup failed.');
       return defaultLocalActivity(now);
     });
-    this.localActivityCache = {
+    this.localActivityCache.set(tradingAccountId, {
       capturedAtMs: nowMs,
       promise,
-    };
+    });
 
     return promise;
   }
@@ -689,11 +705,11 @@ export class AdaptivePollingCoordinator {
     const nowMs = now.getTime();
 
     if (
-      this.marketEvaluationCache &&
-      nowMs - this.marketEvaluationCache.capturedAtMs <=
+      this.marketEvaluationCache.get(tradingAccountId) &&
+      nowMs - this.marketEvaluationCache.get(tradingAccountId)!.capturedAtMs <=
         MARKET_EVALUATION_CACHE_TTL_MS
     ) {
-      return this.marketEvaluationCache.promise;
+      return this.marketEvaluationCache.get(tradingAccountId)!.promise;
     }
 
     const promise = this.marketSessionProvider(tradingAccountId, now)
@@ -717,7 +733,8 @@ export class AdaptivePollingCoordinator {
           this.recoveredAt = now;
           this.forceSync(
             ['submitted_order_sync', 'tracked_position_sync'],
-            'market_session_recovered'
+            'market_session_recovered',
+            tradingAccountId
           );
         } else if (
           previousState !== null &&
@@ -725,7 +742,8 @@ export class AdaptivePollingCoordinator {
         ) {
           this.forceSync(
             ['submitted_order_sync', 'tracked_position_sync'],
-            'market_transition'
+            'market_transition',
+            tradingAccountId
           );
         } else if (
           previousTradingDate !== null &&
@@ -733,7 +751,8 @@ export class AdaptivePollingCoordinator {
         ) {
           this.forceSync(
             ['submitted_order_sync', 'tracked_position_sync'],
-            'trading_date_changed'
+            'trading_date_changed',
+            tradingAccountId
           );
         }
 
@@ -769,12 +788,31 @@ export class AdaptivePollingCoordinator {
         return evaluation;
       });
 
-    this.marketEvaluationCache = {
+    this.marketEvaluationCache.set(tradingAccountId, {
       capturedAtMs: nowMs,
       promise,
-    };
+    });
 
     return promise;
+  }
+
+  private stateFor(
+    tradingAccountId: number,
+    workerKey: AdaptiveWorkerKey
+  ): WorkerRuntimeState {
+    const key = `${tradingAccountId}:${workerKey}`;
+    const existing = this.states.get(key);
+    if (existing) return existing;
+    const created = createWorkerState();
+    this.states.set(key, created);
+    return created;
+  }
+
+  private resolveAccountId(
+    workerKey: AdaptiveWorkerKey,
+    tradingAccountId?: number
+  ) {
+    return tradingAccountId ?? this.lastAccountByWorker.get(workerKey) ?? 0;
   }
 }
 

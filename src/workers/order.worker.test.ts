@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { processPendingOrders, syncSubmittedOrders } from './order.worker.js';
+import {
+  processPendingOrders,
+  recoverStaleSubmittingIntentsForAccount,
+  syncSubmittedOrders,
+  syncSubmittedOrdersAcrossAccounts,
+} from './order.worker.js';
 
 const mocks = vi.hoisted(() => ({
   orderIntentFindMany: vi.fn(),
@@ -7,6 +12,10 @@ const mocks = vi.hoisted(() => ({
   orderIntentUpdate: vi.fn(),
   brokerOrderFindFirst: vi.fn(),
   brokerOrderUpdateMany: vi.fn(),
+  brokerOrderCreate: vi.fn(),
+  securityFindUniqueOrThrow: vi.fn(),
+  prismaTransaction: vi.fn(),
+  getAlpacaOrderByClientOrderId: vi.fn(),
   submitOrderToBroker: vi.fn(),
   getNormalizedOpenOrders: vi.fn(),
   getRuntimeTradingConfig: vi.fn(),
@@ -24,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   adaptiveRecordRateLimitDeferred: vi.fn(),
   recordOrderIntentRiskEvaluation: vi.fn(),
   resolveSubscriptionOrderInput: vi.fn(),
+  enumerateLifecycleAccounts: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -36,7 +46,10 @@ vi.mock('../db/prisma.js', () => ({
     brokerOrder: {
       findFirst: mocks.brokerOrderFindFirst,
       updateMany: mocks.brokerOrderUpdateMany,
+      create: mocks.brokerOrderCreate,
     },
+    security: { findUniqueOrThrow: mocks.securityFindUniqueOrThrow },
+    $transaction: mocks.prismaTransaction,
   },
 }));
 
@@ -97,6 +110,14 @@ vi.mock('../services/subscription.service.js', () => ({
   resolveSubscriptionOrderInput: mocks.resolveSubscriptionOrderInput,
 }));
 
+vi.mock('../services/lifecycle-account-eligibility.service.js', () => ({
+  enumerateLifecycleAccounts: mocks.enumerateLifecycleAccounts,
+}));
+
+vi.mock('../integrations/alpaca/orders.adapter.js', () => ({
+  getAlpacaOrderByClientOrderId: mocks.getAlpacaOrderByClientOrderId,
+}));
+
 const baseIntent = {
   id: 101,
   source: 'api',
@@ -133,6 +154,7 @@ describe('order worker entry-session recheck', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([]);
     mocks.resolveSubscriptionOrderInput.mockResolvedValue({
       tradingAccountId: 1,
       tradingAccountSubscriptionId: 44,
@@ -406,5 +428,190 @@ describe('submitted order sync adaptive polling', () => {
       })
     );
     expect(result).toMatchObject({ synced: 1, polled: true });
+  });
+});
+
+describe('submitted order multi-account coordinator', () => {
+  const eligibleAccount = (id: number, environment: 'PAPER' | 'LIVE') => ({
+    tradingAccountId: id,
+    displayName: `Account ${id}`,
+    broker: 'ALPACA',
+    environment,
+    status: 'PAUSED',
+    credentialStatus: 'ACTIVE',
+    eligible: true,
+    reason: 'usable_credentials_with_work',
+    exposureSummary: {
+      pendingIntents: 0,
+      submittingIntents: 0,
+      submittedIntents: 1,
+      nonterminalOrders: 1,
+      activePositions: 0,
+      unresolvedActivities: 0,
+      hasLifecycleWork: true,
+    },
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.adaptiveGetDecision.mockResolvedValue({
+      due: true,
+      mode: 'market_open_active',
+      effectiveIntervalMs: 10_000,
+      nextDueAt: null,
+      reason: 'startup_due',
+    });
+    mocks.orderIntentFindMany.mockResolvedValue([]);
+  });
+
+  it('processes eligible accounts sequentially in enumerated ID order', async () => {
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([
+      eligibleAccount(1, 'PAPER'),
+      eligibleAccount(2, 'LIVE'),
+    ]);
+
+    const result = await syncSubmittedOrdersAcrossAccounts();
+
+    expect(
+      mocks.orderIntentFindMany.mock.calls.map(
+        (call) => call[0].where.tradingAccountId
+      )
+    ).toEqual([1, 2]);
+    expect(result.results.map((item) => item.account.tradingAccountId)).toEqual([
+      1, 2,
+    ]);
+  });
+
+  it('does not let the first account failure stop the second account', async () => {
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([
+      eligibleAccount(1, 'PAPER'),
+      eligibleAccount(2, 'LIVE'),
+    ]);
+    mocks.orderIntentFindMany
+      .mockRejectedValueOnce(new Error('Paper unavailable'))
+      .mockResolvedValueOnce([]);
+
+    const result = await syncSubmittedOrdersAcrossAccounts();
+
+    expect(result.results.map((item) => item.outcome)).toEqual([
+      'FAILED',
+      'SKIPPED',
+    ]);
+    expect(mocks.orderIntentFindMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('skips dormant credentials and reports credentialless exposure', async () => {
+    const dormant = {
+      ...eligibleAccount(1, 'PAPER'),
+      eligible: false,
+      credentialStatus: null,
+      reason: 'credentials_unavailable_dormant',
+      exposureSummary: {
+        ...eligibleAccount(1, 'PAPER').exposureSummary,
+        submittedIntents: 0,
+        nonterminalOrders: 0,
+        hasLifecycleWork: false,
+      },
+    };
+    const exposed = {
+      ...eligibleAccount(2, 'LIVE'),
+      eligible: false,
+      credentialStatus: null,
+      reason: 'credentials_unavailable_with_exposure',
+    };
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([dormant, exposed]);
+
+    const result = await syncSubmittedOrdersAcrossAccounts();
+
+    expect(result.results.map((item) => item.outcome)).toEqual([
+      'SKIPPED',
+      'CREDENTIALS_UNAVAILABLE',
+    ]);
+    expect(mocks.getNormalizedOpenOrders).not.toHaveBeenCalled();
+  });
+});
+
+describe('stale submitting intent recovery', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.orderIntentUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.createSystemEvent.mockResolvedValue({});
+    mocks.securityFindUniqueOrThrow.mockResolvedValue({ id: 9 });
+    mocks.prismaTransaction.mockImplementation(
+      async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback({
+          brokerOrder: {
+            findFirst: mocks.brokerOrderFindFirst,
+            create: mocks.brokerOrderCreate,
+          },
+          orderIntent: { updateMany: mocks.orderIntentUpdateMany },
+        })
+    );
+  });
+
+  it('materializes a broker order created before local persistence', async () => {
+    mocks.orderIntentFindMany.mockResolvedValue([
+      {
+        ...baseIntent,
+        status: 'submitting',
+        brokerOrders: [],
+        updatedAt: new Date('2026-06-22T13:00:00.000Z'),
+      },
+    ]);
+    mocks.getAlpacaOrderByClientOrderId.mockResolvedValue({
+      id: 'broker-recovered',
+      client_order_id: 'client-101',
+      symbol: 'SPY',
+      side: 'buy',
+      status: 'accepted',
+    });
+    mocks.brokerOrderFindFirst.mockResolvedValue(null);
+
+    const result = await recoverStaleSubmittingIntentsForAccount(
+      1,
+      new Date('2026-06-22T14:00:00.000Z')
+    );
+
+    expect(mocks.getAlpacaOrderByClientOrderId).toHaveBeenCalledWith(
+      1,
+      'client-101',
+      'pending_order_idempotency_check'
+    );
+    expect(mocks.brokerOrderCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          tradingAccountId: 1,
+          brokerOrderId: 'broker-recovered',
+        }),
+      })
+    );
+    expect(result).toMatchObject({ linked: 1, retryable: 0 });
+  });
+
+  it('requeues an entry only after account-specific broker lookup confirms absence', async () => {
+    mocks.orderIntentFindMany.mockResolvedValue([
+      {
+        ...baseIntent,
+        status: 'submitting',
+        brokerOrders: [],
+        updatedAt: new Date('2026-06-22T13:00:00.000Z'),
+      },
+    ]);
+    mocks.getAlpacaOrderByClientOrderId.mockResolvedValue(null);
+
+    const result = await recoverStaleSubmittingIntentsForAccount(
+      1,
+      new Date('2026-06-22T14:00:00.000Z')
+    );
+
+    expect(mocks.orderIntentUpdateMany).toHaveBeenCalledWith({
+      where: { id: 101, status: 'submitting' },
+      data: {
+        status: 'pending',
+        blockReason:
+          'Recovered stale submitting intent after broker lookup found no order.',
+      },
+    });
+    expect(result).toMatchObject({ linked: 0, retryable: 1 });
   });
 });
