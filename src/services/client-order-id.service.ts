@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import type { ResolvedPlaceOrderInput } from '../validators/place-order.schema.js';
 
 const SUBSCRIPTION_KEY_TOKEN_PREFIX = 'skx';
+const SUBSCRIPTION_KEY_HASH_TOKEN_PREFIX = 'skh';
 const MAX_CLIENT_ORDER_ID_LENGTH = 128;
 
 function encodeSubscriptionKey(key: string) {
@@ -53,9 +54,32 @@ export function buildClientOrderId(
     return clientOrderId;
   }
 
-  return ['ai', timestamp, input.symbol, input.side, input.orderType, randomToken]
-    .join('-')
-    .slice(0, MAX_CLIENT_ORDER_ID_LENGTH);
+  const subscriptionHash = input.subscriptionKey
+    ? crypto
+        .createHash('sha256')
+        .update(input.subscriptionKey, 'utf8')
+        .digest('hex')
+        .slice(0, 16)
+    : null;
+  const compactParts = [
+    'ai',
+    timestamp,
+    input.symbol,
+    input.side,
+    input.orderType,
+    `ta${account.tradingAccountId}`,
+    account.environment.toLowerCase(),
+  ];
+
+  if (subscriptionHash) {
+    compactParts.push(
+      `${SUBSCRIPTION_KEY_HASH_TOKEN_PREFIX}${subscriptionHash}`
+    );
+  }
+
+  compactParts.push(randomToken);
+
+  return compactParts.join('-').slice(0, MAX_CLIENT_ORDER_ID_LENGTH);
 }
 
 export function parseSubscriptionKeyFromClientOrderId(

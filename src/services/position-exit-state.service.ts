@@ -20,6 +20,7 @@ type MarkTrailingStopOrderSubmittedArgs = {
 };
 
 type SyncTrailingStopOrderStatusArgs = {
+  tradingAccountId: number;
   clientOrderId: string;
   brokerOrderId?: string;
   orderStatus: string;
@@ -306,6 +307,9 @@ export async function syncTrailingStopOrderStatus(
   return prisma.positionExitState.updateMany({
     where: {
       trailClientOrderId: args.clientOrderId,
+      trackedPosition: {
+        tradingAccountId: args.tradingAccountId,
+      },
     },
     data: updateData,
   });

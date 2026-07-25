@@ -63,6 +63,7 @@ describe('position exit attention states', () => {
     mocks.positionExitStateUpdateMany.mockResolvedValue({ count: 1 });
 
     await syncTrailingStopOrderStatus({
+      tradingAccountId: 1,
       clientOrderId: 'ai-exit-trail-SPY-101-20260606153000',
       brokerOrderId: 'alpaca-order-123',
       orderStatus: 'rejected',
@@ -72,6 +73,9 @@ describe('position exit attention states', () => {
     expect(mocks.positionExitStateUpdateMany).toHaveBeenCalledWith({
       where: {
         trailClientOrderId: 'ai-exit-trail-SPY-101-20260606153000',
+        trackedPosition: {
+          tradingAccountId: 1,
+        },
       },
       data: expect.objectContaining({
         status: 'trailing_stop_rejected',
@@ -97,6 +101,7 @@ describe('position exit attention states', () => {
     mocks.positionExitStateUpdateMany.mockResolvedValue({ count: 1 });
 
     await syncTrailingStopOrderStatus({
+      tradingAccountId: 1,
       clientOrderId: 'ai-exit-trail-QQQ-102-20260606153000',
       brokerOrderId: 'alpaca-order-456',
       orderStatus: 'canceled',
@@ -106,6 +111,9 @@ describe('position exit attention states', () => {
     expect(mocks.positionExitStateUpdateMany).toHaveBeenCalledWith({
       where: {
         trailClientOrderId: 'ai-exit-trail-QQQ-102-20260606153000',
+        trackedPosition: {
+          tradingAccountId: 1,
+        },
       },
       data: expect.objectContaining({
         status: 'trailing_stop_canceled',
@@ -130,6 +138,7 @@ describe('position exit attention states', () => {
     mocks.positionExitStateUpdateMany.mockResolvedValue({ count: 1 });
 
     await syncTrailingStopOrderStatus({
+      tradingAccountId: 1,
       clientOrderId: 'ai-exit-trail-DIA-103-20260606153000',
       brokerOrderId: 'alpaca-order-789',
       orderStatus: 'expired',
@@ -139,6 +148,9 @@ describe('position exit attention states', () => {
     expect(mocks.positionExitStateUpdateMany).toHaveBeenCalledWith({
       where: {
         trailClientOrderId: 'ai-exit-trail-DIA-103-20260606153000',
+        trackedPosition: {
+          tradingAccountId: 1,
+        },
       },
       data: expect.objectContaining({
         status: 'trailing_stop_expired',

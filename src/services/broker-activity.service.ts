@@ -105,6 +105,7 @@ async function findLinkedBrokerOrder(args: {
 
 async function findTrackedPositionLink(args: {
   activity: AlpacaAccountActivity;
+  tradingAccountId: number;
   linkedBrokerOrder: Awaited<ReturnType<typeof findLinkedBrokerOrder>>;
 }) {
   const trackedPositionId =
@@ -132,9 +133,9 @@ async function findTrackedPositionLink(args: {
   const exitState = await prisma.positionExitState.findFirst({
     where: {
       trailBrokerOrderId: args.activity.order_id,
-    },
-    orderBy: {
-      updatedAt: 'desc',
+      trackedPosition: {
+        tradingAccountId: args.tradingAccountId,
+      },
     },
   });
 
@@ -173,6 +174,7 @@ async function upsertBrokerActivity(args: {
   });
   const trackedPositionLink = await findTrackedPositionLink({
     activity,
+    tradingAccountId,
     linkedBrokerOrder,
   });
   const trackedPositionLinkedAt =
@@ -456,7 +458,7 @@ function hasPositiveCloseQtySum(args: {
 
 export async function getCloseFillsForTrackedPosition(args: {
   trackedPositionId: number;
-  tradingAccountId?: number | null;
+  tradingAccountId: number;
   broker: string;
   symbol: string;
   closeSide: 'buy' | 'sell';
@@ -465,9 +467,7 @@ export async function getCloseFillsForTrackedPosition(args: {
   return prisma.brokerActivity.findMany({
     where: {
       trackedPositionId: args.trackedPositionId,
-      ...(args.tradingAccountId !== undefined && {
-        tradingAccountId: args.tradingAccountId,
-      }),
+      tradingAccountId: args.tradingAccountId,
       broker: args.broker,
       activityType: 'FILL',
       symbol: args.symbol,
@@ -484,7 +484,7 @@ export async function getCloseFillsForTrackedPosition(args: {
 
 export async function attributeCloseFillsForTrackedPosition(args: {
   trackedPositionId: number;
-  tradingAccountId?: number | null;
+  tradingAccountId: number;
   broker: string;
   symbol: string;
   closeSide: 'buy' | 'sell';
@@ -510,9 +510,7 @@ export async function attributeCloseFillsForTrackedPosition(args: {
         not: args.trackedPositionId,
       },
       broker: args.broker,
-      ...(args.tradingAccountId !== undefined && {
-        tradingAccountId: args.tradingAccountId,
-      }),
+      tradingAccountId: args.tradingAccountId,
       symbol: args.symbol,
       status: {
         in: [...ACTIVE_TRACKED_POSITION_STATUSES],
@@ -535,9 +533,7 @@ export async function attributeCloseFillsForTrackedPosition(args: {
   const candidates = await prisma.brokerActivity.findMany({
     where: {
       broker: args.broker,
-      ...(args.tradingAccountId !== undefined && {
-        tradingAccountId: args.tradingAccountId,
-      }),
+      tradingAccountId: args.tradingAccountId,
       activityType: 'FILL',
       symbol: args.symbol,
       side: args.closeSide,
@@ -575,6 +571,7 @@ export async function attributeCloseFillsForTrackedPosition(args: {
         in: candidates.map((activity) => activity.id),
       },
       trackedPositionId: null,
+      tradingAccountId: args.tradingAccountId,
     },
     data: {
       trackedPositionId: args.trackedPositionId,

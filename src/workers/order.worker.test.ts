@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   orderIntentUpdateMany: vi.fn(),
   orderIntentUpdate: vi.fn(),
   brokerOrderFindFirst: vi.fn(),
+  brokerOrderUpdateMany: vi.fn(),
   submitOrderToBroker: vi.fn(),
   getNormalizedOpenOrders: vi.fn(),
   getRuntimeTradingConfig: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock('../db/prisma.js', () => ({
     },
     brokerOrder: {
       findFirst: mocks.brokerOrderFindFirst,
+      updateMany: mocks.brokerOrderUpdateMany,
     },
   },
 }));
@@ -298,6 +300,10 @@ describe('submitted order sync adaptive polling', () => {
       reason: 'startup_due',
     });
     mocks.getNormalizedOpenOrders.mockResolvedValue([]);
+    mocks.brokerOrderUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.orderIntentUpdate.mockResolvedValue({});
+    mocks.createSystemEvent.mockResolvedValue({});
+    mocks.syncTrailingStopOrderStatus.mockResolvedValue({ count: 1 });
   });
 
   it('returns healthy idle without an Alpaca request when no submitted intents exist', async () => {
@@ -356,5 +362,49 @@ describe('submitted order sync adaptive polling', () => {
       skipReason: 'adaptive_poll_not_due',
     });
     expect(mocks.getNormalizedOpenOrders).not.toHaveBeenCalled();
+  });
+
+  it('passes the submitted-order account to trailing status synchronization', async () => {
+    mocks.orderIntentFindMany.mockResolvedValue([
+      {
+        ...baseIntent,
+        tradingAccountId: 2,
+        status: 'submitted',
+        brokerOrders: [
+          {
+            id: 501,
+            tradingAccountId: 2,
+            brokerOrderId: 'shared-broker-order',
+            clientOrderId: 'shared-client-order',
+            status: 'new',
+            orderIntentId: 101,
+            symbol: 'SPY',
+            side: 'sell',
+          },
+        ],
+      },
+    ]);
+    mocks.resolveDefaultTradingAccountId.mockResolvedValue(2);
+    mocks.getNormalizedOpenOrders.mockResolvedValue([
+      {
+        id: 'shared-broker-order',
+        clientOrderId: 'shared-client-order',
+        symbol: 'SPY',
+        side: 'sell',
+        status: 'accepted',
+      },
+    ]);
+
+    const result = await syncSubmittedOrders();
+
+    expect(mocks.syncTrailingStopOrderStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tradingAccountId: 2,
+        clientOrderId: 'shared-client-order',
+        brokerOrderId: 'shared-broker-order',
+        orderStatus: 'accepted',
+      })
+    );
+    expect(result).toMatchObject({ synced: 1, polled: true });
   });
 });

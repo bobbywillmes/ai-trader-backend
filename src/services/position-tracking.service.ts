@@ -197,6 +197,7 @@ async function applySubscriptionResolution(args: {
   }
 
   const resolution = await resolveTrackedPositionSubscription({
+    tradingAccountId: args.tradingAccountId,
     broker: args.broker,
     symbol: args.symbol,
     side: args.side,
@@ -224,6 +225,7 @@ async function applySubscriptionResolution(args: {
   if (resolution.source === 'local_order_intent') {
     await linkLocalEntryOwnership({
       trackedPositionId: args.trackedPositionId,
+      tradingAccountId: args.tradingAccountId,
       broker: args.broker,
       symbol: args.symbol,
       side: args.side,
@@ -487,7 +489,7 @@ export async function syncTrackedPositionsForAccount(
 
     const closeFillAttribution = await attributeCloseFillsForTrackedPosition({
       trackedPositionId: closed.id,
-      tradingAccountId: closed.tradingAccountId,
+      tradingAccountId,
       broker: closed.broker,
       symbol: closed.symbol,
       closeSide,

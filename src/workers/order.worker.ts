@@ -371,6 +371,7 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
       const nextStatus = alpacaOrder.status;
 
       await syncTrailingStopOrderStatus({
+        tradingAccountId,
         clientOrderId: brokerOrder.clientOrderId,
         brokerOrderId: brokerOrder.brokerOrderId,
         orderStatus: nextStatus,

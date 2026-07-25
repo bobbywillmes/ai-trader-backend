@@ -76,7 +76,10 @@ async function persistTrailingStopOrder(args: {
   const tradingAccountId = position.tradingAccountId;
 
   const existingIntent = await prisma.orderIntent.findFirst({
-    where: { clientOrderId: args.clientOrderId },
+    where: {
+      tradingAccountId,
+      clientOrderId: args.clientOrderId,
+    },
     orderBy: { createdAt: 'desc' },
   });
 
