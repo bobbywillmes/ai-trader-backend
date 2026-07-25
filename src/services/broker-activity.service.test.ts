@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   brokerActivityFindFirst: vi.fn(),
-  brokerActivityFindUnique: vi.fn(),
   brokerActivityFindMany: vi.fn(),
   brokerActivityUpdate: vi.fn(),
   brokerActivityUpdateMany: vi.fn(),
@@ -16,13 +15,13 @@ const mocks = vi.hoisted(() => ({
   getAlpacaAccountActivities: vi.fn(),
   createSystemEvent: vi.fn(),
   resolveDefaultTradingAccountId: vi.fn(),
+  tradingAccountFindUniqueOrThrow: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
   prisma: {
     brokerActivity: {
       findFirst: mocks.brokerActivityFindFirst,
-      findUnique: mocks.brokerActivityFindUnique,
       findMany: mocks.brokerActivityFindMany,
       update: mocks.brokerActivityUpdate,
       updateMany: mocks.brokerActivityUpdateMany,
@@ -39,6 +38,9 @@ vi.mock('../db/prisma.js', () => ({
     },
     setting: {
       findMany: mocks.settingFindMany,
+    },
+    tradingAccount: {
+      findUniqueOrThrow: mocks.tradingAccountFindUniqueOrThrow,
     },
   },
 }));
@@ -72,13 +74,16 @@ describe('broker activity tracked-position attribution', () => {
     vi.resetAllMocks();
 
     mocks.brokerActivityFindFirst.mockResolvedValue(null);
-    mocks.brokerActivityFindUnique.mockResolvedValue(null);
+    mocks.brokerActivityFindFirst.mockResolvedValue(null);
     mocks.brokerOrderFindFirst.mockResolvedValue(null);
     mocks.positionExitStateFindFirst.mockResolvedValue(null);
     mocks.trackedPositionFindFirst.mockResolvedValue(null);
     mocks.settingFindMany.mockResolvedValue([{ key: 'paperMode', value: 'true' }]);
     mocks.createSystemEvent.mockResolvedValue({});
     mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
+    mocks.tradingAccountFindUniqueOrThrow.mockResolvedValue({
+      environment: 'PAPER',
+    });
   });
 
   it('links observer-discovered close fills when one local cycle is eligible', async () => {
@@ -205,7 +210,7 @@ describe('broker activity tracked-position attribution', () => {
   });
 
   it('preserves tracked-position links during duplicate broker activity ingestion', async () => {
-    mocks.brokerActivityFindUnique.mockResolvedValue({
+    mocks.brokerActivityFindFirst.mockResolvedValue({
       id: 501,
       activityId: 'fill-501',
       trackedPositionId: 101,
@@ -237,7 +242,7 @@ describe('broker activity tracked-position attribution', () => {
 
     expect(mocks.brokerActivityUpdate).toHaveBeenCalledWith({
       where: {
-        activityId: 'fill-501',
+        id: 501,
       },
       data: expect.objectContaining({
         trackedPositionId: 101,

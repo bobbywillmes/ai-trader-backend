@@ -235,6 +235,7 @@ export async function processPendingOrders() {
         where: {
           broker: 'alpaca',
           brokerOrderId: brokerOrder.id,
+          tradingAccountId: intent.tradingAccountId,
         },
       });
 
@@ -267,8 +268,7 @@ export async function processPendingOrders() {
   };
 }
 
-export async function syncSubmittedOrders() {
-  const tradingAccountId = await resolveDefaultTradingAccountId();
+export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
   const submittedIntents = await prisma.orderIntent.findMany({
     where: {
       status: 'submitted',
@@ -292,6 +292,7 @@ export async function syncSubmittedOrders() {
   }
 
   const decision = await adaptivePollingCoordinator.getDecision(
+    tradingAccountId,
     'submitted_order_sync'
   );
 
@@ -316,9 +317,10 @@ export async function syncSubmittedOrders() {
 
   try {
     adaptivePollingCoordinator.recordAttempt('submitted_order_sync');
-    openOrders = await getNormalizedOpenOrders('submitted_order_sync', {
+    openOrders = await getNormalizedOpenOrders(
       tradingAccountId,
-    });
+      'submitted_order_sync'
+    );
   } catch (error) {
     if (error instanceof AlpacaRateLimitDeferredError) {
       adaptivePollingCoordinator.recordRateLimitDeferred(
@@ -453,4 +455,9 @@ export async function syncSubmittedOrders() {
         ? null
         : new Date(Date.now() + decision.effectiveIntervalMs).toISOString(),
   } satisfies SubmittedOrderSyncResult;
+}
+
+export async function syncSubmittedOrders() {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+  return syncSubmittedOrdersForAccount(tradingAccountId);
 }

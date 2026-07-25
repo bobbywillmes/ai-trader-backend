@@ -1,4 +1,3 @@
-import { env } from '../../config/env.js';
 import type {
   AlpacaAccount,
   AlpacaPosition,
@@ -29,11 +28,10 @@ function toNullableNumber(value: string | number | null | undefined): number | n
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function getBrokerMode(): BrokerMode {
-  return env.ALPACA_BASE_URL.includes('paper') ? 'paper' : 'live';
-}
-
-export function normalizeAccount(raw: AlpacaAccount): BrokerAccountSummary {
+export function normalizeAccount(
+  raw: AlpacaAccount,
+  mode: BrokerMode
+): BrokerAccountSummary {
   const equity = toNumber(raw.equity);
   const lastEquity = toNumber(raw.last_equity);
   const dayPnL = equity - lastEquity;
@@ -41,7 +39,7 @@ export function normalizeAccount(raw: AlpacaAccount): BrokerAccountSummary {
 
   return {
     broker: 'alpaca',
-    mode: getBrokerMode(),
+    mode,
     status: raw.status,
     currency: raw.currency,
     accountNumber: raw.account_number,

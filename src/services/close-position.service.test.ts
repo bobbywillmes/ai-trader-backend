@@ -4,7 +4,9 @@ const mocks = vi.hoisted(() => ({
   trackedPositionFindUnique: vi.fn(),
   trackedPositionUpdateMany: vi.fn(),
   orderIntentCreate: vi.fn(),
-  brokerOrderUpsert: vi.fn(),
+  brokerOrderFindFirst: vi.fn(),
+  brokerOrderCreate: vi.fn(),
+  brokerOrderUpdate: vi.fn(),
   closeAlpacaPosition: vi.fn(),
   createSystemEvent: vi.fn(),
   forceAfterBrokerPositionWrite: vi.fn(),
@@ -20,7 +22,9 @@ vi.mock('../db/prisma.js', () => ({
       create: mocks.orderIntentCreate,
     },
     brokerOrder: {
-      upsert: mocks.brokerOrderUpsert,
+      findFirst: mocks.brokerOrderFindFirst,
+      create: mocks.brokerOrderCreate,
+      update: mocks.brokerOrderUpdate,
     },
   },
 }));
@@ -65,7 +69,8 @@ describe('closePosition', () => {
     vi.clearAllMocks();
     mocks.trackedPositionUpdateMany.mockResolvedValue({ count: 1 });
     mocks.orderIntentCreate.mockResolvedValue({ id: 501 });
-    mocks.brokerOrderUpsert.mockResolvedValue({ id: 601 });
+    mocks.brokerOrderFindFirst.mockResolvedValue(null);
+    mocks.brokerOrderCreate.mockResolvedValue({ id: 601 });
     mocks.createSystemEvent.mockResolvedValue(undefined);
     mocks.closeAlpacaPosition.mockResolvedValue({
       id: 'broker-close-1',
@@ -86,9 +91,9 @@ describe('closePosition', () => {
     });
 
     expect(mocks.closeAlpacaPosition).toHaveBeenCalledWith(
+      31,
       'AAPL',
-      'position_close',
-      { tradingAccountId: 31 }
+      'position_close'
     );
     expect(mocks.orderIntentCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({

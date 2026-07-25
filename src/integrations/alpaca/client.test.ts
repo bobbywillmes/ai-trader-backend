@@ -7,16 +7,11 @@ const mocks = vi.hoisted(() => ({
   beginRequest: vi.fn(),
   completeRequest: vi.fn(),
   resolveAlpacaConfigForTradingAccount: vi.fn(),
-  resolveDefaultTradingAccountId: vi.fn(),
 }));
 
 vi.mock('../../services/alpaca-config-resolver.service.js', () => ({
   resolveAlpacaConfigForTradingAccount:
     mocks.resolveAlpacaConfigForTradingAccount,
-}));
-
-vi.mock('../../services/trading-account.service.js', () => ({
-  resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
 }));
 
 vi.mock('../../services/alpaca-api-usage.service.js', () => ({
@@ -29,7 +24,7 @@ vi.mock('../../services/alpaca-api-usage.service.js', () => ({
 }));
 
 import { AlpacaApiError } from '../../errors/alpaca-api-error.js';
-import { alpacaRequest } from './client.js';
+import { alpacaRequestForAccount } from './client.js';
 import type { AlpacaRequestMetadata } from './request-metadata.js';
 
 const accountReadMetadata: AlpacaRequestMetadata = {
@@ -37,6 +32,14 @@ const accountReadMetadata: AlpacaRequestMetadata = {
   endpoint: 'GET /v2/account',
   method: 'GET',
   requestClass: 'informational_read',
+  deferDuringRateLimit: false,
+};
+
+const orderWriteMetadata: AlpacaRequestMetadata = {
+  operation: 'pending_order_submission',
+  endpoint: 'POST /v2/orders',
+  method: 'POST',
+  requestClass: 'critical_write',
   deferDuringRateLimit: false,
 };
 
@@ -50,7 +53,7 @@ function jsonResponse(body: unknown, init: ResponseInit = {}) {
   });
 }
 
-describe('alpacaRequest', () => {
+describe('alpacaRequestForAccount', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal('fetch', mocks.fetch);
@@ -60,9 +63,9 @@ describe('alpacaRequest', () => {
       metadata: accountReadMetadata,
       startedAt: new Date('2026-06-20T00:00:00.000Z'),
     });
-    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.resolveAlpacaConfigForTradingAccount.mockResolvedValue({
       tradingAccountId: 1,
+      environment: 'PAPER',
       baseUrl: 'https://paper-api.alpaca.markets',
       apiKey: 'test-key',
       apiSecret: 'test-secret',
@@ -80,7 +83,7 @@ describe('alpacaRequest', () => {
     mocks.fetch.mockResolvedValueOnce(jsonResponse({ id: 'account-1' }));
 
     await expect(
-      alpacaRequest('/v2/account', {
+      alpacaRequestForAccount(1, '/v2/account', {
         metadata: accountReadMetadata,
       })
     ).resolves.toEqual({ id: 'account-1' });
@@ -102,7 +105,6 @@ describe('alpacaRequest', () => {
         outcome: 'success',
       })
     );
-    expect(mocks.resolveDefaultTradingAccountId).toHaveBeenCalledOnce();
     expect(mocks.resolveAlpacaConfigForTradingAccount).toHaveBeenCalledWith(
       1,
       {}
@@ -112,6 +114,7 @@ describe('alpacaRequest', () => {
   it('uses an explicit trading account id when one is provided', async () => {
     mocks.resolveAlpacaConfigForTradingAccount.mockResolvedValueOnce({
       tradingAccountId: 42,
+      environment: 'LIVE',
       baseUrl: 'https://api.alpaca.markets',
       apiKey: 'account-key',
       apiSecret: 'account-secret',
@@ -122,13 +125,11 @@ describe('alpacaRequest', () => {
     mocks.fetch.mockResolvedValueOnce(jsonResponse({ id: 'account-42' }));
 
     await expect(
-      alpacaRequest('/v2/account', {
-        tradingAccountId: 42,
+      alpacaRequestForAccount(42, '/v2/account', {
         metadata: accountReadMetadata,
       })
     ).resolves.toEqual({ id: 'account-42' });
 
-    expect(mocks.resolveDefaultTradingAccountId).not.toHaveBeenCalled();
     expect(mocks.resolveAlpacaConfigForTradingAccount).toHaveBeenCalledWith(
       42,
       {}
@@ -144,6 +145,35 @@ describe('alpacaRequest', () => {
     );
   });
 
+  it('blocks LIVE broker writes while preserving account-scoped LIVE reads', async () => {
+    mocks.resolveAlpacaConfigForTradingAccount.mockResolvedValue({
+      tradingAccountId: 42,
+      environment: 'LIVE',
+      baseUrl: 'https://api.alpaca.markets',
+      apiKey: 'account-key',
+      apiSecret: 'account-secret',
+      source: 'trading_account_credential',
+      credentialId: 7,
+      keyFingerprint: 'fingerprint-1',
+    });
+    mocks.fetch.mockResolvedValueOnce(jsonResponse({ id: 'account-42' }));
+
+    await expect(
+      alpacaRequestForAccount(42, '/v2/account', {
+        metadata: accountReadMetadata,
+      })
+    ).resolves.toEqual({ id: 'account-42' });
+
+    await expect(
+      alpacaRequestForAccount(42, '/v2/orders', {
+        method: 'POST',
+        body: { symbol: 'SPY' },
+        metadata: orderWriteMetadata,
+      })
+    ).rejects.toThrow('ALLOW_LIVE_TRADING is false');
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('propagates missing account credentials before sending an Alpaca request', async () => {
     mocks.resolveAlpacaConfigForTradingAccount.mockRejectedValueOnce(
       new Error(
@@ -152,8 +182,7 @@ describe('alpacaRequest', () => {
     );
 
     await expect(
-      alpacaRequest('/v2/account', {
-        tradingAccountId: 42,
+      alpacaRequestForAccount(42, '/v2/account', {
         metadata: accountReadMetadata,
       })
     ).rejects.toThrow('Trading account 42 does not have active Alpaca credentials');
@@ -171,7 +200,7 @@ describe('alpacaRequest', () => {
     );
 
     await expect(
-      alpacaRequest('/v2/account', {
+      alpacaRequestForAccount(1, '/v2/account', {
         metadata: accountReadMetadata,
       })
     ).rejects.toMatchObject({
@@ -192,7 +221,7 @@ describe('alpacaRequest', () => {
     mocks.fetch.mockResolvedValueOnce(new Response('not found', { status: 404 }));
 
     await expect(
-      alpacaRequest('/v2/orders/order-123', {
+      alpacaRequestForAccount(1, '/v2/orders/order-123', {
         returnNullOn404: true,
         metadata: {
           operation: 'protective_order_sync',
@@ -207,7 +236,7 @@ describe('alpacaRequest', () => {
 
   it('rejects unknown operation and endpoint keys before fetch', async () => {
     await expect(
-      alpacaRequest('/v2/account', {
+      alpacaRequestForAccount(1, '/v2/account', {
         metadata: {
           ...accountReadMetadata,
           operation: 'GET /v2/account' as never,
@@ -216,7 +245,7 @@ describe('alpacaRequest', () => {
     ).rejects.toThrow('Unknown Alpaca API operation');
 
     await expect(
-      alpacaRequest('/v2/account', {
+      alpacaRequestForAccount(1, '/v2/account', {
         metadata: {
           ...accountReadMetadata,
           endpoint: 'GET /v2/account/abc123' as never,
@@ -230,7 +259,7 @@ describe('alpacaRequest', () => {
 
   it('rejects mismatched declared request methods before fetch', async () => {
     await expect(
-      alpacaRequest('/v2/orders', {
+      alpacaRequestForAccount(1, '/v2/orders', {
         method: 'POST',
         metadata: {
           operation: 'pending_order_submission',
@@ -257,7 +286,7 @@ describe('alpacaRequest', () => {
     );
 
     await expect(
-      alpacaRequest('/v2/account', {
+      alpacaRequestForAccount(1, '/v2/account', {
         metadata: accountReadMetadata,
       })
     ).rejects.toMatchObject({
@@ -279,7 +308,7 @@ describe('alpacaRequest', () => {
     mocks.fetch.mockRejectedValueOnce(networkError);
 
     await expect(
-      alpacaRequest('/v2/account', {
+      alpacaRequestForAccount(1, '/v2/account', {
         metadata: accountReadMetadata,
       })
     ).rejects.toBe(networkError);
@@ -297,7 +326,7 @@ describe('alpacaRequest', () => {
     mocks.fetch.mockRejectedValueOnce(timeoutError);
 
     await expect(
-      alpacaRequest('/v2/account', {
+      alpacaRequestForAccount(1, '/v2/account', {
         metadata: accountReadMetadata,
       })
     ).rejects.toBe(timeoutError);
@@ -316,7 +345,7 @@ describe('alpacaRequest', () => {
     mocks.getBackoffUntil.mockReturnValue(new Date('2026-06-20T00:01:00.000Z'));
 
     await expect(
-      alpacaRequest('/v2/account', {
+      alpacaRequestForAccount(1, '/v2/account', {
         metadata: {
           ...accountReadMetadata,
           deferDuringRateLimit: true,

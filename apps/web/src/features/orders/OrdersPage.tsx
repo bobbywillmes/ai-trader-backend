@@ -23,7 +23,11 @@ export function OrdersPage() {
   const { data: orders = [], isLoading, isError, error } = useOpenOrders(token);
   const cancelOrderMutation = useCancelOrder(token);
 
-  function handleCancelOrder(orderId: string, symbol?: string) {
+  function handleCancelOrder(
+    tradingAccountId: number,
+    orderId: string,
+    symbol?: string
+  ) {
     modals.openConfirmModal({
       title: "Cancel order",
       children: (
@@ -35,7 +39,7 @@ export function OrdersPage() {
       confirmProps: { color: "red" },
       onConfirm: async () => {
         try {
-          await cancelOrderMutation.mutateAsync(orderId);
+          await cancelOrderMutation.mutateAsync({ tradingAccountId, orderId });
           notifications.show({
             message: `Order canceled${symbol ? ` for ${symbol}` : ""}.`,
             color: "teal",
@@ -99,7 +103,7 @@ export function OrdersPage() {
                   const submittedAt = order.submitted_at ?? order.submittedAt ?? null;
                   const isCanceling =
                     cancelOrderMutation.isPending &&
-                    cancelOrderMutation.variables === order.id;
+                    cancelOrderMutation.variables?.orderId === order.id;
 
                   return (
                     <Table.Tr key={order.id}>
@@ -139,8 +143,18 @@ export function OrdersPage() {
                           color="red"
                           variant="subtle"
                           loading={isCanceling}
-                          disabled={isCanceling}
-                          onClick={() => handleCancelOrder(order.id, order.symbol)}
+                          disabled={
+                            isCanceling || order.tradingAccountId === null
+                          }
+                          onClick={() => {
+                            if (order.tradingAccountId !== null) {
+                              handleCancelOrder(
+                                order.tradingAccountId,
+                                order.id,
+                                order.symbol
+                              );
+                            }
+                          }}
                         >
                           Cancel
                         </Button>

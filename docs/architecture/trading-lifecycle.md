@@ -1,5 +1,28 @@
 # Trading Lifecycle
 
+## Multi-account broker identity foundation
+
+All account-owned Alpaca reads and writes require an explicit
+`tradingAccountId`. The integration boundary never resolves a default Trading
+Account. Compatibility controllers and Phase 1 worker entry points may still
+resolve the configured default, but they pass that exact ID through
+account-scoped lifecycle functions.
+
+`TradingAccount.environment` is authoritative: `PAPER` routes to Alpaca Paper
+and `LIVE` routes to Alpaca Live. Global `paperMode` and `ALPACA_BASE_URL` are
+compatibility settings only and cannot route or reject an account-owned
+request.
+
+External activity, broker-order, client-order, and snapshot run-key identities
+are unique inside an attributed account scope. Historical null-account rows
+retain legacy uniqueness and are never assigned to Bobby Paper by assumption.
+New client order IDs include account and environment identity; historical IDs
+are not rewritten.
+
+`ALLOW_LIVE_TRADING=false` blocks every LIVE state-changing request at the
+strict boundary, including cancels and closes, while LIVE reads remain
+available. Lifecycle coordinators remain default-account-only until Phase 2.
+
 This doc covers how a trade moves through the system — from entry signal to broker submission, position tracking, exit evaluation, and the audit trail. It also describes the background workers that keep everything synchronized and the async order processing architecture.
 
 ---

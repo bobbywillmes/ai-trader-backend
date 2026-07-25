@@ -390,10 +390,8 @@ describe('trading accounts controller', () => {
     );
 
     expect(mocks.getNormalizedOpenOrders).toHaveBeenCalledWith(
-      'open_orders_sync',
-      {
-        tradingAccountId: 1,
-      }
+      1,
+      'open_orders_sync'
     );
     expect(mocks.getTradingAccountSummaryById).toHaveBeenCalledWith(1);
     expect(res.status).toHaveBeenCalledWith(200);

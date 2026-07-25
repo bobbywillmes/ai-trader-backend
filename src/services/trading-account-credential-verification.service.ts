@@ -77,10 +77,13 @@ export async function verifyTradingAccountCredential(
   const credentialSnapshot = account.credential;
   const credentialId = credentialSnapshot.id;
 
-  const brokerAccount = await getNormalizedAccount('manual_admin_action', {
+  const brokerAccount = await getNormalizedAccount(
     tradingAccountId,
-    credentialStatuses: VERIFICATION_CREDENTIAL_STATUSES,
-  }).catch(() => null);
+    'manual_admin_action',
+    {
+      credentialStatuses: VERIFICATION_CREDENTIAL_STATUSES,
+    }
+  ).catch(() => null);
 
   if (!brokerAccount) {
     const now = new Date();
@@ -273,7 +276,8 @@ export async function verifyTradingAccountCredential(
         } satisfies Prisma.InputJsonValue,
       },
     });
-  });
+    }
+  );
 
   const updatedAccount = await getTradingAccountForAdmin(tradingAccountId);
 

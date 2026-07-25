@@ -15,9 +15,16 @@ export function getTradingAccountOpenOrders(
   );
 }
 
-export function cancelOrder(orderId: string, token: string) {
-  return apiRequest<void>(`/api/orders/${encodeURIComponent(orderId)}`, {
+export function cancelOrder(
+  tradingAccountId: number,
+  orderId: string,
+  token: string
+) {
+  return apiRequest<void>(
+    `/api/orders/trading-accounts/${tradingAccountId}/${encodeURIComponent(orderId)}`,
+    {
     method: "DELETE",
     token,
-  });
+    }
+  );
 }

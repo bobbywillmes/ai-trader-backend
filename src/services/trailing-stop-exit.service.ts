@@ -11,7 +11,6 @@ import {
   markTrailingStopOrderSubmitted,
 } from './position-exit-state.service.js';
 import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
-import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 const TRAILING_STOP_TIME_IN_FORCE = 'gtc' as const;
 
@@ -69,8 +68,12 @@ async function persistTrailingStopOrder(args: {
   if (!position) {
     throw new Error(`Tracked position ${args.trackedPositionId} was not found.`);
   }
-  const tradingAccountId =
-    position.tradingAccountId ?? (await resolveDefaultTradingAccountId());
+  if (position.tradingAccountId === null) {
+    throw new Error(
+      `TrackedPosition ${position.id} has no tradingAccountId; refusing trailing-stop persistence.`
+    );
+  }
+  const tradingAccountId = position.tradingAccountId;
 
   const existingIntent = await prisma.orderIntent.findFirst({
     where: { clientOrderId: args.clientOrderId },
@@ -125,14 +128,15 @@ async function persistTrailingStopOrder(args: {
     });
   }
 
-  await prisma.brokerOrder.upsert({
+  const existingBrokerOrderRecord = await prisma.brokerOrder.findFirst({
     where: {
-      broker_clientOrderId: {
-        broker: 'alpaca',
-        clientOrderId: args.clientOrderId,
-      },
+      tradingAccountId,
+      broker: 'alpaca',
+      clientOrderId: args.clientOrderId,
     },
-    create: {
+    select: { id: true },
+  });
+  const brokerOrderData = {
       orderIntentId: orderIntent.id,
       tradingAccountId,
       broker: 'alpaca',
@@ -144,15 +148,15 @@ async function persistTrailingStopOrder(args: {
       side: 'sell',
       status: args.order.status,
       rawBrokerJson: args.order as unknown as Prisma.InputJsonValue,
-    },
-    update: {
-      brokerOrderId: args.order.id,
-      tradingAccountId,
-      trackedPositionId: position.id,
-      status: args.order.status,
-      rawBrokerJson: args.order as unknown as Prisma.InputJsonValue,
-    },
-  });
+  };
+  if (existingBrokerOrderRecord) {
+    await prisma.brokerOrder.update({
+      where: { id: existingBrokerOrderRecord.id },
+      data: brokerOrderData,
+    });
+  } else {
+    await prisma.brokerOrder.create({ data: brokerOrderData });
+  }
 
   await markTrailingStopOrderSubmitted({
     trackedPositionId: position.id,
@@ -176,8 +180,12 @@ export async function submitTrailingStopExitOrder(trackedPositionId: number) {
   if (!position) {
     throw new Error(`Tracked position ${trackedPositionId} was not found.`);
   }
-  const tradingAccountId =
-    position.tradingAccountId ?? (await resolveDefaultTradingAccountId());
+  if (position.tradingAccountId === null) {
+    throw new Error(
+      `TrackedPosition ${position.id} has no tradingAccountId; refusing trailing-stop broker access.`
+    );
+  }
+  const tradingAccountId = position.tradingAccountId;
 
   const exitState =
     position.exitState ?? (await ensurePositionExitState(position.id));
@@ -218,12 +226,11 @@ export async function submitTrailingStopExitOrder(trackedPositionId: number) {
     targetUnlockedAt: exitState.targetUnlockedAt,
   });
 
-  const existingBrokerOrder = await prisma.brokerOrder.findUnique({
+  const existingBrokerOrder = await prisma.brokerOrder.findFirst({
     where: {
-      broker_clientOrderId: {
-        broker: 'alpaca',
-        clientOrderId,
-      },
+      tradingAccountId,
+      broker: 'alpaca',
+      clientOrderId,
     },
   });
 
@@ -246,9 +253,9 @@ export async function submitTrailingStopExitOrder(trackedPositionId: number) {
   }
 
   const existingAlpacaOrder = await getAlpacaOrderByClientOrderId(
+    tradingAccountId,
     clientOrderId,
-    'protective_order_idempotency_check',
-    { tradingAccountId }
+    'protective_order_idempotency_check'
   );
 
   if (existingAlpacaOrder) {
@@ -277,9 +284,9 @@ export async function submitTrailingStopExitOrder(trackedPositionId: number) {
   };
 
   const created = await placeAlpacaOrder(
+    tradingAccountId,
     payload,
-    'protective_order_submission',
-    { tradingAccountId }
+    'protective_order_submission'
   );
 
   adaptivePollingCoordinator.forceAfterBrokerOrderCreated(

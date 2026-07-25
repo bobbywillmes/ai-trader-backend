@@ -1,5 +1,16 @@
 # Production Deployment Checklist
 
+## Phase 1 multi-account routing
+
+Broker routing is account-derived. Global `ALPACA_BASE_URL` and `paperMode`
+must not be treated as the environment of every Trading Account. Keep Bobby
+Live dormant and `ALLOW_LIVE_TRADING=false` during rollout; this blocks all
+LIVE writes, including cancels and closes, while allowing scoped reads.
+
+Apply and review the account-scoped identity migration before deploying the
+Phase 1 application. Stop on any preflight exception. The migration does not
+repair or attribute historical rows automatically.
+
 This doc covers the production launch and routine production update flow for the AI Trader backend and web UI.
 
 The goal is to make production startup conservative, repeatable, and easy to verify before n8n is connected to the production backend or before paper-order workflows are enabled.

@@ -1,5 +1,6 @@
 import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
 import { recordAccountSnapshot } from '../services/account-snapshot.service.js';
+import { resolveDefaultTradingAccountId } from '../services/trading-account.service.js';
 
 const EASTERN_TIME_ZONE = 'America/New_York';
 
@@ -67,6 +68,7 @@ function isWithinCheckpointWindow(args: {
 }
 
 export async function runScheduledAccountSnapshots() {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
   const eastern = getEasternDateParts();
 
   if (!isWeekday(eastern.weekday)) {
@@ -97,7 +99,7 @@ export async function runScheduledAccountSnapshots() {
     let result: Awaited<ReturnType<typeof recordAccountSnapshot>>;
 
     try {
-      result = await recordAccountSnapshot({
+      result = await recordAccountSnapshot(tradingAccountId, {
         reason: checkpoint.reason,
         force: false,
         runKey: `${checkpoint.reason}:${eastern.dateKey}`,

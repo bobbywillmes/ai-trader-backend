@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  alpacaRequest: vi.fn(),
+  alpacaRequestForAccount: vi.fn(),
 }));
 
 vi.mock('./client.js', () => ({
-  alpacaRequest: mocks.alpacaRequest,
+  alpacaRequestForAccount: mocks.alpacaRequestForAccount,
 }));
 
 import {
@@ -21,18 +21,20 @@ import { getAlpacaAccountActivities } from './activities.adapter.js';
 describe('Alpaca adapter request metadata', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.alpacaRequest.mockResolvedValue({});
+    mocks.alpacaRequestForAccount.mockResolvedValue({});
   });
 
   it('uses normalized endpoint keys instead of dynamic broker identifiers', async () => {
-    await getAlpacaOrderById('order-abc-123', 'protective_order_sync');
+    await getAlpacaOrderById(1, 'order-abc-123', 'protective_order_sync');
     await getAlpacaOrderByClientOrderId(
+      1,
       'client-abc-123',
       'pending_order_idempotency_check'
     );
-    await closeAlpacaPosition('SPY', 'position_close');
+    await closeAlpacaPosition(1, 'SPY', 'position_close');
 
-    expect(mocks.alpacaRequest).toHaveBeenNthCalledWith(
+    expect(mocks.alpacaRequestForAccount).toHaveBeenNthCalledWith(
+      1,
       1,
       '/v2/orders/order-abc-123',
       expect.objectContaining({
@@ -41,8 +43,9 @@ describe('Alpaca adapter request metadata', () => {
         }),
       })
     );
-    expect(mocks.alpacaRequest).toHaveBeenNthCalledWith(
+    expect(mocks.alpacaRequestForAccount).toHaveBeenNthCalledWith(
       2,
+      1,
       '/v2/orders:by_client_order_id?client_order_id=client-abc-123',
       expect.objectContaining({
         metadata: expect.objectContaining({
@@ -50,8 +53,9 @@ describe('Alpaca adapter request metadata', () => {
         }),
       })
     );
-    expect(mocks.alpacaRequest).toHaveBeenNthCalledWith(
+    expect(mocks.alpacaRequestForAccount).toHaveBeenNthCalledWith(
       3,
+      1,
       '/v2/positions/SPY',
       expect.objectContaining({
         metadata: expect.objectContaining({
@@ -62,15 +66,17 @@ describe('Alpaca adapter request metadata', () => {
   });
 
   it('attributes shared reads to the caller operation', async () => {
-    await getOpenAlpacaOrders('submitted_order_sync');
-    await getAlpacaPositions('reconciliation_check');
-    await getAlpacaAccount('account_snapshot');
+    await getOpenAlpacaOrders(1, 'submitted_order_sync');
+    await getAlpacaPositions(1, 'reconciliation_check');
+    await getAlpacaAccount(1, 'account_snapshot');
     await getAlpacaAccountActivities({
+      tradingAccountId: 1,
       activityType: 'FILL',
       operation: 'manual_admin_action',
     });
 
-    expect(mocks.alpacaRequest).toHaveBeenNthCalledWith(
+    expect(mocks.alpacaRequestForAccount).toHaveBeenNthCalledWith(
+      1,
       1,
       '/v2/orders?status=open&direction=desc',
       expect.objectContaining({
@@ -81,8 +87,9 @@ describe('Alpaca adapter request metadata', () => {
         }),
       })
     );
-    expect(mocks.alpacaRequest).toHaveBeenNthCalledWith(
+    expect(mocks.alpacaRequestForAccount).toHaveBeenNthCalledWith(
       2,
+      1,
       '/v2/positions',
       expect.objectContaining({
         metadata: expect.objectContaining({
@@ -91,8 +98,9 @@ describe('Alpaca adapter request metadata', () => {
         }),
       })
     );
-    expect(mocks.alpacaRequest).toHaveBeenNthCalledWith(
+    expect(mocks.alpacaRequestForAccount).toHaveBeenNthCalledWith(
       3,
+      1,
       '/v2/account',
       expect.objectContaining({
         metadata: expect.objectContaining({
@@ -101,8 +109,9 @@ describe('Alpaca adapter request metadata', () => {
         }),
       })
     );
-    expect(mocks.alpacaRequest).toHaveBeenNthCalledWith(
+    expect(mocks.alpacaRequestForAccount).toHaveBeenNthCalledWith(
       4,
+      1,
       '/v2/account/activities/FILL',
       expect.objectContaining({
         metadata: expect.objectContaining({
@@ -116,6 +125,7 @@ describe('Alpaca adapter request metadata', () => {
 
   it('classifies critical writes separately from deferable reads', async () => {
     await placeAlpacaOrder(
+      1,
       {
         symbol: 'SPY',
         side: 'buy',
@@ -126,9 +136,10 @@ describe('Alpaca adapter request metadata', () => {
       },
       'pending_order_submission'
     );
-    await getOpenAlpacaOrders('submitted_order_sync');
+    await getOpenAlpacaOrders(1, 'submitted_order_sync');
 
-    expect(mocks.alpacaRequest).toHaveBeenNthCalledWith(
+    expect(mocks.alpacaRequestForAccount).toHaveBeenNthCalledWith(
+      1,
       1,
       '/v2/orders',
       expect.objectContaining({
@@ -138,8 +149,9 @@ describe('Alpaca adapter request metadata', () => {
         }),
       })
     );
-    expect(mocks.alpacaRequest).toHaveBeenNthCalledWith(
+    expect(mocks.alpacaRequestForAccount).toHaveBeenNthCalledWith(
       2,
+      1,
       '/v2/orders?status=open&direction=desc',
       expect.objectContaining({
         metadata: expect.objectContaining({

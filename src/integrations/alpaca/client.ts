@@ -1,27 +1,28 @@
 import type { BrokerCredentialStatus } from '@prisma/client';
+import { TradingAccountEnvironment } from '@prisma/client';
+import { env } from '../../config/env.js';
 import { AlpacaApiError } from '../../errors/alpaca-api-error.js';
 import { AlpacaRateLimitDeferredError } from '../../errors/alpaca-rate-limit-deferred-error.js';
 import { alpacaApiUsageRegistry } from '../../services/alpaca-api-usage.service.js';
 import { resolveAlpacaConfigForTradingAccount } from '../../services/alpaca-config-resolver.service.js';
-import { resolveDefaultTradingAccountId } from '../../services/trading-account.service.js';
 import {
   assertKnownAlpacaEndpoint,
   assertKnownAlpacaOperation,
   type AlpacaRequestMetadata,
 } from './request-metadata.js';
 
-type RequestOptions = {
+export type AccountRequestOptions = {
   method?: 'GET' | 'POST' | 'DELETE' | 'PATCH';
   body?: unknown;
   returnNullOn404?: boolean;
   metadata: AlpacaRequestMetadata;
-  tradingAccountId?: number | undefined;
   credentialStatuses?: BrokerCredentialStatus[] | undefined;
 };
 
-export async function alpacaRequest<T>(
+export async function alpacaRequestForAccount<T>(
+  tradingAccountId: number,
   path: string,
-  options: RequestOptions
+  options: AccountRequestOptions
 ): Promise<T> {
   assertKnownAlpacaOperation(options.metadata.operation);
   assertKnownAlpacaEndpoint(options.metadata.endpoint);
@@ -33,11 +34,18 @@ export async function alpacaRequest<T>(
     });
   }
 
-  const tradingAccountId =
-    options.tradingAccountId ?? (await resolveDefaultTradingAccountId());
   const config = await resolveAlpacaConfigForTradingAccount(tradingAccountId, {
     credentialStatuses: options.credentialStatuses,
   });
+  if (
+    options.metadata.requestClass === 'critical_write' &&
+    config.environment === TradingAccountEnvironment.LIVE &&
+    !env.ALLOW_LIVE_TRADING
+  ) {
+    throw new Error(
+      `LIVE broker write blocked for TradingAccount ${tradingAccountId}: ALLOW_LIVE_TRADING is false.`
+    );
+  }
   const url = `${config.baseUrl}${path}`;
   const method = options.method ?? 'GET';
 
@@ -60,7 +68,10 @@ export async function alpacaRequest<T>(
     requestInit.body = JSON.stringify(options.body);
   }
 
-  const requestStart = alpacaApiUsageRegistry.beginRequest(options.metadata);
+  const requestStart = alpacaApiUsageRegistry.beginRequest(
+    tradingAccountId,
+    options.metadata
+  );
   let measured = false;
 
   try {

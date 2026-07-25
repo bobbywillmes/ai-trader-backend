@@ -9,9 +9,10 @@ export async function accountController(
 ) {
   try {
     const tradingAccountId = await resolveDefaultTradingAccountId();
-    const account = await getNormalizedAccount('manual_admin_action', {
+    const account = await getNormalizedAccount(
       tradingAccountId,
-    });
+      'manual_admin_action'
+    );
     res.status(200).json(account);
   } catch (error) {
     next(error);

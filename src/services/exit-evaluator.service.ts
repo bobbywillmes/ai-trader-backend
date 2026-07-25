@@ -57,8 +57,7 @@ function shouldAttemptTrailingStopSubmit(position: {
   return true;
 }
 
-export async function evaluateExits() {
-  const tradingAccountId = await resolveDefaultTradingAccountId();
+export async function evaluateExitsForAccount(tradingAccountId: number) {
   const openPositions = await prisma.trackedPosition.findMany({
     where: { status: 'open', tradingAccountId },
     include: {
@@ -308,4 +307,9 @@ export async function evaluateExits() {
       } as Prisma.InputJsonValue,
     });
   }
+}
+
+export async function evaluateExits() {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+  return evaluateExitsForAccount(tradingAccountId);
 }

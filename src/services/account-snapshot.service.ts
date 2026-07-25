@@ -17,13 +17,12 @@ export type AccountSnapshotReason =
   | 'position_opened'
   | 'position_closed';
 
-type RecordAccountSnapshotInput = {
+export type RecordAccountSnapshotInput = {
   reason: AccountSnapshotReason;
   force?: boolean;
   runKey?: string;
   sourceEntityType?: string;
   sourceEntityId?: string | number;
-  tradingAccountId?: number | null;
 };
 
 export type AccountSnapshotQuery = {
@@ -181,13 +180,13 @@ function buildSnapshotHash(account: Awaited<ReturnType<typeof getNormalizedAccou
     .digest('hex');
 }
 
-export async function recordAccountSnapshot(input: RecordAccountSnapshotInput) {
-  const tradingAccountId =
-    input.tradingAccountId ?? (await resolveDefaultTradingAccountId());
-
+export async function recordAccountSnapshot(
+  tradingAccountId: number,
+  input: RecordAccountSnapshotInput
+) {
   if (input.runKey) {
-    const existingRun = await prisma.accountSnapshot.findUnique({
-      where: { runKey: input.runKey },
+    const existingRun = await prisma.accountSnapshot.findFirst({
+      where: { tradingAccountId, runKey: input.runKey },
       include: {
         tradingAccount: {
           select: TRADING_ACCOUNT_SUMMARY_SELECT,
@@ -205,9 +204,7 @@ export async function recordAccountSnapshot(input: RecordAccountSnapshotInput) {
     }
   }
 
-  const account = await getNormalizedAccount('account_snapshot', {
-    tradingAccountId,
-  });
+  const account = await getNormalizedAccount(tradingAccountId, 'account_snapshot');
   const snapshotHash = buildSnapshotHash(account);
 
   const latestSnapshot = await prisma.accountSnapshot.findFirst({

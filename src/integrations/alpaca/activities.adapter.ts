@@ -1,4 +1,4 @@
-import { alpacaRequest } from './client.js';
+import { alpacaRequestForAccount } from './client.js';
 import type {
   AlpacaApiEndpoint,
   AlpacaApiOperation,
@@ -26,6 +26,7 @@ export type AlpacaAccountActivity = {
 };
 
 type GetAlpacaAccountActivitiesParams = {
+  tradingAccountId: number;
   activityType?: string;
   after?: Date | string;
   until?: Date | string;
@@ -34,7 +35,6 @@ type GetAlpacaAccountActivitiesParams = {
   pageSize?: number;
   pageToken?: string;
   operation?: AlpacaApiOperation;
-  tradingAccountId?: number | undefined;
 };
 
 function toQueryDate(value: Date | string) {
@@ -42,7 +42,7 @@ function toQueryDate(value: Date | string) {
 }
 
 export async function getAlpacaAccountActivities(
-  params: GetAlpacaAccountActivitiesParams = {}
+  params: GetAlpacaAccountActivitiesParams
 ): Promise<AlpacaAccountActivity[]> {
   const path = params.activityType
     ? `/v2/account/activities/${encodeURIComponent(params.activityType)}`
@@ -62,10 +62,10 @@ export async function getAlpacaAccountActivities(
 
   const query = search.toString();
 
-  return alpacaRequest<AlpacaAccountActivity[]>(
+  return alpacaRequestForAccount<AlpacaAccountActivity[]>(
+    params.tradingAccountId,
     query ? `${path}?${query}` : path,
     {
-      tradingAccountId: params.tradingAccountId,
       metadata: {
         operation: params.operation ?? 'broker_activity_sync',
         endpoint,

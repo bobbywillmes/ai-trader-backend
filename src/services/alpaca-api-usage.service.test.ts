@@ -55,7 +55,7 @@ function createRegistry(start = '2026-06-20T12:00:00.000Z') {
 }
 
 function recordSuccess(registry: AlpacaApiUsageRegistry) {
-  const request = registry.beginRequest(metadata);
+  const request = registry.beginRequest(1, metadata);
   registry.completeRequest(request, {
     statusCode: 200,
     outcome: 'success',
@@ -89,8 +89,8 @@ describe('AlpacaApiUsageRegistry', () => {
 
   it('tracks active requests, peak concurrency, outcomes, and rolling windows', () => {
     const { registry, advance } = createRegistry();
-    const first = registry.beginRequest(metadata);
-    const second = registry.beginRequest({
+    const first = registry.beginRequest(1, metadata);
+    const second = registry.beginRequest(1, {
       ...metadata,
       operation: 'tracked_position_sync',
       endpoint: 'GET /v2/positions',
@@ -178,7 +178,7 @@ describe('AlpacaApiUsageRegistry', () => {
 
   it('tracks rate-limit incidents, defers safe reads, and requires later success for recovery', () => {
     const { registry, advance } = createRegistry();
-    const request = registry.beginRequest(metadata);
+    const request = registry.beginRequest(1, metadata);
 
     registry.completeRequest(request, {
       statusCode: 429,

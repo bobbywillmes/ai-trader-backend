@@ -5,7 +5,6 @@ import {
   type AlpacaAccountActivity,
 } from '../integrations/alpaca/activities.adapter.js';
 import type { AlpacaApiOperation } from '../integrations/alpaca/request-metadata.js';
-import { getRuntimeTradingConfig } from './config.service.js';
 import { createSystemEvent } from './system-event.service.js';
 import {
   resolveDefaultTradingAccountId,
@@ -159,8 +158,11 @@ async function upsertBrokerActivity(args: {
 }) {
   const { activity, mode, tradingAccountId } = args;
 
-  const existing = await prisma.brokerActivity.findUnique({
+  const existing = await prisma.brokerActivity.findFirst({
     where: {
+      tradingAccountId,
+      broker: 'alpaca',
+      mode,
       activityId: activity.id,
     },
   });
@@ -215,7 +217,7 @@ async function upsertBrokerActivity(args: {
   if (existing) {
     await prisma.brokerActivity.update({
       where: {
-        activityId: activity.id,
+        id: existing.id,
       },
       data,
     });
@@ -230,13 +232,13 @@ async function upsertBrokerActivity(args: {
   return 'created' as const;
 }
 
-export async function syncBrokerActivities(
+export async function syncBrokerActivitiesForAccount(
+  tradingAccountId: number,
   input: SyncBrokerActivitiesInput = {}
 ) {
   const activityType = input.activityType ?? 'FILL';
   const pageSize = input.pageSize ?? 100;
   const maxPages = input.maxPages ?? 5;
-  const tradingAccountId = await resolveDefaultTradingAccountId();
   const after =
     input.after ??
     (await getDefaultAfterDate({
@@ -244,8 +246,11 @@ export async function syncBrokerActivities(
       tradingAccountId,
     }));
 
-  const config = await getRuntimeTradingConfig();
-  const mode = config.paperMode ? 'paper' : 'live';
+  const account = await prisma.tradingAccount.findUniqueOrThrow({
+    where: { id: tradingAccountId },
+    select: { environment: true },
+  });
+  const mode = account.environment.toLowerCase();
 
   let pageToken: string | undefined;
   let page = 0;
@@ -264,7 +269,7 @@ export async function syncBrokerActivities(
       pageSize?: number;
       pageToken?: string;
       operation?: AlpacaApiOperation;
-      tradingAccountId?: number;
+      tradingAccountId: number;
     } = {
       activityType,
       after,
@@ -338,6 +343,11 @@ export async function syncBrokerActivities(
     created,
     updated,
   };
+}
+
+export async function syncBrokerActivities(input: SyncBrokerActivitiesInput = {}) {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+  return syncBrokerActivitiesForAccount(tradingAccountId, input);
 }
 
 export async function getRecentBrokerActivities(args: {

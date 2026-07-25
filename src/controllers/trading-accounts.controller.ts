@@ -258,9 +258,7 @@ export async function listTradingAccountOpenOrdersController(
       throw new HttpError(404, 'Trading account not found.');
     }
 
-    const orders = await getNormalizedOpenOrders('open_orders_sync', {
-      tradingAccountId: id,
-    });
+    const orders = await getNormalizedOpenOrders(id, 'open_orders_sync');
 
     res.status(200).json({
       orders: orders.map((order) => ({

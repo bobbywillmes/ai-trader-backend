@@ -20,9 +20,7 @@ export async function openOrdersController(
   try {
     const tradingAccountId = await resolveDefaultTradingAccountId();
     const [orders, tradingAccount] = await Promise.all([
-      getNormalizedOpenOrders('manual_admin_action', {
-        tradingAccountId,
-      }),
+      getNormalizedOpenOrders(tradingAccountId, 'manual_admin_action'),
       getTradingAccountSummaryById(tradingAccountId),
     ]);
     res.status(200).json(
@@ -75,7 +73,11 @@ export async function cancelOrderController(
 ) {
   try {
     const { orderId } = cancelOrderParamsSchema.parse(req.params);
-    const result = await cancelOrderById(orderId);
+    const tradingAccountId = res.locals.authorizedTradingAccountId;
+    if (tradingAccountId === undefined) {
+      throw new Error('Authorized Trading Account scope is missing.');
+    }
+    const result = await cancelOrderById(tradingAccountId, orderId);
 
     res.status(200).json(result);
   } catch (error) {
@@ -98,7 +100,11 @@ export async function cancelAllOrdersController(
   next: NextFunction
 ) {
   try {
-    const result = await cancelAllOpenOrders();
+    const tradingAccountId = res.locals.authorizedTradingAccountId;
+    if (tradingAccountId === undefined) {
+      throw new Error('Authorized Trading Account scope is missing.');
+    }
+    const result = await cancelAllOpenOrders(tradingAccountId);
     res.status(200).json(result);
   } catch (error) {
     next(error);

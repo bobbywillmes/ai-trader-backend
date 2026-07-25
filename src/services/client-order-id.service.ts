@@ -21,7 +21,10 @@ function buildTimestampToken(date: Date) {
   return date.toISOString().replace(/[-:.]/g, '').slice(0, 15);
 }
 
-export function buildClientOrderId(input: ResolvedPlaceOrderInput): string {
+export function buildClientOrderId(
+  input: ResolvedPlaceOrderInput,
+  account: { tradingAccountId: number; environment: 'PAPER' | 'LIVE' }
+): string {
   const timestamp = buildTimestampToken(new Date());
   const randomToken = crypto.randomUUID().slice(0, 8);
   const parts = [
@@ -30,6 +33,8 @@ export function buildClientOrderId(input: ResolvedPlaceOrderInput): string {
     input.symbol,
     input.side,
     input.orderType,
+    `ta${account.tradingAccountId}`,
+    account.environment.toLowerCase(),
   ];
 
   if (input.subscriptionKey) {

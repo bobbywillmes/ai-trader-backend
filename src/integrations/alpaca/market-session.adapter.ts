@@ -1,4 +1,4 @@
-import { alpacaRequest } from './client.js';
+import { alpacaRequestForAccount } from './client.js';
 import { prisma } from '../../db/prisma.js';
 import type {
   AlpacaCalendarSession,
@@ -8,7 +8,7 @@ import type {
 const CLOCK_TTL_MS = 45_000;
 const CALENDAR_TTL_MS = 12 * 60 * 60 * 1000;
 const MARKET_TIME_ZONE = 'America/New_York';
-const CLOCK_SETTING_KEY = 'alpacaMarketClockCache';
+const CLOCK_SETTING_KEY_PREFIX = 'alpacaMarketClockCache';
 
 type CacheStatus = 'fresh' | 'cached';
 
@@ -32,7 +32,7 @@ type CalendarCache = {
 };
 
 type AlpacaMarketSessionOptions = {
-  tradingAccountId?: number | undefined;
+  tradingAccountId: number;
 };
 
 export type NormalizedMarketSessionSnapshot = {
@@ -52,9 +52,11 @@ export type NormalizedMarketSessionSnapshot = {
   };
 };
 
-let clockCache: ClockCache | null = null;
-let clockInFlight: Promise<{ raw: AlpacaClock; cacheStatus: CacheStatus }> | null =
-  null;
+const clockCache = new Map<number, ClockCache>();
+const clockInFlight = new Map<
+  number,
+  Promise<{ raw: AlpacaClock; cacheStatus: CacheStatus }>
+>();
 
 const calendarCache = new Map<string, CalendarCache>();
 const calendarInFlight = new Map<
@@ -150,26 +152,35 @@ function isClockUsable(cache: ClockCache, nowMs: number) {
   return nextCloseMs !== null && nowMs < nextCloseMs;
 }
 
-async function readPersistedClock() {
+function clockSettingKey(tradingAccountId: number) {
+  return `${CLOCK_SETTING_KEY_PREFIX}:${tradingAccountId}`;
+}
+
+async function readPersistedClock(tradingAccountId: number) {
   const setting = await prisma.setting.findUnique({
-    where: { key: CLOCK_SETTING_KEY },
+    where: { key: clockSettingKey(tradingAccountId) },
     select: { value: true },
   });
 
   return parsePersistedClock(setting?.value);
 }
 
-async function writePersistedClock(raw: AlpacaClock, fetchedAtIso: string) {
+async function writePersistedClock(
+  tradingAccountId: number,
+  raw: AlpacaClock,
+  fetchedAtIso: string
+) {
   const serialized = serializeClock(raw, fetchedAtIso);
 
   if (!serialized) {
     return;
   }
 
+  const key = clockSettingKey(tradingAccountId);
   await prisma.setting.upsert({
-    where: { key: CLOCK_SETTING_KEY },
+    where: { key },
     update: { value: JSON.stringify(serialized) },
-    create: { key: CLOCK_SETTING_KEY, value: JSON.stringify(serialized) },
+    create: { key, value: JSON.stringify(serialized) },
   });
 }
 
@@ -256,24 +267,31 @@ function advanceTimestamp(rawTimestamp: string, fetchedAtMs: number, nowMs: numb
   return new Date(timestamp.getTime() + Math.max(0, nowMs - fetchedAtMs));
 }
 
-async function getClock(nowMs: number, options: AlpacaMarketSessionOptions = {}) {
-  if (clockCache && nowMs - clockCache.fetchedAtMs <= CLOCK_TTL_MS) {
-    return { raw: clockCache.raw, cacheStatus: 'cached' as const };
+async function getClock(nowMs: number, options: AlpacaMarketSessionOptions) {
+  const accountClockCache = clockCache.get(options.tradingAccountId);
+  if (
+    accountClockCache &&
+    nowMs - accountClockCache.fetchedAtMs <= CLOCK_TTL_MS
+  ) {
+    return { raw: accountClockCache.raw, cacheStatus: 'cached' as const };
   }
 
-  if (clockCache && isClockUsable(clockCache, nowMs)) {
-    return { raw: clockCache.raw, cacheStatus: 'cached' as const };
+  if (accountClockCache && isClockUsable(accountClockCache, nowMs)) {
+    return { raw: accountClockCache.raw, cacheStatus: 'cached' as const };
   }
 
-  const persisted = await readPersistedClock();
+  const persisted = await readPersistedClock(options.tradingAccountId);
   if (persisted && isClockUsable(persisted, nowMs)) {
-    clockCache = persisted;
+    clockCache.set(options.tradingAccountId, persisted);
     return { raw: persisted.raw, cacheStatus: 'cached' as const };
   }
 
-  if (!clockInFlight) {
-    clockInFlight = alpacaRequest<AlpacaClock>('/v2/clock', {
-      tradingAccountId: options.tradingAccountId,
+  const existingRequest = clockInFlight.get(options.tradingAccountId);
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const request = alpacaRequestForAccount<AlpacaClock>(options.tradingAccountId, '/v2/clock', {
       metadata: {
         operation: 'market_clock',
         endpoint: 'GET /v2/clock',
@@ -284,45 +302,45 @@ async function getClock(nowMs: number, options: AlpacaMarketSessionOptions = {})
     })
       .then(async (raw) => {
         const fetchedAtIso = new Date().toISOString();
-        clockCache = {
+        clockCache.set(options.tradingAccountId, {
           raw,
           fetchedAtMs: Date.now(),
           fetchedAtIso,
-        };
-        await writePersistedClock(raw, fetchedAtIso);
+        });
+        await writePersistedClock(options.tradingAccountId, raw, fetchedAtIso);
 
         return { raw, cacheStatus: 'fresh' as const };
       })
       .finally(() => {
-        clockInFlight = null;
+        clockInFlight.delete(options.tradingAccountId);
       });
-  }
-
-  return clockInFlight;
+  clockInFlight.set(options.tradingAccountId, request);
+  return request;
 }
 
 async function getCalendarSession(
   tradingDate: string,
   nowMs: number,
-  options: AlpacaMarketSessionOptions = {}
+  options: AlpacaMarketSessionOptions
 ) {
-  const cached = calendarCache.get(tradingDate);
+  const cacheKey = `${options.tradingAccountId}:${tradingDate}`;
+  const cached = calendarCache.get(cacheKey);
 
   if (cached && nowMs - cached.fetchedAtMs <= CALENDAR_TTL_MS) {
     return { raw: cached.raw, cacheStatus: 'cached' as const };
   }
 
-  const existing = calendarInFlight.get(tradingDate);
+  const existing = calendarInFlight.get(cacheKey);
   if (existing) {
     return existing;
   }
 
-  const request = alpacaRequest<AlpacaCalendarSession[]>(
+  const request = alpacaRequestForAccount<AlpacaCalendarSession[]>(
+    options.tradingAccountId,
     `/v2/calendar?start=${encodeURIComponent(tradingDate)}&end=${encodeURIComponent(
       tradingDate
     )}`,
     {
-      tradingAccountId: options.tradingAccountId,
       metadata: {
         operation: 'market_calendar',
         endpoint: 'GET /v2/calendar',
@@ -334,7 +352,7 @@ async function getCalendarSession(
   )
     .then((raw) => {
       const session = raw[0] ?? null;
-      calendarCache.set(tradingDate, {
+      calendarCache.set(cacheKey, {
         raw: session,
         fetchedAtMs: Date.now(),
       });
@@ -342,10 +360,10 @@ async function getCalendarSession(
       return { raw: session, cacheStatus: 'fresh' as const };
     })
     .finally(() => {
-      calendarInFlight.delete(tradingDate);
+      calendarInFlight.delete(cacheKey);
     });
 
-  calendarInFlight.set(tradingDate, request);
+  calendarInFlight.set(cacheKey, request);
   return request;
 }
 
@@ -363,8 +381,8 @@ function normalizeCalendarTimestamp(
 }
 
 export function clearMarketSessionCache() {
-  clockCache = null;
-  clockInFlight = null;
+  clockCache.clear();
+  clockInFlight.clear();
   calendarCache.clear();
   calendarInFlight.clear();
 }
@@ -412,13 +430,19 @@ function deriveClockSessionWindow(clock: AlpacaClock, evaluatedMs: number) {
 }
 
 export async function getAlpacaMarketSessionSnapshot(
-  now = new Date(),
-  options: AlpacaMarketSessionOptions = {}
+  tradingAccountId: number,
+  now = new Date()
 ): Promise<NormalizedMarketSessionSnapshot> {
   const nowMs = now.getTime();
+  const options = { tradingAccountId };
   const { raw: clock, cacheStatus: clockStatus } = await getClock(nowMs, options);
-  const fetchedAt = clockCache?.fetchedAtIso ?? new Date().toISOString();
-  const evaluated = advanceTimestamp(clock.timestamp, clockCache?.fetchedAtMs ?? nowMs, nowMs);
+  const accountClockCache = clockCache.get(tradingAccountId);
+  const fetchedAt = accountClockCache?.fetchedAtIso ?? new Date().toISOString();
+  const evaluated = advanceTimestamp(
+    clock.timestamp,
+    accountClockCache?.fetchedAtMs ?? nowMs,
+    nowMs
+  );
   const evaluatedTimestamp = evaluated.toISOString();
   const evaluatedMs = evaluated.getTime();
   const tradingDate = tradingDateFromIso(evaluatedTimestamp);

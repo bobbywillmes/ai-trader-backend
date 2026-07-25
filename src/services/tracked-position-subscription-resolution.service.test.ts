@@ -128,7 +128,7 @@ describe('tracked position subscription resolution', () => {
       orderType: 'market',
       timeInForce: 'day',
       extendedHours: false,
-    });
+    }, { tradingAccountId: 1, environment: 'PAPER' });
 
     mocks.brokerActivityFindMany.mockResolvedValue([
       {

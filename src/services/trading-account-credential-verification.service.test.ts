@@ -101,9 +101,9 @@ describe('trading account credential verification service', () => {
     });
 
     expect(mocks.getNormalizedAccount).toHaveBeenCalledWith(
+      1,
       'manual_admin_action',
       {
-        tradingAccountId: 1,
         credentialStatuses: [
           BrokerCredentialStatus.NEEDS_VERIFICATION,
           BrokerCredentialStatus.INVALID,

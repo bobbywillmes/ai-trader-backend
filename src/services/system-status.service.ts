@@ -9,6 +9,7 @@ import { workerHealthRegistry } from './worker-health.service.js';
 import { alpacaApiUsageRegistry } from './alpaca-api-usage.service.js';
 import { getAlpacaApiUsagePersistenceSnapshot } from './alpaca-api-usage-persistence.service.js';
 import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
+import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 import {
   ACCOUNT_SNAPSHOT_WORKER_INTERVAL_MS,
   BROKER_ACTIVITY_WORKER_INTERVAL_MS,
@@ -66,7 +67,9 @@ export async function getSystemStatus() {
   const workerHealth = workerHealthRegistry.getSnapshot();
   const alpacaApiUsage = alpacaApiUsageRegistry.getSnapshot();
   const alpacaApiUsagePersistence = getAlpacaApiUsagePersistenceSnapshot();
-  const adaptivePolling = await adaptivePollingCoordinator.getSnapshot();
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+  const adaptivePolling =
+    await adaptivePollingCoordinator.getSnapshot(tradingAccountId);
   const alpacaUsagePersistenceWorker = workerHealth.items.find(
     (worker) => worker.key === 'alpaca_api_usage_persistence'
   );

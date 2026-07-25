@@ -133,7 +133,7 @@ describe('account snapshot service', () => {
   });
 
   it('stores exposure values when recording a snapshot', async () => {
-    await recordAccountSnapshot({ reason: 'manual', force: true });
+    await recordAccountSnapshot(1, { reason: 'manual', force: true });
 
     expect(mocks.accountSnapshotCreate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -147,7 +147,7 @@ describe('account snapshot service', () => {
   });
 
   it('includes exposure changes in the snapshot hash', async () => {
-    await recordAccountSnapshot({ reason: 'manual', force: true });
+    await recordAccountSnapshot(1, { reason: 'manual', force: true });
 
     const firstCall = mocks.accountSnapshotCreate.mock.calls[0];
 
@@ -166,7 +166,7 @@ describe('account snapshot service', () => {
       account({ longMarketValue: 7001 })
     );
 
-    await recordAccountSnapshot({ reason: 'scheduled_midday' });
+    await recordAccountSnapshot(1, { reason: 'scheduled_midday' });
 
     const secondCall = mocks.accountSnapshotCreate.mock.calls[1];
 
