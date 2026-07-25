@@ -50,7 +50,9 @@ Nothing copies Bobby Paper configuration into Bobby Live.
 
 ## Execution identity and isolation
 
-Entry requests use `tradingAccountSubscriptionId`. Runtime resolves:
+Global entry requests use `subscriptionKey` and the backend enumerates its
+account assignments. Targeted smoke-test requests use one
+`tradingAccountSubscriptionId`. For each assignment, runtime resolves:
 
 `TradingAccountSubscription → TradingAccount → Allocation → Subscription → Security/Strategy/ExitProfile`
 
