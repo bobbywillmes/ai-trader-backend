@@ -4,20 +4,23 @@ import { ZodError } from 'zod';
 
 const mocks = vi.hoisted(() => ({
   recordEntryDecision: vi.fn(),
-  submitOrder: vi.fn(),
+  processSubscriptionEntrySignal: vi.fn(),
+  processTargetedEntrySignal: vi.fn(),
 }));
 
 vi.mock('../services/entry-decision.service.js', () => ({
   recordEntryDecision: mocks.recordEntryDecision,
 }));
 
-vi.mock('../services/place-order.service.js', () => ({
-  submitOrder: mocks.submitOrder,
+vi.mock('../services/signal-entry.service.js', () => ({
+  processSubscriptionEntrySignal: mocks.processSubscriptionEntrySignal,
+  processTargetedEntrySignal: mocks.processTargetedEntrySignal,
 }));
 
 import {
   entryDecisionController,
   entrySignalController,
+  assignmentEntrySignalController,
 } from './signals.controller.js';
 
 function response() {
@@ -157,12 +160,10 @@ describe('signals controller entry signals', () => {
     vi.clearAllMocks();
   });
 
-  it('passes decision keys through to order submission', async () => {
-    mocks.submitOrder.mockResolvedValue({
-      ok: true,
-      intentId: 55,
-      status: 'pending',
-      entryDecisionKey: 'decision-101',
+  it('accepts a subscription key without an assignment ID', async () => {
+    mocks.processSubscriptionEntrySignal.mockResolvedValue({
+      subscriptionKey: 'spy_dip_core',
+      results: [],
     });
     const res = response();
     const next = vi.fn() as NextFunction;
@@ -170,7 +171,6 @@ describe('signals controller entry signals', () => {
     await entrySignalController(
       {
         body: {
-          tradingAccountSubscriptionId: 44,
           subscriptionKey: 'spy_dip_core',
           decisionKey: 'decision-101',
           source: 'n8n-ai-trader',
@@ -180,33 +180,115 @@ describe('signals controller entry signals', () => {
       next
     );
 
-    expect(mocks.submitOrder).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tradingAccountSubscriptionId: 44,
-        subscriptionKey: 'spy_dip_core',
-        signalType: 'entry',
-      }),
-      {
-        entryDecisionKey: 'decision-101',
-      }
+    expect(mocks.processSubscriptionEntrySignal).toHaveBeenCalledWith(
+      expect.objectContaining({ subscriptionKey: 'spy_dip_core' })
     );
-    expect(res.status).toHaveBeenCalledWith(201);
+    expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({
       ok: true,
       signal: {
-        tradingAccountSubscriptionId: 44,
         subscriptionKey: 'spy_dip_core',
         signalType: 'entry',
         source: 'n8n-ai-trader',
         decisionKey: 'decision-101',
       },
-      order: {
-        ok: true,
-        intentId: 55,
-        status: 'pending',
-        entryDecisionKey: 'decision-101',
-      },
+      results: [],
     });
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it('returns a safe 400 for an invalid global subscription key', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await entrySignalController({ body: {} } as Request, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'ValidationError',
+      message: 'Invalid global entry signal payload.',
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, 'NaN', 0, -1, 1.5])(
+    'returns 400 for targeted assignment id %s',
+    async (tradingAccountSubscriptionId) => {
+      const res = response();
+      const next = vi.fn() as NextFunction;
+
+      await assignmentEntrySignalController(
+        { body: { tradingAccountSubscriptionId } } as Request,
+        res,
+        next
+      );
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(mocks.processTargetedEntrySignal).not.toHaveBeenCalled();
+      expect(next).not.toHaveBeenCalled();
+    }
+  );
+
+  it('routes one targeted assignment and confirms its subscription key', async () => {
+    mocks.processTargetedEntrySignal.mockResolvedValue({
+      tradingAccountId: 2,
+      tradingAccountSubscriptionId: 38,
+      accountDisplayName: 'Bobby Paper',
+      environment: 'PAPER',
+      subscriptionKey: 'intc_dip_core',
+      outcome: 'INTENT_CREATED',
+      code: 'INTENT_CREATED',
+      message: 'Order intent created for the account assignment.',
+      orderIntentId: 55,
+    });
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await assignmentEntrySignalController(
+      {
+        body: {
+          tradingAccountSubscriptionId: 38,
+          decisionKey: 'decision-101',
+        },
+      } as Request,
+      res,
+      next
+    );
+
+    expect(mocks.processTargetedEntrySignal).toHaveBeenCalledTimes(1);
+    expect(mocks.processTargetedEntrySignal).toHaveBeenCalledWith(
+      expect.objectContaining({ tradingAccountSubscriptionId: 38 })
+    );
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        signal: expect.objectContaining({
+          tradingAccountSubscriptionId: 38,
+          subscriptionKey: 'intc_dip_core',
+        }),
+        result: expect.not.objectContaining({
+          credential: expect.anything(),
+        }),
+      })
+    );
+  });
+
+  it('does not accept subscriptionKey as targeted routing identity', async () => {
+    const res = response();
+    const next = vi.fn() as NextFunction;
+
+    await assignmentEntrySignalController(
+      {
+        body: {
+          tradingAccountSubscriptionId: 38,
+          subscriptionKey: 'intc_dip_core',
+        },
+      } as Request,
+      res,
+      next
+    );
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mocks.processTargetedEntrySignal).not.toHaveBeenCalled();
   });
 });

@@ -82,6 +82,21 @@ export function buildClientOrderId(
   return compactParts.join('-').slice(0, MAX_CLIENT_ORDER_ID_LENGTH);
 }
 
+export function buildSignalEntryClientOrderId(args: {
+  signalIdentity: string;
+  tradingAccountSubscriptionId: number;
+}) {
+  const digest = crypto
+    .createHash('sha256')
+    .update(
+      `${args.signalIdentity}:${args.tradingAccountSubscriptionId}`,
+      'utf8'
+    )
+    .digest('hex');
+
+  return `ai-entry-tas${args.tradingAccountSubscriptionId}-${digest}`;
+}
+
 export function parseSubscriptionKeyFromClientOrderId(
   clientOrderId: string | null | undefined
 ) {

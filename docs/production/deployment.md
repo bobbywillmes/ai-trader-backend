@@ -776,6 +776,12 @@ POST /api/signals/entry
 signal-key: AI_TRADER_SIGNAL_API_KEY
 ```
 
+Production workflows send `subscriptionKey` to `/api/signals/entry` and let the
+backend own account fan-out. A Paper smoke-test workflow may instead send the
+production-specific assignment ID `38` to
+`/api/signals/entry/assignment`. Keep that ID in smoke-test configuration and
+do not use it as a global subscription identifier.
+
 Use:
 
 ```text

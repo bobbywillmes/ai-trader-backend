@@ -119,6 +119,13 @@ Records a durable snapshot for an ETF decision engine evaluation.
 
 n8n should use this endpoint for meaningful decisions, including skipped or idle opportunities that should remain analyzable without creating an order.
 
+The normal production decision is catalog-level and account-neutral. Send
+`decisionKey`, `subscriptionKey`, `symbol`, and the decision facts and
+snapshots. Do not normally send `tradingAccountId` or
+`tradingAccountSubscriptionId`. If the decision creates a signal, send the same
+`decisionKey` and `subscriptionKey` to `POST /api/signals/entry`; the backend
+then owns account fan-out.
+
 The backend uses `decisionKey` for idempotency. Re-sending the same decision key returns the existing decision instead of creating a duplicate.
 
 Repeated unchanged idle decisions may be accepted but skipped according to the backend persistence policy.
@@ -138,7 +145,6 @@ Example request:
   "evaluatedAt": "2026-06-25T15:00:00.000Z",
   "source": "n8n-ai-trader",
   "symbol": "SPY",
-  "tradingAccountSubscriptionId": 25,
   "subscriptionKey": "spy_dip_core",
   "decisionState": "idle",
   "decisionReason": "above_dip_threshold",
@@ -175,25 +181,23 @@ Example persisted response:
 }
 ```
 
-### Entry Signal
+### Production/global entry signal
 
 ```http
 POST /api/signals/entry
 ```
 
-Primary endpoint for n8n-driven entry signals.
-
-Instead of n8n sending full order instructions, it sends one explicit
-`tradingAccountSubscriptionId` and signal metadata. An optional
-`subscriptionKey` is a consistency assertion, not routing identity. The backend
-resolves the account assignment, validates it, determines account-specific
-sizing, creates an order intent, and submits asynchronously.
+Primary endpoint for production n8n-driven entry signals. n8n identifies the
+global catalog subscription with `subscriptionKey`; it does not choose an
+account assignment. The backend finds every deployment of that subscription and
+processes each independently through the same assignment, account, credential,
+allocation, sizing, reservation, risk, session, environment, and live-write
+controls.
 
 Example request:
 
 ```json
 {
-  "tradingAccountSubscriptionId": 25,
   "subscriptionKey": "spy_dip_core",
   "decisionKey": "n8n:etf-watch:spy_dip_core:2026-06-25T15:00Z",
   "reason": "SPY dip signal triggered",
@@ -213,20 +217,77 @@ Example response:
 {
   "ok": true,
   "signal": {
-    "tradingAccountSubscriptionId": 25,
     "subscriptionKey": "spy_dip_core",
     "signalType": "entry",
     "source": "n8n-ai-trader",
     "decisionKey": "n8n:etf-watch:spy_dip_core:2026-06-25T15:00Z"
   },
-  "order": {
-    "ok": true,
-    "intentId": 25,
-    "status": "pending",
-    "entryDecisionKey": "n8n:etf-watch:spy_dip_core:2026-06-25T15:00Z"
-  }
+  "results": [
+    {
+      "tradingAccountId": 2,
+      "tradingAccountSubscriptionId": 25,
+      "accountDisplayName": "Bobby Paper",
+      "environment": "PAPER",
+      "subscriptionKey": "spy_dip_core",
+      "outcome": "INTENT_CREATED",
+      "code": "INTENT_CREATED",
+      "message": "Order intent created for the account assignment.",
+      "orderIntentId": 25
+    }
+  ]
 }
 ```
+
+Each deployment returns `INTENT_CREATED`, `BLOCKED`, `SKIPPED`, `DUPLICATE`, or
+`FAILED` with a stable code and safe message. A disabled, paused,
+kill-switched, credentialless, or otherwise ineligible deployment does not
+abort other deployments. Bobby Live may therefore appear in the result list
+while remaining blocked by its dormant account configuration.
+
+Retries use the incoming `decisionKey`, then `runId`, then `batchId` as the
+signal identity. When none is supplied, the backend hashes the normalized
+signal payload. That identity is scoped by `tradingAccountSubscriptionId`, so a
+global signal can create one intent per eligible assignment while a retry
+returns `DUPLICATE` for assignments already processed. Partial fan-out retries
+therefore fill only assignments that did not previously create an intent.
+
+The existing `EntryDecision` remains the single incoming global decision.
+Because its current relation permits only one order intent, fan-out does not
+clone the decision per account. Instead, each account outcome is recorded as a
+structured `signal_entry_assignment_outcome` system event containing the global
+decision key/signal identity, assignment and account IDs, outcome, and resulting
+order-intent ID.
+
+### Targeted assignment entry signal
+
+```http
+POST /api/signals/entry/assignment
+```
+
+Use this signal-authenticated endpoint only for n8n smoke tests, deliberate
+single-deployment replays, and targeted Paper-account testing. The assignment ID
+is required and must be a positive integer. `subscriptionKey` is not accepted
+as an alternative routing identity.
+
+This targeted route may be called without first persisting an `EntryDecision`.
+If a targeted decision snapshot is deliberately recorded, it is
+account-specific and must be treated separately from the normal global
+production decision.
+
+```json
+{
+  "tradingAccountSubscriptionId": 38,
+  "decisionKey": "n8n:smoke:intc:2026-07-25T18:00Z",
+  "reason": "Production Paper smoke test",
+  "source": "n8n-smoke-test"
+}
+```
+
+Assignment ID `38` is production-specific and resolves Bobby Paper in the
+current production configuration. Keep it in the smoke-test workflow
+configuration; never treat it as a global subscription identifier. The route
+resolves exactly one assignment, uses the same execution core and safety
+controls as global fan-out, and creates at most one order intent.
 
 ### ETF Watch Context
 

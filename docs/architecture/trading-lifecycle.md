@@ -34,7 +34,11 @@ The system is structured around **subscription-driven trading**.
 ### Entry Flow
 
 1. n8n records a decision snapshot with `POST /api/signals/entry-decisions` when an ETF watch evaluation should be durable.
-2. If the decision creates an entry, n8n sends the entry signal to `POST /api/signals/entry` with the same `decisionKey`.
+2. If the decision creates an entry, n8n sends one global entry signal to
+   `POST /api/signals/entry` with `subscriptionKey` and the same `decisionKey`.
+   The backend fans that signal out to every account assignment. Targeted smoke
+   tests use `POST /api/signals/entry/assignment` with one explicit
+   `tradingAccountSubscriptionId`.
 3. The backend resolves the signal through a `Subscription`.
 4. The subscription links the request to:
    - Security

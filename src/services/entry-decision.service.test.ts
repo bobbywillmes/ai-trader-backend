@@ -46,6 +46,7 @@ vi.mock('./trading-account.service.js', () => ({
 
 import {
   ensureEntryDecisionCanLink,
+  getEntryDecisionById,
   linkEntryDecisionToBrokerOrder,
   linkEntryDecisionToOrderIntent,
   linkEntryDecisionToTrackedPosition,
@@ -213,6 +214,39 @@ describe('entry decision service', () => {
 
     expect(result.persisted).toBe(true);
     expect(result.persistenceReason).toBe('signal_created');
+  });
+
+  it('persists one global signal decision without an account assignment', async () => {
+    mocks.subscriptionFindUnique.mockResolvedValue({
+      id: 22,
+      key: 'spy_dip_core',
+      securityId: 11,
+      strategyId: 33,
+      exitProfileId: 44,
+      security: { id: 11, symbol: 'SPY' },
+      strategy: { id: 33, key: 'dip_n_ride_etf' },
+      exitProfile: { id: 44, key: 'quick_exit' },
+    });
+
+    const result = await recordEntryDecision(
+      input({
+        signalCreated: true,
+        decisionState: 'signal_created',
+        tradingAccountId: undefined,
+        tradingAccountSubscriptionId: undefined,
+        subscriptionKey: 'spy_dip_core',
+      })
+    );
+
+    expect(result.persisted).toBe(true);
+    expect(mocks.entryDecisionCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        decisionKey: 'n8n:spy:2026-06-25T15:00',
+        tradingAccountId: null,
+        tradingAccountSubscriptionId: null,
+        subscriptionKey: 'spy_dip_core',
+      }),
+    });
   });
 
   it('enriches decision context from subscription keys', async () => {
@@ -392,7 +426,10 @@ describe('entry decision service', () => {
         symbol: 'SPY',
         decisionState: 'idle',
         subscriptionId: 22,
-        tradingAccountId: 1,
+        OR: [
+          { tradingAccountId: null },
+          { tradingAccountId: 1 },
+        ],
         signalCreated: false,
         evaluatedAt: {
           gte: new Date('2026-06-25T14:00:00.000Z'),
@@ -423,5 +460,73 @@ describe('entry decision service', () => {
       signalCreated: false,
       limit: 500,
     });
+  });
+
+  it('lists global and default-account decisions without exposing other accounts', async () => {
+    mocks.entryDecisionFindMany.mockResolvedValue([
+      decision({ id: 101, tradingAccountId: null }),
+      decision({ id: 102, tradingAccountId: 1 }),
+    ]);
+
+    const result = await listEntryDecisions();
+
+    expect(mocks.entryDecisionFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          OR: [
+            { tradingAccountId: null },
+            { tradingAccountId: 1 },
+          ],
+        },
+      })
+    );
+    expect(result.decisions).toHaveLength(2);
+  });
+
+  it('returns an account-neutral global decision by id', async () => {
+    const globalDecision = decision({ id: 101, tradingAccountId: null });
+    mocks.entryDecisionFindFirst.mockResolvedValue(globalDecision);
+
+    const result = await getEntryDecisionById(101);
+
+    expect(mocks.entryDecisionFindFirst).toHaveBeenCalledWith({
+      where: {
+        id: 101,
+        OR: [
+          { tradingAccountId: null },
+          { tradingAccountId: 1 },
+        ],
+      },
+      include: expect.any(Object),
+    });
+    expect(result.decision).toBe(globalDecision);
+  });
+
+  it('returns a default-account decision by id', async () => {
+    const accountDecision = decision({ id: 102, tradingAccountId: 1 });
+    mocks.entryDecisionFindFirst.mockResolvedValue(accountDecision);
+
+    const result = await getEntryDecisionById(102);
+
+    expect(result.decision).toBe(accountDecision);
+  });
+
+  it('does not expose a decision belonging only to another account', async () => {
+    mocks.entryDecisionFindFirst.mockResolvedValue(null);
+
+    await expect(getEntryDecisionById(103)).rejects.toMatchObject({
+      statusCode: 404,
+    });
+    expect(mocks.entryDecisionFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: 103,
+          OR: [
+            { tradingAccountId: null },
+            { tradingAccountId: 1 },
+          ],
+        },
+      })
+    );
   });
 });

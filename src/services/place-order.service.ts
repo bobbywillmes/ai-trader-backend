@@ -31,6 +31,7 @@ import {
 
 type SubmitOrderOptions = {
   entryDecisionKey?: string;
+  clientOrderId?: string;
 };
 
 function isEntrySubscriptionOrder(
@@ -98,10 +99,12 @@ export async function submitOrder(
     where: { id: tradingAccountId },
     select: { environment: true },
   });
-  const clientOrderId = buildClientOrderId(resolvedInput, {
-    tradingAccountId,
-    environment: account.environment,
-  });
+  const clientOrderId =
+    options.clientOrderId ??
+    buildClientOrderId(resolvedInput, {
+      tradingAccountId,
+      environment: account.environment,
+    });
 
   const intent = await createOrderIntent(
     resolvedInput,
