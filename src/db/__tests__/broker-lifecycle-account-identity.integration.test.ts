@@ -76,8 +76,12 @@ describeDatabase('broker lifecycle account-scoped external identity', () => {
       CREATE UNIQUE INDEX "AlpacaApiUsageBucket_bucketStart_operation_endpoint_method_requestClass_key"
         ON "AlpacaApiUsageBucket"
         ("bucketStart", "operation", "endpoint", "method", "requestClass");
+      ALTER INDEX "AlpacaApiUsageBucket_bucketStart_operation_endpoint_method_requ"
+        RENAME TO "AlpacaApiUsageBucket_bucketStart_operation_endpoint_method__key";
     `);
-    const migrationSql = await readFile(migrationPath, 'utf8');
+    const migrationSql = (await readFile(migrationPath, 'utf8'))
+      .replaceAll('"public"', quotedSchema)
+      .replaceAll("'public'", `'${schema}'`);
     await client.query(`
       INSERT INTO "BrokerActivity"
         ("tradingAccountId", "broker", "mode", "activityId")

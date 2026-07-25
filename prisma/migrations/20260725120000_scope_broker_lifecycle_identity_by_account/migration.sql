@@ -117,6 +117,80 @@ BEGIN
   END IF;
 END $$;
 
+-- The original usage-bucket index was created with an overlong Prisma name in
+-- 20260620080000, truncated by PostgreSQL, then explicitly renamed by
+-- 20260624113815. Prove that the exact standalone global uniqueness index still
+-- has the expected definition before replacing it with scoped indexes.
+DO $$
+DECLARE
+  indexed_columns TEXT[];
+  is_unique BOOLEAN;
+  is_partial BOOLEAN;
+  backing_constraint OID;
+BEGIN
+  SELECT
+    ARRAY_AGG(attribute.attname ORDER BY key_column.ordinality),
+    index_metadata.indisunique,
+    index_metadata.indpred IS NOT NULL,
+    constraint_metadata.oid
+  INTO
+    indexed_columns,
+    is_unique,
+    is_partial,
+    backing_constraint
+  FROM pg_catalog.pg_class index_relation
+  JOIN pg_catalog.pg_namespace index_namespace
+    ON index_namespace.oid = index_relation.relnamespace
+  JOIN pg_catalog.pg_index index_metadata
+    ON index_metadata.indexrelid = index_relation.oid
+  JOIN pg_catalog.pg_class table_relation
+    ON table_relation.oid = index_metadata.indrelid
+  JOIN LATERAL UNNEST(index_metadata.indkey)
+    WITH ORDINALITY AS key_column(attribute_number, ordinality)
+    ON TRUE
+  JOIN pg_catalog.pg_attribute attribute
+    ON attribute.attrelid = table_relation.oid
+   AND attribute.attnum = key_column.attribute_number
+  LEFT JOIN pg_catalog.pg_constraint constraint_metadata
+    ON constraint_metadata.conindid = index_relation.oid
+  WHERE index_namespace.nspname = 'public'
+    AND table_relation.relname = 'AlpacaApiUsageBucket'
+    AND index_relation.relname =
+      'AlpacaApiUsageBucket_bucketStart_operation_endpoint_method__key'
+  GROUP BY
+    index_metadata.indisunique,
+    (index_metadata.indpred IS NOT NULL),
+    constraint_metadata.oid;
+
+  IF indexed_columns IS NULL THEN
+    RAISE EXCEPTION
+      'Expected historical standalone index public.% is absent',
+      'AlpacaApiUsageBucket_bucketStart_operation_endpoint_method__key';
+  END IF;
+
+  IF indexed_columns <> ARRAY[
+    'bucketStart',
+    'operation',
+    'endpoint',
+    'method',
+    'requestClass'
+  ]::TEXT[] THEN
+    RAISE EXCEPTION
+      'Historical Alpaca API usage index has unexpected columns: %',
+      indexed_columns;
+  END IF;
+
+  IF NOT is_unique OR is_partial THEN
+    RAISE EXCEPTION
+      'Historical Alpaca API usage index must be unique and non-partial';
+  END IF;
+
+  IF backing_constraint IS NOT NULL THEN
+    RAISE EXCEPTION
+      'Historical Alpaca API usage uniqueness object is a constraint-backed index, not a standalone index';
+  END IF;
+END $$;
+
 CREATE UNIQUE INDEX "BrokerActivity_account_broker_mode_activityId_key"
   ON "BrokerActivity" ("tradingAccountId", "broker", "mode", "activityId")
   WHERE "tradingAccountId" IS NOT NULL;
@@ -170,8 +244,8 @@ CREATE UNIQUE INDEX "AlpacaApiUsageBucket_legacy_scope_key"
   )
   WHERE "tradingAccountId" IS NULL;
 
-DROP INDEX "BrokerActivity_activityId_key";
-DROP INDEX "BrokerOrder_broker_brokerOrderId_key";
-DROP INDEX "BrokerOrder_broker_clientOrderId_key";
-DROP INDEX "AccountSnapshot_runKey_key";
-DROP INDEX "AlpacaApiUsageBucket_bucketStart_operation_endpoint_method_requestClass_key";
+DROP INDEX "public"."BrokerActivity_activityId_key";
+DROP INDEX "public"."BrokerOrder_broker_brokerOrderId_key";
+DROP INDEX "public"."BrokerOrder_broker_clientOrderId_key";
+DROP INDEX "public"."AccountSnapshot_runKey_key";
+DROP INDEX "public"."AlpacaApiUsageBucket_bucketStart_operation_endpoint_method__key";
