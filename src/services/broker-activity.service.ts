@@ -260,6 +260,8 @@ export async function syncBrokerActivitiesForAccount(
   let created = 0;
   let updated = 0;
   let seen = 0;
+  let pagesProcessed = 0;
+  let cursorEnd: string | null = null;
 
   while (page < maxPages) {
     const activityRequest: {
@@ -286,6 +288,7 @@ export async function syncBrokerActivitiesForAccount(
     }
 
     const activities = await getAlpacaAccountActivities(activityRequest);
+    pagesProcessed += 1;
 
     if (activities.length === 0) {
       break;
@@ -293,6 +296,7 @@ export async function syncBrokerActivitiesForAccount(
 
     for (const activity of activities) {
       seen += 1;
+      cursorEnd = activity.id;
 
       const result = await upsertBrokerActivity({
         activity,
@@ -341,6 +345,9 @@ export async function syncBrokerActivitiesForAccount(
     tradingAccountId,
     activityType,
     after: after.toISOString(),
+    cursorStart: after.toISOString(),
+    cursorEnd,
+    pagesProcessed,
     seen,
     created,
     updated,

@@ -4,9 +4,10 @@ import { logger } from '../config/logger.js';
 import type { Server } from 'node:http';
 import {
   processPendingOrders,
-  syncSubmittedOrders,
+  recoverStaleSubmittingIntents,
+  syncSubmittedOrdersAcrossAccounts,
 } from '../workers/order.worker.js';
-import { syncTrackedPositions } from '../services/position-tracking.service.js';
+import { syncTrackedPositionsAcrossAccounts } from '../services/position-tracking.service.js';
 import { evaluateExits } from '../services/exit-evaluator.service.js';
 import { runScheduledAccountSnapshots } from '../workers/account-snapshot.worker.js';
 import { runBrokerActivitySync } from '../workers/broker-activity.worker.js';
@@ -73,6 +74,8 @@ async function runTradingWorkers() {
 
   try {
     await runWorker('pending_order_processing', async () => {
+      // Recover account-scoped stale claims before claiming new pending work.
+      await recoverStaleSubmittingIntents();
       const result = await processPendingOrders();
 
       return {
@@ -82,9 +85,9 @@ async function runTradingWorkers() {
     });
 
     await runWorker('submitted_order_sync', async () => {
-      const result = await syncSubmittedOrders();
+      const result = await syncSubmittedOrdersAcrossAccounts();
 
-      if (result.skipped) {
+      if (result.processedAccounts === 0 && result.failedAccounts === 0) {
         return {
           outcome: 'skipped',
           skipReason: 'not_due',
@@ -92,15 +95,15 @@ async function runTradingWorkers() {
       }
 
       return {
-        outcome: result.found > 0 ? 'success' : 'idle',
-        workSucceeded: result.synced > 0,
+        outcome: 'success',
+        workSucceeded: result.processedAccounts > 0,
       };
     });
 
     await runWorker('tracked_position_sync', async () => {
-      const result = await syncTrackedPositions();
+      const result = await syncTrackedPositionsAcrossAccounts();
 
-      if (result.skipped) {
+      if (result.processedAccounts === 0 && result.failedAccounts === 0) {
         return {
           outcome: 'skipped',
           skipReason: 'not_due',
@@ -108,13 +111,14 @@ async function runTradingWorkers() {
       }
 
       return {
-        outcome: result.seen > 0 || result.closed > 0 ? 'success' : 'idle',
-        workSucceeded:
-          result.created > 0 || result.updated > 0 || result.closed > 0,
+        outcome: 'success',
+        workSucceeded: result.processedAccounts > 0,
       };
     });
 
     await runWorker('exit_evaluation', async () => {
+      // Phase 2 intentionally leaves exits default-account-only. Live accounts
+      // must remain dormant until exit enumeration is implemented.
       await evaluateExits();
 
       return {
@@ -162,15 +166,15 @@ function startWorkers() {
         };
       }
 
-      if (!result.result) {
+      if (!result.results) {
         return {
           outcome: 'idle',
         };
       }
 
       return {
-        outcome: result.result.seen > 0 ? 'success' : 'idle',
-        workSucceeded: result.result.created > 0 || result.result.updated > 0,
+        outcome: 'success',
+        workSucceeded: (result.processedAccounts ?? 0) > 0,
       };
     });
   }, BROKER_ACTIVITY_WORKER_INTERVAL_MS);
