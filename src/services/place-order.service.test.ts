@@ -12,6 +12,15 @@ const mocks = vi.hoisted(() => ({
   resolveDefaultTradingAccountId: vi.fn(),
   updateOrderIntentStatus: vi.fn(),
   recordOrderIntentRiskEvaluation: vi.fn(),
+  tradingAccountFindUniqueOrThrow: vi.fn(),
+}));
+
+vi.mock('../db/prisma.js', () => ({
+  prisma: {
+    tradingAccount: {
+      findUniqueOrThrow: mocks.tradingAccountFindUniqueOrThrow,
+    },
+  },
 }));
 
 vi.mock('../integrations/alpaca/orders.adapter.js', () => ({
@@ -102,6 +111,9 @@ const runtimeSizedInput = {
 describe('place order service entry decision attribution', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.tradingAccountFindUniqueOrThrow.mockResolvedValue({
+      environment: 'PAPER',
+    });
     mocks.resolveSubscriptionOrderInput.mockResolvedValue(resolvedInput);
     mocks.resolveRuntimeAccountSubscriptionSizing.mockResolvedValue({
       tradingAccountSubscriptionId: 44,
@@ -144,7 +156,10 @@ describe('place order service entry decision attribution', () => {
       subscriptionId: 22,
       symbol: 'SPY',
     });
-    expect(mocks.buildClientOrderId).toHaveBeenCalledWith(runtimeSizedInput);
+    expect(mocks.buildClientOrderId).toHaveBeenCalledWith(runtimeSizedInput, {
+      tradingAccountId: 1,
+      environment: 'PAPER',
+    });
     expect(mocks.createOrderIntent).toHaveBeenCalledWith(
       runtimeSizedInput,
       'api',

@@ -9,9 +9,9 @@ export async function getBootstrapData() {
   const tradingAccountId = await resolveDefaultTradingAccountId();
   const [account, positions, openOrders, runtimeConfig, risk] =
     await Promise.all([
-      getNormalizedAccount('bootstrap_snapshot', { tradingAccountId }),
-      getNormalizedPositions('bootstrap_snapshot', { tradingAccountId }),
-      getNormalizedOpenOrders('bootstrap_snapshot', { tradingAccountId }),
+      getNormalizedAccount(tradingAccountId, 'bootstrap_snapshot'),
+      getNormalizedPositions(tradingAccountId, 'bootstrap_snapshot'),
+      getNormalizedOpenOrders(tradingAccountId, 'bootstrap_snapshot'),
       getRuntimeTradingConfig(),
       getRiskStatus(),
     ]);

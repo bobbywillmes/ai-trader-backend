@@ -80,9 +80,11 @@ export async function closePosition(trackedPositionId: number) {
 
   const upperSymbol = trackedPosition.symbol.toUpperCase();
   const tradingAccountId = trackedPosition.tradingAccountId;
-  const result = await closeAlpacaPosition(upperSymbol, 'position_close', {
+  const result = await closeAlpacaPosition(
     tradingAccountId,
-  });
+    upperSymbol,
+    'position_close'
+  );
 
   adaptivePollingCoordinator.forceAfterBrokerPositionWrite(
     'broker_position_close_requested'
@@ -133,34 +135,42 @@ export async function closePosition(trackedPositionId: number) {
       },
     });
 
-    await prisma.brokerOrder.upsert({
+    const existingCloseBrokerOrder = await prisma.brokerOrder.findFirst({
       where: {
-        broker_brokerOrderId: {
-          broker: 'alpaca',
-          brokerOrderId: closeOrder.id,
-        },
-      },
-      create: {
-        orderIntentId: orderIntent.id,
         tradingAccountId,
         broker: 'alpaca',
         brokerOrderId: closeOrder.id,
-        clientOrderId: closeOrder.clientOrderId,
-        symbol: closeOrder.symbol ?? upperSymbol,
-        side: closeOrder.side ?? (trackedPosition.side === 'short' ? 'buy' : 'sell'),
-        status: closeOrder.status,
-        securityId: trackedPosition.securityId,
-        trackedPositionId: trackedPosition.id,
-        rawBrokerJson: closeOrder.raw as Prisma.InputJsonValue,
       },
-      update: {
-        orderIntentId: orderIntent.id,
-        tradingAccountId,
-        status: closeOrder.status,
-        trackedPositionId: trackedPosition.id,
-        rawBrokerJson: closeOrder.raw as Prisma.InputJsonValue,
-      },
+      select: { id: true },
     });
+
+    const brokerOrderData = {
+      orderIntentId: orderIntent.id,
+      tradingAccountId,
+      broker: 'alpaca',
+      brokerOrderId: closeOrder.id,
+      clientOrderId: closeOrder.clientOrderId,
+      symbol: closeOrder.symbol ?? upperSymbol,
+      side: closeOrder.side ?? (trackedPosition.side === 'short' ? 'buy' : 'sell'),
+      status: closeOrder.status,
+      securityId: trackedPosition.securityId,
+      trackedPositionId: trackedPosition.id,
+      rawBrokerJson: closeOrder.raw as Prisma.InputJsonValue,
+    };
+
+    if (existingCloseBrokerOrder) {
+      await prisma.brokerOrder.update({
+        where: { id: existingCloseBrokerOrder.id },
+        data: brokerOrderData,
+      });
+    } else {
+      await prisma.brokerOrder.create({
+        data: {
+          ...brokerOrderData,
+        },
+      },
+      );
+    }
   }
 
   await createSystemEvent({

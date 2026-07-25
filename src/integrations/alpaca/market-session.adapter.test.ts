@@ -5,13 +5,13 @@ import {
 } from './market-session.adapter.js';
 
 const mocks = vi.hoisted(() => ({
-  alpacaRequest: vi.fn(),
+  alpacaRequestForAccount: vi.fn(),
   settingFindUnique: vi.fn(),
   settingUpsert: vi.fn(),
 }));
 
 vi.mock('./client.js', () => ({
-  alpacaRequest: mocks.alpacaRequest,
+  alpacaRequestForAccount: mocks.alpacaRequestForAccount,
 }));
 
 vi.mock('../../db/prisma.js', () => ({
@@ -31,7 +31,7 @@ describe('Alpaca market session adapter', () => {
     vi.setSystemTime(new Date('2026-06-18T16:00:00.000Z'));
     clearMarketSessionCache();
     persistedClockValue = undefined;
-    mocks.alpacaRequest.mockReset();
+    mocks.alpacaRequestForAccount.mockReset();
     mocks.settingFindUnique.mockReset();
     mocks.settingUpsert.mockReset();
     mocks.settingFindUnique.mockImplementation(async () =>
@@ -49,7 +49,7 @@ describe('Alpaca market session adapter', () => {
   });
 
   it('caches repeated clock and calendar calls while advancing effective time', async () => {
-    mocks.alpacaRequest
+    mocks.alpacaRequestForAccount
       .mockResolvedValueOnce({
         timestamp: '2026-06-18T16:00:00.000Z',
         is_open: true,
@@ -64,11 +64,11 @@ describe('Alpaca market session adapter', () => {
         },
       ]);
 
-    const first = await getAlpacaMarketSessionSnapshot();
+    const first = await getAlpacaMarketSessionSnapshot(1);
     vi.setSystemTime(new Date('2026-06-18T16:00:30.000Z'));
-    const second = await getAlpacaMarketSessionSnapshot();
+    const second = await getAlpacaMarketSessionSnapshot(1);
 
-    expect(mocks.alpacaRequest).toHaveBeenCalledTimes(2);
+    expect(mocks.alpacaRequestForAccount).toHaveBeenCalledTimes(2);
     expect(first.evaluatedTimestamp).toBe('2026-06-18T16:00:00.000Z');
     expect(second.evaluatedTimestamp).toBe('2026-06-18T16:00:30.000Z');
     expect(second.cache).toEqual({ clock: 'cached', calendar: 'cached' });
@@ -77,7 +77,7 @@ describe('Alpaca market session adapter', () => {
   });
 
   it('deduplicates simultaneous in-flight requests', async () => {
-    mocks.alpacaRequest
+    mocks.alpacaRequestForAccount
       .mockResolvedValueOnce({
         timestamp: '2026-06-18T16:00:00.000Z',
         is_open: true,
@@ -93,36 +93,36 @@ describe('Alpaca market session adapter', () => {
       ]);
 
     await Promise.all([
-      getAlpacaMarketSessionSnapshot(),
-      getAlpacaMarketSessionSnapshot(),
+      getAlpacaMarketSessionSnapshot(1),
+      getAlpacaMarketSessionSnapshot(1),
     ]);
 
-    expect(mocks.alpacaRequest).toHaveBeenCalledTimes(2);
+    expect(mocks.alpacaRequestForAccount).toHaveBeenCalledTimes(2);
   });
 
   it('uses persisted next_open and next_close until the cached close is stale', async () => {
     vi.setSystemTime(new Date('2026-06-19T13:03:00.000Z'));
-    mocks.alpacaRequest.mockResolvedValueOnce({
+    mocks.alpacaRequestForAccount.mockResolvedValueOnce({
       timestamp: '2026-06-19T13:03:00.000Z',
       is_open: false,
       next_open: '2026-06-22T13:30:00.000Z',
       next_close: '2026-06-22T20:00:00.000Z',
     });
 
-    const holiday = await getAlpacaMarketSessionSnapshot();
+    const holiday = await getAlpacaMarketSessionSnapshot(1);
 
     expect(holiday.marketOpen).toBe(false);
     expect(holiday.sessionOpenAt).toBeNull();
     expect(holiday.nextOpenAt).toBe('2026-06-22T13:30:00.000Z');
-    expect(mocks.alpacaRequest).toHaveBeenCalledTimes(1);
+    expect(mocks.alpacaRequestForAccount).toHaveBeenCalledTimes(1);
 
     clearMarketSessionCache();
-    mocks.alpacaRequest.mockClear();
+    mocks.alpacaRequestForAccount.mockClear();
     vi.setSystemTime(new Date('2026-06-22T14:00:00.000Z'));
 
-    const monday = await getAlpacaMarketSessionSnapshot();
+    const monday = await getAlpacaMarketSessionSnapshot(1);
 
-    expect(mocks.alpacaRequest).not.toHaveBeenCalled();
+    expect(mocks.alpacaRequestForAccount).not.toHaveBeenCalled();
     expect(monday.marketOpen).toBe(true);
     expect(monday.sessionOpenAt).toBe('2026-06-22T13:30:00.000Z');
     expect(monday.sessionCloseAt).toBe('2026-06-22T20:00:00.000Z');
@@ -137,7 +137,7 @@ describe('Alpaca market session adapter', () => {
       fetchedAt: '2026-06-19T13:03:00.000Z',
     });
     vi.setSystemTime(new Date('2026-06-22T20:01:00.000Z'));
-    mocks.alpacaRequest
+    mocks.alpacaRequestForAccount
       .mockResolvedValueOnce({
         timestamp: '2026-06-22T20:01:00.000Z',
         is_open: false,
@@ -145,9 +145,10 @@ describe('Alpaca market session adapter', () => {
         next_close: '2026-06-23T20:00:00.000Z',
       });
 
-    const refreshed = await getAlpacaMarketSessionSnapshot();
+    const refreshed = await getAlpacaMarketSessionSnapshot(1);
 
-    expect(mocks.alpacaRequest).toHaveBeenCalledWith(
+    expect(mocks.alpacaRequestForAccount).toHaveBeenCalledWith(
+      1,
       '/v2/clock',
       expect.objectContaining({
         metadata: expect.objectContaining({

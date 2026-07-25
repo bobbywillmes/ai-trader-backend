@@ -363,6 +363,7 @@ function getDedupeSince(windowMinutes: number) {
 
 async function hasRecentReconciliationEvent(
   finding: ReconciliationFinding,
+  tradingAccountId: number,
   dedupeSince: Date
 ) {
   const existing = await prisma.systemEvent.findFirst({
@@ -370,6 +371,7 @@ async function hasRecentReconciliationEvent(
       type: buildReconciliationEventType(finding.code),
       entityType: finding.entityType,
       entityId: finding.entityId,
+      tradingAccountId,
       createdAt: {
         gte: dedupeSince,
       },
@@ -382,10 +384,10 @@ async function hasRecentReconciliationEvent(
   return Boolean(existing);
 }
 
-export async function runReconciliationCheck(
+export async function reconcileTradingAccount(
+  tradingAccountId: number,
   options: RunReconciliationCheckOptions = {}
 ): Promise<RunReconciliationCheckResult> {
-  const tradingAccountId = await resolveDefaultTradingAccountId();
   const [trackedPositions, brokerPositions, brokerOrders] = await Promise.all([
     prisma.trackedPosition.findMany({
       where: {
@@ -401,8 +403,8 @@ export async function runReconciliationCheck(
         symbol: 'asc',
       },
     }),
-    getNormalizedPositions('reconciliation_check', { tradingAccountId }),
-    getOpenAlpacaOrders('reconciliation_check', { tradingAccountId }),
+    getNormalizedPositions(tradingAccountId, 'reconciliation_check'),
+    getOpenAlpacaOrders(tradingAccountId, 'reconciliation_check'),
   ]);
 
   const findings = reconcileSnapshots({
@@ -458,6 +460,7 @@ let skippedDuplicateEventCount = 0;
       if (dedupeEvents) {
         const duplicateExists = await hasRecentReconciliationEvent(
           finding,
+          tradingAccountId,
           dedupeSince
         );
 
@@ -471,6 +474,7 @@ let skippedDuplicateEventCount = 0;
         type: buildReconciliationEventType(finding.code),
         entityType: finding.entityType,
         entityId: finding.entityId,
+        tradingAccountId,
         message: finding.message,
         payloadJson: buildReconciliationEventPayload(finding),
       });
@@ -515,4 +519,11 @@ let skippedDuplicateEventCount = 0;
     persistedEvents: persistEvents,
     persistedAttention: persistAttention,
   };
+}
+
+export async function runReconciliationCheck(
+  options: RunReconciliationCheckOptions = {}
+) {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+  return reconcileTradingAccount(tradingAccountId, options);
 }

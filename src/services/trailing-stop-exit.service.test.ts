@@ -3,8 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   trackedPositionFindUnique: vi.fn(),
 
-  brokerOrderFindUnique: vi.fn(),
-  brokerOrderUpsert: vi.fn(),
+  brokerOrderFindFirst: vi.fn(),
+  brokerOrderCreate: vi.fn(),
+  brokerOrderUpdate: vi.fn(),
 
   orderIntentFindFirst: vi.fn(),
   orderIntentCreate: vi.fn(),
@@ -27,8 +28,9 @@ vi.mock('../db/prisma.js', () => ({
       findUnique: mocks.trackedPositionFindUnique,
     },
     brokerOrder: {
-      findUnique: mocks.brokerOrderFindUnique,
-      upsert: mocks.brokerOrderUpsert,
+      findFirst: mocks.brokerOrderFindFirst,
+      create: mocks.brokerOrderCreate,
+      update: mocks.brokerOrderUpdate,
     },
     orderIntent: {
       findFirst: mocks.orderIntentFindFirst,
@@ -116,14 +118,14 @@ describe('submitTrailingStopExitOrder', () => {
     mocks.trackedPositionFindUnique.mockResolvedValue(position);
 
     // Nothing was persisted locally yet.
-    mocks.brokerOrderFindUnique.mockResolvedValue(null);
+    mocks.brokerOrderFindFirst.mockResolvedValue(null);
 
     // But Alpaca already has the order with the deterministic clientOrderId.
     mocks.getAlpacaOrderByClientOrderId.mockResolvedValue(existingAlpacaOrder);
 
     mocks.orderIntentFindFirst.mockResolvedValue(null);
     mocks.orderIntentCreate.mockResolvedValue({ id: 301 });
-    mocks.brokerOrderUpsert.mockResolvedValue({});
+    mocks.brokerOrderCreate.mockResolvedValue({});
     mocks.markTrailingStopOrderSubmitted.mockResolvedValue({});
 
     const result = await submitTrailingStopExitOrder(101);
@@ -135,19 +137,18 @@ describe('submitTrailingStopExitOrder', () => {
       clientOrderId: expectedClientOrderId,
     });
 
-    expect(mocks.brokerOrderFindUnique).toHaveBeenCalledWith({
+    expect(mocks.brokerOrderFindFirst).toHaveBeenCalledWith({
       where: {
-        broker_clientOrderId: {
-          broker: 'alpaca',
-          clientOrderId: expectedClientOrderId,
-        },
+        tradingAccountId: 1,
+        broker: 'alpaca',
+        clientOrderId: expectedClientOrderId,
       },
     });
 
     expect(mocks.getAlpacaOrderByClientOrderId).toHaveBeenCalledWith(
+      1,
       expectedClientOrderId,
-      'protective_order_idempotency_check',
-      { tradingAccountId: 1 }
+      'protective_order_idempotency_check'
     );
 
     // This is the safety assertion:
@@ -170,15 +171,9 @@ describe('submitTrailingStopExitOrder', () => {
       }),
     });
 
-    expect(mocks.brokerOrderUpsert).toHaveBeenCalledWith(
+    expect(mocks.brokerOrderCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: {
-          broker_clientOrderId: {
-            broker: 'alpaca',
-            clientOrderId: expectedClientOrderId,
-          },
-        },
-        create: expect.objectContaining({
+        data: expect.objectContaining({
           orderIntentId: 301,
           tradingAccountId: 1,
           broker: 'alpaca',
@@ -221,12 +216,12 @@ describe('submitTrailingStopExitOrder', () => {
     };
 
     mocks.trackedPositionFindUnique.mockResolvedValue(buildPosition());
-    mocks.brokerOrderFindUnique.mockResolvedValue(null);
+    mocks.brokerOrderFindFirst.mockResolvedValue(null);
     mocks.getAlpacaOrderByClientOrderId.mockResolvedValue(null);
     mocks.placeAlpacaOrder.mockResolvedValue(createdOrder);
     mocks.orderIntentFindFirst.mockResolvedValue(null);
     mocks.orderIntentCreate.mockResolvedValue({ id: 301 });
-    mocks.brokerOrderUpsert.mockResolvedValue({});
+    mocks.brokerOrderCreate.mockResolvedValue({});
     mocks.markTrailingStopOrderSubmitted.mockResolvedValue({});
     mocks.createSystemEvent.mockResolvedValue({});
 

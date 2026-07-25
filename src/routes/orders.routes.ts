@@ -5,7 +5,11 @@ import {
   cancelOrderController,
   cancelAllOrdersController
 } from '../controllers/orders.controller.js';
-import { requirePermission, requireSystemOwnerAccess } from '../middleware/rbac.js';
+import {
+  requirePermission,
+  requireSystemOwnerAccess,
+  requireTradingAccountAccess,
+} from '../middleware/rbac.js';
 import { PlatformPermission } from '../types/platform-rbac.js';
 
 const router = Router();
@@ -14,7 +18,17 @@ const router = Router();
 router.get('/open', requireSystemOwnerAccess, openOrdersController);
 // Default account operations require owner access (no account-scoping yet)
 router.post('/', requireSystemOwnerAccess, placeOrderController);
-router.delete('/', requireSystemOwnerAccess, cancelAllOrdersController);
-router.delete('/:orderId', requireSystemOwnerAccess, cancelOrderController);
+router.delete(
+  '/trading-accounts/:tradingAccountId',
+  requireSystemOwnerAccess,
+  requireTradingAccountAccess('tradingAccountId'),
+  cancelAllOrdersController
+);
+router.delete(
+  '/trading-accounts/:tradingAccountId/:orderId',
+  requireSystemOwnerAccess,
+  requireTradingAccountAccess('tradingAccountId'),
+  cancelOrderController
+);
 
 export default router;

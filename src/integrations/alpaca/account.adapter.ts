@@ -1,17 +1,16 @@
 import type { BrokerCredentialStatus } from '@prisma/client';
-import { alpacaRequest } from './client.js';
+import { alpacaRequestForAccount } from './client.js';
 import type { AlpacaAccount } from './alpaca.types.js';
 import type { AlpacaApiOperation } from './request-metadata.js';
 
 export async function getAlpacaAccount(
+  tradingAccountId: number,
   operation: AlpacaApiOperation = 'account_read',
   options: {
-    tradingAccountId?: number | undefined;
     credentialStatuses?: BrokerCredentialStatus[] | undefined;
   } = {}
 ): Promise<AlpacaAccount> {
-  return alpacaRequest<AlpacaAccount>('/v2/account', {
-    tradingAccountId: options.tradingAccountId,
+  return alpacaRequestForAccount<AlpacaAccount>(tradingAccountId, '/v2/account', {
     credentialStatuses: options.credentialStatuses,
     metadata: {
       operation,

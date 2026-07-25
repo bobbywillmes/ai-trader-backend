@@ -709,21 +709,6 @@ function addSharedChecks(args: {
     );
   }
 
-  if (
-    profile === TradingAccountEnvironment.LIVE &&
-    args.globalConfig.paperMode
-  ) {
-    args.checks.push(
-      createCheck({
-        id: 'live_global_paper_mode_disabled',
-        label: 'Global paper mode is disabled for live readiness',
-        severity: 'blocker',
-        status: 'fail',
-        message: 'Global paperMode is still enabled while this account is LIVE.',
-      })
-    );
-  }
-
   if (args.unattributedOpenPositions.length > 0) {
     args.checks.push(
       createCheck({

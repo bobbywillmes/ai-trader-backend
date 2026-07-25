@@ -313,12 +313,12 @@ describe('runReconciliationCheck', () => {
       },
     });
     expect(mocks.getNormalizedPositions).toHaveBeenCalledWith(
-      'reconciliation_check',
-      { tradingAccountId: 1 }
+      1,
+      'reconciliation_check'
     );
     expect(mocks.getOpenAlpacaOrders).toHaveBeenCalledWith(
-      'reconciliation_check',
-      { tradingAccountId: 1 }
+      1,
+      'reconciliation_check'
     );
 
     expect(result.findings).toEqual([
@@ -338,6 +338,7 @@ describe('runReconciliationCheck', () => {
       type: 'reconciliation.trail_order_missing_after_unlock',
       entityType: 'trackedPosition',
       entityId: '101',
+      tradingAccountId: 1,
       message:
         'SPY target is unlocked, but no protective trailing-stop order is linked.',
       payloadJson: expect.objectContaining({

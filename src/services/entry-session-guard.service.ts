@@ -146,9 +146,15 @@ export async function evaluateEntrySessionGuard(
   let session: NormalizedMarketSessionSnapshot;
 
   try {
-    session = await getAlpacaMarketSessionSnapshot(now, {
-      tradingAccountId: options.tradingAccountId,
-    });
+    if (options.tradingAccountId === undefined) {
+      throw new Error(
+        'tradingAccountId is required for account-routed market session lookup.'
+      );
+    }
+    session = await getAlpacaMarketSessionSnapshot(
+      options.tradingAccountId,
+      now
+    );
   } catch (error) {
     const details: EntrySessionBaseDetails = {
       enabled: true,

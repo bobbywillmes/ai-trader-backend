@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RuntimeTradingConfig } from './config.service.js';
 import {
-  evaluateEntrySessionGuard,
+  evaluateEntrySessionGuard as evaluateEntrySessionGuardForAccount,
   isEntrySessionBlocked,
 } from './entry-session-guard.service.js';
 import type { NormalizedMarketSessionSnapshot } from '../integrations/alpaca/market-session.adapter.js';
@@ -31,6 +31,15 @@ const baseConfig: RuntimeTradingConfig = {
   reconciliationWorkerEnabled: false,
   reconciliationWorkerIntervalMinutes: 15,
 };
+
+function evaluateEntrySessionGuard(
+  config: RuntimeTradingConfig,
+  now = new Date()
+) {
+  return evaluateEntrySessionGuardForAccount(config, now, {
+    tradingAccountId: 1,
+  });
+}
 
 function session(
   evaluatedTimestamp: string,

@@ -711,9 +711,10 @@ export async function evaluateOrderRisk(
     });
   }
 
-  const account = await getNormalizedAccount('risk_gate_account_check', {
+  const account = await getNormalizedAccount(
     tradingAccountId,
-  });
+    'risk_gate_account_check'
+  );
 
   if (account.tradingBlocked) {
     return block(403, 'Broker account is trading blocked.', {
@@ -722,21 +723,6 @@ export async function evaluateOrderRisk(
       mode: account.mode,
       tradingBlocked: account.tradingBlocked,
     });
-  }
-
-  const expectedMode = config.paperMode ? 'paper' : 'live';
-
-  if (account.mode !== expectedMode) {
-    return block(
-      409,
-      `Broker mode mismatch. Runtime config expects ${expectedMode}, but Alpaca account is ${account.mode}.`,
-      {
-        rule: 'broker_mode_match',
-        expectedMode,
-        actualMode: account.mode,
-        paperMode: config.paperMode,
-      }
-    );
   }
 
   if (!entryOrder) {
@@ -1059,15 +1045,16 @@ export async function logRiskGateBlockedOrder(args: {
 export async function getRiskStatus() {
   const tradingAccountId = await resolveDefaultTradingAccountId();
   const config = await getRuntimeTradingConfig();
-  const account = await getNormalizedAccount('risk_gate_account_check', {
+  const account = await getNormalizedAccount(
     tradingAccountId,
-  });
+    'risk_gate_account_check'
+  );
   const usage = await getTradingAccountEntryRiskUsage({
     tradingAccountId,
     symbol: '',
   });
 
-  const expectedMode = config.paperMode ? 'paper' : 'live';
+  const expectedMode = account.mode;
   const reasons: string[] = [];
 
   if (!config.tradingEnabled) {
@@ -1080,12 +1067,6 @@ export async function getRiskStatus() {
 
   if (account.tradingBlocked) {
     reasons.push('Broker account is trading blocked.');
-  }
-
-  if (account.mode !== expectedMode) {
-    reasons.push(
-      `Broker mode mismatch. Runtime config expects ${expectedMode}, but Alpaca account is ${account.mode}.`
-    );
   }
 
   const entrySession: EntrySessionDecision =

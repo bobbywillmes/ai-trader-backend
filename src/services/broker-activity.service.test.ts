@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   brokerActivityFindFirst: vi.fn(),
-  brokerActivityFindUnique: vi.fn(),
   brokerActivityFindMany: vi.fn(),
   brokerActivityUpdate: vi.fn(),
   brokerActivityUpdateMany: vi.fn(),
@@ -16,13 +15,13 @@ const mocks = vi.hoisted(() => ({
   getAlpacaAccountActivities: vi.fn(),
   createSystemEvent: vi.fn(),
   resolveDefaultTradingAccountId: vi.fn(),
+  tradingAccountFindUniqueOrThrow: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
   prisma: {
     brokerActivity: {
       findFirst: mocks.brokerActivityFindFirst,
-      findUnique: mocks.brokerActivityFindUnique,
       findMany: mocks.brokerActivityFindMany,
       update: mocks.brokerActivityUpdate,
       updateMany: mocks.brokerActivityUpdateMany,
@@ -39,6 +38,9 @@ vi.mock('../db/prisma.js', () => ({
     },
     setting: {
       findMany: mocks.settingFindMany,
+    },
+    tradingAccount: {
+      findUniqueOrThrow: mocks.tradingAccountFindUniqueOrThrow,
     },
   },
 }));
@@ -65,6 +67,7 @@ vi.mock('./trading-account.service.js', () => ({
 import {
   attributeCloseFillsForTrackedPosition,
   syncBrokerActivities,
+  syncBrokerActivitiesForAccount,
 } from './broker-activity.service.js';
 
 describe('broker activity tracked-position attribution', () => {
@@ -72,13 +75,16 @@ describe('broker activity tracked-position attribution', () => {
     vi.resetAllMocks();
 
     mocks.brokerActivityFindFirst.mockResolvedValue(null);
-    mocks.brokerActivityFindUnique.mockResolvedValue(null);
+    mocks.brokerActivityFindFirst.mockResolvedValue(null);
     mocks.brokerOrderFindFirst.mockResolvedValue(null);
     mocks.positionExitStateFindFirst.mockResolvedValue(null);
     mocks.trackedPositionFindFirst.mockResolvedValue(null);
     mocks.settingFindMany.mockResolvedValue([{ key: 'paperMode', value: 'true' }]);
     mocks.createSystemEvent.mockResolvedValue({});
     mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
+    mocks.tradingAccountFindUniqueOrThrow.mockResolvedValue({
+      environment: 'PAPER',
+    });
   });
 
   it('links observer-discovered close fills when one local cycle is eligible', async () => {
@@ -103,6 +109,7 @@ describe('broker activity tracked-position attribution', () => {
 
     const result = await attributeCloseFillsForTrackedPosition({
       trackedPositionId: 101,
+      tradingAccountId: 1,
       broker: 'alpaca',
       symbol: 'SPY',
       closeSide: 'sell',
@@ -122,6 +129,7 @@ describe('broker activity tracked-position attribution', () => {
           not: 101,
         },
         broker: 'alpaca',
+        tradingAccountId: 1,
         symbol: 'SPY',
         status: {
           in: ['open', 'closing'],
@@ -138,6 +146,7 @@ describe('broker activity tracked-position attribution', () => {
           in: [501],
         },
         trackedPositionId: null,
+        tradingAccountId: 1,
       },
       data: {
         trackedPositionId: 101,
@@ -157,6 +166,7 @@ describe('broker activity tracked-position attribution', () => {
 
     const result = await attributeCloseFillsForTrackedPosition({
       trackedPositionId: 101,
+      tradingAccountId: 1,
       broker: 'alpaca',
       symbol: 'SPY',
       closeSide: 'sell',
@@ -188,6 +198,7 @@ describe('broker activity tracked-position attribution', () => {
 
     const result = await attributeCloseFillsForTrackedPosition({
       trackedPositionId: 101,
+      tradingAccountId: 1,
       broker: 'alpaca',
       symbol: 'SPY',
       closeSide: 'sell',
@@ -205,7 +216,7 @@ describe('broker activity tracked-position attribution', () => {
   });
 
   it('preserves tracked-position links during duplicate broker activity ingestion', async () => {
-    mocks.brokerActivityFindUnique.mockResolvedValue({
+    mocks.brokerActivityFindFirst.mockResolvedValue({
       id: 501,
       activityId: 'fill-501',
       trackedPositionId: 101,
@@ -237,7 +248,7 @@ describe('broker activity tracked-position attribution', () => {
 
     expect(mocks.brokerActivityUpdate).toHaveBeenCalledWith({
       where: {
-        activityId: 'fill-501',
+        id: 501,
       },
       data: expect.objectContaining({
         trackedPositionId: 101,
@@ -292,6 +303,53 @@ describe('broker activity tracked-position attribution', () => {
         trackedPositionId: 101,
         trackedPositionLinkSource: 'close_order_submission',
         trackedPositionLinkedAt: expect.any(Date),
+      }),
+    });
+  });
+
+  it('scopes trailing broker-order attribution through the activity account', async () => {
+    mocks.positionExitStateFindFirst.mockResolvedValue({
+      trackedPositionId: 202,
+    });
+    mocks.getAlpacaAccountActivities
+      .mockResolvedValueOnce([
+        {
+          id: 'fill-live-1',
+          activity_type: 'FILL',
+          type: 'fill',
+          symbol: 'SPY',
+          side: 'sell',
+          qty: '3',
+          order_id: 'shared-trailing-order',
+          transaction_time: '2026-06-12T18:00:00.000Z',
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    mocks.tradingAccountFindUniqueOrThrow.mockResolvedValue({
+      environment: 'LIVE',
+    });
+
+    await syncBrokerActivitiesForAccount(2, {
+      activityType: 'FILL',
+      after: new Date('2026-06-12T17:55:00.000Z'),
+      pageSize: 100,
+      maxPages: 1,
+    });
+
+    expect(mocks.positionExitStateFindFirst).toHaveBeenCalledWith({
+      where: {
+        trailBrokerOrderId: 'shared-trailing-order',
+        trackedPosition: {
+          tradingAccountId: 2,
+        },
+      },
+    });
+    expect(mocks.brokerActivityCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        tradingAccountId: 2,
+        mode: 'live',
+        trackedPositionId: 202,
+        trackedPositionLinkSource: 'exit_state_trailing_order',
       }),
     });
   });

@@ -1,5 +1,17 @@
 # Production Database Migrations
 
+## Account-scoped broker identity migration
+
+`20260725120000_scope_broker_lifecycle_identity_by_account` replaces global
+activity, broker-order, client-order, snapshot run-key, and Alpaca API-usage
+uniqueness with partial account-scoped indexes.
+
+Before dropping old indexes, it reports unattributed-row counts and rejects
+duplicate attributed identities, snapshot or usage collisions, and activity
+broker/mode values that contradict the owning Trading Account. It never
+deduplicates, deletes, merges, or attributes historical rows. Investigate any
+preflight exception; do not blanket-assign null rows to Bobby Paper.
+
 This doc covers Prisma migration rules for production, the routine migration flow, how to diagnose and recover from migration mismatches, and the full database model reference.
 
 ---

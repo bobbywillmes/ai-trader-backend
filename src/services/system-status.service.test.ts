@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   alpacaUsageSnapshot: vi.fn(),
   alpacaUsagePersistenceSnapshot: vi.fn(),
   adaptivePollingSnapshot: vi.fn(),
+  resolveDefaultTradingAccountId: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -67,6 +68,10 @@ vi.mock('./adaptive-polling.service.js', () => ({
   },
 }));
 
+vi.mock('./trading-account.service.js', () => ({
+  resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
+}));
+
 vi.mock('../config/cors.js', () => ({
   allowedCorsOrigins: [],
 }));
@@ -74,6 +79,7 @@ vi.mock('../config/cors.js', () => ({
 describe('system status health semantics', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.getHealthStatus.mockResolvedValue({
       ok: true,
       service: 'ai-trader-backend',

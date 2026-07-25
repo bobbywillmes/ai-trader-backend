@@ -7,6 +7,7 @@ import {
   type AccountSnapshotQuery,
 } from '../services/account-snapshot.service.js';
 import type { BrokerMode } from '../types/broker.js';
+import { resolveDefaultTradingAccountId } from '../services/trading-account.service.js';
 
 function getQueryNumber(value: unknown, fallback: number) {
   if (typeof value !== 'string') {
@@ -157,7 +158,8 @@ export async function createManualAccountSnapshotController(
   next: NextFunction
 ) {
   try {
-    const result = await recordAccountSnapshot({
+    const tradingAccountId = await resolveDefaultTradingAccountId();
+    const result = await recordAccountSnapshot(tradingAccountId, {
       reason: 'manual',
       force: true,
     });

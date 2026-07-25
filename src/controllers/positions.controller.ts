@@ -10,9 +10,10 @@ export async function positionsController(
 ) {
   try {
     const tradingAccountId = await resolveDefaultTradingAccountId();
-    const positions = await getNormalizedPositions('manual_admin_action', {
+    const positions = await getNormalizedPositions(
       tradingAccountId,
-    });
+      'manual_admin_action'
+    );
     res.status(200).json(positions);
   } catch (error) {
     next(error);

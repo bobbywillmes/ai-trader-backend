@@ -9,9 +9,8 @@ const mocks = vi.hoisted(() => ({
   subscriptionFindMany: vi.fn(),
   subscriptionFindFirst: vi.fn(),
   subscriptionFindUnique: vi.fn(),
-  settingFindMany: vi.fn(),
+  tradingAccountFindUniqueOrThrow: vi.fn(),
   linkEntryDecisionToTrackedPosition: vi.fn(),
-  resolveDefaultTradingAccountId: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -34,8 +33,8 @@ vi.mock('../db/prisma.js', () => ({
       findFirst: mocks.subscriptionFindFirst,
       findUnique: mocks.subscriptionFindUnique,
     },
-    setting: {
-      findMany: mocks.settingFindMany,
+    tradingAccount: {
+      findUniqueOrThrow: mocks.tradingAccountFindUniqueOrThrow,
     },
   },
 }));
@@ -44,22 +43,11 @@ vi.mock('./entry-decision.service.js', () => ({
   linkEntryDecisionToTrackedPosition: mocks.linkEntryDecisionToTrackedPosition,
 }));
 
-vi.mock('./trading-account.service.js', () => ({
-  resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
-}));
-
 import { buildClientOrderId } from './client-order-id.service.js';
 import {
   linkLocalEntryOwnership,
   resolveTrackedPositionSubscription,
 } from './tracked-position-subscription-resolution.service.js';
-
-function mockPaperMode() {
-  mocks.settingFindMany.mockResolvedValue([
-    { key: 'paperMode', value: 'true' },
-    { key: 'tradingEnabled', value: 'true' },
-  ]);
-}
 
 function subscription(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -78,13 +66,14 @@ function subscription(overrides: Partial<Record<string, unknown>> = {}) {
 describe('tracked position subscription resolution', () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    mockPaperMode();
+    mocks.tradingAccountFindUniqueOrThrow.mockResolvedValue({
+      environment: 'PAPER',
+    });
     mocks.orderIntentFindFirst.mockResolvedValue(null);
     mocks.brokerActivityFindMany.mockResolvedValue([]);
     mocks.subscriptionFindMany.mockResolvedValue([]);
     mocks.subscriptionFindFirst.mockResolvedValue(null);
     mocks.subscriptionFindUnique.mockResolvedValue(null);
-    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.orderIntentUpdateMany.mockResolvedValue({ count: 1 });
     mocks.trackedPositionUpdateMany.mockResolvedValue({ count: 1 });
     mocks.brokerOrderUpdateMany.mockResolvedValue({ count: 1 });
@@ -103,6 +92,7 @@ describe('tracked position subscription resolution', () => {
     });
 
     const result = await resolveTrackedPositionSubscription({
+      tradingAccountId: 1,
       broker: 'alpaca',
       symbol: 'DIA',
       side: 'long',
@@ -118,6 +108,54 @@ describe('tracked position subscription resolution', () => {
     expect(mocks.subscriptionFindMany).not.toHaveBeenCalled();
   });
 
+  it('uses the supplied Live account and environment for all ownership evidence', async () => {
+    mocks.tradingAccountFindUniqueOrThrow.mockResolvedValue({
+      environment: 'LIVE',
+    });
+    mocks.subscriptionFindMany.mockResolvedValue([
+      subscription({
+        id: 23,
+        key: 'dia_live_core',
+      }),
+    ]);
+
+    const result = await resolveTrackedPositionSubscription({
+      tradingAccountId: 2,
+      broker: 'alpaca',
+      symbol: 'DIA',
+      side: 'long',
+      openedAt: new Date('2026-06-16T15:00:00.000Z'),
+    });
+
+    expect(result).toMatchObject({
+      status: 'resolved',
+      source: 'unique_observer_fallback',
+      subscriptionId: 23,
+    });
+    expect(mocks.orderIntentFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ tradingAccountId: 2 }),
+      })
+    );
+    expect(mocks.brokerActivityFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ tradingAccountId: 2 }),
+      })
+    );
+    expect(mocks.subscriptionFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          accountSubscriptions: {
+            some: {
+              tradingAccountId: 2,
+              enabled: true,
+            },
+          },
+        }),
+      })
+    );
+  });
+
   it('resolves a broker-carried subscription key to the matching local subscription', async () => {
     const clientOrderId = buildClientOrderId({
       subscriptionKey: 'dia_dip_core',
@@ -128,7 +166,7 @@ describe('tracked position subscription resolution', () => {
       orderType: 'market',
       timeInForce: 'day',
       extendedHours: false,
-    });
+    }, { tradingAccountId: 1, environment: 'PAPER' });
 
     mocks.brokerActivityFindMany.mockResolvedValue([
       {
@@ -139,6 +177,7 @@ describe('tracked position subscription resolution', () => {
     mocks.subscriptionFindFirst.mockResolvedValue(subscription());
 
     const result = await resolveTrackedPositionSubscription({
+      tradingAccountId: 1,
       broker: 'alpaca',
       symbol: 'DIA',
       side: 'long',
@@ -157,6 +196,7 @@ describe('tracked position subscription resolution', () => {
     mocks.subscriptionFindMany.mockResolvedValue([subscription()]);
 
     const result = await resolveTrackedPositionSubscription({
+      tradingAccountId: 1,
       broker: 'alpaca',
       symbol: 'DIA',
       side: 'long',
@@ -173,6 +213,7 @@ describe('tracked position subscription resolution', () => {
 
   it('leaves an observer-created position unresolved when no subscription is eligible', async () => {
     const result = await resolveTrackedPositionSubscription({
+      tradingAccountId: 1,
       broker: 'alpaca',
       symbol: 'DIA',
       side: 'long',
@@ -194,6 +235,7 @@ describe('tracked position subscription resolution', () => {
     ]);
 
     const result = await resolveTrackedPositionSubscription({
+      tradingAccountId: 1,
       broker: 'alpaca',
       symbol: 'DIA',
       side: 'long',
@@ -212,6 +254,7 @@ describe('tracked position subscription resolution', () => {
     mocks.subscriptionFindMany.mockResolvedValue([subscription()]);
 
     await resolveTrackedPositionSubscription({
+      tradingAccountId: 1,
       broker: 'alpaca',
       symbol: 'DIA',
       side: 'long',
@@ -251,6 +294,7 @@ describe('tracked position subscription resolution', () => {
 
     await linkLocalEntryOwnership({
       trackedPositionId: 303,
+      tradingAccountId: 1,
       broker: 'alpaca',
       symbol: 'DIA',
       side: 'long',
@@ -258,16 +302,25 @@ describe('tracked position subscription resolution', () => {
     });
 
     expect(mocks.orderIntentUpdateMany).toHaveBeenCalledWith({
-      where: { id: 101, trackedPositionId: null },
+      where: {
+        id: 101,
+        tradingAccountId: 1,
+        trackedPositionId: null,
+      },
       data: { trackedPositionId: 303 },
     });
     expect(mocks.brokerOrderUpdateMany).toHaveBeenCalledWith({
-      where: { orderIntentId: 101, trackedPositionId: null },
+      where: {
+        orderIntentId: 101,
+        tradingAccountId: 1,
+        trackedPositionId: null,
+      },
       data: { trackedPositionId: 303 },
     });
     expect(mocks.trackedPositionUpdateMany).toHaveBeenCalledWith({
       where: {
         id: 303,
+        tradingAccountId: 1,
         tradingAccountSubscriptionId: null,
       },
       data: {

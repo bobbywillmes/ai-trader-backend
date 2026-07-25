@@ -1,5 +1,20 @@
 # Alpaca Integration
 
+## Account-owned request boundary
+
+Every Alpaca adapter operation requires `tradingAccountId`. Credentials and
+the base URL come from that Trading Account, and no adapter silently falls back
+to the default account.
+
+Account environment selects Paper or Live routing. API usage is attributed at
+request start and persisted per account. LIVE reads remain available, while
+`ALLOW_LIVE_TRADING=true` is required immediately before every LIVE critical
+write, including risk-reducing cancellation and position close.
+
+Broker activity, broker-order, and client-order identifiers are account-scoped.
+Historical null-account records remain legacy records and cannot authorize a
+broker write.
+
 The backend is the only system that should talk directly to Alpaca. n8n sends signals to the backend, and the backend owns broker mode validation, risk checks, idempotent order submission, broker state sync, account snapshots, broker activity ingestion, and API usage observability.
 
 ## Request Instrumentation

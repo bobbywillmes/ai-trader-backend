@@ -31,7 +31,8 @@ describe('Alpaca account normalization', () => {
       account({
         long_market_value: '7000.25',
         short_market_value: '-1250.50',
-      })
+      }),
+      'paper'
     );
 
     expect(normalized.longMarketValue).toBe(7000.25);
@@ -39,7 +40,7 @@ describe('Alpaca account normalization', () => {
   });
 
   it('keeps missing exposure values nullable for historical compatibility', () => {
-    const normalized = normalizeAccount(account());
+    const normalized = normalizeAccount(account(), 'paper');
 
     expect(normalized.longMarketValue).toBeNull();
     expect(normalized.shortMarketValue).toBeNull();

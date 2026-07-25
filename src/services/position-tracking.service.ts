@@ -7,7 +7,7 @@ import { createSystemEvent } from './system-event.service.js';
 import { recordAccountSnapshot } from './account-snapshot.service.js';
 import {
   attributeCloseFillsForTrackedPosition,
-  syncBrokerActivities,
+  syncBrokerActivitiesForAccount,
 } from './broker-activity.service.js';
 import {
   ensurePositionExitState,
@@ -197,6 +197,7 @@ async function applySubscriptionResolution(args: {
   }
 
   const resolution = await resolveTrackedPositionSubscription({
+    tradingAccountId: args.tradingAccountId,
     broker: args.broker,
     symbol: args.symbol,
     side: args.side,
@@ -224,6 +225,7 @@ async function applySubscriptionResolution(args: {
   if (resolution.source === 'local_order_intent') {
     await linkLocalEntryOwnership({
       trackedPositionId: args.trackedPositionId,
+      tradingAccountId: args.tradingAccountId,
       broker: args.broker,
       symbol: args.symbol,
       side: args.side,
@@ -250,8 +252,11 @@ async function applySubscriptionResolution(args: {
   return resolution;
 }
 
-export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult> {
+export async function syncTrackedPositionsForAccount(
+  tradingAccountId: number
+): Promise<TrackedPositionSyncResult> {
   const decision = await adaptivePollingCoordinator.getDecision(
+    tradingAccountId,
     'tracked_position_sync'
   );
 
@@ -274,14 +279,14 @@ export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult>
     };
   }
 
-  const tradingAccountId = await resolveDefaultTradingAccountId();
   let brokerPositions: Awaited<ReturnType<typeof getNormalizedPositions>>;
 
   try {
     adaptivePollingCoordinator.recordAttempt('tracked_position_sync');
-    brokerPositions = await getNormalizedPositions('tracked_position_sync', {
+    brokerPositions = await getNormalizedPositions(
       tradingAccountId,
-    });
+      'tracked_position_sync'
+    );
   } catch (error) {
     if (error instanceof AlpacaRateLimitDeferredError) {
       adaptivePollingCoordinator.recordRateLimitDeferred(
@@ -474,7 +479,7 @@ export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult>
       continue;
     }
 
-    await syncBrokerActivities({
+    await syncBrokerActivitiesForAccount(tradingAccountId, {
       activityType: 'FILL',
       pageSize: 100,
       maxPages: 2,
@@ -484,7 +489,7 @@ export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult>
 
     const closeFillAttribution = await attributeCloseFillsForTrackedPosition({
       trackedPositionId: closed.id,
-      tradingAccountId: closed.tradingAccountId,
+      tradingAccountId,
       broker: closed.broker,
       symbol: closed.symbol,
       closeSide,
@@ -531,12 +536,11 @@ export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult>
       } as Prisma.InputJsonValue,
     });
 
-    await recordAccountSnapshot({
+    await recordAccountSnapshot(tradingAccountId, {
       reason: 'position_closed',
       force: true,
       sourceEntityType: 'trackedPosition',
       sourceEntityId: closed.id,
-      tradingAccountId: closed.tradingAccountId,
     });
 
     await markPositionExitStateClosed(closed.id, {
@@ -573,6 +577,11 @@ export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult>
         ? null
         : new Date(completedAt.getTime() + decision.effectiveIntervalMs).toISOString(),
   };
+}
+
+export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult> {
+  const tradingAccountId = await resolveDefaultTradingAccountId();
+  return syncTrackedPositionsForAccount(tradingAccountId);
 }
 
 export async function getTrackedPositions() {

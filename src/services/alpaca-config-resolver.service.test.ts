@@ -93,6 +93,7 @@ describe('Alpaca config resolver', () => {
 
     await expect(resolveAlpacaConfigForTradingAccount(2)).resolves.toEqual({
       tradingAccountId: 2,
+      environment: TradingAccountEnvironment.PAPER,
       baseUrl: 'https://paper-api.alpaca.markets',
       apiKey: 'scoped-key',
       apiSecret: 'scoped-secret',

@@ -20,7 +20,7 @@ export async function createOrderIntent(
   input: ResolvedPlaceOrderInput,
   source = 'api',
   clientOrderId: string,
-  tradingAccountId?: number | null,
+  tradingAccountId: number,
   options: {
     tradingAccountSubscriptionId?: number | null;
     accountSubscriptionSizing?: AccountSubscriptionSizingSnapshot | null;
@@ -40,7 +40,7 @@ export async function createOrderIntent(
       clientOrderId,
       subscriptionId: input.subscriptionId ?? null,
       subscriptionKey: input.subscriptionKey ?? null,
-      tradingAccountId: tradingAccountId ?? null,
+      tradingAccountId,
       tradingAccountSubscriptionId:
         options.tradingAccountSubscriptionId ?? null,
       status: 'received',
@@ -108,7 +108,7 @@ export async function recordOrderIntentRiskEvaluation(args: {
 
 export async function createBrokerOrder(args: {
   orderIntentId: number;
-  tradingAccountId?: number | null;
+  tradingAccountId: number;
   brokerOrderId: string;
   clientOrderId: string;
   symbol: string;
@@ -127,7 +127,7 @@ export async function createBrokerOrder(args: {
   return prisma.brokerOrder.create({
     data: {
       orderIntentId: args.orderIntentId,
-      tradingAccountId: args.tradingAccountId ?? null,
+      tradingAccountId: args.tradingAccountId,
       broker: 'alpaca',
       brokerOrderId: args.brokerOrderId,
       clientOrderId: args.clientOrderId,

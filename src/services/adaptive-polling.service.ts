@@ -7,7 +7,6 @@ import {
   type NormalizedMarketSessionSnapshot,
 } from '../integrations/alpaca/market-session.adapter.js';
 import { TRADING_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
-import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 export type AdaptiveWorkerKey =
   | 'submitted_order_sync'
@@ -273,9 +272,9 @@ function defaultLocalActivity(now: Date): AdaptivePollingLocalActivitySnapshot {
 }
 
 async function readLocalActivity(
+  tradingAccountId: number,
   now: Date
 ): Promise<AdaptivePollingLocalActivitySnapshot> {
-  const tradingAccountId = await resolveDefaultTradingAccountId();
   const [
     submittedOrderCount,
     submittingOrderCount,
@@ -347,9 +346,11 @@ async function readLocalActivity(
 export class AdaptivePollingCoordinator {
   private readonly now: () => Date;
   private readonly marketSessionProvider: (
+    tradingAccountId: number,
     now: Date
   ) => Promise<NormalizedMarketSessionSnapshot>;
   private readonly localActivityProvider: (
+    tradingAccountId: number,
     now: Date
   ) => Promise<AdaptivePollingLocalActivitySnapshot>;
   private readonly states: Record<AdaptiveWorkerKey, WorkerRuntimeState> = {
@@ -378,9 +379,11 @@ export class AdaptivePollingCoordinator {
   constructor(args: {
     now?: () => Date;
     marketSessionProvider?: (
+      tradingAccountId: number,
       now: Date
     ) => Promise<NormalizedMarketSessionSnapshot>;
     localActivityProvider?: (
+      tradingAccountId: number,
       now: Date
     ) => Promise<AdaptivePollingLocalActivitySnapshot>;
   } = {}) {
@@ -431,12 +434,13 @@ export class AdaptivePollingCoordinator {
   }
 
   async getDecision(
+    tradingAccountId: number,
     workerKey: AdaptiveWorkerKey
   ): Promise<AdaptivePollingDecision> {
     const now = this.now();
     const [localActivity, market] = await Promise.all([
-      this.getLocalActivity(now),
-      this.evaluateMarket(now),
+      this.getLocalActivity(tradingAccountId, now),
+      this.evaluateMarket(tradingAccountId, now),
     ]);
 
     const active =
@@ -562,9 +566,9 @@ export class AdaptivePollingCoordinator {
           };
   }
 
-  async getSnapshot(): Promise<AdaptivePollingSnapshot> {
+  async getSnapshot(tradingAccountId: number): Promise<AdaptivePollingSnapshot> {
     const now = this.now();
-    const activity = await this.getLocalActivity(now);
+    const activity = await this.getLocalActivity(tradingAccountId, now);
     const market =
       this.latestEvaluation ??
       ({
@@ -655,7 +659,7 @@ export class AdaptivePollingCoordinator {
     };
   }
 
-  private async getLocalActivity(now: Date) {
+  private async getLocalActivity(tradingAccountId: number, now: Date) {
     const nowMs = now.getTime();
 
     if (
@@ -666,7 +670,7 @@ export class AdaptivePollingCoordinator {
       return this.localActivityCache.promise;
     }
 
-    const promise = this.localActivityProvider(now).catch((error) => {
+    const promise = this.localActivityProvider(tradingAccountId, now).catch((error) => {
       logger.warn({ error }, 'Adaptive polling local activity lookup failed.');
       return defaultLocalActivity(now);
     });
@@ -678,7 +682,10 @@ export class AdaptivePollingCoordinator {
     return promise;
   }
 
-  private async evaluateMarket(now: Date): Promise<MarketEvaluation> {
+  private async evaluateMarket(
+    tradingAccountId: number,
+    now: Date
+  ): Promise<MarketEvaluation> {
     const nowMs = now.getTime();
 
     if (
@@ -689,7 +696,7 @@ export class AdaptivePollingCoordinator {
       return this.marketEvaluationCache.promise;
     }
 
-    const promise = this.marketSessionProvider(now)
+    const promise = this.marketSessionProvider(tradingAccountId, now)
       .then((snapshot) => {
         const marketState: AdaptiveMarketState = snapshot.marketOpen
           ? 'open'

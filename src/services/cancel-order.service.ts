@@ -1,14 +1,28 @@
 import { AlpacaApiError } from '../errors/alpaca-api-error.js';
 import { HttpError } from '../errors/http-error.js';
 import { cancelAlpacaOrder } from '../integrations/alpaca/orders.adapter.js';
+import { prisma } from '../db/prisma.js';
 import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
-import { resolveDefaultTradingAccountId } from './trading-account.service.js';
+export async function cancelOrderById(tradingAccountId: number, orderId: string) {
+  const localOrder = await prisma.brokerOrder.findFirst({
+    where: {
+      tradingAccountId,
+      broker: 'alpaca',
+      brokerOrderId: orderId,
+    },
+    select: { id: true },
+  });
 
-export async function cancelOrderById(orderId: string) {
-  const tradingAccountId = await resolveDefaultTradingAccountId();
+  if (!localOrder) {
+    throw new HttpError(
+      404,
+      `Alpaca order ${orderId} was not found in TradingAccount ${tradingAccountId}.`
+    );
+  }
+
 
   try {
-    await cancelAlpacaOrder(orderId, 'order_cancel', { tradingAccountId });
+    await cancelAlpacaOrder(tradingAccountId, orderId, 'order_cancel');
     adaptivePollingCoordinator.forceAfterBrokerOrderCancellation(
       'broker_order_cancel_requested'
     );

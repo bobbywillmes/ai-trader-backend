@@ -1,4 +1,5 @@
 import { HttpError } from '../errors/http-error.js';
+import { prisma } from '../db/prisma.js';
 import {
   getAlpacaOrderByClientOrderId,
   placeAlpacaOrder,
@@ -93,7 +94,14 @@ export async function submitOrder(
     tradingAccountId
   );
   const resolvedInput = runtimeSizing.input;
-  const clientOrderId = buildClientOrderId(resolvedInput);
+  const account = await prisma.tradingAccount.findUniqueOrThrow({
+    where: { id: tradingAccountId },
+    select: { environment: true },
+  });
+  const clientOrderId = buildClientOrderId(resolvedInput, {
+    tradingAccountId,
+    environment: account.environment,
+  });
 
   const intent = await createOrderIntent(
     resolvedInput,
@@ -164,7 +172,7 @@ export type BrokerOrderSubmissionInput = ResolvedPlaceOrderInput & {
 
 export async function submitOrderToBroker(
   input: BrokerOrderSubmissionInput,
-  options: { tradingAccountId?: number | undefined } = {}
+  options: { tradingAccountId: number }
 ) {
   const clientOrderId = input.clientOrderId;
 
@@ -176,9 +184,9 @@ export async function submitOrderToBroker(
   }
 
   const existing = await getAlpacaOrderByClientOrderId(
+    options.tradingAccountId,
     clientOrderId,
-    'pending_order_idempotency_check',
-    { tradingAccountId: options.tradingAccountId }
+    'pending_order_idempotency_check'
   );
 
   if (existing) {
@@ -211,9 +219,11 @@ export async function submitOrderToBroker(
   if (input.limitPrice !== undefined) payload.limit_price = String(input.limitPrice);
   if (input.extendedHours) payload.extended_hours = true;
 
-  const created = await placeAlpacaOrder(payload, 'pending_order_submission', {
-    tradingAccountId: options.tradingAccountId,
-  });
+  const created = await placeAlpacaOrder(
+    options.tradingAccountId,
+    payload,
+    'pending_order_submission'
+  );
 
   adaptivePollingCoordinator.forceAfterBrokerOrderCreated(
     'broker_order_created'

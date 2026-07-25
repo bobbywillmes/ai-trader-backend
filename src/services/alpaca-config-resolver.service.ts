@@ -16,6 +16,7 @@ export type AlpacaCredentialSource = 'trading_account_credential';
 
 export type AlpacaResolvedConfig = {
   tradingAccountId: number;
+  environment: TradingAccountEnvironment;
   baseUrl: string;
   apiKey: string;
   apiSecret: string;
@@ -72,6 +73,7 @@ export async function resolveAlpacaConfigForTradingAccount(
   if (credential) {
     return {
       tradingAccountId,
+      environment: account.environment,
       baseUrl: baseUrlForAccountEnvironment(account.environment),
       apiKey: credential.apiKey,
       apiSecret: credential.apiSecret,

@@ -498,8 +498,9 @@ model BrokerOrder {
   brokerActivities BrokerActivity[]
   entryDecision    EntryDecision?
 
-  @@unique([broker, brokerOrderId])
-  @@unique([broker, clientOrderId])
+  // Partial account-scoped uniqueness is enforced by PostgreSQL migration SQL.
+  @@index([broker, brokerOrderId])
+  @@index([broker, clientOrderId])
   @@index([trackedPositionId])
   @@index([tradingAccountId])
   @@index([tradingAccountId, status])
@@ -579,7 +580,8 @@ model AlpacaApiUsageBucket {
   tradingAccountId  Int?
   tradingAccount    TradingAccount? @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
 
-  @@unique([bucketStart, operation, endpoint, method, requestClass])
+  // Partial account-scoped uniqueness is enforced by PostgreSQL migration SQL.
+  @@index([bucketStart, operation, endpoint, method, requestClass])
   @@index([bucketStart])
   @@index([operation])
   @@index([endpoint])
@@ -1223,7 +1225,7 @@ model AccountSnapshot {
   accountNumber String?
 
   reason           String
-  runKey           String? @unique
+  runKey           String?
   sourceEntityType String?
   sourceEntityId   String?
 
@@ -1254,6 +1256,7 @@ model AccountSnapshot {
   @@index([tradingAccountId])
   @@index([tradingAccountId, createdAt])
   @@index([tradingAccountId, reason])
+  @@index([runKey])
 }
 
 model BrokerActivity {
@@ -1262,7 +1265,7 @@ model BrokerActivity {
   broker String
   mode   String
 
-  activityId       String  @unique
+  activityId       String
   activityType     String
   activityCategory String?
 
@@ -1308,6 +1311,7 @@ model BrokerActivity {
   @@index([tradingAccountId])
   @@index([tradingAccountId, transactionTime])
   @@index([tradingAccountId, symbol])
+  @@index([activityId])
 }
 
 model Strategy {

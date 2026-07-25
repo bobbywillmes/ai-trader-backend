@@ -9,7 +9,6 @@ import {
 import type { AlpacaOrder } from '../integrations/alpaca/alpaca.types.js';
 import { createSystemEvent } from './system-event.service.js';
 import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
-import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 
 function toNullableNumber(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined || value === '') {
@@ -76,8 +75,12 @@ export async function submitNativeTrailingStopForTrackedPosition(
   if (!position) {
     throw new Error(`TrackedPosition ${trackedPositionId} not found.`);
   }
-  const tradingAccountId =
-    position.tradingAccountId ?? (await resolveDefaultTradingAccountId());
+  if (position.tradingAccountId === null) {
+    throw new Error(
+      `TrackedPosition ${position.id} has no tradingAccountId; refusing trailing-stop broker access.`
+    );
+  }
+  const tradingAccountId = position.tradingAccountId;
 
   if (position.status !== 'open') {
     return {
@@ -150,14 +153,15 @@ export async function submitNativeTrailingStopForTrackedPosition(
   try {
     const existingBrokerOrder =
       await getAlpacaOrderByClientOrderId(
+        tradingAccountId,
         clientOrderId,
-        'protective_order_idempotency_check',
-        { tradingAccountId }
+        'protective_order_idempotency_check'
       );
 
     const brokerOrder =
       existingBrokerOrder ??
       (await placeAlpacaOrder(
+        tradingAccountId,
         {
           symbol: position.symbol,
           side: getExitSide(position),
@@ -167,8 +171,7 @@ export async function submitNativeTrailingStopForTrackedPosition(
           trail_percent: String(exitProfile.trailingStopPct),
           client_order_id: clientOrderId,
         },
-        'protective_order_submission',
-        { tradingAccountId }
+        'protective_order_submission'
       ));
 
     if (!existingBrokerOrder) {
@@ -271,8 +274,12 @@ export async function syncNativeTrailingStopForTrackedPosition(
   if (!position) {
     throw new Error(`TrackedPosition ${trackedPositionId} not found.`);
   }
-  const tradingAccountId =
-    position.tradingAccountId ?? (await resolveDefaultTradingAccountId());
+  if (position.tradingAccountId === null) {
+    throw new Error(
+      `TrackedPosition ${position.id} has no tradingAccountId; refusing trailing-stop broker access.`
+    );
+  }
+  const tradingAccountId = position.tradingAccountId;
 
   // Nothing has been handed off to Alpaca yet, so there is no broker order to sync.
   if (!position.trailingStopOrderId) {
@@ -285,9 +292,9 @@ export async function syncNativeTrailingStopForTrackedPosition(
   }
 
   const brokerOrder = await getAlpacaOrderById(
+    tradingAccountId,
     position.trailingStopOrderId,
-    'protective_order_sync',
-    { tradingAccountId }
+    'protective_order_sync'
   );
   const now = new Date();
 

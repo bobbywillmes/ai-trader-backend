@@ -298,11 +298,6 @@ Table BrokerOrder {
   tradingAccount TradingAccount
   brokerActivities BrokerActivity [not null]
   entryDecision EntryDecision
-
-  indexes {
-    (broker, brokerOrderId) [unique]
-    (broker, clientOrderId) [unique]
-  }
 }
 
 Table SystemEvent {
@@ -368,10 +363,6 @@ Table AlpacaApiUsageBucket {
   updatedAt DateTime [not null]
   tradingAccountId Int
   tradingAccount TradingAccount
-
-  indexes {
-    (bucketStart, operation, endpoint, method, requestClass) [unique]
-  }
 }
 
 Table CurrentMarketState {
@@ -740,7 +731,7 @@ Table AccountSnapshot {
   currency String
   accountNumber String
   reason String [not null]
-  runKey String [unique]
+  runKey String
   sourceEntityType String
   sourceEntityId String
   cash Float [not null]
@@ -765,7 +756,7 @@ Table BrokerActivity {
   id Int [pk, increment]
   broker String [not null]
   mode String [not null]
-  activityId String [unique, not null]
+  activityId String [not null]
   activityType String [not null]
   activityCategory String
   symbol String

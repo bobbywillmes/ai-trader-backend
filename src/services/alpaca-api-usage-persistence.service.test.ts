@@ -47,6 +47,7 @@ import {
 import type { AlpacaApiUsageAggregateDelta } from './alpaca-api-usage.service.js';
 
 const delta: AlpacaApiUsageAggregateDelta = {
+  tradingAccountId: 1,
   bucketStart: new Date('2026-06-20T12:00:00.000Z'),
   bucketSizeMinutes: 5,
   operation: 'submitted_order_sync',

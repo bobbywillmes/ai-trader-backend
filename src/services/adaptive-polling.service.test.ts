@@ -56,10 +56,10 @@ function activity(
 function createHarness(args: {
   open?: boolean;
   active?: boolean;
-  marketProvider?: (now: Date) => Promise<NormalizedMarketSessionSnapshot>;
+  marketProvider?: (_tradingAccountId: number, now: Date) => Promise<NormalizedMarketSessionSnapshot>;
 } = {}) {
   let nowMs = new Date('2026-06-22T14:00:00.000Z').getTime();
-  const marketProvider: (now: Date) => Promise<NormalizedMarketSessionSnapshot> =
+  const marketProvider: (_tradingAccountId: number, now: Date) => Promise<NormalizedMarketSessionSnapshot> =
     args.marketProvider ??
     vi.fn(async () => marketSnapshot({ open: args.open ?? true }));
   const localActivityProvider = vi.fn(async () =>
@@ -99,7 +99,7 @@ describe('AdaptivePollingCoordinator', () => {
     const { coordinator } = createHarness({ active: true });
 
     await expect(
-      coordinator.getDecision('submitted_order_sync')
+      coordinator.getDecision(1, 'submitted_order_sync')
     ).resolves.toMatchObject({
       due: true,
       reason: 'startup_due',
@@ -109,7 +109,7 @@ describe('AdaptivePollingCoordinator', () => {
     });
 
     await expect(
-      coordinator.getDecision('tracked_position_sync')
+      coordinator.getDecision(1, 'tracked_position_sync')
     ).resolves.toMatchObject({
       due: true,
       reason: 'startup_due',
@@ -123,7 +123,7 @@ describe('AdaptivePollingCoordinator', () => {
     const { coordinator } = createHarness({ active: false });
 
     await expect(
-      coordinator.getDecision('submitted_order_sync')
+      coordinator.getDecision(1, 'submitted_order_sync')
     ).resolves.toMatchObject({
       due: false,
       reason: 'no_local_submitted_orders',
@@ -133,7 +133,7 @@ describe('AdaptivePollingCoordinator', () => {
 
   it('uses exact nextDueAt boundary semantics', async () => {
     const { coordinator, advance, now } = createHarness({ active: true });
-    const first = await coordinator.getDecision('tracked_position_sync');
+    const first = await coordinator.getDecision(1, 'tracked_position_sync');
     coordinator.recordAttempt('tracked_position_sync', now());
     coordinator.recordSuccess(
       'tracked_position_sync',
@@ -143,7 +143,7 @@ describe('AdaptivePollingCoordinator', () => {
 
     advance((first.effectiveIntervalMs ?? 0) - 1);
     await expect(
-      coordinator.getDecision('tracked_position_sync')
+      coordinator.getDecision(1, 'tracked_position_sync')
     ).resolves.toMatchObject({
       due: false,
       reason: 'adaptive_poll_not_due',
@@ -151,7 +151,7 @@ describe('AdaptivePollingCoordinator', () => {
 
     advance(1);
     await expect(
-      coordinator.getDecision('tracked_position_sync')
+      coordinator.getDecision(1, 'tracked_position_sync')
     ).resolves.toMatchObject({
       due: true,
       reason: 'interval_elapsed',
@@ -160,7 +160,7 @@ describe('AdaptivePollingCoordinator', () => {
 
   it('schedules the next interval from completion time', async () => {
     const { coordinator, advance, now } = createHarness({ active: true });
-    const decision = await coordinator.getDecision('submitted_order_sync');
+    const decision = await coordinator.getDecision(1, 'submitted_order_sync');
     coordinator.recordAttempt('submitted_order_sync', now());
     advance(700);
     coordinator.recordSuccess(
@@ -169,7 +169,7 @@ describe('AdaptivePollingCoordinator', () => {
       decision.effectiveIntervalMs
     );
 
-    const snapshot = await coordinator.getSnapshot();
+    const snapshot = await coordinator.getSnapshot(1);
 
     expect(snapshot.workers.submittedOrderSync.nextDueAt).toBe(
       '2026-06-22T14:00:10.700Z'
@@ -179,11 +179,11 @@ describe('AdaptivePollingCoordinator', () => {
   it('uses bounded retry after failed reads and retains forced state', async () => {
     const { coordinator, now } = createHarness({ active: true });
 
-    await coordinator.getDecision('tracked_position_sync');
+    await coordinator.getDecision(1, 'tracked_position_sync');
     coordinator.recordAttempt('tracked_position_sync', now());
     coordinator.recordFailure('tracked_position_sync', now());
 
-    const snapshot = await coordinator.getSnapshot();
+    const snapshot = await coordinator.getSnapshot(1);
 
     expect(snapshot.workers.trackedPositionSync.nextDueAt).toBe(
       '2026-06-22T14:00:05.000Z'
@@ -198,7 +198,7 @@ describe('AdaptivePollingCoordinator', () => {
     coordinator.forceSync(['submitted_order_sync'], 'protective_order_created');
 
     await expect(
-      coordinator.getDecision('submitted_order_sync')
+      coordinator.getDecision(1, 'submitted_order_sync')
     ).resolves.toMatchObject({
       due: true,
       forceReason: 'startup',
@@ -207,7 +207,7 @@ describe('AdaptivePollingCoordinator', () => {
     coordinator.recordAttempt('submitted_order_sync', now());
     coordinator.recordSuccess('submitted_order_sync', now(), 10_000);
 
-    const snapshot = await coordinator.getSnapshot();
+    const snapshot = await coordinator.getSnapshot(1);
 
     expect(snapshot.workers.submittedOrderSync.forced).toBe(false);
     expect(snapshot.workers.submittedOrderSync.forceReason).toBeNull();
@@ -224,7 +224,7 @@ describe('AdaptivePollingCoordinator', () => {
       const { coordinator } = createHarness({ open, active });
 
       await expect(
-        coordinator.getDecision('tracked_position_sync')
+        coordinator.getDecision(1, 'tracked_position_sync')
       ).resolves.toMatchObject({
         mode,
         effectiveIntervalMs: intervalMs,
@@ -241,7 +241,7 @@ describe('AdaptivePollingCoordinator', () => {
       marketProvider,
     });
 
-    const decision = await coordinator.getDecision('tracked_position_sync');
+    const decision = await coordinator.getDecision(1, 'tracked_position_sync');
 
     expect(decision).toMatchObject({
       marketState: 'unknown',
@@ -266,13 +266,13 @@ describe('AdaptivePollingCoordinator', () => {
       marketProvider,
     });
 
-    await coordinator.getDecision('tracked_position_sync');
+    await coordinator.getDecision(1, 'tracked_position_sync');
     coordinator.recordSuccess('submitted_order_sync', new Date(), 60_000);
     coordinator.recordSuccess('tracked_position_sync', new Date(), 120_000);
 
     advance(2_000);
     await expect(
-      coordinator.getDecision('submitted_order_sync')
+      coordinator.getDecision(1, 'submitted_order_sync')
     ).resolves.toMatchObject({
       due: true,
       reason: 'market_transition',
@@ -283,7 +283,7 @@ describe('AdaptivePollingCoordinator', () => {
 
     advance(2_000);
     await expect(
-      coordinator.getDecision('tracked_position_sync')
+      coordinator.getDecision(1, 'tracked_position_sync')
     ).resolves.toMatchObject({
       due: true,
       reason: 'trading_date_changed',
@@ -300,13 +300,13 @@ describe('AdaptivePollingCoordinator', () => {
       marketProvider,
     });
 
-    await coordinator.getDecision('tracked_position_sync');
+    await coordinator.getDecision(1, 'tracked_position_sync');
     coordinator.recordSuccess('submitted_order_sync', new Date(), 60_000);
     coordinator.recordSuccess('tracked_position_sync', new Date(), 60_000);
 
     advance(2_000);
     await expect(
-      coordinator.getDecision('submitted_order_sync')
+      coordinator.getDecision(1, 'submitted_order_sync')
     ).resolves.toMatchObject({
       due: true,
       forceReason: 'market_session_recovered',
@@ -317,9 +317,9 @@ describe('AdaptivePollingCoordinator', () => {
     const { coordinator, marketProvider } = createHarness({ active: true });
 
     await Promise.all([
-      coordinator.getDecision('submitted_order_sync'),
-      coordinator.getDecision('tracked_position_sync'),
-      coordinator.getSnapshot(),
+      coordinator.getDecision(1, 'submitted_order_sync'),
+      coordinator.getDecision(1, 'tracked_position_sync'),
+      coordinator.getSnapshot(1),
     ]);
 
     expect(marketProvider).toHaveBeenCalledTimes(1);
@@ -328,7 +328,7 @@ describe('AdaptivePollingCoordinator', () => {
   it('does not request market-session data just to build a status snapshot', async () => {
     const { coordinator, marketProvider } = createHarness({ active: false });
 
-    const snapshot = await coordinator.getSnapshot();
+    const snapshot = await coordinator.getSnapshot(1);
 
     expect(marketProvider).not.toHaveBeenCalled();
     expect(snapshot).toMatchObject({

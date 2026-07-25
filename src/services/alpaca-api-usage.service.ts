@@ -82,6 +82,7 @@ export type AlpacaApiUsageSnapshot = {
 };
 
 type RequestStart = {
+  tradingAccountId: number;
   metadata: AlpacaRequestMetadata;
   startedAt: Date;
 };
@@ -94,6 +95,7 @@ type RequestCompletion = {
 };
 
 export type AlpacaApiUsageAggregateDelta = {
+  tradingAccountId: number;
   bucketStart: Date;
   bucketSizeMinutes: number;
   operation: AlpacaApiOperation;
@@ -331,7 +333,10 @@ export class AlpacaApiUsageRegistry {
     return this.rateLimit.backoffUntil;
   }
 
-  beginRequest(metadata: AlpacaRequestMetadata): RequestStart {
+  beginRequest(
+    tradingAccountId: number,
+    metadata: AlpacaRequestMetadata
+  ): RequestStart {
     this.activeRequestCount += 1;
     this.peakConcurrentRequests = Math.max(
       this.peakConcurrentRequests,
@@ -339,6 +344,7 @@ export class AlpacaApiUsageRegistry {
     );
 
     return {
+      tradingAccountId,
       metadata,
       startedAt: this.now(),
     };
@@ -359,6 +365,7 @@ export class AlpacaApiUsageRegistry {
       completion,
     });
     this.recordPersistenceDelta({
+      tradingAccountId: start.tradingAccountId,
       metadata: start.metadata,
       completedAt,
       durationMs,
@@ -496,6 +503,7 @@ export class AlpacaApiUsageRegistry {
   }
 
   private recordPersistenceDelta(args: {
+    tradingAccountId: number;
     metadata: AlpacaRequestMetadata;
     completedAt: Date;
     durationMs: number;
@@ -506,6 +514,7 @@ export class AlpacaApiUsageRegistry {
         PERSISTENCE_BUCKET_MS
     );
     const delta: AlpacaApiUsageAggregateDelta = {
+      tradingAccountId: args.tradingAccountId,
       bucketStart,
       bucketSizeMinutes: PERSISTENCE_BUCKET_MINUTES,
       operation: args.metadata.operation,
@@ -536,6 +545,7 @@ export class AlpacaApiUsageRegistry {
 
   private mergePendingDelta(delta: AlpacaApiUsageAggregateDelta) {
     const key = [
+      delta.tradingAccountId,
       delta.bucketStart.toISOString(),
       delta.operation,
       delta.endpoint,

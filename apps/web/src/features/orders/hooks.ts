@@ -35,11 +35,11 @@ export function useCancelOrder(token: string | null) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (orderId: string) => {
+    mutationFn: (input: { tradingAccountId: number; orderId: string }) => {
       if (!token) {
         throw new Error("Admin session is missing. Please log in again.");
       }
-      return cancelOrder(orderId, token);
+      return cancelOrder(input.tradingAccountId, input.orderId, token);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: orderKeys.open });

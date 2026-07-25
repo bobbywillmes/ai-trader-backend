@@ -168,40 +168,16 @@ export async function runStartupChecks(): Promise<StartupCheckReport> {
       );
     }
 
-    if (config.paperMode && !usingPaperBrokerUrl) {
-      checks.push(
-        fail(
-          'paper_mode_broker_url',
-          'Runtime config is in paper mode, but ALPACA_BASE_URL does not point to the Alpaca paper API.',
-          {
-            paperMode: config.paperMode,
-            alpacaBaseUrl: env.ALPACA_BASE_URL,
-          }
-        )
-      );
-    }
-
-    if (!config.paperMode && usingPaperBrokerUrl) {
-      checks.push(
-        fail(
-          'live_mode_broker_url',
-          'Runtime config is in live mode, but ALPACA_BASE_URL still points to the Alpaca paper API.',
-          {
-            paperMode: config.paperMode,
-            alpacaBaseUrl: env.ALPACA_BASE_URL,
-          }
-        )
-      );
-    }
-
-    if (isProduction && !config.paperMode && !env.ALLOW_LIVE_TRADING) {
-      checks.push(
-        fail(
-          'production_live_trading_guard',
-          'Production startup is configured for live trading, but ALLOW_LIVE_TRADING is not enabled.'
-        )
-      );
-    }
+    checks.push(
+      warn(
+        'legacy_global_broker_mode',
+        'ALPACA_BASE_URL and global paperMode are compatibility settings only. TradingAccount.environment controls broker routing.',
+        {
+          paperMode: config.paperMode,
+          legacyAlpacaBaseUrlIsPaper: usingPaperBrokerUrl,
+        }
+      )
+    );
 
     if (allowedCorsOrigins.length === 0) {
       checks.push(
@@ -250,33 +226,13 @@ export async function runStartupChecks(): Promise<StartupCheckReport> {
       );
     }
 
-    if (isProduction && config.tradingEnabled && config.paperMode) {
+    if (isProduction && config.tradingEnabled) {
       checks.push(
         pass(
-          'production_paper_trading_enabled_on_start',
-          'Production startup found paper trading enabled. Paper-production restarts are allowed.',
+          'production_global_entry_trading_enabled_on_start',
+          'Production startup found global entry trading enabled. Account environment and LIVE-write permission are enforced per Trading Account.',
           {
             source: 'Setting table',
-            tradingEnabled: config.tradingEnabled,
-            paperMode: config.paperMode,
-          }
-        )
-      );
-    }
-
-    if (
-      isProduction &&
-      config.tradingEnabled &&
-      !config.paperMode &&
-      !env.ALLOW_TRADING_ENABLED_ON_START
-    ) {
-      checks.push(
-        fail(
-          'production_live_trading_enabled_on_start_guard',
-          'Production startup found live trading enabled. Set ALLOW_TRADING_ENABLED_ON_START=true only when intentionally restarting production with live trading already enabled.',
-          {
-            source: 'Setting table',
-            settingKey: 'tradingEnabled',
             tradingEnabled: config.tradingEnabled,
             paperMode: config.paperMode,
           }
