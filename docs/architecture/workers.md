@@ -64,6 +64,18 @@ Important distinctions:
 
 Effective broker-read cadences are documented in [Alpaca Integration](../integrations/alpaca.md).
 
+Submitted-order and position ticks are multi-account coordinators. They
+enumerate workflow-eligible accounts in stable ID order, run sequentially, and
+isolate failures. Adaptive due/backoff state and caches are account-keyed, so
+one account cannot suppress another account's work. Broker activity and
+scheduled snapshots use the same coordinator pattern.
+
+Credentialless dormant accounts are skipped before any broker request.
+Credentialless accounts with lifecycle exposure return a critical structured
+result while retaining local state. Global `WorkerHealthState` rows still
+describe coordinator health; account-scoped persisted health and cross-process
+locking are deferred.
+
 ## Statuses
 
 Status is derived from raw state at evaluation time with this priority:

@@ -21,7 +21,41 @@ are not rewritten.
 
 `ALLOW_LIVE_TRADING=false` blocks every LIVE state-changing request at the
 strict boundary, including cancels and closes, while LIVE reads remain
-available. Lifecycle coordinators remain default-account-only until Phase 2.
+available. Phase 2 lifecycle coordinators enumerate accounts for
+submitted-order status, broker activity, positions, and scheduled snapshots.
+Exit evaluation and reconciliation remain default-account-only until Phase 3.
+
+## Multi-account lifecycle coordination
+
+Lifecycle eligibility is workflow-specific; it is not entry eligibility. Each
+coordinator loads explicit accounts in stable `TradingAccount.id` order and
+evaluates credentials plus local lifecycle exposure. `PAUSED`, `DISABLED`, and
+`ERROR` accounts can still require synchronization when they own lifecycle
+work such as nonterminal orders or open/closing positions.
+
+Accounts with active credentials and relevant work run sequentially with
+per-account failure isolation. Results are `PROCESSED`, `SKIPPED`,
+`CREDENTIALS_UNAVAILABLE`, or `FAILED`. Credentialless dormant accounts make no
+Alpaca request. Credentialless accounts with exposure retain their state and
+produce a critical result; credentials never fall back to another account.
+
+Submitted-order synchronization uses a per-account batch of ten oldest intents.
+A submitting intent is stale after five minutes. Recovery first looks up its
+account-specific `clientOrderId`: an existing broker order is linked
+idempotently; an absent entry returns to `pending`; an absent exit remains
+`submitting` because exit replay requires different assumptions.
+
+Activity cursors derive from account-scoped stored rows. Position fetches,
+matching, creation, updates, closure, and close-fill refreshes stay inside the
+selected account. Closure happens only after a successful positions response
+for that exact account. Broker failures are never treated as empty responses,
+and one unknown Security symbol does not abort other symbols. Position creation
+rechecks the active account/broker/symbol cycle in a short transaction.
+
+Scheduled checkpoints reuse one run key across eligible accounts. Uniqueness on
+`(tradingAccountId, runKey)` makes checkpoints idempotent per account. Adaptive
+polling state and short-lived caches are account-keyed. Persisted account health
+and cross-process advisory locking remain Phase 4 work.
 
 This doc covers how a trade moves through the system — from entry signal to broker submission, position tracking, exit evaluation, and the audit trail. It also describes the background workers that keep everything synchronized and the async order processing architecture.
 
@@ -192,9 +226,9 @@ This loop is guarded to prevent overlapping worker ticks.
 It performs:
 
 1. Pending order processing
-2. Submitted order synchronization
-3. Tracked position synchronization
-4. Exit evaluation
+2. Submitted order synchronization by eligible account
+3. Tracked position synchronization by eligible account
+4. Default-account exit evaluation
 
 The order worker uses an atomic `pending → submitting` claim step before calling Alpaca. This prevents overlapping worker ticks from submitting the same `OrderIntent` more than once.
 
@@ -233,13 +267,17 @@ position_closed
 manual
 ```
 
-Scheduled snapshots are skipped when the account state has not changed. Event/manual snapshots can be forced because they represent meaningful trading context.
+Scheduled snapshots enumerate eligible accounts and are skipped per account
+when state has not changed. Event/manual snapshots can be forced because they
+represent meaningful trading context.
 
 ### Broker Activity Worker
 
 Runs separately from the fast trading loop.
 
-It imports broker-confirmed Alpaca account activities, starting with `FILL` events. Imported broker activities are stored idempotently by Alpaca activity ID.
+It enumerates eligible accounts and imports broker-confirmed Alpaca account
+activities, starting with `FILL` events. Imported broker activities are stored
+idempotently by account-scoped Alpaca activity ID.
 
 This creates a durable broker-confirmed ledger separate from internal app events.
 
