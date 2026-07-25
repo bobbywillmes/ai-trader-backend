@@ -1,8 +1,14 @@
 import type { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
-import { entrySignalSchema } from '../validators/signal.schema.js';
-import { submitOrder } from '../services/place-order.service.js';
+import {
+  assignmentEntrySignalSchema,
+  entrySignalSchema,
+} from '../validators/signal.schema.js';
 import { recordEntryDecision } from '../services/entry-decision.service.js';
+import {
+  processSubscriptionEntrySignal,
+  processTargetedEntrySignal,
+} from '../services/signal-entry.service.js';
 
 function toEntryDecisionResponse(
   result: Awaited<ReturnType<typeof recordEntryDecision>>
@@ -36,41 +42,57 @@ export async function entrySignalController(
 ) {
   try {
     const signal = entrySignalSchema.parse(req.body);
-    console.log('Received entry signal:', signal);
-
-    const result = await submitOrder(
-      {
-        tradingAccountSubscriptionId: signal.tradingAccountSubscriptionId,
-        subscriptionKey: signal.subscriptionKey,
-        signalType: 'entry',
-        orderType: 'market',
-        timeInForce: 'day',
-        extendedHours: false,
-        signalMetadata: {
-          source: signal.source,
-          reason: signal.reason ?? null,
-          score: signal.score ?? null,
-          confidence: signal.confidence ?? null,
-          runId: signal.runId ?? null,
-          batchId: signal.batchId ?? null,
-          metadata: signal.metadata ?? null,
-        },
-      },
-      signal.decisionKey ? { entryDecisionKey: signal.decisionKey } : {}
-    );
-
-    res.status(201).json({
+    const result = await processSubscriptionEntrySignal(signal);
+    res.status(200).json({
       ok: true,
       signal: {
-        tradingAccountSubscriptionId: signal.tradingAccountSubscriptionId,
-        subscriptionKey: signal.subscriptionKey ?? null,
+        subscriptionKey: signal.subscriptionKey,
         signalType: signal.signalType,
         source: signal.source,
         decisionKey: signal.decisionKey ?? null,
       },
-      order: result,
+      results: result.results,
     });
   } catch (error) {
+    if (error instanceof ZodError) {
+      res.status(400).json({
+        error: 'ValidationError',
+        message: 'Invalid global entry signal payload.',
+      });
+      return;
+    }
+    next(error);
+  }
+}
+
+export async function assignmentEntrySignalController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const signal = assignmentEntrySignalSchema.parse(req.body);
+    const result = await processTargetedEntrySignal(signal);
+    res.status(result.outcome === 'INTENT_CREATED' ? 201 : 200).json({
+      ok: true,
+      signal: {
+        tradingAccountSubscriptionId:
+          signal.tradingAccountSubscriptionId,
+        subscriptionKey: result.subscriptionKey,
+        signalType: signal.signalType,
+        source: signal.source,
+        decisionKey: signal.decisionKey ?? null,
+      },
+      result,
+    });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      res.status(400).json({
+        error: 'ValidationError',
+        message: 'Invalid targeted entry signal payload.',
+      });
+      return;
+    }
     next(error);
   }
 }

@@ -77,11 +77,16 @@ export const entryDecisionSchema = z.object({
   exitProfileId: optionalPositiveInt,
   exitProfileKey: optionalString,
 }).superRefine((data, ctx) => {
-  if (data.signalCreated && !data.tradingAccountSubscriptionId) {
+  if (
+    data.signalCreated &&
+    !data.tradingAccountSubscriptionId &&
+    !data.subscriptionKey
+  ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['tradingAccountSubscriptionId'],
-      message: 'tradingAccountSubscriptionId is required when signalCreated is true.',
+      message:
+        'subscriptionKey or tradingAccountSubscriptionId is required when signalCreated is true.',
     });
   }
 });

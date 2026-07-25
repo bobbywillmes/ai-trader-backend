@@ -127,7 +127,7 @@ function buildDecisionFingerprint(input: EntryDecisionInput) {
 
 function latestDecisionWhere(
   input: EntryDecisionInput,
-  tradingAccountId: number
+  tradingAccountId: number | null
 ): Prisma.EntryDecisionWhereInput {
   const where: Prisma.EntryDecisionWhereInput = {
     symbol: input.symbol,
@@ -306,11 +306,11 @@ export async function recordEntryDecision(
     throw new HttpError(409, 'Entry decision account does not match its assignment.');
   }
   const tradingAccountId =
-    assignment?.tradingAccountId ?? input.tradingAccountId;
-  if (!tradingAccountId) {
+    assignment?.tradingAccountId ?? input.tradingAccountId ?? null;
+  if (!tradingAccountId && !input.subscriptionKey) {
     throw new HttpError(
       400,
-      'tradingAccountId or tradingAccountSubscriptionId is required for an entry decision.'
+      'subscriptionKey, tradingAccountId, or tradingAccountSubscriptionId is required for an entry decision.'
     );
   }
 

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import {
+  assignmentEntrySignalController,
   entryDecisionController,
   entrySignalController,
 } from '../controllers/signals.controller.js';
@@ -38,6 +39,7 @@ router.get('/etf-watch/context', getEtfWatchContextController);
 router.get('/tracked-positions/open', openTrackedPositionsController);
 router.post('/entry-decisions', entryDecisionController);
 router.post('/entry', entrySignalController);
+router.post('/entry/assignment', assignmentEntrySignalController);
 
 router.get('/market-state/current', getCurrentMarketStateController);
 router.patch('/market-state/current', updateCurrentMarketStateController);
