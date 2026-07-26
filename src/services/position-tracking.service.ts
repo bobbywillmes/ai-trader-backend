@@ -170,6 +170,8 @@ async function createSubscriptionResolutionEvent(args: {
       source: args.result.source,
       subscriptionId: args.result.subscriptionId,
       subscriptionKey: args.result.subscriptionKey,
+      tradingAccountSubscriptionId:
+        args.result.tradingAccountSubscriptionId,
       reason: args.result.reason,
       evidence: args.result.evidence,
     } as Prisma.InputJsonValue,
@@ -221,6 +223,8 @@ async function applySubscriptionResolution(args: {
     where: { id: args.trackedPositionId },
     data: {
       subscriptionId: resolution.subscriptionId,
+      tradingAccountSubscriptionId:
+        resolution.tradingAccountSubscriptionId,
     },
   });
 

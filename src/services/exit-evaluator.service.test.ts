@@ -383,4 +383,51 @@ describe('exit evaluation coordinator', () => {
     expect(result.results[0]?.outcome).toBe('SKIPPED');
     expect(mocks.createSystemEvent).not.toHaveBeenCalled();
   });
+
+  it('keeps a market-closed attributed DIA cycle healthy while dormant Live is skipped', async () => {
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([
+      account(1),
+      account(2, {
+        credentialStatus: null,
+        eligible: false,
+        reason: 'credentials_unavailable_dormant',
+        exposureSummary: {
+          ...account(2).exposureSummary,
+          activePositions: 0,
+          hasLifecycleWork: false,
+        },
+      }),
+    ]);
+    mocks.trackedPositionFindMany.mockResolvedValueOnce([
+      position({
+        symbol: 'DIA',
+        unrealizedPnLPct: 0,
+        exitState: {
+          status: 'watching',
+          targetUnlocked: false,
+          trailBrokerOrderId: null,
+        },
+      }),
+    ]);
+
+    const result = await evaluateExitsForEligibleAccounts();
+
+    expect(result).toMatchObject({
+      processedAccounts: 1,
+      failedAccounts: 0,
+      credentialUnavailableAccounts: 0,
+      skippedAccounts: 1,
+    });
+    expect(result.results.map((item) => ({
+      id: item.account.tradingAccountId,
+      outcome: item.outcome,
+      reason: item.account.reason,
+    }))).toEqual([
+      { id: 1, outcome: 'PROCESSED', reason: 'usable_credentials_with_work' },
+      { id: 2, outcome: 'SKIPPED', reason: 'credentials_unavailable_dormant' },
+    ]);
+    expect(mocks.closePosition).not.toHaveBeenCalled();
+    expect(mocks.submitTrailingStopExitOrder).not.toHaveBeenCalled();
+    expect(mocks.trackedPositionFindMany).toHaveBeenCalledOnce();
+  });
 });
