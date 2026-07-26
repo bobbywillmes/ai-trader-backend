@@ -10,6 +10,10 @@ const mocks = vi.hoisted(() => ({
   resolveDefaultTradingAccountId: vi.fn(),
   tradingAccountFindUniqueOrThrow: vi.fn(),
   enumerateLifecycleAccounts: vi.fn(),
+  brokerOrderFindMany: vi.fn(),
+  brokerActivityFindMany: vi.fn(),
+  orderIntentFindMany: vi.fn(),
+  positionExitStateFindMany: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -22,6 +26,18 @@ vi.mock('../db/prisma.js', () => ({
     },
     tradingAccount: {
       findUniqueOrThrow: mocks.tradingAccountFindUniqueOrThrow,
+    },
+    brokerOrder: {
+      findMany: mocks.brokerOrderFindMany,
+    },
+    brokerActivity: {
+      findMany: mocks.brokerActivityFindMany,
+    },
+    orderIntent: {
+      findMany: mocks.orderIntentFindMany,
+    },
+    positionExitState: {
+      findMany: mocks.positionExitStateFindMany,
     },
   },
 }));
@@ -51,6 +67,7 @@ vi.mock('./lifecycle-account-eligibility.service.js', () => ({
 }));
 
 import {
+  findHistoricalUnattributedLifecycleRecords,
   reconcileEligibleTradingAccounts,
   reconcileSnapshots,
   runReconciliationCheck,
@@ -277,6 +294,10 @@ describe('runReconciliationCheck', () => {
       displayName: 'Bobby Paper',
       environment: 'PAPER',
     });
+    mocks.brokerOrderFindMany.mockResolvedValue([]);
+    mocks.brokerActivityFindMany.mockResolvedValue([]);
+    mocks.orderIntentFindMany.mockResolvedValue([]);
+    mocks.positionExitStateFindMany.mockResolvedValue([]);
   });
 
   it('loads backend and broker snapshots, then creates system events for findings', async () => {
@@ -569,6 +590,10 @@ describe('reconcileEligibleTradingAccounts', () => {
     vi.clearAllMocks();
     mocks.systemEventFindFirst.mockResolvedValue(null);
     mocks.trackedPositionFindMany.mockResolvedValue([]);
+    mocks.brokerOrderFindMany.mockResolvedValue([]);
+    mocks.brokerActivityFindMany.mockResolvedValue([]);
+    mocks.orderIntentFindMany.mockResolvedValue([]);
+    mocks.positionExitStateFindMany.mockResolvedValue([]);
     mocks.getNormalizedPositions.mockResolvedValue([]);
     mocks.getOpenAlpacaOrders.mockResolvedValue([]);
     mocks.tradingAccountFindUniqueOrThrow.mockImplementation(
@@ -626,5 +651,86 @@ describe('reconcileEligibleTradingAccounts', () => {
         tradingAccountId: 3,
       })
     );
+  });
+});
+
+describe('expanded account-scoped reconciliation findings', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.brokerActivityFindMany.mockResolvedValue([]);
+    mocks.orderIntentFindMany.mockResolvedValue([]);
+    mocks.positionExitStateFindMany.mockResolvedValue([]);
+  });
+
+  it('reports quantity, side, and local/broker order mismatches independently', () => {
+    const findings = reconcileSnapshots({
+      trackedPositions: [
+        {
+          id: 101,
+          broker: 'alpaca',
+          symbol: 'SPY',
+          status: 'open',
+          side: 'long',
+          qty: 2,
+        },
+      ],
+      brokerPositions: [
+        { broker: 'alpaca', symbol: 'SPY', side: 'short', qty: '3' },
+      ],
+      localOrders: [
+        {
+          broker: 'alpaca',
+          id: 'local-only',
+          clientOrderId: 'local-client',
+          symbol: 'SPY',
+        },
+      ],
+      brokerOrders: [
+        {
+          broker: 'alpaca',
+          id: 'broker-only',
+          client_order_id: 'broker-client',
+          symbol: 'SPY',
+        },
+      ],
+    });
+
+    expect(findings.map((finding) => finding.code)).toEqual(
+      expect.arrayContaining([
+        'position_quantity_mismatch',
+        'position_side_mismatch',
+        'local_nonterminal_order_missing_at_broker',
+        'broker_order_untracked',
+      ])
+    );
+  });
+
+  it('reports historical null-account records without assigning ownership', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      { id: 900, symbol: 'LEGACY' },
+    ]);
+    mocks.brokerOrderFindMany.mockResolvedValue([
+      { id: 901, clientOrderId: 'legacy-order' },
+    ]);
+    mocks.brokerActivityFindMany.mockResolvedValue([]);
+    mocks.orderIntentFindMany.mockResolvedValue([]);
+    mocks.positionExitStateFindMany.mockResolvedValue([]);
+
+    const findings = await findHistoricalUnattributedLifecycleRecords();
+
+    expect(findings).toEqual([
+      {
+        recordType: 'TrackedPosition',
+        id: 900,
+        safeIdentifier: 'LEGACY',
+      },
+      {
+        recordType: 'BrokerOrder',
+        id: 901,
+        safeIdentifier: 'legacy-order',
+      },
+    ]);
+    expect(mocks.getNormalizedPositions).not.toHaveBeenCalled();
+    expect(mocks.getOpenAlpacaOrders).not.toHaveBeenCalled();
   });
 });
