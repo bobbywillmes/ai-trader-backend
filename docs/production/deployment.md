@@ -4,7 +4,8 @@
 
 Broker routing is account-derived. Global `ALPACA_BASE_URL` and `paperMode`
 must not be treated as the environment of every Trading Account. Keep Bobby
-Live dormant and `ALLOW_LIVE_TRADING=false` during rollout; this blocks all
+Live dormant with `ALLOW_LIVE_TRADING=false` and
+`ALLOW_LIVE_RISK_REDUCING_WRITES=false` during rollout; this blocks all
 LIVE writes, including cancels and closes, while allowing scoped reads.
 
 Apply and review the account-scoped identity migration before deploying the
@@ -41,6 +42,7 @@ tradingEnabled=false
 paperMode=true
 killSwitchEnabled=false
 ALLOW_LIVE_TRADING=false
+ALLOW_LIVE_RISK_REDUCING_WRITES=false
 ALLOW_TRADING_ENABLED_ON_START=false
 ```
 
@@ -51,6 +53,7 @@ tradingEnabled=false
 paperMode=true
 killSwitchEnabled=true or false, depending on the current operating plan
 ALLOW_LIVE_TRADING=false
+ALLOW_LIVE_RISK_REDUCING_WRITES=false
 ALLOW_TRADING_ENABLED_ON_START=false
 ```
 
@@ -95,6 +98,7 @@ AI_TRADER_SIGNAL_API_KEY=
 AI_TRADER_ADMIN_API_KEY=
 
 ALLOW_LIVE_TRADING=false
+ALLOW_LIVE_RISK_REDUCING_WRITES=false
 ALLOW_TRADING_ENABLED_ON_START=false
 
 CORS_ALLOWED_ORIGINS=https://your-web-ui-domain.com
@@ -419,6 +423,7 @@ Expected safe production env:
 ```env
 NODE_ENV=production
 ALLOW_LIVE_TRADING=false
+ALLOW_LIVE_RISK_REDUCING_WRITES=false
 ALLOW_TRADING_ENABLED_ON_START=false
 ```
 
@@ -512,6 +517,7 @@ For paper production, keep:
 
 ```env
 ALLOW_LIVE_TRADING=false
+ALLOW_LIVE_RISK_REDUCING_WRITES=false
 ```
 
 Only set this to `true` when intentionally preparing for live trading.
@@ -943,6 +949,7 @@ Before enabling n8n production signals or paper-order workflows:
 [ ] NODE_ENV=production
 [ ] ALPACA_BASE_URL points to paper API
 [ ] ALLOW_LIVE_TRADING=false
+[ ] ALLOW_LIVE_RISK_REDUCING_WRITES=false
 [ ] ALLOW_TRADING_ENABLED_ON_START=false
 [ ] CORS_ALLOWED_ORIGINS uses production web UI origin
 [ ] /health returns ok=true
@@ -1026,6 +1033,7 @@ At minimum, live trading should require:
 [ ] ALPACA_BASE_URL changed intentionally
 [ ] paperMode=false set intentionally
 [ ] ALLOW_LIVE_TRADING=true set intentionally
+[ ] ALLOW_LIVE_RISK_REDUCING_WRITES=true set intentionally
 [ ] Live order smoke test defined
 [ ] Rollback plan documented
 ```

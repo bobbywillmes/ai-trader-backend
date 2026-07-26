@@ -155,6 +155,7 @@ The first production startup should remain conservative:
 ```env
 NODE_ENV=production
 ALLOW_LIVE_TRADING=false
+ALLOW_LIVE_RISK_REDUCING_WRITES=false
 ALLOW_TRADING_ENABLED_ON_START=false
 ALPACA_BASE_URL=https://paper-api.alpaca.markets
 DEFAULT_TRADING_ACCOUNT_ID=1
