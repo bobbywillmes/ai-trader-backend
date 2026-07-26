@@ -20,8 +20,9 @@ New client order IDs include account and environment identity; historical IDs
 are not rewritten.
 
 Broker requests are classified as `LIFECYCLE_READ`, `ENTRY_WRITE`, or
-`RISK_REDUCING_WRITE`. `ALLOW_LIVE_TRADING=false` still blocks both LIVE write
-classes, including cancels and closes, while LIVE reads remain available.
+`RISK_REDUCING_WRITE`. LIVE risk-reducing writes require
+`ALLOW_LIVE_RISK_REDUCING_WRITES=true`; LIVE entries require that permission and
+`ALLOW_LIVE_TRADING=true`. LIVE reads remain available with usable credentials.
 Phase 3 does not silently weaken this boundary. A future separate emergency
 LIVE-exit permission requires explicit deployment approval. Bobby Live remains
 credentialless and dormant.

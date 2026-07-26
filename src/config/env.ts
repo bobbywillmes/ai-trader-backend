@@ -144,6 +144,7 @@ const envSchema = z.object({
   // Set explicitly only when you intentionally want production startup to allow
   // live trading mode or an already-enabled trading system.
   ALLOW_LIVE_TRADING: envBoolean.default(false),
+  ALLOW_LIVE_RISK_REDUCING_WRITES: envBoolean.default(false),
   ALLOW_TRADING_ENABLED_ON_START: envBoolean.default(false),
 });
 

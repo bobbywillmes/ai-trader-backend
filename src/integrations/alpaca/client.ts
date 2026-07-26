@@ -76,17 +76,23 @@ export async function alpacaRequestForAccount<T>(
     }
     throw error;
   }
-  if (
-    options.metadata.requestClass === 'critical_write' &&
-    config.environment === TradingAccountEnvironment.LIVE &&
-    !env.ALLOW_LIVE_TRADING
-  ) {
-    const operationClass =
-      options.metadata.operationClass ?? 'ENTRY_WRITE';
+  if (options.metadata.requestClass === 'critical_write' &&
+      config.environment === TradingAccountEnvironment.LIVE) {
+    const operationClass = options.metadata.operationClass ?? 'ENTRY_WRITE';
+    const allowed = operationClass === 'RISK_REDUCING_WRITE'
+      ? env.ALLOW_LIVE_RISK_REDUCING_WRITES
+      : operationClass === 'ENTRY_WRITE'
+        ? env.ALLOW_LIVE_TRADING && env.ALLOW_LIVE_RISK_REDUCING_WRITES
+        : false;
+    if (!allowed) {
+      const required = operationClass === 'RISK_REDUCING_WRITE'
+        ? 'ALLOW_LIVE_RISK_REDUCING_WRITES'
+        : 'ALLOW_LIVE_TRADING and ALLOW_LIVE_RISK_REDUCING_WRITES';
     throw new BrokerWriteDeliveryError({
       classification: 'NOT_SENT_BLOCKED',
-      message: `LIVE ${operationClass} blocked for TradingAccount ${tradingAccountId}: ALLOW_LIVE_TRADING is false.`,
+        message: `LIVE ${operationClass} blocked for TradingAccount ${tradingAccountId}: ${required} must be true.`,
     });
+    }
   }
   const url = `${config.baseUrl}${path}`;
   const method = options.method ?? 'GET';

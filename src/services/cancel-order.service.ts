@@ -10,7 +10,7 @@ export async function cancelOrderById(tradingAccountId: number, orderId: string)
       broker: 'alpaca',
       brokerOrderId: orderId,
     },
-    select: { id: true },
+    select: { id: true, side: true },
   });
 
   if (!localOrder) {
@@ -22,7 +22,14 @@ export async function cancelOrderById(tradingAccountId: number, orderId: string)
 
 
   try {
-    await cancelAlpacaOrder(tradingAccountId, orderId, 'order_cancel');
+    await cancelAlpacaOrder(
+      tradingAccountId,
+      orderId,
+      'order_cancel',
+      localOrder.side.toLowerCase() === 'buy'
+        ? 'RISK_REDUCING_WRITE'
+        : 'ENTRY_WRITE'
+    );
     adaptivePollingCoordinator.forceAfterBrokerOrderCancellation(
       tradingAccountId,
       'broker_order_cancel_requested'

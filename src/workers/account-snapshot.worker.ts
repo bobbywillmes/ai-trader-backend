@@ -1,5 +1,7 @@
 import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
 import { recordAccountSnapshot } from '../services/account-snapshot.service.js';
+import { runTradingAccountWorkflow } from '../services/trading-account-workflow-runner.service.js';
+import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from '../services/trading-account-workflow-lock.service.js';
 import { enumerateLifecycleAccounts } from '../services/lifecycle-account-eligibility.service.js';
 
 const EASTERN_TIME_ZONE = 'America/New_York';
@@ -113,11 +115,32 @@ export async function runScheduledAccountSnapshots() {
       }
 
       try {
-        const result = await recordAccountSnapshot(account.tradingAccountId, {
-          reason: checkpoint.reason,
-          force: false,
-          runKey,
+        const run = await runTradingAccountWorkflow({
+          tradingAccountId: account.tradingAccountId,
+          workerKey: 'account_snapshot_scheduler',
+          lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.ACCOUNT_SNAPSHOT,
+          execute: () => recordAccountSnapshot(account.tradingAccountId, {
+            reason: checkpoint.reason,
+            force: false,
+            runKey,
+          }),
+          classify: (result) => result.skipped
+            ? {
+                outcome: 'skipped',
+                summary: { created: result.created, reason: result.reason },
+              }
+            : {
+                outcome: 'success',
+                workSucceeded: result.created,
+                summary: { created: result.created, reason: result.reason },
+              },
         });
+        if (run.outcome === 'FAILED') throw run.error;
+        if (run.outcome !== 'PROCESSED') {
+          results.push({ account, runKey, outcome: run.outcome });
+          continue;
+        }
+        const result = run.value;
 
         if (result.created) recorded += 1;
         results.push({

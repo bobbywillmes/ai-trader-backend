@@ -6,6 +6,7 @@ import {
   deactivateTradingAccountController,
   deleteTradingAccountSubscriptionController,
   getTradingAccountRiskHealthController,
+  getTradingAccountWorkerHealthController,
   getTradingAccountSubscriptionPriceHistoryController,
   getTradingAccountSubscriptionController,
   getTradingAccountController,
@@ -49,6 +50,7 @@ router.post(
 router.get('/:id/risk-settings', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_RISK_WRITE), getTradingAccountRiskSettingsController);
 router.patch('/:id/risk-settings', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_RISK_WRITE), updateTradingAccountRiskSettingsController);
 router.get('/:id/risk-health', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_RISK_WRITE), getTradingAccountRiskHealthController);
+router.get('/:id/worker-health', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), getTradingAccountWorkerHealthController);
 router.post('/:id/entry-risk-preview', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_RISK_WRITE), previewTradingAccountEntryRiskController);
 
 router.get('/:id/allocations', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE), listTradingAccountAllocationsController);

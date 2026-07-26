@@ -28,6 +28,8 @@ import {
   resolveDefaultTradingAccountId,
   TRADING_ACCOUNT_SUMMARY_SELECT,
 } from './trading-account.service.js';
+import { runTradingAccountWorkflow } from './trading-account-workflow-runner.service.js';
+import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from './trading-account-workflow-lock.service.js';
 import { enumerateLifecycleAccounts } from './lifecycle-account-eligibility.service.js';
 
 export type TrackedPositionSyncResult = {
@@ -658,9 +660,36 @@ export async function syncTrackedPositionsAcrossAccounts() {
     }
 
     try {
-      const result = await syncTrackedPositionsForAccount(
-        account.tradingAccountId
-      );
+      const run = await runTradingAccountWorkflow({
+        tradingAccountId: account.tradingAccountId,
+        workerKey: 'tracked_position_sync',
+        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.POSITION_SYNC,
+        execute: () => syncTrackedPositionsForAccount(account.tradingAccountId),
+        classify: (result) => result.symbolErrors.length > 0
+          ? {
+              outcome: 'failure',
+              error: new Error(
+                `${result.symbolErrors.length} tracked position symbol synchronization(s) failed.`
+              ),
+              errorCode: 'TRACKED_POSITION_ITEM_FAILURE',
+              summary: result,
+            }
+          : result.skipped
+            ? { outcome: 'skipped', summary: result }
+            : { outcome: 'success', workSucceeded: true, summary: result },
+      });
+      if (run.outcome === 'FAILED') {
+        if (run.value !== undefined) {
+          results.push({ account, outcome: 'FAILED' as const, result: run.value });
+          continue;
+        }
+        throw run.error;
+      }
+      if (run.outcome !== 'PROCESSED') {
+        results.push({ account, outcome: run.outcome });
+        continue;
+      }
+      const result = run.value;
       results.push({
         account,
         outcome:

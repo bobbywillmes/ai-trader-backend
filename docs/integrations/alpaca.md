@@ -8,14 +8,15 @@ to the default account.
 
 Account environment selects Paper or Live routing. API usage is attributed at
 request start and persisted per account. LIVE reads remain available, while
-`ALLOW_LIVE_TRADING=true` is required immediately before every LIVE critical
-write, including risk-reducing cancellation and position close.
+`ALLOW_LIVE_RISK_REDUCING_WRITES=true` is required immediately before a LIVE
+risk-reducing write. LIVE entries additionally require
+`ALLOW_LIVE_TRADING=true`.
 
 Metadata classifies requests as `LIFECYCLE_READ`, `ENTRY_WRITE`, or
 `RISK_REDUCING_WRITE`. The distinction prevents entry permissions from being
-reused as lifecycle semantics, but Phase 3 deliberately keeps both LIVE write
-classes behind `ALLOW_LIVE_TRADING`. A separate LIVE emergency-exit permission
-is a Phase 4 policy decision; Bobby Live remains credentialless and dormant.
+reused as lifecycle semantics. Phase 4 separates the permissions so entry
+authorization can never exist without risk-reducing authorization. Bobby Live
+remains credentialless and dormant.
 
 Broker activity, broker-order, and client-order identifiers are account-scoped.
 Historical null-account records remain legacy records and cannot authorize a

@@ -1,6 +1,6 @@
 import { alpacaRequestForAccount } from './client.js';
 import type { AlpacaOrder } from './alpaca.types.js';
-import type { AlpacaApiOperation } from './request-metadata.js';
+import type { AlpacaApiOperation, AlpacaBrokerOperationClass } from './request-metadata.js';
 
 type AlpacaCreateOrderRequest = {
   symbol: string;
@@ -105,7 +105,8 @@ export async function placeAlpacaOrder(
 export async function cancelAlpacaOrder(
   tradingAccountId: number,
   orderId: string,
-  operation: AlpacaApiOperation = 'order_cancel'
+  operation: AlpacaApiOperation = 'order_cancel',
+  operationClass: AlpacaBrokerOperationClass = 'ENTRY_WRITE'
 ): Promise<void> {
   await alpacaRequestForAccount(tradingAccountId, `/v2/orders/${orderId}`, {
     method: 'DELETE',
@@ -114,7 +115,7 @@ export async function cancelAlpacaOrder(
       endpoint: 'DELETE /v2/orders/:orderId',
       method: 'DELETE',
       requestClass: 'critical_write',
-      operationClass: 'RISK_REDUCING_WRITE',
+      operationClass,
       deferDuringRateLimit: false,
     },
   });
@@ -139,7 +140,7 @@ export async function cancelAllAlpacaOrders(
       endpoint: 'DELETE /v2/orders',
       method: 'DELETE',
       requestClass: 'critical_write',
-      operationClass: 'RISK_REDUCING_WRITE',
+      operationClass: 'ENTRY_WRITE',
       deferDuringRateLimit: false,
     },
   });

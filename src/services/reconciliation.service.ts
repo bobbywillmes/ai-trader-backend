@@ -17,6 +17,8 @@ import {
   enumerateLifecycleAccounts,
   type LifecycleAccountEligibility,
 } from './lifecycle-account-eligibility.service.js';
+import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from './trading-account-workflow-lock.service.js';
+import { runTradingAccountWorkflow } from './trading-account-workflow-runner.service.js';
 
 export type ReconciliationSeverity = 'info' | 'warn' | 'critical';
 
@@ -737,10 +739,48 @@ let skippedDuplicateEventCount = 0;
   };
 }
 
+export async function reconcileTradingAccountWithLock(
+  tradingAccountId: number,
+  options: RunReconciliationCheckOptions = {}
+): Promise<RunReconciliationCheckResult> {
+  const run = await runReconciliationAccount(tradingAccountId, options);
+  if (run.outcome === 'PROCESSED') return run.value;
+  if (run.outcome === 'LOCK_SKIPPED') {
+    throw new Error(`Reconciliation already running for TradingAccount ${tradingAccountId}.`);
+  }
+  if (run.outcome === 'BACKING_OFF') {
+    throw new Error(
+      `Reconciliation is backing off for TradingAccount ${tradingAccountId} until ${run.backoffUntil.toISOString()}.`
+    );
+  }
+  if (run.outcome === 'SKIPPED') {
+    throw new Error(`Reconciliation skipped for TradingAccount ${tradingAccountId}.`);
+  }
+  throw run.error;
+}
+
+function runReconciliationAccount(
+  tradingAccountId: number,
+  options: RunReconciliationCheckOptions
+) {
+  return runTradingAccountWorkflow({
+    tradingAccountId,
+    workerKey: 'scheduled_reconciliation',
+    lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.RECONCILIATION,
+    execute: () => reconcileTradingAccount(tradingAccountId, options),
+    classify: (result) => ({
+      outcome: 'success',
+      workSucceeded: true,
+      summary: { findingCount: result.findings.length },
+    }),
+  });
+}
+
 export type ReconciliationAccountResult = {
   workflow: 'reconciliation';
   account: LifecycleAccountEligibility;
-  outcome: 'PROCESSED' | 'SKIPPED' | 'CREDENTIALS_UNAVAILABLE' | 'FAILED';
+  outcome: 'PROCESSED' | 'SKIPPED' | 'CREDENTIALS_UNAVAILABLE' | 'FAILED'
+    | 'LOCK_SKIPPED' | 'BACKING_OFF';
   result?: RunReconciliationCheckResult;
   error?: string;
 };
@@ -870,10 +910,20 @@ export async function reconcileEligibleTradingAccounts(
     }
 
     try {
-      const result = await reconcileTradingAccount(
+      const run = await runReconciliationAccount(
         account.tradingAccountId,
         options
       );
+      if (run.outcome === 'FAILED') throw run.error;
+      if (run.outcome !== 'PROCESSED') {
+        results.push({
+          workflow: 'reconciliation',
+          account,
+          outcome: run.outcome,
+        });
+        continue;
+      }
+      const result = run.value;
       results.push({
         workflow: 'reconciliation',
         account,

@@ -7,6 +7,10 @@ import {
 
 import { prisma } from '../db/prisma.js';
 import { NONTERMINAL_BROKER_ORDER_PRISMA_FILTER } from './broker-order-lifecycle-status.service.js';
+import { env } from '../config/env.js';
+import { accountWorkflowProcessInstanceId } from './trading-account-workflow-runner.service.js';
+import { recordTradingAccountWorkerAttempt } from './trading-account-worker-health.service.js';
+import type { WorkerKey } from '../workers/worker-health.definitions.js';
 
 export type LifecycleWorkflow =
   | 'pending_submissions'
@@ -134,7 +138,7 @@ export async function enumerateLifecycleAccounts(
     )
   );
 
-  return accounts.map((account) => {
+  const results = accounts.map((account) => {
     const counts = countsByAccount.get(account.id) ?? {};
     const exposureSummary = {
       pendingIntents: counts.pending ?? 0,
@@ -207,4 +211,40 @@ export async function enumerateLifecycleAccounts(
       exposureSummary,
     };
   });
+
+  if (env.NODE_ENV !== 'test') {
+    const workerKeyByWorkflow: Partial<Record<LifecycleWorkflow, WorkerKey>> = {
+      pending_submissions: 'pending_order_processing',
+      submitted_orders: 'submitted_order_sync',
+      broker_activities: 'broker_activity_sync',
+      positions: 'tracked_position_sync',
+      scheduled_snapshots: 'account_snapshot_scheduler',
+      exit_evaluation: 'exit_evaluation',
+      protective_order_sync: 'exit_evaluation',
+      reconciliation: 'scheduled_reconciliation',
+    };
+    const workerKey = workerKeyByWorkflow[workflow];
+    if (workerKey) {
+      await Promise.all(results.filter((account) => !account.eligible).map((account) =>
+        recordTradingAccountWorkerAttempt({
+          tradingAccountId: account.tradingAccountId,
+          workerKey,
+          processInstanceId: accountWorkflowProcessInstanceId,
+          outcome: account.reason === 'credentials_unavailable_with_exposure'
+            ? 'failure' : 'dormant',
+          applicable: account.reason === 'credentials_unavailable_with_exposure',
+          eligible: false,
+          eligibilityReason: account.reason,
+          error: account.reason === 'credentials_unavailable_with_exposure'
+            ? new Error('Broker credentials are unavailable while account lifecycle exposure exists.')
+            : undefined,
+          errorCode: account.reason === 'credentials_unavailable_with_exposure'
+            ? 'CREDENTIALS_UNAVAILABLE_WITH_EXPOSURE' : null,
+          summary: account.exposureSummary,
+        })
+      ));
+    }
+  }
+
+  return results;
 }

@@ -12,6 +12,7 @@ import {
   getTradingAccount,
   getTradingAccounts,
   getTradingAccountRiskHealth,
+  getTradingAccountWorkerHealth,
   getTradingAccountRiskSettings,
   getTradingAccountSubscription,
   getTradingAccountSubscriptionPriceHistory,
@@ -49,6 +50,8 @@ export const tradingAccountKeys = {
     [...tradingAccountKeys.detail(id), "riskSettings"] as const,
   riskHealth: (id: number) =>
     [...tradingAccountKeys.detail(id), "riskHealth"] as const,
+  workerHealth: (id: number) =>
+    [...tradingAccountKeys.detail(id), "workerHealth"] as const,
   allocations: (id: number) =>
     [...tradingAccountKeys.detail(id), "allocations"] as const,
   accountSubscriptions: (id: number) =>
@@ -135,6 +138,18 @@ export function useTradingAccountRiskHealth(
     queryFn: () => getTradingAccountRiskHealth(id as number, token as string),
     enabled: Boolean(token && id),
     staleTime: 60000,
+  });
+}
+
+export function useTradingAccountWorkerHealth(
+  id: number | undefined, token: string | null
+) {
+  return useQuery({
+    queryKey: id ? tradingAccountKeys.workerHealth(id) :
+      [...tradingAccountKeys.details(), "workerHealth"],
+    queryFn: () => getTradingAccountWorkerHealth(id as number, token as string),
+    enabled: Boolean(token && id),
+    refetchInterval: 30000,
   });
 }
 

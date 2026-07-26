@@ -172,7 +172,7 @@ describe('alpacaRequestForAccount', () => {
         body: { symbol: 'SPY' },
         metadata: orderWriteMetadata,
       })
-    ).rejects.toThrow('ALLOW_LIVE_TRADING is false');
+    ).rejects.toThrow('ALLOW_LIVE_TRADING and ALLOW_LIVE_RISK_REDUCING_WRITES must be true');
     expect(mocks.fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -199,7 +199,7 @@ describe('alpacaRequestForAccount', () => {
         },
       })
     ).rejects.toThrow(
-      'LIVE RISK_REDUCING_WRITE blocked for TradingAccount 42: ALLOW_LIVE_TRADING is false.'
+      'LIVE RISK_REDUCING_WRITE blocked for TradingAccount 42: ALLOW_LIVE_RISK_REDUCING_WRITES must be true.'
     );
     expect(mocks.fetch).not.toHaveBeenCalled();
   });

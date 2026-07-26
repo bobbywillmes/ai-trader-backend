@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 
 import {
   reconcileTradingAccount,
+  reconcileTradingAccountWithLock,
   runReconciliationCheck,
 } from '../services/reconciliation.service.js';
 import { HttpError } from '../errors/http-error.js';
@@ -66,7 +67,7 @@ export async function runTradingAccountReconciliationController(
       throw new HttpError(400, 'Invalid trading account id.');
     }
     const persistEvents = shouldPersistEvents(req);
-    const result = await reconcileTradingAccount(tradingAccountId, {
+    const result = await reconcileTradingAccountWithLock(tradingAccountId, {
       persistEvents,
       persistAttention: shouldPersistAttention(req, persistEvents),
       dedupeEvents: shouldDedupeEvents(req),

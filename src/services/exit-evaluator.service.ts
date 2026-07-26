@@ -15,6 +15,8 @@ import {
   type LifecycleAccountEligibility,
 } from './lifecycle-account-eligibility.service.js';
 import { syncProtectiveOrdersForAccount } from './protective-order-sync.service.js';
+import { runTradingAccountWorkflow } from './trading-account-workflow-runner.service.js';
+import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from './trading-account-workflow-lock.service.js';
 
 export type ExitEvaluationCounts = {
   positionsEvaluated: number;
@@ -29,7 +31,8 @@ export type ExitEvaluationCounts = {
 export type ExitEvaluationAccountResult = {
   workflow: 'exit_evaluation';
   account: LifecycleAccountEligibility;
-  outcome: 'PROCESSED' | 'SKIPPED' | 'CREDENTIALS_UNAVAILABLE' | 'FAILED';
+  outcome: 'PROCESSED' | 'SKIPPED' | 'CREDENTIALS_UNAVAILABLE' | 'FAILED'
+    | 'LOCK_SKIPPED' | 'BACKING_OFF';
   counts: ExitEvaluationCounts;
   failures: Array<{ trackedPositionId: number; error: string }>;
   error?: string;
@@ -316,7 +319,46 @@ export async function evaluateExitsForEligibleAccounts() {
     }
 
     try {
-      const evaluation = await evaluateExitsForAccount(account.tradingAccountId);
+      const run = await runTradingAccountWorkflow({
+        tradingAccountId: account.tradingAccountId,
+        workerKey: 'exit_evaluation',
+        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.EXIT_EVALUATION,
+        execute: () => evaluateExitsForAccount(account.tradingAccountId),
+        classify: (result) => result.counts.failedPositions > 0
+          ? {
+              outcome: 'failure',
+              error: new Error(
+                `${result.counts.failedPositions} position exit evaluation(s) failed.`
+              ),
+              errorCode: 'EXIT_EVALUATION_ITEM_FAILURE',
+              summary: result.counts,
+            }
+          : {
+              outcome: 'success',
+              workSucceeded: result.counts.positionsEvaluated > 0,
+              summary: result.counts,
+            },
+      });
+      if (run.outcome === 'FAILED') {
+        if (run.value !== undefined) {
+          results.push({
+            workflow: 'exit_evaluation',
+            account,
+            outcome: 'FAILED',
+            ...run.value,
+          });
+          continue;
+        }
+        throw run.error;
+      }
+      if (run.outcome !== 'PROCESSED') {
+        results.push({
+          workflow: 'exit_evaluation', account, outcome: run.outcome,
+          counts: emptyCounts(), failures: [],
+        });
+        continue;
+      }
+      const evaluation = run.value;
       const outcome =
         evaluation.counts.failedPositions > 0 ? 'FAILED' : 'PROCESSED';
       results.push({

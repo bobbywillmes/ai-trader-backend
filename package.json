@@ -14,6 +14,7 @@
     "check": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "momentum:reconcile-eligibility": "tsx scripts/reconcile-momentum-eligibility.ts",
+    "diagnose:account-worker-health": "tsx scripts/diagnose-account-worker-health.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

@@ -1,6 +1,8 @@
 import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
 import { syncBrokerActivitiesForAccount } from '../services/broker-activity.service.js';
 import { enumerateLifecycleAccounts } from '../services/lifecycle-account-eligibility.service.js';
+import { runTradingAccountWorkflow } from '../services/trading-account-workflow-runner.service.js';
+import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from '../services/trading-account-workflow-lock.service.js';
 
 let running = false;
 
@@ -31,15 +33,34 @@ export async function runBrokerActivitySync() {
       }
 
       try {
-        const result = await syncBrokerActivitiesForAccount(
-          account.tradingAccountId,
-          {
+        const run = await runTradingAccountWorkflow({
+          tradingAccountId: account.tradingAccountId,
+          workerKey: 'broker_activity_sync',
+          lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.BROKER_ACTIVITY,
+          execute: () => syncBrokerActivitiesForAccount(account.tradingAccountId, {
             activityType: 'FILL',
             pageSize: 100,
             maxPages: 3,
-          }
-        );
-        results.push({ account, outcome: 'PROCESSED' as const, result });
+          }),
+          classify: (result) => ({
+            outcome: 'success',
+            workSucceeded: result.created > 0 || result.updated > 0,
+            summary: {
+              seen: result.seen,
+              created: result.created,
+              updated: result.updated,
+              pagesProcessed: result.pagesProcessed,
+            },
+          }),
+        });
+        if (run.outcome === 'FAILED') throw run.error;
+        if (run.outcome === 'PROCESSED') {
+          results.push({ account, outcome: 'PROCESSED' as const, result: run.value });
+        } else {
+          results.push({ account, outcome: run.outcome,
+            deferred: run.outcome === 'BACKING_OFF',
+            backoffUntil: run.outcome === 'BACKING_OFF' ? run.backoffUntil.toISOString() : null });
+        }
       } catch (error) {
         if (error instanceof AlpacaRateLimitDeferredError) {
           results.push({
