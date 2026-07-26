@@ -136,6 +136,62 @@ describeDatabase('account workflow locks and active position uniqueness', () => 
     `)).rejects.toThrow(/TradingAccountWorkerHealthState_tradingAccountId_workerKey_key/);
   });
 
+  it('makes finalized health visible before another process can acquire the workflow lock', async () => {
+    const owner = await connectedClient();
+    const contender = await connectedClient();
+    const key = deriveAdvisoryLockKey('ai-trader:broker-activity:1').toString();
+    try {
+      await owner.query(`SET search_path TO ${quotedSchema}`);
+      await contender.query(`SET search_path TO ${quotedSchema}`);
+      expect((await owner.query(
+        'SELECT pg_try_advisory_lock($1::bigint) acquired',
+        [key]
+      )).rows[0]?.acquired).toBe(true);
+
+      await owner.query(`
+        INSERT INTO "TradingAccountWorkerHealthState"
+          ("tradingAccountId", "workerKey", "processInstanceId",
+           "expectedIntervalMs", "currentRunStartedAt", "lastTickStartedAt", "updatedAt")
+        VALUES
+          (1, 'broker_activity_sync', 'owner-process', 30000,
+           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `);
+      await owner.query(`
+        UPDATE "TradingAccountWorkerHealthState"
+        SET "currentRunStartedAt" = NULL,
+            "lastTickCompletedAt" = CURRENT_TIMESTAMP,
+            "lastSucceededAt" = CURRENT_TIMESTAMP,
+            "lastOutcome" = 'success',
+            "updatedAt" = CURRENT_TIMESTAMP
+        WHERE "tradingAccountId" = 1 AND "workerKey" = 'broker_activity_sync'
+      `);
+
+      expect((await contender.query(
+        'SELECT pg_try_advisory_lock($1::bigint) acquired',
+        [key]
+      )).rows[0]?.acquired).toBe(false);
+      await owner.query('SELECT pg_advisory_unlock($1::bigint)', [key]);
+      expect((await contender.query(
+        'SELECT pg_try_advisory_lock($1::bigint) acquired',
+        [key]
+      )).rows[0]?.acquired).toBe(true);
+
+      const state = await contender.query(`
+        SELECT "currentRunStartedAt", "lastOutcome", "lastSucceededAt"
+        FROM "TradingAccountWorkerHealthState"
+        WHERE "tradingAccountId" = 1 AND "workerKey" = 'broker_activity_sync'
+      `);
+      expect(state.rows[0]).toMatchObject({
+        currentRunStartedAt: null,
+        lastOutcome: 'success',
+        lastSucceededAt: expect.any(Date),
+      });
+    } finally {
+      await owner.end();
+      await contender.end();
+    }
+  });
+
   it('derives distinct stable keys and rejects a synthetic account lock', async () => {
     const paper = deriveAdvisoryLockKey('ai-trader:order-lifecycle:1');
     const live = deriveAdvisoryLockKey('ai-trader:order-lifecycle:2');
