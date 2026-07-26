@@ -27,6 +27,12 @@ export type RunReconciliationResult = {
   persistedEvents: boolean;
   persistedAttention: boolean;
   skippedDuplicateEventCount: number;
+  runIdentifier: string;
+  account: {
+    tradingAccountId: number;
+    displayName: string;
+    environment: "PAPER" | "LIVE";
+  };
 };
 
 export function runReconciliation(
@@ -38,4 +44,19 @@ export function runReconciliation(
     token,
     body: payload,
   });
+}
+
+export function runTradingAccountReconciliation(
+  token: string,
+  tradingAccountId: number,
+  payload: RunReconciliationPayload = {}
+) {
+  return apiRequest<RunReconciliationResult>(
+    `/api/trading-accounts/${tradingAccountId}/reconciliation/run`,
+    {
+      method: "POST",
+      token,
+      body: payload,
+    }
+  );
 }

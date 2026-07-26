@@ -148,7 +148,8 @@ export async function enumerateLifecycleAccounts(
       hasLifecycleWork: account._count.orderIntents > 0 ||
         account._count.brokerOrders > 0 ||
         account._count.trackedPositions > 0 ||
-        account._count.brokerActivities > 0,
+        account._count.brokerActivities > 0 ||
+        (unresolvedExitCountByAccount.get(account.id) ?? 0) > 0,
     };
     const usableCredentials =
       account.credential?.status === BrokerCredentialStatus.ACTIVE;

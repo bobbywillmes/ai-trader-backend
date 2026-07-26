@@ -1,7 +1,7 @@
 import { logger } from '../config/logger.js';
 import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
 import { getRuntimeTradingConfig } from '../services/config.service.js';
-import { runReconciliationCheck } from '../services/reconciliation.service.js';
+import { reconcileEligibleTradingAccounts } from '../services/reconciliation.service.js';
 
 let running = false;
 let lastRunAt: Date | null = null;
@@ -46,10 +46,10 @@ export async function runScheduledReconciliation() {
 
     lastRunAt = now;
 
-    let result: Awaited<ReturnType<typeof runReconciliationCheck>>;
+    let result: Awaited<ReturnType<typeof reconcileEligibleTradingAccounts>>;
 
     try {
-      result = await runReconciliationCheck({
+      result = await reconcileEligibleTradingAccounts({
         persistEvents: true,
         persistAttention: true,
         dedupeEvents: true,
@@ -67,13 +67,17 @@ export async function runScheduledReconciliation() {
       throw error;
     }
 
-    if (result.findings.length > 0) {
+    const findingCount = result.results.reduce(
+      (sum, item) => sum + (item.result?.findings.length ?? 0),
+      0
+    );
+    if (findingCount > 0) {
       logger.warn(
         {
-          findingCount: result.findings.length,
-          eventCount: result.eventCount,
-          skippedDuplicateEventCount: result.skippedDuplicateEventCount,
-          attentionUpdateCount: result.attentionUpdateCount,
+          findingCount,
+          processedAccounts: result.processedAccounts,
+          failedAccounts: result.failedAccounts,
+          credentialUnavailableAccounts: result.credentialUnavailableAccounts,
         },
         'Scheduled reconciliation found mismatches.'
       );

@@ -224,10 +224,14 @@ function startWorkers() {
               outcome: 'idle',
             };
           }
+          assertAccountCoordinatorHealthy(
+            'scheduled_reconciliation',
+            result.result.results
+          );
 
           return {
             outcome: 'success',
-            workSucceeded: result.result.findings.length > 0,
+            workSucceeded: result.result.processedAccounts > 0,
           };
         },
         { enabled: config.reconciliationWorkerEnabled }

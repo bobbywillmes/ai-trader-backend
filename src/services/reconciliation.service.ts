@@ -1,11 +1,17 @@
 import type { Prisma } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 
+import { logger } from '../config/logger.js';
 import { prisma } from '../db/prisma.js';
 import { getOpenAlpacaOrders } from '../integrations/alpaca/orders.adapter.js';
 import { createSystemEvent } from './system-event.service.js';
 import { getNormalizedPositions } from './positions.service.js';
 import { markPositionExitStateAttentionRequired } from './position-exit-state.service.js';
 import { resolveDefaultTradingAccountId } from './trading-account.service.js';
+import {
+  enumerateLifecycleAccounts,
+  type LifecycleAccountEligibility,
+} from './lifecycle-account-eligibility.service.js';
 
 export type ReconciliationSeverity = 'info' | 'warn' | 'critical';
 
@@ -17,6 +23,7 @@ export type ReconciliationFindingCode =
   | 'trail_order_status_mismatch';
 
 export type ReconciliationFinding = {
+  tradingAccountId?: number;
   code: ReconciliationFindingCode;
   severity: ReconciliationSeverity;
   entityType: 'trackedPosition' | 'brokerPosition' | 'brokerOrder';
@@ -331,6 +338,12 @@ export type RunReconciliationCheckOptions = {
 };
 
 export type RunReconciliationCheckResult = {
+  runIdentifier: string;
+  account: {
+    tradingAccountId: number;
+    displayName: string;
+    environment: string;
+  };
   findings: ReconciliationFinding[];
   eventCount: number;
   skippedDuplicateEventCount: number;
@@ -344,9 +357,14 @@ function buildReconciliationEventType(code: ReconciliationFindingCode) {
 }
 
 function buildReconciliationEventPayload(
-  finding: ReconciliationFinding
+  finding: ReconciliationFinding,
+  account: RunReconciliationCheckResult['account'],
+  runIdentifier: string
 ): Prisma.InputJsonValue {
   return {
+    tradingAccountId: account.tradingAccountId,
+    environment: account.environment,
+    runIdentifier,
     code: finding.code,
     severity: finding.severity,
     symbol: finding.symbol,
@@ -388,6 +406,11 @@ export async function reconcileTradingAccount(
   tradingAccountId: number,
   options: RunReconciliationCheckOptions = {}
 ): Promise<RunReconciliationCheckResult> {
+  const account = await prisma.tradingAccount.findUniqueOrThrow({
+    where: { id: tradingAccountId },
+    select: { id: true, displayName: true, environment: true },
+  });
+  const runIdentifier = randomUUID();
   const [trackedPositions, brokerPositions, brokerOrders] = await Promise.all([
     prisma.trackedPosition.findMany({
       where: {
@@ -443,6 +466,9 @@ export async function reconcileTradingAccount(
     })),
     defaultBroker: 'alpaca',
   });
+  for (const finding of findings) {
+    finding.tradingAccountId = tradingAccountId;
+  }
 
   const persistEvents = options.persistEvents ?? true;
   const persistAttention = options.persistAttention ?? persistEvents;
@@ -476,7 +502,15 @@ let skippedDuplicateEventCount = 0;
         entityId: finding.entityId,
         tradingAccountId,
         message: finding.message,
-        payloadJson: buildReconciliationEventPayload(finding),
+        payloadJson: buildReconciliationEventPayload(
+          finding,
+          {
+            tradingAccountId: account.id,
+            displayName: account.displayName,
+            environment: account.environment,
+          },
+          runIdentifier
+        ),
       });
 
       eventCount += 1;
@@ -512,12 +546,131 @@ let skippedDuplicateEventCount = 0;
   }
 
   return {
+    runIdentifier,
+    account: {
+      tradingAccountId: account.id,
+      displayName: account.displayName,
+      environment: account.environment,
+    },
     findings,
     eventCount,
     skippedDuplicateEventCount,
     attentionUpdateCount,
     persistedEvents: persistEvents,
     persistedAttention: persistAttention,
+  };
+}
+
+export type ReconciliationAccountResult = {
+  workflow: 'reconciliation';
+  account: LifecycleAccountEligibility;
+  outcome: 'PROCESSED' | 'SKIPPED' | 'CREDENTIALS_UNAVAILABLE' | 'FAILED';
+  result?: RunReconciliationCheckResult;
+  error?: string;
+};
+
+function sanitizeError(error: unknown) {
+  return error instanceof Error ? error.message : 'Unknown reconciliation error.';
+}
+
+export async function reconcileEligibleTradingAccounts(
+  options: RunReconciliationCheckOptions = {}
+) {
+  const accounts = await enumerateLifecycleAccounts('reconciliation');
+  const results: ReconciliationAccountResult[] = [];
+
+  for (const account of accounts) {
+    if (!account.eligible) {
+      const outcome =
+        account.reason === 'credentials_unavailable_with_exposure'
+          ? 'CREDENTIALS_UNAVAILABLE'
+          : 'SKIPPED';
+      results.push({ workflow: 'reconciliation', account, outcome });
+
+      if (outcome === 'CREDENTIALS_UNAVAILABLE') {
+        try {
+          await createSystemEvent({
+            type: 'reconciliation.credentials_unavailable_with_exposure',
+            entityType: 'tradingAccount',
+            entityId: account.tradingAccountId,
+            tradingAccountId: account.tradingAccountId,
+            message: `Reconciliation cannot access credentials for ${account.displayName} while lifecycle exposure exists.`,
+            payloadJson: {
+              tradingAccountId: account.tradingAccountId,
+              environment: account.environment,
+              findingType: 'credentials_unavailable_with_exposure',
+              activePositions: account.exposureSummary.activePositions,
+              nonterminalOrders: account.exposureSummary.nonterminalOrders,
+            } as Prisma.InputJsonValue,
+          });
+        } catch (error) {
+          logger.error(
+            {
+              workflow: 'reconciliation',
+              tradingAccountId: account.tradingAccountId,
+              error: sanitizeError(error),
+            },
+            'Failed to persist reconciliation credentials finding.'
+          );
+        }
+      }
+      continue;
+    }
+
+    try {
+      const result = await reconcileTradingAccount(
+        account.tradingAccountId,
+        options
+      );
+      results.push({
+        workflow: 'reconciliation',
+        account,
+        outcome: 'PROCESSED',
+        result,
+      });
+      logger.info(
+        {
+          workflow: 'reconciliation',
+          tradingAccountId: account.tradingAccountId,
+          displayName: account.displayName,
+          environment: account.environment,
+          outcome: 'PROCESSED',
+          findingCount: result.findings.length,
+          eventCount: result.eventCount,
+          attentionUpdateCount: result.attentionUpdateCount,
+        },
+        'Reconciliation account outcome.'
+      );
+    } catch (error) {
+      results.push({
+        workflow: 'reconciliation',
+        account,
+        outcome: 'FAILED',
+        error: sanitizeError(error),
+      });
+      logger.error(
+        {
+          workflow: 'reconciliation',
+          tradingAccountId: account.tradingAccountId,
+          displayName: account.displayName,
+          environment: account.environment,
+          outcome: 'FAILED',
+          error: sanitizeError(error),
+        },
+        'Reconciliation account outcome.'
+      );
+    }
+  }
+
+  return {
+    workflow: 'reconciliation' as const,
+    processedAccounts: results.filter((item) => item.outcome === 'PROCESSED').length,
+    failedAccounts: results.filter((item) => item.outcome === 'FAILED').length,
+    credentialUnavailableAccounts: results.filter(
+      (item) => item.outcome === 'CREDENTIALS_UNAVAILABLE'
+    ).length,
+    skippedAccounts: results.filter((item) => item.outcome === 'SKIPPED').length,
+    results,
   };
 }
 
