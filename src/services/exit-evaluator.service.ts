@@ -185,8 +185,7 @@ export async function evaluateExitsForAccount(
 
         if (
           exitState.targetUnlocked &&
-          !exitState.trailBrokerOrderId &&
-          exitState.trailOrderStatus !== 'submit_failed'
+          !exitState.trailBrokerOrderId
         ) {
           try {
             await submitTrailingStopExitOrder(tradingAccountId, position.id);

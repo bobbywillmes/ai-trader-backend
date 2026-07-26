@@ -252,6 +252,28 @@ describe('account-scoped exit evaluation', () => {
     });
   });
 
+  it('does not permanently suppress protective recovery after submit_failed', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      unlockPosition({
+        exitState: {
+          targetUnlocked: true,
+          targetPct: 0.5,
+          trailingStopPct: 0.25,
+          trailBrokerOrderId: null,
+          trailOrderStatus: 'submit_failed',
+        },
+      }),
+    ]);
+    mocks.submitTrailingStopExitOrder.mockResolvedValue({
+      submitted: false,
+      reason: 'recovery_backoff',
+    });
+
+    await evaluateExitsForAccount(1);
+
+    expect(mocks.submitTrailingStopExitOrder).toHaveBeenCalledWith(1, 101);
+  });
+
   it('keeps same-symbol positions isolated by coordinator account', async () => {
     mocks.trackedPositionFindMany
       .mockResolvedValueOnce([position({ tradingAccountId: 1 })])
