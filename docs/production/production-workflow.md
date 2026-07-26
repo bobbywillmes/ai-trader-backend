@@ -184,6 +184,11 @@ killSwitchEnabled=false
 
 This means the backend can run in production, sync account state, read Alpaca paper positions, receive n8n dry-run context requests, and write Market Diary events without accepting automated order-entry activity.
 
+Phase 2 workers enumerate account-scoped submitted orders, activities,
+positions, and scheduled snapshots. Keep Bobby Live credentialless and dormant:
+exit evaluation and reconciliation remain default-account-only until Phase 3.
+Do not activate Live merely to test read coordination.
+
 ---
 
 ## 🛡 Production Operating Rule
@@ -247,6 +252,12 @@ legacy historical rows render without breaking the UI even if some fields remain
 Settings -> System Status -> Alpaca API Usage shows a normal or explainable status
 Saved Usage Data shows a recent database save after startup
 ```
+
+For the Phase 2 Paper smoke test, keep Live dormant. Verify one scheduled tick
+reports Bobby Paper as processed and Bobby Live as skipped without a Live
+Alpaca request. Confirm logs contain the Paper account ID/environment, activity
+cursor advancement remains Paper-scoped, and a checkpoint run key creates at
+most one Paper snapshot. No schema migration is required for this phase.
 
 For a fresh paper close, verify:
 

@@ -11,6 +11,7 @@ export async function cancelAllOpenOrders(tradingAccountId: number) {
 
   if (accepted) {
     adaptivePollingCoordinator.forceAfterBrokerOrderCancellation(
+      tradingAccountId,
       'broker_order_cancel_all_requested'
     );
   }

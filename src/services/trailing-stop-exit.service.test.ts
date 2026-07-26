@@ -232,6 +232,7 @@ describe('submitTrailingStopExitOrder', () => {
       brokerOrderId: 'alpaca-new-trail-123',
     });
     expect(mocks.forceAfterBrokerOrderCreated).toHaveBeenCalledWith(
+      1,
       'protective_order_created'
     );
   });

@@ -1,6 +1,6 @@
 import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
 import { recordAccountSnapshot } from '../services/account-snapshot.service.js';
-import { resolveDefaultTradingAccountId } from '../services/trading-account.service.js';
+import { enumerateLifecycleAccounts } from '../services/lifecycle-account-eligibility.service.js';
 
 const EASTERN_TIME_ZONE = 'America/New_York';
 
@@ -68,7 +68,6 @@ function isWithinCheckpointWindow(args: {
 }
 
 export async function runScheduledAccountSnapshots() {
-  const tradingAccountId = await resolveDefaultTradingAccountId();
   const eastern = getEasternDateParts();
 
   if (!isWeekday(eastern.weekday)) {
@@ -76,11 +75,14 @@ export async function runScheduledAccountSnapshots() {
       due: false,
       recorded: 0,
       deferred: false,
+      results: [],
     };
   }
 
   let due = false;
   let recorded = 0;
+  const results = [];
+  const accounts = await enumerateLifecycleAccounts('scheduled_snapshots');
 
   for (const checkpoint of CHECKPOINTS) {
     const checkpointDue = isWithinCheckpointWindow({
@@ -96,29 +98,63 @@ export async function runScheduledAccountSnapshots() {
 
     due = true;
 
-    let result: Awaited<ReturnType<typeof recordAccountSnapshot>>;
-
-    try {
-      result = await recordAccountSnapshot(tradingAccountId, {
-        reason: checkpoint.reason,
-        force: false,
-        runKey: `${checkpoint.reason}:${eastern.dateKey}`,
-      });
-    } catch (error) {
-      if (error instanceof AlpacaRateLimitDeferredError) {
-        return {
-          due: false,
-          recorded,
-          deferred: true,
-          backoffUntil: error.backoffUntil?.toISOString() ?? null,
-        };
+    const runKey = `${checkpoint.reason}:${eastern.dateKey}`;
+    for (const account of accounts) {
+      if (!account.eligible) {
+        results.push({
+          account,
+          runKey,
+          outcome:
+            account.reason === 'credentials_unavailable_with_exposure'
+              ? 'CREDENTIALS_UNAVAILABLE' as const
+              : 'SKIPPED' as const,
+        });
+        continue;
       }
 
-      throw error;
-    }
+      try {
+        const result = await recordAccountSnapshot(account.tradingAccountId, {
+          reason: checkpoint.reason,
+          force: false,
+          runKey,
+        });
 
-    if (result.created) {
-      recorded += 1;
+        if (result.created) recorded += 1;
+        results.push({
+          account,
+          runKey,
+          outcome: 'PROCESSED' as const,
+          result,
+        });
+      } catch (error) {
+        if (error instanceof AlpacaRateLimitDeferredError) {
+          results.push({
+            account,
+            runKey,
+            outcome: 'SKIPPED' as const,
+            deferred: true,
+            backoffUntil: error.backoffUntil?.toISOString() ?? null,
+          });
+          continue;
+        }
+
+        const message =
+          error instanceof Error ? error.message : 'Unknown worker error.';
+        results.push({
+          account,
+          runKey,
+          outcome: 'FAILED' as const,
+          error: message,
+        });
+        console.error({
+          workflow: 'scheduled_snapshots',
+          tradingAccountId: account.tradingAccountId,
+          displayName: account.displayName,
+          environment: account.environment,
+          outcome: 'FAILED',
+          error: message,
+        });
+      }
     }
   }
 
@@ -126,5 +162,6 @@ export async function runScheduledAccountSnapshots() {
     due,
     recorded,
     deferred: false,
+    results,
   };
 }

@@ -28,6 +28,7 @@ import {
   resolveDefaultTradingAccountId,
   TRADING_ACCOUNT_SUMMARY_SELECT,
 } from './trading-account.service.js';
+import { enumerateLifecycleAccounts } from './lifecycle-account-eligibility.service.js';
 
 export type TrackedPositionSyncResult = {
   polled: boolean;
@@ -39,6 +40,7 @@ export type TrackedPositionSyncResult = {
   created: number;
   updated: number;
   closed: number;
+  symbolErrors: Array<{ symbol: string; error: string }>;
   mode?: AdaptivePollingDecision['mode'];
   effectiveIntervalMs?: number | null;
   nextDueAt?: string | null;
@@ -273,6 +275,7 @@ export async function syncTrackedPositionsForAccount(
       created: 0,
       updated: 0,
       closed: 0,
+      symbolErrors: [],
       mode: decision.mode,
       effectiveIntervalMs: decision.effectiveIntervalMs,
       nextDueAt: decision.nextDueAt?.toISOString() ?? null,
@@ -282,7 +285,11 @@ export async function syncTrackedPositionsForAccount(
   let brokerPositions: Awaited<ReturnType<typeof getNormalizedPositions>>;
 
   try {
-    adaptivePollingCoordinator.recordAttempt('tracked_position_sync');
+    adaptivePollingCoordinator.recordAttempt(
+      'tracked_position_sync',
+      tradingAccountId,
+      new Date()
+    );
     brokerPositions = await getNormalizedPositions(
       tradingAccountId,
       'tracked_position_sync'
@@ -291,7 +298,9 @@ export async function syncTrackedPositionsForAccount(
     if (error instanceof AlpacaRateLimitDeferredError) {
       adaptivePollingCoordinator.recordRateLimitDeferred(
         'tracked_position_sync',
-        error.backoffUntil
+        tradingAccountId,
+        error.backoffUntil,
+        new Date()
       );
 
       return {
@@ -304,40 +313,123 @@ export async function syncTrackedPositionsForAccount(
         created: 0,
         updated: 0,
         closed: 0,
+        symbolErrors: [],
         mode: decision.mode,
         effectiveIntervalMs: decision.effectiveIntervalMs,
         nextDueAt: error.backoffUntil?.toISOString() ?? null,
       };
     }
 
-    adaptivePollingCoordinator.recordFailure('tracked_position_sync');
+    adaptivePollingCoordinator.recordFailure(
+      'tracked_position_sync',
+      tradingAccountId,
+      new Date()
+    );
     throw error;
   }
 
   let createdCount = 0;
   let updatedCount = 0;
   let closedCount = 0;
+  const symbolErrors: Array<{ symbol: string; error: string }> = [];
 
   for (const position of brokerPositions) {
-    const existing = await findActiveTrackedPosition({
-      broker: position.broker,
-      symbol: position.symbol,
-      tradingAccountId,
-    });
+    try {
+      let existing = await findActiveTrackedPosition({
+        broker: position.broker,
+        symbol: position.symbol,
+        tradingAccountId,
+      });
 
-    const security = await prisma.security.findUnique({
-      where: { symbol: position.symbol },
-    });
+      const security = await prisma.security.findUnique({
+        where: { symbol: position.symbol },
+      });
 
-    if (!security) {
-      throw new Error(`Security not found for symbol: ${position.symbol}`);
-    }
+      if (!security) {
+        throw new Error(`Security not found for symbol: ${position.symbol}`);
+      }
 
-    if (!existing) {
-      const created = await prisma.trackedPosition.create({
+      if (!existing) {
+        let positionCreated = false;
+        const created = await prisma.$transaction(async (tx) => {
+          const rechecked = await tx.trackedPosition.findFirst({
+            where: {
+              broker: position.broker,
+              symbol: position.symbol,
+              tradingAccountId,
+              status: { in: [...ACTIVE_POSITION_STATUSES] },
+            },
+            orderBy: { openedAt: 'desc' },
+          });
+          if (rechecked) return rechecked;
+          positionCreated = true;
+          return tx.trackedPosition.create({
+            data: {
+              broker: position.broker,
+              symbol: position.symbol,
+              side: position.side,
+              qty: position.qty,
+              avgEntryPrice: position.avgEntryPrice,
+              currentPrice: position.currentPrice,
+              marketValue: position.marketValue,
+              costBasis: position.costBasis,
+              unrealizedPnL: position.unrealizedPnL,
+              unrealizedPnLPct: position.unrealizedPnLPct,
+              status: 'open',
+              tradingAccountId,
+              openedAt: new Date(),
+              lastSyncedAt: new Date(),
+              rawPositionJson: position as unknown as Prisma.InputJsonValue,
+              securityId: security.id,
+            },
+          });
+        });
+
+        existing = created;
+        if (positionCreated) {
+          createdCount += 1;
+          await resetPositionExitStateForOpenPosition(created.id);
+
+          const openingSubscriptionResolution =
+            await applySubscriptionResolution({
+              trackedPositionId: created.id,
+              tradingAccountId,
+              broker: created.broker,
+              symbol: created.symbol,
+              side: created.side,
+              openedAt: created.openedAt,
+              currentSubscriptionId: created.subscriptionId,
+              configSnapshotJson:
+                created.configSnapshotJson as Prisma.JsonValue | null,
+            });
+
+          await createSystemEvent({
+            type: 'position.opened',
+            entityType: 'trackedPosition',
+            entityId: created.id,
+            tradingAccountId,
+            message: `Position opened: ${created.symbol}`,
+            payloadJson: {
+              symbol: created.symbol,
+              qty: created.qty,
+              avgEntryPrice: created.avgEntryPrice,
+              subscriptionId:
+                openingSubscriptionResolution?.subscriptionId ??
+                created.subscriptionId,
+              subscriptionResolutionSource:
+                openingSubscriptionResolution?.source ?? null,
+              subscriptionResolutionStatus:
+                openingSubscriptionResolution?.status ?? null,
+            } as Prisma.InputJsonValue,
+          });
+
+          continue;
+        }
+      }
+
+      const updated = await prisma.trackedPosition.update({
+        where: { id: existing.id },
         data: {
-          broker: position.broker,
-          symbol: position.symbol,
           side: position.side,
           qty: position.qty,
           avgEntryPrice: position.avgEntryPrice,
@@ -347,81 +439,37 @@ export async function syncTrackedPositionsForAccount(
           unrealizedPnL: position.unrealizedPnL,
           unrealizedPnLPct: position.unrealizedPnLPct,
           status: 'open',
-          tradingAccountId,
-          openedAt: new Date(),
           lastSyncedAt: new Date(),
           rawPositionJson: position as unknown as Prisma.InputJsonValue,
-          securityId: security.id,
         },
       });
 
-      createdCount += 1;
-      await resetPositionExitStateForOpenPosition(created.id);
+      updatedCount += 1;
+      await ensurePositionExitState(updated.id);
 
-      const openingSubscriptionResolution = await applySubscriptionResolution({
-        trackedPositionId: created.id,
-        tradingAccountId,
-        broker: created.broker,
-        symbol: created.symbol,
-        side: created.side,
-        openedAt: created.openedAt,
-        currentSubscriptionId: created.subscriptionId,
-        configSnapshotJson: created.configSnapshotJson as Prisma.JsonValue | null,
+      await applySubscriptionResolution({
+        trackedPositionId: updated.id,
+        tradingAccountId: updated.tradingAccountId ?? tradingAccountId,
+        broker: updated.broker,
+        symbol: updated.symbol,
+        side: updated.side,
+        openedAt: updated.openedAt,
+        currentSubscriptionId: updated.subscriptionId,
+        configSnapshotJson:
+          updated.configSnapshotJson as Prisma.JsonValue | null,
       });
-
-      await createSystemEvent({
-        type: 'position.opened',
-        entityType: 'trackedPosition',
-        entityId: created.id,
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unknown position sync error.';
+      symbolErrors.push({ symbol: position.symbol, error: message });
+      console.error({
+        workflow: 'positions',
         tradingAccountId,
-        message: `Position opened: ${created.symbol}`,
-        payloadJson: {
-          symbol: created.symbol,
-          qty: created.qty,
-          avgEntryPrice: created.avgEntryPrice,
-          subscriptionId:
-            openingSubscriptionResolution?.subscriptionId ??
-            created.subscriptionId,
-          subscriptionResolutionSource:
-            openingSubscriptionResolution?.source ?? null,
-          subscriptionResolutionStatus:
-            openingSubscriptionResolution?.status ?? null,
-        } as Prisma.InputJsonValue,
+        symbol: position.symbol,
+        outcome: 'FAILED',
+        error: message,
       });
-
-      continue;
     }
-
-    const updated = await prisma.trackedPosition.update({
-      where: { id: existing.id },
-      data: {
-        side: position.side,
-        qty: position.qty,
-        avgEntryPrice: position.avgEntryPrice,
-        currentPrice: position.currentPrice,
-        marketValue: position.marketValue,
-        costBasis: position.costBasis,
-        unrealizedPnL: position.unrealizedPnL,
-        unrealizedPnLPct: position.unrealizedPnLPct,
-        status: 'open',
-        lastSyncedAt: new Date(),
-        rawPositionJson: position as unknown as Prisma.InputJsonValue,
-      },
-    });
-
-    updatedCount += 1;
-    await ensurePositionExitState(updated.id);
-
-    await applySubscriptionResolution({
-      trackedPositionId: updated.id,
-      tradingAccountId: updated.tradingAccountId ?? tradingAccountId,
-      broker: updated.broker,
-      symbol: updated.symbol,
-      side: updated.side,
-      openedAt: updated.openedAt,
-      currentSubscriptionId: updated.subscriptionId,
-      configSnapshotJson: updated.configSnapshotJson as Prisma.JsonValue | null,
-    });
   }
 
   const activeTrackedPositions = await prisma.trackedPosition.findMany({
@@ -555,11 +603,20 @@ export async function syncTrackedPositionsForAccount(
   }
 
   const completedAt = new Date();
-  adaptivePollingCoordinator.recordSuccess(
-    'tracked_position_sync',
-    completedAt,
-    decision.effectiveIntervalMs
-  );
+  if (symbolErrors.length > 0) {
+    adaptivePollingCoordinator.recordFailure(
+      'tracked_position_sync',
+      tradingAccountId,
+      completedAt
+    );
+  } else {
+    adaptivePollingCoordinator.recordSuccess(
+      'tracked_position_sync',
+      tradingAccountId,
+      completedAt,
+      decision.effectiveIntervalMs
+    );
+  }
 
   return {
     polled: true,
@@ -570,6 +627,7 @@ export async function syncTrackedPositionsForAccount(
     created: createdCount,
     updated: updatedCount,
     closed: closedCount,
+    symbolErrors,
     mode: decision.mode,
     effectiveIntervalMs: decision.effectiveIntervalMs,
     nextDueAt:
@@ -579,9 +637,68 @@ export async function syncTrackedPositionsForAccount(
   };
 }
 
+export async function syncTrackedPositionsAcrossAccounts() {
+  const accounts = await enumerateLifecycleAccounts('positions');
+  const results = [];
+
+  for (const account of accounts) {
+    if (!account.eligible) {
+      results.push({
+        account,
+        outcome:
+          account.reason === 'credentials_unavailable_with_exposure'
+            ? 'CREDENTIALS_UNAVAILABLE' as const
+            : 'SKIPPED' as const,
+      });
+      continue;
+    }
+
+    try {
+      const result = await syncTrackedPositionsForAccount(
+        account.tradingAccountId
+      );
+      results.push({
+        account,
+        outcome:
+          result.symbolErrors.length > 0
+            ? 'FAILED' as const
+            : result.skipped
+              ? 'SKIPPED' as const
+              : 'PROCESSED' as const,
+        result,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unknown worker error.';
+      results.push({
+        account,
+        outcome: 'FAILED' as const,
+        error: message,
+      });
+      console.error({
+        workflow: 'positions',
+        tradingAccountId: account.tradingAccountId,
+        displayName: account.displayName,
+        environment: account.environment,
+        outcome: 'FAILED',
+        error: message,
+      });
+    }
+  }
+
+  return {
+    workflow: 'positions' as const,
+    processedAccounts: results.filter((item) => item.outcome === 'PROCESSED')
+      .length,
+    failedAccounts: results.filter((item) => item.outcome === 'FAILED').length,
+    results,
+  };
+}
+
+// Compatibility wrapper for legacy admin/manual callers. The scheduled trading
+// loop uses syncTrackedPositionsAcrossAccounts.
 export async function syncTrackedPositions(): Promise<TrackedPositionSyncResult> {
-  const tradingAccountId = await resolveDefaultTradingAccountId();
-  return syncTrackedPositionsForAccount(tradingAccountId);
+  return syncTrackedPositionsForAccount(await resolveDefaultTradingAccountId());
 }
 
 export async function getTrackedPositions() {

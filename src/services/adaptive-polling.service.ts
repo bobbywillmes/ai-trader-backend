@@ -7,6 +7,10 @@ import {
   type NormalizedMarketSessionSnapshot,
 } from '../integrations/alpaca/market-session.adapter.js';
 import { TRADING_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
+import {
+  isNonterminalBrokerOrderStatus,
+  NONTERMINAL_BROKER_ORDER_PRISMA_FILTER,
+} from './broker-order-lifecycle-status.service.js';
 
 export type AdaptiveWorkerKey =
   | 'submitted_order_sync'
@@ -131,6 +135,18 @@ type MarketEvaluation = {
   evaluatedAt: Date;
 };
 
+type AccountMarketRuntimeState = {
+  lastSuccessfulMarketState: AdaptiveMarketState | null;
+  lastSuccessfulTradingDate: string | null;
+  hadMarketSessionFailure: boolean;
+  consecutiveMarketSessionFailures: number;
+  lastMarketSessionError: string | null;
+  lastMarketSessionErrorAt: Date | null;
+  recoveredAt: Date | null;
+  latestMarketSessionSnapshot: NormalizedMarketSessionSnapshot | null;
+  latestEvaluation: MarketEvaluation | null;
+};
+
 export const ADAPTIVE_POLLING_INTERVALS_MS = {
   submittedOrderSync: {
     marketOpenActive: 10_000,
@@ -177,16 +193,6 @@ function sanitizeError(error: unknown) {
     .replace(/\s+/g, ' ')
     .replace(/(password|token|secret|api[_-]?key)=\S+/gi, '$1=[redacted]')
     .slice(0, SANITIZED_ERROR_MAX_LENGTH);
-}
-
-function isNonterminalBrokerOrderStatus(status: string) {
-  return ![
-    'filled',
-    'canceled',
-    'expired',
-    'rejected',
-    'suspended',
-  ].includes(status);
 }
 
 function modeFor(args: {
@@ -289,9 +295,7 @@ async function readLocalActivity(
     prisma.brokerOrder.count({
       where: {
         tradingAccountId,
-        status: {
-          notIn: ['filled', 'canceled', 'expired', 'rejected', 'suspended'],
-        },
+        status: NONTERMINAL_BROKER_ORDER_PRISMA_FILTER,
       },
     }),
     prisma.trackedPosition.count({ where: { status: 'open', tradingAccountId } }),
@@ -320,7 +324,7 @@ async function readLocalActivity(
               not: null,
             },
             trailingStopStatus: {
-              notIn: ['filled', 'canceled', 'expired', 'rejected', 'suspended'],
+              ...NONTERMINAL_BROKER_ORDER_PRISMA_FILTER,
             },
           },
           {
@@ -353,28 +357,16 @@ export class AdaptivePollingCoordinator {
     tradingAccountId: number,
     now: Date
   ) => Promise<AdaptivePollingLocalActivitySnapshot>;
-  private readonly states: Record<AdaptiveWorkerKey, WorkerRuntimeState> = {
-    submitted_order_sync: createWorkerState(),
-    tracked_position_sync: createWorkerState(),
-  };
-  private localActivityCache: {
+  private readonly states = new Map<string, WorkerRuntimeState>();
+  private readonly marketStates = new Map<number, AccountMarketRuntimeState>();
+  private readonly localActivityCache = new Map<number, {
     capturedAtMs: number;
     promise: Promise<AdaptivePollingLocalActivitySnapshot>;
-  } | null = null;
-  private marketEvaluationCache: {
+  }>();
+  private readonly marketEvaluationCache = new Map<number, {
     capturedAtMs: number;
     promise: Promise<MarketEvaluation>;
-  } | null = null;
-  private lastSuccessfulMarketState: AdaptiveMarketState | null = null;
-  private lastSuccessfulTradingDate: string | null = null;
-  private hadMarketSessionFailure = false;
-  private consecutiveMarketSessionFailures = 0;
-  private lastMarketSessionError: string | null = null;
-  private lastMarketSessionErrorAt: Date | null = null;
-  private recoveredAt: Date | null = null;
-  private latestMarketSessionSnapshot: NormalizedMarketSessionSnapshot | null =
-    null;
-  private latestEvaluation: MarketEvaluation | null = null;
+  }>();
 
   constructor(args: {
     now?: () => Date;
@@ -394,43 +386,55 @@ export class AdaptivePollingCoordinator {
   }
 
   reset() {
-    this.states.submitted_order_sync = createWorkerState();
-    this.states.tracked_position_sync = createWorkerState();
-    this.localActivityCache = null;
-    this.marketEvaluationCache = null;
-    this.lastSuccessfulMarketState = null;
-    this.lastSuccessfulTradingDate = null;
-    this.hadMarketSessionFailure = false;
-    this.consecutiveMarketSessionFailures = 0;
-    this.lastMarketSessionError = null;
-    this.lastMarketSessionErrorAt = null;
-    this.recoveredAt = null;
-    this.latestMarketSessionSnapshot = null;
-    this.latestEvaluation = null;
+    this.states.clear();
+    this.marketStates.clear();
+    this.localActivityCache.clear();
+    this.marketEvaluationCache.clear();
   }
 
   forceSync(
     workers: AdaptiveWorkerKey[],
-    reason: AdaptivePollingForceReason
+    reason: AdaptivePollingForceReason,
+    tradingAccountId: number
   ) {
     for (const workerKey of workers) {
-      const state = this.states[workerKey];
+      const state = this.stateFor(tradingAccountId, workerKey);
       state.forced = true;
-      state.forceReason = state.forceReason ?? reason;
+      state.forceReason =
+        state.forceReason === null || state.forceReason === 'startup'
+          ? reason
+          : state.forceReason;
       state.nextDueAt = this.now();
     }
   }
 
-  forceAfterBrokerOrderCreated(reason: AdaptivePollingForceReason) {
-    this.forceSync(['submitted_order_sync', 'tracked_position_sync'], reason);
+  forceAfterBrokerOrderCreated(
+    tradingAccountId: number,
+    reason: AdaptivePollingForceReason
+  ) {
+    this.forceSync(
+      ['submitted_order_sync', 'tracked_position_sync'],
+      reason,
+      tradingAccountId
+    );
   }
 
-  forceAfterBrokerPositionWrite(reason: AdaptivePollingForceReason) {
-    this.forceSync(['submitted_order_sync', 'tracked_position_sync'], reason);
+  forceAfterBrokerPositionWrite(
+    tradingAccountId: number,
+    reason: AdaptivePollingForceReason
+  ) {
+    this.forceSync(
+      ['submitted_order_sync', 'tracked_position_sync'],
+      reason,
+      tradingAccountId
+    );
   }
 
-  forceAfterBrokerOrderCancellation(reason: AdaptivePollingForceReason) {
-    this.forceSync(['submitted_order_sync'], reason);
+  forceAfterBrokerOrderCancellation(
+    tradingAccountId: number,
+    reason: AdaptivePollingForceReason
+  ) {
+    this.forceSync(['submitted_order_sync'], reason, tradingAccountId);
   }
 
   async getDecision(
@@ -453,7 +457,7 @@ export class AdaptivePollingCoordinator {
       marketState: market.state,
       active,
     });
-    const state = this.states[workerKey];
+    const state = this.stateFor(tradingAccountId, workerKey);
     const evaluatedAt = now;
     let due = false;
     let reason: AdaptivePollingDecisionReason = 'adaptive_poll_not_due';
@@ -505,17 +509,22 @@ export class AdaptivePollingCoordinator {
     return decision;
   }
 
-  recordAttempt(workerKey: AdaptiveWorkerKey, attemptedAt = this.now()) {
-    const state = this.states[workerKey];
+  recordAttempt(
+    workerKey: AdaptiveWorkerKey,
+    tradingAccountId: number,
+    attemptedAt = this.now()
+  ) {
+    const state = this.stateFor(tradingAccountId, workerKey);
     state.lastAttemptAt = attemptedAt;
   }
 
   recordSuccess(
     workerKey: AdaptiveWorkerKey,
+    tradingAccountId: number,
     completedAt = this.now(),
     nextIntervalMs?: number | null
   ) {
-    const state = this.states[workerKey];
+    const state = this.stateFor(tradingAccountId, workerKey);
     state.lastSuccessAt = completedAt;
     state.forced = false;
     state.forceReason = null;
@@ -531,8 +540,12 @@ export class AdaptivePollingCoordinator {
       interval === null ? null : new Date(completedAt.getTime() + interval);
   }
 
-  recordFailure(workerKey: AdaptiveWorkerKey, failedAt = this.now()) {
-    const state = this.states[workerKey];
+  recordFailure(
+    workerKey: AdaptiveWorkerKey,
+    tradingAccountId: number,
+    failedAt = this.now()
+  ) {
+    const state = this.stateFor(tradingAccountId, workerKey);
     const lastAttemptMs = state.lastAttemptAt?.getTime() ?? failedAt.getTime();
     const elapsedSinceAttempt = Math.max(0, failedAt.getTime() - lastAttemptMs);
     const retryDelayMs = Math.min(
@@ -545,10 +558,11 @@ export class AdaptivePollingCoordinator {
 
   recordRateLimitDeferred(
     workerKey: AdaptiveWorkerKey,
+    tradingAccountId: number,
     backoffUntil: Date | null,
     deferredAt = this.now()
   ) {
-    const state = this.states[workerKey];
+    const state = this.stateFor(tradingAccountId, workerKey);
     state.nextDueAt =
       backoffUntil && backoffUntil.getTime() > deferredAt.getTime()
         ? backoffUntil
@@ -569,13 +583,14 @@ export class AdaptivePollingCoordinator {
   async getSnapshot(tradingAccountId: number): Promise<AdaptivePollingSnapshot> {
     const now = this.now();
     const activity = await this.getLocalActivity(tradingAccountId, now);
+    const accountMarket = this.marketStateFor(tradingAccountId);
     const market =
-      this.latestEvaluation ??
+      accountMarket.latestEvaluation ??
       ({
         state: 'unknown',
-        snapshot: this.latestMarketSessionSnapshot,
-        degraded: this.hadMarketSessionFailure,
-        error: this.lastMarketSessionError,
+        snapshot: accountMarket.latestMarketSessionSnapshot,
+        degraded: accountMarket.hadMarketSessionFailure,
+        error: accountMarket.lastMarketSessionError,
         evaluatedAt: now,
       } satisfies MarketEvaluation);
     const active = hasTrackedPositionActivity(activity);
@@ -594,10 +609,10 @@ export class AdaptivePollingCoordinator {
         nextOpenAt: market.snapshot?.nextOpenAt ?? null,
         nextCloseAt: market.snapshot?.nextCloseAt ?? null,
         clockCacheStatus: market.snapshot?.cache.clock ?? null,
-        consecutiveFailures: this.consecutiveMarketSessionFailures,
-        lastError: this.lastMarketSessionError,
-        lastErrorAt: toIso(this.lastMarketSessionErrorAt),
-        recoveredAt: toIso(this.recoveredAt),
+        consecutiveFailures: accountMarket.consecutiveMarketSessionFailures,
+        lastError: accountMarket.lastMarketSessionError,
+        lastErrorAt: toIso(accountMarket.lastMarketSessionErrorAt),
+        recoveredAt: toIso(accountMarket.recoveredAt),
       },
       localActivity: {
         submittedOrderCount: activity.submittedOrderCount,
@@ -612,11 +627,15 @@ export class AdaptivePollingCoordinator {
       workers: {
         submittedOrderSync: this.toWorkerSnapshot(
           'submitted_order_sync',
-          activity
+          activity,
+          tradingAccountId,
+          market.state
         ),
         trackedPositionSync: this.toWorkerSnapshot(
           'tracked_position_sync',
-          activity
+          activity,
+          tradingAccountId,
+          market.state
         ),
       },
     };
@@ -624,9 +643,11 @@ export class AdaptivePollingCoordinator {
 
   private toWorkerSnapshot(
     workerKey: AdaptiveWorkerKey,
-    activity: AdaptivePollingLocalActivitySnapshot
+    activity: AdaptivePollingLocalActivitySnapshot,
+    tradingAccountId: number,
+    marketState: AdaptiveMarketState
   ): AdaptiveWorkerSnapshot {
-    const state = this.states[workerKey];
+    const state = this.stateFor(tradingAccountId, workerKey);
     const decision = state.lastDecision;
     const localActivity =
       workerKey === 'submitted_order_sync'
@@ -639,7 +660,7 @@ export class AdaptivePollingCoordinator {
         decision?.effectiveIntervalMs ??
         intervalFor({
           workerKey,
-          marketState: this.latestEvaluation?.state ?? 'unknown',
+          marketState,
           active: localActivity,
         }),
       due: decision?.due ?? state.forced,
@@ -653,7 +674,7 @@ export class AdaptivePollingCoordinator {
       mode:
         decision?.mode ??
         modeFor({
-          marketState: this.latestEvaluation?.state ?? 'unknown',
+          marketState,
           active: localActivity,
         }),
     };
@@ -663,21 +684,21 @@ export class AdaptivePollingCoordinator {
     const nowMs = now.getTime();
 
     if (
-      this.localActivityCache &&
-      nowMs - this.localActivityCache.capturedAtMs <=
+      this.localActivityCache.get(tradingAccountId) &&
+      nowMs - this.localActivityCache.get(tradingAccountId)!.capturedAtMs <=
         LOCAL_ACTIVITY_CACHE_TTL_MS
     ) {
-      return this.localActivityCache.promise;
+      return this.localActivityCache.get(tradingAccountId)!.promise;
     }
 
     const promise = this.localActivityProvider(tradingAccountId, now).catch((error) => {
       logger.warn({ error }, 'Adaptive polling local activity lookup failed.');
       return defaultLocalActivity(now);
     });
-    this.localActivityCache = {
+    this.localActivityCache.set(tradingAccountId, {
       capturedAtMs: nowMs,
       promise,
-    };
+    });
 
     return promise;
   }
@@ -689,35 +710,37 @@ export class AdaptivePollingCoordinator {
     const nowMs = now.getTime();
 
     if (
-      this.marketEvaluationCache &&
-      nowMs - this.marketEvaluationCache.capturedAtMs <=
+      this.marketEvaluationCache.get(tradingAccountId) &&
+      nowMs - this.marketEvaluationCache.get(tradingAccountId)!.capturedAtMs <=
         MARKET_EVALUATION_CACHE_TTL_MS
     ) {
-      return this.marketEvaluationCache.promise;
+      return this.marketEvaluationCache.get(tradingAccountId)!.promise;
     }
 
     const promise = this.marketSessionProvider(tradingAccountId, now)
       .then((snapshot) => {
+        const accountMarket = this.marketStateFor(tradingAccountId);
         const marketState: AdaptiveMarketState = snapshot.marketOpen
           ? 'open'
           : 'closed';
-        const previousState = this.lastSuccessfulMarketState;
-        const previousTradingDate = this.lastSuccessfulTradingDate;
-        const recovered = this.hadMarketSessionFailure;
+        const previousState = accountMarket.lastSuccessfulMarketState;
+        const previousTradingDate = accountMarket.lastSuccessfulTradingDate;
+        const recovered = accountMarket.hadMarketSessionFailure;
 
-        this.latestMarketSessionSnapshot = snapshot;
-        this.lastSuccessfulMarketState = marketState;
-        this.lastSuccessfulTradingDate = snapshot.tradingDate;
-        this.hadMarketSessionFailure = false;
-        this.consecutiveMarketSessionFailures = 0;
-        this.lastMarketSessionError = null;
-        this.lastMarketSessionErrorAt = null;
+        accountMarket.latestMarketSessionSnapshot = snapshot;
+        accountMarket.lastSuccessfulMarketState = marketState;
+        accountMarket.lastSuccessfulTradingDate = snapshot.tradingDate;
+        accountMarket.hadMarketSessionFailure = false;
+        accountMarket.consecutiveMarketSessionFailures = 0;
+        accountMarket.lastMarketSessionError = null;
+        accountMarket.lastMarketSessionErrorAt = null;
 
         if (recovered) {
-          this.recoveredAt = now;
+          accountMarket.recoveredAt = now;
           this.forceSync(
             ['submitted_order_sync', 'tracked_position_sync'],
-            'market_session_recovered'
+            'market_session_recovered',
+            tradingAccountId
           );
         } else if (
           previousState !== null &&
@@ -725,7 +748,8 @@ export class AdaptivePollingCoordinator {
         ) {
           this.forceSync(
             ['submitted_order_sync', 'tracked_position_sync'],
-            'market_transition'
+            'market_transition',
+            tradingAccountId
           );
         } else if (
           previousTradingDate !== null &&
@@ -733,7 +757,8 @@ export class AdaptivePollingCoordinator {
         ) {
           this.forceSync(
             ['submitted_order_sync', 'tracked_position_sync'],
-            'trading_date_changed'
+            'trading_date_changed',
+            tradingAccountId
           );
         }
 
@@ -744,15 +769,16 @@ export class AdaptivePollingCoordinator {
           error: null,
           evaluatedAt: now,
         };
-        this.latestEvaluation = evaluation;
+        accountMarket.latestEvaluation = evaluation;
         return evaluation;
       })
       .catch((error) => {
+        const accountMarket = this.marketStateFor(tradingAccountId);
         const sanitized = sanitizeError(error);
-        this.hadMarketSessionFailure = true;
-        this.consecutiveMarketSessionFailures += 1;
-        this.lastMarketSessionError = sanitized;
-        this.lastMarketSessionErrorAt = now;
+        accountMarket.hadMarketSessionFailure = true;
+        accountMarket.consecutiveMarketSessionFailures += 1;
+        accountMarket.lastMarketSessionError = sanitized;
+        accountMarket.lastMarketSessionErrorAt = now;
         logger.warn(
           { error: sanitized },
           'Adaptive polling market-session lookup failed.'
@@ -765,17 +791,51 @@ export class AdaptivePollingCoordinator {
           error: sanitized,
           evaluatedAt: now,
         };
-        this.latestEvaluation = evaluation;
+        accountMarket.latestEvaluation = evaluation;
         return evaluation;
       });
 
-    this.marketEvaluationCache = {
+    this.marketEvaluationCache.set(tradingAccountId, {
       capturedAtMs: nowMs,
       promise,
-    };
+    });
 
     return promise;
   }
+
+  private stateFor(
+    tradingAccountId: number,
+    workerKey: AdaptiveWorkerKey
+  ): WorkerRuntimeState {
+    const key = `${tradingAccountId}:${workerKey}`;
+    const existing = this.states.get(key);
+    if (existing) return existing;
+    const created = createWorkerState();
+    this.states.set(key, created);
+    return created;
+  }
+
+  private marketStateFor(tradingAccountId: number) {
+    const existing = this.marketStates.get(tradingAccountId);
+    if (existing) return existing;
+    const created = createAccountMarketState();
+    this.marketStates.set(tradingAccountId, created);
+    return created;
+  }
+}
+
+function createAccountMarketState(): AccountMarketRuntimeState {
+  return {
+    lastSuccessfulMarketState: null,
+    lastSuccessfulTradingDate: null,
+    hadMarketSessionFailure: false,
+    consecutiveMarketSessionFailures: 0,
+    lastMarketSessionError: null,
+    lastMarketSessionErrorAt: null,
+    recoveredAt: null,
+    latestMarketSessionSnapshot: null,
+    latestEvaluation: null,
+  };
 }
 
 export const adaptivePollingCoordinator = new AdaptivePollingCoordinator();

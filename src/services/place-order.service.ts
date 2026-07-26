@@ -229,6 +229,7 @@ export async function submitOrderToBroker(
   );
 
   adaptivePollingCoordinator.forceAfterBrokerOrderCreated(
+    options.tradingAccountId,
     'broker_order_created'
   );
 

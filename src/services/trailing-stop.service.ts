@@ -176,6 +176,7 @@ export async function submitNativeTrailingStopForTrackedPosition(
 
     if (!existingBrokerOrder) {
       adaptivePollingCoordinator.forceAfterBrokerOrderCreated(
+        tradingAccountId,
         'protective_order_created'
       );
     }

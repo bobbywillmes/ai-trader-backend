@@ -16,6 +16,10 @@ import {
   type AdaptivePollingDecision,
 } from '../services/adaptive-polling.service.js';
 import { linkEntryDecisionToBrokerOrder } from '../services/entry-decision.service.js';
+import {
+  enumerateLifecycleAccounts,
+  type LifecycleAccountEligibility,
+} from '../services/lifecycle-account-eligibility.service.js';
 import { resolveDefaultTradingAccountId } from '../services/trading-account.service.js';
 import {
   evaluateOrderRisk,
@@ -24,11 +28,18 @@ import {
 import { getSizingEstimatedNotional } from '../services/trading-account-entry-risk-usage.service.js';
 import { recordOrderIntentRiskEvaluation } from '../services/order-audit.service.js';
 import { resolveSubscriptionOrderInput } from '../services/subscription.service.js';
+import { getAlpacaOrderByClientOrderId } from '../integrations/alpaca/orders.adapter.js';
 
 export type SubmittedOrderSyncResult = {
   found: number;
   polled: boolean;
   synced: number;
+  failed: number;
+  failures: Array<{
+    orderIntentId: number;
+    brokerOrderRecordId: number | null;
+    error: string;
+  }>;
   skipped: boolean;
   skipReason:
     | 'no_local_submitted_orders'
@@ -42,14 +53,213 @@ export type SubmittedOrderSyncResult = {
   nextDueAt?: string | null;
 };
 
+export type LifecycleCoordinatorOutcome =
+  | 'PROCESSED'
+  | 'SKIPPED'
+  | 'CREDENTIALS_UNAVAILABLE'
+  | 'FAILED';
+
+export type SubmittedOrderAccountResult = {
+  workflow: 'submitted_orders';
+  account: LifecycleAccountEligibility;
+  outcome: LifecycleCoordinatorOutcome;
+  result?: SubmittedOrderSyncResult;
+  error?: string;
+};
+
+const SUBMITTED_ORDER_BATCH_LIMIT_PER_ACCOUNT = 10;
+export const PENDING_ORDER_BATCH_LIMIT_PER_ACCOUNT = 5;
+export const STALE_SUBMITTING_INTENT_THRESHOLD_MS = 5 * 60_000;
+
+function sanitizeError(error: unknown) {
+  return error instanceof Error ? error.message : 'Unknown worker error.';
+}
+
+function isExitIntent(intent: { rawRequestJson: Prisma.JsonValue }) {
+  const raw = intent.rawRequestJson;
+  return (
+    typeof raw === 'object' &&
+    raw !== null &&
+    !Array.isArray(raw) &&
+    raw.signalType === 'exit'
+  );
+}
+
+export async function recoverStaleSubmittingIntentsForAccount(
+  tradingAccountId: number,
+  now = new Date()
+) {
+  const intents = await prisma.orderIntent.findMany({
+    where: {
+      tradingAccountId,
+      status: 'submitting',
+      updatedAt: {
+        lte: new Date(now.getTime() - STALE_SUBMITTING_INTENT_THRESHOLD_MS),
+      },
+    },
+    include: { brokerOrders: true },
+    orderBy: { updatedAt: 'asc' },
+    take: 5,
+  });
+  let linked = 0;
+  let retryable = 0;
+  let retained = 0;
+
+  for (const intent of intents) {
+    if (!intent.clientOrderId) {
+      retained += 1;
+      continue;
+    }
+
+    const persisted = intent.brokerOrders[0];
+    if (persisted) {
+      await prisma.orderIntent.updateMany({
+        where: { id: intent.id, status: 'submitting' },
+        data: { status: 'submitted', blockReason: null },
+      });
+      linked += 1;
+      continue;
+    }
+
+    const brokerOrder = await getAlpacaOrderByClientOrderId(
+      tradingAccountId,
+      intent.clientOrderId,
+      'pending_order_idempotency_check'
+    );
+
+    if (brokerOrder) {
+      const security = await prisma.security.findUniqueOrThrow({
+        where: { symbol: brokerOrder.symbol.toUpperCase() },
+        select: { id: true },
+      });
+      await prisma.$transaction(async (tx) => {
+        const existing = await tx.brokerOrder.findFirst({
+          where: {
+            broker: 'alpaca',
+            brokerOrderId: brokerOrder.id,
+            tradingAccountId,
+          },
+        });
+        if (!existing) {
+          await tx.brokerOrder.create({
+            data: {
+              orderIntentId: intent.id,
+              broker: 'alpaca',
+              brokerOrderId: brokerOrder.id,
+              clientOrderId: brokerOrder.client_order_id,
+              symbol: brokerOrder.symbol,
+              side: brokerOrder.side,
+              status: brokerOrder.status,
+              tradingAccountId,
+              trackedPositionId: intent.trackedPositionId,
+              securityId: security.id,
+              rawBrokerJson: brokerOrder as unknown as Prisma.InputJsonValue,
+            },
+          });
+        }
+        await tx.orderIntent.updateMany({
+          where: { id: intent.id, status: 'submitting' },
+          data: { status: 'submitted', blockReason: null },
+        });
+      });
+      await createSystemEvent({
+        type: 'order.submission_recovered',
+        entityType: 'orderIntent',
+        entityId: intent.id,
+        tradingAccountId,
+        payloadJson: {
+          clientOrderId: intent.clientOrderId,
+          brokerOrderId: brokerOrder.id,
+          recovery: 'broker_order_materialized',
+        } as Prisma.InputJsonValue,
+      });
+      linked += 1;
+      continue;
+    }
+
+    if (isExitIntent(intent)) {
+      await createSystemEvent({
+        type: 'order.submission_recovery_deferred',
+        entityType: 'orderIntent',
+        entityId: intent.id,
+        tradingAccountId,
+        payloadJson: {
+          clientOrderId: intent.clientOrderId,
+          recovery: 'exit_order_not_requeued',
+        } as Prisma.InputJsonValue,
+      });
+      retained += 1;
+      continue;
+    }
+
+    const reset = await prisma.orderIntent.updateMany({
+      where: { id: intent.id, status: 'submitting' },
+      data: {
+        status: 'pending',
+        blockReason: 'Recovered stale submitting intent after broker lookup found no order.',
+      },
+    });
+    if (reset.count === 1) {
+      await createSystemEvent({
+        type: 'order.submission_retry_scheduled',
+        entityType: 'orderIntent',
+        entityId: intent.id,
+        tradingAccountId,
+        payloadJson: {
+          clientOrderId: intent.clientOrderId,
+          recovery: 'broker_order_absent_entry_requeued',
+        } as Prisma.InputJsonValue,
+      });
+      retryable += 1;
+    }
+  }
+
+  return { found: intents.length, linked, retryable, retained };
+}
+
+export async function recoverStaleSubmittingIntents() {
+  const accounts = await enumerateLifecycleAccounts('submitted_orders');
+  const results = [];
+  for (const account of accounts) {
+    if (!account.eligible) {
+      results.push({
+        account,
+        outcome:
+          account.reason === 'credentials_unavailable_with_exposure'
+            ? 'CREDENTIALS_UNAVAILABLE' as const
+            : 'SKIPPED' as const,
+      });
+      continue;
+    }
+    try {
+      results.push({
+        account,
+        outcome: 'PROCESSED' as const,
+        result: await recoverStaleSubmittingIntentsForAccount(
+          account.tradingAccountId
+        ),
+      });
+    } catch (error) {
+      results.push({
+        account,
+        outcome: 'FAILED' as const,
+        error: sanitizeError(error),
+      });
+    }
+  }
+  return { workflow: 'stale_submitting_recovery' as const, results };
+}
+
 function isEntryOrder(input: BrokerOrderSubmissionInput): boolean {
   return input.side === 'buy' && (input.signalType ?? 'entry') === 'entry';
 }
 
-export async function processPendingOrders() {
+export async function processPendingOrdersForAccount(
+  tradingAccountId: number
+) {
   const pending = await prisma.orderIntent.findMany({
-    where: { status: 'pending' },
-    take: 5,
+    where: { status: 'pending', tradingAccountId },
+    take: PENDING_ORDER_BATCH_LIMIT_PER_ACCOUNT,
     orderBy: { createdAt: 'asc' },
   });
 
@@ -57,13 +267,16 @@ export async function processPendingOrders() {
     console.log(`Order worker: Found ${pending.length} pending orders`);
   }
 
-  let processed = 0;
+  let claimed = 0;
+  let submitted = 0;
+  let blocked = 0;
+  let failed = 0;
 
   for (const intent of pending) {
     console.log(`Processing intent (${intent.id}): ${intent.symbol} ${intent.side} ${intent.orderType}`);
 
     try {
-      const claimed = await prisma.orderIntent.updateMany({
+      const claimResult = await prisma.orderIntent.updateMany({
         where: {
           id: intent.id,
           status: 'pending',
@@ -73,12 +286,12 @@ export async function processPendingOrders() {
         },
       });
 
-      if (claimed.count !== 1) {
+      if (claimResult.count !== 1) {
         console.log(`Intent (${intent.id}) was already claimed by another worker tick.`);
         continue;
       }
 
-      processed += 1;
+      claimed += 1;
 
       if (!intent.clientOrderId) {
         throw new Error(
@@ -160,6 +373,7 @@ export async function processPendingOrders() {
             `Intent (${intent.id}) blocked by worker-time risk recheck: ${riskResult.reason}`
           );
 
+          blocked += 1;
           continue;
         }
       }
@@ -193,6 +407,7 @@ export async function processPendingOrders() {
 
         console.log(`Intent (${intent.id}) already has broker order ${brokerOrder.id}; marked submitted.`);
 
+        submitted += 1;
         continue;
       }
 
@@ -248,6 +463,7 @@ export async function processPendingOrders() {
       }
 
       console.log(`Intent (${intent.id}) for ${intent.symbol} submitted.`);
+      submitted += 1;
     } catch (error) {
       await prisma.orderIntent.update({
         where: { id: intent.id },
@@ -259,12 +475,91 @@ export async function processPendingOrders() {
       });
 
       console.error(`Intent (${intent.id}) failed during broker submission`, error);
+      failed += 1;
     }
   }
 
   return {
     found: pending.length,
-    processed,
+    claimed,
+    submitted,
+    blocked,
+    failed,
+  };
+}
+
+export async function processPendingOrders() {
+  const accounts = await enumerateLifecycleAccounts('pending_submissions');
+  const results = [];
+
+  for (const account of accounts) {
+    if (!account.eligible) {
+      const outcome =
+        account.reason === 'credentials_unavailable_with_exposure'
+          ? 'CREDENTIALS_UNAVAILABLE' as const
+          : 'SKIPPED' as const;
+      results.push({ account, outcome });
+      console[outcome === 'CREDENTIALS_UNAVAILABLE' ? 'error' : 'info']({
+        workflow: 'pending_submissions',
+        tradingAccountId: account.tradingAccountId,
+        displayName: account.displayName,
+        environment: account.environment,
+        outcome,
+        reason: account.reason,
+      });
+      continue;
+    }
+
+    try {
+      const result = await processPendingOrdersForAccount(
+        account.tradingAccountId
+      );
+      results.push({
+        account,
+        outcome: result.failed > 0 ? 'FAILED' as const : 'PROCESSED' as const,
+        result,
+      });
+    } catch (error) {
+      const message = sanitizeError(error);
+      results.push({
+        account,
+        outcome: 'FAILED' as const,
+        error: message,
+      });
+      console.error({
+        workflow: 'pending_submissions',
+        tradingAccountId: account.tradingAccountId,
+        displayName: account.displayName,
+        environment: account.environment,
+        outcome: 'FAILED',
+        error: message,
+      });
+    }
+  }
+
+  const accountResults = results.flatMap((item) =>
+    'result' in item && item.result ? [item.result] : []
+  );
+
+  return {
+    workflow: 'pending_submissions' as const,
+    processedAccounts: results.filter((item) => item.outcome === 'PROCESSED')
+      .length,
+    failedAccounts: results.filter((item) => item.outcome === 'FAILED').length,
+    credentialUnavailableAccounts: results.filter(
+      (item) => item.outcome === 'CREDENTIALS_UNAVAILABLE'
+    ).length,
+    skippedAccounts: results.filter((item) => item.outcome === 'SKIPPED')
+      .length,
+    intentsFound: accountResults.reduce((sum, item) => sum + item.found, 0),
+    intentsClaimed: accountResults.reduce((sum, item) => sum + item.claimed, 0),
+    intentsSubmitted: accountResults.reduce(
+      (sum, item) => sum + item.submitted,
+      0
+    ),
+    intentsBlocked: accountResults.reduce((sum, item) => sum + item.blocked, 0),
+    intentsFailed: accountResults.reduce((sum, item) => sum + item.failed, 0),
+    results,
   };
 }
 
@@ -277,7 +572,8 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
     include: {
       brokerOrders: true
     },
-    take: 10
+    take: SUBMITTED_ORDER_BATCH_LIMIT_PER_ACCOUNT,
+    orderBy: { createdAt: 'asc' },
   });
 
   if (submittedIntents.length === 0) {
@@ -285,6 +581,8 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
       found: 0,
       polled: false,
       synced: 0,
+      failed: 0,
+      failures: [],
       skipped: true,
       skipReason: 'no_local_submitted_orders' as const,
       deferred: false,
@@ -301,6 +599,8 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
       found: submittedIntents.length,
       polled: false,
       synced: 0,
+      failed: 0,
+      failures: [],
       skipped: true,
       skipReason:
         decision.reason === 'rate_limit_backoff'
@@ -316,7 +616,11 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
   let openOrders: Awaited<ReturnType<typeof getNormalizedOpenOrders>>;
 
   try {
-    adaptivePollingCoordinator.recordAttempt('submitted_order_sync');
+    adaptivePollingCoordinator.recordAttempt(
+      'submitted_order_sync',
+      tradingAccountId,
+      new Date()
+    );
     openOrders = await getNormalizedOpenOrders(
       tradingAccountId,
       'submitted_order_sync'
@@ -325,13 +629,17 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
     if (error instanceof AlpacaRateLimitDeferredError) {
       adaptivePollingCoordinator.recordRateLimitDeferred(
         'submitted_order_sync',
-        error.backoffUntil
+        tradingAccountId,
+        error.backoffUntil,
+        new Date()
       );
 
       return {
         found: submittedIntents.length,
         polled: false,
         synced: 0,
+        failed: 0,
+        failures: [],
         skipped: true,
         skipReason: 'rate_limited' as const,
         deferred: true,
@@ -342,7 +650,11 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
       } satisfies SubmittedOrderSyncResult;
     }
 
-    adaptivePollingCoordinator.recordFailure('submitted_order_sync');
+    adaptivePollingCoordinator.recordFailure(
+      'submitted_order_sync',
+      tradingAccountId,
+      new Date()
+    );
     console.error('Failed to fetch Alpaca open orders during submitted order sync', error);
     throw error;
   }
@@ -352,6 +664,7 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
   );
 
   let synced = 0;
+  const failures: SubmittedOrderSyncResult['failures'] = [];
 
   for (const intent of submittedIntents) {
     try {
@@ -432,20 +745,46 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
         synced += 1;
       }
     } catch (error) {
-      console.error(`Sync error for intent ${intent.id}`, error);
+      const brokerOrder = intent.brokerOrders[0];
+      const message = sanitizeError(error);
+      failures.push({
+        orderIntentId: intent.id,
+        brokerOrderRecordId: brokerOrder?.id ?? null,
+        error: message,
+      });
+      console.error({
+        workflow: 'submitted_orders',
+        tradingAccountId,
+        orderIntentId: intent.id,
+        brokerOrderRecordId: brokerOrder?.id ?? null,
+        outcome: 'FAILED',
+        error: message,
+      });
     }
   }
 
-  adaptivePollingCoordinator.recordSuccess(
-    'submitted_order_sync',
-    new Date(),
-    decision.effectiveIntervalMs
-  );
+  const completedAt = new Date();
+  if (failures.length > 0) {
+    adaptivePollingCoordinator.recordFailure(
+      'submitted_order_sync',
+      tradingAccountId,
+      completedAt
+    );
+  } else {
+    adaptivePollingCoordinator.recordSuccess(
+      'submitted_order_sync',
+      tradingAccountId,
+      completedAt,
+      decision.effectiveIntervalMs
+    );
+  }
 
   return {
     found: submittedIntents.length,
     polled: true,
     synced,
+    failed: failures.length,
+    failures,
     deferred: false,
     skipped: false,
     skipReason: null,
@@ -454,11 +793,77 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
     nextDueAt:
       decision.effectiveIntervalMs === null
         ? null
-        : new Date(Date.now() + decision.effectiveIntervalMs).toISOString(),
+        : new Date(completedAt.getTime() + decision.effectiveIntervalMs).toISOString(),
   } satisfies SubmittedOrderSyncResult;
 }
 
+export async function syncSubmittedOrdersAcrossAccounts() {
+  const accounts = await enumerateLifecycleAccounts('submitted_orders');
+  const results: SubmittedOrderAccountResult[] = [];
+
+  for (const account of accounts) {
+    if (!account.eligible) {
+      const outcome =
+        account.reason === 'credentials_unavailable_with_exposure'
+          ? 'CREDENTIALS_UNAVAILABLE'
+          : 'SKIPPED';
+      results.push({ workflow: 'submitted_orders', account, outcome });
+      console[outcome === 'CREDENTIALS_UNAVAILABLE' ? 'error' : 'info']({
+        workflow: 'submitted_orders',
+        tradingAccountId: account.tradingAccountId,
+        displayName: account.displayName,
+        environment: account.environment,
+        outcome,
+        skipReason: account.reason,
+      });
+      continue;
+    }
+
+    try {
+      const result = await syncSubmittedOrdersForAccount(
+        account.tradingAccountId
+      );
+      results.push({
+        workflow: 'submitted_orders',
+        account,
+        outcome:
+          result.failed > 0
+            ? 'FAILED'
+            : result.skipped
+              ? 'SKIPPED'
+              : 'PROCESSED',
+        result,
+      });
+    } catch (error) {
+      const message = sanitizeError(error);
+      results.push({
+        workflow: 'submitted_orders',
+        account,
+        outcome: 'FAILED',
+        error: message,
+      });
+      console.error({
+        workflow: 'submitted_orders',
+        tradingAccountId: account.tradingAccountId,
+        displayName: account.displayName,
+        environment: account.environment,
+        outcome: 'FAILED',
+        error: message,
+      });
+    }
+  }
+
+  return {
+    workflow: 'submitted_orders' as const,
+    processedAccounts: results.filter((item) => item.outcome === 'PROCESSED')
+      .length,
+    failedAccounts: results.filter((item) => item.outcome === 'FAILED').length,
+    results,
+  };
+}
+
+// Compatibility wrapper for explicit legacy/manual callers. Scheduled worker
+// execution uses syncSubmittedOrdersAcrossAccounts.
 export async function syncSubmittedOrders() {
-  const tradingAccountId = await resolveDefaultTradingAccountId();
-  return syncSubmittedOrdersForAccount(tradingAccountId);
+  return syncSubmittedOrdersForAccount(await resolveDefaultTradingAccountId());
 }

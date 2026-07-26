@@ -1,5 +1,6 @@
 import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
-import { syncBrokerActivities } from '../services/broker-activity.service.js';
+import { syncBrokerActivitiesForAccount } from '../services/broker-activity.service.js';
+import { enumerateLifecycleAccounts } from '../services/lifecycle-account-eligibility.service.js';
 
 let running = false;
 
@@ -14,30 +15,64 @@ export async function runBrokerActivitySync() {
   running = true;
 
   try {
-    let result: Awaited<ReturnType<typeof syncBrokerActivities>>;
+    const accounts = await enumerateLifecycleAccounts('broker_activities');
+    const results = [];
 
-    try {
-      result = await syncBrokerActivities({
-        activityType: 'FILL',
-        pageSize: 100,
-        maxPages: 3,
-      });
-    } catch (error) {
-      if (error instanceof AlpacaRateLimitDeferredError) {
-        return {
-          skipped: true,
-          reason: 'not_due' as const,
-          deferred: true,
-          backoffUntil: error.backoffUntil?.toISOString() ?? null,
-        };
+    for (const account of accounts) {
+      if (!account.eligible) {
+        results.push({
+          account,
+          outcome:
+            account.reason === 'credentials_unavailable_with_exposure'
+              ? 'CREDENTIALS_UNAVAILABLE' as const
+              : 'SKIPPED' as const,
+        });
+        continue;
       }
 
-      throw error;
+      try {
+        const result = await syncBrokerActivitiesForAccount(
+          account.tradingAccountId,
+          {
+            activityType: 'FILL',
+            pageSize: 100,
+            maxPages: 3,
+          }
+        );
+        results.push({ account, outcome: 'PROCESSED' as const, result });
+      } catch (error) {
+        if (error instanceof AlpacaRateLimitDeferredError) {
+          results.push({
+            account,
+            outcome: 'SKIPPED' as const,
+            deferred: true,
+            backoffUntil: error.backoffUntil?.toISOString() ?? null,
+          });
+          continue;
+        }
+
+        const message =
+          error instanceof Error ? error.message : 'Unknown worker error.';
+        results.push({ account, outcome: 'FAILED' as const, error: message });
+        console.error({
+          workflow: 'broker_activities',
+          tradingAccountId: account.tradingAccountId,
+          displayName: account.displayName,
+          environment: account.environment,
+          outcome: 'FAILED',
+          error: message,
+        });
+      }
     }
 
     return {
       skipped: false,
-      result,
+      results,
+      processedAccounts: results.filter(
+        (item) => item.outcome === 'PROCESSED'
+      ).length,
+      failedAccounts: results.filter((item) => item.outcome === 'FAILED')
+        .length,
     };
   } finally {
     running = false;

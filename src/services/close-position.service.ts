@@ -87,6 +87,7 @@ export async function closePosition(trackedPositionId: number) {
   );
 
   adaptivePollingCoordinator.forceAfterBrokerPositionWrite(
+    tradingAccountId,
     'broker_position_close_requested'
   );
 
