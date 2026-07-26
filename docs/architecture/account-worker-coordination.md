@@ -49,3 +49,12 @@ protective order is not automatically risk-reducing.
 The new table is additive, but old code does not understand the new partial unique
 index and can surface uniqueness errors during overlap. Use a brief maintenance
 window rather than mixed-version worker execution.
+
+## Persistent backoff
+
+Backoff is re-read after lock acquisition and survives process restarts. Transient
+failures start at one second and double to a bounded cap: pending orders and
+tracked-position synchronization cap at 30 seconds; submitted orders and broker
+activities at 60 seconds; exit evaluation at 15 seconds; snapshots and
+reconciliation at five minutes. Lock contention never increments failure backoff,
+and any successful evaluation clears the stored failure/backoff state.

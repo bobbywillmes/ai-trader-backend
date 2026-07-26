@@ -28,6 +28,8 @@ import {
   resolveDefaultTradingAccountId,
   TRADING_ACCOUNT_SUMMARY_SELECT,
 } from './trading-account.service.js';
+import { runTradingAccountWorkflow } from './trading-account-workflow-runner.service.js';
+import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from './trading-account-workflow-lock.service.js';
 import { enumerateLifecycleAccounts } from './lifecycle-account-eligibility.service.js';
 
 export type TrackedPositionSyncResult = {
@@ -658,9 +660,18 @@ export async function syncTrackedPositionsAcrossAccounts() {
     }
 
     try {
-      const result = await syncTrackedPositionsForAccount(
-        account.tradingAccountId
-      );
+      const run = await runTradingAccountWorkflow({
+        tradingAccountId: account.tradingAccountId,
+        workerKey: 'tracked_position_sync',
+        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.POSITION_SYNC,
+        execute: () => syncTrackedPositionsForAccount(account.tradingAccountId),
+      });
+      if (run.outcome === 'FAILED') throw run.error;
+      if (run.outcome !== 'PROCESSED') {
+        results.push({ account, outcome: 'SKIPPED' as const });
+        continue;
+      }
+      const result = run.value;
       results.push({
         account,
         outcome:

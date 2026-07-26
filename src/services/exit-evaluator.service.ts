@@ -15,6 +15,8 @@ import {
   type LifecycleAccountEligibility,
 } from './lifecycle-account-eligibility.service.js';
 import { syncProtectiveOrdersForAccount } from './protective-order-sync.service.js';
+import { runTradingAccountWorkflow } from './trading-account-workflow-runner.service.js';
+import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from './trading-account-workflow-lock.service.js';
 
 export type ExitEvaluationCounts = {
   positionsEvaluated: number;
@@ -316,7 +318,21 @@ export async function evaluateExitsForEligibleAccounts() {
     }
 
     try {
-      const evaluation = await evaluateExitsForAccount(account.tradingAccountId);
+      const run = await runTradingAccountWorkflow({
+        tradingAccountId: account.tradingAccountId,
+        workerKey: 'exit_evaluation',
+        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.EXIT_EVALUATION,
+        execute: () => evaluateExitsForAccount(account.tradingAccountId),
+      });
+      if (run.outcome === 'FAILED') throw run.error;
+      if (run.outcome !== 'PROCESSED') {
+        results.push({
+          workflow: 'exit_evaluation', account, outcome: 'SKIPPED',
+          counts: emptyCounts(), failures: [],
+        });
+        continue;
+      }
+      const evaluation = run.value;
       const outcome =
         evaluation.counts.failedPositions > 0 ? 'FAILED' : 'PROCESSED';
       results.push({

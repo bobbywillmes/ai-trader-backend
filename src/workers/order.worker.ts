@@ -21,6 +21,8 @@ import {
   type LifecycleAccountEligibility,
 } from '../services/lifecycle-account-eligibility.service.js';
 import { resolveDefaultTradingAccountId } from '../services/trading-account.service.js';
+import { runTradingAccountWorkflow } from '../services/trading-account-workflow-runner.service.js';
+import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from '../services/trading-account-workflow-lock.service.js';
 import {
   evaluateOrderRisk,
   logRiskGateBlockedOrder,
@@ -276,12 +278,17 @@ export async function recoverStaleSubmittingIntents() {
       continue;
     }
     try {
+      const run = await runTradingAccountWorkflow({
+        tradingAccountId: account.tradingAccountId,
+        workerKey: 'pending_order_processing',
+        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.ORDER_LIFECYCLE,
+        execute: () => recoverStaleSubmittingIntentsForAccount(account.tradingAccountId),
+      });
+      if (run.outcome === 'FAILED') throw run.error;
       results.push({
         account,
-        outcome: 'PROCESSED' as const,
-        result: await recoverStaleSubmittingIntentsForAccount(
-          account.tradingAccountId
-        ),
+        outcome: run.outcome === 'PROCESSED' ? 'PROCESSED' as const : 'SKIPPED' as const,
+        ...(run.outcome === 'PROCESSED' ? { result: run.value } : {}),
       });
     } catch (error) {
       results.push({
@@ -555,9 +562,18 @@ export async function processPendingOrders() {
     }
 
     try {
-      const result = await processPendingOrdersForAccount(
-        account.tradingAccountId
-      );
+      const run = await runTradingAccountWorkflow({
+        tradingAccountId: account.tradingAccountId,
+        workerKey: 'pending_order_processing',
+        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.ORDER_LIFECYCLE,
+        execute: () => processPendingOrdersForAccount(account.tradingAccountId),
+      });
+      if (run.outcome === 'FAILED') throw run.error;
+      if (run.outcome !== 'PROCESSED') {
+        results.push({ account, outcome: 'SKIPPED' as const });
+        continue;
+      }
+      const result = run.value;
       results.push({
         account,
         outcome: result.failed > 0 ? 'FAILED' as const : 'PROCESSED' as const,
@@ -864,9 +880,18 @@ export async function syncSubmittedOrdersAcrossAccounts() {
     }
 
     try {
-      const result = await syncSubmittedOrdersForAccount(
-        account.tradingAccountId
-      );
+      const run = await runTradingAccountWorkflow({
+        tradingAccountId: account.tradingAccountId,
+        workerKey: 'submitted_order_sync',
+        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.ORDER_LIFECYCLE,
+        execute: () => syncSubmittedOrdersForAccount(account.tradingAccountId),
+      });
+      if (run.outcome === 'FAILED') throw run.error;
+      if (run.outcome !== 'PROCESSED') {
+        results.push({ workflow: 'submitted_orders', account, outcome: 'SKIPPED' });
+        continue;
+      }
+      const result = run.value;
       results.push({
         workflow: 'submitted_orders',
         account,
