@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
-import { env } from '../config/env.js';
 import type { WorkerKey } from '../workers/worker-health.definitions.js';
-import { recordTradingAccountWorkerAttempt } from './trading-account-worker-health.service.js';
+import {
+  recordTradingAccountWorkerAttempt,
+  startTradingAccountWorkerRun,
+} from './trading-account-worker-health.service.js';
 import { withTradingAccountWorkflowLock } from './trading-account-workflow-lock.service.js';
 
 export const accountWorkflowProcessInstanceId = randomUUID();
@@ -21,26 +24,45 @@ const BACKOFF_CAP_MS: Record<WorkerKey, number> = {
 
 export type AccountWorkflowRunResult<T> =
   | { outcome: 'PROCESSED'; value: T }
+  | { outcome: 'SKIPPED'; value: T }
   | { outcome: 'LOCK_SKIPPED' }
   | { outcome: 'BACKING_OFF'; backoffUntil: Date }
-  | { outcome: 'FAILED'; error: unknown };
+  | { outcome: 'FAILED'; error: unknown; value?: T };
+
+export type AccountWorkflowClassification =
+  | { outcome: 'success'; workSucceeded?: boolean; summary?: Prisma.InputJsonValue }
+  | { outcome: 'skipped'; summary?: Prisma.InputJsonValue }
+  | { outcome: 'failure'; error: unknown; errorCode?: string; summary?: Prisma.InputJsonValue };
 
 export async function runTradingAccountWorkflow<T>(args: {
   tradingAccountId: number;
   workerKey: WorkerKey;
   lockFamily: string;
   execute: () => Promise<T>;
+  classify?: (value: T) => AccountWorkflowClassification;
 }): Promise<AccountWorkflowRunResult<T>> {
-  // Unit suites that intentionally provide a narrow Prisma mock exercise the
-  // unlocked account core. Locking itself is covered with database-backed tests.
-  if (env.NODE_ENV === 'test' || !prisma.tradingAccountWorkerHealthState) {
+  const classify: (value: T) => AccountWorkflowClassification = args.classify ?? (() => ({
+    outcome: 'success' as const,
+    workSucceeded: true,
+  }));
+
+  // Narrow unit-test Prisma doubles can exercise the account core without
+  // pretending to provide the durable health model.
+  if (!prisma.tradingAccountWorkerHealthState) {
     try {
-      return { outcome: 'PROCESSED', value: await args.execute() };
+      const value = await args.execute();
+      const classification = classify(value);
+      if (classification.outcome === 'failure') {
+        return { outcome: 'FAILED', error: classification.error, value };
+      }
+      return {
+        outcome: classification.outcome === 'skipped' ? 'SKIPPED' : 'PROCESSED',
+        value,
+      };
     } catch (error) {
       return { outcome: 'FAILED', error };
     }
   }
-  const startedAt = new Date();
   const locked = await withTradingAccountWorkflowLock({
     tradingAccountId: args.tradingAccountId,
     workflowKey: args.lockFamily,
@@ -54,13 +76,85 @@ export async function runTradingAccountWorkflow<T>(args: {
         select: { backoffUntil: true },
       });
       if (persisted?.backoffUntil && persisted.backoffUntil > new Date()) {
+        await recordTradingAccountWorkerAttempt({
+          tradingAccountId: args.tradingAccountId,
+          workerKey: args.workerKey,
+          processInstanceId: accountWorkflowProcessInstanceId,
+          outcome: 'backoff_skipped',
+          startedAt: new Date(),
+          backoffUntil: persisted.backoffUntil,
+        });
         return { backingOff: persisted.backoffUntil } as const;
       }
-      return { value: await args.execute() } as const;
+
+      const startedAt = new Date();
+      const startedState = await startTradingAccountWorkerRun({
+        tradingAccountId: args.tradingAccountId,
+        workerKey: args.workerKey,
+        processInstanceId: accountWorkflowProcessInstanceId,
+        startedAt,
+      });
+      try {
+        const value = await args.execute();
+        const classification = classify(value);
+        if (classification.outcome === 'failure') {
+          const failures = startedState.consecutiveFailures + 1;
+          const delayMs = Math.min(
+            1_000 * 2 ** Math.min(failures - 1, 10),
+            BACKOFF_CAP_MS[args.workerKey]
+          );
+          await recordTradingAccountWorkerAttempt({
+            tradingAccountId: args.tradingAccountId,
+            workerKey: args.workerKey,
+            processInstanceId: accountWorkflowProcessInstanceId,
+            outcome: 'failure',
+            error: classification.error,
+            errorCode: classification.errorCode ?? 'CLASSIFIED_FAILURE',
+            ...(classification.summary !== undefined
+              ? { summary: classification.summary }
+              : {}),
+            backoffUntil: new Date(Date.now() + delayMs),
+            startedAt,
+          });
+          return { failed: classification.error, value } as const;
+        }
+        await recordTradingAccountWorkerAttempt({
+          tradingAccountId: args.tradingAccountId,
+          workerKey: args.workerKey,
+          processInstanceId: accountWorkflowProcessInstanceId,
+          outcome: 'success',
+          workSucceeded: classification.outcome === 'success'
+            ? classification.workSucceeded ?? true
+            : false,
+          ...(classification.summary !== undefined
+            ? { summary: classification.summary }
+            : {}),
+          startedAt,
+        });
+        return { value, skipped: classification.outcome === 'skipped' } as const;
+      } catch (error) {
+        const failures = startedState.consecutiveFailures + 1;
+        const delayMs = Math.min(
+          1_000 * 2 ** Math.min(failures - 1, 10),
+          BACKOFF_CAP_MS[args.workerKey]
+        );
+        await recordTradingAccountWorkerAttempt({
+          tradingAccountId: args.tradingAccountId,
+          workerKey: args.workerKey,
+          processInstanceId: accountWorkflowProcessInstanceId,
+          outcome: 'failure',
+          error,
+          errorCode: 'WORKFLOW_ERROR',
+          backoffUntil: new Date(Date.now() + delayMs),
+          startedAt,
+        });
+        return { failed: error } as const;
+      }
     },
   });
 
   if (locked.outcome === 'NOT_ACQUIRED') {
+    const startedAt = new Date();
     await recordTradingAccountWorkerAttempt({
       tradingAccountId: args.tradingAccountId, workerKey: args.workerKey,
       processInstanceId: accountWorkflowProcessInstanceId,
@@ -71,36 +165,20 @@ export async function runTradingAccountWorkflow<T>(args: {
   }
   if (locked.outcome === 'ACQUIRED_AND_COMPLETED') {
     if ('backingOff' in locked.value) {
-      await recordTradingAccountWorkerAttempt({
-        tradingAccountId: args.tradingAccountId, workerKey: args.workerKey,
-        processInstanceId: accountWorkflowProcessInstanceId,
-        outcome: 'backoff_skipped', startedAt,
-        backoffUntil: locked.value.backingOff,
-      });
       return { outcome: 'BACKING_OFF', backoffUntil: locked.value.backingOff };
     }
-    await recordTradingAccountWorkerAttempt({
-      tradingAccountId: args.tradingAccountId, workerKey: args.workerKey,
-      processInstanceId: accountWorkflowProcessInstanceId,
-      outcome: 'success', workSucceeded: true, startedAt,
-    });
-    return { outcome: 'PROCESSED', value: locked.value.value };
+    if ('failed' in locked.value) {
+      return {
+        outcome: 'FAILED',
+        error: locked.value.failed,
+        ...(locked.value.value !== undefined ? { value: locked.value.value } : {}),
+      };
+    }
+    return {
+      outcome: locked.value.skipped ? 'SKIPPED' : 'PROCESSED',
+      value: locked.value.value,
+    };
   }
 
-  const previous = await prisma.tradingAccountWorkerHealthState.findUnique({
-    where: { tradingAccountId_workerKey: {
-      tradingAccountId: args.tradingAccountId, workerKey: args.workerKey,
-    } },
-    select: { consecutiveFailures: true },
-  });
-  const failures = (previous?.consecutiveFailures ?? 0) + 1;
-  const delayMs = Math.min(1_000 * 2 ** Math.min(failures - 1, 10), BACKOFF_CAP_MS[args.workerKey]);
-  const backoffUntil = new Date(Date.now() + delayMs);
-  await recordTradingAccountWorkerAttempt({
-    tradingAccountId: args.tradingAccountId, workerKey: args.workerKey,
-    processInstanceId: accountWorkflowProcessInstanceId,
-    outcome: 'failure', error: locked.error, errorCode: locked.outcome,
-    backoffUntil, startedAt,
-  });
   return { outcome: 'FAILED', error: locked.error };
 }

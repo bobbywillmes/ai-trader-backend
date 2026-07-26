@@ -25,6 +25,15 @@ describe('deriveTradingAccountWorkerStatus', () => {
     }, definition, now)).toBe('BACKING_OFF');
   });
 
+  it('does not hide an applicable credential failure as dormant', () => {
+    expect(deriveTradingAccountWorkerStatus({
+      ...base,
+      eligible: false,
+      consecutiveFailures: 1,
+      lastFailedAt: new Date(now.getTime() - 1_000),
+    }, definition, now)).toBe('FAILING');
+  });
+
   it('makes repeated lock exclusion stale after the freshness threshold', () => {
     expect(deriveTradingAccountWorkerStatus({
       ...base, lastSucceededAt: null,

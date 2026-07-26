@@ -665,8 +665,26 @@ export async function syncTrackedPositionsAcrossAccounts() {
         workerKey: 'tracked_position_sync',
         lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.POSITION_SYNC,
         execute: () => syncTrackedPositionsForAccount(account.tradingAccountId),
+        classify: (result) => result.symbolErrors.length > 0
+          ? {
+              outcome: 'failure',
+              error: new Error(
+                `${result.symbolErrors.length} tracked position symbol synchronization(s) failed.`
+              ),
+              errorCode: 'TRACKED_POSITION_ITEM_FAILURE',
+              summary: result,
+            }
+          : result.skipped
+            ? { outcome: 'skipped', summary: result }
+            : { outcome: 'success', workSucceeded: true, summary: result },
       });
-      if (run.outcome === 'FAILED') throw run.error;
+      if (run.outcome === 'FAILED') {
+        if (run.value !== undefined) {
+          results.push({ account, outcome: 'FAILED' as const, result: run.value });
+          continue;
+        }
+        throw run.error;
+      }
       if (run.outcome !== 'PROCESSED') {
         results.push({ account, outcome: 'SKIPPED' as const });
         continue;

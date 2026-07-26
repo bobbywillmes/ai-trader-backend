@@ -21,7 +21,7 @@ export function deriveTradingAccountWorkerStatus(
   definition: ReturnType<typeof getWorkerDefinition>,
   now = new Date()
 ): AccountWorkerStatus {
-  if (!state.applicable || !state.eligible) return 'DORMANT';
+  if (!state.applicable) return 'DORMANT';
   if (state.backoffUntil && state.backoffUntil > now) return 'BACKING_OFF';
   if (state.consecutiveFailures > 0) return 'FAILING';
   if (state.currentRunStartedAt &&
@@ -97,35 +97,6 @@ export async function recordTradingAccountWorkerAttempt(args: {
       tradingAccountId: args.tradingAccountId, workerKey: args.workerKey,
     } },
   });
-  if (previous?.currentRunStartedAt &&
-      previous.processInstanceId !== args.processInstanceId) {
-    await prisma.tradingAccountWorkerHealthState.update({
-      where: { id: previous.id },
-      data: {
-        currentRunStartedAt: null,
-        lastFailedAt: now,
-        lastErrorAt: now,
-        lastErrorCode: 'INTERRUPTED_PREVIOUS_PROCESS',
-        lastError: 'Previous process ended before this account workflow completed.',
-        consecutiveFailures: { increment: 1 },
-        totalFailures: { increment: 1 },
-      },
-    });
-    await createSystemEvent({
-      type: 'account_worker_health.interrupted',
-      entityType: 'tradingAccountWorker',
-      entityId: `${args.tradingAccountId}:${args.workerKey}`,
-      tradingAccountId: args.tradingAccountId,
-      message: `Account workflow ${args.workerKey} was interrupted in a previous process.`,
-      payloadJson: {
-        tradingAccountId: args.tradingAccountId,
-        workerKey: args.workerKey,
-        previousProcessInstanceId: previous.processInstanceId,
-        nextProcessInstanceId: args.processInstanceId,
-        previousRunStartedAt: previous.currentRunStartedAt,
-      },
-    });
-  }
   const previousStatus = previous
     ? deriveTradingAccountWorkerStatus(previous, definition, now) : 'STARTING';
   const failure = args.outcome === 'failure';
@@ -210,6 +181,70 @@ export async function recordTradingAccountWorkerAttempt(args: {
   const nextStatus = deriveTradingAccountWorkerStatus(state, definition, now);
   await emitTransition({ state, previousStatus, nextStatus, reason: state.lastError ?? state.lastSkipReason });
   return { ...state, status: nextStatus };
+}
+
+export async function startTradingAccountWorkerRun(args: {
+  tradingAccountId: number;
+  workerKey: WorkerKey;
+  processInstanceId: string;
+  startedAt: Date;
+}) {
+  const definition = getWorkerDefinition(args.workerKey);
+  const previous = await prisma.tradingAccountWorkerHealthState.findUnique({
+    where: { tradingAccountId_workerKey: {
+      tradingAccountId: args.tradingAccountId, workerKey: args.workerKey,
+    } },
+  });
+
+  if (previous?.currentRunStartedAt &&
+      previous.processInstanceId !== args.processInstanceId) {
+    await prisma.tradingAccountWorkerHealthState.update({
+      where: { id: previous.id },
+      data: {
+        currentRunStartedAt: null,
+        lastFailedAt: args.startedAt,
+        lastErrorAt: args.startedAt,
+        lastErrorCode: 'INTERRUPTED_PREVIOUS_PROCESS',
+        lastError: 'Previous process ended before this account workflow completed.',
+        consecutiveFailures: { increment: 1 },
+        totalFailures: { increment: 1 },
+      },
+    });
+    await createSystemEvent({
+      type: 'account_worker_health.interrupted',
+      entityType: 'tradingAccountWorker',
+      entityId: `${args.tradingAccountId}:${args.workerKey}`,
+      tradingAccountId: args.tradingAccountId,
+      message: `Account workflow ${args.workerKey} was interrupted in a previous process.`,
+      payloadJson: {
+        tradingAccountId: args.tradingAccountId,
+        workerKey: args.workerKey,
+        previousProcessInstanceId: previous.processInstanceId,
+        nextProcessInstanceId: args.processInstanceId,
+        previousRunStartedAt: previous.currentRunStartedAt,
+      },
+    });
+  }
+
+  return prisma.tradingAccountWorkerHealthState.upsert({
+    where: { tradingAccountId_workerKey: {
+      tradingAccountId: args.tradingAccountId, workerKey: args.workerKey,
+    } },
+    create: {
+      tradingAccountId: args.tradingAccountId,
+      workerKey: args.workerKey,
+      processInstanceId: args.processInstanceId,
+      expectedIntervalMs: definition.expectedIntervalMs,
+      currentRunStartedAt: args.startedAt,
+      lastTickStartedAt: args.startedAt,
+    },
+    update: {
+      processInstanceId: args.processInstanceId,
+      expectedIntervalMs: definition.expectedIntervalMs,
+      currentRunStartedAt: args.startedAt,
+      lastTickStartedAt: args.startedAt,
+    },
+  });
 }
 
 export async function listTradingAccountWorkerHealth(tradingAccountId: number) {

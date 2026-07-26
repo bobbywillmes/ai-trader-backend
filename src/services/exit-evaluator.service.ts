@@ -323,8 +323,33 @@ export async function evaluateExitsForEligibleAccounts() {
         workerKey: 'exit_evaluation',
         lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.EXIT_EVALUATION,
         execute: () => evaluateExitsForAccount(account.tradingAccountId),
+        classify: (result) => result.counts.failedPositions > 0
+          ? {
+              outcome: 'failure',
+              error: new Error(
+                `${result.counts.failedPositions} position exit evaluation(s) failed.`
+              ),
+              errorCode: 'EXIT_EVALUATION_ITEM_FAILURE',
+              summary: result.counts,
+            }
+          : {
+              outcome: 'success',
+              workSucceeded: result.counts.positionsEvaluated > 0,
+              summary: result.counts,
+            },
       });
-      if (run.outcome === 'FAILED') throw run.error;
+      if (run.outcome === 'FAILED') {
+        if (run.value !== undefined) {
+          results.push({
+            workflow: 'exit_evaluation',
+            account,
+            outcome: 'FAILED',
+            ...run.value,
+          });
+          continue;
+        }
+        throw run.error;
+      }
       if (run.outcome !== 'PROCESSED') {
         results.push({
           workflow: 'exit_evaluation', account, outcome: 'SKIPPED',

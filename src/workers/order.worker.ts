@@ -284,7 +284,13 @@ export async function recoverStaleSubmittingIntents() {
         lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.ORDER_LIFECYCLE,
         execute: () => recoverStaleSubmittingIntentsForAccount(account.tradingAccountId),
       });
-      if (run.outcome === 'FAILED') throw run.error;
+      if (run.outcome === 'FAILED') {
+        if (run.value !== undefined) {
+          results.push({ account, outcome: 'FAILED' as const, result: run.value });
+          continue;
+        }
+        throw run.error;
+      }
       results.push({
         account,
         outcome: run.outcome === 'PROCESSED' ? 'PROCESSED' as const : 'SKIPPED' as const,
@@ -567,8 +573,22 @@ export async function processPendingOrders() {
         workerKey: 'pending_order_processing',
         lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.ORDER_LIFECYCLE,
         execute: () => processPendingOrdersForAccount(account.tradingAccountId),
+        classify: (result) => result.failed > 0
+          ? {
+              outcome: 'failure',
+              error: new Error(`${result.failed} pending order submission(s) failed.`),
+              errorCode: 'PENDING_ORDER_ITEM_FAILURE',
+              summary: result,
+            }
+          : { outcome: 'success', workSucceeded: result.submitted > 0, summary: result },
       });
-      if (run.outcome === 'FAILED') throw run.error;
+      if (run.outcome === 'FAILED') {
+        if (run.value !== undefined) {
+          results.push({ account, outcome: 'FAILED' as const, result: run.value });
+          continue;
+        }
+        throw run.error;
+      }
       if (run.outcome !== 'PROCESSED') {
         results.push({ account, outcome: 'SKIPPED' as const });
         continue;
@@ -885,8 +905,26 @@ export async function syncSubmittedOrdersAcrossAccounts() {
         workerKey: 'submitted_order_sync',
         lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.ORDER_LIFECYCLE,
         execute: () => syncSubmittedOrdersForAccount(account.tradingAccountId),
+        classify: (result) => result.failed > 0
+          ? {
+              outcome: 'failure',
+              error: new Error(`${result.failed} submitted order synchronization(s) failed.`),
+              errorCode: 'SUBMITTED_ORDER_ITEM_FAILURE',
+              summary: result,
+            }
+          : result.skipped
+            ? { outcome: 'skipped', summary: result }
+            : { outcome: 'success', workSucceeded: result.synced > 0, summary: result },
       });
-      if (run.outcome === 'FAILED') throw run.error;
+      if (run.outcome === 'FAILED') {
+        if (run.value !== undefined) {
+          results.push({
+            workflow: 'submitted_orders', account, outcome: 'FAILED', result: run.value,
+          });
+          continue;
+        }
+        throw run.error;
+      }
       if (run.outcome !== 'PROCESSED') {
         results.push({ workflow: 'submitted_orders', account, outcome: 'SKIPPED' });
         continue;
