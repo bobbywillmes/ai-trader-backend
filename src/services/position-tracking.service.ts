@@ -686,7 +686,7 @@ export async function syncTrackedPositionsAcrossAccounts() {
         throw run.error;
       }
       if (run.outcome !== 'PROCESSED') {
-        results.push({ account, outcome: 'SKIPPED' as const });
+        results.push({ account, outcome: run.outcome });
         continue;
       }
       const result = run.value;

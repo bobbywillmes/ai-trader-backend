@@ -42,12 +42,22 @@ export async function runBrokerActivitySync() {
             pageSize: 100,
             maxPages: 3,
           }),
+          classify: (result) => ({
+            outcome: 'success',
+            workSucceeded: result.created > 0 || result.updated > 0,
+            summary: {
+              seen: result.seen,
+              created: result.created,
+              updated: result.updated,
+              pagesProcessed: result.pagesProcessed,
+            },
+          }),
         });
         if (run.outcome === 'FAILED') throw run.error;
         if (run.outcome === 'PROCESSED') {
           results.push({ account, outcome: 'PROCESSED' as const, result: run.value });
         } else {
-          results.push({ account, outcome: 'SKIPPED' as const,
+          results.push({ account, outcome: run.outcome,
             deferred: run.outcome === 'BACKING_OFF',
             backoffUntil: run.outcome === 'BACKING_OFF' ? run.backoffUntil.toISOString() : null });
         }

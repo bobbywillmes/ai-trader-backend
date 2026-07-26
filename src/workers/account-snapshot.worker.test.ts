@@ -15,6 +15,29 @@ vi.mock('../services/account-snapshot.service.js', () => ({
   recordAccountSnapshot: mocks.record,
 }));
 
+vi.mock('../services/trading-account-workflow-runner.service.js', () => ({
+  runTradingAccountWorkflow: async <T>(args: {
+    execute: () => Promise<T>;
+    classify?: (value: T) => { outcome: 'success' | 'skipped' | 'failure'; error?: unknown };
+  }) => {
+    try {
+      const value = await args.execute();
+      const classification = args.classify?.(value);
+      if (classification?.outcome === 'failure') {
+        return { outcome: 'FAILED' as const, error: classification.error, value };
+      }
+      return {
+        outcome: classification?.outcome === 'skipped'
+          ? 'SKIPPED' as const
+          : 'PROCESSED' as const,
+        value,
+      };
+    } catch (error) {
+      return { outcome: 'FAILED' as const, error };
+    }
+  },
+}));
+
 function account(id: number) {
   return {
     tradingAccountId: id,

@@ -58,6 +58,8 @@ export type SubmittedOrderSyncResult = {
 export type LifecycleCoordinatorOutcome =
   | 'PROCESSED'
   | 'SKIPPED'
+  | 'LOCK_SKIPPED'
+  | 'BACKING_OFF'
   | 'CREDENTIALS_UNAVAILABLE'
   | 'FAILED';
 
@@ -293,7 +295,7 @@ export async function recoverStaleSubmittingIntents() {
       }
       results.push({
         account,
-        outcome: run.outcome === 'PROCESSED' ? 'PROCESSED' as const : 'SKIPPED' as const,
+        outcome: run.outcome,
         ...(run.outcome === 'PROCESSED' ? { result: run.value } : {}),
       });
     } catch (error) {
@@ -590,7 +592,7 @@ export async function processPendingOrders() {
         throw run.error;
       }
       if (run.outcome !== 'PROCESSED') {
-        results.push({ account, outcome: 'SKIPPED' as const });
+        results.push({ account, outcome: run.outcome });
         continue;
       }
       const result = run.value;
@@ -926,7 +928,7 @@ export async function syncSubmittedOrdersAcrossAccounts() {
         throw run.error;
       }
       if (run.outcome !== 'PROCESSED') {
-        results.push({ workflow: 'submitted_orders', account, outcome: 'SKIPPED' });
+        results.push({ workflow: 'submitted_orders', account, outcome: run.outcome });
         continue;
       }
       const result = run.value;

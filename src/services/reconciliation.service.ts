@@ -17,21 +17,8 @@ import {
   enumerateLifecycleAccounts,
   type LifecycleAccountEligibility,
 } from './lifecycle-account-eligibility.service.js';
-import { withTradingAccountWorkflowLock, ACCOUNT_WORKFLOW_LOCK_FAMILIES } from './trading-account-workflow-lock.service.js';
-import { recordTradingAccountWorkerAttempt } from './trading-account-worker-health.service.js';
-
-const reconciliationProcessInstanceId = randomUUID();
-
-async function recordReconciliationHealth(
-  args: Parameters<typeof recordTradingAccountWorkerAttempt>[0]
-) {
-  try {
-    await recordTradingAccountWorkerAttempt(args);
-  } catch (error) {
-    logger.error({ error, tradingAccountId: args.tradingAccountId },
-      'Reconciliation account-health persistence failed.');
-  }
-}
+import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from './trading-account-workflow-lock.service.js';
+import { runTradingAccountWorkflow } from './trading-account-workflow-runner.service.js';
 
 export type ReconciliationSeverity = 'info' | 'warn' | 'critical';
 
@@ -756,43 +743,44 @@ export async function reconcileTradingAccountWithLock(
   tradingAccountId: number,
   options: RunReconciliationCheckOptions = {}
 ): Promise<RunReconciliationCheckResult> {
-  const startedAt = new Date();
-  const locked = await withTradingAccountWorkflowLock({
-    tradingAccountId,
-    workflowKey: ACCOUNT_WORKFLOW_LOCK_FAMILIES.RECONCILIATION,
-    processInstanceId: reconciliationProcessInstanceId,
-    execute: () => reconcileTradingAccount(tradingAccountId, options),
-  });
-  if (locked.outcome === 'ACQUIRED_AND_COMPLETED') {
-    await recordReconciliationHealth({
-      tradingAccountId, workerKey: 'scheduled_reconciliation',
-      processInstanceId: reconciliationProcessInstanceId, outcome: 'success',
-      workSucceeded: true, startedAt,
-      summary: { findingCount: locked.value.findings.length },
-    });
-    return locked.value;
-  }
-  if (locked.outcome === 'NOT_ACQUIRED') {
-    await recordReconciliationHealth({
-      tradingAccountId, workerKey: 'scheduled_reconciliation',
-      processInstanceId: reconciliationProcessInstanceId,
-      outcome: 'lock_skipped', startedAt, summary: { lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.RECONCILIATION },
-    });
+  const run = await runReconciliationAccount(tradingAccountId, options);
+  if (run.outcome === 'PROCESSED') return run.value;
+  if (run.outcome === 'LOCK_SKIPPED') {
     throw new Error(`Reconciliation already running for TradingAccount ${tradingAccountId}.`);
   }
-  const error = locked.error;
-  await recordReconciliationHealth({
-    tradingAccountId, workerKey: 'scheduled_reconciliation',
-    processInstanceId: reconciliationProcessInstanceId, outcome: 'failure',
-    error, errorCode: locked.outcome, startedAt,
+  if (run.outcome === 'BACKING_OFF') {
+    throw new Error(
+      `Reconciliation is backing off for TradingAccount ${tradingAccountId} until ${run.backoffUntil.toISOString()}.`
+    );
+  }
+  if (run.outcome === 'SKIPPED') {
+    throw new Error(`Reconciliation skipped for TradingAccount ${tradingAccountId}.`);
+  }
+  throw run.error;
+}
+
+function runReconciliationAccount(
+  tradingAccountId: number,
+  options: RunReconciliationCheckOptions
+) {
+  return runTradingAccountWorkflow({
+    tradingAccountId,
+    workerKey: 'scheduled_reconciliation',
+    lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.RECONCILIATION,
+    execute: () => reconcileTradingAccount(tradingAccountId, options),
+    classify: (result) => ({
+      outcome: 'success',
+      workSucceeded: true,
+      summary: { findingCount: result.findings.length },
+    }),
   });
-  throw error;
 }
 
 export type ReconciliationAccountResult = {
   workflow: 'reconciliation';
   account: LifecycleAccountEligibility;
-  outcome: 'PROCESSED' | 'SKIPPED' | 'CREDENTIALS_UNAVAILABLE' | 'FAILED';
+  outcome: 'PROCESSED' | 'SKIPPED' | 'CREDENTIALS_UNAVAILABLE' | 'FAILED'
+    | 'LOCK_SKIPPED' | 'BACKING_OFF';
   result?: RunReconciliationCheckResult;
   error?: string;
 };
@@ -922,10 +910,20 @@ export async function reconcileEligibleTradingAccounts(
     }
 
     try {
-      const result = await reconcileTradingAccountWithLock(
+      const run = await runReconciliationAccount(
         account.tradingAccountId,
         options
       );
+      if (run.outcome === 'FAILED') throw run.error;
+      if (run.outcome !== 'PROCESSED') {
+        results.push({
+          workflow: 'reconciliation',
+          account,
+          outcome: run.outcome,
+        });
+        continue;
+      }
+      const result = run.value;
       results.push({
         workflow: 'reconciliation',
         account,

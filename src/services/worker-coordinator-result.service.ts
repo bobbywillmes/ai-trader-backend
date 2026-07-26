@@ -1,6 +1,8 @@
 export type AccountCoordinatorOutcome =
   | 'PROCESSED'
   | 'SKIPPED'
+  | 'LOCK_SKIPPED'
+  | 'BACKING_OFF'
   | 'CREDENTIALS_UNAVAILABLE'
   | 'FAILED';
 

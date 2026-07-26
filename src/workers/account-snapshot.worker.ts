@@ -124,10 +124,20 @@ export async function runScheduledAccountSnapshots() {
             force: false,
             runKey,
           }),
+          classify: (result) => result.skipped
+            ? {
+                outcome: 'skipped',
+                summary: { created: result.created, reason: result.reason },
+              }
+            : {
+                outcome: 'success',
+                workSucceeded: result.created,
+                summary: { created: result.created, reason: result.reason },
+              },
         });
         if (run.outcome === 'FAILED') throw run.error;
         if (run.outcome !== 'PROCESSED') {
-          results.push({ account, runKey, outcome: 'SKIPPED' as const });
+          results.push({ account, runKey, outcome: run.outcome });
           continue;
         }
         const result = run.value;

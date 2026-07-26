@@ -170,6 +170,16 @@ export async function createManualAccountSnapshotController(
         reason: 'manual',
         force: true,
       }),
+      classify: (result) => result.skipped
+        ? {
+            outcome: 'skipped',
+            summary: { created: result.created, reason: result.reason },
+          }
+        : {
+            outcome: 'success',
+            workSucceeded: result.created,
+            summary: { created: result.created, reason: result.reason },
+          },
     });
     if (run.outcome === 'FAILED') throw run.error;
     if (run.outcome !== 'PROCESSED') {

@@ -31,7 +31,8 @@ export type ExitEvaluationCounts = {
 export type ExitEvaluationAccountResult = {
   workflow: 'exit_evaluation';
   account: LifecycleAccountEligibility;
-  outcome: 'PROCESSED' | 'SKIPPED' | 'CREDENTIALS_UNAVAILABLE' | 'FAILED';
+  outcome: 'PROCESSED' | 'SKIPPED' | 'CREDENTIALS_UNAVAILABLE' | 'FAILED'
+    | 'LOCK_SKIPPED' | 'BACKING_OFF';
   counts: ExitEvaluationCounts;
   failures: Array<{ trackedPositionId: number; error: string }>;
   error?: string;
@@ -352,7 +353,7 @@ export async function evaluateExitsForEligibleAccounts() {
       }
       if (run.outcome !== 'PROCESSED') {
         results.push({
-          workflow: 'exit_evaluation', account, outcome: 'SKIPPED',
+          workflow: 'exit_evaluation', account, outcome: run.outcome,
           counts: emptyCounts(), failures: [],
         });
         continue;
