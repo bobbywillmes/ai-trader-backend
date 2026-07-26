@@ -603,12 +603,20 @@ export async function syncTrackedPositionsForAccount(
   }
 
   const completedAt = new Date();
-  adaptivePollingCoordinator.recordSuccess(
-    'tracked_position_sync',
-    tradingAccountId,
-    completedAt,
-    decision.effectiveIntervalMs
-  );
+  if (symbolErrors.length > 0) {
+    adaptivePollingCoordinator.recordFailure(
+      'tracked_position_sync',
+      tradingAccountId,
+      completedAt
+    );
+  } else {
+    adaptivePollingCoordinator.recordSuccess(
+      'tracked_position_sync',
+      tradingAccountId,
+      completedAt,
+      decision.effectiveIntervalMs
+    );
+  }
 
   return {
     polled: true,
@@ -651,7 +659,12 @@ export async function syncTrackedPositionsAcrossAccounts() {
       );
       results.push({
         account,
-        outcome: result.skipped ? 'SKIPPED' as const : 'PROCESSED' as const,
+        outcome:
+          result.symbolErrors.length > 0
+            ? 'FAILED' as const
+            : result.skipped
+              ? 'SKIPPED' as const
+              : 'PROCESSED' as const,
         result,
       });
     } catch (error) {

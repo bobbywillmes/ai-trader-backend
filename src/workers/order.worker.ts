@@ -34,6 +34,12 @@ export type SubmittedOrderSyncResult = {
   found: number;
   polled: boolean;
   synced: number;
+  failed: number;
+  failures: Array<{
+    orderIntentId: number;
+    brokerOrderRecordId: number | null;
+    error: string;
+  }>;
   skipped: boolean;
   skipReason:
     | 'no_local_submitted_orders'
@@ -505,12 +511,13 @@ export async function processPendingOrders() {
     }
 
     try {
+      const result = await processPendingOrdersForAccount(
+        account.tradingAccountId
+      );
       results.push({
         account,
-        outcome: 'PROCESSED' as const,
-        result: await processPendingOrdersForAccount(
-          account.tradingAccountId
-        ),
+        outcome: result.failed > 0 ? 'FAILED' as const : 'PROCESSED' as const,
+        result,
       });
     } catch (error) {
       const message = sanitizeError(error);
@@ -574,6 +581,8 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
       found: 0,
       polled: false,
       synced: 0,
+      failed: 0,
+      failures: [],
       skipped: true,
       skipReason: 'no_local_submitted_orders' as const,
       deferred: false,
@@ -590,6 +599,8 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
       found: submittedIntents.length,
       polled: false,
       synced: 0,
+      failed: 0,
+      failures: [],
       skipped: true,
       skipReason:
         decision.reason === 'rate_limit_backoff'
@@ -627,6 +638,8 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
         found: submittedIntents.length,
         polled: false,
         synced: 0,
+        failed: 0,
+        failures: [],
         skipped: true,
         skipReason: 'rate_limited' as const,
         deferred: true,
@@ -651,6 +664,7 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
   );
 
   let synced = 0;
+  const failures: SubmittedOrderSyncResult['failures'] = [];
 
   for (const intent of submittedIntents) {
     try {
@@ -731,21 +745,46 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
         synced += 1;
       }
     } catch (error) {
-      console.error(`Sync error for intent ${intent.id}`, error);
+      const brokerOrder = intent.brokerOrders[0];
+      const message = sanitizeError(error);
+      failures.push({
+        orderIntentId: intent.id,
+        brokerOrderRecordId: brokerOrder?.id ?? null,
+        error: message,
+      });
+      console.error({
+        workflow: 'submitted_orders',
+        tradingAccountId,
+        orderIntentId: intent.id,
+        brokerOrderRecordId: brokerOrder?.id ?? null,
+        outcome: 'FAILED',
+        error: message,
+      });
     }
   }
 
-  adaptivePollingCoordinator.recordSuccess(
-    'submitted_order_sync',
-    tradingAccountId,
-    new Date(),
-    decision.effectiveIntervalMs
-  );
+  const completedAt = new Date();
+  if (failures.length > 0) {
+    adaptivePollingCoordinator.recordFailure(
+      'submitted_order_sync',
+      tradingAccountId,
+      completedAt
+    );
+  } else {
+    adaptivePollingCoordinator.recordSuccess(
+      'submitted_order_sync',
+      tradingAccountId,
+      completedAt,
+      decision.effectiveIntervalMs
+    );
+  }
 
   return {
     found: submittedIntents.length,
     polled: true,
     synced,
+    failed: failures.length,
+    failures,
     deferred: false,
     skipped: false,
     skipReason: null,
@@ -754,7 +793,7 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
     nextDueAt:
       decision.effectiveIntervalMs === null
         ? null
-        : new Date(Date.now() + decision.effectiveIntervalMs).toISOString(),
+        : new Date(completedAt.getTime() + decision.effectiveIntervalMs).toISOString(),
   } satisfies SubmittedOrderSyncResult;
 }
 
@@ -787,7 +826,12 @@ export async function syncSubmittedOrdersAcrossAccounts() {
       results.push({
         workflow: 'submitted_orders',
         account,
-        outcome: result.skipped ? 'SKIPPED' : 'PROCESSED',
+        outcome:
+          result.failed > 0
+            ? 'FAILED'
+            : result.skipped
+              ? 'SKIPPED'
+              : 'PROCESSED',
         result,
       });
     } catch (error) {

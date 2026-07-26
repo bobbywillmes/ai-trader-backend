@@ -6,6 +6,7 @@ import {
   syncSubmittedOrders,
   syncSubmittedOrdersAcrossAccounts,
 } from './order.worker.js';
+import { assertAccountCoordinatorHealthy } from '../services/worker-coordinator-result.service.js';
 
 const mocks = vi.hoisted(() => ({
   orderIntentFindMany: vi.fn(),
@@ -539,6 +540,92 @@ describe('pending order multi-account coordinator', () => {
     expect(mocks.orderIntentUpdateMany).not.toHaveBeenCalled();
     expect(mocks.submitOrderToBroker).not.toHaveBeenCalled();
   });
+
+  it('reports an account and worker tick failed when all pending intents fail', async () => {
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([pendingAccount(1)]);
+    mocks.orderIntentFindMany.mockResolvedValue([
+      { ...baseIntent, rawRequestJson: { invalid: true } },
+    ]);
+
+    const result = await processPendingOrders();
+
+    expect(result.results[0]).toMatchObject({
+      outcome: 'FAILED',
+      result: { found: 1, claimed: 1, submitted: 0, blocked: 0, failed: 1 },
+    });
+    expect(() =>
+      assertAccountCoordinatorHealthy('pending_submission', result.results)
+    ).toThrow(/pending_submission completed with account failures/);
+  });
+
+  it('finishes successful work in the same account but reports a mixed run failed', async () => {
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([pendingAccount(1)]);
+    mocks.orderIntentFindMany.mockResolvedValue([
+      { ...baseIntent, rawRequestJson: { invalid: true } },
+      { ...baseIntent, id: 102, clientOrderId: 'client-102' },
+    ]);
+
+    const result = await processPendingOrders();
+
+    expect(result.results[0]).toMatchObject({
+      outcome: 'FAILED',
+      result: { found: 2, claimed: 2, submitted: 1, blocked: 0, failed: 1 },
+    });
+    expect(mocks.submitOrderToBroker).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats risk-blocked intents as healthy domain outcomes', async () => {
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([pendingAccount(1)]);
+    mocks.orderIntentFindMany.mockResolvedValue([baseIntent]);
+    mocks.evaluateOrderRisk.mockResolvedValue({
+      allowed: false,
+      reason: 'Risk limit reached.',
+      details: { rule: 'risk_limit' },
+    });
+
+    const result = await processPendingOrders();
+
+    expect(result.results[0]).toMatchObject({
+      outcome: 'PROCESSED',
+      result: { found: 1, claimed: 1, submitted: 0, blocked: 1, failed: 0 },
+    });
+    expect(() =>
+      assertAccountCoordinatorHealthy('pending_submission', result.results)
+    ).not.toThrow();
+  });
+
+  it('continues to the next account after an item failure', async () => {
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([
+      pendingAccount(1),
+      pendingAccount(2),
+    ]);
+    mocks.orderIntentFindMany
+      .mockResolvedValueOnce([
+        { ...baseIntent, rawRequestJson: { invalid: true } },
+      ])
+      .mockResolvedValueOnce([
+        {
+          ...baseIntent,
+          id: 202,
+          tradingAccountId: 2,
+          tradingAccountSubscriptionId: 55,
+          clientOrderId: 'client-202',
+        },
+      ]);
+    mocks.resolveSubscriptionOrderInput.mockResolvedValue({
+      tradingAccountId: 2,
+      tradingAccountSubscriptionId: 55,
+    });
+
+    const result = await processPendingOrders();
+
+    expect(result.results.map((item) => item.outcome)).toEqual([
+      'FAILED',
+      'PROCESSED',
+    ]);
+    expect(mocks.orderIntentFindMany).toHaveBeenCalledTimes(2);
+    expect(mocks.submitOrderToBroker).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('submitted order multi-account coordinator', () => {
@@ -638,6 +725,97 @@ describe('submitted order multi-account coordinator', () => {
       'CREDENTIALS_UNAVAILABLE',
     ]);
     expect(mocks.getNormalizedOpenOrders).not.toHaveBeenCalled();
+  });
+
+  it('surfaces an item sync exception in account and coordinator health', async () => {
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([
+      eligibleAccount(1, 'PAPER'),
+    ]);
+    mocks.orderIntentFindMany.mockResolvedValue([
+      {
+        ...baseIntent,
+        status: 'submitted',
+        brokerOrders: [{
+          id: 501,
+          tradingAccountId: 1,
+          brokerOrderId: 'broker-501',
+          clientOrderId: 'client-501',
+          status: 'new',
+          orderIntentId: 101,
+          symbol: 'SPY',
+          side: 'buy',
+        }],
+      },
+    ]);
+    mocks.getNormalizedOpenOrders.mockResolvedValue([{
+      id: 'broker-501',
+      clientOrderId: 'client-501',
+      symbol: 'SPY',
+      side: 'buy',
+      status: 'accepted',
+    }]);
+    mocks.syncTrailingStopOrderStatus.mockRejectedValue(
+      new Error('Trailing status write failed')
+    );
+
+    const result = await syncSubmittedOrdersAcrossAccounts();
+
+    expect(result.results[0]).toMatchObject({
+      outcome: 'FAILED',
+      result: {
+        found: 1,
+        failed: 1,
+        failures: [{
+          orderIntentId: 101,
+          brokerOrderRecordId: 501,
+          error: 'Trailing status write failed',
+        }],
+      },
+    });
+    expect(mocks.adaptiveRecordFailure).toHaveBeenCalledWith(
+      'submitted_order_sync',
+      1,
+      expect.any(Date)
+    );
+    expect(mocks.adaptiveRecordSuccess).not.toHaveBeenCalled();
+    expect(() =>
+      assertAccountCoordinatorHealthy('submitted_order_sync', result.results)
+    ).toThrow(/submitted_order_sync completed with account failures/);
+  });
+
+  it('does not treat an order absent from open broker results as a failure', async () => {
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([
+      eligibleAccount(1, 'PAPER'),
+    ]);
+    mocks.orderIntentFindMany.mockResolvedValue([
+      {
+        ...baseIntent,
+        status: 'submitted',
+        brokerOrders: [{
+          id: 501,
+          tradingAccountId: 1,
+          brokerOrderId: 'broker-501',
+          clientOrderId: 'client-501',
+          status: 'new',
+          orderIntentId: 101,
+          symbol: 'SPY',
+          side: 'buy',
+        }],
+      },
+    ]);
+    mocks.getNormalizedOpenOrders.mockResolvedValue([]);
+
+    const result = await syncSubmittedOrdersAcrossAccounts();
+
+    expect(result.results[0]).toMatchObject({
+      outcome: 'PROCESSED',
+      result: { found: 1, synced: 0, failed: 0, failures: [] },
+    });
+    expect(mocks.adaptiveRecordSuccess).toHaveBeenCalled();
+    expect(mocks.adaptiveRecordFailure).not.toHaveBeenCalled();
+    expect(() =>
+      assertAccountCoordinatorHealthy('submitted_order_sync', result.results)
+    ).not.toThrow();
   });
 });
 

@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   adaptiveRecordFailure: vi.fn(),
   adaptiveRecordRateLimitDeferred: vi.fn(),
   resolveDefaultTradingAccountId: vi.fn(),
+  enumerateLifecycleAccounts: vi.fn(),
 }));
 
 vi.mock('./positions.service.js', () => ({
@@ -102,11 +103,16 @@ vi.mock('./trading-account.service.js', () => ({
   },
 }));
 
+vi.mock('./lifecycle-account-eligibility.service.js', () => ({
+  enumerateLifecycleAccounts: mocks.enumerateLifecycleAccounts,
+}));
+
 import {
   getOpenTrackedPositions,
   getOpenTrackedPositionsForTradingAccount,
   getTrackedPositions,
   syncTrackedPositions,
+  syncTrackedPositionsAcrossAccounts,
 } from './position-tracking.service.js';
 
 const brokerPosition = {
@@ -139,6 +145,55 @@ describe('position tracking subscription recovery', () => {
       effectiveIntervalMs: 15_000,
       nextDueAt: null,
       reason: 'startup_due',
+    });
+  });
+
+  it('records adaptive polling failure when a symbol cannot be processed', async () => {
+    mocks.securityFindUnique.mockRejectedValue(new Error('Security lookup failed'));
+
+    const result = await syncTrackedPositions();
+
+    expect(result.symbolErrors).toEqual([
+      { symbol: 'DIA', error: 'Security lookup failed' },
+    ]);
+    expect(mocks.adaptiveRecordFailure).toHaveBeenCalledWith(
+      'tracked_position_sync',
+      1,
+      expect.any(Date)
+    );
+    expect(mocks.adaptiveRecordSuccess).not.toHaveBeenCalled();
+  });
+
+  it('marks the account failed while preserving symbol-level continuation results', async () => {
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([{
+      tradingAccountId: 1,
+      displayName: 'Paper',
+      broker: 'ALPACA',
+      environment: 'PAPER',
+      status: 'ACTIVE',
+      credentialStatus: 'ACTIVE',
+      eligible: true,
+      reason: 'usable_credentials_with_work',
+      exposureSummary: {
+        pendingIntents: 0,
+        submittingIntents: 0,
+        submittedIntents: 0,
+        nonterminalOrders: 0,
+        activePositions: 1,
+        unresolvedActivities: 0,
+        hasLifecycleWork: true,
+      },
+    }]);
+    mocks.securityFindUnique.mockRejectedValue(new Error('Security lookup failed'));
+
+    const result = await syncTrackedPositionsAcrossAccounts();
+
+    expect(result.results[0]).toMatchObject({
+      outcome: 'FAILED',
+      result: {
+        seen: 1,
+        symbolErrors: [{ symbol: 'DIA', error: 'Security lookup failed' }],
+      },
     });
   });
 
