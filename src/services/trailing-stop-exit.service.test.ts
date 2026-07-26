@@ -74,6 +74,7 @@ function buildPosition(overrides: Record<string, unknown> = {}) {
     tradingAccountId: 1,
     securityId: 11,
     subscriptionId: 22,
+    side: 'long',
     subscription: {
       key: 'SPY_dip_core',
     },
@@ -86,6 +87,13 @@ function buildPosition(overrides: Record<string, unknown> = {}) {
       trailBrokerOrderId: null,
       trailClientOrderId: null,
       trailOrderStatus: null,
+    },
+    tradingAccountSubscription: {
+      id: 31,
+      tradingAccountId: 1,
+      subscriptionId: 22,
+      enabled: true,
+      exitsEnabled: true,
     },
     ...overrides,
   };
@@ -128,7 +136,7 @@ describe('submitTrailingStopExitOrder', () => {
     mocks.brokerOrderCreate.mockResolvedValue({});
     mocks.markTrailingStopOrderSubmitted.mockResolvedValue({});
 
-    const result = await submitTrailingStopExitOrder(101);
+    const result = await submitTrailingStopExitOrder(1, 101);
 
     expect(result).toEqual({
       submitted: false,
@@ -225,7 +233,7 @@ describe('submitTrailingStopExitOrder', () => {
     mocks.markTrailingStopOrderSubmitted.mockResolvedValue({});
     mocks.createSystemEvent.mockResolvedValue({});
 
-    const result = await submitTrailingStopExitOrder(101);
+    const result = await submitTrailingStopExitOrder(1, 101);
 
     expect(result).toMatchObject({
       submitted: true,

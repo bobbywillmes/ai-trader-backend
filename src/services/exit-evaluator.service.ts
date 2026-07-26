@@ -14,6 +14,7 @@ import {
   enumerateLifecycleAccounts,
   type LifecycleAccountEligibility,
 } from './lifecycle-account-eligibility.service.js';
+import { syncProtectiveOrdersForAccount } from './protective-order-sync.service.js';
 
 export type ExitEvaluationCounts = {
   positionsEvaluated: number;
@@ -85,6 +86,15 @@ export async function evaluateExitsForAccount(
   });
   const counts = emptyCounts();
   const failures: Array<{ trackedPositionId: number; error: string }> = [];
+  const protectiveSync = await syncProtectiveOrdersForAccount(tradingAccountId);
+  counts.protectiveOrdersSynchronized = protectiveSync.synchronized;
+  counts.failedPositions += protectiveSync.failed;
+  failures.push(
+    ...protectiveSync.failures.map((failure) => ({
+      trackedPositionId: failure.trackedPositionId,
+      error: failure.error,
+    }))
+  );
 
   for (const position of positions) {
     try {
@@ -179,7 +189,7 @@ export async function evaluateExitsForAccount(
           exitState.trailOrderStatus !== 'submit_failed'
         ) {
           try {
-            await submitTrailingStopExitOrder(position.id);
+            await submitTrailingStopExitOrder(tradingAccountId, position.id);
             counts.closeIntentsCreated += 1;
           } catch (error) {
             const payloadJson = errorToPayloadJson(error);

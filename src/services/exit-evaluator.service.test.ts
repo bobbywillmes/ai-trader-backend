@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   unlockTrailingStopExitState: vi.fn(),
   submitTrailingStopExitOrder: vi.fn(),
   enumerateLifecycleAccounts: vi.fn(),
+  syncProtectiveOrdersForAccount: vi.fn(),
   loggerInfo: vi.fn(),
   loggerError: vi.fn(),
 }));
@@ -37,6 +38,9 @@ vi.mock('./trailing-stop-exit.service.js', () => ({
 }));
 vi.mock('./lifecycle-account-eligibility.service.js', () => ({
   enumerateLifecycleAccounts: mocks.enumerateLifecycleAccounts,
+}));
+vi.mock('./protective-order-sync.service.js', () => ({
+  syncProtectiveOrdersForAccount: mocks.syncProtectiveOrdersForAccount,
 }));
 
 import {
@@ -134,6 +138,15 @@ describe('account-scoped exit evaluation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.createSystemEvent.mockResolvedValue({});
+    mocks.syncProtectiveOrdersForAccount.mockResolvedValue({
+      found: 0,
+      synchronized: 0,
+      partialFills: 0,
+      terminalOrders: 0,
+      confirmedMissing: 0,
+      failed: 0,
+      failures: [],
+    });
   });
 
   it('uses the exact account assignment and creates a strategy close when allowed', async () => {
@@ -231,7 +244,7 @@ describe('account-scoped exit evaluation', () => {
     const result = await evaluateExitsForAccount(1);
 
     expect(mocks.unlockTrailingStopExitState).toHaveBeenCalledOnce();
-    expect(mocks.submitTrailingStopExitOrder).toHaveBeenCalledOnce();
+    expect(mocks.submitTrailingStopExitOrder).toHaveBeenCalledWith(1, 101);
     expect(mocks.closePosition).not.toHaveBeenCalled();
     expect(result.counts).toMatchObject({
       exitSignalsTriggered: 1,
@@ -266,6 +279,15 @@ describe('exit evaluation coordinator', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.createSystemEvent.mockResolvedValue({});
+    mocks.syncProtectiveOrdersForAccount.mockResolvedValue({
+      found: 0,
+      synchronized: 0,
+      partialFills: 0,
+      terminalOrders: 0,
+      confirmedMissing: 0,
+      failed: 0,
+      failures: [],
+    });
   });
 
   it('processes eligible accounts sequentially in enumerated stable order', async () => {
