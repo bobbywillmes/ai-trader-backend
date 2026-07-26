@@ -210,6 +210,24 @@ export type TradingAccountRiskHealthResponse = {
   riskHealth: TradingAccountRiskHealth;
 };
 
+export type TradingAccountWorkerStatus =
+  | "HEALTHY" | "DORMANT" | "STARTING" | "DEGRADED"
+  | "DELAYED" | "STALE" | "FAILING" | "BACKING_OFF";
+
+export type TradingAccountWorkerHealthResponse = {
+  tradingAccount: Pick<TradingAccount, "id" | "displayName" | "environment">;
+  generatedAt: string;
+  workers: Array<{
+    id: number; workerKey: string; status: TradingAccountWorkerStatus;
+    applicable: boolean; eligible: boolean; eligibilityReason: string | null;
+    lastSucceededAt: string | null; lastWorkSucceededAt: string | null;
+    lastFailedAt: string | null; consecutiveFailures: number;
+    lastError: string | null; currentRunStartedAt: string | null;
+    totalLockSkips: number; lastLockSkippedAt: string | null;
+    backoffUntil: string | null; processInstanceId: string;
+  }>;
+};
+
 export type RevokeTradingAccountCredentialResponse = {
   revoked: boolean;
   account: TradingAccount;

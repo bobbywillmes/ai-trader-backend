@@ -14,6 +14,7 @@ import type {
   TradingAccountAllocationsResponse,
   TradingAccountResponse,
   TradingAccountRiskHealthResponse,
+  TradingAccountWorkerHealthResponse,
   TradingAccountRiskSettingsInput,
   TradingAccountRiskSettingsResponse,
   TradingAccountSubscriptionInput,
@@ -76,6 +77,13 @@ export function getTradingAccountRiskHealth(id: number, token: string) {
     {
       token,
     }
+  );
+}
+
+export function getTradingAccountWorkerHealth(id: number, token: string) {
+  return apiRequest<TradingAccountWorkerHealthResponse>(
+    `/api/trading-accounts/${id}/worker-health`,
+    { token }
   );
 }
 

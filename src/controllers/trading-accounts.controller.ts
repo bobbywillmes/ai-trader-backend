@@ -59,6 +59,7 @@ import {
 } from '../services/trading-account-risk-settings.service.js';
 import { previewTradingAccountEntryRisk } from '../services/trading-account-entry-risk-preview.service.js';
 import { getTradingAccountRiskHealth } from '../services/trading-account-risk-health.service.js';
+import { listTradingAccountWorkerHealth } from '../services/trading-account-worker-health.service.js';
 
 function parseTradingAccountId(value: unknown) {
   const id = typeof value === 'string' ? Number(value) : NaN;
@@ -419,6 +420,18 @@ export async function getTradingAccountRiskHealthController(
     }
 
     res.status(200).json({ riskHealth });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getTradingAccountWorkerHealthController(
+  req: Request, res: Response, next: NextFunction
+) {
+  try {
+    const result = await listTradingAccountWorkerHealth(parseTradingAccountId(req.params.id));
+    if (!result) throw new HttpError(404, 'Trading account not found.');
+    res.status(200).json(result);
   } catch (error) {
     next(error);
   }

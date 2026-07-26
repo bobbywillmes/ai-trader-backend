@@ -101,6 +101,7 @@ Table TradingAccount {
   entryDecisions EntryDecision [not null]
   systemEvents SystemEvent [not null]
   alpacaApiUsageBuckets AlpacaApiUsageBucket [not null]
+  workerHealthStates TradingAccountWorkerHealthState [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 
@@ -338,6 +339,45 @@ Table WorkerHealthState {
   lastErrorAt DateTime
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
+}
+
+Table TradingAccountWorkerHealthState {
+  id Int [pk, increment]
+  tradingAccountId Int [not null]
+  tradingAccount TradingAccount [not null]
+  workerKey String [not null]
+  processInstanceId String [not null]
+  enabled Boolean [not null, default: true]
+  applicable Boolean [not null, default: true]
+  eligible Boolean [not null, default: true]
+  eligibilityReason String
+  expectedIntervalMs Int [not null]
+  currentRunStartedAt DateTime
+  lastTickStartedAt DateTime
+  lastTickCompletedAt DateTime
+  lastSucceededAt DateTime
+  lastWorkSucceededAt DateTime
+  lastFailedAt DateTime
+  lastDurationMs Int
+  lastOutcome String
+  lastSkipReason String
+  consecutiveFailures Int [not null, default: 0]
+  totalRuns Int [not null, default: 0]
+  totalFailures Int [not null, default: 0]
+  totalSkips Int [not null, default: 0]
+  totalLockSkips Int [not null, default: 0]
+  lastLockSkippedAt DateTime
+  lastError String
+  lastErrorCode String
+  lastErrorAt DateTime
+  backoffUntil DateTime
+  lastSummaryJson Json
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+
+  indexes {
+    (tradingAccountId, workerKey) [unique]
+  }
 }
 
 Table AlpacaApiUsageBucket {
@@ -1034,6 +1074,8 @@ Ref: BrokerOrder.tradingAccountId > TradingAccount.id [delete: Set Null]
 Ref: SystemEvent.tradingAccountId > TradingAccount.id [delete: Set Null]
 
 Ref: SystemEvent.actorUserId > User.id [delete: Set Null]
+
+Ref: TradingAccountWorkerHealthState.tradingAccountId > TradingAccount.id [delete: Cascade]
 
 Ref: AlpacaApiUsageBucket.tradingAccountId > TradingAccount.id [delete: Set Null]
 
