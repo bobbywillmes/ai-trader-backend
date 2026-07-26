@@ -29,59 +29,81 @@ SELECT
   sub."exitProfileId" AS actual_exit_profile_id,
   assigned_sub."exitProfileId" AS assignment_exit_profile_id,
   tp."configSnapshotJson",
-  opening.order_intents,
-  opening.broker_orders,
-  opening.entry_decision,
-  opening.broker_activities
+
+  COALESCE((
+    SELECT jsonb_agg(
+      jsonb_build_object(
+        'id', oi.id,
+        'accountId', oi."tradingAccountId",
+        'subscriptionId', oi."subscriptionId",
+        'assignmentId', oi."tradingAccountSubscriptionId",
+        'clientOrderId', oi."clientOrderId",
+        'createdAt', oi."createdAt"
+      )
+      ORDER BY oi.id
+    )
+    FROM "OrderIntent" oi
+    WHERE oi."trackedPositionId" = tp.id
+  ), '[]'::jsonb) AS order_intents,
+
+  COALESCE((
+    SELECT jsonb_agg(
+      jsonb_build_object(
+        'id', bo.id,
+        'orderIntentId', bo."orderIntentId",
+        'accountId', bo."tradingAccountId",
+        'brokerOrderId', bo."brokerOrderId",
+        'clientOrderId', bo."clientOrderId",
+        'status', bo.status
+      )
+      ORDER BY bo.id
+    )
+    FROM "BrokerOrder" bo
+    WHERE bo."trackedPositionId" = tp.id
+  ), '[]'::jsonb) AS broker_orders,
+
+  COALESCE((
+    SELECT jsonb_agg(
+      jsonb_build_object(
+        'id', ed.id,
+        'accountId', ed."tradingAccountId",
+        'subscriptionId', ed."subscriptionId",
+        'assignmentId', ed."tradingAccountSubscriptionId",
+        'subscriptionKey', ed."subscriptionKey"
+      )
+      ORDER BY ed.id
+    )
+    FROM "EntryDecision" ed
+    WHERE ed."trackedPositionId" = tp.id
+  ), '[]'::jsonb) AS entry_decisions,
+
+  COALESCE((
+    SELECT jsonb_agg(
+      jsonb_build_object(
+        'id', ba.id,
+        'accountId', ba."tradingAccountId",
+        'activityType', ba."activityType",
+        'orderId', ba."orderId",
+        'transactionTime', ba."transactionTime"
+      )
+      ORDER BY ba.id
+    )
+    FROM "BrokerActivity" ba
+    WHERE ba."trackedPositionId" = tp.id
+  ), '[]'::jsonb) AS broker_activities
+
 FROM target
-JOIN "TrackedPosition" tp ON tp.id = target.tracked_position_id
-LEFT JOIN "TradingAccount" ta ON ta.id = tp."tradingAccountId"
+JOIN "TrackedPosition" tp
+  ON tp.id = target.tracked_position_id
+LEFT JOIN "TradingAccount" ta
+  ON ta.id = tp."tradingAccountId"
 LEFT JOIN "TradingAccountSubscription" tas
   ON tas.id = tp."tradingAccountSubscriptionId"
-LEFT JOIN "Subscription" sub ON sub.id = tp."subscriptionId"
-LEFT JOIN "Subscription" assigned_sub ON assigned_sub.id = tas."subscriptionId"
-LEFT JOIN "Security" sec ON sec.id = tp."securityId"
-LEFT JOIN "PositionExitState" pes ON pes."trackedPositionId" = tp.id
-LEFT JOIN LATERAL (
-  SELECT
-    COALESCE(jsonb_agg(DISTINCT jsonb_build_object(
-      'id', oi.id,
-      'accountId', oi."tradingAccountId",
-      'subscriptionId', oi."subscriptionId",
-      'assignmentId', oi."tradingAccountSubscriptionId",
-      'clientOrderId', oi."clientOrderId",
-      'createdAt', oi."createdAt"
-    )) FILTER (WHERE oi.id IS NOT NULL), '[]'::jsonb) AS order_intents,
-    COALESCE(jsonb_agg(DISTINCT jsonb_build_object(
-      'id', bo.id,
-      'orderIntentId', bo."orderIntentId",
-      'accountId', bo."tradingAccountId",
-      'brokerOrderId', bo."brokerOrderId",
-      'clientOrderId', bo."clientOrderId",
-      'status', bo.status
-    )) FILTER (WHERE bo.id IS NOT NULL), '[]'::jsonb) AS broker_orders,
-    COALESCE(jsonb_agg(DISTINCT jsonb_build_object(
-      'id', ed.id,
-      'accountId', ed."tradingAccountId",
-      'subscriptionId', ed."subscriptionId",
-      'assignmentId', ed."tradingAccountSubscriptionId",
-      'subscriptionKey', ed."subscriptionKey"
-    )) FILTER (WHERE ed.id IS NOT NULL), '[]'::jsonb) AS entry_decision,
-    COALESCE(jsonb_agg(DISTINCT jsonb_build_object(
-      'id', ba.id,
-      'accountId', ba."tradingAccountId",
-      'activityType', ba."activityType",
-      'orderId', ba."orderId",
-      'transactionTime', ba."transactionTime"
-    )) FILTER (WHERE ba.id IS NOT NULL), '[]'::jsonb) AS broker_activities
-  FROM "OrderIntent" oi
-  FULL JOIN "BrokerOrder" bo
-    ON bo."trackedPositionId" = tp.id
-   AND (oi.id IS NULL OR bo."orderIntentId" = oi.id)
-  FULL JOIN "EntryDecision" ed ON ed."trackedPositionId" = tp.id
-  FULL JOIN "BrokerActivity" ba ON ba."trackedPositionId" = tp.id
-  WHERE oi."trackedPositionId" = tp.id
-     OR bo."trackedPositionId" = tp.id
-     OR ed."trackedPositionId" = tp.id
-     OR ba."trackedPositionId" = tp.id
-) opening ON true;
+LEFT JOIN "Subscription" sub
+  ON sub.id = tp."subscriptionId"
+LEFT JOIN "Subscription" assigned_sub
+  ON assigned_sub.id = tas."subscriptionId"
+LEFT JOIN "Security" sec
+  ON sec.id = tp."securityId"
+LEFT JOIN "PositionExitState" pes
+  ON pes."trackedPositionId" = tp.id;
