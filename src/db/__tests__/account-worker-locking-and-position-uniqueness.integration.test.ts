@@ -3,7 +3,10 @@ import { readFile } from 'node:fs/promises';
 import 'dotenv/config';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from 'pg';
-import { deriveAdvisoryLockKey } from '../../services/trading-account-workflow-lock.service.js';
+import {
+  deriveAdvisoryLockKey,
+  withTradingAccountWorkflowLock,
+} from '../../services/trading-account-workflow-lock.service.js';
 
 const runDatabaseTests = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1';
 const databaseUrl = process.env.DATABASE_URL;
@@ -99,6 +102,52 @@ describeDatabase('account workflow locks and active position uniqueness', () => 
       INSERT INTO "TrackedPosition" ("tradingAccountId", broker, symbol, status)
       VALUES (1, 'alpaca', 'MSFT', 'closed'), (1, 'alpaca', 'MSFT', 'open')
     `);
+  });
+
+  it('keeps Paper and Live health and backoff rows independent', async () => {
+    await admin.query(`
+      INSERT INTO "TradingAccountWorkerHealthState"
+        ("tradingAccountId", "workerKey", "processInstanceId",
+         "expectedIntervalMs", "lastOutcome", "consecutiveFailures",
+         "backoffUntil", "lastError", "updatedAt")
+      VALUES
+        (1, 'exit_evaluation', 'paper-process', 2000, 'success', 0,
+         NULL, NULL, CURRENT_TIMESTAMP),
+        (2, 'exit_evaluation', 'live-process', 2000, 'failure', 2,
+         CURRENT_TIMESTAMP + interval '15 seconds', 'mock Live failure',
+         CURRENT_TIMESTAMP)
+    `);
+    const result = await admin.query(`
+      SELECT "tradingAccountId", "lastOutcome", "consecutiveFailures",
+             "backoffUntil" IS NOT NULL AS "backingOff"
+      FROM "TradingAccountWorkerHealthState"
+      WHERE "workerKey" = 'exit_evaluation'
+      ORDER BY "tradingAccountId"
+    `);
+    expect(result.rows).toEqual([
+      { tradingAccountId: 1, lastOutcome: 'success', consecutiveFailures: 0, backingOff: false },
+      { tradingAccountId: 2, lastOutcome: 'failure', consecutiveFailures: 2, backingOff: true },
+    ]);
+    await expect(admin.query(`
+      INSERT INTO "TradingAccountWorkerHealthState"
+        ("tradingAccountId", "workerKey", "processInstanceId",
+         "expectedIntervalMs", "updatedAt")
+      VALUES (1, 'exit_evaluation', 'duplicate', 2000, CURRENT_TIMESTAMP)
+    `)).rejects.toThrow(/TradingAccountWorkerHealthState_tradingAccountId_workerKey_key/);
+  });
+
+  it('derives distinct stable keys and rejects a synthetic account lock', async () => {
+    const paper = deriveAdvisoryLockKey('ai-trader:order-lifecycle:1');
+    const live = deriveAdvisoryLockKey('ai-trader:order-lifecycle:2');
+    const paperExit = deriveAdvisoryLockKey('ai-trader:exit-evaluation:1');
+    expect(paper).not.toBe(live);
+    expect(paper).not.toBe(paperExit);
+    await expect(withTradingAccountWorkflowLock({
+      tradingAccountId: 0,
+      workflowKey: 'order-lifecycle',
+      processInstanceId: 'test',
+      execute: async () => undefined,
+    })).rejects.toThrow(/real positive tradingAccountId/);
   });
 
   it('aborts migration explicitly when duplicate active cycles pre-exist', async () => {
