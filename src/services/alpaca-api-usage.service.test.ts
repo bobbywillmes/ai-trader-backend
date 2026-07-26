@@ -31,7 +31,8 @@ const metadata: AlpacaRequestMetadata = {
   operation: 'submitted_order_sync',
   endpoint: 'GET /v2/orders',
   method: 'GET',
-  requestClass: 'synchronization_read',
+      requestClass: 'synchronization_read',
+      operationClass: 'LIFECYCLE_READ',
   deferDuringRateLimit: true,
 };
 

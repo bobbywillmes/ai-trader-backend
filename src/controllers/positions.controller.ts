@@ -32,7 +32,9 @@ export async function closePositionController(
       return;
     }
 
-    const result = await closePosition(trackedPositionId);
+    const result = await closePosition(trackedPositionId, {
+      mode: 'MANUAL_EMERGENCY_CLOSE',
+    });
 
     res.status(200).json(result);
   } catch (error) {

@@ -1,200 +1,275 @@
+import { Prisma, type Prisma as PrismaTypes } from '@prisma/client';
+
 import { prisma } from '../db/prisma.js';
-import type { Prisma } from '@prisma/client';
-import { createSystemEvent } from './system-event.service.js';
-import { closeAlpacaPosition } from '../integrations/alpaca/positions.adapter.js';
+import { placeAlpacaOrder } from '../integrations/alpaca/orders.adapter.js';
 import { HttpError } from '../errors/http-error.js';
 import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
+import { createSystemEvent } from './system-event.service.js';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
+export type ClosePositionMode = 'AUTOMATED_STRATEGY' | 'MANUAL_EMERGENCY_CLOSE';
 
-function getCloseOrderFromBrokerResult(result: unknown) {
-  const candidate = Array.isArray(result) ? result[0] : result;
+type ClosePositionOptions = {
+  mode?: ClosePositionMode;
+};
 
-  if (!isRecord(candidate)) {
-    return null;
-  }
-
-  const id = candidate.id;
-  const clientOrderId = candidate.client_order_id;
-
-  if (typeof id !== 'string' || typeof clientOrderId !== 'string') {
-    return null;
-  }
-
-  return {
-    id,
-    clientOrderId,
-    symbol:
-      typeof candidate.symbol === 'string'
-        ? candidate.symbol.toUpperCase()
-        : null,
-    side: typeof candidate.side === 'string' ? candidate.side : null,
-    status: typeof candidate.status === 'string' ? candidate.status : 'submitted',
-    raw: candidate,
-  };
-}
-
-export async function closePosition(trackedPositionId: number) {
-  const trackedPosition = await prisma.trackedPosition.findUnique({
-    where: {
-      id: trackedPositionId,
-    },
-    include: {
-      tradingAccountSubscription: {
-        select: {
-          id: true,
-          exitsEnabled: true,
-        },
-      },
-    },
-  });
-
-  if (
-    !trackedPosition ||
-    !['open', 'closing'].includes(trackedPosition.status.toLowerCase())
-  ) {
-    throw new HttpError(
-      404,
-      `Active tracked position ${trackedPositionId} was not found.`
-    );
-  }
-
-  if (trackedPosition.tradingAccountId === null) {
-    throw new HttpError(
-      409,
-      `Tracked position ${trackedPosition.id} has no TradingAccount identity.`
-    );
-  }
-
-  if (
-    trackedPosition.tradingAccountSubscription &&
-    !trackedPosition.tradingAccountSubscription.exitsEnabled
-  ) {
-    throw new HttpError(
-      409,
-      `TradingAccountSubscription ${trackedPosition.tradingAccountSubscription.id} has exits disabled.`
-    );
-  }
-
-  const upperSymbol = trackedPosition.symbol.toUpperCase();
-  const tradingAccountId = trackedPosition.tradingAccountId;
-  const result = await closeAlpacaPosition(
-    tradingAccountId,
-    upperSymbol,
-    'position_close'
+function buildCloseClientOrderId(args: {
+  tradingAccountId: number;
+  trackedPositionId: number;
+}) {
+  return `ai-exit-close-${args.tradingAccountId}-${args.trackedPositionId}`.slice(
+    0,
+    128
   );
+}
+
+function sanitizeError(error: unknown) {
+  return error instanceof Error ? error.message : 'Unknown broker close error.';
+}
+
+export async function closePosition(
+  trackedPositionId: number,
+  options: ClosePositionOptions = {}
+) {
+  const mode = options.mode ?? 'AUTOMATED_STRATEGY';
+
+  const claim = await prisma.$transaction(
+    async (tx) => {
+      const position = await tx.trackedPosition.findUnique({
+        where: { id: trackedPositionId },
+        include: {
+          tradingAccountSubscription: {
+            select: {
+              id: true,
+              tradingAccountId: true,
+              subscriptionId: true,
+              enabled: true,
+              exitsEnabled: true,
+            },
+          },
+          orderIntents: {
+            where: {
+              source: 'close-position',
+              status: { in: ['pending', 'submitting', 'submitted'] },
+            },
+            select: { id: true, status: true, clientOrderId: true },
+            take: 1,
+          },
+          brokerOrders: {
+            where: {
+              status: {
+                notIn: [
+                  'filled',
+                  'canceled',
+                  'cancelled',
+                  'expired',
+                  'rejected',
+                  'done_for_day',
+                ],
+              },
+            },
+            select: { id: true, status: true },
+            take: 1,
+          },
+        },
+      });
+
+      if (!position) {
+        throw new HttpError(
+          404,
+          `Active tracked position ${trackedPositionId} was not found.`
+        );
+      }
+      if (position.tradingAccountId === null) {
+        throw new HttpError(
+          409,
+          `Tracked position ${position.id} has no TradingAccount identity.`
+        );
+      }
+      const assignment = position.tradingAccountSubscription;
+      if (
+        !assignment ||
+        assignment.tradingAccountId !== position.tradingAccountId ||
+        assignment.subscriptionId !== position.subscriptionId
+      ) {
+        throw new HttpError(
+          409,
+          `Tracked position ${position.id} has missing or inconsistent account assignment identity.`
+        );
+      }
+      if (
+        mode === 'AUTOMATED_STRATEGY' &&
+        (!assignment.enabled || !assignment.exitsEnabled)
+      ) {
+        throw new HttpError(
+          409,
+          `TradingAccountSubscription ${assignment.id} has automated exits disabled.`
+        );
+      }
+      if (
+        position.status !== 'open' ||
+        position.orderIntents.length > 0 ||
+        position.brokerOrders.length > 0
+      ) {
+        throw new HttpError(
+          409,
+          `A close is already pending for tracked position ${position.id}.`
+        );
+      }
+
+      const claimed = await tx.trackedPosition.updateMany({
+        where: { id: position.id, status: 'open' },
+        data: { status: 'closing', lastSyncedAt: new Date() },
+      });
+      if (claimed.count !== 1) {
+        throw new HttpError(
+          409,
+          `A close is already pending for tracked position ${position.id}.`
+        );
+      }
+
+      const clientOrderId = buildCloseClientOrderId({
+        tradingAccountId: position.tradingAccountId,
+        trackedPositionId: position.id,
+      });
+      const intent = await tx.orderIntent.create({
+        data: {
+          source: 'close-position',
+          symbol: position.symbol.toUpperCase(),
+          side: position.side === 'short' ? 'buy' : 'sell',
+          orderType: 'market',
+          timeInForce: 'day',
+          qty: Math.abs(position.qty),
+          notional: null,
+          limitPrice: null,
+          extendedHours: false,
+          clientOrderId,
+          tradingAccountId: position.tradingAccountId,
+          tradingAccountSubscriptionId: assignment.id,
+          status: 'submitting',
+          subscriptionId: position.subscriptionId,
+          subscriptionKey: null,
+          trackedPositionId: position.id,
+          rawRequestJson: {
+            signalType: 'exit',
+            source: 'close-position',
+            mode,
+            trackedPositionId: position.id,
+            tradingAccountId: position.tradingAccountId,
+            tradingAccountSubscriptionId: assignment.id,
+          } as PrismaTypes.InputJsonValue,
+        },
+      });
+
+      return { position, intent, clientOrderId };
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+  );
+
+  const tradingAccountId = claim.position.tradingAccountId!;
+  const upperSymbol = claim.position.symbol.toUpperCase();
+  let brokerOrder;
+
+  try {
+    brokerOrder = await placeAlpacaOrder(
+      tradingAccountId,
+      {
+        symbol: upperSymbol,
+        side: claim.position.side === 'short' ? 'buy' : 'sell',
+        type: 'market',
+        time_in_force: 'day',
+        qty: String(Math.abs(claim.position.qty)),
+        client_order_id: claim.clientOrderId,
+        extended_hours: false,
+      },
+      'position_close'
+    );
+  } catch (error) {
+    await prisma.orderIntent.updateMany({
+      where: { id: claim.intent.id, status: 'submitting' },
+      data: {
+        blockReason: `Broker close submission requires recovery: ${sanitizeError(error)}`,
+      },
+    });
+    await createSystemEvent({
+      type: 'position.close_submission_uncertain',
+      entityType: 'trackedPosition',
+      entityId: claim.position.id,
+      tradingAccountId,
+      message: `${upperSymbol} close submission failed or is uncertain; deterministic recovery is required.`,
+      payloadJson: {
+        trackedPositionId: claim.position.id,
+        orderIntentId: claim.intent.id,
+        clientOrderId: claim.clientOrderId,
+        mode,
+        error: sanitizeError(error),
+      } as PrismaTypes.InputJsonValue,
+    });
+    throw error;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const existingOrder = await tx.brokerOrder.findFirst({
+      where: {
+        tradingAccountId,
+        broker: 'alpaca',
+        brokerOrderId: brokerOrder.id,
+      },
+      select: { id: true },
+    });
+    const data = {
+      orderIntentId: claim.intent.id,
+      tradingAccountId,
+      broker: 'alpaca',
+      brokerOrderId: brokerOrder.id,
+      clientOrderId: brokerOrder.client_order_id,
+      symbol: brokerOrder.symbol.toUpperCase(),
+      side: brokerOrder.side,
+      status: brokerOrder.status,
+      securityId: claim.position.securityId,
+      trackedPositionId: claim.position.id,
+      rawBrokerJson: brokerOrder as unknown as PrismaTypes.InputJsonValue,
+    };
+    if (existingOrder) {
+      await tx.brokerOrder.update({
+        where: { id: existingOrder.id },
+        data,
+      });
+    } else {
+      await tx.brokerOrder.create({ data });
+    }
+    await tx.orderIntent.updateMany({
+      where: { id: claim.intent.id, status: 'submitting' },
+      data: { status: 'submitted', blockReason: null },
+    });
+  });
 
   adaptivePollingCoordinator.forceAfterBrokerPositionWrite(
     tradingAccountId,
     'broker_position_close_requested'
   );
-
-  const tracked = await prisma.trackedPosition.updateMany({
-    where: {
-      id: trackedPosition.id,
-      status: {
-        in: ['open', 'closing'],
-      },
-    },
-    data: {
-      status: 'closing',
-      lastSyncedAt: new Date(),
-    },
-  });
-
-  const closeOrder = getCloseOrderFromBrokerResult(result);
-
-  if (closeOrder) {
-    const orderIntent = await prisma.orderIntent.create({
-      data: {
-        source: 'close-position',
-        symbol: upperSymbol,
-        side: closeOrder.side ?? (trackedPosition.side === 'short' ? 'buy' : 'sell'),
-        orderType: 'market',
-        timeInForce: 'day',
-        qty: Math.abs(trackedPosition.qty),
-        notional: null,
-        limitPrice: null,
-        extendedHours: false,
-        clientOrderId: closeOrder.clientOrderId,
-        tradingAccountId,
-        tradingAccountSubscriptionId:
-          trackedPosition.tradingAccountSubscriptionId,
-        status: 'submitted',
-        subscriptionId: trackedPosition.subscriptionId,
-        subscriptionKey: null,
-        trackedPositionId: trackedPosition.id,
-        rawRequestJson: {
-          source: 'close-position',
-          trackedPositionId: trackedPosition.id,
-          tradingAccountSubscriptionId:
-            trackedPosition.tradingAccountSubscriptionId,
-          brokerResult: result,
-        } as Prisma.InputJsonValue,
-      },
-    });
-
-    const existingCloseBrokerOrder = await prisma.brokerOrder.findFirst({
-      where: {
-        tradingAccountId,
-        broker: 'alpaca',
-        brokerOrderId: closeOrder.id,
-      },
-      select: { id: true },
-    });
-
-    const brokerOrderData = {
-      orderIntentId: orderIntent.id,
-      tradingAccountId,
-      broker: 'alpaca',
-      brokerOrderId: closeOrder.id,
-      clientOrderId: closeOrder.clientOrderId,
-      symbol: closeOrder.symbol ?? upperSymbol,
-      side: closeOrder.side ?? (trackedPosition.side === 'short' ? 'buy' : 'sell'),
-      status: closeOrder.status,
-      securityId: trackedPosition.securityId,
-      trackedPositionId: trackedPosition.id,
-      rawBrokerJson: closeOrder.raw as Prisma.InputJsonValue,
-    };
-
-    if (existingCloseBrokerOrder) {
-      await prisma.brokerOrder.update({
-        where: { id: existingCloseBrokerOrder.id },
-        data: brokerOrderData,
-      });
-    } else {
-      await prisma.brokerOrder.create({
-        data: {
-          ...brokerOrderData,
-        },
-      },
-      );
-    }
-  }
-
   await createSystemEvent({
     type: 'position.close_requested',
     entityType: 'trackedPosition',
-    entityId: trackedPosition.id,
+    entityId: claim.position.id,
     tradingAccountId,
     payloadJson: {
       symbol: upperSymbol,
       broker: 'alpaca',
-      result,
-      trackedPositionId: trackedPosition.id,
-      brokerOrderId: closeOrder?.id ?? null,
-      clientOrderId: closeOrder?.clientOrderId ?? null,
-      matchedTrackedPositions: tracked.count,
-    } as Prisma.InputJsonValue,
+      trackedPositionId: claim.position.id,
+      orderIntentId: claim.intent.id,
+      brokerOrderId: brokerOrder.id,
+      clientOrderId: brokerOrder.client_order_id,
+      mode,
+    } as PrismaTypes.InputJsonValue,
   });
 
   return {
     ok: true,
-    trackedPositionId: trackedPosition.id,
+    trackedPositionId: claim.position.id,
     symbol: upperSymbol,
-    brokerResult: result,
-    matchedTrackedPositions: tracked.count,
+    tradingAccountId,
+    orderIntentId: claim.intent.id,
+    brokerOrderId: brokerOrder.id,
+    clientOrderId: brokerOrder.client_order_id,
   };
 }

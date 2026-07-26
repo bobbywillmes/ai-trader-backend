@@ -16,6 +16,7 @@ export async function getAlpacaPositions(
         operation === 'bootstrap_snapshot'
           ? 'informational_read'
           : 'synchronization_read',
+      operationClass: 'LIFECYCLE_READ',
       deferDuringRateLimit:
         operation !== 'manual_admin_action' &&
         operation !== 'bootstrap_snapshot',
@@ -35,6 +36,7 @@ export async function closeAlpacaPosition(
       endpoint: 'DELETE /v2/positions/:symbol',
       method: 'DELETE',
       requestClass: 'critical_write',
+      operationClass: 'RISK_REDUCING_WRITE',
       deferDuringRateLimit: false,
     },
   });

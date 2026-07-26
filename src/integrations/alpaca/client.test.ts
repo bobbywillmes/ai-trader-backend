@@ -32,6 +32,7 @@ const accountReadMetadata: AlpacaRequestMetadata = {
   endpoint: 'GET /v2/account',
   method: 'GET',
   requestClass: 'informational_read',
+  operationClass: 'LIFECYCLE_READ',
   deferDuringRateLimit: false,
 };
 
@@ -40,6 +41,7 @@ const orderWriteMetadata: AlpacaRequestMetadata = {
   endpoint: 'POST /v2/orders',
   method: 'POST',
   requestClass: 'critical_write',
+  operationClass: 'ENTRY_WRITE',
   deferDuringRateLimit: false,
 };
 
@@ -174,6 +176,34 @@ describe('alpacaRequestForAccount', () => {
     expect(mocks.fetch).toHaveBeenCalledTimes(1);
   });
 
+  it('classifies but does not silently permit LIVE risk-reducing writes', async () => {
+    mocks.resolveAlpacaConfigForTradingAccount.mockResolvedValue({
+      tradingAccountId: 42,
+      environment: 'LIVE',
+      baseUrl: 'https://api.alpaca.markets',
+      apiKey: 'account-key',
+      apiSecret: 'account-secret',
+      source: 'trading_account_credential',
+      credentialId: 7,
+      keyFingerprint: 'fingerprint-1',
+    });
+
+    await expect(
+      alpacaRequestForAccount(42, '/v2/orders', {
+        method: 'POST',
+        body: { symbol: 'SPY' },
+        metadata: {
+          ...orderWriteMetadata,
+          operation: 'position_close',
+          operationClass: 'RISK_REDUCING_WRITE',
+        },
+      })
+    ).rejects.toThrow(
+      'LIVE RISK_REDUCING_WRITE blocked for TradingAccount 42: ALLOW_LIVE_TRADING is false.'
+    );
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
   it('propagates missing account credentials before sending an Alpaca request', async () => {
     mocks.resolveAlpacaConfigForTradingAccount.mockRejectedValueOnce(
       new Error(
@@ -228,6 +258,7 @@ describe('alpacaRequestForAccount', () => {
           endpoint: 'GET /v2/orders/:orderId',
           method: 'GET',
           requestClass: 'synchronization_read',
+          operationClass: 'LIFECYCLE_READ',
           deferDuringRateLimit: true,
         },
       })
@@ -266,6 +297,7 @@ describe('alpacaRequestForAccount', () => {
           endpoint: 'POST /v2/orders',
           method: 'GET',
           requestClass: 'critical_write',
+          operationClass: 'ENTRY_WRITE',
           deferDuringRateLimit: false,
         },
       })

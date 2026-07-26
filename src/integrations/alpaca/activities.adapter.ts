@@ -74,6 +74,7 @@ export async function getAlpacaAccountActivities(
           params.operation === 'manual_admin_action'
             ? 'informational_read'
             : 'synchronization_read',
+        operationClass: 'LIFECYCLE_READ',
         deferDuringRateLimit:
           (params.operation ?? 'broker_activity_sync') !==
           'manual_admin_action',

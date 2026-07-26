@@ -42,8 +42,10 @@ export async function alpacaRequestForAccount<T>(
     config.environment === TradingAccountEnvironment.LIVE &&
     !env.ALLOW_LIVE_TRADING
   ) {
+    const operationClass =
+      options.metadata.operationClass ?? 'ENTRY_WRITE';
     throw new Error(
-      `LIVE broker write blocked for TradingAccount ${tradingAccountId}: ALLOW_LIVE_TRADING is false.`
+      `LIVE ${operationClass} blocked for TradingAccount ${tradingAccountId}: ALLOW_LIVE_TRADING is false.`
     );
   }
   const url = `${config.baseUrl}${path}`;
