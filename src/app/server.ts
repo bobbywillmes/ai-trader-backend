@@ -8,7 +8,7 @@ import {
   syncSubmittedOrdersAcrossAccounts,
 } from '../workers/order.worker.js';
 import { syncTrackedPositionsAcrossAccounts } from '../services/position-tracking.service.js';
-import { evaluateExits } from '../services/exit-evaluator.service.js';
+import { evaluateExitsForEligibleAccounts } from '../services/exit-evaluator.service.js';
 import { runScheduledAccountSnapshots } from '../workers/account-snapshot.worker.js';
 import { runBrokerActivitySync } from '../workers/broker-activity.worker.js';
 import { assertStartupSafe } from '../services/startup-check.service.js';
@@ -124,12 +124,15 @@ async function runTradingWorkers() {
     });
 
     await runWorker('exit_evaluation', async () => {
-      // Phase 2 intentionally leaves exits default-account-only. Live accounts
-      // must remain dormant until exit enumeration is implemented.
-      await evaluateExits();
+      const result = await evaluateExitsForEligibleAccounts();
+      assertAccountCoordinatorHealthy('exit_evaluation', result.results);
 
       return {
-        outcome: 'success',
+        outcome:
+          result.processedAccounts > 0
+            ? 'success'
+            : 'idle',
+        workSucceeded: result.processedAccounts > 0,
       };
     });
   } finally {
