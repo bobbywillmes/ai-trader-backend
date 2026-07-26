@@ -29,6 +29,7 @@ import { getRuntimeTradingConfig } from '../services/config.service.js';
 import { runAlpacaApiUsagePersistence } from '../services/alpaca-api-usage-persistence.service.js';
 import { runMassiveNewsWorkerOnce } from '../workers/massive-news.worker.js';
 import { assertAccountCoordinatorHealthy } from '../services/worker-coordinator-result.service.js';
+import { closeTradingAccountWorkflowLockPool } from '../services/trading-account-workflow-lock.service.js';
 
 const app = createApp();
 
@@ -311,7 +312,10 @@ async function shutdown(signal: NodeJS.Signals) {
   workerHealthRegistry.stopPersistence();
 
   await Promise.race([
-    workerHealthRegistry.shutdown(),
+    Promise.all([
+      workerHealthRegistry.shutdown(),
+      closeTradingAccountWorkflowLockPool(),
+    ]),
     new Promise((resolve) => setTimeout(resolve, 5_000)),
   ]);
 

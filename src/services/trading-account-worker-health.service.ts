@@ -176,6 +176,37 @@ export async function recordTradingAccountWorkerAttempt(args: {
       lastDurationMs: Math.max(0, now.getTime() - (args.startedAt ?? now).getTime()),
     },
   });
+  if (args.outcome === 'lock_skipped' &&
+      (!previous?.lastLockSkippedAt ||
+       now.getTime() - previous.lastLockSkippedAt.getTime() >= definition.staleAfterMs)) {
+    const account = await prisma.tradingAccount.findUnique({
+      where: { id: args.tradingAccountId },
+      select: { displayName: true, environment: true },
+    });
+    if (account) {
+      await createSystemEvent({
+        type: 'account_worker_health.lock_contention',
+        entityType: 'tradingAccountWorker',
+        entityId: `${args.tradingAccountId}:${args.workerKey}`,
+        tradingAccountId: args.tradingAccountId,
+        message: `${account.displayName} ${args.workerKey} skipped because another process owns the workflow lock.`,
+        payloadJson: {
+          tradingAccountId: args.tradingAccountId,
+          workerKey: args.workerKey,
+          displayName: account.displayName,
+          environment: account.environment,
+          processInstanceId: args.processInstanceId,
+          previousStatus,
+          nextStatus: deriveTradingAccountWorkerStatus(state, definition, now),
+          reason: 'lock_not_acquired',
+          consecutiveFailures: state.consecutiveFailures,
+          totalLockSkips: state.totalLockSkips,
+          lastSucceededAt: state.lastSucceededAt,
+          lastFailedAt: state.lastFailedAt,
+        },
+      });
+    }
+  }
   const nextStatus = deriveTradingAccountWorkerStatus(state, definition, now);
   await emitTransition({ state, previousStatus, nextStatus, reason: state.lastError ?? state.lastSkipReason });
   return { ...state, status: nextStatus };
