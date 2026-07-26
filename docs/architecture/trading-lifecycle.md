@@ -43,8 +43,11 @@ produce a critical result; credentials never fall back to another account.
 Submitted-order synchronization uses a per-account batch of ten oldest intents.
 A submitting intent is stale after five minutes. Recovery first looks up its
 account-specific `clientOrderId`: an existing broker order is linked
-idempotently; an absent entry returns to `pending`; an absent exit remains
-`submitting` because exit replay requires different assumptions.
+idempotently; an absent entry returns to `pending`. An absent exit is resolved
+according to its recorded broker-write delivery classification. Definitively
+not-sent and confirmed-rejected submissions release their close claim safely;
+delivery-uncertain submissions remain `submitting` and are never replayed
+blindly. The deferred-recovery event is emitted once rather than on every tick.
 
 Pending submission also uses account coordination. Accounts are enumerated in
 stable ID order and each receives an independent batch of five oldest pending
@@ -93,12 +96,41 @@ changes an attributed open position to `closing` and creates a `submitting`
 exit intent with deterministic client ID
 `ai-exit-close-{accountId}-{positionId}`. The account-scoped opposite-side
 market order runs outside the transaction. A second transaction materializes
-the broker order. Uncertain failures retain the claim for client-ID recovery.
+the broker order.
+
+Broker-write failures preserve delivery certainty:
+
+- `NOT_SENT_RETRYABLE` covers local rate-limit deferral before `fetch`.
+- `NOT_SENT_BLOCKED` covers credentials, LIVE policy, metadata validation, and
+  request preparation failures before `fetch`.
+- `BROKER_REJECTED` covers an explicit non-success broker response that is not
+  ambiguous.
+- `DELIVERY_UNCERTAIN` covers timeouts, network/response interruption, and
+  ambiguous server failures.
+
+Definitively not-sent closes atomically release the position and intent claim.
+Explicit rejection first receives an account-scoped client-ID lookup; confirmed
+absence releases the claim with operator-visible rejection state. Uncertain
+delivery retains `closing`/`submitting` state so recovery can materialize an
+accepted broker order without issuing a second close.
 
 `PositionExitState` is authoritative for protective orders. Linked orders are
 read through their owning account. Partial and terminal states update only that
-account. A confirmed 404 creates attention without replacement; a temporary
-error remains retryable. Broker activity remains authoritative for fills.
+account. Protective submission creates a durable `OrderIntent` claim with a
+deterministic client ID before the broker call. Recovery observes a short
+backoff, looks up that ID first, materializes an accepted order idempotently,
+and retries only a definitively not-sent attempt. Uncertain or inconclusive
+delivery retains attention without blind replay; `submit_failed` is recoverable
+and is not a permanent evaluator suppression.
+
+A confirmed 404 for a linked protective order creates attention without
+replacement; a temporary lookup error remains retryable. Canonical terminal
+statuses are `filled`, `canceled`, `expired`, `rejected`, `replaced`,
+`done_for_day`, and `calculated`; historical `cancelled` normalizes to
+`canceled`. Filled completes the protective lifecycle. Every other terminal
+status leaves exposure requiring attention unless a replacement is verified,
+and no terminal status falls through to active/submitted polling. Broker
+activity remains authoritative for fills and position closure.
 
 Reconciliation runs accounts with positions, nonterminal orders, active
 intents, unresolved lifecycle state, or credentialed operational history. Its

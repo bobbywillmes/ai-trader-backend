@@ -59,7 +59,12 @@ The goal is operational visibility. The backend needs to know whether normal wor
 
 When Alpaca returns `429`, the usage registry records a rate-limit incident and activates a bounded backoff window. During active backoff, safe nonessential read polling can be deferred so the backend does not keep hammering Alpaca while the limit is recovering.
 
-Critical write paths, including broker order submission, keep their existing behavior. The observability layer should not silently drop broker-facing trading actions.
+When a critical write reaches the shared client during an active local backoff,
+it is deferred before `fetch` and reported as
+`NOT_SENT_RETRYABLE`. Close and protective-order recovery can therefore release
+or retain their durable claim according to proven delivery certainty rather
+than treating the write as ambiguously delivered. The observability layer never
+silently drops the action.
 
 Worker integrations translate intentional rate-limit deferrals into healthy `not_due` skips rather than worker failures. This keeps worker health focused on scheduler liveness while still exposing the rate-limit state through System Status.
 
@@ -145,6 +150,24 @@ Successful Alpaca writes notify the coordinator instead of launching ad hoc sync
 Idempotency lookups, already-recovered existing broker orders, failed writes, policy-blocked orders, and local-only state changes do not force synchronization.
 
 Forced reads run through the normal scheduler and remain subject to active 429 backoff.
+
+## Broker-write delivery certainty
+
+The shared client classifies critical-write failures without exposing
+credentials or raw authenticated responses:
+
+| Classification | Meaning |
+| --- | --- |
+| `NOT_SENT_RETRYABLE` | A local transient guard, currently rate-limit backoff, stopped the request before `fetch`. |
+| `NOT_SENT_BLOCKED` | Credentials, LIVE policy, metadata validation, or local request preparation stopped the request before `fetch`. |
+| `BROKER_REJECTED` | Alpaca returned an explicit non-success response that confirms rejection. |
+| `DELIVERY_UNCERTAIN` | Timeout, network/response interruption, or an ambiguous server response means acceptance cannot be ruled out. |
+
+Callers must retain the deterministic `clientOrderId`. Definitively not-sent
+operations may release their local submission claim for controlled retry after
+the blocker clears. Rejected operations verify absence by that client ID before
+release. Delivery-uncertain operations retain the claim, look up the owning
+account by client ID, and never submit a duplicate blindly.
 
 ### System Status And Admin UI
 
