@@ -17,7 +17,8 @@ function safeError(error: unknown) {
 export function deriveTradingAccountWorkerStatus(
   state: Pick<TradingAccountWorkerHealthState,
     'applicable' | 'eligible' | 'currentRunStartedAt' | 'lastSucceededAt' |
-    'lastFailedAt' | 'consecutiveFailures' | 'backoffUntil' | 'lastLockSkippedAt'>,
+    'lastFailedAt' | 'consecutiveFailures' | 'backoffUntil' | 'lastLockSkippedAt' |
+    'totalLockSkips' | 'createdAt'>,
   definition: ReturnType<typeof getWorkerDefinition>,
   now = new Date()
 ): AccountWorkerStatus {
@@ -27,8 +28,11 @@ export function deriveTradingAccountWorkerStatus(
   if (state.currentRunStartedAt &&
       now.getTime() - state.currentRunStartedAt.getTime() > definition.maxRunDurationMs) return 'DEGRADED';
   if (!state.lastSucceededAt) {
-    if (state.lastLockSkippedAt &&
-        now.getTime() - state.lastLockSkippedAt.getTime() > definition.staleAfterMs) return 'STALE';
+    if (state.totalLockSkips > 0) {
+      const contentionAge = now.getTime() - state.createdAt.getTime();
+      if (contentionAge > definition.staleAfterMs) return 'STALE';
+      if (contentionAge > definition.delayedAfterMs) return 'DELAYED';
+    }
     return 'STARTING';
   }
   const age = now.getTime() - state.lastSucceededAt.getTime();
@@ -42,9 +46,14 @@ async function emitTransition(args: {
   previousStatus: AccountWorkerStatus;
   nextStatus: AccountWorkerStatus;
   reason: string | null;
-}) {
+}, dependencies: {
+  db?: typeof prisma;
+  emitSystemEvent?: typeof createSystemEvent;
+} = {}) {
+  const db = dependencies.db ?? prisma;
+  const emitSystemEvent = dependencies.emitSystemEvent ?? createSystemEvent;
   if (args.previousStatus === args.nextStatus) return;
-  const account = await prisma.tradingAccount.findUnique({
+  const account = await db.tradingAccount.findUnique({
     where: { id: args.state.tradingAccountId },
     select: { displayName: true, environment: true },
   });
@@ -52,7 +61,7 @@ async function emitTransition(args: {
   const recovered = TRANSITION_EVENT_STATUSES.has(args.previousStatus) &&
     !TRANSITION_EVENT_STATUSES.has(args.nextStatus);
   if (!recovered && !TRANSITION_EVENT_STATUSES.has(args.nextStatus)) return;
-  await createSystemEvent({
+  await emitSystemEvent({
     type: recovered ? 'account_worker_health.recovered' :
       args.nextStatus === 'STALE' ? 'account_worker_health.stale' : 'account_worker_health.failing',
     entityType: 'tradingAccountWorker',
@@ -79,7 +88,7 @@ export async function recordTradingAccountWorkerAttempt(args: {
   tradingAccountId: number;
   workerKey: WorkerKey;
   processInstanceId: string;
-  outcome: 'success' | 'failure' | 'dormant' | 'lock_skipped' | 'backoff_skipped';
+  outcome: 'success' | 'failure' | 'dormant' | 'backoff_skipped';
   applicable?: boolean;
   eligible?: boolean;
   eligibilityReason?: string | null;
@@ -89,10 +98,14 @@ export async function recordTradingAccountWorkerAttempt(args: {
   summary?: Prisma.InputJsonValue;
   backoffUntil?: Date | null;
   startedAt?: Date;
-}) {
+}, dependencies: {
+  db?: typeof prisma;
+  emitSystemEvent?: typeof createSystemEvent;
+} = {}) {
+  const db = dependencies.db ?? prisma;
   const definition = getWorkerDefinition(args.workerKey);
   const now = new Date();
-  const previous = await prisma.tradingAccountWorkerHealthState.findUnique({
+  const previous = await db.tradingAccountWorkerHealthState.findUnique({
     where: { tradingAccountId_workerKey: {
       tradingAccountId: args.tradingAccountId, workerKey: args.workerKey,
     } },
@@ -102,7 +115,7 @@ export async function recordTradingAccountWorkerAttempt(args: {
   const failure = args.outcome === 'failure';
   const success = args.outcome === 'success' || args.outcome === 'dormant';
   const skip = args.outcome.endsWith('skipped') || args.outcome === 'dormant';
-  const state = await prisma.tradingAccountWorkerHealthState.upsert({
+  const state = await db.tradingAccountWorkerHealthState.upsert({
     where: { tradingAccountId_workerKey: {
       tradingAccountId: args.tradingAccountId, workerKey: args.workerKey,
     } },
@@ -117,8 +130,8 @@ export async function recordTradingAccountWorkerAttempt(args: {
       lastFailedAt: failure ? now : null, lastOutcome: args.outcome,
       lastSkipReason: skip ? args.outcome : null, totalRuns: 1,
       totalFailures: failure ? 1 : 0, totalSkips: skip ? 1 : 0,
-      totalLockSkips: args.outcome === 'lock_skipped' ? 1 : 0,
-      lastLockSkippedAt: args.outcome === 'lock_skipped' ? now : null,
+      totalLockSkips: 0,
+      lastLockSkippedAt: null,
       consecutiveFailures: failure ? 1 : 0, lastError: failure ? safeError(args.error) : null,
       lastErrorCode: failure ? (args.errorCode ?? null) : null, lastErrorAt: failure ? now : null,
       ...(args.backoffUntil !== undefined ? { backoffUntil: args.backoffUntil } : {}),
@@ -140,22 +153,86 @@ export async function recordTradingAccountWorkerAttempt(args: {
       lastOutcome: args.outcome, lastSkipReason: skip ? args.outcome : null,
       totalRuns: { increment: 1 }, ...(failure ? { totalFailures: { increment: 1 } } : {}),
       ...(skip ? { totalSkips: { increment: 1 } } : {}),
-      ...(args.outcome === 'lock_skipped' ? {
-        totalLockSkips: { increment: 1 }, lastLockSkippedAt: now,
-      } : {}),
       ...(args.summary !== undefined ? { lastSummaryJson: args.summary } : {}),
       lastDurationMs: Math.max(0, now.getTime() - (args.startedAt ?? now).getTime()),
     },
   });
-  if (args.outcome === 'lock_skipped' &&
-      (!previous?.lastLockSkippedAt ||
-       now.getTime() - previous.lastLockSkippedAt.getTime() >= definition.staleAfterMs)) {
-    const account = await prisma.tradingAccount.findUnique({
+  const nextStatus = deriveTradingAccountWorkerStatus(state, definition, now);
+  await emitTransition(
+    { state, previousStatus, nextStatus, reason: state.lastError ?? state.lastSkipReason },
+    dependencies
+  );
+  return { ...state, status: nextStatus };
+}
+
+const CONTENTION_WITHOUT_OWNER_PROCESS_ID = 'lock-contention:no-owner';
+
+export async function recordTradingAccountWorkflowLockContention(args: {
+  tradingAccountId: number;
+  workerKey: WorkerKey;
+  contenderProcessInstanceId: string;
+  lockFamily: string;
+  attemptedAt: Date;
+}, dependencies: {
+  db?: typeof prisma;
+  emitSystemEvent?: typeof createSystemEvent;
+} = {}) {
+  const db = dependencies.db ?? prisma;
+  const emitSystemEvent = dependencies.emitSystemEvent ?? createSystemEvent;
+  const definition = getWorkerDefinition(args.workerKey);
+  const previous = await db.tradingAccountWorkerHealthState.findUnique({
+    where: { tradingAccountId_workerKey: {
+      tradingAccountId: args.tradingAccountId,
+      workerKey: args.workerKey,
+    } },
+  });
+  const previousStatus = previous
+    ? deriveTradingAccountWorkerStatus(previous, definition, args.attemptedAt)
+    : 'STARTING';
+  const summary = {
+    reason: 'lock_not_acquired',
+    lockFamily: args.lockFamily,
+    contenderProcessInstanceId: args.contenderProcessInstanceId,
+    attemptedAt: args.attemptedAt.toISOString(),
+  };
+  const state = await db.tradingAccountWorkerHealthState.upsert({
+    where: { tradingAccountId_workerKey: {
+      tradingAccountId: args.tradingAccountId,
+      workerKey: args.workerKey,
+    } },
+    create: {
+      tradingAccountId: args.tradingAccountId,
+      workerKey: args.workerKey,
+      processInstanceId: CONTENTION_WITHOUT_OWNER_PROCESS_ID,
+      expectedIntervalMs: definition.expectedIntervalMs,
+      currentRunStartedAt: null,
+      lastOutcome: 'lock_skipped',
+      lastSkipReason: 'lock_skipped',
+      totalRuns: 1,
+      totalSkips: 1,
+      totalLockSkips: 1,
+      lastLockSkippedAt: args.attemptedAt,
+      lastSummaryJson: summary,
+    },
+    update: {
+      lastSkipReason: 'lock_skipped',
+      totalRuns: { increment: 1 },
+      totalSkips: { increment: 1 },
+      totalLockSkips: { increment: 1 },
+      lastLockSkippedAt: args.attemptedAt,
+      lastSummaryJson: summary,
+    },
+  });
+
+  if (!previous?.lastLockSkippedAt ||
+      args.attemptedAt.getTime() - previous.lastLockSkippedAt.getTime() >=
+        definition.staleAfterMs) {
+    const account = await db.tradingAccount.findUnique({
       where: { id: args.tradingAccountId },
       select: { displayName: true, environment: true },
     });
     if (account) {
-      await createSystemEvent({
+      await emitSystemEvent({
         type: 'account_worker_health.lock_contention',
         entityType: 'tradingAccountWorker',
         entityId: `${args.tradingAccountId}:${args.workerKey}`,
@@ -166,9 +243,15 @@ export async function recordTradingAccountWorkerAttempt(args: {
           workerKey: args.workerKey,
           displayName: account.displayName,
           environment: account.environment,
-          processInstanceId: args.processInstanceId,
+          ownerProcessInstanceId: state.currentRunStartedAt
+            ? state.processInstanceId
+            : null,
+          contenderProcessInstanceId: args.contenderProcessInstanceId,
+          lockFamily: args.lockFamily,
           previousStatus,
-          nextStatus: deriveTradingAccountWorkerStatus(state, definition, now),
+          nextStatus: deriveTradingAccountWorkerStatus(
+            state, definition, args.attemptedAt
+          ),
           reason: 'lock_not_acquired',
           consecutiveFailures: state.consecutiveFailures,
           totalLockSkips: state.totalLockSkips,
@@ -178,8 +261,13 @@ export async function recordTradingAccountWorkerAttempt(args: {
       });
     }
   }
-  const nextStatus = deriveTradingAccountWorkerStatus(state, definition, now);
-  await emitTransition({ state, previousStatus, nextStatus, reason: state.lastError ?? state.lastSkipReason });
+  const nextStatus = deriveTradingAccountWorkerStatus(
+    state, definition, args.attemptedAt
+  );
+  await emitTransition(
+    { state, previousStatus, nextStatus, reason: 'lock_skipped' },
+    { db, emitSystemEvent }
+  );
   return { ...state, status: nextStatus };
 }
 
@@ -188,9 +276,14 @@ export async function startTradingAccountWorkerRun(args: {
   workerKey: WorkerKey;
   processInstanceId: string;
   startedAt: Date;
-}) {
+}, dependencies: {
+  db?: typeof prisma;
+  emitSystemEvent?: typeof createSystemEvent;
+} = {}) {
+  const db = dependencies.db ?? prisma;
+  const emitSystemEvent = dependencies.emitSystemEvent ?? createSystemEvent;
   const definition = getWorkerDefinition(args.workerKey);
-  const previous = await prisma.tradingAccountWorkerHealthState.findUnique({
+  const previous = await db.tradingAccountWorkerHealthState.findUnique({
     where: { tradingAccountId_workerKey: {
       tradingAccountId: args.tradingAccountId, workerKey: args.workerKey,
     } },
@@ -198,7 +291,7 @@ export async function startTradingAccountWorkerRun(args: {
 
   if (previous?.currentRunStartedAt &&
       previous.processInstanceId !== args.processInstanceId) {
-    await prisma.tradingAccountWorkerHealthState.update({
+    await db.tradingAccountWorkerHealthState.update({
       where: { id: previous.id },
       data: {
         currentRunStartedAt: null,
@@ -210,7 +303,7 @@ export async function startTradingAccountWorkerRun(args: {
         totalFailures: { increment: 1 },
       },
     });
-    await createSystemEvent({
+    await emitSystemEvent({
       type: 'account_worker_health.interrupted',
       entityType: 'tradingAccountWorker',
       entityId: `${args.tradingAccountId}:${args.workerKey}`,
@@ -226,7 +319,7 @@ export async function startTradingAccountWorkerRun(args: {
     });
   }
 
-  return prisma.tradingAccountWorkerHealthState.upsert({
+  return db.tradingAccountWorkerHealthState.upsert({
     where: { tradingAccountId_workerKey: {
       tradingAccountId: args.tradingAccountId, workerKey: args.workerKey,
     } },

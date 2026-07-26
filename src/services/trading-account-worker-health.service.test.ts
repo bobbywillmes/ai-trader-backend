@@ -7,7 +7,8 @@ const now = new Date('2026-07-26T20:00:00.000Z');
 const base = {
   applicable: true, eligible: true, currentRunStartedAt: null,
   lastSucceededAt: now, lastFailedAt: null, consecutiveFailures: 0,
-  backoffUntil: null, lastLockSkippedAt: null,
+  backoffUntil: null, lastLockSkippedAt: null, totalLockSkips: 0,
+  createdAt: now,
 };
 
 describe('deriveTradingAccountWorkerStatus', () => {
@@ -37,8 +38,20 @@ describe('deriveTradingAccountWorkerStatus', () => {
   it('makes repeated lock exclusion stale after the freshness threshold', () => {
     expect(deriveTradingAccountWorkerStatus({
       ...base, lastSucceededAt: null,
-      lastLockSkippedAt: new Date(now.getTime() - definition.staleAfterMs - 1),
+      totalLockSkips: 3,
+      lastLockSkippedAt: now,
+      createdAt: new Date(now.getTime() - definition.staleAfterMs - 1),
     }, definition, now)).toBe('STALE');
+  });
+
+  it('makes sustained contention delayed before it becomes stale', () => {
+    expect(deriveTradingAccountWorkerStatus({
+      ...base,
+      lastSucceededAt: null,
+      totalLockSkips: 2,
+      lastLockSkippedAt: now,
+      createdAt: new Date(now.getTime() - definition.delayedAfterMs - 1),
+    }, definition, now)).toBe('DELAYED');
   });
 
   it('distinguishes delayed and stale successful heartbeats', () => {

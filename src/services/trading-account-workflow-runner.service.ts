@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import type { WorkerKey } from '../workers/worker-health.definitions.js';
 import {
+  recordTradingAccountWorkflowLockContention,
   recordTradingAccountWorkerAttempt,
   startTradingAccountWorkerRun,
 } from './trading-account-worker-health.service.js';
@@ -154,12 +155,12 @@ export async function runTradingAccountWorkflow<T>(args: {
   });
 
   if (locked.outcome === 'NOT_ACQUIRED') {
-    const startedAt = new Date();
-    await recordTradingAccountWorkerAttempt({
-      tradingAccountId: args.tradingAccountId, workerKey: args.workerKey,
-      processInstanceId: accountWorkflowProcessInstanceId,
-      outcome: 'lock_skipped', startedAt,
-      summary: { lockFamily: args.lockFamily },
+    await recordTradingAccountWorkflowLockContention({
+      tradingAccountId: args.tradingAccountId,
+      workerKey: args.workerKey,
+      contenderProcessInstanceId: accountWorkflowProcessInstanceId,
+      lockFamily: args.lockFamily,
+      attemptedAt: new Date(),
     });
     return { outcome: 'LOCK_SKIPPED' };
   }

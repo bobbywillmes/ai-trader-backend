@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   healthFind: vi.fn(),
   startRun: vi.fn(),
   recordAttempt: vi.fn(),
+  recordContention: vi.fn(),
   withLock: vi.fn(),
 }));
 
@@ -18,6 +19,7 @@ vi.mock('../db/prisma.js', () => ({
 vi.mock('./trading-account-worker-health.service.js', () => ({
   startTradingAccountWorkerRun: mocks.startRun,
   recordTradingAccountWorkerAttempt: mocks.recordAttempt,
+  recordTradingAccountWorkflowLockContention: mocks.recordContention,
 }));
 
 vi.mock('./trading-account-workflow-lock.service.js', () => ({
@@ -32,6 +34,7 @@ describe('runTradingAccountWorkflow durable ordering', () => {
     mocks.healthFind.mockResolvedValue({ backoffUntil: null });
     mocks.startRun.mockResolvedValue({ consecutiveFailures: 0 });
     mocks.recordAttempt.mockResolvedValue({});
+    mocks.recordContention.mockResolvedValue({});
     mocks.withLock.mockImplementation(async (args: { execute: () => Promise<unknown> }) => ({
       outcome: 'ACQUIRED_AND_COMPLETED',
       value: await args.execute(),
@@ -108,6 +111,29 @@ describe('runTradingAccountWorkflow durable ordering', () => {
     expect(mocks.recordAttempt).toHaveBeenCalledWith(expect.objectContaining({
       outcome: 'backoff_skipped',
       backoffUntil,
+    }));
+  });
+
+  it('uses dedicated contention persistence when the lock is not acquired', async () => {
+    mocks.withLock.mockResolvedValue({ outcome: 'NOT_ACQUIRED' });
+    const execute = vi.fn();
+
+    const result = await runTradingAccountWorkflow({
+      tradingAccountId: 44,
+      workerKey: 'broker_activity_sync',
+      lockFamily: 'broker-activity',
+      execute,
+    });
+
+    expect(result).toEqual({ outcome: 'LOCK_SKIPPED' });
+    expect(execute).not.toHaveBeenCalled();
+    expect(mocks.recordAttempt).not.toHaveBeenCalled();
+    expect(mocks.recordContention).toHaveBeenCalledWith(expect.objectContaining({
+      tradingAccountId: 44,
+      workerKey: 'broker_activity_sync',
+      lockFamily: 'broker-activity',
+      contenderProcessInstanceId: expect.any(String),
+      attemptedAt: expect.any(Date),
     }));
   });
 });
