@@ -121,4 +121,33 @@ describe('lifecycle account eligibility', () => {
       reason: 'usable_credentials_with_work',
     });
   });
+
+  it('reports credentialless pending submissions without making them eligible', async () => {
+    mocks.accountFindMany.mockResolvedValue([
+      account({
+        credential: null,
+        _count: {
+          orderIntents: 1,
+          brokerOrders: 0,
+          trackedPositions: 0,
+          brokerActivities: 0,
+        },
+      }),
+    ]);
+    mocks.intentGroupBy.mockResolvedValue([
+      {
+        tradingAccountId: 1,
+        status: 'pending',
+        _count: { _all: 1 },
+      },
+    ]);
+
+    const result = await enumerateLifecycleAccounts('pending_submissions');
+
+    expect(result[0]).toMatchObject({
+      eligible: false,
+      reason: 'credentials_unavailable_with_exposure',
+      exposureSummary: { pendingIntents: 1 },
+    });
+  });
 });

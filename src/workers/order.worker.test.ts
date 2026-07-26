@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   processPendingOrders,
+  processPendingOrdersForAccount,
   recoverStaleSubmittingIntentsForAccount,
   syncSubmittedOrders,
   syncSubmittedOrdersAcrossAccounts,
@@ -203,13 +204,14 @@ describe('order worker entry-session recheck', () => {
       },
     });
 
-    await processPendingOrders();
+    await processPendingOrdersForAccount(1);
 
     expect(mocks.orderIntentFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: {
+        where: expect.objectContaining({
           status: 'pending',
-        },
+          tradingAccountId: 1,
+        }),
       })
     );
     expect(mocks.submitOrderToBroker).not.toHaveBeenCalled();
@@ -260,7 +262,7 @@ describe('order worker entry-session recheck', () => {
 
     mocks.orderIntentFindMany.mockResolvedValue([exitIntent]);
 
-    await processPendingOrders();
+    await processPendingOrdersForAccount(1);
 
     expect(mocks.evaluateOrderRisk).not.toHaveBeenCalled();
     expect(mocks.submitOrderToBroker).toHaveBeenCalledWith(
@@ -281,7 +283,7 @@ describe('order worker entry-session recheck', () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ id: 501 });
 
-    await processPendingOrders();
+    await processPendingOrdersForAccount(1);
 
     expect(mocks.linkEntryDecisionToBrokerOrder).toHaveBeenCalledWith({
         orderIntentId: 101,
@@ -294,7 +296,7 @@ describe('order worker entry-session recheck', () => {
     mocks.orderIntentFindMany.mockResolvedValue([baseIntent]);
     mocks.brokerOrderFindFirst.mockResolvedValue({ id: 501 });
 
-    await processPendingOrders();
+    await processPendingOrdersForAccount(1);
 
     expect(mocks.linkEntryDecisionToBrokerOrder).toHaveBeenCalledWith({
       orderIntentId: 101,
@@ -428,6 +430,114 @@ describe('submitted order sync adaptive polling', () => {
       })
     );
     expect(result).toMatchObject({ synced: 1, polled: true });
+  });
+});
+
+describe('pending order multi-account coordinator', () => {
+  function pendingAccount(
+    id: number,
+    overrides: Record<string, unknown> = {}
+  ) {
+    return {
+      tradingAccountId: id,
+      displayName: `Account ${id}`,
+      broker: 'ALPACA',
+      environment: id === 1 ? 'PAPER' : 'LIVE',
+      status: 'ACTIVE',
+      credentialStatus: 'ACTIVE',
+      eligible: true,
+      reason: 'usable_credentials_with_work',
+      exposureSummary: {
+        pendingIntents: 1,
+        submittingIntents: 0,
+        submittedIntents: 0,
+        nonterminalOrders: 0,
+        activePositions: 0,
+        unresolvedActivities: 0,
+        hasLifecycleWork: true,
+      },
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.orderIntentUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.resolveSubscriptionOrderInput.mockResolvedValue({
+      tradingAccountId: 1,
+      tradingAccountSubscriptionId: 44,
+    });
+    mocks.evaluateOrderRisk.mockResolvedValue({
+      allowed: true,
+      details: { orderType: 'entry' },
+    });
+    mocks.submitOrderToBroker.mockResolvedValue({
+      duplicate: false,
+      order: {
+        id: 'broker-1',
+        client_order_id: 'client-101',
+        symbol: 'SPY',
+        side: 'buy',
+        status: 'new',
+      },
+    });
+    mocks.brokerOrderFindFirst.mockResolvedValue({ id: 501 });
+  });
+
+  it('applies the pending batch independently in stable account order', async () => {
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([
+      pendingAccount(1),
+      pendingAccount(2),
+    ]);
+    mocks.orderIntentFindMany.mockResolvedValue([]);
+
+    const result = await processPendingOrders();
+
+    expect(
+      mocks.orderIntentFindMany.mock.calls.map((call) => ({
+        account: call[0].where.tradingAccountId,
+        take: call[0].take,
+      }))
+    ).toEqual([
+      { account: 1, take: 5 },
+      { account: 2, take: 5 },
+    ]);
+    expect(result.processedAccounts).toBe(2);
+  });
+
+  it('continues to a later account after an account query failure', async () => {
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([
+      pendingAccount(1),
+      pendingAccount(2),
+    ]);
+    mocks.orderIntentFindMany
+      .mockRejectedValueOnce(new Error('Paper queue failure'))
+      .mockResolvedValueOnce([]);
+
+    const result = await processPendingOrders();
+
+    expect(result.results.map((item) => item.outcome)).toEqual([
+      'FAILED',
+      'PROCESSED',
+    ]);
+    expect(mocks.orderIntentFindMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves credentialless pending work unclaimed and makes no broker call', async () => {
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([
+      pendingAccount(2, {
+        eligible: false,
+        credentialStatus: null,
+        reason: 'credentials_unavailable_with_exposure',
+      }),
+    ]);
+
+    const result = await processPendingOrders();
+
+    expect(result.credentialUnavailableAccounts).toBe(1);
+    expect(mocks.orderIntentFindMany).not.toHaveBeenCalled();
+    expect(mocks.orderIntentUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.submitOrderToBroker).not.toHaveBeenCalled();
   });
 });
 

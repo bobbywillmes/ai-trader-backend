@@ -6,8 +6,10 @@ import {
 } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
+import { NONTERMINAL_BROKER_ORDER_PRISMA_FILTER } from './broker-order-lifecycle-status.service.js';
 
 export type LifecycleWorkflow =
+  | 'pending_submissions'
   | 'submitted_orders'
   | 'broker_activities'
   | 'positions'
@@ -38,16 +40,6 @@ export type LifecycleAccountEligibility = {
   };
 };
 
-const NONTERMINAL_ORDER_STATUSES = [
-  'new',
-  'accepted',
-  'pending_new',
-  'partially_filled',
-  'held',
-  'pending_cancel',
-  'pending_replace',
-] as const;
-
 export async function enumerateLifecycleAccounts(
   workflow: LifecycleWorkflow
 ): Promise<LifecycleAccountEligibility[]> {
@@ -68,7 +60,9 @@ export async function enumerateLifecycleAccounts(
             where: { status: { in: ['pending', 'submitting', 'submitted'] } },
           },
           brokerOrders: {
-            where: { status: { in: [...NONTERMINAL_ORDER_STATUSES] } },
+            where: {
+              status: NONTERMINAL_BROKER_ORDER_PRISMA_FILTER,
+            },
           },
           trackedPositions: {
             where: { status: { in: ['open', 'closing'] } },
@@ -123,7 +117,9 @@ export async function enumerateLifecycleAccounts(
       account.status === TradingAccountStatus.ACTIVE ||
       account.status === TradingAccountStatus.PAUSED;
     const workflowHasWork =
-      workflow === 'submitted_orders'
+      workflow === 'pending_submissions'
+        ? exposureSummary.pendingIntents > 0
+        : workflow === 'submitted_orders'
         ? exposureSummary.submittingIntents > 0 ||
           exposureSummary.submittedIntents > 0 ||
           exposureSummary.nonterminalOrders > 0

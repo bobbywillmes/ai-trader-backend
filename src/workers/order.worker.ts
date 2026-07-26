@@ -62,6 +62,7 @@ export type SubmittedOrderAccountResult = {
 };
 
 const SUBMITTED_ORDER_BATCH_LIMIT_PER_ACCOUNT = 10;
+export const PENDING_ORDER_BATCH_LIMIT_PER_ACCOUNT = 5;
 export const STALE_SUBMITTING_INTENT_THRESHOLD_MS = 5 * 60_000;
 
 function sanitizeError(error: unknown) {
@@ -247,10 +248,12 @@ function isEntryOrder(input: BrokerOrderSubmissionInput): boolean {
   return input.side === 'buy' && (input.signalType ?? 'entry') === 'entry';
 }
 
-export async function processPendingOrders() {
+export async function processPendingOrdersForAccount(
+  tradingAccountId: number
+) {
   const pending = await prisma.orderIntent.findMany({
-    where: { status: 'pending' },
-    take: 5,
+    where: { status: 'pending', tradingAccountId },
+    take: PENDING_ORDER_BATCH_LIMIT_PER_ACCOUNT,
     orderBy: { createdAt: 'asc' },
   });
 
@@ -258,13 +261,16 @@ export async function processPendingOrders() {
     console.log(`Order worker: Found ${pending.length} pending orders`);
   }
 
-  let processed = 0;
+  let claimed = 0;
+  let submitted = 0;
+  let blocked = 0;
+  let failed = 0;
 
   for (const intent of pending) {
     console.log(`Processing intent (${intent.id}): ${intent.symbol} ${intent.side} ${intent.orderType}`);
 
     try {
-      const claimed = await prisma.orderIntent.updateMany({
+      const claimResult = await prisma.orderIntent.updateMany({
         where: {
           id: intent.id,
           status: 'pending',
@@ -274,12 +280,12 @@ export async function processPendingOrders() {
         },
       });
 
-      if (claimed.count !== 1) {
+      if (claimResult.count !== 1) {
         console.log(`Intent (${intent.id}) was already claimed by another worker tick.`);
         continue;
       }
 
-      processed += 1;
+      claimed += 1;
 
       if (!intent.clientOrderId) {
         throw new Error(
@@ -361,6 +367,7 @@ export async function processPendingOrders() {
             `Intent (${intent.id}) blocked by worker-time risk recheck: ${riskResult.reason}`
           );
 
+          blocked += 1;
           continue;
         }
       }
@@ -394,6 +401,7 @@ export async function processPendingOrders() {
 
         console.log(`Intent (${intent.id}) already has broker order ${brokerOrder.id}; marked submitted.`);
 
+        submitted += 1;
         continue;
       }
 
@@ -449,6 +457,7 @@ export async function processPendingOrders() {
       }
 
       console.log(`Intent (${intent.id}) for ${intent.symbol} submitted.`);
+      submitted += 1;
     } catch (error) {
       await prisma.orderIntent.update({
         where: { id: intent.id },
@@ -460,12 +469,90 @@ export async function processPendingOrders() {
       });
 
       console.error(`Intent (${intent.id}) failed during broker submission`, error);
+      failed += 1;
     }
   }
 
   return {
     found: pending.length,
-    processed,
+    claimed,
+    submitted,
+    blocked,
+    failed,
+  };
+}
+
+export async function processPendingOrders() {
+  const accounts = await enumerateLifecycleAccounts('pending_submissions');
+  const results = [];
+
+  for (const account of accounts) {
+    if (!account.eligible) {
+      const outcome =
+        account.reason === 'credentials_unavailable_with_exposure'
+          ? 'CREDENTIALS_UNAVAILABLE' as const
+          : 'SKIPPED' as const;
+      results.push({ account, outcome });
+      console[outcome === 'CREDENTIALS_UNAVAILABLE' ? 'error' : 'info']({
+        workflow: 'pending_submissions',
+        tradingAccountId: account.tradingAccountId,
+        displayName: account.displayName,
+        environment: account.environment,
+        outcome,
+        reason: account.reason,
+      });
+      continue;
+    }
+
+    try {
+      results.push({
+        account,
+        outcome: 'PROCESSED' as const,
+        result: await processPendingOrdersForAccount(
+          account.tradingAccountId
+        ),
+      });
+    } catch (error) {
+      const message = sanitizeError(error);
+      results.push({
+        account,
+        outcome: 'FAILED' as const,
+        error: message,
+      });
+      console.error({
+        workflow: 'pending_submissions',
+        tradingAccountId: account.tradingAccountId,
+        displayName: account.displayName,
+        environment: account.environment,
+        outcome: 'FAILED',
+        error: message,
+      });
+    }
+  }
+
+  const accountResults = results.flatMap((item) =>
+    'result' in item && item.result ? [item.result] : []
+  );
+
+  return {
+    workflow: 'pending_submissions' as const,
+    processedAccounts: results.filter((item) => item.outcome === 'PROCESSED')
+      .length,
+    failedAccounts: results.filter((item) => item.outcome === 'FAILED').length,
+    credentialUnavailableAccounts: results.filter(
+      (item) => item.outcome === 'CREDENTIALS_UNAVAILABLE'
+    ).length,
+    skippedAccounts: results.filter((item) => item.outcome === 'SKIPPED')
+      .length,
+    intentsFound: accountResults.reduce((sum, item) => sum + item.found, 0),
+    intentsClaimed: accountResults.reduce((sum, item) => sum + item.claimed, 0),
+    intentsSubmitted: accountResults.reduce(
+      (sum, item) => sum + item.submitted,
+      0
+    ),
+    intentsBlocked: accountResults.reduce((sum, item) => sum + item.blocked, 0),
+    intentsFailed: accountResults.reduce((sum, item) => sum + item.failed, 0),
+    results,
   };
 }
 
@@ -520,8 +607,8 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
   try {
     adaptivePollingCoordinator.recordAttempt(
       'submitted_order_sync',
-      new Date(),
-      tradingAccountId
+      tradingAccountId,
+      new Date()
     );
     openOrders = await getNormalizedOpenOrders(
       tradingAccountId,
@@ -531,9 +618,9 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
     if (error instanceof AlpacaRateLimitDeferredError) {
       adaptivePollingCoordinator.recordRateLimitDeferred(
         'submitted_order_sync',
+        tradingAccountId,
         error.backoffUntil,
-        new Date(),
-        tradingAccountId
+        new Date()
       );
 
       return {
@@ -552,8 +639,8 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
 
     adaptivePollingCoordinator.recordFailure(
       'submitted_order_sync',
-      new Date(),
-      tradingAccountId
+      tradingAccountId,
+      new Date()
     );
     console.error('Failed to fetch Alpaca open orders during submitted order sync', error);
     throw error;
@@ -650,9 +737,9 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
 
   adaptivePollingCoordinator.recordSuccess(
     'submitted_order_sync',
+    tradingAccountId,
     new Date(),
-    decision.effectiveIntervalMs,
-    tradingAccountId
+    decision.effectiveIntervalMs
   );
 
   return {
