@@ -24,6 +24,7 @@ export async function cancelOrderById(tradingAccountId: number, orderId: string)
   try {
     await cancelAlpacaOrder(tradingAccountId, orderId, 'order_cancel');
     adaptivePollingCoordinator.forceAfterBrokerOrderCancellation(
+      tradingAccountId,
       'broker_order_cancel_requested'
     );
 

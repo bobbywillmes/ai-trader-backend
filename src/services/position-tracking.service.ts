@@ -287,8 +287,8 @@ export async function syncTrackedPositionsForAccount(
   try {
     adaptivePollingCoordinator.recordAttempt(
       'tracked_position_sync',
-      new Date(),
-      tradingAccountId
+      tradingAccountId,
+      new Date()
     );
     brokerPositions = await getNormalizedPositions(
       tradingAccountId,
@@ -298,9 +298,9 @@ export async function syncTrackedPositionsForAccount(
     if (error instanceof AlpacaRateLimitDeferredError) {
       adaptivePollingCoordinator.recordRateLimitDeferred(
         'tracked_position_sync',
+        tradingAccountId,
         error.backoffUntil,
-        new Date(),
-        tradingAccountId
+        new Date()
       );
 
       return {
@@ -322,8 +322,8 @@ export async function syncTrackedPositionsForAccount(
 
     adaptivePollingCoordinator.recordFailure(
       'tracked_position_sync',
-      new Date(),
-      tradingAccountId
+      tradingAccountId,
+      new Date()
     );
     throw error;
   }
@@ -605,9 +605,9 @@ export async function syncTrackedPositionsForAccount(
   const completedAt = new Date();
   adaptivePollingCoordinator.recordSuccess(
     'tracked_position_sync',
+    tradingAccountId,
     completedAt,
-    decision.effectiveIntervalMs,
-    tradingAccountId
+    decision.effectiveIntervalMs
   );
 
   return {

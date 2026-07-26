@@ -134,9 +134,10 @@ describe('AdaptivePollingCoordinator', () => {
   it('uses exact nextDueAt boundary semantics', async () => {
     const { coordinator, advance, now } = createHarness({ active: true });
     const first = await coordinator.getDecision(1, 'tracked_position_sync');
-    coordinator.recordAttempt('tracked_position_sync', now());
+    coordinator.recordAttempt('tracked_position_sync', 1, now());
     coordinator.recordSuccess(
       'tracked_position_sync',
+      1,
       now(),
       first.effectiveIntervalMs
     );
@@ -161,10 +162,11 @@ describe('AdaptivePollingCoordinator', () => {
   it('schedules the next interval from completion time', async () => {
     const { coordinator, advance, now } = createHarness({ active: true });
     const decision = await coordinator.getDecision(1, 'submitted_order_sync');
-    coordinator.recordAttempt('submitted_order_sync', now());
+    coordinator.recordAttempt('submitted_order_sync', 1, now());
     advance(700);
     coordinator.recordSuccess(
       'submitted_order_sync',
+      1,
       now(),
       decision.effectiveIntervalMs
     );
@@ -180,8 +182,8 @@ describe('AdaptivePollingCoordinator', () => {
     const { coordinator, now } = createHarness({ active: true });
 
     await coordinator.getDecision(1, 'tracked_position_sync');
-    coordinator.recordAttempt('tracked_position_sync', now());
-    coordinator.recordFailure('tracked_position_sync', now());
+    coordinator.recordAttempt('tracked_position_sync', 1, now());
+    coordinator.recordFailure('tracked_position_sync', 1, now());
 
     const snapshot = await coordinator.getSnapshot(1);
 
@@ -194,18 +196,22 @@ describe('AdaptivePollingCoordinator', () => {
   it('coalesces multiple force requests and clears force after success', async () => {
     const { coordinator, now } = createHarness({ active: true });
 
-    coordinator.forceSync(['submitted_order_sync'], 'broker_order_created');
-    coordinator.forceSync(['submitted_order_sync'], 'protective_order_created');
+    coordinator.forceSync(['submitted_order_sync'], 'broker_order_created', 1);
+    coordinator.forceSync(
+      ['submitted_order_sync'],
+      'protective_order_created',
+      1
+    );
 
     await expect(
       coordinator.getDecision(1, 'submitted_order_sync')
     ).resolves.toMatchObject({
       due: true,
-      forceReason: 'startup',
+      forceReason: 'broker_order_created',
     });
 
-    coordinator.recordAttempt('submitted_order_sync', now());
-    coordinator.recordSuccess('submitted_order_sync', now(), 10_000);
+    coordinator.recordAttempt('submitted_order_sync', 1, now());
+    coordinator.recordSuccess('submitted_order_sync', 1, now(), 10_000);
 
     const snapshot = await coordinator.getSnapshot(1);
 
@@ -267,8 +273,8 @@ describe('AdaptivePollingCoordinator', () => {
     });
 
     await coordinator.getDecision(1, 'tracked_position_sync');
-    coordinator.recordSuccess('submitted_order_sync', new Date(), 60_000);
-    coordinator.recordSuccess('tracked_position_sync', new Date(), 120_000);
+    coordinator.recordSuccess('submitted_order_sync', 1, new Date(), 60_000);
+    coordinator.recordSuccess('tracked_position_sync', 1, new Date(), 120_000);
 
     advance(2_000);
     await expect(
@@ -278,8 +284,8 @@ describe('AdaptivePollingCoordinator', () => {
       reason: 'market_transition',
     });
 
-    coordinator.recordSuccess('submitted_order_sync', new Date(), 10_000);
-    coordinator.recordSuccess('tracked_position_sync', new Date(), 15_000);
+    coordinator.recordSuccess('submitted_order_sync', 1, new Date(), 10_000);
+    coordinator.recordSuccess('tracked_position_sync', 1, new Date(), 15_000);
 
     advance(2_000);
     await expect(
@@ -301,8 +307,8 @@ describe('AdaptivePollingCoordinator', () => {
     });
 
     await coordinator.getDecision(1, 'tracked_position_sync');
-    coordinator.recordSuccess('submitted_order_sync', new Date(), 60_000);
-    coordinator.recordSuccess('tracked_position_sync', new Date(), 60_000);
+    coordinator.recordSuccess('submitted_order_sync', 1, new Date(), 60_000);
+    coordinator.recordSuccess('tracked_position_sync', 1, new Date(), 60_000);
 
     advance(2_000);
     await expect(
@@ -335,5 +341,90 @@ describe('AdaptivePollingCoordinator', () => {
       marketState: 'unknown',
       mode: 'market_unknown',
     });
+  });
+
+  it('keeps Paper degraded when a later Live lookup succeeds', async () => {
+    const marketProvider = vi.fn(async (tradingAccountId: number) => {
+      if (tradingAccountId === 1) throw new Error('Paper clock unavailable');
+      return marketSnapshot({ open: true });
+    });
+    const { coordinator } = createHarness({ active: true, marketProvider });
+
+    await coordinator.getDecision(1, 'tracked_position_sync');
+    await coordinator.getDecision(2, 'tracked_position_sync');
+
+    await expect(coordinator.getSnapshot(1)).resolves.toMatchObject({
+      status: 'degraded',
+      marketSession: {
+        consecutiveFailures: 1,
+        lastError: 'Paper clock unavailable',
+      },
+    });
+    await expect(coordinator.getSnapshot(2)).resolves.toMatchObject({
+      status: 'normal',
+      marketState: 'open',
+    });
+  });
+
+  it('does not force Paper when Live market state recovers', async () => {
+    let liveAttempts = 0;
+    const marketProvider = vi.fn(async (tradingAccountId: number) => {
+      if (tradingAccountId === 2 && liveAttempts++ === 0) {
+        throw new Error('Live clock unavailable');
+      }
+      return marketSnapshot({ open: true });
+    });
+    const { coordinator, advance } = createHarness({
+      active: true,
+      marketProvider,
+    });
+    await coordinator.getDecision(1, 'tracked_position_sync');
+    await coordinator.getDecision(2, 'tracked_position_sync');
+    coordinator.recordSuccess('tracked_position_sync', 1, new Date(), 60_000);
+    coordinator.recordSuccess('tracked_position_sync', 2, new Date(), 60_000);
+
+    advance(2_000);
+    await coordinator.getDecision(2, 'tracked_position_sync');
+
+    expect(
+      (await coordinator.getSnapshot(1)).workers.trackedPositionSync.forced
+    ).toBe(false);
+    expect(
+      (await coordinator.getSnapshot(2)).workers.trackedPositionSync.forceReason
+    ).toBe('market_session_recovered');
+  });
+
+  it('forces broker-write polling only for the owning account', async () => {
+    const { coordinator } = createHarness({ active: true });
+    coordinator.recordSuccess('submitted_order_sync', 1, new Date(), 60_000);
+    coordinator.recordSuccess('submitted_order_sync', 2, new Date(), 60_000);
+
+    coordinator.forceAfterBrokerOrderCreated(2, 'broker_order_created');
+
+    expect(
+      (await coordinator.getSnapshot(1)).workers.submittedOrderSync.forced
+    ).toBe(false);
+    expect(
+      (await coordinator.getSnapshot(2)).workers.submittedOrderSync.forceReason
+    ).toBe('broker_order_created');
+  });
+
+  it('never creates synthetic account-zero worker state', () => {
+    const { coordinator } = createHarness({ active: true });
+
+    coordinator.forceAfterBrokerOrderCancellation(
+      7,
+      'broker_order_cancel_requested'
+    );
+
+    const stateKeys = Array.from(
+      (
+        coordinator as unknown as {
+          states: Map<string, unknown>;
+        }
+      ).states.keys()
+    );
+    expect(stateKeys).toEqual(['7:submitted_order_sync']);
+    expect(stateKeys.some((key) => key.startsWith('0:'))).toBe(false);
   });
 });

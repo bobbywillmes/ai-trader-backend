@@ -293,6 +293,7 @@ export async function submitTrailingStopExitOrder(trackedPositionId: number) {
   );
 
   adaptivePollingCoordinator.forceAfterBrokerOrderCreated(
+    tradingAccountId,
     'protective_order_created'
   );
 
