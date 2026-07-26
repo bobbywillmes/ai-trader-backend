@@ -76,6 +76,18 @@ result while retaining local state. Global `WorkerHealthState` rows still
 describe coordinator health; account-scoped persisted health and cross-process
 locking are deferred.
 
+Coordinators finish processing every eligible account before reporting health.
+Any `FAILED` account or `CREDENTIALS_UNAVAILABLE` account with lifecycle work
+causes the coordinator-level tick to fail with a sanitized aggregate message.
+A successful account plus a failed account is therefore visible as a worker
+failure rather than success. Dormant credentialless accounts with no work
+remain normal skips.
+
+Adaptive worker state, market-session evaluation, recovery history, failure
+counts, and broker-write force signals are keyed by `tradingAccountId`. A
+successful Live clock lookup cannot clear Paper degradation, and a broker write
+forces follow-up polling only for the owning account.
+
 ## Statuses
 
 Status is derived from raw state at evaluation time with this priority:

@@ -45,6 +45,21 @@ account-specific `clientOrderId`: an existing broker order is linked
 idempotently; an absent entry returns to `pending`; an absent exit remains
 `submitting` because exit replay requires different assumptions.
 
+Pending submission also uses account coordination. Accounts are enumerated in
+stable ID order and each receives an independent batch of five oldest pending
+intents. The account-specific core preserves the atomic
+`pending -> submitting` claim and worker-time assignment/risk checks.
+Credentialless accounts with pending work are reported as
+`CREDENTIALS_UNAVAILABLE`; their intents remain pending and no broker request is
+made. Exit intents remain eligible and bypass entry-only risk evaluation.
+
+Broker-order lifecycle work uses one canonical status policy. Terminal statuses
+are `filled`, `canceled`, `expired`, `rejected`, `replaced`, `done_for_day`, and
+`calculated`: these represent orders that cannot receive another executable
+state transition. All other known or future statuses are treated
+conservatively as nonterminal, including `suspended`, `stopped`, `held`,
+`accepted_for_bidding`, and pending replacement/cancellation states.
+
 Activity cursors derive from account-scoped stored rows. Position fetches,
 matching, creation, updates, closure, and close-fill refreshes stay inside the
 selected account. Closure happens only after a successful positions response
