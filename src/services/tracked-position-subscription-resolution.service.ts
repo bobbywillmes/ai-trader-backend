@@ -20,6 +20,7 @@ export type SubscriptionResolutionResult =
       >;
       subscriptionId: number;
       subscriptionKey: string;
+      tradingAccountSubscriptionId: number;
       reason: string;
       evidence: Prisma.InputJsonValue;
     }
@@ -28,6 +29,7 @@ export type SubscriptionResolutionResult =
       source: 'unresolved' | 'ambiguous';
       subscriptionId: null;
       subscriptionKey: null;
+      tradingAccountSubscriptionId: null;
       reason: string;
       evidence: Prisma.InputJsonValue;
     };
@@ -111,6 +113,7 @@ async function findLocalOpeningOrderIntent(args: {
           exitProfile: true,
         },
       },
+      tradingAccountSubscription: true,
       brokerOrders: true,
     },
     orderBy: {
@@ -189,6 +192,7 @@ async function resolveFromBrokerClientOrderId(args: {
       source: 'ambiguous' as const,
       subscriptionId: null,
       subscriptionKey: null,
+      tradingAccountSubscriptionId: null,
       reason: 'multiple_broker_client_order_subscription_keys',
       evidence: {
         clientOrderIds,
@@ -211,6 +215,10 @@ async function resolveFromBrokerClientOrderId(args: {
     include: {
       strategy: true,
       exitProfile: true,
+      accountSubscriptions: {
+        where: { tradingAccountId: args.tradingAccountId },
+        select: { id: true },
+      },
     },
   });
 
@@ -225,6 +233,7 @@ async function resolveFromBrokerClientOrderId(args: {
       source: 'unresolved' as const,
       subscriptionId: null,
       subscriptionKey: null,
+      tradingAccountSubscriptionId: null,
       reason: 'broker_client_order_subscription_key_not_eligible',
       evidence: {
         subscriptionKey,
@@ -238,6 +247,7 @@ async function resolveFromBrokerClientOrderId(args: {
     source: 'broker_client_order_id' as const,
     subscriptionId: subscription.id,
     subscriptionKey: subscription.key,
+    tradingAccountSubscriptionId: subscription.accountSubscriptions[0]!.id,
     reason: 'broker_client_order_subscription_key',
     evidence: {
       subscriptionKey,
@@ -272,6 +282,10 @@ async function resolveFromUniqueObserverFallback(args: {
     include: {
       strategy: true,
       exitProfile: true,
+      accountSubscriptions: {
+        where: { tradingAccountId: args.tradingAccountId },
+        select: { id: true },
+      },
     },
     orderBy: {
       id: 'asc',
@@ -284,6 +298,7 @@ async function resolveFromUniqueObserverFallback(args: {
       source: 'unresolved' as const,
       subscriptionId: null,
       subscriptionKey: null,
+      tradingAccountSubscriptionId: null,
       reason: 'no_eligible_subscription_for_observed_position',
       evidence: {
         broker: args.broker,
@@ -299,6 +314,7 @@ async function resolveFromUniqueObserverFallback(args: {
       source: 'ambiguous' as const,
       subscriptionId: null,
       subscriptionKey: null,
+      tradingAccountSubscriptionId: null,
       reason: 'multiple_eligible_subscriptions_for_observed_position',
       evidence: {
         broker: args.broker,
@@ -317,6 +333,7 @@ async function resolveFromUniqueObserverFallback(args: {
     source: 'unique_observer_fallback' as const,
     subscriptionId: subscription.id,
     subscriptionKey: subscription.key,
+    tradingAccountSubscriptionId: subscription.accountSubscriptions[0]!.id,
     reason: 'single_eligible_subscription_for_observed_position',
     evidence: {
       broker: args.broker,
@@ -350,6 +367,11 @@ export async function resolveTrackedPositionSubscription(args: {
   if (
     localIntent?.subscriptionId &&
     localIntent.subscription &&
+    localIntent.tradingAccountSubscription &&
+    localIntent.tradingAccountSubscription.tradingAccountId ===
+      args.tradingAccountId &&
+    localIntent.tradingAccountSubscription.subscriptionId ===
+      localIntent.subscriptionId &&
     isCompatibleSubscription(localIntent.subscription, {
       symbol: args.symbol,
     })
@@ -359,6 +381,8 @@ export async function resolveTrackedPositionSubscription(args: {
       source: 'local_order_intent',
       subscriptionId: localIntent.subscriptionId,
       subscriptionKey: localIntent.subscription.key,
+      tradingAccountSubscriptionId:
+        localIntent.tradingAccountSubscription.id,
       reason: 'local_order_intent_with_broker_order',
       evidence: {
         orderIntentId: localIntent.id,

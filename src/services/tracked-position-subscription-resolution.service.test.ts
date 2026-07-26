@@ -59,6 +59,7 @@ function subscription(overrides: Partial<Record<string, unknown>> = {}) {
     enabled: true,
     strategy: { enabled: true },
     exitProfile: { enabled: true },
+    accountSubscriptions: [{ id: 44 }],
     ...overrides,
   };
 }
@@ -85,6 +86,11 @@ describe('tracked position subscription resolution', () => {
       id: 101,
       tradingAccountId: 1,
       tradingAccountSubscriptionId: 44,
+      tradingAccountSubscription: {
+        id: 44,
+        tradingAccountId: 1,
+        subscriptionId: 22,
+      },
       clientOrderId: 'ai-20260616T-DIA-buy-market-abcdef12',
       subscriptionId: 22,
       subscription: subscription(),
@@ -104,6 +110,7 @@ describe('tracked position subscription resolution', () => {
       source: 'local_order_intent',
       subscriptionId: 22,
       subscriptionKey: 'dia_dip_core',
+      tradingAccountSubscriptionId: 44,
     });
     expect(mocks.subscriptionFindMany).not.toHaveBeenCalled();
   });
@@ -286,6 +293,11 @@ describe('tracked position subscription resolution', () => {
       id: 101,
       tradingAccountId: 1,
       tradingAccountSubscriptionId: 44,
+      tradingAccountSubscription: {
+        id: 44,
+        tradingAccountId: 1,
+        subscriptionId: 22,
+      },
       clientOrderId: 'ai-20260616T-DIA-buy-market-abcdef12',
       subscriptionId: 22,
       subscription: subscription(),

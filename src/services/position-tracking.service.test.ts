@@ -208,6 +208,7 @@ describe('position tracking subscription recovery', () => {
       tradingAccountId: 1,
       openedAt,
       subscriptionId: null,
+      tradingAccountSubscriptionId: null,
       configSnapshotJson: null,
     };
     const updated = {
@@ -231,6 +232,7 @@ describe('position tracking subscription recovery', () => {
       source: 'unique_observer_fallback',
       subscriptionId: 22,
       subscriptionKey: 'dia_dip_core',
+      tradingAccountSubscriptionId: 44,
       reason: 'single_eligible_subscription_for_observed_position',
       evidence: { symbol: 'DIA' },
     });
@@ -239,7 +241,10 @@ describe('position tracking subscription recovery', () => {
 
     expect(mocks.trackedPositionUpdate).toHaveBeenNthCalledWith(2, {
       where: { id: 101 },
-      data: { subscriptionId: 22 },
+      data: {
+        subscriptionId: 22,
+        tradingAccountSubscriptionId: 44,
+      },
     });
     expect(mocks.captureTrackedPositionConfigSnapshot).toHaveBeenCalledWith({
       trackedPositionId: 101,
