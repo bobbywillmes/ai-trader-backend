@@ -12,6 +12,9 @@ import { getTickerLatestPrice } from './massive-market-data.service.js';
 import { validateAccountRiskConfiguration } from './trading-account-risk-configuration.service.js';
 import { resolveEffectiveAccountEntryLimits } from './trading-account-entry-risk-limits.service.js';
 import { getTradingAccountEntryRiskUsage } from './trading-account-entry-risk-usage.service.js';
+import { env } from '../config/env.js';
+import { deriveTradingAccountWorkerStatus } from './trading-account-worker-health.service.js';
+import { getWorkerDefinition, type WorkerKey } from '../workers/worker-health.definitions.js';
 
 const ACTIVE_POSITION_STATUSES = ['open', 'closing'];
 const BROKER_SYNC_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
@@ -950,7 +953,46 @@ export async function getTradingAccountRiskHealth(
   }
 
   const checks: TradingAccountRiskHealthCheck[] = [];
+  const workerHealthStates = prisma.tradingAccountWorkerHealthState
+    ? await prisma.tradingAccountWorkerHealthState.findMany({
+        where: { tradingAccountId },
+        orderBy: { workerKey: 'asc' },
+      })
+    : [];
   const activeSubscriptions = activeAccountSubscriptions(accountSubscriptions);
+
+  for (const workerState of workerHealthStates) {
+    const workerStatus = deriveTradingAccountWorkerStatus(
+      workerState, getWorkerDefinition(workerState.workerKey as WorkerKey), now
+    );
+    if (['FAILING', 'STALE', 'BACKING_OFF'].includes(workerStatus)) {
+      checks.push(createCheck({
+        id: `account_worker_${workerState.workerKey}`,
+        label: `${workerState.workerKey} is operationally ready`,
+        severity: 'blocker',
+        status: 'fail',
+        message: `${workerState.workerKey} is ${workerStatus.toLowerCase()}.`,
+        details: {
+          workerKey: workerState.workerKey,
+          status: workerStatus,
+          lastSucceededAt: workerState.lastSucceededAt,
+          lastFailedAt: workerState.lastFailedAt,
+          backoffUntil: workerState.backoffUntil,
+          consecutiveFailures: workerState.consecutiveFailures,
+        },
+      }));
+    }
+  }
+  if (account.environment === TradingAccountEnvironment.LIVE &&
+      !env.ALLOW_LIVE_RISK_REDUCING_WRITES) {
+    checks.push(createCheck({
+      id: 'live_risk_reducing_writes_permitted',
+      label: 'LIVE risk-reducing writes are permitted',
+      severity: 'blocker',
+      status: 'fail',
+      message: 'ALLOW_LIVE_RISK_REDUCING_WRITES is false; activation readiness is blocked.',
+    }));
+  }
   const effectiveEntryLimits = resolveEffectiveAccountEntryLimits({
     tradingAccountId,
     maxDeployableNotional: account.maxDeployableNotional,

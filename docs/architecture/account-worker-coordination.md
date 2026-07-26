@@ -58,3 +58,9 @@ tracked-position synchronization cap at 30 seconds; submitted orders and broker
 activities at 60 seconds; exit evaluation at 15 seconds; snapshots and
 reconciliation at five minutes. Lock contention never increments failure backoff,
 and any successful evaluation clears the stored failure/backoff state.
+
+Account readiness treats failing, stale, or backing-off applicable workflows as
+blockers. LIVE readiness also requires risk-reducing write permission because an
+account must not be activated unless the backend can reduce the exposure entries
+could create. A subsequent process records and clears abandoned
+`currentRunStartedAt` metadata from a previous process.

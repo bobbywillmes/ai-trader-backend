@@ -97,6 +97,35 @@ export async function recordTradingAccountWorkerAttempt(args: {
       tradingAccountId: args.tradingAccountId, workerKey: args.workerKey,
     } },
   });
+  if (previous?.currentRunStartedAt &&
+      previous.processInstanceId !== args.processInstanceId) {
+    await prisma.tradingAccountWorkerHealthState.update({
+      where: { id: previous.id },
+      data: {
+        currentRunStartedAt: null,
+        lastFailedAt: now,
+        lastErrorAt: now,
+        lastErrorCode: 'INTERRUPTED_PREVIOUS_PROCESS',
+        lastError: 'Previous process ended before this account workflow completed.',
+        consecutiveFailures: { increment: 1 },
+        totalFailures: { increment: 1 },
+      },
+    });
+    await createSystemEvent({
+      type: 'account_worker_health.interrupted',
+      entityType: 'tradingAccountWorker',
+      entityId: `${args.tradingAccountId}:${args.workerKey}`,
+      tradingAccountId: args.tradingAccountId,
+      message: `Account workflow ${args.workerKey} was interrupted in a previous process.`,
+      payloadJson: {
+        tradingAccountId: args.tradingAccountId,
+        workerKey: args.workerKey,
+        previousProcessInstanceId: previous.processInstanceId,
+        nextProcessInstanceId: args.processInstanceId,
+        previousRunStartedAt: previous.currentRunStartedAt,
+      },
+    });
+  }
   const previousStatus = previous
     ? deriveTradingAccountWorkerStatus(previous, definition, now) : 'STARTING';
   const failure = args.outcome === 'failure';
