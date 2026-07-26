@@ -1,11 +1,22 @@
 import type { Prisma } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 
+import { logger } from '../config/logger.js';
 import { prisma } from '../db/prisma.js';
 import { getOpenAlpacaOrders } from '../integrations/alpaca/orders.adapter.js';
+import {
+  isTerminalBrokerOrderStatus,
+  NONTERMINAL_BROKER_ORDER_PRISMA_FILTER,
+  normalizeBrokerOrderStatus,
+} from './broker-order-lifecycle-status.service.js';
 import { createSystemEvent } from './system-event.service.js';
 import { getNormalizedPositions } from './positions.service.js';
 import { markPositionExitStateAttentionRequired } from './position-exit-state.service.js';
 import { resolveDefaultTradingAccountId } from './trading-account.service.js';
+import {
+  enumerateLifecycleAccounts,
+  type LifecycleAccountEligibility,
+} from './lifecycle-account-eligibility.service.js';
 
 export type ReconciliationSeverity = 'info' | 'warn' | 'critical';
 
@@ -14,12 +25,22 @@ export type ReconciliationFindingCode =
   | 'broker_position_untracked'
   | 'trail_order_missing_after_unlock'
   | 'trail_order_problem_status'
-  | 'trail_order_status_mismatch';
+  | 'trail_order_status_mismatch'
+  | 'position_quantity_mismatch'
+  | 'position_side_mismatch'
+  | 'local_nonterminal_order_missing_at_broker'
+  | 'broker_order_untracked'
+  | 'stale_submitting_intent';
 
 export type ReconciliationFinding = {
+  tradingAccountId?: number;
   code: ReconciliationFindingCode;
   severity: ReconciliationSeverity;
-  entityType: 'trackedPosition' | 'brokerPosition' | 'brokerOrder';
+  entityType:
+    | 'trackedPosition'
+    | 'brokerPosition'
+    | 'brokerOrder'
+    | 'orderIntent';
   entityId: string;
   symbol: string;
   message: string;
@@ -68,17 +89,11 @@ export type ReconciliationInput = {
   trackedPositions: ReconciliationTrackedPosition[];
   brokerPositions: ReconciliationBrokerPosition[];
   brokerOrders?: ReconciliationBrokerOrder[];
+  localOrders?: ReconciliationBrokerOrder[];
   defaultBroker?: string;
 };
 
 const ACTIVE_TRACKED_POSITION_STATUSES = new Set(['open', 'closing']);
-
-const PROBLEM_TRAILING_ORDER_STATUSES = new Set([
-  'rejected',
-  'canceled',
-  'expired',
-  'suspended',
-]);
 
 function normalizeBroker(value: string | null | undefined, fallback: string) {
   return (value ?? fallback).trim().toLowerCase();
@@ -149,13 +164,19 @@ function findBrokerOrderForExitState(args: {
 }
 
 function getTrailProblemAttentionCode(status: string) {
-  switch (status) {
+  switch (normalizeBrokerOrderStatus(status)) {
     case 'rejected':
       return 'trail_order_rejected';
     case 'canceled':
       return 'trail_order_canceled';
     case 'expired':
       return 'trail_order_expired';
+    case 'replaced':
+      return 'trail_order_replaced_unlinked';
+    case 'done_for_day':
+      return 'trail_order_done_for_day';
+    case 'calculated':
+      return 'trail_order_calculated';
     default:
       return 'trail_order_problem_status';
   }
@@ -177,6 +198,16 @@ export function reconcileSnapshots(input: ReconciliationInput) {
         defaultBroker,
       })
     )
+  );
+  const brokerPositionsByKey = new Map(
+    input.brokerPositions.map((position) => [
+      positionKey({
+        broker: position.broker,
+        symbol: position.symbol,
+        defaultBroker,
+      }),
+      position,
+    ])
   );
 
   const activeTrackedPositionKeys = new Set(
@@ -221,6 +252,49 @@ export function reconcileSnapshots(input: ReconciliationInput) {
       });
     }
 
+    const brokerPosition = brokerPositionsByKey.get(key);
+    if (brokerPosition) {
+      const localQty = Math.abs(Number(position.qty));
+      const brokerQty = Math.abs(Number(brokerPosition.qty));
+      if (
+        position.qty !== null &&
+        position.qty !== undefined &&
+        brokerPosition.qty !== null &&
+        brokerPosition.qty !== undefined &&
+        Number.isFinite(localQty) &&
+        Number.isFinite(brokerQty) &&
+        Math.abs(localQty - brokerQty) > 0.000001
+      ) {
+        findings.push({
+          code: 'position_quantity_mismatch',
+          severity: 'critical',
+          entityType: 'trackedPosition',
+          entityId: String(position.id),
+          symbol: normalizeSymbol(position.symbol),
+          message: `${position.symbol} quantity differs between backend and broker.`,
+          details: { localQty, brokerQty },
+        });
+      }
+      if (
+        position.side &&
+        brokerPosition.side &&
+        position.side.toLowerCase() !== brokerPosition.side.toLowerCase()
+      ) {
+        findings.push({
+          code: 'position_side_mismatch',
+          severity: 'critical',
+          entityType: 'trackedPosition',
+          entityId: String(position.id),
+          symbol: normalizeSymbol(position.symbol),
+          message: `${position.symbol} side differs between backend and broker.`,
+          details: {
+            localSide: position.side,
+            brokerSide: brokerPosition.side,
+          },
+        });
+      }
+    }
+
     const exitState = position.exitState;
 
     if (!exitState?.targetUnlocked) {
@@ -240,6 +314,7 @@ export function reconcileSnapshots(input: ReconciliationInput) {
           targetUnlocked: exitState.targetUnlocked,
           trailClientOrderId: exitState.trailClientOrderId ?? null,
           trailBrokerOrderId: exitState.trailBrokerOrderId ?? null,
+          previousAttentionRequired: exitState.attentionRequired ?? false,
         },
       });
 
@@ -255,10 +330,19 @@ export function reconcileSnapshots(input: ReconciliationInput) {
       continue;
     }
 
-    const brokerStatus = brokerOrder.status ?? null;
-    const localStatus = exitState.trailOrderStatus ?? null;
+    const brokerStatus = brokerOrder.status
+      ? normalizeBrokerOrderStatus(brokerOrder.status)
+      : null;
+    const localStatus = exitState.trailOrderStatus
+      ? normalizeBrokerOrderStatus(exitState.trailOrderStatus)
+      : null;
 
-    if (brokerStatus && PROBLEM_TRAILING_ORDER_STATUSES.has(brokerStatus)) {
+    if (
+      brokerStatus &&
+      ((isTerminalBrokerOrderStatus(brokerStatus) &&
+        brokerStatus !== 'filled') ||
+        brokerStatus === 'suspended')
+    ) {
       findings.push({
         code: 'trail_order_problem_status',
         severity: 'critical',
@@ -272,6 +356,7 @@ export function reconcileSnapshots(input: ReconciliationInput) {
           clientOrderId: getBrokerOrderClientId(brokerOrder),
           localStatus,
           brokerStatus,
+          previousAttentionRequired: exitState.attentionRequired ?? false,
         },
       });
     }
@@ -320,6 +405,59 @@ export function reconcileSnapshots(input: ReconciliationInput) {
     });
   }
 
+  const localOrderKeys = new Set(
+    (input.localOrders ?? [])
+      .map(getOrderLookupKey)
+      .filter((key): key is string => key !== null)
+  );
+  for (const position of activeTrackedPositions) {
+    if (position.exitState?.trailClientOrderId) {
+      localOrderKeys.add(`client:${position.exitState.trailClientOrderId}`);
+    }
+    if (position.exitState?.trailBrokerOrderId) {
+      localOrderKeys.add(`broker:${position.exitState.trailBrokerOrderId}`);
+    }
+  }
+  const brokerOrderKeys = new Set(
+    (input.brokerOrders ?? [])
+      .map(getOrderLookupKey)
+      .filter((key): key is string => key !== null)
+  );
+
+  for (const order of input.localOrders ?? []) {
+    const key = getOrderLookupKey(order);
+    if (!key || brokerOrderKeys.has(key)) continue;
+    findings.push({
+      code: 'local_nonterminal_order_missing_at_broker',
+      severity: 'warn',
+      entityType: 'brokerOrder',
+      entityId: key,
+      symbol: normalizeSymbol(order.symbol),
+      message: `${order.symbol} is nonterminal locally but missing from broker open orders.`,
+      details: {
+        brokerOrderId: getBrokerOrderId(order),
+        clientOrderId: getBrokerOrderClientId(order),
+      },
+    });
+  }
+
+  for (const order of input.brokerOrders ?? []) {
+    const key = getOrderLookupKey(order);
+    if (!key || localOrderKeys.has(key)) continue;
+    findings.push({
+      code: 'broker_order_untracked',
+      severity: 'warn',
+      entityType: 'brokerOrder',
+      entityId: key,
+      symbol: normalizeSymbol(order.symbol),
+      message: `${order.symbol} broker order is not tracked locally for this account.`,
+      details: {
+        brokerOrderId: getBrokerOrderId(order),
+        clientOrderId: getBrokerOrderClientId(order),
+      },
+    });
+  }
+
   return findings;
 }
 
@@ -331,6 +469,12 @@ export type RunReconciliationCheckOptions = {
 };
 
 export type RunReconciliationCheckResult = {
+  runIdentifier: string;
+  account: {
+    tradingAccountId: number;
+    displayName: string;
+    environment: string;
+  };
   findings: ReconciliationFinding[];
   eventCount: number;
   skippedDuplicateEventCount: number;
@@ -344,13 +488,24 @@ function buildReconciliationEventType(code: ReconciliationFindingCode) {
 }
 
 function buildReconciliationEventPayload(
-  finding: ReconciliationFinding
+  finding: ReconciliationFinding,
+  account: RunReconciliationCheckResult['account'],
+  runIdentifier: string
 ): Prisma.InputJsonValue {
   return {
+    tradingAccountId: account.tradingAccountId,
+    environment: account.environment,
+    runIdentifier,
     code: finding.code,
     severity: finding.severity,
     symbol: finding.symbol,
     attentionCode: finding.attentionCode ?? null,
+    previousAttentionState:
+      finding.details?.previousAttentionRequired ?? null,
+    currentAttentionState:
+      finding.attentionCode && finding.severity === 'critical'
+        ? 'required'
+        : 'unchanged',
     details: finding.details ?? {},
   } as Prisma.InputJsonValue;
 }
@@ -388,7 +543,13 @@ export async function reconcileTradingAccount(
   tradingAccountId: number,
   options: RunReconciliationCheckOptions = {}
 ): Promise<RunReconciliationCheckResult> {
-  const [trackedPositions, brokerPositions, brokerOrders] = await Promise.all([
+  const account = await prisma.tradingAccount.findUniqueOrThrow({
+    where: { id: tradingAccountId },
+    select: { id: true, displayName: true, environment: true },
+  });
+  const runIdentifier = randomUUID();
+  const [trackedPositions, localOrders, staleIntents, brokerPositions, brokerOrders] =
+    await Promise.all([
     prisma.trackedPosition.findMany({
       where: {
         tradingAccountId,
@@ -403,9 +564,24 @@ export async function reconcileTradingAccount(
         symbol: 'asc',
       },
     }),
+    prisma.brokerOrder.findMany({
+      where: {
+        tradingAccountId,
+        status: NONTERMINAL_BROKER_ORDER_PRISMA_FILTER,
+      },
+      orderBy: { id: 'asc' },
+    }),
+    prisma.orderIntent.findMany({
+      where: {
+        tradingAccountId,
+        status: 'submitting',
+        updatedAt: { lte: new Date(Date.now() - 5 * 60_000) },
+      },
+      orderBy: { id: 'asc' },
+    }),
     getNormalizedPositions(tradingAccountId, 'reconciliation_check'),
     getOpenAlpacaOrders(tradingAccountId, 'reconciliation_check'),
-  ]);
+    ]);
 
   const findings = reconcileSnapshots({
     trackedPositions: trackedPositions.map((position) => ({
@@ -441,8 +617,34 @@ export async function reconcileTradingAccount(
       type: order.type ?? null,
       status: order.status ?? null,
     })),
+    localOrders: localOrders.map((order) => ({
+      broker: order.broker,
+      id: order.brokerOrderId,
+      clientOrderId: order.clientOrderId,
+      symbol: order.symbol,
+      side: order.side,
+      status: order.status,
+    })),
     defaultBroker: 'alpaca',
   });
+  for (const finding of findings) {
+    finding.tradingAccountId = tradingAccountId;
+  }
+  for (const intent of staleIntents) {
+    findings.push({
+      tradingAccountId,
+      code: 'stale_submitting_intent',
+      severity: 'critical',
+      entityType: 'orderIntent',
+      entityId: String(intent.id),
+      symbol: normalizeSymbol(intent.symbol),
+      message: `${intent.symbol} OrderIntent remains in submitting state and requires deterministic recovery.`,
+      details: {
+        clientOrderId: intent.clientOrderId,
+        updatedAt: intent.updatedAt.toISOString(),
+      },
+    });
+  }
 
   const persistEvents = options.persistEvents ?? true;
   const persistAttention = options.persistAttention ?? persistEvents;
@@ -476,7 +678,15 @@ let skippedDuplicateEventCount = 0;
         entityId: finding.entityId,
         tradingAccountId,
         message: finding.message,
-        payloadJson: buildReconciliationEventPayload(finding),
+        payloadJson: buildReconciliationEventPayload(
+          finding,
+          {
+            tradingAccountId: account.id,
+            displayName: account.displayName,
+            environment: account.environment,
+          },
+          runIdentifier
+        ),
       });
 
       eventCount += 1;
@@ -512,12 +722,208 @@ let skippedDuplicateEventCount = 0;
   }
 
   return {
+    runIdentifier,
+    account: {
+      tradingAccountId: account.id,
+      displayName: account.displayName,
+      environment: account.environment,
+    },
     findings,
     eventCount,
     skippedDuplicateEventCount,
     attentionUpdateCount,
     persistedEvents: persistEvents,
     persistedAttention: persistAttention,
+  };
+}
+
+export type ReconciliationAccountResult = {
+  workflow: 'reconciliation';
+  account: LifecycleAccountEligibility;
+  outcome: 'PROCESSED' | 'SKIPPED' | 'CREDENTIALS_UNAVAILABLE' | 'FAILED';
+  result?: RunReconciliationCheckResult;
+  error?: string;
+};
+
+export type UnattributedLifecycleFinding = {
+  recordType:
+    | 'TrackedPosition'
+    | 'BrokerOrder'
+    | 'BrokerActivity'
+    | 'OrderIntent'
+    | 'PositionExitState';
+  id: number;
+  safeIdentifier: string;
+};
+
+export async function findHistoricalUnattributedLifecycleRecords() {
+  const [positions, orders, activities, intents, exitStates] = await Promise.all([
+    prisma.trackedPosition.findMany({
+      where: { tradingAccountId: null },
+      select: { id: true, symbol: true },
+      orderBy: { id: 'asc' },
+      take: 100,
+    }),
+    prisma.brokerOrder.findMany({
+      where: { tradingAccountId: null },
+      select: { id: true, clientOrderId: true },
+      orderBy: { id: 'asc' },
+      take: 100,
+    }),
+    prisma.brokerActivity.findMany({
+      where: { tradingAccountId: null },
+      select: { id: true, activityId: true },
+      orderBy: { id: 'asc' },
+      take: 100,
+    }),
+    prisma.orderIntent.findMany({
+      where: { tradingAccountId: null },
+      select: { id: true, clientOrderId: true },
+      orderBy: { id: 'asc' },
+      take: 100,
+    }),
+    prisma.positionExitState.findMany({
+      where: { trackedPosition: { tradingAccountId: null } },
+      select: { id: true, trackedPositionId: true },
+      orderBy: { id: 'asc' },
+      take: 100,
+    }),
+  ]);
+
+  return [
+    ...positions.map((row) => ({
+      recordType: 'TrackedPosition' as const,
+      id: row.id,
+      safeIdentifier: row.symbol,
+    })),
+    ...orders.map((row) => ({
+      recordType: 'BrokerOrder' as const,
+      id: row.id,
+      safeIdentifier: row.clientOrderId,
+    })),
+    ...activities.map((row) => ({
+      recordType: 'BrokerActivity' as const,
+      id: row.id,
+      safeIdentifier: row.activityId,
+    })),
+    ...intents.map((row) => ({
+      recordType: 'OrderIntent' as const,
+      id: row.id,
+      safeIdentifier: row.clientOrderId ?? `intent-${row.id}`,
+    })),
+    ...exitStates.map((row) => ({
+      recordType: 'PositionExitState' as const,
+      id: row.id,
+      safeIdentifier: `tracked-position-${row.trackedPositionId}`,
+    })),
+  ] satisfies UnattributedLifecycleFinding[];
+}
+
+function sanitizeError(error: unknown) {
+  return error instanceof Error ? error.message : 'Unknown reconciliation error.';
+}
+
+export async function reconcileEligibleTradingAccounts(
+  options: RunReconciliationCheckOptions = {}
+) {
+  const unattributedFindings =
+    await findHistoricalUnattributedLifecycleRecords();
+  const accounts = await enumerateLifecycleAccounts('reconciliation');
+  const results: ReconciliationAccountResult[] = [];
+
+  for (const account of accounts) {
+    if (!account.eligible) {
+      const outcome =
+        account.reason === 'credentials_unavailable_with_exposure'
+          ? 'CREDENTIALS_UNAVAILABLE'
+          : 'SKIPPED';
+      results.push({ workflow: 'reconciliation', account, outcome });
+
+      if (outcome === 'CREDENTIALS_UNAVAILABLE') {
+        try {
+          await createSystemEvent({
+            type: 'reconciliation.credentials_unavailable_with_exposure',
+            entityType: 'tradingAccount',
+            entityId: account.tradingAccountId,
+            tradingAccountId: account.tradingAccountId,
+            message: `Reconciliation cannot access credentials for ${account.displayName} while lifecycle exposure exists.`,
+            payloadJson: {
+              tradingAccountId: account.tradingAccountId,
+              environment: account.environment,
+              findingType: 'credentials_unavailable_with_exposure',
+              activePositions: account.exposureSummary.activePositions,
+              nonterminalOrders: account.exposureSummary.nonterminalOrders,
+            } as Prisma.InputJsonValue,
+          });
+        } catch (error) {
+          logger.error(
+            {
+              workflow: 'reconciliation',
+              tradingAccountId: account.tradingAccountId,
+              error: sanitizeError(error),
+            },
+            'Failed to persist reconciliation credentials finding.'
+          );
+        }
+      }
+      continue;
+    }
+
+    try {
+      const result = await reconcileTradingAccount(
+        account.tradingAccountId,
+        options
+      );
+      results.push({
+        workflow: 'reconciliation',
+        account,
+        outcome: 'PROCESSED',
+        result,
+      });
+      logger.info(
+        {
+          workflow: 'reconciliation',
+          tradingAccountId: account.tradingAccountId,
+          displayName: account.displayName,
+          environment: account.environment,
+          outcome: 'PROCESSED',
+          findingCount: result.findings.length,
+          eventCount: result.eventCount,
+          attentionUpdateCount: result.attentionUpdateCount,
+        },
+        'Reconciliation account outcome.'
+      );
+    } catch (error) {
+      results.push({
+        workflow: 'reconciliation',
+        account,
+        outcome: 'FAILED',
+        error: sanitizeError(error),
+      });
+      logger.error(
+        {
+          workflow: 'reconciliation',
+          tradingAccountId: account.tradingAccountId,
+          displayName: account.displayName,
+          environment: account.environment,
+          outcome: 'FAILED',
+          error: sanitizeError(error),
+        },
+        'Reconciliation account outcome.'
+      );
+    }
+  }
+
+  return {
+    workflow: 'reconciliation' as const,
+    processedAccounts: results.filter((item) => item.outcome === 'PROCESSED').length,
+    failedAccounts: results.filter((item) => item.outcome === 'FAILED').length,
+    credentialUnavailableAccounts: results.filter(
+      (item) => item.outcome === 'CREDENTIALS_UNAVAILABLE'
+    ).length,
+    skippedAccounts: results.filter((item) => item.outcome === 'SKIPPED').length,
+    unattributedFindings,
+    results,
   };
 }
 

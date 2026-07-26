@@ -17,6 +17,7 @@ export async function getAlpacaAccount(
       endpoint: 'GET /v2/account',
       method: 'GET',
       requestClass: 'informational_read',
+      operationClass: 'LIFECYCLE_READ',
       deferDuringRateLimit: operation === 'account_snapshot',
     },
   });

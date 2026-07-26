@@ -51,11 +51,21 @@ export const alpacaApiRequestClasses = [
 export type AlpacaApiRequestClass =
   (typeof alpacaApiRequestClasses)[number];
 
+export const alpacaBrokerOperationClasses = [
+  'ENTRY_WRITE',
+  'RISK_REDUCING_WRITE',
+  'LIFECYCLE_READ',
+] as const;
+
+export type AlpacaBrokerOperationClass =
+  (typeof alpacaBrokerOperationClasses)[number];
+
 export type AlpacaRequestMetadata = {
   operation: AlpacaApiOperation;
   endpoint: AlpacaApiEndpoint;
   method: 'GET' | 'POST' | 'DELETE' | 'PATCH';
   requestClass: AlpacaApiRequestClass;
+  operationClass: AlpacaBrokerOperationClass;
   deferDuringRateLimit: boolean;
 };
 

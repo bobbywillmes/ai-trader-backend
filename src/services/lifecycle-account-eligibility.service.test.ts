@@ -5,12 +5,14 @@ import { enumerateLifecycleAccounts } from './lifecycle-account-eligibility.serv
 const mocks = vi.hoisted(() => ({
   accountFindMany: vi.fn(),
   intentGroupBy: vi.fn(),
+  positionGroupBy: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
   prisma: {
     tradingAccount: { findMany: mocks.accountFindMany },
     orderIntent: { groupBy: mocks.intentGroupBy },
+    trackedPosition: { groupBy: mocks.positionGroupBy },
   },
 }));
 
@@ -36,6 +38,7 @@ describe('lifecycle account eligibility', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.intentGroupBy.mockResolvedValue([]);
+    mocks.positionGroupBy.mockResolvedValue([]);
   });
 
   it('returns accounts in stable ID order with workflow-specific reasons', async () => {
@@ -119,6 +122,49 @@ describe('lifecycle account eligibility', () => {
     expect(result[0]).toMatchObject({
       eligible: true,
       reason: 'usable_credentials_with_work',
+    });
+  });
+
+  it('evaluates exits for paused or kill-switched accounts with exposure', async () => {
+    mocks.accountFindMany.mockResolvedValue([
+      account({
+        id: 1,
+        status: 'PAUSED',
+        _count: {
+          orderIntents: 0,
+          brokerOrders: 0,
+          trackedPositions: 1,
+          brokerActivities: 0,
+        },
+      }),
+      account({
+        id: 2,
+        status: 'ERROR',
+        _count: {
+          orderIntents: 0,
+          brokerOrders: 0,
+          trackedPositions: 1,
+          brokerActivities: 0,
+        },
+      }),
+    ]);
+
+    const result = await enumerateLifecycleAccounts('exit_evaluation');
+
+    expect(result).toEqual([
+      expect.objectContaining({ tradingAccountId: 1, eligible: true }),
+      expect.objectContaining({ tradingAccountId: 2, eligible: true }),
+    ]);
+  });
+
+  it('does not enumerate a credentialed account without exposure for exit evaluation', async () => {
+    mocks.accountFindMany.mockResolvedValue([account()]);
+
+    const result = await enumerateLifecycleAccounts('exit_evaluation');
+
+    expect(result[0]).toMatchObject({
+      eligible: false,
+      reason: 'no_work_for_workflow',
     });
   });
 

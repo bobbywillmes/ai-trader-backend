@@ -32,6 +32,7 @@ const accountReadMetadata: AlpacaRequestMetadata = {
   endpoint: 'GET /v2/account',
   method: 'GET',
   requestClass: 'informational_read',
+  operationClass: 'LIFECYCLE_READ',
   deferDuringRateLimit: false,
 };
 
@@ -40,6 +41,7 @@ const orderWriteMetadata: AlpacaRequestMetadata = {
   endpoint: 'POST /v2/orders',
   method: 'POST',
   requestClass: 'critical_write',
+  operationClass: 'ENTRY_WRITE',
   deferDuringRateLimit: false,
 };
 
@@ -174,6 +176,34 @@ describe('alpacaRequestForAccount', () => {
     expect(mocks.fetch).toHaveBeenCalledTimes(1);
   });
 
+  it('classifies but does not silently permit LIVE risk-reducing writes', async () => {
+    mocks.resolveAlpacaConfigForTradingAccount.mockResolvedValue({
+      tradingAccountId: 42,
+      environment: 'LIVE',
+      baseUrl: 'https://api.alpaca.markets',
+      apiKey: 'account-key',
+      apiSecret: 'account-secret',
+      source: 'trading_account_credential',
+      credentialId: 7,
+      keyFingerprint: 'fingerprint-1',
+    });
+
+    await expect(
+      alpacaRequestForAccount(42, '/v2/orders', {
+        method: 'POST',
+        body: { symbol: 'SPY' },
+        metadata: {
+          ...orderWriteMetadata,
+          operation: 'position_close',
+          operationClass: 'RISK_REDUCING_WRITE',
+        },
+      })
+    ).rejects.toThrow(
+      'LIVE RISK_REDUCING_WRITE blocked for TradingAccount 42: ALLOW_LIVE_TRADING is false.'
+    );
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
   it('propagates missing account credentials before sending an Alpaca request', async () => {
     mocks.resolveAlpacaConfigForTradingAccount.mockRejectedValueOnce(
       new Error(
@@ -228,6 +258,7 @@ describe('alpacaRequestForAccount', () => {
           endpoint: 'GET /v2/orders/:orderId',
           method: 'GET',
           requestClass: 'synchronization_read',
+          operationClass: 'LIFECYCLE_READ',
           deferDuringRateLimit: true,
         },
       })
@@ -266,10 +297,14 @@ describe('alpacaRequestForAccount', () => {
           endpoint: 'POST /v2/orders',
           method: 'GET',
           requestClass: 'critical_write',
+          operationClass: 'ENTRY_WRITE',
           deferDuringRateLimit: false,
         },
       })
-    ).rejects.toThrow('metadata method GET does not match request method POST');
+    ).rejects.toMatchObject({
+      name: 'BrokerWriteDeliveryError',
+      classification: 'NOT_SENT_BLOCKED',
+    });
 
     expect(mocks.fetch).not.toHaveBeenCalled();
     expect(mocks.beginRequest).not.toHaveBeenCalled();
@@ -358,5 +393,79 @@ describe('alpacaRequestForAccount', () => {
 
     expect(mocks.fetch).not.toHaveBeenCalled();
     expect(mocks.beginRequest).not.toHaveBeenCalled();
+  });
+
+  it('classifies missing credentials for a write as definitely not sent', async () => {
+    mocks.resolveAlpacaConfigForTradingAccount.mockRejectedValueOnce(
+      new Error('credentials unavailable secret=[redacted]')
+    );
+
+    await expect(
+      alpacaRequestForAccount(42, '/v2/orders', {
+        method: 'POST',
+        body: { symbol: 'SPY' },
+        metadata: orderWriteMetadata,
+      })
+    ).rejects.toMatchObject({
+      classification: 'NOT_SENT_BLOCKED',
+      message: expect.not.stringContaining('secret'),
+    });
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
+  it('classifies locally deferred writes as definitely not sent and retryable', async () => {
+    mocks.shouldDefer.mockReturnValue(true);
+
+    await expect(
+      alpacaRequestForAccount(1, '/v2/orders', {
+        method: 'POST',
+        body: { symbol: 'SPY' },
+        metadata: orderWriteMetadata,
+      })
+    ).rejects.toMatchObject({
+      name: 'BrokerWriteDeliveryError',
+      classification: 'NOT_SENT_RETRYABLE',
+    });
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
+  it('classifies explicit broker rejection separately from uncertain 5xx delivery', async () => {
+    mocks.fetch
+      .mockResolvedValueOnce(new Response('invalid order', { status: 422 }))
+      .mockResolvedValueOnce(new Response('server unavailable', { status: 503 }));
+
+    await expect(
+      alpacaRequestForAccount(1, '/v2/orders', {
+        method: 'POST',
+        body: { symbol: 'SPY' },
+        metadata: orderWriteMetadata,
+      })
+    ).rejects.toMatchObject({ classification: 'BROKER_REJECTED' });
+
+    await expect(
+      alpacaRequestForAccount(1, '/v2/orders', {
+        method: 'POST',
+        body: { symbol: 'SPY' },
+        metadata: orderWriteMetadata,
+      })
+    ).rejects.toMatchObject({ classification: 'DELIVERY_UNCERTAIN' });
+  });
+
+  it('classifies write timeout and network interruption as delivery uncertain', async () => {
+    mocks.fetch
+      .mockRejectedValueOnce(new DOMException('aborted', 'AbortError'))
+      .mockRejectedValueOnce(new Error('connection reset'));
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await expect(
+        alpacaRequestForAccount(1, '/v2/orders', {
+          method: 'POST',
+          body: { symbol: 'SPY' },
+          metadata: orderWriteMetadata,
+        })
+      ).rejects.toMatchObject({
+        classification: 'DELIVERY_UNCERTAIN',
+      });
+    }
   });
 });

@@ -118,6 +118,7 @@ describe('Alpaca adapter request metadata', () => {
           operation: 'manual_admin_action',
           endpoint: 'GET /v2/account/activities/:activityType',
           requestClass: 'informational_read',
+          operationClass: 'LIFECYCLE_READ',
         }),
       })
     );
@@ -145,6 +146,7 @@ describe('Alpaca adapter request metadata', () => {
       expect.objectContaining({
         metadata: expect.objectContaining({
           requestClass: 'critical_write',
+          operationClass: 'ENTRY_WRITE',
           deferDuringRateLimit: false,
         }),
       })
@@ -156,7 +158,34 @@ describe('Alpaca adapter request metadata', () => {
       expect.objectContaining({
         metadata: expect.objectContaining({
           requestClass: 'synchronization_read',
+          operationClass: 'LIFECYCLE_READ',
           deferDuringRateLimit: true,
+        }),
+      })
+    );
+  });
+
+  it('classifies position closes as risk-reducing writes', async () => {
+    await placeAlpacaOrder(
+      1,
+      {
+        symbol: 'SPY',
+        side: 'sell',
+        type: 'market',
+        time_in_force: 'day',
+        qty: '1',
+        client_order_id: 'ai-exit-close-1-10',
+      },
+      'position_close'
+    );
+
+    expect(mocks.alpacaRequestForAccount).toHaveBeenCalledWith(
+      1,
+      '/v2/orders',
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          operation: 'position_close',
+          operationClass: 'RISK_REDUCING_WRITE',
         }),
       })
     );

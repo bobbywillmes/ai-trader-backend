@@ -28,6 +28,7 @@ import {
 } from '../controllers/trading-accounts.controller.js';
 import { requirePermission, requireSystemOwnerAccess, requireTradingAccountAccess } from '../middleware/rbac.js';
 import { PlatformPermission } from '../types/platform-rbac.js';
+import { runTradingAccountReconciliationController } from '../controllers/reconciliation.controller.js';
 
 const router = Router();
 
@@ -39,6 +40,11 @@ router.get('/:id/orders', requireTradingAccountAccess('id'), requirePermission(P
 router.get('/:id/trade-cycles', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.REPORTS_READ), listTradingAccountTradeCyclesController);
 router.patch('/:id', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE), updateTradingAccountController);
 router.post('/:id/deactivate', requireSystemOwnerAccess, deactivateTradingAccountController);
+router.post(
+  '/:id/reconciliation/run',
+  requireSystemOwnerAccess,
+  runTradingAccountReconciliationController
+);
 
 router.get('/:id/risk-settings', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_RISK_WRITE), getTradingAccountRiskSettingsController);
 router.patch('/:id/risk-settings', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_RISK_WRITE), updateTradingAccountRiskSettingsController);

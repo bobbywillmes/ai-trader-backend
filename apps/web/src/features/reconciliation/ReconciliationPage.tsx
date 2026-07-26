@@ -77,7 +77,8 @@ export function ReconciliationPage() {
         <Title order={2}>Reconciliation</Title>
         <Text c="dimmed">
           Compare backend tracked positions and exit state against broker
-          positions and open orders.
+          positions and open orders. This compatibility view runs the configured
+          default account and identifies the resolved account in every result.
         </Text>
       </div>
 
@@ -122,6 +123,10 @@ export function ReconciliationPage() {
         <Card withBorder>
           <Stack gap="md">
             <Group>
+              <Badge color={result.account.environment === "LIVE" ? "red" : "blue"}>
+                {result.account.displayName} · {result.account.environment}
+              </Badge>
+
               <Badge color={result.dryRun ? "blue" : "green"}>
                 {result.dryRun ? "Dry run" : "Persisted"}
               </Badge>

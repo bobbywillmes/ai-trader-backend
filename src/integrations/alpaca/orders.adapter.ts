@@ -30,6 +30,7 @@ export async function getOpenAlpacaOrders(
         operation === 'bootstrap_snapshot'
           ? 'informational_read'
           : 'synchronization_read',
+      operationClass: 'LIFECYCLE_READ',
       deferDuringRateLimit:
         operation !== 'manual_admin_action' &&
         operation !== 'bootstrap_snapshot',
@@ -49,6 +50,7 @@ export async function getAlpacaOrderById(
       endpoint: 'GET /v2/orders/:orderId',
       method: 'GET',
       requestClass: 'synchronization_read',
+      operationClass: 'LIFECYCLE_READ',
       deferDuringRateLimit: true,
     },
   });
@@ -71,6 +73,7 @@ export async function getAlpacaOrderByClientOrderId(
         endpoint: 'GET /v2/orders:by_client_order_id',
         method: 'GET',
         requestClass: 'synchronization_read',
+        operationClass: 'LIFECYCLE_READ',
         deferDuringRateLimit: false,
       },
     }
@@ -90,6 +93,10 @@ export async function placeAlpacaOrder(
       endpoint: 'POST /v2/orders',
       method: 'POST',
       requestClass: 'critical_write',
+      operationClass:
+        operation === 'pending_order_submission'
+          ? 'ENTRY_WRITE'
+          : 'RISK_REDUCING_WRITE',
       deferDuringRateLimit: false,
     },
   });
@@ -107,6 +114,7 @@ export async function cancelAlpacaOrder(
       endpoint: 'DELETE /v2/orders/:orderId',
       method: 'DELETE',
       requestClass: 'critical_write',
+      operationClass: 'RISK_REDUCING_WRITE',
       deferDuringRateLimit: false,
     },
   });
@@ -131,6 +139,7 @@ export async function cancelAllAlpacaOrders(
       endpoint: 'DELETE /v2/orders',
       method: 'DELETE',
       requestClass: 'critical_write',
+      operationClass: 'RISK_REDUCING_WRITE',
       deferDuringRateLimit: false,
     },
   });

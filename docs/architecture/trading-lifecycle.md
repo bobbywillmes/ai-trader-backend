@@ -19,11 +19,12 @@ retain legacy uniqueness and are never assigned to Bobby Paper by assumption.
 New client order IDs include account and environment identity; historical IDs
 are not rewritten.
 
-`ALLOW_LIVE_TRADING=false` blocks every LIVE state-changing request at the
-strict boundary, including cancels and closes, while LIVE reads remain
-available. Phase 2 lifecycle coordinators enumerate accounts for
-submitted-order status, broker activity, positions, and scheduled snapshots.
-Exit evaluation and reconciliation remain default-account-only until Phase 3.
+Broker requests are classified as `LIFECYCLE_READ`, `ENTRY_WRITE`, or
+`RISK_REDUCING_WRITE`. `ALLOW_LIVE_TRADING=false` still blocks both LIVE write
+classes, including cancels and closes, while LIVE reads remain available.
+Phase 3 does not silently weaken this boundary. A future separate emergency
+LIVE-exit permission requires explicit deployment approval. Bobby Live remains
+credentialless and dormant.
 
 ## Multi-account lifecycle coordination
 
@@ -42,8 +43,11 @@ produce a critical result; credentials never fall back to another account.
 Submitted-order synchronization uses a per-account batch of ten oldest intents.
 A submitting intent is stale after five minutes. Recovery first looks up its
 account-specific `clientOrderId`: an existing broker order is linked
-idempotently; an absent entry returns to `pending`; an absent exit remains
-`submitting` because exit replay requires different assumptions.
+idempotently; an absent entry returns to `pending`. An absent exit is resolved
+according to its recorded broker-write delivery classification. Definitively
+not-sent and confirmed-rejected submissions release their close claim safely;
+delivery-uncertain submissions remain `submitting` and are never replayed
+blindly. The deferred-recovery event is emitted once rather than on every tick.
 
 Pending submission also uses account coordination. Accounts are enumerated in
 stable ID order and each receives an independent batch of five oldest pending
@@ -71,6 +75,82 @@ Scheduled checkpoints reuse one run key across eligible accounts. Uniqueness on
 `(tradingAccountId, runKey)` makes checkpoints idempotent per account. Adaptive
 polling state and short-lived caches are account-keyed. Persisted account health
 and cross-process advisory locking remain Phase 4 work.
+
+## Phase 3 exits and reconciliation
+
+Exit evaluation is lifecycle eligibility, not entry eligibility. Accounts with
+open or closing positions run with usable credentials regardless of account
+status, trading switches, or kill switches. Credentialless exposure returns
+`CREDENTIALS_UNAVAILABLE`, preserves state, makes no broker request, emits a
+sanitized event, and makes worker health unhealthy. Dormant credentialless
+accounts are healthy skips.
+
+Assignment `exitsEnabled=false` or `enabled=false` suppresses new automated
+strategy closes; `entriesEnabled` is entry-only. Existing protective orders
+continue synchronizing. Owner manual closes share the same core and bypass
+automated assignment controls, but still require attribution, credentials, and
+the LIVE write boundary.
+
+Close submission is claim-before-write. A short serializable transaction
+changes an attributed open position to `closing` and creates a `submitting`
+exit intent with deterministic client ID
+`ai-exit-close-{accountId}-{positionId}`. The account-scoped opposite-side
+market order runs outside the transaction. A second transaction materializes
+the broker order.
+
+Broker-write failures preserve delivery certainty:
+
+- `NOT_SENT_RETRYABLE` covers local rate-limit deferral before `fetch`.
+- `NOT_SENT_BLOCKED` covers credentials, LIVE policy, metadata validation, and
+  request preparation failures before `fetch`.
+- `BROKER_REJECTED` covers an explicit non-success broker response that is not
+  ambiguous.
+- `DELIVERY_UNCERTAIN` covers timeouts, network/response interruption, and
+  ambiguous server failures.
+
+Definitively not-sent closes atomically release the position and intent claim.
+Explicit rejection first receives an account-scoped client-ID lookup; confirmed
+absence releases the claim with operator-visible rejection state. Uncertain
+delivery retains `closing`/`submitting` state so recovery can materialize an
+accepted broker order without issuing a second close.
+
+`PositionExitState` is authoritative for protective orders. Linked orders are
+read through their owning account. Partial and terminal states update only that
+account. Protective submission creates a durable `OrderIntent` claim with a
+deterministic client ID before the broker call. Recovery observes a short
+backoff, looks up that ID first, materializes an accepted order idempotently,
+and retries only a definitively not-sent attempt. Uncertain or inconclusive
+delivery retains attention without blind replay; `submit_failed` is recoverable
+and is not a permanent evaluator suppression.
+
+A confirmed 404 for a linked protective order creates attention without
+replacement; a temporary lookup error remains retryable. Canonical terminal
+statuses are `filled`, `canceled`, `expired`, `rejected`, `replaced`,
+`done_for_day`, and `calculated`; historical `cancelled` normalizes to
+`canceled`. Filled completes the protective lifecycle. Every other terminal
+status leaves exposure requiring attention unless a replacement is verified,
+and no terminal status falls through to active/submitted polling. Broker
+activity remains authoritative for fills and position closure.
+
+Reconciliation runs accounts with positions, nonterminal orders, active
+intents, unresolved lifecycle state, or credentialed operational history. Its
+interval is global and all eligible accounts run when due. Findings/events
+carry account ID, environment, run ID, safe evidence, and attention changes.
+It remains diagnostic and never fabricates ownership or submits corrective
+orders.
+
+Owner routes are `POST /api/reconciliation/run` for default-account
+compatibility and `POST /api/trading-accounts/:id/reconciliation/run` for an
+explicit account. Historical null-account rows are reported with bounded safe
+identifiers, preserved, denied broker writes, and never assigned to Bobby Paper.
+
+Trading-loop order is stale recovery, pending submission, submitted-order sync,
+position sync, then protective/exit evaluation. Reconciliation runs on its
+independent cadence. Broker activities and snapshots keep separate cadences.
+
+Phase 4 owns per-account persisted health, cross-process advisory locks, final
+mixed PAPER/LIVE proof, and any separate LIVE emergency-exit permission. Bobby
+Live must remain dormant until those controls are complete.
 
 This doc covers how a trade moves through the system — from entry signal to broker submission, position tracking, exit evaluation, and the audit trail. It also describes the background workers that keep everything synchronized and the async order processing architecture.
 

@@ -1,6 +1,10 @@
 import type { NextFunction, Request, Response } from 'express';
 
-import { runReconciliationCheck } from '../services/reconciliation.service.js';
+import {
+  reconcileTradingAccount,
+  runReconciliationCheck,
+} from '../services/reconciliation.service.js';
+import { HttpError } from '../errors/http-error.js';
 
 function shouldPersistEvents(req: Request) {
   return req.body?.persistEvents === true || req.query.persistEvents === 'true';
@@ -46,6 +50,28 @@ export async function runReconciliationController(
       dryRun: !persistEvents,
       ...result,
     });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function runTradingAccountReconciliationController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const tradingAccountId = Number(req.params.id);
+    if (!Number.isInteger(tradingAccountId) || tradingAccountId <= 0) {
+      throw new HttpError(400, 'Invalid trading account id.');
+    }
+    const persistEvents = shouldPersistEvents(req);
+    const result = await reconcileTradingAccount(tradingAccountId, {
+      persistEvents,
+      persistAttention: shouldPersistAttention(req, persistEvents),
+      dedupeEvents: shouldDedupeEvents(req),
+    });
+    res.status(200).json({ ok: true, dryRun: !persistEvents, ...result });
   } catch (error) {
     next(error);
   }

@@ -1,4 +1,6 @@
 import type { Prisma } from '@prisma/client';
+
+import { logger } from '../config/logger.js';
 import { prisma } from '../db/prisma.js';
 import { closePosition } from './close-position.service.js';
 import { createSystemEvent } from './system-event.service.js';
@@ -9,307 +11,355 @@ import {
 } from './position-exit-state.service.js';
 import { submitTrailingStopExitOrder } from './trailing-stop-exit.service.js';
 import {
-  submitNativeTrailingStopForTrackedPosition,
-  syncNativeTrailingStopForTrackedPosition,
-} from './trailing-stop.service.js';
-import { resolveDefaultTradingAccountId } from './trading-account.service.js';
+  enumerateLifecycleAccounts,
+  type LifecycleAccountEligibility,
+} from './lifecycle-account-eligibility.service.js';
+import { syncProtectiveOrdersForAccount } from './protective-order-sync.service.js';
+
+export type ExitEvaluationCounts = {
+  positionsEvaluated: number;
+  positionsSkipped: number;
+  exitSignalsTriggered: number;
+  closeIntentsCreated: number;
+  protectiveOrdersSynchronized: number;
+  blockedExits: number;
+  failedPositions: number;
+};
+
+export type ExitEvaluationAccountResult = {
+  workflow: 'exit_evaluation';
+  account: LifecycleAccountEligibility;
+  outcome: 'PROCESSED' | 'SKIPPED' | 'CREDENTIALS_UNAVAILABLE' | 'FAILED';
+  counts: ExitEvaluationCounts;
+  failures: Array<{ trackedPositionId: number; error: string }>;
+  error?: string;
+};
+
+function emptyCounts(): ExitEvaluationCounts {
+  return {
+    positionsEvaluated: 0,
+    positionsSkipped: 0,
+    exitSignalsTriggered: 0,
+    closeIntentsCreated: 0,
+    protectiveOrdersSynchronized: 0,
+    blockedExits: 0,
+    failedPositions: 0,
+  };
+}
+
+function sanitizeError(error: unknown) {
+  return error instanceof Error ? error.message : 'Unknown exit evaluation error.';
+}
+
+function errorToPayloadJson(error: unknown): Prisma.InputJsonValue {
+  return error instanceof Error
+    ? { name: error.name, message: error.message }
+    : { message: String(error) };
+}
 
 function isUnlockTrailingProfile(exitProfile: { exitMode: string }) {
   return exitProfile.exitMode === 'unlock_trailing_stop';
 }
 
-function errorToPayloadJson(error: unknown): Prisma.InputJsonValue {
-  if (error instanceof Error) {
-    return {
-      name: error.name,
-      message: error.message,
-    };
-  }
-
-  return {
-    message: String(error),
-  };
-}
-
-function hasReachedUnlockTarget(args: {
-  pnlPct: number;
-  targetPct: number | null;
-}) {
-  if (args.targetPct === null || args.targetPct === undefined) {
-    return false;
-  }
-
-  return args.pnlPct >= args.targetPct / 100;
-}
-
-function shouldAttemptTrailingStopSubmit(position: {
-  trailingStopOrderId: string | null;
-  trailingStopStatus: string | null;
-}) {
-  if (position.trailingStopOrderId) {
-    return false;
-  }
-
-  if (position.trailingStopStatus === 'submit_failed') {
-    return false;
-  }
-
-  return true;
-}
-
-export async function evaluateExitsForAccount(tradingAccountId: number) {
-  const openPositions = await prisma.trackedPosition.findMany({
-    where: { status: 'open', tradingAccountId },
+export async function evaluateExitsForAccount(
+  tradingAccountId: number
+): Promise<{
+  counts: ExitEvaluationCounts;
+  failures: Array<{ trackedPositionId: number; error: string }>;
+}> {
+  const positions = await prisma.trackedPosition.findMany({
+    where: { status: { in: ['open', 'closing'] }, tradingAccountId },
     include: {
       exitState: true,
       subscription: {
+        include: { exitProfile: true },
+      },
+      tradingAccountSubscription: {
         include: {
-          exitProfile: true,
+          subscription: {
+            include: { exitProfile: true },
+          },
         },
       },
     },
+    orderBy: { id: 'asc' },
   });
+  const counts = emptyCounts();
+  const failures: Array<{ trackedPositionId: number; error: string }> = [];
+  const protectiveSync = await syncProtectiveOrdersForAccount(tradingAccountId);
+  counts.protectiveOrdersSynchronized = protectiveSync.synchronized;
+  counts.failedPositions += protectiveSync.failed;
+  failures.push(
+    ...protectiveSync.failures.map((failure) => ({
+      trackedPositionId: failure.trackedPositionId,
+      error: failure.error,
+    }))
+  );
 
-  for (const position of openPositions) {
-    const exitProfile = position.subscription?.exitProfile;
-    if (!exitProfile) continue;
+  for (const position of positions) {
+    try {
+      counts.positionsEvaluated += 1;
 
-    const pnlPct = position.unrealizedPnLPct ?? 0;
+      if (position.tradingAccountId !== tradingAccountId) {
+        throw new Error(
+          `TrackedPosition ${position.id} account attribution does not match coordinator account ${tradingAccountId}.`
+        );
+      }
 
-    if (isUnlockTrailingProfile(exitProfile)) {
-      let exitState =
-        position.exitState ?? (await ensurePositionExitState(position.id));
-
-      const targetPct = exitState.targetPct ?? exitProfile.targetPct;
-      const trailingStopPct =
-        exitState.trailingStopPct ?? exitProfile.trailingStopPct;
-
+      const assignment = position.tradingAccountSubscription;
       if (
-        targetPct === null ||
-        targetPct === undefined ||
-        trailingStopPct === null ||
-        trailingStopPct === undefined
+        !assignment ||
+        assignment.tradingAccountId !== tradingAccountId ||
+        assignment.subscriptionId !== position.subscriptionId
       ) {
+        throw new Error(
+          `TrackedPosition ${position.id} has missing or inconsistent account assignment attribution.`
+        );
+      }
+
+      const exitProfile = assignment.subscription.exitProfile;
+      if (!exitProfile) {
+        counts.positionsSkipped += 1;
         continue;
       }
 
-      const hasReachedTarget = pnlPct >= targetPct / 100;
-
-      if (!exitState.targetUnlocked && hasReachedTarget) {
-        exitState = await unlockTrailingStopExitState({
-          trackedPositionId: position.id,
-          currentPrice: position.currentPrice,
-          pnlPct,
-          targetPct,
-          trailingStopPct,
-        });
-
-        await createSystemEvent({
-          type: 'exit.target_unlocked',
-          entityType: 'trackedPosition',
-          entityId: position.id,
-          tradingAccountId: position.tradingAccountId,
-          message: `${position.symbol} reached target unlock for trailing stop exit.`,
-          payloadJson: {
-            symbol: position.symbol,
-            pnlPct,
-            currentPrice: position.currentPrice,
-            targetPct,
-            trailingStopPct,
-            exitProfileKey: exitProfile.key,
-          } as Prisma.InputJsonValue,
-        });
-
-        console.log(
-          `Exit target unlocked for ${position.symbol}: ${targetPct}% target -> ${trailingStopPct}% trail`
-        );
+      // Existing protective orders remain broker-owned lifecycle work. Their
+      // status synchronization is performed by submitted-order synchronization,
+      // independently of whether this assignment still permits new exits.
+      if (position.exitState?.trailBrokerOrderId) {
+        counts.positionsSkipped += 1;
+        continue;
       }
 
-      const shouldSubmitTrailingStop =
-        exitState.targetUnlocked &&
-        !exitState.trailBrokerOrderId &&
-        exitState.trailOrderStatus !== 'submit_failed';
+      if (position.status === 'closing') {
+        counts.positionsSkipped += 1;
+        continue;
+      }
 
-      if (shouldSubmitTrailingStop) {
-        try {
-          await submitTrailingStopExitOrder(position.id);
-        } catch (error) {
-          const payloadJson = errorToPayloadJson(error);
+      if (!assignment.enabled || !assignment.exitsEnabled) {
+        counts.positionsSkipped += 1;
+        counts.blockedExits += 1;
+        continue;
+      }
 
-          await markTrailingStopOrderSubmitFailed(position.id, payloadJson);
+      const pnlPct = position.unrealizedPnLPct ?? 0;
+
+      if (isUnlockTrailingProfile(exitProfile)) {
+        let exitState =
+          position.exitState ?? (await ensurePositionExitState(position.id));
+        const targetPct = exitState.targetPct ?? exitProfile.targetPct;
+        const trailingStopPct =
+          exitState.trailingStopPct ?? exitProfile.trailingStopPct;
+
+        if (targetPct === null || trailingStopPct === null) {
+          counts.positionsSkipped += 1;
+          continue;
+        }
+
+        if (!exitState.targetUnlocked && pnlPct >= targetPct / 100) {
+          exitState = await unlockTrailingStopExitState({
+            trackedPositionId: position.id,
+            currentPrice: position.currentPrice,
+            pnlPct,
+            targetPct,
+            trailingStopPct,
+          });
+          counts.exitSignalsTriggered += 1;
 
           await createSystemEvent({
-            type: 'exit.trailing_stop_submit_failed',
+            type: 'exit.target_unlocked',
             entityType: 'trackedPosition',
             entityId: position.id,
-            tradingAccountId: position.tradingAccountId,
-            message: `${position.symbol} trailing stop exit order submission failed.`,
+            tradingAccountId,
+            message: `${position.symbol} reached target unlock for trailing stop exit.`,
             payloadJson: {
               symbol: position.symbol,
-              error: payloadJson,
+              pnlPct,
+              currentPrice: position.currentPrice,
+              targetPct,
+              trailingStopPct,
+              exitProfileKey: exitProfile.key,
             } as Prisma.InputJsonValue,
           });
+        }
 
-          console.error(
-            `Trailing stop submit failed for ${position.symbol}:`,
-            error
+        if (
+          exitState.targetUnlocked &&
+          !exitState.trailBrokerOrderId
+        ) {
+          try {
+            await submitTrailingStopExitOrder(tradingAccountId, position.id);
+            counts.closeIntentsCreated += 1;
+          } catch (error) {
+            const payloadJson = errorToPayloadJson(error);
+            await markTrailingStopOrderSubmitFailed(position.id, payloadJson);
+            await createSystemEvent({
+              type: 'exit.trailing_stop_submit_failed',
+              entityType: 'trackedPosition',
+              entityId: position.id,
+              tradingAccountId,
+              message: `${position.symbol} trailing stop exit order submission failed.`,
+              payloadJson: {
+                symbol: position.symbol,
+                error: payloadJson,
+              } as Prisma.InputJsonValue,
+            });
+            throw error;
+          }
+        }
+
+        continue;
+      }
+
+      const takeProfit =
+        exitProfile.targetPct !== null &&
+        pnlPct >= exitProfile.targetPct / 100;
+      const stopLoss =
+        exitProfile.stopLossPct !== null &&
+        pnlPct <= -(exitProfile.stopLossPct / 100);
+      if (!takeProfit && !stopLoss) {
+        continue;
+      }
+
+      const reason = stopLoss ? 'stop_loss' : 'take_profit';
+      counts.exitSignalsTriggered += 1;
+      await closePosition(position.id);
+      counts.closeIntentsCreated += 1;
+      await createSystemEvent({
+        type: 'exit.triggered',
+        entityType: 'trackedPosition',
+        entityId: position.id,
+        tradingAccountId,
+        payloadJson: {
+          symbol: position.symbol,
+          reason,
+          pnlPct,
+        } as Prisma.InputJsonValue,
+      });
+    } catch (error) {
+      counts.failedPositions += 1;
+      failures.push({
+        trackedPositionId: position.id,
+        error: sanitizeError(error),
+      });
+      logger.error(
+        {
+          workflow: 'exit_evaluation',
+          tradingAccountId,
+          trackedPositionId: position.id,
+          error: sanitizeError(error),
+        },
+        'Exit evaluation failed for one tracked position.'
+      );
+    }
+  }
+
+  return { counts, failures };
+}
+
+export async function evaluateExitsForEligibleAccounts() {
+  const accounts = await enumerateLifecycleAccounts('exit_evaluation');
+  const results: ExitEvaluationAccountResult[] = [];
+
+  for (const account of accounts) {
+    if (!account.eligible) {
+      const outcome =
+        account.reason === 'credentials_unavailable_with_exposure'
+          ? 'CREDENTIALS_UNAVAILABLE'
+          : 'SKIPPED';
+      results.push({
+        workflow: 'exit_evaluation',
+        account,
+        outcome,
+        counts: emptyCounts(),
+        failures: [],
+      });
+
+      if (outcome === 'CREDENTIALS_UNAVAILABLE') {
+        try {
+          await createSystemEvent({
+            type: 'exit.credentials_unavailable_with_exposure',
+            entityType: 'tradingAccount',
+            entityId: account.tradingAccountId,
+            tradingAccountId: account.tradingAccountId,
+            message: `Exit evaluation cannot safely access broker credentials for ${account.displayName}.`,
+            payloadJson: {
+              workflow: 'exit_evaluation',
+              environment: account.environment,
+              activePositions: account.exposureSummary.activePositions,
+              nonterminalOrders: account.exposureSummary.nonterminalOrders,
+            } as Prisma.InputJsonValue,
+          });
+        } catch (error) {
+          logger.error(
+            {
+              workflow: 'exit_evaluation',
+              tradingAccountId: account.tradingAccountId,
+              error: sanitizeError(error),
+            },
+            'Failed to persist credentials-unavailable exit event.'
           );
         }
       }
-
-      continue;
-    }
-
-    let shouldExit = false;
-    let reason = '';
-
-    // If exitMode is unlock trailing stop
-  if (isUnlockTrailingProfile(exitProfile)) {
-    // If a native trailing-stop order has already been submitted,
-    // Alpaca is now responsible for managing the trailing stop.
-    //
-    // Our job during each evaluator cycle is only to sync the broker-reported
-    // status, high-water mark, and current stop price back into TrackedPosition.
-    if (position.trailingStopOrderId) {
-      try {
-        const result = await syncNativeTrailingStopForTrackedPosition(position.id);
-
-        console.log(
-          `Trailing stop sync for ${position.symbol}: ${result.brokerStatus}`
-        );
-      } catch (error) {
-        console.error(`Trailing stop sync failed for ${position.symbol}:`, error);
-      }
-
-      // Important:
-      // Once a native trailing-stop order exists, do not run the older fixed-target
-      // or stop-loss logic for this position.
-      continue;
-    }
-    // For unlock-trailing profiles, the target percentage does NOT mean:
-    // "sell when this target is reached."
-    //
-    // Instead, it means:
-    // "when this target is reached, submit a native Alpaca trailing-stop order."
-    const targetPct = exitProfile.targetPct;
-    const trailingStopPct = exitProfile.trailingStopPct;
-
-    // If the profile is missing either the unlock target or trailing-stop percent,
-    // we cannot safely process this exit profile.
-    //
-    // Skip this position for now rather than risking a bad broker order.
-    if (
-      targetPct === null ||
-      targetPct === undefined ||
-      trailingStopPct === null ||
-      trailingStopPct === undefined
-    ) {
-      continue;
-    }
-
-    // Check whether the current open position has reached the unlock threshold.
-    //
-    // Example:
-    // - targetPct = 1.0
-    // - pnlPct must be >= 0.01
-    //
-    // The helper handles the conversion from stored percent value to decimal form.
-    const reachedUnlockTarget = hasReachedUnlockTarget({
-      pnlPct,
-      targetPct,
-    });
-
-    // If the position has not reached the unlock target yet,
-    // do nothing and keep the position open.
-    //
-    // The backend will check again on the next worker cycle.
-    if (!reachedUnlockTarget) {
-      continue;
-    }
-
-    // At this point, the position has reached the unlock target.
-    //
-    // Before submitting anything to Alpaca, make sure we have not already handed
-    // this position off to a native trailing-stop order.
-    //
-    // This prevents duplicate trailing-stop sell orders.
-    if (!shouldAttemptTrailingStopSubmit(position)) {
+      logger[outcome === 'CREDENTIALS_UNAVAILABLE' ? 'error' : 'info'](
+        {
+          workflow: 'exit_evaluation',
+          tradingAccountId: account.tradingAccountId,
+          displayName: account.displayName,
+          environment: account.environment,
+          outcome,
+          reason: account.reason,
+        },
+        'Exit evaluation account outcome.'
+      );
       continue;
     }
 
     try {
-      // Submit the native Alpaca trailing-stop sell order.
-      //
-      // The trailing-stop service handles:
-      // - claiming the position
-      // - generating/storing a clientOrderId
-      // - checking Alpaca for an existing order with that clientOrderId
-      // - submitting the trailing_stop order if needed
-      // - saving Alpaca order details back to TrackedPosition
-      // - logging a SystemEvent
-      const result = await submitNativeTrailingStopForTrackedPosition(
-        position.id,
-        position.currentPrice
-      );
-
-      // Keep a simple console message for worker visibility during local testing.
-      console.log(
-        `Trailing stop handoff for ${position.symbol}: ${result.status}`
+      const evaluation = await evaluateExitsForAccount(account.tradingAccountId);
+      const outcome =
+        evaluation.counts.failedPositions > 0 ? 'FAILED' : 'PROCESSED';
+      results.push({
+        workflow: 'exit_evaluation',
+        account,
+        outcome,
+        ...evaluation,
+      });
+      logger[outcome === 'FAILED' ? 'error' : 'info'](
+        {
+          workflow: 'exit_evaluation',
+          tradingAccountId: account.tradingAccountId,
+          displayName: account.displayName,
+          environment: account.environment,
+          outcome,
+          ...evaluation.counts,
+        },
+        'Exit evaluation account outcome.'
       );
     } catch (error) {
-      // The trailing-stop service logs a SystemEvent on failure.
-      //
-      // This console error is mainly for local/dev visibility while watching
-      // the worker process.
-      console.error(
-        `Trailing stop handoff failed for ${position.symbol}:`,
-        error
-      );
+      results.push({
+        workflow: 'exit_evaluation',
+        account,
+        outcome: 'FAILED',
+        counts: emptyCounts(),
+        failures: [],
+        error: sanitizeError(error),
+      });
     }
-
-    // Important:
-    //
-    // Stop processing this position after the unlock-trailing logic runs.
-    //
-    // Without this continue, the evaluator could fall through into the older
-    // fixed-target / stop-loss logic and accidentally close the position at the
-    // unlock target instead of letting Alpaca manage the trailing stop.
-    continue;
   }
 
-    // Take profit
-    if (exitProfile.targetPct && pnlPct >= exitProfile.targetPct / 100) {
-      shouldExit = true;
-      reason = 'take_profit';
-    }
-
-    // Stop loss
-    if (exitProfile.stopLossPct && pnlPct <= -(exitProfile.stopLossPct / 100)) {
-      shouldExit = true;
-      reason = 'stop_loss';
-    }
-
-    if (!shouldExit) continue;
-
-    console.log(`Exit triggered for ${position.symbol} (${reason})`);
-
-    await closePosition(position.id);
-
-    await createSystemEvent({
-      type: 'exit.triggered',
-      entityType: 'trackedPosition',
-      entityId: position.id,
-      tradingAccountId: position.tradingAccountId,
-      payloadJson: {
-        symbol: position.symbol,
-        reason,
-        pnlPct,
-      } as Prisma.InputJsonValue,
-    });
-  }
+  return {
+    workflow: 'exit_evaluation' as const,
+    processedAccounts: results.filter((item) => item.outcome === 'PROCESSED').length,
+    failedAccounts: results.filter((item) => item.outcome === 'FAILED').length,
+    credentialUnavailableAccounts: results.filter(
+      (item) => item.outcome === 'CREDENTIALS_UNAVAILABLE'
+    ).length,
+    skippedAccounts: results.filter((item) => item.outcome === 'SKIPPED').length,
+    results,
+  };
 }
 
-export async function evaluateExits() {
-  const tradingAccountId = await resolveDefaultTradingAccountId();
-  return evaluateExitsForAccount(tradingAccountId);
-}
+// Compatibility name for callers while the lifecycle worker migrates to the
+// explicit coordinator.
+export const evaluateExits = evaluateExitsForEligibleAccounts;

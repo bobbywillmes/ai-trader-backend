@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   getRuntimeTradingConfig: vi.fn(),
-  runReconciliationCheck: vi.fn(),
+  reconcileEligibleTradingAccounts: vi.fn(),
   loggerDebug: vi.fn(),
   loggerWarn: vi.fn(),
   loggerError: vi.fn(),
@@ -13,7 +13,7 @@ vi.mock('../services/config.service.js', () => ({
 }));
 
 vi.mock('../services/reconciliation.service.js', () => ({
-  runReconciliationCheck: mocks.runReconciliationCheck,
+  reconcileEligibleTradingAccounts: mocks.reconcileEligibleTradingAccounts,
 }));
 
 vi.mock('../config/logger.js', () => ({
@@ -44,7 +44,7 @@ describe('runScheduledReconciliation', () => {
       reason: 'disabled',
     });
 
-    expect(mocks.runReconciliationCheck).not.toHaveBeenCalled();
+    expect(mocks.reconcileEligibleTradingAccounts).not.toHaveBeenCalled();
   });
 
   it('runs reconciliation when enabled and due', async () => {
@@ -53,13 +53,13 @@ describe('runScheduledReconciliation', () => {
       reconciliationWorkerIntervalMinutes: 15,
     });
 
-    mocks.runReconciliationCheck.mockResolvedValue({
-      findings: [],
-      eventCount: 0,
-      skippedDuplicateEventCount: 0,
-      attentionUpdateCount: 0,
-      persistedEvents: true,
-      persistedAttention: true,
+    mocks.reconcileEligibleTradingAccounts.mockResolvedValue({
+      workflow: 'reconciliation',
+      processedAccounts: 1,
+      failedAccounts: 0,
+      credentialUnavailableAccounts: 0,
+      skippedAccounts: 0,
+      results: [],
     });
 
     const result = await runScheduledReconciliation();
@@ -67,16 +67,16 @@ describe('runScheduledReconciliation', () => {
     expect(result).toEqual({
       skipped: false,
       result: {
-        findings: [],
-        eventCount: 0,
-        skippedDuplicateEventCount: 0,
-        attentionUpdateCount: 0,
-        persistedEvents: true,
-        persistedAttention: true,
+        workflow: 'reconciliation',
+        processedAccounts: 1,
+        failedAccounts: 0,
+        credentialUnavailableAccounts: 0,
+        skippedAccounts: 0,
+        results: [],
       },
     });
 
-    expect(mocks.runReconciliationCheck).toHaveBeenCalledWith({
+    expect(mocks.reconcileEligibleTradingAccounts).toHaveBeenCalledWith({
       persistEvents: true,
       persistAttention: true,
       dedupeEvents: true,

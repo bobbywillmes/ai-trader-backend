@@ -69,6 +69,9 @@ enumerate workflow-eligible accounts in stable ID order, run sequentially, and
 isolate failures. Adaptive due/backoff state and caches are account-keyed, so
 one account cannot suppress another account's work. Broker activity and
 scheduled snapshots use the same coordinator pattern.
+Exit/protective evaluation and scheduled reconciliation also use this pattern.
+Item-level failures remain visible in account summaries and cannot be hidden
+inside `PROCESSED`.
 
 Credentialless dormant accounts are skipped before any broker request.
 Credentialless accounts with lifecycle exposure return a critical structured
@@ -130,6 +133,9 @@ Examples that count:
 - broker request failure that prevents synchronization
 - unexpected uncaught exception
 - malformed top-level integration response
+- a failed exit or reconciliation account outcome
+- unavailable credentials while an account owns exposure or unresolved orders
+- an isolated exit/protective item reported as failed
 - a run exceeding `maxRunDurationMs`
 
 Examples that do not count:

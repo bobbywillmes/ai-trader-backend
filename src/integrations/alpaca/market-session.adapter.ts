@@ -297,6 +297,7 @@ async function getClock(nowMs: number, options: AlpacaMarketSessionOptions) {
         endpoint: 'GET /v2/clock',
         method: 'GET',
         requestClass: 'informational_read',
+        operationClass: 'LIFECYCLE_READ',
         deferDuringRateLimit: false,
       },
     })
@@ -346,6 +347,7 @@ async function getCalendarSession(
         endpoint: 'GET /v2/calendar',
         method: 'GET',
         requestClass: 'informational_read',
+        operationClass: 'LIFECYCLE_READ',
         deferDuringRateLimit: false,
       },
     }

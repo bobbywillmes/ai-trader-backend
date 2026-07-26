@@ -1,42 +1,51 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  transaction: vi.fn(),
   trackedPositionFindUnique: vi.fn(),
   trackedPositionUpdateMany: vi.fn(),
   orderIntentCreate: vi.fn(),
+  orderIntentUpdateMany: vi.fn(),
   brokerOrderFindFirst: vi.fn(),
   brokerOrderCreate: vi.fn(),
   brokerOrderUpdate: vi.fn(),
-  closeAlpacaPosition: vi.fn(),
+  placeAlpacaOrder: vi.fn(),
+  getAlpacaOrderByClientOrderId: vi.fn(),
   createSystemEvent: vi.fn(),
   forceAfterBrokerPositionWrite: vi.fn(),
 }));
 
+const transactionClient = {
+  trackedPosition: {
+    findUnique: mocks.trackedPositionFindUnique,
+    updateMany: mocks.trackedPositionUpdateMany,
+  },
+  orderIntent: {
+    create: mocks.orderIntentCreate,
+    updateMany: mocks.orderIntentUpdateMany,
+  },
+  brokerOrder: {
+    findFirst: mocks.brokerOrderFindFirst,
+    create: mocks.brokerOrderCreate,
+    update: mocks.brokerOrderUpdate,
+  },
+};
+
 vi.mock('../db/prisma.js', () => ({
   prisma: {
-    trackedPosition: {
-      findUnique: mocks.trackedPositionFindUnique,
-      updateMany: mocks.trackedPositionUpdateMany,
-    },
+    $transaction: mocks.transaction,
     orderIntent: {
-      create: mocks.orderIntentCreate,
-    },
-    brokerOrder: {
-      findFirst: mocks.brokerOrderFindFirst,
-      create: mocks.brokerOrderCreate,
-      update: mocks.brokerOrderUpdate,
+      updateMany: mocks.orderIntentUpdateMany,
     },
   },
 }));
-
-vi.mock('../integrations/alpaca/positions.adapter.js', () => ({
-  closeAlpacaPosition: mocks.closeAlpacaPosition,
+vi.mock('../integrations/alpaca/orders.adapter.js', () => ({
+  placeAlpacaOrder: mocks.placeAlpacaOrder,
+  getAlpacaOrderByClientOrderId: mocks.getAlpacaOrderByClientOrderId,
 }));
-
 vi.mock('./system-event.service.js', () => ({
   createSystemEvent: mocks.createSystemEvent,
 }));
-
 vi.mock('./adaptive-polling.service.js', () => ({
   adaptivePollingCoordinator: {
     forceAfterBrokerPositionWrite: mocks.forceAfterBrokerPositionWrite,
@@ -44,6 +53,7 @@ vi.mock('./adaptive-polling.service.js', () => ({
 }));
 
 import { closePosition } from './close-position.service.js';
+import { BrokerWriteDeliveryError } from '../errors/broker-write-delivery-error.js';
 
 function position(overrides: Record<string, unknown> = {}) {
   return {
@@ -56,82 +66,260 @@ function position(overrides: Record<string, unknown> = {}) {
     subscriptionId: 21,
     tradingAccountId: 31,
     tradingAccountSubscriptionId: 41,
+    orderIntents: [],
+    brokerOrders: [],
     tradingAccountSubscription: {
       id: 41,
+      tradingAccountId: 31,
+      subscriptionId: 21,
+      enabled: true,
       exitsEnabled: true,
     },
     ...overrides,
   };
 }
 
-describe('closePosition', () => {
+describe('closePosition claim-before-write', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.transaction.mockImplementation(
+      async (callback: (tx: typeof transactionClient) => unknown) =>
+        callback(transactionClient)
+    );
+    mocks.trackedPositionFindUnique.mockResolvedValue(position());
     mocks.trackedPositionUpdateMany.mockResolvedValue({ count: 1 });
     mocks.orderIntentCreate.mockResolvedValue({ id: 501 });
+    mocks.orderIntentUpdateMany.mockResolvedValue({ count: 1 });
     mocks.brokerOrderFindFirst.mockResolvedValue(null);
     mocks.brokerOrderCreate.mockResolvedValue({ id: 601 });
     mocks.createSystemEvent.mockResolvedValue(undefined);
-    mocks.closeAlpacaPosition.mockResolvedValue({
+    mocks.placeAlpacaOrder.mockResolvedValue({
       id: 'broker-close-1',
-      client_order_id: 'close-101',
+      client_order_id: 'ai-exit-close-31-101',
       symbol: 'AAPL',
       side: 'sell',
       status: 'accepted',
     });
+    mocks.getAlpacaOrderByClientOrderId.mockResolvedValue(null);
   });
 
-  it('routes the close through the tracked position account and assignment', async () => {
-    mocks.trackedPositionFindUnique.mockResolvedValue(position());
-
+  it('durably claims the exact account before submitting a deterministic close', async () => {
     await expect(closePosition(101)).resolves.toMatchObject({
       ok: true,
       trackedPositionId: 101,
-      symbol: 'AAPL',
+      tradingAccountId: 31,
+      clientOrderId: 'ai-exit-close-31-101',
     });
 
-    expect(mocks.closeAlpacaPosition).toHaveBeenCalledWith(
-      31,
-      'AAPL',
-      'position_close'
-    );
+    expect(mocks.trackedPositionUpdateMany).toHaveBeenCalledWith({
+      where: { id: 101, status: 'open' },
+      data: { status: 'closing', lastSyncedAt: expect.any(Date) },
+    });
     expect(mocks.orderIntentCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
+        status: 'submitting',
+        clientOrderId: 'ai-exit-close-31-101',
         tradingAccountId: 31,
         tradingAccountSubscriptionId: 41,
-        subscriptionId: 21,
         trackedPositionId: 101,
       }),
     });
+    expect(mocks.placeAlpacaOrder).toHaveBeenCalledWith(
+      31,
+      expect.objectContaining({
+        symbol: 'AAPL',
+        side: 'sell',
+        qty: '2',
+        client_order_id: 'ai-exit-close-31-101',
+      }),
+      'position_close'
+    );
+    expect(
+      mocks.trackedPositionUpdateMany.mock.invocationCallOrder[0]
+    ).toBeLessThan(mocks.placeAlpacaOrder.mock.invocationCallOrder[0]!);
   });
 
-  it('fails closed when the tracked position has no account identity', async () => {
+  it('lets a manual emergency close bypass assignment automated-exit controls', async () => {
     mocks.trackedPositionFindUnique.mockResolvedValue(
-      position({ tradingAccountId: null })
+      position({
+        tradingAccountSubscription: {
+          ...position().tradingAccountSubscription,
+          enabled: false,
+          exitsEnabled: false,
+        },
+      })
+    );
+
+    await expect(
+      closePosition(101, { mode: 'MANUAL_EMERGENCY_CLOSE' })
+    ).resolves.toMatchObject({ ok: true });
+    expect(mocks.placeAlpacaOrder).toHaveBeenCalledOnce();
+  });
+
+  it('blocks an automated strategy close when assignment exits are disabled', async () => {
+    mocks.trackedPositionFindUnique.mockResolvedValue(
+      position({
+        tradingAccountSubscription: {
+          ...position().tradingAccountSubscription,
+          exitsEnabled: false,
+        },
+      })
     );
 
     await expect(closePosition(101)).rejects.toMatchObject({ statusCode: 409 });
-    expect(mocks.closeAlpacaPosition).not.toHaveBeenCalled();
+    expect(mocks.placeAlpacaOrder).not.toHaveBeenCalled();
   });
 
-  it('honors an explicit exits-disabled assignment', async () => {
+  it('returns a conflict for an existing close claim or order', async () => {
     mocks.trackedPositionFindUnique.mockResolvedValue(
       position({
-        tradingAccountSubscription: { id: 41, exitsEnabled: false },
+        orderIntents: [
+          {
+            id: 500,
+            status: 'submitting',
+            clientOrderId: 'ai-exit-close-31-101',
+          },
+        ],
       })
     );
 
     await expect(closePosition(101)).rejects.toMatchObject({
       statusCode: 409,
-      message: expect.stringContaining('exits disabled'),
+      message: expect.stringContaining('already pending'),
     });
-    expect(mocks.closeAlpacaPosition).not.toHaveBeenCalled();
+    expect(mocks.placeAlpacaOrder).not.toHaveBeenCalled();
   });
 
-  it('does not guess when the tracked position does not exist', async () => {
-    mocks.trackedPositionFindUnique.mockResolvedValue(null);
+  it('fails closed for unattributed or inconsistent positions', async () => {
+    mocks.trackedPositionFindUnique
+      .mockResolvedValueOnce(position({ tradingAccountId: null }))
+      .mockResolvedValueOnce(
+        position({
+          tradingAccountSubscription: {
+            ...position().tradingAccountSubscription,
+            tradingAccountId: 99,
+          },
+        })
+      );
 
-    await expect(closePosition(999)).rejects.toMatchObject({ statusCode: 404 });
-    expect(mocks.closeAlpacaPosition).not.toHaveBeenCalled();
+    await expect(closePosition(101)).rejects.toMatchObject({ statusCode: 409 });
+    await expect(closePosition(101)).rejects.toMatchObject({ statusCode: 409 });
+    expect(mocks.placeAlpacaOrder).not.toHaveBeenCalled();
+  });
+
+  it('retains a submitting claim for deterministic recovery on broker failure', async () => {
+    mocks.placeAlpacaOrder.mockRejectedValue(new Error('network uncertain'));
+
+    await expect(closePosition(101)).rejects.toThrow('network uncertain');
+
+    expect(mocks.orderIntentUpdateMany).toHaveBeenCalledWith({
+      where: { id: 501, status: 'submitting' },
+      data: {
+        blockReason: expect.stringContaining('DELIVERY_UNCERTAIN'),
+      },
+    });
+    expect(mocks.createSystemEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'position.close_submission_uncertain',
+        tradingAccountId: 31,
+      })
+    );
+  });
+
+  it.each([
+    ['NOT_SENT_RETRYABLE', 'failed'],
+    ['NOT_SENT_BLOCKED', 'blocked'],
+  ] as const)(
+    'releases the close claim when delivery is %s',
+    async (classification, expectedStatus) => {
+      mocks.placeAlpacaOrder.mockRejectedValue(
+        new BrokerWriteDeliveryError({
+          classification,
+          message: 'safe local blocker',
+        })
+      );
+
+      await expect(closePosition(101)).rejects.toThrow('safe local blocker');
+
+      expect(mocks.orderIntentUpdateMany).toHaveBeenCalledWith({
+        where: { id: 501, status: 'submitting' },
+        data: {
+          status: expectedStatus,
+          blockReason: expect.stringContaining(classification),
+        },
+      });
+      expect(mocks.trackedPositionUpdateMany).toHaveBeenLastCalledWith({
+        where: { id: 101, status: 'closing' },
+        data: { status: 'open', lastSyncedAt: expect.any(Date) },
+      });
+      expect(mocks.createSystemEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'position.close_not_sent' })
+      );
+    }
+  );
+
+  it('confirms broker rejection absence before releasing the claim', async () => {
+    mocks.placeAlpacaOrder.mockRejectedValue(
+      new BrokerWriteDeliveryError({
+        classification: 'BROKER_REJECTED',
+        message: 'Alpaca rejected write',
+        statusCode: 422,
+      })
+    );
+    mocks.getAlpacaOrderByClientOrderId.mockResolvedValue(null);
+
+    await expect(closePosition(101)).rejects.toThrow('Alpaca rejected write');
+
+    expect(mocks.getAlpacaOrderByClientOrderId).toHaveBeenCalledWith(
+      31,
+      'ai-exit-close-31-101',
+      'pending_order_idempotency_check'
+    );
+    expect(mocks.trackedPositionUpdateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'open' }) })
+    );
+  });
+
+  it('materializes an accepted order discovered after an explicit rejection response', async () => {
+    mocks.placeAlpacaOrder.mockRejectedValue(
+      new BrokerWriteDeliveryError({
+        classification: 'BROKER_REJECTED',
+        message: 'ambiguous client response',
+        statusCode: 422,
+      })
+    );
+    mocks.getAlpacaOrderByClientOrderId.mockResolvedValue({
+      id: 'broker-close-recovered',
+      client_order_id: 'ai-exit-close-31-101',
+      symbol: 'AAPL',
+      side: 'sell',
+      status: 'accepted',
+    });
+
+    await expect(closePosition(101)).resolves.toMatchObject({
+      brokerOrderId: 'broker-close-recovered',
+    });
+    expect(mocks.brokerOrderCreate).toHaveBeenCalledOnce();
+  });
+
+  it('allows at most one broker write across concurrent close attempts', async () => {
+    let claimed = false;
+    mocks.trackedPositionFindUnique.mockImplementation(async () =>
+      position({ status: claimed ? 'closing' : 'open' })
+    );
+    mocks.trackedPositionUpdateMany.mockImplementation(async () => {
+      if (claimed) return { count: 0 };
+      claimed = true;
+      return { count: 1 };
+    });
+
+    const results = await Promise.allSettled([
+      closePosition(101),
+      closePosition(101),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect(mocks.placeAlpacaOrder).toHaveBeenCalledOnce();
   });
 });

@@ -13,7 +13,11 @@ export type LifecycleWorkflow =
   | 'submitted_orders'
   | 'broker_activities'
   | 'positions'
-  | 'scheduled_snapshots';
+  | 'scheduled_snapshots'
+  | 'exit_evaluation'
+  | 'protective_order_sync'
+  | 'reconciliation'
+  | 'manual_emergency_close';
 
 export type LifecycleAccountEligibility = {
   tradingAccountId: number;
@@ -36,6 +40,7 @@ export type LifecycleAccountEligibility = {
     nonterminalOrders: number;
     activePositions: number;
     unresolvedActivities: number;
+    unresolvedExitPositions: number;
     hasLifecycleWork: boolean;
   };
 };
@@ -80,14 +85,39 @@ export async function enumerateLifecycleAccounts(
     },
   });
 
-  const intentCounts = await prisma.orderIntent.groupBy({
-    by: ['tradingAccountId', 'status'],
-    where: {
-      tradingAccountId: { not: null },
-      status: { in: ['pending', 'submitting', 'submitted'] },
-    },
-    _count: { _all: true },
-  });
+  const [intentCounts, unresolvedExitCounts] = await Promise.all([
+    prisma.orderIntent.groupBy({
+      by: ['tradingAccountId', 'status'],
+      where: {
+        tradingAccountId: { not: null },
+        status: { in: ['pending', 'submitting', 'submitted'] },
+      },
+      _count: { _all: true },
+    }),
+    prisma.trackedPosition.groupBy({
+      by: ['tradingAccountId'],
+      where: {
+        tradingAccountId: { not: null },
+        exitState: {
+          is: {
+            OR: [
+              { attentionRequired: true },
+              {
+                status: {
+                  in: [
+                    'target_unlocked',
+                    'trailing_stop_submitted',
+                    'submit_failed',
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      },
+      _count: { _all: true },
+    }),
+  ]);
 
   const countsByAccount = new Map<number, Record<string, number>>();
   for (const row of intentCounts) {
@@ -96,6 +126,13 @@ export async function enumerateLifecycleAccounts(
     counts[row.status] = row._count._all;
     countsByAccount.set(row.tradingAccountId, counts);
   }
+  const unresolvedExitCountByAccount = new Map(
+    unresolvedExitCounts.flatMap((row) =>
+      row.tradingAccountId === null
+        ? []
+        : [[row.tradingAccountId, row._count._all] as const]
+    )
+  );
 
   return accounts.map((account) => {
     const counts = countsByAccount.get(account.id) ?? {};
@@ -106,10 +143,13 @@ export async function enumerateLifecycleAccounts(
       nonterminalOrders: account._count.brokerOrders,
       activePositions: account._count.trackedPositions,
       unresolvedActivities: account._count.brokerActivities,
+      unresolvedExitPositions:
+        unresolvedExitCountByAccount.get(account.id) ?? 0,
       hasLifecycleWork: account._count.orderIntents > 0 ||
         account._count.brokerOrders > 0 ||
         account._count.trackedPositions > 0 ||
-        account._count.brokerActivities > 0,
+        account._count.brokerActivities > 0 ||
+        (unresolvedExitCountByAccount.get(account.id) ?? 0) > 0,
     };
     const usableCredentials =
       account.credential?.status === BrokerCredentialStatus.ACTIVE;
@@ -127,6 +167,15 @@ export async function enumerateLifecycleAccounts(
           ? exposureSummary.activePositions > 0 ||
             exposureSummary.nonterminalOrders > 0 ||
             operational
+          : workflow === 'exit_evaluation'
+            ? exposureSummary.activePositions > 0
+            : workflow === 'protective_order_sync'
+              ? exposureSummary.unresolvedExitPositions > 0 ||
+                exposureSummary.nonterminalOrders > 0
+              : workflow === 'manual_emergency_close'
+                ? exposureSummary.activePositions > 0
+                : workflow === 'reconciliation'
+                  ? exposureSummary.hasLifecycleWork || operational
           : workflow === 'broker_activities'
             ? exposureSummary.hasLifecycleWork || operational
             : exposureSummary.hasLifecycleWork || operational;

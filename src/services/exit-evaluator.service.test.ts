@@ -2,270 +2,385 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   trackedPositionFindMany: vi.fn(),
-
   closePosition: vi.fn(),
-
   createSystemEvent: vi.fn(),
-
   ensurePositionExitState: vi.fn(),
   markTrailingStopOrderSubmitFailed: vi.fn(),
   unlockTrailingStopExitState: vi.fn(),
-
   submitTrailingStopExitOrder: vi.fn(),
-
-  submitNativeTrailingStopForTrackedPosition: vi.fn(),
-  syncNativeTrailingStopForTrackedPosition: vi.fn(),
-  resolveDefaultTradingAccountId: vi.fn(),
+  enumerateLifecycleAccounts: vi.fn(),
+  syncProtectiveOrdersForAccount: vi.fn(),
+  loggerInfo: vi.fn(),
+  loggerError: vi.fn(),
 }));
 
+vi.mock('../config/logger.js', () => ({
+  logger: { info: mocks.loggerInfo, error: mocks.loggerError },
+}));
 vi.mock('../db/prisma.js', () => ({
   prisma: {
-    trackedPosition: {
-      findMany: mocks.trackedPositionFindMany,
-    },
+    trackedPosition: { findMany: mocks.trackedPositionFindMany },
   },
 }));
-
 vi.mock('./close-position.service.js', () => ({
   closePosition: mocks.closePosition,
 }));
-
 vi.mock('./system-event.service.js', () => ({
   createSystemEvent: mocks.createSystemEvent,
 }));
-
 vi.mock('./position-exit-state.service.js', () => ({
   ensurePositionExitState: mocks.ensurePositionExitState,
   markTrailingStopOrderSubmitFailed: mocks.markTrailingStopOrderSubmitFailed,
   unlockTrailingStopExitState: mocks.unlockTrailingStopExitState,
 }));
-
 vi.mock('./trailing-stop-exit.service.js', () => ({
   submitTrailingStopExitOrder: mocks.submitTrailingStopExitOrder,
 }));
-
-vi.mock('./trailing-stop.service.js', () => ({
-  submitNativeTrailingStopForTrackedPosition:
-    mocks.submitNativeTrailingStopForTrackedPosition,
-  syncNativeTrailingStopForTrackedPosition:
-    mocks.syncNativeTrailingStopForTrackedPosition,
+vi.mock('./lifecycle-account-eligibility.service.js', () => ({
+  enumerateLifecycleAccounts: mocks.enumerateLifecycleAccounts,
+}));
+vi.mock('./protective-order-sync.service.js', () => ({
+  syncProtectiveOrdersForAccount: mocks.syncProtectiveOrdersForAccount,
 }));
 
-vi.mock('./trading-account.service.js', () => ({
-  resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
-}));
+import {
+  evaluateExitsForAccount,
+  evaluateExitsForEligibleAccounts,
+} from './exit-evaluator.service.js';
 
-import { evaluateExits } from './exit-evaluator.service.js';
+function assignment(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 11,
+    tradingAccountId: 1,
+    subscriptionId: 21,
+    enabled: true,
+    exitsEnabled: true,
+    subscription: {
+      exitProfile: {
+        key: 'fixed-exit',
+        exitMode: 'fixed',
+        targetPct: 1,
+        trailingStopPct: null,
+        stopLossPct: 1,
+      },
+    },
+    ...overrides,
+  };
+}
 
-function buildUnlockTrailingPosition(overrides: Record<string, unknown> = {}) {
+function position(overrides: Record<string, unknown> = {}) {
   return {
     id: 101,
     symbol: 'SPY',
     tradingAccountId: 1,
+    tradingAccountSubscriptionId: 11,
+    subscriptionId: 21,
     status: 'open',
-    currentPrice: 100.4,
-    unrealizedPnLPct: 0.003, // 0.3%
-    trailingStopOrderId: null,
-    trailingStopStatus: null,
+    currentPrice: 101,
+    unrealizedPnLPct: 0,
     exitState: null,
     subscription: {
+      exitProfile: assignment().subscription.exitProfile,
+    },
+    tradingAccountSubscription: assignment(),
+    ...overrides,
+  };
+}
+
+function unlockPosition(overrides: Record<string, unknown> = {}) {
+  const trailingAssignment = assignment({
+    subscription: {
       exitProfile: {
-        key: 'exit_etf_unlock_0_5_trail_0_25',
+        key: 'unlock-trail',
         exitMode: 'unlock_trailing_stop',
         targetPct: 0.5,
         trailingStopPct: 0.25,
         stopLossPct: null,
       },
     },
+  });
+  return position({
+    unrealizedPnLPct: 0.006,
+    tradingAccountSubscription: trailingAssignment,
+    subscription: trailingAssignment.subscription,
     ...overrides,
-  };
+  });
 }
 
-function buildExitState(overrides: Record<string, unknown> = {}) {
+function account(
+  id: number,
+  overrides: Record<string, unknown> = {}
+) {
   return {
-    id: 201,
-    trackedPositionId: 101,
-    status: 'watching',
-    targetUnlocked: false,
-    targetUnlockedAt: null,
-    targetUnlockedPrice: null,
-    targetUnlockedPnlPct: null,
-    highWaterMark: null,
-    trailStopPrice: null,
-    targetPct: 0.5,
-    trailingStopPct: 0.25,
-    trailBroker: null,
-    trailBrokerOrderId: null,
-    trailClientOrderId: null,
-    trailOrderStatus: null,
-    rawBrokerJson: null,
+    tradingAccountId: id,
+    displayName: id === 1 ? 'Bobby Paper' : 'Bobby Live',
+    broker: 'ALPACA',
+    environment: id === 1 ? 'PAPER' : 'LIVE',
+    status: 'PAUSED',
+    credentialStatus: 'ACTIVE',
+    eligible: true,
+    reason: 'usable_credentials_with_work',
+    exposureSummary: {
+      pendingIntents: 0,
+      submittingIntents: 0,
+      submittedIntents: 0,
+      nonterminalOrders: 0,
+      activePositions: 1,
+      unresolvedActivities: 0,
+      unresolvedExitPositions: 0,
+      hasLifecycleWork: true,
+    },
     ...overrides,
   };
 }
 
-describe('evaluateExits - unlock trailing stop lifecycle', () => {
+describe('account-scoped exit evaluation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
-
-    vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-  });
-
-  it('does nothing dangerous when an unlock-trailing position has not reached target', async () => {
-    const exitState = buildExitState();
-
-    mocks.trackedPositionFindMany.mockResolvedValue([
-      buildUnlockTrailingPosition({
-        unrealizedPnLPct: 0.003, // 0.3%, below 0.5% target
-        exitState: null,
-      }),
-    ]);
-
-    mocks.ensurePositionExitState.mockResolvedValue(exitState);
-
-    await evaluateExits();
-
-    expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith({
-      where: { status: 'open', tradingAccountId: 1 },
-      include: {
-        exitState: true,
-        subscription: {
-          include: {
-            exitProfile: true,
-          },
-        },
-      },
-    });
-
-    expect(mocks.ensurePositionExitState).toHaveBeenCalledWith(101);
-
-    expect(mocks.unlockTrailingStopExitState).not.toHaveBeenCalled();
-    expect(mocks.submitTrailingStopExitOrder).not.toHaveBeenCalled();
-    expect(mocks.closePosition).not.toHaveBeenCalled();
-    expect(mocks.createSystemEvent).not.toHaveBeenCalled();
-  });
-
-  it('unlocks the target and submits a trailing-stop exit order when target is reached', async () => {
-    const unlockedExitState = buildExitState({
-      status: 'target_unlocked',
-      targetUnlocked: true,
-      targetUnlockedAt: new Date('2026-06-06T15:30:00.000Z'),
-      targetUnlockedPrice: 101,
-      targetUnlockedPnlPct: 0.006,
-      highWaterMark: 101,
-      trailStopPrice: 100.7475,
-    });
-
-    mocks.trackedPositionFindMany.mockResolvedValue([
-      buildUnlockTrailingPosition({
-        currentPrice: 101,
-        unrealizedPnLPct: 0.006, // 0.6%, above 0.5% target
-        exitState: buildExitState(),
-      }),
-    ]);
-
-    mocks.unlockTrailingStopExitState.mockResolvedValue(unlockedExitState);
     mocks.createSystemEvent.mockResolvedValue({});
-    mocks.submitTrailingStopExitOrder.mockResolvedValue({
-      submitted: true,
-      brokerOrderId: 'alpaca-order-123',
-      clientOrderId: 'ai-exit-trail-SPY-101',
+    mocks.syncProtectiveOrdersForAccount.mockResolvedValue({
+      found: 0,
+      synchronized: 0,
+      partialFills: 0,
+      terminalOrders: 0,
+      confirmedMissing: 0,
+      failed: 0,
+      failures: [],
     });
+  });
 
-    await evaluateExits();
+  it('uses the exact account assignment and creates a strategy close when allowed', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      position({ unrealizedPnLPct: 0.02 }),
+    ]);
+    mocks.closePosition.mockResolvedValue({ ok: true });
 
-    expect(mocks.unlockTrailingStopExitState).toHaveBeenCalledWith({
-      trackedPositionId: 101,
-      currentPrice: 101,
-      pnlPct: 0.006,
+    const result = await evaluateExitsForAccount(1);
+
+    expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { status: { in: ['open', 'closing'] }, tradingAccountId: 1 },
+        orderBy: { id: 'asc' },
+      })
+    );
+    expect(mocks.closePosition).toHaveBeenCalledWith(101);
+    expect(result.counts).toMatchObject({
+      positionsEvaluated: 1,
+      exitSignalsTriggered: 1,
+      closeIntentsCreated: 1,
+      failedPositions: 0,
+    });
+  });
+
+  it.each([
+    ['exitsEnabled', assignment({ exitsEnabled: false })],
+    ['enabled', assignment({ enabled: false })],
+  ])('suppresses new automated exits when assignment %s is false', async (_name, value) => {
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      position({
+        unrealizedPnLPct: 0.02,
+        tradingAccountSubscription: value,
+      }),
+    ]);
+
+    const result = await evaluateExitsForAccount(1);
+
+    expect(mocks.closePosition).not.toHaveBeenCalled();
+    expect(result.counts).toMatchObject({
+      positionsSkipped: 1,
+      blockedExits: 1,
+    });
+  });
+
+  it('does not treat entriesEnabled=false as an exit control', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      position({
+        unrealizedPnLPct: 0.02,
+        tradingAccountSubscription: assignment({ entriesEnabled: false }),
+      }),
+    ]);
+    mocks.closePosition.mockResolvedValue({ ok: true });
+
+    await evaluateExitsForAccount(1);
+
+    expect(mocks.closePosition).toHaveBeenCalledWith(101);
+  });
+
+  it('does not let one position failure stop later positions', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      position({
+        id: 101,
+        tradingAccountSubscription: null,
+      }),
+      position({ id: 102, unrealizedPnLPct: 0.02 }),
+    ]);
+    mocks.closePosition.mockResolvedValue({ ok: true });
+
+    const result = await evaluateExitsForAccount(1);
+
+    expect(mocks.closePosition).toHaveBeenCalledWith(102);
+    expect(result.counts.failedPositions).toBe(1);
+    expect(result.failures[0]).toMatchObject({ trackedPositionId: 101 });
+  });
+
+  it('has one authoritative unlock-to-trailing path', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([unlockPosition()]);
+    mocks.ensurePositionExitState.mockResolvedValue({
+      targetUnlocked: false,
       targetPct: 0.5,
       trailingStopPct: 0.25,
+      trailBrokerOrderId: null,
+      trailOrderStatus: null,
     });
-
-    expect(mocks.createSystemEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'exit.target_unlocked',
-        entityType: 'trackedPosition',
-        entityId: 101,
-        message: 'SPY reached target unlock for trailing stop exit.',
-      })
-    );
-
-    expect(mocks.submitTrailingStopExitOrder).toHaveBeenCalledWith(101);
-
-    // Important: target reached should NOT mean immediate close anymore.
-    expect(mocks.closePosition).not.toHaveBeenCalled();
-  });
-
-  it('does not submit a duplicate trailing-stop order when one is already linked', async () => {
-    mocks.trackedPositionFindMany.mockResolvedValue([
-      buildUnlockTrailingPosition({
-        unrealizedPnLPct: 0.01,
-        exitState: buildExitState({
-          status: 'trailing_stop_submitted',
-          targetUnlocked: true,
-          trailBroker: 'alpaca',
-          trailBrokerOrderId: 'existing-broker-order-id',
-          trailClientOrderId: 'existing-client-order-id',
-          trailOrderStatus: 'accepted',
-        }),
-      }),
-    ]);
-
-    await evaluateExits();
-
-    expect(mocks.unlockTrailingStopExitState).not.toHaveBeenCalled();
-    expect(mocks.submitTrailingStopExitOrder).not.toHaveBeenCalled();
-    expect(mocks.closePosition).not.toHaveBeenCalled();
-    expect(mocks.createSystemEvent).not.toHaveBeenCalled();
-  });
-
-  it('marks the trailing-stop submission as failed when broker submission throws', async () => {
-    const unlockedExitState = buildExitState({
-      status: 'target_unlocked',
+    mocks.unlockTrailingStopExitState.mockResolvedValue({
       targetUnlocked: true,
-      targetUnlockedAt: new Date('2026-06-06T15:30:00.000Z'),
-      targetUnlockedPrice: 101,
-      targetUnlockedPnlPct: 0.006,
-      highWaterMark: 101,
-      trailStopPrice: 100.7475,
+      targetPct: 0.5,
+      trailingStopPct: 0.25,
+      trailBrokerOrderId: null,
+      trailOrderStatus: null,
     });
+    mocks.submitTrailingStopExitOrder.mockResolvedValue({ submitted: true });
 
-    const submissionError = new Error('broker rejected trailing stop');
-
-    mocks.trackedPositionFindMany.mockResolvedValue([
-      buildUnlockTrailingPosition({
-        currentPrice: 101,
-        unrealizedPnLPct: 0.006,
-        exitState: buildExitState(),
-      }),
-    ]);
-
-    mocks.unlockTrailingStopExitState.mockResolvedValue(unlockedExitState);
-    mocks.createSystemEvent.mockResolvedValue({});
-    mocks.submitTrailingStopExitOrder.mockRejectedValue(submissionError);
-    mocks.markTrailingStopOrderSubmitFailed.mockResolvedValue({});
-
-    await evaluateExits();
+    const result = await evaluateExitsForAccount(1);
 
     expect(mocks.unlockTrailingStopExitState).toHaveBeenCalledOnce();
-    expect(mocks.submitTrailingStopExitOrder).toHaveBeenCalledWith(101);
+    expect(mocks.submitTrailingStopExitOrder).toHaveBeenCalledWith(1, 101);
+    expect(mocks.closePosition).not.toHaveBeenCalled();
+    expect(result.counts).toMatchObject({
+      exitSignalsTriggered: 1,
+      closeIntentsCreated: 1,
+    });
+  });
 
-    expect(mocks.markTrailingStopOrderSubmitFailed).toHaveBeenCalledWith(101, {
-      name: 'Error',
-      message: 'broker rejected trailing stop',
+  it('does not permanently suppress protective recovery after submit_failed', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      unlockPosition({
+        exitState: {
+          targetUnlocked: true,
+          targetPct: 0.5,
+          trailingStopPct: 0.25,
+          trailBrokerOrderId: null,
+          trailOrderStatus: 'submit_failed',
+        },
+      }),
+    ]);
+    mocks.submitTrailingStopExitOrder.mockResolvedValue({
+      submitted: false,
+      reason: 'recovery_backoff',
     });
 
+    await evaluateExitsForAccount(1);
+
+    expect(mocks.submitTrailingStopExitOrder).toHaveBeenCalledWith(1, 101);
+  });
+
+  it('keeps same-symbol positions isolated by coordinator account', async () => {
+    mocks.trackedPositionFindMany
+      .mockResolvedValueOnce([position({ tradingAccountId: 1 })])
+      .mockResolvedValueOnce([
+        position({
+          id: 202,
+          tradingAccountId: 2,
+          tradingAccountSubscription: assignment({
+            id: 22,
+            tradingAccountId: 2,
+          }),
+        }),
+      ]);
+
+    await evaluateExitsForAccount(1);
+    await evaluateExitsForAccount(2);
+
+    expect(mocks.trackedPositionFindMany.mock.calls.map(([query]) =>
+      query.where.tradingAccountId
+    )).toEqual([1, 2]);
+  });
+});
+
+describe('exit evaluation coordinator', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.createSystemEvent.mockResolvedValue({});
+    mocks.syncProtectiveOrdersForAccount.mockResolvedValue({
+      found: 0,
+      synchronized: 0,
+      partialFills: 0,
+      terminalOrders: 0,
+      confirmedMissing: 0,
+      failed: 0,
+      failures: [],
+    });
+  });
+
+  it('processes eligible accounts sequentially in enumerated stable order', async () => {
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([account(1), account(2)]);
+    mocks.trackedPositionFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    const result = await evaluateExitsForEligibleAccounts();
+
+    expect(mocks.trackedPositionFindMany.mock.calls.map(([query]) =>
+      query.where.tradingAccountId
+    )).toEqual([1, 2]);
+    expect(result.results.map((item) => item.account.tradingAccountId)).toEqual([
+      1,
+      2,
+    ]);
+  });
+
+  it('continues after one account query fails', async () => {
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([account(1), account(2)]);
+    mocks.trackedPositionFindMany
+      .mockRejectedValueOnce(new Error('paper query failed'))
+      .mockResolvedValueOnce([]);
+
+    const result = await evaluateExitsForEligibleAccounts();
+
+    expect(result.results.map((item) => item.outcome)).toEqual([
+      'FAILED',
+      'PROCESSED',
+    ]);
+  });
+
+  it('reports credentialless exposure without making a broker-facing evaluation', async () => {
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([
+      account(2, {
+        credentialStatus: null,
+        eligible: false,
+        reason: 'credentials_unavailable_with_exposure',
+      }),
+    ]);
+
+    const result = await evaluateExitsForEligibleAccounts();
+
+    expect(mocks.trackedPositionFindMany).not.toHaveBeenCalled();
+    expect(result.results[0]?.outcome).toBe('CREDENTIALS_UNAVAILABLE');
     expect(mocks.createSystemEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'exit.trailing_stop_submit_failed',
-        entityType: 'trackedPosition',
-        entityId: 101,
-        message: 'SPY trailing stop exit order submission failed.',
+        type: 'exit.credentials_unavailable_with_exposure',
+        tradingAccountId: 2,
       })
     );
+  });
 
-    expect(mocks.closePosition).not.toHaveBeenCalled();
+  it('treats dormant credentialless accounts as a healthy skip', async () => {
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([
+      account(2, {
+        credentialStatus: null,
+        eligible: false,
+        reason: 'credentials_unavailable_dormant',
+        exposureSummary: {
+          ...account(2).exposureSummary,
+          activePositions: 0,
+          hasLifecycleWork: false,
+        },
+      }),
+    ]);
+
+    const result = await evaluateExitsForEligibleAccounts();
+
+    expect(result.results[0]?.outcome).toBe('SKIPPED');
+    expect(mocks.createSystemEvent).not.toHaveBeenCalled();
   });
 });

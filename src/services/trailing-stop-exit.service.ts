@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma, type Prisma as PrismaTypes } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import type { AlpacaOrder } from '../integrations/alpaca/alpaca.types.js';
 import {
@@ -11,8 +11,24 @@ import {
   markTrailingStopOrderSubmitted,
 } from './position-exit-state.service.js';
 import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
+import {
+  BrokerWriteDeliveryError,
+  type BrokerWriteDeliveryClassification,
+} from '../errors/broker-write-delivery-error.js';
 
 const TRAILING_STOP_TIME_IN_FORCE = 'gtc' as const;
+export const PROTECTIVE_SUBMISSION_RECOVERY_BACKOFF_MS = 30_000;
+const DELIVERY_PREFIX = 'BROKER_WRITE_DELIVERY';
+
+function getDeliveryClassification(blockReason: string | null) {
+  return blockReason?.match(
+    /BROKER_WRITE_DELIVERY:(NOT_SENT_RETRYABLE|NOT_SENT_BLOCKED|BROKER_REJECTED|DELIVERY_UNCERTAIN)/
+  )?.[1] as BrokerWriteDeliveryClassification | undefined;
+}
+
+function safeError(error: unknown) {
+  return error instanceof Error ? error.message : 'Unknown protective write error.';
+}
 
 function compactDate(date: Date) {
   return date
@@ -53,6 +69,7 @@ function getWholeShareQty(qty: number) {
 }
 
 async function persistTrailingStopOrder(args: {
+  tradingAccountId: number;
   trackedPositionId: number;
   clientOrderId: string;
   order: AlpacaOrder;
@@ -62,18 +79,28 @@ async function persistTrailingStopOrder(args: {
     include: {
       subscription: true,
       exitState: true,
+      tradingAccountSubscription: true,
     },
   });
 
   if (!position) {
     throw new Error(`Tracked position ${args.trackedPositionId} was not found.`);
   }
-  if (position.tradingAccountId === null) {
+  if (
+    position.tradingAccountId !== args.tradingAccountId ||
+    !position.tradingAccountSubscription ||
+    position.tradingAccountSubscription.tradingAccountId !==
+      args.tradingAccountId ||
+    position.tradingAccountSubscription.subscriptionId !==
+      position.subscriptionId
+  ) {
     throw new Error(
-      `TrackedPosition ${position.id} has no tradingAccountId; refusing trailing-stop persistence.`
+      `TrackedPosition ${position.id} has missing or inconsistent account attribution; refusing trailing-stop persistence.`
     );
   }
-  const tradingAccountId = position.tradingAccountId;
+  const assignment = position.tradingAccountSubscription;
+  const tradingAccountId = args.tradingAccountId;
+  const side = position.side === 'short' ? 'buy' : 'sell';
 
   const existingIntent = await prisma.orderIntent.findFirst({
     where: {
@@ -82,6 +109,14 @@ async function persistTrailingStopOrder(args: {
     },
     orderBy: { createdAt: 'desc' },
   });
+  if (
+    existingIntent &&
+    existingIntent.trackedPositionId !== position.id
+  ) {
+    throw new Error(
+      `Protective OrderIntent ${existingIntent.id} belongs to a different tracked position.`
+    );
+  }
 
   const orderIntent =
     existingIntent ??
@@ -89,7 +124,7 @@ async function persistTrailingStopOrder(args: {
       data: {
         source: 'exit-evaluator',
         symbol: position.symbol,
-        side: 'sell',
+        side,
         orderType: 'trailing_stop',
         timeInForce: TRAILING_STOP_TIME_IN_FORCE,
         qty: position.qty,
@@ -98,6 +133,8 @@ async function persistTrailingStopOrder(args: {
         extendedHours: false,
         clientOrderId: args.clientOrderId,
         tradingAccountId,
+        tradingAccountSubscriptionId:
+          position.tradingAccountSubscription.id,
         trackedPositionId: position.id,
         subscriptionId: position.subscriptionId,
         subscriptionKey: position.subscription?.key ?? null,
@@ -106,30 +143,15 @@ async function persistTrailingStopOrder(args: {
           source: 'exit-evaluator',
           orderKind: 'target_unlock_trailing_stop',
           trackedPositionId: position.id,
+          tradingAccountId,
+          tradingAccountSubscriptionId:
+            assignment.id,
           exitStateId: position.exitState?.id ?? null,
           trailPercent: position.exitState?.trailingStopPct ?? null,
           clientOrderId: args.clientOrderId,
         } as Prisma.InputJsonValue,
       },
     }));
-
-  if (
-    existingIntent &&
-    (existingIntent.trackedPositionId === null ||
-      existingIntent.tradingAccountId === null)
-  ) {
-    await prisma.orderIntent.update({
-      where: { id: existingIntent.id },
-      data: {
-        ...(existingIntent.trackedPositionId === null && {
-          trackedPositionId: position.id,
-        }),
-        ...(existingIntent.tradingAccountId === null && {
-          tradingAccountId,
-        }),
-      },
-    });
-  }
 
   const existingBrokerOrderRecord = await prisma.brokerOrder.findFirst({
     where: {
@@ -148,7 +170,7 @@ async function persistTrailingStopOrder(args: {
       trackedPositionId: position.id,
       securityId: position.securityId,
       symbol: position.symbol,
-      side: 'sell',
+      side,
       status: args.order.status,
       rawBrokerJson: args.order as unknown as Prisma.InputJsonValue,
   };
@@ -161,6 +183,11 @@ async function persistTrailingStopOrder(args: {
     await prisma.brokerOrder.create({ data: brokerOrderData });
   }
 
+  await prisma.orderIntent.updateMany({
+    where: { id: orderIntent.id },
+    data: { status: 'submitted', blockReason: null },
+  });
+
   await markTrailingStopOrderSubmitted({
     trackedPositionId: position.id,
     broker: 'alpaca',
@@ -171,24 +198,38 @@ async function persistTrailingStopOrder(args: {
   });
 }
 
-export async function submitTrailingStopExitOrder(trackedPositionId: number) {
+export async function submitTrailingStopExitOrder(
+  tradingAccountId: number,
+  trackedPositionId: number,
+  now = new Date()
+) {
   const position = await prisma.trackedPosition.findUnique({
     where: { id: trackedPositionId },
     include: {
       subscription: true,
       exitState: true,
+      tradingAccountSubscription: true,
     },
   });
 
   if (!position) {
     throw new Error(`Tracked position ${trackedPositionId} was not found.`);
   }
-  if (position.tradingAccountId === null) {
+  if (position.tradingAccountId !== tradingAccountId) {
     throw new Error(
-      `TrackedPosition ${position.id} has no tradingAccountId; refusing trailing-stop broker access.`
+      `TrackedPosition ${position.id} does not belong to TradingAccount ${tradingAccountId}; refusing trailing-stop broker access.`
     );
   }
-  const tradingAccountId = position.tradingAccountId;
+  if (
+    !position.tradingAccountSubscription ||
+    position.tradingAccountSubscription.tradingAccountId !== tradingAccountId ||
+    position.tradingAccountSubscription.subscriptionId !== position.subscriptionId
+  ) {
+    throw new Error(
+      `TrackedPosition ${position.id} has missing or inconsistent account assignment attribution.`
+    );
+  }
+  const assignment = position.tradingAccountSubscription;
 
   const exitState =
     position.exitState ?? (await ensurePositionExitState(position.id));
@@ -255,6 +296,94 @@ export async function submitTrailingStopExitOrder(trackedPositionId: number) {
     };
   }
 
+  const claim = await prisma.$transaction(
+    async (tx) => {
+      const existingIntent = await tx.orderIntent.findFirst({
+        where: { tradingAccountId, clientOrderId },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (existingIntent) {
+        if (existingIntent.trackedPositionId !== position.id) {
+          throw new Error(
+            `Protective OrderIntent ${existingIntent.id} belongs to a different tracked position.`
+          );
+        }
+        return { intent: existingIntent, created: false };
+      }
+
+      const exitClaim = await tx.positionExitState.updateMany({
+        where: {
+          trackedPositionId: position.id,
+          trailBrokerOrderId: null,
+          trailClientOrderId: null,
+        },
+        data: {
+          status: 'trailing_stop_submitting',
+          trailBroker: 'alpaca',
+          trailClientOrderId: clientOrderId,
+          trailOrderStatus: 'pending_submit',
+        },
+      });
+      if (exitClaim.count !== 1) {
+        throw new Error(
+          `Protective submission for TrackedPosition ${position.id} is already claimed.`
+        );
+      }
+
+      const intent = await tx.orderIntent.create({
+        data: {
+          source: 'exit-evaluator',
+          symbol: position.symbol,
+          side: position.side === 'short' ? 'buy' : 'sell',
+          orderType: 'trailing_stop',
+          timeInForce: TRAILING_STOP_TIME_IN_FORCE,
+          qty: position.qty,
+          notional: null,
+          limitPrice: null,
+          extendedHours: false,
+          clientOrderId,
+          tradingAccountId,
+          tradingAccountSubscriptionId:
+            assignment.id,
+          trackedPositionId: position.id,
+          subscriptionId: position.subscriptionId,
+          subscriptionKey: position.subscription?.key ?? null,
+          status: 'submitting',
+          rawRequestJson: {
+            signalType: 'exit',
+            source: 'exit-evaluator',
+            orderKind: 'target_unlock_trailing_stop',
+            trackedPositionId: position.id,
+            tradingAccountId,
+            tradingAccountSubscriptionId:
+              assignment.id,
+            exitStateId: exitState.id,
+            trailPercent: trailingStopPct,
+            clientOrderId,
+          } as PrismaTypes.InputJsonValue,
+        },
+      });
+      return { intent, created: true };
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+  );
+
+  const recordedClassification = getDeliveryClassification(
+    claim.intent.blockReason
+  );
+  if (
+    !claim.created &&
+    now.getTime() - claim.intent.updatedAt.getTime() <
+      PROTECTIVE_SUBMISSION_RECOVERY_BACKOFF_MS
+  ) {
+    return {
+      submitted: false,
+      reason: 'recovery_backoff',
+      brokerOrderId: null,
+      clientOrderId,
+    };
+  }
+
   const existingAlpacaOrder = await getAlpacaOrderByClientOrderId(
     tradingAccountId,
     clientOrderId,
@@ -263,6 +392,7 @@ export async function submitTrailingStopExitOrder(trackedPositionId: number) {
 
   if (existingAlpacaOrder) {
     await persistTrailingStopOrder({
+      tradingAccountId,
       trackedPositionId: position.id,
       clientOrderId,
       order: existingAlpacaOrder,
@@ -276,9 +406,28 @@ export async function submitTrailingStopExitOrder(trackedPositionId: number) {
     };
   }
 
+  if (
+    !claim.created &&
+    (recordedClassification === 'DELIVERY_UNCERTAIN' ||
+      recordedClassification === 'BROKER_REJECTED')
+  ) {
+    await prisma.orderIntent.updateMany({
+      where: { id: claim.intent.id },
+      data: {
+        blockReason: `${DELIVERY_PREFIX}:${recordedClassification}:broker lookup remains inconclusive`,
+      },
+    });
+    return {
+      submitted: false,
+      reason: 'recovery_inconclusive',
+      brokerOrderId: null,
+      clientOrderId,
+    };
+  }
+
   const payload = {
     symbol: position.symbol,
-    side: 'sell' as const,
+    side: position.side === 'short' ? 'buy' as const : 'sell' as const,
     type: 'trailing_stop' as const,
     time_in_force: TRAILING_STOP_TIME_IN_FORCE,
     qty,
@@ -286,22 +435,86 @@ export async function submitTrailingStopExitOrder(trackedPositionId: number) {
     client_order_id: clientOrderId,
   };
 
-  const created = await placeAlpacaOrder(
-    tradingAccountId,
-    payload,
-    'protective_order_submission'
-  );
+  let created;
+  try {
+    created = await placeAlpacaOrder(
+      tradingAccountId,
+      payload,
+      'protective_order_submission'
+    );
+  } catch (error) {
+    let classification =
+      error instanceof BrokerWriteDeliveryError
+        ? error.classification
+        : 'DELIVERY_UNCERTAIN';
+    if (classification === 'BROKER_REJECTED') {
+      let recovered = null;
+      try {
+        recovered = await getAlpacaOrderByClientOrderId(
+          tradingAccountId,
+          clientOrderId,
+          'protective_order_idempotency_check'
+        );
+      } catch {
+        classification = 'DELIVERY_UNCERTAIN';
+      }
+      if (recovered) {
+        await persistTrailingStopOrder({
+          tradingAccountId,
+          trackedPositionId: position.id,
+          clientOrderId,
+          order: recovered,
+        });
+        return {
+          submitted: false,
+          reason: 'already_at_broker',
+          brokerOrderId: recovered.id,
+          clientOrderId,
+        };
+      }
+    }
+    await prisma.orderIntent.updateMany({
+      where: { id: claim.intent.id },
+      data: {
+        status:
+          classification === 'NOT_SENT_BLOCKED'
+            ? 'blocked'
+            : classification === 'NOT_SENT_RETRYABLE'
+              ? 'failed'
+              : 'submitting',
+        blockReason: `${DELIVERY_PREFIX}:${classification}:${safeError(error)}`,
+      },
+    });
+    throw error;
+  }
 
   adaptivePollingCoordinator.forceAfterBrokerOrderCreated(
     tradingAccountId,
     'protective_order_created'
   );
 
-  await persistTrailingStopOrder({
-    trackedPositionId: position.id,
-    clientOrderId,
-    order: created,
-  });
+  try {
+    await persistTrailingStopOrder({
+      tradingAccountId,
+      trackedPositionId: position.id,
+      clientOrderId,
+      order: created,
+    });
+  } catch (error) {
+    await prisma.orderIntent.updateMany({
+      where: { id: claim.intent.id },
+      data: {
+        status: 'submitting',
+        blockReason: `${DELIVERY_PREFIX}:DELIVERY_UNCERTAIN:broker accepted before local persistence completed`,
+      },
+    });
+    throw new BrokerWriteDeliveryError({
+      classification: 'DELIVERY_UNCERTAIN',
+      message:
+        'Protective order was accepted but local persistence did not complete.',
+      cause: error,
+    });
+  }
 
   await createSystemEvent({
     type: 'exit.trailing_stop_submitted',

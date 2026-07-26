@@ -292,7 +292,20 @@ operator review and do not replace risk-gate enforcement.
 
 The backend records explicit exit attention states for protective trailing-stop failures.
 
-`PositionExitState` can mark `attentionRequired` when a protective trailing-stop order submission fails, is rejected, is canceled, or expires. These states are surfaced in the Open Positions admin page so operator intervention is visible while the tracked position remains open.
+`PositionExitState` can mark `attentionRequired` when a protective trailing-stop
+submission is blocked or uncertain, or when its broker order becomes
+`canceled`, `expired`, `rejected`, `replaced`, `done_for_day`, or `calculated`.
+Historical `cancelled` normalizes to `canceled`. These terminal states stop
+routine nonterminal polling and remain visible for operator review while
+exposure is unprotected. `filled` completes the protective lifecycle and clears
+protective attention; broker activity remains authoritative for closing the
+tracked position.
+
+Protective submission failure is recoverable. The backend preserves a durable
+intent and deterministic client order ID, observes a retry backoff, and checks
+the owning Alpaca account before retrying. A definitely-not-sent attempt may be
+retried in a controlled way. Uncertain or inconclusive delivery is retained for
+attention and is never replayed blindly.
 
 Attention states are separate from the normal lifecycle `status`: `status` describes where the exit lifecycle is, while `attentionRequired` indicates that the operator should review the position.
 
