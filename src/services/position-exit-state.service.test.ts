@@ -201,6 +201,40 @@ describe('position exit attention states', () => {
     });
   });
 
+  it.each([
+    ['filled', 'trailing_stop_filled', false],
+    ['canceled', 'trailing_stop_canceled', true],
+    ['cancelled', 'trailing_stop_canceled', true],
+    ['expired', 'trailing_stop_expired', true],
+    ['rejected', 'trailing_stop_rejected', true],
+    ['replaced', 'trailing_stop_replaced_attention', true],
+    ['done_for_day', 'trailing_stop_done_for_day_attention', true],
+    ['calculated', 'trailing_stop_calculated_attention', true],
+  ] as const)(
+    'maps terminal protective status %s without falling through to submitted',
+    async (brokerStatus, expectedState, attentionRequired) => {
+      mocks.positionExitStateUpdateMany.mockResolvedValue({ count: 1 });
+
+      await syncTrailingStopOrderStatus({
+        tradingAccountId: 1,
+        clientOrderId: 'trail-client',
+        brokerOrderId: 'trail-order',
+        orderStatus: brokerStatus,
+        rawBrokerJson: { status: brokerStatus },
+      });
+
+      const data =
+        mocks.positionExitStateUpdateMany.mock.calls.at(-1)?.[0].data;
+      expect(data).toMatchObject({
+        status: expectedState,
+        trailOrderStatus:
+          brokerStatus === 'cancelled' ? 'canceled' : brokerStatus,
+        attentionRequired,
+      });
+      expect(data.status).not.toBe('trailing_stop_submitted');
+    }
+  );
+
   it('clears attention when position exit state is closed', async () => {
     const payload = {
       reason: 'close fill imported',

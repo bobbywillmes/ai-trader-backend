@@ -75,6 +75,18 @@ describe('syncProtectiveOrdersForAccount', () => {
       expect.objectContaining({
         where: expect.objectContaining({
           trackedPosition: { tradingAccountId: 1 },
+          trailOrderStatus: {
+            notIn: expect.arrayContaining([
+              'filled',
+              'canceled',
+              'cancelled',
+              'expired',
+              'rejected',
+              'replaced',
+              'done_for_day',
+              'calculated',
+            ]),
+          },
         }),
       })
     );

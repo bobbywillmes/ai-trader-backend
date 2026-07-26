@@ -6,15 +6,11 @@ import {
   markPositionExitStateAttentionRequired,
   syncTrailingStopOrderStatus,
 } from './position-exit-state.service.js';
-
-const TERMINAL_ORDER_STATUSES = [
-  'filled',
-  'canceled',
-  'cancelled',
-  'expired',
-  'rejected',
-  'done_for_day',
-] as const;
+import {
+  isTerminalBrokerOrderStatus,
+  NONTERMINAL_BROKER_ORDER_PRISMA_FILTER,
+  normalizeBrokerOrderStatus,
+} from './broker-order-lifecycle-status.service.js';
 
 function sanitizeError(error: unknown) {
   return error instanceof Error
@@ -38,7 +34,7 @@ export async function syncProtectiveOrdersForAccount(
   const exitStates = await prisma.positionExitState.findMany({
     where: {
       trailBrokerOrderId: { not: null },
-      trailOrderStatus: { notIn: [...TERMINAL_ORDER_STATUSES] },
+      trailOrderStatus: NONTERMINAL_BROKER_ORDER_PRISMA_FILTER,
       trackedPosition: { tradingAccountId },
     },
     include: {
@@ -101,11 +97,8 @@ export async function syncProtectiveOrdersForAccount(
       ) {
         result.partialFills += 1;
       }
-      if (
-        TERMINAL_ORDER_STATUSES.includes(
-          order.status as (typeof TERMINAL_ORDER_STATUSES)[number]
-        )
-      ) {
+      const normalizedStatus = normalizeBrokerOrderStatus(order.status);
+      if (isTerminalBrokerOrderStatus(normalizedStatus)) {
         result.terminalOrders += 1;
       }
 
@@ -113,7 +106,7 @@ export async function syncProtectiveOrdersForAccount(
         tradingAccountId,
         clientOrderId: exitState.trailClientOrderId,
         brokerOrderId,
-        orderStatus: order.status,
+        orderStatus: normalizedStatus,
         rawBrokerJson: order as unknown as Prisma.InputJsonValue,
       });
       await prisma.brokerOrder.updateMany({
@@ -124,7 +117,7 @@ export async function syncProtectiveOrdersForAccount(
           trackedPositionId: exitState.trackedPositionId,
         },
         data: {
-          status: order.status,
+          status: normalizedStatus,
           rawBrokerJson: order as unknown as Prisma.InputJsonValue,
         },
       });

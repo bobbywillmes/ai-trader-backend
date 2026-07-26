@@ -10,6 +10,7 @@ import {
 } from '../errors/broker-write-delivery-error.js';
 import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
 import { createSystemEvent } from './system-event.service.js';
+import { NONTERMINAL_BROKER_ORDER_PRISMA_FILTER } from './broker-order-lifecycle-status.service.js';
 
 export type ClosePositionMode = 'AUTOMATED_STRATEGY' | 'MANUAL_EMERGENCY_CLOSE';
 
@@ -69,16 +70,7 @@ export async function closePosition(
           },
           brokerOrders: {
             where: {
-              status: {
-                notIn: [
-                  'filled',
-                  'canceled',
-                  'cancelled',
-                  'expired',
-                  'rejected',
-                  'done_for_day',
-                ],
-              },
+              status: NONTERMINAL_BROKER_ORDER_PRISMA_FILTER,
             },
             select: { id: true, status: true },
             take: 1,

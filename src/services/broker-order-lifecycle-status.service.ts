@@ -13,7 +13,8 @@ const TERMINAL_BROKER_ORDER_STATUS_SET = new Set<string>(
 );
 
 export function normalizeBrokerOrderStatus(status: string) {
-  return status.trim().toLowerCase();
+  const normalized = status.trim().toLowerCase();
+  return normalized === 'cancelled' ? 'canceled' : normalized;
 }
 
 export function isTerminalBrokerOrderStatus(status: string) {
@@ -27,5 +28,5 @@ export function isNonterminalBrokerOrderStatus(status: string) {
 }
 
 export const NONTERMINAL_BROKER_ORDER_PRISMA_FILTER = {
-  notIn: [...TERMINAL_BROKER_ORDER_STATUSES],
+  notIn: [...TERMINAL_BROKER_ORDER_STATUSES, 'cancelled'],
 };

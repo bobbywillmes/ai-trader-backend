@@ -4,6 +4,7 @@ import {
   isNonterminalBrokerOrderStatus,
   isTerminalBrokerOrderStatus,
   TERMINAL_BROKER_ORDER_STATUSES,
+  normalizeBrokerOrderStatus,
 } from './broker-order-lifecycle-status.service.js';
 
 const SUPPORTED_ALPACA_ORDER_STATUSES = [
@@ -41,5 +42,11 @@ describe('broker order lifecycle status policy', () => {
   it('normalizes broker status casing and whitespace', () => {
     expect(isTerminalBrokerOrderStatus(' FILLED ')).toBe(true);
     expect(isNonterminalBrokerOrderStatus(' SUSPENDED ')).toBe(true);
+  });
+
+  it('normalizes the historical cancelled alias to canceled', () => {
+    expect(normalizeBrokerOrderStatus(' cancelled ')).toBe('canceled');
+    expect(isTerminalBrokerOrderStatus('cancelled')).toBe(true);
+    expect(isNonterminalBrokerOrderStatus('cancelled')).toBe(false);
   });
 });

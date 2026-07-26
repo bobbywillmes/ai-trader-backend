@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
+import { normalizeBrokerOrderStatus } from './broker-order-lifecycle-status.service.js';
 
 type UnlockTrailingStopArgs = {
   trackedPositionId: number;
@@ -41,7 +42,7 @@ function calculateTrailStopPrice(
 }
 
 function mapTrailingStopOrderStatusToExitStateStatus(orderStatus: string) {
-  switch (orderStatus) {
+  switch (normalizeBrokerOrderStatus(orderStatus)) {
     case 'filled':
       return 'trailing_stop_filled';
     case 'canceled':
@@ -50,6 +51,12 @@ function mapTrailingStopOrderStatusToExitStateStatus(orderStatus: string) {
       return 'trailing_stop_expired';
     case 'rejected':
       return 'trailing_stop_rejected';
+    case 'replaced':
+      return 'trailing_stop_replaced_attention';
+    case 'done_for_day':
+      return 'trailing_stop_done_for_day_attention';
+    case 'calculated':
+      return 'trailing_stop_calculated_attention';
     default:
       return 'trailing_stop_submitted';
   }
@@ -81,7 +88,9 @@ function buildAttentionClearedData(): Prisma.PositionExitStateUncheckedUpdateInp
 function buildTrailingStopOrderStatusAttentionData(
   orderStatus: string
 ): Prisma.PositionExitStateUncheckedUpdateInput {
-  switch (orderStatus) {
+  switch (normalizeBrokerOrderStatus(orderStatus)) {
+    case 'filled':
+      return buildAttentionClearedData();
     case 'rejected':
       return buildAttentionRequiredData({
         code: 'trail_order_rejected',
@@ -98,6 +107,27 @@ function buildTrailingStopOrderStatusAttentionData(
       return buildAttentionRequiredData({
         code: 'trail_order_expired',
         message: 'Protective trailing stop order expired.',
+      });
+
+    case 'replaced':
+      return buildAttentionRequiredData({
+        code: 'trail_order_replaced_unlinked',
+        message:
+          'Protective trailing stop order was replaced, but no verified replacement is linked.',
+      });
+
+    case 'done_for_day':
+      return buildAttentionRequiredData({
+        code: 'trail_order_done_for_day',
+        message:
+          'Protective trailing stop order reached done_for_day while exposure may remain.',
+      });
+
+    case 'calculated':
+      return buildAttentionRequiredData({
+        code: 'trail_order_calculated',
+        message:
+          'Protective trailing stop order reached calculated while exposure may remain.',
       });
 
     default:
@@ -231,16 +261,17 @@ export async function unlockTrailingStopExitState(
 export async function markTrailingStopOrderSubmitted(
   args: MarkTrailingStopOrderSubmittedArgs
 ) {
+  const normalizedStatus = normalizeBrokerOrderStatus(args.orderStatus);
   return prisma.positionExitState.update({
     where: { trackedPositionId: args.trackedPositionId },
     data: {
-      status: mapTrailingStopOrderStatusToExitStateStatus(args.orderStatus),
+      status: mapTrailingStopOrderStatusToExitStateStatus(normalizedStatus),
       trailBroker: args.broker,
       trailBrokerOrderId: args.brokerOrderId,
       trailClientOrderId: args.clientOrderId,
-      trailOrderStatus: args.orderStatus,
+      trailOrderStatus: normalizedStatus,
       rawBrokerJson: args.rawBrokerJson,
-      ...buildTrailingStopOrderStatusAttentionData(args.orderStatus),
+      ...buildTrailingStopOrderStatusAttentionData(normalizedStatus),
     },
   });
 }
@@ -294,14 +325,15 @@ export async function markPositionExitStateClosed(
 export async function syncTrailingStopOrderStatus(
   args: SyncTrailingStopOrderStatusArgs
 ) {
+  const normalizedStatus = normalizeBrokerOrderStatus(args.orderStatus);
   const updateData: Prisma.PositionExitStateUpdateManyMutationInput = {
-    status: mapTrailingStopOrderStatusToExitStateStatus(args.orderStatus),
-    trailOrderStatus: args.orderStatus,
+    status: mapTrailingStopOrderStatusToExitStateStatus(normalizedStatus),
+    trailOrderStatus: normalizedStatus,
     rawBrokerJson: args.rawBrokerJson,
     ...(args.brokerOrderId !== undefined
       ? { trailBrokerOrderId: args.brokerOrderId }
       : {}),
-    ...buildTrailingStopOrderStatusAttentionData(args.orderStatus),
+    ...buildTrailingStopOrderStatusAttentionData(normalizedStatus),
   };
 
   return prisma.positionExitState.updateMany({

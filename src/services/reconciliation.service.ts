@@ -4,7 +4,11 @@ import { randomUUID } from 'node:crypto';
 import { logger } from '../config/logger.js';
 import { prisma } from '../db/prisma.js';
 import { getOpenAlpacaOrders } from '../integrations/alpaca/orders.adapter.js';
-import { NONTERMINAL_BROKER_ORDER_PRISMA_FILTER } from './broker-order-lifecycle-status.service.js';
+import {
+  isTerminalBrokerOrderStatus,
+  NONTERMINAL_BROKER_ORDER_PRISMA_FILTER,
+  normalizeBrokerOrderStatus,
+} from './broker-order-lifecycle-status.service.js';
 import { createSystemEvent } from './system-event.service.js';
 import { getNormalizedPositions } from './positions.service.js';
 import { markPositionExitStateAttentionRequired } from './position-exit-state.service.js';
@@ -91,13 +95,6 @@ export type ReconciliationInput = {
 
 const ACTIVE_TRACKED_POSITION_STATUSES = new Set(['open', 'closing']);
 
-const PROBLEM_TRAILING_ORDER_STATUSES = new Set([
-  'rejected',
-  'canceled',
-  'expired',
-  'suspended',
-]);
-
 function normalizeBroker(value: string | null | undefined, fallback: string) {
   return (value ?? fallback).trim().toLowerCase();
 }
@@ -167,13 +164,19 @@ function findBrokerOrderForExitState(args: {
 }
 
 function getTrailProblemAttentionCode(status: string) {
-  switch (status) {
+  switch (normalizeBrokerOrderStatus(status)) {
     case 'rejected':
       return 'trail_order_rejected';
     case 'canceled':
       return 'trail_order_canceled';
     case 'expired':
       return 'trail_order_expired';
+    case 'replaced':
+      return 'trail_order_replaced_unlinked';
+    case 'done_for_day':
+      return 'trail_order_done_for_day';
+    case 'calculated':
+      return 'trail_order_calculated';
     default:
       return 'trail_order_problem_status';
   }
@@ -327,10 +330,19 @@ export function reconcileSnapshots(input: ReconciliationInput) {
       continue;
     }
 
-    const brokerStatus = brokerOrder.status ?? null;
-    const localStatus = exitState.trailOrderStatus ?? null;
+    const brokerStatus = brokerOrder.status
+      ? normalizeBrokerOrderStatus(brokerOrder.status)
+      : null;
+    const localStatus = exitState.trailOrderStatus
+      ? normalizeBrokerOrderStatus(exitState.trailOrderStatus)
+      : null;
 
-    if (brokerStatus && PROBLEM_TRAILING_ORDER_STATUSES.has(brokerStatus)) {
+    if (
+      brokerStatus &&
+      ((isTerminalBrokerOrderStatus(brokerStatus) &&
+        brokerStatus !== 'filled') ||
+        brokerStatus === 'suspended')
+    ) {
       findings.push({
         code: 'trail_order_problem_status',
         severity: 'critical',
