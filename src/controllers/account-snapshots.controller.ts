@@ -8,6 +8,9 @@ import {
 } from '../services/account-snapshot.service.js';
 import type { BrokerMode } from '../types/broker.js';
 import { resolveDefaultTradingAccountId } from '../services/trading-account.service.js';
+import { runTradingAccountWorkflow } from '../services/trading-account-workflow-runner.service.js';
+import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from '../services/trading-account-workflow-lock.service.js';
+import { HttpError } from '../errors/http-error.js';
 
 function getQueryNumber(value: unknown, fallback: number) {
   if (typeof value !== 'string') {
@@ -159,10 +162,25 @@ export async function createManualAccountSnapshotController(
 ) {
   try {
     const tradingAccountId = await resolveDefaultTradingAccountId();
-    const result = await recordAccountSnapshot(tradingAccountId, {
-      reason: 'manual',
-      force: true,
+    const run = await runTradingAccountWorkflow({
+      tradingAccountId,
+      workerKey: 'account_snapshot_scheduler',
+      lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.ACCOUNT_SNAPSHOT,
+      execute: () => recordAccountSnapshot(tradingAccountId, {
+        reason: 'manual',
+        force: true,
+      }),
     });
+    if (run.outcome === 'FAILED') throw run.error;
+    if (run.outcome !== 'PROCESSED') {
+      throw new HttpError(
+        409,
+        run.outcome === 'BACKING_OFF'
+          ? `Account snapshot is backing off until ${run.backoffUntil.toISOString()}.`
+          : 'Account snapshot is already running.'
+      );
+    }
+    const result = run.value;
 
     res.status(201).json(result);
   } catch (error) {
