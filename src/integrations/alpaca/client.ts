@@ -3,6 +3,7 @@ import { TradingAccountEnvironment } from '@prisma/client';
 import { env } from '../../config/env.js';
 import { AlpacaApiError } from '../../errors/alpaca-api-error.js';
 import { AlpacaRateLimitDeferredError } from '../../errors/alpaca-rate-limit-deferred-error.js';
+import { BrokerWriteDeliveryError } from '../../errors/broker-write-delivery-error.js';
 import { alpacaApiUsageRegistry } from '../../services/alpaca-api-usage.service.js';
 import { resolveAlpacaConfigForTradingAccount } from '../../services/alpaca-config-resolver.service.js';
 import {
@@ -24,19 +25,57 @@ export async function alpacaRequestForAccount<T>(
   path: string,
   options: AccountRequestOptions
 ): Promise<T> {
-  assertKnownAlpacaOperation(options.metadata.operation);
-  assertKnownAlpacaEndpoint(options.metadata.endpoint);
+  const isWrite = options.metadata.requestClass === 'critical_write';
+  try {
+    assertKnownAlpacaOperation(options.metadata.operation);
+    assertKnownAlpacaEndpoint(options.metadata.endpoint);
+    const method = options.method ?? 'GET';
+    if (options.metadata.method !== method) {
+      throw new Error(
+        `Alpaca request metadata method ${options.metadata.method} does not match request method ${method}.`
+      );
+    }
+  } catch (error) {
+    if (isWrite) {
+      throw new BrokerWriteDeliveryError({
+        classification: 'NOT_SENT_BLOCKED',
+        message: 'Broker write blocked by local request metadata validation.',
+        cause: error,
+      });
+    }
+    throw error;
+  }
 
   if (alpacaApiUsageRegistry.shouldDefer(options.metadata)) {
-    throw new AlpacaRateLimitDeferredError({
+    const deferred = new AlpacaRateLimitDeferredError({
       metadata: options.metadata,
       backoffUntil: alpacaApiUsageRegistry.getBackoffUntil(),
     });
+    if (isWrite) {
+      throw new BrokerWriteDeliveryError({
+        classification: 'NOT_SENT_RETRYABLE',
+        message: 'Broker write deferred locally before request delivery.',
+        cause: deferred,
+      });
+    }
+    throw deferred;
   }
 
-  const config = await resolveAlpacaConfigForTradingAccount(tradingAccountId, {
-    credentialStatuses: options.credentialStatuses,
-  });
+  let config;
+  try {
+    config = await resolveAlpacaConfigForTradingAccount(tradingAccountId, {
+      credentialStatuses: options.credentialStatuses,
+    });
+  } catch (error) {
+    if (isWrite) {
+      throw new BrokerWriteDeliveryError({
+        classification: 'NOT_SENT_BLOCKED',
+        message: `Broker write blocked because TradingAccount ${tradingAccountId} credentials are unavailable.`,
+        cause: error,
+      });
+    }
+    throw error;
+  }
   if (
     options.metadata.requestClass === 'critical_write' &&
     config.environment === TradingAccountEnvironment.LIVE &&
@@ -44,9 +83,10 @@ export async function alpacaRequestForAccount<T>(
   ) {
     const operationClass =
       options.metadata.operationClass ?? 'ENTRY_WRITE';
-    throw new Error(
-      `LIVE ${operationClass} blocked for TradingAccount ${tradingAccountId}: ALLOW_LIVE_TRADING is false.`
-    );
+    throw new BrokerWriteDeliveryError({
+      classification: 'NOT_SENT_BLOCKED',
+      message: `LIVE ${operationClass} blocked for TradingAccount ${tradingAccountId}: ALLOW_LIVE_TRADING is false.`,
+    });
   }
   const url = `${config.baseUrl}${path}`;
   const method = options.method ?? 'GET';
@@ -60,20 +100,25 @@ export async function alpacaRequestForAccount<T>(
     }
   };
 
-  if (options.metadata.method !== method) {
-    throw new Error(
-      `Alpaca request metadata method ${options.metadata.method} does not match request method ${method}.`
+  let requestStart;
+  try {
+    if (options.body !== undefined) {
+      requestInit.body = JSON.stringify(options.body);
+    }
+    requestStart = alpacaApiUsageRegistry.beginRequest(
+      tradingAccountId,
+      options.metadata
     );
+  } catch (error) {
+    if (isWrite) {
+      throw new BrokerWriteDeliveryError({
+        classification: 'NOT_SENT_BLOCKED',
+        message: 'Broker write blocked by local request preparation.',
+        cause: error,
+      });
+    }
+    throw error;
   }
-
-  if (options.body !== undefined) {
-    requestInit.body = JSON.stringify(options.body);
-  }
-
-  const requestStart = alpacaApiUsageRegistry.beginRequest(
-    tradingAccountId,
-    options.metadata
-  );
   let measured = false;
 
   try {
@@ -137,6 +182,20 @@ export async function alpacaRequestForAccount<T>(
     return (await response.text()) as T;
   } catch (error) {
     if (error instanceof AlpacaApiError) {
+      if (isWrite) {
+        throw new BrokerWriteDeliveryError({
+          classification:
+            error.statusCode >= 500
+              ? 'DELIVERY_UNCERTAIN'
+              : 'BROKER_REJECTED',
+          message:
+            error.statusCode >= 500
+              ? `Broker write delivery is uncertain after Alpaca returned ${error.statusCode}.`
+              : `Alpaca explicitly rejected broker write with status ${error.statusCode}.`,
+          statusCode: error.statusCode,
+          cause: error,
+        });
+      }
       throw error;
     }
 
@@ -151,6 +210,13 @@ export async function alpacaRequestForAccount<T>(
       });
     }
 
+    if (isWrite) {
+      throw new BrokerWriteDeliveryError({
+        classification: 'DELIVERY_UNCERTAIN',
+        message: 'Broker write delivery is uncertain after a network or response failure.',
+        cause: error,
+      });
+    }
     throw error;
   }
 }

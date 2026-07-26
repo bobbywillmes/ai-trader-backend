@@ -85,6 +85,13 @@ function isExitIntent(intent: { rawRequestJson: Prisma.JsonValue }) {
   );
 }
 
+function getRecordedDeliveryClassification(blockReason: string | null) {
+  const match = blockReason?.match(
+    /BROKER_WRITE_DELIVERY:(NOT_SENT_RETRYABLE|NOT_SENT_BLOCKED|BROKER_REJECTED|DELIVERY_UNCERTAIN)/
+  );
+  return match?.[1] ?? null;
+}
+
 export async function recoverStaleSubmittingIntentsForAccount(
   tradingAccountId: number,
   now = new Date()
@@ -178,16 +185,53 @@ export async function recoverStaleSubmittingIntentsForAccount(
     }
 
     if (isExitIntent(intent)) {
-      await createSystemEvent({
-        type: 'order.submission_recovery_deferred',
-        entityType: 'orderIntent',
-        entityId: intent.id,
-        tradingAccountId,
-        payloadJson: {
-          clientOrderId: intent.clientOrderId,
-          recovery: 'exit_order_not_requeued',
-        } as Prisma.InputJsonValue,
-      });
+      const classification = getRecordedDeliveryClassification(
+        intent.blockReason
+      );
+      if (
+        classification === 'NOT_SENT_RETRYABLE' ||
+        classification === 'NOT_SENT_BLOCKED' ||
+        classification === 'BROKER_REJECTED'
+      ) {
+        await prisma.$transaction(async (tx) => {
+          await tx.orderIntent.updateMany({
+            where: { id: intent.id, status: 'submitting' },
+            data: {
+              status:
+                classification === 'NOT_SENT_BLOCKED' ? 'blocked' : 'failed',
+            },
+          });
+          if (intent.trackedPositionId !== null) {
+            await tx.trackedPosition.updateMany({
+              where: { id: intent.trackedPositionId, status: 'closing' },
+              data: { status: 'open', lastSyncedAt: new Date() },
+            });
+          }
+        });
+        retryable += 1;
+        continue;
+      }
+
+      if (!intent.blockReason?.includes('RECOVERY_DEFERRED_EVENT_RECORDED')) {
+        await createSystemEvent({
+          type: 'order.submission_recovery_deferred',
+          entityType: 'orderIntent',
+          entityId: intent.id,
+          tradingAccountId,
+          payloadJson: {
+            clientOrderId: intent.clientOrderId,
+            deliveryClassification:
+              classification ?? 'DELIVERY_UNCERTAIN',
+            recovery: 'exit_order_not_requeued',
+          } as Prisma.InputJsonValue,
+        });
+        await prisma.orderIntent.updateMany({
+          where: { id: intent.id, status: 'submitting' },
+          data: {
+            blockReason: `${intent.blockReason ?? 'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN'}:RECOVERY_DEFERRED_EVENT_RECORDED`,
+          },
+        });
+      }
       retained += 1;
       continue;
     }

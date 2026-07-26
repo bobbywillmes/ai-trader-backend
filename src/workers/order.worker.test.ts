@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   recordOrderIntentRiskEvaluation: vi.fn(),
   resolveSubscriptionOrderInput: vi.fn(),
   enumerateLifecycleAccounts: vi.fn(),
+  trackedPositionUpdateMany: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -833,6 +834,7 @@ describe('stale submitting intent recovery', () => {
             create: mocks.brokerOrderCreate,
           },
           orderIntent: { updateMany: mocks.orderIntentUpdateMany },
+          trackedPosition: { updateMany: mocks.trackedPositionUpdateMany },
         })
     );
   });
@@ -901,5 +903,73 @@ describe('stale submitting intent recovery', () => {
       },
     });
     expect(result).toMatchObject({ linked: 0, retryable: 1 });
+  });
+
+  it('releases a stale exit claim recorded as definitely not sent', async () => {
+    mocks.orderIntentFindMany.mockResolvedValue([
+      {
+        ...baseIntent,
+        status: 'submitting',
+        trackedPositionId: 77,
+        rawRequestJson: { signalType: 'exit' },
+        blockReason:
+          'BROKER_WRITE_DELIVERY:NOT_SENT_RETRYABLE:local rate limit',
+        brokerOrders: [],
+        updatedAt: new Date('2026-06-22T13:00:00.000Z'),
+      },
+    ]);
+    mocks.getAlpacaOrderByClientOrderId.mockResolvedValue(null);
+    mocks.trackedPositionUpdateMany.mockResolvedValue({ count: 1 });
+
+    const result = await recoverStaleSubmittingIntentsForAccount(
+      1,
+      new Date('2026-06-22T14:00:00.000Z')
+    );
+
+    expect(mocks.orderIntentUpdateMany).toHaveBeenCalledWith({
+      where: { id: 101, status: 'submitting' },
+      data: { status: 'failed' },
+    });
+    expect(mocks.trackedPositionUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'open' }) })
+    );
+    expect(result).toMatchObject({ retryable: 1, retained: 0 });
+  });
+
+  it('emits an uncertain exit recovery-deferred event only once', async () => {
+    mocks.orderIntentFindMany
+      .mockResolvedValueOnce([
+        {
+          ...baseIntent,
+          status: 'submitting',
+          rawRequestJson: { signalType: 'exit' },
+          blockReason: 'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:timeout',
+          brokerOrders: [],
+          updatedAt: new Date('2026-06-22T13:00:00.000Z'),
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          ...baseIntent,
+          status: 'submitting',
+          rawRequestJson: { signalType: 'exit' },
+          blockReason:
+            'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:timeout:RECOVERY_DEFERRED_EVENT_RECORDED',
+          brokerOrders: [],
+          updatedAt: new Date('2026-06-22T13:00:00.000Z'),
+        },
+      ]);
+    mocks.getAlpacaOrderByClientOrderId.mockResolvedValue(null);
+
+    await recoverStaleSubmittingIntentsForAccount(
+      1,
+      new Date('2026-06-22T14:00:00.000Z')
+    );
+    await recoverStaleSubmittingIntentsForAccount(
+      1,
+      new Date('2026-06-22T14:10:00.000Z')
+    );
+
+    expect(mocks.createSystemEvent).toHaveBeenCalledTimes(1);
   });
 });

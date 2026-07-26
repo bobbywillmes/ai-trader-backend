@@ -2,7 +2,12 @@ import { Prisma, type Prisma as PrismaTypes } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
 import { placeAlpacaOrder } from '../integrations/alpaca/orders.adapter.js';
+import { getAlpacaOrderByClientOrderId } from '../integrations/alpaca/orders.adapter.js';
 import { HttpError } from '../errors/http-error.js';
+import {
+  BrokerWriteDeliveryError,
+  type BrokerWriteDeliveryClassification,
+} from '../errors/broker-write-delivery-error.js';
 import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
 import { createSystemEvent } from './system-event.service.js';
 
@@ -24,6 +29,14 @@ function buildCloseClientOrderId(args: {
 
 function sanitizeError(error: unknown) {
   return error instanceof Error ? error.message : 'Unknown broker close error.';
+}
+
+const DELIVERY_CLASSIFICATION_PREFIX = 'BROKER_WRITE_DELIVERY';
+
+function getDeliveryClassification(error: unknown): BrokerWriteDeliveryClassification {
+  return error instanceof BrokerWriteDeliveryError
+    ? error.classification
+    : 'DELIVERY_UNCERTAIN';
 }
 
 export async function closePosition(
@@ -184,27 +197,88 @@ export async function closePosition(
       'position_close'
     );
   } catch (error) {
-    await prisma.orderIntent.updateMany({
-      where: { id: claim.intent.id, status: 'submitting' },
-      data: {
-        blockReason: `Broker close submission requires recovery: ${sanitizeError(error)}`,
-      },
-    });
-    await createSystemEvent({
-      type: 'position.close_submission_uncertain',
-      entityType: 'trackedPosition',
-      entityId: claim.position.id,
-      tradingAccountId,
-      message: `${upperSymbol} close submission failed or is uncertain; deterministic recovery is required.`,
-      payloadJson: {
-        trackedPositionId: claim.position.id,
-        orderIntentId: claim.intent.id,
-        clientOrderId: claim.clientOrderId,
-        mode,
-        error: sanitizeError(error),
-      } as PrismaTypes.InputJsonValue,
-    });
-    throw error;
+    let classification = getDeliveryClassification(error);
+
+    if (classification === 'BROKER_REJECTED') {
+      try {
+        brokerOrder = await getAlpacaOrderByClientOrderId(
+          tradingAccountId,
+          claim.clientOrderId,
+          'pending_order_idempotency_check'
+        );
+      } catch {
+        classification = 'DELIVERY_UNCERTAIN';
+      }
+      if (brokerOrder) {
+        // Alpaca accepted the deterministic order despite the response error.
+        // Continue into the normal idempotent materialization path below.
+      }
+    }
+
+    if (!brokerOrder && classification !== 'DELIVERY_UNCERTAIN') {
+      const intentStatus =
+        classification === 'NOT_SENT_BLOCKED' ? 'blocked' : 'failed';
+      await prisma.$transaction(async (tx) => {
+        await tx.orderIntent.updateMany({
+          where: { id: claim.intent.id, status: 'submitting' },
+          data: {
+            status: intentStatus,
+            blockReason: `${DELIVERY_CLASSIFICATION_PREFIX}:${classification}:${sanitizeError(error)}`,
+          },
+        });
+        await tx.trackedPosition.updateMany({
+          where: { id: claim.position.id, status: 'closing' },
+          data: { status: 'open', lastSyncedAt: new Date() },
+        });
+      });
+      await createSystemEvent({
+        type:
+          classification === 'BROKER_REJECTED'
+            ? 'position.close_rejected'
+            : 'position.close_not_sent',
+        entityType: 'trackedPosition',
+        entityId: claim.position.id,
+        tradingAccountId,
+        message:
+          classification === 'BROKER_REJECTED'
+            ? `${upperSymbol} close was rejected and no broker order exists; the local claim was released.`
+            : `${upperSymbol} close was not sent to the broker; the local claim was released.`,
+        payloadJson: {
+          trackedPositionId: claim.position.id,
+          orderIntentId: claim.intent.id,
+          clientOrderId: claim.clientOrderId,
+          mode,
+          deliveryClassification: classification,
+          error: sanitizeError(error),
+        } as PrismaTypes.InputJsonValue,
+      });
+      throw error;
+    }
+
+    if (!brokerOrder) {
+      await prisma.orderIntent.updateMany({
+        where: { id: claim.intent.id, status: 'submitting' },
+        data: {
+          blockReason: `${DELIVERY_CLASSIFICATION_PREFIX}:DELIVERY_UNCERTAIN:${sanitizeError(error)}`,
+        },
+      });
+      await createSystemEvent({
+        type: 'position.close_submission_uncertain',
+        entityType: 'trackedPosition',
+        entityId: claim.position.id,
+        tradingAccountId,
+        message: `${upperSymbol} close delivery is uncertain; deterministic recovery is required.`,
+        payloadJson: {
+          trackedPositionId: claim.position.id,
+          orderIntentId: claim.intent.id,
+          clientOrderId: claim.clientOrderId,
+          mode,
+          deliveryClassification: 'DELIVERY_UNCERTAIN',
+          error: sanitizeError(error),
+        } as PrismaTypes.InputJsonValue,
+      });
+      throw error;
+    }
   }
 
   await prisma.$transaction(async (tx) => {
