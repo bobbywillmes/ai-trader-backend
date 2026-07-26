@@ -28,6 +28,7 @@ import {
 import { getRuntimeTradingConfig } from '../services/config.service.js';
 import { runAlpacaApiUsagePersistence } from '../services/alpaca-api-usage-persistence.service.js';
 import { runMassiveNewsWorkerOnce } from '../workers/massive-news.worker.js';
+import { assertAccountCoordinatorHealthy } from '../services/worker-coordinator-result.service.js';
 
 const app = createApp();
 
@@ -75,17 +76,22 @@ async function runTradingWorkers() {
   try {
     await runWorker('pending_order_processing', async () => {
       // Recover account-scoped stale claims before claiming new pending work.
-      await recoverStaleSubmittingIntents();
+      const recovery = await recoverStaleSubmittingIntents();
       const result = await processPendingOrders();
+      assertAccountCoordinatorHealthy(
+        'pending_order_processing',
+        [...recovery.results, ...result.results]
+      );
 
       return {
-        outcome: result.found > 0 ? 'success' : 'idle',
-        workSucceeded: result.processed > 0,
+        outcome: result.intentsFound > 0 ? 'success' : 'idle',
+        workSucceeded: result.intentsSubmitted > 0 || result.intentsBlocked > 0,
       };
     });
 
     await runWorker('submitted_order_sync', async () => {
       const result = await syncSubmittedOrdersAcrossAccounts();
+      assertAccountCoordinatorHealthy('submitted_order_sync', result.results);
 
       if (result.processedAccounts === 0 && result.failedAccounts === 0) {
         return {
@@ -102,6 +108,7 @@ async function runTradingWorkers() {
 
     await runWorker('tracked_position_sync', async () => {
       const result = await syncTrackedPositionsAcrossAccounts();
+      assertAccountCoordinatorHealthy('tracked_position_sync', result.results);
 
       if (result.processedAccounts === 0 && result.failedAccounts === 0) {
         return {
@@ -138,6 +145,10 @@ function startWorkers() {
   setInterval(() => {
     void runWorker('account_snapshot_scheduler', async () => {
       const result = await runScheduledAccountSnapshots();
+      assertAccountCoordinatorHealthy(
+        'account_snapshot_scheduler',
+        result.results
+      );
 
       if (!result.due) {
         return {
@@ -171,6 +182,7 @@ function startWorkers() {
           outcome: 'idle',
         };
       }
+      assertAccountCoordinatorHealthy('broker_activity_sync', result.results);
 
       return {
         outcome: 'success',
