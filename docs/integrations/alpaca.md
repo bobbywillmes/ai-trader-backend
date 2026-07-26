@@ -11,6 +11,12 @@ request start and persisted per account. LIVE reads remain available, while
 `ALLOW_LIVE_TRADING=true` is required immediately before every LIVE critical
 write, including risk-reducing cancellation and position close.
 
+Metadata classifies requests as `LIFECYCLE_READ`, `ENTRY_WRITE`, or
+`RISK_REDUCING_WRITE`. The distinction prevents entry permissions from being
+reused as lifecycle semantics, but Phase 3 deliberately keeps both LIVE write
+classes behind `ALLOW_LIVE_TRADING`. A separate LIVE emergency-exit permission
+is a Phase 4 policy decision; Bobby Live remains credentialless and dormant.
+
 Broker activity, broker-order, and client-order identifiers are account-scoped.
 Historical null-account records remain legacy records and cannot authorize a
 broker write.

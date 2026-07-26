@@ -1096,6 +1096,24 @@ activation operation is available in this phase.
 
 ## Safety Notes
 
+Run reconciliation for one explicit account:
+
+```http
+POST /api/trading-accounts/:id/reconciliation/run
+Content-Type: application/json
+
+{
+  "persistEvents": true,
+  "persistAttention": true
+}
+```
+
+This route is currently `SYSTEM_OWNER` only, matching legacy reconciliation
+policy. The response includes account ID, display name, environment, and run
+identifier and never falls back to the default account. The legacy
+`POST /api/reconciliation/run` remains a compatibility route and identifies
+the default account it resolved.
+
 - No route returns decrypted credentials.
 - No route returns encrypted credential payloads.
 - n8n should continue to use signal APIs only and should not use broker

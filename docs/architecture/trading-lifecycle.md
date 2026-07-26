@@ -19,11 +19,12 @@ retain legacy uniqueness and are never assigned to Bobby Paper by assumption.
 New client order IDs include account and environment identity; historical IDs
 are not rewritten.
 
-`ALLOW_LIVE_TRADING=false` blocks every LIVE state-changing request at the
-strict boundary, including cancels and closes, while LIVE reads remain
-available. Phase 2 lifecycle coordinators enumerate accounts for
-submitted-order status, broker activity, positions, and scheduled snapshots.
-Exit evaluation and reconciliation remain default-account-only until Phase 3.
+Broker requests are classified as `LIFECYCLE_READ`, `ENTRY_WRITE`, or
+`RISK_REDUCING_WRITE`. `ALLOW_LIVE_TRADING=false` still blocks both LIVE write
+classes, including cancels and closes, while LIVE reads remain available.
+Phase 3 does not silently weaken this boundary. A future separate emergency
+LIVE-exit permission requires explicit deployment approval. Bobby Live remains
+credentialless and dormant.
 
 ## Multi-account lifecycle coordination
 
@@ -71,6 +72,53 @@ Scheduled checkpoints reuse one run key across eligible accounts. Uniqueness on
 `(tradingAccountId, runKey)` makes checkpoints idempotent per account. Adaptive
 polling state and short-lived caches are account-keyed. Persisted account health
 and cross-process advisory locking remain Phase 4 work.
+
+## Phase 3 exits and reconciliation
+
+Exit evaluation is lifecycle eligibility, not entry eligibility. Accounts with
+open or closing positions run with usable credentials regardless of account
+status, trading switches, or kill switches. Credentialless exposure returns
+`CREDENTIALS_UNAVAILABLE`, preserves state, makes no broker request, emits a
+sanitized event, and makes worker health unhealthy. Dormant credentialless
+accounts are healthy skips.
+
+Assignment `exitsEnabled=false` or `enabled=false` suppresses new automated
+strategy closes; `entriesEnabled` is entry-only. Existing protective orders
+continue synchronizing. Owner manual closes share the same core and bypass
+automated assignment controls, but still require attribution, credentials, and
+the LIVE write boundary.
+
+Close submission is claim-before-write. A short serializable transaction
+changes an attributed open position to `closing` and creates a `submitting`
+exit intent with deterministic client ID
+`ai-exit-close-{accountId}-{positionId}`. The account-scoped opposite-side
+market order runs outside the transaction. A second transaction materializes
+the broker order. Uncertain failures retain the claim for client-ID recovery.
+
+`PositionExitState` is authoritative for protective orders. Linked orders are
+read through their owning account. Partial and terminal states update only that
+account. A confirmed 404 creates attention without replacement; a temporary
+error remains retryable. Broker activity remains authoritative for fills.
+
+Reconciliation runs accounts with positions, nonterminal orders, active
+intents, unresolved lifecycle state, or credentialed operational history. Its
+interval is global and all eligible accounts run when due. Findings/events
+carry account ID, environment, run ID, safe evidence, and attention changes.
+It remains diagnostic and never fabricates ownership or submits corrective
+orders.
+
+Owner routes are `POST /api/reconciliation/run` for default-account
+compatibility and `POST /api/trading-accounts/:id/reconciliation/run` for an
+explicit account. Historical null-account rows are reported with bounded safe
+identifiers, preserved, denied broker writes, and never assigned to Bobby Paper.
+
+Trading-loop order is stale recovery, pending submission, submitted-order sync,
+position sync, then protective/exit evaluation. Reconciliation runs on its
+independent cadence. Broker activities and snapshots keep separate cadences.
+
+Phase 4 owns per-account persisted health, cross-process advisory locks, final
+mixed PAPER/LIVE proof, and any separate LIVE emergency-exit permission. Bobby
+Live must remain dormant until those controls are complete.
 
 This doc covers how a trade moves through the system — from entry signal to broker submission, position tracking, exit evaluation, and the audit trail. It also describes the background workers that keep everything synchronized and the async order processing architecture.
 
