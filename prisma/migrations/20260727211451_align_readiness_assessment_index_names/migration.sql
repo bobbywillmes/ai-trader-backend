@@ -1,0 +1,8 @@
+-- RenameIndex
+ALTER INDEX "TradingAccountReadinessAssessment_tradingAccountId_completedAt_" RENAME TO "TradingAccountReadinessAssessment_tradingAccountId_complete_idx";
+
+-- RenameIndex
+ALTER INDEX "TradingAccountReadinessAssessment_tradingAccountId_createdAt_id" RENAME TO "TradingAccountReadinessAssessment_tradingAccountId_createdA_idx";
+
+-- RenameIndex
+ALTER INDEX "TradingAccountReadinessAssessment_tradingAccountId_purpose_comp" RENAME TO "TradingAccountReadinessAssessment_tradingAccountId_purpose__idx";
