@@ -31,7 +31,16 @@ begin tick
 -> mark state dirty for bounded persistence
 ```
 
-The in-memory registry is authoritative for the running process. The `WorkerHealthState` database table stores one latest row per worker key for production diagnostics and external monitoring. It is not a tick history table.
+The in-memory registry is authoritative for coordinator health in the running
+process. The `WorkerHealthState` database table stores one latest global row per
+worker key for production diagnostics and external monitoring. It is not a tick
+history table.
+
+Account-scoped workflows also persist `TradingAccountWorkerHealthState`, with
+one current row per `tradingAccountId` and `workerKey`. This account state is
+separate from coordinator health and records applicability or dormancy,
+successes and failures, freshness, current runs, persistent backoff, lock
+contention, and interrupted prior-process runs.
 
 ## Tick Versus Work
 
@@ -75,9 +84,9 @@ inside `PROCESSED`.
 
 Credentialless dormant accounts are skipped before any broker request.
 Credentialless accounts with lifecycle exposure return a critical structured
-result while retaining local state. Global `WorkerHealthState` rows still
-describe coordinator health; account-scoped persisted health and cross-process
-locking are deferred.
+result while retaining local state. Global `WorkerHealthState` rows describe
+coordinator health, while `TradingAccountWorkerHealthState` preserves the
+result and freshness of each applicable account workflow.
 
 Coordinators finish processing every eligible account before reporting health.
 Any `FAILED` account or `CREDENTIALS_UNAVAILABLE` account with lifecycle work
@@ -90,6 +99,27 @@ Adaptive worker state, market-session evaluation, recovery history, failure
 counts, and broker-write force signals are keyed by `tradingAccountId`. A
 successful Live clock lookup cannot clear Paper degradation, and a broker write
 forces follow-up polling only for the owning account.
+
+## Account Workflow Locking
+
+Each account workflow acquires a PostgreSQL advisory lock through a dedicated
+`pg` session. The session and lock are held for the entire account workflow,
+including broker calls and final health persistence.
+
+Important guarantees:
+
+- scheduled and manual operations share the appropriate lock family when they
+  must not overlap;
+- account health and persistent backoff are finalized before the lock is
+  released;
+- lock contention cannot overwrite the active owner's current-run marker;
+- an interrupted prior-process run remains visible and is recovered or
+  superseded deliberately by a later owning run;
+- one account's lock contention does not prevent later eligible accounts from
+  being processed by the coordinator.
+
+The advisory lock prevents concurrent ownership across backend processes. Local
+in-process guards still prevent duplicate timer overlap inside one process.
 
 ## Statuses
 
@@ -148,11 +178,21 @@ Examples that do not count:
 
 ## Persistence
 
-The registry marks worker rows dirty after state changes. A background flush writes dirty rows approximately every 30 seconds.
+The coordinator registry marks `WorkerHealthState` rows dirty after state
+changes. A background flush writes dirty rows approximately every 30 seconds.
 
-Failures and meaningful status transitions are marked for prompt persistence. Persistence failures are logged with throttling and never mark the business worker failed.
+Account workflows persist `TradingAccountWorkerHealthState` at workflow
+boundaries. Current-run ownership is recorded after lock acquisition, and the
+final outcome, freshness, counters, and backoff are persisted before the
+advisory lock is released.
 
-Shutdown stops the persistence timer and performs a bounded best-effort flush.
+Failures and meaningful status transitions are marked for prompt persistence.
+Persistence failures are logged with throttling and never mark an unrelated
+business worker failed.
+
+Shutdown stops the coordinator persistence timer and performs a bounded
+best-effort flush. Persisted account state allows the next process to identify
+an interrupted prior-process run rather than treating it as a clean idle state.
 
 ## Transition Events
 
@@ -176,9 +216,17 @@ It does not create an event every tick, every System Status request, or for the 
 - `workers.health.summary`
 - `workers.health.items`
 
-`workersHealthy` means all enabled critical workers are healthy. `tradingReady` combines service health, worker health, and the existing risk-gate `canEnter` value.
+`workersHealthy` means all enabled critical coordinator workers are healthy.
+`tradingReady` combines service health, coordinator health, and the existing
+risk-gate `canEnter` value.
 
-Worker health does not automatically enable the kill switch, disable trading, reject signals, restart workers, or restart the process. This branch is diagnostic.
+RBAC-protected Trading Account APIs and the Trading Account UI expose
+account-level worker health and readiness separately. A healthy coordinator does
+not hide a failed, stale, backed-off, locked, or inapplicable account workflow.
+
+Worker health does not automatically enable the kill switch, disable trading,
+reject signals, restart workers, or restart the process. It remains diagnostic
+and contributes explicit blockers to readiness.
 
 ## Alpaca API Usage
 
@@ -206,10 +254,16 @@ Adaptive market-session degradation is visible here but does not directly change
 
 For delayed, stale, failing, or stuck workers:
 
-1. Check `processInstanceId` to confirm the row belongs to the current process.
-2. Compare `lastSucceededAt`, `lastFailedAt`, `currentRunStartedAt`, and `lastError`.
-3. Check backend container logs around the same timestamp.
-4. Inspect related `SystemEvent` rows.
-5. Distinguish disabled workers from stale workers.
-6. Distinguish no work from no heartbeat.
-7. Restart only after identifying whether the cause is configuration, integration failure, database failure, or a stuck run.
+1. Check global `WorkerHealthState` to determine whether the coordinator itself
+   is unhealthy.
+2. Inspect the affected account's `TradingAccountWorkerHealthState`, including
+   applicability, last outcome, freshness, current-run owner, backoff, and lock
+   contention.
+3. Compare `processInstanceId`, `lastSucceededAt`, `lastFailedAt`,
+   `currentRunStartedAt`, and `lastError`.
+4. Check backend container logs around the same timestamp.
+5. Inspect related `SystemEvent` rows.
+6. Distinguish dormancy or no work from a missing heartbeat.
+7. Determine whether another process or manual operation owns the advisory lock.
+8. Restart only after identifying whether the cause is configuration,
+   integration failure, database failure, lock ownership, or an interrupted run.

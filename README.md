@@ -128,10 +128,15 @@ Entry orders are blocked when runtime safety, account, subscription, symbol, str
 Important production controls:
 
 ```text
-tradingEnabled=false  -> broad automated trading shutdown
-killSwitchEnabled=true -> entry-only pause while monitoring/syncing continues
-paperMode=true         -> paper-mode runtime posture
+tradingEnabled=false                    -> account-level automated trading shutdown
+killSwitchEnabled=true                  -> account-level entry pause while lifecycle work continues
+ALLOW_LIVE_RISK_REDUCING_WRITES=false  -> blocks Live close/protective writes
+ALLOW_LIVE_TRADING=false                -> blocks Live entry writes
 ```
+
+Live entry writes require both Live environment permissions. This prevents the
+system from opening Live exposure unless it is also authorized to reduce or
+close that exposure.
 
 For trading safety design, see [Risk & Safety](docs/architecture/risk-and-safety.md).
 
@@ -298,7 +303,10 @@ The backend runs workers for:
 - broker activity/fill imports
 - worker health reporting
 
-Workers are guarded to avoid overlapping ticks and duplicate lifecycle events.
+Workers use multi-account coordinators that process eligible Trading Accounts in
+stable ID order and isolate account failures. Account workflows persist
+`TradingAccountWorkerHealthState` and use PostgreSQL advisory locks held for the
+entire workflow to prevent cross-process overlap.
 
 
 ## 🚀 Local validation
@@ -438,41 +446,48 @@ Detailed API notes live in /docs/api as the project grows.
 
 ## 🧪 Current Operating Posture
 
-The backend is designed for hosted paper-production testing before live trading.
+Production intentionally has different Paper and Live postures:
 
-Default production posture should remain conservative:
+- Bobby Paper is active, credentialed, configured, and continues normal trading.
+- Bobby Live remains `NEEDS_CREDENTIALS`, trading-disabled, kill-switched, and
+  without allocations, account subscriptions, credentials, orders, or positions.
+- Credentialless dormant accounts make no Alpaca requests.
+- Global coordinator health and account-level worker health are tracked separately.
 
-- tradingEnabled=false
-- paperMode=true
-- killSwitchEnabled=false
-- ALLOW_LIVE_TRADING=false
-- ALLOW_TRADING_ENABLED_ON_START=false
+Live broker writes remain blocked at the deployment boundary:
 
-Automated paper trading should only be enabled deliberately after confirming:
+```text
+ALLOW_LIVE_TRADING=false
+ALLOW_LIVE_RISK_REDUCING_WRITES=false
+ALLOW_TRADING_ENABLED_ON_START=false
+```
 
-- backend health
-- database migration status
-- broker mode alignment
-- web UI status
-- Alpaca API Usage status
-- n8n dry-run behavior
-- risk settings
-- open/closing tracked positions
-- pending/submitting order counts
+This allows Paper trading and account-scoped lifecycle processing to continue
+while Bobby Live remains safely dormant.
 
 ## 🗺️ Roadmap
 
-The backend is currently focused on hosted paper-production testing, operational safety, and improving confidence in the full signal → order → tracked position → exit lifecycle.
+The immediate objective is controlled provisioning and eventual activation of
+Bobby Live without treating Live trading as a single switch.
 
-### 🔜 Next Backend Enhancements
+### 🔜 Phase 5 — Controlled Live Provisioning
 
-- (no current near term goals)
+- Provision and verify Live credentials using read-only broker requests.
+- Configure conservative account risk, allocation, and subscription deployment.
+- Prove snapshots, activities, positions, reconciliation, and worker health with
+  Live writes still disabled.
+- Establish risk-reducing readiness before entry authorization.
+- Add an explicit, audited activation workflow; generic account updates must not
+  activate a Trading Account.
+
+The first Live entry remains a later canary rollout after Phase 5 readiness is
+implemented, deployed, and proven.
 
 ### 🧭 Longer-Term
 
+- Expand Live deployment only after complete canary entry and exit lifecycles.
 - Add historical audit dashboard.
 - Add AI-assisted profit-protection workflows.
-- Add live-trading deployment checklist and approval workflow.
 
 ## 📝 Documentation Rule
 
