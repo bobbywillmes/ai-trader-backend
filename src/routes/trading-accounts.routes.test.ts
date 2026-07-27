@@ -7,6 +7,7 @@ import { HttpError } from '../errors/http-error.js';
 const mocks = vi.hoisted(() => ({
   createTradingAccountController: vi.fn(),
   deactivateTradingAccountController: vi.fn(),
+  runTradingAccountReadinessAssessmentController: vi.fn(),
 }));
 
 vi.mock('../controllers/trading-accounts.controller.js', () => ({
@@ -36,6 +37,10 @@ vi.mock('../controllers/trading-accounts.controller.js', () => ({
   upsertTradingAccountCredentialController: vi.fn(),
   revokeTradingAccountCredentialController: vi.fn(),
   verifyTradingAccountCredentialController: vi.fn(),
+  runTradingAccountReadinessAssessmentController: mocks.runTradingAccountReadinessAssessmentController,
+  getLatestTradingAccountReadinessAssessmentController: vi.fn(),
+  listTradingAccountReadinessAssessmentsController: vi.fn(),
+  getTradingAccountReadinessAssessmentController: vi.fn(),
 }));
 
 import tradingAccountsRouter from './trading-accounts.routes.js';
@@ -144,4 +149,25 @@ describe('POST /api/trading-accounts/:id/deactivate RBAC', () => {
       expect(mocks.deactivateTradingAccountController).not.toHaveBeenCalled();
     }
   );
+});
+
+describe('POST /api/trading-accounts/:id/readiness-assessments RBAC', () => {
+  it('allows only System Owners to run an assessment', async () => {
+    mocks.runTradingAccountReadinessAssessmentController.mockImplementation(
+      (_req: Request, res: Response) => res.status(201).json({ assessment: { id: 1 } })
+    );
+    const denied = await postAs(
+      PlatformRole.OPERATOR,
+      '/api/trading-accounts/1/readiness-assessments',
+      { purpose: 'LIVE_ACTIVATION' }
+    );
+    expect(denied.status).toBe(403);
+
+    const allowed = await postAs(
+      PlatformRole.SYSTEM_OWNER,
+      '/api/trading-accounts/1/readiness-assessments',
+      { purpose: 'LIVE_ACTIVATION' }
+    );
+    expect(allowed.status).toBe(201);
+  });
 });

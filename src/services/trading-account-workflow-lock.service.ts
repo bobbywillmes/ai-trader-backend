@@ -13,6 +13,7 @@ export const ACCOUNT_WORKFLOW_LOCK_FAMILIES = {
   EXIT_EVALUATION: 'exit-evaluation',
   RECONCILIATION: 'reconciliation',
   ACCOUNT_SNAPSHOT: 'account-snapshot',
+  READINESS_ASSESSMENT: 'readiness-assessment',
 } as const;
 
 export type AccountWorkflowLockResult<T> =

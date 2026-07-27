@@ -27,6 +27,9 @@ import {
   updateTradingAccountSubscription,
   upsertTradingAccountCredential,
   verifyTradingAccountCredential,
+  getLatestTradingAccountReadiness,
+  listTradingAccountReadiness,
+  runTradingAccountReadiness,
 } from "./api";
 import type {
   AccountSubscriptionMarketContextStatus,
@@ -52,6 +55,10 @@ export const tradingAccountKeys = {
     [...tradingAccountKeys.detail(id), "riskHealth"] as const,
   workerHealth: (id: number) =>
     [...tradingAccountKeys.detail(id), "workerHealth"] as const,
+  readiness: (id: number) =>
+    [...tradingAccountKeys.detail(id), "readiness"] as const,
+  readinessHistory: (id: number) =>
+    [...tradingAccountKeys.readiness(id), "history"] as const,
   allocations: (id: number) =>
     [...tradingAccountKeys.detail(id), "allocations"] as const,
   accountSubscriptions: (id: number) =>
@@ -111,6 +118,36 @@ export function useTradingAccount(id: number | undefined, token: string | null) 
     queryKey: id ? tradingAccountKeys.detail(id) : tradingAccountKeys.details(),
     queryFn: () => getTradingAccount(id as number, token as string),
     enabled: Boolean(token && id),
+  });
+}
+
+export function useLatestTradingAccountReadiness(id: number | undefined, token: string | null) {
+  return useQuery({
+    queryKey: id ? tradingAccountKeys.readiness(id) : [...tradingAccountKeys.all, "readiness"],
+    queryFn: () => getLatestTradingAccountReadiness(id as number, token as string),
+    enabled: Boolean(token && id),
+  });
+}
+
+export function useTradingAccountReadinessHistory(id: number | undefined, token: string | null) {
+  return useQuery({
+    queryKey: id ? tradingAccountKeys.readinessHistory(id) : [...tradingAccountKeys.all, "readinessHistory"],
+    queryFn: () => listTradingAccountReadiness(id as number, token as string),
+    enabled: Boolean(token && id),
+  });
+}
+
+export function useRunTradingAccountReadiness(id: number, token: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => {
+      if (!token) throw new Error("Admin session is missing. Please log in again.");
+      return runTradingAccountReadiness(id, token);
+    },
+    onSuccess: ({ assessment }) => {
+      queryClient.setQueryData(tradingAccountKeys.readiness(id), { assessment });
+      queryClient.invalidateQueries({ queryKey: tradingAccountKeys.readinessHistory(id) });
+    },
   });
 }
 

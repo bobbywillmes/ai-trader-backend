@@ -1124,3 +1124,29 @@ the default account it resolved.
   the n8n signal contract.
 - Bobby Paper can continue to use legacy Alpaca env credentials when no
   `ACTIVE` account-scoped credential exists.
+# Live readiness assessments
+
+Phase 5A exposes immutable, account-scoped evidence describing whether a LIVE
+Trading Account is prepared for a later activation decision. Assessments never
+activate an account or authorize or perform broker writes.
+
+Routes:
+
+- `POST /api/trading-accounts/:id/readiness-assessments` with
+  `{ "purpose": "LIVE_ACTIVATION" }` (System Owner only)
+- `GET /api/trading-accounts/:id/readiness-assessments/latest?purpose=LIVE_ACTIVATION`
+- `GET /api/trading-accounts/:id/readiness-assessments?purpose=LIVE_ACTIVATION&limit=20`
+- `GET /api/trading-accounts/:id/readiness-assessments/:assessmentId`
+
+Read routes require normal account-scoped Trading Account read access. A
+same-account concurrent run returns `409`; different accounts use independent
+advisory-lock scopes. PAPER accounts reject `LIVE_ACTIVATION`.
+
+Responses contain separate credentials-configured, credentials-verified,
+read-only, configuration, risk-reducing, activation, and entry stages. The
+overall result follows activation readiness; entry readiness is informational.
+Validity is recomputed at read time from configuration, safe credential
+metadata, and effective Live-policy SHA-256 fingerprints. Results are
+`CURRENT`, `STALE`, or `EXPIRED`, with explicit stale-reason codes. Assessment
+evidence expires after five minutes and explicit credential verification must
+be no older than 15 minutes.

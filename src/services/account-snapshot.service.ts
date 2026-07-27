@@ -15,7 +15,8 @@ export type AccountSnapshotReason =
   | 'scheduled_midday'
   | 'scheduled_after_close'
   | 'position_opened'
-  | 'position_closed';
+  | 'position_closed'
+  | 'readiness_assessment';
 
 export type RecordAccountSnapshotInput = {
   reason: AccountSnapshotReason;

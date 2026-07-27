@@ -55,6 +55,7 @@ model User {
   heldTradingAccounts         TradingAccount[]           @relation("TradingAccountHolder")
   tradingAccountMemberships   TradingAccountMembership[]
   systemEventsActed           SystemEvent[]               @relation("SystemEventActor")
+  readinessAssessmentsRequested TradingAccountReadinessAssessment[] @relation("ReadinessAssessmentRequester")
 }
 
 model UserSetupToken {
@@ -121,6 +122,16 @@ enum PositionSizingType {
   MAX_NOTIONAL
 }
 
+enum TradingAccountReadinessPurpose {
+  LIVE_ACTIVATION
+}
+
+enum TradingAccountReadinessResult {
+  PASSED
+  BLOCKED
+  ERROR
+}
+
 model TradingAccount {
   id                        Int @id @default(autoincrement())
 
@@ -175,6 +186,7 @@ model TradingAccount {
   systemEvents              SystemEvent[]
   alpacaApiUsageBuckets     AlpacaApiUsageBucket[]
   workerHealthStates        TradingAccountWorkerHealthState[]
+  readinessAssessments      TradingAccountReadinessAssessment[]
 
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
@@ -186,6 +198,48 @@ model TradingAccount {
   @@index([killSwitchEnabled])
   @@unique([accountHolderUserId, broker, environment], map: "TradingAccount_holder_broker_environment_key")
   @@unique([broker, environment, brokerAccountId])
+}
+
+model TradingAccountReadinessAssessment {
+  id                              Int @id @default(autoincrement())
+  tradingAccountId                Int
+  tradingAccount                  TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  purpose                         TradingAccountReadinessPurpose
+  result                          TradingAccountReadinessResult
+  assessmentVersion               Int
+  startedAt                       DateTime
+  completedAt                     DateTime
+  expiresAt                       DateTime
+  configurationFingerprint        String
+  credentialFingerprint           String
+  policyFingerprint               String
+  credentialVerifiedAt            DateTime?
+  accountSnapshotId               Int?
+  accountSnapshot                 AccountSnapshot? @relation(fields: [accountSnapshotId], references: [id], onDelete: SetNull)
+  brokerAccountId                 String?
+  brokerAccountStatus             String?
+  tradingBlocked                  Boolean?
+  brokerPositionCount             Int?
+  brokerOpenOrderCount            Int?
+  localOpenPositionCount          Int
+  localClosingPositionCount       Int
+  localNonterminalIntentCount     Int
+  localNonterminalOrderCount      Int
+  reconciliationSummaryJson       Json?
+  stageResultsJson                Json
+  gateResultsJson                 Json
+  blockersJson                    Json
+  warningsJson                    Json
+  evidenceJson                    Json
+  requestedByUserId               Int?
+  requestedByUser                 User? @relation("ReadinessAssessmentRequester", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+  createdAt                       DateTime @default(now())
+
+  @@index([tradingAccountId, createdAt])
+  @@index([tradingAccountId, completedAt])
+  @@index([tradingAccountId, purpose, completedAt])
+  @@index([result])
+  @@index([expiresAt])
 }
 
 model TradingAccountRiskSettings {
@@ -1284,6 +1338,7 @@ model AccountSnapshot {
 
   tradingAccountId  Int?
   tradingAccount    TradingAccount? @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
+  readinessAssessments  TradingAccountReadinessAssessment[]
 
   snapshotHash String
   changed      Boolean @default(true)

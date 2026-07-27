@@ -36,6 +36,7 @@ Table User {
   heldTradingAccounts TradingAccount [not null]
   tradingAccountMemberships TradingAccountMembership [not null]
   systemEventsActed SystemEvent [not null]
+  readinessAssessmentsRequested TradingAccountReadinessAssessment [not null]
 }
 
 Table UserSetupToken {
@@ -102,6 +103,7 @@ Table TradingAccount {
   systemEvents SystemEvent [not null]
   alpacaApiUsageBuckets AlpacaApiUsageBucket [not null]
   workerHealthStates TradingAccountWorkerHealthState [not null]
+  readinessAssessments TradingAccountReadinessAssessment [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 
@@ -109,6 +111,42 @@ Table TradingAccount {
     (accountHolderUserId, broker, environment) [unique]
     (broker, environment, brokerAccountId) [unique]
   }
+}
+
+Table TradingAccountReadinessAssessment {
+  id Int [pk, increment]
+  tradingAccountId Int [not null]
+  tradingAccount TradingAccount [not null]
+  purpose TradingAccountReadinessPurpose [not null]
+  result TradingAccountReadinessResult [not null]
+  assessmentVersion Int [not null]
+  startedAt DateTime [not null]
+  completedAt DateTime [not null]
+  expiresAt DateTime [not null]
+  configurationFingerprint String [not null]
+  credentialFingerprint String [not null]
+  policyFingerprint String [not null]
+  credentialVerifiedAt DateTime
+  accountSnapshotId Int
+  accountSnapshot AccountSnapshot
+  brokerAccountId String
+  brokerAccountStatus String
+  tradingBlocked Boolean
+  brokerPositionCount Int
+  brokerOpenOrderCount Int
+  localOpenPositionCount Int [not null]
+  localClosingPositionCount Int [not null]
+  localNonterminalIntentCount Int [not null]
+  localNonterminalOrderCount Int [not null]
+  reconciliationSummaryJson Json
+  stageResultsJson Json [not null]
+  gateResultsJson Json [not null]
+  blockersJson Json [not null]
+  warningsJson Json [not null]
+  evidenceJson Json [not null]
+  requestedByUserId Int
+  requestedByUser User
+  createdAt DateTime [default: `now()`, not null]
 }
 
 Table TradingAccountRiskSettings {
@@ -786,6 +824,7 @@ Table AccountSnapshot {
   tradingBlocked Boolean [not null]
   tradingAccountId Int
   tradingAccount TradingAccount
+  readinessAssessments TradingAccountReadinessAssessment [not null]
   snapshotHash String [not null]
   changed Boolean [not null, default: true]
   rawJson Json [not null]
@@ -901,6 +940,16 @@ Enum TradingAccountStatus {
 Enum PositionSizingType {
   FIXED_QTY
   MAX_NOTIONAL
+}
+
+Enum TradingAccountReadinessPurpose {
+  LIVE_ACTIVATION
+}
+
+Enum TradingAccountReadinessResult {
+  PASSED
+  BLOCKED
+  ERROR
 }
 
 Enum BrokerCredentialAuthType {
@@ -1036,6 +1085,12 @@ Ref: UserSetupToken.userId > User.id [delete: Cascade]
 Ref: UserSession.userId > User.id
 
 Ref: TradingAccount.accountHolderUserId > User.id
+
+Ref: TradingAccountReadinessAssessment.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: TradingAccountReadinessAssessment.accountSnapshotId > AccountSnapshot.id [delete: Set Null]
+
+Ref: TradingAccountReadinessAssessment.requestedByUserId > User.id [delete: Set Null]
 
 Ref: TradingAccountRiskSettings.tradingAccountId - TradingAccount.id [delete: Cascade]
 

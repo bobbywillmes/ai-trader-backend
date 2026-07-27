@@ -9,6 +9,7 @@ export const tradingAccountDetailTabs: {
   { value: "orders", label: "Orders" },
   { value: "subscriptions", label: "Subscriptions" },
   { value: "risk-health", label: "Risk Health" },
+  { value: "readiness", label: "Readiness" },
   { value: "activity", label: "Activity" },
 ];
 

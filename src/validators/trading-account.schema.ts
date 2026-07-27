@@ -5,6 +5,12 @@ import {
 } from '@prisma/client';
 import { z } from 'zod';
 
+export const tradingAccountReadinessPurposeSchema = z.enum(['LIVE_ACTIVATION']);
+
+export const runTradingAccountReadinessAssessmentSchema = z.strictObject({
+  purpose: tradingAccountReadinessPurposeSchema,
+});
+
 export const createTradingAccountSchema = z.strictObject({
   accountHolderUserId: z.coerce.number().int().positive(),
   displayName: z.string().trim().min(1),

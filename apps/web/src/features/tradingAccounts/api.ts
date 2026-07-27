@@ -23,6 +23,8 @@ import type {
   TradingAccountsListResponse,
   UpdateTradingAccountPayload,
   UpsertTradingAccountCredentialPayload,
+  TradingAccountReadinessAssessmentResponse,
+  TradingAccountReadinessHistoryResponse,
 } from "./types";
 
 type ListMarketContextOptions = {
@@ -48,6 +50,23 @@ export function getTradingAccount(id: number, token: string) {
   return apiRequest<TradingAccountResponse>(`/api/trading-accounts/${id}`, {
     token,
   });
+}
+
+export function getLatestTradingAccountReadiness(id: number, token: string) {
+  return apiRequest<TradingAccountReadinessAssessmentResponse>(
+    `/api/trading-accounts/${id}/readiness-assessments/latest?purpose=LIVE_ACTIVATION`, { token });
+}
+
+export function listTradingAccountReadiness(id: number, token: string) {
+  return apiRequest<TradingAccountReadinessHistoryResponse>(
+    `/api/trading-accounts/${id}/readiness-assessments?purpose=LIVE_ACTIVATION&limit=20`, { token });
+}
+
+export function runTradingAccountReadiness(id: number, token: string) {
+  return apiRequest<TradingAccountReadinessAssessmentResponse>(
+    `/api/trading-accounts/${id}/readiness-assessments`, {
+      method: "POST", token, body: { purpose: "LIVE_ACTIVATION" },
+    });
 }
 
 export function updateTradingAccount(

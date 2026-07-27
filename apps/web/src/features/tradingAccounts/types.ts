@@ -69,6 +69,44 @@ export type TradingAccountResponse = {
   account: TradingAccount;
 };
 
+export type ReadinessOutcome = "PASSED" | "BLOCKED" | "WARNING" | "NOT_APPLICABLE";
+export type ReadinessGate = {
+  code: string; outcome: ReadinessOutcome; message: string;
+  evidence?: Record<string, unknown>;
+};
+export type ReadinessStage = {
+  key: string; outcome: ReadinessOutcome; summary: string;
+  gates: ReadinessGate[]; blockerCount: number; warningCount: number;
+};
+export type TradingAccountReadinessAssessment = {
+  id: number; tradingAccountId: number; purpose: "LIVE_ACTIVATION";
+  result: "PASSED" | "BLOCKED" | "ERROR"; assessmentVersion: number;
+  startedAt: string; completedAt: string; expiresAt: string; createdAt: string;
+  configurationFingerprint: string; credentialFingerprint: string; policyFingerprint: string;
+  credentialVerifiedAt: string | null; accountSnapshotId: number | null;
+  brokerAccountId: string | null; brokerAccountStatus: string | null;
+  tradingBlocked: boolean | null; brokerPositionCount: number | null;
+  brokerOpenOrderCount: number | null; localOpenPositionCount: number;
+  localClosingPositionCount: number; localNonterminalIntentCount: number;
+  localNonterminalOrderCount: number; stages: ReadinessStage[];
+  gates: ReadinessGate[]; blockers: ReadinessGate[]; warnings: ReadinessGate[];
+  evidence: {
+    policy?: { allowLiveTrading: boolean; allowLiveRiskReducingWrites: boolean };
+    workerHealth?: Array<{ workerKey: string; status: string; applicable: boolean }>;
+  };
+  reconciliationSummary: {
+    mode: string; reason?: string; findingCount?: number;
+    criticalCount?: number; warningCount?: number; findingCodes?: string[];
+  } | null;
+  validity: "CURRENT" | "STALE" | "EXPIRED"; staleReasons: string[];
+};
+export type TradingAccountReadinessAssessmentResponse = {
+  assessment: TradingAccountReadinessAssessment | null;
+};
+export type TradingAccountReadinessHistoryResponse = {
+  assessments: TradingAccountReadinessAssessment[];
+};
+
 export type CreateTradingAccountPayload = {
   accountHolderUserId: number;
   displayName: string;

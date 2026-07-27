@@ -597,3 +597,9 @@ Why this matters:
 - Gives Alpaca a stable idempotency key.
 
 The order worker must reuse the `clientOrderId` stored on the `OrderIntent`. It should not generate a fresh client order ID during broker submission.
+# Phase 5A readiness evidence
+
+Persisted Live Trading Account readiness assessments are implemented. They
+provide immutable, short-lived read-only evidence for a later activation
+decision. Live activation, write authorization, lifecycle exercises, and the
+first Live entry are not implemented.
