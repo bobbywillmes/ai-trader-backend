@@ -245,7 +245,7 @@ export async function evaluateExitsForAccount(
         trackedPositionId: position.id,
         error: sanitizeError(error),
       });
-      logger.error(
+      logger.trace(
         {
           workflow: 'exit_evaluation',
           tradingAccountId,
@@ -304,17 +304,6 @@ export async function evaluateExitsForEligibleAccounts() {
           );
         }
       }
-      logger[outcome === 'CREDENTIALS_UNAVAILABLE' ? 'error' : 'info'](
-        {
-          workflow: 'exit_evaluation',
-          tradingAccountId: account.tradingAccountId,
-          displayName: account.displayName,
-          environment: account.environment,
-          outcome,
-          reason: account.reason,
-        },
-        'Exit evaluation account outcome.'
-      );
       continue;
     }
 
@@ -367,17 +356,6 @@ export async function evaluateExitsForEligibleAccounts() {
         outcome,
         ...evaluation,
       });
-      logger[outcome === 'FAILED' ? 'error' : 'info'](
-        {
-          workflow: 'exit_evaluation',
-          tradingAccountId: account.tradingAccountId,
-          displayName: account.displayName,
-          environment: account.environment,
-          outcome,
-          ...evaluation.counts,
-        },
-        'Exit evaluation account outcome.'
-      );
     } catch (error) {
       results.push({
         workflow: 'exit_evaluation',

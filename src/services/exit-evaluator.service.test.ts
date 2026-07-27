@@ -11,11 +11,16 @@ const mocks = vi.hoisted(() => ({
   enumerateLifecycleAccounts: vi.fn(),
   syncProtectiveOrdersForAccount: vi.fn(),
   loggerInfo: vi.fn(),
+  loggerTrace: vi.fn(),
   loggerError: vi.fn(),
 }));
 
 vi.mock('../config/logger.js', () => ({
-  logger: { info: mocks.loggerInfo, error: mocks.loggerError },
+  logger: {
+    trace: mocks.loggerTrace,
+    info: mocks.loggerInfo,
+    error: mocks.loggerError,
+  },
 }));
 vi.mock('../db/prisma.js', () => ({
   prisma: {

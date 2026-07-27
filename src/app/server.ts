@@ -11,7 +11,11 @@ import { syncTrackedPositionsAcrossAccounts } from '../services/position-trackin
 import { evaluateExitsForEligibleAccounts } from '../services/exit-evaluator.service.js';
 import { runScheduledAccountSnapshots } from '../workers/account-snapshot.worker.js';
 import { runBrokerActivitySync } from '../workers/broker-activity.worker.js';
-import { assertStartupSafe } from '../services/startup-check.service.js';
+import {
+  assertStartupSafe,
+  logStartupReport,
+  StartupCheckError,
+} from '../services/startup-check.service.js';
 import { runScheduledReconciliation } from '../workers/reconciliation.worker.js';
 import {
   ALPACA_API_USAGE_PERSISTENCE_INTERVAL_MS,
@@ -36,10 +40,6 @@ const app = createApp();
 let tradingWorkersRunning = false;
 let server: Server | null = null;
 
-function logWorkerError(key: WorkerKey, error: unknown) {
-  logger.error({ error, workerKey: key }, 'Worker tick failed.');
-}
-
 function skipTradingWorkerTicks(reason: 'already_running') {
   const keys: WorkerKey[] = [
     'pending_order_processing',
@@ -60,9 +60,7 @@ async function runWorker(
 ) {
   try {
     await workerHealthRegistry.runMonitoredWorker(key, execute, options);
-  } catch (error) {
-    logWorkerError(key, error);
-  }
+  } catch {}
 }
 
 async function runTradingWorkers() {
@@ -297,10 +295,10 @@ function startWorkers() {
 }
 
 async function startServer() {
-  await assertStartupSafe();
+  const startupReport = await assertStartupSafe({ logSuccess: false });
 
   server = app.listen(env.PORT, () => {
-    logger.info(`AI Trader Backend listening on http://localhost:${env.PORT}`);
+    logStartupReport(startupReport);
   });
 
   startWorkers();
@@ -345,6 +343,8 @@ process.once('SIGTERM', (signal) => {
 });
 
 startServer().catch((error) => {
-  logger.fatal({ error }, 'AI Trader Backend failed startup checks.');
+  if (!(error instanceof StartupCheckError)) {
+    logger.fatal({ error }, 'AI Trader Backend failed startup.');
+  }
   process.exit(1);
 });

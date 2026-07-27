@@ -36,25 +36,31 @@ export function assertAccountCoordinatorHealthy(
   const unhealthy = results.filter(
     (result) =>
       result.outcome === 'FAILED' ||
-      result.outcome === 'CREDENTIALS_UNAVAILABLE'
+      result.outcome === 'CREDENTIALS_UNAVAILABLE' ||
+      result.outcome === 'BACKING_OFF'
   );
   if (unhealthy.length === 0) return;
 
   const failedAccounts = unhealthy.filter(
-    (result) => result.outcome === 'FAILED'
+    (result) =>
+      result.outcome === 'FAILED' ||
+      result.outcome === 'BACKING_OFF'
   ).length;
-  const credentialUnavailableAccounts = unhealthy.length - failedAccounts;
+  const credentialUnavailableAccounts = unhealthy.filter(
+    (result) => result.outcome === 'CREDENTIALS_UNAVAILABLE'
+  ).length;
   const accountSummary = unhealthy
     .map(
       (result) =>
-        `${result.account.tradingAccountId}:${result.account.displayName}:${result.outcome}`
+        result.account.tradingAccountId
     )
+    .sort((left, right) => left - right)
     .join(', ');
 
   throw new AccountCoordinatorFailureError(
     workflow,
     failedAccounts,
     credentialUnavailableAccounts,
-    `${workflow} completed with account failures (${accountSummary}).`
+    `${workflow} has unhealthy accounts (${accountSummary}).`
   );
 }

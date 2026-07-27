@@ -75,14 +75,6 @@ export async function runBrokerActivitySync() {
         const message =
           error instanceof Error ? error.message : 'Unknown worker error.';
         results.push({ account, outcome: 'FAILED' as const, error: message });
-        console.error({
-          workflow: 'broker_activities',
-          tradingAccountId: account.tradingAccountId,
-          displayName: account.displayName,
-          environment: account.environment,
-          outcome: 'FAILED',
-          error: message,
-        });
       }
     }
 

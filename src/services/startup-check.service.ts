@@ -78,21 +78,40 @@ function isPaperAlpacaBaseUrl(value: string) {
   return value.includes('paper-api.alpaca.markets');
 }
 
-function logStartupReport(report: StartupCheckReport) {
-  for (const check of report.checks) {
-    const payload = {
-      check: check.name,
-      status: check.status,
-      details: check.details,
-    };
-
-    if (check.status === 'fail') {
-      logger.error(payload, check.message);
-    } else if (check.status === 'warn') {
-      logger.warn(payload, check.message);
-    } else {
-      logger.info(payload, check.message);
-    }
+export function logStartupReport(report: StartupCheckReport) {
+  const passed = report.checks.filter((check) => check.status === 'pass');
+  const warnings = report.checks.filter((check) => check.status === 'warn');
+  const failures = report.checks.filter((check) => check.status === 'fail');
+  const runtimeConfig = report.checks.find(
+    (check) => check.name === 'runtime_config' && check.status === 'pass'
+  )?.details;
+  const tradingEnabled = runtimeConfig?.tradingEnabled === true;
+  const killSwitchEnabled = runtimeConfig?.killSwitchEnabled === true;
+  const databaseConnected = report.checks.some(
+    (check) => check.name === 'database' && check.status === 'pass'
+  );
+  const statusParts = [
+    report.environment,
+    databaseConnected ? 'database connected' : 'database unavailable',
+    killSwitchEnabled
+      ? 'kill switch enabled'
+      : tradingEnabled
+        ? 'entry trading enabled'
+        : 'entry trading disabled',
+    `${passed.length} checks passed`,
+    `${warnings.length} warning${warnings.length === 1 ? '' : 's'}`,
+    `http://localhost:${env.PORT}`,
+  ];
+  if (report.blockStartup) {
+    logger.error(
+      `AI Trader Backend startup blocked: ${statusParts.join(' | ')} | ` +
+        `${failures.length} failed (${failures.map((check) => check.name).join(', ')})`
+    );
+  } else if (warnings.length > 0) {
+    logger.info(`AI Trader Backend ready: ${statusParts.join(' | ')}`);
+    logger.warn(`Warnings: ${warnings.map((check) => check.message).join(' | ')}`);
+  } else {
+    logger.info(`AI Trader Backend ready: ${statusParts.join(' |')}`);
   }
 }
 
@@ -308,13 +327,16 @@ if (isProduction && env.ALLOW_TRADING_ENABLED_ON_START) {
   };
 }
 
-export async function assertStartupSafe() {
+export async function assertStartupSafe(options: { logSuccess?: boolean } = {}) {
   const report = await runStartupChecks();
 
-  logStartupReport(report);
-
   if (report.blockStartup) {
+    logStartupReport(report);
     throw new StartupCheckError(report);
+  }
+
+  if (options.logSuccess !== false) {
+    logStartupReport(report);
   }
 
   return report;

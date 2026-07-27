@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { logger } from '../config/logger.js';
 import { prisma } from '../db/prisma.js';
 import { TRADING_ACCOUNT_SUMMARY_SELECT } from './trading-account.service.js';
 
@@ -10,7 +11,11 @@ export async function createSystemEvent(args: {
   message?: string;
   payloadJson: Prisma.InputJsonValue;
 }) {
-  console.log('Creating system event:', args.type, args.entityType, args.entityId);
+  logger.trace({
+    eventType: args.type,
+    entityType: args.entityType,
+    entityId: args.entityId,
+  }, 'Creating system event.');
 
   return prisma.systemEvent.create({
     data: {

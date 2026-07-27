@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { logger } from '../config/logger.js';
 
 import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
 import { prisma } from '../db/prisma.js';
@@ -323,7 +324,7 @@ export async function processPendingOrdersForAccount(
   });
 
   if (pending.length > 0) {
-    console.log(`Order worker: Found ${pending.length} pending orders`);
+    logger.trace({ pendingOrders: pending.length }, 'Order worker found pending orders.');
   }
 
   let claimed = 0;
@@ -332,7 +333,7 @@ export async function processPendingOrdersForAccount(
   let failed = 0;
 
   for (const intent of pending) {
-    console.log(`Processing intent (${intent.id}): ${intent.symbol} ${intent.side} ${intent.orderType}`);
+    logger.trace({ orderIntentId: intent.id }, 'Order worker processing intent.');
 
     try {
       const claimResult = await prisma.orderIntent.updateMany({
@@ -346,7 +347,7 @@ export async function processPendingOrdersForAccount(
       });
 
       if (claimResult.count !== 1) {
-        console.log(`Intent (${intent.id}) was already claimed by another worker tick.`);
+        logger.trace({ orderIntentId: intent.id }, 'Order intent was already claimed.');
         continue;
       }
 
@@ -428,9 +429,8 @@ export async function processPendingOrdersForAccount(
             result: riskResult,
           });
 
-          console.log(
-            `Intent (${intent.id}) blocked by worker-time risk recheck: ${riskResult.reason}`
-          );
+          logger.trace({ orderIntentId: intent.id, reason: riskResult.reason },
+            'Order intent blocked by worker-time risk recheck.');
 
           blocked += 1;
           continue;
@@ -464,7 +464,8 @@ export async function processPendingOrdersForAccount(
           },
         });
 
-        console.log(`Intent (${intent.id}) already has broker order ${brokerOrder.id}; marked submitted.`);
+        logger.trace({ orderIntentId: intent.id, brokerOrderId: brokerOrder.id },
+          'Order intent already has a broker order.');
 
         submitted += 1;
         continue;
@@ -521,7 +522,7 @@ export async function processPendingOrdersForAccount(
         });
       }
 
-      console.log(`Intent (${intent.id}) for ${intent.symbol} submitted.`);
+      logger.trace({ orderIntentId: intent.id }, 'Order intent submitted.');
       submitted += 1;
     } catch (error) {
       await prisma.orderIntent.update({
@@ -533,7 +534,8 @@ export async function processPendingOrdersForAccount(
         },
       });
 
-      console.error(`Intent (${intent.id}) failed during broker submission`, error);
+      logger.trace({ orderIntentId: intent.id, error },
+        'Order intent broker submission failed before account health persistence.');
       failed += 1;
     }
   }
@@ -558,14 +560,6 @@ export async function processPendingOrders() {
           ? 'CREDENTIALS_UNAVAILABLE' as const
           : 'SKIPPED' as const;
       results.push({ account, outcome });
-      console[outcome === 'CREDENTIALS_UNAVAILABLE' ? 'error' : 'info']({
-        workflow: 'pending_submissions',
-        tradingAccountId: account.tradingAccountId,
-        displayName: account.displayName,
-        environment: account.environment,
-        outcome,
-        reason: account.reason,
-      });
       continue;
     }
 
@@ -608,14 +602,14 @@ export async function processPendingOrders() {
         outcome: 'FAILED' as const,
         error: message,
       });
-      console.error({
+      logger.trace({
         workflow: 'pending_submissions',
         tradingAccountId: account.tradingAccountId,
         displayName: account.displayName,
         environment: account.environment,
         outcome: 'FAILED',
         error: message,
-      });
+      }, 'Pending submission account failure captured for account health.');
     }
   }
 
@@ -737,7 +731,8 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
       tradingAccountId,
       new Date()
     );
-    console.error('Failed to fetch Alpaca open orders during submitted order sync', error);
+    logger.trace({ error },
+      'Alpaca open-order fetch failed before account health persistence.');
     throw error;
   }
 
@@ -792,9 +787,8 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
         });
 
         if (updated.count !== 1) {
-          console.log(
-            `Order ${brokerOrder.id} status was already updated by another worker tick.`
-          );
+          logger.trace({ brokerOrderId: brokerOrder.id },
+            'Broker order status was already updated.');
 
           continue;
         }
@@ -821,9 +815,8 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
           } as Prisma.InputJsonValue,
         });
 
-        console.log(
-          `Order ${brokerOrder.id} changed from ${previousStatus} to ${nextStatus}`
-        );
+        logger.trace({ brokerOrderId: brokerOrder.id, previousStatus, nextStatus },
+          'Broker order status changed.');
         synced += 1;
       }
     } catch (error) {
@@ -834,14 +827,14 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
         brokerOrderRecordId: brokerOrder?.id ?? null,
         error: message,
       });
-      console.error({
+      logger.trace({
         workflow: 'submitted_orders',
         tradingAccountId,
         orderIntentId: intent.id,
         brokerOrderRecordId: brokerOrder?.id ?? null,
         outcome: 'FAILED',
         error: message,
-      });
+      }, 'Submitted-order item failure captured for account health.');
     }
   }
 
@@ -890,14 +883,6 @@ export async function syncSubmittedOrdersAcrossAccounts() {
           ? 'CREDENTIALS_UNAVAILABLE'
           : 'SKIPPED';
       results.push({ workflow: 'submitted_orders', account, outcome });
-      console[outcome === 'CREDENTIALS_UNAVAILABLE' ? 'error' : 'info']({
-        workflow: 'submitted_orders',
-        tradingAccountId: account.tradingAccountId,
-        displayName: account.displayName,
-        environment: account.environment,
-        outcome,
-        skipReason: account.reason,
-      });
       continue;
     }
 
@@ -951,14 +936,14 @@ export async function syncSubmittedOrdersAcrossAccounts() {
         outcome: 'FAILED',
         error: message,
       });
-      console.error({
+      logger.trace({
         workflow: 'submitted_orders',
         tradingAccountId: account.tradingAccountId,
         displayName: account.displayName,
         environment: account.environment,
         outcome: 'FAILED',
         error: message,
-      });
+      }, 'Submitted-order account failure captured for account health.');
     }
   }
 

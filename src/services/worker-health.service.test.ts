@@ -2,14 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   workerHealthUpsert: vi.fn(),
+  workerHealthFindUnique: vi.fn(),
   createSystemEvent: vi.fn(),
   loggerWarn: vi.fn(),
+  loggerInfo: vi.fn(),
+  loggerError: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
   prisma: {
     workerHealthState: {
       upsert: mocks.workerHealthUpsert,
+      findUnique: mocks.workerHealthFindUnique,
     },
   },
 }));
@@ -21,6 +25,8 @@ vi.mock('./system-event.service.js', () => ({
 vi.mock('../config/logger.js', () => ({
   logger: {
     warn: mocks.loggerWarn,
+    info: mocks.loggerInfo,
+    error: mocks.loggerError,
   },
 }));
 
@@ -71,6 +77,7 @@ describe('WorkerHealthRegistry', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.workerHealthUpsert.mockResolvedValue({});
+    mocks.workerHealthFindUnique.mockResolvedValue(null);
     mocks.createSystemEvent.mockResolvedValue({});
   });
 
@@ -391,5 +398,47 @@ describe('WorkerHealthRegistry', () => {
         entityId: 'pending_order_processing',
       })
     );
+  });
+
+  it('logs coordinator failures and recovery once using persisted transition state', async () => {
+    let persisted: { consecutiveFailures: number; lastError: string | null;
+      lastFailedAt: Date | null } | null = null;
+    mocks.workerHealthFindUnique.mockImplementation(async () => persisted);
+    mocks.workerHealthUpsert.mockImplementation(async ({ update }) => {
+      persisted = {
+        consecutiveFailures: update.consecutiveFailures,
+        lastError: update.lastError,
+        lastFailedAt: update.lastFailedAt,
+      };
+      return {};
+    });
+    const { registry } = createRegistry();
+    const failure = Object.assign(new Error('Coordinator failure'), {
+      code: 'ACCOUNT_COORDINATOR_PARTIAL_FAILURE',
+    });
+
+    for (let tick = 0; tick < 10; tick += 1) {
+      await registry.runMonitoredWorker(
+        'pending_order_processing',
+        async () => { throw failure; }
+      ).catch(() => undefined);
+    }
+    expect(mocks.loggerError).toHaveBeenCalledTimes(1);
+
+    await registry.runMonitoredWorker(
+      'pending_order_processing',
+      async () => ({ outcome: 'success' })
+    );
+    await registry.runMonitoredWorker(
+      'pending_order_processing',
+      async () => ({ outcome: 'success' })
+    );
+    expect(mocks.loggerInfo).toHaveBeenCalledTimes(1);
+
+    await registry.runMonitoredWorker(
+      'pending_order_processing',
+      async () => { throw failure; }
+    ).catch(() => undefined);
+    expect(mocks.loggerError).toHaveBeenCalledTimes(2);
   });
 });

@@ -7,7 +7,12 @@ import {
 
 function result(
   id: number,
-  outcome: 'PROCESSED' | 'SKIPPED' | 'CREDENTIALS_UNAVAILABLE' | 'FAILED'
+  outcome:
+    | 'PROCESSED'
+    | 'SKIPPED'
+    | 'BACKING_OFF'
+    | 'CREDENTIALS_UNAVAILABLE'
+    | 'FAILED'
 ) {
   return {
     account: { tradingAccountId: id, displayName: `Account ${id}` },
@@ -31,7 +36,7 @@ describe('worker coordinator health result', () => {
         result(1, 'FAILED'),
         result(2, 'FAILED'),
       ])
-    ).toThrow(/2:Account 2:FAILED/);
+    ).toThrow(/unhealthy accounts \(1, 2\)/);
   });
 
   it('accepts success plus a dormant skip', () => {
@@ -62,6 +67,20 @@ describe('worker coordinator health result', () => {
         result(1, 'PROCESSED'),
         result(2, 'FAILED'),
       ])
-    ).toThrow(/stale_submitting_recovery completed with account failures/);
+    ).toThrow(/stale_submitting_recovery has unhealthy accounts/);
+  });
+
+  it('keeps coordinator health failing while an account remains in backoff', () => {
+    expect(() =>
+      assertAccountCoordinatorHealthy('exit_evaluation', [
+        result(1, 'BACKING_OFF'),
+      ])
+    ).toThrow(
+      expect.objectContaining({
+        failedAccounts: 1,
+        credentialUnavailableAccounts: 0,
+        message: 'exit_evaluation has unhealthy accounts (1).',
+      })
+    );
   });
 });

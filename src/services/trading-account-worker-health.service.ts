@@ -1,4 +1,5 @@
 import type { Prisma, TradingAccountWorkerHealthState } from '@prisma/client';
+import { logger } from '../config/logger.js';
 import { prisma } from '../db/prisma.js';
 import { createSystemEvent } from './system-event.service.js';
 import { getWorkerDefinition, type WorkerKey } from '../workers/worker-health.definitions.js';
@@ -9,9 +10,100 @@ export type AccountWorkerStatus =
 
 const MAX_ERROR_LENGTH = 500;
 const TRANSITION_EVENT_STATUSES = new Set<AccountWorkerStatus>(['FAILING', 'STALE']);
+type HealthLogger = Pick<typeof logger, 'trace' | 'info' | 'warn' | 'error'>;
 
 function safeError(error: unknown) {
   return (error instanceof Error ? error.message : String(error)).slice(0, MAX_ERROR_LENGTH);
+}
+
+function failureFingerprint(state: Pick<TradingAccountWorkerHealthState,
+  'tradingAccountId' | 'workerKey' | 'lastErrorCode' | 'lastSummaryJson'>) {
+  const safeEntityIds: string[] = [];
+  const visit = (value: unknown, key = '') => {
+    if (safeEntityIds.length >= 10 || value === null || value === undefined) return;
+    if (typeof value === 'object') {
+      if (Array.isArray(value)) {
+        value.forEach((item) => visit(item, key));
+      } else {
+        Object.entries(value as Record<string, unknown>)
+          .forEach(([childKey, child]) => visit(child, childKey));
+      }
+      return;
+    }
+    if (/id$/i.test(key) && ['string', 'number'].includes(typeof value)) {
+      safeEntityIds.push(`${key}:${String(value)}`);
+    }
+  };
+  visit(state.lastSummaryJson);
+  return [
+    state.tradingAccountId,
+    state.workerKey,
+    state.lastErrorCode ?? 'UNKNOWN',
+    ...safeEntityIds.sort(),
+  ].join('|');
+}
+
+async function logHealthTransition(
+  previous: TradingAccountWorkerHealthState | null,
+  state: TradingAccountWorkerHealthState,
+  previousStatus: AccountWorkerStatus,
+  nextStatus: AccountWorkerStatus,
+  db: typeof prisma,
+  healthLogger: HealthLogger
+) {
+  const account = await db.tradingAccount.findUnique({
+    where: { id: state.tradingAccountId },
+    select: { displayName: true, environment: true },
+  });
+  if (!account) return;
+
+  const context = {
+    tradingAccountId: state.tradingAccountId,
+    displayName: account.displayName,
+    environment: account.environment,
+    workerKey: state.workerKey,
+  };
+  if (state.consecutiveFailures > 0) {
+    const fingerprint = failureFingerprint(state);
+    const previousFingerprint = previous?.consecutiveFailures
+      ? failureFingerprint(previous)
+      : null;
+    if (fingerprint !== previousFingerprint) {
+      healthLogger.error({
+        ...context,
+        errorCode: state.lastErrorCode,
+        error: state.lastError,
+        failureFingerprint: fingerprint,
+      }, 'Account workflow entered a failing state.');
+    }
+    return;
+  }
+
+  if (previous && previous.consecutiveFailures > 0) {
+    const failureDurationMs = previous.lastFailedAt
+      ? Math.max(0, state.lastTickCompletedAt!.getTime() - previous.lastFailedAt.getTime())
+      : null;
+    healthLogger.info({
+      ...context,
+      previousStatus,
+      recoveredStatus: nextStatus,
+      failureDurationMs,
+    }, 'Account workflow recovered.');
+    return;
+  }
+
+  if (previousStatus !== nextStatus && ['DELAYED', 'STALE'].includes(nextStatus)) {
+    healthLogger.warn({
+      ...context,
+      previousStatus,
+      nextStatus,
+      totalLockSkips: state.totalLockSkips,
+    }, 'Account workflow lock contention affected health.');
+    return;
+  }
+
+  healthLogger.trace({ ...context, outcome: state.lastOutcome, status: nextStatus },
+    'Account workflow completed.');
 }
 
 export function deriveTradingAccountWorkerStatus(
@@ -49,6 +141,7 @@ async function emitTransition(args: {
 }, dependencies: {
   db?: typeof prisma;
   emitSystemEvent?: typeof createSystemEvent;
+  logger?: HealthLogger;
 } = {}) {
   const db = dependencies.db ?? prisma;
   const emitSystemEvent = dependencies.emitSystemEvent ?? createSystemEvent;
@@ -101,6 +194,7 @@ export async function recordTradingAccountWorkerAttempt(args: {
 }, dependencies: {
   db?: typeof prisma;
   emitSystemEvent?: typeof createSystemEvent;
+  logger?: HealthLogger;
 } = {}) {
   const db = dependencies.db ?? prisma;
   const definition = getWorkerDefinition(args.workerKey);
@@ -158,6 +252,14 @@ export async function recordTradingAccountWorkerAttempt(args: {
     },
   });
   const nextStatus = deriveTradingAccountWorkerStatus(state, definition, now);
+  await logHealthTransition(
+    previous,
+    state,
+    previousStatus,
+    nextStatus,
+    db,
+    dependencies.logger ?? logger
+  );
   await emitTransition(
     { state, previousStatus, nextStatus, reason: state.lastError ?? state.lastSkipReason },
     dependencies
@@ -176,6 +278,7 @@ export async function recordTradingAccountWorkflowLockContention(args: {
 }, dependencies: {
   db?: typeof prisma;
   emitSystemEvent?: typeof createSystemEvent;
+  logger?: HealthLogger;
 } = {}) {
   const db = dependencies.db ?? prisma;
   const emitSystemEvent = dependencies.emitSystemEvent ?? createSystemEvent;
@@ -187,7 +290,11 @@ export async function recordTradingAccountWorkflowLockContention(args: {
     } },
   });
   const previousStatus = previous
-    ? deriveTradingAccountWorkerStatus(previous, definition, args.attemptedAt)
+    ? deriveTradingAccountWorkerStatus(
+        previous,
+        definition,
+        previous.lastLockSkippedAt ?? args.attemptedAt
+      )
     : 'STARTING';
   const summary = {
     reason: 'lock_not_acquired',
@@ -263,6 +370,14 @@ export async function recordTradingAccountWorkflowLockContention(args: {
   }
   const nextStatus = deriveTradingAccountWorkerStatus(
     state, definition, args.attemptedAt
+  );
+  await logHealthTransition(
+    previous,
+    state,
+    previousStatus,
+    nextStatus,
+    db,
+    dependencies.logger ?? logger
   );
   await emitTransition(
     { state, previousStatus, nextStatus, reason: 'lock_skipped' },

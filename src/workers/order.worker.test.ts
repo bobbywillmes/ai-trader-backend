@@ -556,7 +556,7 @@ describe('pending order multi-account coordinator', () => {
     });
     expect(() =>
       assertAccountCoordinatorHealthy('pending_submission', result.results)
-    ).toThrow(/pending_submission completed with account failures/);
+    ).toThrow(/pending_submission has unhealthy accounts/);
   });
 
   it('finishes successful work in the same account but reports a mixed run failed', async () => {
@@ -781,7 +781,7 @@ describe('submitted order multi-account coordinator', () => {
     expect(mocks.adaptiveRecordSuccess).not.toHaveBeenCalled();
     expect(() =>
       assertAccountCoordinatorHealthy('submitted_order_sync', result.results)
-    ).toThrow(/submitted_order_sync completed with account failures/);
+    ).toThrow(/submitted_order_sync has unhealthy accounts/);
   });
 
   it('does not treat an order absent from open broker results as a failure', async () => {
