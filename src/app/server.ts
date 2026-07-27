@@ -36,10 +36,6 @@ const app = createApp();
 let tradingWorkersRunning = false;
 let server: Server | null = null;
 
-function logWorkerError(key: WorkerKey, error: unknown) {
-  logger.error({ error, workerKey: key }, 'Worker tick failed.');
-}
-
 function skipTradingWorkerTicks(reason: 'already_running') {
   const keys: WorkerKey[] = [
     'pending_order_processing',
@@ -60,9 +56,7 @@ async function runWorker(
 ) {
   try {
     await workerHealthRegistry.runMonitoredWorker(key, execute, options);
-  } catch (error) {
-    logWorkerError(key, error);
-  }
+  } catch {}
 }
 
 async function runTradingWorkers() {

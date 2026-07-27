@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { logger } from '../config/logger.js';
 
 import { prisma } from '../db/prisma.js';
 import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
@@ -468,13 +469,13 @@ export async function syncTrackedPositionsForAccount(
       const message =
         error instanceof Error ? error.message : 'Unknown position sync error.';
       symbolErrors.push({ symbol: position.symbol, error: message });
-      console.error({
+      logger.trace({
         workflow: 'positions',
         tradingAccountId,
         symbol: position.symbol,
         outcome: 'FAILED',
         error: message,
-      });
+      }, 'Position sync item failure captured for account health.');
     }
   }
 
@@ -517,9 +518,8 @@ export async function syncTrackedPositionsForAccount(
     });
 
     if (closedResult.count !== 1) {
-      console.log(
-        `Tracked position ${tracked.id} for ${tracked.symbol} was already closed by another sync.`
-      );
+      logger.trace({ trackedPositionId: tracked.id },
+        'Tracked position was already closed by another sync.');
       continue;
     }
 
@@ -605,7 +605,7 @@ export async function syncTrackedPositionsForAccount(
       ...closeFillSummary,
     } as Prisma.InputJsonValue);
 
-    console.log(`Position closed: ${closed.symbol}`);
+    logger.trace({ trackedPositionId: closed.id }, 'Tracked position closed.');
   }
 
   const completedAt = new Date();
@@ -708,14 +708,14 @@ export async function syncTrackedPositionsAcrossAccounts() {
         outcome: 'FAILED' as const,
         error: message,
       });
-      console.error({
+      logger.trace({
         workflow: 'positions',
         tradingAccountId: account.tradingAccountId,
         displayName: account.displayName,
         environment: account.environment,
         outcome: 'FAILED',
         error: message,
-      });
+      }, 'Position sync account failure captured for account health.');
     }
   }
 

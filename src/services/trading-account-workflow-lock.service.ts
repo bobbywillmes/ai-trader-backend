@@ -48,24 +48,24 @@ export async function withTradingAccountWorkflowLock<T>(args: {
     );
     acquired = result.rows[0]?.acquired === true;
     if (!acquired) {
-      logger.debug({ scope, tradingAccountId: args.tradingAccountId, workflow: args.workflowKey, processInstanceId: args.processInstanceId }, 'Account workflow lock skipped.');
+      logger.trace({ scope, tradingAccountId: args.tradingAccountId, workflow: args.workflowKey, processInstanceId: args.processInstanceId }, 'Account workflow lock skipped.');
       return { outcome: 'NOT_ACQUIRED', scope };
     }
-    logger.debug({ scope, tradingAccountId: args.tradingAccountId, workflow: args.workflowKey, processInstanceId: args.processInstanceId }, 'Account workflow lock acquired.');
+    logger.trace({ scope, tradingAccountId: args.tradingAccountId, workflow: args.workflowKey, processInstanceId: args.processInstanceId }, 'Account workflow lock acquired.');
     try {
       return { outcome: 'ACQUIRED_AND_COMPLETED', value: await args.execute(), scope };
     } catch (error) {
       return { outcome: 'WORKFLOW_ERROR', error, scope };
     }
   } catch (error) {
-    logger.error({ error, scope, tradingAccountId: args.tradingAccountId, workflow: args.workflowKey, processInstanceId: args.processInstanceId }, 'Account workflow lock acquisition failed.');
+    logger.trace({ error, scope, tradingAccountId: args.tradingAccountId, workflow: args.workflowKey, processInstanceId: args.processInstanceId }, 'Account workflow lock acquisition failed before account health persistence.');
     return { outcome: 'LOCK_ERROR', error, scope };
   } finally {
     if (client) {
       if (acquired) {
         try {
           await client.query('SELECT pg_advisory_unlock($1::bigint)', [key.toString()]);
-          logger.debug({ scope, durationMs: Date.now() - startedAt }, 'Account workflow lock released.');
+          logger.trace({ scope, durationMs: Date.now() - startedAt }, 'Account workflow lock released.');
         } catch (error) {
           logger.error({ error, scope }, 'Account workflow lock release failed.');
         }

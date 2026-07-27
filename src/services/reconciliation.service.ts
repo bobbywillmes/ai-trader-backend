@@ -930,19 +930,6 @@ export async function reconcileEligibleTradingAccounts(
         outcome: 'PROCESSED',
         result,
       });
-      logger.info(
-        {
-          workflow: 'reconciliation',
-          tradingAccountId: account.tradingAccountId,
-          displayName: account.displayName,
-          environment: account.environment,
-          outcome: 'PROCESSED',
-          findingCount: result.findings.length,
-          eventCount: result.eventCount,
-          attentionUpdateCount: result.attentionUpdateCount,
-        },
-        'Reconciliation account outcome.'
-      );
     } catch (error) {
       results.push({
         workflow: 'reconciliation',
@@ -950,17 +937,6 @@ export async function reconcileEligibleTradingAccounts(
         outcome: 'FAILED',
         error: sanitizeError(error),
       });
-      logger.error(
-        {
-          workflow: 'reconciliation',
-          tradingAccountId: account.tradingAccountId,
-          displayName: account.displayName,
-          environment: account.environment,
-          outcome: 'FAILED',
-          error: sanitizeError(error),
-        },
-        'Reconciliation account outcome.'
-      );
     }
   }
 

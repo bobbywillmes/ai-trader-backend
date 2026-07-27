@@ -347,9 +347,55 @@ export class WorkerHealthRegistry {
 
     try {
       const result = await execute();
+      const previous = prisma.workerHealthState.findUnique
+        ? await prisma.workerHealthState.findUnique({
+            where: { key },
+            select: {
+              consecutiveFailures: true,
+              lastFailedAt: true,
+            },
+          })
+        : null;
       this.completeWorkerTick(key, result ?? {});
+      if (previous && previous.consecutiveFailures > 0) {
+        const state = this.getState(key);
+        logger.info({
+          workerKey: key,
+          previousStatus: 'failing',
+          recoveredStatus: this.deriveStatus(state, this.now()).status,
+          failureDurationMs: previous.lastFailedAt
+            ? Math.max(0, this.now().getTime() - previous.lastFailedAt.getTime())
+            : null,
+        }, 'Worker coordinator recovered.');
+        await this.flushDirtyStates({ force: true });
+      }
     } catch (error) {
+      const sanitized = sanitizeError(error);
+      const errorCode = sanitized.code ?? (
+        error instanceof Error && 'code' in error && typeof error.code === 'string'
+          ? error.code
+          : error instanceof Error ? error.name : 'UNKNOWN'
+      );
+      const fingerprint = `${key}|${sanitized.message}`;
+      const previous = prisma.workerHealthState.findUnique
+        ? await prisma.workerHealthState.findUnique({
+            where: { key },
+            select: { consecutiveFailures: true, lastError: true },
+          })
+        : null;
       this.failWorkerTick(key, error);
+      const previousFingerprint = previous?.consecutiveFailures
+        ? `${key}|${previous.lastError ?? ''}`
+        : null;
+      if (previousFingerprint !== fingerprint) {
+        logger.error({
+          workerKey: key,
+          errorCode,
+          error: sanitized.message,
+          failureFingerprint: fingerprint,
+        }, 'Worker coordinator entered a failing state.');
+      }
+      await this.flushDirtyStates({ force: true });
       throw error;
     }
   }

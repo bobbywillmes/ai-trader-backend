@@ -181,5 +181,16 @@ export async function runTradingAccountWorkflow<T>(args: {
     };
   }
 
+  await recordTradingAccountWorkerAttempt({
+    tradingAccountId: args.tradingAccountId,
+    workerKey: args.workerKey,
+    processInstanceId: accountWorkflowProcessInstanceId,
+    outcome: 'failure',
+    error: locked.error,
+    errorCode: locked.outcome === 'LOCK_ERROR'
+      ? 'LOCK_ACQUISITION_ERROR'
+      : 'WORKFLOW_LOCK_WRAPPER_ERROR',
+    startedAt: new Date(),
+  });
   return { outcome: 'FAILED', error: locked.error };
 }

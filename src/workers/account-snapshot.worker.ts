@@ -169,14 +169,6 @@ export async function runScheduledAccountSnapshots() {
           outcome: 'FAILED' as const,
           error: message,
         });
-        console.error({
-          workflow: 'scheduled_snapshots',
-          tradingAccountId: account.tradingAccountId,
-          displayName: account.displayName,
-          environment: account.environment,
-          outcome: 'FAILED',
-          error: message,
-        });
       }
     }
   }
