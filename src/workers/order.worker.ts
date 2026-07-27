@@ -560,14 +560,6 @@ export async function processPendingOrders() {
           ? 'CREDENTIALS_UNAVAILABLE' as const
           : 'SKIPPED' as const;
       results.push({ account, outcome });
-      console[outcome === 'CREDENTIALS_UNAVAILABLE' ? 'error' : 'info']({
-        workflow: 'pending_submissions',
-        tradingAccountId: account.tradingAccountId,
-        displayName: account.displayName,
-        environment: account.environment,
-        outcome,
-        reason: account.reason,
-      });
       continue;
     }
 
@@ -891,14 +883,6 @@ export async function syncSubmittedOrdersAcrossAccounts() {
           ? 'CREDENTIALS_UNAVAILABLE'
           : 'SKIPPED';
       results.push({ workflow: 'submitted_orders', account, outcome });
-      console[outcome === 'CREDENTIALS_UNAVAILABLE' ? 'error' : 'info']({
-        workflow: 'submitted_orders',
-        tradingAccountId: account.tradingAccountId,
-        displayName: account.displayName,
-        environment: account.environment,
-        outcome,
-        skipReason: account.reason,
-      });
       continue;
     }
 
