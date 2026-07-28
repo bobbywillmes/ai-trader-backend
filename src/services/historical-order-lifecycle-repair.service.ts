@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
 import { getTradingAccountEntryRiskUsage } from './trading-account-entry-risk-usage.service.js';
+import { representsPendingEntryExposure } from './trading-account-entry-risk-limits.service.js';
 import { normalizeBrokerOrderStatus } from './broker-order-lifecycle-status.service.js';
 import { diagnoseHistoricalOrderLifecycle } from './historical-order-lifecycle-diagnostic.service.js';
 import { withTradingAccountWorkflowLock } from './trading-account-workflow-lock.service.js';
@@ -22,6 +23,15 @@ export type HistoricalOrderRepairProposal =
       orderIntentId: number;
       brokerOrderRecordId: number;
       trackedPositionId: number;
+      brokerOrderStatus: 'filled';
+      orderIntentStatus: 'filled';
+      evidence: string[];
+    }
+  | {
+      kind: 'filled_non_entry';
+      orderIntentId: number;
+      brokerOrderRecordId: number;
+      trackedPositionId: number | null;
       brokerOrderStatus: 'filled';
       orderIntentStatus: 'filled';
       evidence: string[];
@@ -53,6 +63,31 @@ export function buildHistoricalOrderRepairProposal(
       brokerOrderStatus: 'filled',
       orderIntentStatus: 'filled',
       evidence: ['FULL_FILL_LOCAL_EVIDENCE', 'POSITION_LINK_EXACT'],
+    };
+  }
+
+  if (
+    row.classifications.includes('FULL_FILL_LOCAL_EVIDENCE') &&
+    row.side.toLowerCase() !== 'buy'
+  ) {
+    const supportedPositionIds = new Set(
+      [
+        row.orderIntentTrackedPositionId,
+        row.brokerOrderTrackedPositionId,
+        ...row.activityTrackedPositionIds,
+      ].filter((id): id is number => id !== null)
+    );
+    return {
+      kind: 'filled_non_entry',
+      orderIntentId: row.orderIntentId,
+      brokerOrderRecordId: row.brokerOrderRecordId,
+      trackedPositionId:
+        supportedPositionIds.size === 1
+          ? [...supportedPositionIds][0]!
+          : null,
+      brokerOrderStatus: 'filled',
+      orderIntentStatus: 'filled',
+      evidence: ['FULL_FILL_LOCAL_EVIDENCE'],
     };
   }
 
@@ -117,9 +152,10 @@ async function buildReport(tradingAccountId: number) {
   const proposedIntentIds = new Set(
     proposals.map((item) => item.proposal.orderIntentId)
   );
-  const repairedPendingCount = diagnostic.candidates.filter(
-    (row) => proposedIntentIds.has(row.orderIntentId)
-  ).length;
+  const repairedPendingCount = countPendingRepairIntents(
+    diagnostic.candidates,
+    proposedIntentIds
+  );
   const refused = diagnostic.candidates
     .filter((row) => !proposedIntentIds.has(row.orderIntentId))
     .map((row) => ({
@@ -146,6 +182,22 @@ async function buildReport(tradingAccountId: number) {
     },
     safeToApply: proposals.length > 0,
   };
+}
+
+export function countPendingRepairIntents(
+  rows: DiagnosticRow[],
+  proposedIntentIds: Set<number>
+) {
+  return rows.filter(
+    (row) =>
+      proposedIntentIds.has(row.orderIntentId) &&
+      representsPendingEntryExposure({
+        side: row.side,
+        status: row.orderIntentStatus,
+        blockReason: row.blockReason,
+        trackedPositionId: row.orderIntentTrackedPositionId,
+      })
+  ).length;
 }
 
 async function applyProposals(args: {
@@ -197,27 +249,36 @@ async function applyProposals(args: {
       }
 
       const linkedAt = new Date();
+      const shouldPropagatePosition =
+        proposal.kind === 'filled_entry' ||
+        (proposal.kind === 'filled_non_entry' &&
+          proposal.trackedPositionId !== null);
       await tx.brokerOrder.update({
         where: { id: currentOrder.id },
         data: {
           status: proposal.brokerOrderStatus,
-          trackedPositionId: proposal.trackedPositionId,
+          ...(shouldPropagatePosition && {
+            trackedPositionId: proposal.trackedPositionId,
+          }),
         },
       });
       await tx.orderIntent.update({
         where: { id: currentOrder.orderIntentId },
         data: {
           status: proposal.orderIntentStatus,
-          trackedPositionId: proposal.trackedPositionId,
+          ...(shouldPropagatePosition && {
+            trackedPositionId: proposal.trackedPositionId,
+          }),
         },
       });
-      if (proposal.kind === 'filled_entry') {
+      if (shouldPropagatePosition) {
         await tx.brokerActivity.updateMany({
           where: {
             brokerOrderRecordId: currentOrder.id,
             orderIntentId: currentOrder.orderIntentId,
             tradingAccountId: args.tradingAccountId,
             activityType: 'FILL',
+            trackedPositionId: null,
           },
           data: {
             trackedPositionId: proposal.trackedPositionId,

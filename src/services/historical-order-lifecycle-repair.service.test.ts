@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildHistoricalOrderRepairProposal,
+  countPendingRepairIntents,
   repairHistoricalOrderLifecycle,
 } from './historical-order-lifecycle-repair.service.js';
 
@@ -15,6 +16,19 @@ function row(overrides: Record<string, unknown> = {}) {
     symbol: 'DIA',
     side: 'buy',
     quantity: 1,
+    brokerOrderStatus: 'accepted',
+    orderIntentStatus: 'filled',
+    blockReason: null,
+    orderIntentTrackedPositionId: null,
+    brokerOrderTrackedPositionId: null,
+    activityTrackedPositionIds: [],
+    fillEvidence: {
+      cumulativeQty: 1,
+      leavesQty: 0,
+      weightedAveragePrice: 400,
+      completionTime: new Date().toISOString(),
+      activityCount: 1,
+    },
     subscriptionId: 5,
     tradingAccountSubscriptionId: 9,
     createdAt: new Date(),
@@ -59,6 +73,46 @@ describe('buildHistoricalOrderRepairProposal', () => {
     }
   });
 
+  it('terminalizes a locally proven filled sell without requiring a position match', () => {
+    expect(
+      buildHistoricalOrderRepairProposal(
+        row({
+          side: 'sell',
+          classifications: ['FULL_FILL_LOCAL_EVIDENCE'],
+          matchedTrackedPositionId: null,
+          candidateTrackedPositionIds: [],
+          orderIntentTrackedPositionId: 30,
+          brokerOrderTrackedPositionId: 30,
+          activityTrackedPositionIds: [30],
+        })
+      )
+    ).toEqual({
+      kind: 'filled_non_entry',
+      orderIntentId: 10,
+      brokerOrderRecordId: 20,
+      trackedPositionId: 30,
+      brokerOrderStatus: 'filled',
+      orderIntentStatus: 'filled',
+      evidence: ['FULL_FILL_LOCAL_EVIDENCE'],
+    });
+  });
+
+  it('terminalizes an unlinked filled sell without fabricating a position', () => {
+    expect(
+      buildHistoricalOrderRepairProposal(
+        row({
+          side: 'sell',
+          classifications: ['FULL_FILL_LOCAL_EVIDENCE'],
+          matchedTrackedPositionId: null,
+          candidateTrackedPositionIds: [],
+        })
+      )
+    ).toMatchObject({
+      kind: 'filled_non_entry',
+      trackedPositionId: null,
+    });
+  });
+
   it.each([
     ['partial fill', ['PARTIAL_FILL_LOCAL_EVIDENCE']],
     ['ambiguous match', ['FULL_FILL_LOCAL_EVIDENCE', 'POSITION_LINK_AMBIGUOUS']],
@@ -88,6 +142,31 @@ describe('buildHistoricalOrderRepairProposal', () => {
         })
       )
     ).toBeNull();
+  });
+});
+
+describe('countPendingRepairIntents', () => {
+  it('subtracts a pending buy repair but not a filled sell repair', () => {
+    expect(
+      countPendingRepairIntents(
+        [
+          row({
+            orderIntentId: 10,
+            side: 'buy',
+            orderIntentStatus: 'filled',
+            orderIntentTrackedPositionId: null,
+          }),
+          row({
+            orderIntentId: 11,
+            brokerOrderRecordId: 21,
+            side: 'sell',
+            orderIntentStatus: 'submitted',
+            orderIntentTrackedPositionId: 30,
+          }),
+        ],
+        new Set([10, 11])
+      )
+    ).toBe(1);
   });
 });
 
