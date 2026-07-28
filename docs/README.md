@@ -12,6 +12,7 @@ The root `README.md` is the project front door. These docs are the working manua
 | Audit global vs account-scoped risk settings            | [Account Risk Settings](architecture/account-risk-settings.md) |
 | Understand Subscription Catalog and account deployment  | [Subscription Catalog](architecture/subscription-catalog.md) |
 | Understand how a signal becomes a full trade cycle      | [Trading Lifecycle](architecture/trading-lifecycle.md) |
+| Run a controlled Paper lifecycle exercise               | [Trading Lifecycle Exercises](architecture/trading-lifecycle-exercises.md) |
 | Understand the momentum scanner catalyst/news pipeline  | [Momentum Scanner Architecture](architecture/catalyst-news-foundation.md) |
 | Review momentum decisions and durable pipeline runs      | [Momentum Decision Engine](architecture/momentum-decision-engine.md) |
 | Run or debug the n8n Momentum Scanner Review workflow   | [Momentum Scanner Review Workflow](integrations/n8n/momentum-scanner-review.md) |
@@ -89,6 +90,11 @@ n8n signal
 ```
 
 Use this doc when changing signal handling, tracked positions, exit profiles, broker activity imports, or lifecycle event logging.
+
+### [Trading Lifecycle Exercises](architecture/trading-lifecycle-exercises.md)
+
+Paper-only target selection, frozen previews, launch idempotency, lifecycle
+projection, cancellation, manual close, and final reconciliation.
 
 ### [Momentum Scanner Architecture](architecture/catalyst-news-foundation.md)
 

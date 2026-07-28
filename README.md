@@ -90,6 +90,7 @@ System owners can access the full operational console. Operators see the subset 
 - Dashboard
 - Trading Accounts
 - Entry Decisions
+- Lifecycle Exercises (System Owner, Paper-only)
 - Momentum Scanner research dashboard, candidate/catalyst browsing, symbol research,
   research-universe management, and manual pipeline inspection
 - Strategies
@@ -403,6 +404,7 @@ Automated trading should only be enabled deliberately after production health, b
 
 - [Risk & Safety](docs/architecture/risk-and-safety.md)
 - [Trading Lifecycle](docs/architecture/trading-lifecycle.md)
+- [Trading Lifecycle Exercises](docs/architecture/trading-lifecycle-exercises.md)
 - [Worker Health](docs/architecture/workers.md)
 
 ### Integrations:
@@ -467,10 +469,15 @@ while Bobby Live remains safely dormant.
 
 ## 🗺️ Roadmap
 
-The immediate objective is controlled provisioning and eventual activation of
-Bobby Live without treating Live trading as a single switch.
+Phase 5A Live readiness assessments are complete, and controlled Paper
+lifecycle exercises are implemented. The immediate objective remains controlled
+provisioning and eventual activation of Bobby Live.
 
 ### 🔜 Phase 5 — Controlled Live Provisioning
+
+- Completed: immutable Phase 5A Live readiness assessments.
+- Completed: Paper lifecycle exercises with frozen targets, shared entry
+  orchestration, projection, cancellation, and final reconciliation.
 
 - Provision and verify Live credentials using read-only broker requests.
 - Configure conservative account risk, allocation, and subscription deployment.
@@ -480,8 +487,8 @@ Bobby Live without treating Live trading as a single switch.
 - Add an explicit, audited activation workflow; generic account updates must not
   activate a Trading Account.
 
-The first Live entry remains a later canary rollout after Phase 5 readiness is
-implemented, deployed, and proven.
+Live provisioning, write authorization, activation, and the first Live canary
+remain future work.
 
 ### 🧭 Longer-Term
 
