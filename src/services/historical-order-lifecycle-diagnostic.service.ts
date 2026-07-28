@@ -193,13 +193,13 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
   tradingAccountId: number;
   now?: Date;
   lookupBudget?: number;
+  openOrders?: AlpacaOrder[];
 }) {
   const now = args.now ?? new Date();
   const cutoff = new Date(now.getTime() - HISTORICAL_ORDER_MINIMUM_AGE_MS);
-  const openOrders = await getOpenAlpacaOrders(
-    args.tradingAccountId,
-    'open_orders_sync'
-  );
+  const openOrders =
+    args.openOrders ??
+    (await getOpenAlpacaOrders(args.tradingAccountId, 'open_orders_sync'));
   const openIds = new Set(openOrders.flatMap((order) => [order.id, order.client_order_id]));
   const localCandidates = await prisma.brokerOrder.findMany({
     where: {
