@@ -191,6 +191,15 @@ async function buildReportFromDiagnostic(
       classifications: row.classifications,
       reason: 'no_deterministic_mutation',
     }));
+  const remainingPendingEntryExposureCount = Math.max(
+    0,
+    before.pendingEntryIntentSlotCount - repairedPendingCount
+  );
+  const completeness = summarizeRepairCompleteness({
+    proposalCount: proposals.length,
+    unresolvedCandidateCount: refused.length,
+    remainingPendingEntryExposureCount,
+  });
 
   return {
     diagnostic,
@@ -200,14 +209,25 @@ async function buildReportFromDiagnostic(
       before,
       expectedAfter: {
         ...before,
-        pendingEntryIntentSlotCount: Math.max(
-          0,
-          before.pendingEntryIntentSlotCount - repairedPendingCount
-        ),
+        pendingEntryIntentSlotCount: remainingPendingEntryExposureCount,
         usedSlots: Math.max(0, before.usedSlots - repairedPendingCount),
       },
     },
-    safeToApply: proposals.length > 0,
+    ...completeness,
+  };
+}
+
+export function summarizeRepairCompleteness(args: {
+  proposalCount: number;
+  unresolvedCandidateCount: number;
+  remainingPendingEntryExposureCount: number;
+}) {
+  return {
+    safeToApplyProposals: args.proposalCount > 0,
+    allCandidatesResolved: args.unresolvedCandidateCount === 0,
+    unresolvedCandidateCount: args.unresolvedCandidateCount,
+    remainingPendingEntryExposureCount:
+      args.remainingPendingEntryExposureCount,
   };
 }
 
@@ -522,7 +542,7 @@ export async function repairHistoricalOrderLifecycle(args: {
   }
   const initialReport = await buildReport(args.tradingAccountId);
   if (!args.apply) return { mode: 'dry-run' as const, ...initialReport };
-  if (!initialReport.safeToApply) {
+  if (!initialReport.safeToApplyProposals) {
     return { mode: 'apply' as const, ...initialReport, repaired: [] };
   }
 

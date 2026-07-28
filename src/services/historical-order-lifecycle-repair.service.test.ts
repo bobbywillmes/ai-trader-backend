@@ -5,6 +5,7 @@ import {
   buildHistoricalOrderRepairProposal,
   countPendingRepairIntents,
   repairHistoricalOrderLifecycle,
+  summarizeRepairCompleteness,
 } from './historical-order-lifecycle-repair.service.js';
 
 function row(overrides: Record<string, unknown> = {}) {
@@ -213,6 +214,23 @@ describe('countPendingRepairIntents', () => {
         new Set([10, 11])
       )
     ).toBe(1);
+  });
+});
+
+describe('summarizeRepairCompleteness', () => {
+  it('separates safe proposals from unresolved account-wide work', () => {
+    expect(
+      summarizeRepairCompleteness({
+        proposalCount: 22,
+        unresolvedCandidateCount: 26,
+        remainingPendingEntryExposureCount: 1,
+      })
+    ).toEqual({
+      safeToApplyProposals: true,
+      allCandidatesResolved: false,
+      unresolvedCandidateCount: 26,
+      remainingPendingEntryExposureCount: 1,
+    });
   });
 });
 
