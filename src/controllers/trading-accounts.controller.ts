@@ -51,6 +51,8 @@ import {
   updateTradingAccountAllocationSchema,
   updateTradingAccountSubscriptionSchema,
   upsertTradingAccountCredentialSchema,
+  runTradingAccountReadinessAssessmentSchema,
+  tradingAccountReadinessPurposeSchema,
 } from '../validators/trading-account.schema.js';
 import { verifyTradingAccountCredential } from '../services/trading-account-credential-verification.service.js';
 import {
@@ -60,6 +62,35 @@ import {
 import { previewTradingAccountEntryRisk } from '../services/trading-account-entry-risk-preview.service.js';
 import { getTradingAccountRiskHealth } from '../services/trading-account-risk-health.service.js';
 import { listTradingAccountWorkerHealth } from '../services/trading-account-worker-health.service.js';
+import {
+  getLatestTradingAccountReadinessAssessment,
+  getTradingAccountReadinessAssessment,
+  listTradingAccountReadinessAssessments,
+  runTradingAccountReadinessAssessment,
+} from '../services/trading-account-readiness.service.js';
+
+function parseAssessmentId(value: unknown) {
+  const id = typeof value === 'string' ? Number(value) : NaN;
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new HttpError(400, 'Invalid readiness assessment id.');
+  }
+  return id;
+}
+
+function parseReadinessPurpose(value: unknown) {
+  const parsed = tradingAccountReadinessPurposeSchema.safeParse(value);
+  if (!parsed.success) throw new HttpError(400, 'Invalid readiness assessment purpose.');
+  return parsed.data;
+}
+
+function parseReadinessLimit(value: unknown) {
+  if (value === undefined) return 20;
+  const limit = typeof value === 'string' ? Number(value) : NaN;
+  if (!Number.isInteger(limit) || limit <= 0 || limit > 100) {
+    throw new HttpError(400, 'Readiness assessment limit must be between 1 and 100.');
+  }
+  return limit;
+}
 
 function parseTradingAccountId(value: unknown) {
   const id = typeof value === 'string' ? Number(value) : NaN;
@@ -854,4 +885,49 @@ export async function revokeTradingAccountCredentialController(
   } catch (error) {
     next(error);
   }
+}
+
+export async function runTradingAccountReadinessAssessmentController(
+  req: Request, res: Response, next: NextFunction) {
+  try {
+    const input = runTradingAccountReadinessAssessmentSchema.parse(req.body);
+    const assessment = await runTradingAccountReadinessAssessment(
+      parseTradingAccountId(req.params.id), input.purpose, requireActorUserId(res));
+    res.status(201).json({ assessment });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      next(new HttpError(400, 'Invalid readiness assessment request.', error.flatten()));
+      return;
+    }
+    next(error);
+  }
+}
+
+export async function getLatestTradingAccountReadinessAssessmentController(
+  req: Request, res: Response, next: NextFunction) {
+  try {
+    const assessment = await getLatestTradingAccountReadinessAssessment(
+      parseTradingAccountId(req.params.id), parseReadinessPurpose(req.query.purpose));
+    res.status(200).json({ assessment });
+  } catch (error) { next(error); }
+}
+
+export async function listTradingAccountReadinessAssessmentsController(
+  req: Request, res: Response, next: NextFunction) {
+  try {
+    const assessments = await listTradingAccountReadinessAssessments(
+      parseTradingAccountId(req.params.id), parseReadinessPurpose(req.query.purpose),
+      parseReadinessLimit(req.query.limit));
+    res.status(200).json({ assessments });
+  } catch (error) { next(error); }
+}
+
+export async function getTradingAccountReadinessAssessmentController(
+  req: Request, res: Response, next: NextFunction) {
+  try {
+    const assessment = await getTradingAccountReadinessAssessment(
+      parseTradingAccountId(req.params.id), parseAssessmentId(req.params.assessmentId));
+    if (!assessment) throw new HttpError(404, 'Readiness assessment not found.');
+    res.status(200).json({ assessment });
+  } catch (error) { next(error); }
 }

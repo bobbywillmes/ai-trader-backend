@@ -19,6 +19,7 @@ import { OrdersTab } from "./tabs/orders/OrdersTab";
 import { PositionsTab } from "./tabs/positions/PositionsTab";
 import { RiskHealthTab } from "./tabs/riskHealth/RiskHealthTab";
 import { SubscriptionsTab } from "./tabs/subscriptions/SubscriptionsTab";
+import { ReadinessTab } from "./tabs/readiness/ReadinessTab";
 import type { TradingAccountDetailTab } from "./types";
 import {
   isTradingAccountDetailTab,
@@ -118,6 +119,10 @@ export function TradingAccountDetailPage() {
 
           <Tabs.Panel value="risk-health" pt="lg">
             <RiskHealthTab account={account} token={token} />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="readiness" pt="lg">
+            <ReadinessTab account={account} token={token} />
           </Tabs.Panel>
 
           <Tabs.Panel value="activity" pt="lg">

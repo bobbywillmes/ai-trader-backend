@@ -26,6 +26,10 @@ import {
   upsertTradingAccountCredentialController,
   revokeTradingAccountCredentialController,
   verifyTradingAccountCredentialController,
+  runTradingAccountReadinessAssessmentController,
+  getLatestTradingAccountReadinessAssessmentController,
+  listTradingAccountReadinessAssessmentsController,
+  getTradingAccountReadinessAssessmentController,
 } from '../controllers/trading-accounts.controller.js';
 import { requirePermission, requireSystemOwnerAccess, requireTradingAccountAccess } from '../middleware/rbac.js';
 import { PlatformPermission } from '../types/platform-rbac.js';
@@ -41,6 +45,10 @@ router.get('/:id/orders', requireTradingAccountAccess('id'), requirePermission(P
 router.get('/:id/trade-cycles', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.REPORTS_READ), listTradingAccountTradeCyclesController);
 router.patch('/:id', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE), updateTradingAccountController);
 router.post('/:id/deactivate', requireSystemOwnerAccess, deactivateTradingAccountController);
+router.post('/:id/readiness-assessments', requireSystemOwnerAccess, runTradingAccountReadinessAssessmentController);
+router.get('/:id/readiness-assessments/latest', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), getLatestTradingAccountReadinessAssessmentController);
+router.get('/:id/readiness-assessments', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), listTradingAccountReadinessAssessmentsController);
+router.get('/:id/readiness-assessments/:assessmentId', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), getTradingAccountReadinessAssessmentController);
 router.post(
   '/:id/reconciliation/run',
   requireSystemOwnerAccess,

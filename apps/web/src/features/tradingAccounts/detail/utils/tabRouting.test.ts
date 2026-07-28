@@ -14,6 +14,7 @@ describe("trading account detail tab routing", () => {
       "orders",
       "subscriptions",
       "risk-health",
+      "readiness",
       "activity",
     ]);
 
