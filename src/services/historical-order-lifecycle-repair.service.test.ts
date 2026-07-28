@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildHistoricalOrderRepairProposal } from './historical-order-lifecycle-repair.service.js';
+import {
+  buildHistoricalOrderRepairProposal,
+  repairHistoricalOrderLifecycle,
+} from './historical-order-lifecycle-repair.service.js';
 
 function row(overrides: Record<string, unknown> = {}) {
   return {
@@ -85,5 +88,17 @@ describe('buildHistoricalOrderRepairProposal', () => {
         })
       )
     ).toBeNull();
+  });
+});
+
+describe('repairHistoricalOrderLifecycle apply guard', () => {
+  it('requires the exact apply confirmation before any diagnostic work', async () => {
+    await expect(
+      repairHistoricalOrderLifecycle({
+        tradingAccountId: 1,
+        apply: true,
+        confirmation: 'wrong',
+      })
+    ).rejects.toThrow('Apply mode requires');
   });
 });
