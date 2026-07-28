@@ -288,6 +288,30 @@ export function matchHistoricalEntryPosition(
   return { status: 'missing' as const, matches, evaluations };
 }
 
+export function formatHistoricalPositionMatchDiagnostics(
+  positionMatch: ReturnType<typeof matchHistoricalEntryPosition>
+) {
+  return {
+    candidatePositionEvaluations: positionMatch.evaluations.map(
+      (evaluation) => ({
+        trackedPositionId: evaluation.candidate.id,
+        rejectionReasons:
+          evaluation.rejectionReasons.length > 0
+            ? evaluation.rejectionReasons
+            : positionMatch.status === 'ambiguous'
+              ? ['ambiguity']
+              : [],
+      })
+    ),
+    positionMatchRejectionReason:
+      positionMatch.status === 'ambiguous'
+        ? 'ambiguity'
+        : positionMatch.status === 'missing'
+          ? 'no_matching_position'
+          : null,
+  };
+}
+
 type FillEvidenceActivity = {
   activityType: string;
   qty: number | null;
@@ -605,6 +629,9 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
     } else if (candidate.fillEvidence !== 'full') {
       candidate.classifications.push('NO_TERMINAL_EVIDENCE');
     }
+    const positionDiagnostics = formatHistoricalPositionMatchDiagnostics(
+      candidate.positionMatch
+    );
     return {
       tradingAccountId: args.tradingAccountId,
       orderIntentId: candidate.order.orderIntentId,
@@ -656,23 +683,7 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
       candidateTrackedPositionIds: candidate.positionMatch.matches.map(
         (position) => position.id
       ),
-      candidatePositionEvaluations: candidate.positionMatch.evaluations.map(
-        (evaluation) => ({
-          trackedPositionId: evaluation.candidate.id,
-          rejectionReasons:
-            evaluation.rejectionReasons.length > 0
-              ? evaluation.rejectionReasons
-              : candidate.positionMatch.status === 'ambiguous'
-                ? ['ambiguity']
-                : [],
-        })
-      ),
-      positionMatchRejectionReason:
-        candidate.positionMatch.status === 'ambiguous'
-          ? 'ambiguity'
-          : candidate.positionMatch.status === 'missing'
-            ? 'no_matching_position'
-            : null,
+      ...positionDiagnostics,
       brokerLookup: lookup?.brokerOrder
         ? brokerOrderIdentity(lookup.brokerOrder)
         : lookup?.failed

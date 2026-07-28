@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   classifyLocalFillEvidence,
+  evaluateHistoricalPositionCandidates,
+  formatHistoricalPositionMatchDiagnostics,
   HISTORICAL_POSITION_TIME_TOLERANCE_MS,
   HISTORICAL_PRICE_TOLERANCE,
   HISTORICAL_QUANTITY_TOLERANCE,
@@ -77,12 +79,18 @@ describe('matchHistoricalEntryPosition', () => {
   });
 
   it('refuses multiple qualifying candidates rather than choosing closest', () => {
-    expect(
-      matchHistoricalEntryPosition(input, [
+    const result = matchHistoricalEntryPosition(input, [
         candidate,
         { ...candidate, id: 52, openedAt: new Date(fillTime.getTime() + 1) },
-      ])
-    ).toMatchObject({ status: 'ambiguous' });
+      ]);
+    expect(result).toMatchObject({ status: 'ambiguous' });
+    expect(formatHistoricalPositionMatchDiagnostics(result)).toEqual({
+      candidatePositionEvaluations: [
+        { trackedPositionId: 51, rejectionReasons: ['ambiguity'] },
+        { trackedPositionId: 52, rejectionReasons: ['ambiguity'] },
+      ],
+      positionMatchRejectionReason: 'ambiguity',
+    });
   });
 
   it('refuses incomplete evidence', () => {
@@ -195,6 +203,37 @@ describe('summarizeLocalFillEvidence', () => {
         ]
       ).status
     ).toBe('exact');
+  });
+});
+
+describe('evaluateHistoricalPositionCandidates', () => {
+  it('reports structured rejection reasons without loosening price tolerance', () => {
+    const evaluations = evaluateHistoricalPositionCandidates(input, [
+      {
+        ...candidate,
+        tradingAccountId: 2,
+        broker: 'other',
+        symbol: 'QQQ',
+        subscriptionId: 6,
+        tradingAccountSubscriptionId: 10,
+        qty: 2,
+        avgEntryPrice: input.fillPrice + HISTORICAL_PRICE_TOLERANCE + 0.000001,
+        openedAt: new Date(
+          fillTime.getTime() + HISTORICAL_POSITION_TIME_TOLERANCE_MS + 1
+        ),
+      },
+    ]);
+
+    expect(evaluations[0]?.rejectionReasons).toEqual([
+      'account_mismatch',
+      'broker_mismatch',
+      'symbol_mismatch',
+      'subscription_mismatch',
+      'assignment_mismatch',
+      'quantity_mismatch',
+      'price_outside_tolerance',
+      'time_outside_window',
+    ]);
   });
 });
 
