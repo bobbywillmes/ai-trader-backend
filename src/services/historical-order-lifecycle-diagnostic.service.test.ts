@@ -6,6 +6,7 @@ import {
   HISTORICAL_PRICE_TOLERANCE,
   HISTORICAL_QUANTITY_TOLERANCE,
   matchHistoricalEntryPosition,
+  summarizeLocalFillEvidence,
 } from './historical-order-lifecycle-diagnostic.service.js';
 
 const fillTime = new Date('2026-01-02T12:00:00.000Z');
@@ -95,6 +96,7 @@ describe('matchHistoricalEntryPosition', () => {
 describe('classifyLocalFillEvidence', () => {
   const activity = {
     activityType: 'FILL',
+    qty: 1,
     cumQty: 1,
     leavesQty: 0,
     price: 400,
@@ -134,5 +136,63 @@ describe('classifyLocalFillEvidence', () => {
         activities: [{ ...activity, tradingAccountId: 2 }],
       })
     ).toBe('none');
+  });
+});
+
+describe('summarizeLocalFillEvidence', () => {
+  it('uses two incremental fills, their weighted price, and final cumulative completion', () => {
+    const result = summarizeLocalFillEvidence({
+      orderQty: 2,
+      tradingAccountId: 1,
+      brokerOrderRecordId: 20,
+      activities: [
+        {
+          activityType: 'FILL',
+          qty: 0.5,
+          cumQty: 0.5,
+          leavesQty: 1.5,
+          price: 100,
+          transactionTime: new Date('2026-01-02T11:59:58.000Z'),
+          tradingAccountId: 1,
+          brokerOrderRecordId: 20,
+        },
+        {
+          activityType: 'FILL',
+          qty: 1.5,
+          cumQty: 2,
+          leavesQty: 0,
+          price: 102,
+          transactionTime: fillTime,
+          tradingAccountId: 1,
+          brokerOrderRecordId: 20,
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      classification: 'full',
+      cumulativeQty: 2,
+      leavesQty: 0,
+      weightedAveragePrice: 101.5,
+      completionTime: fillTime,
+      activityCount: 2,
+    });
+    expect(
+      matchHistoricalEntryPosition(
+        {
+          ...input,
+          qty: 2,
+          fillPrice: result.weightedAveragePrice,
+          fillTime: result.completionTime,
+        },
+        [
+          {
+            ...candidate,
+            qty: 2,
+            avgEntryPrice: 101.5,
+          },
+        ]
+      ).status
+    ).toBe('exact');
   });
 });

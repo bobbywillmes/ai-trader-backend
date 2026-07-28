@@ -100,6 +100,7 @@ export function matchHistoricalEntryPosition(
 
 type FillEvidenceActivity = {
   activityType: string;
+  qty: number | null;
   cumQty: number | null;
   leavesQty: number | null;
   price: number | null;
@@ -108,7 +109,7 @@ type FillEvidenceActivity = {
   brokerOrderRecordId: number | null;
 };
 
-export function classifyLocalFillEvidence(args: {
+export function summarizeLocalFillEvidence(args: {
   orderQty: number | null;
   tradingAccountId: number;
   brokerOrderRecordId: number;
@@ -120,22 +121,77 @@ export function classifyLocalFillEvidence(args: {
       activity.tradingAccountId === args.tradingAccountId &&
       activity.brokerOrderRecordId === args.brokerOrderRecordId
   );
-  if (ownedFills.length === 0 || args.orderQty === null) return 'none' as const;
-
-  const latest = [...ownedFills].sort(
-    (left, right) =>
-      (right.transactionTime?.getTime() ?? 0) -
-      (left.transactionTime?.getTime() ?? 0)
-  )[0]!;
-  if (
-    latest.cumQty !== null &&
-    latest.leavesQty !== null &&
-    closeEnough(Math.abs(latest.cumQty), Math.abs(args.orderQty), HISTORICAL_QUANTITY_TOLERANCE) &&
-    closeEnough(Math.abs(latest.leavesQty), 0, HISTORICAL_QUANTITY_TOLERANCE)
-  ) {
-    return 'full' as const;
+  if (ownedFills.length === 0 || args.orderQty === null) {
+    return {
+      classification: 'none' as const,
+      cumulativeQty: null,
+      leavesQty: null,
+      weightedAveragePrice: null,
+      completionTime: null,
+      activityCount: ownedFills.length,
+    };
   }
-  return 'partial' as const;
+
+  const ordered = [...ownedFills].sort(
+    (left, right) =>
+      (left.transactionTime?.getTime() ?? 0) -
+      (right.transactionTime?.getTime() ?? 0)
+  );
+  const completion = [...ordered]
+    .reverse()
+    .find(
+      (activity) =>
+        activity.cumQty !== null &&
+        activity.leavesQty !== null &&
+        closeEnough(
+          Math.abs(activity.cumQty),
+          Math.abs(args.orderQty!),
+          HISTORICAL_QUANTITY_TOLERANCE
+        ) &&
+        closeEnough(
+          Math.abs(activity.leavesQty),
+          0,
+          HISTORICAL_QUANTITY_TOLERANCE
+        )
+    );
+  const pricedFills = ownedFills.filter(
+    (activity) =>
+      activity.qty !== null &&
+      activity.price !== null &&
+      Number.isFinite(activity.qty) &&
+      Number.isFinite(activity.price) &&
+      Math.abs(activity.qty) > 0
+  );
+  const pricedQty = pricedFills.reduce(
+    (total, activity) => total + Math.abs(activity.qty!),
+    0
+  );
+  const weightedAveragePrice =
+    pricedQty > 0
+      ? pricedFills.reduce(
+          (total, activity) =>
+            total + Math.abs(activity.qty!) * activity.price!,
+          0
+        ) / pricedQty
+      : null;
+
+  return {
+    classification: completion ? ('full' as const) : ('partial' as const),
+    cumulativeQty: completion?.cumQty ?? ordered.at(-1)?.cumQty ?? null,
+    leavesQty: completion?.leavesQty ?? ordered.at(-1)?.leavesQty ?? null,
+    weightedAveragePrice,
+    completionTime: completion?.transactionTime ?? null,
+    activityCount: ownedFills.length,
+  };
+}
+
+export function classifyLocalFillEvidence(args: {
+  orderQty: number | null;
+  tradingAccountId: number;
+  brokerOrderRecordId: number;
+  activities: FillEvidenceActivity[];
+}) {
+  return summarizeLocalFillEvidence(args).classification;
 }
 
 const candidateInclude = {
@@ -217,19 +273,13 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
 
   const locallyClassified = await Promise.all(
     candidates.map(async (order) => {
-      const fillEvidence = classifyLocalFillEvidence({
+      const fillSummary = summarizeLocalFillEvidence({
         orderQty: order.orderIntent.qty,
         tradingAccountId: args.tradingAccountId,
         brokerOrderRecordId: order.id,
         activities: order.brokerActivities,
       });
-      const fill = [...order.brokerActivities]
-        .filter((activity) => activity.activityType.toUpperCase() === 'FILL')
-        .sort(
-          (left, right) =>
-            (right.transactionTime?.getTime() ?? 0) -
-            (left.transactionTime?.getTime() ?? 0)
-        )[0];
+      const fillEvidence = fillSummary.classification;
       const positionCandidates =
         fillEvidence === 'full' && order.side.toLowerCase() === 'buy'
           ? await prisma.trackedPosition.findMany({
@@ -248,8 +298,8 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
           symbol: order.symbol,
           side: order.side,
           qty: order.orderIntent.qty,
-          fillPrice: fill?.price ?? null,
-          fillTime: fill?.transactionTime ?? null,
+          fillPrice: fillSummary.weightedAveragePrice,
+          fillTime: fillSummary.completionTime,
           subscriptionId: order.orderIntent.subscriptionId,
           tradingAccountSubscriptionId:
             order.orderIntent.tradingAccountSubscriptionId,
@@ -265,7 +315,13 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
         classifications.push('POSITION_LINK_AMBIGUOUS');
       if (fillEvidence === 'full' && positionMatch.status === 'missing')
         classifications.push('POSITION_LINK_MISSING');
-      return { order, fillEvidence, fill, positionMatch, classifications };
+      return {
+        order,
+        fillEvidence,
+        fillSummary,
+        positionMatch,
+        classifications,
+      };
     })
   );
 
@@ -318,6 +374,27 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
       symbol: candidate.order.symbol,
       side: candidate.order.side,
       quantity: candidate.order.orderIntent.qty,
+      brokerOrderStatus: candidate.order.status,
+      orderIntentStatus: candidate.order.orderIntent.status,
+      blockReason: candidate.order.orderIntent.blockReason,
+      orderIntentTrackedPositionId:
+        candidate.order.orderIntent.trackedPositionId,
+      brokerOrderTrackedPositionId: candidate.order.trackedPositionId,
+      activityTrackedPositionIds: Array.from(
+        new Set(
+          candidate.order.brokerActivities
+            .map((activity) => activity.trackedPositionId)
+            .filter((id): id is number => id !== null)
+        )
+      ),
+      fillEvidence: {
+        cumulativeQty: candidate.fillSummary.cumulativeQty,
+        leavesQty: candidate.fillSummary.leavesQty,
+        weightedAveragePrice: candidate.fillSummary.weightedAveragePrice,
+        completionTime:
+          candidate.fillSummary.completionTime?.toISOString() ?? null,
+        activityCount: candidate.fillSummary.activityCount,
+      },
       subscriptionId: candidate.order.orderIntent.subscriptionId,
       tradingAccountSubscriptionId:
         candidate.order.orderIntent.tradingAccountSubscriptionId,
