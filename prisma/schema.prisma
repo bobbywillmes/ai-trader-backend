@@ -56,6 +56,8 @@ model User {
   tradingAccountMemberships   TradingAccountMembership[]
   systemEventsActed           SystemEvent[]               @relation("SystemEventActor")
   readinessAssessmentsRequested TradingAccountReadinessAssessment[] @relation("ReadinessAssessmentRequester")
+  lifecycleExercisesCreated   TradingLifecycleExercise[]  @relation("LifecycleExerciseCreator")
+  lifecycleExerciseTargets    TradingLifecycleExerciseTarget[] @relation("LifecycleExerciseAccountHolder")
 }
 
 model UserSetupToken {
@@ -187,6 +189,7 @@ model TradingAccount {
   alpacaApiUsageBuckets     AlpacaApiUsageBucket[]
   workerHealthStates        TradingAccountWorkerHealthState[]
   readinessAssessments      TradingAccountReadinessAssessment[]
+  lifecycleExerciseTargets  TradingLifecycleExerciseTarget[]
 
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
@@ -399,6 +402,7 @@ model TradingAccountSubscription {
   orderIntents          OrderIntent[]
   trackedPositions      TrackedPosition[]
   entryDecisions        EntryDecision[]
+  lifecycleExerciseTargets TradingLifecycleExerciseTarget[]
 
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -414,6 +418,107 @@ model TradingAccountSubscription {
   @@index([tradingAccountId, entriesEnabled])
   @@index([tradingAccountId, exitsEnabled])
   @@index([allocationId, enabled])
+}
+
+enum TradingLifecycleExerciseSelectionMode {
+  SELECTED_USERS
+  ALL_ELIGIBLE
+}
+
+enum TradingLifecycleExerciseStatus {
+  PREVIEWED
+  LAUNCHING
+  RUNNING
+  BLOCKED
+  PARTIAL
+  COMPLETED
+  FAILED
+  CANCELLED
+  ATTENTION_REQUIRED
+}
+
+enum TradingLifecycleExerciseTargetStatus {
+  READY
+  WARNING
+  BLOCKED
+  DISPATCHING
+  INTENT_CREATED
+  DUPLICATE
+  FAILED
+  ACTIVE
+  CLOSED
+  RECONCILED
+  ATTENTION_REQUIRED
+  CANCELLED
+}
+
+model TradingLifecycleExercise {
+  id                        Int @id @default(autoincrement())
+  name                      String?
+  reason                    String
+  subscriptionId            Int
+  subscription              Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+  selectionMode             TradingLifecycleExerciseSelectionMode
+  requestedUserIdsJson      Json
+  environment               TradingAccountEnvironment
+  status                    TradingLifecycleExerciseStatus
+  previewFingerprint        String
+  previewVersion            Int @default(1)
+  previewedAt               DateTime
+  previewExpiresAt          DateTime
+  launchedAt                DateTime?
+  completedAt               DateTime?
+  cancelledAt               DateTime?
+  createdByUserId           Int
+  createdByUser             User @relation("LifecycleExerciseCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  selectionResultsJson      Json
+  summaryJson               Json?
+  targets                   TradingLifecycleExerciseTarget[]
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  @@index([createdAt])
+  @@index([status, createdAt])
+  @@index([subscriptionId, createdAt])
+  @@index([createdByUserId, createdAt])
+}
+
+model TradingLifecycleExerciseTarget {
+  id                              Int @id @default(autoincrement())
+  exerciseId                      Int
+  exercise                        TradingLifecycleExercise @relation(fields: [exerciseId], references: [id], onDelete: Restrict)
+  accountHolderUserId             Int
+  accountHolderUser               User @relation("LifecycleExerciseAccountHolder", fields: [accountHolderUserId], references: [id], onDelete: Restrict)
+  tradingAccountId                Int
+  tradingAccount                  TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  tradingAccountSubscriptionId    Int
+  tradingAccountSubscription      TradingAccountSubscription @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: Restrict)
+  environment                     TradingAccountEnvironment
+  status                          TradingLifecycleExerciseTargetStatus
+  previewFingerprint              String
+  readinessJson                   Json
+  blockersJson                    Json
+  warningsJson                    Json
+  resolvedSizingJson              Json?
+  estimatedPrice                  Float?
+  resolvedQuantity                Float?
+  estimatedNotional               Float?
+  orderIntentId                   Int? @unique
+  orderIntent                     OrderIntent? @relation(fields: [orderIntentId], references: [id], onDelete: Restrict)
+  dispatchStartedAt               DateTime?
+  dispatchCompletedAt             DateTime?
+  intentCreatedAt                 DateTime?
+  reconciledAt                    DateTime?
+  reconciliationSummaryJson       Json?
+  cancelledAt                     DateTime?
+  createdAt                       DateTime @default(now())
+  updatedAt                       DateTime @updatedAt
+
+  @@unique([exerciseId, tradingAccountSubscriptionId])
+  @@index([exerciseId, status])
+  @@index([tradingAccountId, createdAt])
+  @@index([tradingAccountSubscriptionId, createdAt])
+  @@index([orderIntentId])
 }
 
 enum AssetType {
@@ -516,6 +621,7 @@ model OrderIntent {
   brokerOrders     BrokerOrder[]
   brokerActivities BrokerActivity[]
   entryDecision    EntryDecision?
+  lifecycleExerciseTarget TradingLifecycleExerciseTarget?
 
   @@index([trackedPositionId])
   @@index([tradingAccountId])
@@ -1467,6 +1573,7 @@ model Subscription {
   orderIntents            OrderIntent[]
   entryDecisions          EntryDecision[]
   accountSubscriptions    TradingAccountSubscription[]
+  lifecycleExercises      TradingLifecycleExercise[]
 
   @@index([symbol])
   @@index([strategyId])

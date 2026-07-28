@@ -37,6 +37,8 @@ Table User {
   tradingAccountMemberships TradingAccountMembership [not null]
   systemEventsActed SystemEvent [not null]
   readinessAssessmentsRequested TradingAccountReadinessAssessment [not null]
+  lifecycleExercisesCreated TradingLifecycleExercise [not null]
+  lifecycleExerciseTargets TradingLifecycleExerciseTarget [not null]
 }
 
 Table UserSetupToken {
@@ -104,6 +106,7 @@ Table TradingAccount {
   alpacaApiUsageBuckets AlpacaApiUsageBucket [not null]
   workerHealthStates TradingAccountWorkerHealthState [not null]
   readinessAssessments TradingAccountReadinessAssessment [not null]
+  lifecycleExerciseTargets TradingLifecycleExerciseTarget [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 
@@ -242,11 +245,74 @@ Table TradingAccountSubscription {
   orderIntents OrderIntent [not null]
   trackedPositions TrackedPosition [not null]
   entryDecisions EntryDecision [not null]
+  lifecycleExerciseTargets TradingLifecycleExerciseTarget [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 
   indexes {
     (tradingAccountId, subscriptionId) [unique]
+  }
+}
+
+Table TradingLifecycleExercise {
+  id Int [pk, increment]
+  name String
+  reason String [not null]
+  subscriptionId Int [not null]
+  subscription Subscription [not null]
+  selectionMode TradingLifecycleExerciseSelectionMode [not null]
+  requestedUserIdsJson Json [not null]
+  environment TradingAccountEnvironment [not null]
+  status TradingLifecycleExerciseStatus [not null]
+  previewFingerprint String [not null]
+  previewVersion Int [not null, default: 1]
+  previewedAt DateTime [not null]
+  previewExpiresAt DateTime [not null]
+  launchedAt DateTime
+  completedAt DateTime
+  cancelledAt DateTime
+  createdByUserId Int [not null]
+  createdByUser User [not null]
+  selectionResultsJson Json [not null]
+  summaryJson Json
+  targets TradingLifecycleExerciseTarget [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+}
+
+Table TradingLifecycleExerciseTarget {
+  id Int [pk, increment]
+  exerciseId Int [not null]
+  exercise TradingLifecycleExercise [not null]
+  accountHolderUserId Int [not null]
+  accountHolderUser User [not null]
+  tradingAccountId Int [not null]
+  tradingAccount TradingAccount [not null]
+  tradingAccountSubscriptionId Int [not null]
+  tradingAccountSubscription TradingAccountSubscription [not null]
+  environment TradingAccountEnvironment [not null]
+  status TradingLifecycleExerciseTargetStatus [not null]
+  previewFingerprint String [not null]
+  readinessJson Json [not null]
+  blockersJson Json [not null]
+  warningsJson Json [not null]
+  resolvedSizingJson Json
+  estimatedPrice Float
+  resolvedQuantity Float
+  estimatedNotional Float
+  orderIntentId Int [unique]
+  orderIntent OrderIntent
+  dispatchStartedAt DateTime
+  dispatchCompletedAt DateTime
+  intentCreatedAt DateTime
+  reconciledAt DateTime
+  reconciliationSummaryJson Json
+  cancelledAt DateTime
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+
+  indexes {
+    (exerciseId, tradingAccountSubscriptionId) [unique]
   }
 }
 
@@ -314,6 +380,7 @@ Table OrderIntent {
   brokerOrders BrokerOrder [not null]
   brokerActivities BrokerActivity [not null]
   entryDecision EntryDecision
+  lifecycleExerciseTarget TradingLifecycleExerciseTarget
 }
 
 Table BrokerOrder {
@@ -912,6 +979,7 @@ Table Subscription {
   orderIntents OrderIntent [not null]
   entryDecisions EntryDecision [not null]
   accountSubscriptions TradingAccountSubscription [not null]
+  lifecycleExercises TradingLifecycleExercise [not null]
 }
 
 Enum PlatformRole {
@@ -962,6 +1030,38 @@ Enum BrokerCredentialStatus {
   ACTIVE
   INVALID
   REVOKED
+}
+
+Enum TradingLifecycleExerciseSelectionMode {
+  SELECTED_USERS
+  ALL_ELIGIBLE
+}
+
+Enum TradingLifecycleExerciseStatus {
+  PREVIEWED
+  LAUNCHING
+  RUNNING
+  BLOCKED
+  PARTIAL
+  COMPLETED
+  FAILED
+  CANCELLED
+  ATTENTION_REQUIRED
+}
+
+Enum TradingLifecycleExerciseTargetStatus {
+  READY
+  WARNING
+  BLOCKED
+  DISPATCHING
+  INTENT_CREATED
+  DUPLICATE
+  FAILED
+  ACTIVE
+  CLOSED
+  RECONCILED
+  ATTENTION_REQUIRED
+  CANCELLED
 }
 
 Enum AssetType {
@@ -1107,6 +1207,20 @@ Ref: TradingAccountSubscription.tradingAccountId > TradingAccount.id [delete: Ca
 Ref: TradingAccountSubscription.subscriptionId > Subscription.id [delete: Cascade]
 
 Ref: TradingAccountSubscription.(allocationId, tradingAccountId) > TradingAccountAllocation.(id, tradingAccountId) [delete: Restrict]
+
+Ref: TradingLifecycleExercise.subscriptionId > Subscription.id [delete: Restrict]
+
+Ref: TradingLifecycleExercise.createdByUserId > User.id [delete: Restrict]
+
+Ref: TradingLifecycleExerciseTarget.exerciseId > TradingLifecycleExercise.id [delete: Restrict]
+
+Ref: TradingLifecycleExerciseTarget.accountHolderUserId > User.id [delete: Restrict]
+
+Ref: TradingLifecycleExerciseTarget.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: TradingLifecycleExerciseTarget.tradingAccountSubscriptionId > TradingAccountSubscription.id [delete: Restrict]
+
+Ref: TradingLifecycleExerciseTarget.orderIntentId - OrderIntent.id [delete: Restrict]
 
 Ref: MomentumUniverseMember.securityId - Security.id [delete: Cascade]
 
