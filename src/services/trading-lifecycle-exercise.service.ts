@@ -12,6 +12,7 @@ import { previewTradingAccountEntryRisk } from './trading-account-entry-risk-pre
 import { processEntryForAccountSubscription } from './signal-entry.service.js';
 import { createSystemEvent } from './system-event.service.js';
 import { reconcileTradingAccountWithLock } from './reconciliation.service.js';
+import { projectTradingLifecycleExerciseTarget } from './trading-lifecycle-exercise-projection.service.js';
 
 export const LIFECYCLE_EXERCISE_MAX_TARGETS = 25;
 export const LIFECYCLE_EXERCISE_PREVIEW_TTL_MS = 5 * 60_000;
@@ -251,14 +252,24 @@ async function getExerciseOrThrow(id: number) {
           accountHolderUser: { select: { id: true, name: true, email: true } },
           tradingAccount: { select: { id: true, displayName: true, environment: true } },
           tradingAccountSubscription: { select: { id: true, subscriptionId: true, tradingAccountId: true } },
-          orderIntent: { include: { brokerOrders: { orderBy: { id: 'asc' } }, trackedPosition: { include: { exitState: true } } } },
+          orderIntent: { include: {
+            brokerActivities: { orderBy: { id: 'asc' } },
+            brokerOrders: { include: { trackedPosition: { include: { exitState: true } } }, orderBy: { id: 'asc' } },
+            trackedPosition: { include: { exitState: true } },
+          } },
         },
         orderBy: [{ tradingAccountId: 'asc' }, { tradingAccountSubscriptionId: 'asc' }],
       },
     },
   });
   if (!exercise) throw new HttpError(404, 'Lifecycle exercise not found.');
-  return exercise;
+  return {
+    ...exercise,
+    targets: exercise.targets.map((target) => ({
+      ...target,
+      projection: projectTradingLifecycleExerciseTarget(target),
+    })),
+  };
 }
 
 export async function launchTradingLifecycleExercise(id: number, actorUserId: number, now = new Date()) {
