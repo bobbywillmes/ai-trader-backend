@@ -27,6 +27,7 @@ export const adminNavGroups: AdminNavGroup[] = [
     items: [
       { to: "/trading-accounts", label: "Trading Accounts", requiredPermission: "tradingAccount.read" },
       { to: "/entry-decisions", label: "Entry Decisions", requiredPermission: "tradingAccount.read" },
+      { to: "/lifecycle-exercises", label: "Lifecycle Exercises", systemOwnerOnly: true, requiredPermission: "tradingLifecycleExercise.read" },
       { to: "/momentum-scanner", label: "Momentum Scanner", requiredPermission: "strategy.read" },
       { to: "/strategies", label: "Strategies", requiredPermission: "strategy.read" },
       { to: "/subscriptions", label: "Subscriptions", requiredPermission: "subscription.read" },

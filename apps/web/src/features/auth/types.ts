@@ -15,7 +15,9 @@ export type PlatformPermission =
   | "exitProfile.read"
   | "exitProfile.write"
   | "reports.read"
-  | "systemEvents.read";
+  | "systemEvents.read"
+  | "tradingLifecycleExercise.read"
+  | "tradingLifecycleExercise.write";
 
 export type User = {
   id: number;
