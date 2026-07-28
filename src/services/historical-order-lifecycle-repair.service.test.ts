@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  assertApplyReportUnchanged,
   buildHistoricalOrderRepairProposal,
   countPendingRepairIntents,
   repairHistoricalOrderLifecycle,
@@ -29,6 +30,7 @@ function row(overrides: Record<string, unknown> = {}) {
       completionTime: new Date().toISOString(),
       activityCount: 1,
     },
+    localStateFingerprint: 'state-v1',
     subscriptionId: 5,
     tradingAccountSubscriptionId: 9,
     createdAt: new Date(),
@@ -113,6 +115,17 @@ describe('buildHistoricalOrderRepairProposal', () => {
     });
   });
 
+  it('refuses an entry whose existing lifecycle link contradicts the exact match', () => {
+    expect(
+      buildHistoricalOrderRepairProposal(
+        row({
+          matchedTrackedPositionId: 30,
+          activityTrackedPositionIds: [31],
+        })
+      )
+    ).toBeNull();
+  });
+
   it.each([
     ['partial fill', ['PARTIAL_FILL_LOCAL_EVIDENCE']],
     ['ambiguous match', ['FULL_FILL_LOCAL_EVIDENCE', 'POSITION_LINK_AMBIGUOUS']],
@@ -179,5 +192,31 @@ describe('repairHistoricalOrderLifecycle apply guard', () => {
         confirmation: 'wrong',
       })
     ).rejects.toThrow('Apply mode requires');
+  });
+});
+
+describe('assertApplyReportUnchanged', () => {
+  it('refuses when lifecycle state changes after broker evidence is gathered', () => {
+    const proposal = buildHistoricalOrderRepairProposal(row())!;
+    const initial = {
+      proposals: [{ row: row(), proposal }],
+    } as never;
+    const final = {
+      proposals: [
+        {
+          row: row({
+            brokerOrderStatus: 'filled',
+            localStateFingerprint: 'state-v2',
+          }),
+          proposal,
+        },
+      ],
+    } as never;
+
+    expect(() =>
+      assertApplyReportUnchanged({ initial, final })
+    ).toThrow(
+      'Lifecycle group 20 changed after broker evidence was gathered.'
+    );
   });
 });

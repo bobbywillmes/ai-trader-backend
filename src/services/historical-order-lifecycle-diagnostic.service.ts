@@ -55,6 +55,87 @@ export type HistoricalPositionCandidate = {
   tradingAccountSubscriptionId: number | null;
 };
 
+export function createHistoricalLifecycleStateFingerprint(order: {
+  id: number;
+  orderIntentId: number;
+  tradingAccountId: number | null;
+  broker: string;
+  brokerOrderId: string;
+  clientOrderId: string;
+  symbol: string;
+  side: string;
+  status: string;
+  trackedPositionId: number | null;
+  orderIntent: {
+    id: number;
+    tradingAccountId: number | null;
+    status: string;
+    side: string;
+    qty: number | null;
+    blockReason: string | null;
+    subscriptionId: number | null;
+    tradingAccountSubscriptionId: number | null;
+    trackedPositionId: number | null;
+  };
+  brokerActivities: Array<{
+    id: number;
+    activityId: string;
+    activityType: string;
+    tradingAccountId: number | null;
+    brokerOrderRecordId: number | null;
+    orderIntentId: number | null;
+    trackedPositionId: number | null;
+    qty: number | null;
+    cumQty: number | null;
+    leavesQty: number | null;
+    price: number | null;
+    transactionTime: Date | null;
+  }>;
+}) {
+  return JSON.stringify({
+    brokerOrder: {
+      id: order.id,
+      orderIntentId: order.orderIntentId,
+      tradingAccountId: order.tradingAccountId,
+      broker: order.broker,
+      brokerOrderId: order.brokerOrderId,
+      clientOrderId: order.clientOrderId,
+      symbol: order.symbol,
+      side: order.side,
+      status: order.status,
+      trackedPositionId: order.trackedPositionId,
+    },
+    orderIntent: {
+      id: order.orderIntent.id,
+      tradingAccountId: order.orderIntent.tradingAccountId,
+      status: order.orderIntent.status,
+      side: order.orderIntent.side,
+      qty: order.orderIntent.qty,
+      blockReason: order.orderIntent.blockReason,
+      subscriptionId: order.orderIntent.subscriptionId,
+      tradingAccountSubscriptionId:
+        order.orderIntent.tradingAccountSubscriptionId,
+      trackedPositionId: order.orderIntent.trackedPositionId,
+    },
+    brokerActivities: [...order.brokerActivities]
+      .sort((left, right) => left.id - right.id)
+      .map((activity) => ({
+        id: activity.id,
+        activityId: activity.activityId,
+        activityType: activity.activityType,
+        tradingAccountId: activity.tradingAccountId,
+        brokerOrderRecordId: activity.brokerOrderRecordId,
+        orderIntentId: activity.orderIntentId,
+        trackedPositionId: activity.trackedPositionId,
+        qty: activity.qty,
+        cumQty: activity.cumQty,
+        leavesQty: activity.leavesQty,
+        price: activity.price,
+        transactionTime: activity.transactionTime?.toISOString() ?? null,
+      })),
+  });
+}
+
 function closeEnough(actual: number, expected: number, tolerance: number) {
   return Math.abs(actual - expected) <= tolerance;
 }
@@ -387,6 +468,8 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
             .filter((id): id is number => id !== null)
         )
       ),
+      localStateFingerprint:
+        createHistoricalLifecycleStateFingerprint(candidate.order),
       fillEvidence: {
         cumulativeQty: candidate.fillSummary.cumulativeQty,
         leavesQty: candidate.fillSummary.leavesQty,
