@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   orderIntentUpdateMany: vi.fn(),
   trackedPositionUpdateMany: vi.fn(),
   brokerOrderUpdateMany: vi.fn(),
+  brokerActivityUpdateMany: vi.fn(),
+  transaction: vi.fn(),
   brokerActivityFindMany: vi.fn(),
   subscriptionFindMany: vi.fn(),
   subscriptionFindFirst: vi.fn(),
@@ -27,6 +29,7 @@ vi.mock('../db/prisma.js', () => ({
     },
     brokerActivity: {
       findMany: mocks.brokerActivityFindMany,
+      updateMany: mocks.brokerActivityUpdateMany,
     },
     subscription: {
       findMany: mocks.subscriptionFindMany,
@@ -36,6 +39,7 @@ vi.mock('../db/prisma.js', () => ({
     tradingAccount: {
       findUniqueOrThrow: mocks.tradingAccountFindUniqueOrThrow,
     },
+    $transaction: mocks.transaction,
   },
 }));
 
@@ -78,7 +82,16 @@ describe('tracked position subscription resolution', () => {
     mocks.orderIntentUpdateMany.mockResolvedValue({ count: 1 });
     mocks.trackedPositionUpdateMany.mockResolvedValue({ count: 1 });
     mocks.brokerOrderUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.brokerActivityUpdateMany.mockResolvedValue({ count: 1 });
     mocks.linkEntryDecisionToTrackedPosition.mockResolvedValue({ count: 1 });
+    mocks.transaction.mockImplementation((callback) =>
+      callback({
+        orderIntent: { updateMany: mocks.orderIntentUpdateMany },
+        trackedPosition: { updateMany: mocks.trackedPositionUpdateMany },
+        brokerOrder: { updateMany: mocks.brokerOrderUpdateMany },
+        brokerActivity: { updateMany: mocks.brokerActivityUpdateMany },
+      })
+    );
   });
 
   it('resolves a locally submitted entry through its local order intent', async () => {
@@ -337,6 +350,20 @@ describe('tracked position subscription resolution', () => {
       },
       data: {
         tradingAccountSubscriptionId: 44,
+      },
+    });
+    expect(mocks.brokerActivityUpdateMany).toHaveBeenCalledWith({
+      where: {
+        orderIntentId: 101,
+        tradingAccountId: 1,
+        activityType: 'FILL',
+        brokerOrderRecordId: { in: [201] },
+        trackedPositionId: null,
+      },
+      data: {
+        trackedPositionId: 303,
+        trackedPositionLinkSource: 'broker_order',
+        trackedPositionLinkedAt: expect.any(Date),
       },
     });
     expect(mocks.linkEntryDecisionToTrackedPosition).toHaveBeenCalledWith({
