@@ -26,6 +26,95 @@ export type BrokerActivityTrackedPositionLinkSource =
   | 'reconciliation_discovered_close'
   | 'manual_review';
 
+const FULL_FILL_TOLERANCE = 0.000001;
+
+export function isAuthoritativeFullFill(args: {
+  activityType: string | undefined;
+  cumulativeQty: string | number | undefined;
+  leavesQty: string | number | undefined;
+  orderQty: number | null | undefined;
+}) {
+  const cumulativeQty = Number(args.cumulativeQty);
+  const leavesQty = Number(args.leavesQty);
+  return (
+    args.activityType?.toUpperCase() === 'FILL' &&
+    args.orderQty !== null &&
+    args.orderQty !== undefined &&
+    Number.isFinite(cumulativeQty) &&
+    Number.isFinite(leavesQty) &&
+    Math.abs(Math.abs(cumulativeQty) - Math.abs(args.orderQty)) <=
+      FULL_FILL_TOLERANCE &&
+    Math.abs(leavesQty) <= FULL_FILL_TOLERANCE
+  );
+}
+
+async function terminalizeImportedFullFill(args: {
+  activity: AlpacaAccountActivity;
+  tradingAccountId: number;
+  linkedBrokerOrder: Awaited<ReturnType<typeof findLinkedBrokerOrder>>;
+  trackedPositionId: number | null;
+}) {
+  if (
+    !args.linkedBrokerOrder ||
+    !isAuthoritativeFullFill({
+      activityType:
+        args.activity.activity_type ?? args.activity.type,
+      cumulativeQty: args.activity.cum_qty,
+      leavesQty: args.activity.leaves_qty,
+      orderQty: args.linkedBrokerOrder.orderIntent.qty,
+    })
+  ) {
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.brokerOrder.updateMany({
+      where: {
+        id: args.linkedBrokerOrder!.id,
+        tradingAccountId: args.tradingAccountId,
+        status: {
+          notIn: ['filled', 'canceled', 'cancelled', 'expired', 'rejected', 'replaced'],
+        },
+      },
+      data: {
+        status: 'filled',
+        ...(args.trackedPositionId !== null && {
+          trackedPositionId: args.trackedPositionId,
+        }),
+      },
+    });
+    await tx.orderIntent.updateMany({
+      where: {
+        id: args.linkedBrokerOrder!.orderIntentId,
+        tradingAccountId: args.tradingAccountId,
+        status: {
+          notIn: ['filled', 'canceled', 'cancelled', 'expired', 'rejected'],
+        },
+      },
+      data: {
+        status: 'filled',
+        ...(args.trackedPositionId !== null && {
+          trackedPositionId: args.trackedPositionId,
+        }),
+      },
+    });
+    if (args.trackedPositionId !== null) {
+      await tx.brokerActivity.updateMany({
+        where: {
+          tradingAccountId: args.tradingAccountId,
+          brokerOrderRecordId: args.linkedBrokerOrder!.id,
+          activityType: 'FILL',
+        },
+        data: {
+          trackedPositionId: args.trackedPositionId,
+          trackedPositionLinkSource: 'broker_order',
+          trackedPositionLinkedAt: new Date(),
+        },
+      });
+    }
+  });
+}
+
 function parseNullableFloat(value: string | undefined): number | null {
   if (value === undefined) return null;
 
@@ -224,11 +313,24 @@ async function upsertBrokerActivity(args: {
       data,
     });
 
+    await terminalizeImportedFullFill({
+      activity,
+      tradingAccountId,
+      linkedBrokerOrder,
+      trackedPositionId:
+        trackedPositionLink.trackedPositionId ?? existing.trackedPositionId ?? null,
+    });
     return 'updated' as const;
   }
 
   await prisma.brokerActivity.create({
     data,
+  });
+  await terminalizeImportedFullFill({
+    activity,
+    tradingAccountId,
+    linkedBrokerOrder,
+    trackedPositionId: trackedPositionLink.trackedPositionId,
   });
 
   return 'created' as const;

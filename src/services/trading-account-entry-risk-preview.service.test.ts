@@ -175,6 +175,7 @@ describe('trading account entry risk preview service', () => {
         effectiveEntryLimits: {
           tradingAccountId: 1,
           limits: {
+            maxOpenPositions: { value: 10, source: 'ACCOUNT' },
             maxDailyEntryOrders: { value: 10, source: 'ACCOUNT' },
             maxDailyEntryNotional: {
               value: 25_000,
@@ -183,6 +184,9 @@ describe('trading account entry risk preview service', () => {
           },
         },
         usage: {
+          activePositionCount: 1,
+          pendingEntryPositionCount: 12,
+          currentAccountPositionSlots: 13,
           openPositionNotional: 2_000,
           pendingEntryNotional: 500,
           currentAccountExposure: 2_500,
@@ -203,6 +207,14 @@ describe('trading account entry risk preview service', () => {
       tradingAccount: {
         id: 1,
         displayName: 'Bobby Paper',
+      },
+      positionSlotUsage: {
+        accountMaxPositions: 10,
+        activePositionCount: 1,
+        pendingEntryIntentSlotCount: 12,
+        usedSlots: 13,
+        proposedAdditionalSlots: 1,
+        projectedSlotCount: 14,
       },
       subscription: {
         id: 30,

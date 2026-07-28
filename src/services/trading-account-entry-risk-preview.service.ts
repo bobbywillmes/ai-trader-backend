@@ -667,6 +667,42 @@ function serializePreviewBase(args: {
     !Array.isArray(args.risk.details)
       ? (args.risk.details as Record<string, unknown>)
       : null;
+  const effectiveEntryLimits =
+    riskDetails?.effectiveEntryLimits &&
+    typeof riskDetails.effectiveEntryLimits === 'object' &&
+    !Array.isArray(riskDetails.effectiveEntryLimits)
+      ? (riskDetails.effectiveEntryLimits as Record<string, unknown>)
+      : null;
+  const limits =
+    effectiveEntryLimits?.limits &&
+    typeof effectiveEntryLimits.limits === 'object' &&
+    !Array.isArray(effectiveEntryLimits.limits)
+      ? (effectiveEntryLimits.limits as Record<string, unknown>)
+      : null;
+  const maxOpenPositions =
+    limits?.maxOpenPositions &&
+    typeof limits.maxOpenPositions === 'object' &&
+    !Array.isArray(limits.maxOpenPositions)
+      ? (limits.maxOpenPositions as Record<string, unknown>).value
+      : null;
+  const usage =
+    riskDetails?.usage &&
+    typeof riskDetails.usage === 'object' &&
+    !Array.isArray(riskDetails.usage)
+      ? (riskDetails.usage as Record<string, unknown>)
+      : null;
+  const activePositionCount =
+    typeof usage?.activePositionCount === 'number'
+      ? usage.activePositionCount
+      : 0;
+  const pendingEntryIntentSlotCount =
+    typeof usage?.pendingEntryPositionCount === 'number'
+      ? usage.pendingEntryPositionCount
+      : 0;
+  const usedSlots =
+    typeof usage?.currentAccountPositionSlots === 'number'
+      ? usage.currentAccountPositionSlots
+      : activePositionCount + pendingEntryIntentSlotCount;
 
   return {
     ok,
@@ -684,6 +720,15 @@ function serializePreviewBase(args: {
     risk: args.risk,
     effectiveEntryLimits: riskDetails?.effectiveEntryLimits ?? null,
     accountUsage: riskDetails?.usage ?? null,
+    positionSlotUsage: {
+      accountMaxPositions:
+        typeof maxOpenPositions === 'number' ? maxOpenPositions : null,
+      activePositionCount,
+      pendingEntryIntentSlotCount,
+      usedSlots,
+      proposedAdditionalSlots: 1,
+      projectedSlotCount: usedSlots + 1,
+    },
     blockingLayer: args.risk.ok ? null : args.risk.layer,
     blockingCode: args.risk.ok ? null : args.risk.code,
     allocationRisk: args.allocationRisk,

@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   brokerActivityCreate: vi.fn(),
 
   brokerOrderFindFirst: vi.fn(),
+  brokerOrderUpdateMany: vi.fn(),
+  orderIntentUpdateMany: vi.fn(),
+  transaction: vi.fn(),
   positionExitStateFindFirst: vi.fn(),
   trackedPositionFindFirst: vi.fn(),
   settingFindMany: vi.fn(),
@@ -29,6 +32,10 @@ vi.mock('../db/prisma.js', () => ({
     },
     brokerOrder: {
       findFirst: mocks.brokerOrderFindFirst,
+      updateMany: mocks.brokerOrderUpdateMany,
+    },
+    orderIntent: {
+      updateMany: mocks.orderIntentUpdateMany,
     },
     positionExitState: {
       findFirst: mocks.positionExitStateFindFirst,
@@ -42,6 +49,7 @@ vi.mock('../db/prisma.js', () => ({
     tradingAccount: {
       findUniqueOrThrow: mocks.tradingAccountFindUniqueOrThrow,
     },
+    $transaction: mocks.transaction,
   },
 }));
 
@@ -66,9 +74,31 @@ vi.mock('./trading-account.service.js', () => ({
 
 import {
   attributeCloseFillsForTrackedPosition,
+  isAuthoritativeFullFill,
   syncBrokerActivities,
   syncBrokerActivitiesForAccount,
 } from './broker-activity.service.js';
+
+describe('broker activity full-fill evidence', () => {
+  it('terminalizes only cumulative fills with zero leaves', () => {
+    expect(
+      isAuthoritativeFullFill({
+        activityType: 'FILL',
+        cumulativeQty: '1',
+        leavesQty: '0',
+        orderQty: 1,
+      })
+    ).toBe(true);
+    expect(
+      isAuthoritativeFullFill({
+        activityType: 'FILL',
+        cumulativeQty: '0.5',
+        leavesQty: '0.5',
+        orderQty: 1,
+      })
+    ).toBe(false);
+  });
+});
 
 describe('broker activity tracked-position attribution', () => {
   beforeEach(() => {
@@ -85,6 +115,13 @@ describe('broker activity tracked-position attribution', () => {
     mocks.tradingAccountFindUniqueOrThrow.mockResolvedValue({
       environment: 'PAPER',
     });
+    mocks.transaction.mockImplementation((callback) =>
+      callback({
+        brokerOrder: { updateMany: mocks.brokerOrderUpdateMany },
+        orderIntent: { updateMany: mocks.orderIntentUpdateMany },
+        brokerActivity: { updateMany: mocks.brokerActivityUpdateMany },
+      })
+    );
   });
 
   it('links observer-discovered close fills when one local cycle is eligible', async () => {
@@ -305,6 +342,69 @@ describe('broker activity tracked-position attribution', () => {
         trackedPositionLinkedAt: expect.any(Date),
       }),
     });
+  });
+
+  it('terminalizes a future full fill and links all lifecycle records', async () => {
+    mocks.brokerOrderFindFirst.mockResolvedValue({
+      id: 301,
+      orderIntentId: 201,
+      trackedPositionId: 101,
+      orderIntent: {
+        id: 201,
+        source: 'signal',
+        qty: 3,
+        trackedPositionId: 101,
+      },
+    });
+    mocks.getAlpacaAccountActivities
+      .mockResolvedValueOnce([
+        {
+          id: 'fill-701',
+          activity_type: 'FILL',
+          type: 'fill',
+          symbol: 'SPY',
+          side: 'buy',
+          qty: '3',
+          cum_qty: '3',
+          leaves_qty: '0',
+          price: '101.25',
+          order_id: 'alpaca-entry-order-123',
+          transaction_time: '2026-06-12T18:00:00.000Z',
+        },
+      ])
+      .mockResolvedValueOnce([]);
+
+    await syncBrokerActivitiesForAccount(1, {
+      activityType: 'FILL',
+      after: new Date('2026-06-12T17:55:00.000Z'),
+      maxPages: 1,
+    });
+
+    expect(mocks.transaction).toHaveBeenCalledOnce();
+    expect(mocks.brokerOrderUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 301, tradingAccountId: 1 }),
+        data: { status: 'filled', trackedPositionId: 101 },
+      })
+    );
+    expect(mocks.orderIntentUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 201, tradingAccountId: 1 }),
+        data: { status: 'filled', trackedPositionId: 101 },
+      })
+    );
+    expect(mocks.brokerActivityUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          brokerOrderRecordId: 301,
+          tradingAccountId: 1,
+        }),
+        data: expect.objectContaining({
+          trackedPositionId: 101,
+          trackedPositionLinkSource: 'broker_order',
+        }),
+      })
+    );
   });
 
   it('scopes trailing broker-order attribution through the activity account', async () => {

@@ -19,6 +19,7 @@ import {
 } from './lifecycle-account-eligibility.service.js';
 import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from './trading-account-workflow-lock.service.js';
 import { runTradingAccountWorkflow } from './trading-account-workflow-runner.service.js';
+import { diagnoseHistoricalOrderLifecycle } from './historical-order-lifecycle-diagnostic.service.js';
 
 export type ReconciliationSeverity = 'info' | 'warn' | 'critical';
 
@@ -31,6 +32,7 @@ export type ReconciliationFindingCode =
   | 'position_quantity_mismatch'
   | 'position_side_mismatch'
   | 'local_nonterminal_order_missing_at_broker'
+  | 'local_order_status_stale_terminal_broker_order'
   | 'broker_order_untracked'
   | 'stale_submitting_intent';
 
@@ -463,6 +465,62 @@ export function reconcileSnapshots(input: ReconciliationInput) {
   return findings;
 }
 
+export function refineHistoricalMissingOrderFindings(
+  findings: ReconciliationFinding[],
+  candidates: Awaited<
+    ReturnType<typeof diagnoseHistoricalOrderLifecycle>
+  >['candidates']
+) {
+  const historicalByLookupKey = new Map<
+    string,
+    (typeof candidates)[number]
+  >(
+    candidates.flatMap((candidate) => [
+      [`broker:${candidate.brokerOrderId}`, candidate] as const,
+      [`client:${candidate.clientOrderId}`, candidate] as const,
+    ])
+  );
+  for (let index = findings.length - 1; index >= 0; index -= 1) {
+    const finding = findings[index]!;
+    if (finding.code !== 'local_nonterminal_order_missing_at_broker') continue;
+    const candidate = historicalByLookupKey.get(finding.entityId);
+    if (!candidate) continue;
+    const terminalLocal = candidate.classifications.includes(
+      'FULL_FILL_LOCAL_EVIDENCE'
+    );
+    const terminalBroker = candidate.classifications.includes(
+      'TERMINAL_BROKER_CONFIRMED'
+    );
+    const nonterminalBroker = candidate.classifications.includes(
+      'NONTERMINAL_BROKER_CONFIRMED'
+    );
+    if (nonterminalBroker) {
+      findings.splice(index, 1);
+      continue;
+    }
+    if (terminalLocal || terminalBroker) {
+      findings[index] = {
+        ...finding,
+        code: 'local_order_status_stale_terminal_broker_order',
+        message: `${candidate.symbol} has terminal lifecycle evidence but remains nonterminal locally.`,
+        details: {
+          ...finding.details,
+          classifications: candidate.classifications,
+          brokerLookup: candidate.brokerLookup,
+          matchedTrackedPositionId: candidate.matchedTrackedPositionId,
+        },
+      };
+    } else {
+      finding.details = {
+        ...finding.details,
+        classifications: candidate.classifications,
+        brokerLookup: candidate.brokerLookup,
+      };
+    }
+  }
+  return findings;
+}
+
 export type RunReconciliationCheckOptions = {
   persistEvents?: boolean;
   persistAttention?: boolean;
@@ -629,6 +687,14 @@ export async function reconcileTradingAccount(
     })),
     defaultBroker: 'alpaca',
   });
+  const historicalDiagnostic = await diagnoseHistoricalOrderLifecycle({
+    tradingAccountId,
+    openOrders: brokerOrders,
+  });
+  refineHistoricalMissingOrderFindings(
+    findings,
+    historicalDiagnostic.candidates
+  );
   for (const finding of findings) {
     finding.tradingAccountId = tradingAccountId;
   }

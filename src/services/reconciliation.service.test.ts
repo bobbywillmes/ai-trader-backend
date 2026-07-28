@@ -67,6 +67,7 @@ vi.mock('./lifecycle-account-eligibility.service.js', () => ({
 }));
 
 import {
+  refineHistoricalMissingOrderFindings,
   findHistoricalUnattributedLifecycleRecords,
   reconcileEligibleTradingAccounts,
   reconcileSnapshots,
@@ -281,6 +282,72 @@ describe('reconcileSnapshots', () => {
     });
 
     expect(findings).toEqual([]);
+  });
+});
+
+describe('refineHistoricalMissingOrderFindings', () => {
+  const missingFinding = {
+    code: 'local_nonterminal_order_missing_at_broker' as const,
+    severity: 'warn' as const,
+    entityType: 'brokerOrder' as const,
+    entityId: 'client:client-1',
+    symbol: 'DIA',
+    message: 'missing',
+  };
+  const candidate = {
+    brokerOrderId: 'broker-1',
+    clientOrderId: 'client-1',
+    symbol: 'DIA',
+    classifications: ['FULL_FILL_LOCAL_EVIDENCE'],
+    brokerLookup: null,
+    matchedTrackedPositionId: 51,
+  };
+
+  it('reports definitive local terminal evidence as stale local status', () => {
+    const findings = refineHistoricalMissingOrderFindings(
+      [missingFinding],
+      [candidate as never]
+    );
+    expect(findings[0]).toMatchObject({
+      code: 'local_order_status_stale_terminal_broker_order',
+      details: {
+        classifications: ['FULL_FILL_LOCAL_EVIDENCE'],
+        matchedTrackedPositionId: 51,
+      },
+    });
+  });
+
+  it('does not call a historically confirmed nonterminal order missing', () => {
+    const findings = refineHistoricalMissingOrderFindings(
+      [missingFinding],
+      [
+        {
+          ...candidate,
+          classifications: ['NONTERMINAL_BROKER_CONFIRMED'],
+        } as never,
+      ]
+    );
+    expect(findings).toEqual([]);
+  });
+
+  it('preserves unresolved findings with precise lookup evidence', () => {
+    const findings = refineHistoricalMissingOrderFindings(
+      [missingFinding],
+      [
+        {
+          ...candidate,
+          classifications: ['BROKER_LOOKUP_FAILED'],
+          brokerLookup: { error: 'lookup_failed' },
+        } as never,
+      ]
+    );
+    expect(findings[0]).toMatchObject({
+      code: 'local_nonterminal_order_missing_at_broker',
+      details: {
+        classifications: ['BROKER_LOOKUP_FAILED'],
+        brokerLookup: { error: 'lookup_failed' },
+      },
+    });
   });
 });
 

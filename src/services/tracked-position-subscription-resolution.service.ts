@@ -431,39 +431,59 @@ export async function linkLocalEntryOwnership(args: {
     return;
   }
 
-  await prisma.orderIntent.updateMany({
-    where: {
-      id: intent.id,
-      tradingAccountId: args.tradingAccountId,
-      trackedPositionId: null,
-    },
-    data: {
-      trackedPositionId: args.trackedPositionId,
-    },
-  });
-
-  if (intent.tradingAccountSubscriptionId !== null) {
-    await prisma.trackedPosition.updateMany({
+  const linkedAt = new Date();
+  await prisma.$transaction(async (tx) => {
+    await tx.orderIntent.updateMany({
       where: {
-        id: args.trackedPositionId,
+        id: intent.id,
         tradingAccountId: args.tradingAccountId,
-        tradingAccountSubscriptionId: null,
+        trackedPositionId: null,
       },
       data: {
-        tradingAccountSubscriptionId: intent.tradingAccountSubscriptionId,
+        trackedPositionId: args.trackedPositionId,
       },
     });
-  }
 
-  await prisma.brokerOrder.updateMany({
-    where: {
-      orderIntentId: intent.id,
-      tradingAccountId: args.tradingAccountId,
-      trackedPositionId: null,
-    },
-    data: {
-      trackedPositionId: args.trackedPositionId,
-    },
+    if (intent.tradingAccountSubscriptionId !== null) {
+      await tx.trackedPosition.updateMany({
+        where: {
+          id: args.trackedPositionId,
+          tradingAccountId: args.tradingAccountId,
+          tradingAccountSubscriptionId: null,
+        },
+        data: {
+          tradingAccountSubscriptionId: intent.tradingAccountSubscriptionId,
+        },
+      });
+    }
+
+    await tx.brokerOrder.updateMany({
+      where: {
+        orderIntentId: intent.id,
+        tradingAccountId: args.tradingAccountId,
+        trackedPositionId: null,
+      },
+      data: {
+        trackedPositionId: args.trackedPositionId,
+      },
+    });
+
+    await tx.brokerActivity.updateMany({
+      where: {
+        orderIntentId: intent.id,
+        tradingAccountId: args.tradingAccountId,
+        activityType: 'FILL',
+        brokerOrderRecordId: {
+          in: intent.brokerOrders.map((order) => order.id),
+        },
+        trackedPositionId: null,
+      },
+      data: {
+        trackedPositionId: args.trackedPositionId,
+        trackedPositionLinkSource: 'broker_order',
+        trackedPositionLinkedAt: linkedAt,
+      },
+    });
   });
 
   await linkEntryDecisionToTrackedPosition({

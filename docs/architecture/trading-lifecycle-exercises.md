@@ -77,3 +77,10 @@ only through the System Owner all-permissions rule in this phase.
 Live targets, mixed environments, provisioning, activation, write permits, and
 the first Live canary remain future work. Live support must add explicit
 readiness and authorization; it must not loosen the Paper boundary.
+# Position-slot visibility
+
+Lifecycle exercise previews and target details expose the authoritative entry-risk
+position-slot breakdown: the account limit, active positions, pending entry
+intents, current usage, the proposed additional slot, and projected usage. The
+preview reads this from the normal entry-risk evaluation and does not weaken or
+independently recompute the risk gate.
