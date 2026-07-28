@@ -492,7 +492,7 @@ model TradingLifecycleExerciseTarget {
   tradingAccountId                Int
   tradingAccount                  TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
   tradingAccountSubscriptionId    Int
-  tradingAccountSubscription      TradingAccountSubscription @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: Restrict)
+  tradingAccountSubscription      TradingAccountSubscription @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: Restrict, map: "TradingLifecycleExerciseTarget_tradingAccountSubscriptionId_fke")
   environment                     TradingAccountEnvironment
   status                          TradingLifecycleExerciseTargetStatus
   previewFingerprint              String
@@ -514,10 +514,10 @@ model TradingLifecycleExerciseTarget {
   createdAt                       DateTime @default(now())
   updatedAt                       DateTime @updatedAt
 
-  @@unique([exerciseId, tradingAccountSubscriptionId])
+  @@unique([exerciseId, tradingAccountSubscriptionId], map: "TradingLifecycleExerciseTarget_exerciseId_tradingAccountSubscri")
   @@index([exerciseId, status])
   @@index([tradingAccountId, createdAt])
-  @@index([tradingAccountSubscriptionId, createdAt])
+  @@index([tradingAccountSubscriptionId, createdAt], map: "TradingLifecycleExerciseTarget_tradingAccountSubscriptionId_cre")
   @@index([orderIntentId])
 }
 
