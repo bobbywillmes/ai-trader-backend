@@ -127,11 +127,12 @@ export function LifecycleExercisesPage() {
               ))}
               <ScrollArea>
                 <Table striped withTableBorder miw={900}>
-                  <Table.Thead><Table.Tr><Table.Th>Account</Table.Th><Table.Th>Assignment</Table.Th><Table.Th>Qty</Table.Th><Table.Th>Estimated notional</Table.Th><Table.Th>Readiness</Table.Th><Table.Th>Blockers / warnings</Table.Th></Table.Tr></Table.Thead>
+                  <Table.Thead><Table.Tr><Table.Th>Account</Table.Th><Table.Th>Assignment</Table.Th><Table.Th>Qty</Table.Th><Table.Th>Estimated notional</Table.Th><Table.Th>Position slots</Table.Th><Table.Th>Readiness</Table.Th><Table.Th>Blockers / warnings</Table.Th></Table.Tr></Table.Thead>
                   <Table.Tbody>{(preview.targets ?? []).map((target) => (
                     <Table.Tr key={target.id}>
                       <Table.Td>#{target.tradingAccountId}</Table.Td><Table.Td>#{target.tradingAccountSubscriptionId}</Table.Td>
                       <Table.Td>{target.resolvedQuantity ?? "—"}</Table.Td><Table.Td>{target.estimatedNotional ? `$${target.estimatedNotional.toFixed(2)}` : "—"}</Table.Td>
+                      <Table.Td>{target.readinessJson?.positionSlotUsage ? `${target.readinessJson.positionSlotUsage.activePositionCount} active + ${target.readinessJson.positionSlotUsage.pendingEntryIntentSlotCount} pending = ${target.readinessJson.positionSlotUsage.usedSlots}; +${target.readinessJson.positionSlotUsage.proposedAdditionalSlots} → ${target.readinessJson.positionSlotUsage.projectedSlotCount} / ${target.readinessJson.positionSlotUsage.accountMaxPositions ?? "unlimited"}` : "—"}</Table.Td>
                       <Table.Td><Badge color={target.status === "READY" ? "teal" : "red"}>{target.status}</Badge></Table.Td>
                       <Table.Td>{[...(target.blockersJson ?? []), ...(target.warningsJson ?? [])].map((item) => item.code).join(", ") || "None"}</Table.Td>
                     </Table.Tr>

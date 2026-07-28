@@ -7,6 +7,16 @@ export type LifecycleExerciseTarget = {
   status: string;
   blockersJson: Array<{ code: string; message: string }>;
   warningsJson: Array<{ code: string; message: string }>;
+  readinessJson?: {
+    positionSlotUsage?: {
+      accountMaxPositions: number | null;
+      activePositionCount: number;
+      pendingEntryIntentSlotCount: number;
+      usedSlots: number;
+      proposedAdditionalSlots: number;
+      projectedSlotCount: number;
+    };
+  };
   resolvedQuantity: number | null;
   estimatedPrice: number | null;
   estimatedNotional: number | null;
