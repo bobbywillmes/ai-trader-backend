@@ -7,6 +7,7 @@ import {
   HISTORICAL_QUANTITY_TOLERANCE,
   matchHistoricalEntryPosition,
   summarizeLocalFillEvidence,
+  validateExistingHistoricalPositionLink,
 } from './historical-order-lifecycle-diagnostic.service.js';
 
 const fillTime = new Date('2026-01-02T12:00:00.000Z');
@@ -194,5 +195,66 @@ describe('summarizeLocalFillEvidence', () => {
         ]
       ).status
     ).toBe('exact');
+  });
+});
+
+describe('validateExistingHistoricalPositionLink', () => {
+  it('accepts one consistently referenced position with matching ownership', () => {
+    expect(
+      validateExistingHistoricalPositionLink({
+        existingPositionIds: [51, 51, 51],
+        tradingAccountId: 1,
+        broker: 'alpaca',
+        symbol: 'DIA',
+        subscriptionId: 5,
+        tradingAccountSubscriptionId: 9,
+        positions: [candidate],
+      })
+    ).toMatchObject({ status: 'valid', trackedPositionId: 51 });
+  });
+
+  it('accepts a partially populated but consistent existing link', () => {
+    expect(
+      validateExistingHistoricalPositionLink({
+        existingPositionIds: [51],
+        tradingAccountId: 1,
+        broker: 'alpaca',
+        symbol: 'DIA',
+        subscriptionId: 5,
+        tradingAccountSubscriptionId: 9,
+        positions: [candidate],
+      }).status
+    ).toBe('valid');
+  });
+
+  it('refuses conflicting existing links', () => {
+    expect(
+      validateExistingHistoricalPositionLink({
+        existingPositionIds: [51, 52],
+        tradingAccountId: 1,
+        broker: 'alpaca',
+        symbol: 'DIA',
+        subscriptionId: 5,
+        tradingAccountSubscriptionId: 9,
+        positions: [candidate],
+      }).status
+    ).toBe('conflicting');
+  });
+
+  it('refuses a referenced position owned by another account', () => {
+    expect(
+      validateExistingHistoricalPositionLink({
+        existingPositionIds: [51],
+        tradingAccountId: 1,
+        broker: 'alpaca',
+        symbol: 'DIA',
+        subscriptionId: 5,
+        tradingAccountSubscriptionId: 9,
+        positions: [{ ...candidate, tradingAccountId: 2 }],
+      })
+    ).toMatchObject({
+      status: 'invalid',
+      rejectionReasons: ['account_mismatch'],
+    });
   });
 });

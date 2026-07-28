@@ -9,6 +9,7 @@ import {
   createHistoricalLifecycleStateFingerprint,
   diagnoseHistoricalOrderLifecycle,
   matchHistoricalEntryPosition,
+  validateExistingHistoricalPositionLink,
 } from './historical-order-lifecycle-diagnostic.service.js';
 import { withTradingAccountWorkflowLock } from './trading-account-workflow-lock.service.js';
 
@@ -60,6 +61,25 @@ export function buildHistoricalOrderRepairProposal(
       ...row.activityTrackedPositionIds,
     ].filter((id): id is number => id !== null)
   );
+  if (
+    row.classifications.includes('FULL_FILL_LOCAL_EVIDENCE') &&
+    row.classifications.includes('POSITION_LINK_EXISTING_VALID') &&
+    row.validatedExistingTrackedPositionId !== null &&
+    row.side.toLowerCase() === 'buy'
+  ) {
+    return {
+      kind: 'filled_entry',
+      orderIntentId: row.orderIntentId,
+      brokerOrderRecordId: row.brokerOrderRecordId,
+      trackedPositionId: row.validatedExistingTrackedPositionId,
+      brokerOrderStatus: 'filled',
+      orderIntentStatus: 'filled',
+      evidence: [
+        'FULL_FILL_LOCAL_EVIDENCE',
+        'POSITION_LINK_EXISTING_VALID',
+      ],
+    };
+  }
   if (
     row.classifications.includes('FULL_FILL_LOCAL_EVIDENCE') &&
     row.classifications.includes('POSITION_LINK_EXACT') &&
@@ -271,27 +291,44 @@ async function applyProposals(args: {
             `Matched position ${proposal.trackedPositionId} no longer satisfies ownership.`
           );
         }
-        const match = matchHistoricalEntryPosition(
-          {
-            tradingAccountId: currentOrder.tradingAccountId,
-            broker: currentOrder.broker,
-            symbol: currentOrder.symbol,
-            side: currentOrder.side,
-            qty: currentOrder.orderIntent.qty,
-            fillPrice: row.fillEvidence.weightedAveragePrice,
-            fillTime: row.fillEvidence.completionTime
-              ? new Date(row.fillEvidence.completionTime)
-              : null,
-            subscriptionId: currentOrder.orderIntent.subscriptionId,
-            tradingAccountSubscriptionId:
-              currentOrder.orderIntent.tradingAccountSubscriptionId,
-          },
-          [position]
+        const existingLinkEvidence = proposal.evidence.includes(
+          'POSITION_LINK_EXISTING_VALID'
         );
-        if (
-          match.status !== 'exact' ||
-          match.match.id !== proposal.trackedPositionId
-        ) {
+        const positionStillValid = existingLinkEvidence
+          ? validateExistingHistoricalPositionLink({
+              existingPositionIds: [
+                currentOrder.orderIntent.trackedPositionId,
+                currentOrder.trackedPositionId,
+                ...currentOrder.brokerActivities.map(
+                  (activity) => activity.trackedPositionId
+                ),
+              ].filter((id): id is number => id !== null),
+              tradingAccountId: currentOrder.tradingAccountId,
+              broker: currentOrder.broker,
+              symbol: currentOrder.symbol,
+              subscriptionId: currentOrder.orderIntent.subscriptionId,
+              tradingAccountSubscriptionId:
+                currentOrder.orderIntent.tradingAccountSubscriptionId,
+              positions: [position],
+            }).status === 'valid'
+          : matchHistoricalEntryPosition(
+              {
+                tradingAccountId: currentOrder.tradingAccountId,
+                broker: currentOrder.broker,
+                symbol: currentOrder.symbol,
+                side: currentOrder.side,
+                qty: currentOrder.orderIntent.qty,
+                fillPrice: row.fillEvidence.weightedAveragePrice,
+                fillTime: row.fillEvidence.completionTime
+                  ? new Date(row.fillEvidence.completionTime)
+                  : null,
+                subscriptionId: currentOrder.orderIntent.subscriptionId,
+                tradingAccountSubscriptionId:
+                  currentOrder.orderIntent.tradingAccountSubscriptionId,
+              },
+              [position]
+            ).status === 'exact';
+        if (!positionStillValid) {
           throw new Error(
             `Matched position ${proposal.trackedPositionId} changed after final validation.`
           );
