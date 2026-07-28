@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Alert, Badge, Button, Card, Group, MultiSelect, Radio, ScrollArea, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
+import { useRef, useState } from "react";
+import { Alert, Badge, Button, Card, Group, MultiSelect, ScrollArea, SegmentedControl, Select, Stack, Switch, Table, Text, TextInput, Title } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
@@ -7,6 +7,13 @@ import { getAdminToken } from "../../lib/api";
 import { getSubscriptions } from "../subscriptions/api";
 import { listUsers } from "../users/api";
 import { useLifecycleExerciseMutations, useLifecycleExercises } from "./hooks";
+import {
+  buildLifecycleExercisePreviewPayload,
+  canLaunchPaperExercise,
+  DEFAULT_LIFECYCLE_EXERCISE_REASON,
+  showsSelectedAccountHolders,
+  updateGeneratedExerciseName,
+} from "./exerciseForm";
 
 const statusColor = (status: string) =>
   status === "RUNNING" ? "blue" : status === "COMPLETED" ? "teal" : status === "BLOCKED" || status === "FAILED" ? "red" : status === "ATTENTION_REQUIRED" ? "orange" : "gray";
@@ -18,28 +25,30 @@ export function LifecycleExercisesPage() {
   const subscriptions = useQuery({ queryKey: ["subscriptions", "lifecycle-exercises"], queryFn: () => getSubscriptions(token as string), enabled: Boolean(token) });
   const users = useQuery({ queryKey: ["users", "lifecycle-exercises"], queryFn: listUsers, enabled: Boolean(token) });
   const [name, setName] = useState("");
-  const [reason, setReason] = useState("");
+  const nameManuallyEdited = useRef(false);
+  const [reason, setReason] = useState(DEFAULT_LIFECYCLE_EXERCISE_REASON);
   const [subscriptionId, setSubscriptionId] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState<"SELECTED_USERS" | "ALL_ELIGIBLE">("SELECTED_USERS");
   const [userIds, setUserIds] = useState<string[]>([]);
   const [preview, setPreview] = useState<Awaited<ReturnType<typeof mutations.preview.mutateAsync>>["exercise"] | null>(null);
-  const [confirmation, setConfirmation] = useState("");
+  const [launchConfirmed, setLaunchConfirmed] = useState(false);
 
   async function createPreview() {
-    const response = await mutations.preview.mutateAsync({
-      ...(name.trim() ? { name: name.trim() } : {}),
-      reason: reason.trim(),
-      subscriptionId: Number(subscriptionId),
-      selectionMode,
-      ...(selectionMode === "SELECTED_USERS" ? { userIds: userIds.map(Number) } : {}),
-      environment: "PAPER",
-    });
+    const response = await mutations.preview.mutateAsync(
+      buildLifecycleExercisePreviewPayload({
+        name,
+        reason,
+        subscriptionId: subscriptionId as string,
+        selectionMode,
+        userIds,
+      }),
+    );
     setPreview(response.exercise);
-    setConfirmation("");
+    setLaunchConfirmed(false);
   }
 
   async function launch() {
-    if (!preview || confirmation !== "LAUNCH PAPER EXERCISE") return;
+    if (!preview || !canLaunchPaperExercise(launchConfirmed)) return;
     const response = await mutations.launch.mutateAsync(preview.id);
     setPreview(response.exercise);
   }
@@ -58,17 +67,43 @@ export function LifecycleExercisesPage() {
         <Stack>
           <Title order={4}>Create and preview</Title>
           <Group grow align="flex-end">
-            <Select label="Catalog subscription" searchable value={subscriptionId} onChange={setSubscriptionId}
+            <Select label="Catalog subscription" searchable value={subscriptionId} onChange={(value) => {
+              setSubscriptionId(value);
+              if (!nameManuallyEdited.current && value) {
+                const subscription = subscriptions.data?.find((item) => item.id === Number(value));
+                if (subscription) {
+                  setName(updateGeneratedExerciseName({
+                    currentName: name,
+                    manuallyEdited: nameManuallyEdited.current,
+                    subscriptionName: subscription.name,
+                  }));
+                }
+              }
+            }}
               data={(subscriptions.data ?? []).map((item) => ({ value: String(item.id), label: `${item.name} (${item.key})` }))} />
-            <TextInput label="Exercise name" value={name} onChange={(event) => setName(event.currentTarget.value)} />
+            <TextInput label="Exercise name" value={name} onChange={(event) => {
+              nameManuallyEdited.current = true;
+              setName(event.currentTarget.value);
+            }} />
             <Select label="Environment" value="PAPER" data={[{ value: "PAPER", label: "Paper" }, { value: "LIVE", label: "Live — not available yet", disabled: true }]} />
           </Group>
           <TextInput required label="Reason" value={reason} onChange={(event) => setReason(event.currentTarget.value)} />
-          <Radio.Group label="Account holders" value={selectionMode} onChange={(value) => setSelectionMode(value as typeof selectionMode)}>
-            <Group mt="xs"><Radio value="SELECTED_USERS" label="Selected users" /><Radio value="ALL_ELIGIBLE" label="Everyone eligible" /></Group>
-          </Radio.Group>
-          {selectionMode === "SELECTED_USERS" && (
+          <Stack gap={6} align="flex-start">
+            <Text size="sm" fw={500}>Account holders</Text>
+            <SegmentedControl
+              aria-label="Account holder selection mode"
+              size="sm"
+              value={selectionMode}
+              onChange={(value) => setSelectionMode(value as typeof selectionMode)}
+              data={[
+                { value: "SELECTED_USERS", label: "Selected users" },
+                { value: "ALL_ELIGIBLE", label: "Everyone eligible" },
+              ]}
+            />
+          </Stack>
+          {showsSelectedAccountHolders(selectionMode) && (
             <MultiSelect searchable label="Selected account holders" value={userIds} onChange={setUserIds}
+              styles={{ inputField: { minWidth: "8rem", paddingInlineStart: "var(--mantine-spacing-xs)" } }}
               data={(users.data ?? []).map((user) => ({ value: String(user.id), label: `${user.name ?? user.email}${user.enabled ? "" : " (disabled)"}` }))} />
           )}
           <Group>
@@ -104,10 +139,24 @@ export function LifecycleExercisesPage() {
                 </Table>
               </ScrollArea>
               {preview.status === "PREVIEWED" && (
-                <Group align="flex-end">
-                  <TextInput label='Type "LAUNCH PAPER EXERCISE"' value={confirmation} onChange={(event) => setConfirmation(event.currentTarget.value)} w={360} />
-                  <Button color="orange" onClick={launch} loading={mutations.launch.isPending} disabled={confirmation !== "LAUNCH PAPER EXERCISE"}>Launch Paper exercise</Button>
-                </Group>
+                <Card withBorder radius="md" p="md">
+                  <Stack gap="md" align="flex-start">
+                    <Switch
+                      checked={launchConfirmed}
+                      onChange={(event) => setLaunchConfirmed(event.currentTarget.checked)}
+                      label="I confirm this exercise will dispatch entries to the reviewed Paper targets."
+                      description="Configured sizing, risk controls, and the normal trading lifecycle remain authoritative."
+                    />
+                    <Button
+                      color="orange"
+                      onClick={launch}
+                      loading={mutations.launch.isPending}
+                      disabled={!canLaunchPaperExercise(launchConfirmed)}
+                    >
+                      Launch Paper exercise
+                    </Button>
+                  </Stack>
+                </Card>
               )}
               {mutations.launch.isError && <Alert color="red">{mutations.launch.error.message}</Alert>}
             </Stack>
