@@ -81,7 +81,7 @@ export function projectTradingLifecycleExerciseTarget(target: ProjectionTarget) 
   if (target.cancelledAt || target.status === 'CANCELLED') stage = 'CANCELLED';
   else if (target.status === 'ATTENTION_REQUIRED' || exitState?.attentionRequired) stage = 'ATTENTION_REQUIRED';
   else if (target.status === 'FAILED') stage = 'FAILED';
-  else if (target.reconciledAt && cleanReconciliation(target.reconciliationSummaryJson)) stage = 'RECONCILED';
+  else if (target.reconciledAt && position?.status === 'closed' && cleanReconciliation(target.reconciliationSummaryJson)) stage = 'RECONCILED';
   else if (position?.status === 'closed') stage = target.reconciledAt ? 'ATTENTION_REQUIRED' : 'RECONCILIATION_PENDING';
   else if (position?.status === 'closing') stage = 'POSITION_CLOSING';
   else if (exitState?.trailBrokerOrderId || exitState?.trailClientOrderId) stage = 'PROTECTIVE_ORDER_ACTIVE';

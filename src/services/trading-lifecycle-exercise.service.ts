@@ -13,6 +13,7 @@ import { processEntryForAccountSubscription } from './signal-entry.service.js';
 import { createSystemEvent } from './system-event.service.js';
 import { reconcileTradingAccountWithLock } from './reconciliation.service.js';
 import { projectTradingLifecycleExerciseTarget } from './trading-lifecycle-exercise-projection.service.js';
+import { isTerminalBrokerOrderStatus } from './broker-order-lifecycle-status.service.js';
 
 export const LIFECYCLE_EXERCISE_MAX_TARGETS = 25;
 export const LIFECYCLE_EXERCISE_PREVIEW_TTL_MS = 5 * 60_000;
@@ -298,10 +299,14 @@ export async function launchTradingLifecycleExercise(id: number, actorUserId: nu
   }
 
   let active = 0;
-  let unsuccessful = 0;
+  let unsuccessful = exercise.targets.filter((target) => target.status === TradingLifecycleExerciseTargetStatus.BLOCKED).length;
   for (const target of exercise.targets) {
     const dispatchClaim = await prisma.tradingLifecycleExerciseTarget.updateMany({
-      where: { id: target.id, status: { in: [TradingLifecycleExerciseTargetStatus.READY, TradingLifecycleExerciseTargetStatus.WARNING, TradingLifecycleExerciseTargetStatus.BLOCKED] } },
+      where: {
+        id: target.id,
+        exercise: { status: TradingLifecycleExerciseStatus.LAUNCHING },
+        status: { in: [TradingLifecycleExerciseTargetStatus.READY, TradingLifecycleExerciseTargetStatus.WARNING] },
+      },
       data: { status: TradingLifecycleExerciseTargetStatus.DISPATCHING, dispatchStartedAt: new Date() },
     });
     if (!dispatchClaim.count) continue;
@@ -368,19 +373,43 @@ export async function cancelTradingLifecycleExercise(id: number, reason: string,
 }
 
 export async function reconcileTradingLifecycleExerciseTarget(exerciseId: number, targetId: number, actorUserId: number) {
-  const target = await prisma.tradingLifecycleExerciseTarget.findFirst({ where: { id: targetId, exerciseId }, include: { exercise: true } });
+  const target = await prisma.tradingLifecycleExerciseTarget.findFirst({
+    where: { id: targetId, exerciseId },
+    include: { exercise: true, orderIntent: { include: { trackedPosition: true, brokerOrders: true } } },
+  });
   if (!target) throw new HttpError(404, 'Lifecycle exercise target not found.');
   const result = await reconcileTradingAccountWithLock(target.tradingAccountId, { persistEvents: false, persistAttention: false });
   const summary = { runIdentifier: result.runIdentifier, clean: result.findings.length === 0, findingCount: result.findings.length, findings: result.findings.map(({ code, severity, entityType, entityId, symbol, message }) => ({ code, severity, entityType, entityId, symbol, message })) };
+  const position = target.orderIntent?.trackedPosition;
+  const terminalWithoutPosition = Boolean(
+    target.orderIntent
+    && ['failed', 'blocked', 'rejected', 'canceled', 'cancelled'].includes(target.orderIntent.status.toLowerCase())
+    && target.orderIntent.brokerOrders.every((order) => isTerminalBrokerOrderStatus(order.status))
+  );
+  const lifecycleTerminal = position?.status === 'closed' || terminalWithoutPosition;
+  const reconciled = summary.clean && lifecycleTerminal;
   await prisma.tradingLifecycleExerciseTarget.update({
     where: { id: target.id },
-    data: { reconciledAt: new Date(), reconciliationSummaryJson: json(summary), status: summary.clean ? 'RECONCILED' : 'ATTENTION_REQUIRED' },
+    data: {
+      reconciledAt: new Date(),
+      reconciliationSummaryJson: json({ ...summary, lifecycleTerminal }),
+      status: reconciled ? 'RECONCILED' : summary.clean ? target.status : 'ATTENTION_REQUIRED',
+    },
+  });
+  const remainingTargets = await prisma.tradingLifecycleExerciseTarget.count({
+    where: { exerciseId, status: { notIn: ['RECONCILED', 'CANCELLED'] } },
+  });
+  await prisma.tradingLifecycleExercise.update({
+    where: { id: exerciseId },
+    data: remainingTargets === 0
+      ? { status: 'COMPLETED', completedAt: new Date() }
+      : (!summary.clean ? { status: 'ATTENTION_REQUIRED' } : {}),
   });
   await createSystemEvent({
     type: 'trading_lifecycle_exercise.reconciled', entityType: 'tradingLifecycleExerciseTarget',
     entityId: target.id, tradingAccountId: target.tradingAccountId, actorUserId,
-    message: summary.clean ? 'Lifecycle exercise target reconciliation is clean.' : 'Lifecycle exercise target reconciliation requires attention.',
-    payloadJson: json({ exerciseId, targetId, tradingAccountId: target.tradingAccountId, environment: 'PAPER', clean: summary.clean, findingCount: summary.findingCount }),
+    message: reconciled ? 'Lifecycle exercise target reconciliation is clean and lifecycle-terminal.' : summary.clean ? 'Reconciliation is clean; lifecycle work remains active.' : 'Lifecycle exercise target reconciliation requires attention.',
+    payloadJson: json({ exerciseId, targetId, tradingAccountId: target.tradingAccountId, environment: 'PAPER', clean: summary.clean, lifecycleTerminal, reconciled, findingCount: summary.findingCount }),
   });
   return { target: (await getExerciseOrThrow(exerciseId)).targets.find((row) => row.id === targetId), reconciliation: summary };
 }
