@@ -18,6 +18,8 @@ export enum PlatformPermission {
   EXIT_PROFILE_WRITE = 'exitProfile.write',
   REPORTS_READ = 'reports.read',
   SYSTEM_EVENTS_READ = 'systemEvents.read',
+  TRADING_LIFECYCLE_EXERCISE_READ = 'tradingLifecycleExercise.read',
+  TRADING_LIFECYCLE_EXERCISE_WRITE = 'tradingLifecycleExercise.write',
 }
 
 export const PLATFORM_ROLE_PERMISSIONS: Record<PlatformRole, PlatformPermission[]> = {

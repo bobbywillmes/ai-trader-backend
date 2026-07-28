@@ -44,6 +44,8 @@ import { MomentumCandidateDetailPage } from "../features/momentumScanner/Momentu
 import { StrategiesPage } from "../features/strategies/StrategiesPage";
 import { StrategyDetailPage } from "../features/strategies/StrategyDetailPage";
 import { UsersPage } from "../features/users/UsersPage";
+import { LifecycleExercisesPage } from "../features/lifecycleExercises/LifecycleExercisesPage";
+import { LifecycleExerciseDetailPage } from "../features/lifecycleExercises/LifecycleExerciseDetailPage";
 import { AccountPage } from "../features/accountPortal/AccountPage";
 import {
   AccountPortalAccountsPage,
@@ -92,6 +94,14 @@ export const router = createBrowserRouter([
               {
                 path: "entry-decisions",
                 element: requirePermission("tradingAccount.read", <EntryDecisionsPage />),
+              },
+              {
+                path: "lifecycle-exercises",
+                element: requirePermission("tradingLifecycleExercise.read", <LifecycleExercisesPage />),
+              },
+              {
+                path: "lifecycle-exercises/:id",
+                element: requirePermission("tradingLifecycleExercise.read", <LifecycleExerciseDetailPage />),
               },
               {
                 path: "momentum-scanner",
