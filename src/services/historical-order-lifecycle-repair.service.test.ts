@@ -5,6 +5,7 @@ import {
   buildHistoricalOrderRepairProposal,
   countPendingRepairIntents,
   repairHistoricalOrderLifecycle,
+  summarizeRepairCompleteness,
 } from './historical-order-lifecycle-repair.service.js';
 
 function row(overrides: Record<string, unknown> = {}) {
@@ -36,7 +37,14 @@ function row(overrides: Record<string, unknown> = {}) {
     createdAt: new Date(),
     classifications: ['FULL_FILL_LOCAL_EVIDENCE', 'POSITION_LINK_EXACT'],
     matchedTrackedPositionId: 30,
+    validatedExistingTrackedPositionId: null,
+    existingPositionLinkValidation: {
+      status: 'missing',
+      rejectionReasons: ['no_existing_link'],
+    },
     candidateTrackedPositionIds: [30],
+    candidatePositionEvaluations: [],
+    positionMatchRejectionReason: null,
     brokerLookup: null,
     ...overrides,
   } as never;
@@ -52,6 +60,32 @@ describe('buildHistoricalOrderRepairProposal', () => {
       brokerOrderStatus: 'filled',
       orderIntentStatus: 'filled',
       evidence: ['FULL_FILL_LOCAL_EVIDENCE', 'POSITION_LINK_EXACT'],
+    });
+  });
+
+  it('repairs a filled entry from a validated existing lifecycle link', () => {
+    expect(
+      buildHistoricalOrderRepairProposal(
+        row({
+          classifications: [
+            'FULL_FILL_LOCAL_EVIDENCE',
+            'POSITION_LINK_MISSING',
+            'POSITION_LINK_EXISTING_VALID',
+          ],
+          matchedTrackedPositionId: null,
+          validatedExistingTrackedPositionId: 30,
+          orderIntentTrackedPositionId: 30,
+          brokerOrderTrackedPositionId: 30,
+          activityTrackedPositionIds: [30],
+        })
+      )
+    ).toMatchObject({
+      kind: 'filled_entry',
+      trackedPositionId: 30,
+      evidence: [
+        'FULL_FILL_LOCAL_EVIDENCE',
+        'POSITION_LINK_EXISTING_VALID',
+      ],
     });
   });
 
@@ -180,6 +214,23 @@ describe('countPendingRepairIntents', () => {
         new Set([10, 11])
       )
     ).toBe(1);
+  });
+});
+
+describe('summarizeRepairCompleteness', () => {
+  it('separates safe proposals from unresolved account-wide work', () => {
+    expect(
+      summarizeRepairCompleteness({
+        proposalCount: 22,
+        unresolvedCandidateCount: 26,
+        remainingPendingEntryExposureCount: 1,
+      })
+    ).toEqual({
+      safeToApplyProposals: true,
+      allCandidatesResolved: false,
+      unresolvedCandidateCount: 26,
+      remainingPendingEntryExposureCount: 1,
+    });
   });
 });
 

@@ -9,6 +9,7 @@ import {
   createHistoricalLifecycleStateFingerprint,
   diagnoseHistoricalOrderLifecycle,
   matchHistoricalEntryPosition,
+  validateExistingHistoricalPositionLink,
 } from './historical-order-lifecycle-diagnostic.service.js';
 import { withTradingAccountWorkflowLock } from './trading-account-workflow-lock.service.js';
 
@@ -60,6 +61,25 @@ export function buildHistoricalOrderRepairProposal(
       ...row.activityTrackedPositionIds,
     ].filter((id): id is number => id !== null)
   );
+  if (
+    row.classifications.includes('FULL_FILL_LOCAL_EVIDENCE') &&
+    row.classifications.includes('POSITION_LINK_EXISTING_VALID') &&
+    row.validatedExistingTrackedPositionId !== null &&
+    row.side.toLowerCase() === 'buy'
+  ) {
+    return {
+      kind: 'filled_entry',
+      orderIntentId: row.orderIntentId,
+      brokerOrderRecordId: row.brokerOrderRecordId,
+      trackedPositionId: row.validatedExistingTrackedPositionId,
+      brokerOrderStatus: 'filled',
+      orderIntentStatus: 'filled',
+      evidence: [
+        'FULL_FILL_LOCAL_EVIDENCE',
+        'POSITION_LINK_EXISTING_VALID',
+      ],
+    };
+  }
   if (
     row.classifications.includes('FULL_FILL_LOCAL_EVIDENCE') &&
     row.classifications.includes('POSITION_LINK_EXACT') &&
@@ -171,6 +191,15 @@ async function buildReportFromDiagnostic(
       classifications: row.classifications,
       reason: 'no_deterministic_mutation',
     }));
+  const remainingPendingEntryExposureCount = Math.max(
+    0,
+    before.pendingEntryIntentSlotCount - repairedPendingCount
+  );
+  const completeness = summarizeRepairCompleteness({
+    proposalCount: proposals.length,
+    unresolvedCandidateCount: refused.length,
+    remainingPendingEntryExposureCount,
+  });
 
   return {
     diagnostic,
@@ -180,14 +209,25 @@ async function buildReportFromDiagnostic(
       before,
       expectedAfter: {
         ...before,
-        pendingEntryIntentSlotCount: Math.max(
-          0,
-          before.pendingEntryIntentSlotCount - repairedPendingCount
-        ),
+        pendingEntryIntentSlotCount: remainingPendingEntryExposureCount,
         usedSlots: Math.max(0, before.usedSlots - repairedPendingCount),
       },
     },
-    safeToApply: proposals.length > 0,
+    ...completeness,
+  };
+}
+
+export function summarizeRepairCompleteness(args: {
+  proposalCount: number;
+  unresolvedCandidateCount: number;
+  remainingPendingEntryExposureCount: number;
+}) {
+  return {
+    safeToApplyProposals: args.proposalCount > 0,
+    allCandidatesResolved: args.unresolvedCandidateCount === 0,
+    unresolvedCandidateCount: args.unresolvedCandidateCount,
+    remainingPendingEntryExposureCount:
+      args.remainingPendingEntryExposureCount,
   };
 }
 
@@ -271,27 +311,44 @@ async function applyProposals(args: {
             `Matched position ${proposal.trackedPositionId} no longer satisfies ownership.`
           );
         }
-        const match = matchHistoricalEntryPosition(
-          {
-            tradingAccountId: currentOrder.tradingAccountId,
-            broker: currentOrder.broker,
-            symbol: currentOrder.symbol,
-            side: currentOrder.side,
-            qty: currentOrder.orderIntent.qty,
-            fillPrice: row.fillEvidence.weightedAveragePrice,
-            fillTime: row.fillEvidence.completionTime
-              ? new Date(row.fillEvidence.completionTime)
-              : null,
-            subscriptionId: currentOrder.orderIntent.subscriptionId,
-            tradingAccountSubscriptionId:
-              currentOrder.orderIntent.tradingAccountSubscriptionId,
-          },
-          [position]
+        const existingLinkEvidence = proposal.evidence.includes(
+          'POSITION_LINK_EXISTING_VALID'
         );
-        if (
-          match.status !== 'exact' ||
-          match.match.id !== proposal.trackedPositionId
-        ) {
+        const positionStillValid = existingLinkEvidence
+          ? validateExistingHistoricalPositionLink({
+              existingPositionIds: [
+                currentOrder.orderIntent.trackedPositionId,
+                currentOrder.trackedPositionId,
+                ...currentOrder.brokerActivities.map(
+                  (activity) => activity.trackedPositionId
+                ),
+              ].filter((id): id is number => id !== null),
+              tradingAccountId: currentOrder.tradingAccountId,
+              broker: currentOrder.broker,
+              symbol: currentOrder.symbol,
+              subscriptionId: currentOrder.orderIntent.subscriptionId,
+              tradingAccountSubscriptionId:
+                currentOrder.orderIntent.tradingAccountSubscriptionId,
+              positions: [position],
+            }).status === 'valid'
+          : matchHistoricalEntryPosition(
+              {
+                tradingAccountId: currentOrder.tradingAccountId,
+                broker: currentOrder.broker,
+                symbol: currentOrder.symbol,
+                side: currentOrder.side,
+                qty: currentOrder.orderIntent.qty,
+                fillPrice: row.fillEvidence.weightedAveragePrice,
+                fillTime: row.fillEvidence.completionTime
+                  ? new Date(row.fillEvidence.completionTime)
+                  : null,
+                subscriptionId: currentOrder.orderIntent.subscriptionId,
+                tradingAccountSubscriptionId:
+                  currentOrder.orderIntent.tradingAccountSubscriptionId,
+              },
+              [position]
+            ).status === 'exact';
+        if (!positionStillValid) {
           throw new Error(
             `Matched position ${proposal.trackedPositionId} changed after final validation.`
           );
@@ -485,7 +542,7 @@ export async function repairHistoricalOrderLifecycle(args: {
   }
   const initialReport = await buildReport(args.tradingAccountId);
   if (!args.apply) return { mode: 'dry-run' as const, ...initialReport };
-  if (!initialReport.safeToApply) {
+  if (!initialReport.safeToApplyProposals) {
     return { mode: 'apply' as const, ...initialReport, repaired: [] };
   }
 

@@ -26,6 +26,7 @@ export type HistoricalOrderClassification =
   | 'TERMINAL_BROKER_CONFIRMED'
   | 'NONTERMINAL_BROKER_CONFIRMED'
   | 'POSITION_LINK_EXACT'
+  | 'POSITION_LINK_EXISTING_VALID'
   | 'POSITION_LINK_AMBIGUOUS'
   | 'POSITION_LINK_MISSING'
   | 'NO_TERMINAL_EVIDENCE'
@@ -54,6 +55,114 @@ export type HistoricalPositionCandidate = {
   subscriptionId: number | null;
   tradingAccountSubscriptionId: number | null;
 };
+
+export type HistoricalPositionRejectionReason =
+  | 'account_mismatch'
+  | 'broker_mismatch'
+  | 'symbol_mismatch'
+  | 'subscription_mismatch'
+  | 'assignment_mismatch'
+  | 'quantity_mismatch'
+  | 'price_outside_tolerance'
+  | 'time_outside_window';
+
+export function evaluateHistoricalPositionCandidates(
+  input: HistoricalPositionMatchInput,
+  candidates: HistoricalPositionCandidate[]
+) {
+  return candidates.map((candidate) => {
+    const rejectionReasons: HistoricalPositionRejectionReason[] = [];
+    if (candidate.tradingAccountId !== input.tradingAccountId)
+      rejectionReasons.push('account_mismatch');
+    if (candidate.broker.toLowerCase() !== input.broker.toLowerCase())
+      rejectionReasons.push('broker_mismatch');
+    if (candidate.symbol.toUpperCase() !== input.symbol.toUpperCase())
+      rejectionReasons.push('symbol_mismatch');
+    if (candidate.subscriptionId !== input.subscriptionId)
+      rejectionReasons.push('subscription_mismatch');
+    if (
+      candidate.tradingAccountSubscriptionId !==
+      input.tradingAccountSubscriptionId
+    )
+      rejectionReasons.push('assignment_mismatch');
+    if (
+      input.qty === null ||
+      !closeEnough(
+        Math.abs(candidate.qty),
+        Math.abs(input.qty),
+        HISTORICAL_QUANTITY_TOLERANCE
+      )
+    )
+      rejectionReasons.push('quantity_mismatch');
+    if (
+      input.fillPrice === null ||
+      !closeEnough(
+        candidate.avgEntryPrice,
+        input.fillPrice,
+        HISTORICAL_PRICE_TOLERANCE
+      )
+    )
+      rejectionReasons.push('price_outside_tolerance');
+    if (
+      input.fillTime === null ||
+      Math.abs(candidate.openedAt.getTime() - input.fillTime.getTime()) >
+        HISTORICAL_POSITION_TIME_TOLERANCE_MS
+    )
+      rejectionReasons.push('time_outside_window');
+    return { candidate, rejectionReasons };
+  });
+}
+
+export function validateExistingHistoricalPositionLink(args: {
+  existingPositionIds: number[];
+  tradingAccountId: number | null;
+  broker: string;
+  symbol: string;
+  subscriptionId: number | null;
+  tradingAccountSubscriptionId: number | null;
+  positions: HistoricalPositionCandidate[];
+}) {
+  const uniqueIds = [...new Set(args.existingPositionIds)];
+  if (uniqueIds.length !== 1) {
+    return {
+      status: uniqueIds.length > 1 ? ('conflicting' as const) : ('missing' as const),
+      trackedPositionId: null,
+      rejectionReasons:
+        uniqueIds.length > 1 ? ['conflicting_existing_links'] : ['no_existing_link'],
+    };
+  }
+  const trackedPositionId = uniqueIds[0]!;
+  const position = args.positions.find((item) => item.id === trackedPositionId);
+  const rejectionReasons: string[] = [];
+  if (!position) rejectionReasons.push('referenced_position_missing');
+  else {
+    if (position.tradingAccountId !== args.tradingAccountId)
+      rejectionReasons.push('account_mismatch');
+    if (position.broker.toLowerCase() !== args.broker.toLowerCase())
+      rejectionReasons.push('broker_mismatch');
+    if (position.symbol.toUpperCase() !== args.symbol.toUpperCase())
+      rejectionReasons.push('symbol_mismatch');
+    if (
+      args.subscriptionId !== null &&
+      position.subscriptionId !== null &&
+      position.subscriptionId !== args.subscriptionId
+    )
+      rejectionReasons.push('subscription_mismatch');
+    if (
+      args.tradingAccountSubscriptionId !== null &&
+      position.tradingAccountSubscriptionId !== null &&
+      position.tradingAccountSubscriptionId !==
+        args.tradingAccountSubscriptionId
+    )
+      rejectionReasons.push('assignment_mismatch');
+  }
+  return {
+    status: rejectionReasons.length === 0 ? ('valid' as const) : ('invalid' as const),
+    trackedPositionId:
+      rejectionReasons.length === 0 ? trackedPositionId : null,
+    rejectionReasons,
+  };
+}
 
 export function createHistoricalLifecycleStateFingerprint(order: {
   id: number;
@@ -153,30 +262,54 @@ export function matchHistoricalEntryPosition(
     input.subscriptionId === null ||
     input.tradingAccountSubscriptionId === null
   ) {
-    return { status: 'missing' as const, matches: [] };
+    return {
+      status: 'missing' as const,
+      matches: [],
+      evaluations: evaluateHistoricalPositionCandidates(input, candidates),
+    };
   }
 
-  const matches = candidates.filter(
-    (candidate) =>
-      candidate.tradingAccountId === input.tradingAccountId &&
-      candidate.broker.toLowerCase() === input.broker.toLowerCase() &&
-      candidate.symbol.toUpperCase() === input.symbol.toUpperCase() &&
-      candidate.subscriptionId === input.subscriptionId &&
-      candidate.tradingAccountSubscriptionId ===
-        input.tradingAccountSubscriptionId &&
-      closeEnough(Math.abs(candidate.qty), Math.abs(input.qty!), HISTORICAL_QUANTITY_TOLERANCE) &&
-      closeEnough(candidate.avgEntryPrice, input.fillPrice!, HISTORICAL_PRICE_TOLERANCE) &&
-      Math.abs(candidate.openedAt.getTime() - input.fillTime!.getTime()) <=
-        HISTORICAL_POSITION_TIME_TOLERANCE_MS
-  );
+  const evaluations = evaluateHistoricalPositionCandidates(input, candidates);
+  const matches = evaluations
+    .filter((evaluation) => evaluation.rejectionReasons.length === 0)
+    .map((evaluation) => evaluation.candidate);
 
   if (matches.length === 1) {
-    return { status: 'exact' as const, match: matches[0]!, matches };
+    return {
+      status: 'exact' as const,
+      match: matches[0]!,
+      matches,
+      evaluations,
+    };
   }
   if (matches.length > 1) {
-    return { status: 'ambiguous' as const, matches };
+    return { status: 'ambiguous' as const, matches, evaluations };
   }
-  return { status: 'missing' as const, matches };
+  return { status: 'missing' as const, matches, evaluations };
+}
+
+export function formatHistoricalPositionMatchDiagnostics(
+  positionMatch: ReturnType<typeof matchHistoricalEntryPosition>
+) {
+  return {
+    candidatePositionEvaluations: positionMatch.evaluations.map(
+      (evaluation) => ({
+        trackedPositionId: evaluation.candidate.id,
+        rejectionReasons:
+          evaluation.rejectionReasons.length > 0
+            ? evaluation.rejectionReasons
+            : positionMatch.status === 'ambiguous'
+              ? ['ambiguity']
+              : [],
+      })
+    ),
+    positionMatchRejectionReason:
+      positionMatch.status === 'ambiguous'
+        ? 'ambiguity'
+        : positionMatch.status === 'missing'
+          ? 'no_matching_position'
+          : null,
+  };
 }
 
 type FillEvidenceActivity = {
@@ -361,17 +494,61 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
         activities: order.brokerActivities,
       });
       const fillEvidence = fillSummary.classification;
+      const existingPositionIds = Array.from(
+        new Set(
+          [
+            order.orderIntent.trackedPositionId,
+            order.trackedPositionId,
+            ...order.brokerActivities.map(
+              (activity) => activity.trackedPositionId
+            ),
+          ].filter((id): id is number => id !== null)
+        )
+      );
       const positionCandidates =
         fillEvidence === 'full' && order.side.toLowerCase() === 'buy'
           ? await prisma.trackedPosition.findMany({
               where: {
-                tradingAccountId: args.tradingAccountId,
-                broker: order.broker,
-                symbol: order.symbol,
+                OR: [
+                  {
+                    tradingAccountId: args.tradingAccountId,
+                    broker: order.broker,
+                    symbol: order.symbol,
+                  },
+                  ...(fillSummary.completionTime
+                    ? [
+                        {
+                          openedAt: {
+                            gte: new Date(
+                              fillSummary.completionTime.getTime() -
+                                HISTORICAL_POSITION_TIME_TOLERANCE_MS
+                            ),
+                            lte: new Date(
+                              fillSummary.completionTime.getTime() +
+                                HISTORICAL_POSITION_TIME_TOLERANCE_MS
+                            ),
+                          },
+                        },
+                      ]
+                    : []),
+                  ...(existingPositionIds.length > 0
+                    ? [{ id: { in: existingPositionIds } }]
+                    : []),
+                ],
               },
               orderBy: { openedAt: 'asc' },
             })
           : [];
+      const existingLinkValidation = validateExistingHistoricalPositionLink({
+        existingPositionIds,
+        tradingAccountId: order.tradingAccountId,
+        broker: order.broker,
+        symbol: order.symbol,
+        subscriptionId: order.orderIntent.subscriptionId,
+        tradingAccountSubscriptionId:
+          order.orderIntent.tradingAccountSubscriptionId,
+        positions: positionCandidates,
+      });
       const positionMatch = matchHistoricalEntryPosition(
         {
           tradingAccountId: order.tradingAccountId,
@@ -392,6 +569,11 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
       if (fillEvidence === 'partial') classifications.push('PARTIAL_FILL_LOCAL_EVIDENCE');
       if (fillEvidence === 'full' && positionMatch.status === 'exact')
         classifications.push('POSITION_LINK_EXACT');
+      if (
+        fillEvidence === 'full' &&
+        existingLinkValidation.status === 'valid'
+      )
+        classifications.push('POSITION_LINK_EXISTING_VALID');
       if (fillEvidence === 'full' && positionMatch.status === 'ambiguous')
         classifications.push('POSITION_LINK_AMBIGUOUS');
       if (fillEvidence === 'full' && positionMatch.status === 'missing')
@@ -401,6 +583,7 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
         fillEvidence,
         fillSummary,
         positionMatch,
+        existingLinkValidation,
         classifications,
       };
     })
@@ -446,6 +629,9 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
     } else if (candidate.fillEvidence !== 'full') {
       candidate.classifications.push('NO_TERMINAL_EVIDENCE');
     }
+    const positionDiagnostics = formatHistoricalPositionMatchDiagnostics(
+      candidate.positionMatch
+    );
     return {
       tradingAccountId: args.tradingAccountId,
       orderIntentId: candidate.order.orderIntentId,
@@ -487,9 +673,17 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
         candidate.positionMatch.status === 'exact'
           ? candidate.positionMatch.match.id
           : null,
+      validatedExistingTrackedPositionId:
+        candidate.existingLinkValidation.trackedPositionId,
+      existingPositionLinkValidation: {
+        status: candidate.existingLinkValidation.status,
+        rejectionReasons:
+          candidate.existingLinkValidation.rejectionReasons,
+      },
       candidateTrackedPositionIds: candidate.positionMatch.matches.map(
         (position) => position.id
       ),
+      ...positionDiagnostics,
       brokerLookup: lookup?.brokerOrder
         ? brokerOrderIdentity(lookup.brokerOrder)
         : lookup?.failed
