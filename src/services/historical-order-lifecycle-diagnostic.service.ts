@@ -164,6 +164,42 @@ export function validateExistingHistoricalPositionLink(args: {
   };
 }
 
+export function buildHistoricalPositionCandidateWhere(args: {
+  includeEntryMatchCandidates: boolean;
+  tradingAccountId: number;
+  broker: string;
+  symbol: string;
+  completionTime: Date | null;
+  existingPositionIds: number[];
+}): Prisma.TrackedPositionWhereInput | null {
+  const alternatives: Prisma.TrackedPositionWhereInput[] = [];
+  if (args.includeEntryMatchCandidates) {
+    alternatives.push({
+      tradingAccountId: args.tradingAccountId,
+      broker: args.broker,
+      symbol: args.symbol,
+    });
+    if (args.completionTime) {
+      alternatives.push({
+        openedAt: {
+          gte: new Date(
+            args.completionTime.getTime() -
+              HISTORICAL_POSITION_TIME_TOLERANCE_MS
+          ),
+          lte: new Date(
+            args.completionTime.getTime() +
+              HISTORICAL_POSITION_TIME_TOLERANCE_MS
+          ),
+        },
+      });
+    }
+  }
+  if (args.existingPositionIds.length > 0) {
+    alternatives.push({ id: { in: args.existingPositionIds } });
+  }
+  return alternatives.length > 0 ? { OR: alternatives } : null;
+}
+
 export function createHistoricalLifecycleStateFingerprint(order: {
   id: number;
   orderIntentId: number;
@@ -505,37 +541,19 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
           ].filter((id): id is number => id !== null)
         )
       );
-      const positionCandidates =
-        fillEvidence === 'full' && order.side.toLowerCase() === 'buy'
+      const positionCandidateWhere =
+        buildHistoricalPositionCandidateWhere({
+          includeEntryMatchCandidates:
+            fillEvidence === 'full' && order.side.toLowerCase() === 'buy',
+          tradingAccountId: args.tradingAccountId,
+          broker: order.broker,
+          symbol: order.symbol,
+          completionTime: fillSummary.completionTime,
+          existingPositionIds,
+        });
+      const positionCandidates = positionCandidateWhere
           ? await prisma.trackedPosition.findMany({
-              where: {
-                OR: [
-                  {
-                    tradingAccountId: args.tradingAccountId,
-                    broker: order.broker,
-                    symbol: order.symbol,
-                  },
-                  ...(fillSummary.completionTime
-                    ? [
-                        {
-                          openedAt: {
-                            gte: new Date(
-                              fillSummary.completionTime.getTime() -
-                                HISTORICAL_POSITION_TIME_TOLERANCE_MS
-                            ),
-                            lte: new Date(
-                              fillSummary.completionTime.getTime() +
-                                HISTORICAL_POSITION_TIME_TOLERANCE_MS
-                            ),
-                          },
-                        },
-                      ]
-                    : []),
-                  ...(existingPositionIds.length > 0
-                    ? [{ id: { in: existingPositionIds } }]
-                    : []),
-                ],
-              },
+              where: positionCandidateWhere,
               orderBy: { openedAt: 'asc' },
             })
           : [];
