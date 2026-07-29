@@ -120,6 +120,11 @@ describe('buildHistoricalOrderRepairProposal', () => {
           orderIntentTrackedPositionId: 30,
           brokerOrderTrackedPositionId: 30,
           activityTrackedPositionIds: [30],
+          validatedExistingTrackedPositionId: 30,
+          existingPositionLinkValidation: {
+            status: 'valid',
+            rejectionReasons: [],
+          },
         })
       )
     ).toEqual({
@@ -146,6 +151,114 @@ describe('buildHistoricalOrderRepairProposal', () => {
     ).toMatchObject({
       kind: 'filled_non_entry',
       trackedPositionId: null,
+    });
+  });
+
+  it.each([
+    ['referenced position missing', ['referenced_position_missing']],
+    ['cross-account position', ['account_mismatch']],
+    ['symbol mismatch', ['symbol_mismatch']],
+  ])('refuses a filled sell when %s', (_name, rejectionReasons) => {
+    expect(
+      buildHistoricalOrderRepairProposal(
+        row({
+          side: 'sell',
+          classifications: ['FULL_FILL_LOCAL_EVIDENCE'],
+          matchedTrackedPositionId: null,
+          orderIntentTrackedPositionId: 41,
+          brokerOrderTrackedPositionId: 41,
+          activityTrackedPositionIds: [41],
+          validatedExistingTrackedPositionId: null,
+          existingPositionLinkValidation: {
+            status: 'invalid',
+            rejectionReasons,
+          },
+        })
+      )
+    ).toBeNull();
+  });
+
+  it('refuses conflicting intent, order, and activity links for a filled sell', () => {
+    expect(
+      buildHistoricalOrderRepairProposal(
+        row({
+          side: 'sell',
+          classifications: ['FULL_FILL_LOCAL_EVIDENCE'],
+          orderIntentTrackedPositionId: 41,
+          brokerOrderTrackedPositionId: 42,
+          activityTrackedPositionIds: [41],
+          validatedExistingTrackedPositionId: null,
+          existingPositionLinkValidation: {
+            status: 'conflicting',
+            rejectionReasons: ['conflicting_existing_links'],
+          },
+        })
+      )
+    ).toBeNull();
+  });
+
+  it('allows a valid entry and exit to share the same tracked position', () => {
+    const validLink = {
+      validatedExistingTrackedPositionId: 41,
+      existingPositionLinkValidation: {
+        status: 'valid',
+        rejectionReasons: [],
+      },
+      orderIntentTrackedPositionId: 41,
+      brokerOrderTrackedPositionId: 41,
+      activityTrackedPositionIds: [41],
+    };
+    const entry = buildHistoricalOrderRepairProposal(
+      row({
+        ...validLink,
+        classifications: [
+          'FULL_FILL_LOCAL_EVIDENCE',
+          'POSITION_LINK_EXISTING_VALID',
+        ],
+        matchedTrackedPositionId: null,
+      })
+    );
+    const exit = buildHistoricalOrderRepairProposal(
+      row({
+        ...validLink,
+        orderIntentId: 72,
+        brokerOrderRecordId: 52,
+        side: 'sell',
+        classifications: [
+          'FULL_FILL_LOCAL_EVIDENCE',
+          'POSITION_LINK_EXISTING_VALID',
+        ],
+        matchedTrackedPositionId: null,
+      })
+    );
+    expect(entry).toMatchObject({ trackedPositionId: 41 });
+    expect(exit).toMatchObject({ trackedPositionId: 41 });
+  });
+
+  it('cannot produce a safe proposal carrying an invalid position ID', () => {
+    const proposal = buildHistoricalOrderRepairProposal(
+      row({
+        side: 'sell',
+        classifications: ['FULL_FILL_LOCAL_EVIDENCE'],
+        orderIntentTrackedPositionId: 41,
+        brokerOrderTrackedPositionId: 41,
+        activityTrackedPositionIds: [41],
+        existingPositionLinkValidation: {
+          status: 'invalid',
+          rejectionReasons: ['referenced_position_missing'],
+        },
+      })
+    );
+    expect(proposal).toBeNull();
+    expect(
+      summarizeRepairCompleteness({
+        proposalCount: proposal ? 1 : 0,
+        unresolvedCandidateCount: proposal ? 0 : 1,
+        remainingPendingEntryExposureCount: 0,
+      })
+    ).toMatchObject({
+      safeToApplyProposals: false,
+      allCandidatesResolved: false,
     });
   });
 

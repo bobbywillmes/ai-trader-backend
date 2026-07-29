@@ -104,13 +104,20 @@ export function buildHistoricalOrderRepairProposal(
     row.classifications.includes('FULL_FILL_LOCAL_EVIDENCE') &&
     row.side.toLowerCase() !== 'buy'
   ) {
+    if (
+      existingPositionIds.size > 0 &&
+      (row.existingPositionLinkValidation.status !== 'valid' ||
+        row.validatedExistingTrackedPositionId === null)
+    ) {
+      return null;
+    }
     return {
       kind: 'filled_non_entry',
       orderIntentId: row.orderIntentId,
       brokerOrderRecordId: row.brokerOrderRecordId,
       trackedPositionId:
         existingPositionIds.size === 1
-          ? [...existingPositionIds][0]!
+          ? row.validatedExistingTrackedPositionId
           : null,
       brokerOrderStatus: 'filled',
       orderIntentStatus: 'filled',
@@ -297,10 +304,18 @@ async function applyProposals(args: {
         continue;
       }
 
-      if (proposal.kind === 'filled_entry') {
+      if (
+        proposal.kind === 'filled_entry' ||
+        (proposal.kind === 'filled_non_entry' &&
+          proposal.trackedPositionId !== null)
+      ) {
+        const validatedTrackedPositionId = proposal.trackedPositionId;
+        if (validatedTrackedPositionId === null) {
+          throw new Error('Validated position link unexpectedly became null.');
+        }
         const position = await tx.trackedPosition.findFirst({
           where: {
-            id: proposal.trackedPositionId,
+            id: validatedTrackedPositionId,
             tradingAccountId: args.tradingAccountId,
             broker: currentOrder.broker,
             symbol: currentOrder.symbol,
@@ -311,9 +326,9 @@ async function applyProposals(args: {
             `Matched position ${proposal.trackedPositionId} no longer satisfies ownership.`
           );
         }
-        const existingLinkEvidence = proposal.evidence.includes(
-          'POSITION_LINK_EXISTING_VALID'
-        );
+        const existingLinkEvidence =
+          proposal.kind === 'filled_non_entry' ||
+          proposal.evidence.includes('POSITION_LINK_EXISTING_VALID');
         const positionStillValid = existingLinkEvidence
           ? validateExistingHistoricalPositionLink({
               existingPositionIds: [

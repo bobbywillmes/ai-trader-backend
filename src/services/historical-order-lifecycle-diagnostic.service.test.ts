@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildHistoricalPositionCandidateWhere,
   classifyLocalFillEvidence,
   evaluateHistoricalPositionCandidates,
   formatHistoricalPositionMatchDiagnostics,
@@ -295,5 +296,33 @@ describe('validateExistingHistoricalPositionLink', () => {
       status: 'invalid',
       rejectionReasons: ['account_mismatch'],
     });
+  });
+});
+
+describe('buildHistoricalPositionCandidateWhere', () => {
+  it('loads an existing referenced position for a filled sell without entry matching', () => {
+    expect(
+      buildHistoricalPositionCandidateWhere({
+        includeEntryMatchCandidates: false,
+        tradingAccountId: 1,
+        broker: 'alpaca',
+        symbol: 'DIA',
+        completionTime: fillTime,
+        existingPositionIds: [41],
+      })
+    ).toEqual({ OR: [{ id: { in: [41] } }] });
+  });
+
+  it('does not query positions for an unlinked non-entry lifecycle group', () => {
+    expect(
+      buildHistoricalPositionCandidateWhere({
+        includeEntryMatchCandidates: false,
+        tradingAccountId: 1,
+        broker: 'alpaca',
+        symbol: 'DIA',
+        completionTime: fillTime,
+        existingPositionIds: [],
+      })
+    ).toBeNull();
   });
 });
