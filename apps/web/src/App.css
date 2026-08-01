@@ -6,6 +6,13 @@
     sans-serif;
 }
 
+html, body, #root {
+  width: 100%;
+  max-width: none;
+  min-height: 100%;
+  overflow-x: clip;
+}
+
 * {
   box-sizing: border-box;
 }
