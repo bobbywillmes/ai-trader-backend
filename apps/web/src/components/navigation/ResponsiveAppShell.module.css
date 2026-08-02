@@ -1,3 +1,4 @@
+:global(:root) { --ai-trader-mobile-header-height: calc(60px + env(safe-area-inset-top)); }
 .shell { min-height: 100dvh; overflow-x: clip; }
 .desktopSidebar { position: fixed; inset: 0 auto 0 0; z-index: 200; width: 72px; overflow: hidden; background: rgba(8, 16, 31, .97); border-right: 1px solid rgba(148, 163, 184, .18); box-shadow: 8px 0 30px transparent; transition: width 200ms ease, box-shadow 200ms ease; }
 .desktopSidebar[data-expanded] { width: 248px; box-shadow: 10px 0 34px rgba(0, 0, 0, .34); }
@@ -25,24 +26,21 @@
 .userButton { display: flex; align-items: center; width: calc(100% - 16px); min-height: 58px; margin: 8px; padding: 8px 9px; gap: 11px; border-radius: var(--mantine-radius-md); color: inherit; }
 .userButton:hover { background: rgba(148, 163, 184, .09); }
 .userDetails { flex: 1; min-width: 0; white-space: nowrap; animation: labelIn 150ms ease both; }
+.userMenuHint { display: flex; flex-direction: column; flex: 0 0 auto; align-items: center; gap: 2px; color: var(--mantine-color-gray-5); white-space: nowrap; }
 .main { min-width: 0; margin-left: 72px; transition: margin-left 200ms ease; }
 .main[data-pinned] { margin-left: 248px; }
 .mobileHeader { display: none; }
-.headerBurger[data-drawer-open] { visibility: hidden; }
-.drawerContent { background: #08101f; padding-bottom: env(safe-area-inset-bottom); }
-.drawerHeader { position: absolute; z-index: 2; top: env(safe-area-inset-top); right: 0; min-height: 60px; width: 60px; padding: 8px; background: transparent; }
-.drawerTitle { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
-.drawerClose { width: 44px; height: 44px; min-width: 44px; }
-.drawerClose svg { width: 28px; height: 28px; }
-.drawerBody { height: 100dvh; padding: env(safe-area-inset-top) 0 0; }
+.drawerOverlay { top: var(--ai-trader-mobile-header-height); bottom: 0; height: auto; }
+.drawerInner { top: var(--ai-trader-mobile-header-height); bottom: 0; height: auto; }
+.drawerContent { display: flex; height: 100%; max-height: 100%; overflow: hidden; background: #08101f; padding-bottom: env(safe-area-inset-bottom); }
+.drawerBody { flex: 1; min-height: 0; height: 100%; overflow: hidden; padding: 0; }
 .drawerBody .navigation { padding-top: 8px; }
-.drawerBody .section:first-child .sectionLabel { padding-right: 60px; }
 .drawerBody > .sidebarContents { height: 100%; }
 @keyframes labelIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: translateX(0); } }
 @media (max-width: 48em) {
   .desktopSidebar { display: none; }
-  .mobileHeader { position: sticky; top: 0; z-index: 190; display: flex; height: calc(60px + env(safe-area-inset-top)); align-items: center; justify-content: space-between; padding: env(safe-area-inset-top) 16px 0; background: rgba(8,16,31,.94); border-bottom: 1px solid rgba(148,163,184,.18); backdrop-filter: blur(12px); }
-  .main, .main[data-pinned] { margin-left: 0; padding-top: 0; }
+  .mobileHeader { position: fixed; inset: 0 0 auto; z-index: 190; display: flex; width: 100%; height: var(--ai-trader-mobile-header-height); align-items: center; justify-content: space-between; padding: env(safe-area-inset-top) 16px 0; background: rgba(8,16,31,.98); border-bottom: 1px solid rgba(148,163,184,.18); backdrop-filter: blur(12px); }
+  .main, .main[data-pinned] { margin-left: 0; padding-top: var(--ai-trader-mobile-header-height); }
 }
 @media (prefers-reduced-motion: reduce) {
   .desktopSidebar, .main { transition-duration: 1ms; }

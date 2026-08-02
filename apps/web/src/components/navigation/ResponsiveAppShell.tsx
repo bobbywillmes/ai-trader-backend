@@ -2,7 +2,7 @@ import {
   AppShell, Avatar, Burger, Divider, Drawer, Group, Menu, ScrollArea,
   Text, ThemeIcon, Tooltip, UnstyledButton,
 } from "@mantine/core";
-import { IconChevronRight, IconLogout, IconPin, IconPinnedOff, IconUser } from "@tabler/icons-react";
+import { IconChevronRight, IconChevronUp, IconLogout, IconPin, IconPinnedOff, IconUser } from "@tabler/icons-react";
 import { forwardRef, useCallback, useEffect, useRef, useState, type FocusEvent, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { AdminNavGroup, AdminNavItem } from "../../app/navigation";
@@ -30,6 +30,7 @@ export function ResponsiveAppShell(props: Props) {
   const [state, setState] = useState<SidebarState>(() => getInitialSidebarState(typeof window === "undefined" ? null : window.localStorage));
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ownedMenuOpen = useRef(false);
+  const mobileNavigationScrollTop = useRef(0);
   const hamburgerRef = useRef<HTMLButtonElement>(null);
   const isPinned = state === "desktop-pinned";
   const isExpanded = isPinned || state === "desktop-hover-expanded";
@@ -50,6 +51,18 @@ export function ResponsiveAppShell(props: Props) {
 
   useEffect(() => () => cancelClose(), [cancelClose]);
   useEffect(() => {
+    if (state !== "mobile-open") return;
+    const previousOverflow = document.body.style.overflow;
+    const previousPaddingRight = document.body.style.paddingRight;
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+    document.body.style.overflow = "hidden";
+    if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`;
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.paddingRight = previousPaddingRight;
+    };
+  }, [state]);
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setState((current) => transitionSidebar(current, "temporary-close"));
     };
@@ -64,13 +77,14 @@ export function ResponsiveAppShell(props: Props) {
   };
   const openMobile = () => setState((current) => transitionSidebar(current, "mobile-open"));
   const closeMobile = () => setState((current) => transitionSidebar(current, "mobile-close", window.localStorage.getItem(SIDEBAR_PINNED_STORAGE_KEY) === "true"));
+  const toggleMobile = () => state === "mobile-open" ? closeMobile() : openMobile();
   const handleBlur = (event: FocusEvent<HTMLElement>) => {
     if (!event.currentTarget.contains(event.relatedTarget as Node | null)) scheduleClose();
   };
 
   return (
     <AppShell padding="md" className={classes.shell} data-sidebar-state={state}>
-      <ApplicationHeader ref={hamburgerRef} opened={state === "mobile-open"} onOpen={openMobile} portalName={props.portalName} />
+      <ApplicationHeader ref={hamburgerRef} opened={state === "mobile-open"} onToggle={toggleMobile} portalName={props.portalName} />
       <aside
         className={classes.desktopSidebar}
         data-expanded={isExpanded || undefined}
@@ -85,25 +99,22 @@ export function ResponsiveAppShell(props: Props) {
           if (opened) openTemporary(); else scheduleClose();
         }} />
       </aside>
-      <MobileNavigationDrawer opened={state === "mobile-open"} onClose={closeMobile} returnFocus={hamburgerRef} {...props} />
+      <MobileNavigationDrawer opened={state === "mobile-open"} onClose={closeMobile} returnFocus={hamburgerRef} navigationScrollTopRef={mobileNavigationScrollTop} {...props} />
       <AppShell.Main className={classes.main} data-pinned={isPinned || undefined}>{props.children}</AppShell.Main>
     </AppShell>
   );
 }
 
-const ApplicationHeader = forwardRef<HTMLButtonElement, { opened: boolean; onOpen: () => void; portalName?: string }>(({ opened, onOpen, portalName }, ref) => (
+const ApplicationHeader = forwardRef<HTMLButtonElement, { opened: boolean; onToggle: () => void; portalName?: string }>(({ opened, onToggle, portalName }, ref) => (
   <header className={classes.mobileHeader}>
     <Brand expanded portalName={portalName} />
     <Burger
       ref={ref}
       opened={opened}
-      onClick={onOpen}
-      aria-label="Open navigation"
-      aria-hidden={opened}
-      tabIndex={opened ? -1 : 0}
+      onClick={onToggle}
+      aria-label={opened ? "Close navigation" : "Open navigation"}
       size="sm"
       className={classes.headerBurger}
-      data-drawer-open={opened || undefined}
     />
   </header>
 ));
@@ -115,7 +126,7 @@ function Brand({ expanded, portalName }: { expanded: boolean; portalName?: strin
   </Group>;
 }
 
-function SidebarContents({ groups, user, platformRole, portalName, expanded, pinned, hideBrand = false, isSigningOut, onSignOut, onTogglePinned, onNavigate, onOwnedMenuChange }: Props & { expanded: boolean; pinned: boolean; hideBrand?: boolean; onTogglePinned?: () => void; onNavigate?: () => void; onOwnedMenuChange?: (open: boolean) => void }) {
+function SidebarContents({ groups, user, platformRole, portalName, expanded, pinned, hideBrand = false, mobile = false, navigationScrollTopRef, isSigningOut, onSignOut, onTogglePinned, onNavigate, onOwnedMenuChange }: Props & { expanded: boolean; pinned: boolean; hideBrand?: boolean; mobile?: boolean; navigationScrollTopRef?: { current: number }; onTogglePinned?: () => void; onNavigate?: () => void; onOwnedMenuChange?: (open: boolean) => void }) {
   return <div className={classes.sidebarContents}>
     {!hideBrand && <>
       <div className={classes.sidebarHeader}>
@@ -124,11 +135,20 @@ function SidebarContents({ groups, user, platformRole, portalName, expanded, pin
       </div>
       <Divider />
     </>}
-    <ScrollArea className={classes.navigationScroll} scrollbarSize={6}>
+    <ScrollArea
+      className={classes.navigationScroll}
+      scrollbarSize={6}
+      viewportRef={(viewport) => {
+        if (viewport && navigationScrollTopRef) viewport.scrollTop = navigationScrollTopRef.current;
+      }}
+      onScrollPositionChange={({ y }) => {
+        if (navigationScrollTopRef) navigationScrollTopRef.current = y;
+      }}
+    >
       <SidebarNavigation groups={groups} expanded={expanded} onNavigate={onNavigate} />
     </ScrollArea>
     <Divider />
-    <SidebarUserMenu user={user} platformRole={platformRole} expanded={expanded} isSigningOut={isSigningOut} onSignOut={onSignOut} onMenuChange={onOwnedMenuChange} />
+    <SidebarUserMenu user={user} platformRole={platformRole} expanded={expanded} mobile={mobile} isSigningOut={isSigningOut} onSignOut={onSignOut} onMenuChange={onOwnedMenuChange} />
   </div>;
 }
 
@@ -140,22 +160,40 @@ function SidebarSection({ group, expanded, onNavigate }: { group: AdminNavGroup;
 }
 function SidebarLink({ item, expanded, onNavigate }: { item: AdminNavItem; expanded: boolean; onNavigate?: () => void }) {
   const { pathname } = useLocation(); const navigate = useNavigate(); const active = isNavigationItemActive(item, pathname); const Icon = item.icon;
-  const link = <UnstyledButton className={classes.navLink} data-active={active || undefined} aria-current={active ? "page" : undefined} onClick={() => { navigate(item.to); onNavigate?.(); }}><Icon size={21} stroke={1.8} aria-hidden="true" /><span className={expanded ? classes.linkLabel : classes.visuallyHidden}>{item.label}</span>{expanded && <IconChevronRight className={classes.linkChevron} size={15} aria-hidden="true" />}</UnstyledButton>;
+  const link = <UnstyledButton className={classes.navLink} data-active={active || undefined} aria-current={active ? "page" : undefined} onClick={() => { navigate(item.to); window.scrollTo({ top: 0, left: 0, behavior: "auto" }); onNavigate?.(); }}><Icon size={21} stroke={1.8} aria-hidden="true" /><span className={expanded ? classes.linkLabel : classes.visuallyHidden}>{item.label}</span>{expanded && <IconChevronRight className={classes.linkChevron} size={15} aria-hidden="true" />}</UnstyledButton>;
   return expanded ? link : <Tooltip label={item.label} position="right" openDelay={350}>{link}</Tooltip>;
 }
 
-function SidebarUserMenu({ user, platformRole, expanded, isSigningOut, onSignOut, onMenuChange }: { user: User | null; platformRole?: PlatformRole; expanded: boolean; isSigningOut: boolean; onSignOut: () => void; onMenuChange?: (open: boolean) => void }) {
+function SidebarUserMenu({ user, platformRole, expanded, mobile, isSigningOut, onSignOut, onMenuChange }: { user: User | null; platformRole?: PlatformRole; expanded: boolean; mobile: boolean; isSigningOut: boolean; onSignOut: () => void; onMenuChange?: (open: boolean) => void }) {
   const name = user?.name?.trim() || user?.email || "User";
   const initials = name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
-  return <Menu position="right-end" width={250} shadow="lg" onChange={onMenuChange} withinPortal>
-    <Menu.Target><UnstyledButton className={classes.userButton} aria-label={`Open user menu for ${name}`}><Avatar color="cyan" radius="xl" size={38}>{initials}</Avatar>{expanded && <div className={classes.userDetails}><Text size="sm" fw={650} truncate>{name}</Text><Text size="xs" c="dimmed" truncate>{user?.email}</Text><Text size="xs" c="cyan">{platformRole ? getPlatformRoleLabel(platformRole) : ""}</Text></div>}</UnstyledButton></Menu.Target>
+  return <Menu position={mobile ? "top-start" : "right-end"} offset={8} width={250} shadow="lg" onChange={onMenuChange} withinPortal>
+    <Menu.Target><UnstyledButton className={classes.userButton} aria-label={`Open account menu for ${name}; includes sign out`}><Avatar color="cyan" radius="xl" size={38}>{initials}</Avatar>{expanded && <><div className={classes.userDetails}><Text size="sm" fw={650} truncate>{name}</Text><Text size="xs" c="dimmed" truncate>{user?.email}</Text><Text size="xs" c="cyan">{platformRole ? getPlatformRoleLabel(platformRole) : ""}</Text></div><div className={classes.userMenuHint}>{mobile ? <IconChevronUp size={17} aria-hidden="true" /> : <IconChevronRight size={17} aria-hidden="true" />}<Text size="xs">Account menu</Text></div></>}</UnstyledButton></Menu.Target>
     <Menu.Dropdown><Menu.Label>Signed in as</Menu.Label><Menu.Item leftSection={<IconUser size={16} />} disabled>{user?.email}</Menu.Item><Menu.Divider /><Menu.Item color="red" leftSection={<IconLogout size={16} />} onClick={onSignOut} disabled={isSigningOut}>{isSigningOut ? "Signing out…" : "Sign out"}</Menu.Item></Menu.Dropdown>
   </Menu>;
 }
 
-function MobileNavigationDrawer({ opened, onClose, returnFocus, ...props }: Props & { opened: boolean; onClose: () => void; returnFocus: React.RefObject<HTMLButtonElement | null> }) {
+function MobileNavigationDrawer({ opened, onClose, returnFocus, navigationScrollTopRef, ...props }: Props & { opened: boolean; onClose: () => void; returnFocus: React.RefObject<HTMLButtonElement | null>; navigationScrollTopRef: { current: number } }) {
   const closeAndRestore = () => { onClose(); window.setTimeout(() => returnFocus.current?.focus(), 0); };
-  return <Drawer opened={opened} onClose={closeAndRestore} title="Navigation" size="min(320px, 88vw)" padding={0} trapFocus lockScroll closeOnEscape closeOnClickOutside closeButtonProps={{ size: "lg", "aria-label": "Close navigation" }} classNames={{ content: classes.drawerContent, body: classes.drawerBody, header: classes.drawerHeader, title: classes.drawerTitle, close: classes.drawerClose }}>
-    <SidebarContents {...props} expanded pinned={false} hideBrand onNavigate={closeAndRestore} />
+  return <Drawer
+    opened={opened}
+    onClose={closeAndRestore}
+    aria-label="Navigation"
+    withCloseButton={false}
+    size="min(320px, 88vw)"
+    padding={0}
+    trapFocus={false}
+    lockScroll
+    closeOnEscape
+    closeOnClickOutside
+    zIndex={180}
+    classNames={{ overlay: classes.drawerOverlay, inner: classes.drawerInner, content: classes.drawerContent, body: classes.drawerBody }}
+    styles={{
+      overlay: { top: "var(--ai-trader-mobile-header-height)", bottom: 0, height: "auto" },
+      inner: { top: "var(--ai-trader-mobile-header-height)", bottom: 0, height: "auto" },
+      content: { height: "100%", maxHeight: "100%", overflow: "hidden" },
+    }}
+  >
+    <SidebarContents {...props} expanded pinned={false} hideBrand mobile navigationScrollTopRef={navigationScrollTopRef} onNavigate={closeAndRestore} />
   </Drawer>;
 }
