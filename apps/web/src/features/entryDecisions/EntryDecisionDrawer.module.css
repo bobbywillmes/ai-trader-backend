@@ -1,0 +1,5 @@
+.detailCard { min-width: 0; padding: clamp(1rem, 2vw, 1.25rem); border: 1px solid var(--mantine-color-dark-4); border-radius: var(--mantine-radius-md); background: rgba(30, 41, 59, .58); }
+.marketCard { border-inline-start: 3px solid var(--mantine-color-cyan-7); background: rgba(22, 46, 61, .5); }
+.heading { margin: 0 0 var(--data-space-md); color: var(--mantine-color-gray-1); }
+.diagnostics { min-width: 0; overflow: hidden; }
+.technical { max-width: 36rem; overflow-wrap: anywhere; font-family: var(--mantine-font-family-monospace); }

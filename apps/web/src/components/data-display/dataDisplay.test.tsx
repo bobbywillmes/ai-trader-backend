@@ -85,6 +85,6 @@ describe("filters and states", () => {
 
   it("renders loading, empty, and retryable error states", async () => {
     const retry = vi.fn(); const { rerender } = render(<DataState state="loading"/>, { wrapper: Providers }); expect(screen.getByRole("status").getAttribute("aria-busy")).toBe("true");
-    rerender(<Providers><DataState state="empty"/></Providers>); expect(screen.getByText("No records")).toBeTruthy(); rerender(<Providers><DataState state="error" onRetry={retry}/></Providers>); await userEvent.setup().click(screen.getByRole("button", { name: "Retry" })); expect(retry).toHaveBeenCalledOnce();
+    const emptyAction = vi.fn(); rerender(<Providers><DataState state="empty" action={{ label: "Clear filters", onClick: emptyAction }}/></Providers>); expect(screen.getByText("No records")).toBeTruthy(); await userEvent.setup().click(screen.getByRole("button", { name: "Clear filters" })); expect(emptyAction).toHaveBeenCalledOnce(); rerender(<Providers><DataState state="error" onRetry={retry}/></Providers>); await userEvent.setup().click(screen.getByRole("button", { name: "Retry" })); expect(retry).toHaveBeenCalledOnce();
   });
 });
