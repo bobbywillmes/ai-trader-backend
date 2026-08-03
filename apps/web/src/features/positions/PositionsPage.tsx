@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { Button, Card, Group, Stack, Table, Text, Title } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
@@ -178,6 +178,29 @@ export function PositionsPage() {
   const detailPosition = useMemo(() => positions.find((position) => position.id === detailId) ?? null, [detailId, positions]);
   const attentionCount = positions.filter(needsAttention).length;
 
+  function openDetails(position: TrackedPosition, opener: HTMLElement) {
+    tradeCycleDrawer.closeCycle();
+    setDetailOpener(opener);
+    setDetailId(position.id);
+  }
+
+  function toggleInlineDetails(position: TrackedPosition) {
+    tradeCycleDrawer.closeCycle();
+    setExpandedId((current) => current === position.id ? null : position.id);
+  }
+
+  function openLifecycle(position: TrackedPosition) {
+    setDetailId(null);
+    setExpandedId(null);
+    tradeCycleDrawer.openCycle(position.id);
+  }
+
+  function closeDetails() {
+    const opener = detailOpener;
+    setDetailId(null);
+    window.setTimeout(() => opener?.focus(), 0);
+  }
+
   function closePosition(position: TrackedPosition) {
     if (closeMutation.isPending) return;
     modals.openConfirmModal({
@@ -196,7 +219,7 @@ export function PositionsPage() {
   }
 
   const isClosing = (position: TrackedPosition) => closeMutation.isPending && closeMutation.variables === position.id;
-  const lifecycleAction = (position: TrackedPosition) => ({ label: "View lifecycle", icon: <IconFileAnalytics size={16} />, onClick: () => tradeCycleDrawer.openCycle(position.id) });
+  const lifecycleAction = (position: TrackedPosition) => ({ label: "View lifecycle", icon: <IconFileAnalytics size={16} />, onClick: () => openLifecycle(position) });
   const closeAction = (position: TrackedPosition) => ({ label: isClosing(position) ? "Closing position" : `Close ${position.symbol} position`, icon: <IconTrash size={16} />, color: "red", disabled: closeMutation.isPending, onClick: () => closePosition(position) });
   const actions = (position: TrackedPosition, compact = false) => <ResponsiveActions compact={compact} primary={lifecycleAction(position)} secondary={[closeAction(position)]} />;
   const details = (position: TrackedPosition) => <RecordDetailsGrid missingValue={MISSING_VALUE} sections={detailsFor(position, actions(position))} />;
@@ -213,13 +236,13 @@ export function PositionsPage() {
 
   const wide = (items: readonly TrackedPosition[]) => <DataTable caption="Open tracked positions" density="compact"><Table.Thead><Table.Tr>
     <Table.Th>Position</Table.Th><Table.Th>Side / quantity</Table.Th><Table.Th className={classes.numeric}>Current</Table.Th><Table.Th className={classes.numeric}>P/L</Table.Th><Table.Th>Status / exit state</Table.Th><Table.Th className={classes.actionsHeading}>Actions</Table.Th>
-  </Table.Tr></Table.Thead><Table.Tbody>{items.map((position) => <Table.Tr key={position.id}>
+  </Table.Tr></Table.Thead><Table.Tbody>{items.map((position) => <Fragment key={position.id}><Table.Tr>
     <Table.Td>{identity(position)}</Table.Td><Table.Td>{titleCase(position.side)} · {position.qty} {position.qty === 1 ? "share" : "shares"}</Table.Td>
     <Table.Td className={classes.numeric}>{formatCurrency(position.currentPrice)}</Table.Td><Table.Td className={classes.numeric}><ProfitLoss dollars={position.unrealizedPnL} ratio={position.unrealizedPnLPct} /></Table.Td>
-    <Table.Td>{statusGroup(position)}</Table.Td><Table.Td><Group justify="flex-end" wrap="nowrap"><Button variant="default" size="compact-sm" onClick={(event) => { setDetailOpener(event.currentTarget); setDetailId(position.id); }} aria-haspopup="dialog">Details</Button><ResponsiveActions compact secondary={[lifecycleAction(position), closeAction(position)]} /></Group></Table.Td>
-  </Table.Tr>)}</Table.Tbody></DataTable>;
-  const compact = (items: readonly TrackedPosition[]) => <CompactRecordList records={items} getRecordId={(position) => position.id} renderIdentity={(position) => <Stack gap="xs">{identity(position)}{statusGroup(position)}</Stack>} renderFields={summaryFields} renderDetails={details} renderActions={(position) => <ResponsiveActions compact secondary={[lifecycleAction(position), closeAction(position)]} />} expandedId={expandedId} onExpandedChange={setExpandedId} />;
-  const narrow = (items: readonly TrackedPosition[]) => <MobileRecordCard records={items} getRecordId={(position) => position.id} renderIdentity={identity} renderStatus={statusGroup} renderFields={summaryFields} onDetails={(position, opener) => { setDetailOpener(opener); setDetailId(position.id); }} renderActions={(position) => <ResponsiveActions compact primary={lifecycleAction(position)} secondary={[closeAction(position)]} />} />;
+    <Table.Td>{statusGroup(position)}</Table.Td><Table.Td><Group justify="flex-end" wrap="nowrap"><Button variant="default" size="compact-sm" onClick={() => toggleInlineDetails(position)} aria-expanded={expandedId === position.id} aria-controls={`position-${position.id}-wide-details`}>{expandedId === position.id ? "Hide details" : "Details"}</Button><ResponsiveActions compact secondary={[lifecycleAction(position), closeAction(position)]} /></Group></Table.Td>
+  </Table.Tr>{expandedId === position.id && <Table.Tr><Table.Td colSpan={6} id={`position-${position.id}-wide-details`} className={classes.inlineDetails}>{details(position)}</Table.Td></Table.Tr>}</Fragment>)}</Table.Tbody></DataTable>;
+  const compact = (items: readonly TrackedPosition[]) => <CompactRecordList records={items} getRecordId={(position) => position.id} renderIdentity={(position) => <Stack gap="xs">{identity(position)}{statusGroup(position)}</Stack>} renderFields={summaryFields} renderDetails={details} renderActions={(position) => <ResponsiveActions compact secondary={[lifecycleAction(position), closeAction(position)]} />} expandedId={expandedId} onExpandedChange={(id) => { if (id !== null) tradeCycleDrawer.closeCycle(); setExpandedId(id); }} />;
+  const narrow = (items: readonly TrackedPosition[]) => <MobileRecordCard records={items} getRecordId={(position) => position.id} renderIdentity={identity} renderStatus={statusGroup} renderFields={summaryFields} onDetails={openDetails} renderActions={(position) => <ResponsiveActions compact primary={lifecycleAction(position)} secondary={[closeAction(position)]} />} />;
 
   return <main className={classes.page}><Stack gap="lg">
     <Group justify="space-between" align="flex-end" gap="md"><div><Title order={2} size="h3">Open Positions</Title><Text size="sm" c="dimmed">Live tracked positions and exit management.</Text></div>{!positionsQuery.isLoading && !positionsQuery.isError && <Text size="sm" c="dimmed">{positions.length} open {positions.length === 1 ? "position" : "positions"}{attentionCount > 0 ? ` · ${attentionCount} requiring attention` : ""}</Text>}</Group>
@@ -227,7 +250,6 @@ export function PositionsPage() {
       {positionsQuery.isLoading ? <DataState state="loading" message="Loading open positions…" /> : positionsQuery.isError ? <DataState state="error" title="Unable to load open positions" message={positionsQuery.error instanceof Error ? positionsQuery.error.message : "Open positions could not be loaded."} onRetry={() => void positionsQuery.refetch()} /> : positions.length === 0 ? <DataState state="empty" title="No open positions" message="Positions will appear here after entry orders fill." /> : <ResponsiveDataView records={positions} getRecordId={(position) => position.id} wide={wide} compact={compact} narrow={narrow} aria-label="Open positions" />}
     </Card>
   </Stack>
-  <ResponsiveDetails opened={Boolean(detailPosition)} title={detailPosition ? `${detailPosition.symbol} position details` : "Position details"} onClose={() => setDetailId(null)} returnFocusTo={detailOpener}>{detailPosition && details(detailPosition)}</ResponsiveDetails>
-  <TradeCycleDrawer {...tradeCycleDrawer.drawerProps} onClose={tradeCycleDrawer.closeCycle} />
+  {detailPosition ? <ResponsiveDetails opened title={`${detailPosition.symbol} position details`} onClose={closeDetails}>{details(detailPosition)}</ResponsiveDetails> : <TradeCycleDrawer {...tradeCycleDrawer.drawerProps} onClose={tradeCycleDrawer.closeCycle} />}
   </main>;
 }

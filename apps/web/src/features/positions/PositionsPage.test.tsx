@@ -7,15 +7,15 @@ import type { TrackedPosition } from "./types";
 
 const mocks = vi.hoisted(() => ({
   query: { data: [] as TrackedPosition[], isLoading: false, isError: false, error: null as Error | null, refetch: vi.fn() },
-  mutateAsync: vi.fn(), openCycle: vi.fn(), confirm: vi.fn(), notify: vi.fn(), closePending: false, closeVariables: undefined as number | undefined,
+  mutateAsync: vi.fn(), openCycle: vi.fn(), closeCycle: vi.fn(), confirm: vi.fn(), notify: vi.fn(), closePending: false, closeVariables: undefined as number | undefined, lifecycleOpened: false,
 }));
 
 vi.mock("./hooks", () => ({
   useOpenPositions: () => mocks.query,
   useClosePosition: () => ({ mutateAsync: mocks.mutateAsync, isPending: mocks.closePending, variables: mocks.closeVariables }),
 }));
-vi.mock("../tradeHistory/hooks", () => ({ useTradeCycleDrawer: () => ({ openCycle: mocks.openCycle, closeCycle: vi.fn(), drawerProps: { opened: false, cycle: null, isLoading: false, isError: false, error: null } }) }));
-vi.mock("../tradeHistory/TradeCycleDrawer", () => ({ TradeCycleDrawer: () => null }));
+vi.mock("../tradeHistory/hooks", () => ({ useTradeCycleDrawer: () => ({ openCycle: mocks.openCycle, closeCycle: mocks.closeCycle, drawerProps: { opened: mocks.lifecycleOpened, cycle: null, isLoading: false, isError: false, error: null } }) }));
+vi.mock("../tradeHistory/TradeCycleDrawer", () => ({ TradeCycleDrawer: ({ opened }: { opened: boolean }) => opened ? <aside aria-label="Lifecycle drawer">Lifecycle drawer</aside> : null }));
 vi.mock("../../lib/api", () => ({ getAdminToken: () => "token" }));
 vi.mock("@mantine/modals", () => ({ modals: { openConfirmModal: (options: unknown) => mocks.confirm(options) } }));
 vi.mock("@mantine/notifications", () => ({ notifications: { show: (options: unknown) => mocks.notify(options) } }));
@@ -50,7 +50,7 @@ function renderPage() {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.query.data = [base, { ...base, id: 102, symbol: "TSLA", unrealizedPnL: -12.5, unrealizedPnLPct: -.012, currentPrice: Number.NaN, exitState: { exitMode: "unlock_trailing_stop", attentionRequired: true, attentionCode: "trail_order_rejected", attentionMessage: "Broker rejected the protective order." }, trailingStopOrderId: null, subscription: null }];
-  mocks.query.isLoading = false; mocks.query.isError = false; mocks.query.error = null; mocks.closePending = false; mocks.closeVariables = undefined;
+  mocks.query.isLoading = false; mocks.query.isError = false; mocks.query.error = null; mocks.closePending = false; mocks.closeVariables = undefined; mocks.lifecycleOpened = false;
   vi.stubGlobal("ResizeObserver", ResizeObserverMock);
   window.matchMedia = vi.fn().mockImplementation((query) => ({ matches: false, media: query, onchange: null, addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn() }));
 });
@@ -65,6 +65,17 @@ describe("Open Positions responsive page", () => {
     expect(within(table).getByLabelText("Trail active status")).toBeTruthy();
     expect(within(table).getByLabelText("Attention required status")).toBeTruthy();
     expect(table.querySelectorAll("th")).toHaveLength(6);
+  });
+
+  it("expands wide position details inline instead of opening a drawer", async () => {
+    renderPage(); resize?.(1280);
+    const table = await screen.findByRole("table", { name: "Open tracked positions" });
+    const button = within(table).getAllByRole("button", { name: "Details" })[0];
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    await userEvent.setup().click(button);
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+    expect(within(table).getByText("momentum-breakout-routing-key-that-is-deliberately-long")).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "SPY position details" })).toBeNull();
   });
 
   it("uses compact summaries and expands the correct grouped details", async () => {
@@ -101,6 +112,21 @@ describe("Open Positions responsive page", () => {
     const config = mocks.confirm.mock.calls[0][0] as { onConfirm: () => Promise<void> };
     await config.onConfirm();
     expect(mocks.mutateAsync).toHaveBeenCalledWith(101);
+  });
+
+  it("keeps position details and lifecycle drawers mutually exclusive", async () => {
+    mocks.lifecycleOpened = true;
+    renderPage(); resize?.(390); await screen.findByText("2 open positions · 1 requiring attention");
+    expect(screen.getByLabelText("Lifecycle drawer")).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole("button", { name: "View details" })[0]);
+    expect(mocks.closeCycle).toHaveBeenCalledOnce();
+    const drawer = await screen.findByRole("dialog", { name: "SPY position details" });
+    expect(screen.queryByLabelText("Lifecycle drawer")).toBeNull();
+    await user.click(within(drawer).getByRole("button", { name: "View lifecycle" }));
+    expect(mocks.openCycle).toHaveBeenCalledWith(101);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "SPY position details" })).toBeNull());
+    expect(screen.getByLabelText("Lifecycle drawer")).toBeTruthy();
   });
 
   it("disables close actions and announces the closing state during submission", async () => {

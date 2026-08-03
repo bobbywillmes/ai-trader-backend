@@ -5,6 +5,7 @@
 .wrap { max-width: 24rem; overflow-wrap: anywhere; }
 .numeric { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .actionsHeading { text-align: right; }
+.inlineDetails { padding: var(--data-space-lg) !important; background: rgba(15, 23, 42, .82); }
 .badges { min-width: 11rem; }
 .pnl { display: inline-flex; white-space: nowrap; font-weight: 700; font-variant-numeric: tabular-nums; }
 .pnl[data-pnl-tone="positive"]::before { content: "▲"; margin-right: .3rem; font-size: .65em; color: var(--mantine-color-teal-5); }
