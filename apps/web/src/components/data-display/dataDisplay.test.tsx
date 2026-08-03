@@ -50,9 +50,9 @@ describe("responsive presentation", () => {
 
 describe("details", () => {
   it("opens and closes inline details with associated aria state", async () => {
-    function Harness() { const [id, setId] = useState<string | number | null>(null); return <CompactRecordList records={[{ id: "spy" }]} getRecordId={(record) => record.id} renderIdentity={() => "SPY"} renderFields={() => [{ label: "Status", value: "Open" }]} renderDetails={() => "Secondary position data"} expandedId={id} onExpandedChange={setId}/>; }
+    function Harness() { const [id, setId] = useState<string | number | null>(null); return <CompactRecordList records={[{ id: "spy" }]} getRecordId={(record) => record.id} renderIdentity={() => "SPY"} renderFields={() => [{ label: "Status", value: "Open" }]} renderDetails={() => "Secondary position data"} renderActions={() => <button>Position actions</button>} expandedId={id} onExpandedChange={setId}/>; }
     render(<Harness/>, { wrapper: Providers }); const user = userEvent.setup(); const button = screen.getByRole("button", { name: "Details" });
-    expect(button.getAttribute("aria-expanded")).toBe("false"); await user.click(button); expect(button.getAttribute("aria-expanded")).toBe("true"); expect(screen.getByText("Secondary position data")).toBeTruthy(); await user.click(button); expect(screen.queryByText("Secondary position data")).toBeNull();
+    expect(screen.getByRole("button", { name: "Position actions" })).toBeTruthy(); expect(button.getAttribute("aria-expanded")).toBe("false"); await user.click(button); expect(button.getAttribute("aria-expanded")).toBe("true"); expect(screen.getByText("Secondary position data")).toBeTruthy(); await user.click(button); expect(screen.queryByText("Secondary position data")).toBeNull();
   });
 
   it("closes drawer on Escape and restores focus", async () => {

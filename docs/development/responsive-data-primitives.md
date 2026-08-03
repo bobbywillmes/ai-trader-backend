@@ -42,6 +42,10 @@ In a development build, authenticated admin users can open `/dev/responsive-data
 
 The route definition is guarded by `import.meta.env.DEV`, so production builds do not include a reachable route or lazily loaded preview chunk. Validate it while resizing the browser and with the sidebar both collapsed and pinned. Useful widths are 390, 402, 768, 1024, 1280, 1600, 1920, 2560, and 3840px; also check a 790px viewport height.
 
-## Next phase
+## Reference operational page
 
-Open Positions is the reference conversion for the next branch. That work should decide the final primary field hierarchy using real operator workflows, reuse existing lifecycle and close-position behavior, and tune widths/density against real records. Existing page tables and badges remain in place until their pages are deliberately migrated.
+Open Positions is the first production page built on these primitives and is the reference for later operational conversions. Its primary summary keeps identity, account, side and quantity, current price, combined dollar/percentage P/L, position status, concise exit state, details, and safe action access visible. Entry pricing, full exit configuration, trailing values, routing identifiers, timestamps, and complete attention text are secondary details.
+
+At wide container widths the page uses a concise semantic table and opens secondary fields in `ResponsiveDetails`. Compact widths use summary records with vertical inline expansion; the identity remains visible while details are open. Narrow widths use scan-friendly cards and a focus-managed drawer. `ResponsiveActions` keeps lifecycle access explicit and places the destructive confirmed close action in an overflow menu. Future operational pages should use the same primary/secondary/deep-detail hierarchy rather than carrying every legacy column into their summary.
+
+`CompactRecordList` also supports an optional generic action slot beside its details control. Use it when a compact operational record needs safe action access without making the row itself interactive.

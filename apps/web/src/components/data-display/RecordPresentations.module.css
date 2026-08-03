@@ -13,7 +13,8 @@
 .cardMeta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--data-space-md); }
 .cardActions { display: flex; align-items: center; justify-content: space-between; gap: var(--data-space-sm); margin-top: var(--data-space-md); padding-top: var(--data-space-md); border-top: 1px solid var(--mantine-color-dark-4); }
 .detailButton { min-height: var(--data-touch-target); }
+.summaryActions { display: flex; align-items: center; justify-content: flex-end; gap: var(--data-space-xs); }
 @keyframes reveal { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
-@container responsive-data-view (max-width: 800px) { .summary { grid-template-columns: minmax(9rem, 1.5fr) minmax(7rem, 1fr) auto; } .summary > :nth-child(3) { display: none; } }
+@container responsive-data-view (max-width: 800px) { .summary { grid-template-columns: minmax(9rem, 1.5fr) minmax(7rem, 1fr) auto; } .summary > :nth-child(3) { display: none; } .summaryActions { flex-wrap: wrap; } }
 @container responsive-data-view (max-width: 420px) { .cardMeta { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .details { animation: none; } }

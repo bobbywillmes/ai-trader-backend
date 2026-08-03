@@ -1,415 +1,233 @@
-import { useState } from "react";
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  Group,
-  Loader,
-  ScrollArea,
-  Stack,
-  Table,
-  Text,
-  Title,
-  Tooltip,
-} from "@mantine/core";
+import { useMemo, useState } from "react";
+import { Button, Card, Group, Stack, Table, Text, Title } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
-import { IconFileAnalytics } from "@tabler/icons-react";
-import { TradingAccountBadge } from "../../components/TradingAccountBadge";
+import { IconFileAnalytics, IconTrash } from "@tabler/icons-react";
+import {
+  CompactRecordList,
+  DataState,
+  DataTable,
+  MobileRecordCard,
+  RecordDetailsGrid,
+  ResponsiveActions,
+  ResponsiveDataView,
+  ResponsiveDetails,
+  StatusBadge,
+  type DetailSection,
+  type StatusTone,
+  type SummaryField,
+} from "../../components/data-display";
 import { getAdminToken } from "../../lib/api";
 import { TradeCycleDrawer } from "../tradeHistory/TradeCycleDrawer";
 import { useTradeCycleDrawer } from "../tradeHistory/hooks";
-import { useOpenPositions, useClosePosition } from "./hooks";
+import { useClosePosition, useOpenPositions } from "./hooks";
 import type { TrackedPosition } from "./types";
+import classes from "./PositionsPage.module.css";
 
-function PnL({ value, suffix = "" }: { value: number; suffix?: string }) {
-  const color = value > 0 ? "teal" : value < 0 ? "red" : "dimmed";
-  const sign = value > 0 ? "+" : "";
-  return (
-    <Text c={color} fw={600} size="sm">
-      {sign}{value.toFixed(2)}{suffix}
-    </Text>
-  );
-}
+const MISSING_VALUE = "Not available";
 
-function getAttentionCodeLabel(code: string | null | undefined) {
-  switch (code) {
-    case "trail_submit_failed":
-      return "Submit failed";
-    case "trail_order_rejected":
-      return "Rejected";
-    case "trail_order_canceled":
-      return "Canceled";
-    case "trail_order_expired":
-      return "Expired";
-    default:
-      return "Attention required";
-  }
-}
-
-function positionNeedsAttention(position: TrackedPosition) {
-  return Boolean(position.exitState?.attentionRequired);
-}
-
-function getAttentionMessage(position: TrackedPosition) {
-  return (
-    position.exitState?.attentionMessage ??
-    getAttentionCodeLabel(position.exitState?.attentionCode)
-  );
-}
-
-function getTrailingStopState(position: TrackedPosition) {
-  if (!isUnlockTrailingExit(position)) {
-    return '—';
-  }
-
-  if (position.exitState?.attentionRequired) {
-    return getAttentionCodeLabel(position.exitState.attentionCode);
-  }
-
-  const status =
-    position.exitState?.trailOrderStatus ?? position.trailingStopStatus;
-
-  if (status === 'filled') {
-    return 'Trailing stop filled';
-  }
-
-  if (
-    status === 'canceled' ||
-    status === 'expired' ||
-    status === 'rejected' ||
-    status === 'suspended' ||
-    status === 'broker_order_not_found' ||
-    status === 'submit_failed'
-  ) {
-    return 'Attention required';
-  }
-
-  if (
-    position.exitState?.trailBrokerOrderId ||
-    position.exitState?.trailClientOrderId ||
-    position.trailingStopOrderId
-  ) {
-    return 'Broker trailing stop active';
-  }
-
-  if (position.exitState?.targetUnlocked || position.trailingUnlocked) {
-    return 'Trailing unlocked';
-  }
-
-  return 'Waiting for unlock';
+function finite(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function formatCurrency(value: number | null | undefined) {
-  if (value === null || value === undefined) {
-    return '—';
-  }
-
-  return value.toLocaleString(undefined, {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+  if (!finite(value)) return MISSING_VALUE;
+  return (value as number).toLocaleString(undefined, {
+    style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2,
   });
 }
 
-function formatPercent(value: number | null | undefined) {
-  if (value === null || value === undefined) {
-    return '—';
-  }
-
-  return `${value.toFixed(2)}%`;
+function formatPercent(value: number | null | undefined, signed = false) {
+  if (!finite(value)) return MISSING_VALUE;
+  const sign = signed && (value as number) > 0 ? "+" : "";
+  return `${sign}${(value as number).toFixed(2)}%`;
 }
 
-function getExitProfile(position: TrackedPosition) {
+export function ProfitLoss({ dollars, ratio }: { dollars: number | null | undefined; ratio: number | null | undefined }) {
+  const available = finite(dollars) && finite(ratio);
+  const tone = !available ? "unavailable" : (dollars as number) > 0 ? "positive" : (dollars as number) < 0 ? "negative" : "neutral";
+  const sign = available && (dollars as number) > 0 ? "+" : "";
+  return <span className={classes.pnl} data-pnl-tone={tone} aria-label={available ? `${tone} profit and loss, ${sign}${formatCurrency(dollars)}, ${formatPercent((ratio as number) * 100, true)}` : "Profit and loss unavailable"}>
+    <span aria-hidden="true">{available ? `${sign}${formatCurrency(dollars)} · ${formatPercent((ratio as number) * 100, true)}` : MISSING_VALUE}</span>
+  </span>;
+}
+
+function accountName(position: TrackedPosition) {
+  return position.tradingAccount?.displayName ?? (position.tradingAccountId !== null ? `Account ${position.tradingAccountId}` : "Unassigned account");
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return MISSING_VALUE;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? MISSING_VALUE : date.toLocaleString();
+}
+
+function titleCase(value: string) {
+  return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function attentionLabel(position: TrackedPosition) {
+  switch (position.exitState?.attentionCode) {
+    case "trail_submit_failed": return "Submit failed";
+    case "trail_order_rejected": return "Rejected";
+    case "trail_order_canceled": return "Canceled";
+    case "trail_order_expired": return "Expired";
+    default: return "Attention required";
+  }
+}
+
+function needsAttention(position: TrackedPosition) {
+  return Boolean(position.exitState?.attentionRequired);
+}
+
+function attentionMessage(position: TrackedPosition) {
+  return position.exitState?.attentionMessage ?? (needsAttention(position) ? attentionLabel(position) : "None");
+}
+
+function exitProfile(position: TrackedPosition) {
   return position.subscription?.exitProfile ?? null;
 }
 
-function getExitMode(position: TrackedPosition) {
-  return position.exitState?.exitMode ?? getExitProfile(position)?.exitMode ?? null;
+function exitMode(position: TrackedPosition) {
+  return position.exitState?.exitMode ?? exitProfile(position)?.exitMode ?? null;
 }
 
-function isUnlockTrailingExit(position: TrackedPosition) {
-  return getExitMode(position) === 'unlock_trailing_stop';
+function unlockTrailing(position: TrackedPosition) {
+  return exitMode(position) === "unlock_trailing_stop";
 }
 
-function isFixedTargetExit(position: TrackedPosition) {
-  return getExitMode(position) === 'fixed_target';
+function exitStrategy(position: TrackedPosition) {
+  const mode = exitMode(position);
+  const labels: Record<string, string> = {
+    unlock_trailing_stop: "Target unlocks trail", fixed_target: "Fixed target", fixed_bracket: "Fixed bracket", hybrid: "Hybrid",
+  };
+  return mode ? labels[mode] ?? titleCase(mode) : MISSING_VALUE;
 }
 
-function getExitStrategyLabel(position: TrackedPosition) {
-  const exitMode = getExitMode(position);
-
-  if (exitMode === 'unlock_trailing_stop') {
-    return 'Target Unlocks Trail';
-  }
-
-  if (exitMode === 'fixed_target') {
-    return 'Fixed Target';
-  }
-
-  if (exitMode === 'fixed_bracket') {
-    return 'Fixed Bracket';
-  }
-
-  if (exitMode === 'hybrid') {
-    return 'Hybrid';
-  }
-
-  return exitMode ?? '—';
+function targetPercent(position: TrackedPosition) {
+  return position.exitState?.targetPct ?? exitProfile(position)?.targetPct ?? null;
 }
 
-function getTargetPct(position: TrackedPosition) {
-  return (
-    position.subscription?.exitProfile?.targetPct ??
-    null
-  );
+function targetPrice(position: TrackedPosition) {
+  const percent = targetPercent(position);
+  if (!finite(percent) || !finite(position.avgEntryPrice)) return null;
+  return position.side === "short"
+    ? position.avgEntryPrice * (1 - (percent as number) / 100)
+    : position.avgEntryPrice * (1 + (percent as number) / 100);
 }
 
-function getExitTargetPrice(position: TrackedPosition) {
-  const targetPct = getTargetPct(position);
-
-  if (targetPct === null || targetPct === undefined) {
-    return null;
-  }
-
-  if (position.side === 'short') {
-    return position.avgEntryPrice * (1 - targetPct / 100);
-  }
-
-  return position.avgEntryPrice * (1 + targetPct / 100);
+function conciseExitState(position: TrackedPosition) {
+  if (needsAttention(position)) return attentionLabel(position);
+  if (!unlockTrailing(position)) return exitStrategy(position);
+  const status = position.exitState?.trailOrderStatus ?? position.trailingStopStatus;
+  if (status === "filled") return "Trail filled";
+  if (["canceled", "expired", "rejected", "suspended", "broker_order_not_found", "submit_failed"].includes(status ?? "")) return "Attention required";
+  if (position.exitState?.trailBrokerOrderId || position.exitState?.trailClientOrderId || position.trailingStopOrderId) return "Trail active";
+  if (position.exitState?.targetUnlocked || position.trailingUnlocked) return "Trail unlocked";
+  return "Waiting for unlock";
 }
 
-function getExitTargetLabel(position: TrackedPosition) {
-  const targetPct = getTargetPct(position);
-  const targetPrice = getExitTargetPrice(position);
-
-  if (targetPct === null || targetPct === undefined || targetPrice === null) {
-    return '—';
-  }
-
-  if (isUnlockTrailingExit(position)) {
-    if (position.trailingUnlocked && position.trailingUnlockedPrice) {
-      return `Unlocked at ${formatCurrency(position.trailingUnlockedPrice)}`;
-    }
-
-    return `${targetPct.toFixed(2)}% / ${formatCurrency(targetPrice)}`;
-  }
-
-  if (isFixedTargetExit(position)) {
-    return `${formatCurrency(targetPrice)} (${targetPct.toFixed(2)}%)`;
-  }
-
-  return `${targetPct.toFixed(2)}% / ${formatCurrency(targetPrice)}`;
+function statusTone(position: TrackedPosition, isClosing: boolean): StatusTone {
+  if (needsAttention(position)) return "danger";
+  if (isClosing) return "warning";
+  return position.status.toLowerCase() === "open" ? "positive" : "neutral";
 }
 
+function exitTone(position: TrackedPosition): StatusTone {
+  if (needsAttention(position)) return "danger";
+  const state = conciseExitState(position);
+  if (state === "Trail active" || state === "Trail unlocked") return "informational";
+  if (state === "Waiting for unlock") return "warning";
+  return "neutral";
+}
 
+function detailsFor(position: TrackedPosition, actions: React.ReactNode): DetailSection[] {
+  return [
+    { title: "Position", items: [
+      { label: "Account", value: accountName(position) }, { label: "Symbol", value: position.symbol },
+      { label: "Side", value: titleCase(position.side) }, { label: "Quantity", value: position.qty },
+      { label: "Average entry", value: formatCurrency(position.avgEntryPrice) }, { label: "Current price", value: formatCurrency(position.currentPrice) },
+      { label: "Unrealized P/L", value: <ProfitLoss dollars={position.unrealizedPnL} ratio={position.unrealizedPnLPct} /> },
+      { label: "Position status", value: titleCase(position.status) }, { label: "Attention state", value: attentionMessage(position) },
+      { label: "Opened", value: formatDate(position.openedAt) }, { label: "Last synchronized", value: formatDate(position.lastSyncedAt) },
+    ] },
+    { title: "Exit management", items: [
+      { label: "Exit strategy", value: exitStrategy(position) }, { label: "Exit target percentage", value: formatPercent(targetPercent(position)) },
+      { label: "Exit target price", value: formatCurrency(targetPrice(position)) }, { label: "Trailing state", value: conciseExitState(position) },
+      { label: "Trail percentage", value: unlockTrailing(position) ? formatPercent(position.trailingStopTrailPercent) : MISSING_VALUE },
+      { label: "High-water mark", value: unlockTrailing(position) ? formatCurrency(position.trailingStopHwm) : MISSING_VALUE },
+      { label: "Stop price", value: unlockTrailing(position) ? formatCurrency(position.trailingStopStopPrice) : MISSING_VALUE },
+    ] },
+    { title: "Routing", items: [
+      { label: "Subscription", value: position.subscription?.key, technical: true }, { label: "Position ID", value: position.id, technical: true },
+      { label: "Subscription ID", value: position.subscriptionId, technical: true }, { label: "Trading account ID", value: position.tradingAccountId, technical: true },
+    ] },
+    { title: "Actions", items: [{ label: "Position actions", value: actions }] },
+  ];
+}
 
 export function PositionsPage() {
   const [token] = useState<string | null>(() => getAdminToken());
-  const { data: positions = [], isLoading, isError, error } = useOpenPositions(token);
-  const closePositionMutation = useClosePosition(token);
+  const positionsQuery = useOpenPositions(token);
+  const positions = useMemo(() => positionsQuery.data ?? [], [positionsQuery.data]);
+  const closeMutation = useClosePosition(token);
   const tradeCycleDrawer = useTradeCycleDrawer(token);
-  const attentionPositions = positions.filter(positionNeedsAttention);
+  const [expandedId, setExpandedId] = useState<string | number | null>(null);
+  const [detailId, setDetailId] = useState<number | null>(null);
+  const [detailOpener, setDetailOpener] = useState<HTMLElement | null>(null);
+  const detailPosition = useMemo(() => positions.find((position) => position.id === detailId) ?? null, [detailId, positions]);
+  const attentionCount = positions.filter(needsAttention).length;
 
-  function handleClosePosition(position: TrackedPosition) {
+  function closePosition(position: TrackedPosition) {
+    if (closeMutation.isPending) return;
     modals.openConfirmModal({
       title: "Close position",
-      children: <Text size="sm">Submit a close order for <strong>{position.symbol}</strong> in <strong>{position.tradingAccount?.displayName ?? `account ${position.tradingAccountId}`}</strong>?</Text>,
-      labels: { confirm: "Close position", cancel: "Cancel" },
-      confirmProps: { color: "red" },
+      children: <Text size="sm">Submit a close order for <strong>{position.symbol}</strong> in <strong>{accountName(position)}</strong>?</Text>,
+      labels: { confirm: "Close position", cancel: "Cancel" }, confirmProps: { color: "red" },
       onConfirm: async () => {
         try {
-          await closePositionMutation.mutateAsync(position.id);
+          await closeMutation.mutateAsync(position.id);
           notifications.show({ message: `Close order submitted for ${position.symbol}.`, color: "teal" });
-        } catch (err) {
-          notifications.show({
-            message: err instanceof Error ? err.message : `Failed to close ${position.symbol}.`,
-            color: "red",
-          });
+        } catch (error) {
+          notifications.show({ message: error instanceof Error ? error.message : `Failed to close ${position.symbol}.`, color: "red" });
         }
       },
     });
   }
 
-  return (
-    <Stack gap="lg">
-      <div>
-        <Title order={2} size="h3">Open Positions</Title>
-        <Text size="sm" c="dimmed">View and close open tracked positions.</Text>
-      </div>
+  const isClosing = (position: TrackedPosition) => closeMutation.isPending && closeMutation.variables === position.id;
+  const lifecycleAction = (position: TrackedPosition) => ({ label: "View lifecycle", icon: <IconFileAnalytics size={16} />, onClick: () => tradeCycleDrawer.openCycle(position.id) });
+  const closeAction = (position: TrackedPosition) => ({ label: isClosing(position) ? "Closing position" : `Close ${position.symbol} position`, icon: <IconTrash size={16} />, color: "red", disabled: closeMutation.isPending, onClick: () => closePosition(position) });
+  const actions = (position: TrackedPosition, compact = false) => <ResponsiveActions compact={compact} primary={lifecycleAction(position)} secondary={[closeAction(position)]} />;
+  const details = (position: TrackedPosition) => <RecordDetailsGrid missingValue={MISSING_VALUE} sections={detailsFor(position, actions(position))} />;
+  const identity = (position: TrackedPosition) => <div className={classes.identity}><Text component="h3" fw={800} size="md">{position.symbol}</Text><Text size="xs" c="dimmed" className={classes.wrap}>{accountName(position)}</Text><Text size="xs" c="dimmed">{titleCase(position.side)} · {position.qty} {position.qty === 1 ? "share" : "shares"}</Text></div>;
+  const summaryFields = (position: TrackedPosition): SummaryField[] => [
+    { label: "Current", value: formatCurrency(position.currentPrice) },
+    { label: "P/L", value: <ProfitLoss dollars={position.unrealizedPnL} ratio={position.unrealizedPnLPct} /> },
+  ];
+  const statusGroup = (position: TrackedPosition) => <Group gap="xs" wrap="wrap" className={classes.badges}>
+    <StatusBadge status={isClosing(position) ? "CLOSING" : position.status} tone={statusTone(position, isClosing(position))} size="compact" />
+    <StatusBadge status={conciseExitState(position)} label={conciseExitState(position)} tone={exitTone(position)} size="compact" />
+    {needsAttention(position) && conciseExitState(position) !== "Attention required" && <StatusBadge status="ATTENTION_REQUIRED" label="Attention required" tone="danger" size="compact" />}
+  </Group>;
 
-      <Card withBorder radius="md" p="md">
-        {isError && (
-          <Alert color="red" mb="md">
-            {error instanceof Error ? error.message : "Failed to load positions."}
-          </Alert>
-        )}
+  const wide = (items: readonly TrackedPosition[]) => <DataTable caption="Open tracked positions" density="compact"><Table.Thead><Table.Tr>
+    <Table.Th>Position</Table.Th><Table.Th>Side / quantity</Table.Th><Table.Th className={classes.numeric}>Current</Table.Th><Table.Th className={classes.numeric}>P/L</Table.Th><Table.Th>Status / exit state</Table.Th><Table.Th className={classes.actionsHeading}>Actions</Table.Th>
+  </Table.Tr></Table.Thead><Table.Tbody>{items.map((position) => <Table.Tr key={position.id}>
+    <Table.Td>{identity(position)}</Table.Td><Table.Td>{titleCase(position.side)} · {position.qty} {position.qty === 1 ? "share" : "shares"}</Table.Td>
+    <Table.Td className={classes.numeric}>{formatCurrency(position.currentPrice)}</Table.Td><Table.Td className={classes.numeric}><ProfitLoss dollars={position.unrealizedPnL} ratio={position.unrealizedPnLPct} /></Table.Td>
+    <Table.Td>{statusGroup(position)}</Table.Td><Table.Td><Group justify="flex-end" wrap="nowrap"><Button variant="default" size="compact-sm" onClick={(event) => { setDetailOpener(event.currentTarget); setDetailId(position.id); }} aria-haspopup="dialog">Details</Button><ResponsiveActions compact secondary={[lifecycleAction(position), closeAction(position)]} /></Group></Table.Td>
+  </Table.Tr>)}</Table.Tbody></DataTable>;
+  const compact = (items: readonly TrackedPosition[]) => <CompactRecordList records={items} getRecordId={(position) => position.id} renderIdentity={(position) => <Stack gap="xs">{identity(position)}{statusGroup(position)}</Stack>} renderFields={summaryFields} renderDetails={details} renderActions={(position) => <ResponsiveActions compact secondary={[lifecycleAction(position), closeAction(position)]} />} expandedId={expandedId} onExpandedChange={setExpandedId} />;
+  const narrow = (items: readonly TrackedPosition[]) => <MobileRecordCard records={items} getRecordId={(position) => position.id} renderIdentity={identity} renderStatus={statusGroup} renderFields={summaryFields} onDetails={(position, opener) => { setDetailOpener(opener); setDetailId(position.id); }} renderActions={(position) => <ResponsiveActions compact primary={lifecycleAction(position)} secondary={[closeAction(position)]} />} />;
 
-        {isLoading && (
-          <Group gap="sm">
-            <Loader size="sm" color="cyan" />
-            <Text size="sm" c="dimmed">Loading positions…</Text>
-          </Group>
-        )}
-
-        {!isLoading && positions.length === 0 && (
-          <Text size="sm" c="dimmed">No open positions.</Text>
-        )}
-
-
-        {attentionPositions.length > 0 && (
-          <Alert color="red" title="Exit attention required">
-            <Stack gap="xs">
-              {attentionPositions.map((position) => (
-                <Text key={position.id} size="sm">
-                  <strong>{position.symbol}</strong>: {getAttentionMessage(position)}
-                </Text>
-              ))}
-            </Stack>
-          </Alert>
-        )}
-
-
-        {positions.length > 0 && (
-          <ScrollArea>
-            <Table striped highlightOnHover style={{ minWidth: 820 }}>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Account</Table.Th>
-                  <Table.Th>Symbol</Table.Th>
-                  <Table.Th>Side</Table.Th>
-                  <Table.Th style={{ textAlign: "right" }}>Qty</Table.Th>
-                  <Table.Th style={{ textAlign: "right" }}>Avg Entry</Table.Th>
-                  <Table.Th style={{ textAlign: "right" }}>Current</Table.Th>
-                  <Table.Th style={{ textAlign: "right" }}>P/L</Table.Th>
-                  <Table.Th style={{ textAlign: "right" }}>P/L %</Table.Th>
-                  <Table.Th>Status</Table.Th>
-                  <Table.Th>Attention</Table.Th>
-                  <Table.Th>Subscription</Table.Th>
-                  <Table.Th>Exit Strategy</Table.Th>
-                  <Table.Th>Exit Target</Table.Th>
-                  <Table.Th>Trailing State</Table.Th>
-                  <Table.Th>Trail %</Table.Th>
-                  <Table.Th>Trail HWM</Table.Th>
-                  <Table.Th>Stop Price</Table.Th>
-                  <Table.Th />
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {positions.map((position) => {
-                  const isClosing =
-                    closePositionMutation.isPending &&
-                    closePositionMutation.variables === position.id;
-
-                  return (
-                    <Table.Tr key={position.id}>
-                      <Table.Td>
-                        <TradingAccountBadge
-                          account={position.tradingAccount}
-                          tradingAccountId={position.tradingAccountId}
-                        />
-                      </Table.Td>
-                      <Table.Td fw={600}>{position.symbol}</Table.Td>
-                      <Table.Td>
-                        <Badge size="sm" color={position.side === "long" ? "teal" : "red"} variant="light">
-                          {position.side}
-                        </Badge>
-                      </Table.Td>
-                      <Table.Td style={{ textAlign: "right" }}>{position.qty}</Table.Td>
-                      <Table.Td style={{ textAlign: "right" }}>${position.avgEntryPrice.toFixed(2)}</Table.Td>
-                      <Table.Td style={{ textAlign: "right" }}>${position.currentPrice.toFixed(2)}</Table.Td>
-                      <Table.Td style={{ textAlign: "right" }}>
-                        <PnL value={position.unrealizedPnL} />
-                      </Table.Td>
-                      <Table.Td style={{ textAlign: "right" }}>
-                        <PnL value={position.unrealizedPnLPct * 100} suffix="%" />
-                      </Table.Td>
-                      <Table.Td>
-                        <Badge
-                          size="sm"
-                          color={isClosing ? "yellow" : "teal"}
-                          variant="light"
-                        >
-                          {isClosing ? "closing" : position.status}
-                        </Badge>
-                      </Table.Td>
-                      <Table.Td>
-                        {positionNeedsAttention(position) ? (
-                          <Stack gap={2}>
-                            <Badge color="red" variant="light">
-                              {getAttentionCodeLabel(position.exitState?.attentionCode)}
-                            </Badge>
-                            <Text size="xs" c="dimmed">
-                              {getAttentionMessage(position)}
-                            </Text>
-                          </Stack>
-                        ) : (
-                          <Text size="sm" c="dimmed">
-                            —
-                          </Text>
-                        )}
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="sm" c="dimmed">{position.subscription?.key ?? "—"}</Text>
-                      </Table.Td>
-                      <Table.Td>{getExitStrategyLabel(position)}</Table.Td>
-                      <Table.Td>{getExitTargetLabel(position)}</Table.Td>
-                      <Table.Td>{getTrailingStopState(position)}</Table.Td>
-                      <Table.Td>
-                        {isUnlockTrailingExit(position)
-                          ? formatPercent(position.trailingStopTrailPercent)
-                          : '—'}
-                      </Table.Td>
-                      <Table.Td>
-                        {isUnlockTrailingExit(position)
-                          ? formatCurrency(position.trailingStopHwm)
-                          : '—'}
-                      </Table.Td>
-                      <Table.Td>
-                        {isUnlockTrailingExit(position)
-                          ? formatCurrency(position.trailingStopStopPrice)
-                          : '—'}
-                      </Table.Td>
-                      <Table.Td>
-                        <Group gap="xs" justify="flex-end" wrap="nowrap">
-                          <Tooltip label="Review this position's trade-cycle lifecycle">
-                            <Button
-                              size="xs"
-                              variant="default"
-                              leftSection={<IconFileAnalytics size={14} />}
-                              onClick={() => tradeCycleDrawer.openCycle(position.id)}
-                            >
-                              View lifecycle
-                            </Button>
-                          </Tooltip>
-
-                          <Button
-                            size="xs"
-                            color="red"
-                            variant="subtle"
-                            loading={isClosing}
-                            disabled={isClosing}
-                            onClick={() => handleClosePosition(position)}
-                          >
-                            Close
-                          </Button>
-                        </Group>
-                      </Table.Td>
-                    </Table.Tr>
-                  );
-                })}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
-        )}
-      </Card>
-
-      <TradeCycleDrawer
-        {...tradeCycleDrawer.drawerProps}
-        onClose={tradeCycleDrawer.closeCycle}
-      />
-    </Stack>
-  );
+  return <main className={classes.page}><Stack gap="lg">
+    <Group justify="space-between" align="flex-end" gap="md"><div><Title order={2} size="h3">Open Positions</Title><Text size="sm" c="dimmed">Live tracked positions and exit management.</Text></div>{!positionsQuery.isLoading && !positionsQuery.isError && <Text size="sm" c="dimmed">{positions.length} open {positions.length === 1 ? "position" : "positions"}{attentionCount > 0 ? ` · ${attentionCount} requiring attention` : ""}</Text>}</Group>
+    <Card withBorder radius="md" p="md" className={classes.panel}>
+      {positionsQuery.isLoading ? <DataState state="loading" message="Loading open positions…" /> : positionsQuery.isError ? <DataState state="error" title="Unable to load open positions" message={positionsQuery.error instanceof Error ? positionsQuery.error.message : "Open positions could not be loaded."} onRetry={() => void positionsQuery.refetch()} /> : positions.length === 0 ? <DataState state="empty" title="No open positions" message="Positions will appear here after entry orders fill." /> : <ResponsiveDataView records={positions} getRecordId={(position) => position.id} wide={wide} compact={compact} narrow={narrow} aria-label="Open positions" />}
+    </Card>
+  </Stack>
+  <ResponsiveDetails opened={Boolean(detailPosition)} title={detailPosition ? `${detailPosition.symbol} position details` : "Position details"} onClose={() => setDetailId(null)} returnFocusTo={detailOpener}>{detailPosition && details(detailPosition)}</ResponsiveDetails>
+  <TradeCycleDrawer {...tradeCycleDrawer.drawerProps} onClose={tradeCycleDrawer.closeCycle} />
+  </main>;
 }
