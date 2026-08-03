@@ -1,8 +1,8 @@
 import { Fragment, useMemo, useState } from "react";
-import { Button, Card, Group, Stack, Table, Text, Title } from "@mantine/core";
+import { Accordion, Button, Card, Group, Stack, Table, Text, Title } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
-import { IconFileAnalytics, IconTrash } from "@tabler/icons-react";
+import { IconChevronDown, IconChevronUp, IconFileAnalytics, IconTrash } from "@tabler/icons-react";
 import {
   CompactRecordList,
   DataState,
@@ -13,7 +13,6 @@ import {
   ResponsiveDataView,
   ResponsiveDetails,
   StatusBadge,
-  type DetailSection,
   type StatusTone,
   type SummaryField,
 } from "../../components/data-display";
@@ -141,31 +140,6 @@ function exitTone(position: TrackedPosition): StatusTone {
   return "neutral";
 }
 
-function detailsFor(position: TrackedPosition, actions: React.ReactNode): DetailSection[] {
-  return [
-    { title: "Position", items: [
-      { label: "Account", value: accountName(position) }, { label: "Symbol", value: position.symbol },
-      { label: "Side", value: titleCase(position.side) }, { label: "Quantity", value: position.qty },
-      { label: "Average entry", value: formatCurrency(position.avgEntryPrice) }, { label: "Current price", value: formatCurrency(position.currentPrice) },
-      { label: "Unrealized P/L", value: <ProfitLoss dollars={position.unrealizedPnL} ratio={position.unrealizedPnLPct} /> },
-      { label: "Position status", value: titleCase(position.status) }, { label: "Attention state", value: attentionMessage(position) },
-      { label: "Opened", value: formatDate(position.openedAt) }, { label: "Last synchronized", value: formatDate(position.lastSyncedAt) },
-    ] },
-    { title: "Exit management", items: [
-      { label: "Exit strategy", value: exitStrategy(position) }, { label: "Exit target percentage", value: formatPercent(targetPercent(position)) },
-      { label: "Exit target price", value: formatCurrency(targetPrice(position)) }, { label: "Trailing state", value: conciseExitState(position) },
-      { label: "Trail percentage", value: unlockTrailing(position) ? formatPercent(position.trailingStopTrailPercent) : MISSING_VALUE },
-      { label: "High-water mark", value: unlockTrailing(position) ? formatCurrency(position.trailingStopHwm) : MISSING_VALUE },
-      { label: "Stop price", value: unlockTrailing(position) ? formatCurrency(position.trailingStopStopPrice) : MISSING_VALUE },
-    ] },
-    { title: "Routing", items: [
-      { label: "Subscription", value: position.subscription?.key, technical: true }, { label: "Position ID", value: position.id, technical: true },
-      { label: "Subscription ID", value: position.subscriptionId, technical: true }, { label: "Trading account ID", value: position.tradingAccountId, technical: true },
-    ] },
-    { title: "Actions", items: [{ label: "Position actions", value: actions }] },
-  ];
-}
-
 export function PositionsPage() {
   const [token] = useState<string | null>(() => getAdminToken());
   const positionsQuery = useOpenPositions(token);
@@ -222,7 +196,37 @@ export function PositionsPage() {
   const lifecycleAction = (position: TrackedPosition) => ({ label: "View lifecycle", icon: <IconFileAnalytics size={16} />, onClick: () => openLifecycle(position) });
   const closeAction = (position: TrackedPosition) => ({ label: isClosing(position) ? "Closing position" : `Close ${position.symbol} position`, icon: <IconTrash size={16} />, color: "red", disabled: closeMutation.isPending, onClick: () => closePosition(position) });
   const actions = (position: TrackedPosition, compact = false) => <ResponsiveActions compact={compact} primary={lifecycleAction(position)} secondary={[closeAction(position)]} />;
-  const details = (position: TrackedPosition) => <RecordDetailsGrid missingValue={MISSING_VALUE} sections={detailsFor(position, actions(position))} />;
+  const details = (position: TrackedPosition, includeIdentity = false) => <div className={classes.detailComposition}>
+    {includeIdentity && <div className={classes.drawerIdentity}>{identity(position)}{statusGroup(position)}</div>}
+    <div className={classes.detailCards}>
+      <section className={classes.detailCard} aria-labelledby={`position-${position.id}-position-heading`}>
+        <Title id={`position-${position.id}-position-heading`} order={3} size="h5" className={classes.detailHeading}>Position</Title>
+        <RecordDetailsGrid missingValue={MISSING_VALUE} sections={[{ items: [
+          { label: "Average entry", value: formatCurrency(position.avgEntryPrice) }, { label: "Current price", value: formatCurrency(position.currentPrice) },
+          { label: "Unrealized P/L", value: <ProfitLoss dollars={position.unrealizedPnL} ratio={position.unrealizedPnLPct} /> },
+          { label: "Opened", value: formatDate(position.openedAt) }, { label: "Last synchronized", value: formatDate(position.lastSyncedAt) },
+          { label: "Attention state", value: attentionMessage(position) },
+        ] }]} />
+      </section>
+      <section className={`${classes.detailCard} ${classes.exitCard}`} aria-labelledby={`position-${position.id}-exit-heading`}>
+        <div className={classes.exitHeading}><Title id={`position-${position.id}-exit-heading`} order={3} size="h5" className={classes.detailHeading}>Exit management</Title><StatusBadge status={conciseExitState(position)} label={conciseExitState(position)} tone={exitTone(position)} size="compact" /></div>
+        <RecordDetailsGrid missingValue={MISSING_VALUE} sections={[{ items: [
+          { label: "Exit strategy", value: exitStrategy(position) },
+          { label: "Target", value: `${formatPercent(targetPercent(position))} · ${formatCurrency(targetPrice(position))}` },
+          { label: "Trail percentage", value: unlockTrailing(position) ? formatPercent(position.trailingStopTrailPercent) : MISSING_VALUE },
+          { label: "High-water mark", value: unlockTrailing(position) ? formatCurrency(position.trailingStopHwm) : MISSING_VALUE },
+          { label: "Stop price", value: unlockTrailing(position) ? formatCurrency(position.trailingStopStopPrice) : MISSING_VALUE },
+        ] }]} />
+      </section>
+    </div>
+    <Accordion variant="contained" radius="md" className={classes.routingDisclosure}>
+      <Accordion.Item value="routing"><Accordion.Control><div><Text fw={700} size="sm">Routing &amp; identifiers</Text><Text size="xs" c="dimmed" className={classes.routingSummary}>{position.subscription?.key ?? MISSING_VALUE}</Text></div></Accordion.Control><Accordion.Panel><RecordDetailsGrid missingValue={MISSING_VALUE} sections={[{ items: [
+        { label: "Subscription", value: position.subscription?.key, technical: true }, { label: "Position ID", value: position.id, technical: true },
+        { label: "Subscription ID", value: position.subscriptionId, technical: true }, { label: "Trading account ID", value: position.tradingAccountId, technical: true },
+      ] }]} /></Accordion.Panel></Accordion.Item>
+    </Accordion>
+    <footer className={classes.detailActions}><Text fw={700} size="sm">Position actions</Text>{actions(position)}</footer>
+  </div>;
   const identity = (position: TrackedPosition) => <div className={classes.identity}><Text component="h3" fw={800} size="md">{position.symbol}</Text><Text size="xs" c="dimmed" className={classes.wrap}>{accountName(position)}</Text><Text size="xs" c="dimmed">{titleCase(position.side)} · {position.qty} {position.qty === 1 ? "share" : "shares"}</Text></div>;
   const summaryFields = (position: TrackedPosition): SummaryField[] => [
     { label: "Current", value: formatCurrency(position.currentPrice) },
@@ -234,12 +238,12 @@ export function PositionsPage() {
     {needsAttention(position) && conciseExitState(position) !== "Attention required" && <StatusBadge status="ATTENTION_REQUIRED" label="Attention required" tone="danger" size="compact" />}
   </Group>;
 
-  const wide = (items: readonly TrackedPosition[]) => <DataTable caption="Open tracked positions" density="compact"><Table.Thead><Table.Tr>
+  const wide = (items: readonly TrackedPosition[]) => <DataTable caption="Open tracked positions" captionHidden density="compact"><Table.Thead><Table.Tr>
     <Table.Th>Position</Table.Th><Table.Th>Side / quantity</Table.Th><Table.Th className={classes.numeric}>Current</Table.Th><Table.Th className={classes.numeric}>P/L</Table.Th><Table.Th>Status / exit state</Table.Th><Table.Th className={classes.actionsHeading}>Actions</Table.Th>
   </Table.Tr></Table.Thead><Table.Tbody>{items.map((position) => <Fragment key={position.id}><Table.Tr>
     <Table.Td>{identity(position)}</Table.Td><Table.Td>{titleCase(position.side)} · {position.qty} {position.qty === 1 ? "share" : "shares"}</Table.Td>
     <Table.Td className={classes.numeric}>{formatCurrency(position.currentPrice)}</Table.Td><Table.Td className={classes.numeric}><ProfitLoss dollars={position.unrealizedPnL} ratio={position.unrealizedPnLPct} /></Table.Td>
-    <Table.Td>{statusGroup(position)}</Table.Td><Table.Td><Group justify="flex-end" wrap="nowrap"><Button variant="default" size="compact-sm" onClick={() => toggleInlineDetails(position)} aria-expanded={expandedId === position.id} aria-controls={`position-${position.id}-wide-details`}>{expandedId === position.id ? "Hide details" : "Details"}</Button><ResponsiveActions compact secondary={[lifecycleAction(position), closeAction(position)]} /></Group></Table.Td>
+    <Table.Td>{statusGroup(position)}</Table.Td><Table.Td><Group justify="flex-end" wrap="nowrap"><Button variant="default" size="compact-sm" onClick={() => toggleInlineDetails(position)} aria-expanded={expandedId === position.id} aria-controls={`position-${position.id}-wide-details`} rightSection={expandedId === position.id ? <IconChevronUp size={15} aria-hidden="true" /> : <IconChevronDown size={15} aria-hidden="true" />}>Details</Button><ResponsiveActions compact secondary={[lifecycleAction(position), closeAction(position)]} /></Group></Table.Td>
   </Table.Tr>{expandedId === position.id && <Table.Tr><Table.Td colSpan={6} id={`position-${position.id}-wide-details`} className={classes.inlineDetails}>{details(position)}</Table.Td></Table.Tr>}</Fragment>)}</Table.Tbody></DataTable>;
   const compact = (items: readonly TrackedPosition[]) => <CompactRecordList records={items} getRecordId={(position) => position.id} renderIdentity={(position) => <Stack gap="xs">{identity(position)}{statusGroup(position)}</Stack>} renderFields={summaryFields} renderDetails={details} renderActions={(position) => <ResponsiveActions compact secondary={[lifecycleAction(position), closeAction(position)]} />} expandedId={expandedId} onExpandedChange={(id) => { if (id !== null) tradeCycleDrawer.closeCycle(); setExpandedId(id); }} />;
   const narrow = (items: readonly TrackedPosition[]) => <MobileRecordCard records={items} getRecordId={(position) => position.id} renderIdentity={identity} renderStatus={statusGroup} renderFields={summaryFields} onDetails={openDetails} renderActions={(position) => <ResponsiveActions compact primary={lifecycleAction(position)} secondary={[closeAction(position)]} />} />;
@@ -250,6 +254,6 @@ export function PositionsPage() {
       {positionsQuery.isLoading ? <DataState state="loading" message="Loading open positions…" /> : positionsQuery.isError ? <DataState state="error" title="Unable to load open positions" message={positionsQuery.error instanceof Error ? positionsQuery.error.message : "Open positions could not be loaded."} onRetry={() => void positionsQuery.refetch()} /> : positions.length === 0 ? <DataState state="empty" title="No open positions" message="Positions will appear here after entry orders fill." /> : <ResponsiveDataView records={positions} getRecordId={(position) => position.id} wide={wide} compact={compact} narrow={narrow} aria-label="Open positions" />}
     </Card>
   </Stack>
-  {detailPosition ? <ResponsiveDetails opened title={`${detailPosition.symbol} position details`} onClose={closeDetails}>{details(detailPosition)}</ResponsiveDetails> : <TradeCycleDrawer {...tradeCycleDrawer.drawerProps} onClose={tradeCycleDrawer.closeCycle} />}
+  {detailPosition ? <ResponsiveDetails opened title={`${detailPosition.symbol} position details`} onClose={closeDetails}>{details(detailPosition, true)}</ResponsiveDetails> : <TradeCycleDrawer {...tradeCycleDrawer.drawerProps} onClose={tradeCycleDrawer.closeCycle} />}
   </main>;
 }

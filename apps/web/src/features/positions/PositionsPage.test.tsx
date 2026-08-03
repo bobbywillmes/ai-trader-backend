@@ -74,7 +74,10 @@ describe("Open Positions responsive page", () => {
     expect(button.getAttribute("aria-expanded")).toBe("false");
     await userEvent.setup().click(button);
     expect(button.getAttribute("aria-expanded")).toBe("true");
-    expect(within(table).getByText("momentum-breakout-routing-key-that-is-deliberately-long")).toBeTruthy();
+    expect(button.textContent).toContain("Details");
+    expect(within(table).getAllByText("momentum-breakout-routing-key-that-is-deliberately-long").length).toBeGreaterThan(0);
+    expect(within(table).getByRole("button", { name: /Routing & identifiers/ }).getAttribute("aria-expanded")).toBe("false");
+    expect(within(table).getByText("Position actions")).toBeTruthy();
     expect(screen.queryByRole("dialog", { name: "SPY position details" })).toBeNull();
   });
 
@@ -85,7 +88,8 @@ describe("Open Positions responsive page", () => {
     expect(details[0].getAttribute("aria-expanded")).toBe("false");
     await userEvent.setup().click(details[0]);
     expect(details[0].getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByText("momentum-breakout-routing-key-that-is-deliberately-long")).toBeTruthy();
+    expect(screen.getAllByText("momentum-breakout-routing-key-that-is-deliberately-long").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /Routing & identifiers/ }).getAttribute("aria-expanded")).toBe("false");
     expect(screen.getByText("High-water mark")).toBeTruthy();
   });
 

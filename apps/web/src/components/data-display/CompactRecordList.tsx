@@ -1,4 +1,5 @@
 import { Button } from "@mantine/core";
+import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
 import type { ReactNode } from "react";
 import classes from "./RecordPresentations.module.css";
 
@@ -22,7 +23,7 @@ export function CompactRecordList<T>({ records, getRecordId, renderIdentity, ren
       <div className={classes.summary}>
         <div className={classes.identity}>{renderIdentity(record)}</div>
         {renderFields(record).slice(0, 2).map((field) => <div className={classes.field} key={field.label}><span className={classes.fieldLabel}>{field.label}</span><div className={classes.fieldValue}>{field.value}</div></div>)}
-        <div className={classes.summaryActions}><Button className={classes.detailButton} size="compact-sm" variant="subtle" aria-expanded={expanded} aria-controls={panelId} onClick={() => onExpandedChange(expanded ? null : id)}>{expanded ? "Hide details" : "Details"}</Button>{renderActions?.(record)}</div>
+        <div className={classes.summaryActions}><Button className={classes.detailButton} size="compact-sm" variant="subtle" aria-expanded={expanded} aria-controls={panelId} onClick={() => onExpandedChange(expanded ? null : id)} rightSection={expanded ? <IconChevronUp size={15} aria-hidden="true" /> : <IconChevronDown size={15} aria-hidden="true" />}>Details</Button>{renderActions?.(record)}</div>
       </div>
       {expanded && <div className={classes.details} id={panelId}>{renderDetails(record)}</div>}
     </article>;

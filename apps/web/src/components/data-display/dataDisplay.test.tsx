@@ -6,6 +6,7 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CompactRecordList } from "./CompactRecordList";
 import { DataState } from "./DataState";
+import { DataTable } from "./DataTable";
 import { ResponsiveDataView } from "./ResponsiveDataView";
 import { ResponsiveDetails } from "./ResponsiveDetails";
 import { ResponsiveFilterToolbar } from "./ResponsiveFilterToolbar";
@@ -31,6 +32,11 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("responsive presentation", () => {
+  it("can retain an accessible table caption without displaying it", () => {
+    render(<DataTable caption="Open positions" captionHidden><tbody><tr><td>SPY</td></tr></tbody></DataTable>, { wrapper: Providers });
+    const table = screen.getByRole("table", { name: "Open positions" });
+    expect(table.querySelector("caption")?.className).toContain("visuallyHidden");
+  });
   it("uses centralized narrow, compact, and wide boundaries", () => {
     expect([390, 639, 640, 1099, 1100].map(getDataPresentation)).toEqual(["narrow", "narrow", "compact", "compact", "wide"]);
   });
