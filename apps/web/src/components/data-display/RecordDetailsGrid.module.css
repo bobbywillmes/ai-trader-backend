@@ -1,0 +1,13 @@
+.sections { display: grid; gap: var(--data-space-lg); }
+.grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--data-details-gap); margin: 0; }
+.item { min-width: 0; }
+.label { margin: 0 0 .2rem; color: var(--mantine-color-dimmed); font-size: var(--mantine-font-size-xs); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.value { margin: 0; min-width: 0; overflow-wrap: anywhere; color: var(--mantine-color-gray-2); }
+.technical { font-family: var(--mantine-font-family-monospace); font-size: var(--mantine-font-size-xs); }
+.group { margin: 0 0 var(--data-space-sm); color: var(--mantine-color-gray-3); font-weight: 700; }
+@container responsive-data-view (max-width: 899px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container responsive-data-view (max-width: 639px) { .grid { grid-template-columns: 1fr; } }
+@supports not (container-type: inline-size) {
+  @media (max-width: 899px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 639px) { .grid { grid-template-columns: 1fr; } }
+}

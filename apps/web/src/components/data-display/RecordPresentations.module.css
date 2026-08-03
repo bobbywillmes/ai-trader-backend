@@ -1,0 +1,19 @@
+.list { display: grid; gap: var(--data-space-sm); }
+.record { border: 1px solid var(--mantine-color-dark-4); border-radius: var(--mantine-radius-md); background: rgba(15, 23, 42, .66); }
+.summary { display: grid; grid-template-columns: minmax(10rem, 1.4fr) repeat(2, minmax(7rem, 1fr)) auto; align-items: center; gap: var(--data-space-md); min-height: var(--data-touch-target); padding: var(--data-record-padding-compact); }
+.identity, .field { min-width: 0; }
+.identity { font-weight: 700; color: var(--mantine-color-gray-1); }
+.fieldLabel { display: block; color: var(--mantine-color-dimmed); font-size: .68rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.fieldValue { min-width: 0; overflow-wrap: anywhere; }
+.details { padding: var(--data-record-padding-normal); border-top: 1px solid var(--mantine-color-dark-4); animation: reveal var(--data-motion-fast) ease-out; }
+.cards { display: grid; gap: var(--data-space-md); }
+.card { padding: var(--data-record-padding-normal); border: 1px solid var(--mantine-color-dark-4); border-radius: var(--mantine-radius-lg); background: rgba(15, 23, 42, .76); }
+.cardHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--data-space-md); margin-bottom: var(--data-space-md); }
+.cardIdentity { min-width: 0; }
+.cardMeta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--data-space-md); }
+.cardActions { display: flex; align-items: center; justify-content: space-between; gap: var(--data-space-sm); margin-top: var(--data-space-md); padding-top: var(--data-space-md); border-top: 1px solid var(--mantine-color-dark-4); }
+.detailButton { min-height: var(--data-touch-target); }
+@keyframes reveal { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+@container responsive-data-view (max-width: 800px) { .summary { grid-template-columns: minmax(9rem, 1.5fr) minmax(7rem, 1fr) auto; } .summary > :nth-child(3) { display: none; } }
+@container responsive-data-view (max-width: 420px) { .cardMeta { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .details { animation: none; } }
