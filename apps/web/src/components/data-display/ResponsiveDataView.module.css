@@ -1,0 +1,19 @@
+.container {
+  container-name: responsive-data-view;
+  container-type: inline-size;
+  min-width: 0;
+  width: 100%;
+}
+
+.fallbackCompact, .fallbackNarrow { display: none; }
+
+@supports not (container-type: inline-size) {
+  @media (max-width: 1099px) {
+    .fallbackWide { display: none; }
+    .fallbackCompact { display: block; }
+  }
+  @media (max-width: 639px) {
+    .fallbackCompact { display: none; }
+    .fallbackNarrow { display: block; }
+  }
+}

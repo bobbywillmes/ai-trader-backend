@@ -52,6 +52,10 @@ import {
   AccountPortalPage,
 } from "../features/accountPortal/AccountPortalPage";
 
+const responsiveDataPreviewRoute = import.meta.env.DEV
+  ? [{ path: "dev/responsive-data-primitives", lazy: async () => ({ Component: (await import("../features/dev/ResponsiveDataPrimitivesPreview")).ResponsiveDataPrimitivesPreview }) }]
+  : [];
+
 export const router = createBrowserRouter([
   {
     path: "/login",
@@ -75,6 +79,7 @@ export const router = createBrowserRouter([
           {
             element: <AdminConsoleShell />,
             children: [
+              ...responsiveDataPreviewRoute,
               {
                 path: "dashboard",
                 element: requirePermission("reports.read", <DashboardPage />),

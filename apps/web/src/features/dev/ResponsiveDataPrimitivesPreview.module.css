@@ -1,0 +1,11 @@
+.page { width: min(1440px, calc(100% - 2rem)); margin: 0 auto; padding: 1.5rem 0 3rem; min-width: 0; }
+.previewStack { display: grid; gap: 1.5rem; }
+.panel { min-width: 0; padding: 1rem; border: 1px solid var(--mantine-color-dark-4); border-radius: var(--mantine-radius-lg); background: rgba(8, 16, 31, .72); }
+.forcedGrid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+.constraint { min-width: 0; padding: .5rem; border: 1px dashed var(--mantine-color-dark-3); border-radius: var(--mantine-radius-md); }
+.narrow { max-width: 390px; }
+.compact { max-width: 800px; }
+.reason { display: block; max-width: 34rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.moneyPositive { color: var(--mantine-color-teal-4); font-weight: 700; }
+.moneyNegative { color: var(--mantine-color-red-4); font-weight: 700; }
+@media (max-width: 639px) { .page { width: min(100% - 1rem, 1440px); padding-top: 1rem; } .panel { padding: .75rem; } }
