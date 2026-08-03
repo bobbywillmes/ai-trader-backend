@@ -14,7 +14,7 @@ The root `README.md` is the project front door. These docs are the working manua
 | Understand how a signal becomes a full trade cycle      | [Trading Lifecycle](architecture/trading-lifecycle.md) |
 | Run a controlled Paper lifecycle exercise               | [Trading Lifecycle Exercises](architecture/trading-lifecycle-exercises.md) |
 | Understand the momentum scanner catalyst/news pipeline  | [Momentum Scanner Architecture](architecture/catalyst-news-foundation.md) |
-| Review momentum decisions and durable pipeline runs      | [Momentum Decision Engine](architecture/momentum-decision-engine.md) |
+| Review momentum decisions and durable pipeline runs     | [Momentum Decision Engine](architecture/momentum-decision-engine.md) |
 | Run or debug the n8n Momentum Scanner Review workflow   | [Momentum Scanner Review Workflow](integrations/n8n/momentum-scanner-review.md) |
 | Understand background worker health and stale detection | [Worker Health](architecture/workers.md) |
 | Deploy or update production                             | [Production Deployment](production/deployment.md) |
@@ -24,6 +24,7 @@ The root `README.md` is the project front door. These docs are the working manua
 | Understand the n8n → backend contract                   | [n8n Integration](integrations/n8n.md) |
 | Manage trading accounts and broker credentials          | [Trading Account API](api/trading-accounts.md) |
 | Understand Alpaca broker API observability              | [Alpaca Integration](integrations/alpaca.md) |
+| Test local web changes on a phone or another device     | [Local Network & Mobile Testing](development/local-network-mobile-testing.md) |
 | Generate and view the database diagram                  | [Database Visualization](database/README.md) |
 
 ## 🧱 Architecture Docs
@@ -233,11 +234,28 @@ Use this when something is broken and you need to quickly identify likely causes
 
 Documents how to generate DBML from Prisma and import the schema into dbdiagram.io.
 
-## 🧪 Testing Docs
+## 🧪 Development Docs
+
+Development docs cover local workflows, testing, and developer-environment setup.
 
 ### [Testing](development/testing.md)
 
 Documents backend test commands and the current service-level coverage around lifecycle attribution, trade-cycle APIs, config snapshots, and reporting.
+
+### [Local Network & Mobile Testing](development/local-network-mobile-testing.md)
+
+Documents how to expose the Vite development server to a trusted local network and test the web application from a phone, tablet, or another computer.
+
+Includes:
+
+- LAN address discovery
+- Vite host and API proxy configuration
+- backend CORS configuration
+- Windows Firewall setup
+- troubleshooting for CORS and proxy connection errors
+- notes about DHCP-assigned IP address changes
+
+Use this guide when validating responsive web changes on a physical mobile device before deploying to production.
 
 ## 🟢 Current Production Posture
 
