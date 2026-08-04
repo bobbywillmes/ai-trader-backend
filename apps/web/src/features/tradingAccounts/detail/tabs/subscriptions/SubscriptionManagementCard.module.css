@@ -3,6 +3,11 @@
 .actions { min-width: max-content; }
 .inlineDetails { padding: var(--mantine-spacing-lg) !important; background: var(--mantine-color-dark-7); }
 @container responsive-data-view (max-width: 34rem) {
-  .actions { width: 100%; min-width: 0; }
-  .actions > * { flex: 1 1 auto; min-height: var(--data-touch-target); }
+  .actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, .7fr) minmax(0, .9fr);
+    width: 100%;
+    min-width: 0;
+  }
+  .actions > * { min-width: 0; min-height: var(--data-touch-target); padding-inline: var(--mantine-spacing-xs); }
 }
