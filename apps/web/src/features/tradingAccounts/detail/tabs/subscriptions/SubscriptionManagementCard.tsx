@@ -4,6 +4,7 @@ import {
   Badge,
   Button,
   Card,
+  Divider,
   Group,
   Loader,
   Modal,
@@ -105,6 +106,8 @@ export function SubscriptionManagementCard({
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [detailOpener, setDetailOpener] = useState<HTMLElement | null>(null);
+  const [deleteSectionOpen, setDeleteSectionOpen] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [priceHistoryRange, setPriceHistoryRange] =
     useState<AccountSubscriptionPriceHistoryRange>("1y");
   const { data, isLoading, isError, error } = useTradingAccountSubscriptions(
@@ -220,12 +223,16 @@ export function SubscriptionManagementCard({
     setEditing(accountSubscription);
     setDraft(accountSubscriptionToDraft(accountSubscription));
     setPriceHistoryRange("1y");
+    setDeleteSectionOpen(false);
+    setDeleteConfirmation("");
   }
 
   function closeModal() {
     if (!updateMutation.isPending) {
       setEditing(null);
       setDraft(null);
+      setDeleteSectionOpen(false);
+      setDeleteConfirmation("");
     }
   }
 
@@ -351,6 +358,27 @@ export function SubscriptionManagementCard({
     }
   }
 
+  async function deleteAssignment() {
+    if (!editing || deleteConfirmation.trim().toLowerCase() !== "delete") return;
+
+    try {
+      await deleteMutation.mutateAsync({
+        id: account.id,
+        accountSubscriptionId: editing.id,
+      });
+      notifications.show({ color: "teal", message: "Account assignment removed." });
+      setEditing(null);
+      setDraft(null);
+      setDeleteSectionOpen(false);
+      setDeleteConfirmation("");
+    } catch (error) {
+      notifications.show({
+        color: "red",
+        message: actionableErrorMessage(error, "Assignment could not be removed."),
+      });
+    }
+  }
+
   const readiness = (item: TradingAccountSubscription) => {
     const warning = accountSubscriptionHierarchyWarning(item);
     if (!item.enabled) return { label: "Assignment disabled", tone: "neutral" as const };
@@ -375,11 +403,6 @@ export function SubscriptionManagementCard({
   const actions = (item: TradingAccountSubscription) => <Group gap="xs" wrap="wrap" className={classes.actions}>
     <Button size="compact-sm" variant="default" loading={previewMutation.isPending && previewMutation.variables?.payload.subscriptionKey === item.subscription.key} onClick={() => previewEntryRisk(item)}>Preview risk</Button>
     <Button size="compact-sm" variant="subtle" onClick={() => startEdit(item)}>Edit</Button>
-    <Button size="compact-sm" variant="subtle" color="red" loading={deleteMutation.isPending} onClick={async () => {
-      if (!window.confirm(`Remove ${item.subscription.key} from ${account.displayName}? Referenced operational assignments cannot be removed.`)) return;
-      try { await deleteMutation.mutateAsync({ id: account.id, accountSubscriptionId: item.id }); notifications.show({ color: "teal", message: "Account assignment removed." }); }
-      catch (error) { notifications.show({ color: "red", message: actionableErrorMessage(error, "Assignment could not be removed.") }); }
-    }}>Remove</Button>
   </Group>;
   const details = (item: TradingAccountSubscription, includeIdentity = false) => <Stack gap="md" className={classes.details}>
     {includeIdentity && <Stack gap="xs">{identity(item)}{badges(item)}</Stack>}
@@ -1070,6 +1093,64 @@ export function SubscriptionManagementCard({
                 Save settings
               </Button>
             </Group>
+
+            <Divider />
+
+            {!deleteSectionOpen ? (
+              <Group justify="space-between" align="center">
+                <div>
+                  <Text fw={600} size="sm">Delete assignment</Text>
+                  <Text size="sm" c="dimmed">
+                    Permanently remove this subscription assignment from the account.
+                  </Text>
+                </div>
+                <Button
+                  variant="subtle"
+                  color="red"
+                  disabled={updateMutation.isPending || deleteMutation.isPending}
+                  onClick={() => setDeleteSectionOpen(true)}
+                >
+                  Delete assignment
+                </Button>
+              </Group>
+            ) : (
+              <Alert color="red" title="Confirm assignment deletion">
+                <Stack gap="sm">
+                  <Text size="sm">
+                    This removes <Text component="span" fw={700} ff="monospace">{editing.subscription.key}</Text> from {account.displayName}.
+                    Referenced operational assignments cannot be removed. Type <Text component="span" fw={700} ff="monospace">delete</Text> to continue.
+                  </Text>
+                  <TextInput
+                    label="Confirmation"
+                    placeholder="Type delete"
+                    value={deleteConfirmation}
+                    onChange={(event) => setDeleteConfirmation(event.currentTarget.value)}
+                    disabled={deleteMutation.isPending}
+                    autoComplete="off"
+                  />
+                  <Group justify="flex-end">
+                    <Button
+                      variant="default"
+                      disabled={deleteMutation.isPending}
+                      onClick={() => {
+                        setDeleteSectionOpen(false);
+                        setDeleteConfirmation("");
+                      }}
+                    >
+                      Cancel deletion
+                    </Button>
+                    <Button
+                      color="red"
+                      loading={deleteMutation.isPending}
+                      disabled={deleteConfirmation.trim().toLowerCase() !== "delete"}
+                      onClick={deleteAssignment}
+                    >
+                      Delete assignment
+                    </Button>
+                  </Group>
+                </Stack>
+              </Alert>
+            )}
           </Stack>
         )}
       </Modal>
