@@ -106,7 +106,7 @@ export function TradingAccountDetailPage() {
           </Tabs.List>
 
           <Tabs.Panel value="overview" pt="lg">
-            <OverviewTab account={account} />
+            <OverviewTab account={account} token={token} />
           </Tabs.Panel>
 
           <Tabs.Panel value="positions" pt="lg">

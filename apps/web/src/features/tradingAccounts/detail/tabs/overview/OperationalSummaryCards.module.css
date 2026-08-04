@@ -1,0 +1,3 @@
+.technicalValue { display: inline-block; max-width: 100%; overflow-wrap: anywhere; word-break: break-word; }
+.link { align-self: flex-start; min-height: var(--data-touch-target); }
+@media (max-width: 30rem) { .link { flex: 1 1 100%; } }
