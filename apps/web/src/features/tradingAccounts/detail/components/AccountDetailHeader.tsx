@@ -1,5 +1,6 @@
 import { Button, Group, Stack, Text, Title } from "@mantine/core";
 import { Link } from "react-router-dom";
+import { IconArrowLeft } from "@tabler/icons-react";
 import { StatusBadge } from "../../../../components/data-display";
 import type { TradingAccount } from "../../types";
 import classes from "../TradingAccountDetailPage.module.css";
@@ -13,9 +14,10 @@ export function AccountDetailHeader({ account }: { account?: TradingAccount }) {
           to="/trading-accounts"
           variant="subtle"
           size="xs"
+          leftSection={<IconArrowLeft size={16} aria-hidden="true" />}
           className={classes.backButton}
         >
-          Back to Trading Accounts
+          Trading Accounts
         </Button>
         <Group gap="sm" align="center" wrap="wrap">
           <Title order={2} size="h3" className={classes.accountTitle}>{account?.displayName ?? "Trading Account"}</Title>
