@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import {
   Alert,
   Badge,
@@ -8,7 +8,7 @@ import {
   Loader,
   Modal,
   NumberInput,
-  ScrollArea,
+  Accordion,
   SimpleGrid,
   Stack,
   Switch,
@@ -18,6 +18,16 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
+import {
+  CompactRecordList,
+  DataTable,
+  MobileRecordCard,
+  RecordDetailsGrid,
+  ResponsiveDataView,
+  ResponsiveDetails,
+  StatusBadge,
+  type SummaryField,
+} from "../../../../../components/data-display";
 import { notifications } from "@mantine/notifications";
 import {
   useCreateTradingAccountAllocation,
@@ -36,6 +46,7 @@ import {
   suggestAllocationKey,
   validateAllocationDraft,
 } from "./utils";
+import classes from "./SubscriptionManagementCard.module.css";
 
 export function AllocationManagementCard({
   account,
@@ -47,6 +58,9 @@ export function AllocationManagementCard({
   const [modalState, setModalState] = useState<AllocationModalState | null>(
     null
   );
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [detailId, setDetailId] = useState<number | null>(null);
+  const [detailOpener, setDetailOpener] = useState<HTMLElement | null>(null);
   const { data, isLoading, isError, error } = useTradingAccountAllocations(
     account.id,
     token
@@ -193,6 +207,32 @@ export function AllocationManagementCard({
     }
   }
 
+  const identity = (allocation: TradingAccountAllocation) => <div className={classes.identity}><Text fw={700} className={classes.wrap}>{allocation.name}</Text><Text size="xs" c="dimmed" ff="monospace" className={classes.wrap}>{allocation.key}</Text>{allocation.description && <Text size="xs" c="dimmed" lineClamp={2}>{allocation.description}</Text>}</div>;
+  const status = (allocation: TradingAccountAllocation) => <StatusBadge status={allocation.enabled ? "ENABLED" : "DISABLED"} label={allocation.enabled ? "Enabled" : "Disabled"} tone={allocation.enabled ? "positive" : "neutral"} size="compact" />;
+  const fields = (allocation: TradingAccountAllocation): SummaryField[] => [
+    { label: "Maximum allocated", value: formatMoney(allocation.maxAllocatedNotional, account.baseCurrency) },
+    { label: "Reserved / remaining", value: `${formatMoney(allocation.reservedNotional, account.baseCurrency)} / ${formatMoney(allocation.remainingAllocatedNotional, account.baseCurrency)}` },
+    { label: "Assigned subscriptions", value: `${allocation.entryEnabledSubscriptionCount} entry-capable · ${allocation.accountSubscriptionCount ?? 0} total` },
+  ];
+  const editAction = (allocation: TradingAccountAllocation) => <Button size="compact-sm" variant="subtle" onClick={() => startEdit(allocation)}>Edit</Button>;
+  const details = (allocation: TradingAccountAllocation, includeIdentity = false) => <Stack gap="md" className={classes.details}>{includeIdentity && <Stack gap="xs">{identity(allocation)}{status(allocation)}</Stack>}
+    <section><Title order={5}>Capacity &amp; limits</Title><RecordDetailsGrid missingValue="Not configured" sections={[{ items: [
+      { label: "Maximum allocated dollars", value: formatMoney(allocation.maxAllocatedNotional, account.baseCurrency) }, { label: "Reserved", value: formatMoney(allocation.reservedNotional, account.baseCurrency) },
+      { label: "Remaining", value: formatMoney(allocation.remainingAllocatedNotional, account.baseCurrency) }, { label: "Maximum open positions", value: allocation.maxOpenPositions },
+      { label: "Default maximum position dollars", value: formatMoney(allocation.maxPositionNotional, account.baseCurrency) }, { label: "Assigned subscriptions", value: allocation.accountSubscriptionCount ?? 0 },
+      { label: "Entry-capable subscriptions", value: allocation.entryEnabledSubscriptionCount },
+    ] }]} /></section>
+    <Accordion variant="contained"><Accordion.Item value="technical"><Accordion.Control>Technical details</Accordion.Control><Accordion.Panel><RecordDetailsGrid missingValue="Not available" sections={[{ items: [
+      { label: "Allocation ID", value: allocation.id, technical: true }, { label: "Allocation key", value: allocation.key, technical: true }, { label: "Updated", value: formatDateTime(allocation.updatedAt) },
+      { label: "Notes", value: allocation.notes },
+    ] }]} /></Accordion.Panel></Accordion.Item></Accordion>
+    <footer><Text fw={700} size="sm" mb="xs">Actions</Text>{editAction(allocation)}</footer>
+  </Stack>;
+  const wide = (items: readonly TradingAccountAllocation[]) => <DataTable caption="Allocation buckets" captionHidden density="compact"><Table.Thead><Table.Tr><Table.Th>Name / key</Table.Th><Table.Th>Status</Table.Th><Table.Th>Maximum allocated</Table.Th><Table.Th>Reserved / remaining</Table.Th><Table.Th>Maximum positions / default</Table.Th><Table.Th>Assigned subscriptions</Table.Th><Table.Th>Actions</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{items.map((allocation) => <Fragment key={allocation.id}><Table.Tr><Table.Td>{identity(allocation)}</Table.Td><Table.Td>{status(allocation)}</Table.Td><Table.Td>{formatMoney(allocation.maxAllocatedNotional, account.baseCurrency)}</Table.Td><Table.Td>{formatMoney(allocation.reservedNotional, account.baseCurrency)}<Text size="xs" c="dimmed">{formatMoney(allocation.remainingAllocatedNotional, account.baseCurrency)} remaining</Text></Table.Td><Table.Td>{allocation.maxOpenPositions ?? "Not configured"}<Text size="xs" c="dimmed">{formatMoney(allocation.maxPositionNotional, account.baseCurrency)} default</Text></Table.Td><Table.Td>{allocation.entryEnabledSubscriptionCount} entry-capable<Text size="xs" c="dimmed">{allocation.accountSubscriptionCount ?? 0} total</Text></Table.Td><Table.Td><Group gap="xs" wrap="nowrap"><Button size="compact-sm" variant="default" onClick={() => setExpandedId(expandedId === allocation.id ? null : allocation.id)}>Details</Button>{editAction(allocation)}</Group></Table.Td></Table.Tr>{expandedId === allocation.id && <Table.Tr><Table.Td colSpan={7} className={classes.inlineDetails}>{details(allocation)}</Table.Td></Table.Tr>}</Fragment>)}</Table.Tbody></DataTable>;
+  const compact = (items: readonly TradingAccountAllocation[]) => <CompactRecordList records={items} getRecordId={(item) => item.id} renderIdentity={(item) => <Stack gap="xs">{identity(item)}{status(item)}</Stack>} renderFields={fields} renderDetails={details} renderActions={editAction} expandedId={expandedId} onExpandedChange={(id) => setExpandedId(id === null ? null : Number(id))} />;
+  const narrow = (items: readonly TradingAccountAllocation[]) => <MobileRecordCard records={items} getRecordId={(item) => item.id} renderIdentity={identity} renderStatus={status} renderFields={fields} onDetails={(item, opener) => { setDetailOpener(opener); setDetailId(item.id); }} renderActions={editAction} />;
+  const detailAllocation = allocations.find((item) => item.id === detailId) ?? null;
+
   return (
     <>
       <Card withBorder radius="md" p="lg">
@@ -230,7 +270,10 @@ export function AllocationManagementCard({
           )}
 
           {allocations.length > 0 && (
-            <ScrollArea>
+            <ResponsiveDataView records={allocations} getRecordId={(item) => item.id} wide={wide} compact={compact} narrow={narrow} aria-label="Allocation buckets" />
+          )}
+          {detailAllocation && <ResponsiveDetails opened title={`${detailAllocation.name} allocation details`} onClose={() => setDetailId(null)} returnFocusTo={detailOpener}>{details(detailAllocation, true)}</ResponsiveDetails>}
+          {detailId === -1 && <div>
               <Table striped highlightOnHover style={{ minWidth: 980 }}>
                 <Table.Thead>
                   <Table.Tr>
@@ -333,8 +376,7 @@ export function AllocationManagementCard({
                   ))}
                 </Table.Tbody>
               </Table>
-            </ScrollArea>
-          )}
+            </div>}
         </Stack>
       </Card>
 
