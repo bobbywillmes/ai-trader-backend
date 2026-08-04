@@ -51,3 +51,21 @@ At wide container widths the page uses a concise semantic table with inline deta
 `DataTable` captions remain the accessible table name. Set `captionHidden` when a visible bottom caption would add visual noise; this hides it visually without removing it from the accessibility tree.
 
 `CompactRecordList` also supports an optional generic action slot beside its details control. Use it when a compact operational record needs safe action access without making the row itself interactive.
+
+## Trading account sections
+
+Trading Account detail uses URL-addressable sections for Overview, Positions, Orders, Subscriptions, Risk Health, Readiness, Activity, and Configuration. At mobile widths the horizontal tab list becomes a labeled section selector. Keep each section independently responsive to its content container so sidebar state does not create a page-level horizontal scrollbar.
+
+Positions and Orders reuse the same responsive record views as their global operational pages. Account scope belongs in the query and surrounding heading; do not fork their table, compact-row, card, detail, status, or action compositions. This keeps lifecycle actions, complete labels, empty/error/loading behavior, and primary-versus-secondary field decisions consistent.
+
+Overview is concise and read-oriented. It owns account identity, broker snapshot, latest readiness and allocation summaries, safe credential status, and safety notes. It links to the authoritative detail sections instead of duplicating readiness history or editors. Configuration owns mutable safety/status controls, allocation bucket creation and editing, credential management, and immutable technical metadata. Do not repeat credential or trading controls as large editable Overview sections.
+
+Account Subscriptions and Allocation Buckets follow the standard three-presentation system:
+
+1. Wide containers use concise semantic `DataTable` summaries with inline details.
+2. Compact containers use `CompactRecordList` with structured inline expansion.
+3. Narrow containers use `MobileRecordCard` and a focus-managed `ResponsiveDetails` drawer.
+
+Subscription summaries retain assignment identity, strategy, full enabled and entry-capability status, allocation, sizing, exit profile, details, and existing management actions. Allocation summaries retain name/key, full status, budget, reserved/remaining capacity, position limits, assignment counts, details, and Edit. Raw IDs, technical keys, timestamps, notes, and secondary limits belong in structured details and must wrap safely.
+
+Future account sections should reuse `DataState`, `StatusBadge`, `ResponsiveActions`, and the same detail renderer across modes. An internal scroll region can remain for genuinely diagnostic historical data, but a legacy minimum-width table must never set the width of the account page. Preserve authorization, confirmations, disabled/loading states, and safety behavior when changing presentation.

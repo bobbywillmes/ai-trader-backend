@@ -16,6 +16,7 @@ describe("trading account detail tab routing", () => {
       "risk-health",
       "readiness",
       "activity",
+      "configuration",
     ]);
 
     for (const tab of tradingAccountDetailTabs) {
