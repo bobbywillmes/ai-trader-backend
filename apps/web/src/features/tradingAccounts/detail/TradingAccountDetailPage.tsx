@@ -21,6 +21,7 @@ import { PositionsTab } from "./tabs/positions/PositionsTab";
 import { RiskHealthTab } from "./tabs/riskHealth/RiskHealthTab";
 import { SubscriptionsTab } from "./tabs/subscriptions/SubscriptionsTab";
 import { ReadinessTab } from "./tabs/readiness/ReadinessTab";
+import { ConfigurationTab } from "./tabs/configuration/ConfigurationTab";
 import type { TradingAccountDetailTab } from "./types";
 import {
   isTradingAccountDetailTab,
@@ -105,7 +106,7 @@ export function TradingAccountDetailPage() {
           </Tabs.List>
 
           <Tabs.Panel value="overview" pt="lg">
-            <OverviewTab account={account} token={token} />
+            <OverviewTab account={account} />
           </Tabs.Panel>
 
           <Tabs.Panel value="positions" pt="lg">
@@ -130,6 +131,10 @@ export function TradingAccountDetailPage() {
 
           <Tabs.Panel value="activity" pt="lg">
             <ActivityTab />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="configuration" pt="lg">
+            <ConfigurationTab account={account} token={token} />
           </Tabs.Panel>
         </Tabs>
       )}

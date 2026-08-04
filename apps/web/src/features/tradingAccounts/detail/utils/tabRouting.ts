@@ -11,6 +11,7 @@ export const tradingAccountDetailTabs: {
   { value: "risk-health", label: "Risk Health" },
   { value: "readiness", label: "Readiness" },
   { value: "activity", label: "Activity" },
+  { value: "configuration", label: "Configuration" },
 ];
 
 const tradingAccountDetailTabValues: ReadonlySet<string> = new Set(
