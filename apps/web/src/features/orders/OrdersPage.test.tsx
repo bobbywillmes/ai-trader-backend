@@ -18,8 +18,8 @@ import { OrdersPage } from "./OrdersPage";
 let resize: ((width: number) => void) | null = null;
 class ResizeObserverMock { callback: ResizeObserverCallback; constructor(callback: ResizeObserverCallback) { this.callback = callback; } observe() { resize = (width) => this.callback([{ contentRect: { width } } as ResizeObserverEntry], this as unknown as ResizeObserver); } disconnect() { resize = null; } unobserve() {} }
 const orders: OpenOrder[] = [
-  { id: "broker-order-1", tradingAccountId: 7, tradingAccount: { id: 7, displayName: "Bobby Paper Account With A Very Long Name", broker: "ALPACA", environment: "PAPER" }, symbol: "SPY", side: "sell", type: "stop_limit", qty: "6", filled_qty: "2", limit_price: "744.55", status: "partially_filled", submitted_at: "2026-08-03T12:00:00Z", client_order_id: "client-order-with-a-deliberately-long-routing-identifier" },
-  { id: "broker-order-2", tradingAccountId: 8, tradingAccount: null, symbol: "TSLA", side: "buy", type: "market", qty: "1", filledQty: "0", status: "submitted", submittedAt: "2026-08-03T12:10:00Z" },
+  { id: "broker-order-1", tradingAccountId: 7, tradingAccount: { id: 7, displayName: "Bobby Paper Account With A Very Long Name", broker: "ALPACA", environment: "PAPER" }, symbol: "SPY", side: "sell", orderType: "stop_limit", qty: "6", filledQty: "2", limitPrice: "744.55", stopPrice: "745.00", status: "partially_filled", submittedAt: "2026-08-03T12:00:00Z", clientOrderId: "client-order-with-a-deliberately-long-routing-identifier" },
+  { id: "broker-order-2", tradingAccountId: 8, tradingAccount: null, symbol: "TSLA", side: "buy", orderType: "market", qty: "1", filledQty: "0", status: "submitted", submittedAt: "2026-08-03T12:10:00Z" },
 ];
 function renderPage() { return render(<MantineProvider defaultColorScheme="dark"><OrdersPage /></MantineProvider>); }
 beforeEach(() => { vi.clearAllMocks(); mocks.query.data = orders; mocks.query.isLoading = false; mocks.query.isError = false; mocks.query.error = null; mocks.pending = false; mocks.variables = undefined; vi.stubGlobal("ResizeObserver", ResizeObserverMock); window.matchMedia = vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }); });
@@ -30,7 +30,7 @@ describe("Open Orders responsive page", () => {
     renderPage(); resize?.(1280);
     const table = await screen.findByRole("table", { name: "Open broker orders" });
     expect(within(table).getByText("Partially Filled")).toBeTruthy();
-    expect(within(table).getByText(/Stop Limit · \$744\.55/)).toBeTruthy();
+    expect(within(table).getByText(/Stop Limit · \$745\.00 stop · \$744\.55 limit/)).toBeTruthy();
     expect(within(table).getByText(/Market · Market/)).toBeTruthy();
     expect(table.querySelectorAll("th")).toHaveLength(6);
   });

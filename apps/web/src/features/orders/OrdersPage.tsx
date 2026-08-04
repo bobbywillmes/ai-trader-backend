@@ -23,7 +23,8 @@ function accountName(order: OpenOrder) {
   return order.tradingAccount?.displayName ?? (order.tradingAccountId !== null ? `Account ${order.tradingAccountId}` : "Unassigned account");
 }
 
-function titleCase(input: string) {
+function titleCase(input: string | null | undefined) {
+  if (!input) return MISSING_VALUE;
   return input.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
@@ -56,12 +57,18 @@ function remaining(order: OpenOrder) {
   const total = Number(order.qty); const done = Number(filled(order));
   return Number.isFinite(total) && Number.isFinite(done) ? Math.max(0, total - done).toString() : MISSING_VALUE;
 }
+function orderType(order: OpenOrder) { return order.orderType ?? order.type ?? null; }
 function orderPrice(order: OpenOrder) {
-  const price = value(order, "limitPrice", "limit_price");
-  return order.type.toLowerCase() === "market" ? "Market" : formatPrice(price as string | number | null);
+  const type = orderType(order)?.toLowerCase();
+  if (type === "market") return "Market";
+  const limit = value(order, "limitPrice", "limit_price") as string | number | null;
+  const stop = order.stop_price ?? order.stopPrice ?? null;
+  if (type === "stop_limit") return `${formatPrice(stop)} stop · ${formatPrice(limit)} limit`;
+  if (type === "stop") return formatPrice(stop);
+  return formatPrice(limit);
 }
-function statusTone(status: string): StatusTone {
-  const normalized = status.toLowerCase();
+function statusTone(status: string | null | undefined): StatusTone {
+  const normalized = status?.toLowerCase() ?? "";
   if (normalized.includes("partial")) return "informational";
   if (normalized.includes("reject") || normalized.includes("cancel") || normalized.includes("expire")) return "danger";
   return "warning";
@@ -104,9 +111,9 @@ export function OrdersPage() {
     disabled: cancelMutation.isPending || order.tradingAccountId === null, onClick: () => cancelOrder(order),
   });
   const identity = (order: OpenOrder) => <div className={classes.identity}><Text component="h3" fw={800}>{order.symbol}</Text><Text size="xs" c="dimmed" className={classes.wrap}>{accountName(order)}</Text></div>;
-  const status = (order: OpenOrder) => <Group gap="xs" wrap="wrap"><StatusBadge status={order.side} label={titleCase(order.side)} tone={order.side.toLowerCase() === "buy" ? "positive" : "danger"} size="compact" /><StatusBadge status={order.status} label={titleCase(order.status)} tone={statusTone(order.status)} size="compact" /></Group>;
+  const status = (order: OpenOrder) => <Group gap="xs" wrap="wrap"><StatusBadge status={order.side} label={titleCase(order.side)} tone={order.side?.toLowerCase() === "buy" ? "positive" : "danger"} size="compact" /><StatusBadge status={order.status} label={titleCase(order.status)} tone={statusTone(order.status)} size="compact" /></Group>;
   const fields = (order: OpenOrder): SummaryField[] => [
-    { label: "Order", value: `${titleCase(order.type)} · ${orderPrice(order)}` },
+    { label: "Order", value: `${titleCase(orderType(order))} · ${orderPrice(order)}` },
     { label: "Quantity", value: `${quantity(order)} ${Number(order.qty) === 1 ? "share" : "shares"}` },
     { label: "Submitted", value: formatAge(value(order, "submittedAt", "submitted_at") as string | null) },
   ];
@@ -115,11 +122,11 @@ export function OrdersPage() {
     <div className={classes.detailCards}>
       <section className={classes.detailCard} aria-labelledby={`order-${order.id}-order-heading`}><Title id={`order-${order.id}-order-heading`} order={3} size="h5" className={classes.detailHeading}>Order</Title><RecordDetailsGrid missingValue={MISSING_VALUE} sections={[{ items: [
         { label: "Symbol", value: order.symbol }, { label: "Account", value: accountName(order) }, { label: "Side", value: titleCase(order.side) },
-        { label: "Quantity", value: quantity(order) }, { label: "Order type", value: titleCase(order.type) }, { label: "Status", value: titleCase(order.status) },
+        { label: "Quantity", value: quantity(order) }, { label: "Order type", value: titleCase(orderType(order)) }, { label: "Status", value: titleCase(order.status) },
         { label: "Submitted", value: formatDate(value(order, "submittedAt", "submitted_at") as string | null) },
       ] }]} /></section>
       <section className={`${classes.detailCard} ${classes.executionCard}`} aria-labelledby={`order-${order.id}-execution-heading`}><Title id={`order-${order.id}-execution-heading`} order={3} size="h5" className={classes.detailHeading}>Pricing &amp; execution</Title><RecordDetailsGrid missingValue={MISSING_VALUE} sections={[{ items: [
-        { label: "Relevant price", value: orderPrice(order) }, { label: "Filled quantity", value: filled(order) }, { label: "Remaining quantity", value: remaining(order) },
+        { label: "Relevant price", value: orderPrice(order) }, { label: "Filled quantity", value: filled(order) }, { label: "Remaining quantity", value: remaining(order) }, { label: "Average fill price", value: formatPrice(order.filled_avg_price ?? order.filledAvgPrice ?? null) }, { label: "Time in force", value: titleCase(order.time_in_force ?? order.timeInForce) },
       ] }]} /></section>
     </div>
     <Accordion variant="contained" radius="md" className={classes.routingDisclosure}><Accordion.Item value="routing"><Accordion.Control><div><Text fw={700} size="sm">Routing &amp; identifiers</Text><Text size="xs" c="dimmed" className={classes.wrap}>{value(order, "clientOrderId", "client_order_id") ?? MISSING_VALUE}</Text></div></Accordion.Control><Accordion.Panel><RecordDetailsGrid missingValue={MISSING_VALUE} sections={[{ items: [
@@ -128,7 +135,7 @@ export function OrdersPage() {
     <footer className={classes.detailActions}><Text fw={700} size="sm">Order actions</Text><ResponsiveActions compact secondary={[cancelAction(order)]} /></footer>
   </div>;
 
-  const wide = (items: readonly OpenOrder[]) => <DataTable caption="Open broker orders" captionHidden density="compact"><Table.Thead><Table.Tr><Table.Th>Order</Table.Th><Table.Th>Side / quantity</Table.Th><Table.Th>Type / price</Table.Th><Table.Th>Status</Table.Th><Table.Th>Submitted</Table.Th><Table.Th className={classes.actionsHeading}>Actions</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{items.map((order) => <Fragment key={order.id}><Table.Tr><Table.Td>{identity(order)}</Table.Td><Table.Td>{titleCase(order.side)} · {quantity(order)} {Number(order.qty) === 1 ? "share" : "shares"}</Table.Td><Table.Td>{titleCase(order.type)} · {orderPrice(order)}</Table.Td><Table.Td><StatusBadge status={order.status} label={titleCase(order.status)} tone={statusTone(order.status)} size="compact" /></Table.Td><Table.Td><Text size="sm">{formatAge(value(order, "submittedAt", "submitted_at") as string | null)}</Text><Text size="xs" c="dimmed">{formatDate(value(order, "submittedAt", "submitted_at") as string | null)}</Text></Table.Td><Table.Td><Group justify="flex-end" wrap="nowrap"><Button variant="default" size="compact-sm" onClick={() => setExpandedId(expandedId === order.id ? null : order.id)} aria-expanded={expandedId === order.id} aria-controls={`order-${order.id}-wide-details`} rightSection={expandedId === order.id ? <IconChevronUp size={15} /> : <IconChevronDown size={15} />}>Details</Button><ResponsiveActions compact secondary={[cancelAction(order)]} /></Group></Table.Td></Table.Tr>{expandedId === order.id && <Table.Tr><Table.Td colSpan={6} id={`order-${order.id}-wide-details`} className={classes.inlineDetails}>{details(order)}</Table.Td></Table.Tr>}</Fragment>)}</Table.Tbody></DataTable>;
+  const wide = (items: readonly OpenOrder[]) => <DataTable caption="Open broker orders" captionHidden density="compact"><Table.Thead><Table.Tr><Table.Th>Order</Table.Th><Table.Th>Side / quantity</Table.Th><Table.Th>Type / price</Table.Th><Table.Th>Status</Table.Th><Table.Th>Submitted</Table.Th><Table.Th className={classes.actionsHeading}>Actions</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{items.map((order) => <Fragment key={order.id}><Table.Tr><Table.Td>{identity(order)}</Table.Td><Table.Td>{titleCase(order.side)} · {quantity(order)} {Number(order.qty) === 1 ? "share" : "shares"}</Table.Td><Table.Td>{titleCase(orderType(order))} · {orderPrice(order)}</Table.Td><Table.Td><StatusBadge status={order.status} label={titleCase(order.status)} tone={statusTone(order.status)} size="compact" /></Table.Td><Table.Td><Text size="sm">{formatAge(value(order, "submittedAt", "submitted_at") as string | null)}</Text><Text size="xs" c="dimmed">{formatDate(value(order, "submittedAt", "submitted_at") as string | null)}</Text></Table.Td><Table.Td><Group justify="flex-end" wrap="nowrap"><Button variant="default" size="compact-sm" onClick={() => setExpandedId(expandedId === order.id ? null : order.id)} aria-expanded={expandedId === order.id} aria-controls={`order-${order.id}-wide-details`} rightSection={expandedId === order.id ? <IconChevronUp size={15} /> : <IconChevronDown size={15} />}>Details</Button><ResponsiveActions compact secondary={[cancelAction(order)]} /></Group></Table.Td></Table.Tr>{expandedId === order.id && <Table.Tr><Table.Td colSpan={6} id={`order-${order.id}-wide-details`} className={classes.inlineDetails}>{details(order)}</Table.Td></Table.Tr>}</Fragment>)}</Table.Tbody></DataTable>;
   const compact = (items: readonly OpenOrder[]) => <CompactRecordList records={items} getRecordId={(order) => order.id} renderIdentity={(order) => <Stack gap="xs">{identity(order)}{status(order)}</Stack>} renderFields={fields} renderDetails={details} renderActions={(order) => <ResponsiveActions compact secondary={[cancelAction(order)]} />} expandedId={expandedId} onExpandedChange={setExpandedId} />;
   const narrow = (items: readonly OpenOrder[]) => <MobileRecordCard records={items} getRecordId={(order) => order.id} renderIdentity={identity} renderStatus={status} renderFields={fields} onDetails={openDetails} renderActions={(order) => <ResponsiveActions compact secondary={[cancelAction(order)]} />} />;
 
