@@ -74,10 +74,7 @@ function statusTone(status: string | null | undefined): StatusTone {
   return "warning";
 }
 
-export function OrdersPage() {
-  const [token] = useState<string | null>(() => getAdminToken());
-  const ordersQuery = useOpenOrders(token);
-  const orders = useMemo(() => ordersQuery.data ?? [], [ordersQuery.data]);
+export function OrdersDataView({ orders, token, ariaLabel = "Open orders" }: { orders: readonly OpenOrder[]; token: string | null; ariaLabel?: string }) {
   const cancelMutation = useCancelOrder(token);
   const [expandedId, setExpandedId] = useState<string | number | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -139,5 +136,12 @@ export function OrdersPage() {
   const compact = (items: readonly OpenOrder[]) => <CompactRecordList records={items} getRecordId={(order) => order.id} renderIdentity={(order) => <Stack gap="xs">{identity(order)}{status(order)}</Stack>} renderFields={fields} renderDetails={details} renderActions={(order) => <ResponsiveActions compact secondary={[cancelAction(order)]} />} expandedId={expandedId} onExpandedChange={setExpandedId} />;
   const narrow = (items: readonly OpenOrder[]) => <MobileRecordCard records={items} getRecordId={(order) => order.id} renderIdentity={identity} renderStatus={status} renderFields={fields} onDetails={openDetails} renderActions={(order) => <ResponsiveActions compact secondary={[cancelAction(order)]} />} />;
 
-  return <main className={classes.page}><Stack gap="lg"><Group justify="space-between" align="flex-end"><div><Title order={2} size="h3">Open Orders</Title><Text size="sm" c="dimmed">Broker orders awaiting completion or cancellation.</Text></div>{!ordersQuery.isLoading && !ordersQuery.isError && <Text size="sm" c="dimmed">{orders.length} open {orders.length === 1 ? "order" : "orders"}</Text>}</Group><Card withBorder radius="md" p="md" className={classes.panel}>{ordersQuery.isLoading ? <DataState state="loading" message="Loading open orders…" /> : ordersQuery.isError ? <DataState state="error" title="Unable to load open orders" message={ordersQuery.error instanceof Error ? ordersQuery.error.message : "Open orders could not be loaded."} onRetry={() => void ordersQuery.refetch()} /> : orders.length === 0 ? <DataState state="empty" title="No open orders" message="Orders will appear here while they await execution or cancellation." /> : <ResponsiveDataView records={orders} getRecordId={(order) => order.id} wide={wide} compact={compact} narrow={narrow} aria-label="Open orders" />}</Card></Stack>{detailOrder && <ResponsiveDetails opened title={`${detailOrder.symbol} order details`} onClose={closeDetails}>{details(detailOrder, true)}</ResponsiveDetails>}</main>;
+  return <><ResponsiveDataView records={orders} getRecordId={(order) => order.id} wide={wide} compact={compact} narrow={narrow} aria-label={ariaLabel} />{detailOrder && <ResponsiveDetails opened title={`${detailOrder.symbol} order details`} onClose={closeDetails}>{details(detailOrder, true)}</ResponsiveDetails>}</>;
+}
+
+export function OrdersPage() {
+  const [token] = useState<string | null>(() => getAdminToken());
+  const ordersQuery = useOpenOrders(token);
+  const orders = useMemo(() => ordersQuery.data ?? [], [ordersQuery.data]);
+  return <main className={classes.page}><Stack gap="lg"><Group justify="space-between" align="flex-end"><div><Title order={2} size="h3">Open Orders</Title><Text size="sm" c="dimmed">Broker orders awaiting completion or cancellation.</Text></div>{!ordersQuery.isLoading && !ordersQuery.isError && <Text size="sm" c="dimmed">{orders.length} open {orders.length === 1 ? "order" : "orders"}</Text>}</Group><Card withBorder radius="md" p="md" className={classes.panel}>{ordersQuery.isLoading ? <DataState state="loading" message="Loading open orders…" /> : ordersQuery.isError ? <DataState state="error" title="Unable to load open orders" message={ordersQuery.error instanceof Error ? ordersQuery.error.message : "Open orders could not be loaded."} onRetry={() => void ordersQuery.refetch()} /> : orders.length === 0 ? <DataState state="empty" title="No open orders" message="Orders will appear here while they await execution or cancellation." /> : <OrdersDataView orders={orders} token={token} />}</Card></Stack></main>;
 }

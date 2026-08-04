@@ -140,17 +140,13 @@ function exitTone(position: TrackedPosition): StatusTone {
   return "neutral";
 }
 
-export function PositionsPage() {
-  const [token] = useState<string | null>(() => getAdminToken());
-  const positionsQuery = useOpenPositions(token);
-  const positions = useMemo(() => positionsQuery.data ?? [], [positionsQuery.data]);
+export function PositionsDataView({ positions, token, ariaLabel = "Open positions" }: { positions: readonly TrackedPosition[]; token: string | null; ariaLabel?: string }) {
   const closeMutation = useClosePosition(token);
   const tradeCycleDrawer = useTradeCycleDrawer(token);
   const [expandedId, setExpandedId] = useState<string | number | null>(null);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [detailOpener, setDetailOpener] = useState<HTMLElement | null>(null);
   const detailPosition = useMemo(() => positions.find((position) => position.id === detailId) ?? null, [detailId, positions]);
-  const attentionCount = positions.filter(needsAttention).length;
 
   function openDetails(position: TrackedPosition, opener: HTMLElement) {
     tradeCycleDrawer.closeCycle();
@@ -248,12 +244,19 @@ export function PositionsPage() {
   const compact = (items: readonly TrackedPosition[]) => <CompactRecordList records={items} getRecordId={(position) => position.id} renderIdentity={(position) => <Stack gap="xs">{identity(position)}{statusGroup(position)}</Stack>} renderFields={summaryFields} renderDetails={details} renderActions={(position) => <ResponsiveActions compact secondary={[lifecycleAction(position), closeAction(position)]} />} expandedId={expandedId} onExpandedChange={(id) => { if (id !== null) tradeCycleDrawer.closeCycle(); setExpandedId(id); }} />;
   const narrow = (items: readonly TrackedPosition[]) => <MobileRecordCard records={items} getRecordId={(position) => position.id} renderIdentity={identity} renderStatus={statusGroup} renderFields={summaryFields} onDetails={openDetails} renderActions={(position) => <ResponsiveActions compact primary={lifecycleAction(position)} secondary={[closeAction(position)]} />} />;
 
+  return <>
+  <ResponsiveDataView records={positions} getRecordId={(position) => position.id} wide={wide} compact={compact} narrow={narrow} aria-label={ariaLabel} />
+  {detailPosition ? <ResponsiveDetails opened title={`${detailPosition.symbol} position details`} onClose={closeDetails}>{details(detailPosition, true)}</ResponsiveDetails> : <TradeCycleDrawer {...tradeCycleDrawer.drawerProps} onClose={tradeCycleDrawer.closeCycle} />}
+  </>;
+}
+
+export function PositionsPage() {
+  const [token] = useState<string | null>(() => getAdminToken());
+  const positionsQuery = useOpenPositions(token);
+  const positions = useMemo(() => positionsQuery.data ?? [], [positionsQuery.data]);
+  const attentionCount = positions.filter(needsAttention).length;
   return <main className={classes.page}><Stack gap="lg">
     <Group justify="space-between" align="flex-end" gap="md"><div><Title order={2} size="h3">Open Positions</Title><Text size="sm" c="dimmed">Live tracked positions and exit management.</Text></div>{!positionsQuery.isLoading && !positionsQuery.isError && <Text size="sm" c="dimmed">{positions.length} open {positions.length === 1 ? "position" : "positions"}{attentionCount > 0 ? ` · ${attentionCount} requiring attention` : ""}</Text>}</Group>
-    <Card withBorder radius="md" p="md" className={classes.panel}>
-      {positionsQuery.isLoading ? <DataState state="loading" message="Loading open positions…" /> : positionsQuery.isError ? <DataState state="error" title="Unable to load open positions" message={positionsQuery.error instanceof Error ? positionsQuery.error.message : "Open positions could not be loaded."} onRetry={() => void positionsQuery.refetch()} /> : positions.length === 0 ? <DataState state="empty" title="No open positions" message="Positions will appear here after entry orders fill." /> : <ResponsiveDataView records={positions} getRecordId={(position) => position.id} wide={wide} compact={compact} narrow={narrow} aria-label="Open positions" />}
-    </Card>
-  </Stack>
-  {detailPosition ? <ResponsiveDetails opened title={`${detailPosition.symbol} position details`} onClose={closeDetails}>{details(detailPosition, true)}</ResponsiveDetails> : <TradeCycleDrawer {...tradeCycleDrawer.drawerProps} onClose={tradeCycleDrawer.closeCycle} />}
-  </main>;
+    <Card withBorder radius="md" p="md" className={classes.panel}>{positionsQuery.isLoading ? <DataState state="loading" message="Loading open positions…" /> : positionsQuery.isError ? <DataState state="error" title="Unable to load open positions" message={positionsQuery.error instanceof Error ? positionsQuery.error.message : "Open positions could not be loaded."} onRetry={() => void positionsQuery.refetch()} /> : positions.length === 0 ? <DataState state="empty" title="No open positions" message="Positions will appear here after entry orders fill." /> : <PositionsDataView positions={positions} token={token} />}</Card>
+  </Stack></main>;
 }
