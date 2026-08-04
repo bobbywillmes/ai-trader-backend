@@ -409,7 +409,11 @@ export function AllocationManagementCard({
 
               <TextInput
                 label="Key"
-                description="Lowercase letters, numbers, hyphens, and underscores."
+                description={
+                  modalState.mode === "edit"
+                    ? "Allocation keys are immutable after creation."
+                    : "Generated from the name using lowercase letters, numbers, and underscores."
+                }
                 value={modalState.draft.key}
                 onChange={(event) => updateKey(event.currentTarget.value)}
                 error={
@@ -418,7 +422,7 @@ export function AllocationManagementCard({
                     ? undefined
                     : "Use lowercase letters, numbers, hyphens, or underscores."
                 }
-                disabled={saving}
+                disabled={saving || modalState.mode === "edit"}
                 required
               />
             </SimpleGrid>
