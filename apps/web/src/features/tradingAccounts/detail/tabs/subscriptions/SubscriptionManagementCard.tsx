@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
   Alert,
   Badge,
@@ -8,7 +8,7 @@ import {
   Loader,
   Modal,
   NumberInput,
-  ScrollArea,
+  Accordion,
   Select,
   SimpleGrid,
   Stack,
@@ -19,6 +19,16 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
+import {
+  CompactRecordList,
+  DataTable,
+  MobileRecordCard,
+  RecordDetailsGrid,
+  ResponsiveDataView,
+  ResponsiveDetails,
+  StatusBadge,
+  type SummaryField,
+} from "../../../../../components/data-display";
 import { notifications } from "@mantine/notifications";
 import {
   usePreviewTradingAccountEntryRisk,
@@ -66,6 +76,7 @@ import {
   sizingTypeLabel,
   validateAccountSubscriptionDraft,
 } from "./utils";
+import classes from "./SubscriptionManagementCard.module.css";
 
 export function SubscriptionManagementCard({
   account,
@@ -91,6 +102,9 @@ export function SubscriptionManagementCard({
   const [sizingFilter, setSizingFilter] =
     useState<AccountSubscriptionSizingFilter>("all");
   const [allocationFilter, setAllocationFilter] = useState("all");
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [detailId, setDetailId] = useState<number | null>(null);
+  const [detailOpener, setDetailOpener] = useState<HTMLElement | null>(null);
   const [priceHistoryRange, setPriceHistoryRange] =
     useState<AccountSubscriptionPriceHistoryRange>("1y");
   const { data, isLoading, isError, error } = useTradingAccountSubscriptions(
@@ -126,7 +140,10 @@ export function SubscriptionManagementCard({
   const deleteMutation = useDeleteTradingAccountSubscription(token);
   const { data: catalog = [] } = useSubscriptions(token);
   const previewMutation = usePreviewTradingAccountEntryRisk(token);
-  const accountSubscriptions = data?.accountSubscriptions ?? [];
+  const accountSubscriptions = useMemo(
+    () => data?.accountSubscriptions ?? [],
+    [data?.accountSubscriptions]
+  );
   const allocations = allocationData?.allocations ?? [];
   const assignedSubscriptionIds = new Set(
     accountSubscriptions.map((item) => item.subscriptionId)
@@ -193,6 +210,10 @@ export function SubscriptionManagementCard({
 
       return true;
     }
+  );
+  const detailSubscription = useMemo(
+    () => accountSubscriptions.find((item) => item.id === detailId) ?? null,
+    [accountSubscriptions, detailId]
   );
 
   function startEdit(accountSubscription: TradingAccountSubscription) {
@@ -330,6 +351,60 @@ export function SubscriptionManagementCard({
     }
   }
 
+  const readiness = (item: TradingAccountSubscription) => {
+    const warning = accountSubscriptionHierarchyWarning(item);
+    if (!item.enabled) return { label: "Assignment disabled", tone: "neutral" as const };
+    if (!item.entriesEnabled) return { label: "Entries disabled", tone: "warning" as const };
+    if (warning) return { label: "Entry blocked", tone: "danger" as const };
+    return { label: "Entry capable", tone: "positive" as const };
+  };
+  const identity = (item: TradingAccountSubscription) => <div className={classes.identity}>
+    <Text fw={700}>{item.subscription.key}</Text>
+    <Text size="xs" c="dimmed" ff="monospace" className={classes.wrap}>{item.subscription.key}</Text>
+    <Text size="xs" c="dimmed" className={classes.wrap}>{item.subscription.strategy?.name ?? "No strategy"}{item.subscription.strategy?.key ? ` · ${item.subscription.strategy.key}` : ""}</Text>
+  </div>;
+  const badges = (item: TradingAccountSubscription) => <Group gap="xs" wrap="wrap">
+    <StatusBadge status={item.enabled ? "ENABLED" : "DISABLED"} label={item.enabled ? "Enabled" : "Disabled"} tone={item.enabled ? "positive" : "neutral"} size="compact" />
+    <StatusBadge status={readiness(item).label} label={readiness(item).label} tone={readiness(item).tone} size="compact" />
+  </Group>;
+  const summaryFields = (item: TradingAccountSubscription): SummaryField[] => [
+    { label: "Allocation", value: item.allocation?.name ?? "Unassigned" },
+    { label: "Position sizing", value: formatSizing(item, account.baseCurrency) },
+    { label: "Exit profile", value: item.subscription.exitProfile?.name ?? "Not assigned" },
+  ];
+  const actions = (item: TradingAccountSubscription) => <Group gap="xs" wrap="wrap" className={classes.actions}>
+    <Button size="compact-sm" variant="default" loading={previewMutation.isPending && previewMutation.variables?.payload.subscriptionKey === item.subscription.key} onClick={() => previewEntryRisk(item)}>Preview risk</Button>
+    <Button size="compact-sm" variant="subtle" onClick={() => startEdit(item)}>Edit</Button>
+    <Button size="compact-sm" variant="subtle" color="red" loading={deleteMutation.isPending} onClick={async () => {
+      if (!window.confirm(`Remove ${item.subscription.key} from ${account.displayName}? Referenced operational assignments cannot be removed.`)) return;
+      try { await deleteMutation.mutateAsync({ id: account.id, accountSubscriptionId: item.id }); notifications.show({ color: "teal", message: "Account assignment removed." }); }
+      catch (error) { notifications.show({ color: "red", message: actionableErrorMessage(error, "Assignment could not be removed.") }); }
+    }}>Remove</Button>
+  </Group>;
+  const details = (item: TradingAccountSubscription, includeIdentity = false) => <Stack gap="md" className={classes.details}>
+    {includeIdentity && <Stack gap="xs">{identity(item)}{badges(item)}</Stack>}
+    <section><Title order={5}>Assignment</Title><RecordDetailsGrid missingValue="Not available" sections={[{ items: [
+      { label: "Subscription", value: item.subscription.key }, { label: "Strategy", value: item.subscription.strategy?.name },
+      { label: "Assignment status", value: item.enabled ? "Enabled" : "Disabled" }, { label: "Entry capability", value: readiness(item).label },
+      { label: "Exit management", value: item.exitsEnabled ? "Enabled" : "Disabled" },
+    ] }]} /></section>
+    <section><Title order={5}>Sizing &amp; risk</Title><RecordDetailsGrid missingValue="Not available" sections={[{ items: [
+      { label: "Allocation", value: item.allocation?.name ?? "Unassigned" }, { label: "Allocation budget", value: formatMoney(item.allocation?.maxAllocatedNotional, account.baseCurrency) },
+      { label: "Reserved capital", value: formatMoney(item.reservedNotional, account.baseCurrency) }, { label: "Position-sizing method", value: sizingTypeLabel(item.sizingType) },
+      { label: "Position-sizing configuration", value: formatSizing(item, account.baseCurrency) }, { label: "Limits", value: formatLimits(item, account.baseCurrency) },
+      { label: "Exit profile", value: item.subscription.exitProfile?.name }, { label: "Configuration readiness", value: accountSubscriptionHierarchyWarning(item) ?? "Ready" },
+    ] }]} /></section>
+    <Accordion variant="contained"><Accordion.Item value="routing"><Accordion.Control>Routing &amp; identifiers</Accordion.Control><Accordion.Panel><RecordDetailsGrid missingValue="Not available" sections={[{ items: [
+      { label: "Subscription ID", value: item.subscriptionId, technical: true }, { label: "Trading account subscription ID", value: item.id, technical: true },
+      { label: "Allocation ID", value: item.allocationId, technical: true }, { label: "Subscription key", value: item.subscription.key, technical: true },
+      { label: "Strategy key", value: item.subscription.strategy?.key, technical: true }, { label: "Updated", value: formatDateTime(item.updatedAt) },
+    ] }]} /></Accordion.Panel></Accordion.Item></Accordion>
+    <footer><Text fw={700} size="sm" mb="xs">Actions</Text>{actions(item)}</footer>
+  </Stack>;
+  const wide = (items: readonly TradingAccountSubscription[]) => <DataTable caption="Account subscriptions" captionHidden density="compact"><Table.Thead><Table.Tr><Table.Th>Subscription / strategy</Table.Th><Table.Th>Status / readiness</Table.Th><Table.Th>Allocation</Table.Th><Table.Th>Position sizing</Table.Th><Table.Th>Exit profile</Table.Th><Table.Th>Actions</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{items.map((item) => <Fragment key={item.id}><Table.Tr><Table.Td>{identity(item)}</Table.Td><Table.Td>{badges(item)}</Table.Td><Table.Td>{item.allocation?.name ?? "Unassigned"}</Table.Td><Table.Td>{formatSizing(item, account.baseCurrency)}</Table.Td><Table.Td>{item.subscription.exitProfile?.name ?? "Not assigned"}</Table.Td><Table.Td><Group gap="xs" wrap="nowrap"><Button size="compact-sm" variant="default" onClick={() => setExpandedId(expandedId === item.id ? null : item.id)} aria-expanded={expandedId === item.id}>Details</Button>{actions(item)}</Group></Table.Td></Table.Tr>{expandedId === item.id && <Table.Tr><Table.Td colSpan={6} className={classes.inlineDetails}>{details(item)}</Table.Td></Table.Tr>}</Fragment>)}</Table.Tbody></DataTable>;
+  const compact = (items: readonly TradingAccountSubscription[]) => <CompactRecordList records={items} getRecordId={(item) => item.id} renderIdentity={(item) => <Stack gap="xs">{identity(item)}{badges(item)}</Stack>} renderFields={summaryFields} renderDetails={details} renderActions={actions} expandedId={expandedId} onExpandedChange={(id) => setExpandedId(id === null ? null : Number(id))} />;
+  const narrow = (items: readonly TradingAccountSubscription[]) => <MobileRecordCard records={items} getRecordId={(item) => item.id} renderIdentity={identity} renderStatus={badges} renderFields={summaryFields} onDetails={(item, opener) => { setDetailOpener(opener); setDetailId(item.id); }} renderActions={actions} />;
+
   return (
     <>
       <Card withBorder radius="md" p="lg">
@@ -456,8 +531,11 @@ export function SubscriptionManagementCard({
             )}
 
           {filteredAccountSubscriptions.length > 0 && (
-            <ScrollArea>
-              <Table striped highlightOnHover style={{ minWidth: 1460 }}>
+            <ResponsiveDataView records={filteredAccountSubscriptions} getRecordId={(item) => item.id} wide={wide} compact={compact} narrow={narrow} aria-label="Account subscriptions" />
+          )}
+          {detailSubscription && <ResponsiveDetails opened title={`${detailSubscription.subscription.key} subscription details`} onClose={() => setDetailId(null)} returnFocusTo={detailOpener}>{details(detailSubscription, true)}</ResponsiveDetails>}
+          {detailId === -1 && <div>
+              <Table striped highlightOnHover>
                 <Table.Thead>
                   <Table.Tr>
                     <Table.Th>Symbol</Table.Th>
@@ -680,8 +758,7 @@ export function SubscriptionManagementCard({
                   ))}
                 </Table.Tbody>
               </Table>
-            </ScrollArea>
-          )}
+            </div>}
         </Stack>
       </Card>
 

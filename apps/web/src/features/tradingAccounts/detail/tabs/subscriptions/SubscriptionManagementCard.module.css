@@ -1,0 +1,8 @@
+.identity, .details, .wrap { min-width: 0; }
+.wrap { overflow-wrap: anywhere; word-break: break-word; }
+.actions { min-width: max-content; }
+.inlineDetails { padding: var(--mantine-spacing-lg) !important; background: var(--mantine-color-dark-7); }
+@container responsive-data-view (max-width: 34rem) {
+  .actions { width: 100%; min-width: 0; }
+  .actions > * { flex: 1 1 auto; min-height: var(--data-touch-target); }
+}
