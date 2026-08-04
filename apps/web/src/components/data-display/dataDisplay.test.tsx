@@ -77,6 +77,17 @@ describe("status badges", () => {
 });
 
 describe("filters and states", () => {
+  it("keeps the shrinkable primary control and Filters button in one bounded row", () => {
+    render(<ResponsiveFilterToolbar primary={<input aria-label="Symbol" />} secondary={<select aria-label="Status"><option>Open</option></select>} />, { wrapper: Providers });
+    const toolbar = screen.getByLabelText("Data filters");
+    const controls = toolbar.querySelector("[data-filter-controls]");
+    const primary = toolbar.querySelector("[data-filter-primary]");
+    const filters = screen.getByRole("button", { name: "Filters" });
+    expect(controls?.contains(primary)).toBe(true);
+    expect(controls?.contains(filters)).toBe(true);
+    expect(primary?.contains(screen.getByLabelText("Symbol"))).toBe(true);
+  });
+
   it("shows active filters, opens the mobile panel, and clears all", async () => {
     const clear = vi.fn(); render(<ResponsiveFilterToolbar primary={<label>Search<input aria-label="Search"/></label>} secondary={<label>Status<select aria-label="Status"><option>Open</option></select></label>} activeFilters={[{ key: "open", label: "Status: Open" }]} onClearAll={clear}/>, { wrapper: Providers });
     expect(screen.getByLabelText("Data filters")).toBeTruthy(); expect(within(screen.getByLabelText("Active filters")).getByText("Status: Open")).toBeTruthy();
