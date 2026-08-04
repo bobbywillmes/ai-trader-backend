@@ -1,0 +1,12 @@
+.page { width: 100%; max-width: 112rem; min-width: 0; margin-inline: auto; }
+.header, .headerCopy, .accountTitle { min-width: 0; }
+.accountTitle { overflow-wrap: anywhere; }
+.backButton { align-self: flex-start; min-height: var(--data-touch-target); padding-inline: 0; }
+.tabs { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+.tabs [role="tab"] { min-height: var(--data-touch-target); flex: 0 0 auto; }
+.sectionSelect { display: none; }
+@media (max-width: 639px) {
+  .tabs { display: none; }
+  .sectionSelect { display: block; width: 100%; }
+  .sectionSelect input { min-height: var(--data-touch-target); }
+}
