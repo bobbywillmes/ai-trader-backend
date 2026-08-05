@@ -1,0 +1,12 @@
+.page { min-width: 0; container-type: inline-size; }
+.header { gap: var(--mantine-spacing-md); }
+.identity { min-width: 0; max-width: 28rem; }
+.identity :global(.mantine-Text-root) { overflow-wrap: anywhere; }
+.detailCard { border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-md); padding: var(--mantine-spacing-md); }
+.detailCard h3 { margin-bottom: var(--mantine-spacing-sm); }
+.technical { border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-md); padding: var(--mantine-spacing-sm) var(--mantine-spacing-md); }
+.technical summary { cursor: pointer; display: flex; align-items: center; min-height: 44px; font-weight: 600; }
+.sort { border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; font-weight: 700; padding: 0; }
+.pagination { gap: var(--mantine-spacing-md); }
+.modalActions { position: sticky; bottom: 0; background: var(--mantine-color-body); padding-block: var(--mantine-spacing-sm); }
+@container (max-width: 35rem) { .header { align-items: stretch; flex-direction: column; } .header button { min-height: 44px; width: 100%; } .pagination { align-items: stretch; flex-direction: column; } }
