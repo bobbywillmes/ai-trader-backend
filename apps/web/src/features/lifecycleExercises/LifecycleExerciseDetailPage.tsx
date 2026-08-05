@@ -6,6 +6,7 @@ import { Link, useParams } from "react-router-dom";
 import { getAdminToken } from "../../lib/api";
 import { closePosition } from "../positions/api";
 import { lifecycleExerciseKeys, useLifecycleExercise, useLifecycleExerciseMutations } from "./hooks";
+import classes from "./LifecycleExerciseDetailPage.module.css";
 
 const activeStages = new Set(["POSITION_OPEN", "EXIT_MONITORING", "PROTECTIVE_ORDER_ACTIVE"]);
 
@@ -32,21 +33,21 @@ export function LifecycleExerciseDetailPage() {
   const cancellable = !["COMPLETED", "FAILED", "CANCELLED"].includes(exercise.status);
 
   return (
-    <Stack gap="lg">
-      <Group justify="space-between" align="flex-start">
+    <Stack gap="lg" className={classes.page}>
+      <Group justify="space-between" align="flex-start" className={classes.header}>
         <div><Title order={2}>Exercise #{exercise.id}: {exercise.name ?? exercise.subscription.name}</Title><Text c="dimmed">{exercise.reason}</Text></div>
         <Group><Badge color="cyan">PAPER</Badge><Badge>{exercise.status}</Badge><Button variant="default" onClick={() => query.refetch()} loading={query.isFetching}>Refresh</Button></Group>
       </Group>
       {exercise.cancelledAt && <Alert color="yellow" title="Exercise cancelled">Only undispatched targets were cancelled. Orders and positions already created continue through normal lifecycle management.</Alert>}
       <Card withBorder><Stack>
-        <Group grow>
+        <Group grow className={classes.summary}>
           <div><Text size="xs" c="dimmed">Subscription</Text><Text fw={600}>{exercise.subscription.name} ({exercise.subscription.key})</Text></div>
           <div><Text size="xs" c="dimmed">Selection</Text><Text fw={600}>{exercise.selectionMode === "ALL_ELIGIBLE" ? "Everyone eligible" : `${exercise.requestedUserIdsJson.length} selected users`}</Text></div>
           <div><Text size="xs" c="dimmed">Previewed</Text><Text fw={600}>{new Date(exercise.previewedAt).toLocaleString()}</Text></div>
           <div><Text size="xs" c="dimmed">Launched</Text><Text fw={600}>{exercise.launchedAt ? new Date(exercise.launchedAt).toLocaleString() : "Not launched"}</Text></div>
         </Group>
         <Group>{Object.entries(counts).map(([stage, count]) => <Badge key={stage} variant="light">{stage}: {count}</Badge>)}</Group>
-        {cancellable && <Group align="flex-end"><TextInput label="Cancellation reason" value={cancelReason} onChange={(event) => setCancelReason(event.currentTarget.value)} w={420} /><Button color="red" variant="light" disabled={!cancelReason.trim()} loading={mutations.cancel.isPending} onClick={() => mutations.cancel.mutate({ id, reason: cancelReason })}>Cancel undispatched work</Button></Group>}
+        {cancellable && <Group align="flex-end" className={classes.consequential}><TextInput label="Cancellation reason" value={cancelReason} onChange={(event) => setCancelReason(event.currentTarget.value)} className={classes.reason} /><Button color="red" variant="light" disabled={!cancelReason.trim()} loading={mutations.cancel.isPending} onClick={() => mutations.cancel.mutate({ id, reason: cancelReason })}>Cancel undispatched work</Button></Group>}
       </Stack></Card>
       {targets.map((target) => {
         const projection = target.projection;
@@ -59,13 +60,13 @@ export function LifecycleExerciseDetailPage() {
             </Group>
             {(target.blockersJson?.length ?? 0) > 0 && <Alert color="red" title="Blockers">{target.blockersJson.map((item) => `${item.code}: ${item.message}`).join(" · ")}</Alert>}
             {(target.warningsJson?.length ?? 0) > 0 && <Alert color="yellow" title="Warnings">{target.warningsJson.map((item) => `${item.code}: ${item.message}`).join(" · ")}</Alert>}
-            <Table withTableBorder><Table.Tbody>
+            <div className={classes.targetFacts}><Table withTableBorder><Table.Tbody>
               <Table.Tr><Table.Th>Quantity</Table.Th><Table.Td>{target.resolvedQuantity ?? "—"}</Table.Td><Table.Th>Estimated notional</Table.Th><Table.Td>{target.estimatedNotional ? `$${target.estimatedNotional.toFixed(2)}` : "—"}</Table.Td></Table.Tr>
               {target.readinessJson?.positionSlotUsage && <Table.Tr><Table.Th>Position slot limit</Table.Th><Table.Td>{target.readinessJson.positionSlotUsage.accountMaxPositions ?? "Unlimited"}</Table.Td><Table.Th>Projected usage</Table.Th><Table.Td>{target.readinessJson.positionSlotUsage.activePositionCount} active + {target.readinessJson.positionSlotUsage.pendingEntryIntentSlotCount} pending = {target.readinessJson.positionSlotUsage.usedSlots}; +{target.readinessJson.positionSlotUsage.proposedAdditionalSlots} proposed → {target.readinessJson.positionSlotUsage.projectedSlotCount}</Table.Td></Table.Tr>}
               <Table.Tr><Table.Th>Order intent</Table.Th><Table.Td>{projection?.links.orderIntentId ?? "—"}</Table.Td><Table.Th>Broker orders</Table.Th><Table.Td>{projection?.links.brokerOrderIds.join(", ") || "—"}</Table.Td></Table.Tr>
               <Table.Tr><Table.Th>Tracked position</Table.Th><Table.Td>{positionId ?? "—"}</Table.Td><Table.Th>Exit state</Table.Th><Table.Td>{projection?.links.positionExitStateId ?? "—"}</Table.Td></Table.Tr>
-            </Table.Tbody></Table>
-            <Group>
+            </Table.Tbody></Table></div>
+            <Group className={classes.actions}>
               <Button component={Link} to={`/trading-accounts/${target.tradingAccountId}`} variant="default" size="xs">Trading account</Button>
               {positionId && <Button component={Link} to="/positions/open" variant="default" size="xs">Open positions</Button>}
               {positionId && projection && activeStages.has(projection.stage) && <Button color="orange" size="xs" loading={closeMutation.isPending && closeMutation.variables === positionId} onClick={() => closeMutation.mutate(positionId)}>Manual close</Button>}

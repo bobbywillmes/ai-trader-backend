@@ -36,6 +36,10 @@ export function canLaunchPaperExercise(confirmed: boolean) {
   return confirmed;
 }
 
+export function isLifecyclePreviewValid(status: string, previewExpiresAt: string, now = new Date()) {
+  return status === "PREVIEWED" && new Date(previewExpiresAt).getTime() > now.getTime();
+}
+
 export function buildLifecycleExercisePreviewPayload(input: {
   name: string;
   reason: string;
