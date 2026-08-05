@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
-  Alert, Badge, Button, Card, Group, Modal, ScrollArea, Select,
+  Accordion, Alert, Badge, Button, Card, Group, Modal, ScrollArea, Select,
   SimpleGrid, Stack, Switch, Table, Text, TextInput, Textarea, Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { getAdminToken } from "../../lib/api";
+import { CompactRecordList, DataState, DataTable, MobileRecordCard, RecordDetailsGrid, ResponsiveActions, ResponsiveDataView, ResponsiveDetails, ResponsiveFilterToolbar, StatusBadge, type ActiveFilter, type SummaryField } from "../../components/data-display";
 import { useStrategies } from "../strategies/hooks";
 import { useExitProfiles } from "../exitProfiles/hooks";
 import {
@@ -16,6 +17,7 @@ import type {
   Subscription, SubscriptionAssignmentStatus, SubscriptionCatalogQuery,
   SubscriptionSortBy, SubscriptionSortDirection,
 } from "./types";
+import classes from "./SubscriptionsPage.module.css";
 
 const PAGE_SIZE_OPTIONS = ["25", "50", "100", "250"];
 
@@ -80,6 +82,16 @@ function assignmentState(
   };
 }
 
+function SubscriptionDetails({ item }: { item: Subscription }) {
+  const activeAssignments = item.accountSubscriptions.filter((assignment) => assignment.enabled).length;
+  return <Stack gap="md" className={classes.details}>
+    <section className={classes.detailCard}><Title order={3} size="h5">Catalog definition</Title><RecordDetailsGrid sections={[{ items: [{ label: "Display name", value: item.name }, { label: "Subscription key", value: item.key, technical: true }, { label: "Security", value: `${item.security.symbol} — ${item.security.name}` }, { label: "Strategy", value: `${item.strategy.name} (${item.strategy.key})` }, { label: "Description", value: item.description || "No description configured" }, { label: "Catalog status", value: item.enabled ? "Enabled" : "Retired" }] }]} /></section>
+    <section className={classes.detailCard}><Title order={3} size="h5">Default behavior</Title><RecordDetailsGrid sections={[{ items: [{ label: "Default exit profile", value: `${item.exitProfile.name} (${item.exitProfile.key})` }, { label: "Signal routing", value: `Routes through ${item.strategy.name}` }, { label: "Account sizing", value: "Configured separately on each Trading Account assignment" }] }]} /></section>
+    <section className={classes.detailCard}><Title order={3} size="h5">Assignment usage</Title><RecordDetailsGrid sections={[{ items: [{ label: "Assigned accounts", value: item.accountSubscriptions.length }, { label: "Active assignments", value: activeAssignments }, { label: "Disabled assignments", value: item.accountSubscriptions.length - activeAssignments }, { label: "Entry-capable assignments", value: item.accountSubscriptions.filter((assignment) => assignment.entriesEnabled).length }, { label: "Accounts", value: item.accountSubscriptions.length ? item.accountSubscriptions.map((assignment) => `${assignment.tradingAccount.displayName} (${assignment.tradingAccount.environment})`).join(", ") : "Not assigned to any account" }] }]} /></section>
+    <Accordion variant="contained"><Accordion.Item value="routing"><Accordion.Control>Routing &amp; identifiers</Accordion.Control><Accordion.Panel><RecordDetailsGrid sections={[{ items: [{ label: "Subscription ID", value: item.id, technical: true }, { label: "Security ID", value: item.security.id, technical: true }, { label: "Strategy ID", value: item.strategy.id, technical: true }, { label: "Exit profile ID", value: item.exitProfile.id, technical: true }, { label: "Subscription key", value: item.key, technical: true }] }]} /></Accordion.Panel></Accordion.Item></Accordion>
+  </Stack>;
+}
+
 export function SubscriptionsPage() {
   const [params, setParams] = useSearchParams();
   const [token] = useState(() => getAdminToken());
@@ -110,6 +122,9 @@ export function SubscriptionsPage() {
   const [editing, setEditing] = useState<Subscription | "new" | null>(null);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [autoPopulateId, setAutoPopulateId] = useState(true);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [detailItem, setDetailItem] = useState<Subscription | null>(null);
+  const [detailOpener, setDetailOpener] = useState<HTMLElement | null>(null);
 
   const query = useMemo<SubscriptionCatalogQuery>(() => ({
     page, pageSize, search: search || undefined,
@@ -270,9 +285,24 @@ export function SubscriptionsPage() {
     { value: "false", label: "Disabled" },
   ];
 
+  const activeFilters: ActiveFilter[] = [
+    ...(globalStatus !== "all" ? [{ key: "status", label: globalStatus === "true" ? "Globally enabled" : "Retired", onRemove: () => setGlobalStatus("all") }] : []),
+    ...(assignmentStatus !== "all" ? [{ key: "assignment", label: assignmentStatus === "assigned" ? "Assigned" : "Unassigned", onRemove: () => setAssignmentStatus("all") }] : []),
+    ...(strategyId ? [{ key: "strategy", label: `Strategy: ${filters?.strategies.find((item) => item.id === Number(strategyId))?.name ?? strategyId}`, onRemove: () => setStrategyId(null) }] : []),
+    ...(securityId ? [{ key: "security", label: `Security: ${filters?.securities.find((item) => item.id === Number(securityId))?.symbol ?? securityId}`, onRemove: () => setSecurityId(null) }] : []),
+    ...(exitProfileId ? [{ key: "exit", label: `Exit profile: ${filters?.exitProfiles.find((item) => item.id === Number(exitProfileId))?.name ?? exitProfileId}`, onRemove: () => setExitProfileId(null) }] : []),
+    ...(accountId ? [{ key: "account", label: `Account: ${filters?.tradingAccounts.find((item) => item.id === Number(accountId))?.displayName ?? accountId}`, onRemove: () => setAccountId(null) }] : []),
+  ];
+  function displayedAssignments(item: Subscription) { return accountId ? item.accountSubscriptions.filter((assignment) => assignment.tradingAccount.id === Number(accountId)) : item.accountSubscriptions; }
+  const identity = (item: Subscription) => <div className={classes.identity}><Text component="h3" fw={700}>{item.name}</Text><Text size="xs" ff="monospace" c="dimmed">{item.key}</Text>{item.description && <Text size="xs" c="dimmed" lineClamp={2}>{item.description}</Text>}</div>;
+  const fields = (item: Subscription): SummaryField[] => [{ label: "Security / strategy", value: <><Text fw={600}>{item.symbol}</Text><Text size="xs" c="dimmed">{item.strategy.name}</Text></> }, { label: "Assignments", value: `${displayedAssignments(item).length} account${displayedAssignments(item).length === 1 ? "" : "s"}` }, { label: "Exit profile", value: item.exitProfile.name }];
+  function openDetails(item: Subscription, opener: HTMLElement) { setDetailOpener(opener); setDetailItem(item); }
+  const actions = (item: Subscription, compact = false) => <ResponsiveActions compact={compact} primary={{ label: "Edit", onClick: () => openEdit(item) }} secondary={[{ label: item.enabled ? "Retire subscription" : "Restore subscription", color: item.enabled ? "orange" : "teal", disabled: toggleMutation.isPending, onClick: () => toggleMutation.mutate({ id: item.id, enabled: !item.enabled }) }]} />;
+  const wide = (items: readonly Subscription[]) => <DataTable caption="Global subscription catalog" captionHidden density="compact"><Table.Thead><Table.Tr><Table.Th>Subscription</Table.Th><Table.Th>Security / strategy</Table.Th><Table.Th>Status</Table.Th><Table.Th>Assignments</Table.Th><Table.Th>Exit profile</Table.Th><Table.Th>Actions</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{items.map((item) => <Table.Tr key={item.id}><Table.Td>{identity(item)}</Table.Td><Table.Td><Text fw={600}>{item.symbol}</Text><Text size="xs" c="dimmed">{item.strategy.name}</Text><Text size="xs" ff="monospace">{item.strategy.key}</Text></Table.Td><Table.Td><StatusBadge status={item.enabled ? "enabled" : "retired"} label={item.enabled ? "Enabled" : "Retired"} tone={item.enabled ? "positive" : "neutral"} /></Table.Td><Table.Td><Text>{displayedAssignments(item).length} account{displayedAssignments(item).length === 1 ? "" : "s"}</Text><Text size="xs" c="dimmed">{displayedAssignments(item).filter((assignment) => assignment.enabled).length} active</Text></Table.Td><Table.Td>{item.exitProfile.name}<Text size="xs" ff="monospace">{item.exitProfile.key}</Text></Table.Td><Table.Td><Group gap="xs" wrap="nowrap"><Button variant="default" size="compact-sm" onClick={(event) => openDetails(item, event.currentTarget)}>Details</Button>{actions(item, true)}</Group></Table.Td></Table.Tr>)}</Table.Tbody></DataTable>;
+
   return (
-    <Stack gap="lg">
-      <Group justify="space-between" align="end">
+    <Stack gap="lg" className={classes.page}>
+      <Group justify="space-between" align="end" className={classes.header}>
         <div>
           <Title order={2} size="h3">Subscription Catalog</Title>
           <Text size="sm" c="dimmed">Global trading definitions. Account deployment and sizing are configured on each Trading Account.</Text>
@@ -297,7 +327,7 @@ export function SubscriptionsPage() {
 
       <Card withBorder>
         <Stack gap="md">
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
+          <ResponsiveFilterToolbar primary={<Group align="end" wrap="nowrap" className={classes.search}><TextInput label="Search catalog" placeholder="Key, name, symbol, or strategy" value={searchInput} onChange={(event) => setSearchInput(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === "Enter") { resetPage(); setSearch(searchInput.trim()); } }} /><Button onClick={() => { resetPage(); setSearch(searchInput.trim()); }}>Search</Button></Group>} secondary={<SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
             <TextInput label="Search" placeholder="Key, name, ticker, strategy, exit profile, or description" value={searchInput} onChange={(event) => setSearchInput(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === "Enter") { resetPage(); setSearch(searchInput.trim()); } }} />
             <Select searchable clearable label="Security" placeholder="All securities" data={(filters?.securities ?? []).map((item) => ({ value: String(item.id), label: `${item.symbol} — ${item.name}` }))} value={securityId} onChange={(value) => { resetPage(); setSecurityId(value); }} />
             <Select searchable clearable label="Strategy" placeholder="All strategies" data={(filters?.strategies ?? []).map((item) => ({ value: String(item.id), label: `${item.key} — ${item.name}` }))} value={strategyId} onChange={(value) => { resetPage(); setStrategyId(value); }} />
@@ -313,10 +343,10 @@ export function SubscriptionsPage() {
               <Button onClick={() => { resetPage(); setSearch(searchInput.trim()); }}>Apply</Button>
               <Button variant="default" onClick={clearFilters}>Clear</Button>
             </Group>
-          </SimpleGrid>
+          </SimpleGrid>} activeFilters={activeFilters} onClearAll={clearFilters} title="Catalog filters" />
 
-          {catalogQuery.isError && <Alert color="red">{catalogQuery.error.message}</Alert>}
-          <ScrollArea>
+          {catalogQuery.isError ? <DataState state="error" title="Unable to load subscription catalog" message={catalogQuery.error.message} onRetry={() => catalogQuery.refetch()} /> : catalogQuery.isLoading ? <DataState state="loading" message="Loading catalog…" /> : rows.length === 0 ? <DataState state="empty" title={(search || activeFilters.length) ? "No matching subscriptions" : "No subscription definitions"} message={(search || activeFilters.length) ? "Clear or change the filters to see other catalog definitions." : "Create a global catalog definition to begin."} action={(search || activeFilters.length) ? { label: "Clear filters", onClick: clearFilters } : undefined} /> : <ResponsiveDataView records={rows} getRecordId={(item) => item.id} wide={wide} compact={(items) => <CompactRecordList records={items} getRecordId={(item) => item.id} renderIdentity={identity} renderFields={fields} renderDetails={(item) => <SubscriptionDetails item={item} />} renderActions={(item) => actions(item, true)} expandedId={expandedId} onExpandedChange={(id) => setExpandedId(id as number | null)} />} narrow={(items) => <MobileRecordCard records={items} getRecordId={(item) => item.id} renderIdentity={identity} renderStatus={(item) => <StatusBadge status={item.enabled ? "enabled" : "retired"} label={item.enabled ? "Enabled" : "Retired"} tone={item.enabled ? "positive" : "neutral"} size="compact" />} renderFields={fields} onDetails={openDetails} renderActions={(item) => actions(item, true)} />} aria-label="Global subscription catalog" />}
+          <ScrollArea className={classes.legacyTable}>
             <Table striped highlightOnHover miw={1320}>
               <Table.Thead><Table.Tr>
                 <Table.Th><Button variant="subtle" size="compact-sm" onClick={() => handleSort("key")}>Definition{sortLabel("key")}</Button></Table.Th>
@@ -380,7 +410,7 @@ export function SubscriptionsPage() {
         </Stack>
       </Card>
 
-      <Modal opened={editing !== null} onClose={() => setEditing(null)} title={editing === "new" ? "Create catalog Subscription" : "Edit catalog Subscription"} size="lg">
+      <Modal opened={editing !== null} onClose={() => setEditing(null)} title={editing === "new" ? "Create catalog Subscription" : "Edit catalog Subscription"} size="lg" styles={{ content: { maxHeight: "calc(100dvh - 2rem)" }, body: { overflowY: "auto", paddingBottom: "max(var(--mantine-spacing-md), env(safe-area-inset-bottom))" } }}>
         <Stack>
           <Alert color="blue">
             Use a readable name that identifies the security, strategy, and variant,
@@ -437,6 +467,7 @@ export function SubscriptionsPage() {
           <Group justify="flex-end"><Button variant="default" onClick={() => setEditing(null)}>Cancel</Button><Button loading={createMutation.isPending || updateMutation.isPending} onClick={save}>Save</Button></Group>
         </Stack>
       </Modal>
+      <ResponsiveDetails opened={Boolean(detailItem)} title={detailItem ? `${detailItem.name} catalog details` : "Subscription catalog details"} onClose={() => setDetailItem(null)} returnFocusTo={detailOpener}>{detailItem && <SubscriptionDetails item={detailItem} />}</ResponsiveDetails>
     </Stack>
   );
 }
