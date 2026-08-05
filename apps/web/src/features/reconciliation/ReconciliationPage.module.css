@@ -1,0 +1,11 @@
+.page { min-width: 0; container: reconciliation-page / inline-size; }
+.panel, .runPanel, .metric, .identity, .details { min-width: 0; }
+.identity, .message, .details { overflow-wrap: anywhere; }
+.runActions { justify-content: space-between; }
+.consequential { border-left: 3px solid var(--mantine-color-red-6); padding-left: var(--mantine-spacing-sm); display: flex; gap: var(--mantine-spacing-xs); align-items: center; }
+.details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.detailCard { border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-md); padding: var(--mantine-spacing-md); min-width: 0; }
+.details > :global(.mantine-Accordion-root) { grid-column: 1 / -1; }
+.details pre, .details code { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+@container reconciliation-page (max-width: 40rem) { .header, .runActions, .consequential, .modalActions { flex-direction: column; align-items: stretch; } .header button, .runActions button, .modalActions button { width: 100%; min-height: 44px; } .consequential { border-left: 0; border-top: 3px solid var(--mantine-color-red-6); padding: var(--mantine-spacing-sm) 0 0; } .details { grid-template-columns: 1fr; } }
