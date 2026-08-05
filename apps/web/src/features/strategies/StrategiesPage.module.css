@@ -1,0 +1,9 @@
+.page { min-width: 0; container: strategies-page / inline-size; }
+.panel, .identity, .details { min-width: 0; }
+.identity, .details { overflow-wrap: anywhere; }
+.details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.detailCard { min-width: 0; border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-md); padding: var(--mantine-spacing-md); }
+.details > :global(.mantine-Accordion-root) { grid-column: 1 / -1; }
+.nativeSelect { min-height: 36px; border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-sm); color: var(--mantine-color-text); background: var(--mantine-color-body); padding: 0 var(--mantine-spacing-sm); }
+.drawerSearch { display: none; }
+@container strategies-page (max-width: 40rem) { .header { flex-direction: column; align-items: stretch; } .details { grid-template-columns: 1fr; } .drawerSearch { display: block; } }

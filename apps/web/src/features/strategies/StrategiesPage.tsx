@@ -1,76 +1,53 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import {
-  Alert, Badge, Button, Card, Group, Loader, ScrollArea, Select, SimpleGrid,
-  Stack, Table, Text, TextInput, Title,
-} from "@mantine/core";
+import { Accordion, Badge, Button, Card, Group, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconEye, IconPower } from "@tabler/icons-react";
 
+import { CompactRecordList, DataState, DataTable, MobileRecordCard, RecordDetailsGrid, ResponsiveDataView, ResponsiveDetails, ResponsiveFilterToolbar, StatusBadge, type SummaryField } from "../../components/data-display";
 import { getAdminToken } from "../../lib/api";
 import { useIsSystemOwner } from "../auth/useAuth";
-import {
-  useStrategies,
-  useStrategyChangeImpact,
-  useUpdateStrategyEnabled,
-} from "./hooks";
+import { useStrategies, useStrategyChangeImpact, useUpdateStrategyEnabled } from "./hooks";
 import { StrategyStateModal } from "./StrategyStateModal";
 import type { Strategy } from "./types";
+import classes from "./StrategiesPage.module.css";
 
-function formatDateTime(value?: string) {
-  return value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
-}
+function formatDateTime(value?: string) { return value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "Not available"; }
+function usageLabel(strategy: Strategy) { return `${strategy.subscriptionCount} subscription${strategy.subscriptionCount === 1 ? "" : "s"}`; }
 
-function badges(values: string[]) {
-  if (!values.length) return <Text c="dimmed">-</Text>;
-  return <Group gap={4}>{values.slice(0, 4).map((value) => <Badge key={value} color="gray" variant="light">{value}</Badge>)}{values.length > 4 && <Text size="xs">+{values.length - 4}</Text>}</Group>;
+function StrategyDetails({ strategy }: { strategy: Strategy }) {
+  return <Stack gap="md" className={classes.details}>
+    <section className={classes.detailCard}><Title order={3} size="h5">Strategy</Title><RecordDetailsGrid sections={[{ items: [{ label: "Display name", value: strategy.name }, { label: "Strategy key", value: strategy.key, technical: true }, { label: "Description", value: strategy.description || "No description configured" }, { label: "Status", value: strategy.enabled ? "Enabled" : "Disabled" }, { label: "Created", value: formatDateTime(strategy.createdAt) }, { label: "Updated", value: formatDateTime(strategy.updatedAt) }] }]} /></section>
+    <section className={classes.detailCard}><Title order={3} size="h5">Runtime &amp; signaling</Title><RecordDetailsGrid sections={[{ items: [{ label: "Runtime source", value: "Backend strategy routing" }, { label: "Allowed symbols", value: strategy.symbols.length ? strategy.symbols.join(", ") : "No subscribed symbols" }, { label: "Signal behavior", value: "Defined by the strategy key and backend configuration" }] }]} /></section>
+    <section className={classes.detailCard}><Title order={3} size="h5">Usage</Title><RecordDetailsGrid sections={[{ items: [{ label: "Subscriptions", value: strategy.subscriptionCount }, { label: "Enabled subscriptions", value: strategy.activeSubscriptionCount }, { label: "Trading accounts", value: strategy.tradingAccounts.length ? strategy.tradingAccounts.map((item) => item.displayName).join(", ") : "No account assignments" }, { label: "Exit profiles", value: strategy.exitProfiles.length ? strategy.exitProfiles.map((item) => `${item.name} (${item.subscriptionCount})`).join(", ") : "None" }] }]} /></section>
+    <Accordion variant="contained"><Accordion.Item value="routing"><Accordion.Control>Routing &amp; identifiers</Accordion.Control><Accordion.Panel><RecordDetailsGrid sections={[{ items: [{ label: "Strategy ID", value: strategy.id, technical: true }, { label: "Strategy key", value: strategy.key, technical: true }, { label: "Enabled value", value: String(strategy.enabled), technical: true }] }]} /></Accordion.Panel></Accordion.Item></Accordion>
+  </Stack>;
 }
 
 export function StrategiesPage() {
-  const token = getAdminToken();
-  const isOwner = useIsSystemOwner();
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("all");
-  const [selected, setSelected] = useState<Strategy | null>(null);
-  const strategies = useStrategies(token);
-  const impact = useStrategyChangeImpact(selected?.id ?? null, token);
-  const update = useUpdateStrategyEnabled(token);
+  const token = getAdminToken(); const isOwner = useIsSystemOwner();
+  const [search, setSearch] = useState(""); const [status, setStatus] = useState("all");
+  const [selected, setSelected] = useState<Strategy | null>(null); const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [detailStrategy, setDetailStrategy] = useState<Strategy | null>(null); const [detailOpener, setDetailOpener] = useState<HTMLElement | null>(null);
+  const strategies = useStrategies(token); const impact = useStrategyChangeImpact(selected?.id ?? null, token); const update = useUpdateStrategyEnabled(token);
   const rows = useMemo(() => (strategies.data ?? []).filter((strategy) => {
-    if (status === "enabled" && !strategy.enabled) return false;
-    if (status === "disabled" && strategy.enabled) return false;
-    const term = search.trim().toLowerCase();
-    return !term || [strategy.name, strategy.key, strategy.description, ...strategy.symbols].filter(Boolean).join(" ").toLowerCase().includes(term);
+    if (status === "enabled" && !strategy.enabled) return false; if (status === "disabled" && strategy.enabled) return false;
+    const term = search.trim().toLowerCase(); return !term || [strategy.name, strategy.key, strategy.description, ...strategy.symbols].filter(Boolean).join(" ").toLowerCase().includes(term);
   }), [strategies.data, search, status]);
-
-  async function confirmChange() {
-    if (!selected) return;
-    const enabled = !selected.enabled;
-    try {
-      await update.mutateAsync({ id: selected.id, enabled });
-      notifications.show({ message: `${selected.name} ${enabled ? "enabled" : "disabled"}.`, color: "teal" });
-      setSelected(null);
-    } catch (error) {
-      notifications.show({ title: "Strategy update failed", message: error instanceof Error ? error.message : "Unable to update strategy.", color: "red" });
-    }
-  }
-
-  const data = strategies.data ?? [];
-  return <Stack gap="lg">
-    <Group justify="space-between" align="flex-start"><div><Title order={2}>Strategy Library</Title><Text size="sm" c="dimmed">Review strategy state and system-wide subscription usage.</Text></div>{!isOwner && <Badge color="cyan">Read only</Badge>}</Group>
-    <SimpleGrid cols={{ base: 1, sm: 3 }}>
-      <Card withBorder><Text size="xs" c="dimmed">STRATEGIES</Text><Text size="xl" fw={700}>{data.length}</Text></Card>
-      <Card withBorder><Text size="xs" c="dimmed">ENABLED</Text><Text size="xl" fw={700}>{data.filter((item) => item.enabled).length}</Text></Card>
-      <Card withBorder><Text size="xs" c="dimmed">ENABLED SUBSCRIPTIONS</Text><Text size="xl" fw={700}>{data.reduce((sum, item) => sum + item.activeSubscriptionCount, 0)}</Text></Card>
-    </SimpleGrid>
-    <Card withBorder>
-      {strategies.isError && <Alert color="red">{strategies.error instanceof Error ? strategies.error.message : "Failed to load strategies."}</Alert>}
-      {strategies.isLoading ? <Group><Loader size="sm" /><Text>Loading strategies...</Text></Group> : <Stack>
-        <SimpleGrid cols={{ base: 1, sm: 2 }}><TextInput label="Search" value={search} onChange={(event) => setSearch(event.currentTarget.value)} /><Select label="Status" value={status} onChange={(value) => setStatus(value ?? "all")} data={[{ value: "all", label: "All" }, { value: "enabled", label: "Enabled" }, { value: "disabled", label: "Disabled" }]} /></SimpleGrid>
-        <ScrollArea><Table striped highlightOnHover style={{ minWidth: 1000 }}><Table.Thead><Table.Tr><Table.Th>Strategy</Table.Th><Table.Th>Key</Table.Th><Table.Th>Status</Table.Th><Table.Th>Subscriptions</Table.Th><Table.Th>Symbols</Table.Th><Table.Th>Exit profiles</Table.Th><Table.Th>Updated</Table.Th><Table.Th /></Table.Tr></Table.Thead><Table.Tbody>
-          {rows.map((strategy) => <Table.Tr key={strategy.id}><Table.Td><Text fw={600}>{strategy.name}</Text><Text size="xs" c="dimmed" lineClamp={1}>{strategy.description}</Text></Table.Td><Table.Td><Text ff="monospace" size="sm">{strategy.key}</Text></Table.Td><Table.Td><Badge color={strategy.enabled ? "teal" : "gray"}>{strategy.enabled ? "Enabled" : "Disabled"}</Badge></Table.Td><Table.Td><Text fw={600}>{strategy.subscriptionCount}</Text><Text size="xs" c="dimmed">{strategy.activeSubscriptionCount} enabled</Text></Table.Td><Table.Td>{badges(strategy.symbols)}</Table.Td><Table.Td>{badges(strategy.exitProfiles.map((item) => item.name))}</Table.Td><Table.Td>{formatDateTime(strategy.updatedAt)}</Table.Td><Table.Td><Group justify="flex-end" wrap="nowrap"><Button component={Link} to={`/strategies/${strategy.id}`} size="xs" variant="subtle" leftSection={<IconEye size={14} />}>View</Button>{isOwner && <Button size="xs" variant="light" color={strategy.enabled ? "red" : "teal"} leftSection={<IconPower size={14} />} onClick={() => setSelected(strategy)}>{strategy.enabled ? "Disable" : "Enable"}</Button>}</Group></Table.Td></Table.Tr>)}
-        </Table.Tbody></Table></ScrollArea>
-      </Stack>}
-    </Card>
+  async function confirmChange() { if (!selected) return; const enabled = !selected.enabled; try { await update.mutateAsync({ id: selected.id, enabled }); notifications.show({ message: `${selected.name} ${enabled ? "enabled" : "disabled"}.`, color: "teal" }); setSelected(null); } catch (error) { notifications.show({ title: "Strategy update failed", message: error instanceof Error ? error.message : "Unable to update strategy.", color: "red" }); } }
+  function openDetails(strategy: Strategy, opener: HTMLElement) { setDetailOpener(opener); setDetailStrategy(strategy); }
+  const identity = (strategy: Strategy) => <div className={classes.identity}><Text component="h3" fw={700}>{strategy.name}</Text><Text ff="monospace" size="xs" c="dimmed">{strategy.key}</Text>{strategy.description && <Text size="xs" c="dimmed" lineClamp={2}>{strategy.description}</Text>}</div>;
+  const fields = (strategy: Strategy): SummaryField[] => [{ label: "Type / source", value: "Backend strategy" }, { label: "Usage", value: <><Text size="sm" fw={600}>{usageLabel(strategy)}</Text><Text size="xs" c="dimmed">{strategy.activeSubscriptionCount} enabled</Text></> }];
+  const actions = (strategy: Strategy) => isOwner ? <Button size="compact-sm" variant="light" color={strategy.enabled ? "red" : "teal"} leftSection={<IconPower size={14} />} onClick={() => setSelected(strategy)}>{strategy.enabled ? "Disable" : "Enable"}</Button> : null;
+  const wide = (items: readonly Strategy[]) => <DataTable caption="Strategies" captionHidden density="compact"><Table.Thead><Table.Tr><Table.Th>Strategy</Table.Th><Table.Th>Type / source</Table.Th><Table.Th>Status</Table.Th><Table.Th>Subscriptions</Table.Th><Table.Th>Actions</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{items.map((strategy) => <Fragment key={strategy.id}><Table.Tr><Table.Td>{identity(strategy)}</Table.Td><Table.Td>Backend strategy<Text size="xs" c="dimmed">Signal routing</Text></Table.Td><Table.Td><StatusBadge status={strategy.enabled ? "enabled" : "disabled"} label={strategy.enabled ? "Enabled" : "Disabled"} tone={strategy.enabled ? "positive" : "neutral"} /></Table.Td><Table.Td>{fields(strategy)[1].value}</Table.Td><Table.Td><Group gap="xs" wrap="nowrap"><Button component={Link} to={`/strategies/${strategy.id}`} size="compact-sm" variant="default" leftSection={<IconEye size={14} />}>Details</Button>{actions(strategy)}</Group></Table.Td></Table.Tr></Fragment>)}</Table.Tbody></DataTable>;
+  const data = strategies.data ?? []; const filtered = search.trim() !== "" || status !== "all";
+  return <main className={classes.page}><Stack gap="lg">
+    <Group justify="space-between" align="flex-start" className={classes.header}><div><Title order={2}>Strategy Library</Title><Text size="sm" c="dimmed">Review strategy state, signaling identity, and system-wide subscription usage.</Text></div>{!isOwner && <Badge color="cyan">Read only</Badge>}</Group>
+    <SimpleGrid cols={{ base: 1, sm: 3 }}><Card withBorder><Text size="xs" c="dimmed">STRATEGIES</Text><Text size="xl" fw={700}>{data.length}</Text></Card><Card withBorder><Text size="xs" c="dimmed">ENABLED</Text><Text size="xl" fw={700}>{data.filter((item) => item.enabled).length}</Text></Card><Card withBorder><Text size="xs" c="dimmed">ENABLED SUBSCRIPTIONS</Text><Text size="xl" fw={700}>{data.reduce((sum, item) => sum + item.activeSubscriptionCount, 0)}</Text></Card></SimpleGrid>
+    <Card withBorder className={classes.panel}><Stack gap="md"><ResponsiveFilterToolbar primary={<TextInput label="Search strategies" placeholder="Name, key, description, or symbol" value={search} onChange={(event) => setSearch(event.currentTarget.value)} />} secondary={<SimpleGrid cols={{ base: 1, sm: 2 }}><TextInput label="Search strategies" className={classes.drawerSearch} value={search} onChange={(event) => setSearch(event.currentTarget.value)} /><select className={classes.nativeSelect} aria-label="Strategy status" value={status} onChange={(event) => setStatus(event.currentTarget.value)}><option value="all">All statuses</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></SimpleGrid>} activeFilters={status === "all" ? [] : [{ key: "status", label: status === "enabled" ? "Enabled" : "Disabled", onRemove: () => setStatus("all") }]} onClearAll={() => { setSearch(""); setStatus("all"); }} />
+      {strategies.isError ? <DataState state="error" title="Unable to load strategies" message={strategies.error instanceof Error ? strategies.error.message : "Failed to load strategies."} onRetry={() => strategies.refetch()} /> : strategies.isLoading ? <DataState state="loading" message="Loading strategies…" /> : rows.length === 0 ? <DataState state="empty" title={filtered ? "No matching strategies" : "No strategies"} message={filtered ? "Clear or change the filters to see other strategies." : "No strategy definitions are available."} action={filtered ? { label: "Clear filters", onClick: () => { setSearch(""); setStatus("all"); } } : undefined} /> : <ResponsiveDataView records={rows} getRecordId={(strategy) => strategy.id} wide={wide} compact={(items) => <CompactRecordList records={items} getRecordId={(strategy) => strategy.id} renderIdentity={identity} renderFields={fields} renderDetails={(strategy) => <StrategyDetails strategy={strategy} />} renderActions={actions} expandedId={expandedId} onExpandedChange={(id) => setExpandedId(id as number | null)} />} narrow={(items) => <MobileRecordCard records={items} getRecordId={(strategy) => strategy.id} renderIdentity={identity} renderStatus={(strategy) => <StatusBadge status={strategy.enabled ? "enabled" : "disabled"} label={strategy.enabled ? "Enabled" : "Disabled"} tone={strategy.enabled ? "positive" : "neutral"} size="compact" />} renderFields={fields} onDetails={openDetails} renderActions={actions} />} aria-label="Strategy catalog" />}
+    </Stack></Card>
     <StrategyStateModal opened={selected !== null} strategyName={selected?.name ?? "strategy"} nextEnabled={!(selected?.enabled ?? false)} impact={impact.data} loading={impact.isLoading} pending={update.isPending} error={impact.isError ? (impact.error instanceof Error ? impact.error.message : "Unable to load impact.") : null} onClose={() => !update.isPending && setSelected(null)} onConfirm={confirmChange} />
-  </Stack>;
+    <ResponsiveDetails opened={Boolean(detailStrategy)} title={detailStrategy ? `${detailStrategy.name} details` : "Strategy details"} onClose={() => setDetailStrategy(null)} returnFocusTo={detailOpener}>{detailStrategy && <StrategyDetails strategy={detailStrategy} />}</ResponsiveDetails>
+  </Stack></main>;
 }
