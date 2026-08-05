@@ -16,7 +16,7 @@ Payloads, internal IDs, raw event types, and routing keys are collapsed by defau
 
 ## Reports and charts
 
-Report controls wrap deliberately and become a single-column action/control stack on narrow containers. Existing Recharts responsive containers remain authoritative for sizing and preserve the backend-provided data, tooltip values, and calculations. Dense result tables progressively remove secondary columns while retaining semantic table markup and primary record identity.
+Report controls wrap deliberately and become a single-column action/control stack on narrow containers. Overview, Trade Performance, and Audit Records are separated into keyboard-accessible tabs so each reporting task has a focused workspace. Existing Recharts responsive containers remain authoritative for sizing and preserve the backend-provided data, tooltip values, and calculations. Dense desktop tables retain semantic markup and become labeled record-card rows below laptop widths without dropping report fields.
 
 Reports currently expose snapshot recording and broker-fill synchronization, but no export API or UI contract. Responsive work must not add a client-only export that could diverge from authoritative filters or report calculations.
 

@@ -13,6 +13,7 @@ import {
   SimpleGrid,
   Stack,
   Table,
+  Tabs,
   Text,
   TextInput,
   Title,
@@ -569,40 +570,40 @@ function PerformanceTradesTable({
           <Table.Tbody>
             {trades.map((trade) => (
               <Table.Tr key={trade.id}>
-                <Table.Td>
+                <Table.Td data-label="Account">
                   <TradingAccountBadge
                     account={trade.tradingAccount}
                     tradingAccountId={trade.tradingAccountId}
                   />
                 </Table.Td>
-                <Table.Td>
+                <Table.Td data-label="Trade">
                   <Text fw={700}>{trade.symbol}</Text>
                   <Text size="xs" c="dimmed">
                     {trade.side}
                   </Text>
                 </Table.Td>
-                <Table.Td>
+                <Table.Td data-label="Mode">
                   <Badge size="sm" variant="light">
                     {trade.mode ?? "-"}
                   </Badge>
                 </Table.Td>
-                <Table.Td>{formatDate(trade.openedAt)}</Table.Td>
-                <Table.Td>{formatDate(trade.closedAt)}</Table.Td>
-                <Table.Td ta="right">{formatNumber(trade.quantity)}</Table.Td>
-                <Table.Td ta="right">{formatMoney(trade.avgEntryPrice)}</Table.Td>
-                <Table.Td ta="right">{formatMoney(trade.avgExitPrice)}</Table.Td>
-                <Table.Td ta="right">
+                <Table.Td data-label="Opened">{formatDate(trade.openedAt)}</Table.Td>
+                <Table.Td data-label="Closed">{formatDate(trade.closedAt)}</Table.Td>
+                <Table.Td data-label="Quantity" ta="right">{formatNumber(trade.quantity)}</Table.Td>
+                <Table.Td data-label="Average entry" ta="right">{formatMoney(trade.avgEntryPrice)}</Table.Td>
+                <Table.Td data-label="Average exit" ta="right">{formatMoney(trade.avgExitPrice)}</Table.Td>
+                <Table.Td data-label="Realized P/L" ta="right">
                   <Text fw={700} c={pnlTextColor(trade.realizedPnl)} size="sm">
                     {formatMoney(trade.realizedPnl)}
                   </Text>
                 </Table.Td>
-                <Table.Td ta="right">
+                <Table.Td data-label="Return" ta="right">
                   <Text fw={700} c={pnlTextColor(trade.returnPct)} size="sm">
                     {formatPercent(trade.returnPct)}
                   </Text>
                 </Table.Td>
-                <Table.Td>{formatDuration(trade.holdingDurationMs)}</Table.Td>
-                <Table.Td>
+                <Table.Td data-label="Holding duration">{formatDuration(trade.holdingDurationMs)}</Table.Td>
+                <Table.Td data-label="Strategy / subscription">
                   <Stack gap={2}>
                     <Text size="sm">{trade.strategy?.name ?? "-"}</Text>
                     <Text size="xs" c="dimmed">
@@ -610,7 +611,7 @@ function PerformanceTradesTable({
                     </Text>
                   </Stack>
                 </Table.Td>
-                <Table.Td>
+                <Table.Td data-label="Entry decision">
                   <Stack gap={2}>
                     {trade.entryDecision ? (
                       <>
@@ -634,7 +635,7 @@ function PerformanceTradesTable({
                     )}
                   </Stack>
                 </Table.Td>
-                <Table.Td>
+                <Table.Td data-label="Exit">
                   <Stack gap={2}>
                     <Text size="sm">{trade.exitProfile?.name ?? "-"}</Text>
                     <Text size="xs" c="dimmed">
@@ -642,7 +643,7 @@ function PerformanceTradesTable({
                     </Text>
                   </Stack>
                 </Table.Td>
-                <Table.Td>
+                <Table.Td data-label="Actions">
                   <Button
                     size="xs"
                     variant="default"
@@ -673,6 +674,7 @@ function PerformanceTradesTable({
 
 export function ReportsPage() {
   const [token] = useState(() => getAdminToken());
+  const [reportTab, setReportTab] = useState<string | null>("overview");
 
   const [snapshotLimit, setSnapshotLimit] = useState(20);
   const [activityLimit, setActivityLimit] = useState(20);
@@ -952,8 +954,15 @@ export function ReportsPage() {
         </Group>
       </Group>
 
-      {latestSnapshot && (
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 5 }}>
+      <Tabs value={reportTab} onChange={setReportTab} keepMounted={false} className={classes.reportTabs}>
+        <Tabs.List aria-label="Report sections">
+          <Tabs.Tab value="overview">Overview</Tabs.Tab>
+          <Tabs.Tab value="performance">Trade Performance</Tabs.Tab>
+          <Tabs.Tab value="audit">Audit Records</Tabs.Tab>
+        </Tabs.List>
+
+      {reportTab === "overview" && latestSnapshot && (
+        <SimpleGrid cols={{ base: 1, sm: 2, lg: 5 }} className={classes.overviewSummary}>
           <Card withBorder radius="md" p="md">
             <Text size="sm" c="dimmed">
               Latest Snapshot
@@ -1010,7 +1019,7 @@ export function ReportsPage() {
         </SimpleGrid>
       )}
 
-      <Card withBorder radius="md" p="lg">
+      <Tabs.Panel value="performance" pt="lg"><Card withBorder radius="md" p="lg">
         <Stack gap="md">
           <Group justify="space-between" align="flex-start">
             <div>
@@ -1285,9 +1294,9 @@ export function ReportsPage() {
             </Stack>
           )}
         </Stack>
-      </Card>
+      </Card></Tabs.Panel>
 
-      <SimpleGrid cols={{ base: 1, lg: 3 }}>
+      <Tabs.Panel value="overview" pt="lg"><SimpleGrid cols={{ base: 1, lg: 3 }}>
         <Card withBorder radius="md" p="lg">
           <Stack gap="sm">
             <div>
@@ -1422,9 +1431,9 @@ export function ReportsPage() {
               )}
           </Stack>
         </Card>
-      </SimpleGrid>
+      </SimpleGrid></Tabs.Panel>
 
-      <SimpleGrid cols={{ base: 1, lg: 2 }}>
+      <Tabs.Panel value="audit" pt="lg"><SimpleGrid cols={{ base: 1, lg: 2 }}>
         <Card withBorder radius="md" p="lg">
           <Stack gap="md">
             <Group justify="space-between" align="flex-start">
@@ -1485,23 +1494,23 @@ export function ReportsPage() {
                   <Table.Tbody>
                     {snapshots.map((snapshot) => (
                       <Table.Tr key={snapshot.id}>
-                        <Table.Td>
+                        <Table.Td data-label="Account">
                           <TradingAccountBadge
                             account={snapshot.tradingAccount}
                             tradingAccountId={snapshot.tradingAccountId}
                           />
                         </Table.Td>
-                        <Table.Td>{formatDate(snapshot.createdAt)}</Table.Td>
-                        <Table.Td>
+                        <Table.Td data-label="Time">{formatDate(snapshot.createdAt)}</Table.Td>
+                        <Table.Td data-label="Reason">
                           <Badge variant="light">{snapshot.reason}</Badge>
                         </Table.Td>
-                        <Table.Td>{formatMoney(snapshot.cash)}</Table.Td>
-                        <Table.Td>{formatMoney(snapshot.buyingPower)}</Table.Td>
-                        <Table.Td>{formatMoney(snapshot.equity)}</Table.Td>
-                        <Table.Td>
+                        <Table.Td data-label="Cash">{formatMoney(snapshot.cash)}</Table.Td>
+                        <Table.Td data-label="Buying power">{formatMoney(snapshot.buyingPower)}</Table.Td>
+                        <Table.Td data-label="Equity">{formatMoney(snapshot.equity)}</Table.Td>
+                        <Table.Td data-label="Gross exposure">
                           {formatMoney(snapshot.exposure.grossExposure)}
                         </Table.Td>
-                        <Table.Td>
+                        <Table.Td data-label="Changed">
                           <Badge
                             color={snapshot.changed ? "teal" : "gray"}
                             variant="light"
@@ -1599,20 +1608,20 @@ export function ReportsPage() {
                   <Table.Tbody>
                     {activities.map((activity) => (
                       <Table.Tr key={activity.id}>
-                        <Table.Td>
+                        <Table.Td data-label="Account">
                           <TradingAccountBadge
                             account={activity.tradingAccount}
                             tradingAccountId={activity.tradingAccountId}
                           />
                         </Table.Td>
-                        <Table.Td>
+                        <Table.Td data-label="Time">
                           {formatDate(activity.transactionTime)}
                         </Table.Td>
-                        <Table.Td>
+                        <Table.Td data-label="Type">
                           <Badge variant="light">{activity.activityType}</Badge>
                         </Table.Td>
-                        <Table.Td>{activity.symbol ?? "-"}</Table.Td>
-                        <Table.Td>
+                        <Table.Td data-label="Symbol">{activity.symbol ?? "-"}</Table.Td>
+                        <Table.Td data-label="Side">
                           <Badge
                             color={sideColor(activity.side)}
                             variant="light"
@@ -1620,9 +1629,9 @@ export function ReportsPage() {
                             {activity.side ?? "-"}
                           </Badge>
                         </Table.Td>
-                        <Table.Td>{formatNumber(activity.qty)}</Table.Td>
-                        <Table.Td>{formatMoney(activity.price)}</Table.Td>
-                        <Table.Td>
+                        <Table.Td data-label="Quantity">{formatNumber(activity.qty)}</Table.Td>
+                        <Table.Td data-label="Price">{formatMoney(activity.price)}</Table.Td>
+                        <Table.Td data-label="Intent">
                           {activity.orderIntentId === null
                             ? "-"
                             : activity.orderIntentId}
@@ -1635,7 +1644,8 @@ export function ReportsPage() {
             )}
           </Stack>
         </Card>
-      </SimpleGrid>
+      </SimpleGrid></Tabs.Panel>
+      </Tabs>
 
       <TradeCycleDrawer
         {...tradeCycleDrawer.drawerProps}
