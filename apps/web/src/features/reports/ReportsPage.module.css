@@ -1,0 +1,41 @@
+.page { min-width: 0; container-type: inline-size; }
+.header, .headerControls, .reportFilters { gap: var(--mantine-spacing-sm); }
+.headerControls, .reportFilters { flex-wrap: wrap; }
+.performanceTable, .snapshotTable, .activityTable { max-width: 100%; }
+.performanceTable :global(table), .snapshotTable :global(table), .activityTable :global(table) { width: 100%; }
+.performanceTable :global(td), .performanceTable :global(th), .snapshotTable :global(td), .snapshotTable :global(th), .activityTable :global(td), .activityTable :global(th) { white-space: normal; overflow-wrap: anywhere; }
+@container (max-width: 70rem) {
+  .performanceTable :global(th:nth-child(5)), .performanceTable :global(td:nth-child(5)),
+  .performanceTable :global(th:nth-child(6)), .performanceTable :global(td:nth-child(6)),
+  .performanceTable :global(th:nth-child(7)), .performanceTable :global(td:nth-child(7)),
+  .performanceTable :global(th:nth-child(10)), .performanceTable :global(td:nth-child(10)),
+  .performanceTable :global(th:nth-child(11)), .performanceTable :global(td:nth-child(11)) { display: none; }
+}
+@container (max-width: 48rem) {
+  .header { align-items: stretch; flex-direction: column; }
+  .headerControls { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
+  .headerControls > * { width: 100% !important; }
+  .reportFilters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .reportFilters > * { width: 100% !important; min-width: 0; }
+  .performanceTable :global(table), .snapshotTable :global(table), .activityTable :global(table) { min-width: 0 !important; table-layout: fixed; }
+  .performanceTable :global(th:nth-child(3)), .performanceTable :global(td:nth-child(3)),
+  .performanceTable :global(th:nth-child(4)), .performanceTable :global(td:nth-child(4)),
+  .performanceTable :global(th:nth-child(8)), .performanceTable :global(td:nth-child(8)),
+  .performanceTable :global(th:nth-child(12)), .performanceTable :global(td:nth-child(12)),
+  .performanceTable :global(th:nth-child(13)), .performanceTable :global(td:nth-child(13)),
+  .snapshotTable :global(th:nth-child(4)), .snapshotTable :global(td:nth-child(4)),
+  .snapshotTable :global(th:nth-child(5)), .snapshotTable :global(td:nth-child(5)),
+  .snapshotTable :global(th:nth-child(7)), .snapshotTable :global(td:nth-child(7)),
+  .snapshotTable :global(th:nth-child(8)), .snapshotTable :global(td:nth-child(8)),
+  .activityTable :global(th:nth-child(3)), .activityTable :global(td:nth-child(3)),
+  .activityTable :global(th:nth-child(5)), .activityTable :global(td:nth-child(5)),
+  .activityTable :global(th:nth-child(6)), .activityTable :global(td:nth-child(6)),
+  .activityTable :global(th:nth-child(8)), .activityTable :global(td:nth-child(8)) { display: none; }
+}
+@container (max-width: 32rem) {
+  .headerControls, .reportFilters { grid-template-columns: 1fr; }
+  .headerControls :global(button) { min-height: 44px; }
+  .performanceTable :global(th:nth-child(2)), .performanceTable :global(td:nth-child(2)),
+  .snapshotTable :global(th:nth-child(3)), .snapshotTable :global(td:nth-child(3)),
+  .activityTable :global(th:nth-child(1)), .activityTable :global(td:nth-child(1)) { display: none; }
+}

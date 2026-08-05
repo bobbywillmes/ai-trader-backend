@@ -37,6 +37,7 @@ import { getAdminToken } from "../../lib/api";
 import { useExitProfiles } from "../exitProfiles/hooks";
 import { TradeCycleDrawer } from "../tradeHistory/TradeCycleDrawer";
 import { useTradeCycleDrawer } from "../tradeHistory/hooks";
+import classes from "./ReportsPage.module.css";
 import { useStrategies } from "../strategies/hooks";
 import { useSubscriptions } from "../subscriptions/hooks";
 import {
@@ -506,7 +507,7 @@ function PerformanceTradesTable({
 
   return (
     <Stack gap="sm">
-      <ScrollArea>
+      <ScrollArea className={classes.performanceTable}>
         <Table striped highlightOnHover withTableBorder miw={1380}>
           <Table.Thead>
             <Table.Tr>
@@ -889,8 +890,8 @@ export function ReportsPage() {
   }
 
   return (
-    <Stack gap="lg">
-      <Group justify="space-between" align="flex-start">
+    <main className={classes.page}><Stack gap="lg">
+      <Group justify="space-between" align="flex-start" className={classes.header}>
         <div>
           <Title order={2}>Reports</Title>
           <Text c="dimmed">
@@ -899,7 +900,7 @@ export function ReportsPage() {
           </Text>
         </div>
 
-        <Group align="flex-end">
+        <Group align="flex-end" className={classes.headerControls}>
           <Select
             label="Mode"
             value={reportModeFilter}
@@ -1022,7 +1023,7 @@ export function ReportsPage() {
 
           <Divider />
 
-          <Group align="flex-end">
+          <Group align="flex-end" className={classes.reportFilters}>
             <TextInput
               label="Symbol"
               placeholder="SPY"
@@ -1467,7 +1468,7 @@ export function ReportsPage() {
             )}
 
             {snapshots.length > 0 && (
-              <ScrollArea>
+              <ScrollArea className={classes.snapshotTable}>
                 <Table striped highlightOnHover withTableBorder miw={980}>
                   <Table.Thead>
                     <Table.Tr>
@@ -1581,7 +1582,7 @@ export function ReportsPage() {
             )}
 
             {activities.length > 0 && (
-              <ScrollArea>
+              <ScrollArea className={classes.activityTable}>
                 <Table striped highlightOnHover withTableBorder miw={900}>
                   <Table.Thead>
                     <Table.Tr>
@@ -1640,6 +1641,6 @@ export function ReportsPage() {
         {...tradeCycleDrawer.drawerProps}
         onClose={tradeCycleDrawer.closeCycle}
       />
-    </Stack>
+    </Stack></main>
   );
 }
