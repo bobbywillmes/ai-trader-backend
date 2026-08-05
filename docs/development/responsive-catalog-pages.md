@@ -1,6 +1,6 @@
 # Responsive catalog pages
 
-Strategies, the global Subscription Catalog, and Exit Profiles use the shared responsive data-display primitives. Their presentation is selected from the width of the page container rather than the browser viewport:
+Strategies, the global Subscription Catalog, Exit Profiles, and administrative catalogs use the shared responsive data-display primitives. Their presentation is selected from the width of the page container rather than the browser viewport:
 
 - Wide containers use concise semantic tables.
 - Compact containers use summary rows with stable inline details.
@@ -27,3 +27,9 @@ Create and edit dialogs stack fields on narrow containers, use intentional two-c
 ## Reuse guidance
 
 Future catalog pages should compose `ResponsiveDataView`, `DataTable`, `CompactRecordList`, `MobileRecordCard`, `ResponsiveDetails`, `ResponsiveFilterToolbar`, `DataState`, `StatusBadge`, and `ResponsiveActions`. Keep domain rules in the feature and avoid adding business-specific props to shared primitives. Verify semantic tables, full badge labels, keyboard focus restoration, filter drawers, filtered-empty states, long identifiers, and mobile touch targets at each responsive milestone.
+
+## Users and account access
+
+The Users catalog combines the existing user, per-user membership, and trading-account read contracts. Wide containers show a concise semantic table, compact containers show expandable summary rows, and narrow containers use cards with a focus-managed details drawer. Summary access text distinguishes unrestricted System Owner scope, explicit trading-account memberships, and accounts held by the user. It does not imply that account holding and membership are interchangeable.
+
+Identity, account access, and security/setup state are grouped in details. User and membership IDs remain collapsed under **Routing & identifiers**. Create and manage surfaces keep role, enabled state, and membership selection visible while preventing saves when membership data could not be loaded. Existing server-side System Owner, self-management, ownership, membership, and authorization safeguards remain authoritative.

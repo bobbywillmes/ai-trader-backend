@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Button, Checkbox, Code, CopyButton, Group, Modal, Select, Stack, Switch, Text, TextInput } from "@mantine/core";
+import { Alert, Button, Checkbox, Code, CopyButton, Group, Modal, Select, SimpleGrid, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { getAdminToken } from "../../lib/api";
 import { useTradingAccounts } from "../tradingAccounts/hooks";
@@ -39,14 +39,14 @@ export function CreateUserInviteModal({ opened, onClose }: { opened: boolean; on
     }
   }
 
-  return <Modal opened={opened} onClose={close} title="Create User Invite" size="lg" centered><Stack>
-    <TextInput label="Email" value={email} onChange={(event) => setEmail(event.currentTarget.value)} disabled={Boolean(setupLink)} required />
-    <TextInput label="Name" value={name} onChange={(event) => setName(event.currentTarget.value)} disabled={Boolean(setupLink)} />
+  return <Modal opened={opened} onClose={close} title="Create User Invite" size="lg" centered closeOnEscape={!createInvitation.isPending} closeOnClickOutside={!createInvitation.isPending} styles={{ content: { maxHeight: "calc(100dvh - 2rem)" }, body: { overflowY: "auto", paddingBottom: "max(var(--mantine-spacing-md), env(safe-area-inset-bottom))" } }}><Stack>
+    <SimpleGrid cols={{ base: 1, sm: 2 }}><TextInput type="email" label="Email" value={email} onChange={(event) => setEmail(event.currentTarget.value)} disabled={Boolean(setupLink)} required />
+    <TextInput label="Name" value={name} onChange={(event) => setName(event.currentTarget.value)} disabled={Boolean(setupLink)} /></SimpleGrid>
     <Select label="Platform Role" data={roleOptions} value={platformRole} onChange={(value) => setPlatformRole((value as PlatformRole) || "ACCOUNT_USER")} disabled={Boolean(setupLink)} />
     <Switch label="Enabled" checked={enabled} onChange={(event) => setEnabled(event.currentTarget.checked)} disabled={Boolean(setupLink)} />
     <Stack gap="xs"><Text fw={600} size="sm">Trading Account memberships</Text><Text c="dimmed" size="xs">Memberships determine explicit account scope. System Owners retain unrestricted scope.</Text>
-      {accountsQuery.data?.accounts.map((account) => <Checkbox key={account.id} label={account.displayName} checked={tradingAccountIds.includes(account.id)} onChange={(event) => toggleAccount(account.id, event.currentTarget.checked)} disabled={Boolean(setupLink)} />)}
+      {accountsQuery.isError && <Alert color="red">Unable to load trading accounts. Close and retry before creating the invitation.</Alert>}{accountsQuery.data?.accounts.map((account) => <Checkbox key={account.id} label={`${account.displayName} (${account.environment})`} checked={tradingAccountIds.includes(account.id)} onChange={(event) => toggleAccount(account.id, event.currentTarget.checked)} disabled={Boolean(setupLink)} />)}
     </Stack>
-    {setupLink ? <><Code block>{setupUrl}</Code><CopyButton value={setupUrl}>{({ copied, copy }) => <Button onClick={copy}>{copied ? "Copied" : "Copy Setup Link"}</Button>}</CopyButton></> : <Group justify="flex-end"><Button variant="default" onClick={close}>Cancel</Button><Button onClick={submit} loading={createInvitation.isPending} disabled={!email.trim()}>Create Invite</Button></Group>}
+    {setupLink ? <><Code block style={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>{setupUrl}</Code><CopyButton value={setupUrl}>{({ copied, copy }) => <Button onClick={copy}>{copied ? "Copied" : "Copy Setup Link"}</Button>}</CopyButton></> : <Group justify="flex-end"><Button variant="default" onClick={close} disabled={createInvitation.isPending}>Cancel</Button><Button onClick={submit} loading={createInvitation.isPending} disabled={!email.trim() || accountsQuery.isError || createInvitation.isPending}>Create Invite</Button></Group>}
   </Stack></Modal>;
 }

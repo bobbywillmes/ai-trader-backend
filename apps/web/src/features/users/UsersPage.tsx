@@ -1,75 +1,56 @@
-import { useMemo, useState } from "react";
-import { Badge, Button, Card, Group, Loader, SimpleGrid, Stack, Table, Text, Title } from "@mantine/core";
+import { Fragment, useMemo, useState } from "react";
+import { Button, Card, Group, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
+import { useQueries } from "@tanstack/react-query";
+import { IconRefresh } from "@tabler/icons-react";
+import { CompactRecordList, DataState, DataTable, MobileRecordCard, RecordDetailsGrid, ResponsiveActions, ResponsiveDataView, ResponsiveDetails, ResponsiveFilterToolbar, StatusBadge, type SummaryField } from "../../components/data-display";
+import { getAdminToken } from "../../lib/api";
+import { useTradingAccounts } from "../tradingAccounts/hooks";
 import { CreateUserInviteModal } from "./CreateUserInviteModal";
 import { UserDetailDrawer } from "./UserDetailDrawer";
+import { listUserTradingAccountMemberships } from "./api";
 import { getPlatformRoleColor, getPlatformRoleLabel } from "./roleLabels";
 import { useUsers } from "./hooks";
+import type { TradingAccountMembership, User } from "./types";
+import classes from "./UsersPage.module.css";
+
+function date(value: string | null) { return value ? new Date(value).toLocaleDateString() : "Never"; }
+
+function UserDetails({ user, memberships, heldAccounts }: { user: User; memberships: TradingAccountMembership[]; heldAccounts: { id: number; displayName: string; environment: string }[] }) {
+  return <Stack gap="md" className={classes.details}>
+    <section className={classes.detailCard}><Title order={3} size="h5">Identity</Title><RecordDetailsGrid sections={[{ items: [{ label: "Display name", value: user.name || "Not provided" }, { label: "Email", value: user.email }, { label: "Platform role", value: getPlatformRoleLabel(user.platformRole) }, { label: "Administrative state", value: user.enabled ? "Enabled" : "Disabled" }, { label: "Created", value: date(user.createdAt) }, { label: "Updated", value: date(user.updatedAt) }, { label: "Last active", value: date(user.lastLoginAt) }] }]} /></section>
+    <section className={classes.detailCard}><Title order={3} size="h5">Account access</Title><RecordDetailsGrid sections={[{ items: [{ label: "Scope", value: user.platformRole === "SYSTEM_OWNER" ? "Unrestricted system-owner access" : `${memberships.length} explicit membership${memberships.length === 1 ? "" : "s"}` }, { label: "Account holder", value: heldAccounts.length ? heldAccounts.map((account) => `${account.displayName} (${account.environment})`).join(", ") : "No held trading accounts" }, { label: "Memberships", value: memberships.length ? memberships.map((membership) => membership.displayName).join(", ") : "No explicit memberships" }] }]} /></section>
+    <section className={classes.detailCard}><Title order={3} size="h5">Security &amp; administration</Title><RecordDetailsGrid sections={[{ items: [{ label: "Setup", value: user.pendingSetup ? "Setup pending" : "Setup complete" }, { label: "Email verification", value: user.emailVerifiedAt ? `Verified ${date(user.emailVerifiedAt)}` : "Not verified" }, { label: "Invitation", value: user.invitedAt ? `Invited ${date(user.invitedAt)}` : "No invitation timestamp" }] }]} /></section>
+    <details className={classes.technical}><summary>Routing &amp; identifiers</summary><RecordDetailsGrid sections={[{ items: [{ label: "User ID", value: user.id, technical: true }, { label: "Membership IDs", value: memberships.length ? memberships.map((item) => item.id).join(", ") : "None", technical: true }] }]} /></details>
+  </Stack>;
+}
 
 export function UsersPage() {
-  const { data: users, isLoading, error } = useUsers();
-  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
-  const [inviteOpened, setInviteOpened] = useState(false);
-  const stats = useMemo(() => ({
-    total: users?.length ?? 0,
-    systemOwners: users?.filter((user) => user.platformRole === "SYSTEM_OWNER").length ?? 0,
-    operators: users?.filter((user) => user.platformRole === "OPERATOR").length ?? 0,
-    accountUsers: users?.filter((user) => user.platformRole === "ACCOUNT_USER").length ?? 0,
-    pending: users?.filter((user) => user.pendingSetup).length ?? 0,
-  }), [users]);
-
-  if (isLoading) {
-    return <Stack align="center" justify="center" h={400}><Loader /></Stack>;
-  }
-
-  if (error) {
-    return <Stack><Title order={2}>Users & Access</Title><Card withBorder><Text c="red">Error loading users: {String(error)}</Text></Card></Stack>;
-  }
-
-  return (
-    <Stack gap="lg">
-      <Group justify="space-between"><div>
-        <Title order={2}>Users & Access</Title>
-        <Text c="dimmed" size="sm" mt={4}>
-          Review platform roles and Trading Account membership scope.
-        </Text>
-      </div><Button onClick={() => setInviteOpened(true)}>Create Invite</Button></Group>
-
-      <SimpleGrid cols={{ base: 1, sm: 2, md: 5 }} spacing="md">
-        {[
-          ["Total Users", stats.total],
-          ["System Owners", stats.systemOwners],
-          ["Operators", stats.operators],
-          ["Account Users", stats.accountUsers],
-          ["Pending", stats.pending],
-        ].map(([label, value]) => (
-          <Card key={label} withBorder radius="md" p="md">
-            <Text size="xs" c="dimmed" tt="uppercase" fw={700} mb={6}>{label}</Text>
-            <Text size="xl" fw={700}>{value}</Text>
-          </Card>
-        ))}
-      </SimpleGrid>
-
-      <Card withBorder>
-        <Card.Section withBorder inheritPadding py="md"><Title order={3}>Users</Title></Card.Section>
-        <Card.Section inheritPadding>
-          <Table striped highlightOnHover>
-            <Table.Thead><Table.Tr><Table.Th>Email</Table.Th><Table.Th>Name</Table.Th><Table.Th>Platform Role</Table.Th><Table.Th>Status</Table.Th><Table.Th>Last Login</Table.Th></Table.Tr></Table.Thead>
-            <Table.Tbody>
-              {users?.length ? users.map((user) => (
-                <Table.Tr key={user.id} onClick={() => setSelectedUserId(user.id)} style={{ cursor: "pointer" }}>
-                  <Table.Td><Text size="sm" fw={500}>{user.email}</Text></Table.Td>
-                  <Table.Td><Text size="sm">{user.name || "—"}</Text></Table.Td>
-                  <Table.Td><Badge color={getPlatformRoleColor(user.platformRole)} variant="light">{getPlatformRoleLabel(user.platformRole)}</Badge></Table.Td>
-                  <Table.Td><Group gap="xs"><Badge color={user.enabled ? "green" : "gray"} variant="light">{user.enabled ? "Enabled" : "Disabled"}</Badge>{user.pendingSetup && <Badge color="yellow" variant="light">Pending Setup</Badge>}</Group></Table.Td>
-                  <Table.Td><Text size="sm" c="dimmed">{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleDateString() : "Never"}</Text></Table.Td>
-                </Table.Tr>
-              )) : <Table.Tr><Table.Td colSpan={5}><Text size="sm" c="dimmed" ta="center" py="xl">No users found</Text></Table.Td></Table.Tr>}
-            </Table.Tbody>
-          </Table>
-        </Card.Section>
-      </Card>
-      <UserDetailDrawer userId={selectedUserId} onClose={() => setSelectedUserId(null)} />
-      <CreateUserInviteModal opened={inviteOpened} onClose={() => setInviteOpened(false)} />
-    </Stack>
-  );
+  const usersQuery = useUsers(); const users = useMemo(() => usersQuery.data ?? [], [usersQuery.data]); const accountsQuery = useTradingAccounts(getAdminToken());
+  const membershipQueries = useQueries({ queries: users.map((user) => ({ queryKey: ["users", user.id, "tradingAccountMemberships"], queryFn: () => listUserTradingAccountMemberships(user.id), staleTime: 300_000 })) });
+  const membershipsByUser = new Map(users.map((user, index) => [user.id, membershipQueries[index]?.data ?? []]));
+  const [search, setSearch] = useState(""); const [role, setRole] = useState("all"); const [status, setStatus] = useState("all");
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(null); const [inviteOpened, setInviteOpened] = useState(false); const [detailUser, setDetailUser] = useState<User | null>(null); const [detailOpener, setDetailOpener] = useState<HTMLElement | null>(null); const [expandedId, setExpandedId] = useState<number | null>(null);
+  const filtered = useMemo(() => users.filter((user) => { const term = search.trim().toLowerCase(); return (!term || `${user.name ?? ""} ${user.email}`.toLowerCase().includes(term)) && (role === "all" || user.platformRole === role) && (status === "all" || (status === "enabled") === user.enabled); }), [users, search, role, status]);
+  const held = (user: User) => (accountsQuery.data?.accounts ?? []).filter((account) => account.accountHolderUserId === user.id);
+  const memberships = (user: User) => membershipsByUser.get(user.id) ?? [];
+  const access = (user: User) => user.platformRole === "SYSTEM_OWNER" ? "All trading accounts" : `${memberships(user).length} accessible account${memberships(user).length === 1 ? "" : "s"}${held(user).length ? ` · holder of ${held(user).length}` : ""}`;
+  const identity = (user: User) => <div className={classes.identity}><Text component="h3" fw={700}>{user.name || "Unnamed user"}</Text><Text size="xs" c="dimmed">{user.email}</Text></div>;
+  const fields = (user: User): SummaryField[] => [{ label: "Role", value: getPlatformRoleLabel(user.platformRole) }, { label: "Account access", value: access(user) }, { label: "Last active", value: date(user.lastLoginAt) }];
+  const details = (user: User) => <UserDetails user={user} memberships={memberships(user)} heldAccounts={held(user)} />;
+  const actions = (user: User) => <ResponsiveActions compact primary={{ label: "Manage", onClick: () => setSelectedUserId(user.id) }} />;
+  const activeFilters = [{ key: "role", active: role !== "all", label: `Role: ${role === "all" ? "" : getPlatformRoleLabel(role as User["platformRole"])}`, remove: () => setRole("all") }, { key: "status", active: status !== "all", label: status === "enabled" ? "Enabled" : "Disabled", remove: () => setStatus("all") }].filter((item) => item.active).map((item) => ({ key: item.key, label: item.label, onRemove: item.remove }));
+  const clear = () => { setSearch(""); setRole("all"); setStatus("all"); };
+  const refresh = () => { void usersQuery.refetch(); void accountsQuery.refetch(); membershipQueries.forEach((query) => void query.refetch()); };
+  const wide = (items: readonly User[]) => <DataTable caption="Users and account access" captionHidden density="compact"><Table.Thead><Table.Tr><Table.Th>User</Table.Th><Table.Th>Role</Table.Th><Table.Th>Status</Table.Th><Table.Th>Trading-account access</Table.Th><Table.Th>Created / active</Table.Th><Table.Th>Actions</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{items.map((user) => <Fragment key={user.id}><Table.Tr><Table.Td>{identity(user)}</Table.Td><Table.Td><StatusBadge status={user.platformRole} label={getPlatformRoleLabel(user.platformRole)} tone={getPlatformRoleColor(user.platformRole) === "red" ? "danger" : "informational"} /></Table.Td><Table.Td><Group gap="xs"><StatusBadge status={user.enabled ? "enabled" : "disabled"} label={user.enabled ? "Enabled" : "Disabled"} tone={user.enabled ? "positive" : "neutral"} />{user.pendingSetup && <StatusBadge status="pending" label="Pending setup" tone="warning" />}</Group></Table.Td><Table.Td>{access(user)}</Table.Td><Table.Td>{date(user.createdAt)}<Text size="xs" c="dimmed">Active {date(user.lastLoginAt)}</Text></Table.Td><Table.Td><Group gap="xs" wrap="nowrap"><Button size="compact-sm" variant="default" onClick={() => setExpandedId(expandedId === user.id ? null : user.id)} aria-expanded={expandedId === user.id}>Details</Button>{actions(user)}</Group></Table.Td></Table.Tr>{expandedId === user.id && <Table.Tr><Table.Td colSpan={6}>{details(user)}</Table.Td></Table.Tr>}</Fragment>)}</Table.Tbody></DataTable>;
+  const loading = usersQuery.isLoading || accountsQuery.isLoading || membershipQueries.some((query) => query.isLoading);
+  const error = usersQuery.error || accountsQuery.error || membershipQueries.find((query) => query.error)?.error;
+  return <main className={classes.page}><Stack gap="lg">
+    <Group justify="space-between" align="flex-end" className={classes.header}><div><Title order={2} size="h3">Users &amp; Access</Title><Text size="sm" c="dimmed">Review identity, platform roles, and trading-account scope.</Text></div><Button onClick={() => setInviteOpened(true)}>Create User</Button></Group>
+    <SimpleGrid cols={{ base: 2, sm: 4 }}><Card withBorder><Text size="xs" c="dimmed">USERS</Text><Text size="xl" fw={700}>{users.length}</Text></Card><Card withBorder><Text size="xs" c="dimmed">ENABLED</Text><Text size="xl" fw={700}>{users.filter((user) => user.enabled).length}</Text></Card><Card withBorder><Text size="xs" c="dimmed">SYSTEM OWNERS</Text><Text size="xl" fw={700}>{users.filter((user) => user.platformRole === "SYSTEM_OWNER").length}</Text></Card><Card withBorder><Text size="xs" c="dimmed">PENDING SETUP</Text><Text size="xl" fw={700}>{users.filter((user) => user.pendingSetup).length}</Text></Card></SimpleGrid>
+    <Card withBorder><Stack gap="md"><Group justify="space-between" align="flex-end"><ResponsiveFilterToolbar primary={<TextInput label="Search users" placeholder="Name or email" value={search} onChange={(event) => setSearch(event.currentTarget.value)} />} secondary={<><Select label="Platform role" value={role} onChange={(value) => setRole(value ?? "all")} data={[{ value: "all", label: "All roles" }, { value: "SYSTEM_OWNER", label: "System Owner" }, { value: "OPERATOR", label: "Operator" }, { value: "ACCOUNT_USER", label: "Account User" }]} /><Select label="User status" value={status} onChange={(value) => setStatus(value ?? "all")} data={[{ value: "all", label: "All statuses" }, { value: "enabled", label: "Enabled" }, { value: "disabled", label: "Disabled" }]} /></>} activeFilters={activeFilters} onClearAll={clear} /><Button variant="default" leftSection={<IconRefresh size={16} />} onClick={refresh}>Refresh</Button></Group>
+      {error ? <DataState state="error" title="Unable to load users" message={error instanceof Error ? error.message : "Failed to load users."} onRetry={refresh} /> : loading ? <DataState state="loading" message="Loading users…" /> : filtered.length === 0 ? <DataState state="empty" title={users.length ? "No matching users" : "No users"} message={users.length ? "Clear or change the filters to see other users." : "Create a user invitation to begin."} action={users.length ? { label: "Clear filters", onClick: clear } : undefined} /> : <ResponsiveDataView records={filtered} getRecordId={(user) => user.id} wide={wide} compact={(items) => <CompactRecordList records={items} getRecordId={(user) => user.id} renderIdentity={identity} renderFields={fields} renderDetails={details} renderActions={actions} expandedId={expandedId} onExpandedChange={(id) => setExpandedId(id as number | null)} />} narrow={(items) => <MobileRecordCard records={items} getRecordId={(user) => user.id} renderIdentity={identity} renderStatus={(user) => <StatusBadge status={user.enabled ? "enabled" : "disabled"} label={user.enabled ? "Enabled" : "Disabled"} tone={user.enabled ? "positive" : "neutral"} size="compact" />} renderFields={fields} onDetails={(user, opener) => { setDetailUser(user); setDetailOpener(opener); }} renderActions={actions} />} aria-label="User administration catalog" />}
+    </Stack></Card>
+    <ResponsiveDetails opened={Boolean(detailUser)} title={detailUser ? `${detailUser.name || detailUser.email} details` : "User details"} onClose={() => setDetailUser(null)} returnFocusTo={detailOpener}>{detailUser && details(detailUser)}</ResponsiveDetails>
+    <UserDetailDrawer userId={selectedUserId} onClose={() => setSelectedUserId(null)} /><CreateUserInviteModal opened={inviteOpened} onClose={() => setInviteOpened(false)} />
+  </Stack></main>;
 }
