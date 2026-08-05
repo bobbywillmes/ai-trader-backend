@@ -69,3 +69,13 @@ Account Subscriptions and Allocation Buckets follow the standard three-presentat
 Subscription summaries retain assignment identity, strategy, full enabled and entry-capability status, allocation, sizing, exit profile, details, and existing management actions. Allocation summaries retain name/key, full status, budget, reserved/remaining capacity, position limits, assignment counts, details, and Edit. Raw IDs, technical keys, timestamps, notes, and secondary limits belong in structured details and must wrap safely.
 
 Future account sections should reuse `DataState`, `StatusBadge`, `ResponsiveActions`, and the same detail renderer across modes. An internal scroll region can remain for genuinely diagnostic historical data, but a legacy minimum-width table must never set the width of the account page. Preserve authorization, confirmations, disabled/loading states, and safety behavior when changing presentation.
+
+## Dashboard command center
+
+Dashboard is a concise responsive command center rather than a full operational record page. Its composition is portfolio state, trading readiness, ETF Market Pulse, limited open-position and open-order previews, and current attention items. Deep history remains on Reports, System Events, Reconciliation, and account detail routes.
+
+Portfolio metrics use the broker account snapshot plus `risk.usage.totalOpenNotional`; Dashboard does not recompute financial values. Trading Readiness maps backend entry-session states to state-specific transitions and formats every market timestamp in `America/New_York`. Missing current-session timestamps after close must not be described as proof that no regular session occurred, and missing future timestamps remain explicitly unavailable.
+
+Market Pulse uses the existing index quote and history requests. Each returned history series is normalized to 0% at its own first point and rendered against a shared time and percentage axis. The zero reference, textual summary, signed values, line dash patterns, and tile labels keep the display understandable without color. Quote tiles retain current, change, low, high, previous close, a sparkline, and a guarded range rail. The chart parent has an explicit responsive height and no fixed width so pinned-sidebar changes cannot create page overflow.
+
+Dashboard record previews show at most four positions and four orders and always link to their full operational pages. Attention items are restricted to current bootstrap facts such as broker blocking, risk reasons, or a degraded market-session provider. Historical event severity is not treated as unresolved state. When those authoritative facts are healthy, Dashboard provides links to System Events and Reconciliation instead of manufacturing alerts.
