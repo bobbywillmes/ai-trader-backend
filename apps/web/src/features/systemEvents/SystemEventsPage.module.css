@@ -1,0 +1,4 @@
+.page { min-width: 0; }
+.header { gap: var(--mantine-spacing-md); }
+.message { max-width: 30rem; white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 35rem) { .header { align-items: stretch; flex-direction: column; } .header > button { min-height: 44px; width: 100%; } }
