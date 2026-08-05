@@ -1107,8 +1107,8 @@ function WorkerHealthTable({
           color="gray"
         />
 
-        <ScrollArea>
-          <Table striped highlightOnHover style={{ minWidth: 980 }}>
+        <ScrollArea className={classes.workerScroll}>
+          <Table striped highlightOnHover className={classes.workerTable}>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Worker</Table.Th>
@@ -1126,7 +1126,7 @@ function WorkerHealthTable({
             <Table.Tbody>
               {health.items.map((worker) => (
                 <Table.Tr key={worker.key}>
-                  <Table.Td>
+                  <Table.Td data-label="Worker">
                     <Stack gap={2}>
                       <Text size="sm" fw={600}>
                         {worker.displayName}
@@ -1136,7 +1136,7 @@ function WorkerHealthTable({
                       </Text>
                     </Stack>
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td data-label="Criticality">
                     <Badge
                       color={criticalityColor(worker.criticality)}
                       variant="light"
@@ -1144,7 +1144,7 @@ function WorkerHealthTable({
                       {worker.criticality}
                     </Badge>
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td data-label="Status">
                     <Stack gap={2}>
                       <Badge
                         color={workerStatusColor(worker.status)}
@@ -1157,10 +1157,10 @@ function WorkerHealthTable({
                       </Text>
                     </Stack>
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td data-label="Cadence">
                     <Text size="sm">{formatCadence(worker.expectedIntervalMs)}</Text>
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td data-label="Running">
                     {worker.running && worker.currentRunStartedAt ? (
                       <Tooltip label={formatDateTime(worker.currentRunStartedAt)}>
                         <Badge color="blue" variant="light">
@@ -1179,12 +1179,12 @@ function WorkerHealthTable({
                       </Text>
                     )}
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td data-label="Last success">
                     <Tooltip label={formatDateTime(worker.lastSucceededAt)}>
                       <Text size="sm">{formatRelativeTime(worker.lastSucceededAt)}</Text>
                     </Tooltip>
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td data-label="Last work">
                     <Tooltip label={formatDateTime(worker.lastWorkSucceededAt)}>
                       <Text size="sm">
                         {worker.lastWorkSucceededAt
@@ -1195,10 +1195,10 @@ function WorkerHealthTable({
                       </Text>
                     </Tooltip>
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td data-label="Duration">
                     <Text size="sm">{formatDurationMs(worker.lastDurationMs)}</Text>
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td data-label="Failures">
                     <Text
                       size="sm"
                       c={worker.consecutiveFailures > 0 ? "red" : undefined}
@@ -1206,7 +1206,7 @@ function WorkerHealthTable({
                       {worker.consecutiveFailures}
                     </Text>
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td data-label="Error">
                     {worker.lastError ? (
                       <Tooltip label={worker.lastError} multiline maw={420}>
                         <Text size="sm" c="red" maw={220} truncate="end">

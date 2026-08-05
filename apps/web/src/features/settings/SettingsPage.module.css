@@ -8,8 +8,18 @@
 .selector { display: none; }
 .page :global(.mantine-Group-root) { min-width: 0; }
 .page :global(.mantine-Text-root), .page :global(.mantine-Badge-root) { overflow-wrap: anywhere; }
+.workerTable { min-width: 61.25rem; }
 @container (max-width: 44rem) {
   .tabs { display: none; }
   .selector { display: block; }
   .page :global(.mantine-Group-root) { align-items: stretch; }
+  .workerScroll :global(.mantine-ScrollArea-viewport) { overflow-x: visible !important; }
+  .workerTable { min-width: 0; }
+  .workerTable, .workerTable tbody { display: block; }
+  .workerTable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .workerTable tr { display: grid; gap: 0.6rem; border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-md); margin-top: var(--mantine-spacing-sm); padding: var(--mantine-spacing-md); }
+  .workerTable td { display: grid; grid-template-columns: minmax(6.75rem, 0.42fr) minmax(0, 1fr); gap: var(--mantine-spacing-sm); align-items: start; border: 0; padding: 0; white-space: normal; overflow-wrap: anywhere; }
+  .workerTable td::before { content: attr(data-label); color: var(--mantine-color-dimmed); font-size: var(--mantine-font-size-xs); font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; }
+  .workerTable td:first-child { grid-template-columns: 1fr; }
+  .workerTable td:first-child::before { display: none; }
 }
