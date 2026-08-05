@@ -173,6 +173,10 @@ export const router = createBrowserRouter([
                 element: requirePermission("reports.read", <ReportsPage />),
               },
               {
+                path: "reports/:reportSection",
+                element: requirePermission("reports.read", <ReportsPage />),
+              },
+              {
                 path: "system/events",
                 element: requirePermission("systemEvents.read", <SystemEventsPage />),
               },

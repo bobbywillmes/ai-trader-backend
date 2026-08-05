@@ -19,6 +19,7 @@ import {
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { useNavigate, useParams } from "react-router-dom";
 import { IconFileAnalytics } from "@tabler/icons-react";
 import { TradingAccountBadge } from "../../components/TradingAccountBadge";
 import {
@@ -166,6 +167,20 @@ function normalizeLimit(value: string | number, fallback: number) {
   const parsed = typeof value === "number" ? value : Number(value);
 
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+type ReportTab = "overview" | "performance" | "audit";
+
+const reportSectionByTab: Record<ReportTab, string> = {
+  overview: "",
+  performance: "trade-performance",
+  audit: "audit-records",
+};
+
+function resolveReportTab(section: string | undefined): ReportTab {
+  if (section === "trade-performance") return "performance";
+  if (section === "audit-records") return "audit";
+  return "overview";
 }
 
 function sideColor(side: string | null) {
@@ -674,7 +689,9 @@ function PerformanceTradesTable({
 
 export function ReportsPage() {
   const [token] = useState(() => getAdminToken());
-  const [reportTab, setReportTab] = useState<string | null>("overview");
+  const navigate = useNavigate();
+  const { reportSection } = useParams<{ reportSection?: string }>();
+  const reportTab = resolveReportTab(reportSection);
 
   const [snapshotLimit, setSnapshotLimit] = useState(20);
   const [activityLimit, setActivityLimit] = useState(20);
@@ -954,7 +971,11 @@ export function ReportsPage() {
         </Group>
       </Group>
 
-      <Tabs value={reportTab} onChange={setReportTab} keepMounted={false} className={classes.reportTabs}>
+      <Tabs value={reportTab} onChange={(value) => {
+        if (value !== "overview" && value !== "performance" && value !== "audit") return;
+        const section = reportSectionByTab[value];
+        navigate(section ? `/reports/${section}` : "/reports");
+      }} keepMounted={false} className={classes.reportTabs}>
         <Tabs.List aria-label="Report sections">
           <Tabs.Tab value="overview">Overview</Tabs.Tab>
           <Tabs.Tab value="performance">Trade Performance</Tabs.Tab>
