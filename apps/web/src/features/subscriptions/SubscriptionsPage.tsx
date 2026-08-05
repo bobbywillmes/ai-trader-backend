@@ -5,8 +5,9 @@ import {
   SimpleGrid, Stack, Switch, Table, Text, TextInput, Textarea, Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { IconAdjustments } from "@tabler/icons-react";
 import { getAdminToken } from "../../lib/api";
-import { CompactRecordList, DataState, DataTable, MobileRecordCard, RecordDetailsGrid, ResponsiveActions, ResponsiveDataView, ResponsiveDetails, ResponsiveFilterToolbar, StatusBadge, type ActiveFilter, type SummaryField } from "../../components/data-display";
+import { CompactRecordList, DataState, DataTable, MobileRecordCard, RecordDetailsGrid, ResponsiveActions, ResponsiveDataView, ResponsiveDetails, StatusBadge, type ActiveFilter, type SummaryField } from "../../components/data-display";
 import { useStrategies } from "../strategies/hooks";
 import { useExitProfiles } from "../exitProfiles/hooks";
 import {
@@ -125,6 +126,7 @@ export function SubscriptionsPage() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [detailItem, setDetailItem] = useState<Subscription | null>(null);
   const [detailOpener, setDetailOpener] = useState<HTMLElement | null>(null);
+  const [advancedFiltersOpened, setAdvancedFiltersOpened] = useState(false);
 
   const query = useMemo<SubscriptionCatalogQuery>(() => ({
     page, pageSize, search: search || undefined,
@@ -327,8 +329,8 @@ export function SubscriptionsPage() {
 
       <Card withBorder>
         <Stack gap="md">
-          <ResponsiveFilterToolbar primary={<Group align="end" wrap="nowrap" className={classes.search}><TextInput label="Search catalog" placeholder="Key, name, symbol, or strategy" value={searchInput} onChange={(event) => setSearchInput(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === "Enter") { resetPage(); setSearch(searchInput.trim()); } }} /><Button onClick={() => { resetPage(); setSearch(searchInput.trim()); }}>Search</Button></Group>} secondary={<SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
-            <TextInput label="Search" placeholder="Key, name, ticker, strategy, exit profile, or description" value={searchInput} onChange={(event) => setSearchInput(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === "Enter") { resetPage(); setSearch(searchInput.trim()); } }} />
+          <div className={classes.filterToolbar}><Group align="end" wrap="wrap" className={classes.search}><TextInput label="Search catalog" placeholder="Key, name, symbol, or strategy" value={searchInput} onChange={(event) => setSearchInput(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === "Enter") { resetPage(); setSearch(searchInput.trim()); } }} /><Button onClick={() => { resetPage(); setSearch(searchInput.trim()); }}>Search</Button><Button variant="default" leftSection={<IconAdjustments size={17} />} onClick={() => setAdvancedFiltersOpened(true)}>Advanced Filters{activeFilters.length ? ` (${activeFilters.length})` : ""}</Button></Group></div>
+          <Modal opened={advancedFiltersOpened} onClose={() => setAdvancedFiltersOpened(false)} title="Advanced catalog filters" size="xl" styles={{ content: { maxHeight: "calc(100dvh - 2rem)" }, body: { overflowY: "auto" } }}><Stack><SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>
             <Select searchable clearable label="Security" placeholder="All securities" data={(filters?.securities ?? []).map((item) => ({ value: String(item.id), label: `${item.symbol} — ${item.name}` }))} value={securityId} onChange={(value) => { resetPage(); setSecurityId(value); }} />
             <Select searchable clearable label="Strategy" placeholder="All strategies" data={(filters?.strategies ?? []).map((item) => ({ value: String(item.id), label: `${item.key} — ${item.name}` }))} value={strategyId} onChange={(value) => { resetPage(); setStrategyId(value); }} />
             <Select searchable clearable label="Exit Profile" placeholder="All exit profiles" data={(filters?.exitProfiles ?? []).map((item) => ({ value: String(item.id), label: `${item.key} — ${item.name}` }))} value={exitProfileId} onChange={(value) => { resetPage(); setExitProfileId(value); }} />
@@ -339,11 +341,7 @@ export function SubscriptionsPage() {
             <Select label="Account entries" description="Permission to open new positions" data={booleanOptions} value={entriesEnabled} onChange={(value) => { resetPage(); setEntriesEnabled((value ?? "all") as BooleanFilter); }} />
             <Select label="Account exits" description="Permission to manage or close positions" data={booleanOptions} value={exitsEnabled} onChange={(value) => { resetPage(); setExitsEnabled((value ?? "all") as BooleanFilter); }} />
             <Select label="Rows per page" description="Number of catalog definitions shown" data={PAGE_SIZE_OPTIONS} value={String(pageSize)} onChange={(value) => { setPage(1); setPageSize(Number(value ?? 50)); }} />
-            <Group align="end">
-              <Button onClick={() => { resetPage(); setSearch(searchInput.trim()); }}>Apply</Button>
-              <Button variant="default" onClick={clearFilters}>Clear</Button>
-            </Group>
-          </SimpleGrid>} activeFilters={activeFilters} onClearAll={clearFilters} title="Catalog filters" />
+          </SimpleGrid><Group justify="flex-end" className={classes.filterActions}><Button variant="default" onClick={clearFilters}>Clear all</Button><Button onClick={() => { resetPage(); setSearch(searchInput.trim()); setAdvancedFiltersOpened(false); }}>Apply filters</Button></Group></Stack></Modal>
 
           {catalogQuery.isError ? <DataState state="error" title="Unable to load subscription catalog" message={catalogQuery.error.message} onRetry={() => catalogQuery.refetch()} /> : catalogQuery.isLoading ? <DataState state="loading" message="Loading catalog…" /> : rows.length === 0 ? <DataState state="empty" title={(search || activeFilters.length) ? "No matching subscriptions" : "No subscription definitions"} message={(search || activeFilters.length) ? "Clear or change the filters to see other catalog definitions." : "Create a global catalog definition to begin."} action={(search || activeFilters.length) ? { label: "Clear filters", onClick: clearFilters } : undefined} /> : <ResponsiveDataView records={rows} getRecordId={(item) => item.id} wide={wide} compact={(items) => <CompactRecordList records={items} getRecordId={(item) => item.id} renderIdentity={identity} renderFields={fields} renderDetails={(item) => <SubscriptionDetails item={item} />} renderActions={(item) => actions(item, true)} expandedId={expandedId} onExpandedChange={(id) => setExpandedId(id as number | null)} />} narrow={(items) => <MobileRecordCard records={items} getRecordId={(item) => item.id} renderIdentity={identity} renderStatus={(item) => <StatusBadge status={item.enabled ? "enabled" : "retired"} label={item.enabled ? "Enabled" : "Retired"} tone={item.enabled ? "positive" : "neutral"} size="compact" />} renderFields={fields} onDetails={openDetails} renderActions={(item) => actions(item, true)} />} aria-label="Global subscription catalog" />}
           <ScrollArea className={classes.legacyTable}>
