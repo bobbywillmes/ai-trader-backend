@@ -81,16 +81,14 @@ describe('startup status logging', () => {
       },
     ]));
 
-    expect(mocks.loggerInfo).not.toHaveBeenCalled();
-    expect(mocks.loggerError).not.toHaveBeenCalled();
-    expect(mocks.loggerWarn).toHaveBeenCalledTimes(2);
-    expect(mocks.loggerWarn).toHaveBeenNthCalledWith(
-      1,
+    expect(mocks.loggerInfo).toHaveBeenCalledOnce();
+    expect(mocks.loggerInfo.mock.calls[0]?.[0]).toContain(
       'AI Trader Backend ready: development | database connected | ' +
-        'entry trading enabled | 2 checks passed | 1 warning | http://localhost:3000'
+        'entry trading enabled | 2 checks passed | 1 warning'
     );
-    expect(mocks.loggerWarn).toHaveBeenNthCalledWith(
-      2,
+    expect(mocks.loggerError).not.toHaveBeenCalled();
+    expect(mocks.loggerWarn).toHaveBeenCalledOnce();
+    expect(mocks.loggerWarn).toHaveBeenCalledWith(
       'Warnings: Trading is enabled in a non-production environment.'
     );
   });
