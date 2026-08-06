@@ -6,6 +6,12 @@ The initial implementation is deliberately **Paper-only**.
 
 ## Selection and preview
 
+`SUBSCRIPTION_ENTRY` is the durable exercise type currently supported. The
+legacy workflow records `SELECTED_USERS` or `ALL_ELIGIBLE`; the explicit
+Subscription-entry workflow records `EXPLICIT_ASSIGNMENTS`. The legacy
+`requestedUserIdsJson` remains available but never identifies explicit targets.
+`containsLiveTargets` is false for every current workflow.
+
 A System Owner may use the legacy User-selection workflow to select one catalog
 `Subscription` and either specific account holder Users or Everyone eligible.
 That workflow is unchanged: selection follows
@@ -34,6 +40,12 @@ risk configuration, allocations, assignment sizing and enablement, and catalog
 Security, Strategy, Subscription, and ExitProfile configuration. Market prices
 are excluded. A preview expires after five minutes.
 
+Explicit-assignment previews use fingerprint version 2 and include exercise
+type, selection mode, deterministically ordered frozen assignment IDs,
+Subscription identity, environment, target identity, and existing configuration
+evidence. Legacy version 1 User-selection fingerprints remain valid and
+historical fingerprints are not rewritten.
+
 The Subscription-entry candidate list reads only actual assignment rows for the
 requested Subscription. It returns assignment, account-holder/access,
 allocation, sizing, credential-status, and static configuration summaries in a
@@ -59,6 +71,27 @@ exits, and synchronization.
 Launch always reads assignment IDs from frozen target rows and never accepts a
 replacement target list. Each target is revalidated against current state; an
 assignment that changed after preview is blocked rather than replaced.
+
+Preview blockers and readiness evidence remain immutable. Dispatch stores its
+outcome, stable code, message, attempt timestamp, and evidence separately.
+`orderIntentId` remains the target's lifecycle link; BrokerOrder and
+TrackedPosition state continues to be derived through OrderIntent.
+
+An owner may explicitly call
+`POST /api/trading-lifecycle-exercises/:id/dispatch-recovery`. A persisted
+`DISPATCHING` claim becomes stale after five minutes. Recovery projects an
+already linked intent, or searches by exact client-order ID, Trading Account,
+and frozen assignment. One match is linked without redispatch, multiple matches
+are refused with diagnostic evidence, and no match is atomically reclaimed and
+sent through the normal single-assignment path. Recent claims are untouched,
+concurrent recovery cannot reclaim twice, and all recovery transitions are
+audited.
+
+The stable signal identity is
+`lifecycle-exercise:{exerciseId}:target:{targetId}`; client-order identity also
+contains the frozen TradingAccountSubscription ID. The intended OrderIntent
+uniqueness scope is client-order ID, Trading Account, and assignment. A database
+uniqueness constraint is deferred until production data has been diagnosed.
 
 ## Projection and completion
 
@@ -88,6 +121,7 @@ POST /api/trading-lifecycle-exercises/preview
 GET  /api/trading-lifecycle-exercises/subscription-entry/candidates?subscriptionId=:id
 POST /api/trading-lifecycle-exercises/subscription-entry/preview
 POST /api/trading-lifecycle-exercises/:id/launch
+POST /api/trading-lifecycle-exercises/:id/dispatch-recovery
 POST /api/trading-lifecycle-exercises/:id/cancel
 POST /api/trading-lifecycle-exercises/:exerciseId/targets/:targetId/reconciliation
 GET  /api/trading-lifecycle-exercises
@@ -102,6 +136,8 @@ only through the System Owner all-permissions rule in this phase.
 Live targets, mixed environments, provisioning, activation, write permits, and
 the first Live canary remain future work. Live support must add explicit
 readiness and authorization; it must not loosen the Paper boundary.
+Typed Live confirmation, fresh Live-readiness checks, and a production
+OrderIntent uniqueness constraint also remain deferred.
 # Position-slot visibility
 
 Lifecycle exercise previews and target details expose the authoritative entry-risk

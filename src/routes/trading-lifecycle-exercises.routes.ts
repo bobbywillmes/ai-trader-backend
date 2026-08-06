@@ -9,6 +9,7 @@ import {
   previewSubscriptionEntryLifecycleExerciseController,
   previewLifecycleExerciseController,
   reconcileLifecycleExerciseTargetController,
+  recoverLifecycleExerciseDispatchesController,
 } from '../controllers/trading-lifecycle-exercises.controller.js';
 import { requirePermission, requireSystemOwnerAccess } from '../middleware/rbac.js';
 import { PlatformPermission } from '../types/platform-rbac.js';
@@ -21,6 +22,7 @@ router.get('/', requirePermission(PlatformPermission.TRADING_LIFECYCLE_EXERCISE_
 router.get('/:id', requirePermission(PlatformPermission.TRADING_LIFECYCLE_EXERCISE_READ), getLifecycleExerciseController);
 router.post('/preview', requireSystemOwnerAccess, requirePermission(PlatformPermission.TRADING_LIFECYCLE_EXERCISE_WRITE), previewLifecycleExerciseController);
 router.post('/:id/launch', requireSystemOwnerAccess, requirePermission(PlatformPermission.TRADING_LIFECYCLE_EXERCISE_WRITE), launchLifecycleExerciseController);
+router.post('/:id/dispatch-recovery', requireSystemOwnerAccess, requirePermission(PlatformPermission.TRADING_LIFECYCLE_EXERCISE_WRITE), recoverLifecycleExerciseDispatchesController);
 router.post('/:id/cancel', requireSystemOwnerAccess, requirePermission(PlatformPermission.TRADING_LIFECYCLE_EXERCISE_WRITE), cancelLifecycleExerciseController);
 router.post('/:exerciseId/targets/:targetId/reconciliation', requireSystemOwnerAccess, requirePermission(PlatformPermission.TRADING_LIFECYCLE_EXERCISE_WRITE), reconcileLifecycleExerciseTargetController);
 

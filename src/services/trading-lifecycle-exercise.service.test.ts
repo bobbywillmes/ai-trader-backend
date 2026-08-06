@@ -134,6 +134,10 @@ describe('explicit assignment preview', () => {
     expect(mocks.exerciseCreate).toHaveBeenCalledOnce();
     const createInput = mocks.exerciseCreate.mock.calls[0]![0];
     expect(createInput.data.targets.create).toHaveLength(2);
+    expect(createInput.data).toMatchObject({
+      exerciseType: 'SUBSCRIPTION_ENTRY', selectionMode: 'EXPLICIT_ASSIGNMENTS',
+      containsLiveTargets: false, requestedUserIdsJson: [], previewVersion: 2,
+    });
     expect(createInput.data.previewExpiresAt.toISOString()).toBe('2026-08-06T12:05:00.000Z');
   });
 

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   candidates: vi.fn((_req, res) => res.status(200).json({ candidates: [] })),
   preview: vi.fn((_req, res) => res.status(201).json({ exercise: { id: 1 } })),
   launch: vi.fn((_req, res) => res.status(200).json({ exercise: { id: 1 } })),
+  recovery: vi.fn((_req, res) => res.status(200).json({ exercise: { id: 1 } })),
 }));
 
 vi.mock('../controllers/trading-lifecycle-exercises.controller.js', () => ({
@@ -19,6 +20,7 @@ vi.mock('../controllers/trading-lifecycle-exercises.controller.js', () => ({
   listLifecycleExercisesController: vi.fn(),
   previewLifecycleExerciseController: vi.fn(),
   reconcileLifecycleExerciseTargetController: vi.fn(),
+  recoverLifecycleExerciseDispatchesController: mocks.recovery,
 }));
 
 import router from './trading-lifecycle-exercises.routes.js';
@@ -60,6 +62,7 @@ describe('Subscription-entry Lifecycle Exercise RBAC', () => {
     ['GET', '/api/trading-lifecycle-exercises/subscription-entry/candidates?subscriptionId=7', 'candidates'],
     ['POST', '/api/trading-lifecycle-exercises/subscription-entry/preview', 'preview'],
     ['POST', '/api/trading-lifecycle-exercises/1/launch', 'launch'],
+    ['POST', '/api/trading-lifecycle-exercises/1/dispatch-recovery', 'recovery'],
   ] as const)('rejects non-owners from %s %s', async (method, path, mockName) => {
     const response = await requestAs(PlatformRole.OPERATOR, method, path);
     expect(response.status).toBe(403);

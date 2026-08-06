@@ -11,6 +11,7 @@ import {
   listSubscriptionEntryCandidates,
   previewSubscriptionEntryLifecycleExercise,
   reconcileTradingLifecycleExerciseTarget,
+  recoverStaleTradingLifecycleExerciseDispatches,
 } from '../services/trading-lifecycle-exercise.service.js';
 import {
   lifecycleExerciseCancelSchema,
@@ -122,6 +123,14 @@ export async function reconcileLifecycleExerciseTargetController(req: Request, r
       id(req.params.exerciseId, 'exercise id'), id(req.params.targetId, 'target id'), actor(res)
     );
     res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function recoverLifecycleExerciseDispatchesController(req: Request, res: Response, next: NextFunction) {
+  try {
+    res.status(200).json(await recoverStaleTradingLifecycleExerciseDispatches(id(req.params.id, 'exercise id'), actor(res)));
   } catch (error) {
     next(error);
   }

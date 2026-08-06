@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import {
   Prisma,
+  TradingLifecycleExerciseLaunchOutcome,
   TradingLifecycleExerciseStatus,
   TradingLifecycleExerciseTargetStatus,
 } from '@prisma/client';
@@ -16,9 +17,11 @@ import { createSystemEvent } from './system-event.service.js';
 import { reconcileTradingAccountWithLock } from './reconciliation.service.js';
 import { projectTradingLifecycleExerciseTarget } from './trading-lifecycle-exercise-projection.service.js';
 import { isTerminalBrokerOrderStatus } from './broker-order-lifecycle-status.service.js';
+import { buildSignalEntryClientOrderId } from './client-order-id.service.js';
 
 export const LIFECYCLE_EXERCISE_MAX_TARGETS = 25;
 export const LIFECYCLE_EXERCISE_PREVIEW_TTL_MS = 5 * 60_000;
+export const LIFECYCLE_EXERCISE_DISPATCH_STALE_MS = 5 * 60_000;
 export const LIFECYCLE_EXERCISE_CONFIRMATION = 'LAUNCH PAPER EXERCISE';
 
 function stable(value: unknown): string {
@@ -88,17 +91,24 @@ async function loadFingerprintAssignments(ids: number[]) {
 }
 
 function configurationFingerprint(args: {
+  version?: number;
+  exerciseType?: string;
   subscriptionId: number;
   selectionMode: string;
   requestedUserIds: number[];
   assignments: Awaited<ReturnType<typeof loadFingerprintAssignments>>;
 }) {
+  const version = args.version ?? 1;
   return fingerprint({
-    version: 1,
+    version,
+    ...(version >= 2 ? { exerciseType: args.exerciseType ?? 'SUBSCRIPTION_ENTRY' } : {}),
     environment: 'PAPER',
     subscriptionId: args.subscriptionId,
     selectionMode: args.selectionMode,
     requestedUserIds: args.requestedUserIds,
+    ...(version >= 2 && args.selectionMode === 'EXPLICIT_ASSIGNMENTS'
+      ? { frozenAssignmentIds: args.assignments.map((assignment) => assignment.id).sort((a, b) => a - b) }
+      : {}),
     assignments: args.assignments,
   });
 }
@@ -125,6 +135,13 @@ function staticBlockers(assignment: Awaited<ReturnType<typeof loadFingerprintAss
   if (!assignment.subscription.exitProfile.enabled) blockers.push({ code: 'EXIT_PROFILE_DISABLED', message: 'The exit profile is disabled.' });
   if (!assignment.allocation?.enabled) blockers.push({ code: 'ALLOCATION_INELIGIBLE', message: 'An enabled allocation is required.' });
   return blockers;
+}
+
+function launchOutcome(outcome: string): TradingLifecycleExerciseLaunchOutcome {
+  if (outcome === 'INTENT_CREATED') return TradingLifecycleExerciseLaunchOutcome.INTENT_CREATED;
+  if (outcome === 'DUPLICATE') return TradingLifecycleExerciseLaunchOutcome.DUPLICATE;
+  if (outcome === 'BLOCKED') return TradingLifecycleExerciseLaunchOutcome.BLOCKED;
+  return TradingLifecycleExerciseLaunchOutcome.FAILED;
 }
 
 const CANDIDATE_SELECT = {
@@ -300,8 +317,10 @@ export async function previewSubscriptionEntryLifecycleExercise(
     });
   }
   const configFingerprint = configurationFingerprint({
+    version: 2,
+    exerciseType: 'SUBSCRIPTION_ENTRY',
     subscriptionId: subscription.id,
-    selectionMode: 'SELECTED_USERS',
+    selectionMode: 'EXPLICIT_ASSIGNMENTS',
     requestedUserIds: [],
     assignments,
   });
@@ -339,8 +358,9 @@ export async function previewSubscriptionEntryLifecycleExercise(
   const exercise = await prisma.tradingLifecycleExercise.create({
     data: {
       name: input.name ?? null, reason: input.reason, subscriptionId: subscription.id,
-      selectionMode: 'SELECTED_USERS', requestedUserIdsJson: json([]),
-      environment: 'PAPER', status: TradingLifecycleExerciseStatus.PREVIEWED,
+      exerciseType: 'SUBSCRIPTION_ENTRY', selectionMode: 'EXPLICIT_ASSIGNMENTS', requestedUserIdsJson: json([]),
+      environment: 'PAPER', containsLiveTargets: false, status: TradingLifecycleExerciseStatus.PREVIEWED,
+      previewVersion: 2,
       previewFingerprint: configFingerprint, previewedAt: now,
       previewExpiresAt: new Date(now.getTime() + LIFECYCLE_EXERCISE_PREVIEW_TTL_MS),
       createdByUserId: actorUserId,
@@ -475,8 +495,8 @@ export async function previewTradingLifecycleExercise(
   const exercise = await prisma.tradingLifecycleExercise.create({
     data: {
       name: input.name ?? null, reason: input.reason, subscriptionId: subscription.id,
-      selectionMode: input.selectionMode, requestedUserIdsJson: json(requestedUserIds),
-      environment: 'PAPER', status: TradingLifecycleExerciseStatus.PREVIEWED,
+      exerciseType: 'SUBSCRIPTION_ENTRY', selectionMode: input.selectionMode, requestedUserIdsJson: json(requestedUserIds),
+      environment: 'PAPER', containsLiveTargets: false, status: TradingLifecycleExerciseStatus.PREVIEWED,
       previewFingerprint: configFingerprint, previewedAt: now,
       previewExpiresAt: new Date(now.getTime() + LIFECYCLE_EXERCISE_PREVIEW_TTL_MS),
       createdByUserId: actorUserId, selectionResultsJson: json(selectionResults),
@@ -543,7 +563,7 @@ export async function launchTradingLifecycleExercise(id: number, actorUserId: nu
   });
   if (!claimed.count) throw new HttpError(409, 'Lifecycle exercise is not launchable or is already claimed.');
   let exercise = await getExerciseOrThrow(id);
-  if (exercise.environment !== 'PAPER' || exercise.targets.some((target) => target.environment !== 'PAPER' || target.tradingAccount.environment !== 'PAPER')) {
+  if (exercise.exerciseType !== 'SUBSCRIPTION_ENTRY' || exercise.containsLiveTargets || exercise.environment !== 'PAPER' || exercise.targets.some((target) => target.environment !== 'PAPER' || target.tradingAccount.environment !== 'PAPER')) {
     await prisma.tradingLifecycleExercise.update({ where: { id }, data: { status: TradingLifecycleExerciseStatus.FAILED } });
     throw new HttpError(409, 'LIVE_TARGET_REJECTED');
   }
@@ -553,6 +573,8 @@ export async function launchTradingLifecycleExercise(id: number, actorUserId: nu
   }
   const currentAssignments = await loadFingerprintAssignments(exercise.targets.map((target) => target.tradingAccountSubscriptionId));
   const currentFingerprint = configurationFingerprint({
+    version: exercise.previewVersion,
+    exerciseType: exercise.exerciseType,
     subscriptionId: exercise.subscriptionId, selectionMode: exercise.selectionMode,
     requestedUserIds: exercise.requestedUserIdsJson as number[], assignments: currentAssignments,
   });
@@ -570,7 +592,7 @@ export async function launchTradingLifecycleExercise(id: number, actorUserId: nu
         exercise: { status: TradingLifecycleExerciseStatus.LAUNCHING },
         status: { in: [TradingLifecycleExerciseTargetStatus.READY, TradingLifecycleExerciseTargetStatus.WARNING] },
       },
-      data: { status: TradingLifecycleExerciseTargetStatus.DISPATCHING, dispatchStartedAt: new Date() },
+      data: { status: TradingLifecycleExerciseTargetStatus.DISPATCHING, dispatchStartedAt: now, launchAttemptedAt: now },
     });
     if (!dispatchClaim.count) continue;
     const result = await processEntryForAccountSubscription({
@@ -592,9 +614,10 @@ export async function launchTradingLifecycleExercise(id: number, actorUserId: nu
       data: {
         status: targetStatus, orderIntentId: result.orderIntentId,
         dispatchCompletedAt: new Date(), intentCreatedAt: result.orderIntentId ? new Date() : null,
-        blockersJson: result.outcome === 'BLOCKED'
-          ? json([{ code: result.code, message: result.message }])
-          : (target.blockersJson ?? Prisma.JsonNull),
+        launchOutcome: launchOutcome(result.outcome),
+        launchResultCode: result.code,
+        launchResultMessage: result.message,
+        launchEvidenceJson: json({ source: 'LAUNCH', outcome: result.outcome, code: result.code, orderIntentId: result.orderIntentId }),
       },
     });
     await createSystemEvent({
@@ -614,6 +637,137 @@ export async function launchTradingLifecycleExercise(id: number, actorUserId: nu
     payloadJson: json({ exerciseId: id, subscriptionId: exercise.subscriptionId, environment: 'PAPER', activeCount: active, blockedOrFailedCount: unsuccessful }),
   });
   return getExerciseOrThrow(id);
+}
+
+function exerciseTargetIdentity(exerciseId: number, targetId: number) {
+  return `lifecycle-exercise:${exerciseId}:target:${targetId}`;
+}
+
+async function recordRecoveryEvent(args: {
+  type: string; message: string; exerciseId: number; target: {
+    id: number; tradingAccountId: number; tradingAccountSubscriptionId: number;
+    environment: string; dispatchStartedAt: Date | null;
+  }; actorUserId: number; code: string; orderIntentId?: number | null; evidence?: Record<string, unknown>;
+}) {
+  await createSystemEvent({
+    type: args.type, entityType: 'tradingLifecycleExerciseTarget', entityId: args.target.id,
+    tradingAccountId: args.target.tradingAccountId, actorUserId: args.actorUserId, message: args.message,
+    payloadJson: json({
+      exerciseId: args.exerciseId, targetId: args.target.id,
+      tradingAccountId: args.target.tradingAccountId,
+      tradingAccountSubscriptionId: args.target.tradingAccountSubscriptionId,
+      environment: args.target.environment, recoveryCode: args.code,
+      orderIntentId: args.orderIntentId ?? null,
+      staleDispatchStartedAt: args.target.dispatchStartedAt?.toISOString() ?? null,
+      ...(args.evidence ?? {}),
+    }),
+  });
+}
+
+export async function recoverStaleTradingLifecycleExerciseDispatches(
+  exerciseId: number,
+  actorUserId: number,
+  now = new Date()
+) {
+  const staleBefore = new Date(now.getTime() - LIFECYCLE_EXERCISE_DISPATCH_STALE_MS);
+  const exercise = await prisma.tradingLifecycleExercise.findUnique({
+    where: { id: exerciseId },
+    include: {
+      targets: {
+        where: { status: TradingLifecycleExerciseTargetStatus.DISPATCHING, dispatchStartedAt: { lte: staleBefore } },
+        include: { orderIntent: { select: { id: true, status: true } } },
+        orderBy: { id: 'asc' },
+      },
+    },
+  });
+  if (!exercise) throw new HttpError(404, 'Lifecycle exercise not found.');
+  if (exercise.exerciseType !== 'SUBSCRIPTION_ENTRY' || exercise.containsLiveTargets || exercise.environment !== 'PAPER') {
+    throw new HttpError(409, 'Lifecycle exercise recovery supports PAPER Subscription-entry exercises only.');
+  }
+  await createSystemEvent({
+    type: 'trading_lifecycle_exercise.dispatch_recovery_started', entityType: 'tradingLifecycleExercise',
+    entityId: exerciseId, actorUserId, message: `Dispatch recovery started for lifecycle exercise ${exerciseId}.`,
+    payloadJson: json({ exerciseId, environment: exercise.environment, staleBefore: staleBefore.toISOString(), targetCount: exercise.targets.length }),
+  });
+  const results: Array<{ targetId: number; code: string; orderIntentId: number | null }> = [];
+  for (const target of exercise.targets) {
+    const identity = exerciseTargetIdentity(exerciseId, target.id);
+    const clientOrderId = buildSignalEntryClientOrderId({
+      signalIdentity: identity,
+      tradingAccountSubscriptionId: target.tradingAccountSubscriptionId,
+    });
+    let matches = target.orderIntent ? [target.orderIntent] : await prisma.orderIntent.findMany({
+      where: {
+        clientOrderId,
+        tradingAccountId: target.tradingAccountId,
+        tradingAccountSubscriptionId: target.tradingAccountSubscriptionId,
+      },
+      select: { id: true, status: true },
+      orderBy: { id: 'asc' },
+      take: 2,
+    });
+    if (matches.length > 1) {
+      const evidence = { clientOrderId, matchingOrderIntentIds: matches.map((row) => row.id) };
+      const changed = await prisma.tradingLifecycleExerciseTarget.updateMany({
+        where: { id: target.id, status: 'DISPATCHING', dispatchStartedAt: { lte: staleBefore }, orderIntentId: null },
+        data: {
+          status: 'ATTENTION_REQUIRED', launchOutcome: 'ATTENTION_REQUIRED',
+          launchResultCode: 'RECOVERY_AMBIGUOUS_ORDER_INTENT',
+          launchResultMessage: 'Recovery refused because multiple exact-scope OrderIntents matched.',
+          launchEvidenceJson: json(evidence), dispatchCompletedAt: now,
+        },
+      });
+      if (changed.count) await recordRecoveryEvent({ type: 'trading_lifecycle_exercise.dispatch_recovery_ambiguous', message: 'Ambiguous OrderIntent recovery refused.', exerciseId, target, actorUserId, code: 'RECOVERY_AMBIGUOUS_ORDER_INTENT', evidence });
+      results.push({ targetId: target.id, code: 'RECOVERY_AMBIGUOUS_ORDER_INTENT', orderIntentId: null });
+      continue;
+    }
+    if (matches.length === 1) {
+      const intent = matches[0]!;
+      const changed = await prisma.tradingLifecycleExerciseTarget.updateMany({
+        where: { id: target.id, status: 'DISPATCHING', dispatchStartedAt: { lte: staleBefore }, ...(target.orderIntentId ? { orderIntentId: intent.id } : { orderIntentId: null }) },
+        data: {
+          status: 'INTENT_CREATED', orderIntentId: intent.id, launchOutcome: 'RECOVERED',
+          launchResultCode: target.orderIntentId ? 'RECOVERED_LINKED_ORDER_INTENT' : 'RECOVERED_DISCOVERED_ORDER_INTENT',
+          launchResultMessage: 'Existing exact-scope OrderIntent recovered without redispatch.',
+          launchEvidenceJson: json({ clientOrderId, orderIntentStatus: intent.status, recovered: true }),
+          dispatchCompletedAt: now, intentCreatedAt: now,
+        },
+      });
+      const code = target.orderIntentId ? 'RECOVERED_LINKED_ORDER_INTENT' : 'RECOVERED_DISCOVERED_ORDER_INTENT';
+      if (changed.count) await recordRecoveryEvent({ type: 'trading_lifecycle_exercise.dispatch_order_intent_recovered', message: 'Existing OrderIntent recovered and linked without redispatch.', exerciseId, target, actorUserId, code, orderIntentId: intent.id, evidence: { clientOrderId } });
+      results.push({ targetId: target.id, code, orderIntentId: intent.id });
+      continue;
+    }
+    const reclaimed = await prisma.tradingLifecycleExerciseTarget.updateMany({
+      where: { id: target.id, status: 'DISPATCHING', dispatchStartedAt: { lte: staleBefore }, orderIntentId: null },
+      data: { dispatchStartedAt: now, launchAttemptedAt: now },
+    });
+    if (!reclaimed.count) continue;
+    await recordRecoveryEvent({ type: 'trading_lifecycle_exercise.dispatch_target_reclaimed', message: 'Stale target safely reclaimed for exact-assignment dispatch.', exerciseId, target, actorUserId, code: 'STALE_TARGET_RECLAIMED', evidence: { clientOrderId } });
+    const result = await processEntryForAccountSubscription({
+      tradingAccountSubscriptionId: target.tradingAccountSubscriptionId,
+      source: 'LIFECYCLE_EXERCISE_RECOVERY', idempotencyKey: identity,
+      signal: { signalType: 'entry', source: 'LIFECYCLE_EXERCISE_RECOVERY', reason: exercise.reason, metadata: { exerciseId, targetId: target.id, recovery: true } },
+    });
+    await prisma.tradingLifecycleExerciseTarget.update({
+      where: { id: target.id },
+      data: {
+        status: result.outcome === 'INTENT_CREATED' ? 'INTENT_CREATED' : result.outcome === 'DUPLICATE' ? 'DUPLICATE' : result.outcome === 'BLOCKED' ? 'BLOCKED' : 'FAILED',
+        orderIntentId: result.orderIntentId, launchOutcome: launchOutcome(result.outcome),
+        launchResultCode: result.code, launchResultMessage: result.message,
+        launchEvidenceJson: json({ source: 'RECOVERY', clientOrderId, outcome: result.outcome, code: result.code }),
+        dispatchCompletedAt: now, intentCreatedAt: result.orderIntentId ? now : null,
+      },
+    });
+    await recordRecoveryEvent({ type: 'trading_lifecycle_exercise.dispatch_recovery_completed', message: result.message, exerciseId, target, actorUserId, code: result.code, orderIntentId: result.orderIntentId, evidence: { clientOrderId, outcome: result.outcome } });
+    results.push({ targetId: target.id, code: result.code, orderIntentId: result.orderIntentId });
+  }
+  await createSystemEvent({
+    type: 'trading_lifecycle_exercise.dispatch_recovery_completed', entityType: 'tradingLifecycleExercise',
+    entityId: exerciseId, actorUserId, message: `Dispatch recovery completed for lifecycle exercise ${exerciseId}.`,
+    payloadJson: json({ exerciseId, environment: exercise.environment, staleBefore: staleBefore.toISOString(), results }),
+  });
+  return { exercise: await getExerciseOrThrow(exerciseId), recovery: { staleBefore, results } };
 }
 
 export async function cancelTradingLifecycleExercise(id: number, reason: string, actorUserId: number) {
