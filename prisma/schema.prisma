@@ -423,6 +423,20 @@ model TradingAccountSubscription {
 enum TradingLifecycleExerciseSelectionMode {
   SELECTED_USERS
   ALL_ELIGIBLE
+  EXPLICIT_ASSIGNMENTS
+}
+
+enum TradingLifecycleExerciseType {
+  SUBSCRIPTION_ENTRY
+}
+
+enum TradingLifecycleExerciseLaunchOutcome {
+  INTENT_CREATED
+  DUPLICATE
+  BLOCKED
+  FAILED
+  RECOVERED
+  ATTENTION_REQUIRED
 }
 
 enum TradingLifecycleExerciseStatus {
@@ -459,8 +473,10 @@ model TradingLifecycleExercise {
   subscriptionId            Int
   subscription              Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
   selectionMode             TradingLifecycleExerciseSelectionMode
+  exerciseType              TradingLifecycleExerciseType @default(SUBSCRIPTION_ENTRY)
   requestedUserIdsJson      Json
   environment               TradingAccountEnvironment
+  containsLiveTargets       Boolean @default(false)
   status                    TradingLifecycleExerciseStatus
   previewFingerprint        String
   previewVersion            Int @default(1)
@@ -505,6 +521,11 @@ model TradingLifecycleExerciseTarget {
   estimatedNotional               Float?
   orderIntentId                   Int? @unique
   orderIntent                     OrderIntent? @relation(fields: [orderIntentId], references: [id], onDelete: Restrict)
+  launchOutcome                   TradingLifecycleExerciseLaunchOutcome?
+  launchResultCode                String?
+  launchResultMessage             String?
+  launchEvidenceJson              Json?
+  launchAttemptedAt               DateTime?
   dispatchStartedAt               DateTime?
   dispatchCompletedAt             DateTime?
   intentCreatedAt                 DateTime?

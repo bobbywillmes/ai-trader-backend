@@ -261,8 +261,10 @@ Table TradingLifecycleExercise {
   subscriptionId Int [not null]
   subscription Subscription [not null]
   selectionMode TradingLifecycleExerciseSelectionMode [not null]
+  exerciseType TradingLifecycleExerciseType [not null, default: 'SUBSCRIPTION_ENTRY']
   requestedUserIdsJson Json [not null]
   environment TradingAccountEnvironment [not null]
+  containsLiveTargets Boolean [not null, default: false]
   status TradingLifecycleExerciseStatus [not null]
   previewFingerprint String [not null]
   previewVersion Int [not null, default: 1]
@@ -302,6 +304,11 @@ Table TradingLifecycleExerciseTarget {
   estimatedNotional Float
   orderIntentId Int [unique]
   orderIntent OrderIntent
+  launchOutcome TradingLifecycleExerciseLaunchOutcome
+  launchResultCode String
+  launchResultMessage String
+  launchEvidenceJson Json
+  launchAttemptedAt DateTime
   dispatchStartedAt DateTime
   dispatchCompletedAt DateTime
   intentCreatedAt DateTime
@@ -1035,6 +1042,20 @@ Enum BrokerCredentialStatus {
 Enum TradingLifecycleExerciseSelectionMode {
   SELECTED_USERS
   ALL_ELIGIBLE
+  EXPLICIT_ASSIGNMENTS
+}
+
+Enum TradingLifecycleExerciseType {
+  SUBSCRIPTION_ENTRY
+}
+
+Enum TradingLifecycleExerciseLaunchOutcome {
+  INTENT_CREATED
+  DUPLICATE
+  BLOCKED
+  FAILED
+  RECOVERED
+  ATTENTION_REQUIRED
 }
 
 Enum TradingLifecycleExerciseStatus {
