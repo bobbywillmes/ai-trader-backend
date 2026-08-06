@@ -1,0 +1,44 @@
+.brandLink {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.125rem;
+  border-radius: var(--mantine-radius-md);
+  color: inherit;
+  text-decoration: none;
+  transition:
+    background-color 140ms ease,
+    transform 140ms ease;
+}
+
+.brandLink:hover {
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.brandLink:active {
+  transform: translateY(1px);
+}
+
+.brandLink:focus-visible {
+  outline: 2px solid var(--mantine-color-cyan-5);
+  outline-offset: 3px;
+}
+
+.collapsed {
+  width: 100%;
+  justify-content: center;
+}
+
+.mark {
+  display: block;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  object-fit: contain;
+}
+
+.text {
+  min-width: 0;
+  white-space: nowrap;
+}
