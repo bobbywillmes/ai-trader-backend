@@ -80,9 +80,11 @@ describe("filters and states", () => {
   it("keeps the shrinkable primary control and Filters button in one bounded row", () => {
     render(<ResponsiveFilterToolbar primary={<input aria-label="Symbol" />} secondary={<select aria-label="Status"><option>Open</option></select>} />, { wrapper: Providers });
     const toolbar = screen.getByLabelText("Data filters");
+    const root = toolbar.closest("[data-filter-root]");
     const controls = toolbar.querySelector("[data-filter-controls]");
     const primary = toolbar.querySelector("[data-filter-primary]");
     const filters = screen.getByRole("button", { name: "Filters" });
+    expect(root?.getAttribute("data-layout")).toBe("content-driven");
     expect(controls?.contains(primary)).toBe(true);
     expect(controls?.contains(filters)).toBe(true);
     expect(primary?.contains(screen.getByLabelText("Symbol"))).toBe(true);

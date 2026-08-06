@@ -1,4 +1,4 @@
-.root { flex: 1 1 40rem; min-width: 18rem; width: 100%; }
+.root { flex: 0 1 auto; min-width: 18rem; width: 100%; }
 .toolbar { container-type: inline-size; display: flex; align-items: flex-end; justify-content: space-between; gap: var(--data-space-md); min-width: 0; }
 .controls { display: flex; align-items: flex-end; flex: 1; flex-wrap: wrap; gap: var(--data-space-sm); min-width: 0; }
 .primary { min-width: 0; flex: 1 1 16rem; }
