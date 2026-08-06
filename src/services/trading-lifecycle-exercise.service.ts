@@ -8,6 +8,8 @@ import {
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import type { LifecycleExercisePreviewInput } from '../validators/trading-lifecycle-exercise.schema.js';
+import type { SubscriptionEntryPreviewInput } from '../validators/trading-lifecycle-exercise.schema.js';
+import { evaluateAssignmentEntry } from './assignment-entry-evaluation.service.js';
 import { previewTradingAccountEntryRisk } from './trading-account-entry-risk-preview.service.js';
 import { processEntryForAccountSubscription } from './signal-entry.service.js';
 import { createSystemEvent } from './system-event.service.js';
@@ -57,6 +59,7 @@ const FINGERPRINT_ASSIGNMENT_SELECT = {
       id: true, updatedAt: true, accountHolderUserId: true, environment: true,
       status: true, tradingEnabled: true, killSwitchEnabled: true,
       estimatedTradingCapital: true, maxDeployableNotional: true,
+      accountHolder: { select: { enabled: true } },
       credential: { select: { status: true, verifiedAt: true, updatedAt: true } },
       riskSettings: { select: {
         enabled: true, updatedAt: true, maxDailyEntryOrders: true,
@@ -112,6 +115,7 @@ function staticBlockers(assignment: Awaited<ReturnType<typeof loadFingerprintAss
   if (!account.tradingEnabled) blockers.push({ code: 'ACCOUNT_TRADING_DISABLED', message: 'Trading is disabled for this account.' });
   if (account.killSwitchEnabled) blockers.push({ code: 'ACCOUNT_KILL_SWITCH_ENABLED', message: 'The account kill switch is enabled.' });
   if (account.credential?.status !== 'ACTIVE') blockers.push({ code: 'ACCOUNT_CREDENTIALS_INACTIVE', message: 'Active verified credentials are required.' });
+  if (!account.accountHolder.enabled) blockers.push({ code: 'ACCOUNT_HOLDER_DISABLED', message: 'The account holder is disabled.' });
   if (!assignment.enabled) blockers.push({ code: 'ASSIGNMENT_DISABLED', message: 'The account assignment is disabled.' });
   if (!assignment.entriesEnabled) blockers.push({ code: 'ASSIGNMENT_ENTRIES_DISABLED', message: 'Entries are disabled for the assignment.' });
   if (!assignment.exitsEnabled) blockers.push({ code: 'ASSIGNMENT_EXITS_DISABLED', message: 'Exits must be enabled for a lifecycle exercise.' });
@@ -121,6 +125,265 @@ function staticBlockers(assignment: Awaited<ReturnType<typeof loadFingerprintAss
   if (!assignment.subscription.exitProfile.enabled) blockers.push({ code: 'EXIT_PROFILE_DISABLED', message: 'The exit profile is disabled.' });
   if (!assignment.allocation?.enabled) blockers.push({ code: 'ALLOCATION_INELIGIBLE', message: 'An enabled allocation is required.' });
   return blockers;
+}
+
+const CANDIDATE_SELECT = {
+  id: true,
+  subscriptionId: true,
+  tradingAccountId: true,
+  allocationId: true,
+  enabled: true,
+  entriesEnabled: true,
+  exitsEnabled: true,
+  sizingType: true,
+  fixedQty: true,
+  maxPositionNotional: true,
+  reservedNotional: true,
+  minPositionNotional: true,
+  maxQty: true,
+  subscription: { select: {
+    id: true, key: true, name: true, enabled: true,
+    security: { select: { enabled: true } },
+    strategy: { select: { enabled: true } },
+    exitProfile: { select: { enabled: true } },
+  } },
+  allocation: { select: { id: true, key: true, name: true, enabled: true } },
+  tradingAccount: {
+    select: {
+      id: true, displayName: true, environment: true, status: true,
+      tradingEnabled: true, killSwitchEnabled: true,
+      accountHolder: { select: { id: true, name: true, email: true, enabled: true } },
+      memberships: {
+        select: { user: { select: { id: true, name: true, email: true, enabled: true } } },
+        orderBy: { userId: 'asc' },
+      },
+      credential: { select: { status: true, verifiedAt: true } },
+    },
+  },
+} satisfies Prisma.TradingAccountSubscriptionSelect;
+
+export type SubscriptionEntryCandidateUnavailableReason = { code: string; message: string };
+export type SubscriptionEntryCandidate = {
+  tradingAccountSubscriptionId: number;
+  subscriptionId: number;
+  subscription: { key: string; displayName: string };
+  tradingAccountId: number;
+  tradingAccount: {
+    displayName: string;
+    environment: string;
+    status: string;
+    tradingEnabled: boolean;
+    killSwitchEnabled: boolean;
+    credentialStatus: string | null;
+  };
+  accountHolder: { id: number; name: string | null; email: string; enabled: boolean };
+  accessMembers: Array<{ id: number; name: string | null; email: string; enabled: boolean }>;
+  assignment: {
+    enabled: boolean;
+    entriesEnabled: boolean;
+    exitsEnabled: boolean;
+    sizingType: string;
+    fixedQty: number | null;
+    maxPositionNotional: number | null;
+    reservedNotional: number | null;
+    minPositionNotional: number | null;
+    maxQty: number | null;
+  };
+  allocation: { id: number; key: string; displayName: string; enabled: boolean } | null;
+  selectable: boolean;
+  unavailableReasons: SubscriptionEntryCandidateUnavailableReason[];
+};
+
+export async function listSubscriptionEntryCandidates(subscriptionId: number): Promise<{
+  subscription: { id: number; key: string; displayName: string };
+  candidates: SubscriptionEntryCandidate[];
+}> {
+  const subscription = await prisma.subscription.findUnique({
+    where: { id: subscriptionId }, select: { id: true, key: true, name: true },
+  });
+  if (!subscription) throw new HttpError(404, 'Subscription not found.', { code: 'SUBSCRIPTION_NOT_FOUND', subscriptionId });
+
+  const assignments = await prisma.tradingAccountSubscription.findMany({
+    where: { subscriptionId }, select: CANDIDATE_SELECT,
+    orderBy: [{ tradingAccountId: 'asc' }, { id: 'asc' }],
+  });
+  const candidates = assignments.map((row): SubscriptionEntryCandidate => {
+    const unavailableReasons: SubscriptionEntryCandidateUnavailableReason[] = [];
+    if (row.tradingAccount.environment === 'LIVE') {
+      unavailableReasons.push({ code: 'LIVE_EXERCISES_NOT_SUPPORTED', message: 'Lifecycle Exercises support PAPER assignments only.' });
+    }
+    if (row.tradingAccount.environment !== 'LIVE') {
+      if (row.tradingAccount.status !== 'ACTIVE') unavailableReasons.push({ code: 'ACCOUNT_NOT_OPERATIONAL', message: 'Trading account is not active.' });
+      if (!row.tradingAccount.tradingEnabled) unavailableReasons.push({ code: 'ACCOUNT_TRADING_DISABLED', message: 'Trading is disabled for this account.' });
+      if (row.tradingAccount.killSwitchEnabled) unavailableReasons.push({ code: 'ACCOUNT_KILL_SWITCH_ENABLED', message: 'The account kill switch is enabled.' });
+      if (row.tradingAccount.credential?.status !== 'ACTIVE') unavailableReasons.push({ code: 'ACCOUNT_CREDENTIALS_INACTIVE', message: 'Active verified credentials are required.' });
+      if (!row.enabled) unavailableReasons.push({ code: 'ASSIGNMENT_DISABLED', message: 'The assignment is disabled.' });
+      if (!row.entriesEnabled) unavailableReasons.push({ code: 'ASSIGNMENT_ENTRIES_DISABLED', message: 'Entries are disabled for the assignment.' });
+      if (!row.exitsEnabled) unavailableReasons.push({ code: 'ASSIGNMENT_EXITS_DISABLED', message: 'Exits must be enabled for a lifecycle exercise.' });
+      if (!row.subscription.enabled) unavailableReasons.push({ code: 'SUBSCRIPTION_DISABLED', message: 'The Subscription is disabled.' });
+      if (!row.subscription.security.enabled) unavailableReasons.push({ code: 'SECURITY_DISABLED', message: 'The Security is disabled.' });
+      if (!row.subscription.strategy.enabled) unavailableReasons.push({ code: 'STRATEGY_DISABLED', message: 'The Strategy is disabled.' });
+      if (!row.subscription.exitProfile.enabled) unavailableReasons.push({ code: 'EXIT_PROFILE_DISABLED', message: 'The Exit Profile is disabled.' });
+      if (!row.allocation?.enabled) unavailableReasons.push({ code: 'ALLOCATION_INELIGIBLE', message: 'An enabled allocation is required.' });
+      if (!row.tradingAccount.accountHolder.enabled) unavailableReasons.push({ code: 'ACCOUNT_HOLDER_DISABLED', message: 'The account holder is disabled.' });
+    }
+    return {
+      tradingAccountSubscriptionId: row.id,
+      subscriptionId: row.subscriptionId,
+      subscription: { key: row.subscription.key, displayName: row.subscription.name },
+      tradingAccountId: row.tradingAccountId,
+      tradingAccount: {
+        displayName: row.tradingAccount.displayName, environment: row.tradingAccount.environment,
+        status: row.tradingAccount.status, tradingEnabled: row.tradingAccount.tradingEnabled,
+        killSwitchEnabled: row.tradingAccount.killSwitchEnabled,
+        credentialStatus: row.tradingAccount.credential?.status ?? null,
+      },
+      accountHolder: row.tradingAccount.accountHolder,
+      accessMembers: row.tradingAccount.memberships.map(({ user }) => user),
+      assignment: {
+        enabled: row.enabled, entriesEnabled: row.entriesEnabled, exitsEnabled: row.exitsEnabled,
+        sizingType: row.sizingType, fixedQty: row.fixedQty,
+        maxPositionNotional: row.maxPositionNotional, reservedNotional: row.reservedNotional,
+        minPositionNotional: row.minPositionNotional, maxQty: row.maxQty,
+      },
+      allocation: row.allocation ? { id: row.allocation.id, key: row.allocation.key, displayName: row.allocation.name, enabled: row.allocation.enabled } : null,
+      selectable: unavailableReasons.length === 0,
+      unavailableReasons,
+    };
+  });
+  return { subscription: { id: subscription.id, key: subscription.key, displayName: subscription.name }, candidates };
+}
+
+export async function previewSubscriptionEntryLifecycleExercise(
+  input: SubscriptionEntryPreviewInput,
+  actorUserId: number,
+  now = new Date()
+) {
+  const subscription = await prisma.subscription.findUnique({
+    where: { id: input.subscriptionId }, select: { id: true, key: true, name: true },
+  });
+  if (!subscription) throw new HttpError(404, 'Subscription not found.', { code: 'SUBSCRIPTION_NOT_FOUND', subscriptionId: input.subscriptionId });
+
+  const requestedIds = [...input.tradingAccountSubscriptionIds].sort((a, b) => a - b);
+  const identityRows = await prisma.tradingAccountSubscription.findMany({
+    where: { id: { in: requestedIds } },
+    select: {
+      id: true, subscriptionId: true,
+      tradingAccount: { select: { id: true, environment: true } },
+    },
+    orderBy: { id: 'asc' },
+  });
+  const byId = new Map(identityRows.map((row) => [row.id, row]));
+  const identityErrors = requestedIds.flatMap((assignmentId) => {
+    const row = byId.get(assignmentId);
+    if (!row) return [{ code: 'ASSIGNMENT_NOT_FOUND', tradingAccountSubscriptionId: assignmentId, message: `TradingAccountSubscription ${assignmentId} was not found.` }];
+    if (row.subscriptionId !== subscription.id) return [{ code: 'ASSIGNMENT_WRONG_SUBSCRIPTION', tradingAccountSubscriptionId: assignmentId, actualSubscriptionId: row.subscriptionId, message: `TradingAccountSubscription ${assignmentId} does not belong to Subscription ${subscription.id}.` }];
+    if (row.tradingAccount.environment !== 'PAPER') return [{ code: 'LIVE_EXERCISES_NOT_SUPPORTED', tradingAccountSubscriptionId: assignmentId, message: `TradingAccountSubscription ${assignmentId} is not a PAPER assignment.` }];
+    return [];
+  });
+  if (identityErrors.length) {
+    throw new HttpError(409, 'One or more selected assignments are invalid.', {
+      code: 'INVALID_ASSIGNMENT_SELECTION', errors: identityErrors,
+    });
+  }
+
+  const assignments = await loadFingerprintAssignments(requestedIds);
+  assignments.sort((left, right) => left.tradingAccount.id - right.tradingAccount.id || left.id - right.id);
+  const loadedIds = new Set(assignments.map((assignment) => assignment.id));
+  if (
+    assignments.length !== requestedIds.length
+    || requestedIds.some((assignmentId) => !loadedIds.has(assignmentId))
+    || assignments.some((assignment) => assignment.subscription.id !== subscription.id || assignment.tradingAccount.environment !== 'PAPER')
+  ) {
+    throw new HttpError(409, 'Selected assignment identity changed during preview creation.', {
+      code: 'ASSIGNMENT_SELECTION_CHANGED', tradingAccountSubscriptionIds: requestedIds,
+    });
+  }
+  const configFingerprint = configurationFingerprint({
+    subscriptionId: subscription.id,
+    selectionMode: 'SELECTED_USERS',
+    requestedUserIds: [],
+    assignments,
+  });
+  const targets = [];
+  for (const assignment of assignments) {
+    let evaluation: Awaited<ReturnType<typeof evaluateAssignmentEntry>> | null = null;
+    let blockers = staticBlockers(assignment);
+    try {
+      evaluation = await evaluateAssignmentEntry({
+        input: {
+          tradingAccountSubscriptionId: assignment.id,
+          subscriptionKey: subscription.key,
+          signalType: 'entry',
+          extendedHours: false,
+        },
+      });
+      blockers = [...blockers, ...evaluation.blockers.map((blocker) => ({
+        code: blocker.code.toUpperCase(), message: blocker.message,
+      }))];
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+      if (!blockers.length) blockers.push({
+        code: typeof (error.details as { rule?: unknown } | undefined)?.rule === 'string'
+          ? String((error.details as { rule: string }).rule).toUpperCase()
+          : 'ENTRY_EVALUATION_BLOCKED',
+        message: error.message,
+      });
+    }
+    targets.push({
+      assignment, evaluation, blockers,
+      status: blockers.length ? TradingLifecycleExerciseTargetStatus.BLOCKED : TradingLifecycleExerciseTargetStatus.READY,
+    });
+  }
+
+  const exercise = await prisma.tradingLifecycleExercise.create({
+    data: {
+      name: input.name ?? null, reason: input.reason, subscriptionId: subscription.id,
+      selectionMode: 'SELECTED_USERS', requestedUserIdsJson: json([]),
+      environment: 'PAPER', status: TradingLifecycleExerciseStatus.PREVIEWED,
+      previewFingerprint: configFingerprint, previewedAt: now,
+      previewExpiresAt: new Date(now.getTime() + LIFECYCLE_EXERCISE_PREVIEW_TTL_MS),
+      createdByUserId: actorUserId,
+      selectionResultsJson: json(requestedIds.map((tradingAccountSubscriptionId) => ({
+        tradingAccountSubscriptionId, outcome: 'SELECTED', code: 'EXPLICIT_ASSIGNMENT_SELECTED',
+      }))),
+      summaryJson: json({
+        targetCount: targets.length,
+        readyCount: targets.filter((row) => !row.blockers.length).length,
+        blockedCount: targets.filter((row) => row.blockers.length).length,
+      }),
+      targets: {
+        create: targets.map(({ assignment, evaluation, blockers, status }) => ({
+          accountHolderUserId: assignment.tradingAccount.accountHolderUserId,
+          tradingAccountId: assignment.tradingAccount.id,
+          tradingAccountSubscriptionId: assignment.id,
+          environment: 'PAPER', status, previewFingerprint: configFingerprint,
+          readinessJson: json(evaluation ?? {}), blockersJson: json(blockers),
+          warningsJson: json(evaluation?.warnings ?? []),
+          resolvedSizingJson: evaluation ? json(evaluation.sizing) : undefined,
+          estimatedPrice: evaluation?.referencePrice ?? null,
+          resolvedQuantity: evaluation?.sizing.qty ?? null,
+          estimatedNotional: evaluation?.estimatedNotional ?? null,
+        })) as Prisma.TradingLifecycleExerciseTargetUncheckedCreateWithoutExerciseInput[],
+      },
+    },
+    include: {
+      subscription: true,
+      createdByUser: { select: { id: true, name: true, email: true } },
+      targets: { orderBy: [{ tradingAccountId: 'asc' }, { tradingAccountSubscriptionId: 'asc' }] },
+    },
+  });
+  await createSystemEvent({
+    type: 'trading_lifecycle_exercise.previewed', entityType: 'tradingLifecycleExercise',
+    entityId: exercise.id, actorUserId,
+    message: `Paper lifecycle exercise ${exercise.id} previewed from explicit assignments.`,
+    payloadJson: json({
+      exerciseId: exercise.id, subscriptionId: subscription.id, subscriptionKey: subscription.key,
+      environment: 'PAPER', selectionMode: 'EXPLICIT_ASSIGNMENTS',
+      tradingAccountSubscriptionIds: requestedIds, targetCount: targets.length,
+    }),
+  });
+  return exercise;
 }
 
 export async function previewTradingLifecycleExercise(

@@ -5,6 +5,8 @@ import {
   getLifecycleExerciseController,
   launchLifecycleExerciseController,
   listLifecycleExercisesController,
+  listSubscriptionEntryCandidatesController,
+  previewSubscriptionEntryLifecycleExerciseController,
   previewLifecycleExerciseController,
   reconcileLifecycleExerciseTargetController,
 } from '../controllers/trading-lifecycle-exercises.controller.js';
@@ -13,6 +15,8 @@ import { PlatformPermission } from '../types/platform-rbac.js';
 
 const router = Router();
 
+router.get('/subscription-entry/candidates', requireSystemOwnerAccess, requirePermission(PlatformPermission.TRADING_LIFECYCLE_EXERCISE_READ), listSubscriptionEntryCandidatesController);
+router.post('/subscription-entry/preview', requireSystemOwnerAccess, requirePermission(PlatformPermission.TRADING_LIFECYCLE_EXERCISE_WRITE), previewSubscriptionEntryLifecycleExerciseController);
 router.get('/', requirePermission(PlatformPermission.TRADING_LIFECYCLE_EXERCISE_READ), listLifecycleExercisesController);
 router.get('/:id', requirePermission(PlatformPermission.TRADING_LIFECYCLE_EXERCISE_READ), getLifecycleExerciseController);
 router.post('/preview', requireSystemOwnerAccess, requirePermission(PlatformPermission.TRADING_LIFECYCLE_EXERCISE_WRITE), previewLifecycleExerciseController);

@@ -6,12 +6,23 @@ The initial implementation is deliberately **Paper-only**.
 
 ## Selection and preview
 
-A System Owner selects one catalog `Subscription` and either specific account
-holder Users or Everyone eligible. Selection follows
+A System Owner may use the legacy User-selection workflow to select one catalog
+`Subscription` and either specific account holder Users or Everyone eligible.
+That workflow is unchanged: selection follows
 `TradingAccount.accountHolderUserId`; memberships never create a target. Every
 matching `TradingAccountSubscription` becomes one frozen target, ordered by
 Trading Account ID and assignment ID. Previews are limited to 25 targets and
 record disabled, missing, duplicate, and otherwise unresolved User selections.
+
+The Subscription-entry workflow instead accepts an explicit, unique list of up
+to 25 `TradingAccountSubscription` IDs for one Subscription. It validates every
+requested assignment identity before creating the exercise, then freezes
+exactly those assignments. It does not expand through Users, memberships,
+account holders, sibling assignments, or other accounts on the Subscription.
+Missing assignments, assignments from another Subscription, and LIVE
+assignments reject the entire request before persistence. A valid selected
+PAPER assignment that is currently blocked by configuration, sizing, session,
+account state, or risk is preserved as a blocked preview target.
 
 Preview reuses existing sizing and entry-risk services. It creates no
 `OrderIntent` and performs no broker write. Evidence covers account,
@@ -22,6 +33,14 @@ The configuration fingerprint covers selection, frozen assignments, account and
 risk configuration, allocations, assignment sizing and enablement, and catalog
 Security, Strategy, Subscription, and ExitProfile configuration. Market prices
 are excluded. A preview expires after five minutes.
+
+The Subscription-entry candidate list reads only actual assignment rows for the
+requested Subscription. It returns assignment, account-holder/access,
+allocation, sizing, credential-status, and static configuration summaries in a
+stable account/assignment order. It does not synthesize unassigned accounts or
+perform broker calls or full risk evaluation. PAPER rows are selectable only
+when static exercise requirements pass. LIVE rows may be returned for operator
+context, but are always unavailable with `LIVE_EXERCISES_NOT_SUPPORTED`.
 
 ## Launch and idempotency
 
@@ -36,6 +55,10 @@ service remains authoritative for sizing, risk, duplicate protection,
 client-order IDs, `OrderIntent` creation, broker-write policy, and outcome
 classification. Workers asynchronously handle submission, fills, positions,
 exits, and synchronization.
+
+Launch always reads assignment IDs from frozen target rows and never accepts a
+replacement target list. Each target is revalidated against current state; an
+assignment that changed after preview is blocked rather than replaced.
 
 ## Projection and completion
 
@@ -62,6 +85,8 @@ reconciliation without repair mutations and stores only a sanitized summary.
 
 ```text
 POST /api/trading-lifecycle-exercises/preview
+GET  /api/trading-lifecycle-exercises/subscription-entry/candidates?subscriptionId=:id
+POST /api/trading-lifecycle-exercises/subscription-entry/preview
 POST /api/trading-lifecycle-exercises/:id/launch
 POST /api/trading-lifecycle-exercises/:id/cancel
 POST /api/trading-lifecycle-exercises/:exerciseId/targets/:targetId/reconciliation
