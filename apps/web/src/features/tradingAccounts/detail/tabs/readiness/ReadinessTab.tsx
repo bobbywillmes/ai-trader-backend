@@ -1,6 +1,6 @@
 import { useState } from "react";
 import {
-  Accordion, Alert, Badge, Button, Card, Group, SimpleGrid, Stack, Table, Text, Title,
+  Accordion, Alert, Badge, Button, Card, Group, ScrollArea, SimpleGrid, Stack, Table, Text, Title,
 } from "@mantine/core";
 import { ApiError } from "../../../../../lib/api";
 import {
@@ -120,7 +120,8 @@ export function ReadinessTab({ account, token }: { account: TradingAccount; toke
       {assessment && <AssessmentDetails assessment={assessment} />}
       <Card withBorder>
         <Title order={4} mb="sm">Assessment history</Title>
-        <Table striped highlightOnHover>
+        <ScrollArea>
+        <Table striped highlightOnHover style={{ minWidth: 720 }}>
           <Table.Thead><Table.Tr><Table.Th>Time</Table.Th><Table.Th>Result</Table.Th><Table.Th>Validity</Table.Th><Table.Th>Counts</Table.Th><Table.Th>Fingerprints</Table.Th></Table.Tr></Table.Thead>
           <Table.Tbody>
             {(history.data?.assessments ?? []).map((item) => (
@@ -134,6 +135,7 @@ export function ReadinessTab({ account, token }: { account: TradingAccount; toke
             ))}
           </Table.Tbody>
         </Table>
+        </ScrollArea>
       </Card>
     </Stack>
   );

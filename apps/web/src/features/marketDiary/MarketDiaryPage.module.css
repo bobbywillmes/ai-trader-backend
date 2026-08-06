@@ -1,0 +1,9 @@
+.page { min-width: 0; }
+.header { gap: var(--mantine-spacing-md); }
+.summary { max-width: 34rem; white-space: normal; overflow-wrap: anywhere; }
+.stateHero { align-items: center; background: color-mix(in srgb, var(--mantine-color-cyan-9) 14%, transparent); border: 1px solid var(--mantine-color-dark-4); border-radius: var(--mantine-radius-md); display: flex; justify-content: space-between; gap: var(--mantine-spacing-lg); padding: var(--mantine-spacing-md); }
+.stateTiming { flex: 0 0 auto; text-align: right; }
+.assessmentPrimary { min-height: 100%; }
+.longText { overflow-wrap: anywhere; white-space: pre-wrap; }
+.stateMeta { flex-wrap: wrap; }
+@media (max-width: 35rem) { .header { align-items: stretch; flex-direction: column; } .header > button { min-height: 44px; width: 100%; } .stateHero { align-items: flex-start; flex-direction: column; } .stateTiming { text-align: left; } .stateMeta { align-items: flex-start; flex-direction: column; gap: 4px; } }

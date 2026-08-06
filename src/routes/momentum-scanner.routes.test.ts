@@ -1,5 +1,5 @@
 import type { Server } from 'node:http';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   cancelStalePendingHandoffs: vi.fn(),
@@ -136,7 +136,22 @@ async function jsonResponse(response: Response) {
 
 describe('momentum scanner routes', () => {
   let server: Server | null = null;
+  let createApp: typeof import('../app/app.js')['createApp'];
   const originalEnv = { ...process.env };
+
+  beforeAll(async () => {
+    process.env = {
+      ...originalEnv,
+      NODE_ENV: 'test',
+      DATABASE_URL: 'postgresql://trader:traderpass@localhost:5432/ai_trader',
+      ALPACA_API_KEY: 'test-alpaca-key',
+      ALPACA_API_SECRET: 'test-alpaca-secret',
+      MASSIVE_API_KEY: 'test-massive-key',
+      AI_TRADER_SIGNAL_API_KEY: SIGNAL_KEY,
+      AI_TRADER_ADMIN_API_KEY: ADMIN_KEY,
+    };
+    ({ createApp } = await import('../app/app.js'));
+  });
 
   beforeEach(() => {
     vi.resetModules();
@@ -285,16 +300,15 @@ describe('momentum scanner routes', () => {
   });
 
   async function listen() {
-    const { createApp } = await import('../app/app.js');
     const app = createApp();
 
-    server = app.listen(0);
-
-    await new Promise<void>((resolve) => {
-      server?.once('listening', () => resolve());
+    const listeningServer = await new Promise<Server>((resolve, reject) => {
+      const candidate = app.listen(0, () => resolve(candidate));
+      server = candidate;
+      candidate.once('error', reject);
     });
 
-    const address = server.address();
+    const address = listeningServer.address();
 
     if (address === null || typeof address === 'string') {
       throw new Error('Expected local test server address.');

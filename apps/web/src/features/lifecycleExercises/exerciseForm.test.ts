@@ -4,6 +4,7 @@ import {
   canLaunchPaperExercise,
   DEFAULT_LIFECYCLE_EXERCISE_REASON,
   formatLifecycleExerciseName,
+  isLifecyclePreviewValid,
   showsSelectedAccountHolders,
   updateGeneratedExerciseName,
 } from "./exerciseForm";
@@ -60,6 +61,13 @@ describe("lifecycle exercise create form", () => {
   it("requires explicit Paper launch confirmation", () => {
     expect(canLaunchPaperExercise(false)).toBe(false);
     expect(canLaunchPaperExercise(true)).toBe(true);
+  });
+
+  it("only permits a non-expired preview to remain launch eligible", () => {
+    const now = new Date("2026-07-28T12:00:00.000Z");
+    expect(isLifecyclePreviewValid("PREVIEWED", "2026-07-28T12:05:00.000Z", now)).toBe(true);
+    expect(isLifecyclePreviewValid("PREVIEWED", "2026-07-28T11:59:59.000Z", now)).toBe(false);
+    expect(isLifecyclePreviewValid("RUNNING", "2026-07-28T12:05:00.000Z", now)).toBe(false);
   });
 
   it("builds selected-user and Everyone preview payloads without stale user IDs", () => {

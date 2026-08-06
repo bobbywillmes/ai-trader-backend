@@ -3,6 +3,8 @@
   flex-direction: column;
   gap: 1rem;
   color-scheme: dark;
+  min-width: 0;
+  container-type: inline-size;
 }
 
 .detail-header {
@@ -36,6 +38,7 @@
   color: #9ca3af;
   font-size: 1rem;
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .detail-header p {
@@ -138,9 +141,7 @@
   color: #9ca3af;
 }
 
-.subscriptions-card {
-  overflow-x: auto;
-}
+.subscriptions-card { min-width: 0; }
 
 .detail-table {
   width: 100%;
@@ -475,4 +476,21 @@
   color: #9ca3af;
   font-size: 0.78rem;
   white-space: nowrap;
+}
+
+@container (max-width: 46rem) {
+  .detail-header, .section-title-row { align-items: stretch; flex-direction: column; }
+  .detail-header h1 { align-items: flex-start; flex-direction: column; gap: 0.25rem; }
+  .detail-header > button, .section-title-row button { min-height: 44px; width: 100%; }
+  .detail-list div { grid-template-columns: 1fr; gap: 0.2rem; }
+  .detail-table, .detail-table tbody { display: block; }
+  .detail-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .detail-table tr { display: grid; gap: 0.55rem; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 0.75rem; padding: 0.85rem; margin-top: 0.75rem; }
+  .detail-table td { display: grid; grid-template-columns: minmax(6.5rem, 0.45fr) minmax(0, 1fr); gap: 0.75rem; border: 0; padding: 0; white-space: normal; overflow-wrap: anywhere; }
+  .detail-table td::before { content: attr(data-label); color: #9ca3af; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; }
+  .action-cell, .sub-edit-actions { align-items: stretch; flex-direction: column; }
+  .action-cell button, .sub-edit-actions button { min-height: 44px; width: 100%; }
+  .sub-edit-row { grid-template-columns: 1fr; }
+  .activity-item { align-items: flex-start; flex-direction: column; }
+  .activity-item time { white-space: normal; }
 }

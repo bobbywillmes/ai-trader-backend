@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, Checkbox, Code, CopyButton, Drawer, Group, Select, Stack, Switch, Text, TextInput } from "@mantine/core";
+import { Alert, Button, Checkbox, Code, CopyButton, Drawer, Group, Select, SimpleGrid, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { getAdminToken } from "../../lib/api";
 import { useTradingAccounts } from "../tradingAccounts/hooks";
@@ -50,12 +50,13 @@ export function UserDetailDrawer({ userId, onClose }: { userId: number | null; o
 
   async function regenerate() { if (!userId) return; try { const result = await regenerateLink.mutateAsync(userId); setSetupLink(result.setupLink); } catch (error) { notifications.show({ title: "Setup link failed", message: error instanceof Error ? error.message : "Failed to regenerate setup link", color: "red" }); } }
 
-  return <Drawer opened={userId !== null} onClose={() => { setSetupLink(null); onClose(); }} title="User Details" position="right" size="lg"><Stack>
-    {userQuery.data && <><Text fw={600}>{userQuery.data.email}</Text><TextInput label="Name" value={name} onChange={(event) => setName(event.currentTarget.value)} /><Select label="Platform Role" data={roleOptions} value={platformRole} onChange={(value) => setPlatformRole((value as PlatformRole) || "ACCOUNT_USER")} /><Switch label="Enabled" checked={enabled} onChange={(event) => setEnabled(event.currentTarget.checked)} />
+  const saving = updateUser.isPending || replaceMemberships.isPending;
+  return <Drawer opened={userId !== null} onClose={() => { if (saving) return; setSetupLink(null); onClose(); }} title="Manage User" position="right" size="lg" closeOnEscape={!saving} closeOnClickOutside={!saving} styles={{ content: { maxWidth: "100%" }, body: { paddingBottom: "max(var(--mantine-spacing-md), env(safe-area-inset-bottom))" } }}><Stack>
+    {userQuery.isError && <Alert color="red">{userQuery.error instanceof Error ? userQuery.error.message : "Unable to load this user."}</Alert>}{userQuery.data && <><Text fw={600} style={{ overflowWrap: "anywhere" }}>{userQuery.data.email}</Text><SimpleGrid cols={{ base: 1, sm: 2 }}><TextInput label="Name" value={name} onChange={(event) => setName(event.currentTarget.value)} /><Select label="Platform Role" data={roleOptions} value={platformRole} onChange={(value) => setPlatformRole((value as PlatformRole) || "ACCOUNT_USER")} /></SimpleGrid><Switch label="Enabled" checked={enabled} onChange={(event) => setEnabled(event.currentTarget.checked)} />
     <Stack gap="xs"><Text fw={600} size="sm">Trading Account memberships</Text><Text c="dimmed" size="xs">System Owners have unrestricted scope. Other users are scoped to these explicit memberships.</Text>{accountsQuery.data?.accounts.map((account) => <Checkbox key={account.id} label={account.displayName} checked={tradingAccountIds.includes(account.id)} onChange={(event) => toggleAccount(account.id, event.currentTarget.checked)} />)}</Stack>
-    <Group justify="flex-end"><Button onClick={save} loading={updateUser.isPending || replaceMemberships.isPending}>Save Changes</Button></Group>
+    {membershipsQuery.isError || accountsQuery.isError ? <Alert color="red">Account access could not be loaded. Saving is disabled to avoid replacing memberships with incomplete data.</Alert> : null}<Group justify="flex-end"><Button onClick={save} loading={saving} disabled={saving || membershipsQuery.isError || accountsQuery.isError}>Save Changes</Button></Group>
     {userQuery.data.pendingSetup && <Button variant="light" onClick={regenerate} loading={regenerateLink.isPending}>Regenerate Setup Link</Button>}
-    {setupLink && <><Code block>{setupUrl}</Code><CopyButton value={setupUrl}>{({ copied, copy }) => <Button onClick={copy}>{copied ? "Copied" : "Copy Setup Link"}</Button>}</CopyButton></>}
+    {setupLink && <><Code block style={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>{setupUrl}</Code><CopyButton value={setupUrl}>{({ copied, copy }) => <Button onClick={copy}>{copied ? "Copied" : "Copy Setup Link"}</Button>}</CopyButton></>}
     </>}
   </Stack></Drawer>;
 }

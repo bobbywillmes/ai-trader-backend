@@ -5,4 +5,5 @@ export type TradingAccountDetailTab =
   | "subscriptions"
   | "risk-health"
   | "readiness"
-  | "activity";
+  | "activity"
+  | "configuration";

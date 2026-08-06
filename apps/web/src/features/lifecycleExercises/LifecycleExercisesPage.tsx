@@ -1,189 +1,60 @@
-import { useRef, useState } from "react";
-import { Alert, Badge, Button, Card, Group, MultiSelect, ScrollArea, SegmentedControl, Select, Stack, Switch, Table, Text, TextInput, Title } from "@mantine/core";
+import { Fragment, useRef, useState } from "react";
+import { Accordion, Alert, Button, Card, Group, MultiSelect, SegmentedControl, Select, Stack, Switch, Table, Text, TextInput, Title } from "@mantine/core";
+import { IconRefresh } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
+import { CompactRecordList, DataState, DataTable, MobileRecordCard, RecordDetailsGrid, ResponsiveDataView, ResponsiveDetails, StatusBadge, formatStatusLabel, type StatusTone, type SummaryField } from "../../components/data-display";
 import { getAdminToken } from "../../lib/api";
 import { getSubscriptions } from "../subscriptions/api";
 import { listUsers } from "../users/api";
 import { useLifecycleExerciseMutations, useLifecycleExercises } from "./hooks";
-import {
-  buildLifecycleExercisePreviewPayload,
-  canLaunchPaperExercise,
-  DEFAULT_LIFECYCLE_EXERCISE_REASON,
-  showsSelectedAccountHolders,
-  updateGeneratedExerciseName,
-} from "./exerciseForm";
+import { buildLifecycleExercisePreviewPayload, canLaunchPaperExercise, DEFAULT_LIFECYCLE_EXERCISE_REASON, isLifecyclePreviewValid, showsSelectedAccountHolders, updateGeneratedExerciseName } from "./exerciseForm";
+import type { LifecycleExercise, LifecycleExerciseTarget } from "./types";
+import classes from "./LifecycleExercisesPage.module.css";
 
-const statusColor = (status: string) =>
-  status === "RUNNING" ? "blue" : status === "COMPLETED" ? "teal" : status === "BLOCKED" || status === "FAILED" ? "red" : status === "ATTENTION_REQUIRED" ? "orange" : "gray";
+const tone = (status: string): StatusTone => status === "COMPLETED" || status === "READY" ? "positive" : status === "BLOCKED" || status === "FAILED" ? "danger" : status === "ATTENTION_REQUIRED" || status === "PARTIAL" ? "warning" : "informational";
+const date = (value: string | null) => value ? new Date(value).toLocaleString() : "Not available";
+const creator = (exercise: LifecycleExercise) => exercise.createdByUser.name ?? exercise.createdByUser.email;
+const selection = (exercise: LifecycleExercise) => exercise.selectionMode === "ALL_ELIGIBLE" ? "Everyone eligible" : `${exercise.requestedUserIdsJson.length} selected user${exercise.requestedUserIdsJson.length === 1 ? "" : "s"}`;
+const isPreviewValid = (exercise: LifecycleExercise) => isLifecyclePreviewValid(exercise.status, exercise.previewExpiresAt);
+const targetIssues = (target: LifecycleExerciseTarget) => [...(target.blockersJson ?? []), ...(target.warningsJson ?? [])];
+
+function ExerciseDetails({ exercise }: { exercise: LifecycleExercise }) {
+  return <Stack gap="md" className={classes.details}>
+    <section className={classes.detailCard}><Title order={3} size="h5">Exercise</Title><RecordDetailsGrid sections={[{ items: [{ label: "Exercise ID", value: exercise.id, technical: true }, { label: "Created by", value: creator(exercise) }, { label: "Created", value: date(exercise.createdAt) }, { label: "Exercise type", value: exercise.subscription.name }, { label: "Account / environment", value: `Paper · ${exercise.subscription.key}` }, { label: "Overall status", value: formatStatusLabel(exercise.status) }, { label: "Preview expires", value: date(exercise.previewExpiresAt) }] }]} /></section>
+    <section className={classes.detailCard}><Title order={3} size="h5">Targets</Title><RecordDetailsGrid sections={[{ items: [{ label: "Selection mode", value: selection(exercise) }, { label: "Target count", value: exercise._count?.targets ?? exercise.targets?.length ?? 0 }, { label: "Environment", value: "Paper only" }, { label: "Refused targets", value: exercise.selectionResultsJson.length || "None" }] }]} /></section>
+    <section className={classes.detailCard}><Title order={3} size="h5">Progress &amp; result</Title><RecordDetailsGrid sections={[{ items: [{ label: "Status", value: formatStatusLabel(exercise.status) }, { label: "Launched", value: date(exercise.launchedAt) }, { label: "Result", value: exercise.status === "PREVIEWED" ? "Awaiting launch" : formatStatusLabel(exercise.status) }] }]} /></section>
+    <section className={classes.detailCard}><Title order={3} size="h5">Safety &amp; validation</Title><RecordDetailsGrid sections={[{ items: [{ label: "Preview validity", value: isPreviewValid(exercise) ? "Valid" : exercise.status === "PREVIEWED" ? "Expired" : "Not launchable" }, { label: "Launch eligibility", value: isPreviewValid(exercise) ? "Eligible after confirmation" : "Not eligible" }, { label: "Paper-only enforcement", value: "Required" }, { label: "Safety findings", value: exercise.selectionResultsJson.length ? `${exercise.selectionResultsJson.length} target finding(s)` : "No selection findings" }] }]} /></section>
+    <Accordion variant="contained"><Accordion.Item value="routing"><Accordion.Control>Routing &amp; identifiers</Accordion.Control><Accordion.Panel><RecordDetailsGrid sections={[{ items: [{ label: "Exercise ID", value: exercise.id, technical: true }, { label: "Subscription ID", value: exercise.subscription.id, technical: true }, { label: "Requested user IDs", value: exercise.requestedUserIdsJson.join(", ") || "None", technical: true }] }]} /></Accordion.Panel></Accordion.Item></Accordion>
+    <footer className={classes.actionFooter}><Button component={Link} to={`/lifecycle-exercises/${exercise.id}`} variant="default">Open full details</Button></footer>
+  </Stack>;
+}
+
+function PreviewTarget({ target }: { target: LifecycleExerciseTarget }) {
+  const issues = targetIssues(target);
+  return <Card withBorder radius="md" padding="sm" className={classes.previewTarget}><Group justify="space-between" align="flex-start"><div><Text fw={700}>{target.tradingAccount?.displayName ?? `Trading account ${target.tradingAccountId}`}</Text><Text size="xs" c="dimmed">Assignment {target.tradingAccountSubscriptionId}</Text></div><StatusBadge status={target.status} label={formatStatusLabel(target.status)} tone={tone(target.status)} size="compact" /></Group><RecordDetailsGrid sections={[{ items: [{ label: "Quantity", value: target.resolvedQuantity }, { label: "Estimated notional", value: target.estimatedNotional ? `$${target.estimatedNotional.toFixed(2)}` : null }, { label: "Position slots", value: target.readinessJson?.positionSlotUsage ? `${target.readinessJson.positionSlotUsage.projectedSlotCount} projected / ${target.readinessJson.positionSlotUsage.accountMaxPositions ?? "unlimited"}` : null }, { label: "Blockers / warnings", value: issues.map((item) => `${item.code}: ${item.message}`).join(" · ") || "None" }] }]} /></Card>;
+}
 
 export function LifecycleExercisesPage() {
-  const [token] = useState(() => getAdminToken());
-  const exercises = useLifecycleExercises(token);
-  const mutations = useLifecycleExerciseMutations(token);
+  const [token] = useState(() => getAdminToken()); const exercises = useLifecycleExercises(token); const mutations = useLifecycleExerciseMutations(token);
   const subscriptions = useQuery({ queryKey: ["subscriptions", "lifecycle-exercises"], queryFn: () => getSubscriptions(token as string), enabled: Boolean(token) });
   const users = useQuery({ queryKey: ["users", "lifecycle-exercises"], queryFn: listUsers, enabled: Boolean(token) });
-  const [name, setName] = useState("");
-  const nameManuallyEdited = useRef(false);
-  const [reason, setReason] = useState(DEFAULT_LIFECYCLE_EXERCISE_REASON);
-  const [subscriptionId, setSubscriptionId] = useState<string | null>(null);
-  const [selectionMode, setSelectionMode] = useState<"SELECTED_USERS" | "ALL_ELIGIBLE">("SELECTED_USERS");
-  const [userIds, setUserIds] = useState<string[]>([]);
-  const [preview, setPreview] = useState<Awaited<ReturnType<typeof mutations.preview.mutateAsync>>["exercise"] | null>(null);
-  const [launchConfirmed, setLaunchConfirmed] = useState(false);
-
-  async function createPreview() {
-    const response = await mutations.preview.mutateAsync(
-      buildLifecycleExercisePreviewPayload({
-        name,
-        reason,
-        subscriptionId: subscriptionId as string,
-        selectionMode,
-        userIds,
-      }),
-    );
-    setPreview(response.exercise);
-    setLaunchConfirmed(false);
-  }
-
-  async function launch() {
-    if (!preview || !canLaunchPaperExercise(launchConfirmed)) return;
-    const response = await mutations.launch.mutateAsync(preview.id);
-    setPreview(response.exercise);
-  }
-
+  const [name, setName] = useState(""); const nameManuallyEdited = useRef(false); const [reason, setReason] = useState(DEFAULT_LIFECYCLE_EXERCISE_REASON); const [subscriptionId, setSubscriptionId] = useState<string | null>(null); const [selectionMode, setSelectionMode] = useState<"SELECTED_USERS" | "ALL_ELIGIBLE">("SELECTED_USERS"); const [userIds, setUserIds] = useState<string[]>([]); const [preview, setPreview] = useState<LifecycleExercise | null>(null); const [launchConfirmed, setLaunchConfirmed] = useState(false); const [expandedId, setExpandedId] = useState<number | null>(null); const [drawerExercise, setDrawerExercise] = useState<LifecycleExercise | null>(null); const [detailOpener, setDetailOpener] = useState<HTMLElement | null>(null);
+  async function createPreview() { const response = await mutations.preview.mutateAsync(buildLifecycleExercisePreviewPayload({ name, reason, subscriptionId: subscriptionId as string, selectionMode, userIds })); setPreview(response.exercise); setLaunchConfirmed(false); }
+  async function launch() { if (!preview || !isPreviewValid(preview) || !canLaunchPaperExercise(launchConfirmed) || mutations.launch.isPending) return; const response = await mutations.launch.mutateAsync(preview.id); setPreview(response.exercise); }
+  function openDetails(exercise: LifecycleExercise, opener: HTMLElement) { setDetailOpener(opener); setDrawerExercise(exercise); }
+  function closeDetails() { setDrawerExercise(null); window.setTimeout(() => detailOpener?.focus(), 0); }
   const rows = exercises.data?.exercises ?? [];
-  return (
-    <Stack gap="lg">
-      <div>
-        <Title order={2}>Lifecycle Exercises</Title>
-        <Text c="dimmed">Controlled, durable Paper-only checks of the complete trading lifecycle.</Text>
-      </div>
-      <Alert color="blue" title="Paper-only safety boundary">
-        Live and mixed-environment exercises are rejected by the backend. Exercises use configured sizing and normal risk controls.
-      </Alert>
-      <Card withBorder>
-        <Stack>
-          <Title order={4}>Create and preview</Title>
-          <Group grow align="flex-end">
-            <Select label="Catalog subscription" searchable value={subscriptionId} onChange={(value) => {
-              setSubscriptionId(value);
-              if (!nameManuallyEdited.current && value) {
-                const subscription = subscriptions.data?.find((item) => item.id === Number(value));
-                if (subscription) {
-                  setName(updateGeneratedExerciseName({
-                    currentName: name,
-                    manuallyEdited: nameManuallyEdited.current,
-                    subscriptionName: subscription.name,
-                  }));
-                }
-              }
-            }}
-              data={(subscriptions.data ?? []).map((item) => ({ value: String(item.id), label: `${item.name} (${item.key})` }))} />
-            <TextInput label="Exercise name" value={name} onChange={(event) => {
-              nameManuallyEdited.current = true;
-              setName(event.currentTarget.value);
-            }} />
-            <Select label="Environment" value="PAPER" data={[{ value: "PAPER", label: "Paper" }, { value: "LIVE", label: "Live — not available yet", disabled: true }]} />
-          </Group>
-          <TextInput required label="Reason" value={reason} onChange={(event) => setReason(event.currentTarget.value)} />
-          <Stack gap={6} align="flex-start">
-            <Text size="sm" fw={500}>Account holders</Text>
-            <SegmentedControl
-              aria-label="Account holder selection mode"
-              size="sm"
-              value={selectionMode}
-              onChange={(value) => setSelectionMode(value as typeof selectionMode)}
-              data={[
-                { value: "SELECTED_USERS", label: "Selected users" },
-                { value: "ALL_ELIGIBLE", label: "Everyone eligible" },
-              ]}
-            />
-          </Stack>
-          {showsSelectedAccountHolders(selectionMode) && (
-            <MultiSelect searchable label="Selected account holders" value={userIds} onChange={setUserIds}
-              styles={{ inputField: { minWidth: "8rem", paddingInlineStart: "var(--mantine-spacing-xs)" } }}
-              data={(users.data ?? []).map((user) => ({ value: String(user.id), label: `${user.name ?? user.email}${user.enabled ? "" : " (disabled)"}` }))} />
-          )}
-          <Group>
-            <Button onClick={createPreview} loading={mutations.preview.isPending}
-              disabled={!subscriptionId || !reason.trim() || (selectionMode === "SELECTED_USERS" && !userIds.length)}>
-              Preview frozen targets
-            </Button>
-            <Text size="sm" c="dimmed">Preview expires after five minutes and creates no order intent or broker write.</Text>
-          </Group>
-          {mutations.preview.isError && <Alert color="red">{mutations.preview.error.message}</Alert>}
-          {preview && (
-            <Stack>
-              <Group justify="space-between">
-                <Title order={5}>Preview #{preview.id}</Title>
-                <Badge color={statusColor(preview.status)}>{preview.status}</Badge>
-              </Group>
-              {(preview.selectionResultsJson ?? []).map((result, index) => (
-                <Alert key={`${result.userId}-${result.code}-${index}`} color="yellow">
-                  User {result.name ?? result.email ?? result.userId}: {result.code}
-                </Alert>
-              ))}
-              <ScrollArea>
-                <Table striped withTableBorder miw={900}>
-                  <Table.Thead><Table.Tr><Table.Th>Account</Table.Th><Table.Th>Assignment</Table.Th><Table.Th>Qty</Table.Th><Table.Th>Estimated notional</Table.Th><Table.Th>Position slots</Table.Th><Table.Th>Readiness</Table.Th><Table.Th>Blockers / warnings</Table.Th></Table.Tr></Table.Thead>
-                  <Table.Tbody>{(preview.targets ?? []).map((target) => (
-                    <Table.Tr key={target.id}>
-                      <Table.Td>#{target.tradingAccountId}</Table.Td><Table.Td>#{target.tradingAccountSubscriptionId}</Table.Td>
-                      <Table.Td>{target.resolvedQuantity ?? "—"}</Table.Td><Table.Td>{target.estimatedNotional ? `$${target.estimatedNotional.toFixed(2)}` : "—"}</Table.Td>
-                      <Table.Td>{target.readinessJson?.positionSlotUsage ? `${target.readinessJson.positionSlotUsage.activePositionCount} active + ${target.readinessJson.positionSlotUsage.pendingEntryIntentSlotCount} pending = ${target.readinessJson.positionSlotUsage.usedSlots}; +${target.readinessJson.positionSlotUsage.proposedAdditionalSlots} → ${target.readinessJson.positionSlotUsage.projectedSlotCount} / ${target.readinessJson.positionSlotUsage.accountMaxPositions ?? "unlimited"}` : "—"}</Table.Td>
-                      <Table.Td><Badge color={target.status === "READY" ? "teal" : "red"}>{target.status}</Badge></Table.Td>
-                      <Table.Td>{[...(target.blockersJson ?? []), ...(target.warningsJson ?? [])].map((item) => item.code).join(", ") || "None"}</Table.Td>
-                    </Table.Tr>
-                  ))}</Table.Tbody>
-                </Table>
-              </ScrollArea>
-              {preview.status === "PREVIEWED" && (
-                <Card withBorder radius="md" p="md">
-                  <Stack gap="md" align="flex-start">
-                    <Switch
-                      checked={launchConfirmed}
-                      onChange={(event) => setLaunchConfirmed(event.currentTarget.checked)}
-                      label="I confirm this exercise will dispatch entries to the reviewed Paper targets."
-                      description="Configured sizing, risk controls, and the normal trading lifecycle remain authoritative."
-                    />
-                    <Button
-                      color="orange"
-                      onClick={launch}
-                      loading={mutations.launch.isPending}
-                      disabled={!canLaunchPaperExercise(launchConfirmed)}
-                    >
-                      Launch Paper exercise
-                    </Button>
-                  </Stack>
-                </Card>
-              )}
-              {mutations.launch.isError && <Alert color="red">{mutations.launch.error.message}</Alert>}
-            </Stack>
-          )}
-        </Stack>
-      </Card>
-      <Card withBorder>
-        <Stack>
-          <Group justify="space-between"><Title order={4}>Exercise history</Title><Button variant="default" onClick={() => exercises.refetch()} loading={exercises.isFetching}>Refresh</Button></Group>
-          {!rows.length && !exercises.isLoading && <Text c="dimmed">No lifecycle exercises yet.</Text>}
-          <ScrollArea>
-            <Table striped highlightOnHover>
-              <Table.Thead><Table.Tr><Table.Th>Exercise</Table.Th><Table.Th>Subscription</Table.Th><Table.Th>Environment</Table.Th><Table.Th>Status</Table.Th><Table.Th>Creator</Table.Th><Table.Th>Targets</Table.Th><Table.Th>Created</Table.Th><Table.Th /></Table.Tr></Table.Thead>
-              <Table.Tbody>{rows.map((exercise) => (
-                <Table.Tr key={exercise.id}>
-                  <Table.Td>#{exercise.id} {exercise.name ?? ""}</Table.Td><Table.Td>{exercise.subscription.name}</Table.Td>
-                  <Table.Td><Badge color="cyan">PAPER</Badge></Table.Td><Table.Td><Badge color={statusColor(exercise.status)}>{exercise.status}</Badge></Table.Td>
-                  <Table.Td>{exercise.createdByUser.name ?? exercise.createdByUser.email}</Table.Td><Table.Td>{exercise._count?.targets ?? 0}</Table.Td>
-                  <Table.Td>{new Date(exercise.createdAt).toLocaleString()}</Table.Td>
-                  <Table.Td><Button component={Link} to={`/lifecycle-exercises/${exercise.id}`} size="xs" variant="default">View</Button></Table.Td>
-                </Table.Tr>
-              ))}</Table.Tbody>
-            </Table>
-          </ScrollArea>
-        </Stack>
-      </Card>
-    </Stack>
-  );
+  const identity = (exercise: LifecycleExercise) => <div className={classes.identity}><Text component="h3" fw={800}>#{exercise.id} {exercise.name ?? exercise.subscription.name}</Text><Text size="xs" c="dimmed">{creator(exercise)} · {date(exercise.createdAt)}</Text></div>;
+  const fields = (exercise: LifecycleExercise): SummaryField[] => [{ label: "Scope / targets", value: `${selection(exercise)} · ${exercise._count?.targets ?? 0} target(s)` }, { label: "Account / environment", value: `${exercise.subscription.name} · Paper` }, { label: "Progress", value: exercise.status === "PREVIEWED" ? "Preview ready" : formatStatusLabel(exercise.status) }];
+  const wide = (items: readonly LifecycleExercise[]) => <DataTable caption="Lifecycle exercise history" captionHidden density="compact"><Table.Thead><Table.Tr><Table.Th>Exercise</Table.Th><Table.Th>Scope / targets</Table.Th><Table.Th>Account / environment</Table.Th><Table.Th>Status</Table.Th><Table.Th>Progress</Table.Th><Table.Th>Actions</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{items.map((exercise) => <Fragment key={exercise.id}><Table.Tr><Table.Td>{identity(exercise)}</Table.Td><Table.Td>{fields(exercise)[0].value}</Table.Td><Table.Td>{fields(exercise)[1].value}</Table.Td><Table.Td><StatusBadge status={exercise.status} label={formatStatusLabel(exercise.status)} tone={tone(exercise.status)} size="compact" /></Table.Td><Table.Td>{fields(exercise)[2].value}</Table.Td><Table.Td><Button variant="default" size="compact-sm" aria-expanded={expandedId === exercise.id} onClick={() => setExpandedId(expandedId === exercise.id ? null : exercise.id)}>Details</Button></Table.Td></Table.Tr>{expandedId === exercise.id && <Table.Tr><Table.Td colSpan={6}><ExerciseDetails exercise={exercise} /></Table.Td></Table.Tr>}</Fragment>)}</Table.Tbody></DataTable>;
+  return <main className={classes.page}><Stack gap="lg">
+    <Group justify="space-between" align="flex-end" className={classes.header}><div><Title order={2} size="h3">Lifecycle Exercises</Title><Text size="sm" c="dimmed">Controlled, durable paper-only checks of the complete trading lifecycle.</Text></div><Button variant="default" leftSection={<IconRefresh size={16} />} onClick={() => void exercises.refetch()} loading={exercises.isFetching}>Refresh</Button></Group>
+    <Alert color="blue" title="Paper-only safety boundary">Live and mixed-environment exercises are rejected by the backend. Exercises use configured sizing and normal risk controls.</Alert>
+    <Card withBorder radius="md" className={classes.panel}><Stack gap="md"><Title order={3} size="h4">Create and preview</Title><div className={classes.formGrid}><Select label="Catalog subscription" searchable value={subscriptionId} onChange={(value) => { setSubscriptionId(value); if (!nameManuallyEdited.current && value) { const item = subscriptions.data?.find((candidate) => candidate.id === Number(value)); if (item) setName(updateGeneratedExerciseName({ currentName: name, manuallyEdited: false, subscriptionName: item.name })); } }} data={(subscriptions.data ?? []).map((item) => ({ value: String(item.id), label: `${item.name} (${item.key})` }))} /><TextInput label="Exercise name" value={name} onChange={(event) => { nameManuallyEdited.current = true; setName(event.currentTarget.value); }} /><Select label="Environment" value="PAPER" data={[{ value: "PAPER", label: "Paper" }, { value: "LIVE", label: "Live — not available", disabled: true }]} /></div><TextInput required label="Reason" value={reason} onChange={(event) => setReason(event.currentTarget.value)} /><Stack gap={6} align="flex-start"><Text size="sm" fw={500}>Account holders</Text><SegmentedControl fullWidth className={classes.selection} aria-label="Account holder selection mode" value={selectionMode} onChange={(value) => setSelectionMode(value as typeof selectionMode)} data={[{ value: "SELECTED_USERS", label: "Selected users" }, { value: "ALL_ELIGIBLE", label: "Everyone eligible" }]} /></Stack>{showsSelectedAccountHolders(selectionMode) && <MultiSelect searchable label="Selected account holders" value={userIds} onChange={setUserIds} data={(users.data ?? []).map((user) => ({ value: String(user.id), label: `${user.name ?? user.email}${user.enabled ? "" : " (disabled)"}` }))} />}<div className={classes.previewAction}><Button onClick={createPreview} loading={mutations.preview.isPending} disabled={!subscriptionId || !reason.trim() || (selectionMode === "SELECTED_USERS" && !userIds.length)}>Preview frozen targets</Button><Text size="sm" c="dimmed">Non-mutating. Preview expires after five minutes.</Text></div>{mutations.preview.isError && <Alert color="red">{mutations.preview.error.message}</Alert>}
+      {preview && <Stack gap="md" className={classes.preview}><Group justify="space-between"><div><Title order={4}>Preview #{preview.id}</Title><Text size="sm" c={isPreviewValid(preview) ? "dimmed" : "red"}>Expires {date(preview.previewExpiresAt)}</Text></div><StatusBadge status={preview.status} label={formatStatusLabel(preview.status)} tone={tone(preview.status)} /></Group>{preview.selectionResultsJson.map((result, index) => <Alert key={`${result.userId}-${result.code}-${index}`} color="yellow">{result.name ?? result.email ?? `User ${result.userId}`}: {formatStatusLabel(result.code)}</Alert>)}<div className={classes.previewTargets}>{(preview.targets ?? []).map((target) => <PreviewTarget key={target.id} target={target} />)}</div>{preview.status === "PREVIEWED" && <footer className={classes.launchFooter}><Switch checked={launchConfirmed} onChange={(event) => setLaunchConfirmed(event.currentTarget.checked)} label="I confirm this exercise will dispatch entries to the reviewed Paper targets." description="Configured sizing, risk controls, and the normal trading lifecycle remain authoritative." /><Button color="orange" onClick={launch} loading={mutations.launch.isPending} disabled={!isPreviewValid(preview) || !canLaunchPaperExercise(launchConfirmed) || mutations.launch.isPending}>Launch Paper exercise</Button>{!isPreviewValid(preview) && <Text c="red" size="sm">This preview has expired. Create a new preview before launching.</Text>}</footer>}{mutations.launch.isError && <Alert color="red">{mutations.launch.error.message}</Alert>}</Stack>}
+    </Stack></Card>
+    <Card withBorder radius="md" className={classes.panel}><Stack gap="md"><Title order={3} size="h4">Exercise history</Title>{exercises.isLoading ? <DataState state="loading" message="Loading lifecycle exercises…" /> : exercises.isError ? <DataState state="error" title="Unable to load lifecycle exercises" message={exercises.error instanceof Error ? exercises.error.message : undefined} onRetry={() => void exercises.refetch()} /> : rows.length === 0 ? <DataState state="empty" title="No lifecycle exercises" message="Created previews and launched exercises will appear here." /> : <ResponsiveDataView records={rows} getRecordId={(exercise) => exercise.id} wide={wide} compact={(items) => <CompactRecordList records={items} getRecordId={(exercise) => exercise.id} renderIdentity={identity} renderFields={fields} renderDetails={(exercise) => <ExerciseDetails exercise={exercise} />} expandedId={expandedId} onExpandedChange={(id) => setExpandedId(id as number | null)} />} narrow={(items) => <MobileRecordCard records={items} getRecordId={(exercise) => exercise.id} renderIdentity={identity} renderStatus={(exercise) => <StatusBadge status={exercise.status} label={formatStatusLabel(exercise.status)} tone={tone(exercise.status)} size="compact" />} renderFields={fields} onDetails={openDetails} />} aria-label="Lifecycle exercises" />}</Stack></Card>
+  </Stack><ResponsiveDetails opened={Boolean(drawerExercise)} title={drawerExercise ? `Exercise #${drawerExercise.id}` : "Exercise details"} onClose={closeDetails} returnFocusTo={detailOpener}>{drawerExercise && <ExerciseDetails exercise={drawerExercise} />}</ResponsiveDetails></main>;
 }

@@ -1,0 +1,13 @@
+.identity, .details, .wrap { min-width: 0; }
+.wrap { overflow-wrap: anywhere; word-break: break-word; }
+.actions { min-width: max-content; }
+.inlineDetails { padding: var(--mantine-spacing-lg) !important; background: var(--mantine-color-dark-7); }
+@container responsive-data-view (max-width: 34rem) {
+  .actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    min-width: 0;
+  }
+  .actions > * { min-width: 0; min-height: var(--data-touch-target); padding-inline: var(--mantine-spacing-xs); }
+}

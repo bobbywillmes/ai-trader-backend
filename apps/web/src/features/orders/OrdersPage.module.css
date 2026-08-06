@@ -1,0 +1,17 @@
+.page { width: 100%; max-width: 112rem; min-width: 0; margin-inline: auto; }
+.panel { min-width: 0; overflow: hidden; }
+.identity { min-width: 0; }
+.identity h3, .identity p { margin: 0; }
+.wrap { max-width: 28rem; overflow-wrap: anywhere; }
+.actionsHeading { text-align: right; }
+.inlineDetails { padding: var(--data-space-lg) !important; background: rgba(15, 23, 42, .82); }
+.detailComposition { display: grid; gap: var(--data-space-md); min-width: 0; }
+.detailCards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--data-space-md); }
+.detailCard { min-width: 0; padding: clamp(1rem, 1.4vw, 1.25rem); border: 1px solid var(--mantine-color-dark-4); border-radius: var(--mantine-radius-md); background: rgba(30, 41, 59, .58); }
+.executionCard { border-inline-start: 3px solid var(--mantine-color-cyan-7); background: rgba(22, 46, 61, .5); }
+.detailHeading { margin: 0 0 var(--data-space-md); color: var(--mantine-color-gray-1); }
+.routingDisclosure { min-width: 0; overflow: hidden; }
+.drawerIdentity { display: grid; gap: var(--data-space-sm); padding-bottom: var(--data-space-md); border-bottom: 1px solid var(--mantine-color-dark-4); }
+.detailActions { display: flex; align-items: center; justify-content: space-between; gap: var(--data-space-md); padding: var(--data-space-md) clamp(1rem, 1.4vw, 1.25rem); border-top: 1px solid var(--mantine-color-dark-4); background: rgba(15, 23, 42, .52); }
+@container (max-width: 50rem) { .detailCards { grid-template-columns: 1fr; } }
+@media (max-width: 30rem) { .detailActions { align-items: flex-start; flex-direction: column; } }

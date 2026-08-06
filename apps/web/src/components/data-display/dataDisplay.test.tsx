@@ -6,6 +6,7 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CompactRecordList } from "./CompactRecordList";
 import { DataState } from "./DataState";
+import { DataTable } from "./DataTable";
 import { ResponsiveDataView } from "./ResponsiveDataView";
 import { ResponsiveDetails } from "./ResponsiveDetails";
 import { ResponsiveFilterToolbar } from "./ResponsiveFilterToolbar";
@@ -31,6 +32,11 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("responsive presentation", () => {
+  it("can retain an accessible table caption without displaying it", () => {
+    render(<DataTable caption="Open positions" captionHidden><tbody><tr><td>SPY</td></tr></tbody></DataTable>, { wrapper: Providers });
+    const table = screen.getByRole("table", { name: "Open positions" });
+    expect(table.querySelector("caption")?.className).toContain("visuallyHidden");
+  });
   it("uses centralized narrow, compact, and wide boundaries", () => {
     expect([390, 639, 640, 1099, 1100].map(getDataPresentation)).toEqual(["narrow", "narrow", "compact", "compact", "wide"]);
   });
@@ -50,9 +56,9 @@ describe("responsive presentation", () => {
 
 describe("details", () => {
   it("opens and closes inline details with associated aria state", async () => {
-    function Harness() { const [id, setId] = useState<string | number | null>(null); return <CompactRecordList records={[{ id: "spy" }]} getRecordId={(record) => record.id} renderIdentity={() => "SPY"} renderFields={() => [{ label: "Status", value: "Open" }]} renderDetails={() => "Secondary position data"} expandedId={id} onExpandedChange={setId}/>; }
+    function Harness() { const [id, setId] = useState<string | number | null>(null); return <CompactRecordList records={[{ id: "spy" }]} getRecordId={(record) => record.id} renderIdentity={() => "SPY"} renderFields={() => [{ label: "Status", value: "Open" }]} renderDetails={() => "Secondary position data"} renderActions={() => <button>Position actions</button>} expandedId={id} onExpandedChange={setId}/>; }
     render(<Harness/>, { wrapper: Providers }); const user = userEvent.setup(); const button = screen.getByRole("button", { name: "Details" });
-    expect(button.getAttribute("aria-expanded")).toBe("false"); await user.click(button); expect(button.getAttribute("aria-expanded")).toBe("true"); expect(screen.getByText("Secondary position data")).toBeTruthy(); await user.click(button); expect(screen.queryByText("Secondary position data")).toBeNull();
+    expect(screen.getByRole("button", { name: "Position actions" })).toBeTruthy(); expect(button.getAttribute("aria-expanded")).toBe("false"); await user.click(button); expect(button.getAttribute("aria-expanded")).toBe("true"); expect(screen.getByText("Secondary position data")).toBeTruthy(); await user.click(button); expect(screen.queryByText("Secondary position data")).toBeNull();
   });
 
   it("closes drawer on Escape and restores focus", async () => {
@@ -71,6 +77,19 @@ describe("status badges", () => {
 });
 
 describe("filters and states", () => {
+  it("keeps the shrinkable primary control and Filters button in one bounded row", () => {
+    render(<ResponsiveFilterToolbar primary={<input aria-label="Symbol" />} secondary={<select aria-label="Status"><option>Open</option></select>} />, { wrapper: Providers });
+    const toolbar = screen.getByLabelText("Data filters");
+    const root = toolbar.closest("[data-filter-root]");
+    const controls = toolbar.querySelector("[data-filter-controls]");
+    const primary = toolbar.querySelector("[data-filter-primary]");
+    const filters = screen.getByRole("button", { name: "Filters" });
+    expect(root?.getAttribute("data-layout")).toBe("content-driven");
+    expect(controls?.contains(primary)).toBe(true);
+    expect(controls?.contains(filters)).toBe(true);
+    expect(primary?.contains(screen.getByLabelText("Symbol"))).toBe(true);
+  });
+
   it("shows active filters, opens the mobile panel, and clears all", async () => {
     const clear = vi.fn(); render(<ResponsiveFilterToolbar primary={<label>Search<input aria-label="Search"/></label>} secondary={<label>Status<select aria-label="Status"><option>Open</option></select></label>} activeFilters={[{ key: "open", label: "Status: Open" }]} onClearAll={clear}/>, { wrapper: Providers });
     expect(screen.getByLabelText("Data filters")).toBeTruthy(); expect(within(screen.getByLabelText("Active filters")).getByText("Status: Open")).toBeTruthy();
@@ -79,6 +98,6 @@ describe("filters and states", () => {
 
   it("renders loading, empty, and retryable error states", async () => {
     const retry = vi.fn(); const { rerender } = render(<DataState state="loading"/>, { wrapper: Providers }); expect(screen.getByRole("status").getAttribute("aria-busy")).toBe("true");
-    rerender(<Providers><DataState state="empty"/></Providers>); expect(screen.getByText("No records")).toBeTruthy(); rerender(<Providers><DataState state="error" onRetry={retry}/></Providers>); await userEvent.setup().click(screen.getByRole("button", { name: "Retry" })); expect(retry).toHaveBeenCalledOnce();
+    const emptyAction = vi.fn(); rerender(<Providers><DataState state="empty" action={{ label: "Clear filters", onClick: emptyAction }}/></Providers>); expect(screen.getByText("No records")).toBeTruthy(); await userEvent.setup().click(screen.getByRole("button", { name: "Clear filters" })); expect(emptyAction).toHaveBeenCalledOnce(); rerender(<Providers><DataState state="error" onRetry={retry}/></Providers>); await userEvent.setup().click(screen.getByRole("button", { name: "Retry" })); expect(retry).toHaveBeenCalledOnce();
   });
 });

@@ -12,6 +12,7 @@ import {
   Loader,
   NumberInput,
   ScrollArea,
+  Select,
   SimpleGrid,
   Stack,
   Switch,
@@ -29,16 +30,9 @@ import { ChangePasswordModal } from "../auth/ChangePasswordModal";
 import { useConfig, useSystemStatus, useUpdateConfig } from "./hooks";
 import type { RuntimeTradingConfig } from "../dashboard/types";
 import type { SystemStatusResponse } from "./api";
-
-type RiskLimitKey =
-  | "maxDailyEntryOrders"
-  | "maxDailyEntryNotional"
-  | "maxOpenPositions"
-  | "maxTotalOpenNotional"
-  | "maxSymbolOpenNotional"
-  | "maxSubscriptionOpenNotional";
-
-type RiskLimitForm = Pick<RuntimeTradingConfig, RiskLimitKey>;
+import { Link, useSearchParams } from "react-router-dom";
+import classes from "./SettingsPage.module.css";
+import { getSettingsSection, SETTINGS_SECTIONS, settingsSectionParams, type SettingsSection } from "./sections";
 
 type ReconciliationSettingsDraft = {
   reconciliationWorkerEnabled: boolean;
@@ -51,74 +45,6 @@ type EntrySessionSettingsDraft = {
   entryCutoffMinutesBeforeClose: number | null;
   failClosedOnMarketClockError: boolean;
 };
-
-const riskLimitDefinitions: {
-  key: RiskLimitKey;
-  label: string;
-  badge: string;
-  description: string;
-  placeholder: string;
-}[] = [
-  {
-    key: "maxDailyEntryOrders",
-    label: "Max Daily Entry Orders",
-    badge: "legacy fallback",
-    description:
-      "Compatibility fallback for accounts without maxDailyEntryOrders. Usage follows the America/New_York trading date.",
-    placeholder: "Example: 5",
-  },
-  {
-    key: "maxDailyEntryNotional",
-    label: "Max Daily Entry Notional",
-    badge: "legacy fallback",
-    description:
-      "Compatibility fallback for accounts without maxDailyEntryNotional. Configured account values replace this value.",
-    placeholder: "Example: 10000",
-  },
-  {
-    key: "maxOpenPositions",
-    label: "Max Open Positions",
-    badge: "legacy fallback",
-    description:
-      "Compatibility fallback for accounts without maxOpenPositions. Pending entries also consume account position slots.",
-    placeholder: "Example: 5",
-  },
-  {
-    key: "maxTotalOpenNotional",
-    label: "Max Total Open Notional",
-    badge: "superseded",
-    description:
-      "Stored for compatibility. TradingAccount.maxDeployableNotional owns total exposure for resolved account-subscription entries.",
-    placeholder: "Example: 25000",
-  },
-  {
-    key: "maxSymbolOpenNotional",
-    label: "Max Symbol Open Notional",
-    badge: "legacy fallback",
-    description:
-      "Compatibility fallback for accounts without maxSymbolOpenNotional. Configured account values replace this value.",
-    placeholder: "Example: 5000",
-  },
-  {
-    key: "maxSubscriptionOpenNotional",
-    label: "Max Subscription Open Notional",
-    badge: "superseded",
-    description:
-      "Stored for compatibility. Resolved account subscriptions use reservations and sizing controls instead.",
-    placeholder: "Example: 5000",
-  },
-];
-
-function configToRiskForm(config: RuntimeTradingConfig): RiskLimitForm {
-  return {
-    maxDailyEntryOrders: config.maxDailyEntryOrders,
-    maxDailyEntryNotional: config.maxDailyEntryNotional,
-    maxOpenPositions: config.maxOpenPositions,
-    maxTotalOpenNotional: config.maxTotalOpenNotional,
-    maxSymbolOpenNotional: config.maxSymbolOpenNotional,
-    maxSubscriptionOpenNotional: config.maxSubscriptionOpenNotional,
-  };
-}
 
 function configToEntrySessionDraft(
   config: RuntimeTradingConfig
@@ -147,29 +73,6 @@ function normalizeNumberInput(value: string | number): number | null {
   const parsed = typeof value === "number" ? value : Number(value);
 
   return Number.isFinite(parsed) ? parsed : null;
-}
-
-function formatLimit(value: number | null) {
-  return value === null ? "No limit" : value.toLocaleString();
-}
-
-function riskLimitChanged(
-  config: RuntimeTradingConfig,
-  riskForm: RiskLimitForm,
-  key: RiskLimitKey
-) {
-  return config[key] !== riskForm[key];
-}
-
-function hasRiskLimitChanges(
-  config: RuntimeTradingConfig,
-  riskForm: RiskLimitForm | null
-) {
-  if (!riskForm) return false;
-
-  return riskLimitDefinitions.some((definition) =>
-    riskLimitChanged(config, riskForm, definition.key)
-  );
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -1204,8 +1107,8 @@ function WorkerHealthTable({
           color="gray"
         />
 
-        <ScrollArea>
-          <Table striped highlightOnHover style={{ minWidth: 980 }}>
+        <ScrollArea className={classes.workerScroll}>
+          <Table striped highlightOnHover className={classes.workerTable}>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Worker</Table.Th>
@@ -1223,7 +1126,7 @@ function WorkerHealthTable({
             <Table.Tbody>
               {health.items.map((worker) => (
                 <Table.Tr key={worker.key}>
-                  <Table.Td>
+                  <Table.Td data-label="Worker">
                     <Stack gap={2}>
                       <Text size="sm" fw={600}>
                         {worker.displayName}
@@ -1233,7 +1136,7 @@ function WorkerHealthTable({
                       </Text>
                     </Stack>
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td data-label="Criticality">
                     <Badge
                       color={criticalityColor(worker.criticality)}
                       variant="light"
@@ -1241,7 +1144,7 @@ function WorkerHealthTable({
                       {worker.criticality}
                     </Badge>
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td data-label="Status">
                     <Stack gap={2}>
                       <Badge
                         color={workerStatusColor(worker.status)}
@@ -1254,10 +1157,10 @@ function WorkerHealthTable({
                       </Text>
                     </Stack>
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td data-label="Cadence">
                     <Text size="sm">{formatCadence(worker.expectedIntervalMs)}</Text>
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td data-label="Running">
                     {worker.running && worker.currentRunStartedAt ? (
                       <Tooltip label={formatDateTime(worker.currentRunStartedAt)}>
                         <Badge color="blue" variant="light">
@@ -1276,12 +1179,12 @@ function WorkerHealthTable({
                       </Text>
                     )}
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td data-label="Last success">
                     <Tooltip label={formatDateTime(worker.lastSucceededAt)}>
                       <Text size="sm">{formatRelativeTime(worker.lastSucceededAt)}</Text>
                     </Tooltip>
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td data-label="Last work">
                     <Tooltip label={formatDateTime(worker.lastWorkSucceededAt)}>
                       <Text size="sm">
                         {worker.lastWorkSucceededAt
@@ -1292,10 +1195,10 @@ function WorkerHealthTable({
                       </Text>
                     </Tooltip>
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td data-label="Duration">
                     <Text size="sm">{formatDurationMs(worker.lastDurationMs)}</Text>
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td data-label="Failures">
                     <Text
                       size="sm"
                       c={worker.consecutiveFailures > 0 ? "red" : undefined}
@@ -1303,7 +1206,7 @@ function WorkerHealthTable({
                       {worker.consecutiveFailures}
                     </Text>
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td data-label="Error">
                     {worker.lastError ? (
                       <Tooltip label={worker.lastError} multiline maw={420}>
                         <Text size="sm" c="red" maw={220} truncate="end">
@@ -1355,6 +1258,8 @@ function StatusBadge({
 
 export function SettingsPage() {
   const theme = useMantineTheme();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeSection = getSettingsSection(searchParams.get("section"));
   const [token] = useState<string | null>(() => getAdminToken());
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
 
@@ -1363,10 +1268,6 @@ export function SettingsPage() {
 
   const { data: config, isLoading, isError } = useConfig(token);
   const updateMutation = useUpdateConfig(token);
-
-  const [riskForm, setRiskForm, resetRiskFormDraft] = useConfigDraft(
-    config ? configToRiskForm(config) : null
-  );
 
   const [
     reconciliationDraft,
@@ -1412,10 +1313,6 @@ export function SettingsPage() {
         "Trading is enabled and the kill switch is off. Entry signals may pass through if they also satisfy security, subscription, broker, and exposure checks.",
     };
   }, [config]);
-
-  const riskLimitsHaveChanges = config
-    ? hasRiskLimitChanges(config, riskForm)
-    : false;
 
   async function applyUpdate(payload: Partial<RuntimeTradingConfig>) {
     try {
@@ -1544,17 +1441,6 @@ export function SettingsPage() {
     }
   }
 
-  async function handleSaveRiskLimits() {
-    if (!riskForm) return;
-
-    await applyUpdate(riskForm);
-    resetRiskFormDraft();
-  }
-
-  function handleResetRiskForm() {
-    resetRiskFormDraft();
-  }
-
   const reconciliationSettingsChanged =
     Boolean(config && reconciliationDraft) &&
     (reconciliationDraft?.reconciliationWorkerEnabled !==
@@ -1585,6 +1471,14 @@ export function SettingsPage() {
         entrySessionDraft.entryStartMinutesAfterOpen +
           entrySessionDraft.entryCutoffMinutesBeforeClose <
           390));
+
+  function selectSection(section: SettingsSection) {
+    if (section === activeSection) return;
+    if ((entrySessionSettingsChanged || reconciliationSettingsChanged) && !window.confirm("You have unsaved settings changes. Leave this section and discard those edits?")) return;
+    if (entrySessionSettingsChanged) resetEntrySessionDraft();
+    if (reconciliationSettingsChanged) resetReconciliationDraft();
+    setSearchParams(settingsSectionParams(searchParams, section));
+  }
 
   const reconciliationIntervalValid =
     reconciliationDraft !== null &&
@@ -1625,7 +1519,7 @@ export function SettingsPage() {
   }
 
   return (
-    <Stack gap="lg">
+    <Stack gap="lg" className={classes.page}>
       <Group justify="space-between" align="flex-start">
         <div>
           <Title order={2}>Settings</Title>
@@ -1641,6 +1535,13 @@ export function SettingsPage() {
           </Badge>
         )}
       </Group>
+
+      <nav aria-label="Settings sections" className={classes.sectionNavigation}>
+        <div className={classes.tabs} role="tablist" aria-label="Settings sections">
+          {SETTINGS_SECTIONS.map((section) => <button key={section.value} type="button" role="tab" aria-selected={activeSection === section.value} className={activeSection === section.value ? classes.activeTab : undefined} onClick={() => selectSection(section.value)}>{section.label}</button>)}
+        </div>
+        <Select className={classes.selector} label="Settings section" value={activeSection} onChange={(value) => value && selectSection(value as SettingsSection)} data={SETTINGS_SECTIONS.map((section) => ({ ...section }))} allowDeselect={false} />
+      </nav>
 
       {isError && (
         <Alert color="red" title="Failed to load settings">
@@ -1664,7 +1565,7 @@ export function SettingsPage() {
           )}
 
 
-          <Card withBorder radius="md" p="lg">
+          {activeSection === "status" && <Card withBorder radius="md" p="lg">
             <Stack gap="md">
               <Group justify="space-between" align="flex-start">
                 <div>
@@ -1705,6 +1606,7 @@ export function SettingsPage() {
                   >
                     Refresh
                   </Button>
+                  <Button component={Link} to="/system-events" variant="subtle">System Events</Button>
                 </Group>
               </Group>
 
@@ -1999,9 +1901,9 @@ export function SettingsPage() {
                 </Stack>
               )}
             </Stack>
-          </Card>
+          </Card>}
 
-          <Card withBorder radius="md" p="lg">
+          {activeSection === "trading" && <Card withBorder radius="md" p="lg">
             <Stack gap="md">
               <Group justify="space-between" align="flex-start">
                 <div>
@@ -2178,9 +2080,9 @@ export function SettingsPage() {
                 </Button>
               </Group>
             </Stack>
-          </Card>
+          </Card>}
 
-          <Card withBorder radius="md" p="lg">
+          {activeSection === "trading" && <Card withBorder radius="md" p="lg">
             <Stack gap="md">
               <Group justify="space-between" align="flex-start">
                 <div>
@@ -2287,8 +2189,11 @@ export function SettingsPage() {
                 />
               </Group>
             </Stack>
-          </Card>
+          </Card>}
 
+          {/* Legacy global risk fallbacks remain in the backend contract and runtime
+              enforcement, but are intentionally not editable from this frontend. */}
+          {/*
           <Card withBorder radius="md" p="lg">
             <Stack gap="md">
               <Group justify="space-between" align="flex-start">
@@ -2398,8 +2303,9 @@ export function SettingsPage() {
               )}
             </Stack>
           </Card>
+          */}
 
-          <Card withBorder>
+          {activeSection === "integrity" && <><Alert color={systemStatus?.readiness.needsAttention ? "orange" : "teal"} title="Current integrity status">{systemStatus ? `${systemStatus.workers.health.summary.needsAttention ? "Worker health needs attention." : "Workers report no active health warning."} ${systemStatus.readiness.canEnter ? "Entry readiness is available." : "Entry readiness is blocked; review System Status and Reconciliation before intervening."}` : "Integrity status is unavailable until system status finishes loading."}</Alert><Card withBorder>
             <Stack gap="md">
               <Group justify="space-between" align="flex-start">
                 <div>
@@ -2411,6 +2317,7 @@ export function SettingsPage() {
                 </div>
 
                 <Group>
+                  <Button component={Link} to="/reconciliation" variant="subtle">Open Reconciliation</Button>
                   {reconciliationSettingsChanged && (
                     <Badge color="blue" variant="light">
                       Unsaved changes
@@ -2509,14 +2416,15 @@ export function SettingsPage() {
                 a 15 minute interval is a reasonable starting point for paper production.
               </Alert>
             </Stack>
-          </Card>
+          </Card></>}
 
         </>
       )}
 
-      <Card withBorder radius="md" p="lg">
+      {activeSection === "user" && <Card withBorder radius="md" p="lg">
         <Stack gap="md">
-          <Title order={3}>Security</Title>
+          <Title order={3}>User Settings</Title>
+          <Text size="sm" c="dimmed">These controls apply to your authenticated administrator account. No browser-local display preferences are currently persisted by this page.</Text>
 
           <Group justify="space-between" align="flex-start">
             <div>
@@ -2531,7 +2439,7 @@ export function SettingsPage() {
             </Button>
           </Group>
         </Stack>
-      </Card>
+      </Card>}
 
       {token && (
         <ChangePasswordModal

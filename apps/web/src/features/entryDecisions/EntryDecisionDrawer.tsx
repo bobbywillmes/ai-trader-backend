@@ -1,9 +1,8 @@
 import type { ReactNode } from "react";
 import {
-  Alert,
+  Accordion, Alert,
   Badge,
   Code,
-  Divider,
   Drawer,
   Group,
   Loader,
@@ -15,6 +14,7 @@ import {
 import { IconFileAnalytics } from "@tabler/icons-react";
 import { EntryDecisionAccountBadge } from "./EntryDecisionAccountBadge";
 import type { EntryDecisionDetail, EntryDecisionRelatedRecord } from "./types";
+import classes from "./EntryDecisionDrawer.module.css";
 
 type EntryDecisionDrawerProps = {
   opened: boolean;
@@ -67,7 +67,8 @@ export function EntryDecisionDrawer({
 
       {decision && (
         <Stack gap="lg">
-          <SimpleGrid cols={{ base: 1, sm: 2 }}>
+          <section className={classes.detailCard} aria-labelledby="decision-detail-heading">
+          <Title id="decision-detail-heading" order={3} size="h4" className={classes.heading}>Decision</Title><SimpleGrid cols={{ base: 1, sm: 2 }}>
             <Info
               label="Trading Account"
               value={
@@ -86,13 +87,11 @@ export function EntryDecisionDrawer({
             <Info label="Persisted" value={decision.persistenceReason} />
             <Info label="Source" value={decision.source} />
             <Info label="Market Session" value={decision.marketSession ?? "-"} />
-          </SimpleGrid>
+          </SimpleGrid></section>
 
-          <Divider />
-
-          <Stack gap="xs">
-            <Title order={3} size="h4">
-              Decision Context
+          <section className={`${classes.detailCard} ${classes.marketCard}`}>
+            <Title order={3} size="h4" className={classes.heading}>
+              Market Evaluation
             </Title>
             <SimpleGrid cols={{ base: 1, sm: 2 }}>
               <Metric label="Current Price" value={formatMoney(decision.currentPrice)} />
@@ -113,11 +112,9 @@ export function EntryDecisionDrawer({
                 value={formatNumber(decision.minutesSinceLastSignal)}
               />
             </SimpleGrid>
-          </Stack>
+          </section>
 
-          <Divider />
-
-          <SimpleGrid cols={{ base: 1, sm: 2 }}>
+          <section className={classes.detailCard}><Title order={3} size="h4" className={classes.heading}>Runtime &amp; Routing</Title><SimpleGrid cols={{ base: 1, sm: 2 }}>
             <Info label="Decision Reason" value={decision.decisionReason ?? "-"} />
             <Info label="Blocking Reason" value={decision.blockingReason ?? "-"} />
             <Info label="Signal Action" value={decision.signalAction ?? "-"} />
@@ -148,12 +145,10 @@ export function EntryDecisionDrawer({
                 </Group>
               }
             />
-          </SimpleGrid>
+          </SimpleGrid></section>
 
-          <Divider />
-
-          <Stack gap="xs">
-            <Title order={3} size="h4">
+          <section className={classes.detailCard}>
+            <Title order={3} size="h4" className={classes.heading}>
               Lifecycle Links
             </Title>
             <SimpleGrid cols={{ base: 1, sm: 2 }}>
@@ -189,20 +184,9 @@ export function EntryDecisionDrawer({
                 fallback={decision.trackedPositionId}
               />
             </SimpleGrid>
-          </Stack>
+          </section>
 
-          <Divider />
-
-          <Stack gap="xs">
-            <Title order={3} size="h4">
-              Snapshot Payloads
-            </Title>
-            <Payload label="Market" payload={decision.marketSnapshotJson} />
-            <Payload label="Runtime" payload={decision.runtimeSnapshotJson} />
-            <Payload label="Strategy" payload={decision.strategySnapshotJson} />
-            <Payload label="Indicators" payload={decision.indicatorSnapshotJson} />
-            <Payload label="Raw Decision" payload={decision.rawDecisionJson} />
-          </Stack>
+          <Accordion variant="contained" radius="md" className={classes.diagnostics}><Accordion.Item value="raw"><Accordion.Control><div><Text fw={700} size="sm">Raw diagnostics</Text><Text size="xs" c="dimmed" className={classes.technical}>{decision.decisionReason ?? decision.persistenceReason}</Text></div></Accordion.Control><Accordion.Panel><Stack gap="xs"><Info label="Raw decision reason" value={decision.decisionReason ?? "Not available"} /><Info label="Raw blocking reason" value={decision.blockingReason ?? "Not available"} /><Info label="Decision fingerprint" value={decision.decisionFingerprint} /><Payload label="Market" payload={decision.marketSnapshotJson} /><Payload label="Runtime" payload={decision.runtimeSnapshotJson} /><Payload label="Strategy" payload={decision.strategySnapshotJson} /><Payload label="Indicators" payload={decision.indicatorSnapshotJson} /><Payload label="Raw Decision" payload={decision.rawDecisionJson} /></Stack></Accordion.Panel></Accordion.Item></Accordion>
         </Stack>
       )}
     </Drawer>
@@ -281,7 +265,7 @@ function Related({
         {label}
       </Text>
       <Text size="sm" fw={600}>
-        {primary ?? "-"}
+        {primary ?? "Not created"}
       </Text>
       {record?.id !== undefined && (
         <Text size="xs" c="dimmed">

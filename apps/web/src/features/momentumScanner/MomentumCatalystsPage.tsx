@@ -1,13 +1,14 @@
 import { useMemo, useState } from "react";
-import { Alert, Anchor, Badge, Button, Card, Group, Loader, Pagination, ScrollArea, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
+import { Anchor, Badge, Button, Card, Group, Loader, Pagination, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { IconExternalLink, IconRefresh } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 
+import { CompactRecordList, DataState, DataTable, MobileRecordCard, RecordDetailsGrid, ResponsiveDataView, ResponsiveDetails, StatusBadge, type SummaryField } from "../../components/data-display";
 import { getAdminToken } from "../../lib/api";
 import { useMomentumResearchCatalysts } from "./hooks";
 import { MomentumScannerNavigation } from "./MomentumScannerNavigation";
-import type { MomentumResearchCatalystsQuery } from "./types";
+import type { MomentumResearchCatalystRow, MomentumResearchCatalystsQuery } from "./types";
 
 const sources = ["MASSIVE_NEWS", "MASSIVE_BENZINGA", "SEC_EDGAR", "COMPANY_IR", "MANUAL"];
 const catalystTypes = ["EARNINGS", "GUIDANCE", "ANALYST_UPGRADE", "ANALYST_DOWNGRADE", "FDA_REGULATORY", "CONTRACT_WIN", "PARTNERSHIP", "ACQUISITION_MERGER", "INDEX_ADDITION", "INDEX_REMOVAL", "INSIDER_BUYING", "INSIDER_SELLING", "OFFERING_DILUTION", "SEC_FILING", "PRODUCT_LAUNCH", "MACRO_MARKET", "SECTOR_THEME", "OPINION_ANALYSIS", "UNKNOWN"];
@@ -17,13 +18,6 @@ function formatDate(value: string | null | undefined) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(date);
-}
-
-function sentimentColor(value: string) {
-  if (value === "POSITIVE") return "teal";
-  if (value === "NEGATIVE") return "red";
-  if (value === "MIXED") return "yellow";
-  return "gray";
 }
 
 export function MomentumCatalystsPage() {
@@ -40,6 +34,8 @@ export function MomentumCatalystsPage() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [sort, setSort] = useState<string | null>("publishedAt:desc");
+  const [expandedId, setExpandedId] = useState<string | number | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<MomentumResearchCatalystRow | null>(null);
   const query = useMemo<MomentumResearchCatalystsQuery>(() => {
     const [sortBy, sortDirection] = (sort ?? "publishedAt:desc").split(":") as [MomentumResearchCatalystsQuery["sortBy"], "asc" | "desc"];
     return { page, pageSize: 25, sortBy, sortDirection, ...(debouncedSearch ? { search: debouncedSearch } : {}), ...(debouncedPublisher ? { publisher: debouncedPublisher } : {}), ...(source ? { source } : {}), ...(type ? { catalystType: type } : {}), ...(tier ? { tier } : {}), ...(sentiment ? { sentiment } : {}), ...(from ? { from: new Date(`${from}T00:00:00`).toISOString() } : {}), ...(to ? { to: new Date(`${to}T23:59:59.999`).toISOString() } : {}) };
@@ -48,6 +44,12 @@ export function MomentumCatalystsPage() {
   const data = result.data;
 
   function reset() { setSearch(""); setPublisher(""); setSource(null); setType(null); setTier(null); setSentiment(null); setFrom(""); setTo(""); setSort("publishedAt:desc"); setPage(1); }
+  const identity = (event: MomentumResearchCatalystRow) => <div><Text fw={700}>{event.title}</Text><Group gap="xs">{event.impactedSymbols.slice(0, 3).map((symbol) => <Anchor key={symbol} component={Link} to={`/momentum-scanner/symbols/${encodeURIComponent(symbol)}`} size="sm" fw={700}>{symbol}</Anchor>)}{event.impactedSymbols.length > 3 && <Badge size="sm" variant="light">+{event.impactedSymbols.length - 3}</Badge>}</Group></div>;
+  const status = (event: MomentumResearchCatalystRow) => <StatusBadge status={event.sentiment} label={event.sentiment} tone={event.sentiment === "POSITIVE" ? "positive" : event.sentiment === "NEGATIVE" ? "danger" : event.sentiment === "MIXED" ? "warning" : "neutral"} size="compact" />;
+  const fields = (event: MomentumResearchCatalystRow): SummaryField[] => [{ label: "Published", value: formatDate(event.publishedAt) }, { label: "Publisher", value: event.sourcePublisher ?? event.source.replaceAll("_", " ") }, { label: "Classification", value: `${event.eventType.replaceAll("_", " ")} · ${event.eventTier}` }, { label: "Candidates", value: event.candidateCount }];
+  const details = (event: MomentumResearchCatalystRow) => <RecordDetailsGrid sections={[{ title: "Catalyst", items: [...fields(event), { label: "Received", value: formatDate(event.receivedAt) }, { label: "Affected symbols", value: event.impactedSymbols.join(", ") || "None" }] }, { title: "Identifiers", items: [{ label: "Catalyst ID", value: event.id, technical: true }] }]} />;
+  const sourceAction = (event: MomentumResearchCatalystRow) => event.sourceUrl ? <Button component="a" href={event.sourceUrl} target="_blank" rel="noreferrer" variant="subtle" size="compact-sm" rightSection={<IconExternalLink size={14} />}>Source</Button> : undefined;
+  const wide = (events: readonly MomentumResearchCatalystRow[]) => <DataTable caption="Momentum catalysts" captionHidden density="compact"><Table.Thead><Table.Tr><Table.Th>Headline / symbols</Table.Th><Table.Th>Published</Table.Th><Table.Th>Publisher</Table.Th><Table.Th>Classification</Table.Th><Table.Th>Sentiment</Table.Th><Table.Th ta="right">Candidates</Table.Th><Table.Th /></Table.Tr></Table.Thead><Table.Tbody>{events.map((event) => <Table.Tr key={event.id}><Table.Td maw={420}>{identity(event)}</Table.Td><Table.Td>{formatDate(event.publishedAt)}</Table.Td><Table.Td>{fields(event)[1].value}</Table.Td><Table.Td>{fields(event)[2].value}</Table.Td><Table.Td>{status(event)}</Table.Td><Table.Td ta="right">{event.candidateCount}</Table.Td><Table.Td>{sourceAction(event)}</Table.Td></Table.Tr>)}</Table.Tbody></DataTable>;
 
   return (
     <Stack gap="lg">
@@ -64,8 +66,9 @@ export function MomentumCatalystsPage() {
         <TextInput type="date" label="Published through" value={to} onChange={(event) => { setTo(event.currentTarget.value); setPage(1); }} />
         <Select label="Sort" data={[{ value: "publishedAt:desc", label: "Newest published" }, { value: "receivedAt:desc", label: "Newest received" }, { value: "updatedAt:desc", label: "Recently updated" }, { value: "publishedAt:asc", label: "Oldest published" }]} value={sort} onChange={(value) => { setSort(value); setPage(1); }} />
       </SimpleGrid><Group justify="space-between"><Text size="sm" c="dimmed">{data ? `${data.pagination.total.toLocaleString()} catalyst events` : "Loading catalysts…"}</Text><Button variant="subtle" size="compact-sm" leftSection={<IconRefresh size={14} />} onClick={reset}>Reset filters</Button></Group></Stack></Card>
-      {result.isError && <Alert color="red" title="Unable to load catalysts">{result.error instanceof Error ? result.error.message : "Catalyst research could not be loaded."}</Alert>}
-      <Card withBorder radius="md" p={0}>{!result.isLoading && data?.data.length === 0 ? <Text c="dimmed" p="lg">No catalyst events match these filters.</Text> : <ScrollArea type="auto"><Table striped highlightOnHover miw={1050}><Table.Thead><Table.Tr><Table.Th>Published</Table.Th><Table.Th>Symbols</Table.Th><Table.Th>Publisher</Table.Th><Table.Th>Headline</Table.Th><Table.Th>Type</Table.Th><Table.Th>Tier</Table.Th><Table.Th>Sentiment</Table.Th><Table.Th ta="right">Candidates</Table.Th><Table.Th /></Table.Tr></Table.Thead><Table.Tbody>{data?.data.map((event) => <Table.Tr key={event.id}><Table.Td><Text size="sm">{formatDate(event.publishedAt)}</Text><Text size="xs" c="dimmed">Received {formatDate(event.receivedAt)}</Text></Table.Td><Table.Td><Group gap={5} maw={180}>{event.impactedSymbols.slice(0, 4).map((symbol) => <Anchor key={symbol} component={Link} to={`/momentum-scanner/symbols/${encodeURIComponent(symbol)}`} size="sm" fw={700}>{symbol}</Anchor>)}{event.impactedSymbols.length > 4 && <Badge size="sm" variant="light">+{event.impactedSymbols.length - 4}</Badge>}</Group></Table.Td><Table.Td>{event.sourcePublisher ?? event.source.replaceAll("_", " ")}</Table.Td><Table.Td maw={380}><Text size="sm" fw={600} lineClamp={2}>{event.title}</Text>{event.momentumCandidates.slice(0, 2).map((candidate) => <Anchor key={candidate.id} component={Link} to={`/momentum-scanner/candidates/${encodeURIComponent(candidate.id)}`} display="block" size="xs">{candidate.symbol} candidate</Anchor>)}</Table.Td><Table.Td><Badge variant="light">{event.eventType.replaceAll("_", " ")}</Badge></Table.Td><Table.Td><Badge variant="outline">{event.eventTier}</Badge></Table.Td><Table.Td><Badge color={sentimentColor(event.sentiment)} variant="light">{event.sentiment}</Badge></Table.Td><Table.Td ta="right">{event.candidateCount}</Table.Td><Table.Td>{event.sourceUrl ? <Button component="a" href={event.sourceUrl} target="_blank" rel="noreferrer" variant="subtle" size="compact-sm" rightSection={<IconExternalLink size={14} />}>Source</Button> : <Text size="sm" c="dimmed">-</Text>}</Table.Td></Table.Tr>)}</Table.Tbody></Table></ScrollArea>}</Card>
+      {result.isError && <DataState state="error" title="Unable to load catalysts" message={result.error instanceof Error ? result.error.message : "Catalyst research could not be loaded."} onRetry={() => void result.refetch()} />}
+      <Card withBorder radius="md" p="md">{result.isLoading ? <DataState state="loading" message="Loading catalysts…" /> : data?.data.length === 0 ? <DataState state="empty" title="No matching catalysts" message="No catalyst events match the current filters." action={{ label: "Clear filters", onClick: reset }} /> : data && <ResponsiveDataView records={data.data} getRecordId={(event) => event.id} wide={wide} compact={(events) => <CompactRecordList records={events} getRecordId={(event) => event.id} renderIdentity={(event) => <Stack gap="xs">{identity(event)}{status(event)}</Stack>} renderFields={fields} renderDetails={details} renderActions={sourceAction} expandedId={expandedId} onExpandedChange={setExpandedId} />} narrow={(events) => <MobileRecordCard records={events} getRecordId={(event) => event.id} renderIdentity={identity} renderStatus={status} renderFields={fields} onDetails={(event) => setSelectedEvent(event)} renderActions={sourceAction} detailsLabel="View catalyst" />} aria-label="Momentum catalysts" />}</Card>
+      <ResponsiveDetails opened={selectedEvent !== null} title={selectedEvent ? `${selectedEvent.impactedSymbols[0] ?? "Momentum"} catalyst` : "Catalyst details"} onClose={() => setSelectedEvent(null)}>{selectedEvent && details(selectedEvent)}</ResponsiveDetails>
       {data && data.pagination.totalPages > 1 && <Group justify="flex-end"><Pagination value={data.pagination.page} total={data.pagination.totalPages} onChange={setPage} /></Group>}
     </Stack>
   );

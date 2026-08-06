@@ -1,0 +1,10 @@
+.page { min-width: 0; container-type: inline-size; }
+.header { gap: var(--mantine-spacing-md); }
+.identity { min-width: 0; max-width: 28rem; }
+.identity :global(.mantine-Text-root) { overflow-wrap: anywhere; }
+.details { min-width: 0; }
+.detailCard { border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-md); padding: var(--mantine-spacing-md); }
+.detailCard h3 { margin-bottom: var(--mantine-spacing-sm); }
+.technical { border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-md); padding: var(--mantine-spacing-sm) var(--mantine-spacing-md); }
+.technical summary { cursor: pointer; font-weight: 600; min-height: 44px; display: flex; align-items: center; }
+@container (max-width: 35rem) { .header { align-items: stretch; flex-direction: column; } .header button { min-height: 44px; width: 100%; } }

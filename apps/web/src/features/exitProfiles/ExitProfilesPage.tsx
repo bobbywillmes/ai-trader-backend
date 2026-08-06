@@ -1,381 +1,68 @@
-import React, { useState, Fragment } from "react";
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  Checkbox,
-  Group,
-  Loader,
-  ScrollArea,
-  Select,
-  SimpleGrid,
-  Stack,
-  Table,
-  Text,
-  TextInput,
-  Title,
-} from "@mantine/core";
+import { Fragment, useState } from "react";
+import { Accordion, Alert, Button, Card, Checkbox, Group, Modal, Select, SimpleGrid, Stack, Table, Text, TextInput, Textarea, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+
+import { CompactRecordList, DataState, DataTable, MobileRecordCard, RecordDetailsGrid, ResponsiveActions, ResponsiveDataView, ResponsiveDetails, ResponsiveFilterToolbar, StatusBadge, formatStatusLabel, type SummaryField } from "../../components/data-display";
 import { getAdminToken } from "../../lib/api";
-import { useExitProfiles, useCreateExitProfile, useUpdateExitProfile } from "./hooks";
 import { useSubscriptions } from "../subscriptions/hooks";
+import { useCreateExitProfile, useExitProfiles, useUpdateExitProfile } from "./hooks";
 import type { ExitProfile, ExitProfileForm } from "./types";
+import classes from "./ExitProfilesPage.module.css";
 
-const EMPTY_FORM: ExitProfileForm = {
-  key: "",
-  name: "",
-  description: "",
-  targetPct: "",
-  stopLossPct: "",
-  trailingStopPct: "",
-  maxHoldDays: "",
-  exitMode: "fixed_bracket",
-  takeProfitBehavior: "immediate",
-  enabled: true,
-};
+const EMPTY_FORM: ExitProfileForm = { key: "", name: "", description: "", targetPct: "", stopLossPct: "", trailingStopPct: "", maxHoldDays: "", exitMode: "fixed_bracket", takeProfitBehavior: "immediate", enabled: true };
+function exitProfileToForm(profile: ExitProfile): ExitProfileForm { return { key: profile.key, name: profile.name, description: profile.description ?? "", targetPct: profile.targetPct === null ? "" : String(profile.targetPct), stopLossPct: profile.stopLossPct === null ? "" : String(profile.stopLossPct), trailingStopPct: profile.trailingStopPct === null ? "" : String(profile.trailingStopPct), maxHoldDays: profile.maxHoldDays === null ? "" : String(profile.maxHoldDays), exitMode: profile.exitMode, takeProfitBehavior: profile.takeProfitBehavior, enabled: profile.enabled }; }
+function numberOrNull(value: string, integer = false) { const trimmed = value.trim(); if (!trimmed) return null; const parsed = Number(trimmed); if (Number.isNaN(parsed) || (integer && !Number.isInteger(parsed))) throw new Error(integer ? `Expected whole number: ${value}` : `Invalid number: ${value}`); return parsed; }
+function pct(value: number | null) { return value === null ? "Not configured" : `${value}%`; }
+function profileIdFromName(name: string) { return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, ""); }
 
-function exitProfileToForm(profile: ExitProfile): ExitProfileForm {
-  return {
-    key: profile.key,
-    name: profile.name,
-    description: profile.description ?? "",
-    targetPct: profile.targetPct === null ? "" : String(profile.targetPct),
-    stopLossPct: profile.stopLossPct === null ? "" : String(profile.stopLossPct),
-    trailingStopPct: profile.trailingStopPct === null ? "" : String(profile.trailingStopPct),
-    maxHoldDays: profile.maxHoldDays === null ? "" : String(profile.maxHoldDays),
-    exitMode: profile.exitMode,
-    takeProfitBehavior: profile.takeProfitBehavior,
-    enabled: profile.enabled,
-  };
-}
-
-function emptyToNumberOrNull(value: string): number | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const parsed = Number(trimmed);
-  if (Number.isNaN(parsed)) throw new Error(`Invalid number: ${value}`);
-  return parsed;
-}
-
-function emptyToIntOrNull(value: string): number | null {
-  const parsed = emptyToNumberOrNull(value);
-  if (parsed === null) return null;
-  if (!Number.isInteger(parsed)) throw new Error(`Expected whole number: ${value}`);
-  return parsed;
-}
-
-type ExitProfileEditorProps = {
-  form: ExitProfileForm;
-  setForm: React.Dispatch<React.SetStateAction<ExitProfileForm>>;
-  onSave: () => void;
-  onCancel: () => void;
-  isCreating: boolean;
-  isSaving: boolean;
-};
-
-function ExitProfileEditor({ form, setForm, onSave, onCancel, isCreating, isSaving }: ExitProfileEditorProps) {
-  function field<K extends keyof ExitProfileForm>(key: K) {
-    return (value: ExitProfileForm[K]) => setForm((f) => ({ ...f, [key]: value }));
-  }
-
-  return (
-    <Stack gap="md" p="sm" style={{ background: "var(--mantine-color-dark-7)", borderRadius: "var(--mantine-radius-md)" }}>
-      <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="sm">
-        <TextInput
-          label="Key"
-          value={form.key}
-          disabled={!isCreating}
-          onChange={(e) => field("key")(e.currentTarget.value)}
-          size="sm"
-        />
-        <TextInput
-          label="Name"
-          value={form.name}
-          onChange={(e) => field("name")(e.currentTarget.value)}
-          size="sm"
-        />
-        <TextInput
-          label="Description"
-          value={form.description}
-          onChange={(e) => field("description")(e.currentTarget.value)}
-          size="sm"
-        />
-        <TextInput
-          label="Target %"
-          placeholder="e.g. 5"
-          value={form.targetPct}
-          onChange={(e) => field("targetPct")(e.currentTarget.value)}
-          size="sm"
-        />
-        <TextInput
-          label="Stop Loss %"
-          placeholder="e.g. 3"
-          value={form.stopLossPct}
-          onChange={(e) => field("stopLossPct")(e.currentTarget.value)}
-          size="sm"
-        />
-        <TextInput
-          label="Trailing Stop %"
-          placeholder="e.g. 2"
-          value={form.trailingStopPct}
-          onChange={(e) => field("trailingStopPct")(e.currentTarget.value)}
-          size="sm"
-        />
-        <TextInput
-          label="Max Hold Days"
-          placeholder="e.g. 10"
-          value={form.maxHoldDays}
-          onChange={(e) => field("maxHoldDays")(e.currentTarget.value)}
-          size="sm"
-        />
-        <Select
-          label="Exit Mode"
-          data={[
-            { value: "fixed_target", label: "Fixed Target" },
-            { value: "fixed_bracket", label: "Fixed Bracket" },
-            { value: "hybrid", label: "Hybrid" },
-            { value: "ai_assisted", label: "AI Assisted" },
-          ]}
-          value={form.exitMode}
-          onChange={(v) => field("exitMode")(v ?? form.exitMode)}
-          size="sm"
-        />
-        <Select
-          label="Take Profit Behavior"
-          data={[
-            { value: "immediate", label: "Immediate" },
-            { value: "trail_after_target", label: "Trail After Target" },
-            { value: "ai_confirm", label: "AI Confirm" },
-          ]}
-          value={form.takeProfitBehavior}
-          onChange={(v) => field("takeProfitBehavior")(v ?? form.takeProfitBehavior)}
-          size="sm"
-        />
-      </SimpleGrid>
-
-      <Group gap="sm" align="center">
-        <Checkbox
-          label="Enabled"
-          checked={form.enabled}
-          onChange={(e) => field("enabled")(e.currentTarget.checked)}
-          size="sm"
-        />
-      </Group>
-
-      <Group gap="sm">
-        <Button size="sm" color="cyan" loading={isSaving} onClick={onSave}>
-          Save
-        </Button>
-        <Button size="sm" variant="subtle" onClick={onCancel}>
-          Cancel
-        </Button>
-      </Group>
-    </Stack>
-  );
+function ProfileDetails({ profile, usage }: { profile: ExitProfile; usage: number }) {
+  return <Stack gap="md" className={classes.details}>
+    <section className={classes.detailCard}><Title order={3} size="h5">Profile</Title><RecordDetailsGrid sections={[{ items: [{ label: "Display name", value: profile.name }, { label: "Key", value: profile.key, technical: true }, { label: "Description", value: profile.description || "No description configured" }, { label: "Status", value: profile.enabled ? "Enabled" : "Disabled" }, { label: "Exit mode", value: formatStatusLabel(profile.exitMode) }, { label: "Take-profit behavior", value: formatStatusLabel(profile.takeProfitBehavior) }] }]} /></section>
+    <section className={classes.detailCard}><Title order={3} size="h5">Target behavior</Title><RecordDetailsGrid sections={[{ items: [{ label: "Target percentage", value: pct(profile.targetPct) }, { label: "Stop-loss percentage", value: pct(profile.stopLossPct) }, { label: "Unlock rule", value: profile.takeProfitBehavior === "trail_after_target" ? "Target unlocks trailing behavior" : formatStatusLabel(profile.takeProfitBehavior) }, { label: "Maximum hold", value: profile.maxHoldDays === null ? "Not configured" : `${profile.maxHoldDays} days` }] }]} /></section>
+    <section className={classes.detailCard}><Title order={3} size="h5">Trailing behavior</Title><RecordDetailsGrid sections={[{ items: [{ label: "Trail percentage", value: pct(profile.trailingStopPct) }, { label: "Stop behavior", value: profile.trailingStopPct === null ? "No trailing stop configured" : "Trails by configured percentage" }, { label: "High-water mark", value: profile.trailingStopPct === null ? "Not applicable" : "Maintained by existing exit lifecycle logic" }] }]} /></section>
+    <section className={classes.detailCard}><Title order={3} size="h5">Usage &amp; safety</Title><RecordDetailsGrid sections={[{ items: [{ label: "Subscription usage", value: `${usage} subscription${usage === 1 ? "" : "s"}` }, { label: "Edit safety", value: usage > 0 ? "Saving requires confirmation because dependent behavior may change" : "No subscription dependency detected" }, { label: "Removal", value: "No removal action is exposed by the current API" }] }]} /></section>
+    <Accordion variant="contained"><Accordion.Item value="routing"><Accordion.Control>Routing &amp; identifiers</Accordion.Control><Accordion.Panel><RecordDetailsGrid sections={[{ items: [{ label: "Exit profile ID", value: profile.id, technical: true }, { label: "Profile key", value: profile.key, technical: true }, { label: "Raw exit mode", value: profile.exitMode, technical: true }, { label: "Raw take-profit behavior", value: profile.takeProfitBehavior, technical: true }] }]} /></Accordion.Panel></Accordion.Item></Accordion>
+  </Stack>;
 }
 
 export function ExitProfilesPage() {
-  const [token] = useState<string | null>(() => getAdminToken());
-  const [creatingProfile, setCreatingProfile] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [form, setForm] = useState<ExitProfileForm>(EMPTY_FORM);
-
-  const { data: exitProfiles = [], isLoading, isError, error } = useExitProfiles(token);
-  const { data: subscriptions = [] } = useSubscriptions(token);
-  const createMutation = useCreateExitProfile(token);
-  const updateMutation = useUpdateExitProfile(token);
-
-  function startCreating() {
-    setCreatingProfile(true);
-    setEditingId(null);
-    setForm(EMPTY_FORM);
-  }
-
-  function startEditing(profile: ExitProfile) {
-    setCreatingProfile(false);
-    setEditingId(profile.id);
-    setForm(exitProfileToForm(profile));
-  }
-
-  function cancelForm() {
-    setCreatingProfile(false);
-    setEditingId(null);
-  }
-
+  const [token] = useState<string | null>(() => getAdminToken()); const [editing, setEditing] = useState<ExitProfile | "new" | null>(null); const [form, setForm] = useState<ExitProfileForm>(EMPTY_FORM);
+  const [search, setSearch] = useState(""); const [status, setStatus] = useState("all"); const [expandedId, setExpandedId] = useState<number | null>(null); const [detailProfile, setDetailProfile] = useState<ExitProfile | null>(null); const [detailOpener, setDetailOpener] = useState<HTMLElement | null>(null);
+  const [autoPopulateId, setAutoPopulateId] = useState(true);
+  const profilesQuery = useExitProfiles(token); const exitProfiles = profilesQuery.data ?? []; const subscriptionsQuery = useSubscriptions(token); const subscriptions = subscriptionsQuery.data ?? [];
+  const createMutation = useCreateExitProfile(token); const updateMutation = useUpdateExitProfile(token); const isSaving = createMutation.isPending || updateMutation.isPending;
+  const usage = (profile: ExitProfile) => subscriptions.filter((item) => item.exitProfile?.key === profile.key).length;
+  const filtered = exitProfiles.filter((profile) => { if (status === "enabled" && !profile.enabled) return false; if (status === "disabled" && profile.enabled) return false; const term = search.trim().toLowerCase(); return !term || [profile.name, profile.key, profile.description, profile.exitMode, profile.takeProfitBehavior].filter(Boolean).join(" ").toLowerCase().includes(term); });
+  function startCreating() { setForm(EMPTY_FORM); setAutoPopulateId(true); setEditing("new"); }
+  function startEditing(profile: ExitProfile) { setForm(exitProfileToForm(profile)); setAutoPopulateId(false); setEditing(profile); }
+  function field<K extends keyof ExitProfileForm>(key: K, value: ExitProfileForm[K]) { setForm((current) => ({ ...current, [key]: value })); }
+  function updateName(name: string) { setForm((current) => ({ ...current, name, key: editing === "new" && autoPopulateId ? profileIdFromName(name) : current.key })); }
+  function updateId(key: string) { setAutoPopulateId(false); field("key", key); }
   async function handleSave() {
-    const key = form.key.trim();
-    const name = form.name.trim();
-
-    if (!key) { notifications.show({ message: "Key is required.", color: "red" }); return; }
-    if (!name) { notifications.show({ message: "Name is required.", color: "red" }); return; }
-
-    let targetPct, stopLossPct, trailingStopPct, maxHoldDays;
+    const key = form.key.trim(); const name = form.name.trim(); if (!key) { notifications.show({ message: "Key is required.", color: "red" }); return; } if (!name) { notifications.show({ message: "Name is required.", color: "red" }); return; }
     try {
-      targetPct = emptyToNumberOrNull(form.targetPct);
-      stopLossPct = emptyToNumberOrNull(form.stopLossPct);
-      trailingStopPct = emptyToNumberOrNull(form.trailingStopPct);
-      maxHoldDays = emptyToIntOrNull(form.maxHoldDays);
-    } catch (err) {
-      notifications.show({ message: err instanceof Error ? err.message : "Invalid value.", color: "red" });
-      return;
-    }
-
-    const commonFields = {
-      name,
-      description: form.description.trim() || null,
-      targetPct,
-      stopLossPct,
-      trailingStopPct,
-      maxHoldDays,
-      exitMode: form.exitMode,
-      takeProfitBehavior: form.takeProfitBehavior,
-      enabled: form.enabled,
-    };
-
-    try {
-      if (editingId !== null) {
-        const matchingProfile = exitProfiles.find((p) => p.id === editingId);
-        const usedByEnabled = matchingProfile
-          ? subscriptions.filter((s) => s.enabled && s.exitProfile?.key === matchingProfile.key)
-          : [];
-
-        if (usedByEnabled.length > 0) {
-          const ok = window.confirm(
-            `This exit profile is used by ${usedByEnabled.length} enabled subscription(s). Saving will affect live exit behavior. Continue?`
-          );
-          if (!ok) return;
-        }
-
-        await updateMutation.mutateAsync({ id: editingId, payload: commonFields });
-        notifications.show({ message: `Exit profile updated: ${key}`, color: "teal" });
-      } else {
-        await createMutation.mutateAsync({ key, ...commonFields });
-        notifications.show({ message: `Exit profile created: ${key}`, color: "teal" });
-      }
-      cancelForm();
-    } catch (err) {
-      notifications.show({
-        message: err instanceof Error ? err.message : "Failed to save exit profile.",
-        color: "red",
-      });
-    }
+      const payload = { name, description: form.description.trim() || null, targetPct: numberOrNull(form.targetPct), stopLossPct: numberOrNull(form.stopLossPct), trailingStopPct: numberOrNull(form.trailingStopPct), maxHoldDays: numberOrNull(form.maxHoldDays, true), exitMode: form.exitMode, takeProfitBehavior: form.takeProfitBehavior, enabled: form.enabled };
+      if (editing !== "new" && editing) { const usedByEnabled = subscriptions.filter((item) => item.enabled && item.exitProfile?.key === editing.key); if (usedByEnabled.length > 0 && !window.confirm(`This exit profile is used by ${usedByEnabled.length} enabled subscription(s). Saving will affect live exit behavior. Continue?`)) return; await updateMutation.mutateAsync({ id: editing.id, payload }); notifications.show({ message: `Exit profile updated: ${key}`, color: "teal" }); }
+      else { await createMutation.mutateAsync({ key, ...payload }); notifications.show({ message: `Exit profile created: ${key}`, color: "teal" }); }
+      setEditing(null);
+    } catch (error) { notifications.show({ message: error instanceof Error ? error.message : "Failed to save exit profile.", color: "red" }); }
   }
-
-  const isSaving = createMutation.isPending || updateMutation.isPending;
-
-  return (
-    <Stack gap="lg">
-      <Group justify="space-between" align="flex-end">
-        <div>
-          <Title order={2} size="h3">Exit Profiles</Title>
-          <Text size="sm" c="dimmed">View and edit exit profiles.</Text>
-        </div>
-        <Button size="sm" color="cyan" onClick={startCreating} disabled={creatingProfile}>
-          New Profile
-        </Button>
-      </Group>
-
-      {creatingProfile && (
-        <ExitProfileEditor
-          form={form}
-          setForm={setForm}
-          onSave={handleSave}
-          onCancel={cancelForm}
-          isCreating
-          isSaving={isSaving}
-        />
-      )}
-
-      <Card withBorder radius="md" p="md">
-        {isError && (
-          <Alert color="red" mb="md">
-            {error instanceof Error ? error.message : "Failed to load exit profiles."}
-          </Alert>
-        )}
-
-        {isLoading && (
-          <Group gap="sm">
-            <Loader size="sm" color="cyan" />
-            <Text size="sm" c="dimmed">Loading exit profiles…</Text>
-          </Group>
-        )}
-
-        {!isLoading && exitProfiles.length === 0 && (
-          <Text size="sm" c="dimmed">No exit profiles.</Text>
-        )}
-
-        {exitProfiles.length > 0 && (
-          <ScrollArea>
-            <Table striped highlightOnHover style={{ minWidth: 700 }}>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Key</Table.Th>
-                  <Table.Th style={{ textAlign: "right" }}>Target %</Table.Th>
-                  <Table.Th style={{ textAlign: "right" }}>Stop %</Table.Th>
-                  <Table.Th style={{ textAlign: "right" }}>Trail %</Table.Th>
-                  <Table.Th style={{ textAlign: "right" }}>Max Days</Table.Th>
-                  <Table.Th>Mode</Table.Th>
-                  <Table.Th>Status</Table.Th>
-                  <Table.Th />
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {exitProfiles.map((profile) => (
-                  <Fragment key={profile.id}>
-                    <Table.Tr>
-                      <Table.Td>
-                        <div>
-                          <Text fw={600} size="sm">{profile.key}</Text>
-                          {profile.name !== profile.key && (
-                            <Text size="xs" c="dimmed">{profile.name}</Text>
-                          )}
-                        </div>
-                      </Table.Td>
-                      <Table.Td style={{ textAlign: "right" }}>{profile.targetPct ?? "—"}</Table.Td>
-                      <Table.Td style={{ textAlign: "right" }}>{profile.stopLossPct ?? "—"}</Table.Td>
-                      <Table.Td style={{ textAlign: "right" }}>{profile.trailingStopPct ?? "—"}</Table.Td>
-                      <Table.Td style={{ textAlign: "right" }}>{profile.maxHoldDays ?? "—"}</Table.Td>
-                      <Table.Td>
-                        <Text size="sm" c="dimmed" tt="capitalize">{profile.exitMode.replace(/_/g, " ")}</Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Badge size="sm" color={profile.enabled ? "teal" : "gray"} variant="light">
-                          {profile.enabled ? "Enabled" : "Disabled"}
-                        </Badge>
-                      </Table.Td>
-                      <Table.Td>
-                        <Button
-                          size="xs"
-                          variant="subtle"
-                          onClick={() => editingId === profile.id ? cancelForm() : startEditing(profile)}
-                        >
-                          {editingId === profile.id ? "Cancel" : "Edit"}
-                        </Button>
-                      </Table.Td>
-                    </Table.Tr>
-
-                    {editingId === profile.id && (
-                      <Table.Tr>
-                        <Table.Td colSpan={8} style={{ padding: "8px 0" }}>
-                          <ExitProfileEditor
-                            form={form}
-                            setForm={setForm}
-                            onSave={handleSave}
-                            onCancel={cancelForm}
-                            isCreating={false}
-                            isSaving={isSaving}
-                          />
-                        </Table.Td>
-                      </Table.Tr>
-                    )}
-                  </Fragment>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
-        )}
-      </Card>
-    </Stack>
-  );
+  const identity = (profile: ExitProfile) => <div className={classes.identity}><Text component="h3" fw={700}>{profile.name}</Text><Text ff="monospace" size="xs" c="dimmed">{profile.key}</Text>{profile.description && <Text size="xs" c="dimmed" lineClamp={2}>{profile.description}</Text>}</div>;
+  const fields = (profile: ExitProfile): SummaryField[] => [{ label: "Exit type", value: formatStatusLabel(profile.exitMode) }, { label: "Target / unlock", value: profile.targetPct === null ? "Not configured" : `${profile.targetPct}%${profile.takeProfitBehavior === "trail_after_target" ? " unlock" : " target"}` }, { label: "Trailing", value: pct(profile.trailingStopPct) }, { label: "Usage", value: `${usage(profile)} subscription${usage(profile) === 1 ? "" : "s"}` }];
+  function openDetails(profile: ExitProfile, opener: HTMLElement) { setDetailOpener(opener); setDetailProfile(profile); }
+  const actions = (profile: ExitProfile) => <ResponsiveActions compact primary={{ label: "Edit", onClick: () => startEditing(profile) }} />;
+  const wide = (items: readonly ExitProfile[]) => <DataTable caption="Exit profiles" captionHidden density="compact"><Table.Thead><Table.Tr><Table.Th>Exit profile</Table.Th><Table.Th>Strategy / type</Table.Th><Table.Th>Target</Table.Th><Table.Th>Trailing</Table.Th><Table.Th>Status</Table.Th><Table.Th>Usage</Table.Th><Table.Th>Actions</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{items.map((profile) => <Fragment key={profile.id}><Table.Tr><Table.Td>{identity(profile)}</Table.Td><Table.Td>{formatStatusLabel(profile.exitMode)}<Text size="xs" c="dimmed">{formatStatusLabel(profile.takeProfitBehavior)}</Text></Table.Td><Table.Td>{pct(profile.targetPct)}<Text size="xs" c="dimmed">Stop {pct(profile.stopLossPct)}</Text></Table.Td><Table.Td>{pct(profile.trailingStopPct)}</Table.Td><Table.Td><StatusBadge status={profile.enabled ? "enabled" : "disabled"} label={profile.enabled ? "Enabled" : "Disabled"} tone={profile.enabled ? "positive" : "neutral"} /></Table.Td><Table.Td>{usage(profile)} subscription{usage(profile) === 1 ? "" : "s"}</Table.Td><Table.Td><Group gap="xs" wrap="nowrap"><Button size="compact-sm" variant="default" aria-expanded={expandedId === profile.id} onClick={() => setExpandedId(expandedId === profile.id ? null : profile.id)}>Details</Button>{actions(profile)}</Group></Table.Td></Table.Tr>{expandedId === profile.id && <Table.Tr><Table.Td colSpan={7}><ProfileDetails profile={profile} usage={usage(profile)} /></Table.Td></Table.Tr>}</Fragment>)}</Table.Tbody></DataTable>;
+  const hasFilters = search.trim() !== "" || status !== "all";
+  return <main className={classes.page}><Stack gap="lg">
+    <Group justify="space-between" align="flex-end" className={classes.header}><div><Title order={2} size="h3">Exit Profiles</Title><Text size="sm" c="dimmed">Review exit models, key safety values, and subscription dependencies.</Text></div><Button color="cyan" onClick={startCreating}>New Profile</Button></Group>
+    <SimpleGrid cols={{ base: 2, sm: 3 }}><Card withBorder><Text size="xs" c="dimmed">PROFILES</Text><Text size="xl" fw={700}>{exitProfiles.length}</Text></Card><Card withBorder><Text size="xs" c="dimmed">ENABLED</Text><Text size="xl" fw={700}>{exitProfiles.filter((profile) => profile.enabled).length}</Text></Card><Card withBorder><Text size="xs" c="dimmed">IN USE</Text><Text size="xl" fw={700}>{exitProfiles.filter((profile) => usage(profile) > 0).length}</Text></Card></SimpleGrid>
+    <Card withBorder><Stack gap="md"><ResponsiveFilterToolbar primary={<TextInput label="Search exit profiles" placeholder="Name, key, type, or description" value={search} onChange={(event) => setSearch(event.currentTarget.value)} />} secondary={<Select label="Profile status" value={status} onChange={(value) => setStatus(value ?? "all")} data={[{ value: "all", label: "All statuses" }, { value: "enabled", label: "Enabled" }, { value: "disabled", label: "Disabled" }]} />} activeFilters={status === "all" ? [] : [{ key: "status", label: status === "enabled" ? "Enabled" : "Disabled", onRemove: () => setStatus("all") }]} onClearAll={() => { setSearch(""); setStatus("all"); }} />
+      {profilesQuery.isError ? <DataState state="error" title="Unable to load exit profiles" message={profilesQuery.error instanceof Error ? profilesQuery.error.message : "Failed to load exit profiles."} onRetry={() => profilesQuery.refetch()} /> : profilesQuery.isLoading ? <DataState state="loading" message="Loading exit profiles…" /> : filtered.length === 0 ? <DataState state="empty" title={hasFilters ? "No matching exit profiles" : "No exit profiles"} message={hasFilters ? "Clear or change the filters to see other profiles." : "Create an exit profile to begin."} action={hasFilters ? { label: "Clear filters", onClick: () => { setSearch(""); setStatus("all"); } } : undefined} /> : <ResponsiveDataView records={filtered} getRecordId={(profile) => profile.id} wide={wide} compact={(items) => <CompactRecordList records={items} getRecordId={(profile) => profile.id} renderIdentity={identity} renderFields={fields} renderDetails={(profile) => <ProfileDetails profile={profile} usage={usage(profile)} />} renderActions={actions} expandedId={expandedId} onExpandedChange={(id) => setExpandedId(id as number | null)} />} narrow={(items) => <MobileRecordCard records={items} getRecordId={(profile) => profile.id} renderIdentity={identity} renderStatus={(profile) => <StatusBadge status={profile.enabled ? "enabled" : "disabled"} label={profile.enabled ? "Enabled" : "Disabled"} tone={profile.enabled ? "positive" : "neutral"} size="compact" />} renderFields={fields} onDetails={openDetails} renderActions={actions} />} aria-label="Exit profile catalog" />}
+    </Stack></Card>
+    <Modal opened={editing !== null} onClose={() => !isSaving && setEditing(null)} title={editing === "new" ? "Create exit profile" : "Edit exit profile"} size="lg" closeOnEscape={!isSaving} closeOnClickOutside={!isSaving} styles={{ content: { maxHeight: "calc(100dvh - 2rem)" }, body: { overflowY: "auto", paddingBottom: "max(var(--mantine-spacing-md), env(safe-area-inset-bottom))" } }}><Stack gap="md">{editing === "new" && <Alert color="blue">Use a readable name that identifies the exit behavior, such as <strong>Stock Dip Core Target</strong>. Its stable ID uses lowercase snake_case, such as <strong>stock_dip_core_target</strong>.</Alert>}<SimpleGrid cols={{ base: 1, sm: 2 }}><TextInput required label="Name" description="Human-readable profile name" placeholder="Stock Dip Core Target" value={form.name} onChange={(event) => updateName(event.currentTarget.value)} /><TextInput required label="ID" description={editing === "new" ? (autoPopulateId ? "Generated from the name; edit to override" : "Stable, unique snake_case identifier") : "Cannot be changed after creation"} placeholder="stock_dip_core_target" value={form.key} disabled={editing !== "new"} onChange={(event) => updateId(event.currentTarget.value)} /></SimpleGrid><Textarea label="Description" autosize minRows={2} value={form.description} onChange={(event) => field("description", event.currentTarget.value)} />
+      <section className={classes.formSection}><Title order={3} size="h5">Target behavior</Title><SimpleGrid cols={{ base: 1, sm: 2 }}><TextInput label="Target %" description="Profit target or trailing unlock threshold" value={form.targetPct} onChange={(event) => field("targetPct", event.currentTarget.value)} /><TextInput label="Stop Loss %" description="Fixed downside protection" value={form.stopLossPct} onChange={(event) => field("stopLossPct", event.currentTarget.value)} /><TextInput label="Max Hold Days" description="Optional whole-number time limit" value={form.maxHoldDays} onChange={(event) => field("maxHoldDays", event.currentTarget.value)} /><Select label="Take Profit Behavior" data={[{ value: "immediate", label: "Immediate" }, { value: "trail_after_target", label: "Trail After Target" }, { value: "ai_confirm", label: "AI Confirm" }]} value={form.takeProfitBehavior} onChange={(value) => field("takeProfitBehavior", value ?? form.takeProfitBehavior)} /></SimpleGrid></section>
+      <section className={classes.formSection}><Title order={3} size="h5">Trailing behavior</Title><SimpleGrid cols={{ base: 1, sm: 2 }}><Select label="Exit Mode" data={[{ value: "fixed_target", label: "Fixed Target" }, { value: "fixed_bracket", label: "Fixed Bracket" }, { value: "hybrid", label: "Hybrid" }, { value: "ai_assisted", label: "AI Assisted" }]} value={form.exitMode} onChange={(value) => field("exitMode", value ?? form.exitMode)} /><TextInput label="Trailing Stop %" description="Leave blank when trailing is not applicable" value={form.trailingStopPct} onChange={(event) => field("trailingStopPct", event.currentTarget.value)} /></SimpleGrid></section>
+      {editing !== "new" && editing && usage(editing) > 0 && <Alert color="yellow" title="Dependent subscriptions">This profile is used by {usage(editing)} subscription{usage(editing) === 1 ? "" : "s"}. Saving changes to enabled dependencies requires the existing confirmation.</Alert>}<Checkbox label="Enabled" checked={form.enabled} onChange={(event) => field("enabled", event.currentTarget.checked)} /><Group justify="flex-end" className={classes.modalActions}><Button variant="default" disabled={isSaving} onClick={() => setEditing(null)}>Cancel</Button><Button color="cyan" loading={isSaving} disabled={isSaving} onClick={handleSave}>Save</Button></Group></Stack></Modal>
+    <ResponsiveDetails opened={Boolean(detailProfile)} title={detailProfile ? `${detailProfile.name} details` : "Exit profile details"} onClose={() => setDetailProfile(null)} returnFocusTo={detailOpener}>{detailProfile && <ProfileDetails profile={detailProfile} usage={usage(detailProfile)} />}</ResponsiveDetails>
+  </Stack></main>;
 }

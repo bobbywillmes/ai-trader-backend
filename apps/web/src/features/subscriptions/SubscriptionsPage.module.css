@@ -1,0 +1,16 @@
+.page { min-width: 0; container: subscriptions-page / inline-size; }
+.page > *, .identity, .details { min-width: 0; }
+.identity, .details { overflow-wrap: anywhere; }
+.legacyTable { display: none; }
+.filterToolbar { min-width: 0; }
+.search { width: 100%; }
+.search > :first-child { flex: 1 1 28rem; max-width: 42rem; }
+.details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.detailCard { min-width: 0; border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-md); padding: var(--mantine-spacing-md); }
+.details > :global(.mantine-Accordion-root) { grid-column: 1 / -1; }
+@container subscriptions-page (max-width: 40rem) {
+  .header, .search, .filterActions { flex-direction: column; align-items: stretch; }
+  .search > :first-child { flex: 0 0 auto; max-width: none; width: 100%; }
+  .header button, .search button, .filterActions button { width: 100%; min-height: var(--data-touch-target); }
+  .details { grid-template-columns: 1fr; }
+}

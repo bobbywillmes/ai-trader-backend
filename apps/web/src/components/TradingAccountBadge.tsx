@@ -33,6 +33,7 @@ export function TradingAccountBadge({
       size="xs"
       color={environmentColor(account.environment)}
       variant="light"
+      style={{ flexShrink: 0 }}
     >
       {account.environment}
     </Badge>
@@ -55,8 +56,8 @@ export function TradingAccountBadge({
   }
 
   return (
-    <Group gap={6} wrap="nowrap">
-      <Text size="sm" fw={600} style={{ whiteSpace: "nowrap" }}>
+    <Group gap={6} wrap="nowrap" style={{ minWidth: "max-content" }}>
+      <Text size="sm" fw={600} style={{ whiteSpace: "nowrap", flexShrink: 0 }}>
         {account.displayName}
       </Text>
       {environmentBadge}

@@ -42,6 +42,40 @@ In a development build, authenticated admin users can open `/dev/responsive-data
 
 The route definition is guarded by `import.meta.env.DEV`, so production builds do not include a reachable route or lazily loaded preview chunk. Validate it while resizing the browser and with the sidebar both collapsed and pinned. Useful widths are 390, 402, 768, 1024, 1280, 1600, 1920, 2560, and 3840px; also check a 790px viewport height.
 
-## Next phase
+## Reference operational page
 
-Open Positions is the reference conversion for the next branch. That work should decide the final primary field hierarchy using real operator workflows, reuse existing lifecycle and close-position behavior, and tune widths/density against real records. Existing page tables and badges remain in place until their pages are deliberately migrated.
+Open Positions is the first production page built on these primitives and is the reference for later operational conversions. Its primary summary keeps identity, account, side and quantity, current price, combined dollar/percentage P/L, position status, concise exit state, details, and safe action access visible. Entry pricing, full exit configuration, trailing values, routing identifiers, timestamps, and complete attention text are secondary details.
+
+At wide container widths the page uses a concise semantic table with inline detail rows. Compact widths use summary records with the same vertical inline expansion; the identity remains visible while details are open. Narrow widths use scan-friendly cards and a focus-managed drawer. All modes organize operational details into Position and emphasized Exit management cards, keep routing identifiers in a collapsed disclosure, and separate actions into a footer. `ResponsiveActions` keeps lifecycle access explicit and places the destructive confirmed close action in an overflow menu. Future operational pages should use the same primary/secondary/deep-detail hierarchy rather than carrying every legacy column into their summary.
+
+`DataTable` captions remain the accessible table name. Set `captionHidden` when a visible bottom caption would add visual noise; this hides it visually without removing it from the accessibility tree.
+
+`CompactRecordList` also supports an optional generic action slot beside its details control. Use it when a compact operational record needs safe action access without making the row itself interactive.
+
+## Trading account sections
+
+Trading Account detail uses URL-addressable sections for Overview, Positions, Orders, Subscriptions, Risk Health, Readiness, Activity, and Configuration. At mobile widths the horizontal tab list becomes a labeled section selector. Keep each section independently responsive to its content container so sidebar state does not create a page-level horizontal scrollbar.
+
+Positions and Orders reuse the same responsive record views as their global operational pages. Account scope belongs in the query and surrounding heading; do not fork their table, compact-row, card, detail, status, or action compositions. This keeps lifecycle actions, complete labels, empty/error/loading behavior, and primary-versus-secondary field decisions consistent.
+
+Overview is concise and read-oriented. It owns account identity, broker snapshot, latest readiness and allocation summaries, safe credential status, and safety notes. It links to the authoritative detail sections instead of duplicating readiness history or editors. Configuration owns mutable safety/status controls, allocation bucket creation and editing, credential management, and immutable technical metadata. Do not repeat credential or trading controls as large editable Overview sections.
+
+Account Subscriptions and Allocation Buckets follow the standard three-presentation system:
+
+1. Wide containers use concise semantic `DataTable` summaries with inline details.
+2. Compact containers use `CompactRecordList` with structured inline expansion.
+3. Narrow containers use `MobileRecordCard` and a focus-managed `ResponsiveDetails` drawer.
+
+Subscription summaries retain assignment identity, strategy, full enabled and entry-capability status, allocation, sizing, exit profile, details, and existing management actions. Allocation summaries retain name/key, full status, budget, reserved/remaining capacity, position limits, assignment counts, details, and Edit. Raw IDs, technical keys, timestamps, notes, and secondary limits belong in structured details and must wrap safely.
+
+Future account sections should reuse `DataState`, `StatusBadge`, `ResponsiveActions`, and the same detail renderer across modes. An internal scroll region can remain for genuinely diagnostic historical data, but a legacy minimum-width table must never set the width of the account page. Preserve authorization, confirmations, disabled/loading states, and safety behavior when changing presentation.
+
+## Dashboard command center
+
+Dashboard is a concise responsive command center rather than a full operational record page. Its composition is portfolio state, trading readiness, ETF Market Pulse, limited open-position and open-order previews, and current attention items. Deep history remains on Reports, System Events, Reconciliation, and account detail routes.
+
+Portfolio metrics use the broker account snapshot plus `risk.usage.totalOpenNotional`; Dashboard does not recompute financial values. Trading Readiness maps backend entry-session states to state-specific transitions and formats every market timestamp in `America/New_York`. Missing current-session timestamps after close must not be described as proof that no regular session occurred, and missing future timestamps remain explicitly unavailable.
+
+Market Pulse uses the existing index quote and history requests. Each returned history series is normalized to 0% at its own first point and rendered against a shared time and percentage axis. The zero reference, textual summary, signed values, line dash patterns, and tile labels keep the display understandable without color. Quote tiles retain current, change, low, high, previous close, a sparkline, and a guarded range rail. The chart parent has an explicit responsive height and no fixed width so pinned-sidebar changes cannot create page overflow.
+
+Dashboard record previews show at most four positions and four orders and always link to their full operational pages. Attention items are restricted to current bootstrap facts such as broker blocking, risk reasons, or a degraded market-session provider. Historical event severity is not treated as unresolved state. When those authoritative facts are healthy, Dashboard provides links to System Events and Reconciliation instead of manufacturing alerts.

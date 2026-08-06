@@ -1,6 +1,6 @@
 import {
-  AppShell, Avatar, Burger, Divider, Drawer, Group, Menu, ScrollArea,
-  Text, ThemeIcon, Tooltip, UnstyledButton,
+  AppShell, Avatar, Burger, Divider, Drawer, Menu, ScrollArea,
+  Text, Tooltip, UnstyledButton,
 } from "@mantine/core";
 import { IconChevronRight, IconChevronUp, IconLogout, IconPin, IconPinnedOff, IconUser } from "@tabler/icons-react";
 import { forwardRef, useCallback, useEffect, useRef, useState, type FocusEvent, type ReactNode } from "react";
@@ -11,6 +11,7 @@ import type { PlatformRole, User } from "../../features/auth/types";
 import { getPlatformRoleLabel } from "../../features/users/roleLabels";
 import { SIDEBAR_PINNED_STORAGE_KEY, getInitialSidebarState, transitionSidebar, type SidebarState } from "./sidebarState";
 import classes from "./ResponsiveAppShell.module.css";
+import { AppBrand } from "../brand/AppBrand";
 
 export const SIDEBAR_COLLAPSED_WIDTH = 72;
 export const SIDEBAR_EXPANDED_WIDTH = 248;
@@ -84,7 +85,7 @@ export function ResponsiveAppShell(props: Props) {
 
   return (
     <AppShell padding="md" className={classes.shell} data-sidebar-state={state}>
-      <ApplicationHeader ref={hamburgerRef} opened={state === "mobile-open"} onToggle={toggleMobile} portalName={props.portalName} />
+      <ApplicationHeader ref={hamburgerRef} opened={state === "mobile-open"} onToggle={toggleMobile} />
       <aside
         className={classes.desktopSidebar}
         data-expanded={isExpanded || undefined}
@@ -105,9 +106,9 @@ export function ResponsiveAppShell(props: Props) {
   );
 }
 
-const ApplicationHeader = forwardRef<HTMLButtonElement, { opened: boolean; onToggle: () => void; portalName?: string }>(({ opened, onToggle, portalName }, ref) => (
+const ApplicationHeader = forwardRef<HTMLButtonElement, { opened: boolean; onToggle: () => void }>(({ opened, onToggle }, ref) => (
   <header className={classes.mobileHeader}>
-    <Brand expanded portalName={portalName} />
+    <AppBrand expanded />
     <Burger
       ref={ref}
       opened={opened}
@@ -119,18 +120,11 @@ const ApplicationHeader = forwardRef<HTMLButtonElement, { opened: boolean; onTog
   </header>
 ));
 
-function Brand({ expanded, portalName }: { expanded: boolean; portalName?: string }) {
-  return <Group gap="sm" wrap="nowrap" className={classes.brand}>
-    <ThemeIcon size={40} radius="md" color="cyan"><Text size="xs" fw={800} c="white">AT</Text></ThemeIcon>
-    {expanded && <div className={classes.label}><Text fw={700} size="sm">AI Trader</Text><Text size="xs" c="dimmed">{portalName ?? "Admin Console"}</Text></div>}
-  </Group>;
-}
-
-function SidebarContents({ groups, user, platformRole, portalName, expanded, pinned, hideBrand = false, mobile = false, navigationScrollTopRef, isSigningOut, onSignOut, onTogglePinned, onNavigate, onOwnedMenuChange }: Props & { expanded: boolean; pinned: boolean; hideBrand?: boolean; mobile?: boolean; navigationScrollTopRef?: { current: number }; onTogglePinned?: () => void; onNavigate?: () => void; onOwnedMenuChange?: (open: boolean) => void }) {
+function SidebarContents({ groups, user, platformRole, expanded, pinned, hideBrand = false, mobile = false, navigationScrollTopRef, isSigningOut, onSignOut, onTogglePinned, onNavigate, onOwnedMenuChange }: Props & { expanded: boolean; pinned: boolean; hideBrand?: boolean; mobile?: boolean; navigationScrollTopRef?: { current: number }; onTogglePinned?: () => void; onNavigate?: () => void; onOwnedMenuChange?: (open: boolean) => void }) {
   return <div className={classes.sidebarContents}>
     {!hideBrand && <>
       <div className={classes.sidebarHeader}>
-        <Brand expanded={expanded} portalName={portalName} />
+        <AppBrand expanded={expanded} />
         {expanded && onTogglePinned && <Tooltip label={pinned ? "Unpin sidebar" : "Pin sidebar"}><UnstyledButton className={classes.iconButton} onClick={onTogglePinned} aria-label={pinned ? "Unpin sidebar" : "Pin sidebar"} aria-pressed={pinned}>{pinned ? <IconPinnedOff size={19} /> : <IconPin size={19} />}</UnstyledButton></Tooltip>}
       </div>
       <Divider />

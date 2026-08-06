@@ -3,6 +3,7 @@ import type { TradingAccount } from "../../../types";
 import { DetailItem } from "../../components/DetailItem";
 import { formatDateTime, formatStatus } from "../../utils/formatters";
 import { credentialStatusColor } from "./utils";
+import classes from "./OperationalSummaryCards.module.css";
 
 export function CredentialStatusCard({ account }: { account: TradingAccount }) {
   const credential = account.credential;
@@ -29,7 +30,7 @@ export function CredentialStatusCard({ account }: { account: TradingAccount }) {
           <DetailItem label="Auth type" value={credential.authType ?? "-"} />
           <DetailItem
             label="Key fingerprint"
-            value={credential.keyFingerprint ?? "-"}
+            value={<Text component="span" ff="monospace" className={classes.technicalValue}>{credential.keyFingerprint ?? "-"}</Text>}
           />
           <DetailItem
             label="Verified at"

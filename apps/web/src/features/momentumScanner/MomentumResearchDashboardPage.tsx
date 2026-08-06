@@ -13,9 +13,11 @@ import {
   Text,
   Title,
 } from "@mantine/core";
+import { useState } from "react";
 import { IconArrowRight, IconExternalLink } from "@tabler/icons-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
+import { CompactRecordList, DataTable, MobileRecordCard, RecordDetailsGrid, ResponsiveDataView, StatusBadge, type SummaryField } from "../../components/data-display";
 import { getAdminToken } from "../../lib/api";
 import { useLatestMomentumPipelineRuns, useMomentumResearchOverview } from "./hooks";
 import { MomentumScannerNavigation } from "./MomentumScannerNavigation";
@@ -77,17 +79,6 @@ function SummaryCard({ label, value, color }: { label: string; value: number; co
   );
 }
 
-function Score({ value, label }: { value: number; label: string }) {
-  return (
-    <Stack gap={0} align="flex-end">
-      <Text fw={800}>{value}</Text>
-      <Text size="xs" c="dimmed">
-        {label}
-      </Text>
-    </Stack>
-  );
-}
-
 function EmptyState({ children }: { children: string }) {
   return (
     <Text c="dimmed" py="md">
@@ -97,6 +88,18 @@ function EmptyState({ children }: { children: string }) {
 }
 
 function TopCandidates({ rows }: { rows: MomentumResearchCandidateRow[] }) {
+  const navigate = useNavigate();
+  const [expandedId, setExpandedId] = useState<string | number | null>(null);
+  const identity = (row: MomentumResearchCandidateRow) => <div><Anchor component={Link} to={`/momentum-scanner/symbols/${encodeURIComponent(row.symbol)}`} fw={800}>{row.symbol}</Anchor><Text size="xs" c="dimmed">{row.security?.name ?? "View symbol research"}</Text></div>;
+  const status = (row: MomentumResearchCandidateRow) => <StatusBadge status={row.state} label={row.state.replaceAll("_", " ")} tone={row.state === "ENTRY_READY" ? "positive" : row.state === "ENTRY_BLOCKED" ? "danger" : row.state === "WATCHING" ? "informational" : "neutral"} size="compact" />;
+  const fields = (row: MomentumResearchCandidateRow): SummaryField[] => [
+    { label: "Score", value: `${row.scores.total} total · ${row.scores.catalyst} catalyst` },
+    { label: "Signals", value: `Price ${row.scores.priceAction ?? "—"} · Volume ${row.scores.volume ?? "—"} · Setup ${row.scores.risk ?? "—"}` },
+    { label: "Latest check", value: formatRelative(row.latestPriceCheck?.observedAt) },
+    { label: "Handoff", value: row.latestHandoff?.status.replaceAll("_", " ") ?? "None" },
+  ];
+  const details = (row: MomentumResearchCandidateRow) => <RecordDetailsGrid sections={[{ title: "Candidate assessment", items: [...fields(row), { label: "Reason", value: row.blockedReason ?? row.reason ?? "No stored explanation" }] }, { title: "Identifiers", items: [{ label: "Candidate ID", value: row.id, technical: true }] }]} />;
+  const wide = (items: readonly MomentumResearchCandidateRow[]) => <DataTable caption="Top momentum candidates" captionHidden density="compact"><Table.Thead><Table.Tr><Table.Th>Candidate</Table.Th><Table.Th>Status</Table.Th><Table.Th>Score</Table.Th><Table.Th>Signals</Table.Th><Table.Th>Latest check</Table.Th><Table.Th>Handoff</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{items.map((row) => <Table.Tr key={row.id}><Table.Td>{identity(row)}<Anchor component={Link} to={`/momentum-scanner/candidates/${encodeURIComponent(row.id)}`} display="block" size="xs">View candidate</Anchor></Table.Td><Table.Td>{status(row)}</Table.Td><Table.Td fw={700}>{fields(row)[0].value}</Table.Td><Table.Td>{fields(row)[1].value}</Table.Td><Table.Td title={formatDate(row.latestPriceCheck?.observedAt)}>{fields(row)[2].value}</Table.Td><Table.Td>{fields(row)[3].value}</Table.Td></Table.Tr>)}</Table.Tbody></DataTable>;
   return (
     <Card withBorder radius="md" p="lg">
       <Stack gap="md">
@@ -112,37 +115,7 @@ function TopCandidates({ rows }: { rows: MomentumResearchCandidateRow[] }) {
         {rows.length === 0 ? (
           <EmptyState>No active momentum opportunities are currently stored.</EmptyState>
         ) : (
-          <ScrollArea.Autosize mah={460} type="auto" offsetScrollbars>
-            <Table highlightOnHover miw={960} stickyHeader>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Symbol</Table.Th><Table.Th>State</Table.Th><Table.Th ta="right">Total</Table.Th>
-                  <Table.Th ta="right">Catalyst</Table.Th><Table.Th ta="right">Price</Table.Th>
-                  <Table.Th ta="right">Volume</Table.Th><Table.Th ta="right">Risk</Table.Th>
-                  <Table.Th>Latest check</Table.Th><Table.Th>Handoff</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {rows.map((row) => (
-                  <Table.Tr key={row.id}>
-                    <Table.Td>
-                      <Anchor component={Link} to={`/momentum-scanner/symbols/${encodeURIComponent(row.symbol)}`} fw={800}>{row.symbol}</Anchor>
-                      <Anchor component={Link} to={`/momentum-scanner/candidates/${encodeURIComponent(row.id)}`} display="block" size="xs">View candidate</Anchor>
-                      {row.blockedReason && <Text size="xs" c="red" lineClamp={1}>{row.blockedReason}</Text>}
-                    </Table.Td>
-                    <Table.Td><Badge color={stateColor(row.state)} variant="light">{row.state.replaceAll("_", " ")}</Badge></Table.Td>
-                    <Table.Td><Score value={row.scores.total} label="total" /></Table.Td>
-                    <Table.Td><Score value={row.scores.catalyst} label={row.catalyst?.eventType ?? "catalyst"} /></Table.Td>
-                    <Table.Td ta="right">{row.scores.priceAction ?? <Text size="xs" c="dimmed">Not evaluated</Text>}</Table.Td>
-                    <Table.Td ta="right">{row.scores.volume ?? <Text size="xs" c="dimmed">Not evaluated</Text>}</Table.Td>
-                    <Table.Td ta="right">{row.scores.risk ?? <Text size="xs" c="dimmed">Not evaluated</Text>}</Table.Td>
-                    <Table.Td title={formatDate(row.latestPriceCheck?.observedAt)}>{formatRelative(row.latestPriceCheck?.observedAt)}</Table.Td>
-                    <Table.Td>{row.latestHandoff ? <Badge variant="outline">{row.latestHandoff.status}</Badge> : <Text size="sm" c="dimmed">None</Text>}</Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea.Autosize>
+          <ResponsiveDataView records={rows} getRecordId={(row) => row.id} wide={wide} compact={(items) => <CompactRecordList records={items} getRecordId={(row) => row.id} renderIdentity={(row) => <Stack gap="xs">{identity(row)}{status(row)}</Stack>} renderFields={fields} renderDetails={details} expandedId={expandedId} onExpandedChange={setExpandedId} />} narrow={(items) => <MobileRecordCard records={items} getRecordId={(row) => row.id} renderIdentity={identity} renderStatus={status} renderFields={fields} onDetails={(row) => navigate(`/momentum-scanner/candidates/${encodeURIComponent(row.id)}`)} detailsLabel="View candidate" detailsIsDialog={false} />} aria-label="Top momentum candidates" />
         )}
       </Stack>
     </Card>

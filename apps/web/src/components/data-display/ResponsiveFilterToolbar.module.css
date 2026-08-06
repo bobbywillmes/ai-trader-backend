@@ -1,15 +1,20 @@
+.root { flex: 0 1 auto; min-width: 18rem; width: 100%; }
 .toolbar { container-type: inline-size; display: flex; align-items: flex-end; justify-content: space-between; gap: var(--data-space-md); min-width: 0; }
 .controls { display: flex; align-items: flex-end; flex: 1; flex-wrap: wrap; gap: var(--data-space-sm); min-width: 0; }
-.primary { min-width: min(16rem, 100%); flex: 1 1 16rem; }
+.primary { min-width: 0; flex: 1 1 16rem; }
+.primary > * { width: 100%; min-width: 0; }
+.primary label { white-space: nowrap; }
 .secondary { display: contents; }
 .mobileButton { display: none; }
 .summary { display: flex; align-items: center; flex-wrap: wrap; gap: var(--data-space-xs); margin-top: var(--data-space-sm); }
 @container (max-width: 639px) {
   .toolbar { align-items: stretch; }
-  .controls { flex-wrap: nowrap; align-items: flex-end; }
+  .controls { width: 100%; min-width: 0; flex-wrap: nowrap; align-items: flex-end; }
+  .primary { flex: 1 1 0; width: 100%; min-width: 0; }
   .secondary { display: none; }
-  .mobileButton { display: block; min-height: var(--data-touch-target); flex: 0 0 auto; }
+  .mobileButton { display: block; min-height: var(--data-touch-target); flex: 0 0 auto; white-space: nowrap; }
 }
+@media (max-width: 30rem) { .root { min-width: 0; } }
 @supports not (container-type: inline-size) {
   @media (max-width: 639px) { .toolbar { align-items: stretch; } .controls { flex-wrap: nowrap; } .secondary { display: none; } .mobileButton { display: block; } }
 }

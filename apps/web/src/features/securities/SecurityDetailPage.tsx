@@ -327,13 +327,13 @@ export function SecurityDetailPage() {
             <tbody>
               {security.subscriptions.map((subscription) => (
                 <tr key={subscription.id}>
-                  <td className="mono-cell">{subscription.key}</td>
-                  <td>{subscription.name}</td>
-                  <td>{subscription.strategy?.key ?? '-'}</td>
-                  <td>{subscription.exitProfile?.key ?? '-'}</td>
-                  <td>{formatPct(subscription.exitProfile?.targetPct ?? null)}</td>
-                  <td>{formatPct(subscription.exitProfile?.stopLossPct ?? null)}</td>
-                  <td>
+                  <td className="mono-cell" data-label="Key">{subscription.key}</td>
+                  <td data-label="Name">{subscription.name}</td>
+                  <td data-label="Strategy">{subscription.strategy?.key ?? '-'}</td>
+                  <td data-label="Exit profile">{subscription.exitProfile?.key ?? '-'}</td>
+                  <td data-label="Target">{formatPct(subscription.exitProfile?.targetPct ?? null)}</td>
+                  <td data-label="Stop">{formatPct(subscription.exitProfile?.stopLossPct ?? null)}</td>
+                  <td data-label="Status">
                     <span
                       className={
                         subscription.enabled
@@ -344,7 +344,7 @@ export function SecurityDetailPage() {
                       {subscription.enabled ? 'Enabled' : 'Disabled'}
                     </span>
                   </td>
-                  <td>
+                  <td data-label="Actions">
                     <div className="action-cell">
                       <button
                         type="button"

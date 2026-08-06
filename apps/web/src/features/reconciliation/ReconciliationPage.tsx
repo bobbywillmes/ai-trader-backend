@@ -1,207 +1,41 @@
-import { useState } from "react";
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  Code,
-  Group,
-  Stack,
-  Table,
-  Text,
-  Title,
-} from "@mantine/core";
+import { Fragment, useState } from "react";
+import { Accordion, Alert, Button, Card, Group, Modal, SimpleGrid, Stack, Table, Text, Title } from "@mantine/core";
+import { IconRefresh, IconShieldCheck } from "@tabler/icons-react";
 
+import { CompactRecordList, DataState, DataTable, MobileRecordCard, RecordDetailsGrid, ResponsiveDataView, ResponsiveDetails, StatusBadge, formatStatusLabel, type SummaryField } from "../../components/data-display";
 import { getAdminToken } from "../../lib/api";
+import type { ReconciliationFinding, RunReconciliationResult } from "./api";
 import { useRunReconciliation } from "./hooks";
-import type { ReconciliationFinding } from "./api";
+import { findingIdentity, reconciliationSeverityTone } from "./reconciliationView";
+import classes from "./ReconciliationPage.module.css";
 
-function getSeverityColor(severity: string) {
-  switch (severity) {
-    case "critical":
-      return "red";
-    case "warn":
-      return "yellow";
-    default:
-      return "blue";
-  }
-}
-
-function FindingDetails({ finding }: { finding: ReconciliationFinding }) {
-  const details = finding.details ?? {};
-
-  if (Object.keys(details).length === 0 && !finding.attentionCode) {
-    return (
-      <Text size="sm" c="dimmed">
-        —
-      </Text>
-    );
-  }
-
-  return (
-    <Stack gap={4}>
-      {finding.attentionCode && (
-        <Text size="xs" c="dimmed">
-          Attention: <Code>{finding.attentionCode}</Code>
-        </Text>
-      )}
-
-      {Object.keys(details).length > 0 && (
-        <Code block>{JSON.stringify(details, null, 2)}</Code>
-      )}
-    </Stack>
-  );
+function Metric({ label, value }: { label: string; value: string | number }) { return <Card withBorder radius="md" padding="sm" className={classes.metric}><Text size="xs" c="dimmed">{label}</Text><Text fw={800} size="lg">{value}</Text></Card>; }
+function Details({ finding, result }: { finding: ReconciliationFinding; result: RunReconciliationResult }) {
+  const detailEntries = Object.entries(finding.details ?? {});
+  return <Stack gap="md" className={classes.details}>
+    <section className={classes.detailCard}><Title order={3} size="h5">Discrepancy</Title><RecordDetailsGrid sections={[{ items: [{ label: "Entity", value: `${formatStatusLabel(finding.entityType)} ${finding.entityId}` }, { label: "Symbol", value: finding.symbol }, { label: "Discrepancy type", value: formatStatusLabel(finding.code) }, { label: "Severity", value: formatStatusLabel(finding.severity) }, { label: "Finding", value: finding.message }] }]} /></section>
+    <section className={classes.detailCard}><Title order={3} size="h5">Matching &amp; evidence</Title><RecordDetailsGrid sections={[{ items: detailEntries.length ? detailEntries.map(([key, value]) => ({ label: formatStatusLabel(key), value: typeof value === "object" ? JSON.stringify(value) : String(value) })) : [{ label: "Evidence", value: "No additional structured evidence returned" }] }]} /></section>
+    <section className={classes.detailCard}><Title order={3} size="h5">Attention eligibility</Title><RecordDetailsGrid sections={[{ items: [{ label: "Attention state", value: finding.attentionCode ? formatStatusLabel(finding.attentionCode) : "No attention update requested" }, { label: "Persistence mode", value: result.dryRun ? "Dry run — no changes" : "Persist events and attention" }, { label: "Safety boundary", value: finding.severity === "critical" ? "Critical tracked-position findings may receive attention state" : "No critical attention mutation" }] }]} /></section>
+    <section className={classes.detailCard}><Title order={3} size="h5">Result</Title><RecordDetailsGrid sections={[{ items: [{ label: "Run result", value: result.dryRun ? "Dry run" : "Persisted" }, { label: "Events created", value: result.eventCount }, { label: "Attention updates", value: result.attentionUpdateCount }, { label: "Duplicate events skipped", value: result.skippedDuplicateEventCount }] }]} /></section>
+    <Accordion variant="contained"><Accordion.Item value="raw"><Accordion.Control>Routing &amp; raw diagnostics</Accordion.Control><Accordion.Panel><RecordDetailsGrid sections={[{ items: [{ label: "Run identifier", value: result.runIdentifier, technical: true }, { label: "Trading account ID", value: result.account.tradingAccountId, technical: true }, { label: "Entity ID", value: finding.entityId, technical: true }, { label: "Raw code", value: finding.code, technical: true }, { label: "Attention code", value: finding.attentionCode, technical: true }, { label: "Raw details", value: detailEntries.length ? JSON.stringify(finding.details, null, 2) : "None", technical: true }] }]} /></Accordion.Panel></Accordion.Item></Accordion>
+  </Stack>;
 }
 
 export function ReconciliationPage() {
-  const [token] = useState(() => getAdminToken());
-  const runMutation = useRunReconciliation(token);
-  const result = runMutation.data;
-
-  function runDryRun() {
-    runMutation.mutate({
-      persistEvents: false,
-      persistAttention: false,
-    });
-  }
-
-  function runPersisted() {
-    runMutation.mutate({
-      persistEvents: true,
-    });
-  }
-
-  return (
-    <Stack gap="md">
-      <div>
-        <Title order={2}>Reconciliation</Title>
-        <Text c="dimmed">
-          Compare backend tracked positions and exit state against broker
-          positions and open orders. This compatibility view runs the configured
-          default account and identifies the resolved account in every result.
-        </Text>
-      </div>
-
-      <Card withBorder>
-        <Stack gap="md">
-          <Group>
-            <Button
-              variant="light"
-              onClick={runDryRun}
-              loading={runMutation.isPending}
-            >
-              Run dry check
-            </Button>
-
-            <Button
-              color="red"
-              variant="light"
-              onClick={runPersisted}
-              loading={runMutation.isPending}
-            >
-              Persist events + attention
-            </Button>
-          </Group>
-
-          <Text size="sm" c="dimmed">
-            Dry checks return findings only. Persisted checks create SystemEvents
-            and apply exit attention states for critical tracked-position
-            findings.
-          </Text>
-        </Stack>
-      </Card>
-
-      {runMutation.isError && (
-        <Alert color="red" title="Reconciliation failed">
-          {runMutation.error instanceof Error
-            ? runMutation.error.message
-            : "Unknown reconciliation error."}
-        </Alert>
-      )}
-
-      {result && (
-        <Card withBorder>
-          <Stack gap="md">
-            <Group>
-              <Badge color={result.account.environment === "LIVE" ? "red" : "blue"}>
-                {result.account.displayName} · {result.account.environment}
-              </Badge>
-
-              <Badge color={result.dryRun ? "blue" : "green"}>
-                {result.dryRun ? "Dry run" : "Persisted"}
-              </Badge>
-
-              <Badge color="gray">
-                {result.findings.length} finding
-                {result.findings.length !== 1 ? "s" : ""}
-              </Badge>
-
-              <Badge color="gray">{result.eventCount} event(s)</Badge>
-
-              <Badge color="gray">
-                {result.attentionUpdateCount} attention update(s)
-              </Badge>
-
-              <Badge color="gray">
-                {result.skippedDuplicateEventCount} duplicate event(s) skipped
-              </Badge>
-            </Group>
-
-            {result.findings.length === 0 ? (
-              <Alert color="green" title="No reconciliation findings">
-                Backend tracked positions, broker positions, and broker orders
-                appear consistent for the current checks.
-              </Alert>
-            ) : (
-              <Table striped highlightOnHover>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Severity</Table.Th>
-                    <Table.Th>Code</Table.Th>
-                    <Table.Th>Symbol</Table.Th>
-                    <Table.Th>Entity</Table.Th>
-                    <Table.Th>Message</Table.Th>
-                    <Table.Th>Details</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-
-                <Table.Tbody>
-                  {result.findings.map((finding, index) => (
-                    <Table.Tr
-                      key={`${finding.code}-${finding.entityId}-${index}`}
-                    >
-                      <Table.Td>
-                        <Badge color={getSeverityColor(finding.severity)}>
-                          {finding.severity}
-                        </Badge>
-                      </Table.Td>
-
-                      <Table.Td>
-                        <Code>{finding.code}</Code>
-                      </Table.Td>
-
-                      <Table.Td>{finding.symbol}</Table.Td>
-
-                      <Table.Td>
-                        <Text size="sm">{finding.entityType}</Text>
-                        <Text size="xs" c="dimmed">
-                          {finding.entityId}
-                        </Text>
-                      </Table.Td>
-
-                      <Table.Td>{finding.message}</Table.Td>
-
-                      <Table.Td>
-                        <FindingDetails finding={finding} />
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            )}
-          </Stack>
-        </Card>
-      )}
-    </Stack>
-  );
+  const [token] = useState(() => getAdminToken()); const runMutation = useRunReconciliation(token); const result = runMutation.data; const findings = result?.findings ?? [];
+  const [confirmOpened, setConfirmOpened] = useState(false); const [expandedId, setExpandedId] = useState<string | null>(null); const [drawerFinding, setDrawerFinding] = useState<ReconciliationFinding | null>(null); const [detailOpener, setDetailOpener] = useState<HTMLElement | null>(null);
+  function runDryRun() { if (!runMutation.isPending) runMutation.mutate({ persistEvents: false, persistAttention: false }); }
+  function runPersisted() { if (runMutation.isPending) return; setConfirmOpened(false); runMutation.mutate({ persistEvents: true }); }
+  function openDetails(finding: ReconciliationFinding, opener: HTMLElement) { setDetailOpener(opener); setDrawerFinding(finding); }
+  function closeDetails() { setDrawerFinding(null); window.setTimeout(() => detailOpener?.focus(), 0); }
+  const identity = (finding: ReconciliationFinding, index: number) => <div className={classes.identity}><Text component="h3" fw={800}>{finding.symbol || formatStatusLabel(finding.entityType)}</Text><Text size="xs" c="dimmed">{formatStatusLabel(finding.code)} · {finding.entityType} {finding.entityId}</Text><span className={classes.srOnly}>Finding {index + 1}</span></div>;
+  const fields = (finding: ReconciliationFinding): SummaryField[] => [{ label: "Discrepancy", value: finding.message }, { label: "Attention", value: finding.attentionCode ? formatStatusLabel(finding.attentionCode) : "No attention update" }, { label: "Account", value: result ? `${result.account.displayName} · ${result.account.environment}` : "Not available" }];
+  const wide = (items: readonly ReconciliationFinding[]) => <DataTable caption="Reconciliation findings" captionHidden density="compact"><Table.Thead><Table.Tr><Table.Th>Candidate</Table.Th><Table.Th>Account / symbol</Table.Th><Table.Th>Discrepancy</Table.Th><Table.Th>Severity</Table.Th><Table.Th>Attention</Table.Th><Table.Th>Actions</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{items.map((finding, index) => { const id = findingIdentity(finding, index); return <Fragment key={id}><Table.Tr><Table.Td>{identity(finding, index)}</Table.Td><Table.Td>{result?.account.displayName}<Text size="xs" c="dimmed">{finding.symbol} · {result?.account.environment}</Text></Table.Td><Table.Td className={classes.message}>{finding.message}</Table.Td><Table.Td><StatusBadge status={finding.severity} label={formatStatusLabel(finding.severity)} tone={reconciliationSeverityTone(finding.severity)} size="compact" /></Table.Td><Table.Td>{finding.attentionCode ? formatStatusLabel(finding.attentionCode) : "No action"}</Table.Td><Table.Td><Button variant="default" size="compact-sm" aria-expanded={expandedId === id} onClick={() => setExpandedId(expandedId === id ? null : id)}>Details</Button></Table.Td></Table.Tr>{expandedId === id && result && <Table.Tr><Table.Td colSpan={6}><Details finding={finding} result={result} /></Table.Td></Table.Tr>}</Fragment>; })}</Table.Tbody></DataTable>;
+  return <main className={classes.page}><Stack gap="lg">
+    <Group justify="space-between" align="flex-end" className={classes.header}><div><Title order={2} size="h3">Reconciliation</Title><Text size="sm" c="dimmed">Compare backend tracked positions and exit state with broker positions and open orders for the configured default account.</Text></div>{result && <Button variant="default" leftSection={<IconRefresh size={16} />} onClick={runDryRun} loading={runMutation.isPending}>Refresh dry check</Button>}</Group>
+    <Card withBorder radius="md" className={classes.runPanel}><Stack gap="md"><div><Title order={3} size="h4">Run reconciliation</Title><Text size="sm" c="dimmed">Dry checks return findings only. Persisted checks create SystemEvents and apply exit attention states for critical tracked-position findings.</Text></div><Group className={classes.runActions}><Button variant="light" onClick={runDryRun} loading={runMutation.isPending} disabled={runMutation.isPending}>Run dry check</Button><div className={classes.consequential}><Text size="xs" fw={700} c="red">Consequential</Text><Button color="red" variant="light" onClick={() => setConfirmOpened(true)} disabled={runMutation.isPending}>Persist events + attention</Button></div></Group></Stack></Card>
+    {runMutation.isError && <DataState state="error" title="Reconciliation failed" message={runMutation.error instanceof Error ? runMutation.error.message : "Unknown reconciliation error."} onRetry={runDryRun} />}
+    {runMutation.isPending && !result && <DataState state="loading" message="Running reconciliation…" />}
+    {result && <><SimpleGrid cols={{ base: 2, sm: 3, lg: 6 }} spacing="sm"><Metric label="Current run" value={result.dryRun ? "Dry run" : "Persisted"} /><Metric label="Findings" value={findings.length} /><Metric label="Critical" value={findings.filter((finding) => finding.severity === "critical").length} /><Metric label="Events created" value={result.eventCount} /><Metric label="Attention updates" value={result.attentionUpdateCount} /><Metric label="Duplicates skipped" value={result.skippedDuplicateEventCount} /></SimpleGrid><Card withBorder radius="md" className={classes.panel}><Stack gap="md"><Group justify="space-between"><div><Title order={3} size="h4">Findings</Title><Text size="sm" c="dimmed">{result.account.displayName} · {result.account.environment} · {result.dryRun ? "Non-mutating dry run" : "Persisted run"}</Text></div><StatusBadge status={result.dryRun ? "DRY_RUN" : "PERSISTED"} label={result.dryRun ? "Dry run" : "Persisted"} tone={result.dryRun ? "informational" : "warning"} /></Group>{findings.length === 0 ? <DataState state="empty" title="No reconciliation findings" message="No discrepancies were returned by the current authoritative checks." /> : <ResponsiveDataView records={findings} getRecordId={findingIdentity} wide={wide} compact={(items) => <CompactRecordList records={items} getRecordId={findingIdentity} renderIdentity={(finding) => identity(finding, findings.indexOf(finding))} renderFields={fields} renderDetails={(finding) => <Details finding={finding} result={result} />} expandedId={expandedId} onExpandedChange={(id) => setExpandedId(id as string | null)} />} narrow={(items) => <MobileRecordCard records={items} getRecordId={findingIdentity} renderIdentity={(finding) => identity(finding, findings.indexOf(finding))} renderStatus={(finding) => <StatusBadge status={finding.severity} label={formatStatusLabel(finding.severity)} tone={reconciliationSeverityTone(finding.severity)} size="compact" />} renderFields={fields} onDetails={openDetails} />} aria-label="Reconciliation findings" />}</Stack></Card></>}
+  </Stack><Modal opened={confirmOpened} onClose={() => setConfirmOpened(false)} title="Persist reconciliation events and attention?" centered closeOnEscape trapFocus><Stack><Alert color="red" icon={<IconShieldCheck />} title="This check can write operational state">The backend will re-evaluate the configured account, create SystemEvents, and apply exit attention states where its existing safety rules allow.</Alert><Text size="sm">Run a dry check first if you only need diagnostics. Closing this dialog makes no changes.</Text><Group justify="flex-end" className={classes.modalActions}><Button variant="default" onClick={() => setConfirmOpened(false)}>Cancel</Button><Button color="red" onClick={runPersisted} loading={runMutation.isPending} disabled={runMutation.isPending}>Confirm persisted check</Button></Group></Stack></Modal><ResponsiveDetails opened={Boolean(drawerFinding)} title={drawerFinding ? `${drawerFinding.symbol} reconciliation finding` : "Reconciliation finding"} onClose={closeDetails} returnFocusTo={detailOpener}>{drawerFinding && result && <Details finding={drawerFinding} result={result} />}</ResponsiveDetails></main>;
 }

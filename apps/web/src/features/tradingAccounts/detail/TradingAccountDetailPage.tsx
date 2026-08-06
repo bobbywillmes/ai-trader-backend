@@ -5,6 +5,7 @@ import {
   Card,
   Group,
   Loader,
+  Select,
   Stack,
   Tabs,
   Text,
@@ -20,6 +21,7 @@ import { PositionsTab } from "./tabs/positions/PositionsTab";
 import { RiskHealthTab } from "./tabs/riskHealth/RiskHealthTab";
 import { SubscriptionsTab } from "./tabs/subscriptions/SubscriptionsTab";
 import { ReadinessTab } from "./tabs/readiness/ReadinessTab";
+import { ConfigurationTab } from "./tabs/configuration/ConfigurationTab";
 import type { TradingAccountDetailTab } from "./types";
 import {
   isTradingAccountDetailTab,
@@ -27,6 +29,7 @@ import {
   tradingAccountDetailTabs,
   updateTradingAccountDetailTabSearchParams,
 } from "./utils/tabRouting";
+import classes from "./TradingAccountDetailPage.module.css";
 
 export function TradingAccountDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -67,8 +70,8 @@ export function TradingAccountDetailPage() {
   }
 
   return (
-    <Stack gap="lg">
-      <AccountDetailHeader displayName={account?.displayName} />
+    <main className={classes.page}><Stack gap="lg">
+      <AccountDetailHeader account={account} />
 
       {isError && (
         <Alert color="red" title="Failed to load trading account">
@@ -93,7 +96,8 @@ export function TradingAccountDetailPage() {
 
       {account && (
         <Tabs value={activeTab} onChange={setActiveTab} keepMounted={false}>
-          <Tabs.List>
+          <Select className={classes.sectionSelect} label="Account section" aria-label="Account section" value={activeTab} onChange={setActiveTab} data={tradingAccountDetailTabs} allowDeselect={false} />
+          <Tabs.List className={classes.tabs} aria-label="Account sections">
             {tradingAccountDetailTabs.map((tab) => (
               <Tabs.Tab key={tab.value} value={tab.value}>
                 {tab.label}
@@ -128,8 +132,12 @@ export function TradingAccountDetailPage() {
           <Tabs.Panel value="activity" pt="lg">
             <ActivityTab />
           </Tabs.Panel>
+
+          <Tabs.Panel value="configuration" pt="lg">
+            <ConfigurationTab account={account} token={token} />
+          </Tabs.Panel>
         </Tabs>
       )}
-    </Stack>
+    </Stack></main>
   );
 }
