@@ -5,6 +5,10 @@
 .previewAction { display: flex; gap: var(--mantine-spacing-md); align-items: center; flex-wrap: wrap; }
 .preview { border-top: 1px solid var(--mantine-color-default-border); padding-top: var(--mantine-spacing-md); }
 .previewTargets { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr)); gap: var(--mantine-spacing-sm); }
+.candidateGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 29rem), 1fr)); gap: var(--mantine-spacing-sm); }
+.candidate { min-width: 0; transition: border-color 120ms ease, background 120ms ease; }
+.candidateSelected { border-color: var(--mantine-color-cyan-5); background: color-mix(in srgb, var(--mantine-color-cyan-5) 7%, transparent); }
+.candidateBody { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .detailCard { border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-md); padding: var(--mantine-spacing-md); min-width: 0; }
 .details > :global(.mantine-Accordion-root), .actionFooter { grid-column: 1 / -1; }

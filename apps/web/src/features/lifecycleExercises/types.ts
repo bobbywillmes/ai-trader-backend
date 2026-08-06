@@ -1,12 +1,27 @@
 export type ExerciseStatus = "PREVIEWED" | "LAUNCHING" | "RUNNING" | "BLOCKED" | "PARTIAL" | "COMPLETED" | "FAILED" | "CANCELLED" | "ATTENTION_REQUIRED";
+export type ExerciseSelectionMode = "SELECTED_USERS" | "ALL_ELIGIBLE" | "EXPLICIT_ASSIGNMENTS";
+export type ExerciseType = "SUBSCRIPTION_ENTRY";
+export type Issue = { code: string; message: string };
+
+export type SubscriptionEntryCandidate = {
+  tradingAccountSubscriptionId: number; subscriptionId: number; tradingAccountId: number;
+  subscription: { key: string; displayName: string };
+  tradingAccount: { displayName: string; environment: "PAPER" | "LIVE"; status: string; tradingEnabled: boolean; killSwitchEnabled: boolean; credentialStatus: string | null };
+  accountHolder: { id: number; name: string | null; email: string; enabled: boolean };
+  accessMembers: Array<{ id: number; name: string | null; email: string; enabled: boolean }>;
+  assignment: { enabled: boolean; entriesEnabled: boolean; exitsEnabled: boolean; sizingType: string; fixedQty: number | null; maxPositionNotional: number | null; reservedNotional: number | null; minPositionNotional: number | null; maxQty: number | null };
+  allocation: { id: number; key: string; displayName: string; enabled: boolean } | null;
+  selectable: boolean; unavailableReasons: Issue[];
+};
+export type SubscriptionEntryCandidatesResponse = { subscription: { id: number; key: string; displayName: string }; candidates: SubscriptionEntryCandidate[] };
 
 export type LifecycleExerciseTarget = {
   id: number;
   tradingAccountId: number;
   tradingAccountSubscriptionId: number;
   status: string;
-  blockersJson: Array<{ code: string; message: string }>;
-  warningsJson: Array<{ code: string; message: string }>;
+  blockersJson: Issue[];
+  warningsJson: Issue[];
   readinessJson?: {
     positionSlotUsage?: {
       accountMaxPositions: number | null;
@@ -21,7 +36,12 @@ export type LifecycleExerciseTarget = {
   estimatedPrice: number | null;
   estimatedNotional: number | null;
   accountHolderUser?: { id: number; name: string | null; email: string };
-  tradingAccount?: { id: number; displayName: string; environment: "PAPER" };
+  tradingAccount?: { id: number; displayName: string; environment: "PAPER" | "LIVE" };
+  environment: "PAPER" | "LIVE";
+  allocationSnapshotJson?: { id?: number; key?: string; displayName?: string; name?: string } | null;
+  launchOutcome?: string | null; launchResultCode?: string | null; launchResultMessage?: string | null;
+  launchAttemptedAt?: string | null; launchEvidenceJson?: Record<string, unknown> | null;
+  dispatchStartedAt?: string | null;
   orderIntentId: number | null;
   reconciledAt: string | null;
   projection?: {
@@ -37,8 +57,12 @@ export type LifecycleExercise = {
   name: string | null;
   reason: string;
   environment: "PAPER";
+  exerciseType: ExerciseType;
+  containsLiveTargets: boolean;
+  previewVersion: number;
+  previewFingerprint: string;
   status: ExerciseStatus;
-  selectionMode: "SELECTED_USERS" | "ALL_ELIGIBLE";
+  selectionMode: ExerciseSelectionMode;
   requestedUserIdsJson: number[];
   selectionResultsJson: Array<{ userId: number; outcome: string; code: string; name?: string; email?: string }>;
   summaryJson: Record<string, unknown> | null;
@@ -51,7 +75,11 @@ export type LifecycleExercise = {
   createdByUser: { id: number; name: string | null; email: string };
   targets?: LifecycleExerciseTarget[];
   _count?: { targets: number };
+  recoveryApplicable?: boolean;
 };
+
+export type ExplicitAssignmentPreviewInput = { name?: string; reason: string; subscriptionId: number; tradingAccountSubscriptionIds: number[]; environment: "PAPER" };
+export type DispatchRecoveryResponse = { exercise: LifecycleExercise; recovery: { staleBefore: string; results: Array<{ targetId: number; code: string; orderIntentId: number | null }> } };
 
 export type PreviewExerciseInput = {
   name?: string;

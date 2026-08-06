@@ -54,6 +54,34 @@ perform broker calls or full risk evaluation. PAPER rows are selectable only
 when static exercise requirements pass. LIVE rows may be returned for operator
 context, but are always unavailable with `LIVE_EXERCISES_NOT_SUPPORTED`.
 
+## Operator UI workflow
+
+Lifecycle Exercises remains the canonical operator surface. New sessions
+default to **TradingAccounts**, where a System Owner chooses a Subscription and
+then selects exact `TradingAccountSubscription` deployments. The responsive
+picker shows account holder, account/environment, assignment controls,
+allocation, sizing, credentials, and explicit static unavailability reasons.
+LIVE deployments remain visible but disabled. A refresh preserves only selected
+IDs that still exist and remain selectable; it never selects newly eligible
+deployments automatically. **Users** remains available as the secondary legacy
+workflow with its original selected-user and all-eligible semantics.
+
+Candidate availability is a static configuration check, not a promise that an
+entry can run. Preview is authoritative for current sizing, session, capacity,
+exposure, and risk. It freezes every selected target, including blocked targets,
+for five minutes. The review separates “selected target” from current preview
+eligibility, shows sizing/notional, blockers, and warnings, and requires starting
+over rather than editing a frozen target set.
+
+Launch uses only the persisted exercise ID, revalidates every frozen target,
+and may produce mixed results. The detail page keeps immutable preview evidence
+visually separate from launch outcome/code/message/evidence and links into the
+existing lifecycle records. When the server projects a stale dispatch as
+recoverable, the System Owner can confirm dispatch recovery. Recovery checks for
+an existing exact-scope intent before redispatch and retains ambiguous matches
+as attention-required. The UI does not calculate staleness or expose a generic
+retry action.
+
 ## Launch and idempotency
 
 Launch requires `{ "confirmation": "LAUNCH PAPER EXERCISE" }`. An atomic

@@ -1,4 +1,5 @@
 import type { PreviewExerciseInput } from "./types";
+import type { SubscriptionEntryCandidate } from "./types";
 
 export const DEFAULT_LIFECYCLE_EXERCISE_REASON =
   "Controlled Paper lifecycle validation.";
@@ -13,6 +14,17 @@ export function formatLifecycleExerciseName(
   }).format(now);
 
   return `${subscriptionName} — Paper lifecycle — ${localDateTime}`;
+}
+
+export function validatedAssignmentIds(candidates: SubscriptionEntryCandidate[], selectedIds: readonly number[]) {
+  const selected = new Set(selectedIds);
+  return candidates.filter((candidate) => candidate.selectable && candidate.tradingAccount.environment === "PAPER" && selected.has(candidate.tradingAccountSubscriptionId)).map((candidate) => candidate.tradingAccountSubscriptionId).slice(0, 25);
+}
+
+export function selectionModeLabel(mode: "SELECTED_USERS" | "ALL_ELIGIBLE" | "EXPLICIT_ASSIGNMENTS") {
+  if (mode === "EXPLICIT_ASSIGNMENTS") return "Selected TradingAccounts";
+  if (mode === "ALL_ELIGIBLE") return "All eligible users/accounts";
+  return "Selected users";
 }
 
 export function updateGeneratedExerciseName(input: {

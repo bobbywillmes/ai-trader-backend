@@ -549,6 +549,7 @@ async function getExerciseOrThrow(id: number) {
   if (!exercise) throw new HttpError(404, 'Lifecycle exercise not found.');
   return {
     ...exercise,
+    recoveryApplicable: exercise.targets.some((target) => target.status === TradingLifecycleExerciseTargetStatus.DISPATCHING && Boolean(target.dispatchStartedAt) && target.dispatchStartedAt!.getTime() <= Date.now() - LIFECYCLE_EXERCISE_DISPATCH_STALE_MS),
     targets: exercise.targets.map((target) => ({
       ...target,
       projection: projectTradingLifecycleExerciseTarget(target),
