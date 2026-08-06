@@ -44,6 +44,13 @@ function signalIdentity(signal: AccountSignal) {
 }
 
 function codeForError(error: HttpError) {
+  if (error.details && typeof error.details === 'object' && !Array.isArray(error.details)) {
+    const detailCode = (error.details as Record<string, unknown>).code;
+    if (detailCode === 'live_entry_policy_blocked') {
+      return 'LIVE_ENTRY_POLICY_BLOCKED';
+    }
+  }
+
   const message = error.message.toLowerCase();
   if (message.includes('globally disabled')) return 'SUBSCRIPTION_DISABLED';
   if (message.includes('entries are disabled')) return 'ASSIGNMENT_ENTRIES_DISABLED';

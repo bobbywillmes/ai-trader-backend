@@ -84,3 +84,23 @@ position-slot breakdown: the account limit, active positions, pending entry
 intents, current usage, the proposed additional slot, and projected usage. The
 preview reads this from the normal entry-risk evaluation and does not weaken or
 independently recompute the risk gate.
+
+## Phase 1 shared entry evaluation
+
+Lifecycle Exercise previews and launches now meet the normal signal path at the
+same single-assignment evaluation boundary. The backend resolves one explicit
+`TradingAccountSubscription`, calculates its runtime sizing, evaluates current
+session and risk state, and returns the evidence needed to decide whether an
+intent may be created. Evaluation itself does not create an `OrderIntent`,
+reserve a client order ID, or write to Alpaca. Launch remains a separate,
+explicit mutation through `processEntryForAccountSubscription`.
+
+The order worker continues to resolve the recorded assignment and rerun the
+risk gate immediately before broker submission. It uses current account,
+assignment, allocation, broker, session, exposure, and risk state rather than
+trusting preview or intent-creation snapshots.
+
+LIVE entry policy is also evaluated before intent creation. Both
+`ALLOW_LIVE_TRADING` and `ALLOW_LIVE_RISK_REDUCING_WRITES` must permit an entry;
+the Alpaca client retains the same check as defense in depth. Lifecycle
+Exercises remain PAPER-only in this phase.

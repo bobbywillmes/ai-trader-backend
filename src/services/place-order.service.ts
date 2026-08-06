@@ -28,6 +28,7 @@ import {
   resolveRuntimeAccountSubscriptionSizing,
   type RuntimeAccountSubscriptionSizingResult,
 } from './account-subscription-runtime-sizing.service.js';
+import { evaluateAssignmentEntry } from './assignment-entry-evaluation.service.js';
 
 type SubmitOrderOptions = {
   entryDecisionKey?: string;
@@ -80,21 +81,39 @@ export async function submitOrder(
   input: PlaceOrderInput,
   options: SubmitOrderOptions = {}
 ) {
-  const subscriptionResolvedInput = await resolveSubscriptionOrderInput(input);
+  if (options.entryDecisionKey) {
+    await ensureEntryDecisionCanLink(options.entryDecisionKey);
+  }
+
+  const isAssignmentEntry = (input.signalType ?? 'entry') === 'entry';
+  const entryEvaluation = isAssignmentEntry
+    ? await evaluateAssignmentEntry({ input })
+    : null;
+  const subscriptionResolvedInput = entryEvaluation?.input ??
+    await resolveSubscriptionOrderInput(input);
   const tradingAccountId = subscriptionResolvedInput.tradingAccountId;
   if (tradingAccountId === undefined) {
     throw new HttpError(400, 'Resolved order is missing tradingAccountId.');
   }
 
-  if (options.entryDecisionKey) {
-    await ensureEntryDecisionCanLink(options.entryDecisionKey);
-  }
-
-  const runtimeSizing = await applyRuntimeAccountSubscriptionSizing(
-    subscriptionResolvedInput,
-    tradingAccountId
-  );
+  const runtimeSizing = entryEvaluation
+    ? { input: entryEvaluation.input, sizing: entryEvaluation.sizing }
+    : await applyRuntimeAccountSubscriptionSizing(
+        subscriptionResolvedInput,
+        tradingAccountId
+      );
   const resolvedInput = runtimeSizing.input;
+  if (
+    entryEvaluation &&
+    !entryEvaluation.risk.allowed &&
+    entryEvaluation.blockers[0]?.code === 'live_entry_policy_blocked'
+  ) {
+    throw new HttpError(
+      entryEvaluation.risk.statusCode,
+      entryEvaluation.risk.reason,
+      entryEvaluation.risk.details
+    );
+  }
   const account = await prisma.tradingAccount.findUniqueOrThrow({
     where: { id: tradingAccountId },
     select: { environment: true },
@@ -130,11 +149,13 @@ export async function submitOrder(
     });
   }
 
-  const riskResult = await evaluateOrderRisk(resolvedInput, {
-    tradingAccountId,
-    requestedNotionalOverride:
-      runtimeSizing.sizing?.estimatedNotional ?? null,
-  });
+  const riskResult =
+    entryEvaluation?.risk ??
+    (await evaluateOrderRisk(resolvedInput, {
+      tradingAccountId,
+      requestedNotionalOverride:
+        runtimeSizing.sizing?.estimatedNotional ?? null,
+    }));
   await recordOrderIntentRiskEvaluation({
     orderIntentId: intent.id,
     allowed: riskResult.allowed,

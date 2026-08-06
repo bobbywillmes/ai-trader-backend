@@ -2,9 +2,7 @@ import type { PositionSizingType, Prisma } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
-import type { ResolvedPlaceOrderInput } from '../validators/place-order.schema.js';
 import {
-  resolveRuntimeAccountSubscriptionSizing,
   type RuntimeAccountSubscriptionSizingResult,
 } from './account-subscription-runtime-sizing.service.js';
 import { getRuntimeTradingConfig } from './config.service.js';
@@ -14,6 +12,7 @@ import {
   isEntrySessionBlocked,
 } from './entry-session-guard.service.js';
 import { evaluateOrderRisk, type RiskGateBlocked } from './risk-gate.service.js';
+import { evaluateAssignmentEntry } from './assignment-entry-evaluation.service.js';
 
 const ACTIVE_POSITION_STATUSES = ['open', 'closing'];
 const ENTRY_ORDER_STATUSES = ['pending', 'submitted', 'filled'];
@@ -629,28 +628,6 @@ function serializeAllocation(
     : null;
 }
 
-function buildRiskInput(args: {
-  tradingAccountId: number;
-  subscription: PreviewSubscription;
-  sizing: RuntimeAccountSubscriptionSizingResult;
-  subscriptionKey: string;
-}): ResolvedPlaceOrderInput {
-  return {
-    tradingAccountSubscriptionId:
-      args.sizing.tradingAccountSubscriptionId,
-    tradingAccountId: args.tradingAccountId,
-    subscriptionKey: args.subscriptionKey,
-    subscriptionId: args.subscription.id,
-    symbol: args.subscription.symbol,
-    side: 'buy',
-    orderType: 'market',
-    timeInForce: 'day',
-    qty: args.sizing.qty,
-    extendedHours: false,
-    signalType: 'entry',
-  };
-}
-
 function serializePreviewBase(args: {
   account: PreviewTradingAccount;
   subscription: PreviewSubscription;
@@ -776,6 +753,7 @@ export async function previewTradingAccountEntryRisk(
   const session = await getSessionPreview(tradingAccountId, ignoreSession);
   let sizing: RuntimeAccountSubscriptionSizingResult | null = null;
   let sizingError: unknown = null;
+  let sharedRiskResult: Awaited<ReturnType<typeof evaluateOrderRisk>> | null = null;
 
   try {
     if (!accountSubscription) {
@@ -784,12 +762,19 @@ export async function previewTradingAccountEntryRisk(
         'Trading account subscription assignment is required for risk preview.'
       );
     }
-    sizing = await resolveRuntimeAccountSubscriptionSizing({
-      tradingAccountSubscriptionId: accountSubscription.id,
-      tradingAccountId,
-      subscriptionId: subscription.id,
-      symbol: subscription.symbol,
+    const evaluation = await evaluateAssignmentEntry({
+      input: {
+        tradingAccountSubscriptionId: accountSubscription.id,
+        subscriptionKey: input.subscriptionKey,
+        signalType: 'entry',
+        orderType: 'market',
+        timeInForce: 'day',
+        extendedHours: false,
+      },
+      enforceEntrySessionGuard: !ignoreSession,
     });
+    sizing = evaluation.sizing;
+    sharedRiskResult = evaluation.risk;
   } catch (error) {
     sizingError = error;
   }
@@ -815,17 +800,10 @@ export async function previewTradingAccountEntryRisk(
     });
   }
 
-  const riskInput = buildRiskInput({
-    tradingAccountId,
-    subscription,
-    sizing,
-    subscriptionKey: input.subscriptionKey,
-  });
-  const riskResult = await evaluateOrderRisk(riskInput, {
-    tradingAccountId,
-    enforceEntrySessionGuard: !ignoreSession,
-    requestedNotionalOverride: sizing.estimatedNotional,
-  });
+  const riskResult = sharedRiskResult;
+  if (!riskResult) {
+    throw new HttpError(500, 'Assignment entry evaluation did not return a risk result.');
+  }
 
   return serializePreviewBase({
     account,
