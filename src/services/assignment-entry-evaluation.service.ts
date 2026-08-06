@@ -80,7 +80,10 @@ export type AssignmentEntryEvaluation = {
     message: string;
   }>;
   permitsIntentCreation: boolean;
-  outcomeCode: 'ENTRY_ELIGIBLE' | 'ENTRY_RISK_BLOCKED';
+  outcomeCode:
+    | 'ENTRY_ELIGIBLE'
+    | 'ENTRY_RISK_BLOCKED'
+    | 'LIVE_ENTRY_POLICY_BLOCKED';
 };
 
 function riskRule(result: RiskGateResult) {
@@ -169,7 +172,8 @@ export async function evaluateResolvedAssignmentEntry(args: {
   enforceEntrySessionGuard?: boolean;
   excludeOrderIntentId?: number;
 }): Promise<AssignmentEntryEvaluation> {
-  const risk = getLiveEntryPolicyBlock(args.context) ?? await evaluateOrderRisk(args.input, {
+  const livePolicyBlock = getLiveEntryPolicyBlock(args.context);
+  const risk = livePolicyBlock ?? await evaluateOrderRisk(args.input, {
     tradingAccountId: args.context.tradingAccount.id,
     requestedNotionalOverride: args.sizing.estimatedNotional,
     ...(args.enforceEntrySessionGuard === false
@@ -207,7 +211,11 @@ export async function evaluateResolvedAssignmentEntry(args: {
     blockers,
     warnings: [],
     permitsIntentCreation: risk.allowed,
-    outcomeCode: risk.allowed ? 'ENTRY_ELIGIBLE' : 'ENTRY_RISK_BLOCKED',
+    outcomeCode: risk.allowed
+      ? 'ENTRY_ELIGIBLE'
+      : livePolicyBlock
+        ? 'LIVE_ENTRY_POLICY_BLOCKED'
+        : 'ENTRY_RISK_BLOCKED',
   };
 }
 

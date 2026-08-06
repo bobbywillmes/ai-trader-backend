@@ -92,15 +92,18 @@ same single-assignment evaluation boundary. The backend resolves one explicit
 `TradingAccountSubscription`, calculates its runtime sizing, evaluates current
 session and risk state, and returns the evidence needed to decide whether an
 intent may be created. Evaluation itself does not create an `OrderIntent`,
-reserve a client order ID, or write to Alpaca. Launch remains a separate,
-explicit mutation through `processEntryForAccountSubscription`.
+reserve idempotency state, or write to Alpaca. Launch remains a separate,
+explicit mutation through `processEntryForAccountSubscription`. The signal
+layer may calculate its deterministic identity and client order ID earlier;
+that calculation is non-mutating and does not reserve state.
 
 The order worker continues to resolve the recorded assignment and rerun the
 risk gate immediately before broker submission. It uses current account,
 assignment, allocation, broker, session, exposure, and risk state rather than
 trusting preview or intent-creation snapshots.
 
-LIVE entry policy is also evaluated before intent creation. Both
+LIVE entry policy is evaluated before `OrderIntent` creation and before
+`submitOrder()` generates a fallback client order ID. Both
 `ALLOW_LIVE_TRADING` and `ALLOW_LIVE_RISK_REDUCING_WRITES` must permit an entry;
 the Alpaca client retains the same check as defense in depth. Lifecycle
 Exercises remain PAPER-only in this phase.

@@ -160,11 +160,30 @@ describe('assignment entry evaluation', () => {
 
     expect(result).toMatchObject({
       permitsIntentCreation: false,
-      outcomeCode: 'ENTRY_RISK_BLOCKED',
+      outcomeCode: 'LIVE_ENTRY_POLICY_BLOCKED',
       blockers: [{ code: 'live_entry_policy_blocked' }],
       risk: { allowed: false, statusCode: 403 },
     });
     expect(mocks.evaluateOrderRisk).not.toHaveBeenCalled();
+  });
+
+  it('keeps ordinary risk failures distinct from LIVE policy failures', async () => {
+    mocks.evaluateOrderRisk.mockResolvedValue({
+      allowed: false,
+      statusCode: 409,
+      reason: 'Account maximum position capacity would be exceeded.',
+      details: { rule: 'account_max_open_positions_exceeded' },
+    });
+
+    const result = await evaluateAssignmentEntry({
+      input: { tradingAccountSubscriptionId: 40, extendedHours: false },
+    });
+
+    expect(result).toMatchObject({
+      permitsIntentCreation: false,
+      outcomeCode: 'ENTRY_RISK_BLOCKED',
+      blockers: [{ code: 'account_max_open_positions_exceeded' }],
+    });
   });
 
   it('allows LIVE to continue when both existing entry-write flags are enabled', async () => {

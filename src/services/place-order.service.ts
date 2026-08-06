@@ -105,8 +105,8 @@ export async function submitOrder(
   const resolvedInput = runtimeSizing.input;
   if (
     entryEvaluation &&
-    !entryEvaluation.risk.allowed &&
-    entryEvaluation.blockers[0]?.code === 'live_entry_policy_blocked'
+    entryEvaluation.outcomeCode === 'LIVE_ENTRY_POLICY_BLOCKED' &&
+    !entryEvaluation.risk.allowed
   ) {
     throw new HttpError(
       entryEvaluation.risk.statusCode,

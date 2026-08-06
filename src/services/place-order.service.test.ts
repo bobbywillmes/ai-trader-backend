@@ -238,7 +238,7 @@ describe('place order service entry decision attribution', () => {
       },
       blockers: [{ code: 'live_entry_policy_blocked' }],
       permitsIntentCreation: false,
-      outcomeCode: 'ENTRY_RISK_BLOCKED',
+      outcomeCode: 'LIVE_ENTRY_POLICY_BLOCKED',
     } as never);
 
     await expect(submitOrder({
