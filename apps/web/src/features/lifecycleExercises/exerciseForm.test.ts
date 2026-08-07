@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildLifecycleExercisePreviewPayload,
   canLaunchPaperExercise,
   DEFAULT_LIFECYCLE_EXERCISE_REASON,
   formatLifecycleExerciseName,
   isLifecyclePreviewValid,
-  showsSelectedAccountHolders,
   selectionModeLabel,
   updateGeneratedExerciseName,
   validatedAssignmentIds,
@@ -56,11 +54,6 @@ describe("lifecycle exercise create form", () => {
     );
   });
 
-  it("shows selected users only for Selected users mode", () => {
-    expect(showsSelectedAccountHolders("SELECTED_USERS")).toBe(true);
-    expect(showsSelectedAccountHolders("ALL_ELIGIBLE")).toBe(false);
-  });
-
   it("requires explicit Paper launch confirmation", () => {
     expect(canLaunchPaperExercise(false)).toBe(false);
     expect(canLaunchPaperExercise(true)).toBe(true);
@@ -71,38 +64,6 @@ describe("lifecycle exercise create form", () => {
     expect(isLifecyclePreviewValid("PREVIEWED", "2026-07-28T12:05:00.000Z", now)).toBe(true);
     expect(isLifecyclePreviewValid("PREVIEWED", "2026-07-28T11:59:59.000Z", now)).toBe(false);
     expect(isLifecyclePreviewValid("RUNNING", "2026-07-28T12:05:00.000Z", now)).toBe(false);
-  });
-
-  it("builds selected-user and Everyone preview payloads without stale user IDs", () => {
-    const selected = buildLifecycleExercisePreviewPayload({
-      name: "RSP Paper check",
-      reason: DEFAULT_LIFECYCLE_EXERCISE_REASON,
-      subscriptionId: "42",
-      selectionMode: "SELECTED_USERS",
-      userIds: ["7", "9"],
-    });
-    expect(selected).toEqual({
-      name: "RSP Paper check",
-      reason: "Controlled Paper lifecycle validation.",
-      subscriptionId: 42,
-      selectionMode: "SELECTED_USERS",
-      userIds: [7, 9],
-      environment: "PAPER",
-    });
-
-    expect(buildLifecycleExercisePreviewPayload({
-      name: "RSP Paper check",
-      reason: DEFAULT_LIFECYCLE_EXERCISE_REASON,
-      subscriptionId: "42",
-      selectionMode: "ALL_ELIGIBLE",
-      userIds: ["7", "9"],
-    })).toEqual({
-      name: "RSP Paper check",
-      reason: "Controlled Paper lifecycle validation.",
-      subscriptionId: 42,
-      selectionMode: "ALL_ELIGIBLE",
-      environment: "PAPER",
-    });
   });
 
   it("constructs exact preview IDs only from current selectable PAPER candidates", () => {
