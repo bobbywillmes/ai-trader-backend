@@ -35,11 +35,12 @@ const exercise = (id: number, selectionMode: LifecycleExercise["selectionMode"])
 
 const candidates = [candidate(4, "PAPER", true), candidate(8, "PAPER", false, [{ code: "ASSIGNMENT_DISABLED", message: "Entries are disabled for this deployment." }]), candidate(9, "LIVE", false)];
 const history = [exercise(1, "EXPLICIT_ASSIGNMENTS"), exercise(2, "SELECTED_USERS"), exercise(3, "ALL_ELIGIBLE")];
+let historyRows = history;
 
-vi.mock("@tanstack/react-query", () => ({ useQuery: ({ queryKey }: { queryKey: string[] }) => queryKey[0] === "subscriptions" ? { data: [{ id: 7, key: "spy", name: "SPY Core" }] } : {} }));
+vi.mock("@tanstack/react-query", () => ({ useQuery: ({ queryKey }: { queryKey: string[] }) => queryKey[0] === "subscriptions" ? { data: [{ id: 7, key: "spy", name: "SPY Core" }, { id: 99, key: "unused", name: "Unused Subscription" }] } : {} }));
 vi.mock("../../lib/api", () => ({ getAdminToken: () => "token" }));
 vi.mock("./hooks", () => ({
-  useLifecycleExercises: () => ({ data: { exercises: history }, isLoading: false, isFetching: false, refetch: vi.fn() }),
+  useLifecycleExercises: () => ({ data: { exercises: historyRows }, isLoading: false, isFetching: false, refetch: vi.fn() }),
   useSubscriptionEntryCandidates: (_token: string, subscriptionId: number | null) => {
     mocks.candidateSubscriptionId = subscriptionId;
     return { data: subscriptionId ? { candidates } : undefined, isLoading: false, isFetching: false, isError: false, refetch: vi.fn().mockResolvedValue({ data: { candidates } }) };
@@ -58,6 +59,7 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  historyRows = history;
   mocks.candidateSubscriptionId = null;
   mocks.previewExplicit.mockResolvedValue({ exercise: exercise(10, "EXPLICIT_ASSIGNMENTS") });
   window.matchMedia = vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() });
@@ -66,7 +68,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("Lifecycle Exercises creation", () => {
-  it("offers only the TradingAccount workflow while preserving legacy history labels", () => {
+  it("offers only the TradingAccount workflow while preserving legacy history labels", async () => {
     renderPage();
     expect(screen.getByText("Select TradingAccounts")).toBeTruthy();
     expect(screen.getByText("How this works")).toBeTruthy();
@@ -76,6 +78,7 @@ describe("Lifecycle Exercises creation", () => {
     expect(screen.queryByText("Users")).toBeNull();
     expect(screen.queryByText("Legacy User selection")).toBeNull();
     expect(screen.queryByText("Selected account holders")).toBeNull();
+    expect(screen.queryByPlaceholderText("Selection mode")).toBeNull();
     expect(screen.getByText(/Subscription Entry · Selected users/)).toBeTruthy();
     expect(screen.getByText(/Subscription Entry · All eligible users\/accounts/)).toBeTruthy();
     expect(screen.getByText(/Subscription Entry · 2 selected TradingAccounts/)).toBeTruthy();
@@ -164,5 +167,19 @@ describe("Lifecycle Exercises creation", () => {
     expect(screen.queryByRole("button", { name: "Launch PAPER exercise" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Create fresh preview" }));
     expect(screen.getByText("Create Subscription Entry exercise")).toBeTruthy();
+  });
+
+  it("limits history to ten rows and paginates the filtered result set", async () => {
+    historyRows = Array.from({ length: 12 }, (_, index) => exercise(12 - index, index % 2 ? "SELECTED_USERS" : "EXPLICIT_ASSIGNMENTS"));
+    renderPage();
+
+    expect(screen.getByText("Showing 1–10 of 12")).toBeTruthy();
+    expect(screen.getByText("#12 Exercise 12")).toBeTruthy();
+    expect(screen.queryByText("#2 Exercise 2")).toBeNull();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "2" }));
+    expect(screen.getByText("Showing 11–12 of 12")).toBeTruthy();
+    expect(screen.getByText("#2 Exercise 2")).toBeTruthy();
+    expect(screen.queryByText("#12 Exercise 12")).toBeNull();
   });
 });

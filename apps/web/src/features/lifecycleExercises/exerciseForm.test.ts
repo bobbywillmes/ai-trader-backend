@@ -3,6 +3,7 @@ import {
   canLaunchPaperExercise,
   DEFAULT_LIFECYCLE_EXERCISE_REASON,
   formatLifecycleExerciseName,
+  historySubscriptionOptions,
   isLifecyclePreviewValid,
   selectionModeLabel,
   updateGeneratedExerciseName,
@@ -93,5 +94,16 @@ describe("lifecycle exercise create form", () => {
     expect(selectionModeLabel("EXPLICIT_ASSIGNMENTS")).toBe("Selected TradingAccounts");
     expect(selectionModeLabel("SELECTED_USERS")).toBe("Selected users");
     expect(selectionModeLabel("ALL_ELIGIBLE")).toBe("All eligible users/accounts");
+  });
+
+  it("builds history Subscription filters only from distinct exercised subscriptions", () => {
+    expect(historySubscriptionOptions([
+      { subscription: { id: 7, name: "SPY Core" } },
+      { subscription: { id: 7, name: "SPY Core" } },
+      { subscription: { id: 4, name: "AAPL Core" } },
+    ])).toEqual([
+      { value: "4", label: "AAPL Core" },
+      { value: "7", label: "SPY Core" },
+    ]);
   });
 });

@@ -26,6 +26,12 @@ export function selectionModeLabel(mode: "SELECTED_USERS" | "ALL_ELIGIBLE" | "EX
   return "Selected users";
 }
 
+export function historySubscriptionOptions(exercises: readonly { subscription: { id: number; name: string } }[]) {
+  return [...new Map(exercises.map((exercise) => [exercise.subscription.id, exercise.subscription])).values()]
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((subscription) => ({ value: String(subscription.id), label: subscription.name }));
+}
+
 export function updateGeneratedExerciseName(input: {
   currentName: string;
   manuallyEdited: boolean;
