@@ -75,6 +75,24 @@ for five minutes. The review separates “selected target” from current previe
 eligibility, shows sizing/notional, blockers, and warnings, and requires starting
 over rather than editing a frozen target set.
 
+Subscription-entry preview diagnostics do not stop at a temporal entry-session
+block. When the market is closed, an entry buffer is active, or the session clock
+is unavailable, preview runs a second session-independent risk evaluation for
+the same frozen assignment and sizing. It records the session blocker together
+with any downstream risk blocker and preserves account position-slot and
+exposure evidence. This diagnostic continuation is preview-only: it creates no
+intent, performs no broker write, and does not change the fail-fast risk gate
+used by launch, signal processing, or the order worker. Checks whose own
+prerequisites cannot be resolved remain explicitly unevaluated rather than
+being guessed.
+
+Account position-slot evidence distinguishes open tracked positions,
+pending or unresolved entry intents that have not materialized into tracked
+positions, and the proposed exercise entry. Pending or unresolved intents are
+conservatively reserved even when no broker order appears on the Open Orders
+screen, preventing lifecycle lag or ambiguous attribution from understating
+account capacity.
+
 Launch uses only the persisted exercise ID, revalidates every frozen target
 against current state, and sends only eligible targets through the normal entry
 pipeline. Blocked targets stay recorded, so mixed results are expected and

@@ -29,7 +29,7 @@ vi.mock('./risk-gate.service.js', () => ({
   evaluateOrderRisk: mocks.evaluateOrderRisk,
 }));
 
-import { evaluateAssignmentEntry } from './assignment-entry-evaluation.service.js';
+import { evaluateAssignmentEntry, evaluateAssignmentEntryPreviewDiagnostics } from './assignment-entry-evaluation.service.js';
 
 function context(environment: 'PAPER' | 'LIVE') {
   return {
@@ -144,6 +144,43 @@ describe('assignment entry evaluation', () => {
         requestedNotionalOverride: 1_425,
       })
     );
+  });
+
+  it('continues preview diagnostics past a session block without permitting entry', async () => {
+    mocks.evaluateOrderRisk
+      .mockResolvedValueOnce({
+        allowed: false,
+        statusCode: 409,
+        reason: 'Regular market is closed. New entries are blocked.',
+        details: { rule: 'market_closed', marketOpen: false },
+      })
+      .mockResolvedValueOnce({
+        allowed: false,
+        statusCode: 409,
+        reason: 'Account maximum position capacity would be exceeded.',
+        details: {
+          rule: 'account_max_open_positions_exceeded',
+          usage: { activePositionCount: 4, pendingEntryPositionCount: 1, currentAccountPositionSlots: 5 },
+          effectiveEntryLimits: { limits: { maxOpenPositions: { value: 5 } } },
+        },
+      });
+
+    const result = await evaluateAssignmentEntryPreviewDiagnostics({
+      input: { tradingAccountSubscriptionId: 40, subscriptionKey: 'dia_dip_core', extendedHours: false },
+    });
+
+    expect(result).toMatchObject({
+      permitsIntentCreation: false,
+      risk: { allowed: false, details: { rule: 'account_max_open_positions_exceeded' } },
+      blockers: [
+        { code: 'market_closed' },
+        { code: 'account_max_open_positions_exceeded' },
+      ],
+      session: { rule: 'market_closed', marketOpen: false },
+    });
+    expect(mocks.evaluateOrderRisk).toHaveBeenNthCalledWith(2, expect.anything(), expect.objectContaining({
+      enforceEntrySessionGuard: false,
+    }));
   });
 
   it.each([

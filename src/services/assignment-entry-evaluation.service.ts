@@ -239,3 +239,59 @@ export async function evaluateAssignmentEntry(args: {
       : {}),
   });
 }
+
+const ENTRY_SESSION_BLOCK_RULES = new Set([
+  'market_closed',
+  'entry_open_buffer_active',
+  'entry_close_buffer_active',
+  'market_clock_unavailable',
+  'entry_window_unavailable',
+]);
+
+/**
+ * Preview-only evaluation that preserves the real entry result while continuing
+ * past a temporal session block to collect session-independent risk evidence.
+ * This function never creates an intent or performs a broker write.
+ */
+export async function evaluateAssignmentEntryPreviewDiagnostics(args: {
+  input: PlaceOrderInput;
+  excludeOrderIntentId?: number;
+}) {
+  const resolved = await resolveAssignmentEntryContext(args.input);
+  const sized = await calculateAssignmentEntrySizing(resolved);
+  const authoritative = await evaluateResolvedAssignmentEntry({
+    context: resolved.context,
+    input: sized.input,
+    sizing: sized.sizing,
+    ...(args.excludeOrderIntentId !== undefined
+      ? { excludeOrderIntentId: args.excludeOrderIntentId }
+      : {}),
+  });
+  const authoritativeRule = riskRule(authoritative.risk);
+
+  if (authoritative.permitsIntentCreation || !authoritativeRule || !ENTRY_SESSION_BLOCK_RULES.has(authoritativeRule)) {
+    return authoritative;
+  }
+
+  const sessionIndependent = await evaluateResolvedAssignmentEntry({
+    context: resolved.context,
+    input: sized.input,
+    sizing: sized.sizing,
+    enforceEntrySessionGuard: false,
+    ...(args.excludeOrderIntentId !== undefined
+      ? { excludeOrderIntentId: args.excludeOrderIntentId }
+      : {}),
+  });
+  const blockers = [...authoritative.blockers];
+  for (const blocker of sessionIndependent.blockers) {
+    if (!blockers.some((existing) => existing.code === blocker.code)) blockers.push(blocker);
+  }
+
+  return {
+    ...sessionIndependent,
+    blockers,
+    permitsIntentCreation: false,
+    outcomeCode: authoritative.outcomeCode,
+    session: authoritative.risk.details as Prisma.InputJsonValue,
+  } satisfies AssignmentEntryEvaluation;
+}

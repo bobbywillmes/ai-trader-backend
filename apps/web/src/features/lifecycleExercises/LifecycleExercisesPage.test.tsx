@@ -87,7 +87,15 @@ describe("Lifecycle Exercises creation", () => {
       targets: [{
         id: 100, tradingAccountId: 104, tradingAccountSubscriptionId: 4, status: "READY", blockersJson: [], warningsJson: [], environment: "PAPER",
         resolvedQuantity: 3, estimatedPrice: 314.09, estimatedNotional: 942.27, orderIntentId: null, reconciledAt: null,
-        readinessJson: { risk: { details: { usage: { activePositionCount: 1, pendingEntryPositionCount: 1, currentAccountPositionSlots: 2 }, effectiveEntryLimits: { limits: { maxOpenPositions: { value: 5 } } } } } },
+        readinessJson: {
+          sizing: { qty: 3, snapshot: { sizingType: "MAX_NOTIONAL", maxPositionNotional: 1_000, latestPriceAt: "2026-08-07T12:00:00Z", latestPriceSource: "last_trade" } },
+          session: { status: "allowed", marketOpen: true },
+          risk: { allowed: true, details: {
+            usage: { activePositionCount: 1, pendingEntryPositionCount: 1, currentAccountPositionSlots: 2, currentAccountExposure: 2_000, projectedAccountExposure: 2_942.27 },
+            effectiveEntryLimits: { limits: { maxOpenPositions: { value: 5 } }, authoritativeTotalExposure: { value: 10_000 } },
+            allocationRisk: { limits: { maxAllocatedNotional: 5_000 }, usage: { currentAllocatedNotional: 1_000, projectedAllocatedNotional: 1_942.27 } },
+          } },
+        },
       }],
     } });
     renderPage();
@@ -109,19 +117,26 @@ describe("Lifecycle Exercises creation", () => {
     expect(screen.getByText("Paper Account 4")).toBeTruthy();
     expect(screen.getByText(/Selected target · Holder 4 · Assignment #4/)).toBeTruthy();
     expect(screen.getByText("Allocation 4")).toBeTruthy();
-    expect(screen.getByText("3 projected / 5")).toBeTruthy();
+    expect(screen.getByText("1 open + 1 pending/unresolved + 1 proposed = 3 / 5")).toBeTruthy();
+    expect(screen.queryByText("Warnings")).toBeNull();
+    expect(screen.queryByText("Eligible notional")).toBeNull();
+    await user.click(screen.getByRole("button", { name: /View risk and sizing details/ }));
+    expect(screen.getByText("$1,000.00 maximum notional")).toBeTruthy();
+    expect(screen.getByText("3 shares at $314.09 = $942.27")).toBeTruthy();
+    expect(screen.getByText("$2,000.00 current · $2,942.27 projected · $10,000.00 max")).toBeTruthy();
+    expect(screen.getByText("$1,000.00 current · $1,942.27 projected · $5,000.00 max")).toBeTruthy();
     expect(screen.queryByText("Select TradingAccounts")).toBeNull();
     expect(screen.getByRole("button", { name: "Launch PAPER exercise" })).toBeTruthy();
   });
 
-  it("explains when account position slots were not evaluated because an earlier check blocked entry", async () => {
+  it("shows account position slots even when the market-session check blocks entry", async () => {
     mocks.previewExplicit.mockResolvedValue({ exercise: {
       ...exercise(11, "EXPLICIT_ASSIGNMENTS"),
       targets: [{
         id: 101, tradingAccountId: 104, tradingAccountSubscriptionId: 4, status: "BLOCKED",
         blockersJson: [{ code: "MARKET_CLOSED", message: "Regular market is closed." }], warningsJson: [], environment: "PAPER",
         resolvedQuantity: 3, estimatedPrice: 314.09, estimatedNotional: 942.27, orderIntentId: null, reconciledAt: null,
-        readinessJson: { risk: { details: { entrySession: { marketOpen: false } } } },
+        readinessJson: { risk: { details: { usage: { activePositionCount: 1, pendingEntryPositionCount: 0, currentAccountPositionSlots: 1 }, effectiveEntryLimits: { limits: { maxOpenPositions: { value: 5 } } } } } },
       }],
     } });
     renderPage();
@@ -132,6 +147,22 @@ describe("Lifecycle Exercises creation", () => {
     await user.click(screen.getByRole("button", { name: "Preview frozen targets" }));
 
     expect(await screen.findByText("Account position slots")).toBeTruthy();
-    expect(screen.getByText("Not evaluated — entry blocked earlier")).toBeTruthy();
+    expect(screen.getByText("1 open + 0 pending/unresolved + 1 proposed = 2 / 5")).toBeTruthy();
+    expect(screen.getByText("Regular market is closed.")).toBeTruthy();
+  });
+
+  it("replaces launch with a fresh-preview action after expiration", async () => {
+    mocks.previewExplicit.mockResolvedValue({ exercise: { ...exercise(12, "EXPLICIT_ASSIGNMENTS"), previewExpiresAt: "2020-01-01T00:00:00Z" } });
+    renderPage();
+    const user = userEvent.setup();
+    await user.click(screen.getByPlaceholderText("Select a Subscription"));
+    await user.click(await screen.findByText("SPY Core (spy)"));
+    await user.click(screen.getByLabelText("Select Paper Account 4 assignment 4"));
+    await user.click(screen.getByRole("button", { name: "Preview frozen targets" }));
+
+    expect(await screen.findByText("Expired")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Launch PAPER exercise" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Create fresh preview" }));
+    expect(screen.getByText("Create Subscription Entry exercise")).toBeTruthy();
   });
 });

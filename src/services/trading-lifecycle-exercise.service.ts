@@ -10,7 +10,7 @@ import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import type { LifecycleExercisePreviewInput } from '../validators/trading-lifecycle-exercise.schema.js';
 import type { SubscriptionEntryPreviewInput } from '../validators/trading-lifecycle-exercise.schema.js';
-import { evaluateAssignmentEntry } from './assignment-entry-evaluation.service.js';
+import { evaluateAssignmentEntry, evaluateAssignmentEntryPreviewDiagnostics } from './assignment-entry-evaluation.service.js';
 import { previewTradingAccountEntryRisk } from './trading-account-entry-risk-preview.service.js';
 import { processEntryForAccountSubscription } from './signal-entry.service.js';
 import { createSystemEvent } from './system-event.service.js';
@@ -329,7 +329,7 @@ export async function previewSubscriptionEntryLifecycleExercise(
     let evaluation: Awaited<ReturnType<typeof evaluateAssignmentEntry>> | null = null;
     let blockers = staticBlockers(assignment);
     try {
-      evaluation = await evaluateAssignmentEntry({
+      evaluation = await evaluateAssignmentEntryPreviewDiagnostics({
         input: {
           tradingAccountSubscriptionId: assignment.id,
           subscriptionKey: subscription.key,

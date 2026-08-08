@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   assignmentFindMany: vi.fn(),
   exerciseCreate: vi.fn(),
   evaluateAssignmentEntry: vi.fn(),
+  evaluateAssignmentEntryPreviewDiagnostics: vi.fn(),
   createSystemEvent: vi.fn(),
 }));
 
@@ -16,7 +17,10 @@ vi.mock('../db/prisma.js', () => ({
     tradingLifecycleExercise: { create: mocks.exerciseCreate },
   },
 }));
-vi.mock('./assignment-entry-evaluation.service.js', () => ({ evaluateAssignmentEntry: mocks.evaluateAssignmentEntry }));
+vi.mock('./assignment-entry-evaluation.service.js', () => ({
+  evaluateAssignmentEntry: mocks.evaluateAssignmentEntry,
+  evaluateAssignmentEntryPreviewDiagnostics: mocks.evaluateAssignmentEntryPreviewDiagnostics,
+}));
 vi.mock('./system-event.service.js', () => ({ createSystemEvent: mocks.createSystemEvent }));
 vi.mock('./signal-entry.service.js', () => ({ processEntryForAccountSubscription: vi.fn() }));
 vi.mock('./trading-account-entry-risk-preview.service.js', () => ({ previewTradingAccountEntryRisk: vi.fn() }));
@@ -122,14 +126,14 @@ describe('explicit assignment preview', () => {
     mocks.assignmentFindMany
       .mockResolvedValueOnce([identity(4), identity(8)])
       .mockResolvedValueOnce([assignment(8, 108), assignment(4, 104)]);
-    mocks.evaluateAssignmentEntry.mockImplementation(async ({ input }) => evaluation(input.tradingAccountSubscriptionId));
+    mocks.evaluateAssignmentEntryPreviewDiagnostics.mockImplementation(async ({ input }) => evaluation(input.tradingAccountSubscriptionId));
 
     const result = await previewSubscriptionEntryLifecycleExercise({
       reason: 'Selected canary', subscriptionId: 7,
       tradingAccountSubscriptionIds: [8, 4], environment: 'PAPER',
     }, 1, new Date('2026-08-06T12:00:00Z'));
 
-    expect(mocks.evaluateAssignmentEntry.mock.calls.map(([arg]) => arg.input.tradingAccountSubscriptionId)).toEqual([4, 8]);
+    expect(mocks.evaluateAssignmentEntryPreviewDiagnostics.mock.calls.map(([arg]) => arg.input.tradingAccountSubscriptionId)).toEqual([4, 8]);
     expect(result.targets.map((target: { tradingAccountSubscriptionId: number }) => target.tradingAccountSubscriptionId)).toEqual([4, 8]);
     expect(mocks.exerciseCreate).toHaveBeenCalledOnce();
     const createInput = mocks.exerciseCreate.mock.calls[0]![0];
@@ -153,7 +157,7 @@ describe('explicit assignment preview', () => {
     }, 1)).rejects.toMatchObject({
       statusCode: 409, details: { code: 'INVALID_ASSIGNMENT_SELECTION', errors: [expect.objectContaining({ code })] },
     });
-    expect(mocks.evaluateAssignmentEntry).not.toHaveBeenCalled();
+    expect(mocks.evaluateAssignmentEntryPreviewDiagnostics).not.toHaveBeenCalled();
     expect(mocks.exerciseCreate).not.toHaveBeenCalled();
   });
 
@@ -161,7 +165,7 @@ describe('explicit assignment preview', () => {
     const disabled = assignment(4);
     disabled.tradingAccount.tradingEnabled = false;
     mocks.assignmentFindMany.mockResolvedValueOnce([identity(4)]).mockResolvedValueOnce([disabled]);
-    mocks.evaluateAssignmentEntry.mockRejectedValue(new HttpError(403, 'Trading is disabled.'));
+    mocks.evaluateAssignmentEntryPreviewDiagnostics.mockRejectedValue(new HttpError(403, 'Trading is disabled.'));
 
     const result = await previewSubscriptionEntryLifecycleExercise({
       reason: 'Blocked canary', subscriptionId: 7,

@@ -35,17 +35,49 @@ export type LifecycleExerciseTarget = {
       allocation?: { key?: string; name?: string } | null;
       tradingAccount?: { displayName?: string };
     };
+    sizing?: {
+      qty?: number;
+      estimatedNotional?: number;
+      snapshot?: {
+        sizingType?: string;
+        fixedQty?: number | null;
+        maxPositionNotional?: number | null;
+        minPositionNotional?: number | null;
+        maxQty?: number | null;
+        latestPrice?: number | null;
+        latestPriceAt?: string | null;
+        latestPriceSource?: string | null;
+      };
+    };
+    priceEvidence?: { observedAt?: string | null; source?: string | null };
+    session?: {
+      status?: string;
+      rule?: string;
+      marketOpen?: boolean | null;
+      evaluatedAt?: string | null;
+      entryAllowedAt?: string | null;
+      nextOpenAt?: string | null;
+    } | null;
     risk?: {
+      allowed?: boolean;
       details?: {
         usage?: {
           activePositionCount?: number;
           pendingEntryPositionCount?: number;
           currentAccountPositionSlots?: number;
+          currentAccountExposure?: number;
+          projectedAccountExposure?: number;
         };
         effectiveEntryLimits?: {
           limits?: { maxOpenPositions?: { value?: number | null } };
+          authoritativeTotalExposure?: { value?: number | null };
         };
-        allocationRisk?: { allocationKey?: string; allocationName?: string } | null;
+        allocationRisk?: {
+          allocationKey?: string;
+          allocationName?: string;
+          limits?: { maxAllocatedNotional?: number | null };
+          usage?: { currentAllocatedNotional?: number; projectedAllocatedNotional?: number | null };
+        } | null;
       } | null;
     };
   };
