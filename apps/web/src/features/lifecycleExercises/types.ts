@@ -31,6 +31,23 @@ export type LifecycleExerciseTarget = {
       proposedAdditionalSlots: number;
       projectedSlotCount: number;
     };
+    context?: {
+      allocation?: { key?: string; name?: string } | null;
+      tradingAccount?: { displayName?: string };
+    };
+    risk?: {
+      details?: {
+        usage?: {
+          activePositionCount?: number;
+          pendingEntryPositionCount?: number;
+          currentAccountPositionSlots?: number;
+        };
+        effectiveEntryLimits?: {
+          limits?: { maxOpenPositions?: { value?: number | null } };
+        };
+        allocationRisk?: { allocationKey?: string; allocationName?: string } | null;
+      } | null;
+    };
   };
   resolvedQuantity: number | null;
   estimatedPrice: number | null;

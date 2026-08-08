@@ -82,6 +82,14 @@ describe("Lifecycle Exercises creation", () => {
   });
 
   it("loads deployments, disables LIVE and unavailable PAPER rows, and previews exact selected assignment IDs", async () => {
+    mocks.previewExplicit.mockResolvedValue({ exercise: {
+      ...exercise(10, "EXPLICIT_ASSIGNMENTS"),
+      targets: [{
+        id: 100, tradingAccountId: 104, tradingAccountSubscriptionId: 4, status: "READY", blockersJson: [], warningsJson: [], environment: "PAPER",
+        resolvedQuantity: 3, estimatedPrice: 314.09, estimatedNotional: 942.27, orderIntentId: null, reconciledAt: null,
+        readinessJson: { risk: { details: { usage: { activePositionCount: 1, pendingEntryPositionCount: 1, currentAccountPositionSlots: 2 }, effectiveEntryLimits: { limits: { maxOpenPositions: { value: 5 } } } } } },
+      }],
+    } });
     renderPage();
     const user = userEvent.setup();
     await user.click(screen.getByPlaceholderText("Select a Subscription"));
@@ -98,7 +106,32 @@ describe("Lifecycle Exercises creation", () => {
     await user.click(screen.getByRole("button", { name: "Preview frozen targets" }));
     expect(mocks.previewExplicit).toHaveBeenCalledWith(expect.objectContaining({ subscriptionId: 7, tradingAccountSubscriptionIds: [4], environment: "PAPER" }));
     expect(await screen.findByText("Frozen preview")).toBeTruthy();
+    expect(screen.getByText("Paper Account 4")).toBeTruthy();
+    expect(screen.getByText(/Selected target · Holder 4 · Assignment #4/)).toBeTruthy();
+    expect(screen.getByText("Allocation 4")).toBeTruthy();
+    expect(screen.getByText("3 projected / 5")).toBeTruthy();
     expect(screen.queryByText("Select TradingAccounts")).toBeNull();
     expect(screen.getByRole("button", { name: "Launch PAPER exercise" })).toBeTruthy();
+  });
+
+  it("explains when account position slots were not evaluated because an earlier check blocked entry", async () => {
+    mocks.previewExplicit.mockResolvedValue({ exercise: {
+      ...exercise(11, "EXPLICIT_ASSIGNMENTS"),
+      targets: [{
+        id: 101, tradingAccountId: 104, tradingAccountSubscriptionId: 4, status: "BLOCKED",
+        blockersJson: [{ code: "MARKET_CLOSED", message: "Regular market is closed." }], warningsJson: [], environment: "PAPER",
+        resolvedQuantity: 3, estimatedPrice: 314.09, estimatedNotional: 942.27, orderIntentId: null, reconciledAt: null,
+        readinessJson: { risk: { details: { entrySession: { marketOpen: false } } } },
+      }],
+    } });
+    renderPage();
+    const user = userEvent.setup();
+    await user.click(screen.getByPlaceholderText("Select a Subscription"));
+    await user.click(await screen.findByText("SPY Core (spy)"));
+    await user.click(screen.getByLabelText("Select Paper Account 4 assignment 4"));
+    await user.click(screen.getByRole("button", { name: "Preview frozen targets" }));
+
+    expect(await screen.findByText("Account position slots")).toBeTruthy();
+    expect(screen.getByText("Not evaluated — entry blocked earlier")).toBeTruthy();
   });
 });
