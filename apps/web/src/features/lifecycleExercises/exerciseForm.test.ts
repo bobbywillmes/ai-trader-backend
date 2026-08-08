@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildLifecycleExercisePreviewPayload,
   canLaunchPaperExercise,
   DEFAULT_LIFECYCLE_EXERCISE_REASON,
   formatLifecycleExerciseName,
+  historySubscriptionOptions,
   isLifecyclePreviewValid,
-  showsSelectedAccountHolders,
+  selectionModeLabel,
   updateGeneratedExerciseName,
+  validatedAssignmentIds,
 } from "./exerciseForm";
+import type { SubscriptionEntryCandidate } from "./types";
 
 const localTime = new Date(2026, 6, 28, 4, 53);
 
@@ -53,11 +55,6 @@ describe("lifecycle exercise create form", () => {
     );
   });
 
-  it("shows selected users only for Selected users mode", () => {
-    expect(showsSelectedAccountHolders("SELECTED_USERS")).toBe(true);
-    expect(showsSelectedAccountHolders("ALL_ELIGIBLE")).toBe(false);
-  });
-
   it("requires explicit Paper launch confirmation", () => {
     expect(canLaunchPaperExercise(false)).toBe(false);
     expect(canLaunchPaperExercise(true)).toBe(true);
@@ -70,35 +67,43 @@ describe("lifecycle exercise create form", () => {
     expect(isLifecyclePreviewValid("RUNNING", "2026-07-28T12:05:00.000Z", now)).toBe(false);
   });
 
-  it("builds selected-user and Everyone preview payloads without stale user IDs", () => {
-    const selected = buildLifecycleExercisePreviewPayload({
-      name: "RSP Paper check",
-      reason: DEFAULT_LIFECYCLE_EXERCISE_REASON,
-      subscriptionId: "42",
-      selectionMode: "SELECTED_USERS",
-      userIds: ["7", "9"],
+  it("constructs exact preview IDs only from current selectable PAPER candidates", () => {
+    const candidate = (id: number, environment: "PAPER" | "LIVE", selectable: boolean): SubscriptionEntryCandidate => ({
+      tradingAccountSubscriptionId: id, subscriptionId: 7, tradingAccountId: id + 100,
+      subscription: { key: "spy", displayName: "SPY" },
+      tradingAccount: { displayName: `Account ${id}`, environment, status: "ACTIVE", tradingEnabled: true, killSwitchEnabled: false, credentialStatus: "ACTIVE" },
+      accountHolder: { id, name: `Holder ${id}`, email: `holder${id}@example.com`, enabled: true }, accessMembers: [],
+      assignment: { enabled: true, entriesEnabled: true, exitsEnabled: true, sizingType: "FIXED_QTY", fixedQty: 1, maxPositionNotional: null, reservedNotional: null, minPositionNotional: null, maxQty: null },
+      allocation: { id, key: `allocation-${id}`, displayName: `Allocation ${id}`, enabled: true }, selectable, unavailableReasons: [],
     });
-    expect(selected).toEqual({
-      name: "RSP Paper check",
-      reason: "Controlled Paper lifecycle validation.",
-      subscriptionId: 42,
-      selectionMode: "SELECTED_USERS",
-      userIds: [7, 9],
-      environment: "PAPER",
-    });
+    const candidates = [candidate(4, "PAPER", true), candidate(8, "PAPER", false), candidate(9, "LIVE", true), candidate(10, "PAPER", true)];
+    expect(validatedAssignmentIds(candidates, [4, 8, 9, 10, 999])).toEqual([4, 10]);
+    expect(validatedAssignmentIds(candidates, [4, 4])).toEqual([4]);
+  });
 
-    expect(buildLifecycleExercisePreviewPayload({
-      name: "RSP Paper check",
-      reason: DEFAULT_LIFECYCLE_EXERCISE_REASON,
-      subscriptionId: "42",
-      selectionMode: "ALL_ELIGIBLE",
-      userIds: ["7", "9"],
-    })).toEqual({
-      name: "RSP Paper check",
-      reason: "Controlled Paper lifecycle validation.",
-      subscriptionId: 42,
-      selectionMode: "ALL_ELIGIBLE",
-      environment: "PAPER",
-    });
+  it("caps exact assignment validation at 25 without adding newly eligible targets", () => {
+    const candidates = Array.from({ length: 30 }, (_, index) => ({
+      tradingAccountSubscriptionId: index + 1, selectable: true,
+      tradingAccount: { environment: "PAPER" },
+    })) as SubscriptionEntryCandidate[];
+    expect(validatedAssignmentIds(candidates, candidates.map((row) => row.tradingAccountSubscriptionId))).toEqual(Array.from({ length: 25 }, (_, index) => index + 1));
+    expect(validatedAssignmentIds(candidates, [2, 29])).toEqual([2, 29]);
+  });
+
+  it("uses durable friendly selection labels", () => {
+    expect(selectionModeLabel("EXPLICIT_ASSIGNMENTS")).toBe("Selected TradingAccounts");
+    expect(selectionModeLabel("SELECTED_USERS")).toBe("Selected users");
+    expect(selectionModeLabel("ALL_ELIGIBLE")).toBe("All eligible users/accounts");
+  });
+
+  it("builds history Subscription filters only from distinct exercised subscriptions", () => {
+    expect(historySubscriptionOptions([
+      { subscription: { id: 7, name: "SPY Core" } },
+      { subscription: { id: 7, name: "SPY Core" } },
+      { subscription: { id: 4, name: "AAPL Core" } },
+    ])).toEqual([
+      { value: "4", label: "AAPL Core" },
+      { value: "7", label: "SPY Core" },
+    ]);
   });
 });

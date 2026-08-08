@@ -5,10 +5,33 @@
 .previewAction { display: flex; gap: var(--mantine-spacing-md); align-items: center; flex-wrap: wrap; }
 .preview { border-top: 1px solid var(--mantine-color-default-border); padding-top: var(--mantine-spacing-md); }
 .previewTargets { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr)); gap: var(--mantine-spacing-sm); }
+.previewTarget { background: linear-gradient(135deg, color-mix(in srgb, var(--mantine-color-cyan-9) 5%, transparent), transparent 42%); }
+.previewTargetBlocked { border-left: 3px solid var(--mantine-color-red-7); }
+.previewTargetReady { border-left: 3px solid var(--mantine-color-teal-6); }
+.targetSummary { padding: var(--mantine-spacing-sm); border-radius: var(--mantine-radius-sm); background: color-mix(in srgb, var(--mantine-color-dark-8) 45%, transparent); }
+.targetSummary dt { color: var(--mantine-color-gray-5); }
+.targetSummary dd { color: var(--mantine-color-gray-0); font-weight: 600; }
+.targetSummary dl > div:nth-child(2) dd, .targetSummary dl > div:nth-child(3) dd, .targetSummary dl > div:nth-child(4) dd { color: var(--mantine-color-cyan-2); }
+.targetSummary dl > div:nth-child(5) dd { color: var(--mantine-color-blue-2); }
+.targetSummary dl > div:nth-child(6) dd { color: var(--mantine-color-yellow-2); }
+.riskDetails { margin-top: var(--mantine-spacing-xs); }
+.riskDetails :global(.mantine-Accordion-item) { overflow: hidden; border-color: var(--mantine-color-cyan-8); background: color-mix(in srgb, var(--mantine-color-cyan-9) 8%, transparent); }
+.riskDetails :global(.mantine-Accordion-control) { color: var(--mantine-color-cyan-2); background: color-mix(in srgb, var(--mantine-color-cyan-8) 12%, transparent); min-height: 54px; }
+.riskDetails :global(.mantine-Accordion-control:hover) { background: color-mix(in srgb, var(--mantine-color-cyan-7) 20%, transparent); }
+.riskDetails :global(.mantine-Accordion-chevron) { color: var(--mantine-color-cyan-3); }
+.riskDetails :global(.mantine-Accordion-panel) { border-top: 1px solid color-mix(in srgb, var(--mantine-color-cyan-8) 65%, transparent); }
+.riskDetails h3 { color: var(--mantine-color-cyan-2); border-left: 3px solid var(--mantine-color-cyan-7); padding-left: var(--mantine-spacing-xs); }
+.riskDetails dt { color: var(--mantine-color-gray-5); }
+.riskDetails dd { color: var(--mantine-color-gray-1); }
+.historyPagination { display: flex; align-items: center; justify-content: space-between; gap: var(--mantine-spacing-sm); flex-wrap: wrap; }
+.candidateGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 29rem), 1fr)); gap: var(--mantine-spacing-sm); }
+.candidate { min-width: 0; transition: border-color 120ms ease, background 120ms ease; }
+.candidateSelected { border-color: var(--mantine-color-cyan-5); background: color-mix(in srgb, var(--mantine-color-cyan-5) 7%, transparent); }
+.candidateBody { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .detailCard { border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-md); padding: var(--mantine-spacing-md); min-width: 0; }
 .details > :global(.mantine-Accordion-root), .actionFooter { grid-column: 1 / -1; }
 .actionFooter, .launchFooter { border-top: 1px solid var(--mantine-color-default-border); padding-top: var(--mantine-spacing-md); display: flex; gap: var(--mantine-spacing-md); align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
 .launchFooter { border: 1px solid var(--mantine-color-orange-4); border-radius: var(--mantine-radius-md); padding: var(--mantine-spacing-md); }
 @container lifecycle-page (max-width: 52rem) { .formGrid { grid-template-columns: 1fr 1fr; } .formGrid > :last-child { grid-column: 1 / -1; } }
-@container lifecycle-page (max-width: 34rem) { .header { align-items: stretch; flex-direction: column; } .header button, .previewAction button, .launchFooter button, .actionFooter button { width: 100%; min-height: 44px; } .formGrid, .details { grid-template-columns: 1fr; } .formGrid > :last-child { grid-column: auto; } .selection { width: 100%; } .launchFooter { flex-direction: column; } }
+@container lifecycle-page (max-width: 34rem) { .header { align-items: stretch; flex-direction: column; } .header button, .previewAction button, .launchFooter button, .actionFooter button { width: 100%; min-height: 44px; } .formGrid, .details { grid-template-columns: 1fr; } .formGrid > :last-child { grid-column: auto; } .selection { width: 100%; } .launchFooter { flex-direction: column; } .historyPagination { justify-content: center; } .historyPagination > p { width: 100%; text-align: center; } }

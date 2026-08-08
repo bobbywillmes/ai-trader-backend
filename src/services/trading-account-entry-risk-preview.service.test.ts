@@ -40,6 +40,37 @@ vi.mock('./account-subscription-runtime-sizing.service.js', () => ({
     mocks.resolveRuntimeAccountSubscriptionSizing,
 }));
 
+vi.mock('./assignment-entry-evaluation.service.js', () => ({
+  evaluateAssignmentEntry: vi.fn(async ({ input, enforceEntrySessionGuard }: {
+    input: { tradingAccountSubscriptionId: number };
+    enforceEntrySessionGuard?: boolean;
+  }) => {
+    const sizing = await mocks.resolveRuntimeAccountSubscriptionSizing({
+      tradingAccountSubscriptionId: input.tradingAccountSubscriptionId,
+      tradingAccountId: 1,
+      subscriptionId: 30,
+      symbol: 'DIA',
+    });
+    const risk = await mocks.evaluateOrderRisk(
+      {
+        ...input,
+        tradingAccountId: 1,
+        subscriptionId: 30,
+        subscriptionKey: 'dia_dip_core',
+        symbol: 'DIA',
+        side: 'buy',
+        qty: sizing.qty,
+      },
+      {
+        tradingAccountId: 1,
+        enforceEntrySessionGuard,
+        requestedNotionalOverride: sizing.estimatedNotional,
+      }
+    );
+    return { sizing, risk };
+  }),
+}));
+
 vi.mock('./config.service.js', () => ({
   getRuntimeTradingConfig: mocks.getRuntimeTradingConfig,
 }));

@@ -59,6 +59,33 @@ vi.mock('./account-subscription-runtime-sizing.service.js', () => ({
     mocks.resolveRuntimeAccountSubscriptionSizing,
 }));
 
+vi.mock('./assignment-entry-evaluation.service.js', () => ({
+  evaluateAssignmentEntry: vi.fn(async ({ input }: { input: unknown }) => {
+    const resolved = await mocks.resolveSubscriptionOrderInput(input);
+    const sizing = await mocks.resolveRuntimeAccountSubscriptionSizing({
+      tradingAccountSubscriptionId: resolved.tradingAccountSubscriptionId,
+      tradingAccountId: resolved.tradingAccountId,
+      subscriptionId: resolved.subscriptionId,
+      symbol: resolved.symbol,
+    });
+    const { notional: _notional, ...withoutNotional } = resolved;
+    const sizedInput = { ...withoutNotional, qty: sizing.qty };
+    const risk = await mocks.evaluateOrderRisk(sizedInput, {
+      tradingAccountId: resolved.tradingAccountId,
+      requestedNotionalOverride: sizing.estimatedNotional,
+    });
+    const code = risk.allowed ? null : risk.details?.rule ?? 'entry_risk_blocked';
+    return {
+      input: sizedInput,
+      sizing,
+      risk,
+      blockers: risk.allowed ? [] : [{ code }],
+      permitsIntentCreation: risk.allowed,
+      outcomeCode: risk.allowed ? 'ENTRY_ELIGIBLE' : 'ENTRY_RISK_BLOCKED',
+    };
+  }),
+}));
+
 vi.mock('./subscription.service.js', () => ({
   resolveSubscriptionOrderInput: mocks.resolveSubscriptionOrderInput,
 }));
@@ -191,6 +218,40 @@ describe('place order service entry decision attribution', () => {
       status: 'pending',
       entryDecisionKey: 'decision-101',
     });
+  });
+
+  it('rejects prohibited LIVE policy results before creating an intent or client order id', async () => {
+    const { evaluateAssignmentEntry } = await import('./assignment-entry-evaluation.service.js');
+    vi.mocked(evaluateAssignmentEntry).mockResolvedValueOnce({
+      input: runtimeSizedInput,
+      sizing: {
+        tradingAccountSubscriptionId: 44,
+        qty: 3,
+        estimatedNotional: 1500,
+        snapshot: { tradingAccountSubscriptionId: 44 },
+      },
+      risk: {
+        allowed: false,
+        statusCode: 403,
+        reason: 'LIVE entry writes are blocked.',
+        details: { rule: 'live_entry_policy_blocked' },
+      },
+      blockers: [{ code: 'live_entry_policy_blocked' }],
+      permitsIntentCreation: false,
+      outcomeCode: 'LIVE_ENTRY_POLICY_BLOCKED',
+    } as never);
+
+    await expect(submitOrder({
+      tradingAccountSubscriptionId: 25,
+      signalType: 'entry',
+      extendedHours: false,
+    })).rejects.toMatchObject({
+      statusCode: 403,
+      details: { rule: 'live_entry_policy_blocked' },
+    });
+
+    expect(mocks.createOrderIntent).not.toHaveBeenCalled();
+    expect(mocks.buildClientOrderId).not.toHaveBeenCalled();
   });
 
   it('keeps risk-blocked intents linked to their entry decision', async () => {

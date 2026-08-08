@@ -159,6 +159,117 @@ describe('signal entry routing', () => {
     );
   });
 
+  it('returns and audits the stable LIVE policy code without an intent', async () => {
+    mocks.assignmentFindUnique.mockResolvedValue(
+      assignment(39, 'Bobby Live', 'LIVE')
+    );
+    mocks.intentFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+    mocks.submitOrder.mockRejectedValue(
+      new HttpError(403, 'LIVE entry writes are blocked.', {
+        code: 'live_entry_policy_blocked',
+        rule: 'live_entry_policy_blocked',
+      })
+    );
+
+    const result = await processEntryForAccountSubscription({
+      tradingAccountSubscriptionId: 39,
+      signal: {
+        signalType: 'entry',
+        source: 'n8n-smoke-test',
+        decisionKey: 'live-policy-test',
+      },
+      source: 'n8n-smoke-test',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        tradingAccountId: 139,
+        tradingAccountSubscriptionId: 39,
+        environment: 'LIVE',
+        outcome: 'BLOCKED',
+        code: 'LIVE_ENTRY_POLICY_BLOCKED',
+        orderIntentId: null,
+      })
+    );
+    expect(mocks.assignmentFindUnique).toHaveBeenCalledTimes(1);
+    expect(mocks.assignmentFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 39 } })
+    );
+    expect(mocks.intentFindFirst).toHaveBeenCalledTimes(2);
+    expect(mocks.intentFindFirst).toHaveBeenLastCalledWith({
+      where: expect.objectContaining({
+        tradingAccountSubscriptionId: 39,
+      }),
+      select: { id: true },
+    });
+    expect(mocks.createSystemEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityId: 39,
+        tradingAccountId: 139,
+        payloadJson: expect.objectContaining({
+          tradingAccountSubscriptionId: 39,
+          outcome: 'BLOCKED',
+          code: 'LIVE_ENTRY_POLICY_BLOCKED',
+          orderIntentId: null,
+        }),
+      })
+    );
+  });
+
+  it('continues subscription fan-out after a LIVE policy block', async () => {
+    mocks.subscriptionFindUnique.mockResolvedValue({
+      key: 'intc_dip_core',
+      accountSubscriptions: [
+        {
+          id: 39,
+          tradingAccount: assignment(39, 'Bobby Live', 'LIVE').tradingAccount,
+        },
+        {
+          id: 40,
+          tradingAccount: assignment(40, 'Second Paper', 'PAPER').tradingAccount,
+        },
+      ],
+    });
+    mocks.assignmentFindUnique
+      .mockResolvedValueOnce(assignment(39, 'Bobby Live', 'LIVE'))
+      .mockResolvedValueOnce(assignment(40, 'Second Paper', 'PAPER'));
+    mocks.intentFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+    mocks.submitOrder
+      .mockRejectedValueOnce(
+        new HttpError(403, 'LIVE entry writes are blocked.', {
+          code: 'live_entry_policy_blocked',
+        })
+      )
+      .mockResolvedValueOnce({ intentId: 502 });
+
+    const result = await processSubscriptionEntrySignal({
+      subscriptionKey: 'intc_dip_core',
+      signalType: 'entry',
+      source: 'n8n-ai-trader',
+      decisionKey: 'fanout-live-policy-test',
+    });
+
+    expect(mocks.submitOrder).toHaveBeenCalledTimes(2);
+    expect(result.results).toEqual([
+      expect.objectContaining({
+        tradingAccountSubscriptionId: 39,
+        outcome: 'BLOCKED',
+        code: 'LIVE_ENTRY_POLICY_BLOCKED',
+        orderIntentId: null,
+      }),
+      expect.objectContaining({
+        tradingAccountSubscriptionId: 40,
+        outcome: 'INTENT_CREATED',
+        orderIntentId: 502,
+      }),
+    ]);
+  });
+
   it('returns 404 for an unknown targeted assignment', async () => {
     mocks.assignmentFindUnique.mockResolvedValue(null);
 
