@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Alert, Badge, Box, Button, Checkbox, Group, Modal, NumberInput, Paper, Radio, Select, Stack, Text, TextInput, Textarea } from "@mantine/core";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import { createScopedNavigationTarget } from "../../app/navigationUtils";
 import { useUsers } from "../users/hooks";
 import type { TradingAccount, TradingAccountEnvironment } from "./types";
 import { useCreateTradingAccount } from "./hooks";
@@ -10,6 +11,7 @@ type Props = { opened: boolean; onClose: () => void; token: string | null; accou
 
 export function CreateTradingAccountModal({ opened, onClose, token, accounts }: Props) {
   const navigate = useNavigate();
+  const location = useLocation();
   const users = useUsers();
   const createAccount = useCreateTradingAccount(token);
   const [holderId, setHolderId] = useState<string | null>(null);
@@ -43,7 +45,7 @@ export function CreateTradingAccountModal({ opened, onClose, token, accounts }: 
         maxDeployableNotional: notional === "" ? null : Number(notional), notes: notes.trim() || null,
       });
       resetAndClose();
-      navigate(`/trading-accounts/${result.account.id}`);
+      navigate(createScopedNavigationTarget(`/trading-accounts/${result.account.id}`, location.search));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Failed to create Trading Account.");
     }

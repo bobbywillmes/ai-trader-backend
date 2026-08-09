@@ -9,12 +9,12 @@ import { TradingAccountScopeSelector } from "./TradingAccountScopeSelector";
 import type { TradingAccountScopeContextValue } from "./types";
 
 const base = { id: 1, displayName: "Primary Paper", accountHolderName: "Alex", broker: "ALPACA", environment: "PAPER" } as TradingAccount;
-function renderSelector(overrides: Partial<TradingAccountScopeContextValue> = {}, mode: "SYSTEM" | "ACCOUNT_FILTERABLE" | "ACCOUNT_SPECIFIC" = "ACCOUNT_FILTERABLE", routeTradingAccountId: number | null = null) {
+function renderSelector(overrides: Partial<TradingAccountScopeContextValue> = {}, mode: "SYSTEM" | "ACCOUNT_FILTERABLE" | "ACCOUNT_SPECIFIC" = "ACCOUNT_FILTERABLE", mobile = false) {
   const value: TradingAccountScopeContextValue = {
     scope: { type: "ALL" }, selectedAccount: null, accessibleAccounts: [base, { ...base, id: 2, displayName: "Primary Live", environment: "LIVE" }],
     isAll: true, isLoading: false, isError: false, error: null, setScope: vi.fn(), isAccountAccessible: () => true, ...overrides,
   };
-  render(<MantineProvider><TradingAccountScopeContext.Provider value={value}><TradingAccountScopeSelector mode={mode} routeTradingAccountId={routeTradingAccountId} expanded /></TradingAccountScopeContext.Provider></MantineProvider>);
+  render(<MantineProvider><TradingAccountScopeContext.Provider value={value}><TradingAccountScopeSelector mode={mode} expanded mobile={mobile} /></TradingAccountScopeContext.Provider></MantineProvider>);
   return value;
 }
 afterEach(cleanup);
@@ -41,10 +41,20 @@ describe("TradingAccountScopeSelector", () => {
     renderSelector({}, "SYSTEM");
     expect(screen.queryByText(/Trading Account/)).toBeNull();
   });
-  it("presents route-authoritative context on account-specific pages", () => {
-    renderSelector({}, "ACCOUNT_SPECIFIC", 2);
-    expect(screen.getByLabelText("Trading Account context: Primary Live — LIVE")).toBeTruthy();
-    expect(screen.queryByText("All Trading Accounts")).toBeNull();
+  it("hides both route and preserved scope context on account-specific pages", () => {
+    renderSelector({ scope: { type: "ACCOUNT", tradingAccountId: 2 }, selectedAccount: { ...base, id: 2, displayName: "Primary Live", environment: "LIVE" }, isAll: false }, "ACCOUNT_SPECIFIC");
+    expect(screen.queryByText(/Trading Account/)).toBeNull();
+    expect(screen.queryByText(/Primary Paper|Primary Live/)).toBeNull();
+  });
+  it("opens the mobile menu below the drawer control at a viewport-safe width", async () => {
+    renderSelector({}, "ACCOUNT_FILTERABLE", true);
+    await userEvent.setup().click(screen.getByRole("button", { name: /Trading Account scope/ }));
+    const menu = document.querySelector<HTMLElement>('[role="menu"][aria-label="Choose Trading Account scope"]');
+    expect(menu).toBeTruthy();
+    expect(menu?.getAttribute("data-position")).toBe("bottom-start");
+    expect(menu?.className).toContain("mobileDropdown");
+    expect(screen.getByText("Primary Live")).toBeTruthy();
+    expect(screen.getByText("LIVE")).toBeTruthy();
   });
   it.each([
     [{ isLoading: true }, "Loading Trading Accounts"],

@@ -10,7 +10,8 @@ import {
   Tabs,
   Text,
 } from "@mantine/core";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { createScopedNavigationTarget } from "../../../app/navigationUtils";
 import { getAdminToken } from "../../../lib/api";
 import { useTradingAccount } from "../hooks";
 import { AccountDetailHeader } from "./components/AccountDetailHeader";
@@ -34,6 +35,7 @@ import classes from "./TradingAccountDetailPage.module.css";
 export function TradingAccountDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [token] = useState<string | null>(() => getAdminToken());
   const accountId = id ? Number(id) : undefined;
@@ -61,7 +63,7 @@ export function TradingAccountDetailPage() {
   if (!validAccountId) {
     return (
       <Stack gap="md">
-        <Button variant="subtle" onClick={() => navigate("/trading-accounts")}>
+        <Button variant="subtle" onClick={() => navigate(createScopedNavigationTarget("/trading-accounts", location.search))}>
           Back to Trading Accounts
         </Button>
         <Alert color="red">Invalid trading account id.</Alert>
@@ -71,7 +73,7 @@ export function TradingAccountDetailPage() {
 
   return (
     <main className={classes.page}><Stack gap="lg">
-      <AccountDetailHeader account={account} />
+      <AccountDetailHeader account={account} backTo={createScopedNavigationTarget("/trading-accounts", location.search)} />
 
       {isError && (
         <Alert color="red" title="Failed to load trading account">

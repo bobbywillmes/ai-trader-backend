@@ -146,7 +146,7 @@ function SidebarContents({ groups, user, platformRole, pageScope, preserveTradin
     >
       <SidebarNavigation groups={groups} expanded={expanded} onNavigate={onNavigate} preserveTradingAccountScope={preserveTradingAccountScope} />
     </ScrollArea>
-    {pageScope && <><Divider /><TradingAccountScopeSelector {...pageScope} expanded={expanded} onMenuChange={onOwnedMenuChange} /></>}
+    {pageScope && <><Divider /><TradingAccountScopeSelector {...pageScope} expanded={expanded} mobile={mobile} onMenuChange={onOwnedMenuChange} /></>}
     <Divider />
     <SidebarUserMenu user={user} platformRole={platformRole} expanded={expanded} mobile={mobile} isSigningOut={isSigningOut} onSignOut={onSignOut} onMenuChange={onOwnedMenuChange} />
   </div>;

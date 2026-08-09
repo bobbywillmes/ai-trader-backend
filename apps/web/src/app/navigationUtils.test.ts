@@ -32,6 +32,10 @@ describe("TradingAccount-scoped navigation", () => {
     expect(createScopedNavigationTarget("/reports/performance?period=30d&account=all", "?account=12&page=4"))
       .toBe("/reports/performance?period=30d&account=12");
   });
+  it("keeps persistent operational scope distinct from an account-specific path", () => {
+    expect(createScopedNavigationTarget("/trading-accounts/1?tab=subscriptions", "?account=2"))
+      .toBe("/trading-accounts/1?tab=subscriptions&account=2");
+  });
   it("leaves targets unchanged when no scope exists", () => {
     expect(createScopedNavigationTarget("/settings", "?section=risk")).toBe("/settings");
   });

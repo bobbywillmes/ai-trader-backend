@@ -6,27 +6,15 @@ import { useTradingAccountScope } from "./useTradingAccountScope";
 import type { PageScopeMode, TradingAccountScope } from "./types";
 import classes from "./TradingAccountScopeSelector.module.css";
 
-type Props = { mode: PageScopeMode; routeTradingAccountId: number | null; expanded: boolean; onMenuChange?: (open: boolean) => void };
+type Props = { mode: PageScopeMode; expanded: boolean; mobile?: boolean; onMenuChange?: (open: boolean) => void };
 
 function accountLabel(account: TradingAccount) {
   return `${account.displayName} — ${account.environment}`;
 }
 
-export function TradingAccountScopeSelector({ mode, routeTradingAccountId, expanded, onMenuChange }: Props) {
+export function TradingAccountScopeSelector({ mode, expanded, mobile = false, onMenuChange }: Props) {
   const context = useTradingAccountScope();
-  if (mode === "SYSTEM") return null;
-
-  if (mode === "ACCOUNT_SPECIFIC") {
-    const account = routeTradingAccountId === null
-      ? null
-      : context.accessibleAccounts.find((candidate) => candidate.id === routeTradingAccountId) ?? null;
-    const text = account ? accountLabel(account) : "Account-specific view";
-    const content = <div className={classes.specific} aria-label={`Trading Account context: ${text}`}>
-      <IconBuildingBank size={19} aria-hidden="true" />
-      {expanded && <div className={classes.specificText}><Text size="xs" c="dimmed">TRADING ACCOUNT</Text><Text size="sm" fw={650} truncate>{text}</Text></div>}
-    </div>;
-    return expanded ? content : <Tooltip label={text} position="right">{content}</Tooltip>;
-  }
+  if (mode !== "ACCOUNT_FILTERABLE") return null;
 
   if (context.isLoading) return <SelectorState expanded={expanded} label="Loading Trading Accounts" icon={<Loader size={18} />} />;
   if (context.isError) return <SelectorState expanded={expanded} label="Trading Accounts unavailable" />;
@@ -38,7 +26,7 @@ export function TradingAccountScopeSelector({ mode, routeTradingAccountId, expan
     groups.set(holder, [...(groups.get(holder) ?? []), account]);
     return groups;
   }, new Map<string, TradingAccount[]>());
-  return <Menu position="right-start" offset={8} width={300} shadow="lg" withinPortal onChange={onMenuChange}>
+  return <Menu position={mobile ? "bottom-start" : "right-start"} offset={8} width={300} shadow="lg" withinPortal onChange={onMenuChange} classNames={mobile ? { dropdown: classes.mobileDropdown } : undefined}>
     <Menu.Target>
       <UnstyledButton className={classes.trigger} aria-label={`Trading Account scope: ${selectedLabel}`}>
         <IconBuildingBank size={20} aria-hidden="true" />

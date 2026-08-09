@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { updateOwnedSearchParams } from "../../app/searchParams";
 import {
   Accordion, Alert, Badge, Button, Card, Group, Modal, ScrollArea, Select,
   SimpleGrid, Stack, Switch, Table, Text, TextInput, Textarea, Title,
@@ -21,6 +22,11 @@ import type {
 import classes from "./SubscriptionsPage.module.css";
 
 const PAGE_SIZE_OPTIONS = ["25", "50", "100", "250"];
+const OWNED_SEARCH_PARAMS = [
+  "page", "pageSize", "search", "enabled", "assignmentStatus",
+  "assignmentEnabled", "entriesEnabled", "exitsEnabled", "tradingAccountId",
+  "securityId", "strategyId", "exitProfileId", "sortBy", "sortDirection",
+] as const;
 
 type Draft = {
   key: string; name: string; description: string; symbol: string;
@@ -161,22 +167,22 @@ export function SubscriptionsPage() {
   const lastResult = Math.min(page * pageSize, total);
 
   useEffect(() => {
-    const next = new URLSearchParams();
-    if (page !== 1) next.set("page", String(page));
-    if (pageSize !== 50) next.set("pageSize", String(pageSize));
-    if (search) next.set("search", search);
-    if (globalStatus !== "all") next.set("enabled", globalStatus);
-    if (assignmentStatus !== "all") next.set("assignmentStatus", assignmentStatus);
-    if (assignmentEnabled !== "all") next.set("assignmentEnabled", assignmentEnabled);
-    if (entriesEnabled !== "all") next.set("entriesEnabled", entriesEnabled);
-    if (exitsEnabled !== "all") next.set("exitsEnabled", exitsEnabled);
-    if (accountId) next.set("tradingAccountId", accountId);
-    if (securityId) next.set("securityId", securityId);
-    if (strategyId) next.set("strategyId", strategyId);
-    if (exitProfileId) next.set("exitProfileId", exitProfileId);
-    if (sortBy !== "key") next.set("sortBy", sortBy);
-    if (sortDirection !== "asc") next.set("sortDirection", sortDirection);
-    setParams(next, { replace: true });
+    const owned = new URLSearchParams();
+    if (page !== 1) owned.set("page", String(page));
+    if (pageSize !== 50) owned.set("pageSize", String(pageSize));
+    if (search) owned.set("search", search);
+    if (globalStatus !== "all") owned.set("enabled", globalStatus);
+    if (assignmentStatus !== "all") owned.set("assignmentStatus", assignmentStatus);
+    if (assignmentEnabled !== "all") owned.set("assignmentEnabled", assignmentEnabled);
+    if (entriesEnabled !== "all") owned.set("entriesEnabled", entriesEnabled);
+    if (exitsEnabled !== "all") owned.set("exitsEnabled", exitsEnabled);
+    if (accountId) owned.set("tradingAccountId", accountId);
+    if (securityId) owned.set("securityId", securityId);
+    if (strategyId) owned.set("strategyId", strategyId);
+    if (exitProfileId) owned.set("exitProfileId", exitProfileId);
+    if (sortBy !== "key") owned.set("sortBy", sortBy);
+    if (sortDirection !== "asc") owned.set("sortDirection", sortDirection);
+    setParams((current) => updateOwnedSearchParams(current, OWNED_SEARCH_PARAMS, owned), { replace: true });
   }, [page, pageSize, search, globalStatus, assignmentStatus,
     assignmentEnabled, entriesEnabled, exitsEnabled, accountId, securityId,
     strategyId, exitProfileId, sortBy, sortDirection, setParams]);

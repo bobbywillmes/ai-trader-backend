@@ -19,7 +19,8 @@ import {
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { createScopedNavigationTarget } from "../../app/navigationUtils";
 import { IconFileAnalytics } from "@tabler/icons-react";
 import { TradingAccountBadge } from "../../components/TradingAccountBadge";
 import {
@@ -688,6 +689,7 @@ function PerformanceTradesTable({
 }
 
 export function ReportsPage() {
+  const location = useLocation();
   const [token] = useState(() => getAdminToken());
   const navigate = useNavigate();
   const { reportSection } = useParams<{ reportSection?: string }>();
@@ -974,7 +976,7 @@ export function ReportsPage() {
       <Tabs value={reportTab} onChange={(value) => {
         if (value !== "overview" && value !== "performance" && value !== "audit") return;
         const section = reportSectionByTab[value];
-        navigate(section ? `/reports/${section}` : "/reports");
+        navigate(createScopedNavigationTarget(section ? `/reports/${section}` : "/reports", location.search));
       }} keepMounted={false} className={classes.reportTabs}>
         <Tabs.List aria-label="Report sections">
           <Tabs.Tab value="overview">Overview</Tabs.Tab>

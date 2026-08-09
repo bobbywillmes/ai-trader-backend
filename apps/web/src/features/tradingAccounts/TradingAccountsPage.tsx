@@ -1,6 +1,7 @@
 import { Fragment, useState } from "react";
 import { Button, Card, Group, Stack, Table, Text, Title } from "@mantine/core";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import { createScopedNavigationTarget } from "../../app/navigationUtils";
 import {
   CompactRecordList,
   DataState,
@@ -59,12 +60,13 @@ export function TradingAccountsPage() {
   const [createOpened, setCreateOpened] = useState(false);
   const [expandedId, setExpandedId] = useState<string | number | null>(null);
   const navigate = useNavigate();
+  const location = useLocation();
   const isSystemOwner = useIsSystemOwner();
   const query = useTradingAccounts(token);
   const accounts = query.data?.accounts ?? [];
   const healthQueries = useTradingAccountRiskHealthSummaries(accounts.map((account) => account.id), token);
   const healthFor = (account: TradingAccount) => healthQueries[accounts.findIndex((item) => item.id === account.id)];
-  const openAccount = (account: TradingAccount) => navigate(`/trading-accounts/${account.id}`);
+  const openAccount = (account: TradingAccount) => navigate(createScopedNavigationTarget(`/trading-accounts/${account.id}`, location.search));
 
   const identity = (account: TradingAccount) => <div className={classes.identity}><Text component="h3" fw={800}>{account.displayName}</Text><Text size="xs" c="dimmed" className={classes.wrap}>{account.accountHolderName || "No account holder"} · ID {account.id}</Text></div>;
   const environment = (account: TradingAccount) => <Group gap="xs" wrap="wrap"><StatusBadge status={account.environment} tone={account.environment === "LIVE" ? "danger" : "informational"} size="compact" /><Text size="sm">{account.broker}</Text></Group>;
