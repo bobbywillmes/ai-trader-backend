@@ -1,6 +1,17 @@
 import type { AdminNavGroup, AdminNavItem } from "./navigation";
 import type { PlatformPermission } from "../features/auth/types";
 
+export function createScopedNavigationTarget(to: string, currentSearch: string): string {
+  const account = new URLSearchParams(currentSearch).get("account");
+  if (!account) return to;
+  const [pathAndSearch, hash = ""] = to.split("#", 2);
+  const [pathname, targetSearch = ""] = pathAndSearch.split("?", 2);
+  const params = new URLSearchParams(targetSearch);
+  params.set("account", account);
+  const query = params.toString();
+  return `${pathname}${query ? `?${query}` : ""}${hash ? `#${hash}` : ""}`;
+}
+
 /**
  * Filter navigation groups and items based on user role and permissions.
  * System Owners see everything; other roles see permitted items.

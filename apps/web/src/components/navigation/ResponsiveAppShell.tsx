@@ -12,6 +12,9 @@ import { getPlatformRoleLabel } from "../../features/users/roleLabels";
 import { SIDEBAR_PINNED_STORAGE_KEY, getInitialSidebarState, transitionSidebar, type SidebarState } from "./sidebarState";
 import classes from "./ResponsiveAppShell.module.css";
 import { AppBrand } from "../brand/AppBrand";
+import type { PageScopeMode } from "../../features/tradingAccountScope/types";
+import { TradingAccountScopeSelector } from "../../features/tradingAccountScope/TradingAccountScopeSelector";
+import { createScopedNavigationTarget } from "../../app/navigationUtils";
 
 export const SIDEBAR_COLLAPSED_WIDTH = 72;
 export const SIDEBAR_EXPANDED_WIDTH = 248;
@@ -25,6 +28,8 @@ type Props = {
   portalName?: string;
   isSigningOut: boolean;
   onSignOut: () => void;
+  pageScope?: { mode: PageScopeMode; routeTradingAccountId: number | null };
+  preserveTradingAccountScope?: boolean;
 };
 
 export function ResponsiveAppShell(props: Props) {
@@ -120,7 +125,7 @@ const ApplicationHeader = forwardRef<HTMLButtonElement, { opened: boolean; onTog
   </header>
 ));
 
-function SidebarContents({ groups, user, platformRole, expanded, pinned, hideBrand = false, mobile = false, navigationScrollTopRef, isSigningOut, onSignOut, onTogglePinned, onNavigate, onOwnedMenuChange }: Props & { expanded: boolean; pinned: boolean; hideBrand?: boolean; mobile?: boolean; navigationScrollTopRef?: { current: number }; onTogglePinned?: () => void; onNavigate?: () => void; onOwnedMenuChange?: (open: boolean) => void }) {
+function SidebarContents({ groups, user, platformRole, pageScope, preserveTradingAccountScope = false, expanded, pinned, hideBrand = false, mobile = false, navigationScrollTopRef, isSigningOut, onSignOut, onTogglePinned, onNavigate, onOwnedMenuChange }: Props & { expanded: boolean; pinned: boolean; hideBrand?: boolean; mobile?: boolean; navigationScrollTopRef?: { current: number }; onTogglePinned?: () => void; onNavigate?: () => void; onOwnedMenuChange?: (open: boolean) => void }) {
   return <div className={classes.sidebarContents}>
     {!hideBrand && <>
       <div className={classes.sidebarHeader}>
@@ -139,22 +144,24 @@ function SidebarContents({ groups, user, platformRole, expanded, pinned, hideBra
         if (navigationScrollTopRef) navigationScrollTopRef.current = y;
       }}
     >
-      <SidebarNavigation groups={groups} expanded={expanded} onNavigate={onNavigate} />
+      <SidebarNavigation groups={groups} expanded={expanded} onNavigate={onNavigate} preserveTradingAccountScope={preserveTradingAccountScope} />
     </ScrollArea>
+    {pageScope && <><Divider /><TradingAccountScopeSelector {...pageScope} expanded={expanded} onMenuChange={onOwnedMenuChange} /></>}
     <Divider />
     <SidebarUserMenu user={user} platformRole={platformRole} expanded={expanded} mobile={mobile} isSigningOut={isSigningOut} onSignOut={onSignOut} onMenuChange={onOwnedMenuChange} />
   </div>;
 }
 
-function SidebarNavigation({ groups, expanded, onNavigate }: { groups: AdminNavGroup[]; expanded: boolean; onNavigate?: () => void }) {
-  return <nav aria-label="Primary navigation" className={classes.navigation}>{groups.map((group) => <SidebarSection key={group.label} group={group} expanded={expanded} onNavigate={onNavigate} />)}</nav>;
+function SidebarNavigation({ groups, expanded, onNavigate, preserveTradingAccountScope = false }: { groups: AdminNavGroup[]; expanded: boolean; onNavigate?: () => void; preserveTradingAccountScope?: boolean }) {
+  return <nav aria-label="Primary navigation" className={classes.navigation}>{groups.map((group) => <SidebarSection key={group.label} group={group} expanded={expanded} onNavigate={onNavigate} preserveTradingAccountScope={preserveTradingAccountScope} />)}</nav>;
 }
-function SidebarSection({ group, expanded, onNavigate }: { group: AdminNavGroup; expanded: boolean; onNavigate?: () => void }) {
-  return <section className={classes.section}>{expanded ? <Text className={classes.sectionLabel}>{group.label}</Text> : <Divider className={classes.sectionDivider} />}{group.items.map((item) => <SidebarLink key={item.to} item={item} expanded={expanded} onNavigate={onNavigate} />)}</section>;
+function SidebarSection({ group, expanded, onNavigate, preserveTradingAccountScope }: { group: AdminNavGroup; expanded: boolean; onNavigate?: () => void; preserveTradingAccountScope: boolean }) {
+  return <section className={classes.section}>{expanded ? <Text className={classes.sectionLabel}>{group.label}</Text> : <Divider className={classes.sectionDivider} />}{group.items.map((item) => <SidebarLink key={item.to} item={item} expanded={expanded} onNavigate={onNavigate} preserveTradingAccountScope={preserveTradingAccountScope} />)}</section>;
 }
-function SidebarLink({ item, expanded, onNavigate }: { item: AdminNavItem; expanded: boolean; onNavigate?: () => void }) {
-  const { pathname } = useLocation(); const navigate = useNavigate(); const active = isNavigationItemActive(item, pathname); const Icon = item.icon;
-  const link = <UnstyledButton className={classes.navLink} data-active={active || undefined} aria-current={active ? "page" : undefined} onClick={() => { navigate(item.to); window.scrollTo({ top: 0, left: 0, behavior: "auto" }); onNavigate?.(); }}><Icon size={21} stroke={1.8} aria-hidden="true" /><span className={expanded ? classes.linkLabel : classes.visuallyHidden}>{item.label}</span>{expanded && <IconChevronRight className={classes.linkChevron} size={15} aria-hidden="true" />}</UnstyledButton>;
+function SidebarLink({ item, expanded, onNavigate, preserveTradingAccountScope }: { item: AdminNavItem; expanded: boolean; onNavigate?: () => void; preserveTradingAccountScope: boolean }) {
+  const { pathname, search } = useLocation(); const navigate = useNavigate(); const active = isNavigationItemActive(item, pathname); const Icon = item.icon;
+  const target = preserveTradingAccountScope ? createScopedNavigationTarget(item.to, search) : item.to;
+  const link = <UnstyledButton className={classes.navLink} data-active={active || undefined} aria-current={active ? "page" : undefined} onClick={() => { navigate(target); window.scrollTo({ top: 0, left: 0, behavior: "auto" }); onNavigate?.(); }}><Icon size={21} stroke={1.8} aria-hidden="true" /><span className={expanded ? classes.linkLabel : classes.visuallyHidden}>{item.label}</span>{expanded && <IconChevronRight className={classes.linkChevron} size={15} aria-hidden="true" />}</UnstyledButton>;
   return expanded ? link : <Tooltip label={item.label} position="right" openDelay={350}>{link}</Tooltip>;
 }
 
