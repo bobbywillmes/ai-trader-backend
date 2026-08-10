@@ -1,7 +1,8 @@
 import type { NextFunction, Request, Response } from 'express';
+import { HttpError } from '../errors/http-error.js';
 import {
-  getTradeCycleById,
-  listTradeCycles,
+  getAccessibleTradeCycleById,
+  listAccessibleTradeCycles,
   type TradeCycleFilters,
 } from '../services/trade-cycles.service.js';
 
@@ -41,6 +42,18 @@ function parseStatus(value: unknown): TradeCycleFilters['status'] {
   return undefined;
 }
 
+function parseAccountScope(value: unknown) {
+  if (value === 'all') return null;
+  const id = getQueryNumber(value);
+  if (id !== undefined) return id;
+  throw new HttpError(400, 'A valid account query parameter is required.');
+}
+
+function authenticatedUser(res: Response) {
+  if (!res.locals.user) throw new HttpError(401, 'Authentication required.');
+  return res.locals.user;
+}
+
 export async function tradeCyclesController(
   req: Request,
   res: Response,
@@ -70,7 +83,7 @@ export async function tradeCyclesController(
     if (mode !== undefined) filters.mode = mode;
     if (limit !== undefined) filters.limit = limit;
 
-    const result = await listTradeCycles(filters);
+    const result = await listAccessibleTradeCycles(authenticatedUser(res), parseAccountScope(req.query.account), filters);
 
     res.status(200).json(result);
   } catch (error) {
@@ -94,7 +107,7 @@ export async function tradeCycleByIdController(
       return;
     }
 
-    const result = await getTradeCycleById(id);
+    const result = await getAccessibleTradeCycleById(authenticatedUser(res), id);
 
     res.status(200).json(result);
   } catch (error) {

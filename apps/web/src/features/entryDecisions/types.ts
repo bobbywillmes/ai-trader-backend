@@ -57,6 +57,7 @@ export type EntryDecisionListResponse = {
 };
 
 export type EntryDecisionQuery = {
+  account?: "all" | number;
   limit?: number;
   symbol?: string;
   decisionState?: string;

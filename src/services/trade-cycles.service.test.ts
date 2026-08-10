@@ -5,6 +5,9 @@ const mocks = vi.hoisted(() => ({
   trackedPositionFindFirst: vi.fn(),
   systemEventFindMany: vi.fn(),
   resolveDefaultTradingAccountId: vi.fn(),
+  tradingAccountFindMany: vi.fn(),
+  membershipFindMany: vi.fn(),
+  membershipFindUnique: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -16,6 +19,8 @@ vi.mock('../db/prisma.js', () => ({
     systemEvent: {
       findMany: mocks.systemEventFindMany,
     },
+    tradingAccount: { findMany: mocks.tradingAccountFindMany },
+    tradingAccountMembership: { findMany: mocks.membershipFindMany, findUnique: mocks.membershipFindUnique },
   },
 }));
 
@@ -32,6 +37,8 @@ vi.mock('./trading-account.service.js', () => ({
 
 import {
   getTradeCycleById,
+  getAccessibleTradeCycleById,
+  listAccessibleTradeCycles,
   listTradeCycles,
   listTradeCyclesForTradingAccount,
 } from './trade-cycles.service.js';
@@ -642,5 +649,24 @@ describe('trade cycle service', () => {
       statusCode: 404,
       message: 'Trade cycle 999 was not found.',
     });
+  });
+
+  it('membership-filters aggregate trade cycles and scopes the database query', async () => {
+    mocks.membershipFindMany.mockResolvedValue([{ tradingAccountId: 2 }, { tradingAccountId: 3 }]);
+    mocks.trackedPositionFindMany.mockResolvedValue([]);
+    mocks.systemEventFindMany.mockResolvedValue([]);
+    await listAccessibleTradeCycles({ id: 9, platformRole: 'OPERATOR' }, null, {});
+    expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ tradingAccountId: { in: [2, 3] } }),
+    }));
+  });
+
+  it('authorizes detail from the record account instead of the default account', async () => {
+    mocks.trackedPositionFindFirst.mockResolvedValue(null);
+    await expect(getAccessibleTradeCycleById({ id: 9, platformRole: 'OPERATOR' }, 404)).rejects.toMatchObject({ statusCode: 404 });
+    expect(mocks.trackedPositionFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 404, tradingAccount: { memberships: { some: { userId: 9 } } } },
+    }));
+    expect(mocks.resolveDefaultTradingAccountId).not.toHaveBeenCalled();
   });
 });

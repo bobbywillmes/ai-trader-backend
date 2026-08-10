@@ -50,3 +50,7 @@ Operational pages should call `useTradingAccountScope()` only on routes whose me
 Every TanStack Query key introduced or converted for scoped data must include stable scope identity, for example `"all"` for aggregate data or the numeric `tradingAccountId` for account data. Query functions and keys must change together so cache entries cannot leak across TradingAccount scopes.
 
 Phase 2 made Dashboard a scope consumer. Its sidebar and in-page selectors share this provider, and Dashboard no longer uses the legacy `/api/bootstrap` account or presents AI Trader as globally PAPER. See `trading-account-dashboard.md`.
+
+Phase 4 makes Trade History and Entry Decisions scope consumers. Both list APIs require `account=all` or an explicit TradingAccount ID, enforce owner/all versus operator/membership access on the server, and reject Account Portal users from the Admin Console collection semantics. Detail authorization follows the record's persisted TradingAccount attribution rather than the selected UI scope or the legacy default account.
+
+Entry Decisions preserve historical `tradingAccountId = null` rows without inferring ownership. System Owners may see these records only in `account=all`, where the UI labels them `Legacy / Unattributed`. Selected-account lists exclude them, and non-owner aggregate lists exclude them because they cannot be tied to an authorized membership. Attributed records show TradingAccount and PAPER/LIVE identity in aggregate views. Trade cycles remain limited to canonically attributed TradingAccounts.

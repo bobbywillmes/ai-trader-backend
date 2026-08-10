@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   securityFindUnique: vi.fn(),
   subscriptionFindUnique: vi.fn(),
   tradingAccountSubscriptionFindUnique: vi.fn(),
+  membershipFindUnique: vi.fn(),
   resolveDefaultTradingAccountId: vi.fn(),
 }));
 
@@ -30,6 +31,7 @@ vi.mock('../db/prisma.js', () => ({
     tradingAccountSubscription: {
       findUnique: mocks.tradingAccountSubscriptionFindUnique,
     },
+    tradingAccountMembership: { findUnique: mocks.membershipFindUnique },
   },
 }));
 
@@ -47,10 +49,12 @@ vi.mock('./trading-account.service.js', () => ({
 import {
   ensureEntryDecisionCanLink,
   getEntryDecisionById,
+  getAccessibleEntryDecisionById,
   linkEntryDecisionToBrokerOrder,
   linkEntryDecisionToOrderIntent,
   linkEntryDecisionToTrackedPosition,
   listEntryDecisions,
+  listAccessibleEntryDecisions,
   recordEntryDecision,
 } from './entry-decision.service.js';
 
@@ -528,5 +532,30 @@ describe('entry decision service', () => {
         },
       })
     );
+  });
+
+  it('includes null-attributed decisions only for owner ALL scope', async () => {
+    mocks.entryDecisionFindMany.mockResolvedValue([]);
+    await listAccessibleEntryDecisions({ id: 1, platformRole: 'SYSTEM_OWNER' }, null, {});
+    expect(mocks.entryDecisionFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: {} }));
+    await listAccessibleEntryDecisions({ id: 9, platformRole: 'OPERATOR' }, null, {});
+    expect(mocks.entryDecisionFindMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { tradingAccount: { memberships: { some: { userId: 9 } } } },
+    }));
+  });
+
+  it('excludes null history from selected-account scope', async () => {
+    mocks.membershipFindUnique.mockResolvedValue({ id: 5 });
+    mocks.entryDecisionFindMany.mockResolvedValue([]);
+    await listAccessibleEntryDecisions({ id: 9, platformRole: 'OPERATOR' }, 7, {});
+    expect(mocks.entryDecisionFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tradingAccountId: 7 } }));
+  });
+
+  it('uses record attribution for arbitrary-account detail authorization', async () => {
+    mocks.entryDecisionFindFirst.mockResolvedValue(null);
+    await expect(getAccessibleEntryDecisionById({ id: 9, platformRole: 'OPERATOR' }, 103)).rejects.toMatchObject({ statusCode: 404 });
+    expect(mocks.entryDecisionFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 103, tradingAccount: { memberships: { some: { userId: 9 } } } },
+    }));
   });
 });

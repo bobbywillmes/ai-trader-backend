@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextFunction, Request, Response } from 'express';
 
 const mocks = vi.hoisted(() => ({
-  getEntryDecisionById: vi.fn(),
-  listEntryDecisions: vi.fn(),
+  getAccessibleEntryDecisionById: vi.fn(),
+  listAccessibleEntryDecisions: vi.fn(),
 }));
 
 vi.mock('../services/entry-decision.service.js', () => ({
-  getEntryDecisionById: mocks.getEntryDecisionById,
-  listEntryDecisions: mocks.listEntryDecisions,
+  getAccessibleEntryDecisionById: mocks.getAccessibleEntryDecisionById,
+  listAccessibleEntryDecisions: mocks.listAccessibleEntryDecisions,
 }));
 
 import {
@@ -20,6 +20,7 @@ function response() {
   const res = {
     status: vi.fn(),
     json: vi.fn(),
+    locals: { user: { id: 3, platformRole: 'OPERATOR' } },
   };
 
   res.status.mockReturnValue(res);
@@ -33,8 +34,8 @@ function response() {
 describe('entry decisions controller', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.listEntryDecisions.mockResolvedValue({ decisions: [] });
-    mocks.getEntryDecisionById.mockResolvedValue({
+    mocks.listAccessibleEntryDecisions.mockResolvedValue({ decisions: [] });
+    mocks.getAccessibleEntryDecisionById.mockResolvedValue({
       decision: {
         id: 101,
       },
@@ -58,13 +59,17 @@ describe('entry decisions controller', () => {
           signalCreated: 'false',
           signalBlocked: 'true',
           limit: '25',
+          account: '12',
         },
       } as unknown as Request,
       res,
       next
     );
 
-    expect(mocks.listEntryDecisions).toHaveBeenCalledWith({
+    expect(mocks.listAccessibleEntryDecisions).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 3, platformRole: 'OPERATOR' }),
+      12,
+      {
       symbol: 'spy',
       decisionState: 'idle',
       subscriptionId: 22,
@@ -75,7 +80,8 @@ describe('entry decisions controller', () => {
       signalCreated: false,
       signalBlocked: true,
       limit: 25,
-    });
+      }
+    );
     expect(res.status).toHaveBeenCalledWith(200);
     expect(next).not.toHaveBeenCalled();
   });
@@ -94,7 +100,7 @@ describe('entry decisions controller', () => {
       next
     );
 
-    expect(mocks.listEntryDecisions).not.toHaveBeenCalled();
+    expect(mocks.listAccessibleEntryDecisions).not.toHaveBeenCalled();
     expect(next).toHaveBeenCalledWith(
       expect.objectContaining({
         statusCode: 400,
@@ -117,7 +123,10 @@ describe('entry decisions controller', () => {
       next
     );
 
-    expect(mocks.getEntryDecisionById).toHaveBeenCalledWith(101);
+    expect(mocks.getAccessibleEntryDecisionById).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 3, platformRole: 'OPERATOR' }),
+      101
+    );
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({
       decision: {
@@ -140,7 +149,7 @@ describe('entry decisions controller', () => {
       next
     );
 
-    expect(mocks.getEntryDecisionById).not.toHaveBeenCalled();
+    expect(mocks.getAccessibleEntryDecisionById).not.toHaveBeenCalled();
     expect(next).toHaveBeenCalledWith(
       expect.objectContaining({
         statusCode: 400,

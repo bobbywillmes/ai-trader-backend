@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { EntryDecision, Prisma } from '@prisma/client';
+import { PlatformRole, type EntryDecision, type Prisma } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
@@ -423,9 +423,16 @@ export async function recordEntryDecision(
 
 export async function listEntryDecisions(filters: EntryDecisionFilters = {}) {
   const tradingAccountId = await resolveDefaultTradingAccountId();
+  return queryEntryDecisions(filters, entryDecisionReadScope(tradingAccountId));
+}
+
+async function queryEntryDecisions(
+  filters: EntryDecisionFilters,
+  scope: Prisma.EntryDecisionWhereInput
+) {
   const limit = normalizeLimit(filters.limit);
   const where = buildEntryDecisionWhere(filters);
-  Object.assign(where, entryDecisionReadScope(tradingAccountId));
+  Object.assign(where, scope);
 
   const decisions = await prisma.entryDecision.findMany({
     where,
@@ -491,6 +498,32 @@ export async function listEntryDecisions(filters: EntryDecisionFilters = {}) {
   };
 }
 
+export async function listAccessibleEntryDecisions(
+  user: { id: number; platformRole: PlatformRole },
+  tradingAccountId: number | null,
+  filters: EntryDecisionFilters = {}
+) {
+  if (user.platformRole === PlatformRole.ACCOUNT_USER) {
+    throw new HttpError(403, 'Admin-console entry decisions are not available to account portal users.');
+  }
+  if (tradingAccountId !== null) {
+    if (user.platformRole !== PlatformRole.SYSTEM_OWNER) {
+      const membership = await prisma.tradingAccountMembership.findUnique({
+        where: { tradingAccountId_userId: { tradingAccountId, userId: user.id } },
+        select: { id: true },
+      });
+      if (!membership) throw new HttpError(403, 'Access to this trading account is not permitted.');
+    }
+    return queryEntryDecisions(filters, { tradingAccountId });
+  }
+  if (user.platformRole === PlatformRole.SYSTEM_OWNER) {
+    return queryEntryDecisions(filters, {});
+  }
+  return queryEntryDecisions(filters, {
+    tradingAccount: { memberships: { some: { userId: user.id } } },
+  });
+}
+
 export async function getEntryDecisionById(id: number) {
   const tradingAccountId = await resolveDefaultTradingAccountId();
 
@@ -517,6 +550,35 @@ export async function getEntryDecisionById(id: number) {
     throw new HttpError(404, `Entry decision ${id} was not found.`);
   }
 
+  return { decision };
+}
+
+export async function getAccessibleEntryDecisionById(
+  user: { id: number; platformRole: PlatformRole },
+  id: number
+) {
+  if (user.platformRole === PlatformRole.ACCOUNT_USER) {
+    throw new HttpError(403, 'Admin-console entry decisions are not available to account portal users.');
+  }
+  const decision = await prisma.entryDecision.findFirst({
+    where: {
+      id,
+      ...(user.platformRole === PlatformRole.SYSTEM_OWNER
+        ? {}
+        : { tradingAccount: { memberships: { some: { userId: user.id } } } }),
+    },
+    include: {
+      security: true,
+      subscription: true,
+      strategy: true,
+      exitProfile: true,
+      orderIntent: true,
+      brokerOrderRecord: true,
+      trackedPosition: true,
+      tradingAccount: { select: TRADING_ACCOUNT_SUMMARY_SELECT },
+    },
+  });
+  if (!decision) throw new HttpError(404, `Entry decision ${id} was not found.`);
   return { decision };
 }
 

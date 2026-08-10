@@ -160,6 +160,7 @@ export type TradeCycleDetailResponse = {
 };
 
 export type TradeCyclesQuery = {
+  account?: "all" | number;
   limit?: number;
   symbol?: string;
   status?: "open" | "closing" | "closed";
