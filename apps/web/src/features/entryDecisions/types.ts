@@ -54,11 +54,13 @@ export type EntryDecisionFilters = {
 export type EntryDecisionListResponse = {
   decisions: EntryDecisionSummary[];
   filters: EntryDecisionFilters;
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
 };
 
 export type EntryDecisionQuery = {
   account?: "all" | number;
-  limit?: number;
+  page?: number;
+  pageSize?: number;
   symbol?: string;
   decisionState?: string;
   subscriptionId?: number;

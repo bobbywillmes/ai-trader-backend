@@ -1,5 +1,11 @@
 .page { min-width: 0; }
 .header { gap: var(--mantine-spacing-md); }
 .reason { max-width: 24rem; white-space: normal; overflow-wrap: anywhere; }
+.statusFilter { width: 10rem; }
+.modeFilter { width: 12rem; }
+.dateFilter { width: 11rem; }
+.pageSizeFilter { width: 7rem; }
+.filterButton { white-space: nowrap; }
 .srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-@media (max-width: 35rem) { .header { align-items: stretch; flex-direction: column; } .header > button { min-height: 44px; width: 100%; } }
+.pagination { gap: var(--mantine-spacing-md); }
+@media (max-width: 35rem) { .header, .pagination { align-items: stretch; flex-direction: column; } .header > button { min-height: 44px; width: 100%; } }

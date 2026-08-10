@@ -59,6 +59,8 @@ describe('entry decisions controller', () => {
           signalCreated: 'false',
           signalBlocked: 'true',
           limit: '25',
+          page: '2',
+          pageSize: '50',
           account: '12',
         },
       } as unknown as Request,
@@ -80,6 +82,8 @@ describe('entry decisions controller', () => {
       signalCreated: false,
       signalBlocked: true,
       limit: 25,
+      page: 2,
+      pageSize: 50,
       }
     );
     expect(res.status).toHaveBeenCalledWith(200);

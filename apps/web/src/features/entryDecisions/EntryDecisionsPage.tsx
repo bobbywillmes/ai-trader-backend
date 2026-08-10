@@ -5,7 +5,7 @@ import {
   Button,
   Card,
   Group,
-  NumberInput,
+  Pagination,
   Select,
   Stack,
   Table,
@@ -42,12 +42,7 @@ import { TradingAccountScopeSelector } from "../tradingAccountScope/TradingAccou
 import { useTradingAccountScope } from "../tradingAccountScope/useTradingAccountScope";
 
 const MISSING_VALUE = "Not available";
-
-function normalizeLimit(value: string | number, fallback: number) {
-  if (value === "") return fallback;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
+const PAGE_SIZE_OPTIONS = [25, 50, 100];
 function humanize(value: string | null | undefined) {
   if (!value) return MISSING_VALUE;
   const labels: Record<string, string> = {
@@ -158,33 +153,47 @@ export function EntryDecisionsPage() {
   const [token] = useState(() => getAdminToken());
   const accountScope = useTradingAccountScope();
   const [params, setParams] = useSearchParams();
-  const limit = Number(params.get("limit")) || 100;
+  const page = Number(params.get("page")) || 1;
+  const pageSize = Number(params.get("pageSize")) || 25;
   const symbolFilter = params.get("symbol") ?? "";
   const stateFilter = params.get("decisionState") ?? "";
+  const [symbolDraft, setSymbolDraft] = useState(symbolFilter);
+  const [stateDraft, setStateDraft] = useState(stateFilter);
   const signalFilter = params.get("signal") ?? "all";
   const updateFilter = (key: string, value: string, fallback = "") =>
     setParams((current) => {
       const next = new URLSearchParams(current);
       if (value === fallback || value === "") next.delete(key);
       else next.set(key, value);
+      if (key !== "page") next.delete("page");
       return next;
     });
-  const setLimit = (value: number) => updateFilter("limit", String(value), "100");
-  const setSymbolFilter = (value: string) => updateFilter("symbol", value);
-  const setStateFilter = (value: string) => updateFilter("decisionState", value);
+  const setPage = (value: number) => updateFilter("page", String(value), "1");
+  const setPageSize = (value: number) => updateFilter("pageSize", String(value), "25");
+  const setSymbolFilter = (value: string) => { setSymbolDraft(value); updateFilter("symbol", value); };
+  const setStateFilter = (value: string) => { setStateDraft(value); updateFilter("decisionState", value); };
   const setSignalFilter = (value: string) => updateFilter("signal", value, "all");
+  const applyTextFilters = () => setParams((current) => {
+    const next = new URLSearchParams(current);
+    const symbol = symbolDraft.trim();
+    const state = stateDraft.trim();
+    if (symbol) next.set("symbol", symbol); else next.delete("symbol");
+    if (state) next.set("decisionState", state); else next.delete("decisionState");
+    next.delete("page");
+    return next;
+  });
   const [expandedId, setExpandedId] = useState<string | number | null>(null);
   const [detailOpener, setDetailOpener] = useState<HTMLElement | null>(null);
   const drawer = useEntryDecisionDrawer(token);
   const hasActiveFilters =
     symbolFilter.trim() !== "" ||
     stateFilter.trim() !== "" ||
-    signalFilter !== "all" ||
-    limit !== 100;
+    signalFilter !== "all";
   const query = useMemo(() => {
     const next: EntryDecisionQuery = {
       account: accountScope.isAll ? "all" : accountScope.selectedAccount?.id,
-      limit,
+      page,
+      pageSize,
     };
     const symbol = symbolFilter.trim().toUpperCase();
     const state = stateFilter.trim();
@@ -196,19 +205,23 @@ export function EntryDecisionsPage() {
   }, [
     accountScope.isAll,
     accountScope.selectedAccount?.id,
-    limit,
+    page,
+    pageSize,
     signalFilter,
     stateFilter,
     symbolFilter,
   ]);
   const decisionsQuery = useEntryDecisions(token, query);
   const decisions = decisionsQuery.data?.decisions ?? [];
+  const pagination = decisionsQuery.data?.pagination;
   function clearFilters() {
     setParams((current) => {
       const next = new URLSearchParams(current);
-      for (const key of ["symbol", "decisionState", "signal", "limit"]) next.delete(key);
+      for (const key of ["symbol", "decisionState", "signal", "page", "pageSize", "limit"]) next.delete(key);
       return next;
     });
+    setSymbolDraft("");
+    setStateDraft("");
   }
   function openDetails(decision: EntryDecisionSummary, opener: HTMLElement) {
     setDetailOpener(opener);
@@ -248,33 +261,30 @@ export function EntryDecisionsPage() {
           },
         ]
       : []),
-    ...(limit !== 100
-      ? [
-          {
-            key: "limit",
-            label: `Limit: ${limit}`,
-            onRemove: () => setLimit(100),
-          },
-        ]
-      : []),
   ];
   const primaryFilter = (
-    <TextInput
-      label="Symbol"
-      placeholder="SPY"
-      leftSection={<IconSearch size={16} />}
-      value={symbolFilter}
-      onChange={(event) => setSymbolFilter(event.currentTarget.value)}
-      className={classes.symbolFilter}
-    />
+    <Group align="flex-end" wrap="wrap">
+      <TextInput
+        label="Symbol"
+        placeholder="SPY"
+        leftSection={<IconSearch size={16} />}
+        value={symbolDraft}
+        onChange={(event) => setSymbolDraft(event.currentTarget.value)}
+        onKeyDown={(event) => event.key === "Enter" && applyTextFilters()}
+        className={classes.symbolFilter}
+      />
+      <Button onClick={applyTextFilters}>Filter Results</Button>
+    </Group>
   );
   const secondaryFilters = (
     <>
       <TextInput
         label="State"
-        placeholder="eligible"
-        value={stateFilter}
-        onChange={(event) => setStateFilter(event.currentTarget.value)}
+        description="Enter the state label shown in the results."
+        placeholder="Watching dip setup"
+        value={stateDraft}
+        onChange={(event) => setStateDraft(event.currentTarget.value)}
+        onKeyDown={(event) => event.key === "Enter" && applyTextFilters()}
         className={classes.stateFilter}
       />
       <Select
@@ -288,12 +298,11 @@ export function EntryDecisionsPage() {
         ]}
         className={classes.signalFilter}
       />
-      <NumberInput
-        label="Limit"
-        min={1}
-        max={500}
-        value={limit}
-        onChange={(value) => setLimit(normalizeLimit(value, limit))}
+      <Select
+        label="Per page"
+        value={String(pageSize)}
+        data={PAGE_SIZE_OPTIONS.map(String)}
+        onChange={(value) => setPageSize(Number(value ?? 25))}
         className={classes.limitFilter}
       />
       <Button
@@ -697,6 +706,14 @@ export function EntryDecisionsPage() {
                 narrow={narrow}
                 aria-label="Entry decisions"
               />
+            )}
+            {(pagination?.totalPages ?? 1) > 1 && (
+              <Group justify="space-between" className={classes.pagination}>
+                <Text size="sm" c="dimmed">
+                  Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, pagination?.total ?? 0)} of {pagination?.total ?? 0}
+                </Text>
+                <Pagination value={page} total={pagination?.totalPages ?? 1} onChange={setPage} disabled={decisionsQuery.isFetching} />
+              </Group>
             )}
           </Stack>
         </Card>

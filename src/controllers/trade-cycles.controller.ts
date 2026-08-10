@@ -71,6 +71,8 @@ export async function tradeCyclesController(
     const exitReason = getQueryString(req.query.exitReason);
     const mode = getQueryString(req.query.mode);
     const limit = getQueryNumber(req.query.limit);
+    const page = getQueryNumber(req.query.page);
+    const pageSize = getQueryNumber(req.query.pageSize);
 
     if (symbol !== undefined) filters.symbol = symbol;
     if (status !== undefined) filters.status = status;
@@ -82,6 +84,8 @@ export async function tradeCyclesController(
     if (exitReason !== undefined) filters.exitReason = exitReason;
     if (mode !== undefined) filters.mode = mode;
     if (limit !== undefined) filters.limit = limit;
+    if (page !== undefined) filters.page = page;
+    if (pageSize !== undefined) filters.pageSize = pageSize;
 
     const result = await listAccessibleTradeCycles(authenticatedUser(res), parseAccountScope(req.query.account), filters);
 

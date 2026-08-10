@@ -57,6 +57,8 @@ export type EntryDecisionFilters = {
   signalCreated?: boolean;
   signalBlocked?: boolean;
   limit?: number;
+  page?: number;
+  pageSize?: number;
 };
 
 const CHECKPOINT_INTERVAL_MS = 60 * 60 * 1000;
@@ -211,7 +213,12 @@ function buildEntryDecisionWhere(
   const where: Prisma.EntryDecisionWhereInput = {};
 
   if (filters.symbol) where.symbol = filters.symbol.trim().toUpperCase();
-  if (filters.decisionState) where.decisionState = filters.decisionState;
+  if (filters.decisionState) {
+    where.decisionState = {
+      equals: filters.decisionState.trim().replace(/\s+/g, '_'),
+      mode: 'insensitive',
+    };
+  }
   if (filters.subscriptionId !== undefined) {
     where.subscriptionId = filters.subscriptionId;
   }
@@ -428,18 +435,24 @@ export async function listEntryDecisions(filters: EntryDecisionFilters = {}) {
 
 async function queryEntryDecisions(
   filters: EntryDecisionFilters,
-  scope: Prisma.EntryDecisionWhereInput
+  scope: Prisma.EntryDecisionWhereInput,
+  paginate = false
 ) {
   const limit = normalizeLimit(filters.limit);
+  const page = filters.page ?? 1;
+  const pageSize = Math.min(filters.pageSize ?? 25, 100);
   const where = buildEntryDecisionWhere(filters);
   Object.assign(where, scope);
+
+  const total = paginate ? await prisma.entryDecision.count({ where }) : null;
 
   const decisions = await prisma.entryDecision.findMany({
     where,
     orderBy: {
       evaluatedAt: 'desc',
     },
-    take: limit,
+    take: paginate ? pageSize : limit,
+    ...(paginate ? { skip: (page - 1) * pageSize } : {}),
     select: {
       id: true,
       decisionKey: true,
@@ -495,6 +508,7 @@ async function queryEntryDecisions(
       signalBlocked: filters.signalBlocked ?? null,
       limit,
     },
+    ...(paginate ? { pagination: { page, pageSize, total: total as number, totalPages: Math.max(1, Math.ceil((total as number) / pageSize)) } } : {}),
   };
 }
 
@@ -514,14 +528,14 @@ export async function listAccessibleEntryDecisions(
       });
       if (!membership) throw new HttpError(403, 'Access to this trading account is not permitted.');
     }
-    return queryEntryDecisions(filters, { tradingAccountId });
+    return queryEntryDecisions(filters, { tradingAccountId }, true);
   }
   if (user.platformRole === PlatformRole.SYSTEM_OWNER) {
-    return queryEntryDecisions(filters, {});
+    return queryEntryDecisions(filters, {}, true);
   }
   return queryEntryDecisions(filters, {
     tradingAccount: { memberships: { some: { userId: user.id } } },
-  });
+  }, true);
 }
 
 export async function getEntryDecisionById(id: number) {

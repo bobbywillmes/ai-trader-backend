@@ -98,6 +98,8 @@ export async function entryDecisionsController(
       'signalBlocked'
     );
     const limit = getQueryNumber(req.query.limit, 'limit');
+    const page = getQueryNumber(req.query.page, 'page');
+    const pageSize = getQueryNumber(req.query.pageSize, 'pageSize');
 
     if (symbol !== undefined) filters.symbol = symbol;
     if (decisionState !== undefined) filters.decisionState = decisionState;
@@ -109,6 +111,8 @@ export async function entryDecisionsController(
     if (signalCreated !== undefined) filters.signalCreated = signalCreated;
     if (signalBlocked !== undefined) filters.signalBlocked = signalBlocked;
     if (limit !== undefined) filters.limit = limit;
+    if (page !== undefined) filters.page = page;
+    if (pageSize !== undefined) filters.pageSize = pageSize;
 
     res.status(200).json(await listAccessibleEntryDecisions(authenticatedUser(res), getAccountScope(req.query.account), filters));
   } catch (error) {

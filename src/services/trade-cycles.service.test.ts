@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   trackedPositionFindMany: vi.fn(),
   trackedPositionFindFirst: vi.fn(),
+  trackedPositionCount: vi.fn(),
   systemEventFindMany: vi.fn(),
   resolveDefaultTradingAccountId: vi.fn(),
   tradingAccountFindMany: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock('../db/prisma.js', () => ({
     trackedPosition: {
       findMany: mocks.trackedPositionFindMany,
       findFirst: mocks.trackedPositionFindFirst,
+      count: mocks.trackedPositionCount,
     },
     systemEvent: {
       findMany: mocks.systemEventFindMany,
@@ -131,6 +133,7 @@ function buildCycle(overrides: Record<string, unknown> = {}) {
 describe('trade cycle service', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mocks.trackedPositionCount.mockResolvedValue(0);
     mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.systemEventFindMany.mockResolvedValue([]);
   });
@@ -654,11 +657,15 @@ describe('trade cycle service', () => {
   it('membership-filters aggregate trade cycles and scopes the database query', async () => {
     mocks.membershipFindMany.mockResolvedValue([{ tradingAccountId: 2 }, { tradingAccountId: 3 }]);
     mocks.trackedPositionFindMany.mockResolvedValue([]);
+    mocks.trackedPositionCount.mockResolvedValue(75);
     mocks.systemEventFindMany.mockResolvedValue([]);
-    await listAccessibleTradeCycles({ id: 9, platformRole: 'OPERATOR' }, null, {});
+    const result = await listAccessibleTradeCycles({ id: 9, platformRole: 'OPERATOR' }, null, { page: 2, pageSize: 25 });
     expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ tradingAccountId: { in: [2, 3] } }),
+      skip: 25,
+      take: 25,
     }));
+    expect(result.pagination).toEqual({ page: 2, pageSize: 25, total: 75, totalPages: 3 });
   });
 
   it('authorizes detail from the record account instead of the default account', async () => {

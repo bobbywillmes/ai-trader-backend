@@ -12,4 +12,6 @@
 .detailCard { min-width: 0; padding: clamp(1rem, 1.4vw, 1.25rem); border: 1px solid var(--mantine-color-dark-4); border-radius: var(--mantine-radius-md); background: rgba(30, 41, 59, .58); }
 .marketCard { border-inline-start: 3px solid var(--mantine-color-cyan-7); background: rgba(22, 46, 61, .5); }
 .detailHeading { margin: 0 0 var(--data-space-md); color: var(--mantine-color-gray-1); }
+.pagination { gap: var(--mantine-spacing-md); }
 @container (max-width: 50rem) { .detailCards { grid-template-columns: 1fr; } }
+@container (max-width: 35rem) { .pagination { align-items: stretch; flex-direction: column; } }

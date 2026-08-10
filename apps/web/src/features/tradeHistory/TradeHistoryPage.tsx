@@ -5,7 +5,7 @@ import {
   Button,
   Card,
   Group,
-  NumberInput,
+  Pagination,
   Select,
   Stack,
   Table,
@@ -54,6 +54,7 @@ const statusTone = (status: string) =>
     : status === "closing"
       ? ("warning" as const)
       : ("informational" as const);
+const PAGE_SIZE_OPTIONS = [25, 50, 100];
 function Result({ cycle }: { cycle: TradeCycleSummary }) {
   const label =
     cycle.realizedPnl === null
@@ -167,8 +168,10 @@ export function TradeHistoryPage() {
   const accountScope = useTradingAccountScope();
   const [expanded, setExpanded] = useState<number | null>(null);
   const drawer = useTradeCycleDrawer(token);
-  const limit = Number(params.get("limit")) || 50;
+  const page = Number(params.get("page")) || 1;
+  const pageSize = Number(params.get("pageSize")) || 25;
   const symbol = params.get("symbol") ?? "";
+  const [symbolDraft, setSymbolDraft] = useState(symbol);
   const status = params.has("status") ? params.get("status") : "closed";
   const mode = params.get("mode") ?? "all";
   const dateFrom = params.get("dateFrom") ?? "";
@@ -178,19 +181,21 @@ export function TradeHistoryPage() {
       const next = new URLSearchParams(current);
       if (value === fallback || value === "") next.delete(key);
       else next.set(key, value);
+      if (key !== "page") next.delete("page");
       return next;
     });
-  const setLimit = (value: number) => update("limit", String(value), "50");
-  const setSymbol = (value: string) => update("symbol", value);
-  const setStatus = (value: string | null) =>
-    update("status", value ?? "", "closed");
+  const setPage = (value: number) => update("page", String(value), "1");
+  const setPageSize = (value: number) => update("pageSize", String(value), "25");
+  const applyTextFilters = () => update("symbol", symbolDraft.trim());
+  const setStatus = (value: string) => update("status", value, "closed");
   const setMode = (value: string) => update("mode", value, "all");
   const setDateFrom = (value: string) => update("dateFrom", value);
   const setDateTo = (value: string) => update("dateTo", value);
   const query = useMemo<TradeCyclesQuery>(
     () => ({
       account: accountScope.isAll ? "all" : accountScope.selectedAccount?.id,
-      limit,
+      page,
+      pageSize,
       ...(symbol.trim() ? { symbol: symbol.trim().toUpperCase() } : {}),
       ...(status === "open" || status === "closing" || status === "closed"
         ? { status }
@@ -204,7 +209,8 @@ export function TradeHistoryPage() {
       accountScope.selectedAccount?.id,
       dateFrom,
       dateTo,
-      limit,
+      page,
+      pageSize,
       mode,
       status,
       symbol,
@@ -212,18 +218,29 @@ export function TradeHistoryPage() {
   );
   const cyclesQuery = useTradeCycles(token, query);
   const cycles = cyclesQuery.data?.cycles ?? [];
+  const pagination = cyclesQuery.data?.pagination;
   const clear = () => {
     setParams((current) => {
       const next = new URLSearchParams(current);
-      for (const key of ["symbol", "status", "mode", "dateFrom", "dateTo", "limit"]) next.delete(key);
+      for (const key of ["symbol", "status", "mode", "dateFrom", "dateTo", "page", "pageSize", "limit"]) next.delete(key);
       return next;
     });
+    setSymbolDraft("");
   };
   const active = [
     {
+      key: "symbol",
+      active: Boolean(symbol.trim()),
+      label: `Symbol: ${symbol.trim().toUpperCase()}`,
+      remove: () => {
+        setSymbolDraft("");
+        update("symbol", "");
+      },
+    },
+    {
       key: "status",
       active: status !== "closed",
-      label: `Status: ${status ? formatStatusLabel(status) : "All"}`,
+      label: `Status: ${formatStatusLabel(status ?? "closed")}`,
       remove: () => setStatus("closed"),
     },
     {
@@ -243,12 +260,6 @@ export function TradeHistoryPage() {
       active: Boolean(dateTo),
       label: `To ${dateTo}`,
       remove: () => setDateTo(""),
-    },
-    {
-      key: "limit",
-      active: limit !== 50,
-      label: `Last ${limit}`,
-      remove: () => setLimit(50),
     },
   ]
     .filter((item) => item.active)
@@ -383,25 +394,28 @@ export function TradeHistoryPage() {
                   label="Symbol"
                   placeholder="SPY"
                   leftSection={<IconSearch size={16} />}
-                  value={symbol}
-                  onChange={(event) => setSymbol(event.currentTarget.value)}
+                  value={symbolDraft}
+                  onChange={(event) => setSymbolDraft(event.currentTarget.value)}
+                  onKeyDown={(event) => event.key === "Enter" && applyTextFilters()}
                 />
               }
               secondary={
                 <>
                   <Select
                     label="Status"
-                    value={status ?? ""}
-                    onChange={(value) => setStatus(value || null)}
+                    className={classes.statusFilter}
+                    value={status ?? "closed"}
+                    onChange={(value) => setStatus(value ?? "closed")}
                     data={[
                       { value: "closed", label: "Closed" },
                       { value: "open", label: "Open" },
                       { value: "closing", label: "Closing" },
-                      { value: "", label: "All" },
+                      { value: "all", label: "All" },
                     ]}
                   />
                   <Select
                     label="Mode"
+                    className={classes.modeFilter}
                     value={mode}
                     onChange={(value) => setMode(value ?? "all")}
                     data={[
@@ -413,24 +427,25 @@ export function TradeHistoryPage() {
                   <TextInput
                     type="date"
                     label="Opened from"
+                    className={classes.dateFilter}
                     value={dateFrom}
                     onChange={(event) => setDateFrom(event.currentTarget.value)}
                   />
                   <TextInput
                     type="date"
                     label="Opened through"
+                    className={classes.dateFilter}
                     value={dateTo}
                     onChange={(event) => setDateTo(event.currentTarget.value)}
                   />
-                  <NumberInput
-                    label="Limit"
-                    min={1}
-                    max={250}
-                    value={limit}
-                    onChange={(value) =>
-                      typeof value === "number" && setLimit(value)
-                    }
+                  <Select
+                    label="Per page"
+                    className={classes.pageSizeFilter}
+                    value={String(pageSize)}
+                    data={PAGE_SIZE_OPTIONS.map(String)}
+                    onChange={(value) => setPageSize(Number(value ?? 25))}
                   />
+                  <Button className={classes.filterButton} onClick={applyTextFilters}>Filter Results</Button>
                 </>
               }
               activeFilters={active}
@@ -502,6 +517,14 @@ export function TradeHistoryPage() {
                 )}
                 aria-label="Trade history"
               />
+            )}
+            {(pagination?.totalPages ?? 1) > 1 && (
+              <Group justify="space-between" className={classes.pagination}>
+                <Text size="sm" c="dimmed">
+                  Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, pagination?.total ?? 0)} of {pagination?.total ?? 0}
+                </Text>
+                <Pagination value={page} total={pagination?.totalPages ?? 1} onChange={setPage} disabled={cyclesQuery.isFetching} />
+              </Group>
             )}
           </Stack>
         </Card>

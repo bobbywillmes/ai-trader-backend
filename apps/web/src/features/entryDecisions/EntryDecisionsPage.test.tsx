@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import type { EntryDecisionSummary } from "./types";
 
-const mocks = vi.hoisted(() => ({ query: { data: { decisions: [] as EntryDecisionSummary[] }, isLoading: false, isError: false, isFetching: false, error: null as Error | null, refetch: vi.fn() } }));
+const mocks = vi.hoisted(() => ({ query: { data: { decisions: [] as EntryDecisionSummary[], pagination: { page: 1, pageSize: 25, total: 0, totalPages: 1 } }, isLoading: false, isError: false, isFetching: false, error: null as Error | null, refetch: vi.fn() } }));
 vi.mock("./hooks", async () => {
   const React = await import("react");
   return {
@@ -29,7 +29,7 @@ const decisions: EntryDecisionSummary[] = [{
 }, { id: 22, tradingAccountId: 7, tradingAccount: { id: 7, displayName: "Bobby Paper", broker: "ALPACA", environment: "PAPER" }, decisionKey: "second", evaluatedAt: "2026-08-03T20:00:00Z", source: "runtime", symbol: "SPY", decisionState: "eligible", decisionReason: "no_dip_yet", signalAction: "buy", signalEligible: true, signalCreated: true, signalBlocked: false, blockingReason: null, persistenceReason: "periodic_evaluation", currentPrice: null, dipPercent: null, dipThresholdPercent: null, allowOrderSignals: true, dryRun: false, eventRisk: null, marketSession: null, tradingEnabled: true, killSwitchEnabled: false, paperMode: true, subscriptionId: null, subscriptionKey: null, strategyId: null, strategyKey: null, exitProfileId: null, exitProfileKey: null, orderIntentId: 91, brokerOrderRecordId: null, trackedPositionId: null, createdAt: "2026-08-03T20:00:00Z" }];
 function page() { return <MemoryRouter initialEntries={["/entry-decisions?account=all"]}><MantineProvider defaultColorScheme="dark"><EntryDecisionsPage /></MantineProvider></MemoryRouter>; }
 function renderPage() { return render(page()); }
-beforeEach(() => { vi.clearAllMocks(); mocks.query.data = { decisions }; mocks.query.isLoading = false; mocks.query.isError = false; mocks.query.isFetching = false; mocks.query.error = null; vi.stubGlobal("ResizeObserver", ResizeObserverMock); window.matchMedia = vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }); });
+beforeEach(() => { vi.clearAllMocks(); mocks.query.data = { decisions, pagination: { page: 1, pageSize: 25, total: decisions.length, totalPages: 1 } }; mocks.query.isLoading = false; mocks.query.isError = false; mocks.query.isFetching = false; mocks.query.error = null; vi.stubGlobal("ResizeObserver", ResizeObserverMock); window.matchMedia = vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("Entry Decisions responsive page", () => {
@@ -46,13 +46,21 @@ describe("Entry Decisions responsive page", () => {
     expect(await screen.findByRole("dialog", { name: "Entry Decision" })).toBeTruthy(); fireEvent.keyDown(document.body, { key: "Escape" }); await waitFor(() => expect(screen.queryByRole("dialog", { name: "Entry Decision" })).toBeNull()); await waitFor(() => expect(document.activeElement).toBe(openers[1]));
   });
   it("preserves filters, mobile filter drawer, clear all, and refresh", async () => {
-    renderPage(); resize?.(390); const user = userEvent.setup(); await user.type(screen.getByLabelText("Symbol"), "spy"); expect(await screen.findByText("Symbol: SPY")).toBeTruthy();
+    renderPage(); resize?.(390); const user = userEvent.setup(); await user.type(screen.getByLabelText("Symbol"), "spy"); expect(screen.queryByText("Symbol: SPY")).toBeNull(); await user.click(screen.getByRole("button", { name: "Filter Results" })); expect(await screen.findByText("Symbol: SPY")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Filters (1)" })); const filterDrawer = await screen.findByRole("dialog", { name: "Entry decision filters" }); await user.click(within(filterDrawer).getByRole("button", { name: "Clear all" })); await waitFor(() => expect(screen.queryByText("Symbol: SPY")).toBeNull());
     await user.click(screen.getByRole("button", { name: "Refresh" })); expect(mocks.query.refetch).toHaveBeenCalledOnce();
   });
+  it("renders server pagination and offers per-page choices", async () => {
+    mocks.query.data = { decisions, pagination: { page: 1, pageSize: 25, total: 120, totalPages: 5 } };
+    renderPage();
+    expect(screen.getByText("Showing 1–25 of 120")).toBeTruthy();
+    expect(screen.getAllByLabelText("Per page").length).toBeGreaterThan(0);
+    await userEvent.setup().click(screen.getByRole("button", { name: "2" }));
+    expect(screen.getByRole("button", { name: "2" }).getAttribute("data-active")).not.toBeNull();
+  });
   it("renders loading, filtered-empty, and recoverable error states", async () => {
-    mocks.query.data = { decisions: [] }; mocks.query.isLoading = true; const view = renderPage(); expect(screen.getByRole("status")).toBeTruthy(); mocks.query.isLoading = false; view.rerender(page());
-    await userEvent.setup().type(screen.getByLabelText("Symbol"), "qqq"); expect(screen.getByText("No matching entry decisions")).toBeTruthy(); await userEvent.setup().click(screen.getByRole("button", { name: "Clear filters" })); expect(screen.queryByText("Symbol: QQQ")).toBeNull();
+    mocks.query.data = { decisions: [], pagination: { page: 1, pageSize: 25, total: 0, totalPages: 1 } }; mocks.query.isLoading = true; const view = renderPage(); expect(screen.getByRole("status")).toBeTruthy(); mocks.query.isLoading = false; view.rerender(page());
+    await userEvent.setup().type(screen.getByLabelText("Symbol"), "qqq"); await userEvent.setup().click(screen.getByRole("button", { name: "Filter Results" })); expect(screen.getByText("No matching entry decisions")).toBeTruthy(); await userEvent.setup().click(screen.getByRole("button", { name: "Clear filters" })); expect(screen.queryByText("Symbol: QQQ")).toBeNull();
     mocks.query.isError = true; mocks.query.error = new Error("Decision service unavailable"); view.rerender(page()); await userEvent.setup().click(screen.getByRole("button", { name: "Retry" })); expect(mocks.query.refetch).toHaveBeenCalledOnce();
   });
 });

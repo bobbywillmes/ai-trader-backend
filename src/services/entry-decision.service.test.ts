@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   entryDecisionFindFirst: vi.fn(),
   entryDecisionFindMany: vi.fn(),
   entryDecisionFindUnique: vi.fn(),
+  entryDecisionCount: vi.fn(),
   entryDecisionUpdateMany: vi.fn(),
   securityFindUnique: vi.fn(),
   subscriptionFindUnique: vi.fn(),
@@ -20,6 +21,7 @@ vi.mock('../db/prisma.js', () => ({
       findFirst: mocks.entryDecisionFindFirst,
       findMany: mocks.entryDecisionFindMany,
       findUnique: mocks.entryDecisionFindUnique,
+      count: mocks.entryDecisionCount,
       updateMany: mocks.entryDecisionUpdateMany,
     },
     security: {
@@ -106,6 +108,7 @@ function decision(overrides: Record<string, unknown> = {}) {
 describe('entry decision service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.entryDecisionCount.mockResolvedValue(0);
     mocks.entryDecisionFindUnique.mockResolvedValue(null);
     mocks.entryDecisionFindFirst.mockResolvedValue(null);
     mocks.entryDecisionFindMany.mockResolvedValue([]);
@@ -428,7 +431,7 @@ describe('entry decision service', () => {
     expect(mocks.entryDecisionFindMany).toHaveBeenCalledWith({
       where: {
         symbol: 'SPY',
-        decisionState: 'idle',
+        decisionState: { equals: 'idle', mode: 'insensitive' },
         subscriptionId: 22,
         OR: [
           { tradingAccountId: null },
@@ -536,11 +539,26 @@ describe('entry decision service', () => {
 
   it('includes null-attributed decisions only for owner ALL scope', async () => {
     mocks.entryDecisionFindMany.mockResolvedValue([]);
-    await listAccessibleEntryDecisions({ id: 1, platformRole: 'SYSTEM_OWNER' }, null, {});
+    mocks.entryDecisionCount.mockResolvedValue(51);
+    const result = await listAccessibleEntryDecisions({ id: 1, platformRole: 'SYSTEM_OWNER' }, null, { page: 2, pageSize: 25 });
     expect(mocks.entryDecisionFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: {} }));
+    expect(mocks.entryDecisionFindMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 25, take: 25 }));
+    expect(result.pagination).toEqual({ page: 2, pageSize: 25, total: 51, totalPages: 3 });
     await listAccessibleEntryDecisions({ id: 9, platformRole: 'OPERATOR' }, null, {});
     expect(mocks.entryDecisionFindMany).toHaveBeenLastCalledWith(expect.objectContaining({
       where: { tradingAccount: { memberships: { some: { userId: 9 } } } },
+    }));
+  });
+
+  it('matches a displayed decision-state label case-insensitively', async () => {
+    mocks.entryDecisionFindMany.mockResolvedValue([]);
+    await listAccessibleEntryDecisions(
+      { id: 1, platformRole: 'SYSTEM_OWNER' },
+      null,
+      { decisionState: 'Watching dip setup' }
+    );
+    expect(mocks.entryDecisionFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { decisionState: { equals: 'Watching_dip_setup', mode: 'insensitive' } },
     }));
   });
 

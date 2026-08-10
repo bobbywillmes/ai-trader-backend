@@ -19,6 +19,8 @@ export type TradeCycleFilters = {
   exitReason?: string;
   mode?: string;
   limit?: number | null;
+  page?: number;
+  pageSize?: number;
 };
 
 function getCloseSide(positionSide: string): 'buy' | 'sell' {
@@ -467,18 +469,22 @@ export async function listAccessibleTradeCycles(
     })).map(({ tradingAccountId: id }) => id);
   }
 
-  if (accountIds.length === 0) return { cycles: [] };
+  if (accountIds.length === 0) {
+    const page = filters.page ?? 1;
+    const pageSize = Math.min(filters.pageSize ?? 25, 100);
+    return { cycles: [], pagination: { page, pageSize, total: 0, totalPages: 1 } };
+  }
   return listTradeCyclesForAccountIds(accountIds, filters);
 }
 
 async function listTradeCyclesForAccountIds(accountIds: number[], filters: TradeCycleFilters) {
-  const take = filters.limit === null ? undefined : filters.limit ?? 50;
-  const cycles = await prisma.trackedPosition.findMany({
-    where: buildWhere(filters, { in: accountIds }),
-    include: tradeCycleInclude,
-    orderBy: { openedAt: 'desc' },
-    ...(take !== undefined ? { take } : {}),
-  });
+  const page = filters.page ?? 1;
+  const pageSize = Math.min(filters.pageSize ?? 25, 100);
+  const where = buildWhere(filters, { in: accountIds });
+  const [cycles, total] = await Promise.all([
+    prisma.trackedPosition.findMany({ where, include: tradeCycleInclude, orderBy: { openedAt: 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
+    prisma.trackedPosition.count({ where }),
+  ]);
   const systemEvents = await prisma.systemEvent.findMany({
     where: {
       entityType: 'trackedPosition',
@@ -494,7 +500,7 @@ async function listTradeCyclesForAccountIds(accountIds: number[], filters: Trade
     existing.push(event);
     byPosition.set(event.entityId, existing);
   }
-  return { cycles: cycles.map((cycle) => buildCycleSummary(cycle, byPosition.get(String(cycle.id)) ?? [])) };
+  return { cycles: cycles.map((cycle) => buildCycleSummary(cycle, byPosition.get(String(cycle.id)) ?? [])), pagination: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) } };
 }
 
 export async function getTradeCycleById(id: number) {
