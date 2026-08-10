@@ -26,7 +26,8 @@ export function TradingAccountScopeSelector({ mode, expanded, mobile = false, va
     groups.set(holder, [...(groups.get(holder) ?? []), account]);
     return groups;
   }, new Map<string, TradingAccount[]>());
-  return <Menu position={mobile ? "bottom-start" : "right-start"} offset={8} width={300} shadow="lg" withinPortal onChange={onMenuChange} classNames={mobile ? { dropdown: classes.mobileDropdown } : undefined}>
+  const opensBelow = mobile || variant === "dashboard";
+  return <Menu position={opensBelow ? "bottom-start" : "right-start"} offset={8} width={300} shadow="lg" withinPortal onChange={onMenuChange} classNames={opensBelow ? { dropdown: classes.mobileDropdown } : undefined}>
     <Menu.Target>
       <UnstyledButton className={`${classes.trigger} ${variant === "dashboard" ? classes.dashboardTrigger : ""}`} aria-label={`Trading Account scope: ${selectedLabel}`}>
         <IconBuildingBank size={20} aria-hidden="true" />
