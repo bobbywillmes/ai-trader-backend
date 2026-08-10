@@ -1,15 +1,19 @@
 import { apiRequest } from "../../lib/api";
-import type { OpenOrder } from "./types";
+import type { OpenOrder, OpenOrdersAccountResult } from "./types";
 
 export function getOpenOrders(token: string) {
   return apiRequest<OpenOrder[]>("/api/orders/open", { token });
+}
+
+export function getAllOpenOrders(token: string) {
+  return apiRequest<{ accounts: OpenOrdersAccountResult[] }>("/api/orders/open/scoped", { token });
 }
 
 export function getTradingAccountOpenOrders(
   tradingAccountId: number,
   token: string
 ) {
-  return apiRequest<{ orders: OpenOrder[] }>(
+  return apiRequest<OpenOrdersAccountResult>(
     `/api/trading-accounts/${tradingAccountId}/orders`,
     { token }
   );

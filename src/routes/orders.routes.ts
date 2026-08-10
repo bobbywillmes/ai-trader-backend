@@ -3,7 +3,8 @@ import {
   openOrdersController,
   placeOrderController,
   cancelOrderController,
-  cancelAllOrdersController
+  cancelAllOrdersController,
+  scopedOpenOrdersController,
 } from '../controllers/orders.controller.js';
 import {
   requirePermission,
@@ -16,6 +17,7 @@ const router = Router();
 
 // Default account read requires owner access (no account-scoping)
 router.get('/open', requireSystemOwnerAccess, openOrdersController);
+router.get('/open/scoped', requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), scopedOpenOrdersController);
 // Default account operations require owner access (no account-scoping yet)
 router.post('/', requireSystemOwnerAccess, placeOrderController);
 router.delete(

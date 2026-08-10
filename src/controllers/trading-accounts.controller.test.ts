@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   deactivateTradingAccountForAdmin: vi.fn(),
   getNormalizedOpenOrders: vi.fn(),
   getOpenTrackedPositionsForTradingAccount: vi.fn(),
+  getScopedOpenPositionsForAccount: vi.fn(),
+  getScopedOpenOrdersForAccount: vi.fn(),
   listTradeCyclesForTradingAccount: vi.fn(),
   getTradingAccountRiskSettingsForAdmin: vi.fn(),
   updateTradingAccountRiskSettingsForAdmin: vi.fn(),
@@ -56,6 +58,11 @@ vi.mock('../services/orders.service.js', () => ({
 vi.mock('../services/position-tracking.service.js', () => ({
   getOpenTrackedPositionsForTradingAccount:
     mocks.getOpenTrackedPositionsForTradingAccount,
+}));
+
+vi.mock('../services/operational-scope.service.js', () => ({
+  getScopedOpenPositionsForAccount: mocks.getScopedOpenPositionsForAccount,
+  getScopedOpenOrdersForAccount: mocks.getScopedOpenOrdersForAccount,
 }));
 
 vi.mock('../services/trade-cycles.service.js', () => ({
@@ -181,6 +188,12 @@ describe('trading accounts controller', () => {
     mocks.getOpenTrackedPositionsForTradingAccount.mockResolvedValue([
       { id: 101, symbol: 'DIA' },
     ]);
+    mocks.getScopedOpenPositionsForAccount.mockResolvedValue({
+      positions: [{ id: 101, symbol: 'DIA' }],
+    });
+    mocks.getScopedOpenOrdersForAccount.mockResolvedValue({
+      orders: [{ id: 'order-1', tradingAccountId: 1 }],
+    });
     mocks.listTradeCyclesForTradingAccount.mockResolvedValue({
       cycles: [{ id: 101, symbol: 'DIA' }],
     });
@@ -340,9 +353,7 @@ describe('trading accounts controller', () => {
       next
     );
 
-    expect(
-      mocks.getOpenTrackedPositionsForTradingAccount
-    ).toHaveBeenCalledWith(1);
+    expect(mocks.getScopedOpenPositionsForAccount).toHaveBeenCalledWith(1);
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({
       positions: [{ id: 101, symbol: 'DIA' }],
@@ -365,7 +376,7 @@ describe('trading accounts controller', () => {
     );
 
     expect(
-      mocks.getOpenTrackedPositionsForTradingAccount
+      mocks.getScopedOpenPositionsForAccount
     ).not.toHaveBeenCalled();
     expect(next).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -389,24 +400,13 @@ describe('trading accounts controller', () => {
       next
     );
 
-    expect(mocks.getNormalizedOpenOrders).toHaveBeenCalledWith(
-      1,
-      'open_orders_sync'
-    );
-    expect(mocks.getTradingAccountSummaryById).toHaveBeenCalledWith(1);
+    expect(mocks.getScopedOpenOrdersForAccount).toHaveBeenCalledWith(1);
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({
       orders: [
         {
           id: 'order-1',
           tradingAccountId: 1,
-          tradingAccount: {
-            id: 1,
-            displayName: 'Bobby Paper',
-            broker: 'ALPACA',
-            environment: 'PAPER',
-            status: 'ACTIVE',
-          },
         },
       ],
     });
@@ -416,7 +416,9 @@ describe('trading accounts controller', () => {
   it('returns not found when account-scoped order reads target a missing account', async () => {
     const res = response();
     const next = vi.fn() as NextFunction;
-    mocks.getTradingAccountSummaryById.mockResolvedValue(null);
+    mocks.getScopedOpenOrdersForAccount.mockRejectedValue(
+      Object.assign(new Error('Trading account not found.'), { statusCode: 404 })
+    );
 
     await listTradingAccountOpenOrdersController(
       {

@@ -11,6 +11,8 @@ import {
   getTradingAccountSummaryById,
   resolveDefaultTradingAccountId,
 } from '../services/trading-account.service.js';
+import { HttpError } from '../errors/http-error.js';
+import { listScopedOpenOrders } from '../services/operational-scope.service.js';
 
 export async function openOrdersController(
   _req: Request,
@@ -106,6 +108,20 @@ export async function cancelAllOrdersController(
     }
     const result = await cancelAllOpenOrders(tradingAccountId);
     res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function scopedOpenOrdersController(
+  _req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const user = res.locals.user;
+    if (!user) throw new HttpError(401, 'Authentication required.');
+    res.status(200).json({ accounts: await listScopedOpenOrders(user) });
   } catch (error) {
     next(error);
   }

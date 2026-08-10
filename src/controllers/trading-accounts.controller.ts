@@ -7,13 +7,14 @@ import {
   getTradingAccountForAdmin,
   createTradingAccountForAdmin,
   deactivateTradingAccountForAdmin,
-  getTradingAccountSummaryById,
   listTradingAccountsForAdmin,
   listTradingAccountsForUser,
   updateTradingAccountForAdmin,
 } from '../services/trading-account.service.js';
-import { getNormalizedOpenOrders } from '../services/orders.service.js';
-import { getOpenTrackedPositionsForTradingAccount } from '../services/position-tracking.service.js';
+import {
+  getScopedOpenOrdersForAccount,
+  getScopedOpenPositionsForAccount,
+} from '../services/operational-scope.service.js';
 import {
   listTradeCyclesForTradingAccount,
   type TradeCycleFilters,
@@ -269,9 +270,7 @@ export async function listTradingAccountOpenPositionsController(
 ) {
   try {
     const id = parseTradingAccountId(req.params.id);
-    const positions = await getOpenTrackedPositionsForTradingAccount(id);
-
-    res.status(200).json({ positions });
+    res.status(200).json(await getScopedOpenPositionsForAccount(id));
   } catch (error) {
     next(error);
   }
@@ -284,21 +283,7 @@ export async function listTradingAccountOpenOrdersController(
 ) {
   try {
     const id = parseTradingAccountId(req.params.id);
-    const tradingAccount = await getTradingAccountSummaryById(id);
-
-    if (!tradingAccount) {
-      throw new HttpError(404, 'Trading account not found.');
-    }
-
-    const orders = await getNormalizedOpenOrders(id, 'open_orders_sync');
-
-    res.status(200).json({
-      orders: orders.map((order) => ({
-        ...order,
-        tradingAccountId: id,
-        tradingAccount,
-      })),
-    });
+    res.status(200).json(await getScopedOpenOrdersForAccount(id));
   } catch (error) {
     next(error);
   }

@@ -6,14 +6,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TrackedPosition } from "./types";
 
 const mocks = vi.hoisted(() => ({
-  query: { data: [] as TrackedPosition[], isLoading: false, isError: false, error: null as Error | null, refetch: vi.fn() },
-  mutateAsync: vi.fn(), openCycle: vi.fn(), closeCycle: vi.fn(), confirm: vi.fn(), notify: vi.fn(), closePending: false, closeVariables: undefined as number | undefined, lifecycleOpened: false,
+  query: { data: { positions: [] as TrackedPosition[] }, isLoading: false, isError: false, error: null as Error | null, refetch: vi.fn() },
+  mutateAsync: vi.fn(), openCycle: vi.fn(), closeCycle: vi.fn(), confirm: vi.fn(), notify: vi.fn(), closePending: false, closeVariables: undefined as { trackedPositionId: number } | undefined, lifecycleOpened: false,
 }));
 
 vi.mock("./hooks", () => ({
-  useOpenPositions: () => mocks.query,
+  useAllOpenPositions: () => mocks.query,
+  useTradingAccountOpenPositions: () => mocks.query,
   useClosePosition: () => ({ mutateAsync: mocks.mutateAsync, isPending: mocks.closePending, variables: mocks.closeVariables }),
 }));
+vi.mock("../tradingAccountScope/useTradingAccountScope", () => ({ useTradingAccountScope: () => ({ isAll: true, selectedAccount: null }) }));
+vi.mock("../tradingAccountScope/TradingAccountScopeSelector", () => ({ TradingAccountScopeSelector: () => <button>Trading Account scope</button> }));
 vi.mock("../tradeHistory/hooks", () => ({ useTradeCycleDrawer: () => ({ openCycle: mocks.openCycle, closeCycle: mocks.closeCycle, drawerProps: { opened: mocks.lifecycleOpened, cycle: null, isLoading: false, isError: false, error: null } }) }));
 vi.mock("../tradeHistory/TradeCycleDrawer", () => ({ TradeCycleDrawer: ({ opened }: { opened: boolean }) => opened ? <aside aria-label="Lifecycle drawer">Lifecycle drawer</aside> : null }));
 vi.mock("../../lib/api", () => ({ getAdminToken: () => "token" }));
@@ -49,7 +52,7 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.query.data = [base, { ...base, id: 102, symbol: "TSLA", unrealizedPnL: -12.5, unrealizedPnLPct: -.012, currentPrice: Number.NaN, exitState: { exitMode: "unlock_trailing_stop", attentionRequired: true, attentionCode: "trail_order_rejected", attentionMessage: "Broker rejected the protective order." }, trailingStopOrderId: null, subscription: null }];
+  mocks.query.data = { positions: [base, { ...base, id: 102, symbol: "TSLA", unrealizedPnL: -12.5, unrealizedPnLPct: -.012, currentPrice: Number.NaN, exitState: { exitMode: "unlock_trailing_stop", attentionRequired: true, attentionCode: "trail_order_rejected", attentionMessage: "Broker rejected the protective order." }, trailingStopOrderId: null, subscription: null }] };
   mocks.query.isLoading = false; mocks.query.isError = false; mocks.query.error = null; mocks.closePending = false; mocks.closeVariables = undefined; mocks.lifecycleOpened = false;
   vi.stubGlobal("ResizeObserver", ResizeObserverMock);
   window.matchMedia = vi.fn().mockImplementation((query) => ({ matches: false, media: query, onchange: null, addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn() }));
@@ -115,7 +118,7 @@ describe("Open Positions responsive page", () => {
     expect(mocks.confirm).toHaveBeenCalledOnce();
     const config = mocks.confirm.mock.calls[0][0] as { onConfirm: () => Promise<void> };
     await config.onConfirm();
-    expect(mocks.mutateAsync).toHaveBeenCalledWith(101);
+    expect(mocks.mutateAsync).toHaveBeenCalledWith({ tradingAccountId: 7, trackedPositionId: 101 });
   });
 
   it("keeps position details and lifecycle drawers mutually exclusive", async () => {
@@ -134,7 +137,7 @@ describe("Open Positions responsive page", () => {
   });
 
   it("disables close actions and announces the closing state during submission", async () => {
-    mocks.closePending = true; mocks.closeVariables = 101;
+    mocks.closePending = true; mocks.closeVariables = { trackedPositionId: 101 };
     renderPage(); resize?.(390); await screen.findByText("2 open positions · 1 requiring attention");
     expect(screen.getByLabelText("Closing status")).toBeTruthy();
     await userEvent.setup().click(screen.getAllByRole("button", { name: "More actions" })[0]);
@@ -142,7 +145,7 @@ describe("Open Positions responsive page", () => {
   });
 
   it("renders loading, empty, and recoverable error states", async () => {
-    mocks.query.data = []; mocks.query.isLoading = true;
+    mocks.query.data = { positions: [] }; mocks.query.isLoading = true;
     const view = renderPage(); expect(screen.getByRole("status").getAttribute("aria-busy")).toBe("true");
     mocks.query.isLoading = false; view.rerender(<MantineProvider><PositionsPage /></MantineProvider>);
     expect(screen.getByText("No open positions")).toBeTruthy();

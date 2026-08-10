@@ -1,15 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getOpenPositions,
+  getAllOpenPositions,
   getTradingAccountOpenPositions,
-  closePosition,
+  closeScopedPosition,
 } from "./api";
 
 export const positionKeys = {
   open: ["positions", "open"] as const,
+  allOpen: ["positions", "scope", "all"] as const,
   accountOpen: (tradingAccountId: number) =>
     ["positions", "account", tradingAccountId, "open"] as const,
 };
+
+export function useAllOpenPositions(token: string | null, enabled = true) {
+  return useQuery({
+    queryKey: positionKeys.allOpen,
+    queryFn: () => getAllOpenPositions(token as string),
+    enabled: Boolean(token && enabled),
+    refetchInterval: 5000,
+  });
+}
 
 export function useOpenPositions(token: string | null) {
   return useQuery({
@@ -39,14 +50,14 @@ export function useClosePosition(token: string | null) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (trackedPositionId: number) => {
+    mutationFn: (input: { tradingAccountId: number; trackedPositionId: number }) => {
       if (!token) {
         throw new Error("Admin session is missing. Please log in again.");
       }
-      return closePosition(trackedPositionId, token);
+      return closeScopedPosition(input.tradingAccountId, input.trackedPositionId, token);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: positionKeys.open });
+      queryClient.invalidateQueries({ queryKey: ["positions"] });
     },
   });
 }

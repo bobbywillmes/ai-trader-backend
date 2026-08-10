@@ -1,11 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getOpenOrders, getTradingAccountOpenOrders, cancelOrder } from "./api";
+import { getOpenOrders, getAllOpenOrders, getTradingAccountOpenOrders, cancelOrder } from "./api";
 
 export const orderKeys = {
   open: ["orders", "open"] as const,
+  allOpen: ["orders", "scope", "all"] as const,
   accountOpen: (tradingAccountId: number) =>
     ["orders", "account", tradingAccountId, "open"] as const,
 };
+
+export function useAllOpenOrders(token: string | null, enabled = true) {
+  return useQuery({ queryKey: orderKeys.allOpen, queryFn: () => getAllOpenOrders(token as string), enabled: Boolean(token && enabled), refetchInterval: 10000 });
+}
 
 export function useOpenOrders(token: string | null) {
   return useQuery({
@@ -42,7 +47,7 @@ export function useCancelOrder(token: string | null) {
       return cancelOrder(input.tradingAccountId, input.orderId, token);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: orderKeys.open });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
     },
   });
 }

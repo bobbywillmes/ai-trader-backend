@@ -19,7 +19,9 @@ import {
 import { getAdminToken } from "../../lib/api";
 import { TradeCycleDrawer } from "../tradeHistory/TradeCycleDrawer";
 import { useTradeCycleDrawer } from "../tradeHistory/hooks";
-import { useClosePosition, useOpenPositions } from "./hooks";
+import { useAllOpenPositions, useClosePosition, useTradingAccountOpenPositions } from "./hooks";
+import { TradingAccountScopeSelector } from "../tradingAccountScope/TradingAccountScopeSelector";
+import { useTradingAccountScope } from "../tradingAccountScope/useTradingAccountScope";
 import type { TrackedPosition } from "./types";
 import classes from "./PositionsPage.module.css";
 
@@ -53,6 +55,11 @@ export function ProfitLoss({ dollars, ratio }: { dollars: number | null | undefi
 
 function accountName(position: TrackedPosition) {
   return position.tradingAccount?.displayName ?? (position.tradingAccountId !== null ? `Account ${position.tradingAccountId}` : "Unassigned account");
+}
+
+function accountContext(position: TrackedPosition) {
+  const account = position.tradingAccount;
+  return `${accountName(position)} · ${account?.environment ?? "Environment unavailable"}${account?.accountHolderName ? ` · ${account.accountHolderName}` : ""}`;
 }
 
 function formatDate(value: string | null | undefined) {
@@ -140,7 +147,7 @@ function exitTone(position: TrackedPosition): StatusTone {
   return "neutral";
 }
 
-export function PositionsDataView({ positions, token, ariaLabel = "Open positions" }: { positions: readonly TrackedPosition[]; token: string | null; ariaLabel?: string }) {
+export function PositionsDataView({ positions, token, selectedTradingAccountId, showAccountIdentity = true, ariaLabel = "Open positions" }: { positions: readonly TrackedPosition[]; token: string | null; selectedTradingAccountId?: number; showAccountIdentity?: boolean; ariaLabel?: string }) {
   const closeMutation = useClosePosition(token);
   const tradeCycleDrawer = useTradeCycleDrawer(token);
   const [expandedId, setExpandedId] = useState<string | number | null>(null);
@@ -172,14 +179,19 @@ export function PositionsDataView({ positions, token, ariaLabel = "Open position
   }
 
   function closePosition(position: TrackedPosition) {
-    if (closeMutation.isPending) return;
+    if (closeMutation.isPending || position.tradingAccountId === null) return;
+    if (selectedTradingAccountId !== undefined && position.tradingAccountId !== selectedTradingAccountId) {
+      notifications.show({ message: "Position account identity does not match the selected Trading Account. Close was blocked.", color: "red" });
+      return;
+    }
+    const environment = position.tradingAccount?.environment ?? "UNKNOWN";
     modals.openConfirmModal({
       title: "Close position",
-      children: <Text size="sm">Submit a close order for <strong>{position.symbol}</strong> in <strong>{accountName(position)}</strong>?</Text>,
+      children: <Stack gap="xs"><Text size="sm">Submit a close order for <strong>{position.qty} {position.symbol}</strong> in <strong>{accountName(position)} · {environment}</strong>?</Text>{environment === "LIVE" && <Text size="sm" c="red" fw={700}>This affects a LIVE brokerage account and can execute a real-money trade.</Text>}</Stack>,
       labels: { confirm: "Close position", cancel: "Cancel" }, confirmProps: { color: "red" },
       onConfirm: async () => {
         try {
-          await closeMutation.mutateAsync(position.id);
+          await closeMutation.mutateAsync({ tradingAccountId: position.tradingAccountId as number, trackedPositionId: position.id });
           notifications.show({ message: `Close order submitted for ${position.symbol}.`, color: "teal" });
         } catch (error) {
           notifications.show({ message: error instanceof Error ? error.message : `Failed to close ${position.symbol}.`, color: "red" });
@@ -188,9 +200,9 @@ export function PositionsDataView({ positions, token, ariaLabel = "Open position
     });
   }
 
-  const isClosing = (position: TrackedPosition) => closeMutation.isPending && closeMutation.variables === position.id;
+  const isClosing = (position: TrackedPosition) => closeMutation.isPending && closeMutation.variables?.trackedPositionId === position.id;
   const lifecycleAction = (position: TrackedPosition) => ({ label: "View lifecycle", icon: <IconFileAnalytics size={16} />, onClick: () => openLifecycle(position) });
-  const closeAction = (position: TrackedPosition) => ({ label: isClosing(position) ? "Closing position" : `Close ${position.symbol} position`, icon: <IconTrash size={16} />, color: "red", disabled: closeMutation.isPending, onClick: () => closePosition(position) });
+  const closeAction = (position: TrackedPosition) => ({ label: isClosing(position) ? "Closing position" : `Close ${position.symbol} position`, icon: <IconTrash size={16} />, color: "red", disabled: closeMutation.isPending || position.tradingAccountId === null || (selectedTradingAccountId !== undefined && position.tradingAccountId !== selectedTradingAccountId), onClick: () => closePosition(position) });
   const actions = (position: TrackedPosition, compact = false) => <ResponsiveActions compact={compact} primary={lifecycleAction(position)} secondary={[closeAction(position)]} />;
   const details = (position: TrackedPosition, includeIdentity = false) => <div className={classes.detailComposition}>
     {includeIdentity && <div className={classes.drawerIdentity}>{identity(position)}{statusGroup(position)}</div>}
@@ -198,7 +210,7 @@ export function PositionsDataView({ positions, token, ariaLabel = "Open position
       <section className={classes.detailCard} aria-labelledby={`position-${position.id}-position-heading`}>
         <Title id={`position-${position.id}-position-heading`} order={3} size="h5" className={classes.detailHeading}>Position</Title>
         <RecordDetailsGrid missingValue={MISSING_VALUE} sections={[{ items: [
-          { label: "Average entry", value: formatCurrency(position.avgEntryPrice) }, { label: "Current price", value: formatCurrency(position.currentPrice) },
+          { label: "Trading Account", value: accountContext(position) }, { label: "Average entry", value: formatCurrency(position.avgEntryPrice) }, { label: "Current price", value: formatCurrency(position.currentPrice) },
           { label: "Unrealized P/L", value: <ProfitLoss dollars={position.unrealizedPnL} ratio={position.unrealizedPnLPct} /> },
           { label: "Opened", value: formatDate(position.openedAt) }, { label: "Last synchronized", value: formatDate(position.lastSyncedAt) },
           { label: "Attention state", value: attentionMessage(position) },
@@ -223,7 +235,7 @@ export function PositionsDataView({ positions, token, ariaLabel = "Open position
     </Accordion>
     <footer className={classes.detailActions}><Text fw={700} size="sm">Position actions</Text>{actions(position)}</footer>
   </div>;
-  const identity = (position: TrackedPosition) => <div className={classes.identity}><Text component="h3" fw={800} size="md">{position.symbol}</Text><Text size="xs" c="dimmed" className={classes.wrap}>{accountName(position)}</Text><Text size="xs" c="dimmed">{titleCase(position.side)} · {position.qty} {position.qty === 1 ? "share" : "shares"}</Text></div>;
+  const identity = (position: TrackedPosition) => <div className={classes.identity}><Text component="h3" fw={800} size="md">{position.symbol}</Text>{showAccountIdentity && <Text size="xs" c="dimmed" className={classes.wrap}>{accountContext(position)}</Text>}<Text size="xs" c="dimmed">{titleCase(position.side)} · {position.qty} {position.qty === 1 ? "share" : "shares"}</Text></div>;
   const summaryFields = (position: TrackedPosition): SummaryField[] => [
     { label: "Current", value: formatCurrency(position.currentPrice) },
     { label: "P/L", value: <ProfitLoss dollars={position.unrealizedPnL} ratio={position.unrealizedPnLPct} /> },
@@ -252,11 +264,15 @@ export function PositionsDataView({ positions, token, ariaLabel = "Open position
 
 export function PositionsPage() {
   const [token] = useState<string | null>(() => getAdminToken());
-  const positionsQuery = useOpenPositions(token);
-  const positions = useMemo(() => positionsQuery.data ?? [], [positionsQuery.data]);
+  const scope = useTradingAccountScope();
+  const allQuery = useAllOpenPositions(token, scope.isAll);
+  const accountQuery = useTradingAccountOpenPositions(scope.selectedAccount?.id, token);
+  const positionsQuery = scope.isAll ? allQuery : accountQuery;
+  const positions = useMemo(() => positionsQuery.data?.positions ?? [], [positionsQuery.data]);
   const attentionCount = positions.filter(needsAttention).length;
   return <main className={classes.page}><Stack gap="lg">
-    <Group justify="space-between" align="flex-end" gap="md"><div><Title order={2} size="h3">Open Positions</Title><Text size="sm" c="dimmed">Live tracked positions and exit management.</Text></div>{!positionsQuery.isLoading && !positionsQuery.isError && <Text size="sm" c="dimmed">{positions.length} open {positions.length === 1 ? "position" : "positions"}{attentionCount > 0 ? ` · ${attentionCount} requiring attention` : ""}</Text>}</Group>
-    <Card withBorder radius="md" p="md" className={classes.panel}>{positionsQuery.isLoading ? <DataState state="loading" message="Loading open positions…" /> : positionsQuery.isError ? <DataState state="error" title="Unable to load open positions" message={positionsQuery.error instanceof Error ? positionsQuery.error.message : "Open positions could not be loaded."} onRetry={() => void positionsQuery.refetch()} /> : positions.length === 0 ? <DataState state="empty" title="No open positions" message="Positions will appear here after entry orders fill." /> : <PositionsDataView positions={positions} token={token} />}</Card>
+    <Group justify="space-between" align="flex-end" gap="md"><div><Title order={2} size="h3">Open Positions</Title><Text size="sm" c="dimmed">{scope.isAll ? "Tracked positions across accessible Trading Accounts." : `${scope.selectedAccount?.displayName} · ${scope.selectedAccount?.environment ?? ""} tracked positions and exit management.`}</Text></div><TradingAccountScopeSelector mode="ACCOUNT_FILTERABLE" expanded variant="dashboard" /></Group>
+    {!positionsQuery.isLoading && !positionsQuery.isError && <Text size="sm" c="dimmed">{positions.length} open {positions.length === 1 ? "position" : "positions"}{attentionCount > 0 ? ` · ${attentionCount} requiring attention` : ""}</Text>}
+    <Card withBorder radius="md" p="md" className={classes.panel}>{positionsQuery.isLoading ? <DataState state="loading" message="Loading open positions…" /> : positionsQuery.isError ? <DataState state="error" title="Position state unavailable" message={positionsQuery.error instanceof Error ? positionsQuery.error.message : "Open positions could not be loaded."} onRetry={() => void positionsQuery.refetch()} /> : positions.length === 0 ? <DataState state="empty" title="No open positions" message="Positions will appear here after entry orders fill." /> : <PositionsDataView positions={positions} token={token} showAccountIdentity={scope.isAll} selectedTradingAccountId={scope.selectedAccount?.id} />}</Card>
   </Stack></main>;
 }
