@@ -48,7 +48,7 @@ export async function getRecentSystemEvents(limit = 50) {
 export async function getAccessibleSystemEvents(
   user: { id: number; platformRole: PlatformRole },
   accountId: number | null,
-  filters: { limit?: number; type?: string; search?: string } = {}
+  filters: { page?: number; pageSize?: number; type?: string; search?: string } = {}
 ) {
   if (user.platformRole === PlatformRole.ACCOUNT_USER) {
     throw new HttpError(403, 'Admin-console system events are not available to account portal users.');
@@ -69,8 +69,7 @@ export async function getAccessibleSystemEvents(
     accountScope = { tradingAccount: { memberships: { some: { userId: user.id } } } };
   }
   const search = filters.search?.trim();
-  return prisma.systemEvent.findMany({
-    where: {
+  const where: Prisma.SystemEventWhereInput = {
       ...accountScope,
       ...(filters.type ? { type: filters.type } : {}),
       ...(search ? { OR: [
@@ -79,11 +78,23 @@ export async function getAccessibleSystemEvents(
         { entityId: { contains: search, mode: 'insensitive' } },
         { message: { contains: search, mode: 'insensitive' } },
       ] } : {}),
-    },
+  };
+  const page = Math.max(filters.page ?? 1, 1);
+  const pageSize = Math.min(Math.max(filters.pageSize ?? 25, 1), 100);
+  const [events, total] = await Promise.all([
+    prisma.systemEvent.findMany({
+      where,
     include: { tradingAccount: { select: TRADING_ACCOUNT_SUMMARY_SELECT } },
     orderBy: { createdAt: 'desc' },
-    take: Math.min(filters.limit ?? 100, 500),
-  });
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    prisma.systemEvent.count({ where }),
+  ]);
+  return {
+    events,
+    pagination: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) },
+  };
 }
 
 export async function getSecurityActivity(symbol: string, limit = 10) {

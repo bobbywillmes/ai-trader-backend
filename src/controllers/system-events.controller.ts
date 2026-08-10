@@ -14,11 +14,13 @@ export async function systemEventsController(
     if (account !== null && (!Number.isInteger(account) || account <= 0)) {
       throw new HttpError(400, 'A valid account query parameter is required.');
     }
-    const limit = getQueryNumber(req.query.limit, 100);
+    const page = getQueryNumber(req.query.page, 1);
+    const pageSize = getQueryNumber(req.query.pageSize, 25);
     const type = typeof req.query.type === 'string' && req.query.type !== 'all' ? req.query.type : undefined;
     const search = typeof req.query.search === 'string' ? req.query.search : undefined;
     const events = await getAccessibleSystemEvents(res.locals.user, account, {
-      limit,
+      page,
+      pageSize,
       ...(type ? { type } : {}),
       ...(search ? { search } : {}),
     });

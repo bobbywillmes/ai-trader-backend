@@ -4,7 +4,7 @@ import type {
   IndexChartRange,
   IndexIntradayResponse,
   IndexPerformanceResponse,
-  SystemEvent,
+  SystemEventsResponse,
   TradingAccountDashboardResponse,
   DashboardAccountsOverviewResponse,
 } from "./types";
@@ -33,10 +33,20 @@ export function getDashboardAccountsOverview(token: string) {
 export function getSystemEvents(
   token: string,
   account: "all" | number,
-  limit = 20,
+  page = 1,
+  pageSize = 25,
+  type?: string,
+  search?: string,
 ) {
-  return apiRequest<SystemEvent[]>(
-    `/api/system-events?account=${account}&limit=${limit}`,
+  const query = new URLSearchParams({
+    account: String(account),
+    page: String(page),
+    pageSize: String(pageSize),
+  });
+  if (type && type !== "all") query.set("type", type);
+  if (search?.trim()) query.set("search", search.trim());
+  return apiRequest<SystemEventsResponse>(
+    `/api/system-events?${query.toString()}`,
     { token },
   );
 }

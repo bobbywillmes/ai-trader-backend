@@ -4,7 +4,7 @@ import {
   Button,
   Card,
   Group,
-  NumberInput,
+  Pagination,
   Select,
   Stack,
   Table,
@@ -12,6 +12,7 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
+import { useSearchParams } from "react-router-dom";
 import { IconRefresh, IconSearch } from "@tabler/icons-react";
 import { TradingAccountBadge } from "../../components/TradingAccountBadge";
 import {
@@ -147,45 +148,55 @@ function Details({ event }: { event: SystemEvent }) {
 
 export function SystemEventsPage() {
   const accountScope = useTradingAccountScope();
+  const [params, setParams] = useSearchParams();
   const [token] = useState(() => getAdminToken());
-  const [limit, setLimit] = useState(100);
+  const page = Math.max(Number(params.get("page")) || 1, 1);
+  const pageSize = [25, 50, 100].includes(Number(params.get("pageSize")))
+    ? Number(params.get("pageSize"))
+    : 25;
+  const updatePage = (nextPage: number) =>
+    setParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set("page", String(nextPage));
+      return next;
+    });
+  const updatePageSize = (nextPageSize: string | null) =>
+    setParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set("pageSize", nextPageSize ?? "25");
+      next.set("page", "1");
+      return next;
+    });
   const [type, setType] = useState("all");
   const [search, setSearch] = useState("");
+  const [appliedSearch, setAppliedSearch] = useState("");
   const [expanded, setExpanded] = useState<number | null>(null);
   const [selected, setSelected] = useState<SystemEvent | null>(null);
   const [opener, setOpener] = useState<HTMLElement | null>(null);
   const query = useSystemEvents(
     token,
     accountScope.isAll ? "all" : (accountScope.selectedAccount?.id ?? "all"),
-    limit,
+    page,
+    pageSize,
+    type,
+    appliedSearch,
   );
-  const events = useMemo(() => query.data ?? [], [query.data]);
+  const events = useMemo(() => query.data?.events ?? [], [query.data]);
+  const pagination = query.data?.pagination;
   const types = useMemo(
     () => [...new Set(events.map((event) => event.type))].sort(),
     [events],
   );
-  const filtered = useMemo(
-    () =>
-      events.filter(
-        (event) =>
-          (type === "all" || event.type === type) &&
-          (!search.trim() ||
-            [
-              event.type,
-              event.entityType,
-              event.entityId,
-              event.tradingAccount?.displayName,
-              describeEvent(event).description,
-            ].some((value) =>
-              value?.toLowerCase().includes(search.trim().toLowerCase()),
-            )),
-      ),
-    [events, search, type],
-  );
+  const filtered = events;
+  const applySearch = () => {
+    setAppliedSearch(search.trim());
+    updatePage(1);
+  };
   const clear = () => {
     setSearch("");
+    setAppliedSearch("");
     setType("all");
-    setLimit(100);
+    updatePage(1);
   };
   const active = [
     {
@@ -193,12 +204,6 @@ export function SystemEventsPage() {
       active: type !== "all",
       label: `Event: ${eventTitle(type)}`,
       remove: () => setType("all"),
-    },
-    {
-      key: "limit",
-      active: limit !== 100,
-      label: `Last ${limit}`,
-      remove: () => setLimit(100),
     },
   ]
     .filter((item) => item.active)
@@ -355,20 +360,33 @@ export function SystemEventsPage() {
           <Stack gap="md">
             <ResponsiveFilterToolbar
               primary={
-                <TextInput
-                  aria-label="Search system events"
-                  placeholder="Search events or context"
-                  leftSection={<IconSearch size={16} />}
-                  value={search}
-                  onChange={(event) => setSearch(event.currentTarget.value)}
-                />
+                <Group
+                  align="flex-end"
+                  gap="sm"
+                  wrap="nowrap"
+                  className={classes.searchControls}
+                >
+                  <TextInput
+                    aria-label="Search system events"
+                    placeholder="Search events or context"
+                    leftSection={<IconSearch size={16} />}
+                    value={search}
+                    onChange={(event) => setSearch(event.currentTarget.value)}
+                    onKeyDown={(event) => event.key === "Enter" && applySearch()}
+                    className={classes.searchInput}
+                  />
+                  <Button onClick={applySearch}>Filter Results</Button>
+                </Group>
               }
               secondary={
                 <>
                   <Select
                     label="Event type"
                     value={type}
-                    onChange={(value) => setType(value ?? "all")}
+                    onChange={(value) => {
+                      setType(value ?? "all");
+                      updatePage(1);
+                    }}
                     data={[
                       { value: "all", label: "All event types" },
                       ...types.map((value) => ({
@@ -377,14 +395,11 @@ export function SystemEventsPage() {
                       })),
                     ]}
                   />
-                  <NumberInput
-                    label="Result limit"
-                    min={1}
-                    max={500}
-                    value={limit}
-                    onChange={(value) =>
-                      typeof value === "number" && setLimit(value)
-                    }
+                  <Select
+                    label="Per page"
+                    value={String(pageSize)}
+                    onChange={updatePageSize}
+                    data={["25", "50", "100"]}
                   />
                 </>
               }
@@ -422,6 +437,7 @@ export function SystemEventsPage() {
             ) : (
               <ResponsiveDataView
                 records={filtered}
+                className={classes.eventResults}
                 getRecordId={(event) => event.id}
                 wide={wide}
                 compact={(items) => (
@@ -454,6 +470,21 @@ export function SystemEventsPage() {
                 )}
                 aria-label="System event stream"
               />
+            )}
+            {(pagination?.totalPages ?? 1) > 1 && (
+              <Group justify="space-between" className={classes.pagination}>
+                <Text size="sm" c="dimmed">
+                  Showing {(page - 1) * pageSize + 1}–
+                  {Math.min(page * pageSize, pagination?.total ?? 0)} of{" "}
+                  {pagination?.total ?? 0}
+                </Text>
+                <Pagination
+                  value={page}
+                  total={pagination?.totalPages ?? 1}
+                  onChange={updatePage}
+                  disabled={query.isFetching}
+                />
+              </Group>
             )}
           </Stack>
         </Card>

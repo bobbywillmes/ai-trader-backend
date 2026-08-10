@@ -14,8 +14,13 @@ export const dashboardKeys = {
   indexIntraday: (range: IndexChartRange) =>
     ["dashboard", "index-intraday", range] as const,
   indexPerformance: ["dashboard", "index-performance"] as const,
-  systemEvents: (account: "all" | number, limit: number) =>
-    ["system-events", account, limit] as const,
+  systemEvents: (
+    account: "all" | number,
+    page: number,
+    pageSize: number,
+    type: string,
+    search: string,
+  ) => ["system-events", account, page, pageSize, type, search] as const,
   account: (tradingAccountId: number) =>
     ["dashboard", "account", tradingAccountId] as const,
   accountsOverview: ["dashboard", "scope", "all", "accounts-overview"] as const,
@@ -61,11 +66,15 @@ export function useBootstrap(token: string | null) {
 export function useSystemEvents(
   token: string | null,
   account: "all" | number,
-  limit = 20,
+  page = 1,
+  pageSize = 25,
+  type = "all",
+  search = "",
 ) {
   return useQuery({
-    queryKey: dashboardKeys.systemEvents(account, limit),
-    queryFn: () => getSystemEvents(token as string, account, limit),
+    queryKey: dashboardKeys.systemEvents(account, page, pageSize, type, search),
+    queryFn: () =>
+      getSystemEvents(token as string, account, page, pageSize, type, search),
     enabled: Boolean(token),
     refetchInterval: 15000,
   });

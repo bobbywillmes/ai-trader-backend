@@ -3,11 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   eventFindMany: vi.fn(),
+  eventCount: vi.fn(),
   membershipFindUnique: vi.fn(),
 }));
 vi.mock('../db/prisma.js', () => ({
   prisma: {
-    systemEvent: { findMany: mocks.eventFindMany },
+    systemEvent: { findMany: mocks.eventFindMany, count: mocks.eventCount },
     tradingAccountMembership: { findUnique: mocks.membershipFindUnique },
   },
 }));
@@ -22,6 +23,7 @@ describe('scoped system events', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.eventFindMany.mockResolvedValue([]);
+    mocks.eventCount.mockResolvedValue(0);
   });
 
   it('uses exact attribution for a selected authorized account', async () => {

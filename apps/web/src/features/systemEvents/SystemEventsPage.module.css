@@ -1,4 +1,8 @@
 .page { min-width: 0; }
 .header { gap: var(--mantine-spacing-md); }
 .message { min-width: 15rem; max-width: 34rem; white-space: normal; overflow-wrap: anywhere; }
-@media (max-width: 35rem) { .header { align-items: stretch; flex-direction: column; } .header > button { min-height: 44px; width: 100%; } }
+.searchInput { flex: 1; min-width: 0; }
+.eventResults, .eventResults > div, .eventResults :global(article) { max-width: 100%; min-width: 0; width: 100%; }
+.eventResults :global(article) { overflow: hidden; }
+.eventResults :global(article) * { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+@media (max-width: 35rem) { .header { align-items: stretch; flex-direction: column; } .header > button { min-height: 44px; width: 100%; } .searchControls { align-items: stretch; flex-direction: column; } .searchControls button { min-height: 44px; width: 100%; } }

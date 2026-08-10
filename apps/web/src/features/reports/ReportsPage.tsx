@@ -719,7 +719,6 @@ export function ReportsPage() {
   const [snapshotLimit, setSnapshotLimit] = useState(20);
   const [activityLimit, setActivityLimit] = useState(20);
   const [reportTimespan, setReportTimespan] = useState("all");
-  const [reportModeFilter, setReportModeFilter] = useState("all");
   const [symbolFilter, setSymbolFilter] = useState("");
   const [activityTypeFilter, setActivityTypeFilter] = useState<string | null>(
     "FILL",
@@ -775,10 +774,9 @@ export function ReportsPage() {
     return {
       account: scopedAccount,
       limit: snapshotLimit,
-      ...(reportModeFilter !== "all" ? { mode: reportModeFilter } : {}),
       ...(dateFrom ? { dateFrom } : {}),
     };
-  }, [reportModeFilter, reportTimespan, scopedAccount, snapshotLimit]);
+  }, [reportTimespan, scopedAccount, snapshotLimit]);
 
   const performanceQuery = useMemo<TradePerformanceQuery>(() => {
     const dateFrom = getTimespanDateFrom(reportTimespan);
@@ -790,7 +788,6 @@ export function ReportsPage() {
       pageSize: performancePageSize,
       sortBy: performanceSortBy,
       sortDirection: performanceSortDirection,
-      ...(reportModeFilter !== "all" ? { mode: reportModeFilter } : {}),
       ...(dateFrom ? { dateFrom } : {}),
       ...(symbol ? { symbol } : {}),
       ...(performanceStrategyId
@@ -816,7 +813,6 @@ export function ReportsPage() {
     performanceStrategyId,
     performanceSubscriptionId,
     performanceSymbolFilter,
-    reportModeFilter,
     reportTimespan,
     scopedAccount,
   ]);
@@ -967,64 +963,12 @@ export function ReportsPage() {
             </Text>
           </div>
 
-          <Group align="flex-end" className={classes.headerControls}>
+          <Group className={classes.headerControls}>
             <TradingAccountScopeSelector
               mode="ACCOUNT_FILTERABLE"
               expanded
               variant="dashboard"
             />
-            <Select
-              label="Mode"
-              value={reportModeFilter}
-              onChange={(value) => {
-                setReportModeFilter(value ?? "all");
-                setPerformancePage(1);
-              }}
-              data={[
-                { value: "all", label: "All" },
-                { value: "paper", label: "Paper" },
-                { value: "live", label: "Live" },
-              ]}
-              w={120}
-            />
-
-            <Select
-              label="Timespan"
-              value={reportTimespan}
-              onChange={(value) => {
-                setReportTimespan(value ?? "all");
-                setPerformancePage(1);
-              }}
-              data={[
-                { value: "today", label: "Today" },
-                { value: "7d", label: "7 days" },
-                { value: "30d", label: "30 days" },
-                { value: "90d", label: "90 days" },
-                { value: "ytd", label: "YTD" },
-                { value: "1y", label: "1 year" },
-                { value: "all", label: "All time" },
-              ]}
-              w={140}
-            />
-
-            {!accountScope.isAll && (
-              <Button
-                variant="default"
-                onClick={handleManualSnapshot}
-                loading={manualSnapshotMutation.isPending}
-              >
-                Record Account Snapshot
-              </Button>
-            )}
-
-            {!accountScope.isAll && (
-              <Button
-                onClick={handleBrokerSync}
-                loading={brokerSyncMutation.isPending}
-              >
-                Sync Broker Fills
-              </Button>
-            )}
           </Group>
         </Group>
 
@@ -1053,6 +997,27 @@ export function ReportsPage() {
             <Tabs.Tab value="performance">Trade Performance</Tabs.Tab>
             <Tabs.Tab value="audit">Audit Records</Tabs.Tab>
           </Tabs.List>
+
+          <Group align="flex-end" mt="md" className={classes.reportFilters}>
+            <Select
+              label="Timespan"
+              value={reportTimespan}
+              onChange={(value) => {
+                setReportTimespan(value ?? "all");
+                setPerformancePage(1);
+              }}
+              data={[
+                { value: "today", label: "Today" },
+                { value: "7d", label: "7 days" },
+                { value: "30d", label: "30 days" },
+                { value: "90d", label: "90 days" },
+                { value: "ytd", label: "YTD" },
+                { value: "1y", label: "1 year" },
+                { value: "all", label: "All time" },
+              ]}
+              w={140}
+            />
+          </Group>
 
           {reportTab === "overview" &&
             !accountScope.isAll &&
@@ -1591,16 +1556,27 @@ export function ReportsPage() {
                       </Text>
                     </div>
 
-                    <NumberInput
-                      label="Limit"
-                      value={snapshotLimit}
-                      min={1}
-                      max={200}
-                      w={110}
-                      onChange={(value) =>
-                        setSnapshotLimit(normalizeLimit(value, snapshotLimit))
-                      }
-                    />
+                    <Group align="flex-end">
+                      <NumberInput
+                        label="Limit"
+                        value={snapshotLimit}
+                        min={1}
+                        max={200}
+                        w={110}
+                        onChange={(value) =>
+                          setSnapshotLimit(normalizeLimit(value, snapshotLimit))
+                        }
+                      />
+                      {!accountScope.isAll && (
+                        <Button
+                          variant="default"
+                          onClick={handleManualSnapshot}
+                          loading={manualSnapshotMutation.isPending}
+                        >
+                          Record Account Snapshot
+                        </Button>
+                      )}
+                    </Group>
                   </Group>
 
                   <Divider />
@@ -1725,6 +1701,15 @@ export function ReportsPage() {
                           setActivityLimit(normalizeLimit(value, activityLimit))
                         }
                       />
+
+                      {!accountScope.isAll && (
+                        <Button
+                          onClick={handleBrokerSync}
+                          loading={brokerSyncMutation.isPending}
+                        >
+                          Sync Broker Fills
+                        </Button>
+                      )}
                     </Group>
                   </Group>
 
