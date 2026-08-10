@@ -4,6 +4,8 @@ import {
   getIndexIntraday,
   getIndexPerformance,
   getSystemEvents,
+  getTradingAccountDashboard,
+  getDashboardAccountsOverview,
 } from "./api";
 import type { IndexChartRange } from "./types";
 
@@ -13,7 +15,17 @@ export const dashboardKeys = {
     ["dashboard", "index-intraday", range] as const,
   indexPerformance: ["dashboard", "index-performance"] as const,
   systemEvents: (limit: number) => ["dashboard", "system-events", limit] as const,
+  account: (tradingAccountId: number) => ["dashboard", "account", tradingAccountId] as const,
+  accountsOverview: ["dashboard", "scope", "all", "accounts-overview"] as const,
 };
+
+export function useTradingAccountDashboard(token: string | null, tradingAccountId: number | null) {
+  return useQuery({ queryKey: dashboardKeys.account(tradingAccountId ?? 0), queryFn: () => getTradingAccountDashboard(token as string, tradingAccountId as number), enabled: Boolean(token && tradingAccountId), refetchInterval: 10000, staleTime: 5000 });
+}
+
+export function useDashboardAccountsOverview(token: string | null, enabled: boolean) {
+  return useQuery({ queryKey: dashboardKeys.accountsOverview, queryFn: () => getDashboardAccountsOverview(token as string), enabled: Boolean(token && enabled), refetchInterval: 15000, staleTime: 10000 });
+}
 
 export function useBootstrap(token: string | null) {
   return useQuery({

@@ -49,4 +49,4 @@ Operational pages should call `useTradingAccountScope()` only on routes whose me
 
 Every TanStack Query key introduced or converted for scoped data must include stable scope identity, for example `"all"` for aggregate data or the numeric `tradingAccountId` for account data. Query functions and keys must change together so cache entries cannot leak across TradingAccount scopes.
 
-The Dashboard's existing `PAPER TRADING` badge still describes the legacy `/api/bootstrap` account. It is not a scope indicator and remains unchanged in Phase 1.
+Phase 2 made Dashboard a scope consumer. Its sidebar and in-page selectors share this provider, and Dashboard no longer uses the legacy `/api/bootstrap` account or presents AI Trader as globally PAPER. See `trading-account-dashboard.md`.

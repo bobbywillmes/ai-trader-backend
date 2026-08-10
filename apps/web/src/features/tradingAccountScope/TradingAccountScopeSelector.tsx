@@ -6,13 +6,13 @@ import { useTradingAccountScope } from "./useTradingAccountScope";
 import type { PageScopeMode, TradingAccountScope } from "./types";
 import classes from "./TradingAccountScopeSelector.module.css";
 
-type Props = { mode: PageScopeMode; expanded: boolean; mobile?: boolean; onMenuChange?: (open: boolean) => void };
+type Props = { mode: PageScopeMode; expanded: boolean; mobile?: boolean; variant?: "sidebar" | "dashboard"; onMenuChange?: (open: boolean) => void };
 
 function accountLabel(account: TradingAccount) {
   return `${account.displayName} — ${account.environment}`;
 }
 
-export function TradingAccountScopeSelector({ mode, expanded, mobile = false, onMenuChange }: Props) {
+export function TradingAccountScopeSelector({ mode, expanded, mobile = false, variant = "sidebar", onMenuChange }: Props) {
   const context = useTradingAccountScope();
   if (mode !== "ACCOUNT_FILTERABLE") return null;
 
@@ -28,7 +28,7 @@ export function TradingAccountScopeSelector({ mode, expanded, mobile = false, on
   }, new Map<string, TradingAccount[]>());
   return <Menu position={mobile ? "bottom-start" : "right-start"} offset={8} width={300} shadow="lg" withinPortal onChange={onMenuChange} classNames={mobile ? { dropdown: classes.mobileDropdown } : undefined}>
     <Menu.Target>
-      <UnstyledButton className={classes.trigger} aria-label={`Trading Account scope: ${selectedLabel}`}>
+      <UnstyledButton className={`${classes.trigger} ${variant === "dashboard" ? classes.dashboardTrigger : ""}`} aria-label={`Trading Account scope: ${selectedLabel}`}>
         <IconBuildingBank size={20} aria-hidden="true" />
         {expanded && <><div className={classes.triggerText}><Text size="xs" c="dimmed">TRADING ACCOUNT SCOPE</Text><Text size="sm" fw={650} truncate>{selectedLabel}</Text></div><IconChevronDown size={16} aria-hidden="true" /></>}
       </UnstyledButton>

@@ -34,12 +34,14 @@ import {
 import { requirePermission, requireSystemOwnerAccess, requireTradingAccountAccess } from '../middleware/rbac.js';
 import { PlatformPermission } from '../types/platform-rbac.js';
 import { runTradingAccountReconciliationController } from '../controllers/reconciliation.controller.js';
+import { getTradingAccountDashboardController } from '../controllers/dashboard.controller.js';
 
 const router = Router();
 
 router.get('/', requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), listTradingAccountsController);
 router.post('/', requireSystemOwnerAccess, createTradingAccountController);
 router.get('/:id', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), getTradingAccountController);
+router.get('/:id/dashboard', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.REPORTS_READ), getTradingAccountDashboardController);
 router.get('/:id/positions', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), listTradingAccountOpenPositionsController);
 router.get('/:id/orders', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), listTradingAccountOpenOrdersController);
 router.get('/:id/trade-cycles', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.REPORTS_READ), listTradingAccountTradeCyclesController);

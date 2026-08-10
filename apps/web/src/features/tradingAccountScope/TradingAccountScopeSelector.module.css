@@ -4,3 +4,4 @@
 .triggerText, .itemIdentity { flex: 1; min-width: 0; white-space: nowrap; }
 .state { color: var(--mantine-color-gray-5); }
 .mobileDropdown { width: min(300px, calc(100vw - 32px)) !important; max-width: calc(100vw - 32px); }
+.dashboardTrigger { width: min(100%, 360px); margin: 0; color: var(--mantine-color-text); border: 1px solid var(--mantine-color-default-border); background: var(--mantine-color-default); }

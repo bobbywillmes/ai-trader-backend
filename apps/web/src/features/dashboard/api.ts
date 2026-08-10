@@ -5,10 +5,20 @@ import type {
   IndexIntradayResponse,
   IndexPerformanceResponse,
   SystemEvent,
+  TradingAccountDashboardResponse,
+  DashboardAccountsOverviewResponse,
 } from "./types";
 
 export function getBootstrap(token: string) {
   return apiRequest<BootstrapResponse>("/api/bootstrap", { token });
+}
+
+export function getTradingAccountDashboard(token: string, tradingAccountId: number) {
+  return apiRequest<TradingAccountDashboardResponse>(`/api/trading-accounts/${tradingAccountId}/dashboard`, { token });
+}
+
+export function getDashboardAccountsOverview(token: string) {
+  return apiRequest<DashboardAccountsOverviewResponse>("/api/dashboard/accounts-overview", { token });
 }
 
 export function getSystemEvents(token: string, limit = 20) {
