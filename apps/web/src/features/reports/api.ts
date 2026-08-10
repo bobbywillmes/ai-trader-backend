@@ -27,71 +27,78 @@ function buildQuery(params: Record<string, string | number | undefined>) {
 
 export function getAccountSnapshots(
   token: string,
-  query: AccountSnapshotQuery = {}
+  query: AccountSnapshotQuery = {},
 ) {
   return apiRequest<AccountSnapshotsResponse>(
     `/api/account-snapshots${buildQuery({
+      account: query.account,
       limit: query.limit,
       mode: query.mode,
       dateFrom: query.dateFrom,
       dateTo: query.dateTo,
     })}`,
-    { token }
+    { token },
   );
 }
 
 export function getAccountSnapshotTrends(
   token: string,
-  query: AccountSnapshotQuery = {}
+  query: AccountSnapshotQuery = {},
 ) {
   return apiRequest<AccountSnapshotTrendsResponse>(
     `/api/account-snapshots/trends${buildQuery({
+      account: query.account,
       limit: query.limit,
       mode: query.mode,
       dateFrom: query.dateFrom,
       dateTo: query.dateTo,
     })}`,
-    { token }
+    { token },
   );
 }
 
-export function createManualAccountSnapshot(token: string) {
+export function createManualAccountSnapshot(token: string, account: string) {
   return apiRequest<ManualAccountSnapshotResponse>(
-    "/api/account-snapshots/manual",
+    `/api/account-snapshots/manual${buildQuery({ account })}`,
     {
       method: "POST",
       token,
-    }
+    },
   );
 }
 
 export function getBrokerActivities(
   token: string,
-  query: BrokerActivitiesQuery = {}
+  query: BrokerActivitiesQuery = {},
 ) {
   return apiRequest<BrokerActivitiesResponse>(
     `/api/broker-activities${buildQuery({
+      account: query.account,
       limit: query.limit,
       symbol: query.symbol,
       activityType: query.activityType,
     })}`,
-    { token }
+    { token },
   );
 }
 
-export function syncBrokerActivities(token: string) {
-  return apiRequest<BrokerActivitySyncResponse>("/api/broker-activities/sync", {
-    method: "POST",
-    token,
-  });
+export function syncBrokerActivities(token: string, account: string) {
+  return apiRequest<BrokerActivitySyncResponse>(
+    `/api/broker-activities/sync${buildQuery({ account })}`,
+    {
+      method: "POST",
+      token,
+    },
+  );
 }
 
 export function getTradePerformance(
   token: string,
-  query: TradePerformanceQuery = {}
+  query: TradePerformanceQuery = {},
 ) {
   return apiRequest<TradePerformanceResponse>(
     `/api/trade-performance${buildQuery({
+      account: query.account,
       mode: query.mode,
       dateFrom: query.dateFrom,
       dateTo: query.dateTo,
@@ -106,6 +113,6 @@ export function getTradePerformance(
       sortBy: query.sortBy,
       sortDirection: query.sortDirection,
     })}`,
-    { token }
+    { token },
   );
 }

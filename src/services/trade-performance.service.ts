@@ -1,4 +1,4 @@
-import { listTradeCycles, type TradeCycleFilters } from './trade-cycles.service.js';
+import { listTradeCycles, listTradeCyclesForTradingAccount, type TradeCycleFilters } from './trade-cycles.service.js';
 import type { TradingAccountSummaryResponse } from './trading-account.service.js';
 
 export type TradePerformanceOutcome = 'all' | 'winner' | 'loser' | 'breakeven';
@@ -345,12 +345,34 @@ function toTradeRow(cycle: PerformanceCycle): TradePerformanceTradeRow {
 }
 
 export async function getTradePerformance(query: TradePerformanceQuery = {}) {
+  const result = await listTradeCycles(buildTradeCycleFilters(query));
+  return buildTradePerformance(result.cycles as PerformanceCycle[], query);
+}
+
+export async function getTradePerformanceForAccounts(
+  tradingAccountIds: number[],
+  query: TradePerformanceQuery = {}
+) {
+  const results = await Promise.all(
+    tradingAccountIds.map((id) =>
+      listTradeCyclesForTradingAccount(id, buildTradeCycleFilters(query))
+    )
+  );
+  return buildTradePerformance(
+    results.flatMap((result) => result.cycles) as PerformanceCycle[],
+    query
+  );
+}
+
+function buildTradePerformance(
+  sourceCycles: PerformanceCycle[],
+  query: TradePerformanceQuery
+) {
   const page = normalizePositiveInt(query.page, DEFAULT_PAGE);
   const pageSize = normalizePageSize(query);
   const sortBy = query.sortBy ?? 'closedAt';
   const sortDirection = query.sortDirection ?? 'desc';
-  const result = await listTradeCycles(buildTradeCycleFilters(query));
-  const cycles = filterCycles(result.cycles as PerformanceCycle[], query);
+  const cycles = filterCycles(sourceCycles, query);
   const reportable = cycles.filter(isReportable);
   const sortedCycles = sortCycles(cycles, {
     ...query,

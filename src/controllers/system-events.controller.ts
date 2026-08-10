@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
-import { getRecentSystemEvents } from '../services/system-event.service.js';
+import { getAccessibleSystemEvents } from '../services/system-event.service.js';
 import { getSecurityActivity } from '../services/system-event.service.js';
+import { HttpError } from '../errors/http-error.js';
 
 export async function systemEventsController(
   req: Request,
@@ -8,8 +9,19 @@ export async function systemEventsController(
   next: NextFunction
 ) {
   try {
-    const limit = Number(req.query.limit ?? 50);
-    const events = await getRecentSystemEvents(limit);
+    if (!res.locals.user) throw new HttpError(401, 'Authentication required.');
+    const account = req.query.account === 'all' ? null : Number(req.query.account);
+    if (account !== null && (!Number.isInteger(account) || account <= 0)) {
+      throw new HttpError(400, 'A valid account query parameter is required.');
+    }
+    const limit = getQueryNumber(req.query.limit, 100);
+    const type = typeof req.query.type === 'string' && req.query.type !== 'all' ? req.query.type : undefined;
+    const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+    const events = await getAccessibleSystemEvents(res.locals.user, account, {
+      limit,
+      ...(type ? { type } : {}),
+      ...(search ? { search } : {}),
+    });
 
     res.status(200).json(events);
   } catch (error) {

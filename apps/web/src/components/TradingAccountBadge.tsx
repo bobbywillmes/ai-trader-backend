@@ -4,7 +4,7 @@ import type { TradingAccountSummary } from "../types/tradingAccount";
 type TradingAccountBadgeProps = {
   account?: TradingAccountSummary | null;
   tradingAccountId?: number | null;
-  emptyLabel?: "Global" | "Unassigned";
+  emptyLabel?: "Global" | "SYSTEM" | "Unassigned";
   layout?: "compact" | "stacked";
 };
 

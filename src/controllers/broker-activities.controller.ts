@@ -1,9 +1,19 @@
 import type { Request, Response, NextFunction } from 'express';
 import {
   getLatestBrokerActivity,
-  getRecentBrokerActivities,
-  syncBrokerActivities,
+  syncBrokerActivitiesForAccount,
+  getRecentBrokerActivitiesForAccounts,
 } from '../services/broker-activity.service.js';
+import { HttpError } from '../errors/http-error.js';
+import { resolveReportAccountIds } from '../services/report-scope.service.js';
+
+function getAccountScope(value: unknown) {
+  if (value === 'all') return null;
+  if (typeof value !== 'string' || !/^\d+$/.test(value) || Number(value) <= 0) {
+    throw new HttpError(400, 'account must be all or a positive TradingAccount id.');
+  }
+  return Number(value);
+}
 
 function getQueryNumber(value: unknown, fallback: number) {
   if (typeof value !== 'string') {
@@ -56,7 +66,12 @@ export async function getBrokerActivitiesController(
       filters.activityType = activityType;
     }
 
-    const activities = await getRecentBrokerActivities(filters);
+    if (!res.locals.user) throw new HttpError(401, 'Authentication required.');
+    const accountIds = await resolveReportAccountIds(
+      res.locals.user,
+      getAccountScope(req.query.account)
+    );
+    const activities = await getRecentBrokerActivitiesForAccounts(accountIds, filters);
 
     res.status(200).json({ activities });
   } catch (error) {
@@ -103,7 +118,9 @@ export async function syncBrokerActivitiesController(
       input.after = after;
     }
 
-    const result = await syncBrokerActivities(input);
+    const tradingAccountId = getAccountScope(req.query.account);
+    if (tradingAccountId === null) throw new HttpError(400, 'Broker sync requires one TradingAccount.');
+    const result = await syncBrokerActivitiesForAccount(tradingAccountId, input);
 
     res.status(200).json(result);
   } catch (error) {

@@ -26,7 +26,7 @@ export const reportsKeys = {
 
 export function useAccountSnapshots(
   token: string | null,
-  query: AccountSnapshotQuery
+  query: AccountSnapshotQuery,
 ) {
   return useQuery({
     queryKey: reportsKeys.accountSnapshots(query),
@@ -38,7 +38,7 @@ export function useAccountSnapshots(
 
 export function useAccountSnapshotTrends(
   token: string | null,
-  query: AccountSnapshotQuery
+  query: AccountSnapshotQuery,
 ) {
   return useQuery({
     queryKey: reportsKeys.accountSnapshotTrends(query),
@@ -48,7 +48,10 @@ export function useAccountSnapshotTrends(
   });
 }
 
-export function useCreateManualAccountSnapshot(token: string | null) {
+export function useCreateManualAccountSnapshot(
+  token: string | null,
+  account: string,
+) {
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -57,10 +60,12 @@ export function useCreateManualAccountSnapshot(token: string | null) {
         throw new Error("Admin session is missing. Please log in again.");
       }
 
-      return createManualAccountSnapshot(token);
+      return createManualAccountSnapshot(token, account);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["reports", "accountSnapshots"] });
+      queryClient.invalidateQueries({
+        queryKey: ["reports", "accountSnapshots"],
+      });
       queryClient.invalidateQueries({
         queryKey: ["reports", "accountSnapshotTrends"],
       });
@@ -70,7 +75,7 @@ export function useCreateManualAccountSnapshot(token: string | null) {
 
 export function useBrokerActivities(
   token: string | null,
-  query: BrokerActivitiesQuery
+  query: BrokerActivitiesQuery,
 ) {
   return useQuery({
     queryKey: reportsKeys.brokerActivities(query),
@@ -80,7 +85,7 @@ export function useBrokerActivities(
   });
 }
 
-export function useSyncBrokerActivities(token: string | null) {
+export function useSyncBrokerActivities(token: string | null, account: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -89,17 +94,19 @@ export function useSyncBrokerActivities(token: string | null) {
         throw new Error("Admin session is missing. Please log in again.");
       }
 
-      return syncBrokerActivities(token);
+      return syncBrokerActivities(token, account);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["reports", "brokerActivities"] });
+      queryClient.invalidateQueries({
+        queryKey: ["reports", "brokerActivities"],
+      });
     },
   });
 }
 
 export function useTradePerformance(
   token: string | null,
-  query: TradePerformanceQuery
+  query: TradePerformanceQuery,
 ) {
   return useQuery({
     queryKey: reportsKeys.tradePerformance(query),

@@ -493,6 +493,28 @@ export async function getRecentBrokerActivities(args: {
   });
 }
 
+export async function getRecentBrokerActivitiesForAccounts(
+  tradingAccountIds: number[],
+  args: { limit?: number; symbol?: string; activityType?: string }
+) {
+  if (tradingAccountIds.length === 0) return [];
+  const where: Prisma.BrokerActivityWhereInput = {
+    tradingAccountId: { in: tradingAccountIds },
+  };
+  if (args.symbol) where.symbol = args.symbol;
+  if (args.activityType) where.activityType = args.activityType;
+  return prisma.brokerActivity.findMany({
+    where,
+    orderBy: { transactionTime: 'desc' },
+    take: args.limit ?? 50,
+    include: {
+      tradingAccount: { select: TRADING_ACCOUNT_SUMMARY_SELECT },
+      orderIntent: true,
+      brokerOrderRecord: true,
+    },
+  });
+}
+
 export async function getLatestBrokerActivity() {
   const tradingAccountId = await resolveDefaultTradingAccountId();
 

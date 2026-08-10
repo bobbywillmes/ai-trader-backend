@@ -1,16 +1,24 @@
 import type { Request, Response, NextFunction } from 'express';
 import {
-  getAccountSnapshotTrends,
+  getAccountSnapshotTrendsForAccounts,
   getLatestAccountSnapshot,
-  getRecentAccountSnapshots,
+  getAccountSnapshotsForAccounts,
   recordAccountSnapshot,
   type AccountSnapshotQuery,
 } from '../services/account-snapshot.service.js';
 import type { BrokerMode } from '../types/broker.js';
-import { resolveDefaultTradingAccountId } from '../services/trading-account.service.js';
 import { runTradingAccountWorkflow } from '../services/trading-account-workflow-runner.service.js';
 import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from '../services/trading-account-workflow-lock.service.js';
 import { HttpError } from '../errors/http-error.js';
+import { resolveReportAccountIds } from '../services/report-scope.service.js';
+
+function getAccountScope(value: unknown) {
+  if (value === 'all') return null;
+  if (typeof value !== 'string' || !/^\d+$/.test(value) || Number(value) <= 0) {
+    throw new HttpError(400, 'account must be all or a positive TradingAccount id.');
+  }
+  return Number(value);
+}
 
 function getQueryNumber(value: unknown, fallback: number) {
   if (typeof value !== 'string') {
@@ -113,7 +121,9 @@ export async function getAccountSnapshotsController(
     }
 
     const limit = getQueryNumber(req.query.limit, 50);
-    const snapshots = await getRecentAccountSnapshots(limit, query);
+    if (!res.locals.user) throw new HttpError(401, 'Authentication required.');
+    const accountIds = await resolveReportAccountIds(res.locals.user, getAccountScope(req.query.account));
+    const snapshots = await getAccountSnapshotsForAccounts(accountIds, limit, query);
 
     res.status(200).json({ snapshots });
   } catch (error) {
@@ -135,7 +145,9 @@ export async function getAccountSnapshotTrendsController(
 
     query.limit = getQueryNumber(req.query.limit, 500);
 
-    res.status(200).json(await getAccountSnapshotTrends(query));
+    if (!res.locals.user) throw new HttpError(401, 'Authentication required.');
+    const accountIds = await resolveReportAccountIds(res.locals.user, getAccountScope(req.query.account));
+    res.status(200).json(await getAccountSnapshotTrendsForAccounts(accountIds, query));
   } catch (error) {
     next(error);
   }
@@ -156,12 +168,13 @@ export async function getLatestAccountSnapshotController(
 }
 
 export async function createManualAccountSnapshotController(
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction
 ) {
   try {
-    const tradingAccountId = await resolveDefaultTradingAccountId();
+    const tradingAccountId = getAccountScope(req.query.account);
+    if (tradingAccountId === null) throw new HttpError(400, 'Manual snapshots require one TradingAccount.');
     const run = await runTradingAccountWorkflow({
       tradingAccountId,
       workerKey: 'account_snapshot_scheduler',
