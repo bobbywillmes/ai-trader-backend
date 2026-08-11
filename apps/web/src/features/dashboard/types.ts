@@ -115,14 +115,6 @@ export type RiskStatus = {
   };
 };
 
-export type BootstrapResponse = {
-  account: BrokerAccountSummary;
-  positions: BrokerPosition[];
-  openOrders: BrokerOpenOrder[];
-  config: RuntimeTradingConfig;
-  risk: RiskStatus;
-};
-
 export type DashboardAccountIdentity = {
   id: number;
   displayName: string;

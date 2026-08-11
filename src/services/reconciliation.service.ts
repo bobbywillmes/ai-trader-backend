@@ -1043,6 +1043,8 @@ export async function reconcileEligibleTradingAccounts(
 export async function runReconciliationCheck(
   options: RunReconciliationCheckOptions = {}
 ) {
+  // Legacy internal compatibility wrapper. New callers must use
+  // reconcileTradingAccount() with an explicit, authorized account ID.
   const tradingAccountId = await resolveDefaultTradingAccountId();
   return reconcileTradingAccount(tradingAccountId, options);
 }

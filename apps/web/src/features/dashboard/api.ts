@@ -1,6 +1,5 @@
 import { apiRequest } from "../../lib/api";
 import type {
-  BootstrapResponse,
   IndexChartRange,
   IndexIntradayResponse,
   IndexPerformanceResponse,
@@ -8,10 +7,6 @@ import type {
   TradingAccountDashboardResponse,
   DashboardAccountsOverviewResponse,
 } from "./types";
-
-export function getBootstrap(token: string) {
-  return apiRequest<BootstrapResponse>("/api/bootstrap", { token });
-}
 
 export function getTradingAccountDashboard(
   token: string,

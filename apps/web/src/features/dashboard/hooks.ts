@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import {
-  getBootstrap,
   getIndexIntraday,
   getIndexPerformance,
   getSystemEvents,
@@ -10,7 +9,6 @@ import {
 import type { IndexChartRange } from "./types";
 
 export const dashboardKeys = {
-  bootstrap: ["dashboard", "bootstrap"] as const,
   indexIntraday: (range: IndexChartRange) =>
     ["dashboard", "index-intraday", range] as const,
   indexPerformance: ["dashboard", "index-performance"] as const,
@@ -50,16 +48,6 @@ export function useDashboardAccountsOverview(
     enabled: Boolean(token && enabled),
     refetchInterval: 15000,
     staleTime: 10000,
-  });
-}
-
-export function useBootstrap(token: string | null) {
-  return useQuery({
-    queryKey: dashboardKeys.bootstrap,
-    queryFn: () => getBootstrap(token as string),
-    enabled: Boolean(token),
-    refetchInterval: 10000,
-    staleTime: 5000,
   });
 }
 

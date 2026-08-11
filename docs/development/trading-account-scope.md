@@ -1,6 +1,6 @@
 # Frontend TradingAccount Scope
 
-The Admin Console has a first-class, URL-authoritative TradingAccount scope. Phase 1 establishes the scope infrastructure and shell presentation; operational page queries remain unchanged until later phases.
+The Admin Console has a first-class, URL-authoritative TradingAccount scope used by every account-filterable operational page.
 
 ## Scope and URL
 
@@ -31,7 +31,7 @@ Until the account list succeeds, the context exposes a safe `ALL` scope and a lo
 
 Route scope is classified centrally in `apps/web/src/app/pageScope.ts`:
 
-- `ACCOUNT_FILTERABLE`: Dashboard, Open Positions, Open Orders, Trade History, Entry Decisions, System Events, and Reports. The shell presents the interactive selector. Later phases will make these pages consume it.
+- `ACCOUNT_FILTERABLE`: Dashboard, Open Positions, Open Orders, Trade History, Entry Decisions, System Events, and Reports. The shell and page present synchronized views of the shared interactive selector, and each page sends either `ALL` or one explicit account identity in its query key and backend request.
 - `ACCOUNT_SPECIFIC`: TradingAccount detail, Reconciliation, and account-specific portal routes. A concrete route account is authoritative. The shell hides the scope-selector area because the page itself identifies its resource.
 - `SYSTEM`: global catalog, research, configuration, and administration pages, including the Trading Accounts directory, Users & Access, Strategies, Exit Profiles, Securities, Subscription Catalog, Momentum Scanner, Market Diary, Settings, and Lifecycle Exercises. The selector is hidden so the page does not appear filtered.
 
@@ -43,11 +43,11 @@ Pages that own additional URL filters must update only their declared parameter 
 
 Reconciliation uses `/trading-accounts/:id/reconciliation`, with the path ID as its authoritative target and the global scope selector hidden. Its in-page target selector changes the route ID while preserving the dormant operational scope. The compatibility `/system/reconciliation` route redirects only from a concrete authorized `?account=<id>`; `ALL`, missing, malformed, or inaccessible scope requires explicit selection and never falls back to a default account. The Account Portal retains its existing route-authoritative model and is not wrapped in the Admin Console scope provider.
 
-## Consuming scope in future phases
+## Query and mutation safety
 
 Operational pages should call `useTradingAccountScope()` only on routes whose metadata permits account filtering. They must not issue account-specific requests until `isLoading` is false, `isError` is false, and an `ACCOUNT` scope has a non-null `selectedAccount`.
 
-Every TanStack Query key introduced or converted for scoped data must include stable scope identity, for example `"all"` for aggregate data or the numeric `tradingAccountId` for account data. Query functions and keys must change together so cache entries cannot leak across TradingAccount scopes.
+Every TanStack Query key introduced or converted for scoped data must include stable scope identity, for example `"all"` for aggregate data or the numeric `tradingAccountId` for account data. Query functions and keys must change together so cache entries cannot leak across TradingAccount scopes. Cross-scope navigation must show the target cache or loading state, never previous-account placeholder data. Account-owned mutations must take identity from the record or route, then invalidate that account and the corresponding `ALL` overview when its aggregate state can change.
 
 Phase 2 made Dashboard a scope consumer. Its sidebar and in-page selectors share this provider, and Dashboard no longer uses the legacy `/api/bootstrap` account or presents AI Trader as globally PAPER. See `trading-account-dashboard.md`.
 
@@ -60,3 +60,9 @@ Trade History and Entry Decisions use server-side pagination with `page` and `pa
 System Events and Reports also consume the shared provider. A selected System Events scope returns only events whose persisted `tradingAccountId` matches that account. Owner `ALL` includes all attributed events plus `tradingAccountId = null` system events, which the UI labels `SYSTEM`. Operator `ALL` includes membership-attributed events only; global events are not inferred into account access.
 
 Report reads require the same explicit account parameter. Snapshot, broker-activity, and canonical trade-cycle performance queries resolve an authorized account set on the server and preserve each row's persisted account attribution. In `ALL`, snapshot balances and trend charts and combined performance financial ratios are intentionally omitted because PAPER, LIVE, different holders, and unrelated brokerage accounts do not form one portfolio. Audit rows remain account-attributed. Legacy default-account service wrappers remain for unrelated consumers, while these Admin Console reads do not use them.
+
+## Compatibility boundary
+
+The current frontend has no runtime consumer of `GET /api/bootstrap`, legacy `GET /api/orders/open`, legacy tracked-position reads, legacy default-account close routes, or `POST /api/reconciliation/run`. `GET /api/bootstrap` and `POST /api/reconciliation/run` remain SYSTEM_OWNER-only compatibility endpoints because private or external consumers are not yet proven absent. Their default-account semantics must not be reused by new Admin Console code. Reconciliation UI uses only `POST /api/trading-accounts/:id/reconciliation/run`; position and order actions use account IDs carried by their records.
+
+`paperMode` remains a legacy system-global safety guard and is labeled that way in Settings. It does not describe the selected account. PAPER/LIVE identity belongs to each TradingAccount and must be explicit in account selectors, aggregate records, and confirmations for broker-affecting LIVE actions.

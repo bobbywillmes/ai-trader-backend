@@ -1,13 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  getOpenPositions,
   getAllOpenPositions,
   getTradingAccountOpenPositions,
   closeScopedPosition,
 } from "./api";
 
 export const positionKeys = {
-  open: ["positions", "open"] as const,
   allOpen: ["positions", "scope", "all"] as const,
   accountOpen: (tradingAccountId: number) =>
     ["positions", "account", tradingAccountId, "open"] as const,
@@ -18,15 +16,6 @@ export function useAllOpenPositions(token: string | null, enabled = true) {
     queryKey: positionKeys.allOpen,
     queryFn: () => getAllOpenPositions(token as string),
     enabled: Boolean(token && enabled),
-    refetchInterval: 5000,
-  });
-}
-
-export function useOpenPositions(token: string | null) {
-  return useQuery({
-    queryKey: positionKeys.open,
-    queryFn: () => getOpenPositions(token as string),
-    enabled: Boolean(token),
     refetchInterval: 5000,
   });
 }
@@ -56,8 +45,11 @@ export function useClosePosition(token: string | null) {
       }
       return closeScopedPosition(input.tradingAccountId, input.trackedPositionId, token);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["positions"] });
+    onSuccess: (_result, input) => {
+      queryClient.invalidateQueries({ queryKey: positionKeys.allOpen });
+      queryClient.invalidateQueries({ queryKey: positionKeys.accountOpen(input.tradingAccountId) });
+      queryClient.invalidateQueries({ queryKey: ["dashboard", "account", input.tradingAccountId] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard", "scope", "all", "accounts-overview"] });
     },
   });
 }
