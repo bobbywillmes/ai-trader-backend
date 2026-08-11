@@ -7,7 +7,9 @@ describe("navigation configuration", () => {
     for (const group of adminNavGroups) for (const item of group.items) {
       expect(item.icon).toBeTypeOf("object");
       expect(isNavigationItemActive(item, item.to)).toBe(true);
-      expect(isNavigationItemActive(item, `${item.to}/detail`)).toBe(true);
+      if (!item.isActive) {
+        expect(isNavigationItemActive(item, `${item.to}/detail`)).toBe(true);
+      }
     }
   });
 
@@ -21,5 +23,17 @@ describe("navigation configuration", () => {
     const groups = createPortalNavGroups("/portal/accounts/42");
     expect(groups[0].items.map((item) => item.label)).toEqual(["Dashboard", "Accounts", "Positions", "Orders", "Trade History"]);
     expect(isNavigationItemActive(groups[0].items[1], "/portal/accounts/42")).toBe(true);
+  });
+
+  it("prefers Reconciliation over Trading Accounts for account reconciliation routes", () => {
+    const items = adminNavGroups.flatMap((group) => group.items);
+    const tradingAccounts = items.find((item) => item.label === "Trading Accounts")!;
+    const reconciliation = items.find((item) => item.label === "Reconciliation")!;
+
+    expect(isNavigationItemActive(tradingAccounts, "/trading-accounts")).toBe(true);
+    expect(isNavigationItemActive(tradingAccounts, "/trading-accounts/42")).toBe(true);
+    expect(isNavigationItemActive(tradingAccounts, "/trading-accounts/42/reconciliation")).toBe(false);
+    expect(isNavigationItemActive(reconciliation, "/trading-accounts/42/reconciliation")).toBe(true);
+    expect(isNavigationItemActive(reconciliation, "/system/reconciliation")).toBe(true);
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TradingAccount } from "../tradingAccounts/types";
-import { defaultTradingAccountScope, parseAccountScope, resolveTradingAccountScope, serializeAccountScope, withAccountScope } from "./url";
+import { defaultTradingAccountScope, parseAccountScope, resolveTradingAccountScope, serializeAccountScope, withAccountScope, withUserSelectedAccountScope } from "./url";
 
 const account = (id: number) => ({ id } as TradingAccount);
 
@@ -37,5 +37,20 @@ describe("TradingAccount scope URL", () => {
 
   it("preserves unrelated search parameters when changing scope", () => {
     expect(withAccountScope("?tab=activity&page=2&account=1", { type: "ACCOUNT", tradingAccountId: 8 }).toString()).toBe("tab=activity&page=2&account=8");
+  });
+
+  it.each([
+    [{ type: "ACCOUNT", tradingAccountId: 8 } as const, "8"],
+    [{ type: "ALL" } as const, "all"],
+  ])("resets dataset pagination for a user-selected %s scope and preserves filters", (scope, accountValue) => {
+    const params = withUserSelectedAccountScope(
+      "?account=1&page=7&pageSize=50&symbol=QQQ&status=closed",
+      scope,
+    );
+    expect(params.get("account")).toBe(accountValue);
+    expect(params.has("page")).toBe(false);
+    expect(params.get("pageSize")).toBe("50");
+    expect(params.get("symbol")).toBe("QQQ");
+    expect(params.get("status")).toBe("closed");
   });
 });

@@ -738,13 +738,22 @@ export function ReportsPage() {
   >(null);
   const [performanceOutcome, setPerformanceOutcome] =
     useState<TradePerformanceOutcome>("all");
-  const [performancePage, setPerformancePage] = useState(1);
+  const [performancePaginationState, setPerformancePaginationState] = useState({
+    scope: scopedAccount,
+    page: 1,
+  });
+  const performancePage = performancePaginationState.scope === scopedAccount
+    ? performancePaginationState.page
+    : 1;
+  const setPerformancePage = (page: number) =>
+    setPerformancePaginationState({ scope: scopedAccount, page });
   const [performancePageSize, setPerformancePageSize] = useState(25);
   const [performanceSortBy, setPerformanceSortBy] =
     useState<TradePerformanceSortBy>("closedAt");
   const [performanceSortDirection, setPerformanceSortDirection] =
     useState<TradePerformanceSortDirection>("desc");
   const tradeCycleDrawer = useTradeCycleDrawer(token);
+
   const strategiesQuery = useStrategies(token);
   const subscriptionsQuery = useSubscriptions(token);
   const exitProfilesQuery = useExitProfiles(token);

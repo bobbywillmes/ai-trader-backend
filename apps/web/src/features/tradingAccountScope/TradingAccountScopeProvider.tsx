@@ -6,7 +6,7 @@ import { useTradingAccounts } from "../tradingAccounts/hooks";
 import { getAdminToken } from "../../lib/api";
 import { TradingAccountScopeContext } from "./context";
 import type { TradingAccountScope } from "./types";
-import { parseAccountScope, resolveTradingAccountScope, withAccountScope } from "./url";
+import { parseAccountScope, resolveTradingAccountScope, withAccountScope, withUserSelectedAccountScope } from "./url";
 
 const UNAVAILABLE_MESSAGE = "That Trading Account is unavailable or you no longer have access.";
 
@@ -38,9 +38,11 @@ export function TradingAccountScopeProvider({ children }: { children: ReactNode 
 
   const setScope = useCallback((scope: TradingAccountScope) => {
     if (scope.type === "ACCOUNT" && !accessibleAccounts.some((account) => account.id === scope.tradingAccountId)) return;
-    const params = withAccountScope(location.search, scope);
+    const currentScope = resolution.scope;
+    if (scope.type === currentScope.type && (scope.type === "ALL" || (currentScope.type === "ACCOUNT" && scope.tradingAccountId === currentScope.tradingAccountId))) return;
+    const params = withUserSelectedAccountScope(location.search, scope);
     navigate({ pathname: location.pathname, search: `?${params.toString()}`, hash: location.hash });
-  }, [accessibleAccounts, location.hash, location.pathname, location.search, navigate]);
+  }, [accessibleAccounts, location.hash, location.pathname, location.search, navigate, resolution.scope]);
 
   const scope = resolution.scope;
   const selectedAccount = scope.type === "ACCOUNT"

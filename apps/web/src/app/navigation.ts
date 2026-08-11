@@ -26,6 +26,10 @@ export function matchesRoute(to: string): ActiveRouteMatcher {
   return (pathname) => pathname === to || pathname.startsWith(`${to}/`);
 }
 
+export const matchesTradingAccountsRoute: ActiveRouteMatcher = (pathname) =>
+  (pathname === "/trading-accounts" || /^\/trading-accounts\/\d+\/?$/.test(pathname)) &&
+  !/^\/trading-accounts\/\d+\/reconciliation\/?$/.test(pathname);
+
 export function isNavigationItemActive(item: AdminNavItem, pathname: string) {
   return (item.isActive ?? matchesRoute(item.to))(pathname);
 }
@@ -37,7 +41,7 @@ export const adminNavGroups: AdminNavGroup[] = [
     { to: "/orders/open", label: "Open Orders", icon: IconListCheck, requiredPermission: "tradingAccount.read" },
   ] },
   { label: "Trading", items: [
-    { to: "/trading-accounts", label: "Trading Accounts", icon: IconBuildingBank, requiredPermission: "tradingAccount.read" },
+    { to: "/trading-accounts", label: "Trading Accounts", icon: IconBuildingBank, requiredPermission: "tradingAccount.read", isActive: matchesTradingAccountsRoute },
     { to: "/entry-decisions", label: "Entry Decisions", icon: IconTargetArrow, requiredPermission: "tradingAccount.read" },
     { to: "/lifecycle-exercises", label: "Lifecycle Exercises", icon: IconFlask, systemOwnerOnly: true, requiredPermission: "tradingLifecycleExercise.read" },
     { to: "/momentum-scanner", label: "Momentum Scanner", icon: IconActivity, requiredPermission: "strategy.read" },

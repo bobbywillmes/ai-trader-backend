@@ -34,6 +34,15 @@ export function withAccountScope(search: string | URLSearchParams, scope: Tradin
   return params;
 }
 
+export function withUserSelectedAccountScope(
+  search: string | URLSearchParams,
+  scope: TradingAccountScope,
+) {
+  const params = withAccountScope(search, scope);
+  params.delete("page");
+  return params;
+}
+
 export function resolveTradingAccountScope(parsed: ParsedAccountScope, accounts: readonly TradingAccount[], role: PlatformRole | undefined) {
   const fallback = defaultTradingAccountScope(accounts, role);
   if (parsed.kind !== "VALID") return { scope: fallback, shouldCanonicalize: true, shouldNotify: parsed.kind === "INVALID" };
