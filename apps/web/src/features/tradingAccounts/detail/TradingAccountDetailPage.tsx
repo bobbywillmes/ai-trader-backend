@@ -97,7 +97,7 @@ export function TradingAccountDetailPage() {
       )}
 
       {account && (
-        <Tabs value={activeTab} onChange={setActiveTab} keepMounted={false}>
+        <><Group justify="flex-end"><Button variant="default" onClick={() => navigate(createScopedNavigationTarget(`/trading-accounts/${account.id}/reconciliation`, location.search))}>Reconciliation</Button></Group><Tabs value={activeTab} onChange={setActiveTab} keepMounted={false}>
           <Select className={classes.sectionSelect} label="Account section" aria-label="Account section" value={activeTab} onChange={setActiveTab} data={tradingAccountDetailTabs} allowDeselect={false} />
           <Tabs.List className={classes.tabs} aria-label="Account sections">
             {tradingAccountDetailTabs.map((tab) => (
@@ -138,7 +138,7 @@ export function TradingAccountDetailPage() {
           <Tabs.Panel value="configuration" pt="lg">
             <ConfigurationTab account={account} token={token} />
           </Tabs.Panel>
-        </Tabs>
+        </Tabs></>
       )}
     </Stack></main>
   );

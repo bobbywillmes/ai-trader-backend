@@ -29,7 +29,7 @@ import { SettingsPage } from "../features/settings/SettingsPage";
 import { SecurityDetailPage } from "../features/securities/SecurityDetailPage";
 import { ReportsPage } from "../features/reports/ReportsPage";
 import { MarketDiaryPage } from "../features/marketDiary/MarketDiaryPage";
-import { ReconciliationPage } from "../features/reconciliation/ReconciliationPage";
+import { ReconciliationPage, ReconciliationTargetPage } from "../features/reconciliation/ReconciliationPage";
 import { TradeHistoryPage } from "../features/tradeHistory/TradeHistoryPage";
 import { EntryDecisionsPage } from "../features/entryDecisions/EntryDecisionsPage";
 import { TradingAccountsPage } from "../features/tradingAccounts/TradingAccountsPage";
@@ -153,6 +153,10 @@ export const router = createBrowserRouter([
                 element: requirePermission("tradingAccount.read", <TradingAccountDetailPage />),
               },
               {
+                path: "trading-accounts/:id/reconciliation",
+                element: requirePermission("system.security.read", <ReconciliationPage />),
+              },
+              {
                 path: "subscriptions",
                 element: requirePermission("subscription.read", <SubscriptionsPage />),
               },
@@ -182,7 +186,7 @@ export const router = createBrowserRouter([
               },
               {
                 path: "system/reconciliation",
-                element: requirePermission("system.security.read", <ReconciliationPage />),
+                element: requirePermission("system.security.read", <ReconciliationTargetPage />),
               },
               {
                 path: "market-diary",

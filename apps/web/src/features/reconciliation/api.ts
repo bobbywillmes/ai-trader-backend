@@ -35,17 +35,6 @@ export type RunReconciliationResult = {
   };
 };
 
-export function runReconciliation(
-  token: string,
-  payload: RunReconciliationPayload = {}
-) {
-  return apiRequest<RunReconciliationResult>("/api/reconciliation/run", {
-    method: "POST",
-    token,
-    body: payload,
-  });
-}
-
 export function runTradingAccountReconciliation(
   token: string,
   tradingAccountId: number,

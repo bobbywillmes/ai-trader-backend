@@ -46,7 +46,7 @@ export const adminNavGroups: AdminNavGroup[] = [
   ] },
   { label: "Risk & Safety", items: [
     { to: "/exit-profiles", label: "Exit Profiles", icon: IconShieldCheck, requiredPermission: "exitProfile.read" },
-    { to: "/system/reconciliation", label: "Reconciliation", icon: IconAdjustments, requiredPermission: "system.security.read" },
+    { to: "/system/reconciliation", label: "Reconciliation", icon: IconAdjustments, systemOwnerOnly: true, requiredPermission: "system.security.read", isActive: (path) => path === "/system/reconciliation" || path.startsWith("/system/reconciliation/") || /^\/trading-accounts\/\d+\/reconciliation\/?$/.test(path) },
   ] },
   { label: "Market Intelligence", items: [
     { to: "/market-diary", label: "Market Diary", icon: IconChartBar, requiredPermission: "systemEvents.read" },

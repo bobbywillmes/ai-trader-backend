@@ -9,8 +9,9 @@ describe("page scope classification", () => {
     expect(getPageScope("/trading-accounts/42")).toEqual({ mode: "ACCOUNT_SPECIFIC", routeTradingAccountId: 42 });
     expect(getPageScope("/portal/accounts/9/orders")).toEqual({ mode: "ACCOUNT_SPECIFIC", routeTradingAccountId: 9 });
   });
-  it("classifies reconciliation as account-specific pending its route identity evolution", () => {
-    expect(getPageScope("/system/reconciliation")).toEqual({ mode: "ACCOUNT_SPECIFIC", routeTradingAccountId: null });
+  it("classifies canonical reconciliation by its authoritative route account", () => {
+    expect(getPageScope("/trading-accounts/2/reconciliation")).toEqual({ mode: "ACCOUNT_SPECIFIC", routeTradingAccountId: 2 });
+    expect(getPageScope("/system/reconciliation")).toEqual({ mode: "SYSTEM", routeTradingAccountId: null });
   });
   it.each(["/trading-accounts", "/users", "/strategies/2", "/exit-profiles", "/securities/AAPL", "/subscriptions", "/momentum-scanner", "/market-diary", "/settings", "/lifecycle-exercises/4"])("classifies %s as system scope", (path) => {
     expect(getPageScope(path).mode).toBe("SYSTEM");

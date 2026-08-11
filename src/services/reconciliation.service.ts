@@ -543,6 +543,16 @@ export type RunReconciliationCheckResult = {
   persistedAttention: boolean;
 };
 
+export class ReconciliationBrokerUnavailableError extends Error {
+  tradingAccountId: number;
+
+  constructor(tradingAccountId: number, message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'ReconciliationBrokerUnavailableError';
+    this.tradingAccountId = tradingAccountId;
+  }
+}
+
 function buildReconciliationEventType(code: ReconciliationFindingCode) {
   return `reconciliation.${code}`;
 }
@@ -608,8 +618,7 @@ export async function reconcileTradingAccount(
     select: { id: true, displayName: true, environment: true },
   });
   const runIdentifier = randomUUID();
-  const [trackedPositions, localOrders, staleIntents, brokerPositions, brokerOrders] =
-    await Promise.all([
+  const [trackedPositions, localOrders, staleIntents] = await Promise.all([
     prisma.trackedPosition.findMany({
       where: {
         tradingAccountId,
@@ -639,9 +648,21 @@ export async function reconcileTradingAccount(
       },
       orderBy: { id: 'asc' },
     }),
-    getNormalizedPositions(tradingAccountId, 'reconciliation_check'),
-    getOpenAlpacaOrders(tradingAccountId, 'reconciliation_check'),
+  ]);
+  let brokerPositions;
+  let brokerOrders;
+  try {
+    [brokerPositions, brokerOrders] = await Promise.all([
+      getNormalizedPositions(tradingAccountId, 'reconciliation_check'),
+      getOpenAlpacaOrders(tradingAccountId, 'reconciliation_check'),
     ]);
+  } catch (error) {
+    throw new ReconciliationBrokerUnavailableError(
+      tradingAccountId,
+      `Reconciliation unavailable for ${account.displayName}: broker positions and open orders could not be observed.`,
+      { cause: error }
+    );
+  }
 
   const findings = reconcileSnapshots({
     trackedPositions: trackedPositions.map((position) => ({

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   createTradingAccountController: vi.fn(),
   deactivateTradingAccountController: vi.fn(),
   runTradingAccountReadinessAssessmentController: vi.fn(),
+  runTradingAccountReconciliationController: vi.fn(),
 }));
 
 vi.mock('../controllers/trading-accounts.controller.js', () => ({
@@ -41,6 +42,10 @@ vi.mock('../controllers/trading-accounts.controller.js', () => ({
   getLatestTradingAccountReadinessAssessmentController: vi.fn(),
   listTradingAccountReadinessAssessmentsController: vi.fn(),
   getTradingAccountReadinessAssessmentController: vi.fn(),
+}));
+
+vi.mock('../controllers/reconciliation.controller.js', () => ({
+  runTradingAccountReconciliationController: mocks.runTradingAccountReconciliationController,
 }));
 
 import tradingAccountsRouter from './trading-accounts.routes.js';
@@ -169,5 +174,28 @@ describe('POST /api/trading-accounts/:id/readiness-assessments RBAC', () => {
       { purpose: 'LIVE_ACTIVATION' }
     );
     expect(allowed.status).toBe(201);
+  });
+});
+
+describe('POST /api/trading-accounts/:id/reconciliation/run RBAC', () => {
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server?.close(() => resolve()));
+    server = undefined;
+    vi.clearAllMocks();
+  });
+
+  it('authorizes a System Owner before invoking account reconciliation', async () => {
+    mocks.runTradingAccountReconciliationController.mockImplementation(
+      (_req: Request, res: Response) => res.status(200).json({ ok: true })
+    );
+    const response = await postAs(PlatformRole.SYSTEM_OWNER, '/api/trading-accounts/2/reconciliation/run', { persistEvents: false });
+    expect(response.status).toBe(200);
+    expect(mocks.runTradingAccountReconciliationController).toHaveBeenCalledOnce();
+  });
+
+  it.each([PlatformRole.OPERATOR, PlatformRole.ACCOUNT_USER])('rejects %s before reconciliation work', async (platformRole) => {
+    const response = await postAs(platformRole, '/api/trading-accounts/2/reconciliation/run', { persistEvents: true });
+    expect(response.status).toBe(403);
+    expect(mocks.runTradingAccountReconciliationController).not.toHaveBeenCalled();
   });
 });

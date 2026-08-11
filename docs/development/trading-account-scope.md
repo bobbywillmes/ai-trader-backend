@@ -41,7 +41,7 @@ The same separation applies to `ACCOUNT_SPECIFIC` routes. For example, `/trading
 
 Pages that own additional URL filters must update only their declared parameter keys. They clone the current query string, remove or replace their owned keys, and retain `account` and every other unrelated key. This prevents independent URL owners from competing with the scope provider.
 
-The current Reconciliation URL (`/system/reconciliation`) has no account identity in its path even though its semantics are account-specific. Phase 1 classifies it as `ACCOUNT_SPECIFIC` and hides the selector. A later reconciliation conversion must introduce or derive an authoritative account identity before using the new scope for requests. The Account Portal retains its existing route-authoritative model and is not wrapped in the Admin Console scope provider.
+Reconciliation uses `/trading-accounts/:id/reconciliation`, with the path ID as its authoritative target and the global scope selector hidden. Its in-page target selector changes the route ID while preserving the dormant operational scope. The compatibility `/system/reconciliation` route redirects only from a concrete authorized `?account=<id>`; `ALL`, missing, malformed, or inaccessible scope requires explicit selection and never falls back to a default account. The Account Portal retains its existing route-authoritative model and is not wrapped in the Admin Console scope provider.
 
 ## Consuming scope in future phases
 
