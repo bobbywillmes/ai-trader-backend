@@ -35,7 +35,10 @@ describe("role-aware navigation configuration", () => {
   });
 
   it("limits account users to the personal trading surface", () => {
+    const groups = filterNavigationGroups(adminNavGroups, "ACCOUNT_USER", allPermissions);
     expect(visibleLabels("ACCOUNT_USER")).toEqual(["Dashboard", "Open Positions", "Open Orders", "Reports", "Trade History", "My Accounts"]);
+    expect(groups.map((group) => group.label)).toEqual(["Dashboard", "Trading", "Reports", "Accounts"]);
+    expect(groups.find((group) => group.label === "Accounts")?.items.map((item) => item.label)).toEqual(["My Accounts"]);
   });
 
   it("prefers Reconciliation over Trading Accounts for account reconciliation routes", () => {

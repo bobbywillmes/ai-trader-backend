@@ -22,7 +22,11 @@ export type AdminNavItem = {
   children?: AdminNavItem[];
 };
 
-export type AdminNavGroup = { label: string; items: AdminNavItem[] };
+export type AdminNavGroup = {
+  label: string;
+  labelByRole?: Partial<Record<PlatformRole, string>>;
+  items: AdminNavItem[];
+};
 
 export function matchesRoute(to: string): ActiveRouteMatcher {
   return (pathname) => pathname === to || pathname.startsWith(`${to}/`);
@@ -55,7 +59,7 @@ export const adminNavGroups: AdminNavGroup[] = [
     { routeId: "reports", to: "/reports", label: "Reports", icon: IconReportAnalytics },
     { routeId: "tradeHistory", to: "/trade-history", label: "Trade History", icon: IconHistory },
   ] },
-  { label: "System", items: [
+  { label: "System", labelByRole: { ACCOUNT_USER: "Accounts" }, items: [
     { routeId: "tradingAccounts", to: "/trading-accounts", label: "Trading Accounts", labelByRole: { ACCOUNT_USER: "My Accounts" }, icon: IconBuildingBank, isActive: matchesTradingAccountsRoute },
     { routeId: "reconciliation", to: "/system/reconciliation", label: "Reconciliation", icon: IconAdjustments, isActive: (path) => path === "/system/reconciliation" || path.startsWith("/system/reconciliation/") || /^\/trading-accounts\/\d+\/reconciliation\/?$/.test(path) },
     { routeId: "systemEvents", to: "/system/events", label: "System Events", icon: IconActivity },

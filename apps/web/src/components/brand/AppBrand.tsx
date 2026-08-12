@@ -32,10 +32,6 @@ export function AppBrand({ expanded }: AppBrandProps) {
           <Text fw={700} size="md" lh={1.15}>
             AI Trader
           </Text>
-
-          <Text c="dimmed" size="xs" lh={1.2}>
-            Admin Console
-          </Text>
         </Box>
       )}
     </UnstyledButton>

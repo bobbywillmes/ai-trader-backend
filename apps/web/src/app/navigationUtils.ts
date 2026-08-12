@@ -28,6 +28,7 @@ export function filterNavigationGroups(
   if (!role || !permissions) return [];
   return groups.map((group) => ({
     ...group,
+    label: group.labelByRole?.[role] ?? group.label,
     items: group.items.map((item) => filterItem(item, role, permissions)).filter((item): item is AdminNavItem => item !== null),
   })).filter((group) => group.items.length > 0);
 }
