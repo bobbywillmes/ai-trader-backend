@@ -7,7 +7,6 @@ describe("page scope classification", () => {
   });
   it("extracts account identity from account-specific routes", () => {
     expect(getPageScope("/trading-accounts/42")).toEqual({ mode: "ACCOUNT_SPECIFIC", routeTradingAccountId: 42 });
-    expect(getPageScope("/portal/accounts/9/orders")).toEqual({ mode: "ACCOUNT_SPECIFIC", routeTradingAccountId: 9 });
   });
   it("classifies canonical reconciliation by its authoritative route account", () => {
     expect(getPageScope("/trading-accounts/2/reconciliation")).toEqual({ mode: "ACCOUNT_SPECIFIC", routeTradingAccountId: 2 });

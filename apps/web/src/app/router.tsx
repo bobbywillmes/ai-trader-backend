@@ -6,8 +6,6 @@ import {
   AdminConsoleShell,
   AdminLayout,
   RouteAccessGuard,
-  AccountPortalGuard,
-  AccountPortalShell,
 } from "../layouts/AdminLayout";
 import type { AppRouteId } from "./routeAccess";
 
@@ -46,12 +44,6 @@ import { StrategyDetailPage } from "../features/strategies/StrategyDetailPage";
 import { UsersPage } from "../features/users/UsersPage";
 import { LifecycleExercisesPage } from "../features/lifecycleExercises/LifecycleExercisesPage";
 import { LifecycleExerciseDetailPage } from "../features/lifecycleExercises/LifecycleExerciseDetailPage";
-import { AccountPage } from "../features/accountPortal/AccountPage";
-import {
-  AccountPortalAccountsPage,
-  AccountPortalPage,
-} from "../features/accountPortal/AccountPortalPage";
-import { RoleAwarePage } from "./RoleAwarePage";
 
 const responsiveDataPreviewRoute = import.meta.env.DEV
   ? [{ path: "dev/responsive-data-primitives", lazy: async () => ({ Component: (await import("../features/dev/ResponsiveDataPrimitivesPreview")).ResponsiveDataPrimitivesPreview }) }]
@@ -147,11 +139,11 @@ export const router = createBrowserRouter([
               },
               {
                 path: "trading-accounts",
-                element: authorize("tradingAccounts", <RoleAwarePage accountUser={<AccountPortalAccountsPage />} elevated={<TradingAccountsPage />} />),
+                element: authorize("tradingAccounts", <TradingAccountsPage />),
               },
               {
                 path: "trading-accounts/:id",
-                element: authorize("tradingAccounts", <RoleAwarePage accountUser={<AccountPage />} elevated={<TradingAccountDetailPage />} />),
+                element: authorize("tradingAccounts", <TradingAccountDetailPage />),
               },
               {
                 path: "trading-accounts/:id/reconciliation",
@@ -200,41 +192,6 @@ export const router = createBrowserRouter([
               {
                 path: "users",
                 element: authorize("users", <UsersPage />),
-              },
-            ],
-          },
-        ],
-      },
-      {
-        element: <AccountPortalGuard />,
-        children: [
-          {
-            path: "portal",
-            element: <AccountPortalShell />,
-            children: [
-              {
-                index: true,
-                element: <AccountPortalPage />,
-              },
-              {
-                path: "accounts",
-                element: <AccountPortalAccountsPage />,
-              },
-              {
-                path: "accounts/:accountId",
-                element: <AccountPage />,
-              },
-              {
-                path: "accounts/:accountId/positions",
-                element: <AccountPage view="positions" />,
-              },
-              {
-                path: "accounts/:accountId/orders",
-                element: <AccountPage view="orders" />,
-              },
-              {
-                path: "accounts/:accountId/trade-history",
-                element: <AccountPage view="trade-history" />,
               },
             ],
           },

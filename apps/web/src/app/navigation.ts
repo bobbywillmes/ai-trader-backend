@@ -46,12 +46,6 @@ export const adminNavGroups: AdminNavGroup[] = [
     { routeId: "positions", to: "/positions/open", label: "Open Positions", icon: IconChartCandle },
     { routeId: "orders", to: "/orders/open", label: "Open Orders", icon: IconListCheck },
     { routeId: "entryDecisions", to: "/entry-decisions", label: "Entry Decisions", icon: IconTargetArrow },
-    { label: "Trading Setup", icon: IconRoute, children: [
-      { routeId: "strategies", to: "/strategies", label: "Strategies", icon: IconRoute },
-      { routeId: "subscriptions", to: "/subscriptions", label: "Subscriptions", icon: IconClipboardData },
-      { routeId: "exitProfiles", to: "/exit-profiles", label: "Exit Profiles", icon: IconShieldCheck },
-    ] },
-    { routeId: "lifecycleExercises", to: "/lifecycle-exercises", label: "Lifecycle Exercises", icon: IconFlask },
   ] },
   { label: "Market Intelligence", items: [
     { routeId: "momentumScanner", to: "/momentum-scanner", label: "Momentum Scanner", icon: IconActivity },
@@ -65,23 +59,16 @@ export const adminNavGroups: AdminNavGroup[] = [
     { routeId: "tradingAccounts", to: "/trading-accounts", label: "Trading Accounts", labelByRole: { ACCOUNT_USER: "My Accounts" }, icon: IconBuildingBank, isActive: matchesTradingAccountsRoute },
     { routeId: "reconciliation", to: "/system/reconciliation", label: "Reconciliation", icon: IconAdjustments, isActive: (path) => path === "/system/reconciliation" || path.startsWith("/system/reconciliation/") || /^\/trading-accounts\/\d+\/reconciliation\/?$/.test(path) },
     { routeId: "systemEvents", to: "/system/events", label: "System Events", icon: IconActivity },
+    { routeId: "lifecycleExercises", to: "/lifecycle-exercises", label: "Lifecycle Exercises", icon: IconFlask },
   ] },
   { label: "Administration", items: [
+    { label: "Trading Setup", icon: IconRoute, children: [
+      { routeId: "strategies", to: "/strategies", label: "Strategies", icon: IconRoute },
+      { routeId: "subscriptions", to: "/subscriptions", label: "Subscriptions", icon: IconClipboardData },
+      { routeId: "exitProfiles", to: "/exit-profiles", label: "Exit Profiles", icon: IconShieldCheck },
+    ] },
     { routeId: "users", to: "/users", label: "Users & Access", icon: IconUsers },
     { routeId: "securities", to: "/securities", label: "Securities", icon: IconFileAnalytics },
     { routeId: "settings", to: "/settings", label: "Settings", icon: IconSettings },
   ] },
 ];
-
-/** Legacy deep-link navigation retained while account users transition to shared routes. */
-export function createPortalNavGroups(accountBasePath: string | null): AdminNavGroup[] {
-  return [{ label: "Portal", items: [
-    { to: "/dashboard", label: "Dashboard", icon: IconDashboard },
-    { to: "/trading-accounts", label: "My Accounts", icon: IconBuildingBank, isActive: matchesTradingAccountsRoute },
-    ...(accountBasePath ? [
-      { to: `${accountBasePath}/positions`, label: "Open Positions", icon: IconChartCandle },
-      { to: `${accountBasePath}/orders`, label: "Open Orders", icon: IconListCheck },
-      { to: `${accountBasePath}/trade-history`, label: "Trade History", icon: IconHistory },
-    ] : []),
-  ] }];
-}

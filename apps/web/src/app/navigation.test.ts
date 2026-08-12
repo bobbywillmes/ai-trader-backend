@@ -23,6 +23,9 @@ describe("role-aware navigation configuration", () => {
     expect(setup.children?.map((child) => child.label)).toEqual(["Strategies", "Subscriptions", "Exit Profiles"]);
     expect(isNavigationItemActive(setup, "/subscriptions")).toBe(true);
     expect(isNavigationItemActive(setup.children![1], "/subscriptions")).toBe(true);
+    expect(groups.find((group) => group.label === "Trading")?.items.map((item) => item.label)).toEqual(["Open Positions", "Open Orders", "Entry Decisions"]);
+    expect(groups.find((group) => group.label === "System")?.items.map((item) => item.label)).toContain("Lifecycle Exercises");
+    expect(groups.find((group) => group.label === "Administration")?.items.map((item) => item.label)).toContain("Trading Setup");
   });
 
   it("gives operators broad operations without owner-critical destinations", () => {

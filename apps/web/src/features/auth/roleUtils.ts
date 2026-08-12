@@ -1,8 +1,4 @@
-import type { AccessMetadata, PlatformRole } from "./types";
-
-export function isAccountPortalRole(role: PlatformRole | null | undefined) {
-  return role === "ACCOUNT_USER";
-}
+import type { AccessMetadata } from "./types";
 
 export function getAuthenticatedHomePath(
   access: AccessMetadata | null | undefined

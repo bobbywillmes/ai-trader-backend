@@ -26,7 +26,6 @@ type Props = {
   groups: AdminNavGroup[];
   user: User | null;
   platformRole?: PlatformRole;
-  portalName?: string;
   isSigningOut: boolean;
   onSignOut: () => void;
   pageScope?: { mode: PageScopeMode; routeTradingAccountId: number | null };
