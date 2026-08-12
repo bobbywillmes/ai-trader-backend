@@ -49,7 +49,10 @@ describe('operational TradingAccount scope', () => {
     expect(result[1]).toMatchObject({ account: { id: 2 }, availability: 'UNAVAILABLE', reason: 'BROKER_REQUEST_FAILED', message: 'broker timeout', orders: null });
   });
 
-  it('rejects account portal users from admin-console ALL scope', async () => {
-    await expect(listScopedOpenOrders({ id: 3, platformRole: PlatformRole.ACCOUNT_USER })).rejects.toMatchObject({ statusCode: 403 });
+  it('limits account-user ALL scope to membership-authorized accounts', async () => {
+    mocks.accountFindMany.mockResolvedValue([paper]);
+    mocks.getOrders.mockResolvedValue([]);
+    await expect(listScopedOpenOrders({ id: 3, platformRole: PlatformRole.ACCOUNT_USER })).resolves.toHaveLength(1);
+    expect(mocks.accountFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { memberships: { some: { userId: 3 } } } }));
   });
 });

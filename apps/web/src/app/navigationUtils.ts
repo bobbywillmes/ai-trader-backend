@@ -1,5 +1,6 @@
 import type { AdminNavGroup, AdminNavItem } from "./navigation";
-import type { PlatformPermission } from "../features/auth/types";
+import type { PlatformPermission, PlatformRole } from "../features/auth/types";
+import { canAccessRoute } from "./routeAccess";
 
 export function createScopedNavigationTarget(to: string, currentSearch: string): string {
   const account = new URLSearchParams(currentSearch).get("account");
@@ -12,48 +13,25 @@ export function createScopedNavigationTarget(to: string, currentSearch: string):
   return `${pathname}${query ? `?${query}` : ""}${hash ? `#${hash}` : ""}`;
 }
 
-/**
- * Filter navigation groups and items based on user role and permissions.
- * System Owners see everything; other roles see permitted items.
- */
-export function filterNavigationGroups(
-  groups: AdminNavGroup[],
-  userRole: string | undefined,
-  permissions: PlatformPermission[] | undefined
-): AdminNavGroup[] {
-  const isSystemOwner = userRole === "SYSTEM_OWNER";
-  const permissionSet = new Set(permissions || []);
-
-  return groups
-    .map((group) => ({
-      ...group,
-      items: group.items.filter((item) =>
-        canAccessNavItem(item, isSystemOwner, permissionSet)
-      ),
-    }))
-    .filter((group) => group.items.length > 0);
+function filterItem(item: AdminNavItem, role: PlatformRole, permissions: PlatformPermission[]): AdminNavItem | null {
+  if (item.routeId && !canAccessRoute(item.routeId, role, permissions)) return null;
+  const children = item.children?.map((child) => filterItem(child, role, permissions)).filter((child): child is AdminNavItem => child !== null);
+  if (item.children && !children?.length) return null;
+  return { ...item, label: item.labelByRole?.[role] ?? item.label, children };
 }
 
-/**
- * Check if a user can access a specific navigation item.
- */
-export function canAccessNavItem(
-  item: AdminNavItem,
-  isSystemOwner: boolean,
-  permissions: Set<PlatformPermission>
-): boolean {
-  if (isSystemOwner) {
-    return true;
-  }
+export function filterNavigationGroups(
+  groups: AdminNavGroup[],
+  role: PlatformRole | undefined,
+  permissions: PlatformPermission[] | undefined,
+): AdminNavGroup[] {
+  if (!role || !permissions) return [];
+  return groups.map((group) => ({
+    ...group,
+    items: group.items.map((item) => filterItem(item, role, permissions)).filter((item): item is AdminNavItem => item !== null),
+  })).filter((group) => group.items.length > 0);
+}
 
-  if (item.systemOwnerOnly) {
-    return false;
-  }
-
-  // If item requires a permission and user doesn't have it, deny access
-  if (item.requiredPermission && !permissions.has(item.requiredPermission)) {
-    return false;
-  }
-
-  return true;
+export function canAccessNavItem(item: AdminNavItem, role: PlatformRole, permissions: PlatformPermission[]): boolean {
+  return filterItem(item, role, permissions) !== null;
 }

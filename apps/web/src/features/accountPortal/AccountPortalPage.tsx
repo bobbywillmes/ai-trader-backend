@@ -288,9 +288,9 @@ export function AccountPortalAccountsPage() {
   return (
     <Stack gap="lg">
       <div>
-        <Title order={2} size="h3">Accounts</Title>
+        <Title order={2} size="h3">My Accounts</Title>
         <Text size="sm" c="dimmed">
-          Read-only trading accounts assigned to your portal access.
+          Read-only Trading Accounts available through your memberships.
         </Text>
       </div>
 
@@ -418,7 +418,7 @@ export function AccountPortalAccountsPage() {
                         <Group justify="flex-end">
                           <Button
                             component={Link}
-                            to={`/portal/accounts/${account.id}`}
+                            to={`/trading-accounts/${account.id}`}
                             size="xs"
                             variant="subtle"
                           >

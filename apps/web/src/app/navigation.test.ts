@@ -1,39 +1,46 @@
 import { describe, expect, it } from "vitest";
-import { adminNavGroups, createPortalNavGroups, isNavigationItemActive } from "./navigation";
+import { adminNavGroups, isNavigationItemActive } from "./navigation";
 import { filterNavigationGroups } from "./navigationUtils";
+import type { PlatformPermission, PlatformRole } from "../features/auth/types";
 
-describe("navigation configuration", () => {
-  it("provides an icon and active-route behavior for every destination", () => {
-    for (const group of adminNavGroups) for (const item of group.items) {
-      expect(item.icon).toBeTypeOf("object");
-      expect(isNavigationItemActive(item, item.to)).toBe(true);
-      if (!item.isActive) {
-        expect(isNavigationItemActive(item, `${item.to}/detail`)).toBe(true);
-      }
-    }
+const allPermissions: PlatformPermission[] = [
+  "system.settings.read", "system.settings.write", "system.security.read", "system.security.write",
+  "tradingAccount.read", "tradingAccount.write", "tradingAccount.risk.write", "subscription.read",
+  "subscription.write", "strategy.read", "strategy.write", "exitProfile.read", "exitProfile.write",
+  "reports.read", "systemEvents.read", "tradingLifecycleExercise.read", "tradingLifecycleExercise.write",
+];
+
+function visibleLabels(role: PlatformRole, permissions = allPermissions) {
+  return filterNavigationGroups(adminNavGroups, role, permissions).flatMap((group) =>
+    group.items.flatMap((item) => [item.label, ...(item.children?.map((child) => child.label) ?? [])]));
+}
+
+describe("role-aware navigation configuration", () => {
+  it("keeps every owner destination and the Trading Setup hierarchy", () => {
+    const groups = filterNavigationGroups(adminNavGroups, "SYSTEM_OWNER", allPermissions);
+    expect(groups.map((group) => group.label)).toEqual(["Dashboard", "Trading", "Market Intelligence", "Reports", "System", "Administration"]);
+    const setup = groups.flatMap((group) => group.items).find((item) => item.label === "Trading Setup")!;
+    expect(setup.children?.map((child) => child.label)).toEqual(["Strategies", "Subscriptions", "Exit Profiles"]);
+    expect(isNavigationItemActive(setup, "/subscriptions")).toBe(true);
+    expect(isNavigationItemActive(setup.children![1], "/subscriptions")).toBe(true);
   });
 
-  it("does not render inaccessible or empty sections", () => {
-    const groups = filterNavigationGroups(adminNavGroups, "OPERATOR", ["reports.read"]);
-    expect(groups.every((group) => group.items.length > 0)).toBe(true);
-    expect(groups.flatMap((group) => group.items).some((item) => item.to === "/users")).toBe(false);
+  it("gives operators broad operations without owner-critical destinations", () => {
+    const labels = visibleLabels("OPERATOR");
+    expect(labels).toEqual(expect.arrayContaining(["Dashboard", "Open Positions", "Open Orders", "Entry Decisions", "Trading Setup", "Momentum Scanner", "Reports", "Trading Accounts", "System Events"]));
+    expect(labels).not.toEqual(expect.arrayContaining(["Users & Access", "Settings", "Securities", "Reconciliation", "Lifecycle Exercises"]));
   });
 
-  it("keeps account details active without hiding account sub-navigation", () => {
-    const groups = createPortalNavGroups("/portal/accounts/42");
-    expect(groups[0].items.map((item) => item.label)).toEqual(["Dashboard", "Accounts", "Positions", "Orders", "Trade History"]);
-    expect(isNavigationItemActive(groups[0].items[1], "/portal/accounts/42")).toBe(true);
+  it("limits account users to the personal trading surface", () => {
+    expect(visibleLabels("ACCOUNT_USER")).toEqual(["Dashboard", "Open Positions", "Open Orders", "Reports", "Trade History", "My Accounts"]);
   });
 
   it("prefers Reconciliation over Trading Accounts for account reconciliation routes", () => {
     const items = adminNavGroups.flatMap((group) => group.items);
-    const tradingAccounts = items.find((item) => item.label === "Trading Accounts")!;
-    const reconciliation = items.find((item) => item.label === "Reconciliation")!;
-
-    expect(isNavigationItemActive(tradingAccounts, "/trading-accounts")).toBe(true);
-    expect(isNavigationItemActive(tradingAccounts, "/trading-accounts/42")).toBe(true);
-    expect(isNavigationItemActive(tradingAccounts, "/trading-accounts/42/reconciliation")).toBe(false);
+    const accounts = items.find((item) => item.routeId === "tradingAccounts")!;
+    const reconciliation = items.find((item) => item.routeId === "reconciliation")!;
+    expect(isNavigationItemActive(accounts, "/trading-accounts/42")).toBe(true);
+    expect(isNavigationItemActive(accounts, "/trading-accounts/42/reconciliation")).toBe(false);
     expect(isNavigationItemActive(reconciliation, "/trading-accounts/42/reconciliation")).toBe(true);
-    expect(isNavigationItemActive(reconciliation, "/system/reconciliation")).toBe(true);
   });
 });

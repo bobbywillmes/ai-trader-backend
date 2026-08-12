@@ -56,7 +56,10 @@ describe('ALL Dashboard overview', () => {
     expect(mocks.getAccount).not.toHaveBeenCalled();
   });
 
-  it('rejects ACCOUNT_USER access explicitly', async () => {
-    await expect(getDashboardAccountsOverview({ id: 8, platformRole: PlatformRole.ACCOUNT_USER })).rejects.toMatchObject({ statusCode: 403 });
+  it('limits ACCOUNT_USER overview to membership-authorized accounts', async () => {
+    mocks.findAccounts.mockResolvedValue([]);
+    const result = await getDashboardAccountsOverview({ id: 8, platformRole: PlatformRole.ACCOUNT_USER });
+    expect(mocks.findAccounts).toHaveBeenCalledWith(expect.objectContaining({ where: { memberships: { some: { userId: 8 } } } }));
+    expect(result.accounts).toEqual([]);
   });
 });

@@ -7,5 +7,5 @@ export function isAccountPortalRole(role: PlatformRole | null | undefined) {
 export function getAuthenticatedHomePath(
   access: AccessMetadata | null | undefined
 ) {
-  return isAccountPortalRole(access?.platformRole) ? "/portal" : "/dashboard";
+  return access ? "/dashboard" : "/login";
 }

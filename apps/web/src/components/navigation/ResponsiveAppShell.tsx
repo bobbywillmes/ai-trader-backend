@@ -2,7 +2,7 @@ import {
   AppShell, Avatar, Burger, Divider, Drawer, Menu, ScrollArea,
   Text, Tooltip, UnstyledButton,
 } from "@mantine/core";
-import { IconChevronRight, IconChevronUp, IconLogout, IconPin, IconPinnedOff, IconUser } from "@tabler/icons-react";
+import { IconChevronDown, IconChevronRight, IconChevronUp, IconLogout, IconPin, IconPinnedOff, IconUser } from "@tabler/icons-react";
 import { forwardRef, useCallback, useEffect, useRef, useState, type FocusEvent, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { AdminNavGroup, AdminNavItem } from "../../app/navigation";
@@ -15,6 +15,7 @@ import { AppBrand } from "../brand/AppBrand";
 import type { PageScopeMode } from "../../features/tradingAccountScope/types";
 import { TradingAccountScopeSelector } from "../../features/tradingAccountScope/TradingAccountScopeSelector";
 import { createScopedNavigationTarget } from "../../app/navigationUtils";
+import { isNestedGroupOpen } from "./nestedNavigationState";
 
 export const SIDEBAR_COLLAPSED_WIDTH = 72;
 export const SIDEBAR_EXPANDED_WIDTH = 248;
@@ -153,15 +154,34 @@ function SidebarContents({ groups, user, platformRole, pageScope, preserveTradin
 }
 
 function SidebarNavigation({ groups, expanded, onNavigate, preserveTradingAccountScope = false }: { groups: AdminNavGroup[]; expanded: boolean; onNavigate?: () => void; preserveTradingAccountScope?: boolean }) {
-  return <nav aria-label="Primary navigation" className={classes.navigation}>{groups.map((group) => <SidebarSection key={group.label} group={group} expanded={expanded} onNavigate={onNavigate} preserveTradingAccountScope={preserveTradingAccountScope} />)}</nav>;
+  const { pathname } = useLocation();
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const toggleGroup = (label: string) => setExpandedGroups((current) => ({ ...current, [label]: !current[label] }));
+  return <nav aria-label="Primary navigation" className={classes.navigation}>{groups.map((group) => <SidebarSection key={group.label} group={group} expanded={expanded} pathname={pathname} expandedGroups={expandedGroups} onToggleGroup={toggleGroup} onNavigate={onNavigate} preserveTradingAccountScope={preserveTradingAccountScope} />)}</nav>;
 }
-function SidebarSection({ group, expanded, onNavigate, preserveTradingAccountScope }: { group: AdminNavGroup; expanded: boolean; onNavigate?: () => void; preserveTradingAccountScope: boolean }) {
-  return <section className={classes.section}>{expanded ? <Text className={classes.sectionLabel}>{group.label}</Text> : <Divider className={classes.sectionDivider} />}{group.items.map((item) => <SidebarLink key={item.to} item={item} expanded={expanded} onNavigate={onNavigate} preserveTradingAccountScope={preserveTradingAccountScope} />)}</section>;
+function SidebarSection({ group, expanded, pathname, expandedGroups, onToggleGroup, onNavigate, preserveTradingAccountScope }: { group: AdminNavGroup; expanded: boolean; pathname: string; expandedGroups: Record<string, boolean>; onToggleGroup: (label: string) => void; onNavigate?: () => void; preserveTradingAccountScope: boolean }) {
+  return <section className={classes.section}>{expanded ? <Text className={classes.sectionLabel}>{group.label}</Text> : <Divider className={classes.sectionDivider} />}{group.items.map((item) => item.children
+    ? <SidebarNestedGroup key={item.label} item={item} expanded={expanded} pathname={pathname} manuallyExpanded={expandedGroups[item.label] ?? false} onToggle={() => onToggleGroup(item.label)} onNavigate={onNavigate} preserveTradingAccountScope={preserveTradingAccountScope} />
+    : <SidebarLink key={item.to} item={item} expanded={expanded} onNavigate={onNavigate} preserveTradingAccountScope={preserveTradingAccountScope} />)}</section>;
 }
-function SidebarLink({ item, expanded, onNavigate, preserveTradingAccountScope }: { item: AdminNavItem; expanded: boolean; onNavigate?: () => void; preserveTradingAccountScope: boolean }) {
+function SidebarNestedGroup({ item, expanded, pathname, manuallyExpanded, onToggle, onNavigate, preserveTradingAccountScope }: { item: AdminNavItem; expanded: boolean; pathname: string; manuallyExpanded: boolean; onToggle: () => void; onNavigate?: () => void; preserveTradingAccountScope: boolean }) {
+  const active = isNavigationItemActive(item, pathname);
+  const open = isNestedGroupOpen(active, manuallyExpanded);
+  const Icon = item.icon;
+  const control = <UnstyledButton className={classes.navLink} data-active={active || undefined} aria-expanded={open} onClick={onToggle}>
+    <Icon size={21} stroke={1.8} aria-hidden="true" />
+    <span className={expanded ? classes.linkLabel : classes.visuallyHidden}>{item.label}</span>
+    {expanded && (open ? <IconChevronUp className={classes.linkChevron} size={15} aria-hidden="true" /> : <IconChevronDown className={classes.linkChevron} size={15} aria-hidden="true" />)}
+  </UnstyledButton>;
+  return <div>{expanded ? control : <Tooltip label={item.label} position="right" openDelay={350}>{control}</Tooltip>}
+    {expanded && open && <div className={classes.nestedLinks}>{item.children?.map((child) => <SidebarLink key={child.to} item={child} expanded onNavigate={onNavigate} preserveTradingAccountScope={preserveTradingAccountScope} nested />)}</div>}
+  </div>;
+}
+function SidebarLink({ item, expanded, onNavigate, preserveTradingAccountScope, nested = false }: { item: AdminNavItem; expanded: boolean; onNavigate?: () => void; preserveTradingAccountScope: boolean; nested?: boolean }) {
   const { pathname, search } = useLocation(); const navigate = useNavigate(); const active = isNavigationItemActive(item, pathname); const Icon = item.icon;
-  const target = preserveTradingAccountScope ? createScopedNavigationTarget(item.to, search) : item.to;
-  const link = <UnstyledButton className={classes.navLink} data-active={active || undefined} aria-current={active ? "page" : undefined} onClick={() => { navigate(target); window.scrollTo({ top: 0, left: 0, behavior: "auto" }); onNavigate?.(); }}><Icon size={21} stroke={1.8} aria-hidden="true" /><span className={expanded ? classes.linkLabel : classes.visuallyHidden}>{item.label}</span>{expanded && <IconChevronRight className={classes.linkChevron} size={15} aria-hidden="true" />}</UnstyledButton>;
+  const to = item.to ?? "/";
+  const target = preserveTradingAccountScope ? createScopedNavigationTarget(to, search) : to;
+  const link = <UnstyledButton className={`${classes.navLink} ${nested ? classes.nestedLink : ""}`} data-active={active || undefined} aria-current={active ? "page" : undefined} onClick={() => { navigate(target); window.scrollTo({ top: 0, left: 0, behavior: "auto" }); onNavigate?.(); }}><Icon size={nested ? 17 : 21} stroke={1.8} aria-hidden="true" /><span className={expanded ? classes.linkLabel : classes.visuallyHidden}>{item.label}</span>{expanded && !nested && <IconChevronRight className={classes.linkChevron} size={15} aria-hidden="true" />}</UnstyledButton>;
   return expanded ? link : <Tooltip label={item.label} position="right" openDelay={350}>{link}</Tooltip>;
 }
 

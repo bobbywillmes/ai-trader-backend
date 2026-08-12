@@ -331,15 +331,15 @@ export function AccountPage({ view = "overview" }: AccountPageProps) {
   );
 
   if (!id) {
-    return <Navigate to="/portal" replace />;
+    return <Navigate to="/trading-accounts" replace />;
   }
 
   if (!assignedAccountIdSet.has(id)) {
     return (
       <Alert color="red" title="Not authorized">
-        This trading account is not assigned to your portal access.{" "}
-        <Text component={Link} to="/portal" size="sm" c="red.7">
-          Back to portal
+        This Trading Account is not available through your memberships.{" "}
+        <Text component={Link} to="/trading-accounts" size="sm" c="red.7">
+          Back to My Accounts
         </Text>
       </Alert>
     );
@@ -371,7 +371,7 @@ export function AccountPage({ view = "overview" }: AccountPageProps) {
           {view === "overview" && (
             <Button
               component={Link}
-              to="/portal/accounts"
+              to="/trading-accounts"
               size="xs"
               variant="outline"
               color="gray"

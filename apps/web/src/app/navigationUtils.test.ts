@@ -1,26 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type { PlatformPermission } from "../features/auth/types";
-import type { AdminNavItem } from "./navigation";
-import { canAccessNavItem, createScopedNavigationTarget } from "./navigationUtils";
-import { IconDashboard } from "@tabler/icons-react";
+import { canAccessRoute } from "./routeAccess";
+import { createScopedNavigationTarget } from "./navigationUtils";
 
-const permissions = (...values: PlatformPermission[]) => new Set(values);
-
-describe("Admin Console navigation authorization", () => {
-  it("allows System Owners to access every item", () => {
-    const item: AdminNavItem = { to: "/users", label: "Users", icon: IconDashboard, systemOwnerOnly: true };
-    expect(canAccessNavItem(item, true, permissions())).toBe(true);
+describe("shared route authorization", () => {
+  it("denies direct owner-route access to operators and account users", () => {
+    expect(canAccessRoute("users", "OPERATOR", ["system.settings.read"])).toBe(false);
+    expect(canAccessRoute("settings", "ACCOUNT_USER", ["system.settings.read"])).toBe(false);
+    expect(canAccessRoute("reconciliation", "ACCOUNT_USER", ["system.security.read"])).toBe(false);
   });
-
-  it("rejects System Owner-only items for Operators", () => {
-    const item: AdminNavItem = { to: "/users", label: "Users", icon: IconDashboard, systemOwnerOnly: true };
-    expect(canAccessNavItem(item, false, permissions("system.settings.read"))).toBe(false);
-  });
-
-  it("requires the declared platform permission", () => {
-    const item: AdminNavItem = { to: "/reports", label: "Reports", icon: IconDashboard, requiredPermission: "reports.read" };
-    expect(canAccessNavItem(item, false, permissions())).toBe(false);
-    expect(canAccessNavItem(item, false, permissions("reports.read"))).toBe(true);
+  it("requires both an allowed role and the backend-aligned permission", () => {
+    expect(canAccessRoute("reports", "ACCOUNT_USER", [])).toBe(false);
+    expect(canAccessRoute("reports", "ACCOUNT_USER", ["reports.read"])).toBe(true);
   });
 });
 

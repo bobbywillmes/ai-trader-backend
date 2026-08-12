@@ -8,6 +8,9 @@ import { useLogout, useMe } from "../features/auth/hooks";
 import { isAccountPortalRole } from "../features/auth/roleUtils";
 import { useAuth } from "../features/auth/useAuth";
 import type { PlatformPermission } from "../features/auth/types";
+import type { AppRouteId } from "../app/routeAccess";
+import { canAccessRoute } from "../app/routeAccess";
+import { AccessDeniedPage } from "../pages/AccessDeniedPage";
 import { getAdminToken } from "../lib/api";
 import type { ReactNode } from "react";
 import { TradingAccountScopeProvider } from "../features/tradingAccountScope/TradingAccountScopeProvider";
@@ -23,8 +26,7 @@ export function AdminLayout() {
 }
 
 export function AdminConsoleGuard() {
-  const { access } = useAuth();
-  return isAccountPortalRole(access?.platformRole) ? <Navigate to="/portal" replace /> : <Outlet />;
+  return <Outlet />;
 }
 
 export function AccountPortalGuard() {
@@ -35,6 +37,11 @@ export function AccountPortalGuard() {
 export function PermissionGuard({ permission, children }: { permission: PlatformPermission; children: ReactNode }) {
   const { access } = useAuth();
   return access?.permissions.includes(permission) ? children : <Navigate to="/dashboard" replace />;
+}
+
+export function RouteAccessGuard({ routeId, children }: { routeId: AppRouteId; children: ReactNode }) {
+  const { access } = useAuth();
+  return canAccessRoute(routeId, access?.platformRole, access?.permissions) ? children : <AccessDeniedPage />;
 }
 
 function AuthenticatedShell({ portal = false }: { portal?: boolean }) {

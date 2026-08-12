@@ -153,7 +153,6 @@ export async function getTradingAccountDashboard(tradingAccountId: number) {
 }
 
 export async function getDashboardAccountsOverview(user: { id: number; platformRole: PlatformRole }) {
-  if (user.platformRole === PlatformRole.ACCOUNT_USER) throw new HttpError(403, 'Dashboard accounts overview is limited to admin-console roles.');
   const where = user.platformRole === PlatformRole.SYSTEM_OWNER ? {} : { memberships: { some: { userId: user.id } } };
   const accounts = await prisma.tradingAccount.findMany({ where, select: DASHBOARD_ACCOUNT_SELECT, orderBy: { id: 'asc' } });
   const ids = accounts.map((account) => account.id);

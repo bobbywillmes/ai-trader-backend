@@ -5,14 +5,14 @@ import {
   AdminConsoleGuard,
   AdminConsoleShell,
   AdminLayout,
-  PermissionGuard,
+  RouteAccessGuard,
   AccountPortalGuard,
   AccountPortalShell,
 } from "../layouts/AdminLayout";
-import type { PlatformPermission } from "../features/auth/types";
+import type { AppRouteId } from "./routeAccess";
 
-function requirePermission(permission: PlatformPermission, element: ReactNode) {
-  return <PermissionGuard permission={permission}>{element}</PermissionGuard>;
+function authorize(routeId: AppRouteId, element: ReactNode) {
+  return <RouteAccessGuard routeId={routeId}>{element}</RouteAccessGuard>;
 }
 import { HomePage } from "../pages/HomePage";
 import { SetupAccountPage } from "../pages/SetupAccountPage";
@@ -51,6 +51,7 @@ import {
   AccountPortalAccountsPage,
   AccountPortalPage,
 } from "../features/accountPortal/AccountPortalPage";
+import { RoleAwarePage } from "./RoleAwarePage";
 
 const responsiveDataPreviewRoute = import.meta.env.DEV
   ? [{ path: "dev/responsive-data-primitives", lazy: async () => ({ Component: (await import("../features/dev/ResponsiveDataPrimitivesPreview")).ResponsiveDataPrimitivesPreview }) }]
@@ -82,123 +83,123 @@ export const router = createBrowserRouter([
               ...responsiveDataPreviewRoute,
               {
                 path: "dashboard",
-                element: requirePermission("reports.read", <DashboardPage />),
+                element: authorize("dashboard", <DashboardPage />),
               },
               {
                 path: "positions/open",
-                element: requirePermission("tradingAccount.read", <PositionsPage />),
+                element: authorize("positions", <PositionsPage />),
               },
               {
                 path: "orders/open",
-                element: requirePermission("tradingAccount.read", <OrdersPage />),
+                element: authorize("orders", <OrdersPage />),
               },
               {
                 path: "trade-history",
-                element: requirePermission("reports.read", <TradeHistoryPage />),
+                element: authorize("tradeHistory", <TradeHistoryPage />),
               },
               {
                 path: "entry-decisions",
-                element: requirePermission("tradingAccount.read", <EntryDecisionsPage />),
+                element: authorize("entryDecisions", <EntryDecisionsPage />),
               },
               {
                 path: "lifecycle-exercises",
-                element: requirePermission("tradingLifecycleExercise.read", <LifecycleExercisesPage />),
+                element: authorize("lifecycleExercises", <LifecycleExercisesPage />),
               },
               {
                 path: "lifecycle-exercises/:id",
-                element: requirePermission("tradingLifecycleExercise.read", <LifecycleExerciseDetailPage />),
+                element: authorize("lifecycleExercises", <LifecycleExerciseDetailPage />),
               },
               {
                 path: "momentum-scanner",
-                element: requirePermission("strategy.read", <MomentumResearchDashboardPage />),
+                element: authorize("momentumScanner", <MomentumResearchDashboardPage />),
               },
               {
                 path: "momentum-scanner/pipeline",
-                element: requirePermission("strategy.read", <MomentumScannerPipelinePage />),
+                element: authorize("momentumScanner", <MomentumScannerPipelinePage />),
               },
               {
                 path: "momentum-scanner/universe",
-                element: requirePermission("strategy.read", <MomentumUniversePage />),
+                element: authorize("momentumScanner", <MomentumUniversePage />),
               },
               {
                 path: "momentum-scanner/candidates",
-                element: requirePermission("strategy.read", <MomentumCandidatesPage />),
+                element: authorize("momentumScanner", <MomentumCandidatesPage />),
               },
               {
                 path: "momentum-scanner/candidates/:candidateId",
-                element: requirePermission("strategy.read", <MomentumCandidateDetailPage />),
+                element: authorize("momentumScanner", <MomentumCandidateDetailPage />),
               },
               {
                 path: "momentum-scanner/catalysts",
-                element: requirePermission("strategy.read", <MomentumCatalystsPage />),
+                element: authorize("momentumScanner", <MomentumCatalystsPage />),
               },
               {
                 path: "momentum-scanner/symbols/:symbol",
-                element: requirePermission("strategy.read", <MomentumSymbolResearchPage />),
+                element: authorize("momentumScanner", <MomentumSymbolResearchPage />),
               },
               {
                 path: "strategies",
-                element: requirePermission("strategy.read", <StrategiesPage />),
+                element: authorize("strategies", <StrategiesPage />),
               },
               {
                 path: "strategies/:strategyId",
-                element: requirePermission("strategy.read", <StrategyDetailPage />),
+                element: authorize("strategies", <StrategyDetailPage />),
               },
               {
                 path: "trading-accounts",
-                element: requirePermission("tradingAccount.read", <TradingAccountsPage />),
+                element: authorize("tradingAccounts", <RoleAwarePage accountUser={<AccountPortalAccountsPage />} elevated={<TradingAccountsPage />} />),
               },
               {
                 path: "trading-accounts/:id",
-                element: requirePermission("tradingAccount.read", <TradingAccountDetailPage />),
+                element: authorize("tradingAccounts", <RoleAwarePage accountUser={<AccountPage />} elevated={<TradingAccountDetailPage />} />),
               },
               {
                 path: "trading-accounts/:id/reconciliation",
-                element: requirePermission("system.security.read", <ReconciliationPage />),
+                element: authorize("reconciliation", <ReconciliationPage />),
               },
               {
                 path: "subscriptions",
-                element: requirePermission("subscription.read", <SubscriptionsPage />),
+                element: authorize("subscriptions", <SubscriptionsPage />),
               },
               {
                 path: "exit-profiles",
-                element: requirePermission("exitProfile.read", <ExitProfilesPage />),
+                element: authorize("exitProfiles", <ExitProfilesPage />),
               },
               {
                 path: "securities",
-                element: requirePermission("system.security.read", <SecuritiesPage />),
+                element: authorize("securities", <SecuritiesPage />),
               },
               {
                 path: "securities/:symbol",
-                element: requirePermission("system.security.read", <SecurityDetailPage />),
+                element: authorize("securities", <SecurityDetailPage />),
               },
               {
                 path: "reports",
-                element: requirePermission("reports.read", <ReportsPage />),
+                element: authorize("reports", <ReportsPage />),
               },
               {
                 path: "reports/:reportSection",
-                element: requirePermission("reports.read", <ReportsPage />),
+                element: authorize("reports", <ReportsPage />),
               },
               {
                 path: "system/events",
-                element: requirePermission("systemEvents.read", <SystemEventsPage />),
+                element: authorize("systemEvents", <SystemEventsPage />),
               },
               {
                 path: "system/reconciliation",
-                element: requirePermission("system.security.read", <ReconciliationTargetPage />),
+                element: authorize("reconciliation", <ReconciliationTargetPage />),
               },
               {
                 path: "market-diary",
-                element: requirePermission("systemEvents.read", <MarketDiaryPage />),
+                element: authorize("marketDiary", <MarketDiaryPage />),
               },
               {
                 path: "settings",
-                element: requirePermission("system.settings.read", <SettingsPage />),
+                element: authorize("settings", <SettingsPage />),
               },
               {
                 path: "users",
-                element: requirePermission("system.settings.read", <UsersPage />),
+                element: authorize("users", <UsersPage />),
               },
             ],
           },
