@@ -518,7 +518,7 @@ export async function listAccessibleEntryDecisions(
   filters: EntryDecisionFilters = {}
 ) {
   if (user.platformRole === PlatformRole.ACCOUNT_USER) {
-    throw new HttpError(403, 'Admin-console entry decisions are not available to account portal users.');
+    throw new HttpError(403, 'Entry decisions are not available to Account Users.');
   }
   if (tradingAccountId !== null) {
     if (user.platformRole !== PlatformRole.SYSTEM_OWNER) {
@@ -572,7 +572,7 @@ export async function getAccessibleEntryDecisionById(
   id: number
 ) {
   if (user.platformRole === PlatformRole.ACCOUNT_USER) {
-    throw new HttpError(403, 'Admin-console entry decisions are not available to account portal users.');
+    throw new HttpError(403, 'Entry decisions are not available to Account Users.');
   }
   const decision = await prisma.entryDecision.findFirst({
     where: {

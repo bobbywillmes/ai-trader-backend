@@ -167,7 +167,7 @@ Use this doc when adding Alpaca adapter calls, changing broker polling behavior,
 
 ### [Access Control & RBAC](security/README.md)
 
-Documents human authentication, machine authentication, Platform Roles, Platform Permissions, Trading Account memberships, System Owner onboarding, setup links, and the Account Portal.
+Documents human authentication, machine authentication, Platform Roles, Platform Permissions, Trading Account memberships, System Owner onboarding, setup links, and the shared role-aware web application.
 
 Use this doc when changing:
 
@@ -179,7 +179,7 @@ Use this doc when changing:
 - RBAC middleware
 - Users & Access
 - invite/setup onboarding
-- `/portal` Account User routing
+- shared Account User routing and role-aware access
 - membership-scoped Trading Account API routes
 
 ## 🚢 Production Docs

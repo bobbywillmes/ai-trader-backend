@@ -1104,7 +1104,7 @@ After auth/RBAC/onboarding changes:
 - Users & Access loads.
 - Create Invite panel opens.
 - Operator enters the admin console and sees only permission-authorized features.
-- Account User lands on `/portal` and sees only membership-scoped Trading Accounts.
+- Account User lands on `/dashboard` in the shared application and sees only membership-scoped Trading Accounts.
 - Account User cannot access `/users`, `/settings`, or other admin console routes.
 - Membership replacement does not show or submit account roles or capability flags.
 - n8n smoke test still passes.

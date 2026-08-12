@@ -1,6 +1,6 @@
 # Responsive application shell
 
-The web console uses `ResponsiveAppShell` for both the administration console and account portal. Its explicit states are `desktop-collapsed`, `desktop-hover-expanded`, `desktop-pinned`, and `mobile-open`.
+The shared role-aware web application uses `ResponsiveAppShell` for every human role. Its explicit states are `desktop-collapsed`, `desktop-hover-expanded`, `desktop-pinned`, and `mobile-open`.
 
 At widths above Mantine's `sm` breakpoint (`48em`), the sidebar starts as a 72px icon rail. Pointer entry or keyboard focus temporarily expands it to 248px as an overlay without moving page content. Pinning changes the persistent page offset to 248px. The browser/device-specific preference is stored under `ai-trader.sidebar.pinned` in `localStorage`.
 

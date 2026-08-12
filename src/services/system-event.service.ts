@@ -51,7 +51,7 @@ export async function getAccessibleSystemEvents(
   filters: { page?: number; pageSize?: number; type?: string; search?: string } = {}
 ) {
   if (user.platformRole === PlatformRole.ACCOUNT_USER) {
-    throw new HttpError(403, 'Admin-console system events are not available to account portal users.');
+    throw new HttpError(403, 'System events are not available to Account Users.');
   }
   let accountScope: Prisma.SystemEventWhereInput;
   if (accountId !== null) {

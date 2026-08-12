@@ -32,7 +32,7 @@ Until the account list succeeds, the context exposes a safe `ALL` scope and a lo
 Route scope is classified centrally in `apps/web/src/app/pageScope.ts`:
 
 - `ACCOUNT_FILTERABLE`: Dashboard, Open Positions, Open Orders, Trade History, Entry Decisions, System Events, and Reports. The shell and page present synchronized views of the shared interactive selector, and each page sends either `ALL` or one explicit account identity in its query key and backend request.
-- `ACCOUNT_SPECIFIC`: TradingAccount detail, Reconciliation, and account-specific portal routes. A concrete route account is authoritative. The shell hides the scope-selector area because the page itself identifies its resource.
+- `ACCOUNT_SPECIFIC`: TradingAccount detail and Reconciliation routes. A concrete route account is authoritative. The shell hides the scope-selector area because the page itself identifies its resource.
 - `SYSTEM`: global catalog, research, configuration, and administration pages, including the Trading Accounts directory, Users & Access, Strategies, Exit Profiles, Securities, Subscription Catalog, Momentum Scanner, Market Diary, Settings, and Lifecycle Exercises. The selector is hidden so the page does not appear filtered.
 
 Scope persistence and scope applicability are separate. The `account` URL parameter may remain while visiting a `SYSTEM` page, but that page must not use it to filter data. Returning through scoped sidebar navigation restores the prior account context.
@@ -41,7 +41,7 @@ The same separation applies to `ACCOUNT_SPECIFIC` routes. For example, `/trading
 
 Pages that own additional URL filters must update only their declared parameter keys. They clone the current query string, remove or replace their owned keys, and retain `account` and every other unrelated key. This prevents independent URL owners from competing with the scope provider.
 
-Reconciliation uses `/trading-accounts/:id/reconciliation`, with the path ID as its authoritative target and the global scope selector hidden. Its in-page target selector changes the route ID while preserving the dormant operational scope. The compatibility `/system/reconciliation` route redirects only from a concrete authorized `?account=<id>`; `ALL`, missing, malformed, or inaccessible scope requires explicit selection and never falls back to a default account. Legacy `/portal` deep links remain compatible, but normal Account User navigation now uses the shared routes and scope provider.
+Reconciliation uses `/trading-accounts/:id/reconciliation`, with the path ID as its authoritative target and the global scope selector hidden. Its in-page target selector changes the route ID while preserving the dormant operational scope. The compatibility `/system/reconciliation` route redirects only from a concrete authorized `?account=<id>`; `ALL`, missing, malformed, or inaccessible scope requires explicit selection and never falls back to a default account. Account Users use the same canonical routes and scope provider as other roles.
 
 ## Query and mutation safety
 
