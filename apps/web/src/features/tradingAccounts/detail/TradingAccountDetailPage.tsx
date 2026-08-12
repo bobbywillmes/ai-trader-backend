@@ -31,6 +31,7 @@ import {
   updateTradingAccountDetailTabSearchParams,
 } from "./utils/tabRouting";
 import classes from "./TradingAccountDetailPage.module.css";
+import { useIsAccountUser } from "../../auth/useAuth";
 
 export function TradingAccountDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -38,10 +39,16 @@ export function TradingAccountDetailPage() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [token] = useState<string | null>(() => getAdminToken());
+  const isAccountUser = useIsAccountUser();
   const accountId = id ? Number(id) : undefined;
   const requestedTab = searchParams.get("tab");
-  const activeTab: TradingAccountDetailTab =
-    resolveTradingAccountDetailTab(requestedTab);
+  const allowedTabs = isAccountUser
+    ? tradingAccountDetailTabs.filter((tab) => ["overview", "positions", "orders"].includes(tab.value))
+    : tradingAccountDetailTabs;
+  const resolvedTab = resolveTradingAccountDetailTab(requestedTab);
+  const activeTab: TradingAccountDetailTab = allowedTabs.some((tab) => tab.value === resolvedTab)
+    ? resolvedTab
+    : "overview";
   const validAccountId =
     accountId !== undefined && Number.isInteger(accountId) && accountId > 0
       ? accountId
@@ -97,10 +104,10 @@ export function TradingAccountDetailPage() {
       )}
 
       {account && (
-        <><Group justify="flex-end"><Button variant="default" onClick={() => navigate(createScopedNavigationTarget(`/trading-accounts/${account.id}/reconciliation`, location.search))}>Reconciliation</Button></Group><Tabs value={activeTab} onChange={setActiveTab} keepMounted={false}>
-          <Select className={classes.sectionSelect} label="Account section" aria-label="Account section" value={activeTab} onChange={setActiveTab} data={tradingAccountDetailTabs} allowDeselect={false} />
+        <>{!isAccountUser && <Group justify="flex-end"><Button variant="default" onClick={() => navigate(createScopedNavigationTarget(`/trading-accounts/${account.id}/reconciliation`, location.search))}>Reconciliation</Button></Group>}<Tabs value={activeTab} onChange={setActiveTab} keepMounted={false}>
+          <Select className={classes.sectionSelect} label="Account section" aria-label="Account section" value={activeTab} onChange={setActiveTab} data={allowedTabs} allowDeselect={false} />
           <Tabs.List className={classes.tabs} aria-label="Account sections">
-            {tradingAccountDetailTabs.map((tab) => (
+            {allowedTabs.map((tab) => (
               <Tabs.Tab key={tab.value} value={tab.value}>
                 {tab.label}
               </Tabs.Tab>

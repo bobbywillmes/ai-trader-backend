@@ -16,9 +16,9 @@ There is no public registration. A system owner creates invitations in **System 
 | --- | --- | --- |
 | `SYSTEM_OWNER` | Admin Console | Unrestricted; membership scope is bypassed |
 | `OPERATOR` | Admin Console | Explicit `TradingAccountMembership` records |
-| `ACCOUNT_USER` | Account Portal at `/portal` | Explicit `TradingAccountMembership` records |
+| `ACCOUNT_USER` | Shared console with a simplified personal navigation surface | Explicit `TradingAccountMembership` records |
 
-Platform role selects the application surface. Platform permissions control features within the admin console. Trading account memberships determine which accounts a non-system-owner user may access.
+Platform role selects available application capabilities. Platform permissions remain the backend-aligned capability vocabulary. Trading account memberships independently determine which accounts a non-system-owner user may access.
 
 `accessibleTradingAccountIds` semantics:
 
@@ -39,17 +39,17 @@ Memberships do not contain account-level roles or capability flags.
 - `reports.read`
 - `systemEvents.read`
 
-System owners receive every permission. Operators receive operational trading, risk, subscription, strategy-read, exit-profile-read, and reporting permissions. Account Users receive the read permissions required by the Account Portal, subject to membership scope.
+System owners receive every permission. Operators receive operational trading, risk, subscription, strategy-read, exit-profile-read, and reporting permissions. Account Users receive the read permissions needed for Dashboard, My Accounts, Open Positions, Open Orders, Reports, and Trade History, subject to membership scope.
 
 ## Enforcement and validation
 
-The backend validates the session, platform permission, and Trading Account membership where applicable. The Admin UI mirrors those boundaries by routing Account Users to the Account Portal and applying permission checks to Admin Console navigation and direct routes.
+The backend validates the session, platform permission, and Trading Account membership where applicable. The web UI derives navigation and direct-route guards from shared route policies. Hiding a link is never treated as the security boundary; account-specific reads still validate membership, aggregate reads resolve the user's authorized account set, and sensitive writes retain their existing owner/permission middleware.
 
 Disabled users and users with incomplete setup cannot sign in. The backend prevents demoting the final System Owner, disabling the final enabled System Owner, changing one's own platform role, and removing a membership required by an account-holder assignment.
 
 - Confirm system owner login enters the full owner console and can open `/users`.
 - Confirm Operator login enters the owner console and only sees permitted features.
-- Confirm account user login enters `/portal` and only sees membership-scoped accounts.
+- Confirm account user login enters `/dashboard`, sees only the personal navigation surface, and can access only membership-scoped accounts.
 - Confirm direct unauthorized routes and API requests are rejected.
 - Confirm invitation, setup completion, setup-link regeneration, and membership replacement.
 - Confirm n8n continues to authenticate only with its signal API key.

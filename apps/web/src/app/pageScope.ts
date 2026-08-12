@@ -6,7 +6,6 @@ const routeScopes: RouteScopeDefinition[] = [
   { pattern: /^\/(dashboard|positions\/open|orders\/open|trade-history|entry-decisions|system\/events|reports(?:\/[^/]+)?)\/?$/, mode: "ACCOUNT_FILTERABLE" },
   { pattern: /^\/trading-accounts\/(\d+)\/?$/, mode: "ACCOUNT_SPECIFIC", routeAccountIdGroup: 1 },
   { pattern: /^\/trading-accounts\/(\d+)\/reconciliation\/?$/, mode: "ACCOUNT_SPECIFIC", routeAccountIdGroup: 1 },
-  { pattern: /^\/portal\/accounts\/(\d+)(?:\/(?:positions|orders|trade-history))?\/?$/, mode: "ACCOUNT_SPECIFIC", routeAccountIdGroup: 1 },
 ];
 
 export function getPageScope(pathname: string): { mode: PageScopeMode; routeTradingAccountId: number | null } {

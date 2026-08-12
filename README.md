@@ -71,7 +71,7 @@ Human users log in through the web UI and receive a User session bearer token.
 ```text
 SYSTEM_OWNER -> full admin console with unrestricted Trading Account scope
 OPERATOR     -> permission-driven admin console with membership-scoped accounts
-ACCOUNT_USER -> read-only Account Portal with membership-scoped accounts
+ACCOUNT_USER -> shared role-aware web application with membership-scoped accounts
 ```
 
 Owners can invite users from **System → Users & Access**. Invite links are one-time setup links. Until email delivery exists, owners copy setup links manually.
@@ -81,9 +81,9 @@ For the full model, see [Access Control & RBAC](docs/security/README.md).
 
 ## 🖥️ Web UI experiences
 
-The React UI now has two role-based experiences.
+The React UI is one shared role-aware application for all human roles.
 
-### Admin Console
+### Shared web application
 
 System owners can access the full operational console. Operators see the subset allowed by their Platform Permissions:
 
@@ -104,17 +104,15 @@ System owners can access the full operational console. Operators see the subset 
 - Settings
 - Users & Access
 
-### Account Portal
-
-Account Users are routed to `/portal` and can only see read-only data for Trading Accounts assigned through explicit memberships:
+Account Users enter at `/dashboard` and use the same shell, routes, and account-facing components. Centralized role-aware policies limit their navigation to membership-scoped, read-only destinations:
 
 - Dashboard
-- Accounts
+- My Accounts
 - Positions
 - Orders
 - Trade History
 
-Account Users cannot change settings, manage users, place orders, cancel orders, close positions, trigger broker syncs, or access Admin Console routes.
+Account Users cannot change settings, manage users, provision accounts, place orders, cancel orders, close positions, trigger broker syncs, or access unauthorized operational or administration routes.
 
 ## 🧯 Production safety layer
 
@@ -384,7 +382,7 @@ System Owner login works
 /api/auth/me returns user and access.platformRole = SYSTEM_OWNER
 Users & Access loads
 Create Invite opens
-Account User login lands on /portal
+Account User login lands on /dashboard
 Account User cannot access admin console pages
 Dashboard / Trading Accounts / Settings load for system owner
 n8n signal smoke test passes

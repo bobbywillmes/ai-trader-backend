@@ -31,12 +31,6 @@ export function operationalAccountIdentity(account: OperationalAccountRecord) {
 }
 
 function accessibleWhere(user: { id: number; platformRole: PlatformRole }) {
-  if (user.platformRole === PlatformRole.ACCOUNT_USER) {
-    throw new HttpError(
-      403,
-      'Admin-console operational scope is not available to account portal users.'
-    );
-  }
   return user.platformRole === PlatformRole.SYSTEM_OWNER
     ? {}
     : { memberships: { some: { userId: user.id } } };

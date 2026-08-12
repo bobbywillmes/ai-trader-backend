@@ -447,7 +447,7 @@ export async function listAccessibleTradeCycles(
   filters: TradeCycleFilters = {}
 ) {
   if (user.platformRole === PlatformRole.ACCOUNT_USER) {
-    throw new HttpError(403, 'Admin-console trade history is not available to account portal users.');
+    throw new HttpError(403, 'Administrative trade-history scope is not available to Account Users.');
   }
 
   let accountIds: number[];
@@ -575,7 +575,7 @@ export async function getAccessibleTradeCycleById(
   id: number
 ) {
   if (user.platformRole === PlatformRole.ACCOUNT_USER) {
-    throw new HttpError(403, 'Admin-console trade history is not available to account portal users.');
+    throw new HttpError(403, 'Administrative trade-history scope is not available to Account Users.');
   }
   const position = await prisma.trackedPosition.findFirst({
     where: {

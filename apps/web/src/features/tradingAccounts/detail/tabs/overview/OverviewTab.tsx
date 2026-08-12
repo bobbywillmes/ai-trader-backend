@@ -5,6 +5,7 @@ import { BrokerSnapshotCard } from "./BrokerSnapshotCard";
 import { CredentialStatusCard } from "./CredentialStatusCard";
 import { SafetyNotesCard } from "./SafetyNotesCard";
 import { OperationalSummaryCards } from "./OperationalSummaryCards";
+import { useIsAccountUser } from "../../../../auth/useAuth";
 
 export function OverviewTab({
   account,
@@ -13,10 +14,11 @@ export function OverviewTab({
   account: TradingAccount;
   token: string | null;
 }) {
+  const isAccountUser = useIsAccountUser();
   return (
     <Stack gap="lg">
       <AccountSummaryCard account={account} />
-      <OperationalSummaryCards account={account} token={token} />
+      {!isAccountUser && <OperationalSummaryCards account={account} token={token} />}
       <BrokerSnapshotCard account={account} />
       <CredentialStatusCard account={account} />
       <SafetyNotesCard account={account} />

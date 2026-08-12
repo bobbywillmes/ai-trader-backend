@@ -7,8 +7,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TradingAccount } from "../types";
 
 const account = { id: 7, displayName: "Bobby Live Account With A Long Name", accountHolderName: "Bobby W", broker: "ALPACA", environment: "LIVE", status: "NEEDS_CREDENTIALS", tradingEnabled: false, killSwitchEnabled: true, credential: { exists: false } } as TradingAccount;
-const mocks = vi.hoisted(() => ({ query: { data: { account: undefined as TradingAccount | undefined }, isLoading: false, isError: false, error: null as Error | null } }));
+const mocks = vi.hoisted(() => ({ accountUser: false, query: { data: { account: undefined as TradingAccount | undefined }, isLoading: false, isError: false, error: null as Error | null } }));
 vi.mock("../hooks", () => ({ useTradingAccount: () => mocks.query }));
+vi.mock("../../auth/useAuth", () => ({ useIsAccountUser: () => mocks.accountUser }));
 vi.mock("../../../lib/api", () => ({ getAdminToken: () => "token" }));
 vi.mock("./tabs/overview/OverviewTab", () => ({ OverviewTab: () => <div>Overview content</div> }));
 vi.mock("./tabs/positions/PositionsTab", () => ({ PositionsTab: () => <div>Positions content</div> }));
@@ -21,7 +22,7 @@ import { TradingAccountDetailPage } from "./TradingAccountDetailPage";
 
 function Location() { return <output aria-label="location">{useLocation().pathname}{useLocation().search}</output>; }
 function renderPage(entry = "/trading-accounts/7") { mocks.query.data = { account }; return render(<MantineProvider defaultColorScheme="dark"><MemoryRouter initialEntries={[entry]}><Routes><Route path="/trading-accounts" element={<Location />} /><Route path="/trading-accounts/:id" element={<><TradingAccountDetailPage /><Location /></>} /></Routes></MemoryRouter></MantineProvider>); }
-afterEach(cleanup);
+afterEach(() => { cleanup(); mocks.accountUser = false; });
 
 describe("Trading Account detail shell", () => {
   it("renders account identity, complete safety context, desktop tabs, and the mobile selector", () => { renderPage(); expect(screen.getByRole("heading", { name: account.displayName })).toBeTruthy(); expect(screen.getByLabelText("Live status")).toBeTruthy(); expect(screen.getByLabelText("Needs credentials status")).toBeTruthy(); expect(screen.getByText(/Kill switch enabled/)).toBeTruthy(); expect(screen.getByRole("tablist", { name: "Account sections" })).toBeTruthy(); expect(screen.getByRole("combobox", { name: "Account section" })).toBeTruthy(); expect(screen.getByText("Overview content")).toBeTruthy(); });
@@ -31,5 +32,12 @@ describe("Trading Account detail shell", () => {
     renderPage("/trading-accounts/7?account=2&tab=activity");
     await userEvent.setup().click(screen.getByRole("link", { name: "Trading Accounts" }));
     expect(screen.getByLabelText("location").textContent).toBe("/trading-accounts?account=2");
+  });
+  it("limits Account Users to shared read-only account sections", () => {
+    mocks.accountUser = true;
+    renderPage("/trading-accounts/7?tab=configuration");
+    expect(screen.getByText("Overview content")).toBeTruthy();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Positions", "Orders"]);
+    expect(screen.queryByRole("button", { name: "Reconciliation" })).toBeNull();
   });
 });

@@ -32,3 +32,8 @@ export function useIsSystemOwner(): boolean {
   const { access } = useAuth();
   return access?.platformRole === ("SYSTEM_OWNER" satisfies PlatformRole);
 }
+
+export function useIsAccountUser(): boolean {
+  const { access } = useAuth();
+  return access?.platformRole === ("ACCOUNT_USER" satisfies PlatformRole);
+}

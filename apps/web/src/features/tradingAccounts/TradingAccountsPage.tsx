@@ -14,7 +14,7 @@ import {
   type SummaryField,
 } from "../../components/data-display";
 import { getAdminToken } from "../../lib/api";
-import { useIsSystemOwner } from "../auth/useAuth";
+import { useIsAccountUser, useIsSystemOwner } from "../auth/useAuth";
 import { CreateTradingAccountModal } from "./CreateTradingAccountModal";
 import { useTradingAccountRiskHealthSummaries, useTradingAccounts } from "./hooks";
 import type { TradingAccount, TradingAccountRiskHealthStatus } from "./types";
@@ -62,9 +62,10 @@ export function TradingAccountsPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const isSystemOwner = useIsSystemOwner();
+  const isAccountUser = useIsAccountUser();
   const query = useTradingAccounts(token);
   const accounts = query.data?.accounts ?? [];
-  const healthQueries = useTradingAccountRiskHealthSummaries(accounts.map((account) => account.id), token);
+  const healthQueries = useTradingAccountRiskHealthSummaries(isAccountUser ? [] : accounts.map((account) => account.id), token);
   const healthFor = (account: TradingAccount) => healthQueries[accounts.findIndex((item) => item.id === account.id)];
   const openAccount = (account: TradingAccount) => navigate(createScopedNavigationTarget(`/trading-accounts/${account.id}`, location.search));
 
@@ -92,5 +93,5 @@ export function TradingAccountsPage() {
   const compact = (items: readonly TradingAccount[]) => <CompactRecordList records={items} getRecordId={(account) => account.id} renderIdentity={(account) => <Stack gap="xs">{identity(account)}{environment(account)}</Stack>} renderFields={fields} renderDetails={details} renderActions={action} expandedId={expandedId} onExpandedChange={setExpandedId} />;
   const narrow = (items: readonly TradingAccount[]) => <MobileRecordCard records={items} getRecordId={(account) => account.id} renderIdentity={identity} renderStatus={(account) => <StatusBadge status={account.environment} tone={account.environment === "LIVE" ? "danger" : "informational"} size="compact" />} renderFields={(account) => [{ label: "Broker", value: account.broker }, ...fields(account)]} onDetails={(account) => openAccount(account)} detailsLabel="View account" detailsIsDialog={false} />;
 
-  return <main className={classes.page}><Stack gap="lg"><Group className={classes.heading} justify="space-between" align="flex-end"><div className={classes.headingCopy}><Title order={2} size="h3">Trading Accounts</Title><Text size="sm" c="dimmed">View broker account scope, safety posture, and credential status.</Text></div>{isSystemOwner && <Button className={classes.createButton} onClick={() => setCreateOpened(true)}>New Trading Account</Button>}</Group><CreateTradingAccountModal opened={createOpened} onClose={() => setCreateOpened(false)} token={token} accounts={accounts} /><Card withBorder radius="md" p="md" className={classes.panel}>{query.isLoading ? <DataState state="loading" message="Loading trading accounts…" /> : query.isError ? <DataState state="error" title="Unable to load trading accounts" message={query.error instanceof Error ? query.error.message : "Trading accounts could not be loaded."} onRetry={() => void query.refetch()} /> : accounts.length === 0 ? <DataState state="empty" title="No trading accounts" message="No trading accounts are available to the current user." /> : <ResponsiveDataView records={accounts} getRecordId={(account) => account.id} wide={wide} compact={compact} narrow={narrow} aria-label="Trading accounts" />}</Card></Stack></main>;
+  return <main className={classes.page}><Stack gap="lg"><Group className={classes.heading} justify="space-between" align="flex-end"><div className={classes.headingCopy}><Title order={2} size="h3">{isAccountUser ? "My Accounts" : "Trading Accounts"}</Title><Text size="sm" c="dimmed">View broker account scope, safety posture, and credential status.</Text></div>{isSystemOwner && <Button className={classes.createButton} onClick={() => setCreateOpened(true)}>New Trading Account</Button>}</Group><CreateTradingAccountModal opened={createOpened} onClose={() => setCreateOpened(false)} token={token} accounts={accounts} /><Card withBorder radius="md" p="md" className={classes.panel}>{query.isLoading ? <DataState state="loading" message="Loading trading accounts…" /> : query.isError ? <DataState state="error" title="Unable to load trading accounts" message={query.error instanceof Error ? query.error.message : "Trading accounts could not be loaded."} onRetry={() => void query.refetch()} /> : accounts.length === 0 ? <DataState state="empty" title="No trading accounts" message="No trading accounts are available to the current user." /> : <ResponsiveDataView records={accounts} getRecordId={(account) => account.id} wide={wide} compact={compact} narrow={narrow} aria-label="Trading accounts" />}</Card></Stack></main>;
 }

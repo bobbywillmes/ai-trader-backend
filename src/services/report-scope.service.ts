@@ -7,7 +7,7 @@ export async function resolveReportAccountIds(
   accountId: number | null
 ) {
   if (user.platformRole === PlatformRole.ACCOUNT_USER) {
-    throw new HttpError(403, 'Admin-console reports are not available to account portal users.');
+    throw new HttpError(403, 'Administrative report scope is not available to Account Users.');
   }
   if (accountId !== null) {
     if (user.platformRole !== PlatformRole.SYSTEM_OWNER) {

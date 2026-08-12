@@ -1,11 +1,12 @@
 # AI Trader Web
 
-React application for AI Trader's authenticated human interfaces.
+React application for AI Trader's authenticated human interface.
 
-## Application surfaces
+## Application surface
 
-- Web Console for System Owners and Operators
-- Account Portal for Account Users
+- One shared role-aware web application for System Owners, Operators, and Account Users
+- Centralized navigation and route policies determine role visibility and access
+- Trading Account memberships determine non-owner account scope
 
 ## Development
 
