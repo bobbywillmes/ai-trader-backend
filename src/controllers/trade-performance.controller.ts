@@ -1,12 +1,21 @@
 import type { NextFunction, Request, Response } from 'express';
 import { HttpError } from '../errors/http-error.js';
 import {
-  getTradePerformance,
+  getTradePerformanceForAccounts,
   type TradePerformanceQuery,
   type TradePerformanceOutcome,
   type TradePerformanceSortBy,
   type TradePerformanceSortDirection,
 } from '../services/trade-performance.service.js';
+import { resolveReportAccountIds } from '../services/report-scope.service.js';
+
+function getAccountScope(value: unknown) {
+  if (value === 'all') return null;
+  if (typeof value !== 'string' || !/^\d+$/.test(value) || Number(value) <= 0) {
+    throw new HttpError(400, 'account must be all or a positive TradingAccount id.');
+  }
+  return Number(value);
+}
 
 function getQueryString(value: unknown, field: string) {
   if (value === undefined || value === null || value === '') {
@@ -166,7 +175,12 @@ export async function tradePerformanceController(
     if (sortBy !== undefined) query.sortBy = sortBy;
     if (sortDirection !== undefined) query.sortDirection = sortDirection;
 
-    res.status(200).json(await getTradePerformance(query));
+    if (!res.locals.user) throw new HttpError(401, 'Authentication required.');
+    const accountIds = await resolveReportAccountIds(
+      res.locals.user,
+      getAccountScope(req.query.account)
+    );
+    res.status(200).json(await getTradePerformanceForAccounts(accountIds, query));
   } catch (error) {
     next(error);
   }

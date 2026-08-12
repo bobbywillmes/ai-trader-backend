@@ -3,6 +3,7 @@ import type { NextFunction, Request, Response } from 'express';
 import {
   reconcileTradingAccount,
   reconcileTradingAccountWithLock,
+  ReconciliationBrokerUnavailableError,
   runReconciliationCheck,
 } from '../services/reconciliation.service.js';
 import { HttpError } from '../errors/http-error.js';
@@ -52,6 +53,13 @@ export async function runReconciliationController(
       ...result,
     });
   } catch (error) {
+    if (error instanceof ReconciliationBrokerUnavailableError) {
+      next(new HttpError(503, error.message, {
+        code: 'RECONCILIATION_UNAVAILABLE',
+        tradingAccountId: error.tradingAccountId,
+      }));
+      return;
+    }
     next(error);
   }
 }
@@ -74,6 +82,13 @@ export async function runTradingAccountReconciliationController(
     });
     res.status(200).json({ ok: true, dryRun: !persistEvents, ...result });
   } catch (error) {
+    if (error instanceof ReconciliationBrokerUnavailableError) {
+      next(new HttpError(503, error.message, {
+        code: 'RECONCILIATION_UNAVAILABLE',
+        tradingAccountId: error.tradingAccountId,
+      }));
+      return;
+    }
     next(error);
   }
 }

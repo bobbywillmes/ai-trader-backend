@@ -62,6 +62,7 @@ describe('user access metadata', () => {
             PlatformPermission.STRATEGY_READ,
             PlatformPermission.EXIT_PROFILE_READ,
             PlatformPermission.REPORTS_READ,
+            PlatformPermission.SYSTEM_EVENTS_READ,
           ]
         : [
             PlatformPermission.TRADING_ACCOUNT_READ,

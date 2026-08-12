@@ -2,11 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextFunction, Request, Response } from 'express';
 
 const mocks = vi.hoisted(() => ({
-  getTradePerformance: vi.fn(),
+  getTradePerformanceForAccounts: vi.fn(),
+  resolveReportAccountIds: vi.fn(),
 }));
 
 vi.mock('../services/trade-performance.service.js', () => ({
-  getTradePerformance: mocks.getTradePerformance,
+  getTradePerformanceForAccounts: mocks.getTradePerformanceForAccounts,
+}));
+vi.mock('../services/report-scope.service.js', () => ({
+  resolveReportAccountIds: mocks.resolveReportAccountIds,
 }));
 
 import { tradePerformanceController } from './trade-performance.controller.js';
@@ -15,18 +19,21 @@ function response() {
   return {
     status: vi.fn().mockReturnThis(),
     json: vi.fn(),
+    locals: {},
   } as unknown as Response;
 }
 
 describe('trade performance controller', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mocks.resolveReportAccountIds.mockResolvedValue([7]);
   });
 
   it('passes validated query parameters to the service', async () => {
-    mocks.getTradePerformance.mockResolvedValue({ ok: true });
+    mocks.getTradePerformanceForAccounts.mockResolvedValue({ ok: true });
     const req = {
       query: {
+        account: '7',
         dateFrom: '2026-06-01T00:00:00Z',
         dateTo: '2026-06-30T23:59:59Z',
         symbol: 'spy',
@@ -43,11 +50,13 @@ describe('trade performance controller', () => {
       },
     } as unknown as Request;
     const res = response();
+    (res.locals as Record<string, unknown>).user = { id: 2, platformRole: 'OPERATOR' };
     const next = vi.fn() as NextFunction;
 
     await tradePerformanceController(req, res, next);
 
-    expect(mocks.getTradePerformance).toHaveBeenCalledWith({
+    expect(mocks.resolveReportAccountIds).toHaveBeenCalledWith(res.locals.user, 7);
+    expect(mocks.getTradePerformanceForAccounts).toHaveBeenCalledWith([7], {
       dateFrom: new Date('2026-06-01T00:00:00Z'),
       dateTo: new Date('2026-06-30T23:59:59Z'),
       symbol: 'spy',
@@ -70,15 +79,17 @@ describe('trade performance controller', () => {
   it('rejects malformed query parameters', async () => {
     const req = {
       query: {
+        account: '7',
         sortBy: 'rawSql',
       },
     } as unknown as Request;
     const res = response();
+    (res.locals as Record<string, unknown>).user = { id: 2, platformRole: 'OPERATOR' };
     const next = vi.fn() as NextFunction;
 
     await tradePerformanceController(req, res, next);
 
-    expect(mocks.getTradePerformance).not.toHaveBeenCalled();
+    expect(mocks.getTradePerformanceForAccounts).not.toHaveBeenCalled();
     expect(next).toHaveBeenCalledWith(
       expect.objectContaining({
         statusCode: 400,

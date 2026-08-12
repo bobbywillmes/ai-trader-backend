@@ -1,5 +1,5 @@
-import { Fragment, useMemo, useState } from "react";
-import { Accordion, Button, Card, Group, Stack, Table, Text, Title } from "@mantine/core";
+import { Fragment, useState } from "react";
+import { Accordion, Alert, Badge, Button, Card, Group, Stack, Table, Text, Title } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { IconChevronDown, IconChevronUp, IconTrash } from "@tabler/icons-react";
@@ -9,8 +9,10 @@ import {
   type StatusTone, type SummaryField,
 } from "../../components/data-display";
 import { getAdminToken } from "../../lib/api";
-import { useCancelOrder, useOpenOrders } from "./hooks";
-import type { OpenOrder } from "./types";
+import { useAllOpenOrders, useCancelOrder, useTradingAccountOpenOrders } from "./hooks";
+import type { OpenOrder, OpenOrdersAccountResult } from "./types";
+import { TradingAccountScopeSelector } from "../tradingAccountScope/TradingAccountScopeSelector";
+import { useTradingAccountScope } from "../tradingAccountScope/useTradingAccountScope";
 import classes from "./OrdersPage.module.css";
 
 const MISSING_VALUE = "Not available";
@@ -21,6 +23,11 @@ function value(order: OpenOrder, camel: "filledQty" | "limitPrice" | "submittedA
 
 function accountName(order: OpenOrder) {
   return order.tradingAccount?.displayName ?? (order.tradingAccountId !== null ? `Account ${order.tradingAccountId}` : "Unassigned account");
+}
+
+function accountContext(order: OpenOrder) {
+  const account = order.tradingAccount;
+  return `${accountName(order)} · ${account?.environment ?? "Environment unavailable"}${account?.accountHolderName ? ` · ${account.accountHolderName}` : ""}`;
 }
 
 function titleCase(input: string | null | undefined) {
@@ -74,7 +81,7 @@ function statusTone(status: string | null | undefined): StatusTone {
   return "warning";
 }
 
-export function OrdersDataView({ orders, token, ariaLabel = "Open orders" }: { orders: readonly OpenOrder[]; token: string | null; ariaLabel?: string }) {
+export function OrdersDataView({ orders, token, showAccountIdentity = true, ariaLabel = "Open orders" }: { orders: readonly OpenOrder[]; token: string | null; showAccountIdentity?: boolean; ariaLabel?: string }) {
   const cancelMutation = useCancelOrder(token);
   const [expandedId, setExpandedId] = useState<string | number | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -85,9 +92,10 @@ export function OrdersDataView({ orders, token, ariaLabel = "Open orders" }: { o
   function closeDetails() { const opener = detailOpener; setDetailId(null); window.setTimeout(() => opener?.focus(), 0); }
   function cancelOrder(order: OpenOrder) {
     if (cancelMutation.isPending || order.tradingAccountId === null) return;
+    const environment = order.tradingAccount?.environment ?? "UNKNOWN";
     modals.openConfirmModal({
       title: "Cancel order",
-      children: <Text size="sm">Cancel the open order for <strong>{order.symbol}</strong> in <strong>{accountName(order)}</strong>?</Text>,
+      children: <Stack gap="xs"><Text size="sm">Cancel the <strong>{titleCase(order.side)} {quantity(order)} {order.symbol}</strong> {titleCase(orderType(order))} order ({orderPrice(order)}) in <strong>{accountName(order)} · {environment}</strong>?</Text>{environment === "LIVE" && <Text size="sm" c="red" fw={700}>This cancellation affects a LIVE brokerage account with real money at risk.</Text>}</Stack>,
       labels: { confirm: "Cancel order", cancel: "Keep" }, confirmProps: { color: "red" },
       onConfirm: async () => {
         if (cancelMutation.isPending || order.tradingAccountId === null) return;
@@ -107,7 +115,7 @@ export function OrdersDataView({ orders, token, ariaLabel = "Open orders" }: { o
     label: isCanceling(order) ? "Canceling order" : `Cancel ${order.symbol} order`, icon: <IconTrash size={16} />, color: "red",
     disabled: cancelMutation.isPending || order.tradingAccountId === null, onClick: () => cancelOrder(order),
   });
-  const identity = (order: OpenOrder) => <div className={classes.identity}><Text component="h3" fw={800}>{order.symbol}</Text><Text size="xs" c="dimmed" className={classes.wrap}>{accountName(order)}</Text></div>;
+  const identity = (order: OpenOrder) => <div className={classes.identity}><Text component="h3" fw={800}>{order.symbol}</Text>{showAccountIdentity && <Text size="xs" c="dimmed" className={classes.wrap}>{accountContext(order)}</Text>}</div>;
   const status = (order: OpenOrder) => <Group gap="xs" wrap="wrap"><StatusBadge status={order.side} label={titleCase(order.side)} tone={order.side?.toLowerCase() === "buy" ? "positive" : "danger"} size="compact" /><StatusBadge status={order.status} label={titleCase(order.status)} tone={statusTone(order.status)} size="compact" /></Group>;
   const fields = (order: OpenOrder): SummaryField[] => [
     { label: "Order", value: `${titleCase(orderType(order))} · ${orderPrice(order)}` },
@@ -118,7 +126,7 @@ export function OrdersDataView({ orders, token, ariaLabel = "Open orders" }: { o
     {includeIdentity && <div className={classes.drawerIdentity}>{identity(order)}{status(order)}</div>}
     <div className={classes.detailCards}>
       <section className={classes.detailCard} aria-labelledby={`order-${order.id}-order-heading`}><Title id={`order-${order.id}-order-heading`} order={3} size="h5" className={classes.detailHeading}>Order</Title><RecordDetailsGrid missingValue={MISSING_VALUE} sections={[{ items: [
-        { label: "Symbol", value: order.symbol }, { label: "Account", value: accountName(order) }, { label: "Side", value: titleCase(order.side) },
+        { label: "Symbol", value: order.symbol }, { label: "Trading Account", value: accountContext(order) }, { label: "Side", value: titleCase(order.side) },
         { label: "Quantity", value: quantity(order) }, { label: "Order type", value: titleCase(orderType(order)) }, { label: "Status", value: titleCase(order.status) },
         { label: "Submitted", value: formatDate(value(order, "submittedAt", "submitted_at") as string | null) },
       ] }]} /></section>
@@ -141,7 +149,20 @@ export function OrdersDataView({ orders, token, ariaLabel = "Open orders" }: { o
 
 export function OrdersPage() {
   const [token] = useState<string | null>(() => getAdminToken());
-  const ordersQuery = useOpenOrders(token);
-  const orders = useMemo(() => ordersQuery.data ?? [], [ordersQuery.data]);
-  return <main className={classes.page}><Stack gap="lg"><Group justify="space-between" align="flex-end"><div><Title order={2} size="h3">Open Orders</Title><Text size="sm" c="dimmed">Broker orders awaiting completion or cancellation.</Text></div>{!ordersQuery.isLoading && !ordersQuery.isError && <Text size="sm" c="dimmed">{orders.length} open {orders.length === 1 ? "order" : "orders"}</Text>}</Group><Card withBorder radius="md" p="md" className={classes.panel}>{ordersQuery.isLoading ? <DataState state="loading" message="Loading open orders…" /> : ordersQuery.isError ? <DataState state="error" title="Unable to load open orders" message={ordersQuery.error instanceof Error ? ordersQuery.error.message : "Open orders could not be loaded."} onRetry={() => void ordersQuery.refetch()} /> : orders.length === 0 ? <DataState state="empty" title="No open orders" message="Orders will appear here while they await execution or cancellation." /> : <OrdersDataView orders={orders} token={token} />}</Card></Stack></main>;
+  const scope = useTradingAccountScope();
+  const allQuery = useAllOpenOrders(token, scope.isAll);
+  const accountQuery = useTradingAccountOpenOrders(scope.selectedAccount?.id, token);
+  const ordersQuery = scope.isAll ? allQuery : accountQuery;
+  const accountResults: OpenOrdersAccountResult[] = scope.isAll
+    ? (allQuery.data?.accounts ?? [])
+    : accountQuery.data ? [accountQuery.data] : [];
+  const orders = accountResults.flatMap((result) => result.orders ?? []);
+  const unavailable = accountResults.filter((result) => result.availability === "UNAVAILABLE");
+  return <main className={classes.page}><Stack gap="lg">
+    <Group justify="space-between" align="flex-end"><div><Title order={2} size="h3">Open Orders</Title><Text size="sm" c="dimmed">{scope.isAll ? "Live broker orders across accessible Trading Accounts." : `${scope.selectedAccount?.displayName} · ${scope.selectedAccount?.environment ?? ""} broker orders.`}</Text></div><TradingAccountScopeSelector mode="ACCOUNT_FILTERABLE" expanded variant="dashboard" /></Group>
+    {!ordersQuery.isLoading && !ordersQuery.isError && <Text size="sm" c="dimmed">{orders.length} confirmed open {orders.length === 1 ? "order" : "orders"}{unavailable.length ? ` · ${unavailable.length} ${unavailable.length === 1 ? "account" : "accounts"} unavailable` : ""}</Text>}
+    {unavailable.map((result) => <Alert key={result.account.id} color={result.account.environment === "LIVE" ? "red" : "orange"} title={`${result.account.displayName} · ${result.account.environment} — Broker order state unavailable`}><Text size="sm">{result.reason === "CREDENTIALS_MISSING" ? "Credentials missing. " : ""}{result.message}</Text><Text size="xs" c="dimmed">{result.account.accountHolderName} · {result.account.broker}</Text></Alert>)}
+    {!scope.isAll && scope.selectedAccount && <Group gap="xs"><Badge color={scope.selectedAccount.environment === "LIVE" ? "red" : "blue"}>{scope.selectedAccount.environment}</Badge><Text size="sm" fw={600}>{scope.selectedAccount.displayName}</Text></Group>}
+    <Card withBorder radius="md" p="md" className={classes.panel}>{ordersQuery.isLoading ? <DataState state="loading" message="Loading open broker orders…" /> : ordersQuery.isError ? <DataState state="error" title="Broker order state unavailable" message={ordersQuery.error instanceof Error ? ordersQuery.error.message : "Open orders could not be loaded."} onRetry={() => void ordersQuery.refetch()} /> : orders.length === 0 && unavailable.length === 0 ? <DataState state="empty" title="No open orders" message="The broker confirmed there are no orders awaiting execution or cancellation." /> : orders.length === 0 ? <DataState state="empty" title="No broker order data available" message="No accessible Trading Account returned confirmed broker order state." /> : <OrdersDataView orders={orders} token={token} showAccountIdentity={scope.isAll} />}</Card>
+  </Stack></main>;
 }

@@ -1,34 +1,68 @@
 import { useQuery } from "@tanstack/react-query";
 import {
-  getBootstrap,
   getIndexIntraday,
   getIndexPerformance,
   getSystemEvents,
+  getTradingAccountDashboard,
+  getDashboardAccountsOverview,
 } from "./api";
 import type { IndexChartRange } from "./types";
 
 export const dashboardKeys = {
-  bootstrap: ["dashboard", "bootstrap"] as const,
   indexIntraday: (range: IndexChartRange) =>
     ["dashboard", "index-intraday", range] as const,
   indexPerformance: ["dashboard", "index-performance"] as const,
-  systemEvents: (limit: number) => ["dashboard", "system-events", limit] as const,
+  systemEvents: (
+    account: "all" | number,
+    page: number,
+    pageSize: number,
+    type: string,
+    search: string,
+  ) => ["system-events", account, page, pageSize, type, search] as const,
+  account: (tradingAccountId: number) =>
+    ["dashboard", "account", tradingAccountId] as const,
+  accountsOverview: ["dashboard", "scope", "all", "accounts-overview"] as const,
 };
 
-export function useBootstrap(token: string | null) {
+export function useTradingAccountDashboard(
+  token: string | null,
+  tradingAccountId: number | null,
+) {
   return useQuery({
-    queryKey: dashboardKeys.bootstrap,
-    queryFn: () => getBootstrap(token as string),
-    enabled: Boolean(token),
+    queryKey: dashboardKeys.account(tradingAccountId ?? 0),
+    queryFn: () =>
+      getTradingAccountDashboard(token as string, tradingAccountId as number),
+    enabled: Boolean(token && tradingAccountId),
     refetchInterval: 10000,
     staleTime: 5000,
   });
 }
 
-export function useSystemEvents(token: string | null, limit = 20) {
+export function useDashboardAccountsOverview(
+  token: string | null,
+  enabled: boolean,
+) {
   return useQuery({
-    queryKey: dashboardKeys.systemEvents(limit),
-    queryFn: () => getSystemEvents(token as string, limit),
+    queryKey: dashboardKeys.accountsOverview,
+    queryFn: () => getDashboardAccountsOverview(token as string),
+    enabled: Boolean(token && enabled),
+    refetchInterval: 15000,
+    staleTime: 10000,
+  });
+}
+
+export function useSystemEvents(
+  token: string | null,
+  account: "all" | number,
+  page = 1,
+  pageSize = 25,
+  type = "all",
+  search = "",
+) {
+  return useQuery({
+    queryKey: dashboardKeys.systemEvents(account, page, pageSize, type, search),
+    queryFn: () =>
+      getSystemEvents(token as string, account, page, pageSize, type, search),
     enabled: Boolean(token),
     refetchInterval: 15000,
   });

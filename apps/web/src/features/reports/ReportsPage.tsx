@@ -19,7 +19,8 @@ import {
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { createScopedNavigationTarget } from "../../app/navigationUtils";
 import { IconFileAnalytics } from "@tabler/icons-react";
 import { TradingAccountBadge } from "../../components/TradingAccountBadge";
 import {
@@ -42,6 +43,8 @@ import { useTradeCycleDrawer } from "../tradeHistory/hooks";
 import classes from "./ReportsPage.module.css";
 import { useStrategies } from "../strategies/hooks";
 import { useSubscriptions } from "../subscriptions/hooks";
+import { TradingAccountScopeSelector } from "../tradingAccountScope/TradingAccountScopeSelector";
+import { useTradingAccountScope } from "../tradingAccountScope/useTradingAccountScope";
 import {
   useAccountSnapshotTrends,
   useAccountSnapshots,
@@ -135,7 +138,11 @@ function getTimespanDateFrom(timespan: string) {
   const now = new Date();
 
   if (timespan === "today") {
-    return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    return new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+    ).toISOString();
   }
 
   if (timespan === "7d") {
@@ -212,7 +219,7 @@ function decisionColor(state: string) {
 function getSortLabel(
   column: TradePerformanceSortBy,
   sortBy: TradePerformanceSortBy,
-  sortDirection: TradePerformanceSortDirection
+  sortDirection: TradePerformanceSortDirection,
 ) {
   if (column !== sortBy) return "";
   return sortDirection === "asc" ? " ↑" : " ↓";
@@ -347,7 +354,7 @@ function AccountTrendChart({
   yAxisFormatter: (value: number) => string;
 }) {
   const hasRenderableValue = data.some((point) =>
-    lines.some((line) => point[line.dataKey] !== null)
+    lines.some((line) => point[line.dataKey] !== null),
   );
 
   if (data.length === 0) {
@@ -412,11 +419,7 @@ function PerformanceSortHeader({
 }) {
   return (
     <Table.Th ta={align}>
-      <Button
-        variant="subtle"
-        size="compact-sm"
-        onClick={() => onSort(column)}
-      >
+      <Button variant="subtle" size="compact-sm" onClick={() => onSort(column)}>
         {label}
         {getSortLabel(column, sortBy, sortDirection)}
       </Button>
@@ -441,7 +444,8 @@ function PerformancePaginationFooter({
   isFetching: boolean;
   onPageChange: (page: number) => void;
 }) {
-  const firstResult = total === 0 || rowCount === 0 ? 0 : (page - 1) * pageSize + 1;
+  const firstResult =
+    total === 0 || rowCount === 0 ? 0 : (page - 1) * pageSize + 1;
   const lastResult =
     total === 0 || rowCount === 0
       ? 0
@@ -602,11 +606,21 @@ function PerformanceTradesTable({
                     {trade.mode ?? "-"}
                   </Badge>
                 </Table.Td>
-                <Table.Td data-label="Opened">{formatDate(trade.openedAt)}</Table.Td>
-                <Table.Td data-label="Closed">{formatDate(trade.closedAt)}</Table.Td>
-                <Table.Td data-label="Quantity" ta="right">{formatNumber(trade.quantity)}</Table.Td>
-                <Table.Td data-label="Average entry" ta="right">{formatMoney(trade.avgEntryPrice)}</Table.Td>
-                <Table.Td data-label="Average exit" ta="right">{formatMoney(trade.avgExitPrice)}</Table.Td>
+                <Table.Td data-label="Opened">
+                  {formatDate(trade.openedAt)}
+                </Table.Td>
+                <Table.Td data-label="Closed">
+                  {formatDate(trade.closedAt)}
+                </Table.Td>
+                <Table.Td data-label="Quantity" ta="right">
+                  {formatNumber(trade.quantity)}
+                </Table.Td>
+                <Table.Td data-label="Average entry" ta="right">
+                  {formatMoney(trade.avgEntryPrice)}
+                </Table.Td>
+                <Table.Td data-label="Average exit" ta="right">
+                  {formatMoney(trade.avgExitPrice)}
+                </Table.Td>
                 <Table.Td data-label="Realized P/L" ta="right">
                   <Text fw={700} c={pnlTextColor(trade.realizedPnl)} size="sm">
                     {formatMoney(trade.realizedPnl)}
@@ -617,12 +631,16 @@ function PerformanceTradesTable({
                     {formatPercent(trade.returnPct)}
                   </Text>
                 </Table.Td>
-                <Table.Td data-label="Holding duration">{formatDuration(trade.holdingDurationMs)}</Table.Td>
+                <Table.Td data-label="Holding duration">
+                  {formatDuration(trade.holdingDurationMs)}
+                </Table.Td>
                 <Table.Td data-label="Strategy / subscription">
                   <Stack gap={2}>
                     <Text size="sm">{trade.strategy?.name ?? "-"}</Text>
                     <Text size="xs" c="dimmed">
-                      {trade.subscription?.name ?? trade.subscription?.key ?? "-"}
+                      {trade.subscription?.name ??
+                        trade.subscription?.key ??
+                        "-"}
                     </Text>
                   </Stack>
                 </Table.Td>
@@ -634,7 +652,7 @@ function PerformanceTradesTable({
                           size="xs"
                           variant="light"
                           color={decisionColor(
-                            trade.entryDecision.decisionState
+                            trade.entryDecision.decisionState,
                           )}
                         >
                           {trade.entryDecision.decisionState}
@@ -688,6 +706,11 @@ function PerformanceTradesTable({
 }
 
 export function ReportsPage() {
+  const accountScope = useTradingAccountScope();
+  const scopedAccount = accountScope.isAll
+    ? "all"
+    : String(accountScope.selectedAccount?.id);
+  const location = useLocation();
   const [token] = useState(() => getAdminToken());
   const navigate = useNavigate();
   const { reportSection } = useParams<{ reportSection?: string }>();
@@ -696,31 +719,48 @@ export function ReportsPage() {
   const [snapshotLimit, setSnapshotLimit] = useState(20);
   const [activityLimit, setActivityLimit] = useState(20);
   const [reportTimespan, setReportTimespan] = useState("all");
-  const [reportModeFilter, setReportModeFilter] = useState("all");
   const [symbolFilter, setSymbolFilter] = useState("");
   const [activityTypeFilter, setActivityTypeFilter] = useState<string | null>(
-    "FILL"
+    "FILL",
   );
   const [performanceSymbolFilter, setPerformanceSymbolFilter] = useState("");
-  const [performanceStrategyId, setPerformanceStrategyId] = useState<string | null>(null);
-  const [performanceSubscriptionId, setPerformanceSubscriptionId] = useState<string | null>(null);
-  const [performanceExitProfileId, setPerformanceExitProfileId] = useState<string | null>(null);
-  const [performanceExitReason, setPerformanceExitReason] = useState<string | null>(null);
+  const [performanceStrategyId, setPerformanceStrategyId] = useState<
+    string | null
+  >(null);
+  const [performanceSubscriptionId, setPerformanceSubscriptionId] = useState<
+    string | null
+  >(null);
+  const [performanceExitProfileId, setPerformanceExitProfileId] = useState<
+    string | null
+  >(null);
+  const [performanceExitReason, setPerformanceExitReason] = useState<
+    string | null
+  >(null);
   const [performanceOutcome, setPerformanceOutcome] =
     useState<TradePerformanceOutcome>("all");
-  const [performancePage, setPerformancePage] = useState(1);
+  const [performancePaginationState, setPerformancePaginationState] = useState({
+    scope: scopedAccount,
+    page: 1,
+  });
+  const performancePage = performancePaginationState.scope === scopedAccount
+    ? performancePaginationState.page
+    : 1;
+  const setPerformancePage = (page: number) =>
+    setPerformancePaginationState({ scope: scopedAccount, page });
   const [performancePageSize, setPerformancePageSize] = useState(25);
   const [performanceSortBy, setPerformanceSortBy] =
     useState<TradePerformanceSortBy>("closedAt");
   const [performanceSortDirection, setPerformanceSortDirection] =
     useState<TradePerformanceSortDirection>("desc");
   const tradeCycleDrawer = useTradeCycleDrawer(token);
+
   const strategiesQuery = useStrategies(token);
   const subscriptionsQuery = useSubscriptions(token);
   const exitProfilesQuery = useExitProfiles(token);
 
   const brokerQuery = useMemo(() => {
     const query: BrokerActivitiesQuery = {
+      account: scopedAccount,
       limit: activityLimit,
     };
 
@@ -735,31 +775,33 @@ export function ReportsPage() {
     }
 
     return query;
-  }, [activityLimit, activityTypeFilter, symbolFilter]);
+  }, [activityLimit, activityTypeFilter, scopedAccount, symbolFilter]);
 
   const accountSnapshotQuery = useMemo(() => {
     const dateFrom = getTimespanDateFrom(reportTimespan);
 
     return {
+      account: scopedAccount,
       limit: snapshotLimit,
-      ...(reportModeFilter !== "all" ? { mode: reportModeFilter } : {}),
       ...(dateFrom ? { dateFrom } : {}),
     };
-  }, [reportModeFilter, reportTimespan, snapshotLimit]);
+  }, [reportTimespan, scopedAccount, snapshotLimit]);
 
   const performanceQuery = useMemo<TradePerformanceQuery>(() => {
     const dateFrom = getTimespanDateFrom(reportTimespan);
     const symbol = performanceSymbolFilter.trim().toUpperCase();
 
     return {
+      account: scopedAccount,
       page: performancePage,
       pageSize: performancePageSize,
       sortBy: performanceSortBy,
       sortDirection: performanceSortDirection,
-      ...(reportModeFilter !== "all" ? { mode: reportModeFilter } : {}),
       ...(dateFrom ? { dateFrom } : {}),
       ...(symbol ? { symbol } : {}),
-      ...(performanceStrategyId ? { strategyId: Number(performanceStrategyId) } : {}),
+      ...(performanceStrategyId
+        ? { strategyId: Number(performanceStrategyId) }
+        : {}),
       ...(performanceSubscriptionId
         ? { subscriptionId: Number(performanceSubscriptionId) }
         : {}),
@@ -780,20 +822,26 @@ export function ReportsPage() {
     performanceStrategyId,
     performanceSubscriptionId,
     performanceSymbolFilter,
-    reportModeFilter,
     reportTimespan,
+    scopedAccount,
   ]);
 
-  const accountSnapshotsQuery = useAccountSnapshots(token, accountSnapshotQuery);
+  const accountSnapshotsQuery = useAccountSnapshots(
+    token,
+    accountSnapshotQuery,
+  );
   const accountSnapshotTrendsQuery = useAccountSnapshotTrends(
     token,
-    accountSnapshotQuery
+    accountSnapshotQuery,
   );
   const brokerActivitiesQuery = useBrokerActivities(token, brokerQuery);
   const tradePerformanceQuery = useTradePerformance(token, performanceQuery);
 
-  const manualSnapshotMutation = useCreateManualAccountSnapshot(token);
-  const brokerSyncMutation = useSyncBrokerActivities(token);
+  const manualSnapshotMutation = useCreateManualAccountSnapshot(
+    token,
+    scopedAccount,
+  );
+  const brokerSyncMutation = useSyncBrokerActivities(token, scopedAccount);
 
   const snapshots = accountSnapshotsQuery.data?.snapshots ?? [];
   const trendSnapshots = accountSnapshotTrendsQuery.data?.snapshots ?? [];
@@ -836,7 +884,7 @@ export function ReportsPage() {
           .map((group) => group.id)
           .filter((value) => value !== "unknown"),
         ...(performanceExitReason ? [performanceExitReason] : []),
-      ])
+      ]),
     ).map((reason) => ({ value: reason, label: reason })),
   ];
 
@@ -859,7 +907,7 @@ export function ReportsPage() {
 
     if (performanceSortBy === nextSortBy) {
       setPerformanceSortDirection((current) =>
-        current === "asc" ? "desc" : "asc"
+        current === "asc" ? "desc" : "asc",
       );
       return;
     }
@@ -909,769 +957,862 @@ export function ReportsPage() {
   }
 
   return (
-    <main className={classes.page}><Stack gap="lg">
-      <Group justify="space-between" align="flex-start" className={classes.header}>
-        <div>
-          <Title order={2}>Reports</Title>
-          <Text c="dimmed">
-            Account snapshots and broker-confirmed activity for production
-            auditing.
-          </Text>
-        </div>
-
-        <Group align="flex-end" className={classes.headerControls}>
-          <Select
-            label="Mode"
-            value={reportModeFilter}
-            onChange={(value) => {
-              setReportModeFilter(value ?? "all");
-              setPerformancePage(1);
-            }}
-            data={[
-              { value: "all", label: "All" },
-              { value: "paper", label: "Paper" },
-              { value: "live", label: "Live" },
-            ]}
-            w={120}
-          />
-
-          <Select
-            label="Timespan"
-            value={reportTimespan}
-            onChange={(value) => {
-              setReportTimespan(value ?? "all");
-              setPerformancePage(1);
-            }}
-            data={[
-              { value: "today", label: "Today" },
-              { value: "7d", label: "7 days" },
-              { value: "30d", label: "30 days" },
-              { value: "90d", label: "90 days" },
-              { value: "ytd", label: "YTD" },
-              { value: "1y", label: "1 year" },
-              { value: "all", label: "All time" },
-            ]}
-            w={140}
-          />
-
-          <Button
-            variant="default"
-            onClick={handleManualSnapshot}
-            loading={manualSnapshotMutation.isPending}
-          >
-            Record Account Snapshot
-          </Button>
-
-          <Button
-            onClick={handleBrokerSync}
-            loading={brokerSyncMutation.isPending}
-          >
-            Sync Broker Fills
-          </Button>
-        </Group>
-      </Group>
-
-      <Tabs value={reportTab} onChange={(value) => {
-        if (value !== "overview" && value !== "performance" && value !== "audit") return;
-        const section = reportSectionByTab[value];
-        navigate(section ? `/reports/${section}` : "/reports");
-      }} keepMounted={false} className={classes.reportTabs}>
-        <Tabs.List aria-label="Report sections">
-          <Tabs.Tab value="overview">Overview</Tabs.Tab>
-          <Tabs.Tab value="performance">Trade Performance</Tabs.Tab>
-          <Tabs.Tab value="audit">Audit Records</Tabs.Tab>
-        </Tabs.List>
-
-      {reportTab === "overview" && latestSnapshot && (
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 5 }} className={classes.overviewSummary}>
-          <Card withBorder radius="md" p="md">
-            <Text size="sm" c="dimmed">
-              Latest Snapshot
+    <main className={classes.page}>
+      <Stack gap="lg">
+        <Group
+          justify="space-between"
+          align="flex-start"
+          className={classes.header}
+        >
+          <div>
+            <Title order={2}>Reports</Title>
+            <Text c="dimmed">
+              Account snapshots and broker-confirmed activity for production
+              auditing.
             </Text>
-            <Text fw={700}>{formatDate(latestSnapshot.createdAt)}</Text>
-            <Badge variant="light" color={latestSnapshot.changed ? "teal" : "gray"}>
-              {latestSnapshot.reason}
-            </Badge>
-          </Card>
+          </div>
 
-          <Card withBorder radius="md" p="md">
-            <Text size="sm" c="dimmed">
-              Cash
-            </Text>
-            <Text fw={700}>{formatMoney(latestSnapshot.cash)}</Text>
-            <Text size="xs" c="dimmed">
-              Buying power: {formatMoney(latestSnapshot.buyingPower)}
-            </Text>
-          </Card>
-
-          <Card withBorder radius="md" p="md">
-            <Text size="sm" c="dimmed">
-              Equity
-            </Text>
-            <Text fw={700}>{formatMoney(latestSnapshot.equity)}</Text>
-            <Text size="xs" c="dimmed">
-              Portfolio: {formatMoney(latestSnapshot.portfolioValue)}
-            </Text>
-          </Card>
-
-          <Card withBorder radius="md" p="md">
-            <Text size="sm" c="dimmed">
-              Day P/L
-            </Text>
-            <Text fw={700}>{formatMoney(latestSnapshot.dayPnL)}</Text>
-            <Text size="xs" c="dimmed">
-              {latestSnapshot.dayPnLPct === null
-                ? "-"
-                : `${latestSnapshot.dayPnLPct.toFixed(3)}%`}
-            </Text>
-          </Card>
-
-          <Card withBorder radius="md" p="md">
-            <Text size="sm" c="dimmed">
-              Gross Exposure
-            </Text>
-            <Text fw={700}>
-              {formatMoney(latestSnapshot.exposure.grossExposure)}
-            </Text>
-            <Text size="xs" c="dimmed">
-              {formatExposurePercent(latestSnapshot.exposure.grossExposurePct)}
-            </Text>
-          </Card>
-        </SimpleGrid>
-      )}
-
-      <Tabs.Panel value="performance" pt="lg"><Card withBorder radius="md" p="lg">
-        <Stack gap="md">
-          <Group justify="space-between" align="flex-start">
-            <div>
-              <Title order={3}>Trade Performance</Title>
-              <Text size="sm" c="dimmed">
-                Closed trade-cycle results grouped by lifecycle ownership.
-              </Text>
-            </div>
+          <Group className={classes.headerControls}>
+            <TradingAccountScopeSelector
+              mode="ACCOUNT_FILTERABLE"
+              expanded
+              variant="dashboard"
+            />
           </Group>
+        </Group>
 
-          <Divider />
+        <Tabs
+          value={reportTab}
+          onChange={(value) => {
+            if (
+              value !== "overview" &&
+              value !== "performance" &&
+              value !== "audit"
+            )
+              return;
+            const section = reportSectionByTab[value];
+            navigate(
+              createScopedNavigationTarget(
+                section ? `/reports/${section}` : "/reports",
+                location.search,
+              ),
+            );
+          }}
+          keepMounted={false}
+          className={classes.reportTabs}
+        >
+          <Tabs.List aria-label="Report sections">
+            <Tabs.Tab value="overview">Overview</Tabs.Tab>
+            <Tabs.Tab value="performance">Trade Performance</Tabs.Tab>
+            <Tabs.Tab value="audit">Audit Records</Tabs.Tab>
+          </Tabs.List>
 
-          <Group align="flex-end" className={classes.reportFilters}>
-            <TextInput
-              label="Symbol"
-              placeholder="SPY"
-              value={performanceSymbolFilter}
-              onChange={(event) => {
-                setPerformanceSymbolFilter(event.currentTarget.value);
-                resetPerformancePage();
-              }}
-              w={110}
-            />
-
+          <Group align="flex-end" mt="md" className={classes.reportFilters}>
             <Select
-              label="Strategy"
-              value={performanceStrategyId ?? ""}
+              label="Timespan"
+              value={reportTimespan}
               onChange={(value) => {
-                setPerformanceStrategyId(value || null);
-                resetPerformancePage();
-              }}
-              data={strategyOptions}
-              searchable
-              w={190}
-            />
-
-            <Select
-              label="Subscription"
-              value={performanceSubscriptionId ?? ""}
-              onChange={(value) => {
-                setPerformanceSubscriptionId(value || null);
-                resetPerformancePage();
-              }}
-              data={subscriptionOptions}
-              searchable
-              w={190}
-            />
-
-            <Select
-              label="Exit profile"
-              value={performanceExitProfileId ?? ""}
-              onChange={(value) => {
-                setPerformanceExitProfileId(value || null);
-                resetPerformancePage();
-              }}
-              data={exitProfileOptions}
-              searchable
-              w={190}
-            />
-
-            <Select
-              label="Exit reason"
-              value={performanceExitReason ?? ""}
-              onChange={(value) => {
-                setPerformanceExitReason(value || null);
-                resetPerformancePage();
-              }}
-              data={exitReasonOptions}
-              searchable
-              w={180}
-            />
-
-            <Select
-              label="Outcome"
-              value={performanceOutcome}
-              onChange={(value) => {
-                setPerformanceOutcome(
-                  (value as TradePerformanceOutcome | null) ?? "all"
-                );
-                resetPerformancePage();
+                setReportTimespan(value ?? "all");
+                setPerformancePage(1);
               }}
               data={[
-                { value: "all", label: "All" },
-                { value: "winner", label: "Winners" },
-                { value: "loser", label: "Losers" },
-                { value: "breakeven", label: "Breakeven" },
+                { value: "today", label: "Today" },
+                { value: "7d", label: "7 days" },
+                { value: "30d", label: "30 days" },
+                { value: "90d", label: "90 days" },
+                { value: "ytd", label: "YTD" },
+                { value: "1y", label: "1 year" },
+                { value: "all", label: "All time" },
               ]}
               w={140}
             />
-
-            <Select
-              label="Rows"
-              value={String(performancePageSize)}
-              onChange={(value) => {
-                setPerformancePageSize(Number(value ?? 25));
-                resetPerformancePage();
-              }}
-              data={[
-                { value: "10", label: "10" },
-                { value: "25", label: "25" },
-                { value: "50", label: "50" },
-                { value: "100", label: "100" },
-              ]}
-              w={100}
-            />
-
-            <Button variant="default" onClick={clearPerformanceFilters}>
-              Clear
-            </Button>
           </Group>
 
-          {tradePerformanceQuery.isLoading && (
-            <Group>
-              <Loader size="sm" />
-              <Text>Loading trade performance...</Text>
-            </Group>
-          )}
-
-          {tradePerformanceQuery.isError && (
-            <Alert color="red" title="Failed to load trade performance">
-              Check the backend route and admin session.
-            </Alert>
-          )}
-
-          {performance && (
-            <Stack gap="lg">
-              <SimpleGrid cols={{ base: 1, sm: 2, lg: 5 }}>
+          {reportTab === "overview" &&
+            !accountScope.isAll &&
+            latestSnapshot && (
+              <SimpleGrid
+                cols={{ base: 1, sm: 2, lg: 5 }}
+                className={classes.overviewSummary}
+              >
                 <Card withBorder radius="md" p="md">
                   <Text size="sm" c="dimmed">
-                    Realized P/L
+                    Latest Snapshot
                   </Text>
-                  <Text
-                    fw={700}
-                    c={
-                      performance.summary.totalRealizedPnl >= 0
-                        ? "teal"
-                        : "red"
-                    }
+                  <Text fw={700}>{formatDate(latestSnapshot.createdAt)}</Text>
+                  <Badge
+                    variant="light"
+                    color={latestSnapshot.changed ? "teal" : "gray"}
                   >
-                    {formatMoney(performance.summary.totalRealizedPnl)}
+                    {latestSnapshot.reason}
+                  </Badge>
+                </Card>
+
+                <Card withBorder radius="md" p="md">
+                  <Text size="sm" c="dimmed">
+                    Cash
                   </Text>
+                  <Text fw={700}>{formatMoney(latestSnapshot.cash)}</Text>
                   <Text size="xs" c="dimmed">
-                    {performance.summary.reportableTradeCount} reportable trades
+                    Buying power: {formatMoney(latestSnapshot.buyingPower)}
                   </Text>
                 </Card>
 
                 <Card withBorder radius="md" p="md">
                   <Text size="sm" c="dimmed">
-                    Win Rate
+                    Equity
                   </Text>
-                  <Text fw={700}>
-                    {formatPercent(performance.summary.winRate)}
-                  </Text>
+                  <Text fw={700}>{formatMoney(latestSnapshot.equity)}</Text>
                   <Text size="xs" c="dimmed">
-                    {performance.summary.winnerCount} wins /{" "}
-                    {performance.summary.loserCount} losses
+                    Portfolio: {formatMoney(latestSnapshot.portfolioValue)}
                   </Text>
                 </Card>
 
                 <Card withBorder radius="md" p="md">
                   <Text size="sm" c="dimmed">
-                    Avg Return
+                    Day P/L
                   </Text>
-                  <Text fw={700}>
-                    {formatPercent(performance.summary.averageReturnPct)}
-                  </Text>
+                  <Text fw={700}>{formatMoney(latestSnapshot.dayPnL)}</Text>
                   <Text size="xs" c="dimmed">
-                    Per reportable trade
+                    {latestSnapshot.dayPnLPct === null
+                      ? "-"
+                      : `${latestSnapshot.dayPnLPct.toFixed(3)}%`}
                   </Text>
                 </Card>
 
                 <Card withBorder radius="md" p="md">
                   <Text size="sm" c="dimmed">
-                    Profit Factor
+                    Gross Exposure
                   </Text>
                   <Text fw={700}>
-                    {formatNumber(performance.summary.profitFactor)}
+                    {formatMoney(latestSnapshot.exposure.grossExposure)}
                   </Text>
                   <Text size="xs" c="dimmed">
-                    Gross wins over gross losses
-                  </Text>
-                </Card>
-
-                <Card withBorder radius="md" p="md">
-                  <Text size="sm" c="dimmed">
-                    Avg Hold
-                  </Text>
-                  <Text fw={700}>
-                    {formatDuration(
-                      performance.summary.averageHoldingDurationMs
+                    {formatExposurePercent(
+                      latestSnapshot.exposure.grossExposurePct,
                     )}
                   </Text>
-                  <Text size="xs" c="dimmed">
-                    Closed cycle duration
-                  </Text>
                 </Card>
               </SimpleGrid>
+            )}
 
-              <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }}>
-                <Card withBorder radius="md" p="md">
-                  <Stack gap="sm">
-                    <Title order={4}>By Strategy</Title>
-                    <PerformanceBarChart
-                      data={performance.groups.byStrategy}
-                      emptyLabel="No strategy results yet."
-                    />
+          <Tabs.Panel value="performance" pt="lg">
+            <Card withBorder radius="md" p="lg">
+              <Stack gap="md">
+                <Group justify="space-between" align="flex-start">
+                  <div>
+                    <Title order={3}>Trade Performance</Title>
+                    <Text size="sm" c="dimmed">
+                      Closed trade-cycle results grouped by lifecycle ownership.
+                    </Text>
+                  </div>
+                </Group>
+
+                <Divider />
+
+                <Group align="flex-end" className={classes.reportFilters}>
+                  <TextInput
+                    label="Symbol"
+                    placeholder="SPY"
+                    value={performanceSymbolFilter}
+                    onChange={(event) => {
+                      setPerformanceSymbolFilter(event.currentTarget.value);
+                      resetPerformancePage();
+                    }}
+                    w={110}
+                  />
+
+                  <Select
+                    label="Strategy"
+                    value={performanceStrategyId ?? ""}
+                    onChange={(value) => {
+                      setPerformanceStrategyId(value || null);
+                      resetPerformancePage();
+                    }}
+                    data={strategyOptions}
+                    searchable
+                    w={190}
+                  />
+
+                  <Select
+                    label="Subscription"
+                    value={performanceSubscriptionId ?? ""}
+                    onChange={(value) => {
+                      setPerformanceSubscriptionId(value || null);
+                      resetPerformancePage();
+                    }}
+                    data={subscriptionOptions}
+                    searchable
+                    w={190}
+                  />
+
+                  <Select
+                    label="Exit profile"
+                    value={performanceExitProfileId ?? ""}
+                    onChange={(value) => {
+                      setPerformanceExitProfileId(value || null);
+                      resetPerformancePage();
+                    }}
+                    data={exitProfileOptions}
+                    searchable
+                    w={190}
+                  />
+
+                  <Select
+                    label="Exit reason"
+                    value={performanceExitReason ?? ""}
+                    onChange={(value) => {
+                      setPerformanceExitReason(value || null);
+                      resetPerformancePage();
+                    }}
+                    data={exitReasonOptions}
+                    searchable
+                    w={180}
+                  />
+
+                  <Select
+                    label="Outcome"
+                    value={performanceOutcome}
+                    onChange={(value) => {
+                      setPerformanceOutcome(
+                        (value as TradePerformanceOutcome | null) ?? "all",
+                      );
+                      resetPerformancePage();
+                    }}
+                    data={[
+                      { value: "all", label: "All" },
+                      { value: "winner", label: "Winners" },
+                      { value: "loser", label: "Losers" },
+                      { value: "breakeven", label: "Breakeven" },
+                    ]}
+                    w={140}
+                  />
+
+                  <Select
+                    label="Rows"
+                    value={String(performancePageSize)}
+                    onChange={(value) => {
+                      setPerformancePageSize(Number(value ?? 25));
+                      resetPerformancePage();
+                    }}
+                    data={[
+                      { value: "10", label: "10" },
+                      { value: "25", label: "25" },
+                      { value: "50", label: "50" },
+                      { value: "100", label: "100" },
+                    ]}
+                    w={100}
+                  />
+
+                  <Button variant="default" onClick={clearPerformanceFilters}>
+                    Clear
+                  </Button>
+                </Group>
+
+                {tradePerformanceQuery.isLoading && (
+                  <Group>
+                    <Loader size="sm" />
+                    <Text>Loading trade performance...</Text>
+                  </Group>
+                )}
+
+                {tradePerformanceQuery.isError && (
+                  <Alert color="red" title="Failed to load trade performance">
+                    Check the backend route and admin session.
+                  </Alert>
+                )}
+
+                {performance && (
+                  <Stack gap="lg">
+                    {accountScope.isAll ? (
+                      <Alert title="Per-account performance" color="blue">
+                        ALL scope keeps trade rows attributed to their Trading
+                        Account. Combined P/L, return, and ratio cards are
+                        intentionally omitted because the accounts are not one
+                        portfolio.
+                      </Alert>
+                    ) : (
+                      <>
+                        <SimpleGrid cols={{ base: 1, sm: 2, lg: 5 }}>
+                          <Card withBorder radius="md" p="md">
+                            <Text size="sm" c="dimmed">
+                              Realized P/L
+                            </Text>
+                            <Text
+                              fw={700}
+                              c={
+                                performance.summary.totalRealizedPnl >= 0
+                                  ? "teal"
+                                  : "red"
+                              }
+                            >
+                              {formatMoney(
+                                performance.summary.totalRealizedPnl,
+                              )}
+                            </Text>
+                            <Text size="xs" c="dimmed">
+                              {performance.summary.reportableTradeCount}{" "}
+                              reportable trades
+                            </Text>
+                          </Card>
+
+                          <Card withBorder radius="md" p="md">
+                            <Text size="sm" c="dimmed">
+                              Win Rate
+                            </Text>
+                            <Text fw={700}>
+                              {formatPercent(performance.summary.winRate)}
+                            </Text>
+                            <Text size="xs" c="dimmed">
+                              {performance.summary.winnerCount} wins /{" "}
+                              {performance.summary.loserCount} losses
+                            </Text>
+                          </Card>
+
+                          <Card withBorder radius="md" p="md">
+                            <Text size="sm" c="dimmed">
+                              Avg Return
+                            </Text>
+                            <Text fw={700}>
+                              {formatPercent(
+                                performance.summary.averageReturnPct,
+                              )}
+                            </Text>
+                            <Text size="xs" c="dimmed">
+                              Per reportable trade
+                            </Text>
+                          </Card>
+
+                          <Card withBorder radius="md" p="md">
+                            <Text size="sm" c="dimmed">
+                              Profit Factor
+                            </Text>
+                            <Text fw={700}>
+                              {formatNumber(performance.summary.profitFactor)}
+                            </Text>
+                            <Text size="xs" c="dimmed">
+                              Gross wins over gross losses
+                            </Text>
+                          </Card>
+
+                          <Card withBorder radius="md" p="md">
+                            <Text size="sm" c="dimmed">
+                              Avg Hold
+                            </Text>
+                            <Text fw={700}>
+                              {formatDuration(
+                                performance.summary.averageHoldingDurationMs,
+                              )}
+                            </Text>
+                            <Text size="xs" c="dimmed">
+                              Closed cycle duration
+                            </Text>
+                          </Card>
+                        </SimpleGrid>
+
+                        <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }}>
+                          <Card withBorder radius="md" p="md">
+                            <Stack gap="sm">
+                              <Title order={4}>By Strategy</Title>
+                              <PerformanceBarChart
+                                data={performance.groups.byStrategy}
+                                emptyLabel="No strategy results yet."
+                              />
+                            </Stack>
+                          </Card>
+
+                          <Card withBorder radius="md" p="md">
+                            <Stack gap="sm">
+                              <Title order={4}>By Entry Decision</Title>
+                              <PerformanceBarChart
+                                data={performance.groups.byEntryDecisionState}
+                                emptyLabel="No decision-state results yet."
+                              />
+                            </Stack>
+                          </Card>
+
+                          <Card withBorder radius="md" p="md">
+                            <Stack gap="sm">
+                              <Title order={4}>By Symbol</Title>
+                              <PerformanceBarChart
+                                data={performance.groups.bySecurity}
+                                emptyLabel="No symbol results yet."
+                              />
+                            </Stack>
+                          </Card>
+
+                          <Card withBorder radius="md" p="md">
+                            <Stack gap="sm">
+                              <Title order={4}>By Exit Reason</Title>
+                              <PerformanceBarChart
+                                data={performance.groups.byExitReason}
+                                emptyLabel="No exit results yet."
+                              />
+                            </Stack>
+                          </Card>
+                        </SimpleGrid>
+                      </>
+                    )}
+
+                    <Card withBorder radius="md" p="md">
+                      <Stack gap="sm">
+                        <Group justify="space-between" align="flex-start">
+                          <div>
+                            <Title order={4}>Trades</Title>
+                            <Text size="sm" c="dimmed">
+                              Completed trade cycles matching the current
+                              filters.
+                            </Text>
+                          </div>
+                          {tradePerformanceQuery.isFetching && (
+                            <Badge variant="light" color="blue">
+                              Refreshing
+                            </Badge>
+                          )}
+                        </Group>
+
+                        <PerformanceTradesTable
+                          trades={performanceTrades}
+                          page={performancePagination?.page ?? performancePage}
+                          pageSize={
+                            performancePagination?.pageSize ??
+                            performancePageSize
+                          }
+                          total={performancePagination?.total ?? 0}
+                          totalPages={performancePagination?.totalPages ?? 1}
+                          sortBy={performanceSortBy}
+                          sortDirection={performanceSortDirection}
+                          isFetching={tradePerformanceQuery.isFetching}
+                          onPageChange={setPerformancePage}
+                          onSort={handlePerformanceSort}
+                          onOpenCycle={tradeCycleDrawer.openCycle}
+                        />
+                      </Stack>
+                    </Card>
                   </Stack>
-                </Card>
+                )}
+              </Stack>
+            </Card>
+          </Tabs.Panel>
 
-                <Card withBorder radius="md" p="md">
+          <Tabs.Panel value="overview" pt="lg">
+            {accountScope.isAll ? (
+              <Alert title="Financial trends are per account" color="blue">
+                Use the attributed snapshot records below or select one Trading
+                Account to view equity, capital, and exposure charts. Financial
+                balances are never combined across accounts.
+              </Alert>
+            ) : (
+              <SimpleGrid cols={{ base: 1, lg: 3 }}>
+                <Card withBorder radius="md" p="lg">
                   <Stack gap="sm">
-                    <Title order={4}>By Entry Decision</Title>
-                    <PerformanceBarChart
-                      data={performance.groups.byEntryDecisionState}
-                      emptyLabel="No decision-state results yet."
-                    />
-                  </Stack>
-                </Card>
-
-                <Card withBorder radius="md" p="md">
-                  <Stack gap="sm">
-                    <Title order={4}>By Symbol</Title>
-                    <PerformanceBarChart
-                      data={performance.groups.bySecurity}
-                      emptyLabel="No symbol results yet."
-                    />
-                  </Stack>
-                </Card>
-
-                <Card withBorder radius="md" p="md">
-                  <Stack gap="sm">
-                    <Title order={4}>By Exit Reason</Title>
-                    <PerformanceBarChart
-                      data={performance.groups.byExitReason}
-                      emptyLabel="No exit results yet."
-                    />
-                  </Stack>
-                </Card>
-              </SimpleGrid>
-
-              <Card withBorder radius="md" p="md">
-                <Stack gap="sm">
-                  <Group justify="space-between" align="flex-start">
                     <div>
-                      <Title order={4}>Trades</Title>
+                      <Title order={3}>Account Value</Title>
                       <Text size="sm" c="dimmed">
-                        Completed trade cycles matching the current filters.
+                        Equity and portfolio value over the selected snapshot
+                        range.
                       </Text>
                     </div>
-                    {tradePerformanceQuery.isFetching && (
-                      <Badge variant="light" color="blue">
-                        Refreshing
-                      </Badge>
+
+                    {accountSnapshotTrendsQuery.isLoading && (
+                      <Group>
+                        <Loader size="sm" />
+                        <Text>Loading account trends...</Text>
+                      </Group>
                     )}
+
+                    {accountSnapshotTrendsQuery.isError && (
+                      <Alert color="red" title="Failed to load account trends">
+                        Check the backend route and admin session.
+                      </Alert>
+                    )}
+
+                    {!accountSnapshotTrendsQuery.isLoading &&
+                      !accountSnapshotTrendsQuery.isError && (
+                        <AccountTrendChart
+                          data={accountTrendData}
+                          emptyLabel="No account snapshots match these filters."
+                          lines={[
+                            {
+                              dataKey: "equity",
+                              name: "Equity",
+                              stroke: "var(--mantine-color-blue-6)",
+                            },
+                            {
+                              dataKey: "portfolioValue",
+                              name: "Portfolio value",
+                              stroke: "var(--mantine-color-teal-6)",
+                            },
+                          ]}
+                          valueFormatter={formatMoney}
+                          yAxisFormatter={(value) =>
+                            `$${Number(value).toLocaleString()}`
+                          }
+                        />
+                      )}
+                  </Stack>
+                </Card>
+
+                <Card withBorder radius="md" p="lg">
+                  <Stack gap="sm">
+                    <div>
+                      <Title order={3}>Capital Allocation</Title>
+                      <Text size="sm" c="dimmed">
+                        Cash compared with gross market exposure.
+                      </Text>
+                    </div>
+
+                    {accountSnapshotTrendsQuery.isLoading && (
+                      <Group>
+                        <Loader size="sm" />
+                        <Text>Loading allocation trends...</Text>
+                      </Group>
+                    )}
+
+                    {accountSnapshotTrendsQuery.isError && (
+                      <Alert
+                        color="red"
+                        title="Failed to load allocation trends"
+                      >
+                        Check the backend route and admin session.
+                      </Alert>
+                    )}
+
+                    {!accountSnapshotTrendsQuery.isLoading &&
+                      !accountSnapshotTrendsQuery.isError && (
+                        <AccountTrendChart
+                          data={accountTrendData}
+                          emptyLabel="No account snapshots match these filters."
+                          unavailableLabel="Exposure data is unavailable for these historical snapshots."
+                          lines={[
+                            {
+                              dataKey: "cash",
+                              name: "Cash",
+                              stroke: "var(--mantine-color-green-6)",
+                            },
+                            {
+                              dataKey: "grossExposure",
+                              name: "Gross exposure",
+                              stroke: "var(--mantine-color-orange-6)",
+                            },
+                          ]}
+                          valueFormatter={formatMoney}
+                          yAxisFormatter={(value) =>
+                            `$${Number(value).toLocaleString()}`
+                          }
+                        />
+                      )}
+                  </Stack>
+                </Card>
+
+                <Card withBorder radius="md" p="lg">
+                  <Stack gap="sm">
+                    <div>
+                      <Title order={3}>Exposure Percent</Title>
+                      <Text size="sm" c="dimmed">
+                        Gross exposure as a percentage of account equity.
+                      </Text>
+                    </div>
+
+                    {accountSnapshotTrendsQuery.isLoading && (
+                      <Group>
+                        <Loader size="sm" />
+                        <Text>Loading exposure trends...</Text>
+                      </Group>
+                    )}
+
+                    {accountSnapshotTrendsQuery.isError && (
+                      <Alert color="red" title="Failed to load exposure trends">
+                        Check the backend route and admin session.
+                      </Alert>
+                    )}
+
+                    {!accountSnapshotTrendsQuery.isLoading &&
+                      !accountSnapshotTrendsQuery.isError && (
+                        <AccountTrendChart
+                          data={accountTrendData}
+                          emptyLabel="No account snapshots match these filters."
+                          unavailableLabel="Exposure percentage is unavailable for these historical snapshots."
+                          lines={[
+                            {
+                              dataKey: "grossExposurePct",
+                              name: "Gross exposure",
+                              stroke: "var(--mantine-color-violet-6)",
+                            },
+                          ]}
+                          valueFormatter={formatExposurePercent}
+                          yAxisFormatter={(value) =>
+                            `${Number(value).toFixed(0)}%`
+                          }
+                        />
+                      )}
+                  </Stack>
+                </Card>
+              </SimpleGrid>
+            )}
+          </Tabs.Panel>
+
+          <Tabs.Panel value="audit" pt="lg">
+            <SimpleGrid cols={{ base: 1, lg: 2 }}>
+              <Card withBorder radius="md" p="lg">
+                <Stack gap="md">
+                  <Group justify="space-between" align="flex-start">
+                    <div>
+                      <Title order={3}>Account Snapshots</Title>
+                      <Text size="sm" c="dimmed">
+                        Account-level cash, buying power, equity, and portfolio
+                        value checkpoints.
+                      </Text>
+                    </div>
+
+                    <Group align="flex-end">
+                      <NumberInput
+                        label="Limit"
+                        value={snapshotLimit}
+                        min={1}
+                        max={200}
+                        w={110}
+                        onChange={(value) =>
+                          setSnapshotLimit(normalizeLimit(value, snapshotLimit))
+                        }
+                      />
+                      {!accountScope.isAll && (
+                        <Button
+                          variant="default"
+                          onClick={handleManualSnapshot}
+                          loading={manualSnapshotMutation.isPending}
+                        >
+                          Record Account Snapshot
+                        </Button>
+                      )}
+                    </Group>
                   </Group>
 
-                  <PerformanceTradesTable
-                    trades={performanceTrades}
-                    page={performancePagination?.page ?? performancePage}
-                    pageSize={performancePagination?.pageSize ?? performancePageSize}
-                    total={performancePagination?.total ?? 0}
-                    totalPages={performancePagination?.totalPages ?? 1}
-                    sortBy={performanceSortBy}
-                    sortDirection={performanceSortDirection}
-                    isFetching={tradePerformanceQuery.isFetching}
-                    onPageChange={setPerformancePage}
-                    onSort={handlePerformanceSort}
-                    onOpenCycle={tradeCycleDrawer.openCycle}
-                  />
+                  <Divider />
+
+                  {accountSnapshotsQuery.isLoading && (
+                    <Group>
+                      <Loader size="sm" />
+                      <Text>Loading snapshots…</Text>
+                    </Group>
+                  )}
+
+                  {accountSnapshotsQuery.isError && (
+                    <Alert color="red" title="Failed to load account snapshots">
+                      Check the backend route and admin session.
+                    </Alert>
+                  )}
+
+                  {!accountSnapshotsQuery.isLoading &&
+                    snapshots.length === 0 && (
+                      <Text c="dimmed">No account snapshots recorded yet.</Text>
+                    )}
+
+                  {snapshots.length > 0 && (
+                    <ScrollArea className={classes.snapshotTable}>
+                      <Table striped highlightOnHover withTableBorder miw={980}>
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>Account</Table.Th>
+                            <Table.Th>Time</Table.Th>
+                            <Table.Th>Reason</Table.Th>
+                            <Table.Th>Cash</Table.Th>
+                            <Table.Th>Buying Power</Table.Th>
+                            <Table.Th>Equity</Table.Th>
+                            <Table.Th>Gross Exposure</Table.Th>
+                            <Table.Th>Changed</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {snapshots.map((snapshot) => (
+                            <Table.Tr key={snapshot.id}>
+                              <Table.Td data-label="Account">
+                                <TradingAccountBadge
+                                  account={snapshot.tradingAccount}
+                                  tradingAccountId={snapshot.tradingAccountId}
+                                />
+                              </Table.Td>
+                              <Table.Td data-label="Time">
+                                {formatDate(snapshot.createdAt)}
+                              </Table.Td>
+                              <Table.Td data-label="Reason">
+                                <Badge variant="light">{snapshot.reason}</Badge>
+                              </Table.Td>
+                              <Table.Td data-label="Cash">
+                                {formatMoney(snapshot.cash)}
+                              </Table.Td>
+                              <Table.Td data-label="Buying power">
+                                {formatMoney(snapshot.buyingPower)}
+                              </Table.Td>
+                              <Table.Td data-label="Equity">
+                                {formatMoney(snapshot.equity)}
+                              </Table.Td>
+                              <Table.Td data-label="Gross exposure">
+                                {formatMoney(snapshot.exposure.grossExposure)}
+                              </Table.Td>
+                              <Table.Td data-label="Changed">
+                                <Badge
+                                  color={snapshot.changed ? "teal" : "gray"}
+                                  variant="light"
+                                >
+                                  {snapshot.changed ? "Yes" : "No"}
+                                </Badge>
+                              </Table.Td>
+                            </Table.Tr>
+                          ))}
+                        </Table.Tbody>
+                      </Table>
+                    </ScrollArea>
+                  )}
                 </Stack>
               </Card>
-            </Stack>
-          )}
-        </Stack>
-      </Card></Tabs.Panel>
 
-      <Tabs.Panel value="overview" pt="lg"><SimpleGrid cols={{ base: 1, lg: 3 }}>
-        <Card withBorder radius="md" p="lg">
-          <Stack gap="sm">
-            <div>
-              <Title order={3}>Account Value</Title>
-              <Text size="sm" c="dimmed">
-                Equity and portfolio value over the selected snapshot range.
-              </Text>
-            </div>
+              <Card withBorder radius="md" p="lg">
+                <Stack gap="md">
+                  <Group justify="space-between" align="flex-start">
+                    <div>
+                      <Title order={3}>Broker Activity</Title>
+                      <Text size="sm" c="dimmed">
+                        Broker-confirmed fills and related account activity
+                        imported from Alpaca.
+                      </Text>
+                    </div>
 
-            {accountSnapshotTrendsQuery.isLoading && (
-              <Group>
-                <Loader size="sm" />
-                <Text>Loading account trends...</Text>
-              </Group>
-            )}
+                    <Group align="flex-end">
+                      <TextInput
+                        label="Symbol"
+                        placeholder="SPY"
+                        value={symbolFilter}
+                        onChange={(event) =>
+                          setSymbolFilter(event.currentTarget.value)
+                        }
+                        w={100}
+                      />
 
-            {accountSnapshotTrendsQuery.isError && (
-              <Alert color="red" title="Failed to load account trends">
-                Check the backend route and admin session.
-              </Alert>
-            )}
+                      <Select
+                        label="Type"
+                        value={activityTypeFilter}
+                        onChange={setActivityTypeFilter}
+                        data={[
+                          { value: "FILL", label: "FILL" },
+                          { value: "", label: "All" },
+                        ]}
+                        w={110}
+                      />
 
-            {!accountSnapshotTrendsQuery.isLoading &&
-              !accountSnapshotTrendsQuery.isError && (
-                <AccountTrendChart
-                  data={accountTrendData}
-                  emptyLabel="No account snapshots match these filters."
-                  lines={[
-                    {
-                      dataKey: "equity",
-                      name: "Equity",
-                      stroke: "var(--mantine-color-blue-6)",
-                    },
-                    {
-                      dataKey: "portfolioValue",
-                      name: "Portfolio value",
-                      stroke: "var(--mantine-color-teal-6)",
-                    },
-                  ]}
-                  valueFormatter={formatMoney}
-                  yAxisFormatter={(value) => `$${Number(value).toLocaleString()}`}
-                />
-              )}
-          </Stack>
-        </Card>
+                      <NumberInput
+                        label="Limit"
+                        value={activityLimit}
+                        min={1}
+                        max={200}
+                        w={110}
+                        onChange={(value) =>
+                          setActivityLimit(normalizeLimit(value, activityLimit))
+                        }
+                      />
 
-        <Card withBorder radius="md" p="lg">
-          <Stack gap="sm">
-            <div>
-              <Title order={3}>Capital Allocation</Title>
-              <Text size="sm" c="dimmed">
-                Cash compared with gross market exposure.
-              </Text>
-            </div>
+                      {!accountScope.isAll && (
+                        <Button
+                          onClick={handleBrokerSync}
+                          loading={brokerSyncMutation.isPending}
+                        >
+                          Sync Broker Fills
+                        </Button>
+                      )}
+                    </Group>
+                  </Group>
 
-            {accountSnapshotTrendsQuery.isLoading && (
-              <Group>
-                <Loader size="sm" />
-                <Text>Loading allocation trends...</Text>
-              </Group>
-            )}
+                  <Divider />
 
-            {accountSnapshotTrendsQuery.isError && (
-              <Alert color="red" title="Failed to load allocation trends">
-                Check the backend route and admin session.
-              </Alert>
-            )}
+                  {brokerActivitiesQuery.isLoading && (
+                    <Group>
+                      <Loader size="sm" />
+                      <Text>Loading broker activities…</Text>
+                    </Group>
+                  )}
 
-            {!accountSnapshotTrendsQuery.isLoading &&
-              !accountSnapshotTrendsQuery.isError && (
-                <AccountTrendChart
-                  data={accountTrendData}
-                  emptyLabel="No account snapshots match these filters."
-                  unavailableLabel="Exposure data is unavailable for these historical snapshots."
-                  lines={[
-                    {
-                      dataKey: "cash",
-                      name: "Cash",
-                      stroke: "var(--mantine-color-green-6)",
-                    },
-                    {
-                      dataKey: "grossExposure",
-                      name: "Gross exposure",
-                      stroke: "var(--mantine-color-orange-6)",
-                    },
-                  ]}
-                  valueFormatter={formatMoney}
-                  yAxisFormatter={(value) => `$${Number(value).toLocaleString()}`}
-                />
-              )}
-          </Stack>
-        </Card>
+                  {brokerActivitiesQuery.isError && (
+                    <Alert color="red" title="Failed to load broker activities">
+                      Check the backend route and admin session.
+                    </Alert>
+                  )}
 
-        <Card withBorder radius="md" p="lg">
-          <Stack gap="sm">
-            <div>
-              <Title order={3}>Exposure Percent</Title>
-              <Text size="sm" c="dimmed">
-                Gross exposure as a percentage of account equity.
-              </Text>
-            </div>
+                  {!brokerActivitiesQuery.isLoading &&
+                    activities.length === 0 && (
+                      <Text c="dimmed">No broker activities found.</Text>
+                    )}
 
-            {accountSnapshotTrendsQuery.isLoading && (
-              <Group>
-                <Loader size="sm" />
-                <Text>Loading exposure trends...</Text>
-              </Group>
-            )}
+                  {activities.length > 0 && (
+                    <ScrollArea className={classes.activityTable}>
+                      <Table striped highlightOnHover withTableBorder miw={900}>
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>Account</Table.Th>
+                            <Table.Th>Time</Table.Th>
+                            <Table.Th>Type</Table.Th>
+                            <Table.Th>Symbol</Table.Th>
+                            <Table.Th>Side</Table.Th>
+                            <Table.Th>Qty</Table.Th>
+                            <Table.Th>Price</Table.Th>
+                            <Table.Th>Intent</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {activities.map((activity) => (
+                            <Table.Tr key={activity.id}>
+                              <Table.Td data-label="Account">
+                                <TradingAccountBadge
+                                  account={activity.tradingAccount}
+                                  tradingAccountId={activity.tradingAccountId}
+                                />
+                              </Table.Td>
+                              <Table.Td data-label="Time">
+                                {formatDate(activity.transactionTime)}
+                              </Table.Td>
+                              <Table.Td data-label="Type">
+                                <Badge variant="light">
+                                  {activity.activityType}
+                                </Badge>
+                              </Table.Td>
+                              <Table.Td data-label="Symbol">
+                                {activity.symbol ?? "-"}
+                              </Table.Td>
+                              <Table.Td data-label="Side">
+                                <Badge
+                                  color={sideColor(activity.side)}
+                                  variant="light"
+                                >
+                                  {activity.side ?? "-"}
+                                </Badge>
+                              </Table.Td>
+                              <Table.Td data-label="Quantity">
+                                {formatNumber(activity.qty)}
+                              </Table.Td>
+                              <Table.Td data-label="Price">
+                                {formatMoney(activity.price)}
+                              </Table.Td>
+                              <Table.Td data-label="Intent">
+                                {activity.orderIntentId === null
+                                  ? "-"
+                                  : activity.orderIntentId}
+                              </Table.Td>
+                            </Table.Tr>
+                          ))}
+                        </Table.Tbody>
+                      </Table>
+                    </ScrollArea>
+                  )}
+                </Stack>
+              </Card>
+            </SimpleGrid>
+          </Tabs.Panel>
+        </Tabs>
 
-            {accountSnapshotTrendsQuery.isError && (
-              <Alert color="red" title="Failed to load exposure trends">
-                Check the backend route and admin session.
-              </Alert>
-            )}
-
-            {!accountSnapshotTrendsQuery.isLoading &&
-              !accountSnapshotTrendsQuery.isError && (
-                <AccountTrendChart
-                  data={accountTrendData}
-                  emptyLabel="No account snapshots match these filters."
-                  unavailableLabel="Exposure percentage is unavailable for these historical snapshots."
-                  lines={[
-                    {
-                      dataKey: "grossExposurePct",
-                      name: "Gross exposure",
-                      stroke: "var(--mantine-color-violet-6)",
-                    },
-                  ]}
-                  valueFormatter={formatExposurePercent}
-                  yAxisFormatter={(value) => `${Number(value).toFixed(0)}%`}
-                />
-              )}
-          </Stack>
-        </Card>
-      </SimpleGrid></Tabs.Panel>
-
-      <Tabs.Panel value="audit" pt="lg"><SimpleGrid cols={{ base: 1, lg: 2 }}>
-        <Card withBorder radius="md" p="lg">
-          <Stack gap="md">
-            <Group justify="space-between" align="flex-start">
-              <div>
-                <Title order={3}>Account Snapshots</Title>
-                <Text size="sm" c="dimmed">
-                  Account-level cash, buying power, equity, and portfolio value
-                  checkpoints.
-                </Text>
-              </div>
-
-              <NumberInput
-                label="Limit"
-                value={snapshotLimit}
-                min={1}
-                max={200}
-                w={110}
-                onChange={(value) =>
-                  setSnapshotLimit(normalizeLimit(value, snapshotLimit))
-                }
-              />
-            </Group>
-
-            <Divider />
-
-            {accountSnapshotsQuery.isLoading && (
-              <Group>
-                <Loader size="sm" />
-                <Text>Loading snapshots…</Text>
-              </Group>
-            )}
-
-            {accountSnapshotsQuery.isError && (
-              <Alert color="red" title="Failed to load account snapshots">
-                Check the backend route and admin session.
-              </Alert>
-            )}
-
-            {!accountSnapshotsQuery.isLoading && snapshots.length === 0 && (
-              <Text c="dimmed">No account snapshots recorded yet.</Text>
-            )}
-
-            {snapshots.length > 0 && (
-              <ScrollArea className={classes.snapshotTable}>
-                <Table striped highlightOnHover withTableBorder miw={980}>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Account</Table.Th>
-                      <Table.Th>Time</Table.Th>
-                      <Table.Th>Reason</Table.Th>
-                      <Table.Th>Cash</Table.Th>
-                      <Table.Th>Buying Power</Table.Th>
-                      <Table.Th>Equity</Table.Th>
-                      <Table.Th>Gross Exposure</Table.Th>
-                      <Table.Th>Changed</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {snapshots.map((snapshot) => (
-                      <Table.Tr key={snapshot.id}>
-                        <Table.Td data-label="Account">
-                          <TradingAccountBadge
-                            account={snapshot.tradingAccount}
-                            tradingAccountId={snapshot.tradingAccountId}
-                          />
-                        </Table.Td>
-                        <Table.Td data-label="Time">{formatDate(snapshot.createdAt)}</Table.Td>
-                        <Table.Td data-label="Reason">
-                          <Badge variant="light">{snapshot.reason}</Badge>
-                        </Table.Td>
-                        <Table.Td data-label="Cash">{formatMoney(snapshot.cash)}</Table.Td>
-                        <Table.Td data-label="Buying power">{formatMoney(snapshot.buyingPower)}</Table.Td>
-                        <Table.Td data-label="Equity">{formatMoney(snapshot.equity)}</Table.Td>
-                        <Table.Td data-label="Gross exposure">
-                          {formatMoney(snapshot.exposure.grossExposure)}
-                        </Table.Td>
-                        <Table.Td data-label="Changed">
-                          <Badge
-                            color={snapshot.changed ? "teal" : "gray"}
-                            variant="light"
-                          >
-                            {snapshot.changed ? "Yes" : "No"}
-                          </Badge>
-                        </Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </ScrollArea>
-            )}
-          </Stack>
-        </Card>
-
-        <Card withBorder radius="md" p="lg">
-          <Stack gap="md">
-            <Group justify="space-between" align="flex-start">
-              <div>
-                <Title order={3}>Broker Activity</Title>
-                <Text size="sm" c="dimmed">
-                  Broker-confirmed fills and related account activity imported
-                  from Alpaca.
-                </Text>
-              </div>
-
-              <Group align="flex-end">
-                <TextInput
-                  label="Symbol"
-                  placeholder="SPY"
-                  value={symbolFilter}
-                  onChange={(event) => setSymbolFilter(event.currentTarget.value)}
-                  w={100}
-                />
-
-                <Select
-                  label="Type"
-                  value={activityTypeFilter}
-                  onChange={setActivityTypeFilter}
-                  data={[
-                    { value: "FILL", label: "FILL" },
-                    { value: "", label: "All" },
-                  ]}
-                  w={110}
-                />
-
-                <NumberInput
-                  label="Limit"
-                  value={activityLimit}
-                  min={1}
-                  max={200}
-                  w={110}
-                  onChange={(value) =>
-                    setActivityLimit(normalizeLimit(value, activityLimit))
-                  }
-                />
-              </Group>
-            </Group>
-
-            <Divider />
-
-            {brokerActivitiesQuery.isLoading && (
-              <Group>
-                <Loader size="sm" />
-                <Text>Loading broker activities…</Text>
-              </Group>
-            )}
-
-            {brokerActivitiesQuery.isError && (
-              <Alert color="red" title="Failed to load broker activities">
-                Check the backend route and admin session.
-              </Alert>
-            )}
-
-            {!brokerActivitiesQuery.isLoading && activities.length === 0 && (
-              <Text c="dimmed">No broker activities found.</Text>
-            )}
-
-            {activities.length > 0 && (
-              <ScrollArea className={classes.activityTable}>
-                <Table striped highlightOnHover withTableBorder miw={900}>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Account</Table.Th>
-                      <Table.Th>Time</Table.Th>
-                      <Table.Th>Type</Table.Th>
-                      <Table.Th>Symbol</Table.Th>
-                      <Table.Th>Side</Table.Th>
-                      <Table.Th>Qty</Table.Th>
-                      <Table.Th>Price</Table.Th>
-                      <Table.Th>Intent</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {activities.map((activity) => (
-                      <Table.Tr key={activity.id}>
-                        <Table.Td data-label="Account">
-                          <TradingAccountBadge
-                            account={activity.tradingAccount}
-                            tradingAccountId={activity.tradingAccountId}
-                          />
-                        </Table.Td>
-                        <Table.Td data-label="Time">
-                          {formatDate(activity.transactionTime)}
-                        </Table.Td>
-                        <Table.Td data-label="Type">
-                          <Badge variant="light">{activity.activityType}</Badge>
-                        </Table.Td>
-                        <Table.Td data-label="Symbol">{activity.symbol ?? "-"}</Table.Td>
-                        <Table.Td data-label="Side">
-                          <Badge
-                            color={sideColor(activity.side)}
-                            variant="light"
-                          >
-                            {activity.side ?? "-"}
-                          </Badge>
-                        </Table.Td>
-                        <Table.Td data-label="Quantity">{formatNumber(activity.qty)}</Table.Td>
-                        <Table.Td data-label="Price">{formatMoney(activity.price)}</Table.Td>
-                        <Table.Td data-label="Intent">
-                          {activity.orderIntentId === null
-                            ? "-"
-                            : activity.orderIntentId}
-                        </Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </ScrollArea>
-            )}
-          </Stack>
-        </Card>
-      </SimpleGrid></Tabs.Panel>
-      </Tabs>
-
-      <TradeCycleDrawer
-        {...tradeCycleDrawer.drawerProps}
-        onClose={tradeCycleDrawer.closeCycle}
-      />
-    </Stack></main>
+        <TradeCycleDrawer
+          {...tradeCycleDrawer.drawerProps}
+          onClose={tradeCycleDrawer.closeCycle}
+        />
+      </Stack>
+    </main>
   );
 }

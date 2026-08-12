@@ -4,11 +4,12 @@ import {
   getLatestBrokerActivityController,
   syncBrokerActivitiesController,
 } from '../controllers/broker-activities.controller.js';
-import { requireSystemOwnerAccess } from '../middleware/rbac.js';
+import { requirePermission, requireSystemOwnerAccess } from '../middleware/rbac.js';
+import { PlatformPermission } from '../types/platform-rbac.js';
 
 const router = Router();
 
-router.get('/', requireSystemOwnerAccess, getBrokerActivitiesController);
+router.get('/', requirePermission(PlatformPermission.REPORTS_READ), getBrokerActivitiesController);
 router.get('/latest', requireSystemOwnerAccess, getLatestBrokerActivityController);
 // Broker sync is a maintenance operation, requires owner access
 router.post('/sync', requireSystemOwnerAccess, syncBrokerActivitiesController);

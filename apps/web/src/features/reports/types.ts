@@ -44,6 +44,7 @@ export type AccountSnapshotsResponse = {
 };
 
 export type AccountSnapshotQuery = {
+  account?: string;
   limit?: number;
   mode?: string;
   dateFrom?: string;
@@ -114,6 +115,7 @@ export type BrokerActivitySyncResponse = {
 };
 
 export type BrokerActivitiesQuery = {
+  account?: string;
   limit?: number;
   symbol?: string;
   activityType?: string;
@@ -235,6 +237,7 @@ export type TradePerformanceResponse = {
 };
 
 export type TradePerformanceQuery = {
+  account?: string;
   mode?: string;
   dateFrom?: string;
   dateTo?: string;

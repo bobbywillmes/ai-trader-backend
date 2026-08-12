@@ -81,11 +81,7 @@ function clampLimit(limit: number | undefined, fallback: number, max: number) {
 }
 
 function buildSnapshotWhere(query: AccountSnapshotQuery) {
-  const where: {
-    createdAt?: { gte?: Date; lte?: Date };
-    mode?: BrokerMode;
-    tradingAccountId?: number;
-  } = {};
+  const where: Prisma.AccountSnapshotWhereInput = {};
 
   if (query.dateFrom !== undefined || query.dateTo !== undefined) {
     where.createdAt = {};
@@ -351,5 +347,40 @@ export async function getAccountSnapshotTrends(
       limit,
     },
     snapshots,
+  };
+}
+
+export async function getAccountSnapshotsForAccounts(
+  tradingAccountIds: number[],
+  limit = DEFAULT_RECENT_SNAPSHOT_LIMIT,
+  query: AccountSnapshotQuery = {}
+) {
+  if (tradingAccountIds.length === 0) return [];
+  const where = buildSnapshotWhere(query);
+  where.tradingAccountId = { in: tradingAccountIds };
+  const snapshots = await prisma.accountSnapshot.findMany({
+    where,
+    include: { tradingAccount: { select: TRADING_ACCOUNT_SUMMARY_SELECT } },
+    orderBy: { createdAt: 'desc' },
+    take: clampLimit(limit, DEFAULT_RECENT_SNAPSHOT_LIMIT, MAX_RECENT_SNAPSHOT_LIMIT),
+  });
+  return snapshots.map(mapAccountSnapshot);
+}
+
+export async function getAccountSnapshotTrendsForAccounts(
+  tradingAccountIds: number[],
+  query: AccountSnapshotQuery = {}
+) {
+  const limit = clampLimit(query.limit, DEFAULT_TREND_SNAPSHOT_LIMIT, MAX_TREND_SNAPSHOT_LIMIT);
+  const snapshots = tradingAccountIds.length === 0 ? [] : await prisma.accountSnapshot.findMany({
+    where: { ...buildSnapshotWhere(query), tradingAccountId: { in: tradingAccountIds } },
+    include: { tradingAccount: { select: TRADING_ACCOUNT_SUMMARY_SELECT } },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+  });
+  return {
+    generatedAt: new Date().toISOString(),
+    filters: { dateFrom: query.dateFrom?.toISOString() ?? null, dateTo: query.dateTo?.toISOString() ?? null, mode: query.mode ?? null, limit },
+    snapshots: snapshots.reverse().map(mapAccountSnapshot),
   };
 }

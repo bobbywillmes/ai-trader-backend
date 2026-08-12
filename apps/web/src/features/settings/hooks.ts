@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getConfig, getSystemStatus, updateConfig } from "./api";
-import { dashboardKeys } from "../dashboard/hooks";
 import type { RuntimeTradingConfig } from "../dashboard/types";
 
 export const settingsKeys = {
@@ -31,7 +30,6 @@ export function useUpdateConfig(token: string | null) {
     onSuccess: (updated) => {
       queryClient.setQueryData(settingsKeys.config, updated);
       queryClient.invalidateQueries({ queryKey: settingsKeys.systemStatus });
-      queryClient.invalidateQueries({ queryKey: dashboardKeys.bootstrap });
     },
   });
 }

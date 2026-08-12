@@ -70,7 +70,9 @@ import {
   refineHistoricalMissingOrderFindings,
   findHistoricalUnattributedLifecycleRecords,
   reconcileEligibleTradingAccounts,
+  reconcileTradingAccount,
   reconcileSnapshots,
+  ReconciliationBrokerUnavailableError,
   runReconciliationCheck,
 } from './reconciliation.service.js';
 
@@ -558,6 +560,36 @@ describe('runReconciliationCheck', () => {
     expect(result.persistedAttention).toBe(false);
     expect(mocks.markPositionExitStateAttentionRequired).not.toHaveBeenCalled();
 
+  });
+
+  it('uses only the explicit account for broker reads, local records, events, and attention updates', async () => {
+    mocks.tradingAccountFindUniqueOrThrow.mockResolvedValue({ id: 2, displayName: 'Bobby Live', environment: 'LIVE' });
+    mocks.trackedPositionFindMany.mockResolvedValue([{ id: 202, broker: 'alpaca', symbol: 'QQQ', status: 'open', side: 'long', qty: 1, exitState: { targetUnlocked: true, trailClientOrderId: null, trailBrokerOrderId: null, trailOrderStatus: null, attentionRequired: false } }]);
+    mocks.getNormalizedPositions.mockResolvedValue([{ broker: 'alpaca', symbol: 'QQQ', qty: 1, side: 'long' }]);
+    mocks.getOpenAlpacaOrders.mockResolvedValue([]);
+
+    const result = await reconcileTradingAccount(2, { persistEvents: true, persistAttention: true });
+
+    expect(mocks.resolveDefaultTradingAccountId).not.toHaveBeenCalled();
+    expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ tradingAccountId: 2 }) }));
+    expect(mocks.brokerOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ tradingAccountId: 2 }) }));
+    expect(mocks.orderIntentFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ tradingAccountId: 2 }) }));
+    expect(mocks.getNormalizedPositions).toHaveBeenCalledWith(2, 'reconciliation_check');
+    expect(mocks.getOpenAlpacaOrders).toHaveBeenCalledWith(2, 'reconciliation_check');
+    expect(mocks.createSystemEvent).toHaveBeenCalledWith(expect.objectContaining({ tradingAccountId: 2, entityId: '202' }));
+    expect(mocks.markPositionExitStateAttentionRequired).toHaveBeenCalledWith(expect.objectContaining({ trackedPositionId: 202 }));
+    expect(result.account).toMatchObject({ tradingAccountId: 2, displayName: 'Bobby Live', environment: 'LIVE' });
+  });
+
+  it('reports broker state as unavailable and persists no effects when observation fails', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([]);
+    mocks.getNormalizedPositions.mockRejectedValue(new Error('active credentials unavailable'));
+    mocks.getOpenAlpacaOrders.mockResolvedValue([]);
+
+    await expect(reconcileTradingAccount(2, { persistEvents: true, persistAttention: true }))
+      .rejects.toBeInstanceOf(ReconciliationBrokerUnavailableError);
+    expect(mocks.createSystemEvent).not.toHaveBeenCalled();
+    expect(mocks.markPositionExitStateAttentionRequired).not.toHaveBeenCalled();
   });
 
   it('skips duplicate reconciliation system events within the de-dupe window while still applying attention', async () => {

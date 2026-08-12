@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { EntryDecision, Prisma } from '@prisma/client';
+import { PlatformRole, type EntryDecision, type Prisma } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
@@ -57,6 +57,8 @@ export type EntryDecisionFilters = {
   signalCreated?: boolean;
   signalBlocked?: boolean;
   limit?: number;
+  page?: number;
+  pageSize?: number;
 };
 
 const CHECKPOINT_INTERVAL_MS = 60 * 60 * 1000;
@@ -211,7 +213,12 @@ function buildEntryDecisionWhere(
   const where: Prisma.EntryDecisionWhereInput = {};
 
   if (filters.symbol) where.symbol = filters.symbol.trim().toUpperCase();
-  if (filters.decisionState) where.decisionState = filters.decisionState;
+  if (filters.decisionState) {
+    where.decisionState = {
+      equals: filters.decisionState.trim().replace(/\s+/g, '_'),
+      mode: 'insensitive',
+    };
+  }
   if (filters.subscriptionId !== undefined) {
     where.subscriptionId = filters.subscriptionId;
   }
@@ -423,16 +430,29 @@ export async function recordEntryDecision(
 
 export async function listEntryDecisions(filters: EntryDecisionFilters = {}) {
   const tradingAccountId = await resolveDefaultTradingAccountId();
+  return queryEntryDecisions(filters, entryDecisionReadScope(tradingAccountId));
+}
+
+async function queryEntryDecisions(
+  filters: EntryDecisionFilters,
+  scope: Prisma.EntryDecisionWhereInput,
+  paginate = false
+) {
   const limit = normalizeLimit(filters.limit);
+  const page = filters.page ?? 1;
+  const pageSize = Math.min(filters.pageSize ?? 25, 100);
   const where = buildEntryDecisionWhere(filters);
-  Object.assign(where, entryDecisionReadScope(tradingAccountId));
+  Object.assign(where, scope);
+
+  const total = paginate ? await prisma.entryDecision.count({ where }) : null;
 
   const decisions = await prisma.entryDecision.findMany({
     where,
     orderBy: {
       evaluatedAt: 'desc',
     },
-    take: limit,
+    take: paginate ? pageSize : limit,
+    ...(paginate ? { skip: (page - 1) * pageSize } : {}),
     select: {
       id: true,
       decisionKey: true,
@@ -488,7 +508,34 @@ export async function listEntryDecisions(filters: EntryDecisionFilters = {}) {
       signalBlocked: filters.signalBlocked ?? null,
       limit,
     },
+    ...(paginate ? { pagination: { page, pageSize, total: total as number, totalPages: Math.max(1, Math.ceil((total as number) / pageSize)) } } : {}),
   };
+}
+
+export async function listAccessibleEntryDecisions(
+  user: { id: number; platformRole: PlatformRole },
+  tradingAccountId: number | null,
+  filters: EntryDecisionFilters = {}
+) {
+  if (user.platformRole === PlatformRole.ACCOUNT_USER) {
+    throw new HttpError(403, 'Admin-console entry decisions are not available to account portal users.');
+  }
+  if (tradingAccountId !== null) {
+    if (user.platformRole !== PlatformRole.SYSTEM_OWNER) {
+      const membership = await prisma.tradingAccountMembership.findUnique({
+        where: { tradingAccountId_userId: { tradingAccountId, userId: user.id } },
+        select: { id: true },
+      });
+      if (!membership) throw new HttpError(403, 'Access to this trading account is not permitted.');
+    }
+    return queryEntryDecisions(filters, { tradingAccountId }, true);
+  }
+  if (user.platformRole === PlatformRole.SYSTEM_OWNER) {
+    return queryEntryDecisions(filters, {}, true);
+  }
+  return queryEntryDecisions(filters, {
+    tradingAccount: { memberships: { some: { userId: user.id } } },
+  }, true);
 }
 
 export async function getEntryDecisionById(id: number) {
@@ -517,6 +564,35 @@ export async function getEntryDecisionById(id: number) {
     throw new HttpError(404, `Entry decision ${id} was not found.`);
   }
 
+  return { decision };
+}
+
+export async function getAccessibleEntryDecisionById(
+  user: { id: number; platformRole: PlatformRole },
+  id: number
+) {
+  if (user.platformRole === PlatformRole.ACCOUNT_USER) {
+    throw new HttpError(403, 'Admin-console entry decisions are not available to account portal users.');
+  }
+  const decision = await prisma.entryDecision.findFirst({
+    where: {
+      id,
+      ...(user.platformRole === PlatformRole.SYSTEM_OWNER
+        ? {}
+        : { tradingAccount: { memberships: { some: { userId: user.id } } } }),
+    },
+    include: {
+      security: true,
+      subscription: true,
+      strategy: true,
+      exitProfile: true,
+      orderIntent: true,
+      brokerOrderRecord: true,
+      trackedPosition: true,
+      tradingAccount: { select: TRADING_ACCOUNT_SUMMARY_SELECT },
+    },
+  });
+  if (!decision) throw new HttpError(404, `Entry decision ${id} was not found.`);
   return { decision };
 }
 

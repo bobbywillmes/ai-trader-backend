@@ -1,4 +1,4 @@
-import type { BrokerActivity, Prisma } from '@prisma/client';
+import { PlatformRole, type BrokerActivity, type Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import {
@@ -19,6 +19,8 @@ export type TradeCycleFilters = {
   exitReason?: string;
   mode?: string;
   limit?: number | null;
+  page?: number;
+  pageSize?: number;
 };
 
 function getCloseSide(positionSide: string): 'buy' | 'sell' {
@@ -305,9 +307,11 @@ function buildCycleSummary(
 
 function buildWhere(
   filters: TradeCycleFilters,
-  tradingAccountId: number
+  tradingAccountScope: number | { in: number[] }
 ): Prisma.TrackedPositionWhereInput {
-  const where: Prisma.TrackedPositionWhereInput = { tradingAccountId };
+  const where: Prisma.TrackedPositionWhereInput = {
+    tradingAccountId: tradingAccountScope,
+  };
 
   if (filters.symbol) {
     where.symbol = filters.symbol.trim().toUpperCase();
@@ -437,6 +441,68 @@ export async function listTradeCyclesForTradingAccount(
   };
 }
 
+export async function listAccessibleTradeCycles(
+  user: { id: number; platformRole: PlatformRole },
+  tradingAccountId: number | null,
+  filters: TradeCycleFilters = {}
+) {
+  if (user.platformRole === PlatformRole.ACCOUNT_USER) {
+    throw new HttpError(403, 'Admin-console trade history is not available to account portal users.');
+  }
+
+  let accountIds: number[];
+  if (tradingAccountId !== null) {
+    if (user.platformRole !== PlatformRole.SYSTEM_OWNER) {
+      const membership = await prisma.tradingAccountMembership.findUnique({
+        where: { tradingAccountId_userId: { tradingAccountId, userId: user.id } },
+        select: { id: true },
+      });
+      if (!membership) throw new HttpError(403, 'Access to this trading account is not permitted.');
+    }
+    accountIds = [tradingAccountId];
+  } else if (user.platformRole === PlatformRole.SYSTEM_OWNER) {
+    accountIds = (await prisma.tradingAccount.findMany({ select: { id: true } })).map(({ id }) => id);
+  } else {
+    accountIds = (await prisma.tradingAccountMembership.findMany({
+      where: { userId: user.id },
+      select: { tradingAccountId: true },
+    })).map(({ tradingAccountId: id }) => id);
+  }
+
+  if (accountIds.length === 0) {
+    const page = filters.page ?? 1;
+    const pageSize = Math.min(filters.pageSize ?? 25, 100);
+    return { cycles: [], pagination: { page, pageSize, total: 0, totalPages: 1 } };
+  }
+  return listTradeCyclesForAccountIds(accountIds, filters);
+}
+
+async function listTradeCyclesForAccountIds(accountIds: number[], filters: TradeCycleFilters) {
+  const page = filters.page ?? 1;
+  const pageSize = Math.min(filters.pageSize ?? 25, 100);
+  const where = buildWhere(filters, { in: accountIds });
+  const [cycles, total] = await Promise.all([
+    prisma.trackedPosition.findMany({ where, include: tradeCycleInclude, orderBy: { openedAt: 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
+    prisma.trackedPosition.count({ where }),
+  ]);
+  const systemEvents = await prisma.systemEvent.findMany({
+    where: {
+      entityType: 'trackedPosition',
+      entityId: { in: cycles.map((cycle) => String(cycle.id)) },
+      tradingAccountId: { in: accountIds },
+      type: 'position.closed',
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+  const byPosition = new Map<string, TrackedPositionSystemEvent[]>();
+  for (const event of systemEvents) {
+    const existing = byPosition.get(event.entityId) ?? [];
+    existing.push(event);
+    byPosition.set(event.entityId, existing);
+  }
+  return { cycles: cycles.map((cycle) => buildCycleSummary(cycle, byPosition.get(String(cycle.id)) ?? [])), pagination: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) } };
+}
+
 export async function getTradeCycleById(id: number) {
   const tradingAccountId = await resolveDefaultTradingAccountId();
   const position = await prisma.trackedPosition.findFirst({
@@ -500,6 +566,53 @@ export async function getTradeCycleById(id: number) {
         brokerActivities: position.brokerActivities,
         systemEvents,
       }),
+    },
+  };
+}
+
+export async function getAccessibleTradeCycleById(
+  user: { id: number; platformRole: PlatformRole },
+  id: number
+) {
+  if (user.platformRole === PlatformRole.ACCOUNT_USER) {
+    throw new HttpError(403, 'Admin-console trade history is not available to account portal users.');
+  }
+  const position = await prisma.trackedPosition.findFirst({
+    where: {
+      id,
+      ...(user.platformRole === PlatformRole.SYSTEM_OWNER
+        ? { tradingAccountId: { not: null } }
+        : { tradingAccount: { memberships: { some: { userId: user.id } } } }),
+    },
+    include: {
+      ...tradeCycleInclude,
+      orderIntents: { include: { brokerOrders: true }, orderBy: { createdAt: 'asc' } },
+      brokerOrders: { orderBy: { createdAt: 'asc' } },
+    },
+  });
+  if (!position) throw new HttpError(404, `Trade cycle ${id} was not found.`);
+  const systemEvents = await prisma.systemEvent.findMany({
+    where: { entityType: 'trackedPosition', entityId: String(id), tradingAccountId: position.tradingAccountId },
+    orderBy: { createdAt: 'asc' },
+  });
+  return {
+    cycle: {
+      ...buildCycleSummary(position, systemEvents),
+      rawPositionJson: position.rawPositionJson,
+      configSnapshotJson: position.configSnapshotJson,
+      configSnapshotCapturedAt: position.configSnapshotCapturedAt,
+      currentPrice: position.currentPrice,
+      marketValue: position.marketValue,
+      costBasis: position.costBasis,
+      unrealizedPnL: position.unrealizedPnL,
+      unrealizedPnLPct: position.unrealizedPnLPct,
+      exitState: position.exitState,
+      orderIntents: position.orderIntents,
+      brokerOrders: position.brokerOrders,
+      brokerActivities: position.brokerActivities,
+      entryDecision: position.entryDecision,
+      systemEvents,
+      timeline: buildTimeline({ openedAt: position.openedAt, closedAt: position.closedAt, entryDecision: position.entryDecision, orderIntents: position.orderIntents, brokerOrders: position.brokerOrders, brokerActivities: position.brokerActivities, systemEvents }),
     },
   };
 }

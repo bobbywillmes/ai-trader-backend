@@ -2,12 +2,15 @@ import { useMemo, useState } from "react";
 import { Alert, Anchor, Badge, Box, Card, Group, Loader, SegmentedControl, SimpleGrid, Skeleton, Stack, Text, Title } from "@mantine/core";
 import { IconAlertTriangle, IconCircleCheck } from "@tabler/icons-react";
 import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { DataState } from "../components/data-display";
 import { getAdminToken } from "../lib/api";
-import { useBootstrap, useIndexIntraday, useIndexPerformance } from "../features/dashboard/hooks";
-import type { BrokerOpenOrder, BrokerPosition, IndexChartRange, IndexIntradaySymbol, IndexPerformanceSymbol, RiskStatus } from "../features/dashboard/types";
+import { useDashboardAccountsOverview, useIndexIntraday, useIndexPerformance, useTradingAccountDashboard } from "../features/dashboard/hooks";
+import type { BrokerOpenOrder, BrokerPosition, DashboardOverviewRow, EntryReadiness, IndexChartRange, IndexIntradaySymbol, IndexPerformanceSymbol, RiskStatus } from "../features/dashboard/types";
 import { describeRegularSession, formatMarketDateTime, getTradingTransition, marketContext, normalizeSeries, rangePosition } from "../features/dashboard/dashboardView";
+import { useTradingAccountScope } from "../features/tradingAccountScope/useTradingAccountScope";
+import { TradingAccountScopeSelector } from "../features/tradingAccountScope/TradingAccountScopeSelector";
+import { createScopedNavigationTarget } from "../app/navigationUtils";
 import classes from "./DashboardPage.module.css";
 
 const ranges: Array<{ label: string; value: IndexChartRange }> = [
@@ -37,14 +40,15 @@ function Metric({ label, value, detail, pnl }: { label: string; value: string; d
   return <Card withBorder p="md"><Text size="xs" c="dimmed" fw={700} tt="uppercase">{label}</Text><Text className={classes.metricValue} mt={4} size="xl" fw={700} c={pnl == null ? undefined : tone(pnl)}>{value}</Text>{detail && <Text size="xs" c={pnl == null ? "dimmed" : tone(pnl)}>{detail}</Text>}</Card>;
 }
 
-function TradingReadiness({ risk }: { risk: RiskStatus | undefined }) {
-  if (!risk) return <Card withBorder p="md"><DataState state="empty" title="Trading readiness unavailable" message="The account bootstrap did not include risk status." /></Card>;
+function TradingReadiness({ risk }: { risk: EntryReadiness | undefined }) {
+  if (!risk) return <Card withBorder p="md"><DataState state="empty" title="Trading readiness unavailable" message="Account readiness could not be evaluated." /></Card>;
   const session = risk.entrySession;
+  if (!session) return <Card withBorder p="md"><Text fw={700}>Trading Readiness</Text><Badge mt="sm" color="orange">{risk.status}</Badge><Stack mt="sm" gap="xs">{risk.blockers.map((reason) => <Text size="sm" key={reason}>{reason}</Text>)}</Stack></Card>;
   const transition = getTradingTransition(session);
   return <Card withBorder p="md" aria-labelledby="trading-readiness-title">
     <Group justify="space-between" align="flex-start" mb="md"><div><Text id="trading-readiness-title" fw={700}>Trading Readiness</Text><Text size="xs" c="dimmed">Authoritative account and regular-session entry state</Text></div><Badge color={session.canEnterNow ? "teal" : session.degraded ? "yellow" : "orange"} variant="light">{session.canEnterNow ? "Entries permitted" : sessionLabel(session.status)}</Badge></Group>
     <div className={classes.readinessGrid}>
-      <Datum label="Overall status" value={risk.canEnter ? "Operational — entries may proceed" : `Blocked — ${risk.reasons[0] ?? "entry requirements not met"}`} />
+      <Datum label="Overall status" value={risk.canEnter ? "Operational — entries may proceed" : `Blocked — ${risk.blockers[0] ?? "entry requirements not met"}`} />
       <Datum label="Market state" value={session.marketOpen == null ? "Unavailable" : session.marketOpen ? "Open" : "Closed"} />
       <Datum label="Regular session" value={describeRegularSession(session)} />
       <Datum label={transition.label} value={formatMarketDateTime(transition.value)} />
@@ -92,27 +96,32 @@ function PositionRows({ records }: { records: BrokerPosition[] }) { return <>{re
 function OrderRows({ records }: { records: BrokerOpenOrder[] }) { return <>{records.slice(0, 4).map((o) => <div className={classes.record} key={o.id}><Text fw={700}>{o.symbol}</Text><Datum label="Side / quantity" value={`${o.side.toUpperCase()} ${o.qty ?? (o.notional != null ? money(o.notional) : "Unavailable")}`} /><div className={classes.recordValue}><Datum label="Type" value={o.orderType.replaceAll("_", " ")} /></div><div className={classes.recordValue}><Datum label="Status" value={o.status} /></div></div>)}</>; }
 function SummaryCard({ title, count, to, loading, empty, children }: { title: string; count: number; to: string; loading: boolean; empty: string; children: React.ReactNode }) { return <Card withBorder p="md"><Group justify="space-between" mb="xs"><Group gap="xs"><Text fw={700}>{title}</Text><Badge variant="light">{count}</Badge></Group><Anchor component={Link} to={to} size="sm">View all {title.toLowerCase()}</Anchor></Group>{loading ? <Skeleton height={100} /> : count ? children : <DataState state="empty" title={empty} message="There are no current records to review." />}</Card>; }
 
-function Attention({ accountBlocked, risk }: { accountBlocked: boolean; risk?: RiskStatus }) {
+function Attention({ dataAvailable, accountBlocked, risk, reconciliationTo, eventsTo }: { dataAvailable: boolean; accountBlocked: boolean; risk?: EntryReadiness; reconciliationTo: string; eventsTo: string }) {
   const issues = [
     ...(accountBlocked ? [{ severity: "Critical", text: "Broker account reports trading is blocked.", to: "/trading-accounts" }] : []),
-    ...(risk?.entrySession.degraded || risk?.entrySession.error ? [{ severity: "Warning", text: risk.entrySession.error?.message ?? "Market-session status is degraded.", to: "/system/events" }] : []),
-    ...(!risk?.canEnter && risk?.reasons?.length ? risk.reasons.slice(0, 3).map((text) => ({ severity: "Blocked", text, to: "/settings" })) : []),
+    ...(risk?.entrySession?.degraded || risk?.entrySession?.error ? [{ severity: "Warning", text: risk.entrySession?.error?.message ?? "Market-session status is degraded.", to: "/system/events" }] : []),
+    ...(!risk?.canEnter && risk?.blockers?.length ? risk.blockers.slice(0, 3).map((text) => ({ severity: "Blocked", text, to: "/settings" })) : []),
   ].slice(0, 5);
-  return <Card withBorder p="md"><Text fw={700} mb="sm">Attention &amp; Exceptions</Text>{issues.length ? <Stack gap="sm">{issues.map((item, index) => <div className={classes.attentionItem} key={`${item.text}-${index}`}><IconAlertTriangle size={18} aria-hidden="true" /><Badge color={item.severity === "Critical" ? "red" : "orange"} variant="light">{item.severity}</Badge><Anchor component={Link} to={item.to} size="sm">{item.text}</Anchor></div>)}</Stack> : <Group gap="sm"><IconCircleCheck color="var(--mantine-color-teal-5)" aria-hidden="true" /><Text size="sm">No current issues require attention. <Anchor component={Link} to="/system/events">Review system events</Anchor> or <Anchor component={Link} to="/system/reconciliation">reconciliation</Anchor>.</Text></Group>}</Card>;
+  return <Card withBorder p="md"><Text fw={700} mb="sm">Attention &amp; Exceptions</Text>{issues.length ? <Stack gap="sm">{issues.map((item, index) => <div className={classes.attentionItem} key={`${item.text}-${index}`}><IconAlertTriangle size={18} aria-hidden="true" /><Badge color={item.severity === "Critical" ? "red" : "orange"} variant="light">{item.severity}</Badge><Anchor component={Link} to={item.to} size="sm">{item.text}</Anchor></div>)}</Stack> : dataAvailable ? <Group gap="sm"><IconCircleCheck color="var(--mantine-color-teal-5)" aria-hidden="true" /><Text size="sm">No current issues require attention. <Anchor component={Link} to={eventsTo}>Review system events</Anchor> or <Anchor component={Link} to={reconciliationTo}>reconciliation</Anchor>.</Text></Group> : <DataState state="empty" title="Health status unavailable" message="There is not enough observed account data to report a healthy state." />}</Card>;
+}
+
+function OverviewAccount({ row, onSelect }: { row: DashboardOverviewRow; onSelect: () => void }) {
+  return <Card withBorder p="md"><Group justify="space-between" align="flex-start"><div><Text fw={750}>{row.account.displayName}</Text><Text size="sm" c="dimmed">{row.account.accountHolderName} · {row.account.broker}</Text></div><Badge color={row.account.environment === "LIVE" ? "red" : "blue"}>{row.account.environment}</Badge></Group><SimpleGrid cols={{ base: 2, sm: 4 }} mt="md"><Datum label="Portfolio" value={row.financialSnapshot ? money(row.financialSnapshot.portfolioValue) : "Unavailable"} /><Datum label="Readiness" value={row.readiness.status} /><Datum label="Positions / orders" value={`${row.exposure.openPositionCount} / ${row.exposure.openOrderCount}`} /><Datum label="Observed" value={row.freshness.observedAt ? formatMarketDateTime(row.freshness.observedAt) : "Unavailable"} /></SimpleGrid>{row.readiness.blockers.length > 0 && <Alert mt="md" color="orange" title={row.readiness.primaryBlocker ?? "Attention required"}>{row.readiness.blockers.slice(1).join(" · ") || "Review this Trading Account."}</Alert>}<Anchor component="button" type="button" mt="md" onClick={onSelect}>View account Dashboard</Anchor></Card>;
 }
 
 export function DashboardPage() {
   const [token] = useState(() => getAdminToken()); const [range, setRange] = useState<IndexChartRange>("1d");
-  const bootstrap = useBootstrap(token); const performance = useIndexPerformance(token); const intraday = useIndexIntraday(token, range);
-  const account = bootstrap.data?.account; const risk = bootstrap.data?.risk; const positions = bootstrap.data?.positions ?? []; const orders = bootstrap.data?.openOrders ?? [];
-  const exposure = risk?.usage.totalOpenNotional;
+  const scope = useTradingAccountScope();
+  const location = useLocation();
+  const selectedId = scope.scope.type === "ACCOUNT" ? scope.scope.tradingAccountId : null;
+  const selected = useTradingAccountDashboard(token, selectedId); const overview = useDashboardAccountsOverview(token, scope.isAll);
+  const performance = useIndexPerformance(token); const intraday = useIndexIntraday(token, range);
+  const account = selected.data?.broker.account; const risk = selected.data?.readiness; const positions = selected.data?.exposure.positions ?? []; const orders = selected.data?.exposure.openOrders ?? [];
+  const exposure = risk?.usage?.totalOpenNotional;
   return <Stack className={classes.page} gap="lg">
-    <Group className={classes.header} justify="space-between"><div><Title order={2}>Dashboard</Title><Text size="sm" c="dimmed">Operational command center</Text></div><Group className={classes.badges} gap="xs">{account && <Badge color={account.mode === "live" ? "red" : "yellow"} variant="filled">{account.mode === "live" ? "Live trading" : "Paper trading"}</Badge>}{account && <Badge color={account.tradingBlocked ? "red" : risk?.canEnter ? "teal" : "orange"} variant="light">{account.tradingBlocked ? "Trading blocked" : risk?.canEnter ? "Entries permitted" : "Entries blocked"}</Badge>}{bootstrap.isFetching && <Loader size="xs" />}</Group></Group>
-    {bootstrap.error && <Alert color="red" title="Account overview unavailable">{bootstrap.error.message}</Alert>}
-    <div className={classes.metricGrid}><Metric label="Portfolio value" value={money(account?.portfolioValue)} /><Metric label="Day P/L" value={signedMoney(account?.dayPnL)} detail={signedPercent(account == null ? null : account.dayPnLPct * 100)} pnl={account?.dayPnL} /><Metric label="Open exposure" value={money(exposure)} detail={`${positions.length} open position${positions.length === 1 ? "" : "s"}`} /><Metric label="Buying power" value={money(account?.buyingPower)} /></div>
-    <TradingReadiness risk={risk} />
+    <Group className={classes.header} justify="space-between" align="flex-start"><div><Title order={2}>Dashboard</Title><Text size="sm" c="dimmed">{scope.isAll ? "Operational overview across all Trading Accounts" : scope.selectedAccount ? `${scope.selectedAccount.displayName} · ${scope.selectedAccount.accountHolderName ?? "Account holder"} · ${scope.selectedAccount.broker}` : "Operational command center"}</Text></div><TradingAccountScopeSelector mode="ACCOUNT_FILTERABLE" expanded variant="dashboard" /></Group>
+    {scope.isAll ? <><div className={classes.metricGrid}><Metric label="Trading Accounts" value={String(overview.data?.summary.tradingAccountCount ?? "—")} detail={overview.data ? `${overview.data.summary.paperCount} PAPER · ${overview.data.summary.liveCount} LIVE` : undefined} /><Metric label="Readiness" value={overview.data ? `${overview.data.summary.readyCount} ready` : "—"} detail={overview.data ? `${overview.data.summary.blockedCount} blocked · ${overview.data.summary.unavailableCount} unavailable` : undefined} /><Metric label="Open Positions" value={String(overview.data?.summary.openPositionCount ?? "—")} /><Metric label="Accounts Requiring Attention" value={String(overview.data?.summary.attentionCount ?? "—")} detail={overview.data ? `${overview.data.summary.openOrderCount} open orders` : undefined} /></div>{overview.error && <Alert color="red" title="Accounts overview unavailable">{overview.error.message}</Alert>}<Stack gap="md">{overview.data?.accounts.map((row) => <OverviewAccount key={row.account.id} row={row} onSelect={() => scope.setScope({ type: "ACCOUNT", tradingAccountId: row.account.id })} />)}</Stack></> : <>{selected.error && <Alert color="red" title="Account overview unavailable">{selected.error.message}</Alert>}<Group gap="xs"><Badge color={selected.data?.account.environment === "LIVE" ? "red" : "blue"}>{selected.data?.account.environment ?? scope.selectedAccount?.environment}</Badge>{risk && <Badge color={risk.canEnter ? "teal" : "orange"}>{risk.status}</Badge>}{selected.isFetching && <Loader size="xs" />}</Group><div className={classes.metricGrid}><Metric label="Portfolio value" value={money(account?.portfolioValue)} /><Metric label="Day P/L" value={signedMoney(account?.dayPnL)} detail={signedPercent(account == null ? null : account.dayPnLPct * 100)} pnl={account?.dayPnL} /><Metric label="Open exposure" value={money(exposure)} detail={selected.data?.exposure.openPositionCount == null ? "Unavailable" : `${selected.data.exposure.openPositionCount} open positions`} /><Metric label="Buying power" value={money(account?.buyingPower)} /></div><TradingReadiness risk={risk} /></>}
     <MarketPulse range={range} setRange={setRange} quotes={performance.data?.symbols ?? []} history={intraday.data?.symbols ?? []} loading={performance.isLoading || intraday.isLoading} error={performance.error ?? intraday.error} />
-    <SimpleGrid cols={{ base: 1, lg: 2 }}><SummaryCard title="Open Positions" count={positions.length} to="/positions/open" loading={bootstrap.isLoading} empty="No open positions"><PositionRows records={positions} /></SummaryCard><SummaryCard title="Open Orders" count={orders.length} to="/orders/open" loading={bootstrap.isLoading} empty="No open orders"><OrderRows records={orders} /></SummaryCard></SimpleGrid>
-    <Attention accountBlocked={account?.tradingBlocked ?? false} risk={risk} />
+    {!scope.isAll && selectedId && <><SimpleGrid cols={{ base: 1, lg: 2 }}>{selected.data && selected.data.exposure.positions === null ? <Card withBorder><DataState state="empty" title="Open positions unavailable" message="Broker position state could not be observed." /></Card> : <SummaryCard title="Open Positions" count={positions.length} to={createScopedNavigationTarget("/positions/open", location.search)} loading={selected.isLoading} empty="No open positions"><PositionRows records={positions} /></SummaryCard>}{selected.data && selected.data.exposure.openOrders === null ? <Card withBorder><DataState state="empty" title="Open orders unavailable" message="Broker order state could not be observed." /></Card> : <SummaryCard title="Open Orders" count={orders.length} to={createScopedNavigationTarget("/orders/open", location.search)} loading={selected.isLoading} empty="No open orders"><OrderRows records={orders} /></SummaryCard>}</SimpleGrid><Attention dataAvailable={Boolean(selected.data)} accountBlocked={account?.tradingBlocked ?? false} risk={risk} eventsTo={createScopedNavigationTarget("/system/events", location.search)} reconciliationTo={createScopedNavigationTarget(`/trading-accounts/${selectedId}/reconciliation`, location.search)} /></>}
   </Stack>;
 }

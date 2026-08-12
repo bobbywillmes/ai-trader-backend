@@ -1,4 +1,5 @@
-import type { Prisma } from '@prisma/client';
+import { PlatformRole, type Prisma } from '@prisma/client';
+import { HttpError } from '../errors/http-error.js';
 import { logger } from '../config/logger.js';
 import { prisma } from '../db/prisma.js';
 import { TRADING_ACCOUNT_SUMMARY_SELECT } from './trading-account.service.js';
@@ -42,6 +43,58 @@ export async function getRecentSystemEvents(limit = 50) {
     orderBy: { createdAt: 'desc' },
     take: limit
   });
+}
+
+export async function getAccessibleSystemEvents(
+  user: { id: number; platformRole: PlatformRole },
+  accountId: number | null,
+  filters: { page?: number; pageSize?: number; type?: string; search?: string } = {}
+) {
+  if (user.platformRole === PlatformRole.ACCOUNT_USER) {
+    throw new HttpError(403, 'Admin-console system events are not available to account portal users.');
+  }
+  let accountScope: Prisma.SystemEventWhereInput;
+  if (accountId !== null) {
+    if (user.platformRole !== PlatformRole.SYSTEM_OWNER) {
+      const membership = await prisma.tradingAccountMembership.findUnique({
+        where: { tradingAccountId_userId: { tradingAccountId: accountId, userId: user.id } },
+        select: { id: true },
+      });
+      if (!membership) throw new HttpError(403, 'Access to this trading account is not permitted.');
+    }
+    accountScope = { tradingAccountId: accountId };
+  } else if (user.platformRole === PlatformRole.SYSTEM_OWNER) {
+    accountScope = {};
+  } else {
+    accountScope = { tradingAccount: { memberships: { some: { userId: user.id } } } };
+  }
+  const search = filters.search?.trim();
+  const where: Prisma.SystemEventWhereInput = {
+      ...accountScope,
+      ...(filters.type ? { type: filters.type } : {}),
+      ...(search ? { OR: [
+        { type: { contains: search, mode: 'insensitive' } },
+        { entityType: { contains: search, mode: 'insensitive' } },
+        { entityId: { contains: search, mode: 'insensitive' } },
+        { message: { contains: search, mode: 'insensitive' } },
+      ] } : {}),
+  };
+  const page = Math.max(filters.page ?? 1, 1);
+  const pageSize = Math.min(Math.max(filters.pageSize ?? 25, 1), 100);
+  const [events, total] = await Promise.all([
+    prisma.systemEvent.findMany({
+      where,
+    include: { tradingAccount: { select: TRADING_ACCOUNT_SUMMARY_SELECT } },
+    orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    prisma.systemEvent.count({ where }),
+  ]);
+  return {
+    events,
+    pagination: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) },
+  };
 }
 
 export async function getSecurityActivity(symbol: string, limit = 10) {

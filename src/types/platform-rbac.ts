@@ -33,6 +33,7 @@ export const PLATFORM_ROLE_PERMISSIONS: Record<PlatformRole, PlatformPermission[
     PlatformPermission.STRATEGY_READ,
     PlatformPermission.EXIT_PROFILE_READ,
     PlatformPermission.REPORTS_READ,
+    PlatformPermission.SYSTEM_EVENTS_READ,
   ],
   [PlatformRole.ACCOUNT_USER]: [
     PlatformPermission.TRADING_ACCOUNT_READ,

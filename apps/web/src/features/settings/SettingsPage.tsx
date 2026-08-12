@@ -1571,7 +1571,7 @@ export function SettingsPage() {
                 <div>
                   <Title order={3}>System Status</Title>
                   <Text c="dimmed" size="sm">
-                    Production readiness snapshot for the app, database, broker mode,
+                    Production readiness snapshot for the app, database, legacy broker-mode guard,
                     workers, and trading entry state.
                   </Text>
                 </div>
@@ -2159,9 +2159,9 @@ export function SettingsPage() {
               <Group justify="space-between" align="flex-start" wrap="nowrap">
                 <div>
                   <Group gap="xs">
-                    <Text fw={600}>Paper Trading Mode</Text>
+                    <Text fw={600}>Legacy Global Paper-Mode Guard</Text>
                     <Badge color={config.paperMode ? "blue" : "red"}>
-                      {config.paperMode ? "Paper" : "Live"}
+                      {config.paperMode ? "Paper-only guard enabled" : "Live broker mode allowed"}
                     </Badge>
                   </Group>
                   <Text size="sm" c="dimmed" maw={720}>
@@ -2173,7 +2173,7 @@ export function SettingsPage() {
                   </Text>
                   {!config.paperMode && (
                     <Text size="sm" c="red" fw={600} mt="xs">
-                      Live trading is active — real money at risk.
+                      The legacy guard permits live broker mode. Each broker action still targets an explicit TradingAccount; LIVE accounts can affect real money.
                     </Text>
                   )}
                 </div>

@@ -3,8 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   trackedPositionFindMany: vi.fn(),
   trackedPositionFindFirst: vi.fn(),
+  trackedPositionCount: vi.fn(),
   systemEventFindMany: vi.fn(),
   resolveDefaultTradingAccountId: vi.fn(),
+  tradingAccountFindMany: vi.fn(),
+  membershipFindMany: vi.fn(),
+  membershipFindUnique: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -12,10 +16,13 @@ vi.mock('../db/prisma.js', () => ({
     trackedPosition: {
       findMany: mocks.trackedPositionFindMany,
       findFirst: mocks.trackedPositionFindFirst,
+      count: mocks.trackedPositionCount,
     },
     systemEvent: {
       findMany: mocks.systemEventFindMany,
     },
+    tradingAccount: { findMany: mocks.tradingAccountFindMany },
+    tradingAccountMembership: { findMany: mocks.membershipFindMany, findUnique: mocks.membershipFindUnique },
   },
 }));
 
@@ -32,6 +39,8 @@ vi.mock('./trading-account.service.js', () => ({
 
 import {
   getTradeCycleById,
+  getAccessibleTradeCycleById,
+  listAccessibleTradeCycles,
   listTradeCycles,
   listTradeCyclesForTradingAccount,
 } from './trade-cycles.service.js';
@@ -124,6 +133,7 @@ function buildCycle(overrides: Record<string, unknown> = {}) {
 describe('trade cycle service', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mocks.trackedPositionCount.mockResolvedValue(0);
     mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.systemEventFindMany.mockResolvedValue([]);
   });
@@ -642,5 +652,28 @@ describe('trade cycle service', () => {
       statusCode: 404,
       message: 'Trade cycle 999 was not found.',
     });
+  });
+
+  it('membership-filters aggregate trade cycles and scopes the database query', async () => {
+    mocks.membershipFindMany.mockResolvedValue([{ tradingAccountId: 2 }, { tradingAccountId: 3 }]);
+    mocks.trackedPositionFindMany.mockResolvedValue([]);
+    mocks.trackedPositionCount.mockResolvedValue(75);
+    mocks.systemEventFindMany.mockResolvedValue([]);
+    const result = await listAccessibleTradeCycles({ id: 9, platformRole: 'OPERATOR' }, null, { page: 2, pageSize: 25 });
+    expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ tradingAccountId: { in: [2, 3] } }),
+      skip: 25,
+      take: 25,
+    }));
+    expect(result.pagination).toEqual({ page: 2, pageSize: 25, total: 75, totalPages: 3 });
+  });
+
+  it('authorizes detail from the record account instead of the default account', async () => {
+    mocks.trackedPositionFindFirst.mockResolvedValue(null);
+    await expect(getAccessibleTradeCycleById({ id: 9, platformRole: 'OPERATOR' }, 404)).rejects.toMatchObject({ statusCode: 404 });
+    expect(mocks.trackedPositionFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 404, tradingAccount: { memberships: { some: { userId: 9 } } } },
+    }));
+    expect(mocks.resolveDefaultTradingAccountId).not.toHaveBeenCalled();
   });
 });

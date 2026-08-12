@@ -5,13 +5,13 @@ import { StatusBadge } from "../../../../components/data-display";
 import type { TradingAccount } from "../../types";
 import classes from "../TradingAccountDetailPage.module.css";
 
-export function AccountDetailHeader({ account }: { account?: TradingAccount }) {
+export function AccountDetailHeader({ account, backTo }: { account?: TradingAccount; backTo: string }) {
   return (
     <header className={classes.header}>
       <Stack gap="xs" className={classes.headerCopy}>
         <Button
           component={Link}
-          to="/trading-accounts"
+          to={backTo}
           variant="subtle"
           size="xs"
           leftSection={<IconArrowLeft size={16} aria-hidden="true" />}

@@ -115,12 +115,105 @@ export type RiskStatus = {
   };
 };
 
-export type BootstrapResponse = {
-  account: BrokerAccountSummary;
-  positions: BrokerPosition[];
-  openOrders: BrokerOpenOrder[];
-  config: RuntimeTradingConfig;
-  risk: RiskStatus;
+export type DashboardAccountIdentity = {
+  id: number;
+  displayName: string;
+  accountHolderName: string;
+  broker: string;
+  environment: "PAPER" | "LIVE";
+  status: string;
+  baseCurrency: string;
+  brokerAccountNumberMasked: string | null;
+  brokerAccountStatus: string | null;
+};
+export type DashboardCredentials = {
+  exists: boolean;
+  status: string;
+  usable: boolean;
+  verifiedAt: string | null;
+  lastFailedAt: string | null;
+  revokedAt: string | null;
+};
+export type EntryReadiness = {
+  status: "READY" | "READY_WITH_WARNINGS" | "BLOCKED" | "UNAVAILABLE";
+  canEnter: boolean;
+  blockers: string[];
+  warnings: string[];
+  evaluatedAt: string;
+  entrySession: RiskStatus["entrySession"] | null;
+  usage: null | {
+    dailyEntryOrderCount: number;
+    dailyEntryNotional: number;
+    activePositionCount: number;
+    openPositionNotional: number;
+    pendingEntryNotional: number;
+    totalOpenNotional: number;
+    activeSymbols: string[];
+  };
+  systemBlockers: {
+    tradingEnabled: boolean | null;
+    killSwitchEnabled: boolean | null;
+  };
+};
+export type TradingAccountDashboardResponse = {
+  account: DashboardAccountIdentity;
+  credentials: DashboardCredentials;
+  safety: { tradingEnabled: boolean; killSwitchEnabled: boolean };
+  broker: {
+    available: boolean;
+    observedAt: string | null;
+    account: BrokerAccountSummary | null;
+    error?: string;
+  };
+  exposure: {
+    openPositionNotional: number | null;
+    pendingEntryNotional: number | null;
+    openPositionCount: number | null;
+    openOrderCount: number | null;
+    positions: BrokerPosition[] | null;
+    openOrders: BrokerOpenOrder[] | null;
+  };
+  readiness: EntryReadiness;
+  partialFailures: Record<string, string>;
+};
+export type DashboardOverviewRow = {
+  account: DashboardAccountIdentity;
+  credentials: DashboardCredentials;
+  safety: { tradingEnabled: boolean; killSwitchEnabled: boolean };
+  readiness: {
+    status: "READY" | "BLOCKED" | "UNAVAILABLE";
+    primaryBlocker: string | null;
+    blockers: string[];
+  };
+  exposure: {
+    openPositionCount: number;
+    openOrderCount: number;
+    openPositionNotional: number;
+  };
+  financialSnapshot: null | {
+    portfolioValue: number;
+    equity: number;
+    cash: number;
+    buyingPower: number;
+    dayPnL: number | null;
+    dayPnLPct: number | null;
+  };
+  freshness: { observedAt: string | null; stale: boolean; available: boolean };
+};
+export type DashboardAccountsOverviewResponse = {
+  generatedAt: string;
+  summary: {
+    tradingAccountCount: number;
+    paperCount: number;
+    liveCount: number;
+    readyCount: number;
+    blockedCount: number;
+    unavailableCount: number;
+    attentionCount: number;
+    openPositionCount: number;
+    openOrderCount: number;
+  };
+  accounts: DashboardOverviewRow[];
 };
 
 export type IndexPerformanceSymbol = {
@@ -187,4 +280,14 @@ export type SystemEvent = {
   payloadJson: string | null;
   processed: boolean;
   createdAt: string;
+};
+
+export type SystemEventsResponse = {
+  events: SystemEvent[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+  };
 };

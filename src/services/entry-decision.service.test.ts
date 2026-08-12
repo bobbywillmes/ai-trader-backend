@@ -5,10 +5,12 @@ const mocks = vi.hoisted(() => ({
   entryDecisionFindFirst: vi.fn(),
   entryDecisionFindMany: vi.fn(),
   entryDecisionFindUnique: vi.fn(),
+  entryDecisionCount: vi.fn(),
   entryDecisionUpdateMany: vi.fn(),
   securityFindUnique: vi.fn(),
   subscriptionFindUnique: vi.fn(),
   tradingAccountSubscriptionFindUnique: vi.fn(),
+  membershipFindUnique: vi.fn(),
   resolveDefaultTradingAccountId: vi.fn(),
 }));
 
@@ -19,6 +21,7 @@ vi.mock('../db/prisma.js', () => ({
       findFirst: mocks.entryDecisionFindFirst,
       findMany: mocks.entryDecisionFindMany,
       findUnique: mocks.entryDecisionFindUnique,
+      count: mocks.entryDecisionCount,
       updateMany: mocks.entryDecisionUpdateMany,
     },
     security: {
@@ -30,6 +33,7 @@ vi.mock('../db/prisma.js', () => ({
     tradingAccountSubscription: {
       findUnique: mocks.tradingAccountSubscriptionFindUnique,
     },
+    tradingAccountMembership: { findUnique: mocks.membershipFindUnique },
   },
 }));
 
@@ -47,10 +51,12 @@ vi.mock('./trading-account.service.js', () => ({
 import {
   ensureEntryDecisionCanLink,
   getEntryDecisionById,
+  getAccessibleEntryDecisionById,
   linkEntryDecisionToBrokerOrder,
   linkEntryDecisionToOrderIntent,
   linkEntryDecisionToTrackedPosition,
   listEntryDecisions,
+  listAccessibleEntryDecisions,
   recordEntryDecision,
 } from './entry-decision.service.js';
 
@@ -102,6 +108,7 @@ function decision(overrides: Record<string, unknown> = {}) {
 describe('entry decision service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.entryDecisionCount.mockResolvedValue(0);
     mocks.entryDecisionFindUnique.mockResolvedValue(null);
     mocks.entryDecisionFindFirst.mockResolvedValue(null);
     mocks.entryDecisionFindMany.mockResolvedValue([]);
@@ -424,7 +431,7 @@ describe('entry decision service', () => {
     expect(mocks.entryDecisionFindMany).toHaveBeenCalledWith({
       where: {
         symbol: 'SPY',
-        decisionState: 'idle',
+        decisionState: { equals: 'idle', mode: 'insensitive' },
         subscriptionId: 22,
         OR: [
           { tradingAccountId: null },
@@ -528,5 +535,45 @@ describe('entry decision service', () => {
         },
       })
     );
+  });
+
+  it('includes null-attributed decisions only for owner ALL scope', async () => {
+    mocks.entryDecisionFindMany.mockResolvedValue([]);
+    mocks.entryDecisionCount.mockResolvedValue(51);
+    const result = await listAccessibleEntryDecisions({ id: 1, platformRole: 'SYSTEM_OWNER' }, null, { page: 2, pageSize: 25 });
+    expect(mocks.entryDecisionFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: {} }));
+    expect(mocks.entryDecisionFindMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 25, take: 25 }));
+    expect(result.pagination).toEqual({ page: 2, pageSize: 25, total: 51, totalPages: 3 });
+    await listAccessibleEntryDecisions({ id: 9, platformRole: 'OPERATOR' }, null, {});
+    expect(mocks.entryDecisionFindMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { tradingAccount: { memberships: { some: { userId: 9 } } } },
+    }));
+  });
+
+  it('matches a displayed decision-state label case-insensitively', async () => {
+    mocks.entryDecisionFindMany.mockResolvedValue([]);
+    await listAccessibleEntryDecisions(
+      { id: 1, platformRole: 'SYSTEM_OWNER' },
+      null,
+      { decisionState: 'Watching dip setup' }
+    );
+    expect(mocks.entryDecisionFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { decisionState: { equals: 'Watching_dip_setup', mode: 'insensitive' } },
+    }));
+  });
+
+  it('excludes null history from selected-account scope', async () => {
+    mocks.membershipFindUnique.mockResolvedValue({ id: 5 });
+    mocks.entryDecisionFindMany.mockResolvedValue([]);
+    await listAccessibleEntryDecisions({ id: 9, platformRole: 'OPERATOR' }, 7, {});
+    expect(mocks.entryDecisionFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tradingAccountId: 7 } }));
+  });
+
+  it('uses record attribution for arbitrary-account detail authorization', async () => {
+    mocks.entryDecisionFindFirst.mockResolvedValue(null);
+    await expect(getAccessibleEntryDecisionById({ id: 9, platformRole: 'OPERATOR' }, 103)).rejects.toMatchObject({ statusCode: 404 });
+    expect(mocks.entryDecisionFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 103, tradingAccount: { memberships: { some: { userId: 9 } } } },
+    }));
   });
 });

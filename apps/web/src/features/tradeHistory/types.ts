@@ -153,6 +153,7 @@ export type TradeCycleDetail = TradeCycleSummary & {
 
 export type TradeCyclesResponse = {
   cycles: TradeCycleSummary[];
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
 };
 
 export type TradeCycleDetailResponse = {
@@ -160,6 +161,9 @@ export type TradeCycleDetailResponse = {
 };
 
 export type TradeCyclesQuery = {
+  account?: "all" | number;
+  page?: number;
+  pageSize?: number;
   limit?: number;
   symbol?: string;
   status?: "open" | "closing" | "closed";

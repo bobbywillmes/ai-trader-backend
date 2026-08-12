@@ -1,8 +1,8 @@
 import type { NextFunction, Request, Response } from 'express';
 import { HttpError } from '../errors/http-error.js';
 import {
-  getEntryDecisionById,
-  listEntryDecisions,
+  getAccessibleEntryDecisionById,
+  listAccessibleEntryDecisions,
   type EntryDecisionFilters,
 } from '../services/entry-decision.service.js';
 
@@ -57,6 +57,18 @@ function getQueryBoolean(value: unknown, field: string) {
   throw new HttpError(400, `${field} must be true or false.`);
 }
 
+function getAccountScope(value: unknown) {
+  if (value === 'all') return null;
+  const id = getQueryNumber(value, 'account');
+  if (id === undefined) throw new HttpError(400, 'account is required.');
+  return id;
+}
+
+function authenticatedUser(res: Response) {
+  if (!res.locals.user) throw new HttpError(401, 'Authentication required.');
+  return res.locals.user;
+}
+
 export async function entryDecisionsController(
   req: Request,
   res: Response,
@@ -86,6 +98,8 @@ export async function entryDecisionsController(
       'signalBlocked'
     );
     const limit = getQueryNumber(req.query.limit, 'limit');
+    const page = getQueryNumber(req.query.page, 'page');
+    const pageSize = getQueryNumber(req.query.pageSize, 'pageSize');
 
     if (symbol !== undefined) filters.symbol = symbol;
     if (decisionState !== undefined) filters.decisionState = decisionState;
@@ -97,8 +111,10 @@ export async function entryDecisionsController(
     if (signalCreated !== undefined) filters.signalCreated = signalCreated;
     if (signalBlocked !== undefined) filters.signalBlocked = signalBlocked;
     if (limit !== undefined) filters.limit = limit;
+    if (page !== undefined) filters.page = page;
+    if (pageSize !== undefined) filters.pageSize = pageSize;
 
-    res.status(200).json(await listEntryDecisions(filters));
+    res.status(200).json(await listAccessibleEntryDecisions(authenticatedUser(res), getAccountScope(req.query.account), filters));
   } catch (error) {
     next(error);
   }
@@ -116,7 +132,7 @@ export async function entryDecisionByIdController(
       throw new HttpError(400, 'Invalid entry decision id.');
     }
 
-    res.status(200).json(await getEntryDecisionById(id));
+    res.status(200).json(await getAccessibleEntryDecisionById(authenticatedUser(res), id));
   } catch (error) {
     next(error);
   }

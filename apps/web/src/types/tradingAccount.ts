@@ -8,4 +8,5 @@ export type TradingAccountSummary = {
   broker: TradingBroker;
   environment: TradingAccountEnvironment;
   status?: string | null;
+  accountHolderName?: string | null;
 };

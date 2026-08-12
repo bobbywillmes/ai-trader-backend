@@ -25,3 +25,11 @@ export type OpenOrder = {
   clientOrderId?: string | null;
   client_order_id?: string | null;
 };
+
+export type OpenOrdersAccountResult = {
+  account: TradingAccountSummary;
+  availability: "AVAILABLE" | "UNAVAILABLE";
+  reason: "CREDENTIALS_MISSING" | "CREDENTIALS_UNUSABLE" | "BROKER_REQUEST_FAILED" | null;
+  message: string | null;
+  orders: OpenOrder[] | null;
+};

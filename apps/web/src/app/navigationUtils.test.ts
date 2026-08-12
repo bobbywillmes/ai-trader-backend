@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PlatformPermission } from "../features/auth/types";
 import type { AdminNavItem } from "./navigation";
-import { canAccessNavItem } from "./navigationUtils";
+import { canAccessNavItem, createScopedNavigationTarget } from "./navigationUtils";
 import { IconDashboard } from "@tabler/icons-react";
 
 const permissions = (...values: PlatformPermission[]) => new Set(values);
@@ -21,5 +21,22 @@ describe("Admin Console navigation authorization", () => {
     const item: AdminNavItem = { to: "/reports", label: "Reports", icon: IconDashboard, requiredPermission: "reports.read" };
     expect(canAccessNavItem(item, false, permissions())).toBe(false);
     expect(canAccessNavItem(item, false, permissions("reports.read"))).toBe(true);
+  });
+});
+
+describe("TradingAccount-scoped navigation", () => {
+  it("carries only account scope to another route", () => {
+    expect(createScopedNavigationTarget("/reports", "?account=12&page=4&status=open")).toBe("/reports?account=12");
+  });
+  it("preserves target-specific parameters while replacing target account scope", () => {
+    expect(createScopedNavigationTarget("/reports/performance?period=30d&account=all", "?account=12&page=4"))
+      .toBe("/reports/performance?period=30d&account=12");
+  });
+  it("keeps persistent operational scope distinct from an account-specific path", () => {
+    expect(createScopedNavigationTarget("/trading-accounts/1?tab=subscriptions", "?account=2"))
+      .toBe("/trading-accounts/1?tab=subscriptions&account=2");
+  });
+  it("leaves targets unchanged when no scope exists", () => {
+    expect(createScopedNavigationTarget("/settings", "?section=risk")).toBe("/settings");
   });
 });

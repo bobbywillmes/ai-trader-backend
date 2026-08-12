@@ -10,6 +10,8 @@ import { useAuth } from "../features/auth/useAuth";
 import type { PlatformPermission } from "../features/auth/types";
 import { getAdminToken } from "../lib/api";
 import type { ReactNode } from "react";
+import { TradingAccountScopeProvider } from "../features/tradingAccountScope/TradingAccountScopeProvider";
+import { getPageScope } from "../app/pageScope";
 
 export function AdminLayout() {
   const token = getAdminToken();
@@ -52,14 +54,18 @@ function AuthenticatedShell({ portal = false }: { portal?: boolean }) {
     navigate("/login", { replace: true });
   }
 
-  return <ResponsiveAppShell
+  const pageScope = getPageScope(pathname);
+  const shell = <ResponsiveAppShell
     groups={groups}
     user={user}
     platformRole={access?.platformRole}
     portalName={portal ? "Account Portal" : "Admin Console"}
     isSigningOut={logoutMutation.isPending}
     onSignOut={handleLogout}
+    pageScope={portal ? undefined : pageScope}
+    preserveTradingAccountScope={!portal}
   ><Outlet /></ResponsiveAppShell>;
+  return portal ? shell : <TradingAccountScopeProvider>{shell}</TradingAccountScopeProvider>;
 }
 
 export function AdminConsoleShell() { return <AuthenticatedShell />; }

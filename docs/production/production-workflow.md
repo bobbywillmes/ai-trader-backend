@@ -185,9 +185,11 @@ killSwitchEnabled=false
 
 This means the backend can run in production, sync account state, read Alpaca paper positions, receive n8n dry-run context requests, and write Market Diary events without accepting automated order-entry activity.
 
-Phase 2 workers enumerate account-scoped submitted orders, activities,
-positions, and scheduled snapshots. Keep Bobby Live credentialless and dormant:
-exit evaluation and reconciliation remain default-account-only until Phase 3.
+Workers enumerate account-scoped submitted orders, activities, positions,
+scheduled snapshots, exit evaluation, and reconciliation. Keep Bobby Live
+credentialless and dormant until its readiness controls are deliberately
+completed. The Admin Console targets reconciliation through the explicit
+TradingAccount route; the default-account route remains compatibility-only.
 Do not activate Live merely to test read coordination.
 
 ---
