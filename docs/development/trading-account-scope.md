@@ -41,7 +41,7 @@ The same separation applies to `ACCOUNT_SPECIFIC` routes. For example, `/trading
 
 Pages that own additional URL filters must update only their declared parameter keys. They clone the current query string, remove or replace their owned keys, and retain `account` and every other unrelated key. This prevents independent URL owners from competing with the scope provider.
 
-Reconciliation uses `/trading-accounts/:id/reconciliation`, with the path ID as its authoritative target and the global scope selector hidden. Its in-page target selector changes the route ID while preserving the dormant operational scope. The compatibility `/system/reconciliation` route redirects only from a concrete authorized `?account=<id>`; `ALL`, missing, malformed, or inaccessible scope requires explicit selection and never falls back to a default account. The Account Portal retains its existing route-authoritative model and is not wrapped in the Admin Console scope provider.
+Reconciliation uses `/trading-accounts/:id/reconciliation`, with the path ID as its authoritative target and the global scope selector hidden. Its in-page target selector changes the route ID while preserving the dormant operational scope. The compatibility `/system/reconciliation` route redirects only from a concrete authorized `?account=<id>`; `ALL`, missing, malformed, or inaccessible scope requires explicit selection and never falls back to a default account. Legacy `/portal` deep links remain compatible, but normal Account User navigation now uses the shared routes and scope provider.
 
 ## Query and mutation safety
 
@@ -51,7 +51,7 @@ Every TanStack Query key introduced or converted for scoped data must include st
 
 Phase 2 made Dashboard a scope consumer. Its sidebar and in-page selectors share this provider, and Dashboard no longer uses the legacy `/api/bootstrap` account or presents AI Trader as globally PAPER. See `trading-account-dashboard.md`.
 
-Phase 4 makes Trade History and Entry Decisions scope consumers. Both list APIs require `account=all` or an explicit TradingAccount ID, enforce owner/all versus operator/membership access on the server, and reject Account Portal users from the Admin Console collection semantics. Detail authorization follows the record's persisted TradingAccount attribution rather than the selected UI scope or the legacy default account.
+Phase 4 makes Trade History and Entry Decisions scope consumers. Both list APIs require `account=all` or an explicit TradingAccount ID and enforce owner/all versus membership access on the server. Route policy keeps Entry Decisions operational-only, while Trade History supports Account Users over their authorized account set. Detail authorization follows the record's persisted TradingAccount attribution rather than the selected UI scope or the legacy default account.
 
 Entry Decisions preserve historical `tradingAccountId = null` rows without inferring ownership. System Owners may see these records only in `account=all`, where the UI labels them `Legacy / Unattributed`. Selected-account lists exclude them, and non-owner aggregate lists exclude them because they cannot be tied to an authorized membership. Attributed records show TradingAccount and PAPER/LIVE identity in aggregate views. Trade cycles remain limited to canonically attributed TradingAccounts.
 
