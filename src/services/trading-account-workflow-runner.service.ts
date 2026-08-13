@@ -32,8 +32,10 @@ export type AccountWorkflowRunResult<T> =
 
 export type AccountWorkflowClassification =
   | { outcome: 'success'; workSucceeded?: boolean; summary?: Prisma.InputJsonValue }
-  | { outcome: 'skipped'; summary?: Prisma.InputJsonValue }
-  | { outcome: 'failure'; error: unknown; errorCode?: string; summary?: Prisma.InputJsonValue };
+  | { outcome: 'skipped'; skipReason: string; summary?: Prisma.InputJsonValue }
+  | { outcome: 'dormant'; eligibilityReason?: string; summary?: Prisma.InputJsonValue }
+  | { outcome: 'failure'; error: unknown; errorCode?: string;
+      eligible?: boolean; eligibilityReason?: string; summary?: Prisma.InputJsonValue };
 
 export async function runTradingAccountWorkflow<T>(args: {
   tradingAccountId: number;
@@ -41,6 +43,7 @@ export async function runTradingAccountWorkflow<T>(args: {
   lockFamily: string;
   execute: () => Promise<T>;
   classify?: (value: T) => AccountWorkflowClassification;
+  ignoreBackoffWhenInapplicable?: boolean;
 }): Promise<AccountWorkflowRunResult<T>> {
   const classify: (value: T) => AccountWorkflowClassification = args.classify ?? (() => ({
     outcome: 'success' as const,
@@ -57,7 +60,8 @@ export async function runTradingAccountWorkflow<T>(args: {
         return { outcome: 'FAILED', error: classification.error, value };
       }
       return {
-        outcome: classification.outcome === 'skipped' ? 'SKIPPED' : 'PROCESSED',
+        outcome: classification.outcome === 'skipped' ||
+          classification.outcome === 'dormant' ? 'SKIPPED' : 'PROCESSED',
         value,
       };
     } catch (error) {
@@ -76,7 +80,8 @@ export async function runTradingAccountWorkflow<T>(args: {
         } },
         select: { backoffUntil: true },
       });
-      if (persisted?.backoffUntil && persisted.backoffUntil > new Date()) {
+      if (persisted?.backoffUntil && persisted.backoffUntil > new Date() &&
+          !args.ignoreBackoffWhenInapplicable) {
         await recordTradingAccountWorkerAttempt({
           tradingAccountId: args.tradingAccountId,
           workerKey: args.workerKey,
@@ -111,6 +116,12 @@ export async function runTradingAccountWorkflow<T>(args: {
             outcome: 'failure',
             error: classification.error,
             errorCode: classification.errorCode ?? 'CLASSIFIED_FAILURE',
+            ...(classification.eligible !== undefined
+              ? { eligible: classification.eligible }
+              : {}),
+            ...(classification.eligibilityReason !== undefined
+              ? { eligibilityReason: classification.eligibilityReason }
+              : {}),
             ...(classification.summary !== undefined
               ? { summary: classification.summary }
               : {}),
@@ -123,7 +134,17 @@ export async function runTradingAccountWorkflow<T>(args: {
           tradingAccountId: args.tradingAccountId,
           workerKey: args.workerKey,
           processInstanceId: accountWorkflowProcessInstanceId,
-          outcome: 'success',
+          outcome: classification.outcome,
+          ...(classification.outcome === 'skipped'
+            ? { skipReason: classification.skipReason }
+            : {}),
+          ...(classification.outcome === 'dormant'
+            ? {
+                applicable: false,
+                eligible: false,
+                eligibilityReason: classification.eligibilityReason ?? null,
+              }
+            : {}),
           workSucceeded: classification.outcome === 'success'
             ? classification.workSucceeded ?? true
             : false,
@@ -132,7 +153,11 @@ export async function runTradingAccountWorkflow<T>(args: {
             : {}),
           startedAt,
         });
-        return { value, skipped: classification.outcome === 'skipped' } as const;
+        return {
+          value,
+          skipped: classification.outcome === 'skipped' ||
+            classification.outcome === 'dormant',
+        } as const;
       } catch (error) {
         const failures = startedState.consecutiveFailures + 1;
         const delayMs = Math.min(

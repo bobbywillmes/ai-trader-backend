@@ -50,7 +50,8 @@ export type LifecycleAccountEligibility = {
 };
 
 export async function enumerateLifecycleAccounts(
-  workflow: LifecycleWorkflow
+  workflow: LifecycleWorkflow,
+  options: { persistWorkerHealth?: boolean } = {}
 ): Promise<LifecycleAccountEligibility[]> {
   const accounts = await prisma.tradingAccount.findMany({
     orderBy: { id: 'asc' },
@@ -212,7 +213,7 @@ export async function enumerateLifecycleAccounts(
     };
   });
 
-  if (env.NODE_ENV !== 'test') {
+  if (env.NODE_ENV !== 'test' && options.persistWorkerHealth !== false) {
     const workerKeyByWorkflow: Partial<Record<LifecycleWorkflow, WorkerKey>> = {
       pending_submissions: 'pending_order_processing',
       submitted_orders: 'submitted_order_sync',

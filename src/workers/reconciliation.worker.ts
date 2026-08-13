@@ -2,9 +2,16 @@ import { logger } from '../config/logger.js';
 import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
 import { getRuntimeTradingConfig } from '../services/config.service.js';
 import { reconcileEligibleTradingAccounts } from '../services/reconciliation.service.js';
+import { propagateScheduledAccountDecision } from '../services/scheduled-account-worker-coordinator.service.js';
+import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from '../services/trading-account-workflow-lock.service.js';
 
 let running = false;
 let lastRunAt: Date | null = null;
+
+export function resetScheduledReconciliationStateForTests() {
+  running = false;
+  lastRunAt = null;
+}
 
 export async function runScheduledReconciliation() {
   if (running) {
@@ -21,9 +28,16 @@ export async function runScheduledReconciliation() {
     const config = await getRuntimeTradingConfig();
 
     if (!config.reconciliationWorkerEnabled) {
+      const idle = await propagateScheduledAccountDecision({
+        workflow: 'reconciliation',
+        workerKey: 'scheduled_reconciliation',
+        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.RECONCILIATION,
+        decision: 'disabled',
+      });
       return {
         skipped: true,
         reason: 'disabled' as const,
+        results: idle.results,
       };
     }
 
@@ -38,9 +52,16 @@ export async function runScheduledReconciliation() {
       lastRunAt &&
       now.getTime() - lastRunAt.getTime() < intervalMinutes * 60_000
     ) {
+      const idle = await propagateScheduledAccountDecision({
+        workflow: 'reconciliation',
+        workerKey: 'scheduled_reconciliation',
+        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.RECONCILIATION,
+        decision: 'not_due',
+      });
       return {
         skipped: true,
         reason: 'not_due' as const,
+        results: idle.results,
       };
     }
 

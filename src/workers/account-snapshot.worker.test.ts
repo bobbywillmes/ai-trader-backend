@@ -5,6 +5,11 @@ import { runScheduledAccountSnapshots } from './account-snapshot.worker.js';
 const mocks = vi.hoisted(() => ({
   enumerate: vi.fn(),
   record: vi.fn(),
+  propagate: vi.fn(),
+}));
+
+vi.mock('../services/scheduled-account-worker-coordinator.service.js', () => ({
+  propagateScheduledAccountDecision: mocks.propagate,
 }));
 
 vi.mock('../services/lifecycle-account-eligibility.service.js', () => ({
@@ -57,6 +62,34 @@ describe('scheduled snapshot account coordinator', () => {
     vi.clearAllMocks();
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-27T13:36:00.000Z'));
+    mocks.propagate.mockResolvedValue({ results: [{ outcome: 'SKIPPED' }] });
+  });
+
+  it('propagates a healthy not-due decision outside checkpoint windows', async () => {
+    vi.setSystemTime(new Date('2026-07-27T14:00:00.000Z'));
+
+    const result = await runScheduledAccountSnapshots();
+
+    expect(mocks.propagate).toHaveBeenCalledWith({
+      workflow: 'scheduled_snapshots',
+      workerKey: 'account_snapshot_scheduler',
+      lockFamily: 'account-snapshot',
+      decision: 'not_due',
+    });
+    expect(result).toMatchObject({ due: false, results: [{ outcome: 'SKIPPED' }] });
+    expect(mocks.enumerate).not.toHaveBeenCalled();
+    expect(mocks.record).not.toHaveBeenCalled();
+  });
+
+  it('propagates a healthy not-due decision on weekends', async () => {
+    vi.setSystemTime(new Date('2026-08-01T14:00:00.000Z'));
+
+    await runScheduledAccountSnapshots();
+
+    expect(mocks.propagate).toHaveBeenCalledWith(expect.objectContaining({
+      decision: 'not_due',
+    }));
+    expect(mocks.enumerate).not.toHaveBeenCalled();
   });
 
   afterEach(() => {

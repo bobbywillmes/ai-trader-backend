@@ -259,6 +259,22 @@ export function deriveReadinessValidity(input: {
   };
 }
 
+const BLOCKING_ACCOUNT_WORKER_STATUSES = new Set([
+  'FAILING',
+  'STALE',
+  'BACKING_OFF',
+  'DEGRADED',
+]);
+
+export function blockingAccountWorkers<T extends {
+  applicable: boolean;
+  status: string;
+}>(workers: readonly T[]): T[] {
+  return workers.filter((worker) =>
+    worker.applicable && BLOCKING_ACCOUNT_WORKER_STATUSES.has(worker.status)
+  );
+}
+
 async function gatherAndPersist(tradingAccountId: number, requestedByUserId: number) {
   const startedAt = new Date();
   const [account, credential] = await Promise.all([
@@ -344,8 +360,7 @@ async function gatherAndPersist(tradingAccountId: number, requestedByUserId: num
       symbol: item.symbol, side: item.side, status: item.status,
     })),
   }) : [];
-  const workerBlockers = workerHealth?.workers.filter((item) =>
-    item.applicable && ['FAILING', 'STALE', 'BACKING_OFF', 'DEGRADED'].includes(item.status)) ?? [];
+  const workerBlockers = blockingAccountWorkers(workerHealth?.workers ?? []);
 
   const credentialsConfigured = [
     gate('CREDENTIAL_ROW_PRESENT', Boolean(credential), 'Credential record exists.', 'Credential record is missing.'),

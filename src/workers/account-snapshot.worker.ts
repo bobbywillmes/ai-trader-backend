@@ -3,6 +3,7 @@ import { recordAccountSnapshot } from '../services/account-snapshot.service.js';
 import { runTradingAccountWorkflow } from '../services/trading-account-workflow-runner.service.js';
 import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from '../services/trading-account-workflow-lock.service.js';
 import { enumerateLifecycleAccounts } from '../services/lifecycle-account-eligibility.service.js';
+import { propagateScheduledAccountDecision } from '../services/scheduled-account-worker-coordinator.service.js';
 
 const EASTERN_TIME_ZONE = 'America/New_York';
 
@@ -73,33 +74,48 @@ export async function runScheduledAccountSnapshots() {
   const eastern = getEasternDateParts();
 
   if (!isWeekday(eastern.weekday)) {
+    const idle = await propagateScheduledAccountDecision({
+      workflow: 'scheduled_snapshots',
+      workerKey: 'account_snapshot_scheduler',
+      lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.ACCOUNT_SNAPSHOT,
+      decision: 'not_due',
+    });
     return {
       due: false,
       recorded: 0,
       deferred: false,
-      results: [],
+      results: idle.results,
     };
   }
 
-  let due = false;
-  let recorded = 0;
-  const results = [];
-  const accounts = await enumerateLifecycleAccounts('scheduled_snapshots');
-
-  for (const checkpoint of CHECKPOINTS) {
-    const checkpointDue = isWithinCheckpointWindow({
+  const dueCheckpoints = CHECKPOINTS.filter((checkpoint) =>
+    isWithinCheckpointWindow({
       currentHour: eastern.hour,
       currentMinute: eastern.minute,
       checkpointHour: checkpoint.hour,
       checkpointMinute: checkpoint.minute,
+    })
+  );
+  if (dueCheckpoints.length === 0) {
+    const idle = await propagateScheduledAccountDecision({
+      workflow: 'scheduled_snapshots',
+      workerKey: 'account_snapshot_scheduler',
+      lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.ACCOUNT_SNAPSHOT,
+      decision: 'not_due',
     });
+    return {
+      due: false,
+      recorded: 0,
+      deferred: false,
+      results: idle.results,
+    };
+  }
 
-    if (!checkpointDue) {
-      continue;
-    }
+  let recorded = 0;
+  const results = [];
+  const accounts = await enumerateLifecycleAccounts('scheduled_snapshots');
 
-    due = true;
-
+  for (const checkpoint of dueCheckpoints) {
     const runKey = `${checkpoint.reason}:${eastern.dateKey}`;
     for (const account of accounts) {
       if (!account.eligible) {
@@ -127,6 +143,7 @@ export async function runScheduledAccountSnapshots() {
           classify: (result) => result.skipped
             ? {
                 outcome: 'skipped',
+                skipReason: 'not_due',
                 summary: { created: result.created, reason: result.reason },
               }
             : {
@@ -174,7 +191,7 @@ export async function runScheduledAccountSnapshots() {
   }
 
   return {
-    due,
+    due: true,
     recorded,
     deferred: false,
     results,

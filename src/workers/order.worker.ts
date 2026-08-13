@@ -900,7 +900,7 @@ export async function syncSubmittedOrdersAcrossAccounts() {
               summary: result,
             }
           : result.skipped
-            ? { outcome: 'skipped', summary: result }
+            ? { outcome: 'skipped', skipReason: 'not_due', summary: result }
             : { outcome: 'success', workSucceeded: result.synced > 0, summary: result },
       });
       if (run.outcome === 'FAILED') {

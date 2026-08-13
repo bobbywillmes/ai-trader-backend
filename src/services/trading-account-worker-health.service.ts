@@ -181,7 +181,8 @@ export async function recordTradingAccountWorkerAttempt(args: {
   tradingAccountId: number;
   workerKey: WorkerKey;
   processInstanceId: string;
-  outcome: 'success' | 'failure' | 'dormant' | 'backoff_skipped';
+  outcome: 'success' | 'skipped' | 'failure' | 'dormant' | 'backoff_skipped';
+  skipReason?: string | null;
   applicable?: boolean;
   eligible?: boolean;
   eligibilityReason?: string | null;
@@ -207,7 +208,8 @@ export async function recordTradingAccountWorkerAttempt(args: {
   const previousStatus = previous
     ? deriveTradingAccountWorkerStatus(previous, definition, now) : 'STARTING';
   const failure = args.outcome === 'failure';
-  const success = args.outcome === 'success' || args.outcome === 'dormant';
+  const success = args.outcome === 'success' || args.outcome === 'skipped' ||
+    args.outcome === 'dormant';
   const skip = args.outcome.endsWith('skipped') || args.outcome === 'dormant';
   const state = await db.tradingAccountWorkerHealthState.upsert({
     where: { tradingAccountId_workerKey: {
@@ -222,7 +224,7 @@ export async function recordTradingAccountWorkerAttempt(args: {
       lastTickStartedAt: args.startedAt ?? now, lastTickCompletedAt: now,
       lastSucceededAt: success ? now : null, lastWorkSucceededAt: args.workSucceeded ? now : null,
       lastFailedAt: failure ? now : null, lastOutcome: args.outcome,
-      lastSkipReason: skip ? args.outcome : null, totalRuns: 1,
+      lastSkipReason: skip ? (args.skipReason ?? args.outcome) : null, totalRuns: 1,
       totalFailures: failure ? 1 : 0, totalSkips: skip ? 1 : 0,
       totalLockSkips: 0,
       lastLockSkippedAt: null,
@@ -244,7 +246,8 @@ export async function recordTradingAccountWorkerAttempt(args: {
       ...(failure ? { lastFailedAt: now, lastError: safeError(args.error),
         lastErrorCode: args.errorCode, lastErrorAt: now,
         consecutiveFailures: { increment: 1 }, backoffUntil: args.backoffUntil } : {}),
-      lastOutcome: args.outcome, lastSkipReason: skip ? args.outcome : null,
+      lastOutcome: args.outcome,
+      lastSkipReason: skip ? (args.skipReason ?? args.outcome) : null,
       totalRuns: { increment: 1 }, ...(failure ? { totalFailures: { increment: 1 } } : {}),
       ...(skip ? { totalSkips: { increment: 1 } } : {}),
       ...(args.summary !== undefined ? { lastSummaryJson: args.summary } : {}),

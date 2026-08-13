@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TradingAccountWorkerHealthState } from '@prisma/client';
 import {
   recordTradingAccountWorkerAttempt,
   recordTradingAccountWorkflowLockContention,
+  deriveTradingAccountWorkerStatus,
 } from './trading-account-worker-health.service.js';
 import { getWorkerDefinition } from '../workers/worker-health.definitions.js';
 
@@ -113,6 +114,74 @@ describe('account workflow health logging', () => {
     expect(healthLogger.error).not.toHaveBeenCalled();
     expect(healthLogger.trace).toHaveBeenCalledTimes(10);
     expect(state?.totalRuns).toBe(11);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('persists skipped not-due as healthy liveness without moving work success', async () => {
+    const previousWorkSucceededAt = new Date('2026-07-27T13:35:00.000Z');
+    state = makeState({
+      workerKey: 'account_snapshot_scheduler',
+      lastSucceededAt: new Date('2026-07-27T13:36:00.000Z'),
+      lastWorkSucceededAt: previousWorkSucceededAt,
+    });
+
+    const result = await recordTradingAccountWorkerAttempt({
+      tradingAccountId: 7,
+      workerKey: 'account_snapshot_scheduler',
+      processInstanceId: 'process-a',
+      outcome: 'skipped',
+      skipReason: 'not_due',
+      workSucceeded: false,
+    }, dependencies);
+
+    expect(result).toMatchObject({
+      status: 'HEALTHY',
+      lastOutcome: 'skipped',
+      lastSkipReason: 'not_due',
+      lastWorkSucceededAt: previousWorkSucceededAt,
+      consecutiveFailures: 0,
+      backoffUntil: null,
+    });
+    expect(result.lastSucceededAt!.getTime())
+      .toBeGreaterThan(new Date('2026-07-27T13:36:00.000Z').getTime());
+  });
+
+  it('stays healthy beyond the stale threshold while minute not-due ticks continue', async () => {
+    vi.useFakeTimers();
+    const definition = getWorkerDefinition('account_snapshot_scheduler');
+    const start = new Date('2026-07-27T14:00:00.000Z');
+    const previousWorkSucceededAt = new Date('2026-07-27T13:35:00.000Z');
+    state = makeState({
+      workerKey: 'account_snapshot_scheduler',
+      expectedIntervalMs: definition.expectedIntervalMs,
+      lastSucceededAt: start,
+      lastWorkSucceededAt: previousWorkSucceededAt,
+      createdAt: start,
+    });
+
+    for (let minute = 1; minute <= 15; minute += 1) {
+      vi.setSystemTime(new Date(start.getTime() + minute * 60_000));
+      await recordTradingAccountWorkerAttempt({
+        tradingAccountId: 7,
+        workerKey: 'account_snapshot_scheduler',
+        processInstanceId: 'process-a',
+        outcome: 'skipped',
+        skipReason: 'not_due',
+        workSucceeded: false,
+      }, dependencies);
+      expect(deriveTradingAccountWorkerStatus(state!, definition, new Date()))
+        .toBe('HEALTHY');
+    }
+
+    expect(state?.lastWorkSucceededAt).toEqual(previousWorkSucceededAt);
+    vi.setSystemTime(new Date(
+      state!.lastSucceededAt!.getTime() + definition.staleAfterMs + 1
+    ));
+    expect(deriveTradingAccountWorkerStatus(state!, definition, new Date()))
+      .toBe('STALE');
   });
 
   it('keeps a credentialless dormant Live account below normal log levels', async () => {

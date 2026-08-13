@@ -136,4 +136,50 @@ describe('runTradingAccountWorkflow durable ordering', () => {
       attemptedAt: expect.any(Date),
     }));
   });
+
+  it('allows an explicitly inapplicable workflow to become dormant during backoff', async () => {
+    mocks.healthFind.mockResolvedValue({ backoffUntil: new Date(Date.now() + 30_000) });
+
+    const result = await runTradingAccountWorkflow({
+      tradingAccountId: 46,
+      workerKey: 'scheduled_reconciliation',
+      lockFamily: 'reconciliation',
+      ignoreBackoffWhenInapplicable: true,
+      execute: async () => ({ disabled: true }),
+      classify: () => ({
+        outcome: 'dormant',
+        eligibilityReason: 'worker_disabled',
+      }),
+    });
+
+    expect(result).toMatchObject({ outcome: 'SKIPPED' });
+    expect(mocks.startRun).toHaveBeenCalledOnce();
+    expect(mocks.recordAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: 'dormant',
+      applicable: false,
+      eligible: false,
+      eligibilityReason: 'worker_disabled',
+    }));
+  });
+
+  it('persists first-class not-due skips without reporting useful work', async () => {
+    const result = await runTradingAccountWorkflow({
+      tradingAccountId: 45,
+      workerKey: 'account_snapshot_scheduler',
+      lockFamily: 'account-snapshot',
+      execute: async () => ({ due: false }),
+      classify: () => ({
+        outcome: 'skipped',
+        skipReason: 'not_due',
+        summary: { reason: 'not_due' },
+      }),
+    });
+
+    expect(result).toMatchObject({ outcome: 'SKIPPED', value: { due: false } });
+    expect(mocks.recordAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: 'skipped',
+      skipReason: 'not_due',
+      workSucceeded: false,
+    }));
+  });
 });
