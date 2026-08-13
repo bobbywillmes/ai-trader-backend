@@ -675,7 +675,7 @@ export async function syncTrackedPositionsAcrossAccounts() {
               summary: result,
             }
           : result.skipped
-            ? { outcome: 'skipped', summary: result }
+            ? { outcome: 'skipped', skipReason: 'not_due', summary: result }
             : { outcome: 'success', workSucceeded: true, summary: result },
       });
       if (run.outcome === 'FAILED') {

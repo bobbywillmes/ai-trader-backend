@@ -206,12 +206,28 @@ function startWorkers() {
     void (async () => {
       const config = await getRuntimeTradingConfig();
 
+      if (!config.reconciliationWorkerEnabled) {
+        await runWorker(
+          'scheduled_reconciliation',
+          async () => ({ outcome: 'skipped', skipReason: 'disabled' }),
+          { enabled: false }
+        );
+        await runScheduledReconciliation();
+        return;
+      }
+
       await runWorker(
         'scheduled_reconciliation',
         async () => {
           const result = await runScheduledReconciliation();
 
           if (result.skipped && result.reason) {
+            if (result.reason === 'not_due' && result.results) {
+              assertAccountCoordinatorHealthy(
+                'scheduled_reconciliation',
+                result.results
+              );
+            }
             return {
               outcome: 'skipped',
               skipReason: result.reason,
@@ -233,7 +249,7 @@ function startWorkers() {
             workSucceeded: result.result.processedAccounts > 0,
           };
         },
-        { enabled: config.reconciliationWorkerEnabled }
+        { enabled: true }
       );
     })().catch((error) => {
       logger.error({ error }, 'Scheduled reconciliation wrapper error.');

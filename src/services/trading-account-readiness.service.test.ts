@@ -1,8 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import {
+  blockingAccountWorkers,
   deriveReadinessValidity,
   readinessFingerprint,
 } from './trading-account-readiness.service.js';
+
+describe('account worker readiness blockers', () => {
+  it('blocks only unhealthy applicable workers without mutating health', () => {
+    const workers = [
+      { workerKey: 'healthy', applicable: true, status: 'HEALTHY' },
+      { workerKey: 'dormant', applicable: false, status: 'DORMANT' },
+      { workerKey: 'stale-dormant', applicable: false, status: 'STALE' },
+      { workerKey: 'stale', applicable: true, status: 'STALE' },
+      { workerKey: 'failing', applicable: true, status: 'FAILING' },
+      { workerKey: 'backoff', applicable: true, status: 'BACKING_OFF' },
+      { workerKey: 'degraded', applicable: true, status: 'DEGRADED' },
+    ];
+    const before = structuredClone(workers);
+
+    expect(blockingAccountWorkers(workers).map((worker) => worker.workerKey))
+      .toEqual(['stale', 'failing', 'backoff', 'degraded']);
+    expect(workers).toEqual(before);
+  });
+});
 
 describe('readiness fingerprints', () => {
   it('is deterministic across object property ordering', () => {

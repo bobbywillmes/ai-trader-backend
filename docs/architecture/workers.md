@@ -186,6 +186,15 @@ boundaries. Current-run ownership is recorded after lock acquisition, and the
 final outcome, freshness, counters, and backoff are persisted before the
 advisory lock is released.
 
+Scheduled account coordinators must propagate every normal scheduler decision
+to account-scoped health, including ticks where business work is intentionally
+`not_due`. Applicable accounts record a healthy `skipped` outcome with
+`lastSkipReason=not_due`; this refreshes `lastSucceededAt` without changing
+`lastWorkSucceededAt`. Globally disabled optional account workers reevaluate
+their accounts as inapplicable and dormant. These decisions use the account
+workflow lock so they cannot overwrite an active owner, hide lock contention,
+or clear failure and backoff state from a competing run.
+
 Failures and meaningful status transitions are marked for prompt persistence.
 Persistence failures are logged with throttling and never mark an unrelated
 business worker failed.

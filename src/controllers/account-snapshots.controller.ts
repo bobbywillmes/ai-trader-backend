@@ -186,6 +186,7 @@ export async function createManualAccountSnapshotController(
       classify: (result) => result.skipped
         ? {
             outcome: 'skipped',
+            skipReason: result.reason ?? 'not_due',
             summary: { created: result.created, reason: result.reason },
           }
         : {
