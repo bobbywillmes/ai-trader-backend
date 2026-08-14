@@ -169,6 +169,7 @@ export const ADAPTIVE_POLLING_INTERVALS_MS = {
 
 const LOCAL_ACTIVITY_CACHE_TTL_MS = 1_500;
 const MARKET_EVALUATION_CACHE_TTL_MS = 1_500;
+export const MARKET_SESSION_FAILURE_RETRY_MS = 45_000;
 const SANITIZED_ERROR_MAX_LENGTH = 500;
 
 function createWorkerState(): WorkerRuntimeState {
@@ -357,6 +358,9 @@ export class AdaptivePollingCoordinator {
     tradingAccountId: number,
     now: Date
   ) => Promise<AdaptivePollingLocalActivitySnapshot>;
+  private readonly accountEnvironmentProvider: (
+    tradingAccountId: number
+  ) => Promise<string | null>;
   private readonly states = new Map<string, WorkerRuntimeState>();
   private readonly marketStates = new Map<number, AccountMarketRuntimeState>();
   private readonly localActivityCache = new Map<number, {
@@ -364,7 +368,7 @@ export class AdaptivePollingCoordinator {
     promise: Promise<AdaptivePollingLocalActivitySnapshot>;
   }>();
   private readonly marketEvaluationCache = new Map<number, {
-    capturedAtMs: number;
+    expiresAtMs: number;
     promise: Promise<MarketEvaluation>;
   }>();
 
@@ -378,11 +382,23 @@ export class AdaptivePollingCoordinator {
       tradingAccountId: number,
       now: Date
     ) => Promise<AdaptivePollingLocalActivitySnapshot>;
+    accountEnvironmentProvider?: (
+      tradingAccountId: number
+    ) => Promise<string | null>;
   } = {}) {
     this.now = args.now ?? (() => new Date());
     this.marketSessionProvider =
       args.marketSessionProvider ?? getAlpacaMarketSessionSnapshot;
     this.localActivityProvider = args.localActivityProvider ?? readLocalActivity;
+    this.accountEnvironmentProvider =
+      args.accountEnvironmentProvider ??
+      (async (tradingAccountId) => {
+        const account = await prisma.tradingAccount.findUnique({
+          where: { id: tradingAccountId },
+          select: { environment: true },
+        });
+        return account?.environment ?? null;
+      });
   }
 
   reset() {
@@ -711,8 +727,7 @@ export class AdaptivePollingCoordinator {
 
     if (
       this.marketEvaluationCache.get(tradingAccountId) &&
-      nowMs - this.marketEvaluationCache.get(tradingAccountId)!.capturedAtMs <=
-        MARKET_EVALUATION_CACHE_TTL_MS
+      nowMs < this.marketEvaluationCache.get(tradingAccountId)!.expiresAtMs
     ) {
       return this.marketEvaluationCache.get(tradingAccountId)!.promise;
     }
@@ -772,15 +787,31 @@ export class AdaptivePollingCoordinator {
         accountMarket.latestEvaluation = evaluation;
         return evaluation;
       })
-      .catch((error) => {
+      .catch(async (error) => {
         const accountMarket = this.marketStateFor(tradingAccountId);
         const sanitized = sanitizeError(error);
+        const environment = await this.accountEnvironmentProvider(
+          tradingAccountId
+        ).catch(() => null);
         accountMarket.hadMarketSessionFailure = true;
         accountMarket.consecutiveMarketSessionFailures += 1;
         accountMarket.lastMarketSessionError = sanitized;
         accountMarket.lastMarketSessionErrorAt = now;
         logger.warn(
-          { error: sanitized },
+          {
+            tradingAccountId,
+            environment: environment ?? 'unknown',
+            operation: 'market_session_evaluation',
+            endpoint: 'GET /v2/clock or GET /v2/calendar',
+            statusCode:
+              typeof error === 'object' &&
+              error !== null &&
+              'statusCode' in error &&
+              typeof error.statusCode === 'number'
+                ? error.statusCode
+                : null,
+            error: sanitized,
+          },
           'Adaptive polling market-session lookup failed.'
         );
 
@@ -792,11 +823,15 @@ export class AdaptivePollingCoordinator {
           evaluatedAt: now,
         };
         accountMarket.latestEvaluation = evaluation;
+        const cached = this.marketEvaluationCache.get(tradingAccountId);
+        if (cached?.promise === promise) {
+          cached.expiresAtMs = nowMs + MARKET_SESSION_FAILURE_RETRY_MS;
+        }
         return evaluation;
       });
 
     this.marketEvaluationCache.set(tradingAccountId, {
-      capturedAtMs: nowMs,
+      expiresAtMs: nowMs + MARKET_EVALUATION_CACHE_TTL_MS,
       promise,
     });
 

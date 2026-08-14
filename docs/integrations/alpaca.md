@@ -128,6 +128,11 @@ The coordinator reuses `getAlpacaMarketSessionSnapshot()` from `src/integrations
 
 The existing adapter remains the single source of broker market-open state. Its memory cache, persisted usable clock behavior, and in-flight request deduplication continue to apply.
 
+Calendar fallback uses Alpaca's regular-session `open` and `close` fields so it
+matches the primary clock's regular-market semantics. The extended-session
+`session_open` and `session_close` fields are compatibility fallbacks only.
+Calendar times accept only validated `HH:mm` or compact `HHmm` values.
+
 ### Transitions And Failure Fallback
 
 Both adaptive workers are forced when:
@@ -138,6 +143,10 @@ Both adaptive workers are forced when:
 - a relevant broker write succeeds
 
 If market-session lookup fails, adaptive polling treats the market as `unknown`, uses conservative open-market cadence, keeps broker synchronization running, and exposes degraded state in System Status. This does not activate the kill switch, change `risk.canEnter`, block critical writes, or fail the basic health endpoint.
+
+Failed market-session evaluations are cached per TradingAccount for 45 seconds.
+This bounds clock/calendar retries and warning logs while allowing automatic
+recovery and the normal recovery-forced catch-up synchronization.
 
 ### Forced Sync After Writes
 
