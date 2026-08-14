@@ -76,6 +76,74 @@ describe('Alpaca market session adapter', () => {
     expect(second.sessionCloseAt).toBe('2026-06-18T20:00:00.000Z');
   });
 
+  it('normalizes the observed LIVE response as the regular session', async () => {
+    vi.setSystemTime(new Date('2026-08-13T17:00:00.000Z'));
+    mocks.alpacaRequestForAccount
+      .mockResolvedValueOnce({
+        timestamp: '2026-08-13T17:00:00.000Z',
+        is_open: true,
+        next_open: '2026-08-14T13:30:00.000Z',
+        next_close: '2026-08-13T20:00:00.000Z',
+      })
+      .mockResolvedValueOnce([{
+        date: '2026-08-13',
+        open: '09:30',
+        close: '16:00',
+        session_open: '0400',
+        session_close: '2000',
+        settlement_date: '2026-08-14',
+      }]);
+
+    const snapshot = await getAlpacaMarketSessionSnapshot(2);
+
+    expect(snapshot).toMatchObject({
+      marketOpen: true,
+      sessionOpenAt: '2026-08-13T13:30:00.000Z',
+      sessionCloseAt: '2026-08-13T20:00:00.000Z',
+    });
+  });
+
+  it('accepts compact session fields as a compatibility fallback', async () => {
+    mocks.alpacaRequestForAccount
+      .mockResolvedValueOnce({
+        timestamp: '2026-06-18T16:00:00.000Z',
+        is_open: true,
+        next_open: '2026-06-19T13:30:00.000Z',
+        next_close: '2026-06-18T20:00:00.000Z',
+      })
+      .mockResolvedValueOnce([{
+        date: '2026-06-18',
+        session_open: '0400',
+        session_close: '2000',
+      }]);
+
+    const snapshot = await getAlpacaMarketSessionSnapshot(2);
+    expect(snapshot.sessionOpenAt).toBe('2026-06-18T08:00:00.000Z');
+    expect(snapshot.sessionCloseAt).toBe('2026-06-19T00:00:00.000Z');
+  });
+
+  it.each(['400', '04000', '04:0', '2400', '1260', 'abcd'])(
+    'rejects invalid compact calendar time %s',
+    async (invalidTime) => {
+      mocks.alpacaRequestForAccount
+        .mockResolvedValueOnce({
+          timestamp: '2026-06-18T16:00:00.000Z',
+          is_open: true,
+          next_open: '2026-06-19T13:30:00.000Z',
+          next_close: '2026-06-18T20:00:00.000Z',
+        })
+        .mockResolvedValueOnce([{
+          date: '2026-06-18',
+          open: invalidTime,
+          close: '16:00',
+        }]);
+
+      await expect(getAlpacaMarketSessionSnapshot(2)).rejects.toThrow(
+        'missing valid open or close timestamps'
+      );
+    }
+  );
+
   it('deduplicates simultaneous in-flight requests', async () => {
     mocks.alpacaRequestForAccount
       .mockResolvedValueOnce({

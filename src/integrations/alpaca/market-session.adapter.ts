@@ -379,7 +379,18 @@ function normalizeCalendarTimestamp(
     return toIsoOrNull(value);
   }
 
-  return zonedDateTimeToIso(tradingDate, value, MARKET_TIME_ZONE);
+  const match = /^(?:(\d{2}):(\d{2})|(\d{2})(\d{2}))$/.exec(value);
+  if (!match) return null;
+
+  const hour = Number(match[1] ?? match[3]);
+  const minute = Number(match[2] ?? match[4]);
+  if (hour > 23 || minute > 59) return null;
+
+  return zonedDateTimeToIso(
+    tradingDate,
+    `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+    MARKET_TIME_ZONE
+  );
 }
 
 export function clearMarketSessionCache() {
@@ -465,11 +476,11 @@ export async function getAlpacaMarketSessionSnapshot(
 
     sessionOpenAt = normalizeCalendarTimestamp(
       tradingDate,
-      calendar?.session_open ?? calendar?.open
+      calendar?.open ?? calendar?.session_open
     );
     sessionCloseAt = normalizeCalendarTimestamp(
       tradingDate,
-      calendar?.session_close ?? calendar?.close
+      calendar?.close ?? calendar?.session_close
     );
 
     if (calendar && (!sessionOpenAt || !sessionCloseAt)) {

@@ -3,10 +3,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ADAPTIVE_POLLING_INTERVALS_MS,
   AdaptivePollingCoordinator,
+  MARKET_SESSION_FAILURE_RETRY_MS,
   adaptivePollingLocalActivityFromCounts,
   type AdaptivePollingLocalActivitySnapshot,
 } from './adaptive-polling.service.js';
 import type { NormalizedMarketSessionSnapshot } from '../integrations/alpaca/market-session.adapter.js';
+
+const mocks = vi.hoisted(() => ({ loggerWarn: vi.fn() }));
+
+vi.mock('../config/logger.js', () => ({
+  logger: { warn: mocks.loggerWarn },
+}));
 
 function marketSnapshot(args: {
   open: boolean;
@@ -72,6 +79,8 @@ function createHarness(args: {
     now: () => new Date(nowMs),
     marketSessionProvider: marketProvider,
     localActivityProvider,
+    accountEnvironmentProvider: async (tradingAccountId) =>
+      tradingAccountId === 1 ? 'PAPER' : 'LIVE',
   });
 
   return {
@@ -310,11 +319,66 @@ describe('AdaptivePollingCoordinator', () => {
     coordinator.recordSuccess('submitted_order_sync', 1, new Date(), 60_000);
     coordinator.recordSuccess('tracked_position_sync', 1, new Date(), 60_000);
 
-    advance(2_000);
+    advance(MARKET_SESSION_FAILURE_RETRY_MS);
     await expect(
       coordinator.getDecision(1, 'submitted_order_sync')
     ).resolves.toMatchObject({
       due: true,
+      forceReason: 'market_session_recovered',
+    });
+  });
+
+  it('bounds failed market-session retries and recovers per account', async () => {
+    let liveAttempts = 0;
+    const marketProvider = vi.fn(async (tradingAccountId: number) => {
+      if (tradingAccountId === 2 && liveAttempts++ === 0) {
+        throw Object.assign(new Error('HTTP 503 token=secret-value'), {
+          statusCode: 503,
+          apiKey: 'must-not-be-logged',
+        });
+      }
+      return marketSnapshot({ open: true });
+    });
+    const { coordinator, advance } = createHarness({
+      active: true,
+      marketProvider,
+    });
+
+    await coordinator.getDecision(2, 'tracked_position_sync');
+    advance(2_000);
+    await coordinator.getDecision(2, 'submitted_order_sync');
+    await coordinator.getDecision(1, 'tracked_position_sync');
+
+    expect(marketProvider).toHaveBeenCalledTimes(2);
+    await expect(coordinator.getSnapshot(2)).resolves.toMatchObject({
+      status: 'degraded',
+      marketSession: { consecutiveFailures: 1 },
+    });
+    await expect(coordinator.getSnapshot(1)).resolves.toMatchObject({
+      status: 'normal',
+    });
+    expect(mocks.loggerWarn).toHaveBeenCalledTimes(1);
+    const warning = mocks.loggerWarn.mock.calls[0]?.[0];
+    expect(warning).toMatchObject({
+      tradingAccountId: 2,
+      environment: 'LIVE',
+      operation: 'market_session_evaluation',
+      endpoint: 'GET /v2/clock or GET /v2/calendar',
+      statusCode: 503,
+      error: 'HTTP 503 token=[redacted]',
+    });
+    expect(JSON.stringify(warning)).not.toContain('must-not-be-logged');
+    expect(JSON.stringify(warning)).not.toContain('secret-value');
+
+    advance(MARKET_SESSION_FAILURE_RETRY_MS - 2_001);
+    await coordinator.getDecision(2, 'tracked_position_sync');
+    expect(marketProvider).toHaveBeenCalledTimes(2);
+
+    advance(1);
+    const recovered = await coordinator.getDecision(2, 'tracked_position_sync');
+    expect(marketProvider).toHaveBeenCalledTimes(3);
+    expect(recovered).toMatchObject({
+      marketState: 'open',
       forceReason: 'market_session_recovered',
     });
   });
@@ -383,7 +447,7 @@ describe('AdaptivePollingCoordinator', () => {
     coordinator.recordSuccess('tracked_position_sync', 1, new Date(), 60_000);
     coordinator.recordSuccess('tracked_position_sync', 2, new Date(), 60_000);
 
-    advance(2_000);
+    advance(MARKET_SESSION_FAILURE_RETRY_MS);
     await coordinator.getDecision(2, 'tracked_position_sync');
 
     expect(
