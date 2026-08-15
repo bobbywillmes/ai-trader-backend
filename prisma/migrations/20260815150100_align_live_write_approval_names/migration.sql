@@ -1,0 +1,5 @@
+-- RenameForeignKey
+ALTER TABLE "TradingAccountLiveWriteApprovalDecision" RENAME CONSTRAINT "TradingAccountLiveWriteApprovalDecision_readinessAssessmentId_f" TO "TradingAccountLiveWriteApprovalDecision_readinessAssessmen_fkey";
+
+-- RenameIndex
+ALTER INDEX "TradingAccountLiveWriteApprovalDecision_account_capability_crea" RENAME TO "TradingAccountLiveWriteApprovalDecision_tradingAccountId_ca_idx";
