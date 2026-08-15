@@ -39,6 +39,9 @@ Table User {
   readinessAssessmentsRequested TradingAccountReadinessAssessment [not null]
   lifecycleExercisesCreated TradingLifecycleExercise [not null]
   lifecycleExerciseTargets TradingLifecycleExerciseTarget [not null]
+  liveWriteApprovalsGranted TradingAccountLiveWriteApproval [not null]
+  liveWriteApprovalsRevoked TradingAccountLiveWriteApproval [not null]
+  liveWriteApprovalDecisions TradingAccountLiveWriteApprovalDecision [not null]
 }
 
 Table UserSetupToken {
@@ -106,6 +109,8 @@ Table TradingAccount {
   alpacaApiUsageBuckets AlpacaApiUsageBucket [not null]
   workerHealthStates TradingAccountWorkerHealthState [not null]
   readinessAssessments TradingAccountReadinessAssessment [not null]
+  liveWriteApprovals TradingAccountLiveWriteApproval [not null]
+  liveWriteApprovalDecisions TradingAccountLiveWriteApprovalDecision [not null]
   lifecycleExerciseTargets TradingLifecycleExerciseTarget [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
@@ -149,6 +154,56 @@ Table TradingAccountReadinessAssessment {
   evidenceJson Json [not null]
   requestedByUserId Int
   requestedByUser User
+  liveWriteApprovals TradingAccountLiveWriteApproval [not null]
+  liveWriteApprovalDecisions TradingAccountLiveWriteApprovalDecision [not null]
+  createdAt DateTime [default: `now()`, not null]
+}
+
+Table TradingAccountLiveWriteApproval {
+  id Int [pk, increment]
+  tradingAccountId Int [not null]
+  tradingAccount TradingAccount [not null]
+  capability LiveWriteCapability [not null]
+  status LiveWriteApprovalStatus [not null]
+  revision Int [not null, default: 0]
+  configurationFingerprint String [not null]
+  credentialFingerprint String [not null]
+  readinessAssessmentId Int
+  readinessAssessment TradingAccountReadinessAssessment
+  grantedByUserId Int
+  grantedByUser User
+  grantedAt DateTime
+  grantReason String
+  revokedByUserId Int
+  revokedByUser User
+  revokedAt DateTime
+  invalidationReason String
+  expiresAt DateTime
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+
+  indexes {
+    (tradingAccountId, capability) [unique]
+  }
+}
+
+Table TradingAccountLiveWriteApprovalDecision {
+  id Int [pk, increment]
+  tradingAccountId Int [not null]
+  tradingAccount TradingAccount [not null]
+  capability LiveWriteCapability [not null]
+  action LiveWriteApprovalAction [not null]
+  actorUserId Int
+  actorUser User
+  reason String [not null]
+  configurationFingerprint String [not null]
+  credentialFingerprint String [not null]
+  readinessAssessmentId Int
+  readinessAssessment TradingAccountReadinessAssessment
+  deploymentEnvironment String [not null]
+  priorRevision Int [not null]
+  resultingRevision Int [not null]
+  expiresAt DateTime
   createdAt DateTime [default: `now()`, not null]
 }
 
@@ -1027,6 +1082,23 @@ Enum TradingAccountReadinessResult {
   ERROR
 }
 
+Enum LiveWriteCapability {
+  RISK_REDUCING
+  ENTRY
+}
+
+Enum LiveWriteApprovalStatus {
+  GRANTED
+  REVOKED
+  INVALIDATED
+}
+
+Enum LiveWriteApprovalAction {
+  GRANT
+  REVOKE
+  INVALIDATE
+}
+
 Enum BrokerCredentialAuthType {
   API_KEY
   OAUTH
@@ -1212,6 +1284,20 @@ Ref: TradingAccountReadinessAssessment.tradingAccountId > TradingAccount.id [del
 Ref: TradingAccountReadinessAssessment.accountSnapshotId > AccountSnapshot.id [delete: Set Null]
 
 Ref: TradingAccountReadinessAssessment.requestedByUserId > User.id [delete: Set Null]
+
+Ref: TradingAccountLiveWriteApproval.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: TradingAccountLiveWriteApproval.readinessAssessmentId > TradingAccountReadinessAssessment.id [delete: Set Null]
+
+Ref: TradingAccountLiveWriteApproval.grantedByUserId > User.id [delete: Set Null]
+
+Ref: TradingAccountLiveWriteApproval.revokedByUserId > User.id [delete: Set Null]
+
+Ref: TradingAccountLiveWriteApprovalDecision.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: TradingAccountLiveWriteApprovalDecision.actorUserId > User.id [delete: Set Null]
+
+Ref: TradingAccountLiveWriteApprovalDecision.readinessAssessmentId > TradingAccountReadinessAssessment.id [delete: Set Null]
 
 Ref: TradingAccountRiskSettings.tradingAccountId - TradingAccount.id [delete: Cascade]
 

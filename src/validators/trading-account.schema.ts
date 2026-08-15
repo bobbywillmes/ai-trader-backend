@@ -1,5 +1,6 @@
 import {
   BrokerCredentialAuthType,
+  LiveWriteCapability,
   PositionSizingType,
   TradingAccountEnvironment,
 } from '@prisma/client';
@@ -58,6 +59,23 @@ export const deactivateTradingAccountSchema = z.strictObject({
 export type DeactivateTradingAccountInput = z.infer<
   typeof deactivateTradingAccountSchema
 >;
+
+export const liveWriteCapabilitySchema = z.enum(LiveWriteCapability);
+
+export const grantLiveWriteApprovalSchema = z.strictObject({
+  reason: z.string().trim().min(1).max(1_000),
+  typedConfirmation: z.string(),
+  readinessAssessmentId: z.coerce.number().int().positive(),
+  expectedConfigurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  expectedCredentialFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  expectedRevision: z.coerce.number().int().nonnegative(),
+  expiresAt: z.coerce.date().nullable().optional(),
+});
+
+export const revokeLiveWriteApprovalSchema = z.strictObject({
+  reason: z.string().trim().min(1).max(1_000),
+  expectedRevision: z.coerce.number().int().nonnegative(),
+});
 
 const nullablePositiveNumber = z.coerce.number().positive().nullable().optional();
 const nullablePositiveInteger = z.coerce.number().int().positive().nullable().optional();

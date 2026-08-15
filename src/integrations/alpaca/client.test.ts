@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   beginRequest: vi.fn(),
   completeRequest: vi.fn(),
   resolveAlpacaConfigForTradingAccount: vi.fn(),
+  authorizeLiveBrokerWrite: vi.fn(),
 }));
 
 vi.mock('../../services/alpaca-config-resolver.service.js', () => ({
@@ -21,6 +22,10 @@ vi.mock('../../services/alpaca-api-usage.service.js', () => ({
     beginRequest: mocks.beginRequest,
     completeRequest: mocks.completeRequest,
   },
+}));
+
+vi.mock('../../services/live-write-approval.service.js', () => ({
+  authorizeLiveBrokerWrite: mocks.authorizeLiveBrokerWrite,
 }));
 
 import { AlpacaApiError } from '../../errors/alpaca-api-error.js';
@@ -60,6 +65,7 @@ describe('alpacaRequestForAccount', () => {
     vi.clearAllMocks();
     vi.stubGlobal('fetch', mocks.fetch);
     mocks.shouldDefer.mockReturnValue(false);
+    mocks.authorizeLiveBrokerWrite.mockResolvedValue(undefined);
     mocks.getBackoffUntil.mockReturnValue(null);
     mocks.beginRequest.mockReturnValue({
       metadata: accountReadMetadata,

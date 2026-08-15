@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('./live-write-approval.service.js', () => ({
+  invalidateEntryApprovalsForSubscriptions: vi.fn(),
+}));
 
 const mocks = vi.hoisted(() => ({
   strategyFindMany: vi.fn(),

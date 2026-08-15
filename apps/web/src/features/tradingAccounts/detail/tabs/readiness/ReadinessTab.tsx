@@ -11,6 +11,7 @@ import {
 import type {
   ReadinessOutcome, TradingAccount, TradingAccountReadinessAssessment,
 } from "../../../types";
+import { LiveWriteAuthorizationCard } from "./LiveWriteAuthorizationCard";
 
 const stageLabels: Record<string, string> = {
   CREDENTIALS_CONFIGURED: "Credentials configured",
@@ -137,6 +138,7 @@ export function ReadinessTab({ account, token }: { account: TradingAccount; toke
         </Table>
         </ScrollArea>
       </Card>
+      <LiveWriteAuthorizationCard accountId={account.id} token={token} latest={latest.data?.assessment ?? null} />
     </Stack>
   );
 }

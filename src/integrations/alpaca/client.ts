@@ -6,6 +6,7 @@ import { AlpacaRateLimitDeferredError } from '../../errors/alpaca-rate-limit-def
 import { BrokerWriteDeliveryError } from '../../errors/broker-write-delivery-error.js';
 import { alpacaApiUsageRegistry } from '../../services/alpaca-api-usage.service.js';
 import { resolveAlpacaConfigForTradingAccount } from '../../services/alpaca-config-resolver.service.js';
+import { authorizeLiveBrokerWrite } from '../../services/live-write-approval.service.js';
 import {
   assertKnownAlpacaEndpoint,
   assertKnownAlpacaOperation,
@@ -79,19 +80,26 @@ export async function alpacaRequestForAccount<T>(
   if (options.metadata.requestClass === 'critical_write' &&
       config.environment === TradingAccountEnvironment.LIVE) {
     const operationClass = options.metadata.operationClass ?? 'ENTRY_WRITE';
-    const allowed = operationClass === 'RISK_REDUCING_WRITE'
+    const policyAllowed = operationClass === 'RISK_REDUCING_WRITE'
       ? env.ALLOW_LIVE_RISK_REDUCING_WRITES
       : operationClass === 'ENTRY_WRITE'
         ? env.ALLOW_LIVE_TRADING && env.ALLOW_LIVE_RISK_REDUCING_WRITES
         : false;
-    if (!allowed) {
+    if (!policyAllowed) {
       const required = operationClass === 'RISK_REDUCING_WRITE'
         ? 'ALLOW_LIVE_RISK_REDUCING_WRITES'
         : 'ALLOW_LIVE_TRADING and ALLOW_LIVE_RISK_REDUCING_WRITES';
-    throw new BrokerWriteDeliveryError({
-      classification: 'NOT_SENT_BLOCKED',
-        message: `LIVE ${operationClass} blocked for TradingAccount ${tradingAccountId}: ${required} must be true.`,
-    });
+      throw new BrokerWriteDeliveryError({ classification: 'NOT_SENT_BLOCKED',
+        message: `LIVE ${operationClass} blocked for TradingAccount ${tradingAccountId}: ${required} must be true.` });
+    }
+    try {
+      await authorizeLiveBrokerWrite(tradingAccountId, operationClass);
+    } catch (error) {
+      throw new BrokerWriteDeliveryError({
+        classification: 'NOT_SENT_BLOCKED',
+        message: error instanceof Error ? error.message : `LIVE ${operationClass} blocked.`,
+        cause: error,
+      });
     }
   }
   const url = `${config.baseUrl}${path}`;

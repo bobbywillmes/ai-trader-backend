@@ -14,6 +14,7 @@ import {
   fingerprintSecret,
 } from './trading-credential-crypto.service.js';
 import { withAccountRiskConfigurationTransaction } from './trading-account-risk-configuration.service.js';
+import { invalidateLiveWriteApprovals, LiveWriteCapability } from './live-write-approval.service.js';
 
 export type ActiveTradingAccountApiKeyCredential = {
   credentialId: number;
@@ -212,6 +213,8 @@ export async function upsertTradingAccountApiKeyCredential(
       where: { id: tradingAccountId },
       data: SAFE_CREDENTIAL_ACCOUNT_STATE,
     });
+    await invalidateLiveWriteApprovals(tx, tradingAccountId,
+      [LiveWriteCapability.RISK_REDUCING, LiveWriteCapability.ENTRY], 'Broker credentials were created or replaced.');
 
     const after = { ...SAFE_CREDENTIAL_ACCOUNT_STATE };
     const replaced = account.credential !== null;
@@ -297,6 +300,8 @@ export async function revokeTradingAccountCredential(
       where: { id: tradingAccountId },
       data: SAFE_CREDENTIAL_ACCOUNT_STATE,
     });
+    await invalidateLiveWriteApprovals(tx, tradingAccountId,
+      [LiveWriteCapability.RISK_REDUCING, LiveWriteCapability.ENTRY], 'Broker credentials were revoked.');
 
     const after = { ...SAFE_CREDENTIAL_ACCOUNT_STATE };
     await tx.systemEvent.create({

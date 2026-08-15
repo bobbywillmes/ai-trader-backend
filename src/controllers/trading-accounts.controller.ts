@@ -54,6 +54,9 @@ import {
   upsertTradingAccountCredentialSchema,
   runTradingAccountReadinessAssessmentSchema,
   tradingAccountReadinessPurposeSchema,
+  liveWriteCapabilitySchema,
+  grantLiveWriteApprovalSchema,
+  revokeLiveWriteApprovalSchema,
 } from '../validators/trading-account.schema.js';
 import { verifyTradingAccountCredential } from '../services/trading-account-credential-verification.service.js';
 import {
@@ -69,6 +72,12 @@ import {
   listTradingAccountReadinessAssessments,
   runTradingAccountReadinessAssessment,
 } from '../services/trading-account-readiness.service.js';
+import {
+  getLiveWriteApprovalState,
+  grantLiveWriteApproval,
+  listLiveWriteApprovalHistory,
+  revokeLiveWriteApproval,
+} from '../services/live-write-approval.service.js';
 
 function parseAssessmentId(value: unknown) {
   const id = typeof value === 'string' ? Number(value) : NaN;
@@ -915,4 +924,45 @@ export async function getTradingAccountReadinessAssessmentController(
     if (!assessment) throw new HttpError(404, 'Readiness assessment not found.');
     res.status(200).json({ assessment });
   } catch (error) { next(error); }
+}
+
+export async function getLiveWriteApprovalsController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const tradingAccountId = parseTradingAccountId(req.params.id);
+    const [state, history] = await Promise.all([
+      getLiveWriteApprovalState(tradingAccountId),
+      listLiveWriteApprovalHistory(tradingAccountId),
+    ]);
+    res.json({ ...state, history });
+  } catch (error) { next(error); }
+}
+
+export async function grantLiveWriteApprovalController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const tradingAccountId = parseTradingAccountId(req.params.id);
+    const capability = liveWriteCapabilitySchema.parse(req.params.capability);
+    const input = grantLiveWriteApprovalSchema.parse(req.body);
+    const approval = await grantLiveWriteApproval({
+      tradingAccountId, capability, actorUserId: requireActorUserId(res), input,
+    });
+    res.json({ approval });
+  } catch (error) {
+    if (error instanceof ZodError) return next(new HttpError(400, 'Invalid Live write approval request.', error.flatten()));
+    next(error);
+  }
+}
+
+export async function revokeLiveWriteApprovalController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const tradingAccountId = parseTradingAccountId(req.params.id);
+    const capability = liveWriteCapabilitySchema.parse(req.params.capability);
+    const input = revokeLiveWriteApprovalSchema.parse(req.body);
+    const approval = await revokeLiveWriteApproval({
+      tradingAccountId, capability, actorUserId: requireActorUserId(res), ...input,
+    });
+    res.json({ approval });
+  } catch (error) {
+    if (error instanceof ZodError) return next(new HttpError(400, 'Invalid Live write approval revocation.', error.flatten()));
+    next(error);
+  }
 }

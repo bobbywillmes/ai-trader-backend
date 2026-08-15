@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   deactivateTradingAccountController: vi.fn(),
   runTradingAccountReadinessAssessmentController: vi.fn(),
   runTradingAccountReconciliationController: vi.fn(),
+  grantLiveWriteApprovalController: vi.fn((_req: Request, res: Response) => res.status(200).json({ ok: true })),
 }));
 
 vi.mock('../controllers/trading-accounts.controller.js', () => ({
@@ -42,6 +43,9 @@ vi.mock('../controllers/trading-accounts.controller.js', () => ({
   getLatestTradingAccountReadinessAssessmentController: vi.fn(),
   listTradingAccountReadinessAssessmentsController: vi.fn(),
   getTradingAccountReadinessAssessmentController: vi.fn(),
+  getLiveWriteApprovalsController: vi.fn(),
+  grantLiveWriteApprovalController: mocks.grantLiveWriteApprovalController,
+  revokeLiveWriteApprovalController: vi.fn(),
 }));
 
 vi.mock('../controllers/reconciliation.controller.js', () => ({
@@ -197,5 +201,23 @@ describe('POST /api/trading-accounts/:id/reconciliation/run RBAC', () => {
     const response = await postAs(platformRole, '/api/trading-accounts/2/reconciliation/run', { persistEvents: true });
     expect(response.status).toBe(403);
     expect(mocks.runTradingAccountReconciliationController).not.toHaveBeenCalled();
+  });
+});
+
+describe('Live write approval RBAC', () => {
+  afterEach(() => { mocks.grantLiveWriteApprovalController.mockClear(); });
+
+  it('allows only SYSTEM_OWNER to reach a grant mutation', async () => {
+    const owner = await postAs(PlatformRole.SYSTEM_OWNER,
+      '/api/trading-accounts/2/live-write-approvals/RISK_REDUCING/grant', {});
+    expect(owner.status).toBe(200);
+    expect(mocks.grantLiveWriteApprovalController).toHaveBeenCalledTimes(1);
+
+    for (const role of [PlatformRole.OPERATOR, PlatformRole.ACCOUNT_USER]) {
+      const response = await postAs(role,
+        '/api/trading-accounts/2/live-write-approvals/RISK_REDUCING/grant', {});
+      expect(response.status).toBe(403);
+    }
+    expect(mocks.grantLiveWriteApprovalController).toHaveBeenCalledTimes(1);
   });
 });

@@ -7,6 +7,7 @@ import {
   resolveEffectiveAccountEntryLimits,
   type EffectiveAccountEntryLimits,
 } from './trading-account-entry-risk-limits.service.js';
+import { invalidateLiveWriteApprovals, LiveWriteCapability } from './live-write-approval.service.js';
 
 const TRADING_ACCOUNT_RISK_SETTINGS_SELECT = {
   id: true,
@@ -99,7 +100,8 @@ export async function updateTradingAccountRiskSettingsForAdmin(
     return null;
   }
 
-  const settings = await prisma.tradingAccountRiskSettings.upsert({
+  const settings = await prisma.$transaction(async (tx) => {
+    const updated = await tx.tradingAccountRiskSettings.upsert({
     where: { tradingAccountId },
     update: {
       ...(input.enabled !== undefined && { enabled: input.enabled }),
@@ -147,6 +149,9 @@ export async function updateTradingAccountRiskSettingsForAdmin(
       ...(input.notes !== undefined && { notes: input.notes }),
     },
     select: TRADING_ACCOUNT_RISK_SETTINGS_SELECT,
+    });
+    await invalidateLiveWriteApprovals(tx, tradingAccountId, [LiveWriteCapability.ENTRY], 'Account entry risk limits changed.');
+    return updated;
   });
 
   const globalConfig = await getRuntimeTradingConfig();
