@@ -25,6 +25,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../config/env.js', () => ({
   env: mocks.env,
 }));
+vi.mock('./live-write-approval.service.js', () => ({
+  LiveWriteCapability: { RISK_REDUCING: 'RISK_REDUCING', ENTRY: 'ENTRY' },
+  invalidateLiveWriteApprovals: vi.fn(),
+}));
 
 vi.mock('../db/prisma.js', () => ({
   prisma: {

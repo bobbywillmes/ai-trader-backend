@@ -30,6 +30,9 @@ import {
   getLatestTradingAccountReadiness,
   listTradingAccountReadiness,
   runTradingAccountReadiness,
+  getLiveWriteApprovals,
+  grantLiveWriteApproval,
+  revokeLiveWriteApproval,
 } from "./api";
 import type {
   AccountSubscriptionMarketContextStatus,
@@ -42,6 +45,7 @@ import type {
   TradingAccountSubscriptionInput,
   UpdateTradingAccountPayload,
   UpsertTradingAccountCredentialPayload,
+  LiveWriteCapability,
 } from "./types";
 
 export const tradingAccountKeys = {
@@ -59,6 +63,7 @@ export const tradingAccountKeys = {
     [...tradingAccountKeys.detail(id), "readiness"] as const,
   readinessHistory: (id: number) =>
     [...tradingAccountKeys.readiness(id), "history"] as const,
+  liveWriteApprovals: (id: number) => [...tradingAccountKeys.detail(id), "liveWriteApprovals"] as const,
   allocations: (id: number) =>
     [...tradingAccountKeys.detail(id), "allocations"] as const,
   accountSubscriptions: (id: number) =>
@@ -148,6 +153,33 @@ export function useRunTradingAccountReadiness(id: number, token: string | null) 
       queryClient.setQueryData(tradingAccountKeys.readiness(id), { assessment });
       queryClient.invalidateQueries({ queryKey: tradingAccountKeys.readinessHistory(id) });
     },
+  });
+}
+
+export function useLiveWriteApprovals(id: number, token: string | null) {
+  return useQuery({ queryKey: tradingAccountKeys.liveWriteApprovals(id),
+    queryFn: () => getLiveWriteApprovals(id, token as string), enabled: Boolean(token) });
+}
+
+export function useGrantLiveWriteApproval(id: number, token: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ capability, payload }: { capability: LiveWriteCapability; payload: unknown }) => {
+      if (!token) throw new Error("Admin session is missing.");
+      return grantLiveWriteApproval(id, capability, payload, token);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: tradingAccountKeys.liveWriteApprovals(id) }),
+  });
+}
+
+export function useRevokeLiveWriteApproval(id: number, token: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ capability, payload }: { capability: LiveWriteCapability; payload: unknown }) => {
+      if (!token) throw new Error("Admin session is missing.");
+      return revokeLiveWriteApproval(id, capability, payload, token);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: tradingAccountKeys.liveWriteApprovals(id) }),
   });
 }
 

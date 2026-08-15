@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('./live-write-approval.service.js', () => ({
+  LiveWriteCapability: { RISK_REDUCING: 'RISK_REDUCING', ENTRY: 'ENTRY' },
+  invalidateLiveWriteApprovals: vi.fn(),
+}));
 import { PositionSizingType, Prisma } from '@prisma/client';
 
 const mocks = vi.hoisted(() => ({

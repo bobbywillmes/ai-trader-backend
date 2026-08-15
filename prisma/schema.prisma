@@ -58,6 +58,9 @@ model User {
   readinessAssessmentsRequested TradingAccountReadinessAssessment[] @relation("ReadinessAssessmentRequester")
   lifecycleExercisesCreated   TradingLifecycleExercise[]  @relation("LifecycleExerciseCreator")
   lifecycleExerciseTargets    TradingLifecycleExerciseTarget[] @relation("LifecycleExerciseAccountHolder")
+  liveWriteApprovalsGranted   TradingAccountLiveWriteApproval[] @relation("LiveWriteApprovalGranter")
+  liveWriteApprovalsRevoked   TradingAccountLiveWriteApproval[] @relation("LiveWriteApprovalRevoker")
+  liveWriteApprovalDecisions  TradingAccountLiveWriteApprovalDecision[] @relation("LiveWriteApprovalDecisionActor")
 }
 
 model UserSetupToken {
@@ -134,6 +137,23 @@ enum TradingAccountReadinessResult {
   ERROR
 }
 
+enum LiveWriteCapability {
+  RISK_REDUCING
+  ENTRY
+}
+
+enum LiveWriteApprovalStatus {
+  GRANTED
+  REVOKED
+  INVALIDATED
+}
+
+enum LiveWriteApprovalAction {
+  GRANT
+  REVOKE
+  INVALIDATE
+}
+
 model TradingAccount {
   id                        Int @id @default(autoincrement())
 
@@ -189,6 +209,8 @@ model TradingAccount {
   alpacaApiUsageBuckets     AlpacaApiUsageBucket[]
   workerHealthStates        TradingAccountWorkerHealthState[]
   readinessAssessments      TradingAccountReadinessAssessment[]
+  liveWriteApprovals        TradingAccountLiveWriteApproval[]
+  liveWriteApprovalDecisions TradingAccountLiveWriteApprovalDecision[]
   lifecycleExerciseTargets  TradingLifecycleExerciseTarget[]
 
   createdAt                 DateTime @default(now())
@@ -236,6 +258,8 @@ model TradingAccountReadinessAssessment {
   evidenceJson                    Json
   requestedByUserId               Int?
   requestedByUser                 User? @relation("ReadinessAssessmentRequester", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+  liveWriteApprovals              TradingAccountLiveWriteApproval[]
+  liveWriteApprovalDecisions      TradingAccountLiveWriteApprovalDecision[]
   createdAt                       DateTime @default(now())
 
   @@index([tradingAccountId, createdAt])
@@ -243,6 +267,57 @@ model TradingAccountReadinessAssessment {
   @@index([tradingAccountId, purpose, completedAt])
   @@index([result])
   @@index([expiresAt])
+}
+
+model TradingAccountLiveWriteApproval {
+  id                       Int @id @default(autoincrement())
+  tradingAccountId         Int
+  tradingAccount           TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  capability               LiveWriteCapability
+  status                   LiveWriteApprovalStatus
+  revision                 Int @default(0)
+  configurationFingerprint String
+  credentialFingerprint    String
+  readinessAssessmentId    Int?
+  readinessAssessment      TradingAccountReadinessAssessment? @relation(fields: [readinessAssessmentId], references: [id], onDelete: SetNull)
+  grantedByUserId          Int?
+  grantedByUser            User? @relation("LiveWriteApprovalGranter", fields: [grantedByUserId], references: [id], onDelete: SetNull)
+  grantedAt                DateTime?
+  grantReason              String?
+  revokedByUserId          Int?
+  revokedByUser            User? @relation("LiveWriteApprovalRevoker", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+  revokedAt                DateTime?
+  invalidationReason       String?
+  expiresAt                DateTime?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@unique([tradingAccountId, capability])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model TradingAccountLiveWriteApprovalDecision {
+  id                       Int @id @default(autoincrement())
+  tradingAccountId         Int
+  tradingAccount           TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  capability               LiveWriteCapability
+  action                   LiveWriteApprovalAction
+  actorUserId              Int?
+  actorUser                User? @relation("LiveWriteApprovalDecisionActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  reason                   String
+  configurationFingerprint String
+  credentialFingerprint    String
+  readinessAssessmentId    Int?
+  readinessAssessment      TradingAccountReadinessAssessment? @relation(fields: [readinessAssessmentId], references: [id], onDelete: SetNull)
+  deploymentEnvironment    String
+  priorRevision            Int
+  resultingRevision        Int
+  expiresAt                DateTime?
+  createdAt                DateTime @default(now())
+
+  @@index([tradingAccountId, capability, createdAt])
+  @@index([actorUserId])
 }
 
 model TradingAccountRiskSettings {

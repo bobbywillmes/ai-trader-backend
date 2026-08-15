@@ -30,6 +30,9 @@ import {
   getLatestTradingAccountReadinessAssessmentController,
   listTradingAccountReadinessAssessmentsController,
   getTradingAccountReadinessAssessmentController,
+  getLiveWriteApprovalsController,
+  grantLiveWriteApprovalController,
+  revokeLiveWriteApprovalController,
 } from '../controllers/trading-accounts.controller.js';
 import { requirePermission, requireSystemOwnerAccess, requireTradingAccountAccess } from '../middleware/rbac.js';
 import { PlatformPermission } from '../types/platform-rbac.js';
@@ -51,6 +54,9 @@ router.post('/:id/readiness-assessments', requireSystemOwnerAccess, runTradingAc
 router.get('/:id/readiness-assessments/latest', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), getLatestTradingAccountReadinessAssessmentController);
 router.get('/:id/readiness-assessments', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), listTradingAccountReadinessAssessmentsController);
 router.get('/:id/readiness-assessments/:assessmentId', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), getTradingAccountReadinessAssessmentController);
+router.get('/:id/live-write-approvals', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), getLiveWriteApprovalsController);
+router.post('/:id/live-write-approvals/:capability/grant', requireSystemOwnerAccess, grantLiveWriteApprovalController);
+router.post('/:id/live-write-approvals/:capability/revoke', requireSystemOwnerAccess, revokeLiveWriteApprovalController);
 router.post(
   '/:id/reconciliation/run',
   requireSystemOwnerAccess,

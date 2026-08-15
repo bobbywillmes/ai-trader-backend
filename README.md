@@ -131,6 +131,7 @@ tradingEnabled=false                    -> account-level automated trading shutd
 killSwitchEnabled=true                  -> account-level entry pause while lifecycle work continues
 ALLOW_LIVE_RISK_REDUCING_WRITES=false  -> blocks Live close/protective writes
 ALLOW_LIVE_TRADING=false                -> blocks Live entry writes
+LIVE_WRITE_DEPLOYMENT_ROLE=OBSERVATION_ONLY -> blocks every Live broker write
 ```
 
 Live entry writes require both Live environment permissions. This prevents the

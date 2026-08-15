@@ -5,9 +5,16 @@ const mocks = vi.hoisted(() => ({
   tradingAccountRiskSettingsUpsert: vi.fn(),
   getRuntimeTradingConfig: vi.fn(),
 }));
+vi.mock('./live-write-approval.service.js', () => ({
+  LiveWriteCapability: { RISK_REDUCING: 'RISK_REDUCING', ENTRY: 'ENTRY' },
+  invalidateLiveWriteApprovals: vi.fn(),
+}));
 
 vi.mock('../db/prisma.js', () => ({
   prisma: {
+    $transaction: async (callback: (tx: unknown) => unknown) => callback({
+      tradingAccountRiskSettings: { upsert: mocks.tradingAccountRiskSettingsUpsert },
+    }),
     tradingAccount: {
       findUnique: mocks.tradingAccountFindUnique,
     },

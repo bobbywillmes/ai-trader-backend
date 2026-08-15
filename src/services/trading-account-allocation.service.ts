@@ -10,6 +10,7 @@ import {
   assertAccountRiskConfiguration,
   withAccountRiskConfigurationTransaction,
 } from './trading-account-risk-configuration.service.js';
+import { invalidateLiveWriteApprovals, LiveWriteCapability } from './live-write-approval.service.js';
 
 const TRADING_ACCOUNT_ALLOCATION_SELECT = {
   id: true,
@@ -227,6 +228,7 @@ export async function updateTradingAccountAllocationForAdmin(
       },
       select: TRADING_ACCOUNT_ALLOCATION_SELECT,
       });
+      await invalidateLiveWriteApprovals(tx, tradingAccountId, [LiveWriteCapability.ENTRY], 'Account allocation configuration changed.');
       return serializeTradingAccountAllocationForAdmin(allocation);
     });
   } catch (error) {

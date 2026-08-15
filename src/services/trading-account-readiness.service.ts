@@ -15,6 +15,7 @@ import { recordAccountSnapshot } from './account-snapshot.service.js';
 import { getNormalizedPositions } from './positions.service.js';
 import { reconcileSnapshots } from './reconciliation.service.js';
 import { listTradingAccountWorkerHealth } from './trading-account-worker-health.service.js';
+import { getLiveWriteApprovalState } from './live-write-approval.service.js';
 import {
   ACCOUNT_WORKFLOW_LOCK_FAMILIES,
   withTradingAccountWorkflowLock,
@@ -66,6 +67,8 @@ const CREDENTIAL_SELECT = {
   accessTokenCiphertext: true, refreshTokenCiphertext: true,
 } satisfies Prisma.TradingAccountCredentialSelect;
 
+type ReadinessDbClient = Prisma.TransactionClient | typeof prisma;
+
 function canonicalize(value: unknown): unknown {
   if (value instanceof Date) return value.toISOString();
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -108,24 +111,24 @@ function safeCredentialMetadata(credential: Awaited<ReturnType<typeof loadCreden
   };
 }
 
-async function loadConfiguration(tradingAccountId: number) {
-  return prisma.tradingAccount.findUnique({
+async function loadConfiguration(tradingAccountId: number, db: ReadinessDbClient = prisma) {
+  return db.tradingAccount.findUnique({
     where: { id: tradingAccountId },
     select: CONFIGURATION_SELECT,
   });
 }
 
-async function loadCredential(tradingAccountId: number) {
-  return prisma.tradingAccountCredential.findUnique({
+async function loadCredential(tradingAccountId: number, db: ReadinessDbClient = prisma) {
+  return db.tradingAccountCredential.findUnique({
     where: { tradingAccountId },
     select: CREDENTIAL_SELECT,
   });
 }
 
-export async function computeReadinessFingerprints(tradingAccountId: number) {
+export async function computeReadinessFingerprints(tradingAccountId: number, db: ReadinessDbClient = prisma) {
   const [configuration, credential] = await Promise.all([
-    loadConfiguration(tradingAccountId),
-    loadCredential(tradingAccountId),
+    loadConfiguration(tradingAccountId, db),
+    loadCredential(tradingAccountId, db),
   ]);
   if (!configuration) return null;
   return {
@@ -433,6 +436,9 @@ async function gatherAndPersist(tradingAccountId: number, requestedByUserId: num
   const configurationReady = configGates.every((item) => item.outcome === 'PASSED');
   const readOnlyGates = [...identityGates, ...lifecycleGates, ...brokerGates, ...workerGates];
   const readOnlyReady = readOnlyGates.every((item) => item.outcome === 'PASSED');
+  const approvalState = await getLiveWriteApprovalState(tradingAccountId);
+  const riskReducingApproval = approvalState.capabilities.find((item) => item.capability === 'RISK_REDUCING')!;
+  const entryApproval = approvalState.capabilities.find((item) => item.capability === 'ENTRY')!;
   const riskReducingGates = [
     gate('RISK_REDUCING_CREDENTIALS_USABLE', credentialUsable,
       'Credentials are usable.', 'Usable credentials are required.'),
@@ -446,9 +452,11 @@ async function gatherAndPersist(tradingAccountId: number, requestedByUserId: num
     gate('LIVE_ENTRY_POLICY_DISABLED', !env.ALLOW_LIVE_TRADING,
       'Live entry environment permission remains disabled.',
       'ALLOW_LIVE_TRADING must remain false for activation readiness.'),
-    gate('ACCOUNT_SCOPED_WRITE_APPROVAL_AVAILABLE', false, '',
-      'Account-scoped Live write approval is a future prerequisite.'),
+    gate('ACCOUNT_SCOPED_RISK_REDUCING_APPROVAL_CURRENT', riskReducingApproval.effective,
+      'Account-scoped risk-reducing approval is current.',
+      `Account-scoped risk-reducing approval is blocked: ${riskReducingApproval.reason ?? 'missing'}.`),
   ];
+  const riskReducingReady = riskReducingGates.every((item) => item.outcome === 'PASSED');
   const activationGates = [
     gate('ACTIVATION_CREDENTIALS_CONFIGURED',
       credentialsConfigured.every((item) => item.outcome === 'PASSED'),
@@ -459,6 +467,8 @@ async function gatherAndPersist(tradingAccountId: number, requestedByUserId: num
       'Read-only posture is ready.', 'Read-only posture is blocked.'),
     gate('ACTIVATION_CONFIGURATION_READY', configurationReady,
       'Configuration is ready.', 'Configuration is blocked.'),
+    gate('ACTIVATION_RISK_REDUCING_READY', riskReducingReady,
+      'Risk-reducing capability is ready.', 'Risk-reducing capability is blocked.'),
   ];
   const entryGates = [
     gate('ENTRY_ACCOUNT_ACTIVE', account.status === 'ACTIVE', 'Account is ACTIVE.', 'Account is not ACTIVE.'),
@@ -471,6 +481,10 @@ async function gatherAndPersist(tradingAccountId: number, requestedByUserId: num
       account.accountSubscriptions.some((item) => item.enabled && item.entriesEnabled),
       'An enabled assignment allows entries.', 'No enabled assignment allows entries.'),
     gate('ENTRY_CONFIGURATION_READY', configurationReady, 'Configuration is ready.', 'Configuration is blocked.'),
+    gate('ENTRY_RISK_REDUCING_APPROVAL_CURRENT', riskReducingApproval.effective,
+      'Risk-reducing approval is current.', `Risk-reducing approval is blocked: ${riskReducingApproval.reason ?? 'missing'}.`),
+    gate('ENTRY_ACCOUNT_APPROVAL_CURRENT', entryApproval.effective,
+      'Entry approval is current.', `Entry approval is blocked: ${entryApproval.reason ?? 'missing'}.`),
   ];
   const stages = [
     stage('CREDENTIALS_CONFIGURED', credentialsConfigured, 'Safe credential configuration checks.'),

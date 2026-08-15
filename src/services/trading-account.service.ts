@@ -17,6 +17,7 @@ import {
   assertAccountRiskConfiguration,
   withAccountRiskConfigurationTransaction,
 } from './trading-account-risk-configuration.service.js';
+import { invalidateLiveWriteApprovals, LiveWriteCapability } from './live-write-approval.service.js';
 
 const LEGACY_DEFAULT_TRADING_ACCOUNT = {
   broker: TradingBroker.ALPACA,
@@ -398,6 +399,9 @@ export async function updateTradingAccountForAdmin(
       data,
       select: TRADING_ACCOUNT_ADMIN_SELECT,
     });
+    if (input.maxDeployableNotional !== undefined) {
+      await invalidateLiveWriteApprovals(tx, id, [LiveWriteCapability.ENTRY], 'Account deployable notional changed.');
+    }
     return serializeTradingAccountForAdmin(account);
   });
 }
@@ -452,6 +456,7 @@ export async function deactivateTradingAccountForAdmin(
         blockReason: `Trading account deactivated: ${input.reason}`,
       },
     });
+    await invalidateLiveWriteApprovals(tx, id, [LiveWriteCapability.ENTRY], 'Trading account was deactivated.');
 
     const occurredAt = new Date();
     await tx.systemEvent.create({

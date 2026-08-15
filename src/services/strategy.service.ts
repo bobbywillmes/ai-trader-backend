@@ -6,6 +6,7 @@ import {
   evaluateMomentumSubscriptionEligibility,
   momentumSubscriptionEligibilitySelect,
 } from './momentum-subscription-eligibility.service.js';
+import { invalidateEntryApprovalsForSubscriptions } from './live-write-approval.service.js';
 import { isMomentumContinuationStrategyKey } from '../types/strategies.js';
 import type {
   StrategyDetailQuery,
@@ -241,6 +242,8 @@ export async function updateStrategyEnabled(
     if (!updated) {
       throw new HttpError(404, `Strategy id ${id} was not found.`);
     }
+    await invalidateEntryApprovalsForSubscriptions(transaction, { strategyId: id },
+      `Strategy ${updated.key} enabled state changed.`);
 
     const usage = summarizeUsage(updated);
     const momentumStrategy = isMomentumContinuationStrategyKey(updated.key);

@@ -25,6 +25,8 @@ import type {
   UpsertTradingAccountCredentialPayload,
   TradingAccountReadinessAssessmentResponse,
   TradingAccountReadinessHistoryResponse,
+  LiveWriteApprovalStateResponse,
+  LiveWriteCapability,
 } from "./types";
 
 type ListMarketContextOptions = {
@@ -67,6 +69,22 @@ export function runTradingAccountReadiness(id: number, token: string) {
     `/api/trading-accounts/${id}/readiness-assessments`, {
       method: "POST", token, body: { purpose: "LIVE_ACTIVATION" },
     });
+}
+
+export function getLiveWriteApprovals(id: number, token: string) {
+  return apiRequest<LiveWriteApprovalStateResponse>(`/api/trading-accounts/${id}/live-write-approvals`, { token });
+}
+
+export function grantLiveWriteApproval(id: number, capability: LiveWriteCapability, payload: unknown, token: string) {
+  return apiRequest(`/api/trading-accounts/${id}/live-write-approvals/${capability}/grant`, {
+    method: "POST", token, body: payload,
+  });
+}
+
+export function revokeLiveWriteApproval(id: number, capability: LiveWriteCapability, payload: unknown, token: string) {
+  return apiRequest(`/api/trading-accounts/${id}/live-write-approvals/${capability}/revoke`, {
+    method: "POST", token, body: payload,
+  });
 }
 
 export function updateTradingAccount(

@@ -107,6 +107,34 @@ export type TradingAccountReadinessHistoryResponse = {
   assessments: TradingAccountReadinessAssessment[];
 };
 
+export type LiveWriteCapability = "RISK_REDUCING" | "ENTRY";
+export type LiveWriteApprovalStateResponse = {
+  tradingAccountId: number;
+  environment: TradingAccountEnvironment;
+  deploymentRole: "OBSERVATION_ONLY" | "PRODUCTION_EXECUTOR";
+  deploymentCanWrite: boolean;
+  capabilities: Array<{
+    capability: LiveWriteCapability;
+    effective: boolean;
+    reason: string | null;
+    fingerprints: { configurationFingerprint: string; credentialFingerprint: string } | null;
+    approval: null | {
+      status: "GRANTED" | "REVOKED" | "INVALIDATED";
+      revision: number;
+      grantedAt: string | null;
+      grantReason: string | null;
+      expiresAt: string | null;
+      invalidationReason: string | null;
+      grantedByUser: { id: number; name: string | null; email: string } | null;
+    };
+  }>;
+  history: Array<{
+    id: number; capability: LiveWriteCapability; action: "GRANT" | "REVOKE" | "INVALIDATE";
+    reason: string; createdAt: string; resultingRevision: number;
+    actorUser: { id: number; name: string | null; email: string } | null;
+  }>;
+};
+
 export type CreateTradingAccountPayload = {
   accountHolderUserId: number;
   displayName: string;

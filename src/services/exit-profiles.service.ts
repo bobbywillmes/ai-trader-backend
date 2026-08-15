@@ -1,6 +1,7 @@
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import { createAdminAuditEvent } from './admin-audit.service.js';
+import { invalidateLiveWriteApprovalsForExitProfile } from './live-write-approval.service.js';
 import type {
   CreateExitProfileInput,
   UpdateExitProfileInput
@@ -68,9 +69,10 @@ export async function updateExitProfile(key: string, input: UpdateExitProfileInp
     }
   }
 
-  const exitProfile = await prisma.exitProfile.update({
-    where: { key: normalizedKey },
-    data: {
+  const exitProfile = await prisma.$transaction(async (tx) => {
+    const updated = await tx.exitProfile.update({
+      where: { key: normalizedKey },
+      data: {
       ...(input.key !== undefined && { key: input.key }),
       ...(input.name !== undefined && { name: input.name }),
       ...(input.description !== undefined && { description: input.description }),
@@ -81,7 +83,11 @@ export async function updateExitProfile(key: string, input: UpdateExitProfileInp
       ...(input.exitMode !== undefined && { exitMode: input.exitMode }),
       ...(input.takeProfitBehavior !== undefined && { takeProfitBehavior: input.takeProfitBehavior }),
       ...(input.enabled !== undefined && { enabled: input.enabled }),
-    },
+      },
+    });
+    await invalidateLiveWriteApprovalsForExitProfile(tx, existingProfile.id,
+      `Exit profile ${normalizedKey} changed.`);
+    return updated;
   });
 
   await createAdminAuditEvent({

@@ -10,6 +10,9 @@ const mocks = vi.hoisted(() => ({
   resolveSizing: vi.fn(),
   evaluateOrderRisk: vi.fn(),
 }));
+vi.mock('./live-write-approval.service.js', () => ({
+  authorizeLiveBrokerWrite: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock('../config/env.js', () => ({ env: mocks.env }));
 vi.mock('../db/prisma.js', () => ({

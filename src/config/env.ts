@@ -145,7 +145,18 @@ const envSchema = z.object({
   // live trading mode or an already-enabled trading system.
   ALLOW_LIVE_TRADING: envBoolean.default(false),
   ALLOW_LIVE_RISK_REDUCING_WRITES: envBoolean.default(false),
+  LIVE_WRITE_DEPLOYMENT_ROLE: z
+    .enum(['OBSERVATION_ONLY', 'PRODUCTION_EXECUTOR'])
+    .default('OBSERVATION_ONLY'),
   ALLOW_TRADING_ENABLED_ON_START: envBoolean.default(false),
+}).superRefine((value, context) => {
+  if (value.LIVE_WRITE_DEPLOYMENT_ROLE === 'PRODUCTION_EXECUTOR' && value.NODE_ENV !== 'production') {
+    context.addIssue({
+      code: 'custom',
+      path: ['LIVE_WRITE_DEPLOYMENT_ROLE'],
+      message: 'PRODUCTION_EXECUTOR is only valid when NODE_ENV=production.',
+    });
+  }
 });
 
 const parsed = envSchema.safeParse(process.env);

@@ -1150,3 +1150,22 @@ metadata, and effective Live-policy SHA-256 fingerprints. Results are
 `CURRENT`, `STALE`, or `EXPIRED`, with explicit stale-reason codes. Assessment
 evidence expires after five minutes and explicit credential verification must
 be no older than 15 minutes.
+
+## Live write approvals
+
+Account-scoped Live broker authorization uses separate `RISK_REDUCING` and
+`ENTRY` capabilities. Entry depends on risk-reducing approval. Approval
+mutations are System Owner-only; reads use normal account-scoped read access.
+
+```text
+GET  /api/trading-accounts/:id/live-write-approvals
+POST /api/trading-accounts/:id/live-write-approvals/:capability/grant
+POST /api/trading-accounts/:id/live-write-approvals/:capability/revoke
+```
+
+Grant requests require a reason, exact typed confirmation, fresh readiness
+assessment ID, current approval fingerprints, expected revision, and an
+expiration for `ENTRY`. The server recomputes all evidence. Grants are rejected
+for Paper accounts and observation-only deployments. Risk-reducing revocation
+is rejected while broker or local exposure exists. Current state, immutable
+decision history, and sanitized SystemEvents are recorded without credentials.

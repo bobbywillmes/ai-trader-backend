@@ -10,6 +10,7 @@ import {
   assertAccountRiskConfiguration,
   withAccountRiskConfigurationTransaction,
 } from './trading-account-risk-configuration.service.js';
+import { invalidateLiveWriteApprovals, LiveWriteCapability } from './live-write-approval.service.js';
 
 const TRADING_ACCOUNT_SUBSCRIPTION_SELECT = {
   id: true,
@@ -279,6 +280,9 @@ export async function createTradingAccountSubscriptionForAdmin(
       },
       select: TRADING_ACCOUNT_SUBSCRIPTION_SELECT,
       });
+      await invalidateLiveWriteApprovals(tx, tradingAccountId,
+        input.exitsEnabled === false ? [LiveWriteCapability.RISK_REDUCING, LiveWriteCapability.ENTRY] : [LiveWriteCapability.ENTRY],
+        'Account subscription configuration changed.');
       return serializeTradingAccountSubscriptionForAdmin(accountSubscription);
     });
   } catch (error) {
@@ -326,6 +330,8 @@ export async function deleteTradingAccountSubscriptionForAdmin(
     await tx.tradingAccountSubscription.delete({
       where: { id: existing.id },
     });
+    await invalidateLiveWriteApprovals(tx, tradingAccountId,
+      [LiveWriteCapability.RISK_REDUCING, LiveWriteCapability.ENTRY], 'An account assignment was removed.');
 
     return { id: existing.id };
   });
@@ -404,6 +410,11 @@ export async function updateTradingAccountSubscriptionForAdmin(
       },
       select: TRADING_ACCOUNT_SUBSCRIPTION_SELECT,
       });
+      await invalidateLiveWriteApprovals(tx, tradingAccountId,
+        input.exitsEnabled === false || input.enabled === false
+          ? [LiveWriteCapability.RISK_REDUCING, LiveWriteCapability.ENTRY]
+          : [LiveWriteCapability.ENTRY],
+        'Account subscription configuration changed.');
       return serializeTradingAccountSubscriptionForAdmin(accountSubscription);
     });
   } catch (error) {

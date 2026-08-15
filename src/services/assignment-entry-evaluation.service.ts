@@ -16,6 +16,7 @@ import {
   type RiskGateResult,
 } from './risk-gate.service.js';
 import { resolveSubscriptionOrderInput } from './subscription.service.js';
+import { authorizeLiveBrokerWrite } from './live-write-approval.service.js';
 
 const ASSIGNMENT_ENTRY_CONTEXT_SELECT = {
   id: true,
@@ -95,7 +96,7 @@ function riskRule(result: RiskGateResult) {
   return typeof rule === 'string' ? rule : null;
 }
 
-function getLiveEntryPolicyBlock(context: AssignmentEntryContext) {
+async function getLiveEntryPolicyBlock(context: AssignmentEntryContext) {
   if (context.tradingAccount.environment !== 'LIVE') return null;
 
   if (!env.ALLOW_LIVE_TRADING || !env.ALLOW_LIVE_RISK_REDUCING_WRITES) {
@@ -110,6 +111,17 @@ function getLiveEntryPolicyBlock(context: AssignmentEntryContext) {
         allowLiveTrading: env.ALLOW_LIVE_TRADING,
         allowLiveRiskReducingWrites: env.ALLOW_LIVE_RISK_REDUCING_WRITES,
       } as Prisma.InputJsonValue,
+    };
+  }
+
+  try {
+    await authorizeLiveBrokerWrite(context.tradingAccount.id, 'ENTRY_WRITE');
+  } catch (error) {
+    return {
+      allowed: false as const, statusCode: 403,
+      reason: error instanceof Error ? error.message : 'Account-scoped Live entry approval is blocked.',
+      details: { code: 'live_entry_approval_blocked', rule: 'live_entry_approval_blocked',
+        tradingAccountId: context.tradingAccount.id } as Prisma.InputJsonValue,
     };
   }
 
@@ -172,7 +184,7 @@ export async function evaluateResolvedAssignmentEntry(args: {
   enforceEntrySessionGuard?: boolean;
   excludeOrderIntentId?: number;
 }): Promise<AssignmentEntryEvaluation> {
-  const livePolicyBlock = getLiveEntryPolicyBlock(args.context);
+  const livePolicyBlock = await getLiveEntryPolicyBlock(args.context);
   const risk = livePolicyBlock ?? await evaluateOrderRisk(args.input, {
     tradingAccountId: args.context.tradingAccount.id,
     requestedNotionalOverride: args.sizing.estimatedNotional,

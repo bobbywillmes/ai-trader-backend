@@ -43,7 +43,15 @@ minutes and readiness never updates `verifiedAt`.
 
 ## Explicit Phase 5A exclusions
 
-Live activation, account-scoped write approval, risk-reducing authorization,
-lifecycle exercises, credential entry, assignment provisioning, order entry,
-order cancellation, position closing, protective orders, and the first Live
-entry remain future work.
+Account-scoped Live write approval is modeled independently for
+`RISK_REDUCING` and `ENTRY`. Effective entry approval depends on a current
+risk-reducing approval. Readiness observes these approvals but never grants or
+refreshes them. Activation, Live lifecycle exercises, and the first Live entry
+remain future work.
+
+Every Live critical write also requires
+`LIVE_WRITE_DEPLOYMENT_ROLE=PRODUCTION_EXECUTOR`; the default is
+`OBSERVATION_ONLY`, and executor mode is rejected outside `NODE_ENV=production`.
+The shared Alpaca client performs the final account approval, deployment role,
+global policy, expiry, dependency, and fingerprint check immediately before a
+broker request.
