@@ -25,6 +25,11 @@ export function listLifecycleRepairs(token: string, tradingAccountId?: number) {
 export function diagnosePositionAttribution(token: string, tradingAccountId: number, trackedPositionId: number) {
   return apiRequest<{ case: LifecycleRepairCase }>("/api/lifecycle-repairs/diagnose", { method: "POST", token, body: { repairType: "RESOLVE_POSITION_ATTRIBUTION", tradingAccountId, trackedPositionId } });
 }
-export function applyLifecycleRepair(token: string, caseId: number, input: { reason: string; confirmation: string; attemptKey: string }) {
-  return apiRequest<{ case: LifecycleRepairCase; execution: LifecycleRepairExecution; idempotent: boolean }>(`/api/lifecycle-repairs/${caseId}/apply`, { method: "POST", token, body: input });
+export function applyLifecycleRepair(token: string, input: { caseId: number; reason: string; confirmation: string; attemptKey: string }) {
+  const { caseId, reason, confirmation, attemptKey } = input;
+  return apiRequest<{ case: LifecycleRepairCase; execution: LifecycleRepairExecution; idempotent: boolean }>(`/api/lifecycle-repairs/${caseId}/apply`, {
+    method: "POST",
+    token,
+    body: { reason, confirmation, attemptKey },
+  });
 }

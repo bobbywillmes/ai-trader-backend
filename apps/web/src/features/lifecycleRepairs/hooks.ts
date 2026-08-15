@@ -11,5 +11,5 @@ export function useDiagnoseLifecycleRepair(token: string | null) {
 }
 export function useApplyLifecycleRepair(token: string | null) {
   const client = useQueryClient();
-  return useMutation({ mutationFn: (input: { caseId: number; reason: string; confirmation: string; attemptKey: string }) => applyLifecycleRepair(token!, input.caseId, input), onSuccess: () => client.invalidateQueries({ queryKey: lifecycleRepairKeys.all }) });
+  return useMutation({ mutationFn: (input: { caseId: number; reason: string; confirmation: string; attemptKey: string }) => applyLifecycleRepair(token!, input), onSuccess: () => client.invalidateQueries({ queryKey: lifecycleRepairKeys.all }) });
 }
