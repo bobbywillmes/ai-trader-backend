@@ -120,3 +120,15 @@ export function parseSubscriptionKeyFromClientOrderId(
 
   return decodeSubscriptionKey(encoded);
 }
+
+const SIGNAL_ENTRY_CLIENT_ORDER_ID_PATTERN = /^ai-entry-tas([1-9]\d*)-([a-f0-9]{64})$/;
+
+export function parseTradingAccountSubscriptionIdFromClientOrderId(
+  clientOrderId: string | null | undefined
+) {
+  if (!clientOrderId) return null;
+  const match = SIGNAL_ENTRY_CLIENT_ORDER_ID_PATTERN.exec(clientOrderId);
+  if (!match) return null;
+  const id = Number(match[1]);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}

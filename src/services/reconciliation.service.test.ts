@@ -287,6 +287,25 @@ describe('reconcileSnapshots', () => {
   });
 });
 
+describe('position attribution reconciliation integrity', () => {
+  it('surfaces a local-only repair deep link without broker diagnosis', () => {
+    const findings = reconcileSnapshots({
+      trackedPositions: [{
+        id: 73, tradingAccountId: 1, broker: 'alpaca', symbol: 'AAPL', status: 'open',
+        side: 'long', qty: 3, subscriptionId: null,
+        tradingAccountSubscriptionId: null, configSnapshotJson: null,
+      }],
+      brokerPositions: [{ broker: 'alpaca', symbol: 'AAPL', side: 'long', qty: 3 }],
+      brokerOrders: [], localOrders: [],
+    });
+    expect(findings).toContainEqual(expect.objectContaining({
+      code: 'position_attribution_missing', entityType: 'trackedPosition', entityId: '73',
+      details: expect.objectContaining({ tradingAccountId: 1, trackedPositionId: 73, repairType: 'RESOLVE_POSITION_ATTRIBUTION' }),
+    }));
+    expect(mocks.getOpenAlpacaOrders).not.toHaveBeenCalled();
+  });
+});
+
 describe('refineHistoricalMissingOrderFindings', () => {
   const missingFinding = {
     code: 'local_nonterminal_order_missing_at_broker' as const,

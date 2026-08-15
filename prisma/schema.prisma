@@ -61,6 +61,8 @@ model User {
   liveWriteApprovalsGranted   TradingAccountLiveWriteApproval[] @relation("LiveWriteApprovalGranter")
   liveWriteApprovalsRevoked   TradingAccountLiveWriteApproval[] @relation("LiveWriteApprovalRevoker")
   liveWriteApprovalDecisions  TradingAccountLiveWriteApprovalDecision[] @relation("LiveWriteApprovalDecisionActor")
+  lifecycleRepairCasesCreated LifecycleRepairCase[]       @relation("LifecycleRepairCaseCreator")
+  lifecycleRepairExecutions   LifecycleRepairExecution[]  @relation("LifecycleRepairExecutionActor")
 }
 
 model UserSetupToken {
@@ -212,6 +214,7 @@ model TradingAccount {
   liveWriteApprovals        TradingAccountLiveWriteApproval[]
   liveWriteApprovalDecisions TradingAccountLiveWriteApprovalDecision[]
   lifecycleExerciseTargets  TradingLifecycleExerciseTarget[]
+  lifecycleRepairCases      LifecycleRepairCase[]
 
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
@@ -223,6 +226,91 @@ model TradingAccount {
   @@index([killSwitchEnabled])
   @@unique([accountHolderUserId, broker, environment], map: "TradingAccount_holder_broker_environment_key")
   @@unique([broker, environment, brokerAccountId])
+}
+
+enum LifecycleRepairType {
+  RESOLVE_POSITION_ATTRIBUTION
+}
+
+enum LifecycleRepairImpact {
+  LOCAL_ONLY
+}
+
+enum LifecycleRepairSource {
+  MANUAL_DIAGNOSIS
+  RECONCILIATION
+  WORKER_FAILURE
+}
+
+enum LifecycleRepairConfidence {
+  DETERMINISTIC
+  STRONG
+  AMBIGUOUS
+  INSUFFICIENT
+}
+
+enum LifecycleRepairExecutionResult {
+  SUCCEEDED
+  FAILED
+}
+
+model LifecycleRepairCase {
+  id                         Int @id @default(autoincrement())
+  repairType                 LifecycleRepairType
+  repairVersion              Int
+  impact                     LifecycleRepairImpact
+  source                     LifecycleRepairSource
+  tradingAccountId           Int
+  tradingAccount             TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  targetType                 String
+  targetId                   String
+  confidence                 LifecycleRepairConfidence
+  resolutionSource           String?
+  diagnosticFingerprint      String
+  localLifecycleFingerprint  String
+  configurationFingerprint   String?
+  evidenceJson               Json
+  candidateResolutionsJson   Json
+  rejectedAlternativesJson   Json
+  beforeJson                 Json
+  proposedMutationsJson      Json
+  preconditionsJson          Json
+  brokerImpactJson           Json
+  executableAtCreation       Boolean @default(false)
+  nonExecutableReasonsJson   Json
+  createdByUserId            Int
+  createdByUser              User @relation("LifecycleRepairCaseCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdAt                  DateTime @default(now())
+  expiresAt                  DateTime
+  executions                 LifecycleRepairExecution[]
+
+  @@unique([repairType, targetType, targetId, diagnosticFingerprint], map: "LifecycleRepairCase_type_target_fingerprint_key")
+  @@index([tradingAccountId, createdAt])
+  @@index([repairType, targetType, targetId, createdAt], map: "LifecycleRepairCase_type_target_createdAt_idx")
+  @@index([confidence, createdAt])
+  @@index([expiresAt])
+  @@index([createdByUserId, createdAt])
+}
+
+model LifecycleRepairExecution {
+  id                    Int @id @default(autoincrement())
+  caseId                Int
+  repairCase            LifecycleRepairCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  attemptKey            String @unique
+  result                LifecycleRepairExecutionResult
+  executedByUserId      Int
+  executedByUser        User @relation("LifecycleRepairExecutionActor", fields: [executedByUserId], references: [id], onDelete: Restrict)
+  reason                String
+  confirmation          String
+  diagnosticFingerprint String
+  beforeJson            Json
+  afterJson             Json?
+  validationJson        Json?
+  failureJson           Json?
+  executedAt            DateTime @default(now())
+
+  @@index([caseId, executedAt])
+  @@index([executedByUserId, executedAt])
 }
 
 model TradingAccountReadinessAssessment {

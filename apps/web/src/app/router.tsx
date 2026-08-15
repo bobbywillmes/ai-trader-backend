@@ -44,6 +44,7 @@ import { StrategyDetailPage } from "../features/strategies/StrategyDetailPage";
 import { UsersPage } from "../features/users/UsersPage";
 import { LifecycleExercisesPage } from "../features/lifecycleExercises/LifecycleExercisesPage";
 import { LifecycleExerciseDetailPage } from "../features/lifecycleExercises/LifecycleExerciseDetailPage";
+import { LifecycleRepairsPage } from "../features/lifecycleRepairs/LifecycleRepairsPage";
 
 const responsiveDataPreviewRoute = import.meta.env.DEV
   ? [{ path: "dev/responsive-data-primitives", lazy: async () => ({ Component: (await import("../features/dev/ResponsiveDataPrimitivesPreview")).ResponsiveDataPrimitivesPreview }) }]
@@ -180,6 +181,10 @@ export const router = createBrowserRouter([
               {
                 path: "system/reconciliation",
                 element: authorize("reconciliation", <ReconciliationTargetPage />),
+              },
+              {
+                path: "system/lifecycle-repairs",
+                element: authorize("lifecycleRepairs", <LifecycleRepairsPage />),
               },
               {
                 path: "market-diary",

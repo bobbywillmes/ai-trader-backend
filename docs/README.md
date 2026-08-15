@@ -13,6 +13,7 @@ The root `README.md` is the project front door. These docs are the working manua
 | Understand Subscription Catalog and account deployment  | [Subscription Catalog](architecture/subscription-catalog.md) |
 | Understand how a signal becomes a full trade cycle      | [Trading Lifecycle](architecture/trading-lifecycle.md) |
 | Run a controlled Paper lifecycle exercise               | [Trading Lifecycle Exercises](architecture/trading-lifecycle-exercises.md) |
+| Diagnose and repair deterministic local lifecycle gaps  | [Lifecycle Repair Workbench](architecture/lifecycle-repair-workbench.md) |
 | Understand the momentum scanner catalyst/news pipeline  | [Momentum Scanner Architecture](architecture/catalyst-news-foundation.md) |
 | Review momentum decisions and durable pipeline runs     | [Momentum Decision Engine](architecture/momentum-decision-engine.md) |
 | Run or debug the n8n Momentum Scanner Review workflow   | [Momentum Scanner Review Workflow](integrations/n8n/momentum-scanner-review.md) |

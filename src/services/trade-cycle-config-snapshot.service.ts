@@ -14,22 +14,26 @@ type BuildSnapshotArgs = {
     | 'local_order_intent'
     | 'broker_client_order_id'
     | 'unique_observer_fallback';
+  capturedAt?: Date;
 };
+
+type SnapshotDb = Pick<typeof prisma, 'security' | 'subscription' | 'tradingAccount' | 'setting'>;
 
 function toIso(value: Date | null | undefined) {
   return value ? value.toISOString() : null;
 }
 
 export async function buildTradeCycleConfigSnapshot(
-  args: BuildSnapshotArgs
+  args: BuildSnapshotArgs,
+  db: SnapshotDb = prisma
 ): Promise<Prisma.InputJsonValue> {
   const [security, subscription, runtimeConfig, tradingAccount] = await Promise.all([
-    prisma.security.findUnique({
+    db.security.findUnique({
       where: { id: args.securityId },
     }),
     args.subscriptionId === null
       ? Promise.resolve(null)
-      : prisma.subscription.findUnique({
+      : db.subscription.findUnique({
           where: { id: args.subscriptionId },
           include: {
             strategy: true,
@@ -37,10 +41,10 @@ export async function buildTradeCycleConfigSnapshot(
             security: true,
           },
         }),
-    getRuntimeTradingConfig(),
+    getRuntimeTradingConfig(db),
     args.tradingAccountId == null
       ? Promise.resolve(null)
-      : prisma.tradingAccount.findUnique({
+      : db.tradingAccount.findUnique({
           where: { id: args.tradingAccountId },
           select: {
           id: true,
@@ -72,7 +76,7 @@ export async function buildTradeCycleConfigSnapshot(
 
   return {
     schemaVersion: 2,
-    capturedAt: new Date().toISOString(),
+    capturedAt: (args.capturedAt ?? new Date()).toISOString(),
     source: args.source,
     subscriptionResolutionSource: args.subscriptionResolutionSource ?? null,
     broker: args.broker,

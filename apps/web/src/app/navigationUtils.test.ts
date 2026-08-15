@@ -7,6 +7,8 @@ describe("shared route authorization", () => {
     expect(canAccessRoute("users", "OPERATOR", ["system.settings.read"])).toBe(false);
     expect(canAccessRoute("settings", "ACCOUNT_USER", ["system.settings.read"])).toBe(false);
     expect(canAccessRoute("reconciliation", "ACCOUNT_USER", ["system.security.read"])).toBe(false);
+    expect(canAccessRoute("lifecycleRepairs", "OPERATOR", ["system.security.read"])).toBe(false);
+    expect(canAccessRoute("lifecycleRepairs", "SYSTEM_OWNER", ["system.security.read"])).toBe(true);
   });
   it("requires both an allowed role and the backend-aligned permission", () => {
     expect(canAccessRoute("reports", "ACCOUNT_USER", [])).toBe(false);

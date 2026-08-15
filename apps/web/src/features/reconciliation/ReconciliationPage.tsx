@@ -49,7 +49,7 @@ function Details({ finding, result }: { finding: ReconciliationFinding; result: 
   return <div className={classes.details}>
     <div className={classes.detailCard}><Text size="xs" c="dimmed">TradingAccount</Text><Text size="sm">{result.account.displayName} · {result.account.environment}</Text></div>
     <div className={classes.detailCard}><Text size="xs" c="dimmed">Entity</Text><Text size="sm">{finding.entityType} {finding.entityId}</Text></div>
-    {finding.details && <div className={classes.detailCard}><Text size="xs" c="dimmed">Diagnostic details</Text><pre>{JSON.stringify(finding.details, null, 2)}</pre></div>}
+    {finding.details && <div className={classes.detailCard}><Text size="xs" c="dimmed">Diagnostic details</Text><pre>{JSON.stringify(finding.details, null, 2)}</pre>{finding.code === "position_attribution_missing" && <Button component={Link} to={`/system/lifecycle-repairs?account=${result.account.tradingAccountId}&position=${finding.entityId}`} variant="light" size="compact-sm">Diagnose repair</Button>}</div>}
   </div>;
 }
 

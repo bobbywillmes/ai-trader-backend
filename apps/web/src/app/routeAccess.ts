@@ -9,6 +9,7 @@ export type AppRouteId =
   | "subscriptions"
   | "exitProfiles"
   | "lifecycleExercises"
+  | "lifecycleRepairs"
   | "momentumScanner"
   | "marketDiary"
   | "reports"
@@ -38,6 +39,7 @@ export const routeAccessPolicies: Record<AppRouteId, RouteAccessPolicy> = {
   subscriptions: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "subscription.read" },
   exitProfiles: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "exitProfile.read" },
   lifecycleExercises: { allowedRoles: OWNER_ONLY, requiredPermission: "tradingLifecycleExercise.read" },
+  lifecycleRepairs: { allowedRoles: OWNER_ONLY, requiredPermission: "system.security.read" },
   momentumScanner: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "strategy.read" },
   marketDiary: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "systemEvents.read" },
   reports: { allowedRoles: ALL_ROLES, requiredPermission: "reports.read" },

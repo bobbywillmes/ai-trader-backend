@@ -42,6 +42,8 @@ Table User {
   liveWriteApprovalsGranted TradingAccountLiveWriteApproval [not null]
   liveWriteApprovalsRevoked TradingAccountLiveWriteApproval [not null]
   liveWriteApprovalDecisions TradingAccountLiveWriteApprovalDecision [not null]
+  lifecycleRepairCasesCreated LifecycleRepairCase [not null]
+  lifecycleRepairExecutions LifecycleRepairExecution [not null]
 }
 
 Table UserSetupToken {
@@ -112,6 +114,7 @@ Table TradingAccount {
   liveWriteApprovals TradingAccountLiveWriteApproval [not null]
   liveWriteApprovalDecisions TradingAccountLiveWriteApprovalDecision [not null]
   lifecycleExerciseTargets TradingLifecycleExerciseTarget [not null]
+  lifecycleRepairCases LifecycleRepairCase [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 
@@ -119,6 +122,59 @@ Table TradingAccount {
     (accountHolderUserId, broker, environment) [unique]
     (broker, environment, brokerAccountId) [unique]
   }
+}
+
+Table LifecycleRepairCase {
+  id Int [pk, increment]
+  repairType LifecycleRepairType [not null]
+  repairVersion Int [not null]
+  impact LifecycleRepairImpact [not null]
+  source LifecycleRepairSource [not null]
+  tradingAccountId Int [not null]
+  tradingAccount TradingAccount [not null]
+  targetType String [not null]
+  targetId String [not null]
+  confidence LifecycleRepairConfidence [not null]
+  resolutionSource String
+  diagnosticFingerprint String [not null]
+  localLifecycleFingerprint String [not null]
+  configurationFingerprint String
+  evidenceJson Json [not null]
+  candidateResolutionsJson Json [not null]
+  rejectedAlternativesJson Json [not null]
+  beforeJson Json [not null]
+  proposedMutationsJson Json [not null]
+  preconditionsJson Json [not null]
+  brokerImpactJson Json [not null]
+  executableAtCreation Boolean [not null, default: false]
+  nonExecutableReasonsJson Json [not null]
+  createdByUserId Int [not null]
+  createdByUser User [not null]
+  createdAt DateTime [default: `now()`, not null]
+  expiresAt DateTime [not null]
+  executions LifecycleRepairExecution [not null]
+
+  indexes {
+    (repairType, targetType, targetId, diagnosticFingerprint) [unique]
+  }
+}
+
+Table LifecycleRepairExecution {
+  id Int [pk, increment]
+  caseId Int [not null]
+  repairCase LifecycleRepairCase [not null]
+  attemptKey String [unique, not null]
+  result LifecycleRepairExecutionResult [not null]
+  executedByUserId Int [not null]
+  executedByUser User [not null]
+  reason String [not null]
+  confirmation String [not null]
+  diagnosticFingerprint String [not null]
+  beforeJson Json [not null]
+  afterJson Json
+  validationJson Json
+  failureJson Json
+  executedAt DateTime [default: `now()`, not null]
 }
 
 Table TradingAccountReadinessAssessment {
@@ -1099,6 +1155,32 @@ Enum LiveWriteApprovalAction {
   INVALIDATE
 }
 
+Enum LifecycleRepairType {
+  RESOLVE_POSITION_ATTRIBUTION
+}
+
+Enum LifecycleRepairImpact {
+  LOCAL_ONLY
+}
+
+Enum LifecycleRepairSource {
+  MANUAL_DIAGNOSIS
+  RECONCILIATION
+  WORKER_FAILURE
+}
+
+Enum LifecycleRepairConfidence {
+  DETERMINISTIC
+  STRONG
+  AMBIGUOUS
+  INSUFFICIENT
+}
+
+Enum LifecycleRepairExecutionResult {
+  SUCCEEDED
+  FAILED
+}
+
 Enum BrokerCredentialAuthType {
   API_KEY
   OAUTH
@@ -1278,6 +1360,14 @@ Ref: UserSetupToken.userId > User.id [delete: Cascade]
 Ref: UserSession.userId > User.id
 
 Ref: TradingAccount.accountHolderUserId > User.id
+
+Ref: LifecycleRepairCase.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: LifecycleRepairCase.createdByUserId > User.id [delete: Restrict]
+
+Ref: LifecycleRepairExecution.caseId > LifecycleRepairCase.id [delete: Restrict]
+
+Ref: LifecycleRepairExecution.executedByUserId > User.id [delete: Restrict]
 
 Ref: TradingAccountReadinessAssessment.tradingAccountId > TradingAccount.id [delete: Restrict]
 

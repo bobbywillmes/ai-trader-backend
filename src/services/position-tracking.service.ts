@@ -190,6 +190,9 @@ async function applySubscriptionResolution(args: {
   openedAt: Date;
   currentSubscriptionId: number | null;
   configSnapshotJson: Prisma.JsonValue | null;
+  initialObservation: boolean;
+  qty: number;
+  avgEntryPrice: number;
 }) {
   if (args.currentSubscriptionId !== null) {
     if (args.configSnapshotJson === null) {
@@ -209,6 +212,11 @@ async function applySubscriptionResolution(args: {
     symbol: args.symbol,
     side: args.side,
     openedAt: args.openedAt,
+    qty: args.qty,
+    avgEntryPrice: args.avgEntryPrice,
+    brokerLookupPolicy: args.initialObservation
+      ? 'ALLOW_EXACT_ORDER_ID_READ'
+      : 'LOCAL_ONLY',
   });
 
   if (resolution.status !== 'resolved') {
@@ -408,6 +416,9 @@ export async function syncTrackedPositionsForAccount(
               currentSubscriptionId: created.subscriptionId,
               configSnapshotJson:
                 created.configSnapshotJson as Prisma.JsonValue | null,
+              initialObservation: true,
+              qty: created.qty,
+              avgEntryPrice: created.avgEntryPrice,
             });
 
           await createSystemEvent({
@@ -464,6 +475,9 @@ export async function syncTrackedPositionsForAccount(
         currentSubscriptionId: updated.subscriptionId,
         configSnapshotJson:
           updated.configSnapshotJson as Prisma.JsonValue | null,
+        initialObservation: false,
+        qty: updated.qty,
+        avgEntryPrice: updated.avgEntryPrice,
       });
     } catch (error) {
       const message =

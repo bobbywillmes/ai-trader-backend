@@ -3,7 +3,7 @@ import type { IconProps } from "@tabler/icons-react";
 import {
   IconActivity, IconAdjustments, IconBuildingBank, IconChartBar,
   IconChartCandle, IconClipboardData, IconDashboard, IconFileAnalytics,
-  IconFlask, IconHistory, IconListCheck, IconReportAnalytics, IconRoute,
+  IconFlask, IconHistory, IconListCheck, IconReportAnalytics, IconRoute, IconTool,
   IconSettings, IconShieldCheck, IconTargetArrow, IconUsers,
 } from "@tabler/icons-react";
 import type { PlatformRole } from "../features/auth/types";
@@ -64,6 +64,7 @@ export const adminNavGroups: AdminNavGroup[] = [
     { routeId: "reconciliation", to: "/system/reconciliation", label: "Reconciliation", icon: IconAdjustments, isActive: (path) => path === "/system/reconciliation" || path.startsWith("/system/reconciliation/") || /^\/trading-accounts\/\d+\/reconciliation\/?$/.test(path) },
     { routeId: "systemEvents", to: "/system/events", label: "System Events", icon: IconActivity },
     { routeId: "lifecycleExercises", to: "/lifecycle-exercises", label: "Lifecycle Exercises", icon: IconFlask },
+    { routeId: "lifecycleRepairs", to: "/system/lifecycle-repairs", label: "Lifecycle Repairs", icon: IconTool },
   ] },
   { label: "Administration", items: [
     { label: "Trading Setup", icon: IconRoute, children: [
