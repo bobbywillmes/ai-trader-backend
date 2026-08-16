@@ -38,6 +38,51 @@ function fingerprint(value: unknown) {
   return createHash('sha256').update(stable(value)).digest('hex');
 }
 
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+export function getFrozenPositionAttributionAssessedAt(
+  proposedMutationsJson: unknown
+): Date {
+  const root = objectValue(proposedMutationsJson);
+  const trackedPosition = objectValue(root?.trackedPosition);
+  const capturedAt = objectValue(trackedPosition?.configSnapshotCapturedAt);
+  const value = capturedAt?.after;
+  if (typeof value !== 'string') {
+    throw new HttpError(409, 'Lifecycle repair case has no valid frozen snapshot timestamp.');
+  }
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString() !== value) {
+    throw new HttpError(409, 'Lifecycle repair case has an invalid frozen snapshot timestamp.');
+  }
+  return parsed;
+}
+
+export function positionAttributionRevalidationMatches(args: {
+  rechecked: {
+    executable: boolean;
+    localLifecycleFingerprint: string;
+    configurationFingerprint: string | null;
+    proposed: unknown;
+    evidence: unknown;
+  };
+  frozen: {
+    localLifecycleFingerprint: string;
+    configurationFingerprint: string | null;
+    proposedMutationsJson: unknown;
+    evidenceJson: unknown;
+  };
+}): boolean {
+  return args.rechecked.executable &&
+    args.rechecked.localLifecycleFingerprint === args.frozen.localLifecycleFingerprint &&
+    args.rechecked.configurationFingerprint === args.frozen.configurationFingerprint &&
+    stable(args.rechecked.proposed) === stable(args.frozen.proposedMutationsJson) &&
+    stable(args.rechecked.evidence) === stable(args.frozen.evidenceJson);
+}
+
 const positionInclude = {
   tradingAccount: { select: { id: true, displayName: true, environment: true, broker: true } },
   security: true,
@@ -303,8 +348,19 @@ export async function applyPositionAttributionRepair(args: {
     workflowKey: ACCOUNT_WORKFLOW_LOCK_FAMILIES.EXIT_EVALUATION,
     processInstanceId: runId,
     execute: async () => {
-      const rechecked = await buildDiagnosis({ tradingAccountId: repairCase.tradingAccountId, trackedPositionId: Number(repairCase.targetId), assessedAt: repairCase.createdAt });
-      if (!rechecked.executable || rechecked.localLifecycleFingerprint !== repairCase.localLifecycleFingerprint || rechecked.configurationFingerprint !== repairCase.configurationFingerprint || stable(rechecked.proposed) !== stable(repairCase.proposedMutationsJson) || stable(rechecked.evidence) !== stable(repairCase.evidenceJson)) {
+      const frozenAssessedAt = getFrozenPositionAttributionAssessedAt(
+        repairCase.proposedMutationsJson
+      );
+      const rechecked = await buildDiagnosis({ tradingAccountId: repairCase.tradingAccountId, trackedPositionId: Number(repairCase.targetId), assessedAt: frozenAssessedAt });
+      if (!positionAttributionRevalidationMatches({
+        rechecked,
+        frozen: {
+          localLifecycleFingerprint: repairCase.localLifecycleFingerprint,
+          configurationFingerprint: repairCase.configurationFingerprint,
+          proposedMutationsJson: repairCase.proposedMutationsJson,
+          evidenceJson: repairCase.evidenceJson,
+        },
+      })) {
         throw new HttpError(409, 'Lifecycle repair case is superseded because target, configuration, or authoritative evidence changed.');
       }
       return prisma.$transaction(async (tx) => {
