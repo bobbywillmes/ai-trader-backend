@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { deriveTradingAccountWorkerStatus } from './trading-account-worker-health.service.js';
+import {
+  deriveTradingAccountWorkerStatus,
+  isAccountWorkerRecoveryTransition,
+} from './trading-account-worker-health.service.js';
 import { getWorkerDefinition } from '../workers/worker-health.definitions.js';
 
 const definition = getWorkerDefinition('exit_evaluation');
@@ -63,5 +66,31 @@ describe('deriveTradingAccountWorkerStatus', () => {
       ...base,
       lastSucceededAt: new Date(now.getTime() - definition.staleAfterMs - 1),
     }, definition, now)).toBe('STALE');
+  });
+});
+
+describe('isAccountWorkerRecoveryTransition', () => {
+  it.each([
+    ['FAILING', 'HEALTHY'],
+    ['STALE', 'HEALTHY'],
+    ['DEGRADED', 'HEALTHY'],
+    ['BACKING_OFF', 'HEALTHY'],
+  ] as const)('classifies %s to %s as recovery', (previous, next) => {
+    expect(isAccountWorkerRecoveryTransition(previous, next)).toBe(true);
+  });
+
+  it.each([
+    ['FAILING', 'BACKING_OFF'],
+    ['STALE', 'BACKING_OFF'],
+    ['DEGRADED', 'BACKING_OFF'],
+    ['FAILING', 'DEGRADED'],
+    ['STALE', 'DEGRADED'],
+    ['BACKING_OFF', 'FAILING'],
+    ['BACKING_OFF', 'BACKING_OFF'],
+    ['HEALTHY', 'HEALTHY'],
+    ['FAILING', 'DORMANT'],
+    ['STALE', 'DORMANT'],
+  ] as const)('does not classify %s to %s as recovery', (previous, next) => {
+    expect(isAccountWorkerRecoveryTransition(previous, next)).toBe(false);
   });
 });

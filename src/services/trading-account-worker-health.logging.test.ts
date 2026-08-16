@@ -271,6 +271,89 @@ describe('account workflow health logging', () => {
     expect(healthLogger.error).not.toHaveBeenCalled();
   });
 
+  it('does not emit recovery when a failed exit evaluation enters renewed backoff', async () => {
+    const failedAt = new Date();
+    state = makeState({
+      consecutiveFailures: 1,
+      lastFailedAt: failedAt,
+      lastSucceededAt: new Date(failedAt.getTime() - 60_000),
+      lastOutcome: 'failure',
+      lastError: 'Broker unavailable',
+      lastErrorCode: 'BROKER_TIMEOUT',
+      backoffUntil: null,
+    });
+
+    await recordTradingAccountWorkerAttempt({
+      tradingAccountId: 7,
+      workerKey: 'exit_evaluation',
+      processInstanceId: 'process-a',
+      outcome: 'failure',
+      error: new Error('Broker still unavailable'),
+      errorCode: 'BROKER_TIMEOUT',
+      backoffUntil: new Date(failedAt.getTime() + 16_000),
+    }, dependencies);
+
+    expect(state).toMatchObject({
+      consecutiveFailures: 2,
+      lastOutcome: 'failure',
+    });
+    expect(emitSystemEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'account_worker_health.recovered' })
+    );
+  });
+
+  it('emits exactly one recovery after backoff ends with a healthy attempt', async () => {
+    state = makeState({
+      consecutiveFailures: 2,
+      lastFailedAt: new Date(Date.now() - 20_000),
+      lastOutcome: 'failure',
+      backoffUntil: new Date(Date.now() + 16_000),
+    });
+
+    await recordTradingAccountWorkerAttempt({
+      tradingAccountId: 7,
+      workerKey: 'exit_evaluation',
+      processInstanceId: 'process-a',
+      outcome: 'success',
+    }, dependencies);
+    await recordTradingAccountWorkerAttempt({
+      tradingAccountId: 7,
+      workerKey: 'exit_evaluation',
+      processInstanceId: 'process-a',
+      outcome: 'success',
+    }, dependencies);
+
+    expect(emitSystemEvent).toHaveBeenCalledTimes(1);
+    expect(emitSystemEvent).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'account_worker_health.recovered',
+      payloadJson: expect.objectContaining({
+        previousStatus: 'BACKING_OFF',
+        nextStatus: 'HEALTHY',
+      }),
+    }));
+  });
+
+  it('suppresses recovery when a failing workflow becomes dormant', async () => {
+    state = makeState({
+      consecutiveFailures: 1,
+      lastFailedAt: new Date(),
+      lastOutcome: 'failure',
+    });
+
+    await recordTradingAccountWorkerAttempt({
+      tradingAccountId: 7,
+      workerKey: 'exit_evaluation',
+      processInstanceId: 'process-a',
+      outcome: 'dormant',
+      applicable: false,
+      eligible: false,
+      eligibilityReason: 'credentials_unavailable_dormant',
+    }, dependencies);
+
+    expect(emitSystemEvent).not.toHaveBeenCalled();
+    expect(healthLogger.info).not.toHaveBeenCalled();
+  });
+
   it('keeps ordinary contention quiet and logs only a delayed transition', async () => {
     const definition = getWorkerDefinition('exit_evaluation');
     state = makeState({

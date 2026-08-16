@@ -378,6 +378,28 @@ describe('WorkerHealthRegistry', () => {
     );
   });
 
+  it('creates one recovery event when a degraded global worker becomes healthy', async () => {
+    const { registry } = createRegistry();
+
+    await registry
+      .runMonitoredWorker('pending_order_processing', async () => {
+        throw new Error('Transient worker failure');
+      })
+      .catch(() => undefined);
+    await registry.runMonitoredWorker('pending_order_processing', async () => ({
+      outcome: 'success',
+    }));
+
+    expect(mocks.createSystemEvent).toHaveBeenCalledTimes(1);
+    expect(mocks.createSystemEvent).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'worker_health.recovered',
+      payloadJson: expect.objectContaining({
+        previousStatus: 'degraded',
+        nextStatus: 'healthy',
+      }),
+    }));
+  });
+
   it('creates a stale transition event from timer-based evaluation during flush', async () => {
     const { registry, advance } = createRegistry();
 
