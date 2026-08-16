@@ -1,10 +1,25 @@
-import { Alert, Badge, Card, Group, SimpleGrid, Stack, Text, Title } from "@mantine/core";
-import type { TradingAccount } from "../../../types";
-import { DetailItem } from "../../components/DetailItem";
-import { formatMoney, formatStatus } from "../../utils/formatters";
-import { accountStatusColor, environmentColor } from "./utils";
+import {
+  Alert,
+  Badge,
+  Card,
+  Group,
+  SimpleGrid,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
+import type { TradingAccount } from '../../../types';
+import { DetailItem } from '../../components/DetailItem';
+import { formatMoney, formatStatus } from '../../utils/formatters';
+import { accountStatusColor, environmentColor } from './utils';
 
 export function AccountSummaryCard({ account }: { account: TradingAccount }) {
+  const operationalLabel =
+    account.status === 'ACTIVE' &&
+    !account.tradingEnabled &&
+    account.killSwitchEnabled
+      ? 'ACTIVE · ENTRY DISARMED'
+      : formatStatus(account.status);
   return (
     <Card withBorder radius="md" p="lg">
       <Stack gap="md">
@@ -16,40 +31,70 @@ export function AccountSummaryCard({ account }: { account: TradingAccount }) {
             </Text>
           </div>
           <Group gap="xs">
-            <Badge color={environmentColor(account.environment)} variant="light">
+            <Badge
+              color={environmentColor(account.environment)}
+              variant="light"
+            >
               {account.environment}
             </Badge>
-            <Badge color={accountStatusColor(account.status)} variant="light">
-              {formatStatus(account.status)}
+            <Badge
+              color={
+                operationalLabel.includes('DISARMED')
+                  ? 'yellow'
+                  : accountStatusColor(account.status)
+              }
+              variant="light"
+            >
+              {operationalLabel}
             </Badge>
           </Group>
         </Group>
 
-        {account.environment === "LIVE" && (
+        {account.environment === 'LIVE' && (
           <Alert color="red" title="Live account">
-            Treat every credential and trading-control change for this account as
-            broker-facing real-money risk.
+            Treat every credential and trading-control change for this account
+            as broker-facing real-money risk.
           </Alert>
         )}
 
         <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
           <DetailItem label="Display name" value={account.displayName} />
-          <DetailItem label="Broker" value={<Stack gap={0}><Text>{account.broker}</Text><Text size="xs" c="dimmed">Permanent — cannot be changed after creation.</Text></Stack>} />
-          <DetailItem label="Environment" value={<Stack gap={0}><Text>{account.environment}</Text><Text size="xs" c="dimmed">Permanent — cannot be changed after creation.</Text></Stack>} />
-          <DetailItem label="Status" value={formatStatus(account.status)} />
+          <DetailItem
+            label="Broker"
+            value={
+              <Stack gap={0}>
+                <Text>{account.broker}</Text>
+                <Text size="xs" c="dimmed">
+                  Permanent — cannot be changed after creation.
+                </Text>
+              </Stack>
+            }
+          />
+          <DetailItem
+            label="Environment"
+            value={
+              <Stack gap={0}>
+                <Text>{account.environment}</Text>
+                <Text size="xs" c="dimmed">
+                  Permanent — cannot be changed after creation.
+                </Text>
+              </Stack>
+            }
+          />
+          <DetailItem label="Status" value={operationalLabel} />
           <DetailItem
             label="Trading enabled"
             value={
-              <Badge color={account.tradingEnabled ? "teal" : "gray"}>
-                {account.tradingEnabled ? "Enabled" : "Disabled"}
+              <Badge color={account.tradingEnabled ? 'teal' : 'gray'}>
+                {account.tradingEnabled ? 'Enabled' : 'Disabled'}
               </Badge>
             }
           />
           <DetailItem
             label="Kill switch"
             value={
-              <Badge color={account.killSwitchEnabled ? "orange" : "teal"}>
-                {account.killSwitchEnabled ? "Enabled" : "Off"}
+              <Badge color={account.killSwitchEnabled ? 'orange' : 'teal'}>
+                {account.killSwitchEnabled ? 'Enabled' : 'Off'}
               </Badge>
             }
           />
@@ -57,7 +102,7 @@ export function AccountSummaryCard({ account }: { account: TradingAccount }) {
             label="Estimated capital"
             value={formatMoney(
               account.estimatedTradingCapital,
-              account.baseCurrency
+              account.baseCurrency,
             )}
           />
           <DetailItem label="Base currency" value={account.baseCurrency} />

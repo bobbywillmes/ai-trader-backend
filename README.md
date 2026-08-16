@@ -134,6 +134,16 @@ ALLOW_LIVE_TRADING=false                -> blocks Live entry writes
 LIVE_WRITE_DEPLOYMENT_ROLE=OBSERVATION_ONLY -> blocks every Live broker write
 ```
 
+`TradingAccount.status=ACTIVE` means the service operationally manages the
+account; it does not mean entries are armed. A Live account may be
+`ACTIVE / tradingEnabled=false / killSwitchEnabled=true` while risk-reducing
+authorization remains available. New Live exposure additionally requires the
+deployment flags, effective account approvals, entry-enabled assignment, and
+global runtime controls.
+
+Externally supplied accepted `EntryDecision` rows are source/decision telemetry.
+They are not proof that an executable Live broker entry was authorized.
+
 Live entry writes require both Live environment permissions. This prevents the
 system from opening Live exposure unless it is also authorized to reduce or
 close that exposure.

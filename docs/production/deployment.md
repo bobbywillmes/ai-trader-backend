@@ -61,11 +61,13 @@ Runtime trading settings such as `tradingEnabled`, `paperMode`, and `killSwitchE
 
 Trading Account operational fields are separate from these global settings.
 Ordinary account updates cannot change account `status`, `tradingEnabled`, or
-`killSwitchEnabled`. The only account-scoped safety operation currently
-available is owner-only deactivation, which preserves credentials, exit
-permissions, broker orders, and open positions. Live activation is
-intentionally unavailable until readiness and multi-account lifecycle work is
-complete.
+`killSwitchEnabled`. Owner-only first activation consumes a fresh passing
+`LIVE_ACTIVATION` assessment and changes `PAUSED / false / true` to
+`ACTIVE / false / true` without a broker write. This is ACTIVE / ENTRY
+DISARMED; it does not enable Live entries. Owner-only deactivation returns the
+account to `PAUSED / false / true`, disables assignment entries, and preserves
+credentials, exit permissions, risk-reducing authorization, broker orders, and
+open positions.
 
 ---
 

@@ -1,4 +1,4 @@
-import { apiRequest } from "../../lib/api";
+import { apiRequest } from '../../lib/api';
 import type {
   AccountSubscriptionMarketContextResponse,
   AccountSubscriptionMarketContextStatus,
@@ -27,7 +27,9 @@ import type {
   TradingAccountReadinessHistoryResponse,
   LiveWriteApprovalStateResponse,
   LiveWriteCapability,
-} from "./types";
+  ActivateTradingAccountPayload,
+  ActivateTradingAccountResponse,
+} from './types';
 
 type ListMarketContextOptions = {
   status?: AccountSubscriptionMarketContextStatus;
@@ -35,14 +37,17 @@ type ListMarketContextOptions = {
 };
 
 export function getTradingAccounts(token: string) {
-  return apiRequest<TradingAccountsListResponse>("/api/trading-accounts", {
+  return apiRequest<TradingAccountsListResponse>('/api/trading-accounts', {
     token,
   });
 }
 
-export function createTradingAccount(payload: CreateTradingAccountPayload, token: string) {
-  return apiRequest<TradingAccountResponse>("/api/trading-accounts", {
-    method: "POST",
+export function createTradingAccount(
+  payload: CreateTradingAccountPayload,
+  token: string,
+) {
+  return apiRequest<TradingAccountResponse>('/api/trading-accounts', {
+    method: 'POST',
     token,
     body: payload,
   });
@@ -54,46 +59,92 @@ export function getTradingAccount(id: number, token: string) {
   });
 }
 
+export function activateTradingAccount(
+  id: number,
+  payload: ActivateTradingAccountPayload,
+  token: string,
+) {
+  return apiRequest<ActivateTradingAccountResponse>(
+    `/api/trading-accounts/${id}/activate`,
+    {
+      method: 'POST',
+      token,
+      body: payload,
+    },
+  );
+}
+
 export function getLatestTradingAccountReadiness(id: number, token: string) {
   return apiRequest<TradingAccountReadinessAssessmentResponse>(
-    `/api/trading-accounts/${id}/readiness-assessments/latest?purpose=LIVE_ACTIVATION`, { token });
+    `/api/trading-accounts/${id}/readiness-assessments/latest?purpose=LIVE_ACTIVATION`,
+    { token },
+  );
 }
 
 export function listTradingAccountReadiness(id: number, token: string) {
   return apiRequest<TradingAccountReadinessHistoryResponse>(
-    `/api/trading-accounts/${id}/readiness-assessments?purpose=LIVE_ACTIVATION&limit=20`, { token });
+    `/api/trading-accounts/${id}/readiness-assessments?purpose=LIVE_ACTIVATION&limit=20`,
+    { token },
+  );
 }
 
 export function runTradingAccountReadiness(id: number, token: string) {
   return apiRequest<TradingAccountReadinessAssessmentResponse>(
-    `/api/trading-accounts/${id}/readiness-assessments`, {
-      method: "POST", token, body: { purpose: "LIVE_ACTIVATION" },
-    });
+    `/api/trading-accounts/${id}/readiness-assessments`,
+    {
+      method: 'POST',
+      token,
+      body: { purpose: 'LIVE_ACTIVATION' },
+    },
+  );
 }
 
 export function getLiveWriteApprovals(id: number, token: string) {
-  return apiRequest<LiveWriteApprovalStateResponse>(`/api/trading-accounts/${id}/live-write-approvals`, { token });
+  return apiRequest<LiveWriteApprovalStateResponse>(
+    `/api/trading-accounts/${id}/live-write-approvals`,
+    { token },
+  );
 }
 
-export function grantLiveWriteApproval(id: number, capability: LiveWriteCapability, payload: unknown, token: string) {
-  return apiRequest(`/api/trading-accounts/${id}/live-write-approvals/${capability}/grant`, {
-    method: "POST", token, body: payload,
-  });
+export function grantLiveWriteApproval(
+  id: number,
+  capability: LiveWriteCapability,
+  payload: unknown,
+  token: string,
+) {
+  return apiRequest(
+    `/api/trading-accounts/${id}/live-write-approvals/${capability}/grant`,
+    {
+      method: 'POST',
+      token,
+      body: payload,
+    },
+  );
 }
 
-export function revokeLiveWriteApproval(id: number, capability: LiveWriteCapability, payload: unknown, token: string) {
-  return apiRequest(`/api/trading-accounts/${id}/live-write-approvals/${capability}/revoke`, {
-    method: "POST", token, body: payload,
-  });
+export function revokeLiveWriteApproval(
+  id: number,
+  capability: LiveWriteCapability,
+  payload: unknown,
+  token: string,
+) {
+  return apiRequest(
+    `/api/trading-accounts/${id}/live-write-approvals/${capability}/revoke`,
+    {
+      method: 'POST',
+      token,
+      body: payload,
+    },
+  );
 }
 
 export function updateTradingAccount(
   id: number,
   payload: UpdateTradingAccountPayload,
-  token: string
+  token: string,
 ) {
   return apiRequest<TradingAccountResponse>(`/api/trading-accounts/${id}`, {
-    method: "PATCH",
+    method: 'PATCH',
     token,
     body: payload,
   });
@@ -104,7 +155,7 @@ export function getTradingAccountRiskSettings(id: number, token: string) {
     `/api/trading-accounts/${id}/risk-settings`,
     {
       token,
-    }
+    },
   );
 }
 
@@ -113,48 +164,48 @@ export function getTradingAccountRiskHealth(id: number, token: string) {
     `/api/trading-accounts/${id}/risk-health`,
     {
       token,
-    }
+    },
   );
 }
 
 export function getTradingAccountWorkerHealth(id: number, token: string) {
   return apiRequest<TradingAccountWorkerHealthResponse>(
     `/api/trading-accounts/${id}/worker-health`,
-    { token }
+    { token },
   );
 }
 
 export function updateTradingAccountRiskSettings(
   id: number,
   payload: TradingAccountRiskSettingsInput,
-  token: string
+  token: string,
 ) {
   return apiRequest<TradingAccountRiskSettingsResponse>(
     `/api/trading-accounts/${id}/risk-settings`,
     {
-      method: "PATCH",
+      method: 'PATCH',
       token,
       body: payload,
-    }
+    },
   );
 }
 
 export function upsertTradingAccountCredential(
   id: number,
   payload: UpsertTradingAccountCredentialPayload,
-  token: string
+  token: string,
 ) {
   return apiRequest<TradingAccountResponse>(
     `/api/trading-accounts/${id}/credentials`,
     {
-      method: "PUT",
+      method: 'PUT',
       token,
       body: {
-        authType: payload.authType ?? "API_KEY",
+        authType: payload.authType ?? 'API_KEY',
         apiKey: payload.apiKey,
         apiSecret: payload.apiSecret,
       },
-    }
+    },
   );
 }
 
@@ -162,9 +213,9 @@ export function verifyTradingAccountCredential(id: number, token: string) {
   return apiRequest<TradingAccountResponse>(
     `/api/trading-accounts/${id}/credentials/verify`,
     {
-      method: "POST",
+      method: 'POST',
       token,
-    }
+    },
   );
 }
 
@@ -172,9 +223,9 @@ export function revokeTradingAccountCredential(id: number, token: string) {
   return apiRequest<RevokeTradingAccountCredentialResponse>(
     `/api/trading-accounts/${id}/credentials/revoke`,
     {
-      method: "POST",
+      method: 'POST',
       token,
-    }
+    },
   );
 }
 
@@ -183,22 +234,22 @@ export function listTradingAccountAllocations(id: number, token: string) {
     `/api/trading-accounts/${id}/allocations`,
     {
       token,
-    }
+    },
   );
 }
 
 export function createTradingAccountAllocation(
   id: number,
   payload: TradingAccountAllocationInput,
-  token: string
+  token: string,
 ) {
   return apiRequest<TradingAccountAllocationResponse>(
     `/api/trading-accounts/${id}/allocations`,
     {
-      method: "POST",
+      method: 'POST',
       token,
       body: payload,
-    }
+    },
   );
 }
 
@@ -206,15 +257,15 @@ export function updateTradingAccountAllocation(
   id: number,
   allocationId: number,
   payload: TradingAccountAllocationInput,
-  token: string
+  token: string,
 ) {
   return apiRequest<TradingAccountAllocationResponse>(
     `/api/trading-accounts/${id}/allocations/${allocationId}`,
     {
-      method: "PATCH",
+      method: 'PATCH',
       token,
       body: payload,
-    }
+    },
   );
 }
 
@@ -223,45 +274,45 @@ export function listTradingAccountSubscriptions(id: number, token: string) {
     `/api/trading-accounts/${id}/account-subscriptions`,
     {
       token,
-    }
+    },
   );
 }
 
 export function listTradingAccountSubscriptionMarketContext(
   id: number,
   token: string,
-  options: ListMarketContextOptions = {}
+  options: ListMarketContextOptions = {},
 ) {
   const query = new URLSearchParams();
 
   if (options.status) {
-    query.set("status", options.status);
+    query.set('status', options.status);
   }
 
   if (options.symbols?.length) {
-    query.set("symbols", options.symbols.join(","));
+    query.set('symbols', options.symbols.join(','));
   }
 
-  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const suffix = query.toString() ? `?${query.toString()}` : '';
 
   return apiRequest<AccountSubscriptionMarketContextResponse>(
     `/api/trading-accounts/${id}/account-subscriptions/market-context${suffix}`,
     {
       token,
-    }
+    },
   );
 }
 
 export function getTradingAccountSubscription(
   id: number,
   accountSubscriptionId: number,
-  token: string
+  token: string,
 ) {
   return apiRequest<TradingAccountSubscriptionResponse>(
     `/api/trading-accounts/${id}/account-subscriptions/${accountSubscriptionId}`,
     {
       token,
-    }
+    },
   );
 }
 
@@ -269,7 +320,7 @@ export function getTradingAccountSubscriptionPriceHistory(
   id: number,
   accountSubscriptionId: number,
   token: string,
-  range: AccountSubscriptionPriceHistoryRange = "1y"
+  range: AccountSubscriptionPriceHistoryRange = '1y',
 ) {
   const query = new URLSearchParams({ range });
 
@@ -277,22 +328,22 @@ export function getTradingAccountSubscriptionPriceHistory(
     `/api/trading-accounts/${id}/account-subscriptions/${accountSubscriptionId}/price-history?${query.toString()}`,
     {
       token,
-    }
+    },
   );
 }
 
 export function createTradingAccountSubscription(
   id: number,
   payload: CreateTradingAccountSubscriptionInput,
-  token: string
+  token: string,
 ) {
   return apiRequest<TradingAccountSubscriptionResponse>(
     `/api/trading-accounts/${id}/account-subscriptions`,
     {
-      method: "POST",
+      method: 'POST',
       token,
       body: payload,
-    }
+    },
   );
 }
 
@@ -300,40 +351,40 @@ export function updateTradingAccountSubscription(
   id: number,
   accountSubscriptionId: number,
   payload: TradingAccountSubscriptionInput,
-  token: string
+  token: string,
 ) {
   return apiRequest<TradingAccountSubscriptionResponse>(
     `/api/trading-accounts/${id}/account-subscriptions/${accountSubscriptionId}`,
     {
-      method: "PATCH",
+      method: 'PATCH',
       token,
       body: payload,
-    }
+    },
   );
 }
 
 export function deleteTradingAccountSubscription(
   id: number,
   accountSubscriptionId: number,
-  token: string
+  token: string,
 ) {
   return apiRequest<void>(
     `/api/trading-accounts/${id}/account-subscriptions/${accountSubscriptionId}`,
-    { method: "DELETE", token }
+    { method: 'DELETE', token },
   );
 }
 
 export function previewTradingAccountEntryRisk(
   id: number,
   payload: EntryRiskPreviewInput,
-  token: string
+  token: string,
 ) {
   return apiRequest<EntryRiskPreviewResponse>(
     `/api/trading-accounts/${id}/entry-risk-preview`,
     {
-      method: "POST",
+      method: 'POST',
       token,
       body: payload,
-    }
+    },
   );
 }

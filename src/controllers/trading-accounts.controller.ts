@@ -6,6 +6,7 @@ import { isSystemOwnerRole } from '../types/platform-rbac.js';
 import {
   getTradingAccountForAdmin,
   createTradingAccountForAdmin,
+  activateTradingAccountForAdmin,
   deactivateTradingAccountForAdmin,
   listTradingAccountsForAdmin,
   listTradingAccountsForUser,
@@ -44,6 +45,7 @@ import {
 import {
   createTradingAccountAllocationSchema,
   createTradingAccountSchema,
+  activateTradingAccountSchema,
   createTradingAccountSubscriptionSchema,
   deactivateTradingAccountSchema,
   entryRiskPreviewSchema,
@@ -89,7 +91,8 @@ function parseAssessmentId(value: unknown) {
 
 function parseReadinessPurpose(value: unknown) {
   const parsed = tradingAccountReadinessPurposeSchema.safeParse(value);
-  if (!parsed.success) throw new HttpError(400, 'Invalid readiness assessment purpose.');
+  if (!parsed.success)
+    throw new HttpError(400, 'Invalid readiness assessment purpose.');
   return parsed.data;
 }
 
@@ -97,7 +100,10 @@ function parseReadinessLimit(value: unknown) {
   if (value === undefined) return 20;
   const limit = typeof value === 'string' ? Number(value) : NaN;
   if (!Number.isInteger(limit) || limit <= 0 || limit > 100) {
-    throw new HttpError(400, 'Readiness assessment limit must be between 1 and 100.');
+    throw new HttpError(
+      400,
+      'Readiness assessment limit must be between 1 and 100.',
+    );
   }
   return limit;
 }
@@ -120,14 +126,24 @@ function requireActorUserId(res: Response) {
   return user.id;
 }
 
-export async function createTradingAccountController(req: Request, res: Response, next: NextFunction) {
+export async function createTradingAccountController(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
   try {
     const input = createTradingAccountSchema.parse(req.body);
     const account = await createTradingAccountForAdmin(input);
     res.status(201).json({ account });
   } catch (error) {
     if (error instanceof ZodError) {
-      next(new HttpError(400, 'Invalid trading account creation request.', error.flatten()));
+      next(
+        new HttpError(
+          400,
+          'Invalid trading account creation request.',
+          error.flatten(),
+        ),
+      );
       return;
     }
     next(error);
@@ -170,7 +186,7 @@ function parseSymbolsQuery(value: unknown) {
 export async function listTradingAccountsController(
   _req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const user = res.locals.user;
@@ -181,7 +197,8 @@ export async function listTradingAccountsController(
     const accounts = await listTradingAccountsForUser({
       userId: user.id,
       isSystemOwner:
-        isSystemOwnerRole(user.platformRole) || Boolean(res.locals.isStaticAdminKey),
+        isSystemOwnerRole(user.platformRole) ||
+        Boolean(res.locals.isStaticAdminKey),
     });
 
     res.status(200).json({ accounts });
@@ -193,7 +210,7 @@ export async function listTradingAccountsController(
 export async function getTradingAccountController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const id = parseTradingAccountId(req.params.id);
@@ -275,7 +292,7 @@ function parseTradeCycleFilters(query: Request['query']) {
 export async function listTradingAccountOpenPositionsController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const id = parseTradingAccountId(req.params.id);
@@ -288,7 +305,7 @@ export async function listTradingAccountOpenPositionsController(
 export async function listTradingAccountOpenOrdersController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const id = parseTradingAccountId(req.params.id);
@@ -301,13 +318,13 @@ export async function listTradingAccountOpenOrdersController(
 export async function listTradingAccountTradeCyclesController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const id = parseTradingAccountId(req.params.id);
     const result = await listTradeCyclesForTradingAccount(
       id,
-      parseTradeCycleFilters(req.query)
+      parseTradeCycleFilters(req.query),
     );
 
     res.status(200).json(result);
@@ -319,7 +336,7 @@ export async function listTradingAccountTradeCyclesController(
 export async function updateTradingAccountController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const id = parseTradingAccountId(req.params.id);
@@ -334,7 +351,11 @@ export async function updateTradingAccountController(
   } catch (error) {
     if (error instanceof ZodError) {
       next(
-        new HttpError(400, 'Invalid trading account update request.', error.flatten())
+        new HttpError(
+          400,
+          'Invalid trading account update request.',
+          error.flatten(),
+        ),
       );
       return;
     }
@@ -346,7 +367,7 @@ export async function updateTradingAccountController(
 export async function deactivateTradingAccountController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const id = parseTradingAccountId(req.params.id);
@@ -354,7 +375,7 @@ export async function deactivateTradingAccountController(
     const result = await deactivateTradingAccountForAdmin(
       id,
       input,
-      requireActorUserId(res)
+      requireActorUserId(res),
     );
 
     if (!result) {
@@ -368,8 +389,8 @@ export async function deactivateTradingAccountController(
         new HttpError(
           400,
           'Invalid trading account deactivation request.',
-          error.flatten()
-        )
+          error.flatten(),
+        ),
       );
       return;
     }
@@ -378,10 +399,40 @@ export async function deactivateTradingAccountController(
   }
 }
 
+export async function activateTradingAccountController(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    const id = parseTradingAccountId(req.params.id);
+    const input = activateTradingAccountSchema.parse(req.body);
+    const result = await activateTradingAccountForAdmin(
+      id,
+      input,
+      requireActorUserId(res),
+    );
+    if (!result) throw new HttpError(404, 'Trading account not found.');
+    res.status(200).json(result);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      next(
+        new HttpError(
+          400,
+          'Invalid trading account activation request.',
+          error.flatten(),
+        ),
+      );
+      return;
+    }
+    next(error);
+  }
+}
+
 export async function getTradingAccountRiskSettingsController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const id = parseTradingAccountId(req.params.id);
@@ -400,14 +451,14 @@ export async function getTradingAccountRiskSettingsController(
 export async function updateTradingAccountRiskSettingsController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const id = parseTradingAccountId(req.params.id);
     const input = updateTradingAccountRiskSettingsSchema.parse(req.body);
     const riskSettings = await updateTradingAccountRiskSettingsForAdmin(
       id,
-      input
+      input,
     );
 
     if (!riskSettings) {
@@ -421,8 +472,8 @@ export async function updateTradingAccountRiskSettingsController(
         new HttpError(
           400,
           'Invalid trading account risk settings request.',
-          error.flatten()
-        )
+          error.flatten(),
+        ),
       );
       return;
     }
@@ -434,7 +485,7 @@ export async function updateTradingAccountRiskSettingsController(
 export async function getTradingAccountRiskHealthController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const id = parseTradingAccountId(req.params.id);
@@ -451,10 +502,14 @@ export async function getTradingAccountRiskHealthController(
 }
 
 export async function getTradingAccountWorkerHealthController(
-  req: Request, res: Response, next: NextFunction
+  req: Request,
+  res: Response,
+  next: NextFunction,
 ) {
   try {
-    const result = await listTradingAccountWorkerHealth(parseTradingAccountId(req.params.id));
+    const result = await listTradingAccountWorkerHealth(
+      parseTradingAccountId(req.params.id),
+    );
     if (!result) throw new HttpError(404, 'Trading account not found.');
     res.status(200).json(result);
   } catch (error) {
@@ -465,7 +520,7 @@ export async function getTradingAccountWorkerHealthController(
 export async function previewTradingAccountEntryRiskController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const id = parseTradingAccountId(req.params.id);
@@ -483,8 +538,8 @@ export async function previewTradingAccountEntryRiskController(
         new HttpError(
           400,
           'Invalid entry risk preview request.',
-          error.flatten()
-        )
+          error.flatten(),
+        ),
       );
       return;
     }
@@ -496,7 +551,7 @@ export async function previewTradingAccountEntryRiskController(
 export async function listTradingAccountAllocationsController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const accountId = parseTradingAccountId(req.params.id);
@@ -515,14 +570,14 @@ export async function listTradingAccountAllocationsController(
 export async function createTradingAccountAllocationController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const accountId = parseTradingAccountId(req.params.id);
     const input = createTradingAccountAllocationSchema.parse(req.body);
     const allocation = await createTradingAccountAllocationForAdmin(
       accountId,
-      input
+      input,
     );
 
     if (!allocation) {
@@ -536,8 +591,8 @@ export async function createTradingAccountAllocationController(
         new HttpError(
           400,
           'Invalid trading account allocation request.',
-          error.flatten()
-        )
+          error.flatten(),
+        ),
       );
       return;
     }
@@ -549,7 +604,7 @@ export async function createTradingAccountAllocationController(
 export async function updateTradingAccountAllocationController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const accountId = parseTradingAccountId(req.params.id);
@@ -558,7 +613,7 @@ export async function updateTradingAccountAllocationController(
     const allocation = await updateTradingAccountAllocationForAdmin(
       accountId,
       allocationId,
-      input
+      input,
     );
 
     if (!allocation) {
@@ -572,8 +627,8 @@ export async function updateTradingAccountAllocationController(
         new HttpError(
           400,
           'Invalid trading account allocation request.',
-          error.flatten()
-        )
+          error.flatten(),
+        ),
       );
       return;
     }
@@ -585,7 +640,7 @@ export async function updateTradingAccountAllocationController(
 export async function listTradingAccountSubscriptionsController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const accountId = parseTradingAccountId(req.params.id);
@@ -605,16 +660,16 @@ export async function listTradingAccountSubscriptionsController(
 export async function getTradingAccountSubscriptionController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const accountId = parseTradingAccountId(req.params.id);
     const accountSubscriptionId = parseAccountSubscriptionId(
-      req.params.accountSubscriptionId
+      req.params.accountSubscriptionId,
     );
     const accountSubscription = await getTradingAccountSubscriptionForAdmin(
       accountId,
-      accountSubscriptionId
+      accountSubscriptionId,
     );
 
     if (!accountSubscription) {
@@ -630,7 +685,7 @@ export async function getTradingAccountSubscriptionController(
 export async function listTradingAccountSubscriptionMarketContextController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const accountId = parseTradingAccountId(req.params.id);
@@ -640,7 +695,7 @@ export async function listTradingAccountSubscriptionMarketContextController(
       {
         status: parseAccountSubscriptionMarketContextStatus(req.query.status),
         ...(symbols !== undefined && { symbols }),
-      }
+      },
     );
 
     if (!result) {
@@ -656,19 +711,19 @@ export async function listTradingAccountSubscriptionMarketContextController(
 export async function getTradingAccountSubscriptionPriceHistoryController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const accountId = parseTradingAccountId(req.params.id);
     const accountSubscriptionId = parseAccountSubscriptionId(
-      req.params.accountSubscriptionId
+      req.params.accountSubscriptionId,
     );
     const result = await getAccountSubscriptionPriceHistoryForAdmin(
       accountId,
       accountSubscriptionId,
       {
         range: parseAccountSubscriptionPriceHistoryRange(req.query.range),
-      }
+      },
     );
 
     if (!result) {
@@ -684,14 +739,14 @@ export async function getTradingAccountSubscriptionPriceHistoryController(
 export async function createTradingAccountSubscriptionController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const accountId = parseTradingAccountId(req.params.id);
     const input = createTradingAccountSubscriptionSchema.parse(req.body);
     const accountSubscription = await createTradingAccountSubscriptionForAdmin(
       accountId,
-      input
+      input,
     );
 
     if (!accountSubscription) {
@@ -705,8 +760,8 @@ export async function createTradingAccountSubscriptionController(
         new HttpError(
           400,
           'Invalid trading account subscription request.',
-          error.flatten()
-        )
+          error.flatten(),
+        ),
       );
       return;
     }
@@ -718,18 +773,18 @@ export async function createTradingAccountSubscriptionController(
 export async function updateTradingAccountSubscriptionController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const accountId = parseTradingAccountId(req.params.id);
     const accountSubscriptionId = parseAccountSubscriptionId(
-      req.params.accountSubscriptionId
+      req.params.accountSubscriptionId,
     );
     const input = updateTradingAccountSubscriptionSchema.parse(req.body);
     const accountSubscription = await updateTradingAccountSubscriptionForAdmin(
       accountId,
       accountSubscriptionId,
-      input
+      input,
     );
 
     if (!accountSubscription) {
@@ -743,8 +798,8 @@ export async function updateTradingAccountSubscriptionController(
         new HttpError(
           400,
           'Invalid trading account subscription request.',
-          error.flatten()
-        )
+          error.flatten(),
+        ),
       );
       return;
     }
@@ -756,16 +811,16 @@ export async function updateTradingAccountSubscriptionController(
 export async function deleteTradingAccountSubscriptionController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const accountId = parseTradingAccountId(req.params.id);
     const accountSubscriptionId = parseAccountSubscriptionId(
-      req.params.accountSubscriptionId
+      req.params.accountSubscriptionId,
     );
     const deleted = await deleteTradingAccountSubscriptionForAdmin(
       accountId,
-      accountSubscriptionId
+      accountSubscriptionId,
     );
 
     if (!deleted) {
@@ -781,7 +836,7 @@ export async function deleteTradingAccountSubscriptionController(
 export async function upsertTradingAccountCredentialController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const id = parseTradingAccountId(req.params.id);
@@ -789,7 +844,7 @@ export async function upsertTradingAccountCredentialController(
     const credential = await upsertTradingAccountApiKeyCredential(
       id,
       input,
-      requireActorUserId(res)
+      requireActorUserId(res),
     );
 
     if (!credential) {
@@ -809,8 +864,8 @@ export async function upsertTradingAccountCredentialController(
         new HttpError(
           400,
           'Invalid trading account credential request.',
-          error.flatten()
-        )
+          error.flatten(),
+        ),
       );
       return;
     }
@@ -822,13 +877,13 @@ export async function upsertTradingAccountCredentialController(
 export async function verifyTradingAccountCredentialController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const id = parseTradingAccountId(req.params.id);
     const result = await verifyTradingAccountCredential(
       id,
-      requireActorUserId(res)
+      requireActorUserId(res),
     );
 
     if (!result) {
@@ -853,13 +908,13 @@ export async function verifyTradingAccountCredentialController(
 export async function revokeTradingAccountCredentialController(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const id = parseTradingAccountId(req.params.id);
     const result = await revokeTradingAccountCredential(
       id,
-      requireActorUserId(res)
+      requireActorUserId(res),
     );
 
     if (!result) {
@@ -882,15 +937,27 @@ export async function revokeTradingAccountCredentialController(
 }
 
 export async function runTradingAccountReadinessAssessmentController(
-  req: Request, res: Response, next: NextFunction) {
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
   try {
     const input = runTradingAccountReadinessAssessmentSchema.parse(req.body);
     const assessment = await runTradingAccountReadinessAssessment(
-      parseTradingAccountId(req.params.id), input.purpose, requireActorUserId(res));
+      parseTradingAccountId(req.params.id),
+      input.purpose,
+      requireActorUserId(res),
+    );
     res.status(201).json({ assessment });
   } catch (error) {
     if (error instanceof ZodError) {
-      next(new HttpError(400, 'Invalid readiness assessment request.', error.flatten()));
+      next(
+        new HttpError(
+          400,
+          'Invalid readiness assessment request.',
+          error.flatten(),
+        ),
+      );
       return;
     }
     next(error);
@@ -898,35 +965,61 @@ export async function runTradingAccountReadinessAssessmentController(
 }
 
 export async function getLatestTradingAccountReadinessAssessmentController(
-  req: Request, res: Response, next: NextFunction) {
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
   try {
     const assessment = await getLatestTradingAccountReadinessAssessment(
-      parseTradingAccountId(req.params.id), parseReadinessPurpose(req.query.purpose));
+      parseTradingAccountId(req.params.id),
+      parseReadinessPurpose(req.query.purpose),
+    );
     res.status(200).json({ assessment });
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 }
 
 export async function listTradingAccountReadinessAssessmentsController(
-  req: Request, res: Response, next: NextFunction) {
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
   try {
     const assessments = await listTradingAccountReadinessAssessments(
-      parseTradingAccountId(req.params.id), parseReadinessPurpose(req.query.purpose),
-      parseReadinessLimit(req.query.limit));
+      parseTradingAccountId(req.params.id),
+      parseReadinessPurpose(req.query.purpose),
+      parseReadinessLimit(req.query.limit),
+    );
     res.status(200).json({ assessments });
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 }
 
 export async function getTradingAccountReadinessAssessmentController(
-  req: Request, res: Response, next: NextFunction) {
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
   try {
     const assessment = await getTradingAccountReadinessAssessment(
-      parseTradingAccountId(req.params.id), parseAssessmentId(req.params.assessmentId));
-    if (!assessment) throw new HttpError(404, 'Readiness assessment not found.');
+      parseTradingAccountId(req.params.id),
+      parseAssessmentId(req.params.assessmentId),
+    );
+    if (!assessment)
+      throw new HttpError(404, 'Readiness assessment not found.');
     res.status(200).json({ assessment });
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 }
 
-export async function getLiveWriteApprovalsController(req: Request, res: Response, next: NextFunction) {
+export async function getLiveWriteApprovalsController(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
   try {
     const tradingAccountId = parseTradingAccountId(req.params.id);
     const [state, history] = await Promise.all([
@@ -934,35 +1027,65 @@ export async function getLiveWriteApprovalsController(req: Request, res: Respons
       listLiveWriteApprovalHistory(tradingAccountId),
     ]);
     res.json({ ...state, history });
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 }
 
-export async function grantLiveWriteApprovalController(req: Request, res: Response, next: NextFunction) {
+export async function grantLiveWriteApprovalController(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
   try {
     const tradingAccountId = parseTradingAccountId(req.params.id);
     const capability = liveWriteCapabilitySchema.parse(req.params.capability);
     const input = grantLiveWriteApprovalSchema.parse(req.body);
     const approval = await grantLiveWriteApproval({
-      tradingAccountId, capability, actorUserId: requireActorUserId(res), input,
+      tradingAccountId,
+      capability,
+      actorUserId: requireActorUserId(res),
+      input,
     });
     res.json({ approval });
   } catch (error) {
-    if (error instanceof ZodError) return next(new HttpError(400, 'Invalid Live write approval request.', error.flatten()));
+    if (error instanceof ZodError)
+      return next(
+        new HttpError(
+          400,
+          'Invalid Live write approval request.',
+          error.flatten(),
+        ),
+      );
     next(error);
   }
 }
 
-export async function revokeLiveWriteApprovalController(req: Request, res: Response, next: NextFunction) {
+export async function revokeLiveWriteApprovalController(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
   try {
     const tradingAccountId = parseTradingAccountId(req.params.id);
     const capability = liveWriteCapabilitySchema.parse(req.params.capability);
     const input = revokeLiveWriteApprovalSchema.parse(req.body);
     const approval = await revokeLiveWriteApproval({
-      tradingAccountId, capability, actorUserId: requireActorUserId(res), ...input,
+      tradingAccountId,
+      capability,
+      actorUserId: requireActorUserId(res),
+      ...input,
     });
     res.json({ approval });
   } catch (error) {
-    if (error instanceof ZodError) return next(new HttpError(400, 'Invalid Live write approval revocation.', error.flatten()));
+    if (error instanceof ZodError)
+      return next(
+        new HttpError(
+          400,
+          'Invalid Live write approval revocation.',
+          error.flatten(),
+        ),
+      );
     next(error);
   }
 }

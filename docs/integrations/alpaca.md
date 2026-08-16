@@ -14,6 +14,11 @@ risk-reducing write. LIVE entries additionally require
 
 Metadata classifies requests as `LIFECYCLE_READ`, `ENTRY_WRITE`, or
 `RISK_REDUCING_WRITE`. The distinction prevents entry permissions from being
+used as risk-reducing authority. Immediately before a LIVE `ENTRY_WRITE`, the
+shared client also requires `TradingAccount.status=ACTIVE`,
+`tradingEnabled=true`, and `killSwitchEnabled=false`. These entry latches do not
+apply to `RISK_REDUCING_WRITE`, so a safely paused account can still reduce
+existing exposure.
 reused as lifecycle semantics. Phase 4 separates the permissions so entry
 authorization can never exist without risk-reducing authorization. Bobby Live
 remains credentialless and dormant.

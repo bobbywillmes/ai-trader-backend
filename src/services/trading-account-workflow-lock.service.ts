@@ -14,6 +14,7 @@ export const ACCOUNT_WORKFLOW_LOCK_FAMILIES = {
   RECONCILIATION: 'reconciliation',
   ACCOUNT_SNAPSHOT: 'account-snapshot',
   READINESS_ASSESSMENT: 'readiness-assessment',
+  OPERATIONAL_STATE: 'operational-state',
 } as const;
 
 export type AccountWorkflowLockResult<T> =
@@ -34,7 +35,9 @@ export async function withTradingAccountWorkflowLock<T>(args: {
   execute: () => Promise<T>;
 }): Promise<AccountWorkflowLockResult<T>> {
   if (!Number.isInteger(args.tradingAccountId) || args.tradingAccountId <= 0) {
-    throw new Error('A real positive tradingAccountId is required for an advisory lock.');
+    throw new Error(
+      'A real positive tradingAccountId is required for an advisory lock.',
+    );
   }
   const scope = `${APP_NAMESPACE}:${args.workflowKey}:${args.tradingAccountId}`;
   const key = deriveAdvisoryLockKey(scope);
@@ -45,30 +48,67 @@ export async function withTradingAccountWorkflowLock<T>(args: {
     client = await pool.connect();
     const result = await client.query<{ acquired: boolean }>(
       'SELECT pg_try_advisory_lock($1::bigint) AS acquired',
-      [key.toString()]
+      [key.toString()],
     );
     acquired = result.rows[0]?.acquired === true;
     if (!acquired) {
-      logger.trace({ scope, tradingAccountId: args.tradingAccountId, workflow: args.workflowKey, processInstanceId: args.processInstanceId }, 'Account workflow lock skipped.');
+      logger.trace(
+        {
+          scope,
+          tradingAccountId: args.tradingAccountId,
+          workflow: args.workflowKey,
+          processInstanceId: args.processInstanceId,
+        },
+        'Account workflow lock skipped.',
+      );
       return { outcome: 'NOT_ACQUIRED', scope };
     }
-    logger.trace({ scope, tradingAccountId: args.tradingAccountId, workflow: args.workflowKey, processInstanceId: args.processInstanceId }, 'Account workflow lock acquired.');
+    logger.trace(
+      {
+        scope,
+        tradingAccountId: args.tradingAccountId,
+        workflow: args.workflowKey,
+        processInstanceId: args.processInstanceId,
+      },
+      'Account workflow lock acquired.',
+    );
     try {
-      return { outcome: 'ACQUIRED_AND_COMPLETED', value: await args.execute(), scope };
+      return {
+        outcome: 'ACQUIRED_AND_COMPLETED',
+        value: await args.execute(),
+        scope,
+      };
     } catch (error) {
       return { outcome: 'WORKFLOW_ERROR', error, scope };
     }
   } catch (error) {
-    logger.trace({ error, scope, tradingAccountId: args.tradingAccountId, workflow: args.workflowKey, processInstanceId: args.processInstanceId }, 'Account workflow lock acquisition failed before account health persistence.');
+    logger.trace(
+      {
+        error,
+        scope,
+        tradingAccountId: args.tradingAccountId,
+        workflow: args.workflowKey,
+        processInstanceId: args.processInstanceId,
+      },
+      'Account workflow lock acquisition failed before account health persistence.',
+    );
     return { outcome: 'LOCK_ERROR', error, scope };
   } finally {
     if (client) {
       if (acquired) {
         try {
-          await client.query('SELECT pg_advisory_unlock($1::bigint)', [key.toString()]);
-          logger.trace({ scope, durationMs: Date.now() - startedAt }, 'Account workflow lock released.');
+          await client.query('SELECT pg_advisory_unlock($1::bigint)', [
+            key.toString(),
+          ]);
+          logger.trace(
+            { scope, durationMs: Date.now() - startedAt },
+            'Account workflow lock released.',
+          );
         } catch (error) {
-          logger.error({ error, scope }, 'Account workflow lock release failed.');
+          logger.error(
+            { error, scope },
+            'Account workflow lock release failed.',
+          );
         }
       }
       client.release();

@@ -16,12 +16,18 @@ export const createTradingAccountSchema = z.strictObject({
   accountHolderUserId: z.coerce.number().int().positive(),
   displayName: z.string().trim().min(1),
   environment: z.enum(TradingAccountEnvironment),
-  estimatedTradingCapital: z.coerce.number().nonnegative().nullable().optional(),
+  estimatedTradingCapital: z.coerce
+    .number()
+    .nonnegative()
+    .nullable()
+    .optional(),
   maxDeployableNotional: z.coerce.number().positive().nullable().optional(),
   notes: z.string().trim().nullable().optional(),
 });
 
-export type CreateTradingAccountInput = z.infer<typeof createTradingAccountSchema>;
+export type CreateTradingAccountInput = z.infer<
+  typeof createTradingAccountSchema
+>;
 
 const allocationKeySchema = z
   .string()
@@ -32,14 +38,19 @@ const allocationKeySchema = z
       .string()
       .min(1)
       .regex(/^[a-z0-9_-]+$/, {
-        message: 'Allocation key may only contain letters, numbers, hyphens, and underscores.',
-      })
+        message:
+          'Allocation key may only contain letters, numbers, hyphens, and underscores.',
+      }),
   );
 
 export const updateTradingAccountSchema = z
   .strictObject({
     displayName: z.string().trim().min(1).optional(),
-    estimatedTradingCapital: z.coerce.number().nonnegative().nullable().optional(),
+    estimatedTradingCapital: z.coerce
+      .number()
+      .nonnegative()
+      .nullable()
+      .optional(),
     maxDeployableNotional: z.coerce.number().positive().nullable().optional(),
     pausedReason: z.string().trim().nullable().optional(),
     notes: z.string().trim().nullable().optional(),
@@ -52,8 +63,27 @@ export type UpdateTradingAccountInput = z.infer<
   typeof updateTradingAccountSchema
 >;
 
+export const activateTradingAccountSchema = z.strictObject({
+  readinessAssessmentId: z.coerce.number().int().positive(),
+  reason: z
+    .string()
+    .trim()
+    .min(1, 'An activation reason is required.')
+    .max(1_000),
+  typedConfirmation: z.literal('ACTIVATE LIVE ACCOUNT'),
+  expectedUpdatedAt: z.coerce.date(),
+});
+
+export type ActivateTradingAccountInput = z.infer<
+  typeof activateTradingAccountSchema
+>;
+
 export const deactivateTradingAccountSchema = z.strictObject({
-  reason: z.string().trim().min(1, 'A deactivation reason is required.').max(1_000),
+  reason: z
+    .string()
+    .trim()
+    .min(1, 'A deactivation reason is required.')
+    .max(1_000),
 });
 
 export type DeactivateTradingAccountInput = z.infer<
@@ -77,8 +107,17 @@ export const revokeLiveWriteApprovalSchema = z.strictObject({
   expectedRevision: z.coerce.number().int().nonnegative(),
 });
 
-const nullablePositiveNumber = z.coerce.number().positive().nullable().optional();
-const nullablePositiveInteger = z.coerce.number().int().positive().nullable().optional();
+const nullablePositiveNumber = z.coerce
+  .number()
+  .positive()
+  .nullable()
+  .optional();
+const nullablePositiveInteger = z.coerce
+  .number()
+  .int()
+  .positive()
+  .nullable()
+  .optional();
 
 export const updateTradingAccountRiskSettingsSchema = z
   .strictObject({
@@ -107,9 +146,9 @@ export const entryRiskPreviewSchema = z.strictObject({
 export type EntryRiskPreviewInput = z.infer<typeof entryRiskPreviewSchema>;
 
 export const upsertTradingAccountCredentialSchema = z.strictObject({
-  authType: z.literal(BrokerCredentialAuthType.API_KEY).default(
-    BrokerCredentialAuthType.API_KEY
-  ),
+  authType: z
+    .literal(BrokerCredentialAuthType.API_KEY)
+    .default(BrokerCredentialAuthType.API_KEY),
   apiKey: z.string().trim().min(1),
   apiSecret: z.string().trim().min(1),
 });
@@ -172,7 +211,7 @@ function validateCreateAccountSubscriptionSizing(
     fixedQty?: number | null | undefined;
     maxPositionNotional?: number | null | undefined;
   },
-  ctx: z.RefinementCtx
+  ctx: z.RefinementCtx,
 ) {
   const sizingType = data.sizingType ?? PositionSizingType.FIXED_QTY;
 

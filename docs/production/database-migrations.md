@@ -46,6 +46,11 @@ CHECK (
 )
 ```
 
+Migration `20260816120000_allow_active_entry_disarmed` replaces that constraint
+so ACTIVE accounts may be either entry-disarmed (`false / true`) or explicitly
+armed (`true / false`). Non-ACTIVE accounts remain constrained to `false / true`,
+and ambiguous ACTIVE latch combinations remain invalid.
+
 Before adding the constraint, its `DO` block counts invalid accounts and raises
 an exception containing that count. It does not update or repair rows. Review
 and resolve any reported inconsistency deliberately before retrying deployment.

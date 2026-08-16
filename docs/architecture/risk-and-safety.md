@@ -79,9 +79,15 @@ Kill Switch On
 Account-scoped operational state is constrained in PostgreSQL:
 
 ```text
-ACTIVE / tradingEnabled=true / killSwitchEnabled=false
-non-ACTIVE / tradingEnabled=false / killSwitchEnabled=true
+ACTIVE / tradingEnabled=false / killSwitchEnabled=true  -> ACTIVE / ENTRY DISARMED
+ACTIVE / tradingEnabled=true  / killSwitchEnabled=false -> ACTIVE / ENTRIES ARMED
+non-ACTIVE / tradingEnabled=false / killSwitchEnabled=true -> SAFE / DISARMED
 ```
+
+`ACTIVE` is not equivalent to entry authorization or entry arming. Entry authority
+also requires the account entry latch, kill switch, deployment permissions,
+account-scoped approvals, assignment `entriesEnabled`, and global runtime safety
+controls. Ambiguous ACTIVE tuples (`false/false` and `true/true`) are rejected.
 
 The `TradingAccount_operational_state_check` constraint rejects every other
 tuple. Generic Trading Account updates cannot write any of these three fields.

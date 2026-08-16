@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState } from 'react';
 import {
   Alert,
   Badge,
@@ -12,22 +12,22 @@ import {
   Textarea,
   TextInput,
   Title,
-} from "@mantine/core";
-import { notifications } from "@mantine/notifications";
-import { useUpdateTradingAccount } from "../../../hooks";
-import type { TradingAccount } from "../../../types";
-import { actionableErrorMessage } from "../../utils/errors";
-import { formatMoney } from "../../utils/formatters";
+} from '@mantine/core';
+import { notifications } from '@mantine/notifications';
+import { useUpdateTradingAccount } from '../../../hooks';
+import type { TradingAccount } from '../../../types';
+import { actionableErrorMessage } from '../../utils/errors';
+import { formatMoney } from '../../utils/formatters';
 import {
   normalizeNumberInput,
   normalizeOptionalText,
-} from "../../utils/formValues";
-import type { AccountSettingsDraft } from "./types";
+} from '../../utils/formValues';
+import type { AccountSettingsDraft } from './types';
 import {
   accountStatusColor,
   accountToSettingsDraft,
   settingsDraftChanged,
-} from "./utils";
+} from './utils';
 
 export function SafetySettingsCard({
   account,
@@ -37,13 +37,14 @@ export function SafetySettingsCard({
   token: string | null;
 }) {
   const [draft, setDraft] = useState<AccountSettingsDraft>(() =>
-    accountToSettingsDraft(account)
+    accountToSettingsDraft(account),
   );
   const updateMutation = useUpdateTradingAccount(token);
   const hasChanges = settingsDraftChanged(account, draft);
   const displayNameValid = draft.displayName.trim().length > 0;
   const capitalValid =
-    draft.estimatedTradingCapital === null || draft.estimatedTradingCapital >= 0;
+    draft.estimatedTradingCapital === null ||
+    draft.estimatedTradingCapital >= 0;
   const deployableCapitalValid =
     draft.maxDeployableNotional !== null
       ? draft.maxDeployableNotional > 0
@@ -56,23 +57,23 @@ export function SafetySettingsCard({
   async function saveSettings() {
     if (!displayNameValid) {
       notifications.show({
-        message: "Display name is required.",
-        color: "red",
+        message: 'Display name is required.',
+        color: 'red',
       });
       return;
     }
 
     if (!capitalValid) {
       notifications.show({
-        message: "Estimated trading capital must be zero or greater.",
-        color: "red",
+        message: 'Estimated trading capital must be zero or greater.',
+        color: 'red',
       });
       return;
     }
     if (!deployableCapitalValid) {
       notifications.show({
-        message: "Max deployable notional must be empty or greater than zero.",
-        color: "red",
+        message: 'Max deployable notional must be empty or greater than zero.',
+        color: 'red',
       });
       return;
     }
@@ -90,16 +91,16 @@ export function SafetySettingsCard({
       });
 
       notifications.show({
-        message: "Trading account settings saved.",
-        color: "teal",
+        message: 'Trading account settings saved.',
+        color: 'teal',
       });
     } catch (error) {
       notifications.show({
         message: actionableErrorMessage(
           error,
-          "Failed to save trading account settings."
+          'Failed to save trading account settings.',
         ),
-        color: "red",
+        color: 'red',
       });
     }
   }
@@ -157,24 +158,43 @@ export function SafetySettingsCard({
             <Text size="xs" c="dimmed">
               Status
             </Text>
-            <Badge color={accountStatusColor(account.status)} variant="light">
-              {account.status.replaceAll("_", " ")}
+            <Badge
+              color={
+                account.status === 'ACTIVE' &&
+                !account.tradingEnabled &&
+                account.killSwitchEnabled
+                  ? 'yellow'
+                  : accountStatusColor(account.status)
+              }
+              variant="light"
+            >
+              {account.status === 'ACTIVE' &&
+              !account.tradingEnabled &&
+              account.killSwitchEnabled
+                ? 'ACTIVE · ENTRY DISARMED'
+                : account.status.replaceAll('_', ' ')}
             </Badge>
           </div>
           <div>
             <Text size="xs" c="dimmed">
               Automated trading
             </Text>
-            <Badge color={account.tradingEnabled ? "teal" : "gray"} variant="light">
-              {account.tradingEnabled ? "Enabled" : "Disabled"}
+            <Badge
+              color={account.tradingEnabled ? 'teal' : 'gray'}
+              variant="light"
+            >
+              {account.tradingEnabled ? 'Enabled' : 'Disabled'}
             </Badge>
           </div>
           <div>
             <Text size="xs" c="dimmed">
               Kill switch
             </Text>
-            <Badge color={account.killSwitchEnabled ? "orange" : "teal"} variant="light">
-              {account.killSwitchEnabled ? "Enabled" : "Off"}
+            <Badge
+              color={account.killSwitchEnabled ? 'orange' : 'teal'}
+              variant="light"
+            >
+              {account.killSwitchEnabled ? 'Enabled' : 'Off'}
             </Badge>
           </div>
         </SimpleGrid>
@@ -191,13 +211,13 @@ export function SafetySettingsCard({
                 displayName: value,
               }));
             }}
-            error={displayNameValid ? undefined : "Display name is required."}
+            error={displayNameValid ? undefined : 'Display name is required.'}
             disabled={updateMutation.isPending}
           />
 
           <NumberInput
             label="Estimated trading capital"
-            value={draft.estimatedTradingCapital ?? ""}
+            value={draft.estimatedTradingCapital ?? ''}
             onChange={(value) =>
               setDraft((current) => ({
                 ...current,
@@ -207,14 +227,14 @@ export function SafetySettingsCard({
             min={0}
             thousandSeparator=","
             prefix="$"
-            error={capitalValid ? undefined : "Must be zero or greater."}
+            error={capitalValid ? undefined : 'Must be zero or greater.'}
             disabled={updateMutation.isPending}
           />
 
           <NumberInput
             label="Max deployable notional"
             description="Authoritative ceiling for enabled allocation budgets."
-            value={draft.maxDeployableNotional ?? ""}
+            value={draft.maxDeployableNotional ?? ''}
             onChange={(value) =>
               setDraft((current) => ({
                 ...current,
@@ -224,7 +244,9 @@ export function SafetySettingsCard({
             min={0}
             thousandSeparator=","
             prefix="$"
-            error={deployableCapitalValid ? undefined : "Must be greater than zero."}
+            error={
+              deployableCapitalValid ? undefined : 'Must be greater than zero.'
+            }
             disabled={updateMutation.isPending}
           />
 
@@ -232,18 +254,22 @@ export function SafetySettingsCard({
             color={
               account.remainingDeployableNotional !== null &&
               account.remainingDeployableNotional < 0
-                ? "red"
-                : "blue"
+                ? 'red'
+                : 'blue'
             }
             title="Allocation capacity"
           >
-            Enabled allocation budgets: {formatMoney(
+            Enabled allocation budgets:{' '}
+            {formatMoney(
               account.enabledAllocatedNotional,
-              account.baseCurrency
-            )}. Remaining deployable capacity: {formatMoney(
+              account.baseCurrency,
+            )}
+            . Remaining deployable capacity:{' '}
+            {formatMoney(
               account.remainingDeployableNotional,
-              account.baseCurrency
-            )}.
+              account.baseCurrency,
+            )}
+            .
           </Alert>
 
           <Textarea
