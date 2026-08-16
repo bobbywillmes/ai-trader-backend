@@ -4,11 +4,12 @@ export type RepairConfidence = "DETERMINISTIC" | "STRONG" | "AMBIGUOUS" | "INSUF
 export type LifecycleRepairExecution = {
   id: number; result: "SUCCEEDED" | "FAILED"; reason: string; executedAt: string;
   beforeJson: unknown; afterJson: unknown; validationJson: unknown; failureJson: unknown;
+  executedByUser?: { id: number; name: string; email: string };
 };
 export type LifecycleRepairCase = {
   id: number; repairType: "RESOLVE_POSITION_ATTRIBUTION"; repairVersion: number;
   impact: "LOCAL_ONLY"; targetType: string; targetId: string; confidence: RepairConfidence;
-  resolutionSource: string | null; diagnosticFingerprint: string; evidenceJson: Record<string, unknown>;
+  resolutionSource: string | null; diagnosticFingerprint: string; localLifecycleFingerprint?: string; configurationFingerprint?: string | null; evidenceJson: Record<string, unknown>;
   candidateResolutionsJson: unknown[]; rejectedAlternativesJson: unknown[];
   beforeJson: unknown; proposedMutationsJson: unknown; preconditionsJson: unknown;
   brokerImpactJson: Record<string, string>; executableAtCreation: boolean;

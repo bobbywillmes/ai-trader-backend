@@ -288,7 +288,13 @@ export async function diagnosePositionAttributionRepair(args: {
 export async function listLifecycleRepairCases(tradingAccountId?: number) {
   const rows = await prisma.lifecycleRepairCase.findMany({
     ...(tradingAccountId ? { where: { tradingAccountId } } : {}),
-    include: { tradingAccount: { select: { id: true, displayName: true, environment: true } }, executions: { orderBy: { executedAt: 'desc' } } },
+    include: {
+      tradingAccount: { select: { id: true, displayName: true, environment: true } },
+      executions: {
+        include: { executedByUser: { select: { id: true, name: true, email: true } } },
+        orderBy: { executedAt: 'desc' },
+      },
+    },
     orderBy: { createdAt: 'desc' }, take: 100,
   });
   return rows.map((row) => caseProjection(row, rows.some((other) =>

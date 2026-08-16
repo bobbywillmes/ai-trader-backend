@@ -8,3 +8,11 @@ export function lifecycleRepairApplyState(item: Pick<LifecycleRepairCase, "confi
   if (item.confidence !== "DETERMINISTIC" || !item.executable) return { allowed: false, label: "Automatic repair unavailable — manual review required." };
   return { allowed: true, label: "Apply deterministic PAPER repair" };
 }
+
+export function lifecycleRepairCaseState(item: Pick<LifecycleRepairCase, "expired" | "superseded" | "executed" | "executable">) {
+  if (item.executed) return { label: "Executed", color: "teal" };
+  if (item.superseded) return { label: "Superseded", color: "orange" };
+  if (item.expired) return { label: "Expired", color: "orange" };
+  if (item.executable) return { label: "Executable", color: "teal" };
+  return { label: "Non-executable", color: "gray" };
+}
