@@ -1,0 +1,17 @@
+.summary { border-left: 4px solid var(--mantine-color-blue-6); }
+.section, .safety, .execution { min-width: 0; }
+.safety { border-color: var(--mantine-color-blue-5); }
+.execution[data-result="SUCCEEDED"] { border-left: 4px solid var(--mantine-color-teal-6); }
+.execution[data-result="FAILED"] { border-left: 4px solid var(--mantine-color-red-6); }
+.identifier { font-family: var(--mantine-font-family-monospace); overflow-wrap: anywhere; font-size: var(--mantine-font-size-sm); }
+.raw { margin: 0; max-width: 100%; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--mantine-font-size-xs); line-height: 1.45; }
+.tableWrap { max-width: 100%; overflow-x: auto; }
+.caseButton { height: auto; padding-block: var(--mantine-spacing-sm); }
+.caseButton :global(.mantine-Button-inner) { justify-content: flex-start; }
+.caseButton :global(.mantine-Button-label) { width: 100%; white-space: normal; }
+.caseIdentity { min-width: 0; text-align: left; }
+
+@media (max-width: 48em) {
+  .tableWrap table { min-width: 42rem; }
+  .summary, .section, .safety { padding: var(--mantine-spacing-sm); }
+}

@@ -1,7 +1,10 @@
 import crypto from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { buildClientOrderId } from './client-order-id.service.js';
+import {
+  buildClientOrderId,
+  parseTradingAccountSubscriptionIdFromClientOrderId,
+} from './client-order-id.service.js';
 
 const input = {
   symbol: 'SPY',
@@ -86,5 +89,25 @@ describe('client order id account identity', () => {
     expect(value).toBe(
       'ai-20260725T123456-SPY-buy-market-ta1-paper-skx7370795f6469705f636f7265-12345678'
     );
+  });
+});
+
+describe('parseTradingAccountSubscriptionIdFromClientOrderId', () => {
+  const digest = 'fc7fee7e1652deb4f9d502c49f99baaaaadec24f3b3112f504977ca594b85e92';
+
+  it('parses only the complete modern signal-entry format', () => {
+    expect(parseTradingAccountSubscriptionIdFromClientOrderId(`ai-entry-tas4-${digest}`)).toBe(4);
+  });
+
+  it.each([
+    `prefix-ai-entry-tas4-${digest}`,
+    `ai-entry-tas4-${digest.toUpperCase()}`,
+    'ai-entry-tas4-short',
+    `ai-entry-tas0-${digest}`,
+    `ai-entry-tas04-${digest}`,
+    `other-tas4-${digest}`,
+    null,
+  ])('rejects malformed input %s', (value) => {
+    expect(parseTradingAccountSubscriptionIdFromClientOrderId(value)).toBeNull();
   });
 });

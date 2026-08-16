@@ -34,7 +34,8 @@ export type ReconciliationFindingCode =
   | 'local_nonterminal_order_missing_at_broker'
   | 'local_order_status_stale_terminal_broker_order'
   | 'broker_order_untracked'
-  | 'stale_submitting_intent';
+  | 'stale_submitting_intent'
+  | 'position_attribution_missing';
 
 export type ReconciliationFinding = {
   tradingAccountId?: number;
@@ -62,11 +63,15 @@ export type ReconciliationExitState = {
 
 export type ReconciliationTrackedPosition = {
   id: number;
+  tradingAccountId?: number | null;
   broker: string;
   symbol: string;
   status: string;
   side?: string | null;
   qty?: number | null;
+  subscriptionId?: number | null;
+  tradingAccountSubscriptionId?: number | null;
+  configSnapshotJson?: unknown | null;
   exitState?: ReconciliationExitState | null;
 };
 
@@ -240,6 +245,28 @@ export function reconcileSnapshots(input: ReconciliationInput) {
       symbol: position.symbol,
       defaultBroker,
     });
+
+    if (
+      position.subscriptionId === null ||
+      position.tradingAccountSubscriptionId === null ||
+      position.configSnapshotJson === null
+    ) {
+      findings.push({
+        code: 'position_attribution_missing', severity: 'critical',
+        entityType: 'trackedPosition', entityId: String(position.id),
+        symbol: normalizeSymbol(position.symbol),
+        message: `${position.symbol} has missing lifecycle attribution required for exit evaluation.`,
+        details: {
+          tradingAccountId: position.tradingAccountId ?? null,
+          trackedPositionId: position.id,
+          repairType: 'RESOLVE_POSITION_ATTRIBUTION',
+          diagnosisRequired: true,
+          subscriptionId: position.subscriptionId ?? null,
+          tradingAccountSubscriptionId: position.tradingAccountSubscriptionId ?? null,
+          configSnapshotPresent: position.configSnapshotJson != null,
+        },
+      });
+    }
 
     if (!brokerPositionKeys.has(key)) {
       findings.push({
@@ -672,6 +699,10 @@ export async function reconcileTradingAccount(
       status: position.status,
       side: position.side,
       qty: position.qty,
+      tradingAccountId: position.tradingAccountId,
+      subscriptionId: position.subscriptionId,
+      tradingAccountSubscriptionId: position.tradingAccountSubscriptionId,
+      configSnapshotJson: position.configSnapshotJson,
       exitState: position.exitState
         ? {
             targetUnlocked: position.exitState.targetUnlocked,

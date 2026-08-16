@@ -3,6 +3,11 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { parseSubscriptionKeyFromClientOrderId } from './client-order-id.service.js';
 import { linkEntryDecisionToTrackedPosition } from './entry-decision.service.js';
+import {
+  attributionEvidenceJson,
+  resolveExactBrokerOrderAttribution,
+  type AttributionBrokerLookupPolicy,
+} from './attribution-evidence-resolver.service.js';
 
 export type SubscriptionResolutionSource =
   | 'local_order_intent'
@@ -349,6 +354,9 @@ export async function resolveTrackedPositionSubscription(args: {
   symbol: string;
   side: string;
   openedAt: Date;
+  qty?: number;
+  avgEntryPrice?: number;
+  brokerLookupPolicy?: AttributionBrokerLookupPolicy;
 }): Promise<SubscriptionResolutionResult> {
   const account = await prisma.tradingAccount.findUniqueOrThrow({
     where: { id: args.tradingAccountId },
@@ -405,6 +413,40 @@ export async function resolveTrackedPositionSubscription(args: {
 
   if (brokerClientOrderResolution) {
     return brokerClientOrderResolution;
+  }
+
+  if (args.qty !== undefined && args.avgEntryPrice !== undefined) {
+    const exact = await resolveExactBrokerOrderAttribution({
+      tradingAccountId: args.tradingAccountId,
+      broker: args.broker,
+      symbol: args.symbol,
+      side: args.side,
+      qty: args.qty,
+      avgEntryPrice: args.avgEntryPrice,
+      openedAt: args.openedAt,
+      mode,
+      policy: args.brokerLookupPolicy ?? 'LOCAL_ONLY',
+    });
+    if (exact) {
+      if (exact.confidence === 'DETERMINISTIC' && exact.assignment) {
+        return {
+          status: 'resolved', source: 'broker_client_order_id',
+          subscriptionId: exact.assignment.subscriptionId,
+          subscriptionKey: exact.assignment.subscriptionKey,
+          tradingAccountSubscriptionId: exact.assignment.id,
+          reason: exact.reason,
+          evidence: attributionEvidenceJson(exact),
+        };
+      }
+      return {
+        status: exact.confidence === 'AMBIGUOUS' ? 'ambiguous' : 'unresolved',
+        source: exact.confidence === 'AMBIGUOUS' ? 'ambiguous' : 'unresolved',
+        subscriptionId: null, subscriptionKey: null,
+        tradingAccountSubscriptionId: null,
+        reason: exact.reason,
+        evidence: attributionEvidenceJson(exact),
+      };
+    }
   }
 
   return resolveFromUniqueObserverFallback({

@@ -70,8 +70,10 @@ function upsertSetting(key: string, value: boolean | number | null) {
   });
 }
 
-export async function getRuntimeTradingConfig(): Promise<RuntimeTradingConfig> {
-  const settings = await prisma.setting.findMany();
+export async function getRuntimeTradingConfig(
+  db: Pick<typeof prisma, 'setting'> = prisma
+): Promise<RuntimeTradingConfig> {
+  const settings = await db.setting.findMany();
   const map = new Map(settings.map((setting) => [setting.key, setting.value]));
 
   return {
