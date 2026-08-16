@@ -577,7 +577,7 @@ export class WorkerHealthRegistry {
 
     return (
       nextStatus === 'healthy' &&
-      (previousStatus === 'stale' || previousStatus === 'failing')
+      ['degraded', 'stale', 'failing'].includes(previousStatus)
     );
   }
 

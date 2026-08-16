@@ -10,6 +10,9 @@ export type AccountWorkerStatus =
 
 const MAX_ERROR_LENGTH = 500;
 const TRANSITION_EVENT_STATUSES = new Set<AccountWorkerStatus>(['FAILING', 'STALE']);
+const RECOVERABLE_STATUSES = new Set<AccountWorkerStatus>([
+  'FAILING', 'STALE', 'DEGRADED', 'BACKING_OFF',
+]);
 type HealthLogger = Pick<typeof logger, 'trace' | 'info' | 'warn' | 'error'>;
 
 function safeError(error: unknown) {
@@ -79,7 +82,7 @@ async function logHealthTransition(
     return;
   }
 
-  if (previous && previous.consecutiveFailures > 0) {
+  if (previous && isAccountWorkerRecoveryTransition(previousStatus, nextStatus)) {
     const failureDurationMs = previous.lastFailedAt
       ? Math.max(0, state.lastTickCompletedAt!.getTime() - previous.lastFailedAt.getTime())
       : null;
@@ -104,6 +107,13 @@ async function logHealthTransition(
 
   healthLogger.trace({ ...context, outcome: state.lastOutcome, status: nextStatus },
     'Account workflow completed.');
+}
+
+export function isAccountWorkerRecoveryTransition(
+  previousStatus: AccountWorkerStatus,
+  nextStatus: AccountWorkerStatus
+) {
+  return nextStatus === 'HEALTHY' && RECOVERABLE_STATUSES.has(previousStatus);
 }
 
 export function deriveTradingAccountWorkerStatus(
@@ -151,8 +161,10 @@ async function emitTransition(args: {
     select: { displayName: true, environment: true },
   });
   if (!account) return;
-  const recovered = TRANSITION_EVENT_STATUSES.has(args.previousStatus) &&
-    !TRANSITION_EVENT_STATUSES.has(args.nextStatus);
+  const recovered = isAccountWorkerRecoveryTransition(
+    args.previousStatus,
+    args.nextStatus
+  );
   if (!recovered && !TRANSITION_EVENT_STATUSES.has(args.nextStatus)) return;
   await emitSystemEvent({
     type: recovered ? 'account_worker_health.recovered' :
