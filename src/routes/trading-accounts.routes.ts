@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   createTradingAccountAllocationController,
   createTradingAccountController,
+  activateTradingAccountController,
   createTradingAccountSubscriptionController,
   deactivateTradingAccountController,
   deleteTradingAccountSubscriptionController,
@@ -34,55 +35,221 @@ import {
   grantLiveWriteApprovalController,
   revokeLiveWriteApprovalController,
 } from '../controllers/trading-accounts.controller.js';
-import { requirePermission, requireSystemOwnerAccess, requireTradingAccountAccess } from '../middleware/rbac.js';
+import {
+  requirePermission,
+  requireSystemOwnerAccess,
+  requireTradingAccountAccess,
+} from '../middleware/rbac.js';
 import { PlatformPermission } from '../types/platform-rbac.js';
 import { runTradingAccountReconciliationController } from '../controllers/reconciliation.controller.js';
 import { getTradingAccountDashboardController } from '../controllers/dashboard.controller.js';
 
 const router = Router();
 
-router.get('/', requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), listTradingAccountsController);
+router.get(
+  '/',
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_READ),
+  listTradingAccountsController,
+);
 router.post('/', requireSystemOwnerAccess, createTradingAccountController);
-router.get('/:id', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), getTradingAccountController);
-router.get('/:id/dashboard', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.REPORTS_READ), getTradingAccountDashboardController);
-router.get('/:id/positions', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), listTradingAccountOpenPositionsController);
-router.get('/:id/orders', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), listTradingAccountOpenOrdersController);
-router.get('/:id/trade-cycles', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.REPORTS_READ), listTradingAccountTradeCyclesController);
-router.patch('/:id', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE), updateTradingAccountController);
-router.post('/:id/deactivate', requireSystemOwnerAccess, deactivateTradingAccountController);
-router.post('/:id/readiness-assessments', requireSystemOwnerAccess, runTradingAccountReadinessAssessmentController);
-router.get('/:id/readiness-assessments/latest', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), getLatestTradingAccountReadinessAssessmentController);
-router.get('/:id/readiness-assessments', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), listTradingAccountReadinessAssessmentsController);
-router.get('/:id/readiness-assessments/:assessmentId', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), getTradingAccountReadinessAssessmentController);
-router.get('/:id/live-write-approvals', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), getLiveWriteApprovalsController);
-router.post('/:id/live-write-approvals/:capability/grant', requireSystemOwnerAccess, grantLiveWriteApprovalController);
-router.post('/:id/live-write-approvals/:capability/revoke', requireSystemOwnerAccess, revokeLiveWriteApprovalController);
+router.get(
+  '/:id',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_READ),
+  getTradingAccountController,
+);
+router.get(
+  '/:id/dashboard',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.REPORTS_READ),
+  getTradingAccountDashboardController,
+);
+router.get(
+  '/:id/positions',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_READ),
+  listTradingAccountOpenPositionsController,
+);
+router.get(
+  '/:id/orders',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_READ),
+  listTradingAccountOpenOrdersController,
+);
+router.get(
+  '/:id/trade-cycles',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.REPORTS_READ),
+  listTradingAccountTradeCyclesController,
+);
+router.patch(
+  '/:id',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE),
+  updateTradingAccountController,
+);
+router.post(
+  '/:id/activate',
+  requireSystemOwnerAccess,
+  activateTradingAccountController,
+);
+router.post(
+  '/:id/deactivate',
+  requireSystemOwnerAccess,
+  deactivateTradingAccountController,
+);
+router.post(
+  '/:id/readiness-assessments',
+  requireSystemOwnerAccess,
+  runTradingAccountReadinessAssessmentController,
+);
+router.get(
+  '/:id/readiness-assessments/latest',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_READ),
+  getLatestTradingAccountReadinessAssessmentController,
+);
+router.get(
+  '/:id/readiness-assessments',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_READ),
+  listTradingAccountReadinessAssessmentsController,
+);
+router.get(
+  '/:id/readiness-assessments/:assessmentId',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_READ),
+  getTradingAccountReadinessAssessmentController,
+);
+router.get(
+  '/:id/live-write-approvals',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_READ),
+  getLiveWriteApprovalsController,
+);
+router.post(
+  '/:id/live-write-approvals/:capability/grant',
+  requireSystemOwnerAccess,
+  grantLiveWriteApprovalController,
+);
+router.post(
+  '/:id/live-write-approvals/:capability/revoke',
+  requireSystemOwnerAccess,
+  revokeLiveWriteApprovalController,
+);
 router.post(
   '/:id/reconciliation/run',
   requireSystemOwnerAccess,
-  runTradingAccountReconciliationController
+  runTradingAccountReconciliationController,
 );
 
-router.get('/:id/risk-settings', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_RISK_WRITE), getTradingAccountRiskSettingsController);
-router.patch('/:id/risk-settings', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_RISK_WRITE), updateTradingAccountRiskSettingsController);
-router.get('/:id/risk-health', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_RISK_WRITE), getTradingAccountRiskHealthController);
-router.get('/:id/worker-health', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), getTradingAccountWorkerHealthController);
-router.post('/:id/entry-risk-preview', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_RISK_WRITE), previewTradingAccountEntryRiskController);
+router.get(
+  '/:id/risk-settings',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_RISK_WRITE),
+  getTradingAccountRiskSettingsController,
+);
+router.patch(
+  '/:id/risk-settings',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_RISK_WRITE),
+  updateTradingAccountRiskSettingsController,
+);
+router.get(
+  '/:id/risk-health',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_RISK_WRITE),
+  getTradingAccountRiskHealthController,
+);
+router.get(
+  '/:id/worker-health',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_READ),
+  getTradingAccountWorkerHealthController,
+);
+router.post(
+  '/:id/entry-risk-preview',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_RISK_WRITE),
+  previewTradingAccountEntryRiskController,
+);
 
-router.get('/:id/allocations', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE), listTradingAccountAllocationsController);
-router.post('/:id/allocations', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE), createTradingAccountAllocationController);
-router.patch('/:id/allocations/:allocationId', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE), updateTradingAccountAllocationController);
+router.get(
+  '/:id/allocations',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE),
+  listTradingAccountAllocationsController,
+);
+router.post(
+  '/:id/allocations',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE),
+  createTradingAccountAllocationController,
+);
+router.patch(
+  '/:id/allocations/:allocationId',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE),
+  updateTradingAccountAllocationController,
+);
 
-router.get('/:id/account-subscriptions', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.SUBSCRIPTION_READ), listTradingAccountSubscriptionsController);
-router.get('/:id/account-subscriptions/market-context', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.SUBSCRIPTION_READ), listTradingAccountSubscriptionMarketContextController);
-router.get('/:id/account-subscriptions/:accountSubscriptionId', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.SUBSCRIPTION_READ), getTradingAccountSubscriptionController);
-router.get('/:id/account-subscriptions/:accountSubscriptionId/price-history', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.SUBSCRIPTION_READ), getTradingAccountSubscriptionPriceHistoryController);
-router.post('/:id/account-subscriptions', requireSystemOwnerAccess, createTradingAccountSubscriptionController);
-router.patch('/:id/account-subscriptions/:accountSubscriptionId', requireSystemOwnerAccess, updateTradingAccountSubscriptionController);
-router.delete('/:id/account-subscriptions/:accountSubscriptionId', requireSystemOwnerAccess, deleteTradingAccountSubscriptionController);
+router.get(
+  '/:id/account-subscriptions',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.SUBSCRIPTION_READ),
+  listTradingAccountSubscriptionsController,
+);
+router.get(
+  '/:id/account-subscriptions/market-context',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.SUBSCRIPTION_READ),
+  listTradingAccountSubscriptionMarketContextController,
+);
+router.get(
+  '/:id/account-subscriptions/:accountSubscriptionId',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.SUBSCRIPTION_READ),
+  getTradingAccountSubscriptionController,
+);
+router.get(
+  '/:id/account-subscriptions/:accountSubscriptionId/price-history',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.SUBSCRIPTION_READ),
+  getTradingAccountSubscriptionPriceHistoryController,
+);
+router.post(
+  '/:id/account-subscriptions',
+  requireSystemOwnerAccess,
+  createTradingAccountSubscriptionController,
+);
+router.patch(
+  '/:id/account-subscriptions/:accountSubscriptionId',
+  requireSystemOwnerAccess,
+  updateTradingAccountSubscriptionController,
+);
+router.delete(
+  '/:id/account-subscriptions/:accountSubscriptionId',
+  requireSystemOwnerAccess,
+  deleteTradingAccountSubscriptionController,
+);
 
-router.put('/:id/credentials', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE), upsertTradingAccountCredentialController);
-router.post('/:id/credentials/verify', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE), verifyTradingAccountCredentialController);
-router.post('/:id/credentials/revoke', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE), revokeTradingAccountCredentialController);
+router.put(
+  '/:id/credentials',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE),
+  upsertTradingAccountCredentialController,
+);
+router.post(
+  '/:id/credentials/verify',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE),
+  verifyTradingAccountCredentialController,
+);
+router.post(
+  '/:id/credentials/revoke',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_WRITE),
+  revokeTradingAccountCredentialController,
+);
 
 export default router;

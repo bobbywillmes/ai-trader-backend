@@ -1,23 +1,16 @@
-export type TradingBroker = "ALPACA";
+export type TradingBroker = 'ALPACA';
 
-export type TradingAccountEnvironment = "PAPER" | "LIVE";
+export type TradingAccountEnvironment = 'PAPER' | 'LIVE';
 
 export type TradingAccountStatus =
-  | "ACTIVE"
-  | "PAUSED"
-  | "NEEDS_CREDENTIALS"
-  | "ERROR"
-  | "DISABLED";
+  'ACTIVE' | 'PAUSED' | 'NEEDS_CREDENTIALS' | 'ERROR' | 'DISABLED';
 
 export type BrokerCredentialStatus =
-  | "ACTIVE"
-  | "NEEDS_VERIFICATION"
-  | "INVALID"
-  | "REVOKED";
+  'ACTIVE' | 'NEEDS_VERIFICATION' | 'INVALID' | 'REVOKED';
 
-export type BrokerCredentialAuthType = "API_KEY";
+export type BrokerCredentialAuthType = 'API_KEY';
 
-export type PositionSizingType = "FIXED_QTY" | "MAX_NOTIONAL";
+export type PositionSizingType = 'FIXED_QTY' | 'MAX_NOTIONAL';
 
 export type TradingAccountCredentialSummary = {
   exists: boolean;
@@ -69,36 +62,94 @@ export type TradingAccountResponse = {
   account: TradingAccount;
 };
 
-export type ReadinessOutcome = "PASSED" | "BLOCKED" | "WARNING" | "NOT_APPLICABLE";
+export type ReadinessOutcome =
+  'PASSED' | 'BLOCKED' | 'WARNING' | 'NOT_APPLICABLE';
 export type ReadinessGate = {
-  code: string; outcome: ReadinessOutcome; message: string;
+  code: string;
+  outcome: ReadinessOutcome;
+  message: string;
   evidence?: Record<string, unknown>;
 };
 export type ReadinessStage = {
-  key: string; outcome: ReadinessOutcome; summary: string;
-  gates: ReadinessGate[]; blockerCount: number; warningCount: number;
+  key: string;
+  outcome: ReadinessOutcome;
+  summary: string;
+  gates: ReadinessGate[];
+  blockerCount: number;
+  warningCount: number;
 };
 export type TradingAccountReadinessAssessment = {
-  id: number; tradingAccountId: number; purpose: "LIVE_ACTIVATION";
-  result: "PASSED" | "BLOCKED" | "ERROR"; assessmentVersion: number;
-  startedAt: string; completedAt: string; expiresAt: string; createdAt: string;
-  configurationFingerprint: string; credentialFingerprint: string; policyFingerprint: string;
-  credentialVerifiedAt: string | null; accountSnapshotId: number | null;
-  brokerAccountId: string | null; brokerAccountStatus: string | null;
-  tradingBlocked: boolean | null; brokerPositionCount: number | null;
-  brokerOpenOrderCount: number | null; localOpenPositionCount: number;
-  localClosingPositionCount: number; localNonterminalIntentCount: number;
-  localNonterminalOrderCount: number; stages: ReadinessStage[];
-  gates: ReadinessGate[]; blockers: ReadinessGate[]; warnings: ReadinessGate[];
+  id: number;
+  tradingAccountId: number;
+  purpose: 'LIVE_ACTIVATION';
+  result: 'PASSED' | 'BLOCKED' | 'ERROR';
+  assessmentVersion: number;
+  startedAt: string;
+  completedAt: string;
+  expiresAt: string;
+  createdAt: string;
+  configurationFingerprint: string;
+  credentialFingerprint: string;
+  policyFingerprint: string;
+  credentialVerifiedAt: string | null;
+  accountSnapshotId: number | null;
+  brokerAccountId: string | null;
+  brokerAccountStatus: string | null;
+  tradingBlocked: boolean | null;
+  brokerPositionCount: number | null;
+  brokerOpenOrderCount: number | null;
+  localOpenPositionCount: number;
+  localClosingPositionCount: number;
+  localNonterminalIntentCount: number;
+  localNonterminalOrderCount: number;
+  stages: ReadinessStage[];
+  gates: ReadinessGate[];
+  blockers: ReadinessGate[];
+  warnings: ReadinessGate[];
   evidence: {
-    policy?: { allowLiveTrading: boolean; allowLiveRiskReducingWrites: boolean };
-    workerHealth?: Array<{ workerKey: string; status: string; applicable: boolean }>;
+    policy?: {
+      allowLiveTrading: boolean;
+      allowLiveRiskReducingWrites: boolean;
+      liveWriteDeploymentRole?: string;
+    };
+    workerHealth?: Array<{
+      workerKey: string;
+      status: string;
+      applicable: boolean;
+    }>;
   };
   reconciliationSummary: {
-    mode: string; reason?: string; findingCount?: number;
-    criticalCount?: number; warningCount?: number; findingCodes?: string[];
+    mode: string;
+    reason?: string;
+    findingCount?: number;
+    criticalCount?: number;
+    warningCount?: number;
+    findingCodes?: string[];
   } | null;
-  validity: "CURRENT" | "STALE" | "EXPIRED"; staleReasons: string[];
+  validity: 'CURRENT' | 'STALE' | 'EXPIRED';
+  staleReasons: string[];
+};
+
+export type ActivateTradingAccountPayload = {
+  readinessAssessmentId: number;
+  reason: string;
+  typedConfirmation: 'ACTIVATE LIVE ACCOUNT';
+  expectedUpdatedAt: string;
+};
+
+export type ActivateTradingAccountResponse = {
+  outcome: 'activated' | 'already_active_disarmed';
+  before: {
+    status: TradingAccountStatus;
+    tradingEnabled: boolean;
+    killSwitchEnabled: boolean;
+  };
+  after: {
+    status: TradingAccountStatus;
+    tradingEnabled: boolean;
+    killSwitchEnabled: boolean;
+  };
+  readinessAssessmentId: number;
 };
 export type TradingAccountReadinessAssessmentResponse = {
   assessment: TradingAccountReadinessAssessment | null;
@@ -107,19 +158,22 @@ export type TradingAccountReadinessHistoryResponse = {
   assessments: TradingAccountReadinessAssessment[];
 };
 
-export type LiveWriteCapability = "RISK_REDUCING" | "ENTRY";
+export type LiveWriteCapability = 'RISK_REDUCING' | 'ENTRY';
 export type LiveWriteApprovalStateResponse = {
   tradingAccountId: number;
   environment: TradingAccountEnvironment;
-  deploymentRole: "OBSERVATION_ONLY" | "PRODUCTION_EXECUTOR";
+  deploymentRole: 'OBSERVATION_ONLY' | 'PRODUCTION_EXECUTOR';
   deploymentCanWrite: boolean;
   capabilities: Array<{
     capability: LiveWriteCapability;
     effective: boolean;
     reason: string | null;
-    fingerprints: { configurationFingerprint: string; credentialFingerprint: string } | null;
+    fingerprints: {
+      configurationFingerprint: string;
+      credentialFingerprint: string;
+    } | null;
     approval: null | {
-      status: "GRANTED" | "REVOKED" | "INVALIDATED";
+      status: 'GRANTED' | 'REVOKED' | 'INVALIDATED';
       revision: number;
       grantedAt: string | null;
       grantReason: string | null;
@@ -129,8 +183,12 @@ export type LiveWriteApprovalStateResponse = {
     };
   }>;
   history: Array<{
-    id: number; capability: LiveWriteCapability; action: "GRANT" | "REVOKE" | "INVALIDATE";
-    reason: string; createdAt: string; resultingRevision: number;
+    id: number;
+    capability: LiveWriteCapability;
+    action: 'GRANT' | 'REVOKE' | 'INVALIDATE';
+    reason: string;
+    createdAt: string;
+    resultingRevision: number;
     actorUser: { id: number; name: string | null; email: string } | null;
   }>;
 };
@@ -161,8 +219,7 @@ export type TradingAccountRiskSettings = {
 };
 
 export type EffectiveAccountEntryLimitSource =
-  | "ACCOUNT"
-  | "LEGACY_GLOBAL_FALLBACK";
+  'ACCOUNT' | 'LEGACY_GLOBAL_FALLBACK';
 
 export type EffectiveAccountEntryLimits = {
   tradingAccountId: number;
@@ -187,9 +244,9 @@ export type EffectiveAccountEntryLimits = {
     };
   };
   authoritativeTotalExposure: {
-    field: "maxDeployableNotional";
+    field: 'maxDeployableNotional';
     value: number | null;
-    source: "TRADING_ACCOUNT";
+    source: 'TRADING_ACCOUNT';
   };
   superseded: {
     accountMaxTotalOpenNotional: number | null;
@@ -204,20 +261,13 @@ export type TradingAccountRiskSettingsResponse = {
 };
 
 export type TradingAccountRiskHealthStatus =
-  | "READY"
-  | "READY_WITH_WARNINGS"
-  | "BLOCKED";
+  'READY' | 'READY_WITH_WARNINGS' | 'BLOCKED';
 
 export type TradingAccountRiskHealthCheckSeverity =
-  | "blocker"
-  | "warning"
-  | "info";
+  'blocker' | 'warning' | 'info';
 
 export type TradingAccountRiskHealthCheckStatus =
-  | "pass"
-  | "fail"
-  | "warn"
-  | "info";
+  'pass' | 'fail' | 'warn' | 'info';
 
 export type TradingAccountRiskHealthCheck = {
   id: string;
@@ -261,9 +311,7 @@ export type TradingAccountRiskHealth = {
     activeSubscriptionBudgetSurplus: number | null;
     maxSimultaneousExposureSurplus: number | null;
     capitalSource:
-      | "BROKER_PORTFOLIO_VALUE"
-      | "ESTIMATED_TRADING_CAPITAL"
-      | "UNAVAILABLE";
+      'BROKER_PORTFOLIO_VALUE' | 'ESTIMATED_TRADING_CAPITAL' | 'UNAVAILABLE';
   };
   effectiveEntryLimits: EffectiveAccountEntryLimits;
   checks: TradingAccountRiskHealthCheck[];
@@ -277,20 +325,35 @@ export type TradingAccountRiskHealthResponse = {
 };
 
 export type TradingAccountWorkerStatus =
-  | "HEALTHY" | "DORMANT" | "STARTING" | "DEGRADED"
-  | "DELAYED" | "STALE" | "FAILING" | "BACKING_OFF";
+  | 'HEALTHY'
+  | 'DORMANT'
+  | 'STARTING'
+  | 'DEGRADED'
+  | 'DELAYED'
+  | 'STALE'
+  | 'FAILING'
+  | 'BACKING_OFF';
 
 export type TradingAccountWorkerHealthResponse = {
-  tradingAccount: Pick<TradingAccount, "id" | "displayName" | "environment">;
+  tradingAccount: Pick<TradingAccount, 'id' | 'displayName' | 'environment'>;
   generatedAt: string;
   workers: Array<{
-    id: number; workerKey: string; status: TradingAccountWorkerStatus;
-    applicable: boolean; eligible: boolean; eligibilityReason: string | null;
-    lastSucceededAt: string | null; lastWorkSucceededAt: string | null;
-    lastFailedAt: string | null; consecutiveFailures: number;
-    lastError: string | null; currentRunStartedAt: string | null;
-    totalLockSkips: number; lastLockSkippedAt: string | null;
-    backoffUntil: string | null; processInstanceId: string;
+    id: number;
+    workerKey: string;
+    status: TradingAccountWorkerStatus;
+    applicable: boolean;
+    eligible: boolean;
+    eligibilityReason: string | null;
+    lastSucceededAt: string | null;
+    lastWorkSucceededAt: string | null;
+    lastFailedAt: string | null;
+    consecutiveFailures: number;
+    lastError: string | null;
+    currentRunStartedAt: string | null;
+    totalLockSkips: number;
+    lastLockSkippedAt: string | null;
+    backoffUntil: string | null;
+    processInstanceId: string;
   }>;
 };
 
@@ -383,12 +446,12 @@ export type TradingAccountSubscriptionResponse = {
 };
 
 export type EntryRiskPreviewLayer =
-  | "global"
-  | "account"
-  | "allocation"
-  | "subscription"
-  | "session"
-  | "unknown"
+  | 'global'
+  | 'account'
+  | 'allocation'
+  | 'subscription'
+  | 'session'
+  | 'unknown'
   | null;
 
 export type EntryRiskPreview = {
@@ -464,7 +527,7 @@ export type EntryRiskPreview = {
     checked: boolean;
     ok: boolean;
     code: string | null;
-    layer: "allocation" | null;
+    layer: 'allocation' | null;
     message: string | null;
     details: unknown;
   };
@@ -492,11 +555,9 @@ export type EntryRiskPreviewInput = {
 };
 
 export type AccountSubscriptionMarketContextStatus =
-  | "active"
-  | "all"
-  | "disabled";
+  'active' | 'all' | 'disabled';
 
-export type AccountSubscriptionPriceHistoryRange = "3m" | "6m" | "1y";
+export type AccountSubscriptionPriceHistoryRange = '3m' | '6m' | '1y';
 
 export type AccountSubscriptionMarketContextItem = {
   accountSubscriptionId: number;

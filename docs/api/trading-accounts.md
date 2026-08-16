@@ -111,9 +111,28 @@ account through ordinary editing.
 Valid persisted operational tuples are:
 
 ```text
+ACTIVE / tradingEnabled=false / killSwitchEnabled=true
 ACTIVE / tradingEnabled=true / killSwitchEnabled=false
 any non-ACTIVE status / tradingEnabled=false / killSwitchEnabled=true
 ```
+
+`ACTIVE` does not mean entries are armed.
+
+## Activate Live Account
+
+```http
+POST /api/trading-accounts/:id/activate
+```
+
+This System Owner-only operation consumes a current, passing `LIVE_ACTIVATION`
+assessment and requires a LIVE account in `PAUSED / false / true`. The strict
+body contains `readinessAssessmentId`, `reason`, `typedConfirmation` equal to
+`ACTIVATE LIVE ACCOUNT`, and `expectedUpdatedAt`.
+
+Success changes only the operational status and clears `pausedReason`, producing
+`ACTIVE / false / true` (`ACTIVE / ENTRY DISARMED`). It does not perform a broker
+write, enable assignment entries, grant ENTRY approval, or alter RISK_REDUCING
+authorization. A retry against that exact destination is idempotent.
 
 Activation is intentionally unavailable until the readiness and multi-account
 lifecycle phases are complete.

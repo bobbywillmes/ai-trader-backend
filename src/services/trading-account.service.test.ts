@@ -8,7 +8,7 @@ import {
 } from '@prisma/client';
 
 const mocks = vi.hoisted(() => ({
-  env: {} as { DEFAULT_TRADING_ACCOUNT_ID?: number },
+  env: {} as Record<string, unknown>,
   tradingAccountFindFirst: vi.fn(),
   tradingAccountFindMany: vi.fn(),
   tradingAccountFindUnique: vi.fn(),
@@ -19,6 +19,12 @@ const mocks = vi.hoisted(() => ({
   tradingAccountMembershipFindMany: vi.fn(),
   trackedPositionFindMany: vi.fn(),
   orderIntentUpdateMany: vi.fn(),
+  accountSubscriptionUpdateMany: vi.fn(),
+  queryRaw: vi.fn(),
+  readinessAssessmentFindFirst: vi.fn(),
+  count: vi.fn(),
+  computeReadinessFingerprints: vi.fn(),
+  getLiveWriteApprovalState: vi.fn(),
   systemEventCreate: vi.fn(),
 }));
 
@@ -28,6 +34,20 @@ vi.mock('../config/env.js', () => ({
 vi.mock('./live-write-approval.service.js', () => ({
   LiveWriteCapability: { RISK_REDUCING: 'RISK_REDUCING', ENTRY: 'ENTRY' },
   invalidateLiveWriteApprovals: vi.fn(),
+  getLiveWriteApprovalState: mocks.getLiveWriteApprovalState,
+}));
+vi.mock('./trading-account-readiness.service.js', () => ({
+  CREDENTIAL_VERIFICATION_MAX_AGE_MS: 15 * 60_000,
+  READINESS_ASSESSMENT_VERSION: 1,
+  computeReadinessFingerprints: mocks.computeReadinessFingerprints,
+}));
+vi.mock('./trading-account-workflow-lock.service.js', () => ({
+  ACCOUNT_WORKFLOW_LOCK_FAMILIES: { OPERATIONAL_STATE: 'operational-state' },
+  withTradingAccountWorkflowLock: vi.fn(async ({ execute }) => ({
+    outcome: 'ACQUIRED_AND_COMPLETED',
+    value: await execute(),
+    scope: 'test',
+  })),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -68,15 +88,27 @@ vi.mock('./trading-account-risk-configuration.service.js', () => ({
       },
       orderIntent: {
         updateMany: mocks.orderIntentUpdateMany,
+        count: mocks.count,
       },
+      tradingAccountSubscription: {
+        updateMany: mocks.accountSubscriptionUpdateMany,
+      },
+      tradingAccountReadinessAssessment: {
+        findFirst: mocks.readinessAssessmentFindFirst,
+      },
+      trackedPosition: { count: mocks.count },
+      brokerOrder: { count: mocks.count },
+      positionExitState: { count: mocks.count },
       systemEvent: {
         create: mocks.systemEventCreate,
       },
-    })
+      $queryRaw: mocks.queryRaw,
+    }),
   ),
 }));
 
 import {
+  activateTradingAccountForAdmin,
   createTradingAccountForAdmin,
   deactivateTradingAccountForAdmin,
   getTradingAccountForAdmin,
@@ -87,7 +119,9 @@ import {
   updateTradingAccountForAdmin,
 } from './trading-account.service.js';
 
-function tradingAccount(overrides: Partial<TradingAccount> = {}): TradingAccount {
+function tradingAccount(
+  overrides: Partial<TradingAccount> = {},
+): TradingAccount {
   return {
     id: 1,
     accountHolderUserId: 1,
@@ -130,6 +164,9 @@ describe('trading account service', () => {
     });
     mocks.tradingAccountMembershipFindMany.mockResolvedValue([]);
     mocks.trackedPositionFindMany.mockResolvedValue([]);
+    mocks.accountSubscriptionUpdateMany.mockResolvedValue({ count: 0 });
+    mocks.queryRaw.mockResolvedValue([]);
+    mocks.count.mockResolvedValue(0);
     mocks.orderIntentUpdateMany.mockResolvedValue({ count: 0 });
     mocks.systemEventCreate.mockResolvedValue({ id: 100 });
     mocks.userFindUnique.mockResolvedValue({ id: 1, enabled: true });
@@ -141,13 +178,16 @@ describe('trading account service', () => {
           findFirst: mocks.tradingAccountFindFirst,
           create: mocks.tradingAccountCreate,
         },
-      })
+      }),
     );
   });
 
   it('resolves the configured default trading account id first', async () => {
     mocks.env.DEFAULT_TRADING_ACCOUNT_ID = 7;
-    const account = tradingAccount({ id: 7, displayName: 'Configured Account' });
+    const account = tradingAccount({
+      id: 7,
+      displayName: 'Configured Account',
+    });
     mocks.tradingAccountFindUnique.mockResolvedValue(account);
 
     await expect(resolveDefaultTradingAccount()).resolves.toBe(account);
@@ -179,10 +219,10 @@ describe('trading account service', () => {
 
   it('throws a clear operational error when no default account can be resolved', async () => {
     await expect(resolveDefaultTradingAccount()).rejects.toThrow(
-      'Default trading account could not be resolved'
+      'Default trading account could not be resolved',
     );
     await expect(resolveDefaultTradingAccount()).rejects.toThrow(
-      'scripts/bootstrap-default-trading-account.ts'
+      'scripts/bootstrap-default-trading-account.ts',
     );
   });
 
@@ -251,7 +291,7 @@ describe('trading account service', () => {
       },
     });
     expect(JSON.stringify(await listTradingAccountsForAdmin())).not.toContain(
-      'must-not-leak'
+      'must-not-leak',
     );
   });
 
@@ -290,7 +330,7 @@ describe('trading account service', () => {
           lastFailedAt: null,
           revokedAt: null,
         },
-      })
+      }),
     );
     expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith({
       where: {
@@ -320,15 +360,23 @@ describe('trading account service', () => {
 
   it('returns all trading accounts for system owners without querying memberships', async () => {
     mocks.tradingAccountFindMany.mockResolvedValue([
-      { ...tradingAccount({ id: 1, displayName: 'Bobby Paper' }), accountHolder: { name: 'Bobby W' }, credential: null },
-      { ...tradingAccount({ id: 2, displayName: 'Bobby Live' }), accountHolder: { name: 'Bobby W' }, credential: null },
+      {
+        ...tradingAccount({ id: 1, displayName: 'Bobby Paper' }),
+        accountHolder: { name: 'Bobby W' },
+        credential: null,
+      },
+      {
+        ...tradingAccount({ id: 2, displayName: 'Bobby Live' }),
+        accountHolder: { name: 'Bobby W' },
+        credential: null,
+      },
     ]);
 
     await expect(
       listTradingAccountsForUser({
         userId: 42,
         isSystemOwner: true,
-      })
+      }),
     ).resolves.toEqual([
       expect.objectContaining({ id: 1, displayName: 'Bobby Paper' }),
       expect.objectContaining({ id: 2, displayName: 'Bobby Live' }),
@@ -339,8 +387,16 @@ describe('trading account service', () => {
 
   it('filters trading account lists to memberships for non-owner users', async () => {
     mocks.tradingAccountFindMany.mockResolvedValue([
-      { ...tradingAccount({ id: 1, displayName: 'Bobby Paper' }), accountHolder: { name: 'Bobby W' }, credential: null },
-      { ...tradingAccount({ id: 2, displayName: 'Unassigned Account' }), accountHolder: { name: null }, credential: null },
+      {
+        ...tradingAccount({ id: 1, displayName: 'Bobby Paper' }),
+        accountHolder: { name: 'Bobby W' },
+        credential: null,
+      },
+      {
+        ...tradingAccount({ id: 2, displayName: 'Unassigned Account' }),
+        accountHolder: { name: null },
+        credential: null,
+      },
     ]);
     mocks.tradingAccountMembershipFindMany.mockResolvedValue([
       { tradingAccountId: 1 },
@@ -350,7 +406,7 @@ describe('trading account service', () => {
       listTradingAccountsForUser({
         userId: 42,
         isSystemOwner: false,
-      })
+      }),
     ).resolves.toEqual([
       expect.objectContaining({ id: 1, displayName: 'Bobby Paper' }),
     ]);
@@ -405,26 +461,168 @@ describe('trading account service', () => {
         displayName: 'Updated Paper',
         status: TradingAccountStatus.PAUSED,
         credential: expect.objectContaining({ exists: false }),
-      })
+      }),
     );
+  });
+
+  describe('Live activation', () => {
+    const updatedAt = new Date('2026-08-16T19:00:00.000Z');
+    const fingerprints = {
+      configurationFingerprint: 'a'.repeat(64),
+      credentialFingerprint: 'b'.repeat(64),
+      policyFingerprint: 'c'.repeat(64),
+    };
+
+    beforeEach(() => {
+      Object.assign(mocks.env, {
+        NODE_ENV: 'production',
+        LIVE_WRITE_DEPLOYMENT_ROLE: 'PRODUCTION_EXECUTOR',
+        ALLOW_LIVE_RISK_REDUCING_WRITES: true,
+        ALLOW_LIVE_TRADING: false,
+      });
+      mocks.tradingAccountFindUnique.mockResolvedValue({
+        ...tradingAccount({
+          environment: TradingAccountEnvironment.LIVE,
+          status: TradingAccountStatus.PAUSED,
+          tradingEnabled: false,
+          killSwitchEnabled: true,
+          updatedAt,
+        }),
+        credential: {
+          status: 'ACTIVE',
+          revokedAt: null,
+          verifiedAt: new Date(),
+        },
+        accountSubscriptions: [
+          { id: 8, entriesEnabled: false, exitsEnabled: true },
+        ],
+      });
+      mocks.readinessAssessmentFindFirst.mockResolvedValue({
+        id: 12,
+        result: 'PASSED',
+        assessmentVersion: 1,
+        completedAt: new Date(),
+        expiresAt: new Date(Date.now() + 60_000),
+        ...fingerprints,
+      });
+      mocks.computeReadinessFingerprints.mockResolvedValue(fingerprints);
+      mocks.getLiveWriteApprovalState.mockResolvedValue({
+        capabilities: [
+          {
+            capability: 'RISK_REDUCING',
+            effective: true,
+            approval: { revision: 2 },
+          },
+          {
+            capability: 'ENTRY',
+            effective: false,
+            reason: 'MISSING',
+            approval: null,
+          },
+        ],
+      });
+    });
+
+    it('activates only status while preserving disarmed latches and audit evidence', async () => {
+      await expect(
+        activateTradingAccountForAdmin(
+          1,
+          {
+            readinessAssessmentId: 12,
+            reason: 'First managed activation',
+            typedConfirmation: 'ACTIVATE LIVE ACCOUNT',
+            expectedUpdatedAt: updatedAt,
+          },
+          7,
+        ),
+      ).resolves.toMatchObject({
+        outcome: 'activated',
+        after: {
+          status: 'ACTIVE',
+          tradingEnabled: false,
+          killSwitchEnabled: true,
+        },
+      });
+      expect(mocks.tradingAccountUpdate).toHaveBeenCalledWith({
+        where: { id: 1 },
+        data: {
+          status: 'ACTIVE',
+          tradingEnabled: false,
+          killSwitchEnabled: true,
+          pausedReason: null,
+        },
+      });
+      expect(mocks.systemEventCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          type: 'trading_account.activated',
+          payloadJson: expect.objectContaining({ readinessAssessmentId: 12 }),
+        }),
+      });
+      expect(mocks.accountSubscriptionUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects stale readiness without changing account state', async () => {
+      mocks.computeReadinessFingerprints.mockResolvedValue({
+        ...fingerprints,
+        policyFingerprint: 'd'.repeat(64),
+      });
+      await expect(
+        activateTradingAccountForAdmin(
+          1,
+          {
+            readinessAssessmentId: 12,
+            reason: 'Activate',
+            typedConfirmation: 'ACTIVATE LIVE ACCOUNT',
+            expectedUpdatedAt: updatedAt,
+          },
+          7,
+        ),
+      ).rejects.toThrow('readiness evidence is stale');
+      expect(mocks.tradingAccountUpdate).not.toHaveBeenCalled();
+      expect(mocks.systemEventCreate).not.toHaveBeenCalled();
+    });
+
+    it('is idempotent without a duplicate activation audit event', async () => {
+      mocks.tradingAccountFindUnique.mockResolvedValue({
+        ...tradingAccount({
+          environment: TradingAccountEnvironment.LIVE,
+          status: TradingAccountStatus.ACTIVE,
+          tradingEnabled: false,
+          killSwitchEnabled: true,
+          updatedAt,
+        }),
+        credential: null,
+        accountSubscriptions: [],
+      });
+      const result = await activateTradingAccountForAdmin(
+        1,
+        {
+          readinessAssessmentId: 12,
+          reason: 'Retry',
+          typedConfirmation: 'ACTIVATE LIVE ACCOUNT',
+          expectedUpdatedAt: updatedAt,
+        },
+        7,
+      );
+      expect(result?.outcome).toBe('already_active_disarmed');
+      expect(mocks.systemEventCreate).not.toHaveBeenCalled();
+    });
   });
 
   describe('deactivation', () => {
     it('atomically pauses an active account and blocks only pending buy intents', async () => {
       mocks.tradingAccountFindUnique.mockResolvedValue({
         id: 1,
+        environment: TradingAccountEnvironment.LIVE,
         status: TradingAccountStatus.ACTIVE,
         tradingEnabled: true,
         killSwitchEnabled: false,
       });
       mocks.orderIntentUpdateMany.mockResolvedValue({ count: 2 });
+      mocks.accountSubscriptionUpdateMany.mockResolvedValue({ count: 3 });
 
       await expect(
-        deactivateTradingAccountForAdmin(
-          1,
-          { reason: 'Emergency pause' },
-          7
-        )
+        deactivateTradingAccountForAdmin(1, { reason: 'Emergency pause' }, 7),
       ).resolves.toEqual({
         before: {
           status: TradingAccountStatus.ACTIVE,
@@ -437,6 +635,7 @@ describe('trading account service', () => {
           killSwitchEnabled: true,
         },
         affectedPendingEntryIntentCount: 2,
+        affectedEntryEnabledAssignmentCount: 3,
       });
 
       expect(mocks.tradingAccountUpdate).toHaveBeenCalledWith({
@@ -458,6 +657,10 @@ describe('trading account service', () => {
           blockReason: 'Trading account deactivated: Emergency pause',
         },
       });
+      expect(mocks.accountSubscriptionUpdateMany).toHaveBeenCalledWith({
+        where: { tradingAccountId: 1, entriesEnabled: true },
+        data: { entriesEnabled: false },
+      });
       expect(mocks.systemEventCreate).toHaveBeenCalledWith({
         data: expect.objectContaining({
           type: 'trading_account.deactivated',
@@ -465,6 +668,7 @@ describe('trading account service', () => {
           actorUserId: 7,
           payloadJson: expect.objectContaining({
             affectedPendingEntryIntentCount: 2,
+            affectedEntryEnabledAssignmentCount: 3,
           }),
         }),
       });
@@ -481,7 +685,7 @@ describe('trading account service', () => {
       const result = await deactivateTradingAccountForAdmin(
         1,
         { reason: 'Keep paused' },
-        7
+        7,
       );
 
       expect(result?.before).toEqual(result?.after);
@@ -496,10 +700,12 @@ describe('trading account service', () => {
         tradingEnabled: true,
         killSwitchEnabled: false,
       });
-      mocks.systemEventCreate.mockRejectedValue(new Error('audit insert failed'));
+      mocks.systemEventCreate.mockRejectedValue(
+        new Error('audit insert failed'),
+      );
 
       await expect(
-        deactivateTradingAccountForAdmin(1, { reason: 'Pause' }, 7)
+        deactivateTradingAccountForAdmin(1, { reason: 'Pause' }, 7),
       ).rejects.toThrow('audit insert failed');
       expect(mocks.tradingAccountUpdate).toHaveBeenCalledOnce();
       expect(mocks.systemEventCreate).toHaveBeenCalledOnce();
@@ -513,7 +719,10 @@ describe('trading account service', () => {
           id: 10,
           environment,
           status: TradingAccountStatus.NEEDS_CREDENTIALS,
-          displayName: environment === TradingAccountEnvironment.PAPER ? 'Bobby Paper' : 'Bobby Live',
+          displayName:
+            environment === TradingAccountEnvironment.PAPER
+              ? 'Bobby Paper'
+              : 'Bobby Live',
         }),
         accountHolder: { name: 'Bobby W' },
         credential: null,
@@ -522,10 +731,15 @@ describe('trading account service', () => {
     }
 
     async function create(environment: TradingAccountEnvironment) {
-      mocks.tradingAccountFindUnique.mockResolvedValue(createdAccount(environment));
+      mocks.tradingAccountFindUnique.mockResolvedValue(
+        createdAccount(environment),
+      );
       return createTradingAccountForAdmin({
         accountHolderUserId: 1,
-        displayName: environment === TradingAccountEnvironment.PAPER ? 'Bobby Paper' : 'Bobby Live',
+        displayName:
+          environment === TradingAccountEnvironment.PAPER
+            ? 'Bobby Paper'
+            : 'Bobby Live',
         environment,
         estimatedTradingCapital: 5_000,
         maxDeployableNotional: 5_000,
@@ -537,7 +751,10 @@ describe('trading account service', () => {
       'allows a System Owner service caller to provision an Alpaca %s account with safe defaults',
       async (environment) => {
         await expect(create(environment)).resolves.toEqual(
-          expect.objectContaining({ environment, status: TradingAccountStatus.NEEDS_CREDENTIALS })
+          expect.objectContaining({
+            environment,
+            status: TradingAccountStatus.NEEDS_CREDENTIALS,
+          }),
         );
         expect(mocks.tradingAccountCreate).toHaveBeenCalledWith({
           data: expect.objectContaining({
@@ -552,18 +769,22 @@ describe('trading account service', () => {
           }),
           select: { id: true },
         });
-      }
+      },
     );
 
     it('rejects a missing account holder before creating anything', async () => {
       mocks.userFindUnique.mockResolvedValue(null);
-      await expect(create(TradingAccountEnvironment.PAPER)).rejects.toMatchObject({ statusCode: 404 });
+      await expect(
+        create(TradingAccountEnvironment.PAPER),
+      ).rejects.toMatchObject({ statusCode: 404 });
       expect(mocks.tradingAccountCreate).not.toHaveBeenCalled();
     });
 
     it('rejects a disabled account holder before creating anything', async () => {
       mocks.userFindUnique.mockResolvedValue({ id: 1, enabled: false });
-      await expect(create(TradingAccountEnvironment.PAPER)).rejects.toMatchObject({ statusCode: 400 });
+      await expect(
+        create(TradingAccountEnvironment.PAPER),
+      ).rejects.toMatchObject({ statusCode: 400 });
       expect(mocks.tradingAccountCreate).not.toHaveBeenCalled();
     });
 
@@ -571,13 +792,21 @@ describe('trading account service', () => {
       await create(TradingAccountEnvironment.PAPER);
       expect(mocks.transaction).toHaveBeenCalledOnce();
       expect(mocks.tradingAccountCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ memberships: { create: { userId: 1 } } }) })
+        expect.objectContaining({
+          data: expect.objectContaining({
+            memberships: { create: { userId: 1 } },
+          }),
+        }),
       );
     });
 
     it('propagates provisioning failures without returning a partially created account', async () => {
-      mocks.tradingAccountCreate.mockRejectedValue(new Error('membership insert failed'));
-      await expect(create(TradingAccountEnvironment.PAPER)).rejects.toThrow('membership insert failed');
+      mocks.tradingAccountCreate.mockRejectedValue(
+        new Error('membership insert failed'),
+      );
+      await expect(create(TradingAccountEnvironment.PAPER)).rejects.toThrow(
+        'membership insert failed',
+      );
       expect(mocks.tradingAccountFindUnique).not.toHaveBeenCalled();
     });
 
@@ -587,17 +816,23 @@ describe('trading account service', () => {
         mocks.tradingAccountFindFirst.mockResolvedValue({ id: 9 });
         await expect(create(environment)).rejects.toMatchObject({
           statusCode: 409,
-          message: expect.stringContaining(environment === TradingAccountEnvironment.PAPER ? 'Paper' : 'Live'),
+          message: expect.stringContaining(
+            environment === TradingAccountEnvironment.PAPER ? 'Paper' : 'Live',
+          ),
         });
         expect(mocks.tradingAccountCreate).not.toHaveBeenCalled();
-      }
+      },
     );
 
     it('permits one Paper and one Live account for the same holder', async () => {
       await create(TradingAccountEnvironment.PAPER);
       await create(TradingAccountEnvironment.LIVE);
       expect(mocks.tradingAccountCreate).toHaveBeenCalledTimes(2);
-      expect(mocks.tradingAccountFindFirst.mock.calls.map(([query]) => query.where.environment)).toEqual([
+      expect(
+        mocks.tradingAccountFindFirst.mock.calls.map(
+          ([query]) => query.where.environment,
+        ),
+      ).toEqual([
         TradingAccountEnvironment.PAPER,
         TradingAccountEnvironment.LIVE,
       ]);
@@ -606,20 +841,29 @@ describe('trading account service', () => {
     it('checks holder identity rather than membership access for duplicates', async () => {
       await create(TradingAccountEnvironment.PAPER);
       expect(mocks.tradingAccountFindFirst).toHaveBeenCalledWith({
-        where: { accountHolderUserId: 1, broker: TradingBroker.ALPACA, environment: TradingAccountEnvironment.PAPER },
+        where: {
+          accountHolderUserId: 1,
+          broker: TradingBroker.ALPACA,
+          environment: TradingAccountEnvironment.PAPER,
+        },
         select: { id: true },
       });
       expect(mocks.tradingAccountMembershipFindMany).not.toHaveBeenCalled();
     });
 
     it('translates a concurrent Prisma unique violation into the domain conflict', async () => {
-      const error = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-        code: 'P2002',
-        clientVersion: '7.8.0',
-        meta: { target: 'TradingAccount_holder_broker_environment_key' },
-      });
+      const error = new Prisma.PrismaClientKnownRequestError(
+        'Unique constraint failed',
+        {
+          code: 'P2002',
+          clientVersion: '7.8.0',
+          meta: { target: 'TradingAccount_holder_broker_environment_key' },
+        },
+      );
       mocks.tradingAccountCreate.mockRejectedValue(error);
-      await expect(create(TradingAccountEnvironment.LIVE)).rejects.toMatchObject({
+      await expect(
+        create(TradingAccountEnvironment.LIVE),
+      ).rejects.toMatchObject({
         statusCode: 409,
         message: expect.stringContaining('Alpaca Live'),
       });
@@ -632,7 +876,7 @@ describe('trading account service', () => {
     await expect(
       updateTradingAccountForAdmin(404, {
         displayName: 'Missing Account',
-      })
+      }),
     ).resolves.toBeNull();
     expect(mocks.tradingAccountUpdate).not.toHaveBeenCalled();
   });

@@ -7,9 +7,12 @@ import { Client } from 'pg';
 
 const runDatabaseTests = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1';
 const databaseUrl = process.env.DATABASE_URL;
-const describeDatabase = runDatabaseTests && databaseUrl ? describe : describe.skip;
-const migrationPath =
+const describeDatabase =
+  runDatabaseTests && databaseUrl ? describe : describe.skip;
+const originalMigrationPath =
   'prisma/migrations/20260724180000_lock_trading_account_operational_state/migration.sql';
+const migrationPath =
+  'prisma/migrations/20260816120000_allow_active_entry_disarmed/migration.sql';
 
 describeDatabase('TradingAccount operational-state database invariant', () => {
   const schema = `trading_account_state_${randomUUID().replaceAll('-', '')}`;
@@ -55,19 +58,11 @@ describeDatabase('TradingAccount operational-state database invariant', () => {
       VALUES
         (1, 'ACTIVE', true, false),
         (2, 'NEEDS_CREDENTIALS', false, true),
-        (3, 'PAUSED', true, false);
+        (3, 'PAUSED', false, true);
     `);
 
+    await client.query(await readFile(originalMigrationPath, 'utf8'));
     migrationSql = await readFile(migrationPath, 'utf8');
-    await expect(client.query(migrationSql)).rejects.toThrow(
-      /1 invalid row\(s\) found/
-    );
-
-    await client.query(`
-      UPDATE "TradingAccount"
-      SET "tradingEnabled" = false, "killSwitchEnabled" = true
-      WHERE "id" = 3
-    `);
     await client.query(migrationSql);
   });
 
@@ -107,7 +102,7 @@ describeDatabase('TradingAccount operational-state database invariant', () => {
         INSERT INTO "TradingAccount"
           ("id", "status", "tradingEnabled", "killSwitchEnabled")
         VALUES (10, 'NEEDS_CREDENTIALS', true, false)
-      `)
+      `),
     ).rejects.toThrow(/TradingAccount_operational_state_check/);
   });
 
@@ -117,9 +112,36 @@ describeDatabase('TradingAccount operational-state database invariant', () => {
         UPDATE "TradingAccount"
         SET "status" = 'PAUSED'
         WHERE "id" = 1
-      `)
+      `),
     ).rejects.toThrow(/TradingAccount_operational_state_check/);
   });
+
+  it('accepts ACTIVE entry-disarmed and entry-armed tuples', async () => {
+    await expect(
+      client.query(`
+      INSERT INTO "TradingAccount" ("id", "status", "tradingEnabled", "killSwitchEnabled")
+      VALUES (12, 'ACTIVE', false, true), (13, 'ACTIVE', true, false)
+    `),
+    ).resolves.toBeDefined();
+  });
+
+  it.each([
+    [14, false, false],
+    [15, true, true],
+  ])(
+    'rejects ambiguous ACTIVE tuple %s',
+    async (id, tradingEnabled, killSwitchEnabled) => {
+      await expect(
+        client.query(
+          `
+      INSERT INTO "TradingAccount" ("id", "status", "tradingEnabled", "killSwitchEnabled")
+      VALUES ($1, 'ACTIVE', $2, $3)
+    `,
+          [id, tradingEnabled, killSwitchEnabled],
+        ),
+      ).rejects.toThrow(/TradingAccount_operational_state_check/);
+    },
+  );
 
   it('rolls back operational state and its audit event together on failure', async () => {
     await expect(
@@ -138,9 +160,9 @@ describeDatabase('TradingAccount operational-state database invariant', () => {
           ('trading_account.deactivated', 'tradingAccount', '1', '{}', 1, 7);
         INSERT INTO "TradingAccount"
           ("id", "status", "tradingEnabled", "killSwitchEnabled")
-        VALUES (11, 'ACTIVE', false, true);
+        VALUES (11, 'ACTIVE', false, false);
         COMMIT;
-      `)
+      `),
     ).rejects.toThrow(/TradingAccount_operational_state_check/);
     await client.query('ROLLBACK');
 

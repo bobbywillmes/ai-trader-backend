@@ -1,6 +1,9 @@
 import {
+  BrokerCredentialStatus,
   Prisma,
   TradingAccountEnvironment,
+  TradingAccountReadinessPurpose,
+  TradingAccountReadinessResult,
   TradingAccountStatus,
   TradingBroker,
   type TradingAccount,
@@ -9,6 +12,7 @@ import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
 import type {
   CreateTradingAccountInput,
+  ActivateTradingAccountInput,
   DeactivateTradingAccountInput,
   UpdateTradingAccountInput,
 } from '../validators/trading-account.schema.js';
@@ -17,7 +21,20 @@ import {
   assertAccountRiskConfiguration,
   withAccountRiskConfigurationTransaction,
 } from './trading-account-risk-configuration.service.js';
-import { invalidateLiveWriteApprovals, LiveWriteCapability } from './live-write-approval.service.js';
+import {
+  invalidateLiveWriteApprovals,
+  LiveWriteCapability,
+} from './live-write-approval.service.js';
+import { getLiveWriteApprovalState } from './live-write-approval.service.js';
+import {
+  CREDENTIAL_VERIFICATION_MAX_AGE_MS,
+  READINESS_ASSESSMENT_VERSION,
+  computeReadinessFingerprints,
+} from './trading-account-readiness.service.js';
+import {
+  ACCOUNT_WORKFLOW_LOCK_FAMILIES,
+  withTradingAccountWorkflowLock,
+} from './trading-account-workflow-lock.service.js';
 
 const LEGACY_DEFAULT_TRADING_ACCOUNT = {
   broker: TradingBroker.ALPACA,
@@ -111,7 +128,7 @@ type TradingAccountOperationalState = Prisma.TradingAccountGetPayload<{
 
 function missingDefaultTradingAccountError() {
   return new Error(
-    'Default trading account could not be resolved. Set DEFAULT_TRADING_ACCOUNT_ID to a valid TradingAccount id or run scripts/bootstrap-default-trading-account.ts to create the Bobby Paper default account.'
+    'Default trading account could not be resolved. Set DEFAULT_TRADING_ACCOUNT_ID to a valid TradingAccount id or run scripts/bootstrap-default-trading-account.ts to create the Bobby Paper default account.',
   );
 }
 
@@ -123,12 +140,12 @@ export async function getTradingAccountById(id: number) {
 
 export function serializeTradingAccountForAdmin(
   account: TradingAccountAdminRecord,
-  totalOpenPositionNotional = 0
+  totalOpenPositionNotional = 0,
 ) {
   const credential = account.credential;
   const enabledAllocatedNotional = (account.allocations ?? []).reduce(
     (total, allocation) => total + (allocation.maxAllocatedNotional ?? 0),
-    0
+    0,
   );
   const remainingDeployableNotional =
     account.maxDeployableNotional === null
@@ -177,18 +194,31 @@ export function serializeTradingAccountForAdmin(
 }
 
 function duplicateTradingAccountError(environment: TradingAccountEnvironment) {
-  return new HttpError(409, `The selected User already has an Alpaca ${environment === TradingAccountEnvironment.PAPER ? 'Paper' : 'Live'} Trading Account.`);
+  return new HttpError(
+    409,
+    `The selected User already has an Alpaca ${environment === TradingAccountEnvironment.PAPER ? 'Paper' : 'Live'} Trading Account.`,
+  );
 }
 
-export async function createTradingAccountForAdmin(input: CreateTradingAccountInput) {
+export async function createTradingAccountForAdmin(
+  input: CreateTradingAccountInput,
+) {
   try {
     const accountId = await prisma.$transaction(async (tx) => {
-      const holder = await tx.user.findUnique({ where: { id: input.accountHolderUserId }, select: { id: true, enabled: true } });
+      const holder = await tx.user.findUnique({
+        where: { id: input.accountHolderUserId },
+        select: { id: true, enabled: true },
+      });
       if (!holder) throw new HttpError(404, 'Account holder User not found.');
-      if (!holder.enabled) throw new HttpError(400, 'Account holder User must be enabled.');
+      if (!holder.enabled)
+        throw new HttpError(400, 'Account holder User must be enabled.');
 
       const duplicate = await tx.tradingAccount.findFirst({
-        where: { accountHolderUserId: input.accountHolderUserId, broker: TradingBroker.ALPACA, environment: input.environment },
+        where: {
+          accountHolderUserId: input.accountHolderUserId,
+          broker: TradingBroker.ALPACA,
+          environment: input.environment,
+        },
         select: { id: true },
       });
       if (duplicate) throw duplicateTradingAccountError(input.environment);
@@ -203,8 +233,12 @@ export async function createTradingAccountForAdmin(input: CreateTradingAccountIn
           tradingEnabled: false,
           killSwitchEnabled: true,
           baseCurrency: 'USD',
-          ...(input.estimatedTradingCapital !== undefined && { estimatedTradingCapital: input.estimatedTradingCapital }),
-          ...(input.maxDeployableNotional !== undefined && { maxDeployableNotional: input.maxDeployableNotional }),
+          ...(input.estimatedTradingCapital !== undefined && {
+            estimatedTradingCapital: input.estimatedTradingCapital,
+          }),
+          ...(input.maxDeployableNotional !== undefined && {
+            maxDeployableNotional: input.maxDeployableNotional,
+          }),
           ...(input.notes !== undefined && { notes: input.notes }),
           memberships: { create: { userId: input.accountHolderUserId } },
         },
@@ -213,10 +247,14 @@ export async function createTradingAccountForAdmin(input: CreateTradingAccountIn
       return created.id;
     });
     const account = await getTradingAccountForAdmin(accountId);
-    if (!account) throw new Error('Created Trading Account could not be loaded.');
+    if (!account)
+      throw new Error('Created Trading Account could not be loaded.');
     return account;
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    ) {
       throw duplicateTradingAccountError(input.environment);
     }
     throw error;
@@ -232,16 +270,16 @@ function getPositionExposure(position: {
 }
 
 function sumOpenPositionNotional(
-  positions: TradingAccountOpenPositionExposure[]
+  positions: TradingAccountOpenPositionExposure[],
 ) {
   return positions.reduce(
     (total, position) => total + getPositionExposure(position),
-    0
+    0,
   );
 }
 
 async function getOpenPositionNotionalByTradingAccountId(
-  tradingAccountIds: number[]
+  tradingAccountIds: number[],
 ) {
   if (tradingAccountIds.length === 0) {
     return new Map<number, number>();
@@ -273,7 +311,7 @@ async function getOpenPositionNotionalByTradingAccountId(
     totals.set(
       position.tradingAccountId,
       (totals.get(position.tradingAccountId) ?? 0) +
-        getPositionExposure(position)
+        getPositionExposure(position),
     );
   }
 
@@ -289,14 +327,14 @@ export async function listTradingAccountsForAdmin() {
   });
   const openPositionNotionalByAccount =
     await getOpenPositionNotionalByTradingAccountId(
-      accounts.map((account) => account.id)
+      accounts.map((account) => account.id),
     );
 
   return accounts.map((account) =>
     serializeTradingAccountForAdmin(
       account,
-      openPositionNotionalByAccount.get(account.id) ?? 0
-    )
+      openPositionNotionalByAccount.get(account.id) ?? 0,
+    ),
   );
 }
 
@@ -321,7 +359,7 @@ export async function listTradingAccountsForUser(args: {
   });
 
   const allowedAccountIds = new Set(
-    memberships.map((membership) => membership.tradingAccountId)
+    memberships.map((membership) => membership.tradingAccountId),
   );
 
   return accounts.filter((account) => allowedAccountIds.has(account.id));
@@ -351,7 +389,7 @@ export async function getTradingAccountForAdmin(id: number) {
   return account
     ? serializeTradingAccountForAdmin(
         account,
-        sumOpenPositionNotional(positions)
+        sumOpenPositionNotional(positions),
       )
     : null;
 }
@@ -365,7 +403,7 @@ export async function getTradingAccountSummaryById(id: number) {
 
 export async function updateTradingAccountForAdmin(
   id: number,
-  input: UpdateTradingAccountInput
+  input: UpdateTradingAccountInput,
 ) {
   const data: Prisma.TradingAccountUpdateInput = {
     ...(input.displayName !== undefined && { displayName: input.displayName }),
@@ -400,7 +438,12 @@ export async function updateTradingAccountForAdmin(
       select: TRADING_ACCOUNT_ADMIN_SELECT,
     });
     if (input.maxDeployableNotional !== undefined) {
-      await invalidateLiveWriteApprovals(tx, id, [LiveWriteCapability.ENTRY], 'Account deployable notional changed.');
+      await invalidateLiveWriteApprovals(
+        tx,
+        id,
+        [LiveWriteCapability.ENTRY],
+        'Account deployable notional changed.',
+      );
     }
     return serializeTradingAccountForAdmin(account);
   });
@@ -408,89 +451,430 @@ export async function updateTradingAccountForAdmin(
 
 function changedOperationalFields(
   before: TradingAccountOperationalState,
-  after: TradingAccountOperationalState
+  after: TradingAccountOperationalState,
 ) {
-  return (Object.keys(after) as Array<keyof TradingAccountOperationalState>)
-    .filter((field) => before[field] !== after[field]);
+  return (
+    Object.keys(after) as Array<keyof TradingAccountOperationalState>
+  ).filter((field) => before[field] !== after[field]);
 }
 
 export async function deactivateTradingAccountForAdmin(
   id: number,
   input: DeactivateTradingAccountInput,
-  actorUserId: number
+  actorUserId: number,
 ) {
-  return withAccountRiskConfigurationTransaction(async (tx) => {
-    const account = await tx.tradingAccount.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        ...TRADING_ACCOUNT_OPERATIONAL_STATE_SELECT,
-      },
-    });
-    if (!account) return null;
+  const locked = await withTradingAccountWorkflowLock({
+    tradingAccountId: id,
+    workflowKey: ACCOUNT_WORKFLOW_LOCK_FAMILIES.OPERATIONAL_STATE,
+    processInstanceId: `deactivate:${actorUserId}`,
+    execute: () =>
+      withAccountRiskConfigurationTransaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "TradingAccount" WHERE id = ${id} FOR UPDATE`;
+        const account = await tx.tradingAccount.findUnique({
+          where: { id },
+          select: {
+            id: true,
+            environment: true,
+            ...TRADING_ACCOUNT_OPERATIONAL_STATE_SELECT,
+          },
+        });
+        if (!account) return null;
 
-    const before: TradingAccountOperationalState = {
-      status: account.status,
-      tradingEnabled: account.tradingEnabled,
-      killSwitchEnabled: account.killSwitchEnabled,
-    };
-    const after: TradingAccountOperationalState = {
-      status: TradingAccountStatus.PAUSED,
-      tradingEnabled: false,
-      killSwitchEnabled: true,
-    };
+        const before: TradingAccountOperationalState = {
+          status: account.status,
+          tradingEnabled: account.tradingEnabled,
+          killSwitchEnabled: account.killSwitchEnabled,
+        };
+        const after: TradingAccountOperationalState = {
+          status: TradingAccountStatus.PAUSED,
+          tradingEnabled: false,
+          killSwitchEnabled: true,
+        };
 
-    await tx.tradingAccount.update({
-      where: { id },
-      data: after,
-    });
+        await tx.tradingAccount.update({
+          where: { id },
+          data: after,
+        });
 
-    const blockedEntries = await tx.orderIntent.updateMany({
-      where: {
-        tradingAccountId: id,
-        status: 'pending',
-        side: 'buy',
-      },
-      data: {
-        status: 'blocked',
-        blockReason: `Trading account deactivated: ${input.reason}`,
-      },
-    });
-    await invalidateLiveWriteApprovals(tx, id, [LiveWriteCapability.ENTRY], 'Trading account was deactivated.');
+        const disabledAssignments =
+          account.environment === TradingAccountEnvironment.LIVE
+            ? await tx.tradingAccountSubscription.updateMany({
+                where: { tradingAccountId: id, entriesEnabled: true },
+                data: { entriesEnabled: false },
+              })
+            : { count: 0 };
 
-    const occurredAt = new Date();
-    await tx.systemEvent.create({
-      data: {
-        type: 'trading_account.deactivated',
-        entityType: 'tradingAccount',
-        entityId: String(id),
-        tradingAccountId: id,
-        actorUserId: actorUserId > 0 ? actorUserId : null,
-        message: `Trading account ${id} was deactivated.`,
-        payloadJson: {
-          actorUserId,
-          tradingAccountId: id,
-          occurredAt: occurredAt.toISOString(),
-          reason: input.reason,
+        const blockedEntries = await tx.orderIntent.updateMany({
+          where: {
+            tradingAccountId: id,
+            status: 'pending',
+            side: 'buy',
+          },
+          data: {
+            status: 'blocked',
+            blockReason: `Trading account deactivated: ${input.reason}`,
+          },
+        });
+        await invalidateLiveWriteApprovals(
+          tx,
+          id,
+          [LiveWriteCapability.ENTRY],
+          'Trading account was deactivated.',
+        );
+
+        const occurredAt = new Date();
+        await tx.systemEvent.create({
+          data: {
+            type: 'trading_account.deactivated',
+            entityType: 'tradingAccount',
+            entityId: String(id),
+            tradingAccountId: id,
+            actorUserId: actorUserId > 0 ? actorUserId : null,
+            message: `Trading account ${id} was deactivated.`,
+            payloadJson: {
+              actorUserId,
+              tradingAccountId: id,
+              occurredAt: occurredAt.toISOString(),
+              reason: input.reason,
+              before,
+              after,
+              changedFields: changedOperationalFields(before, after),
+              affectedPendingEntryIntentCount: blockedEntries.count,
+              affectedEntryEnabledAssignmentCount: disabledAssignments.count,
+            },
+          },
+        });
+
+        return {
           before,
           after,
-          changedFields: changedOperationalFields(before, after),
           affectedPendingEntryIntentCount: blockedEntries.count,
-        },
-      },
-    });
-
-    return {
-      before,
-      after,
-      affectedPendingEntryIntentCount: blockedEntries.count,
-    };
+          affectedEntryEnabledAssignmentCount: disabledAssignments.count,
+        };
+      }),
   });
+  if (locked.outcome === 'ACQUIRED_AND_COMPLETED') return locked.value;
+  if (locked.outcome === 'NOT_ACQUIRED') {
+    throw new HttpError(
+      409,
+      'A Trading Account operational-state change is already running.',
+    );
+  }
+  throw locked.error;
+}
+
+export async function activateTradingAccountForAdmin(
+  id: number,
+  input: ActivateTradingAccountInput,
+  actorUserId: number,
+) {
+  const locked = await withTradingAccountWorkflowLock({
+    tradingAccountId: id,
+    workflowKey: ACCOUNT_WORKFLOW_LOCK_FAMILIES.OPERATIONAL_STATE,
+    processInstanceId: `activate:${actorUserId}`,
+    execute: () =>
+      withAccountRiskConfigurationTransaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "TradingAccount" WHERE id = ${id} FOR UPDATE`;
+        const account = await tx.tradingAccount.findUnique({
+          where: { id },
+          include: {
+            credential: true,
+            accountSubscriptions: {
+              where: { enabled: true },
+              select: { id: true, entriesEnabled: true, exitsEnabled: true },
+            },
+          },
+        });
+        if (!account) return null;
+        if (account.environment !== TradingAccountEnvironment.LIVE) {
+          throw new HttpError(
+            400,
+            'Activation is available only for LIVE Trading Accounts.',
+          );
+        }
+        if (
+          account.status === TradingAccountStatus.ACTIVE &&
+          !account.tradingEnabled &&
+          account.killSwitchEnabled
+        ) {
+          return {
+            outcome: 'already_active_disarmed' as const,
+            before: {
+              status: account.status,
+              tradingEnabled: account.tradingEnabled,
+              killSwitchEnabled: account.killSwitchEnabled,
+            },
+            after: {
+              status: account.status,
+              tradingEnabled: account.tradingEnabled,
+              killSwitchEnabled: account.killSwitchEnabled,
+            },
+            readinessAssessmentId: input.readinessAssessmentId,
+          };
+        }
+        if (
+          account.status !== TradingAccountStatus.PAUSED ||
+          account.tradingEnabled ||
+          !account.killSwitchEnabled
+        ) {
+          throw new HttpError(
+            409,
+            'Activation requires the exact PAUSED / trading disabled / kill switch enabled starting posture.',
+          );
+        }
+        if (account.updatedAt.getTime() !== input.expectedUpdatedAt.getTime()) {
+          throw new HttpError(
+            409,
+            'Trading Account changed; refresh and retry activation.',
+          );
+        }
+        if (
+          env.NODE_ENV !== 'production' ||
+          env.LIVE_WRITE_DEPLOYMENT_ROLE !== 'PRODUCTION_EXECUTOR'
+        ) {
+          throw new HttpError(
+            403,
+            'Activation requires a production executor deployment.',
+          );
+        }
+        if (!env.ALLOW_LIVE_RISK_REDUCING_WRITES || env.ALLOW_LIVE_TRADING) {
+          throw new HttpError(
+            409,
+            'Activation requires risk-reducing writes enabled and Live entry writes disabled.',
+          );
+        }
+        const assessment = await tx.tradingAccountReadinessAssessment.findFirst(
+          {
+            where: {
+              id: input.readinessAssessmentId,
+              tradingAccountId: id,
+              purpose: TradingAccountReadinessPurpose.LIVE_ACTIVATION,
+            },
+          },
+        );
+        if (!assessment)
+          throw new HttpError(
+            409,
+            'A same-account LIVE_ACTIVATION readiness assessment is required.',
+          );
+        if (assessment.result !== TradingAccountReadinessResult.PASSED) {
+          throw new HttpError(
+            409,
+            'Activation readiness assessment did not pass.',
+          );
+        }
+        if (assessment.assessmentVersion !== READINESS_ASSESSMENT_VERSION) {
+          throw new HttpError(
+            409,
+            'Activation readiness assessment version is unsupported.',
+          );
+        }
+        if (assessment.expiresAt.getTime() <= Date.now()) {
+          throw new HttpError(
+            409,
+            'Activation readiness assessment has expired.',
+          );
+        }
+        const fingerprints = await computeReadinessFingerprints(id, tx);
+        if (
+          !fingerprints ||
+          fingerprints.configurationFingerprint !==
+            assessment.configurationFingerprint ||
+          fingerprints.credentialFingerprint !==
+            assessment.credentialFingerprint ||
+          fingerprints.policyFingerprint !== assessment.policyFingerprint
+        ) {
+          throw new HttpError(
+            409,
+            'Activation readiness evidence is stale. Run a new assessment.',
+          );
+        }
+        const credential = account.credential;
+        if (
+          !credential ||
+          credential.status !== BrokerCredentialStatus.ACTIVE ||
+          credential.revokedAt ||
+          !credential.verifiedAt ||
+          Date.now() - credential.verifiedAt.getTime() >
+            CREDENTIAL_VERIFICATION_MAX_AGE_MS
+        ) {
+          throw new HttpError(
+            409,
+            'Current usable and recently verified credentials are required.',
+          );
+        }
+        if (
+          !account.accountSubscriptions.length ||
+          account.accountSubscriptions.some(
+            (assignment) =>
+              assignment.entriesEnabled || !assignment.exitsEnabled,
+          )
+        ) {
+          throw new HttpError(
+            409,
+            'Enabled assignments must keep entries disabled and exits enabled.',
+          );
+        }
+        const approvalState = await getLiveWriteApprovalState(id, tx);
+        const riskApproval = approvalState.capabilities.find(
+          (item) => item.capability === LiveWriteCapability.RISK_REDUCING,
+        )!;
+        const entryApproval = approvalState.capabilities.find(
+          (item) => item.capability === LiveWriteCapability.ENTRY,
+        )!;
+        if (!riskApproval.effective)
+          throw new HttpError(
+            409,
+            'Effective RISK_REDUCING approval is required.',
+          );
+        if (entryApproval.effective)
+          throw new HttpError(
+            409,
+            'ENTRY approval must remain ineffective during activation.',
+          );
+        const [
+          openPositions,
+          closingPositions,
+          nonterminalIntents,
+          nonterminalOrders,
+          exitAttention,
+        ] = await Promise.all([
+          tx.trackedPosition.count({
+            where: { tradingAccountId: id, status: 'open' },
+          }),
+          tx.trackedPosition.count({
+            where: { tradingAccountId: id, status: 'closing' },
+          }),
+          tx.orderIntent.count({
+            where: {
+              tradingAccountId: id,
+              status: {
+                in: ['received', 'pending', 'submitting', 'submitted'],
+              },
+            },
+          }),
+          tx.brokerOrder.count({
+            where: {
+              tradingAccountId: id,
+              status: {
+                notIn: [
+                  'filled',
+                  'canceled',
+                  'cancelled',
+                  'expired',
+                  'rejected',
+                  'replaced',
+                  'done_for_day',
+                  'calculated',
+                ],
+              },
+            },
+          }),
+          tx.positionExitState.count({
+            where: {
+              attentionRequired: true,
+              trackedPosition: { tradingAccountId: id },
+            },
+          }),
+        ]);
+        if (
+          openPositions ||
+          closingPositions ||
+          nonterminalIntents ||
+          nonterminalOrders ||
+          exitAttention
+        ) {
+          throw new HttpError(
+            409,
+            'First activation requires zero current local lifecycle exposure.',
+          );
+        }
+        const before = {
+          status: account.status,
+          tradingEnabled: account.tradingEnabled,
+          killSwitchEnabled: account.killSwitchEnabled,
+        };
+        const after = {
+          status: TradingAccountStatus.ACTIVE,
+          tradingEnabled: false,
+          killSwitchEnabled: true,
+        };
+        await tx.tradingAccount.update({
+          where: { id },
+          data: { ...after, pausedReason: null },
+        });
+        await tx.systemEvent.create({
+          data: {
+            type: 'trading_account.activated',
+            entityType: 'tradingAccount',
+            entityId: String(id),
+            tradingAccountId: id,
+            actorUserId,
+            message: `Trading account ${id} activated with entries disarmed.`,
+            payloadJson: {
+              actorUserId,
+              reason: input.reason,
+              typedConfirmation: input.typedConfirmation,
+              before,
+              after,
+              readinessAssessmentId: assessment.id,
+              assessmentVersion: assessment.assessmentVersion,
+              assessmentCompletedAt: assessment.completedAt.toISOString(),
+              assessmentExpiresAt: assessment.expiresAt.toISOString(),
+              fingerprintPrefixes: {
+                configuration: assessment.configurationFingerprint.slice(0, 12),
+                credential: assessment.credentialFingerprint.slice(0, 12),
+                policy: assessment.policyFingerprint.slice(0, 12),
+              },
+              deploymentPolicy: {
+                role: env.LIVE_WRITE_DEPLOYMENT_ROLE,
+                allowLiveRiskReducingWrites:
+                  env.ALLOW_LIVE_RISK_REDUCING_WRITES,
+                allowLiveTrading: env.ALLOW_LIVE_TRADING,
+              },
+              liveWriteApprovals: {
+                riskReducing: {
+                  effective: riskApproval.effective,
+                  revision: riskApproval.approval?.revision ?? null,
+                },
+                entry: {
+                  effective: entryApproval.effective,
+                  reason: entryApproval.reason,
+                },
+              },
+              enabledAssignments: account.accountSubscriptions,
+              localEvidence: {
+                openPositions,
+                closingPositions,
+                nonterminalIntents,
+                nonterminalOrders,
+                exitAttention,
+              },
+            },
+          },
+        });
+        return {
+          outcome: 'activated' as const,
+          before,
+          after,
+          readinessAssessmentId: assessment.id,
+        };
+      }),
+  });
+  if (locked.outcome === 'ACQUIRED_AND_COMPLETED') return locked.value;
+  if (locked.outcome === 'NOT_ACQUIRED')
+    throw new HttpError(
+      409,
+      'A Trading Account operational-state change is already running.',
+    );
+  throw locked.error;
 }
 
 export async function resolveDefaultTradingAccount(): Promise<TradingAccount> {
   if (env.DEFAULT_TRADING_ACCOUNT_ID !== undefined) {
-    const configured = await getTradingAccountById(env.DEFAULT_TRADING_ACCOUNT_ID);
+    const configured = await getTradingAccountById(
+      env.DEFAULT_TRADING_ACCOUNT_ID,
+    );
 
     if (!configured) {
       throw missingDefaultTradingAccountError();

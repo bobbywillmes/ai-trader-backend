@@ -35,7 +35,12 @@ Stages are `CREDENTIALS_CONFIGURED`, `CREDENTIALS_VERIFIED`,
 
 Three deterministic SHA-256 fingerprints cover readiness configuration, safe
 credential metadata, and the effective `ALLOW_LIVE_TRADING` and
-`ALLOW_LIVE_RISK_REDUCING_WRITES` policy values. Historical rows never change.
+`ALLOW_LIVE_RISK_REDUCING_WRITES` policy values, plus
+`LIVE_WRITE_DEPLOYMENT_ROLE`. Historical rows never change. First activation
+requires `PRODUCTION_EXECUTOR`, `PAUSED / false / true`, zero broker and local
+exposure, disarmed assignment entries, enabled exits, and effective
+RISK_REDUCING authorization. It produces `ACTIVE / ENTRY DISARMED`; entry arming
+is separate future scope.
 Reads compare current fingerprints and report `CURRENT`, `STALE`, or `EXPIRED`
 plus configuration, credential, and policy stale reasons. Expiration (five
 minutes) takes display precedence. Credential verification freshness is 15

@@ -3,7 +3,7 @@ import {
   useQueries,
   useQuery,
   useQueryClient,
-} from "@tanstack/react-query";
+} from '@tanstack/react-query';
 import {
   createTradingAccountAllocation,
   createTradingAccount,
@@ -33,7 +33,8 @@ import {
   getLiveWriteApprovals,
   grantLiveWriteApproval,
   revokeLiveWriteApproval,
-} from "./api";
+  activateTradingAccount,
+} from './api';
 import type {
   AccountSubscriptionMarketContextStatus,
   AccountSubscriptionPriceHistoryRange,
@@ -46,28 +47,30 @@ import type {
   UpdateTradingAccountPayload,
   UpsertTradingAccountCredentialPayload,
   LiveWriteCapability,
-} from "./types";
+  ActivateTradingAccountPayload,
+} from './types';
 
 export const tradingAccountKeys = {
-  all: ["tradingAccounts"] as const,
-  lists: () => [...tradingAccountKeys.all, "list"] as const,
-  details: () => [...tradingAccountKeys.all, "detail"] as const,
+  all: ['tradingAccounts'] as const,
+  lists: () => [...tradingAccountKeys.all, 'list'] as const,
+  details: () => [...tradingAccountKeys.all, 'detail'] as const,
   detail: (id: number) => [...tradingAccountKeys.details(), id] as const,
   riskSettings: (id: number) =>
-    [...tradingAccountKeys.detail(id), "riskSettings"] as const,
+    [...tradingAccountKeys.detail(id), 'riskSettings'] as const,
   riskHealth: (id: number) =>
-    [...tradingAccountKeys.detail(id), "riskHealth"] as const,
+    [...tradingAccountKeys.detail(id), 'riskHealth'] as const,
   workerHealth: (id: number) =>
-    [...tradingAccountKeys.detail(id), "workerHealth"] as const,
+    [...tradingAccountKeys.detail(id), 'workerHealth'] as const,
   readiness: (id: number) =>
-    [...tradingAccountKeys.detail(id), "readiness"] as const,
+    [...tradingAccountKeys.detail(id), 'readiness'] as const,
   readinessHistory: (id: number) =>
-    [...tradingAccountKeys.readiness(id), "history"] as const,
-  liveWriteApprovals: (id: number) => [...tradingAccountKeys.detail(id), "liveWriteApprovals"] as const,
+    [...tradingAccountKeys.readiness(id), 'history'] as const,
+  liveWriteApprovals: (id: number) =>
+    [...tradingAccountKeys.detail(id), 'liveWriteApprovals'] as const,
   allocations: (id: number) =>
-    [...tradingAccountKeys.detail(id), "allocations"] as const,
+    [...tradingAccountKeys.detail(id), 'allocations'] as const,
   accountSubscriptions: (id: number) =>
-    [...tradingAccountKeys.detail(id), "accountSubscriptions"] as const,
+    [...tradingAccountKeys.detail(id), 'accountSubscriptions'] as const,
   accountSubscription: (id: number, accountSubscriptionId: number) =>
     [
       ...tradingAccountKeys.accountSubscriptions(id),
@@ -76,22 +79,22 @@ export const tradingAccountKeys = {
   accountSubscriptionMarketContext: (
     id: number,
     status: AccountSubscriptionMarketContextStatus,
-    symbolsKey: string
+    symbolsKey: string,
   ) =>
     [
       ...tradingAccountKeys.accountSubscriptions(id),
-      "marketContext",
+      'marketContext',
       status,
       symbolsKey,
     ] as const,
   accountSubscriptionPriceHistory: (
     id: number,
     accountSubscriptionId: number,
-    range: AccountSubscriptionPriceHistoryRange
+    range: AccountSubscriptionPriceHistoryRange,
   ) =>
     [
       ...tradingAccountKeys.accountSubscription(id, accountSubscriptionId),
-      "priceHistory",
+      'priceHistory',
       range,
     ] as const,
 };
@@ -108,17 +111,23 @@ export function useCreateTradingAccount(token: string | null) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (payload: CreateTradingAccountPayload) => {
-      if (!token) throw new Error("Admin session is missing. Please log in again.");
+      if (!token)
+        throw new Error('Admin session is missing. Please log in again.');
       return createTradingAccount(payload, token);
     },
     onSuccess: ({ account }) => {
       queryClient.invalidateQueries({ queryKey: tradingAccountKeys.lists() });
-      queryClient.setQueryData(tradingAccountKeys.detail(account.id), { account });
+      queryClient.setQueryData(tradingAccountKeys.detail(account.id), {
+        account,
+      });
     },
   });
 }
 
-export function useTradingAccount(id: number | undefined, token: string | null) {
+export function useTradingAccount(
+  id: number | undefined,
+  token: string | null,
+) {
   return useQuery({
     queryKey: id ? tradingAccountKeys.detail(id) : tradingAccountKeys.details(),
     queryFn: () => getTradingAccount(id as number, token as string),
@@ -126,71 +135,134 @@ export function useTradingAccount(id: number | undefined, token: string | null) 
   });
 }
 
-export function useLatestTradingAccountReadiness(id: number | undefined, token: string | null) {
+export function useLatestTradingAccountReadiness(
+  id: number | undefined,
+  token: string | null,
+) {
   return useQuery({
-    queryKey: id ? tradingAccountKeys.readiness(id) : [...tradingAccountKeys.all, "readiness"],
-    queryFn: () => getLatestTradingAccountReadiness(id as number, token as string),
+    queryKey: id
+      ? tradingAccountKeys.readiness(id)
+      : [...tradingAccountKeys.all, 'readiness'],
+    queryFn: () =>
+      getLatestTradingAccountReadiness(id as number, token as string),
     enabled: Boolean(token && id),
   });
 }
 
-export function useTradingAccountReadinessHistory(id: number | undefined, token: string | null) {
+export function useTradingAccountReadinessHistory(
+  id: number | undefined,
+  token: string | null,
+) {
   return useQuery({
-    queryKey: id ? tradingAccountKeys.readinessHistory(id) : [...tradingAccountKeys.all, "readinessHistory"],
+    queryKey: id
+      ? tradingAccountKeys.readinessHistory(id)
+      : [...tradingAccountKeys.all, 'readinessHistory'],
     queryFn: () => listTradingAccountReadiness(id as number, token as string),
     enabled: Boolean(token && id),
   });
 }
 
-export function useRunTradingAccountReadiness(id: number, token: string | null) {
+export function useRunTradingAccountReadiness(
+  id: number,
+  token: string | null,
+) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => {
-      if (!token) throw new Error("Admin session is missing. Please log in again.");
+      if (!token)
+        throw new Error('Admin session is missing. Please log in again.');
       return runTradingAccountReadiness(id, token);
     },
     onSuccess: ({ assessment }) => {
-      queryClient.setQueryData(tradingAccountKeys.readiness(id), { assessment });
-      queryClient.invalidateQueries({ queryKey: tradingAccountKeys.readinessHistory(id) });
+      queryClient.setQueryData(tradingAccountKeys.readiness(id), {
+        assessment,
+      });
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.readinessHistory(id),
+      });
+    },
+  });
+}
+
+export function useActivateTradingAccount(id: number, token: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: ActivateTradingAccountPayload) => {
+      if (!token)
+        throw new Error('Admin session is missing. Please log in again.');
+      return activateTradingAccount(id, payload, token);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.detail(id),
+      });
+      queryClient.invalidateQueries({ queryKey: tradingAccountKeys.lists() });
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.readiness(id),
+      });
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.liveWriteApprovals(id),
+      });
     },
   });
 }
 
 export function useLiveWriteApprovals(id: number, token: string | null) {
-  return useQuery({ queryKey: tradingAccountKeys.liveWriteApprovals(id),
-    queryFn: () => getLiveWriteApprovals(id, token as string), enabled: Boolean(token) });
+  return useQuery({
+    queryKey: tradingAccountKeys.liveWriteApprovals(id),
+    queryFn: () => getLiveWriteApprovals(id, token as string),
+    enabled: Boolean(token),
+  });
 }
 
 export function useGrantLiveWriteApproval(id: number, token: string | null) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ capability, payload }: { capability: LiveWriteCapability; payload: unknown }) => {
-      if (!token) throw new Error("Admin session is missing.");
+    mutationFn: ({
+      capability,
+      payload,
+    }: {
+      capability: LiveWriteCapability;
+      payload: unknown;
+    }) => {
+      if (!token) throw new Error('Admin session is missing.');
       return grantLiveWriteApproval(id, capability, payload, token);
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: tradingAccountKeys.liveWriteApprovals(id) }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.liveWriteApprovals(id),
+      }),
   });
 }
 
 export function useRevokeLiveWriteApproval(id: number, token: string | null) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ capability, payload }: { capability: LiveWriteCapability; payload: unknown }) => {
-      if (!token) throw new Error("Admin session is missing.");
+    mutationFn: ({
+      capability,
+      payload,
+    }: {
+      capability: LiveWriteCapability;
+      payload: unknown;
+    }) => {
+      if (!token) throw new Error('Admin session is missing.');
       return revokeLiveWriteApproval(id, capability, payload, token);
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: tradingAccountKeys.liveWriteApprovals(id) }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.liveWriteApprovals(id),
+      }),
   });
 }
 
 export function useTradingAccountRiskSettings(
   id: number | undefined,
-  token: string | null
+  token: string | null,
 ) {
   return useQuery({
     queryKey: id
       ? tradingAccountKeys.riskSettings(id)
-      : [...tradingAccountKeys.details(), "riskSettings"],
+      : [...tradingAccountKeys.details(), 'riskSettings'],
     queryFn: () => getTradingAccountRiskSettings(id as number, token as string),
     enabled: Boolean(token && id),
   });
@@ -198,12 +270,12 @@ export function useTradingAccountRiskSettings(
 
 export function useTradingAccountRiskHealth(
   id: number | undefined,
-  token: string | null
+  token: string | null,
 ) {
   return useQuery({
     queryKey: id
       ? tradingAccountKeys.riskHealth(id)
-      : [...tradingAccountKeys.details(), "riskHealth"],
+      : [...tradingAccountKeys.details(), 'riskHealth'],
     queryFn: () => getTradingAccountRiskHealth(id as number, token as string),
     enabled: Boolean(token && id),
     staleTime: 60000,
@@ -211,11 +283,13 @@ export function useTradingAccountRiskHealth(
 }
 
 export function useTradingAccountWorkerHealth(
-  id: number | undefined, token: string | null
+  id: number | undefined,
+  token: string | null,
 ) {
   return useQuery({
-    queryKey: id ? tradingAccountKeys.workerHealth(id) :
-      [...tradingAccountKeys.details(), "workerHealth"],
+    queryKey: id
+      ? tradingAccountKeys.workerHealth(id)
+      : [...tradingAccountKeys.details(), 'workerHealth'],
     queryFn: () => getTradingAccountWorkerHealth(id as number, token as string),
     enabled: Boolean(token && id),
     refetchInterval: 30000,
@@ -224,7 +298,7 @@ export function useTradingAccountWorkerHealth(
 
 export function useTradingAccountRiskHealthSummaries(
   ids: number[],
-  token: string | null
+  token: string | null,
 ) {
   return useQueries({
     queries: ids.map((id) => ({
@@ -238,12 +312,12 @@ export function useTradingAccountRiskHealthSummaries(
 
 export function useTradingAccountAllocations(
   id: number | undefined,
-  token: string | null
+  token: string | null,
 ) {
   return useQuery({
     queryKey: id
       ? tradingAccountKeys.allocations(id)
-      : [...tradingAccountKeys.details(), "allocations"],
+      : [...tradingAccountKeys.details(), 'allocations'],
     queryFn: () => listTradingAccountAllocations(id as number, token as string),
     enabled: Boolean(token && id),
   });
@@ -251,13 +325,14 @@ export function useTradingAccountAllocations(
 
 export function useTradingAccountSubscriptions(
   id: number | undefined,
-  token: string | null
+  token: string | null,
 ) {
   return useQuery({
     queryKey: id
       ? tradingAccountKeys.accountSubscriptions(id)
-      : [...tradingAccountKeys.details(), "accountSubscriptions"],
-    queryFn: () => listTradingAccountSubscriptions(id as number, token as string),
+      : [...tradingAccountKeys.details(), 'accountSubscriptions'],
+    queryFn: () =>
+      listTradingAccountSubscriptions(id as number, token as string),
     enabled: Boolean(token && id),
   });
 }
@@ -265,18 +340,18 @@ export function useTradingAccountSubscriptions(
 export function useTradingAccountSubscription(
   id: number | undefined,
   accountSubscriptionId: number | undefined,
-  token: string | null
+  token: string | null,
 ) {
   return useQuery({
     queryKey:
       id && accountSubscriptionId
         ? tradingAccountKeys.accountSubscription(id, accountSubscriptionId)
-        : [...tradingAccountKeys.details(), "accountSubscriptions", "detail"],
+        : [...tradingAccountKeys.details(), 'accountSubscriptions', 'detail'],
     queryFn: () =>
       getTradingAccountSubscription(
         id as number,
         accountSubscriptionId as number,
-        token as string
+        token as string,
       ),
     enabled: Boolean(token && id && accountSubscriptionId),
   });
@@ -285,24 +360,32 @@ export function useTradingAccountSubscription(
 export function useTradingAccountSubscriptionMarketContext(
   id: number | undefined,
   token: string | null,
-  status: AccountSubscriptionMarketContextStatus = "active",
-  symbols: string[] = []
+  status: AccountSubscriptionMarketContextStatus = 'active',
+  symbols: string[] = [],
 ) {
-  const symbolsKey = symbols.map((symbol) => symbol.toUpperCase()).join(",");
+  const symbolsKey = symbols.map((symbol) => symbol.toUpperCase()).join(',');
 
   return useQuery({
     queryKey: id
       ? tradingAccountKeys.accountSubscriptionMarketContext(
           id,
           status,
-          symbolsKey
+          symbolsKey,
         )
-      : [...tradingAccountKeys.details(), "accountSubscriptions", "marketContext"],
+      : [
+          ...tradingAccountKeys.details(),
+          'accountSubscriptions',
+          'marketContext',
+        ],
     queryFn: () =>
-      listTradingAccountSubscriptionMarketContext(id as number, token as string, {
-        status,
-        ...(symbols.length > 0 && { symbols }),
-      }),
+      listTradingAccountSubscriptionMarketContext(
+        id as number,
+        token as string,
+        {
+          status,
+          ...(symbols.length > 0 && { symbols }),
+        },
+      ),
     enabled: Boolean(token && id),
     staleTime: 60000,
     refetchInterval: 120000,
@@ -313,7 +396,7 @@ export function useTradingAccountSubscriptionPriceHistory(
   id: number | undefined,
   accountSubscriptionId: number | undefined,
   token: string | null,
-  range: AccountSubscriptionPriceHistoryRange = "1y"
+  range: AccountSubscriptionPriceHistoryRange = '1y',
 ) {
   return useQuery({
     queryKey:
@@ -321,12 +404,12 @@ export function useTradingAccountSubscriptionPriceHistory(
         ? tradingAccountKeys.accountSubscriptionPriceHistory(
             id,
             accountSubscriptionId,
-            range
+            range,
           )
         : [
             ...tradingAccountKeys.details(),
-            "accountSubscriptions",
-            "priceHistory",
+            'accountSubscriptions',
+            'priceHistory',
             range,
           ],
     queryFn: () =>
@@ -334,7 +417,7 @@ export function useTradingAccountSubscriptionPriceHistory(
         id as number,
         accountSubscriptionId as number,
         token as string,
-        range
+        range,
       ),
     enabled: Boolean(token && id && accountSubscriptionId),
     staleTime: 300000,
@@ -353,7 +436,7 @@ export function useUpdateTradingAccount(token: string | null) {
       payload: UpdateTradingAccountPayload;
     }) => {
       if (!token) {
-        throw new Error("Admin session is missing. Please log in again.");
+        throw new Error('Admin session is missing. Please log in again.');
       }
 
       return updateTradingAccount(id, payload, token);
@@ -382,7 +465,7 @@ export function useUpsertTradingAccountCredential(token: string | null) {
       payload: UpsertTradingAccountCredentialPayload;
     }) => {
       if (!token) {
-        throw new Error("Admin session is missing. Please log in again.");
+        throw new Error('Admin session is missing. Please log in again.');
       }
 
       return upsertTradingAccountCredential(id, payload, token);
@@ -405,7 +488,7 @@ export function useVerifyTradingAccountCredential(token: string | null) {
   return useMutation({
     mutationFn: (id: number) => {
       if (!token) {
-        throw new Error("Admin session is missing. Please log in again.");
+        throw new Error('Admin session is missing. Please log in again.');
       }
 
       return verifyTradingAccountCredential(id, token);
@@ -428,7 +511,7 @@ export function useRevokeTradingAccountCredential(token: string | null) {
   return useMutation({
     mutationFn: (id: number) => {
       if (!token) {
-        throw new Error("Admin session is missing. Please log in again.");
+        throw new Error('Admin session is missing. Please log in again.');
       }
 
       return revokeTradingAccountCredential(id, token);
@@ -457,7 +540,7 @@ export function useUpdateTradingAccountRiskSettings(token: string | null) {
       payload: TradingAccountRiskSettingsInput;
     }) => {
       if (!token) {
-        throw new Error("Admin session is missing. Please log in again.");
+        throw new Error('Admin session is missing. Please log in again.');
       }
 
       return updateTradingAccountRiskSettings(id, payload, token);
@@ -465,7 +548,7 @@ export function useUpdateTradingAccountRiskSettings(token: string | null) {
     onSuccess: ({ riskSettings }) => {
       queryClient.setQueryData(
         tradingAccountKeys.riskSettings(riskSettings.tradingAccountId),
-        { riskSettings }
+        { riskSettings },
       );
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.riskHealth(riskSettings.tradingAccountId),
@@ -486,7 +569,7 @@ export function useCreateTradingAccountAllocation(token: string | null) {
       payload: TradingAccountAllocationInput;
     }) => {
       if (!token) {
-        throw new Error("Admin session is missing. Please log in again.");
+        throw new Error('Admin session is missing. Please log in again.');
       }
 
       return createTradingAccountAllocation(id, payload, token);
@@ -500,7 +583,7 @@ export function useCreateTradingAccountAllocation(token: string | null) {
       });
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.accountSubscriptions(
-          allocation.tradingAccountId
+          allocation.tradingAccountId,
         ),
       });
     },
@@ -521,7 +604,7 @@ export function useUpdateTradingAccountAllocation(token: string | null) {
       payload: TradingAccountAllocationInput;
     }) => {
       if (!token) {
-        throw new Error("Admin session is missing. Please log in again.");
+        throw new Error('Admin session is missing. Please log in again.');
       }
 
       return updateTradingAccountAllocation(id, allocationId, payload, token);
@@ -535,7 +618,7 @@ export function useUpdateTradingAccountAllocation(token: string | null) {
       });
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.accountSubscriptions(
-          allocation.tradingAccountId
+          allocation.tradingAccountId,
         ),
       });
     },
@@ -554,7 +637,7 @@ export function useCreateTradingAccountSubscription(token: string | null) {
       payload: CreateTradingAccountSubscriptionInput;
     }) => {
       if (!token) {
-        throw new Error("Admin session is missing. Please log in again.");
+        throw new Error('Admin session is missing. Please log in again.');
       }
 
       return createTradingAccountSubscription(id, payload, token);
@@ -563,31 +646,31 @@ export function useCreateTradingAccountSubscription(token: string | null) {
       queryClient.setQueryData(
         tradingAccountKeys.accountSubscription(
           accountSubscription.tradingAccountId,
-          accountSubscription.id
+          accountSubscription.id,
         ),
-        { accountSubscription }
+        { accountSubscription },
       );
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.accountSubscriptions(
-          accountSubscription.tradingAccountId
+          accountSubscription.tradingAccountId,
         ),
       });
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.riskHealth(
-          accountSubscription.tradingAccountId
+          accountSubscription.tradingAccountId,
         ),
       });
       queryClient.invalidateQueries({
         queryKey: [
           ...tradingAccountKeys.accountSubscriptions(
-            accountSubscription.tradingAccountId
+            accountSubscription.tradingAccountId,
           ),
-          "marketContext",
+          'marketContext',
         ],
       });
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.allocations(
-          accountSubscription.tradingAccountId
+          accountSubscription.tradingAccountId,
         ),
       });
     },
@@ -608,45 +691,45 @@ export function useUpdateTradingAccountSubscription(token: string | null) {
       payload: TradingAccountSubscriptionInput;
     }) => {
       if (!token) {
-        throw new Error("Admin session is missing. Please log in again.");
+        throw new Error('Admin session is missing. Please log in again.');
       }
 
       return updateTradingAccountSubscription(
         id,
         accountSubscriptionId,
         payload,
-        token
+        token,
       );
     },
     onSuccess: ({ accountSubscription }) => {
       queryClient.setQueryData(
         tradingAccountKeys.accountSubscription(
           accountSubscription.tradingAccountId,
-          accountSubscription.id
+          accountSubscription.id,
         ),
-        { accountSubscription }
+        { accountSubscription },
       );
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.accountSubscriptions(
-          accountSubscription.tradingAccountId
+          accountSubscription.tradingAccountId,
         ),
       });
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.riskHealth(
-          accountSubscription.tradingAccountId
+          accountSubscription.tradingAccountId,
         ),
       });
       queryClient.invalidateQueries({
         queryKey: [
           ...tradingAccountKeys.accountSubscriptions(
-            accountSubscription.tradingAccountId
+            accountSubscription.tradingAccountId,
           ),
-          "marketContext",
+          'marketContext',
         ],
       });
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.allocations(
-          accountSubscription.tradingAccountId
+          accountSubscription.tradingAccountId,
         ),
       });
     },
@@ -656,14 +739,25 @@ export function useUpdateTradingAccountSubscription(token: string | null) {
 export function useDeleteTradingAccountSubscription(token: string | null) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, accountSubscriptionId }: { id: number; accountSubscriptionId: number }) => {
-      if (!token) throw new Error("Admin session is missing. Please log in again.");
+    mutationFn: ({
+      id,
+      accountSubscriptionId,
+    }: {
+      id: number;
+      accountSubscriptionId: number;
+    }) => {
+      if (!token)
+        throw new Error('Admin session is missing. Please log in again.');
       return deleteTradingAccountSubscription(id, accountSubscriptionId, token);
     },
     onSuccess: (_result, variables) => {
-      queryClient.invalidateQueries({ queryKey: tradingAccountKeys.accountSubscriptions(variables.id) });
-      queryClient.invalidateQueries({ queryKey: tradingAccountKeys.riskHealth(variables.id) });
-      queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.accountSubscriptions(variables.id),
+      });
+      queryClient.invalidateQueries({
+        queryKey: tradingAccountKeys.riskHealth(variables.id),
+      });
+      queryClient.invalidateQueries({ queryKey: ['subscriptions'] });
     },
   });
 }
@@ -678,7 +772,7 @@ export function usePreviewTradingAccountEntryRisk(token: string | null) {
       payload: EntryRiskPreviewInput;
     }) => {
       if (!token) {
-        throw new Error("Admin session is missing. Please log in again.");
+        throw new Error('Admin session is missing. Please log in again.');
       }
 
       return previewTradingAccountEntryRisk(id, payload, token);
