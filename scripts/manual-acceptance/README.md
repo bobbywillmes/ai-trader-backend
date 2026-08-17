@@ -12,7 +12,7 @@ Start the repository's local PostgreSQL container. In a fresh PowerShell window 
 $env:DATABASE_URL='postgresql://trader:traderpass@localhost:5432/ai_trader_live_entry_acceptance'
 $env:NODE_ENV='production'
 $env:PORT='3000'
-$env:CORS_ALLOWED_ORIGINS='https://manual-acceptance.invalid'
+$env:CORS_ALLOWED_ORIGINS='http://localhost:5173'
 $env:ALPACA_API_KEY='synthetic-global-key'
 $env:ALPACA_API_SECRET='synthetic-global-secret'
 $env:ALPACA_BASE_URL='https://paper-api.alpaca.markets'

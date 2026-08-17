@@ -1,3 +1,5 @@
+import { MANUAL_ACCEPTANCE_SENTINEL } from '../../src/services/manual-acceptance-environment.js';
+
 type MockRequest = {
   method: string;
   path: string;
@@ -36,7 +38,7 @@ function account() {
 }
 
 export function installMockAlpacaTransport() {
-  if (process.env.MANUAL_ACCEPTANCE_HARNESS !== 'I_UNDERSTAND_THIS_IS_SYNTHETIC') {
+  if (process.env.MANUAL_ACCEPTANCE_HARNESS !== MANUAL_ACCEPTANCE_SENTINEL) {
     throw new Error('Manual acceptance transport requires the explicit harness sentinel.');
   }
 

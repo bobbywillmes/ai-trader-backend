@@ -3,6 +3,7 @@ import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { getRuntimeTradingConfig } from './config.service.js';
 import { allowedCorsOrigins } from '../config/cors.js';
+import { isIsolatedManualAcceptanceEnvironment } from './manual-acceptance-environment.js';
 
 type StartupCheckStatus = 'pass' | 'warn' | 'fail';
 
@@ -225,7 +226,20 @@ export async function runStartupChecks(): Promise<StartupCheckReport> {
       );
     }
 
-    if (isProduction && allowedCorsOrigins.some(isLocalhostOrigin)) {
+    const isolatedManualAcceptance =
+      isProduction &&
+      isIsolatedManualAcceptanceEnvironment({
+        sentinel: process.env.MANUAL_ACCEPTANCE_HARNESS,
+        entrypoint: process.env.MANUAL_ACCEPTANCE_ENTRYPOINT,
+        databaseUrl: env.DATABASE_URL,
+        allowedOrigins: allowedCorsOrigins,
+      });
+
+    if (
+      isProduction &&
+      allowedCorsOrigins.some(isLocalhostOrigin) &&
+      !isolatedManualAcceptance
+    ) {
       checks.push(
         fail(
           'production_localhost_cors_origin',
@@ -233,6 +247,20 @@ export async function runStartupChecks(): Promise<StartupCheckReport> {
           {
             allowedCorsOrigins,
           }
+        )
+      );
+    }
+
+    if (
+      isProduction &&
+      allowedCorsOrigins.some(isLocalhostOrigin) &&
+      isolatedManualAcceptance
+    ) {
+      checks.push(
+        pass(
+          'manual_acceptance_localhost_cors_origin',
+          'Exact loopback UI origin accepted for the isolated manual-acceptance harness.',
+          { allowedCorsOrigins }
         )
       );
     }

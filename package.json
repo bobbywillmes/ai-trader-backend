@@ -21,7 +21,8 @@
     "test:watch": "vitest",
     "acceptance:live-entry:reset": "tsx scripts/manual-acceptance/reset-schema.ts",
     "acceptance:live-entry:fixture": "tsx scripts/manual-acceptance/fixture.ts",
-    "acceptance:live-entry:server": "tsx scripts/manual-acceptance/server.ts"
+    "acceptance:live-entry:server": "tsx scripts/manual-acceptance/server.ts",
+    "acceptance:live-entry:test": "vitest run --config vitest.acceptance.config.ts"
   },
   "devDependencies": {
     "@ngrok/ngrok": "^1.7.0",
