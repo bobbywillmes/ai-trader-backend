@@ -2,6 +2,7 @@ import http from 'node:http';
 
 import { installMockAlpacaTransport, mockAlpacaState } from './mock-alpaca-transport.js';
 import { MANUAL_ACCEPTANCE_ENTRYPOINT } from '../../src/services/manual-acceptance-environment.js';
+import { buildManualAcceptanceState } from './state.js';
 
 const databaseUrl = process.env.DATABASE_URL ?? '';
 if (new URL(databaseUrl).pathname !== '/ai_trader_live_entry_acceptance') {
@@ -20,6 +21,7 @@ if (!controlToken || controlToken.length < 16) throw new Error('MANUAL_ACCEPTANC
 const { prisma } = await import('../../src/db/prisma.js');
 const { processEntryForAccountSubscription } = await import('../../src/services/signal-entry.service.js');
 const { processPendingOrders } = await import('../../src/workers/order.worker.js');
+const { getLiveWriteApprovalState } = await import('../../src/services/live-write-approval.service.js');
 
 function response(res: http.ServerResponse, status: number, value: unknown) {
   res.writeHead(status, { 'content-type': 'application/json' });
@@ -30,11 +32,11 @@ const control = http.createServer(async (req, res) => {
   try {
     if (req.headers.authorization !== `Bearer ${controlToken}`) return response(res, 401, { error: 'Unauthorized' });
     if (req.method === 'GET' && req.url === '/state') {
-      const account = await prisma.tradingAccount.findUnique({
-        where: { displayName: 'Synthetic Live Acceptance' },
-        include: { liveEntryArmings: { include: { terminations: true } }, orderIntents: true },
-      });
-      return response(res, 200, { mock: mockAlpacaState(), account });
+      return response(res, 200, await buildManualAcceptanceState({
+        db: prisma,
+        getApprovalState: getLiveWriteApprovalState,
+        getTransportState: mockAlpacaState,
+      }));
     }
     if (req.method === 'POST' && req.url === '/entry') {
       const assignment = await prisma.tradingAccountSubscription.findFirstOrThrow({

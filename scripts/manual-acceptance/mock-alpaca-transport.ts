@@ -90,7 +90,9 @@ export function installMockAlpacaTransport() {
 
 export function mockAlpacaState() {
   return {
+    totalRequests: requests.length,
+    getCount: requests.filter((item) => item.method === 'GET').length,
     postCount: requests.filter((item) => item.method === 'POST').length,
-    requests: [...requests],
+    recentRequests: requests.slice(-50),
   };
 }
