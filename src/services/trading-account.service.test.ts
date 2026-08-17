@@ -123,6 +123,7 @@ function tradingAccount(
   overrides: Partial<TradingAccount> = {},
 ): TradingAccount {
   return {
+    activeLiveEntryArmingId: null,
     id: 1,
     accountHolderUserId: 1,
     displayName: 'Bobby Paper',

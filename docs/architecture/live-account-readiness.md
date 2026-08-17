@@ -1,5 +1,7 @@
 # Live Trading Account readiness
 
+After activation, `LIVE_ENTRY_ARMING` is the forward readiness purpose. Before ENTRY approval it may be BLOCKED solely on ENTRY while returning `prerequisitesForEntryGrantPassed=true`; ARM requires a new PASSED/CURRENT post-grant assessment. Market-open timing remains a runtime gate.
+
 Phase 5A persists immutable completed readiness assessments as capability and
 posture evidence. It does not activate accounts, repair lifecycle records,
 replace credential verification, synchronize broker state, or authorize a

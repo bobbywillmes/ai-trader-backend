@@ -1,5 +1,7 @@
 # Production Workflow
 
+First-Live sequence: confirm local disarm, verify credentials, stage only `rsp_dip_core`, deliberately deploy entry policy, run pre-grant readiness, grant session-bounded ENTRY, rerun readiness, and explicitly ARM. Complete expected fingerprint-changing work before grant.
+
 This doc covers the day-to-day workflow for local development, committing, and deploying to the production VPS — including the production safety baseline, operating rule, and emergency controls.
 
 ---

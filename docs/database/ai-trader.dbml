@@ -42,6 +42,8 @@ Table User {
   liveWriteApprovalsGranted TradingAccountLiveWriteApproval [not null]
   liveWriteApprovalsRevoked TradingAccountLiveWriteApproval [not null]
   liveWriteApprovalDecisions TradingAccountLiveWriteApprovalDecision [not null]
+  liveEntryArmings LiveEntryArming [not null]
+  liveEntryArmingTerminations LiveEntryArmingTermination [not null]
   lifecycleRepairCasesCreated LifecycleRepairCase [not null]
   lifecycleRepairExecutions LifecycleRepairExecution [not null]
 }
@@ -113,6 +115,9 @@ Table TradingAccount {
   readinessAssessments TradingAccountReadinessAssessment [not null]
   liveWriteApprovals TradingAccountLiveWriteApproval [not null]
   liveWriteApprovalDecisions TradingAccountLiveWriteApprovalDecision [not null]
+  liveEntryArmings LiveEntryArming [not null]
+  activeLiveEntryArmingId Int [unique]
+  activeLiveEntryArming LiveEntryArming
   lifecycleExerciseTargets TradingLifecycleExerciseTarget [not null]
   lifecycleRepairCases LifecycleRepairCase [not null]
   createdAt DateTime [default: `now()`, not null]
@@ -212,6 +217,7 @@ Table TradingAccountReadinessAssessment {
   requestedByUser User
   liveWriteApprovals TradingAccountLiveWriteApproval [not null]
   liveWriteApprovalDecisions TradingAccountLiveWriteApprovalDecision [not null]
+  liveEntryArmings LiveEntryArming [not null]
   createdAt DateTime [default: `now()`, not null]
 }
 
@@ -237,9 +243,62 @@ Table TradingAccountLiveWriteApproval {
   expiresAt DateTime
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
+  entryArmings LiveEntryArming [not null]
+  riskReducingArmings LiveEntryArming [not null]
 
   indexes {
     (tradingAccountId, capability) [unique]
+  }
+}
+
+Table LiveEntryArming {
+  id Int [pk, increment]
+  tradingAccountId Int [not null]
+  tradingAccount TradingAccount [not null]
+  activeForAccount TradingAccount
+  entryApprovalId Int [not null]
+  entryApproval TradingAccountLiveWriteApproval [not null]
+  entryApprovalRevision Int [not null]
+  riskReducingApprovalId Int [not null]
+  riskReducingApproval TradingAccountLiveWriteApproval [not null]
+  riskReducingApprovalRevision Int [not null]
+  readinessAssessmentId Int [not null]
+  readinessAssessment TradingAccountReadinessAssessment [not null]
+  readinessVersion Int [not null]
+  tradingAccountSubscriptionId Int [not null]
+  tradingAccountSubscription TradingAccountSubscription [not null]
+  subscriptionId Int [not null]
+  subscription Subscription [not null]
+  securityId Int [not null]
+  security Security [not null]
+  configurationFingerprint String [not null]
+  credentialFingerprint String [not null]
+  policyFingerprint String [not null]
+  entryApprovalExpiresAt DateTime [not null]
+  accountUpdatedAtEvidence DateTime [not null]
+  armedByUserId Int [not null]
+  armedByUser User [not null]
+  reason String [not null]
+  typedConfirmation String [not null]
+  armedAt DateTime [default: `now()`, not null]
+  terminations LiveEntryArmingTermination [not null]
+}
+
+Table LiveEntryArmingTermination {
+  id Int [pk, increment]
+  liveEntryArmingId Int [not null]
+  liveEntryArming LiveEntryArming [not null]
+  type LiveEntryArmingTerminationType [not null]
+  actorUserId Int
+  actorUser User
+  reason String [not null]
+  orderIntentId Int
+  clientOrderId String
+  evidenceJson Json [not null]
+  occurredAt DateTime [default: `now()`, not null]
+
+  indexes {
+    (liveEntryArmingId, type) [unique]
   }
 }
 
@@ -357,6 +416,7 @@ Table TradingAccountSubscription {
   trackedPositions TrackedPosition [not null]
   entryDecisions EntryDecision [not null]
   lifecycleExerciseTargets TradingLifecycleExerciseTarget [not null]
+  liveEntryArmings LiveEntryArming [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 
@@ -451,6 +511,7 @@ Table Security {
   momentumUniverseMember MomentumUniverseMember
   catalystTickerImpacts CatalystTickerImpact [not null]
   momentumCandidates MomentumCandidate [not null]
+  liveEntryArmings LiveEntryArming [not null]
 }
 
 Table MomentumUniverseMember {
@@ -1098,6 +1159,7 @@ Table Subscription {
   entryDecisions EntryDecision [not null]
   accountSubscriptions TradingAccountSubscription [not null]
   lifecycleExercises TradingLifecycleExercise [not null]
+  liveEntryArmings LiveEntryArming [not null]
 }
 
 Enum PlatformRole {
@@ -1130,6 +1192,14 @@ Enum PositionSizingType {
 
 Enum TradingAccountReadinessPurpose {
   LIVE_ACTIVATION
+  LIVE_ENTRY_ARMING
+}
+
+Enum LiveEntryArmingTerminationType {
+  DISARMED
+  INVALIDATED
+  EXPIRED
+  CONSUMED
 }
 
 Enum TradingAccountReadinessResult {
@@ -1361,6 +1431,8 @@ Ref: UserSession.userId > User.id
 
 Ref: TradingAccount.accountHolderUserId > User.id
 
+Ref: TradingAccount.activeLiveEntryArmingId - LiveEntryArming.id
+
 Ref: LifecycleRepairCase.tradingAccountId > TradingAccount.id [delete: Restrict]
 
 Ref: LifecycleRepairCase.createdByUserId > User.id [delete: Restrict]
@@ -1382,6 +1454,26 @@ Ref: TradingAccountLiveWriteApproval.readinessAssessmentId > TradingAccountReadi
 Ref: TradingAccountLiveWriteApproval.grantedByUserId > User.id [delete: Set Null]
 
 Ref: TradingAccountLiveWriteApproval.revokedByUserId > User.id [delete: Set Null]
+
+Ref: LiveEntryArming.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: LiveEntryArming.entryApprovalId > TradingAccountLiveWriteApproval.id [delete: Restrict]
+
+Ref: LiveEntryArming.riskReducingApprovalId > TradingAccountLiveWriteApproval.id [delete: Restrict]
+
+Ref: LiveEntryArming.readinessAssessmentId > TradingAccountReadinessAssessment.id [delete: Restrict]
+
+Ref: LiveEntryArming.tradingAccountSubscriptionId > TradingAccountSubscription.id [delete: Restrict]
+
+Ref: LiveEntryArming.subscriptionId > Subscription.id [delete: Restrict]
+
+Ref: LiveEntryArming.securityId > Security.id [delete: Restrict]
+
+Ref: LiveEntryArming.armedByUserId > User.id [delete: Restrict]
+
+Ref: LiveEntryArmingTermination.liveEntryArmingId > LiveEntryArming.id [delete: Restrict]
+
+Ref: LiveEntryArmingTermination.actorUserId > User.id [delete: Set Null]
 
 Ref: TradingAccountLiveWriteApprovalDecision.tradingAccountId > TradingAccount.id [delete: Restrict]
 

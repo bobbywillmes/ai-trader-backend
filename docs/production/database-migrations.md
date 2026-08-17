@@ -1,5 +1,7 @@
 # Production Database Migrations
 
+`20260817120000_add_live_entry_arming` adds immutable arming/termination evidence, the account active-binding foreign key, and `LIVE_ENTRY_ARMING`. It must precede application rollout.
+
 ## Account-scoped broker identity migration
 
 `20260725120000_scope_broker_lifecycle_identity_by_account` replaces global

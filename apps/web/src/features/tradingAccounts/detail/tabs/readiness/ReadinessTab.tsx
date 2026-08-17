@@ -26,6 +26,7 @@ import type {
 } from '../../../types';
 import { LiveWriteAuthorizationCard } from './LiveWriteAuthorizationCard';
 import { LiveAccountActivationCard } from './LiveAccountActivationCard';
+import { LiveEntryArmingCard } from './LiveEntryArmingCard';
 
 const stageLabels: Record<string, string> = {
   CREDENTIALS_CONFIGURED: 'Credentials configured',
@@ -35,6 +36,7 @@ const stageLabels: Record<string, string> = {
   RISK_REDUCING_READY: 'Risk-reducing ready',
   ACTIVATION_READY: 'Activation ready',
   ENTRY_READY: 'Entry ready',
+  LIVE_ENTRY_ARMING_READY: 'Live entry arming ready',
 };
 
 function outcomeColor(
@@ -161,9 +163,10 @@ export function ReadinessTab({
   account: TradingAccount;
   token: string | null;
 }) {
-  const latest = useLatestTradingAccountReadiness(account.id, token);
-  const history = useTradingAccountReadinessHistory(account.id, token);
-  const run = useRunTradingAccountReadiness(account.id, token);
+  const purpose = account.status === 'ACTIVE' ? 'LIVE_ENTRY_ARMING' : 'LIVE_ACTIVATION';
+  const latest = useLatestTradingAccountReadiness(account.id, token, purpose);
+  const history = useTradingAccountReadinessHistory(account.id, token, purpose);
+  const run = useRunTradingAccountReadiness(account.id, token, purpose);
   const [selected, setSelected] =
     useState<TradingAccountReadinessAssessment | null>(null);
   const assessment = selected ?? latest.data?.assessment ?? null;
@@ -224,6 +227,7 @@ export function ReadinessTab({
         assessment={latest.data?.assessment ?? null}
         token={token}
       />
+      {account.status === 'ACTIVE' && <LiveEntryArmingCard account={account} assessment={latest.data?.assessment ?? null} token={token} />}
       <Card withBorder>
         <Title order={4} mb="sm">
           Assessment history

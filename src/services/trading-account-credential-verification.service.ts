@@ -2,6 +2,7 @@ import {
   BrokerCredentialStatus,
   Prisma,
   TradingAccountStatus,
+  LiveWriteCapability,
 } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
@@ -9,6 +10,8 @@ import { getNormalizedAccount } from './account.service.js';
 import { getTradingAccountForAdmin } from './trading-account.service.js';
 import type { TradingAccountAdminResponse } from './trading-account.service.js';
 import { withAccountRiskConfigurationTransaction } from './trading-account-risk-configuration.service.js';
+import { invalidateLiveWriteApprovals } from './live-write-approval.service.js';
+import { disarmLiveEntries } from './live-entry-arming.service.js';
 
 export type TradingAccountCredentialVerificationResult =
   | {
@@ -72,6 +75,17 @@ export async function verifyTradingAccountCredential(
       message: 'Trading account does not have a credential to verify.',
       account: await getTradingAccountForAdmin(tradingAccountId),
     };
+  }
+
+  if (
+    account.status === TradingAccountStatus.ACTIVE &&
+    (account.tradingEnabled || !account.killSwitchEnabled)
+  ) {
+    await disarmLiveEntries(
+      tradingAccountId,
+      actorUserId > 0 ? actorUserId : null,
+      'Live entries were disarmed before credential re-verification.',
+    );
   }
 
   const credentialSnapshot = account.credential;
@@ -211,8 +225,14 @@ export async function verifyTradingAccountCredential(
       tradingEnabled: current.tradingEnabled,
       killSwitchEnabled: current.killSwitchEnabled,
     };
+    const preserveActiveDisarmed =
+      current.status === TradingAccountStatus.ACTIVE &&
+      !current.tradingEnabled &&
+      current.killSwitchEnabled;
     const after = {
-      status: TradingAccountStatus.PAUSED,
+      status: preserveActiveDisarmed
+        ? TradingAccountStatus.ACTIVE
+        : TradingAccountStatus.PAUSED,
       tradingEnabled: false,
       killSwitchEnabled: true,
     };
@@ -243,6 +263,12 @@ export async function verifyTradingAccountCredential(
         baseCurrency: brokerAccount.currency ?? 'USD',
       },
     });
+    await invalidateLiveWriteApprovals(
+      tx,
+      tradingAccountId,
+      [LiveWriteCapability.RISK_REDUCING, LiveWriteCapability.ENTRY],
+      'Broker credentials were re-verified and credential evidence changed.',
+    );
     await tx.systemEvent.create({
       data: {
         type: 'trading_account.credential_verified',

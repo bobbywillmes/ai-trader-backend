@@ -1,5 +1,7 @@
 # Trading Account Admin API
 
+System Owner first-canary endpoints are `POST /:id/stage-live-entry-canary`, `POST /:id/arm-live-entries`, and `POST /:id/disarm-live-entries`. ARM requires exact `ARM LIVE ENTRIES` confirmation and PASSED/CURRENT post-grant `LIVE_ENTRY_ARMING`; DISARM requires only a reason and no broker access.
+
 The trading account admin API is for backend admin clients only. It is not part
 of the n8n signal contract.
 

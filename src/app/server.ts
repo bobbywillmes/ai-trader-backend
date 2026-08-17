@@ -34,6 +34,7 @@ import { runAlpacaApiUsagePersistence } from '../services/alpaca-api-usage-persi
 import { runMassiveNewsWorkerOnce } from '../workers/massive-news.worker.js';
 import { assertAccountCoordinatorHealthy } from '../services/worker-coordinator-result.service.js';
 import { closeTradingAccountWorkflowLockPool } from '../services/trading-account-workflow-lock.service.js';
+import { monitorLiveEntryArmings } from '../services/live-entry-arming.service.js';
 
 const app = createApp();
 
@@ -141,6 +142,14 @@ async function runTradingWorkers() {
 
 function startWorkers() {
   workerHealthRegistry.startPersistence();
+
+  // This validity monitor is local-only. Final broker authorization remains
+  // authoritative, while this loop promptly closes stale permissive latches.
+  setInterval(() => {
+    void monitorLiveEntryArmings().catch((error) => {
+      logger.error({ error }, 'Live entry arming validity monitor failed.');
+    });
+  }, TRADING_WORKER_INTERVAL_MS);
 
   // Account snapshot checkpoints do not need the high-frequency trading loop.
   // This checks once per minute and records only scheduled checkpoint snapshots.
@@ -311,6 +320,7 @@ function startWorkers() {
 }
 
 async function startServer() {
+  await monitorLiveEntryArmings();
   const startupReport = await assertStartupSafe({ logSuccess: false });
 
   server = app.listen(env.PORT, () => {

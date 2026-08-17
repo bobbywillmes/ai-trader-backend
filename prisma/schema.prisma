@@ -61,6 +61,8 @@ model User {
   liveWriteApprovalsGranted   TradingAccountLiveWriteApproval[] @relation("LiveWriteApprovalGranter")
   liveWriteApprovalsRevoked   TradingAccountLiveWriteApproval[] @relation("LiveWriteApprovalRevoker")
   liveWriteApprovalDecisions  TradingAccountLiveWriteApprovalDecision[] @relation("LiveWriteApprovalDecisionActor")
+  liveEntryArmings            LiveEntryArming[] @relation("LiveEntryArmingActor")
+  liveEntryArmingTerminations LiveEntryArmingTermination[] @relation("LiveEntryArmingTerminationActor")
   lifecycleRepairCasesCreated LifecycleRepairCase[]       @relation("LifecycleRepairCaseCreator")
   lifecycleRepairExecutions   LifecycleRepairExecution[]  @relation("LifecycleRepairExecutionActor")
 }
@@ -131,6 +133,14 @@ enum PositionSizingType {
 
 enum TradingAccountReadinessPurpose {
   LIVE_ACTIVATION
+  LIVE_ENTRY_ARMING
+}
+
+enum LiveEntryArmingTerminationType {
+  DISARMED
+  INVALIDATED
+  EXPIRED
+  CONSUMED
 }
 
 enum TradingAccountReadinessResult {
@@ -213,6 +223,9 @@ model TradingAccount {
   readinessAssessments      TradingAccountReadinessAssessment[]
   liveWriteApprovals        TradingAccountLiveWriteApproval[]
   liveWriteApprovalDecisions TradingAccountLiveWriteApprovalDecision[]
+  liveEntryArmings           LiveEntryArming[] @relation("LiveEntryArmingAccount")
+  activeLiveEntryArmingId    Int? @unique
+  activeLiveEntryArming      LiveEntryArming? @relation("ActiveLiveEntryArming", fields: [activeLiveEntryArmingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   lifecycleExerciseTargets  TradingLifecycleExerciseTarget[]
   lifecycleRepairCases      LifecycleRepairCase[]
 
@@ -348,6 +361,7 @@ model TradingAccountReadinessAssessment {
   requestedByUser                 User? @relation("ReadinessAssessmentRequester", fields: [requestedByUserId], references: [id], onDelete: SetNull)
   liveWriteApprovals              TradingAccountLiveWriteApproval[]
   liveWriteApprovalDecisions      TradingAccountLiveWriteApprovalDecision[]
+  liveEntryArmings                LiveEntryArming[]
   createdAt                       DateTime @default(now())
 
   @@index([tradingAccountId, createdAt])
@@ -379,10 +393,69 @@ model TradingAccountLiveWriteApproval {
   expiresAt                DateTime?
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
+  entryArmings             LiveEntryArming[] @relation("EntryArmingApproval")
+  riskReducingArmings      LiveEntryArming[] @relation("RiskReducingArmingApproval")
 
   @@unique([tradingAccountId, capability])
   @@index([status])
   @@index([expiresAt])
+}
+
+model LiveEntryArming {
+  id                              Int @id @default(autoincrement())
+  tradingAccountId                Int
+  tradingAccount                  TradingAccount @relation("LiveEntryArmingAccount", fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  activeForAccount                TradingAccount? @relation("ActiveLiveEntryArming")
+  entryApprovalId                 Int
+  entryApproval                   TradingAccountLiveWriteApproval @relation("EntryArmingApproval", fields: [entryApprovalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  entryApprovalRevision           Int
+  riskReducingApprovalId          Int
+  riskReducingApproval            TradingAccountLiveWriteApproval @relation("RiskReducingArmingApproval", fields: [riskReducingApprovalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  riskReducingApprovalRevision    Int
+  readinessAssessmentId           Int
+  readinessAssessment             TradingAccountReadinessAssessment @relation(fields: [readinessAssessmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  readinessVersion                Int
+  tradingAccountSubscriptionId    Int
+  tradingAccountSubscription      TradingAccountSubscription @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  subscriptionId                  Int
+  subscription                    Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  securityId                      Int
+  security                        Security @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  configurationFingerprint        String
+  credentialFingerprint           String
+  policyFingerprint               String
+  entryApprovalExpiresAt          DateTime
+  accountUpdatedAtEvidence        DateTime
+  armedByUserId                   Int
+  armedByUser                     User @relation("LiveEntryArmingActor", fields: [armedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reason                          String
+  typedConfirmation               String
+  armedAt                         DateTime @default(now())
+  terminations                    LiveEntryArmingTermination[]
+
+  @@index([tradingAccountId, armedAt])
+  @@index([entryApprovalId, entryApprovalRevision])
+  @@index([tradingAccountSubscriptionId, armedAt])
+  @@index([entryApprovalExpiresAt])
+}
+
+model LiveEntryArmingTermination {
+  id                    Int @id @default(autoincrement())
+  liveEntryArmingId     Int
+  liveEntryArming       LiveEntryArming @relation(fields: [liveEntryArmingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  type                  LiveEntryArmingTerminationType
+  actorUserId           Int?
+  actorUser             User? @relation("LiveEntryArmingTerminationActor", fields: [actorUserId], references: [id], onDelete: SetNull, onUpdate: Restrict)
+  reason                String
+  orderIntentId         Int?
+  clientOrderId         String?
+  evidenceJson          Json
+  occurredAt            DateTime @default(now())
+
+  @@index([liveEntryArmingId, occurredAt])
+  @@index([type, occurredAt])
+  @@index([orderIntentId])
+  @@unique([liveEntryArmingId, type])
 }
 
 model TradingAccountLiveWriteApprovalDecision {
@@ -566,6 +639,7 @@ model TradingAccountSubscription {
   trackedPositions      TrackedPosition[]
   entryDecisions        EntryDecision[]
   lifecycleExerciseTargets TradingLifecycleExerciseTarget[]
+  liveEntryArmings       LiveEntryArming[]
 
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -732,6 +806,7 @@ model Security {
   momentumUniverseMember MomentumUniverseMember?
   catalystTickerImpacts  CatalystTickerImpact[] @relation("SecurityCatalystTickerImpacts")
   momentumCandidates     MomentumCandidate[] @relation("SecurityMomentumCandidates")
+  liveEntryArmings       LiveEntryArming[]
 
   @@index([enabled])
   @@index([assetType])
@@ -1758,6 +1833,7 @@ model Subscription {
   entryDecisions          EntryDecision[]
   accountSubscriptions    TradingAccountSubscription[]
   lifecycleExercises      TradingLifecycleExercise[]
+  liveEntryArmings        LiveEntryArming[]
 
   @@index([symbol])
   @@index([strategyId])

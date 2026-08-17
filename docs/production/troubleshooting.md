@@ -1,5 +1,7 @@
 # Production Troubleshooting
 
+For `ENTRY AUTH EXPIRED`, `ENTRY APPROVAL STALE`, or `ENTRY DISARM REQUIRED`, use local DISARM first. Never repair permissive latches directly. Review arming/termination events, restore prerequisites, rerun readiness, and perform a new ARM ceremony.
+
 This doc covers post-deploy verification steps and common production issues: 502 errors, blocked startup due to trading state, migration mismatches, and non-critical build warnings.
 
 ---

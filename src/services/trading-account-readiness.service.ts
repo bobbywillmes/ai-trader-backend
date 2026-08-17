@@ -22,6 +22,7 @@ import {
 } from './trading-account-workflow-lock.service.js';
 
 export const READINESS_ASSESSMENT_VERSION = 1;
+export const LIVE_ENTRY_ARMING_READINESS_VERSION = 1;
 export const LIVE_ACTIVATION_ASSESSMENT_LIFETIME_MS = 5 * 60_000;
 export const CREDENTIAL_VERIFICATION_MAX_AGE_MS = 15 * 60_000;
 export const READINESS_HISTORY_MAX_LIMIT = 100;
@@ -35,6 +36,7 @@ export type ReadinessStageKey =
   | 'CONFIGURATION_READY'
   | 'RISK_REDUCING_READY'
   | 'ACTIVATION_READY'
+  | 'LIVE_ENTRY_ARMING_READY'
   | 'ENTRY_READY';
 export type ReadinessGate = {
   code: string;
@@ -59,6 +61,7 @@ const CONFIGURATION_SELECT = {
   status: true,
   tradingEnabled: true,
   killSwitchEnabled: true,
+  activeLiveEntryArmingId: true,
   maxDeployableNotional: true,
   brokerAccountId: true,
   riskSettings: true,
@@ -438,6 +441,7 @@ export function blockingAccountWorkers<
 async function gatherAndPersist(
   tradingAccountId: number,
   requestedByUserId: number,
+  purpose: TradingAccountReadinessPurpose,
 ) {
   const startedAt = new Date();
   const [account, credential] = await Promise.all([
@@ -471,6 +475,7 @@ async function gatherAndPersist(
     localNonterminalOrderCount,
     attentionCount,
     missingAttributionCount,
+    unresolvedBrokerActivityCount,
     workerHealth,
   ] = await Promise.all([
     prisma.trackedPosition.count({
@@ -499,6 +504,12 @@ async function gatherAndPersist(
         tradingAccountId,
         status: { in: ['open', 'closing'] },
         tradingAccountSubscriptionId: null,
+      },
+    }),
+    prisma.brokerActivity.count({
+      where: {
+        tradingAccountId,
+        OR: [{ trackedPositionId: null }, { brokerOrderRecordId: null }],
       },
     }),
     listTradingAccountWorkerHealth(tradingAccountId),
@@ -770,7 +781,35 @@ async function gatherAndPersist(
       },
     ),
   ];
-  const configGates = configurationGates(account);
+  const activationConfigGates = configurationGates(account);
+  const enabledEntryAssignments = account.accountSubscriptions.filter(
+    (item) => item.enabled && item.entriesEnabled,
+  );
+  const canary = enabledEntryAssignments[0] ?? null;
+  const canaryGates = [
+    gate('CANARY_EXACTLY_ONE_ENTRY_ASSIGNMENT', enabledEntryAssignments.length === 1,
+      'Exactly one entry-enabled canary assignment is staged.',
+      'Exactly one entry-enabled assignment is required.', { count: enabledEntryAssignments.length }),
+    gate('CANARY_RSP_DIP_CORE', canary?.subscription.key === 'rsp_dip_core' && canary.subscription.symbol === 'RSP' && canary.subscription.security.symbol === 'RSP',
+      'The rsp_dip_core RSP canary is selected.', 'The selected canary must be rsp_dip_core for RSP.'),
+    gate('CANARY_ENABLED_WITH_EXITS', Boolean(canary?.enabled && canary.entriesEnabled && canary.exitsEnabled),
+      'The canary is enabled for entries and exits.', 'The canary must be enabled with entriesEnabled=true and exitsEnabled=true.'),
+    gate('CANARY_CATALOG_ENABLED', Boolean(canary?.subscription.enabled && canary.subscription.security.enabled && canary.subscription.strategy.enabled && canary.subscription.exitProfile.enabled),
+      'The canary catalog hierarchy is enabled.', 'The canary subscription, security, strategy, and exit profile must be enabled.'),
+    gate('CANARY_CORE_ETF_ALLOCATION', canary?.allocation?.key === 'core_etf' && canary.allocation.enabled,
+      'The canary uses the enabled core_etf allocation.', 'The canary must use the enabled core_etf allocation.'),
+    gate('CANARY_MAX_NOTIONAL_SIZING', canary?.sizingType === 'MAX_NOTIONAL' && Number(canary.maxPositionNotional) === 1_000,
+      'The canary uses $1,000 MAX_NOTIONAL sizing.', 'The canary must use MAX_NOTIONAL sizing capped at $1,000.'),
+    gate('CANARY_RESERVATION_LIMIT', Number(canary?.reservedNotional) === 1_000 && Number(canary?.allocation?.maxAllocatedNotional) === 1_000,
+      'The canary reservation and allocation ceiling are $1,000.', 'The canary reservation and allocation ceiling must be $1,000.'),
+    gate('CANARY_ACCOUNT_RISK_LIMITS', Boolean(account.riskSettings?.enabled && account.riskSettings.maxDailyEntryOrders === 1 && Number(account.riskSettings.maxDailyEntryNotional) === 1_000 && account.riskSettings.maxOpenPositions === 1 && Number(account.riskSettings.maxSymbolOpenNotional) === 1_000),
+      'Account first-canary risk limits are configured.', 'Account risk limits must enforce one entry, one position, and $1,000 daily/symbol ceilings.'),
+  ];
+  const baseConfigGates = activationConfigGates.filter((item) =>
+    item.code !== 'ACTIVATION_ENTRIES_DISARMED' && item.code !== 'ACTIVATION_EXITS_ENABLED');
+  const configGates = purpose === TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING
+    ? [...baseConfigGates, ...canaryGates]
+    : activationConfigGates;
   const configurationReady = configGates.every(
     (item) => item.outcome === 'PASSED',
   );
@@ -869,6 +908,42 @@ async function gatherAndPersist(
       'Risk-reducing capability is blocked.',
     ),
   ];
+  const requiredArmingWorkers = new Set([
+    'pending_order_processing', 'submitted_order_sync', 'broker_activity_sync',
+    'tracked_position_sync', 'exit_evaluation', 'account_snapshot_scheduler',
+  ]);
+  const workerRows = workerHealth?.workers ?? [];
+  const armingWorkerGates = Array.from(requiredArmingWorkers).map((workerKey) => {
+    const row = workerRows.find((item) => item.workerKey === workerKey);
+    return gate(`ARMING_WORKER_${workerKey.toUpperCase()}`, Boolean(row?.applicable && row.status === 'HEALTHY'),
+      `${workerKey} is healthy.`, `${workerKey} must be applicable and healthy.`);
+  });
+  const armingPrerequisiteGates = [
+    ...identityGates.filter((item) => !['OPERATIONAL_POSTURE_VALID', 'ACTIVATION_STARTING_STATUS_PAUSED'].includes(item.code)),
+    gate('ARMING_ACCOUNT_ACTIVE_DISARMED', account.status === 'ACTIVE' && !account.tradingEnabled && account.killSwitchEnabled,
+      'Account is ACTIVE with entry latches closed.', 'Arming readiness requires ACTIVE / trading disabled / kill switch enabled.'),
+    gate('ARMING_NO_ACTIVE_BINDING', account.activeLiveEntryArmingId === null,
+      'No prior Live entry arming is active.', 'A prior Live entry arming must be terminated first.'),
+    gate('ARMING_BROKER_IDENTITY_EXACT', Boolean(account.brokerAccountId && brokerAccountId && account.brokerAccountId === brokerAccountId),
+      'Stored and observed broker identities match exactly.', 'A stored broker identity must exactly match the observed account.'),
+    gate('ARMING_UNRESOLVED_BROKER_ACTIVITY_EMPTY', unresolvedBrokerActivityCount === 0,
+      'No unresolved broker activity attribution exists.', 'Unresolved broker activity attribution must be resolved.', { count: unresolvedBrokerActivityCount }),
+    ...lifecycleGates,
+    ...brokerGates,
+    ...armingWorkerGates,
+    gate('ARMING_RECONCILIATION_CLEAN', credentialUsable && !brokerError && findings.length === 0,
+      'Diagnostic reconciliation is clean.', 'Diagnostic reconciliation must complete without findings.'),
+    ...configGates,
+    gate('ARMING_NODE_ENV_PRODUCTION', env.NODE_ENV === 'production', 'Runtime is production.', 'Live entry arming requires NODE_ENV=production.'),
+    gate('ARMING_DEPLOYMENT_EXECUTOR', env.LIVE_WRITE_DEPLOYMENT_ROLE === 'PRODUCTION_EXECUTOR', 'Deployment role is PRODUCTION_EXECUTOR.', 'Live entry arming requires PRODUCTION_EXECUTOR.'),
+    gate('ARMING_RISK_REDUCING_POLICY', env.ALLOW_LIVE_RISK_REDUCING_WRITES, 'Risk-reducing deployment permission is enabled.', 'ALLOW_LIVE_RISK_REDUCING_WRITES must be true.'),
+    gate('ARMING_ENTRY_POLICY', env.ALLOW_LIVE_TRADING, 'Live entry deployment permission is enabled.', 'ALLOW_LIVE_TRADING must be true.'),
+    gate('ARMING_RISK_REDUCING_APPROVAL', riskReducingApproval.effective, 'RISK_REDUCING approval is effective.', `RISK_REDUCING approval is ${riskReducingApproval.reason ?? 'missing'}.`),
+    gate('ARMING_CREDENTIAL_VERIFICATION_CURRENT', verifiedFresh, 'Credential verification is current.', 'Credential verification must be less than 15 minutes old.'),
+  ];
+  const entryApprovalGate = gate('ARMING_ENTRY_APPROVAL_CURRENT', entryApproval.effective,
+    'ENTRY approval is effective.', `ENTRY approval is ${entryApproval.reason ?? 'missing'}.`);
+  const armingGates = [...armingPrerequisiteGates, entryApprovalGate];
   const entryGates = [
     gate(
       'ENTRY_ACCOUNT_ACTIVE',
@@ -964,13 +1039,22 @@ async function gatherAndPersist(
       'Informational entry posture; no entry is attempted.',
     ),
   ];
+  if (purpose === TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING) {
+    stages.push(stage('LIVE_ENTRY_ARMING_READY', armingGates,
+      'First-Live RSP canary authorization and operational prerequisites.'));
+  }
   const allGates = stages.flatMap((item) => item.gates);
   const blockers = allGates.filter((item) => item.outcome === 'BLOCKED');
   const warnings = allGates.filter((item) => item.outcome === 'WARNING');
   const activation = stages.find((item) => item.key === 'ACTIVATION_READY')!;
   const completedAt = new Date();
+  const assessedStage = purpose === TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING
+    ? stages.find((item) => item.key === 'LIVE_ENTRY_ARMING_READY')!
+    : activation;
+  const prerequisitesForEntryGrantPassed = purpose === TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING &&
+    armingPrerequisiteGates.every((item) => item.outcome === 'PASSED') && !entryApproval.effective;
   const result =
-    activation.outcome === 'PASSED'
+    assessedStage.outcome === 'PASSED'
       ? TradingAccountReadinessResult.PASSED
       : TradingAccountReadinessResult.BLOCKED;
   const reconciliationSummary =
@@ -993,9 +1077,10 @@ async function gatherAndPersist(
   const created = await prisma.tradingAccountReadinessAssessment.create({
     data: {
       tradingAccountId,
-      purpose: TradingAccountReadinessPurpose.LIVE_ACTIVATION,
+      purpose,
       result,
-      assessmentVersion: READINESS_ASSESSMENT_VERSION,
+      assessmentVersion: purpose === TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING
+        ? LIVE_ENTRY_ARMING_READINESS_VERSION : READINESS_ASSESSMENT_VERSION,
       startedAt,
       completedAt,
       expiresAt: new Date(
@@ -1040,6 +1125,18 @@ async function gatherAndPersist(
             eligible: item.eligible,
             expectedIntervalMs: item.expectedIntervalMs,
           })) ?? [],
+        prerequisitesForEntryGrantPassed,
+        selectedCanary: canary ? {
+          tradingAccountSubscriptionId: canary.id,
+          subscriptionId: canary.subscriptionId,
+          securityId: canary.subscription.securityId,
+          symbol: canary.subscription.security.symbol,
+          sizingType: canary.sizingType,
+          maxPositionNotional: canary.maxPositionNotional,
+          reservedNotional: canary.reservedNotional,
+          accountLimits: account.riskSettings,
+          allocation: canary.allocation,
+        } : null,
       },
       requestedByUserId,
     },
@@ -1088,7 +1185,8 @@ export async function runTradingAccountReadinessAssessment(
   });
   if (!account) throw new HttpError(404, 'Trading account not found.');
   if (
-    purpose === TradingAccountReadinessPurpose.LIVE_ACTIVATION &&
+    (purpose === TradingAccountReadinessPurpose.LIVE_ACTIVATION ||
+      purpose === TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING) &&
     account.environment !== TradingAccountEnvironment.LIVE
   ) {
     throw new HttpError(
@@ -1102,7 +1200,7 @@ export async function runTradingAccountReadinessAssessment(
     processInstanceId: `manual-readiness:${requestedByUserId}`,
     execute: async () => {
       try {
-        return await gatherAndPersist(tradingAccountId, requestedByUserId);
+        return await gatherAndPersist(tradingAccountId, requestedByUserId, purpose);
       } catch (error) {
         const startedAt = new Date();
         const completedAt = new Date();

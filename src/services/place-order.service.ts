@@ -196,7 +196,7 @@ export type BrokerOrderSubmissionInput = ResolvedPlaceOrderInput & {
 
 export async function submitOrderToBroker(
   input: BrokerOrderSubmissionInput,
-  options: { tradingAccountId: number }
+  options: { tradingAccountId: number; orderIntentId: number }
 ) {
   const clientOrderId = input.clientOrderId;
 
@@ -246,7 +246,18 @@ export async function submitOrderToBroker(
   const created = await placeAlpacaOrder(
     options.tradingAccountId,
     payload,
-    'pending_order_submission'
+    'pending_order_submission',
+    isEntrySubscriptionOrder(input)
+      ? {
+          subtype: 'NEW_POSITION_ENTRY',
+          orderIntentId: options.orderIntentId,
+          tradingAccountSubscriptionId: input.tradingAccountSubscriptionId,
+          subscriptionId: input.subscriptionId,
+          symbol: input.symbol,
+          side: 'buy',
+          clientOrderId,
+        }
+      : undefined,
   );
 
   adaptivePollingCoordinator.forceAfterBrokerOrderCreated(

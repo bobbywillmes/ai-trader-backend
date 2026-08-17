@@ -1,5 +1,7 @@
 # Account Entry-Risk Ownership
 
+First-canary readiness requires account-owned one-entry/one-position and `$1,000` daily/symbol limits plus the `$1,000` `core_etf` allocation, reservation, and `rsp_dip_core` MAX_NOTIONAL configuration. Market fills may exceed estimated notional.
+
 Phase 2A makes each `TradingAccount` the owner of routine numerical entry
 limits while retaining legacy global numerical settings as temporary
 compatibility fallbacks.

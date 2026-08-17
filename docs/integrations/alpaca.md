@@ -1,5 +1,7 @@
 # Alpaca Integration
 
+Actual new-position submissions carry `NEW_POSITION_ENTRY` intent, assignment, subscription, and canonical security identity. The final boundary consumes exact one-shot arming before POST. Generic cancellations retain their existing classification without assignment context.
+
 ## Account-owned request boundary
 
 Every Alpaca adapter operation requires `tradingAccountId`. Credentials and

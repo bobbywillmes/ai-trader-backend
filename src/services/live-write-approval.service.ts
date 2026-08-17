@@ -14,6 +14,7 @@ import { HttpError } from '../errors/http-error.js';
 import type { AlpacaBrokerOperationClass } from '../integrations/alpaca/request-metadata.js';
 import { getOpenAlpacaOrders } from '../integrations/alpaca/orders.adapter.js';
 import { getAlpacaPositions } from '../integrations/alpaca/positions.adapter.js';
+import { getAlpacaMarketSessionSnapshot } from '../integrations/alpaca/market-session.adapter.js';
 
 export { LiveWriteCapability };
 
@@ -320,6 +321,23 @@ export async function grantLiveWriteApproval(args: {
   if (args.input.expiresAt && args.input.expiresAt.getTime() <= Date.now()) {
     throw new HttpError(400, 'Approval expiration must be in the future.');
   }
+  if (args.capability === LiveWriteCapability.ENTRY) {
+    if (!args.input.expiresAt) {
+      throw new HttpError(400, 'ENTRY approval requires an exact session-bounded expiration.');
+    }
+    const session = await getAlpacaMarketSessionSnapshot(args.tradingAccountId);
+    const sessionCloseAt = session.sessionCloseAt ?? session.nextCloseAt;
+    const sessionOpenAt = session.sessionOpenAt ?? session.nextOpenAt;
+    if (!sessionCloseAt || !sessionOpenAt) {
+      throw new HttpError(409, 'The intended regular U.S. trading session could not be determined.');
+    }
+    if (args.input.expiresAt.getTime() <= new Date(sessionOpenAt).getTime()) {
+      throw new HttpError(409, 'ENTRY approval expiration must fall within the intended regular U.S. trading session.');
+    }
+    if (args.input.expiresAt.getTime() > new Date(sessionCloseAt).getTime()) {
+      throw new HttpError(409, 'ENTRY approval expiration must not extend beyond the intended regular U.S. trading session.');
+    }
+  }
 
   return prisma.$transaction(
     async (tx) => {
@@ -338,7 +356,9 @@ export async function grantLiveWriteApproval(args: {
         where: {
           id: args.input.readinessAssessmentId,
           tradingAccountId: args.tradingAccountId,
-          purpose: TradingAccountReadinessPurpose.LIVE_ACTIVATION,
+          purpose: args.capability === LiveWriteCapability.ENTRY
+            ? TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING
+            : TradingAccountReadinessPurpose.LIVE_ACTIVATION,
         },
       });
       if (!assessment)
@@ -348,6 +368,12 @@ export async function grantLiveWriteApproval(args: {
         );
       if (assessment.expiresAt.getTime() <= Date.now())
         throw new HttpError(409, 'The readiness assessment has expired.');
+      if (args.capability === LiveWriteCapability.ENTRY) {
+        const evidence = assessment.evidenceJson as Record<string, unknown>;
+        if (assessment.result !== 'BLOCKED' || evidence.prerequisitesForEntryGrantPassed !== true) {
+          throw new HttpError(409, 'ENTRY approval requires LIVE_ENTRY_ARMING readiness with every prerequisite passed and ENTRY as the sole expected blocker.');
+        }
+      }
       const { computeReadinessFingerprints } =
         await import('./trading-account-readiness.service.js');
       const currentReadinessFingerprints = await computeReadinessFingerprints(

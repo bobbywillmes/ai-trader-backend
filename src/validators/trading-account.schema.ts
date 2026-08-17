@@ -6,7 +6,7 @@ import {
 } from '@prisma/client';
 import { z } from 'zod';
 
-export const tradingAccountReadinessPurposeSchema = z.enum(['LIVE_ACTIVATION']);
+export const tradingAccountReadinessPurposeSchema = z.enum(['LIVE_ACTIVATION', 'LIVE_ENTRY_ARMING']);
 
 export const runTradingAccountReadinessAssessmentSchema = z.strictObject({
   purpose: tradingAccountReadinessPurposeSchema,
@@ -105,6 +105,25 @@ export const grantLiveWriteApprovalSchema = z.strictObject({
 export const revokeLiveWriteApprovalSchema = z.strictObject({
   reason: z.string().trim().min(1).max(1_000),
   expectedRevision: z.coerce.number().int().nonnegative(),
+});
+
+export const stageLiveEntryCanarySchema = z.strictObject({
+  tradingAccountSubscriptionId: z.coerce.number().int().positive(),
+  reason: z.string().trim().min(1).max(1_000),
+});
+
+export const armLiveEntriesSchema = z.strictObject({
+  reason: z.string().trim().min(1).max(1_000),
+  typedConfirmation: z.literal('ARM LIVE ENTRIES'),
+  readinessAssessmentId: z.coerce.number().int().positive(),
+  tradingAccountSubscriptionId: z.coerce.number().int().positive(),
+  entryApprovalId: z.coerce.number().int().positive(),
+  entryApprovalRevision: z.coerce.number().int().positive(),
+  expectedUpdatedAt: z.coerce.date(),
+});
+
+export const disarmLiveEntriesSchema = z.strictObject({
+  reason: z.string().trim().min(1).max(1_000),
 });
 
 const nullablePositiveNumber = z.coerce

@@ -7,6 +7,7 @@ import { BrokerWriteDeliveryError } from '../../errors/broker-write-delivery-err
 import { alpacaApiUsageRegistry } from '../../services/alpaca-api-usage.service.js';
 import { resolveAlpacaConfigForTradingAccount } from '../../services/alpaca-config-resolver.service.js';
 import { authorizeLiveBrokerWrite } from '../../services/live-write-approval.service.js';
+import { authorizeAndConsumeNewPositionEntry } from '../../services/live-entry-arming.service.js';
 import {
   assertKnownAlpacaEndpoint,
   assertKnownAlpacaOperation,
@@ -93,7 +94,14 @@ export async function alpacaRequestForAccount<T>(
         message: `LIVE ${operationClass} blocked for TradingAccount ${tradingAccountId}: ${required} must be true.` });
     }
     try {
-      await authorizeLiveBrokerWrite(tradingAccountId, operationClass);
+      if (operationClass === 'ENTRY_WRITE' && options.metadata.newPositionEntryContext) {
+        await authorizeAndConsumeNewPositionEntry(
+          tradingAccountId,
+          options.metadata.newPositionEntryContext,
+        );
+      } else {
+        await authorizeLiveBrokerWrite(tradingAccountId, operationClass);
+      }
     } catch (error) {
       throw new BrokerWriteDeliveryError({
         classification: 'NOT_SENT_BLOCKED',
