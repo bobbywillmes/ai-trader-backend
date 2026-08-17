@@ -119,7 +119,7 @@ await prisma.tradingAccountLiveWriteApprovalDecision.create({
   data: {
     tradingAccountId: account.id,
     capability: LiveWriteCapability.RISK_REDUCING,
-    action: LiveWriteApprovalAction.GRANTED,
+    action: LiveWriteApprovalAction.GRANT,
     actorUserId: owner.id,
     reason: 'Synthetic fixture bootstrap for isolated manual acceptance.',
     ...fingerprints,
