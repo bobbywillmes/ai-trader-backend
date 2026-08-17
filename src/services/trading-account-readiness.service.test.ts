@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   blockingAccountWorkers,
   deriveReadinessValidity,
+  liveEntryArmingWorkerGate,
   readinessFingerprint,
 } from './trading-account-readiness.service.js';
 
@@ -21,6 +22,74 @@ describe('account worker readiness blockers', () => {
     expect(blockingAccountWorkers(workers).map((worker) => worker.workerKey))
       .toEqual(['stale', 'failing', 'backoff', 'degraded']);
     expect(workers).toEqual(before);
+  });
+});
+
+describe('LIVE_ENTRY_ARMING worker gates', () => {
+  const dormant = (workerKey: string) => ({
+    workerKey,
+    applicable: false,
+    status: 'DORMANT',
+    eligibilityReason: 'no_work_for_workflow',
+  });
+  const healthy = (workerKey: string) => ({
+    workerKey,
+    applicable: true,
+    status: 'HEALTHY',
+    eligibilityReason: 'usable_credentials_operational_account',
+  });
+
+  it.each([
+    'pending_order_processing',
+    'submitted_order_sync',
+    'exit_evaluation',
+  ])('accepts %s as dormant only when its account workload is empty', (workerKey) => {
+    expect(liveEntryArmingWorkerGate(workerKey, dormant(workerKey))).toMatchObject({
+      outcome: 'PASSED',
+      evidence: { applicable: false, status: 'DORMANT', eligibilityReason: 'no_work_for_workflow' },
+    });
+  });
+
+  it.each(['FAILING', 'STALE', 'BACKING_OFF'])('blocks an applicable work-dependent worker in %s', (status) => {
+    expect(liveEntryArmingWorkerGate('pending_order_processing', {
+      workerKey: 'pending_order_processing', applicable: true, status,
+    }).outcome).toBe('BLOCKED');
+  });
+
+  it('does not accept dormant when credentials or another condition made the worker inapplicable', () => {
+    expect(liveEntryArmingWorkerGate('submitted_order_sync', {
+      workerKey: 'submitted_order_sync', applicable: false, status: 'DORMANT',
+      eligibilityReason: 'credentials_unavailable_dormant',
+    }).outcome).toBe('BLOCKED');
+  });
+
+  it.each([
+    'broker_activity_sync',
+    'tracked_position_sync',
+    'account_snapshot_scheduler',
+  ])('requires always-applicable worker %s to remain applicable and healthy', (workerKey) => {
+    expect(liveEntryArmingWorkerGate(workerKey, healthy(workerKey)).outcome).toBe('PASSED');
+    expect(liveEntryArmingWorkerGate(workerKey, dormant(workerKey)).outcome).toBe('BLOCKED');
+  });
+
+  it('leaves only credential freshness and ENTRY authorization in a staged zero-exposure blocker set', () => {
+    const workers = [
+      dormant('pending_order_processing'),
+      dormant('submitted_order_sync'),
+      healthy('broker_activity_sync'),
+      healthy('tracked_position_sync'),
+      dormant('exit_evaluation'),
+      healthy('account_snapshot_scheduler'),
+    ];
+    const workerBlockers = workers
+      .map((row) => liveEntryArmingWorkerGate(row.workerKey, row))
+      .filter((item) => item.outcome === 'BLOCKED');
+    const unchangedNonWorkerBlockers = [
+      'ARMING_CREDENTIAL_VERIFICATION_CURRENT',
+      'ARMING_ENTRY_APPROVAL_CURRENT',
+    ];
+    expect([...workerBlockers.map((item) => item.code), ...unchangedNonWorkerBlockers])
+      .toEqual(unchangedNonWorkerBlockers);
   });
 });
 

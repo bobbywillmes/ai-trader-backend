@@ -201,6 +201,56 @@ function gate(
   };
 }
 
+const LIVE_ENTRY_ARMING_ALWAYS_APPLICABLE_WORKERS = new Set([
+  'broker_activity_sync',
+  'tracked_position_sync',
+  'account_snapshot_scheduler',
+]);
+
+const LIVE_ENTRY_ARMING_WORK_DEPENDENT_WORKERS = new Set([
+  'pending_order_processing',
+  'submitted_order_sync',
+  'exit_evaluation',
+]);
+
+export type LiveEntryArmingWorkerEvidence = {
+  workerKey: string;
+  applicable: boolean;
+  status: string;
+  eligibilityReason?: string | null;
+};
+
+export function liveEntryArmingWorkerGate(
+  workerKey: string,
+  row: LiveEntryArmingWorkerEvidence | undefined,
+) {
+  const healthy = Boolean(row?.applicable && row.status === 'HEALTHY');
+  const safelyDormant = Boolean(
+    row &&
+    LIVE_ENTRY_ARMING_WORK_DEPENDENT_WORKERS.has(workerKey) &&
+    !row.applicable &&
+    row.status === 'DORMANT' &&
+    row.eligibilityReason === 'no_work_for_workflow'
+  );
+  const passed = healthy || safelyDormant;
+  const requirement = LIVE_ENTRY_ARMING_ALWAYS_APPLICABLE_WORKERS.has(workerKey)
+    ? `${workerKey} must be applicable and healthy.`
+    : `${workerKey} must be healthy when applicable or dormant because no work exists.`;
+  return gate(
+    `ARMING_WORKER_${workerKey.toUpperCase()}`,
+    passed,
+    safelyDormant
+      ? `${workerKey} is safely dormant because no account work exists.`
+      : `${workerKey} is applicable and healthy.`,
+    requirement,
+    row ? {
+      applicable: row.applicable,
+      status: row.status,
+      eligibilityReason: row.eligibilityReason ?? null,
+    } : undefined,
+  );
+}
+
 function stage(
   key: ReadinessStageKey,
   gates: ReadinessGate[],
@@ -915,8 +965,7 @@ async function gatherAndPersist(
   const workerRows = workerHealth?.workers ?? [];
   const armingWorkerGates = Array.from(requiredArmingWorkers).map((workerKey) => {
     const row = workerRows.find((item) => item.workerKey === workerKey);
-    return gate(`ARMING_WORKER_${workerKey.toUpperCase()}`, Boolean(row?.applicable && row.status === 'HEALTHY'),
-      `${workerKey} is healthy.`, `${workerKey} must be applicable and healthy.`);
+    return liveEntryArmingWorkerGate(workerKey, row);
   });
   const armingPrerequisiteGates = [
     ...identityGates.filter((item) => !['OPERATIONAL_POSTURE_VALID', 'ACTIVATION_STARTING_STATUS_PAUSED'].includes(item.code)),
