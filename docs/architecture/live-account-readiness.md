@@ -2,6 +2,8 @@
 
 After activation, `LIVE_ENTRY_ARMING` is the forward readiness purpose. Before ENTRY approval it may be BLOCKED solely on ENTRY while returning `prerequisitesForEntryGrantPassed=true`; ARM requires a new PASSED/CURRENT post-grant assessment. Market-open timing remains a runtime gate.
 
+`LIVE_ENTRY_ARMING` evidence has a 15-minute operator window. Credential verification retains its independent 15-minute freshness limit and is revalidated at approval grant and ARM, so the assessment lifetime cannot extend stale credential authority.
+
 Phase 5A persists immutable completed readiness assessments as capability and
 posture evidence. It does not activate accounts, repair lifecycle records,
 replace credential verification, synchronize broker state, or authorize a

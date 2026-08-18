@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateLiveEntryArmingBinding } from './live-entry-arming.service.js';
+import {
+  assertArmingCredentialVerificationCurrent,
+  evaluateLiveEntryArmingBinding,
+} from './live-entry-arming.service.js';
 
 const arming = {
   entryApprovalId: 10,
@@ -47,5 +50,15 @@ describe('Live entry arming binding', () => {
 
   it('rejects replacement risk-reducing authority', () => {
     expect(evaluateLiveEntryArmingBinding({ ...current, riskReducingApproval: { id: 20, revision: 5 } })).toEqual({ valid: false, reason: 'RISK_REDUCING_APPROVAL_MISMATCH' });
+  });
+});
+
+describe('Live entry ARM credential freshness', () => {
+  it('does not let a CURRENT 15-minute assessment extend stale credential verification', () => {
+    const verifiedAt = new Date('2026-08-18T12:00:00Z');
+    expect(() => assertArmingCredentialVerificationCurrent(
+      verifiedAt,
+      new Date('2026-08-18T12:15:00.001Z'),
+    )).toThrow('Credential verification is no longer current');
   });
 });

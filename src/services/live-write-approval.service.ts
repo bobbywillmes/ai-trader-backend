@@ -293,6 +293,39 @@ export type GrantLiveWriteApprovalInput = {
   expiresAt?: Date | null | undefined;
 };
 
+type GrantAccountPosture = {
+  status: string;
+  tradingEnabled: boolean;
+  killSwitchEnabled: boolean;
+};
+
+export function resolveGrantReadinessPurpose(
+  capability: LiveWriteCapability,
+  account: GrantAccountPosture,
+) {
+  if (capability === LiveWriteCapability.ENTRY) {
+    return TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING;
+  }
+  if (
+    account.status === 'PAUSED' &&
+    !account.tradingEnabled &&
+    account.killSwitchEnabled
+  ) {
+    return TradingAccountReadinessPurpose.LIVE_ACTIVATION;
+  }
+  if (
+    account.status === 'ACTIVE' &&
+    !account.tradingEnabled &&
+    account.killSwitchEnabled
+  ) {
+    return TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING;
+  }
+  throw new HttpError(
+    409,
+    'RISK_REDUCING approval requires exact PAUSED or ACTIVE entry-disarmed posture.',
+  );
+}
+
 export async function grantLiveWriteApproval(args: {
   tradingAccountId: number;
   capability: LiveWriteCapability;
@@ -343,7 +376,12 @@ export async function grantLiveWriteApproval(args: {
     async (tx) => {
       const account = await tx.tradingAccount.findUnique({
         where: { id: args.tradingAccountId },
-        select: { environment: true },
+        select: {
+          environment: true,
+          status: true,
+          tradingEnabled: true,
+          killSwitchEnabled: true,
+        },
       });
       if (!account) throw new HttpError(404, 'Trading account not found.');
       if (account.environment !== TradingAccountEnvironment.LIVE) {
@@ -352,13 +390,21 @@ export async function grantLiveWriteApproval(args: {
           'Live write approval can only be granted to a LIVE Trading Account.',
         );
       }
+      const {
+        computeReadinessFingerprints,
+        isCredentialVerificationCurrent,
+        LIVE_ENTRY_ARMING_READINESS_VERSION,
+        READINESS_ASSESSMENT_VERSION,
+      } = await import('./trading-account-readiness.service.js');
+      const requiredPurpose = resolveGrantReadinessPurpose(
+        args.capability,
+        account,
+      );
       const assessment = await tx.tradingAccountReadinessAssessment.findFirst({
         where: {
           id: args.input.readinessAssessmentId,
           tradingAccountId: args.tradingAccountId,
-          purpose: args.capability === LiveWriteCapability.ENTRY
-            ? TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING
-            : TradingAccountReadinessPurpose.LIVE_ACTIVATION,
+          purpose: requiredPurpose,
         },
       });
       if (!assessment)
@@ -368,14 +414,36 @@ export async function grantLiveWriteApproval(args: {
         );
       if (assessment.expiresAt.getTime() <= Date.now())
         throw new HttpError(409, 'The readiness assessment has expired.');
+      const supportedVersion = requiredPurpose === TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING
+        ? LIVE_ENTRY_ARMING_READINESS_VERSION
+        : READINESS_ASSESSMENT_VERSION;
+      if (assessment.assessmentVersion !== supportedVersion) {
+        throw new HttpError(409, 'The readiness assessment version is not supported.');
+      }
+      if (!isCredentialVerificationCurrent(assessment.credentialVerifiedAt)) {
+        throw new HttpError(
+          409,
+          'Credential verification is no longer current. Verify credentials and run a new readiness assessment.',
+        );
+      }
       if (args.capability === LiveWriteCapability.ENTRY) {
         const evidence = assessment.evidenceJson as Record<string, unknown>;
         if (assessment.result !== 'BLOCKED' || evidence.prerequisitesForEntryGrantPassed !== true) {
           throw new HttpError(409, 'ENTRY approval requires LIVE_ENTRY_ARMING readiness with every prerequisite passed and ENTRY as the sole expected blocker.');
         }
       }
-      const { computeReadinessFingerprints } =
-        await import('./trading-account-readiness.service.js');
+      if (
+        args.capability === LiveWriteCapability.RISK_REDUCING &&
+        requiredPurpose === TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING
+      ) {
+        const evidence = assessment.evidenceJson as Record<string, unknown>;
+        if (evidence.prerequisitesForRiskReducingGrantPassed !== true) {
+          throw new HttpError(
+            409,
+            'RISK_REDUCING approval requires LIVE_ENTRY_ARMING readiness with every non-authorization prerequisite passed.',
+          );
+        }
+      }
       const currentReadinessFingerprints = await computeReadinessFingerprints(
         args.tradingAccountId,
         tx,

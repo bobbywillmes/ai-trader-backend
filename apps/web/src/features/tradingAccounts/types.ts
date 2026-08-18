@@ -127,6 +127,7 @@ export type TradingAccountReadinessAssessment = {
       applicable: boolean;
     }>;
     prerequisitesForEntryGrantPassed?: boolean;
+    prerequisitesForRiskReducingGrantPassed?: boolean;
     selectedCanary?: null | {
       tradingAccountSubscriptionId: number;
       subscriptionId: number;

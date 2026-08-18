@@ -18,6 +18,7 @@ import {
 } from './live-write-approval.service.js';
 import {
   computeReadinessFingerprints,
+  isCredentialVerificationCurrent,
   LIVE_ENTRY_ARMING_READINESS_VERSION,
 } from './trading-account-readiness.service.js';
 import {
@@ -206,6 +207,18 @@ export type ArmLiveEntriesInput = {
   expectedUpdatedAt: Date;
 };
 
+export function assertArmingCredentialVerificationCurrent(
+  credentialVerifiedAt: Date | null,
+  now = new Date(),
+) {
+  if (!isCredentialVerificationCurrent(credentialVerifiedAt, now)) {
+    throw new HttpError(
+      409,
+      'Credential verification is no longer current. Verify credentials and run a new readiness assessment before ARM.',
+    );
+  }
+}
+
 async function armInsideTransaction(tx: Prisma.TransactionClient, tradingAccountId: number, actorUserId: number, input: ArmLiveEntriesInput) {
   await tx.$queryRaw`SELECT id FROM "TradingAccount" WHERE id = ${tradingAccountId} FOR UPDATE`;
   const account = await tx.tradingAccount.findUnique({ where: { id: tradingAccountId }, include: {
@@ -218,6 +231,7 @@ async function armInsideTransaction(tx: Prisma.TransactionClient, tradingAccount
     id: input.readinessAssessmentId, tradingAccountId, purpose: TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING,
   }});
   if (!assessment || assessment.result !== TradingAccountReadinessResult.PASSED || assessment.assessmentVersion !== LIVE_ENTRY_ARMING_READINESS_VERSION || assessment.expiresAt <= new Date()) throw new HttpError(409, 'A current passing supported post-grant LIVE_ENTRY_ARMING assessment is required.');
+  assertArmingCredentialVerificationCurrent(assessment.credentialVerifiedAt);
   const readiness = await computeReadinessFingerprints(tradingAccountId, tx);
   if (!readiness || assessment.configurationFingerprint !== readiness.configurationFingerprint || assessment.credentialFingerprint !== readiness.credentialFingerprint || assessment.policyFingerprint !== readiness.policyFingerprint) throw new HttpError(409, 'LIVE_ENTRY_ARMING readiness evidence is stale.');
   const approvals = await getLiveWriteApprovalState(tradingAccountId, tx);

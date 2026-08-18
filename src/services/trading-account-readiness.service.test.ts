@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { TradingAccountReadinessPurpose } from '@prisma/client';
 import {
   blockingAccountWorkers,
   deriveReadinessValidity,
+  isCredentialVerificationCurrent,
+  liveEntryArmingRiskReducingPrerequisitesPassed,
   liveEntryArmingWorkerGate,
+  readinessAssessmentLifetimeMs,
   readinessFingerprint,
 } from './trading-account-readiness.service.js';
 
@@ -138,5 +142,56 @@ describe('readiness validity', () => {
     }, fingerprints, new Date('2026-01-01T00:00:00Z'))).toEqual({
       validity: 'EXPIRED', staleReasons: ['CONFIGURATION_CHANGED'],
     });
+  });
+});
+
+describe('LIVE_ENTRY_ARMING risk-reducing grant evidence', () => {
+  const passed = (code: string) => ({ code, outcome: 'PASSED' as const, message: 'passed' });
+  const blocked = (code: string) => ({ code, outcome: 'BLOCKED' as const, message: 'blocked' });
+
+  it.each([
+    [blocked('ARMING_RISK_REDUCING_APPROVAL')],
+    [blocked('ARMING_ENTRY_APPROVAL_CURRENT')],
+    [blocked('ARMING_RISK_REDUCING_APPROVAL'), blocked('ARMING_ENTRY_APPROVAL_CURRENT')],
+  ])('allows only the expected unresolved authorization gates', (...authorizationGates) => {
+    expect(liveEntryArmingRiskReducingPrerequisitesPassed([
+      passed('ARMING_ACCOUNT_ACTIVE_DISARMED'),
+      ...authorizationGates,
+    ])).toBe(true);
+  });
+
+  it.each([
+    'ARMING_CREDENTIAL_VERIFICATION_CURRENT',
+    'ARMING_WORKER_PENDING_ORDER_PROCESSING',
+    'LOCAL_OPEN_POSITIONS_EMPTY',
+    'CANARY_ACCOUNT_RISK_LIMITS',
+    'ARMING_DEPLOYMENT_EXECUTOR',
+  ])('rejects unrelated blocker %s', (code) => {
+    expect(liveEntryArmingRiskReducingPrerequisitesPassed([
+      blocked('ARMING_RISK_REDUCING_APPROVAL'),
+      blocked('ARMING_ENTRY_APPROVAL_CURRENT'),
+      blocked(code),
+    ])).toBe(false);
+  });
+});
+
+describe('readiness operator and credential windows', () => {
+  it('uses 15 minutes for LIVE_ENTRY_ARMING and retains five minutes for activation', () => {
+    expect(readinessAssessmentLifetimeMs(TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING)).toBe(15 * 60_000);
+    expect(readinessAssessmentLifetimeMs(TradingAccountReadinessPurpose.LIVE_ACTIVATION)).toBe(5 * 60_000);
+  });
+
+  it('keeps arming evidence current through its 15-minute window and expires afterward', () => {
+    const fingerprints = { configurationFingerprint: 'c', credentialFingerprint: 'k', policyFingerprint: 'p' };
+    const completedAt = new Date('2026-08-18T12:00:00Z');
+    const assessment = { ...fingerprints, expiresAt: new Date(completedAt.getTime() + 15 * 60_000) };
+    expect(deriveReadinessValidity(assessment, fingerprints, new Date('2026-08-18T12:14:59.999Z')).validity).toBe('CURRENT');
+    expect(deriveReadinessValidity(assessment, fingerprints, new Date('2026-08-18T12:15:00.000Z')).validity).toBe('EXPIRED');
+  });
+
+  it('independently expires credential verification after 15 minutes', () => {
+    const verifiedAt = new Date('2026-08-18T12:00:00Z');
+    expect(isCredentialVerificationCurrent(verifiedAt, new Date('2026-08-18T12:15:00Z'))).toBe(true);
+    expect(isCredentialVerificationCurrent(verifiedAt, new Date('2026-08-18T12:15:00.001Z'))).toBe(false);
   });
 });

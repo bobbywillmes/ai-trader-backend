@@ -22,8 +22,9 @@ import {
 } from './trading-account-workflow-lock.service.js';
 
 export const READINESS_ASSESSMENT_VERSION = 1;
-export const LIVE_ENTRY_ARMING_READINESS_VERSION = 1;
+export const LIVE_ENTRY_ARMING_READINESS_VERSION = 2;
 export const LIVE_ACTIVATION_ASSESSMENT_LIFETIME_MS = 5 * 60_000;
+export const LIVE_ENTRY_ARMING_ASSESSMENT_LIFETIME_MS = 15 * 60_000;
 export const CREDENTIAL_VERIFICATION_MAX_AGE_MS = 15 * 60_000;
 export const READINESS_HISTORY_MAX_LIMIT = 100;
 
@@ -201,6 +202,24 @@ function gate(
   };
 }
 
+export function isCredentialVerificationCurrent(
+  verifiedAt: Date | null | undefined,
+  now = new Date(),
+) {
+  return Boolean(
+    verifiedAt &&
+    now.getTime() - verifiedAt.getTime() <= CREDENTIAL_VERIFICATION_MAX_AGE_MS,
+  );
+}
+
+export function readinessAssessmentLifetimeMs(
+  purpose: TradingAccountReadinessPurpose,
+) {
+  return purpose === TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING
+    ? LIVE_ENTRY_ARMING_ASSESSMENT_LIFETIME_MS
+    : LIVE_ACTIVATION_ASSESSMENT_LIFETIME_MS;
+}
+
 const LIVE_ENTRY_ARMING_ALWAYS_APPLICABLE_WORKERS = new Set([
   'broker_activity_sync',
   'tracked_position_sync',
@@ -248,6 +267,21 @@ export function liveEntryArmingWorkerGate(
       status: row.status,
       eligibilityReason: row.eligibilityReason ?? null,
     } : undefined,
+  );
+}
+
+export function liveEntryArmingRiskReducingPrerequisitesPassed(
+  gates: readonly ReadinessGate[],
+) {
+  const expectedAuthorizationBlockers = new Set([
+    'ARMING_RISK_REDUCING_APPROVAL',
+    'ARMING_ENTRY_APPROVAL_CURRENT',
+  ]);
+  return gates.every(
+    (item) =>
+      item.outcome === 'PASSED' ||
+      (item.outcome === 'BLOCKED' &&
+        expectedAuthorizationBlockers.has(item.code)),
   );
 }
 
@@ -511,12 +545,8 @@ async function gatherAndPersist(
     !credential.revokedAt &&
     credential.keyFingerprint,
   );
-  const verifiedFresh = Boolean(
-    credentialUsable &&
-    credential?.verifiedAt &&
-    startedAt.getTime() - credential.verifiedAt.getTime() <=
-      CREDENTIAL_VERIFICATION_MAX_AGE_MS,
-  );
+  const verifiedFresh = credentialUsable &&
+    isCredentialVerificationCurrent(credential?.verifiedAt, startedAt);
 
   const [
     localOpenPositionCount,
@@ -1102,6 +1132,9 @@ async function gatherAndPersist(
     : activation;
   const prerequisitesForEntryGrantPassed = purpose === TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING &&
     armingPrerequisiteGates.every((item) => item.outcome === 'PASSED') && !entryApproval.effective;
+  const prerequisitesForRiskReducingGrantPassed =
+    purpose === TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING &&
+    liveEntryArmingRiskReducingPrerequisitesPassed(armingGates);
   const result =
     assessedStage.outcome === 'PASSED'
       ? TradingAccountReadinessResult.PASSED
@@ -1133,7 +1166,7 @@ async function gatherAndPersist(
       startedAt,
       completedAt,
       expiresAt: new Date(
-        completedAt.getTime() + LIVE_ACTIVATION_ASSESSMENT_LIFETIME_MS,
+        completedAt.getTime() + readinessAssessmentLifetimeMs(purpose),
       ),
       ...fingerprints,
       credentialVerifiedAt: credential?.verifiedAt ?? null,
@@ -1175,6 +1208,7 @@ async function gatherAndPersist(
             expectedIntervalMs: item.expectedIntervalMs,
           })) ?? [],
         prerequisitesForEntryGrantPassed,
+        prerequisitesForRiskReducingGrantPassed,
         selectedCanary: canary ? {
           tradingAccountSubscriptionId: canary.id,
           subscriptionId: canary.subscriptionId,
@@ -1285,12 +1319,14 @@ export async function runTradingAccountReadinessAssessment(
                 tradingAccountId,
                 purpose,
                 result: TradingAccountReadinessResult.ERROR,
-                assessmentVersion: READINESS_ASSESSMENT_VERSION,
+                assessmentVersion: purpose === TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING
+                  ? LIVE_ENTRY_ARMING_READINESS_VERSION
+                  : READINESS_ASSESSMENT_VERSION,
                 startedAt,
                 completedAt,
                 expiresAt: new Date(
                   completedAt.getTime() +
-                    LIVE_ACTIVATION_ASSESSMENT_LIFETIME_MS,
+                    readinessAssessmentLifetimeMs(purpose),
                 ),
                 ...fingerprints,
                 localOpenPositionCount: 0,
