@@ -1,6 +1,7 @@
 import { MANUAL_ACCEPTANCE_SENTINEL } from '../../src/services/manual-acceptance-environment.js';
 
 type MockRequest = {
+  host: string;
   method: string;
   path: string;
   body: unknown;
@@ -8,6 +9,10 @@ type MockRequest = {
 };
 
 const ALPACA_HOSTS = new Set(['api.alpaca.markets', 'paper-api.alpaca.markets']);
+const MASSIVE_HOST = 'api.massive.com';
+const MASSIVE_RSP_SNAPSHOT_PATH = '/v2/snapshot/locale/us/markets/stocks/tickers/RSP';
+const MASSIVE_RSP_PRICE = 250;
+const MASSIVE_RSP_PRICE_AT = Date.parse('2026-08-18T17:00:00.000Z');
 const MARKET_TIME_ZONE = 'America/New_York';
 const requests: MockRequest[] = [];
 let nextOrderId = 1;
@@ -115,14 +120,31 @@ export function installMockAlpacaTransport() {
   globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
     const rawUrl = input instanceof Request ? input.url : String(input);
     const url = new URL(rawUrl);
-    if (url.protocol !== 'https:' || !ALPACA_HOSTS.has(url.hostname)) {
+    const isAlpacaHost = ALPACA_HOSTS.has(url.hostname);
+    const isMassiveHost = url.hostname === MASSIVE_HOST;
+    if (url.protocol !== 'https:' || (!isAlpacaHost && !isMassiveHost)) {
       throw new Error(`Manual acceptance network deny: ${url.origin}${url.pathname}`);
     }
 
     const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
     const bodyText = typeof init?.body === 'string' ? init.body : null;
     const body = bodyText ? JSON.parse(bodyText) : null;
-    requests.push({ method, path: `${url.pathname}${url.search}`, body, occurredAt: new Date().toISOString() });
+    requests.push({ host: url.hostname, method, path: `${url.pathname}${url.search}`, body, occurredAt: new Date().toISOString() });
+
+    if (isMassiveHost) {
+      const onlyCacheBuster = [...url.searchParams.keys()].every((key) => key === '_') &&
+        url.searchParams.getAll('_').length <= 1;
+      if (method !== 'GET' || url.pathname !== MASSIVE_RSP_SNAPSHOT_PATH || !onlyCacheBuster) {
+        throw new Error(`Manual acceptance Massive mock has no route for ${method} ${url.pathname}${url.search}`);
+      }
+      return json({
+        ticker: {
+          ticker: 'RSP',
+          lastTrade: { p: MASSIVE_RSP_PRICE, t: MASSIVE_RSP_PRICE_AT },
+          updated: MASSIVE_RSP_PRICE_AT,
+        },
+      });
+    }
 
     if (url.pathname === '/v2/account') return json(account());
     if (url.pathname === '/v2/positions') return json([]);
@@ -162,7 +184,7 @@ export function mockAlpacaState() {
   return {
     totalRequests: requests.length,
     getCount: requests.filter((item) => item.method === 'GET').length,
-    postCount: requests.filter((item) => item.method === 'POST').length,
+    postCount: requests.filter((item) => ALPACA_HOSTS.has(item.host) && item.method === 'POST').length,
     recentRequests: requests.slice(-50),
   };
 }

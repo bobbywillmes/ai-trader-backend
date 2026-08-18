@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MANUAL_ACCEPTANCE_SENTINEL } from '../../src/services/manual-acceptance-environment.js';
-import { installMockAlpacaTransport } from './mock-alpaca-transport.js';
+import {
+  getTickerLatestPrice,
+  normalizeTickerLatestPrice,
+} from '../../src/services/massive-market-data.service.js';
+import { installMockAlpacaTransport, mockAlpacaState } from './mock-alpaca-transport.js';
 
 describe('manual acceptance Alpaca transport boundary', () => {
   const originalFetch = globalThis.fetch;
@@ -23,6 +27,82 @@ describe('manual acceptance Alpaca transport boundary', () => {
     const response = await fetch('https://api.alpaca.markets/v2/account');
     expect(response.ok).toBe(true);
     await expect(response.json()).resolves.toMatchObject({ id: 'manual-acceptance-live-account' });
+  });
+
+  it.each([
+    'https://api.massive.com/v2/snapshot/locale/us/markets/stocks/tickers/RSP',
+    'https://api.massive.com/v2/snapshot/locale/us/markets/stocks/tickers/RSP?_=1787072400000',
+  ])('returns a parseable deterministic RSP latest price for %s', async (url) => {
+    const before = mockAlpacaState();
+    const response = await fetch(url);
+    const payload = await response.json() as { ticker: Parameters<typeof normalizeTickerLatestPrice>[1] };
+
+    expect(response.ok).toBe(true);
+    expect(normalizeTickerLatestPrice('RSP', payload.ticker)).toEqual({
+      symbol: 'RSP',
+      latestPrice: 250,
+      latestPriceAt: '2026-08-18T17:00:00.000Z',
+      latestPriceSource: 'lastTrade',
+    });
+    expect(mockAlpacaState()).toMatchObject({
+      totalRequests: before.totalRequests + 1,
+      getCount: before.getCount + 1,
+      postCount: before.postCount,
+    });
+    expect(mockAlpacaState().recentRequests.at(-1)).toMatchObject({
+      host: 'api.massive.com',
+      method: 'GET',
+      path: new URL(url).pathname + new URL(url).search,
+    });
+  });
+
+  it('serves the real latest-price client used by MAX_NOTIONAL runtime sizing', async () => {
+    const before = mockAlpacaState();
+
+    await expect(getTickerLatestPrice('RSP')).resolves.toEqual({
+      symbol: 'RSP',
+      latestPrice: 250,
+      latestPriceAt: '2026-08-18T17:00:00.000Z',
+      latestPriceSource: 'lastTrade',
+    });
+    expect(mockAlpacaState()).toMatchObject({
+      totalRequests: before.totalRequests + 1,
+      getCount: before.getCount + 1,
+      postCount: before.postCount,
+    });
+    expect(mockAlpacaState().recentRequests.at(-1)).toMatchObject({
+      host: 'api.massive.com',
+      method: 'GET',
+      path: expect.stringMatching(/^\/v2\/snapshot\/locale\/us\/markets\/stocks\/tickers\/RSP\?_=/),
+    });
+  });
+
+  it('denies non-GET access to the permitted Massive snapshot', async () => {
+    const before = mockAlpacaState();
+
+    await expect(fetch(
+      'https://api.massive.com/v2/snapshot/locale/us/markets/stocks/tickers/RSP',
+      { method: 'POST' },
+    )).rejects.toThrow('Manual acceptance Massive mock has no route');
+    expect(mockAlpacaState().postCount).toBe(before.postCount);
+  });
+
+  it.each([
+    'https://api.massive.com/v2/snapshot/locale/us/markets/stocks/tickers/SPY',
+    'https://api.massive.com/v2/snapshot/locale/us/markets/stocks/tickers/RSP/details',
+    'https://api.massive.com/v2/reference/news',
+    'https://api.massive.com/v2/snapshot/locale/us/markets/stocks/tickers/RSP?unexpected=true',
+    'https://api.massive.com/v2/snapshot/locale/us/markets/stocks/tickers/RSP?_=1&_=2',
+  ])('denies an unapproved Massive request to %s', async (url) => {
+    await expect(fetch(url)).rejects.toThrow('Manual acceptance Massive mock has no route');
+  });
+
+  it.each([
+    'http://api.massive.com/v2/snapshot/locale/us/markets/stocks/tickers/RSP',
+    'https://api.massive.com.evil.invalid/v2/snapshot/locale/us/markets/stocks/tickers/RSP',
+    'https://massive.com/v2/snapshot/locale/us/markets/stocks/tickers/RSP',
+  ])('denies an unsafe Massive destination at %s', async (url) => {
+    await expect(fetch(url)).rejects.toThrow('Manual acceptance network deny');
   });
 
   it.each([

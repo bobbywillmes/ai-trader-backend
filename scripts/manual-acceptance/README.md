@@ -1,6 +1,6 @@
 # Live-entry-arming manual acceptance harness
 
-This harness runs the real backend, frontend, authorization services, order worker, and Prisma schema against a disposable local database. It replaces only the process-global Alpaca `fetch` transport. The replacement accepts the two exact Alpaca HTTPS hostnames, answers them in memory, and throws for every other outbound `fetch`; no accepted request reaches the network.
+This harness runs the real backend, frontend, authorization services, order worker, and Prisma schema against a disposable local database. It replaces the process-global `fetch` transport for the exact Alpaca calls and the single Massive RSP latest-price snapshot required by this ceremony. Those requests are answered in memory. Every other hostname, Massive endpoint or symbol, and unrelated outbound request is denied; no accepted request reaches the network.
 
 The harness is deliberately outside `src/`, requires an explicit sentinel, refuses any database except `ai_trader_live_entry_acceptance`, and binds its control API to `127.0.0.1`. It is not a production runtime mode.
 
