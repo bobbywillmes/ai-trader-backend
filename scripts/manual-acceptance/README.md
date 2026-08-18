@@ -9,7 +9,7 @@ The harness is deliberately outside `src/`, requires an explicit sentinel, refus
 Start the repository's local PostgreSQL container. In a fresh PowerShell window at the repository root, set synthetic process-local values (do not edit `.env`):
 
 ```powershell
-$env:DATABASE_URL='postgresql://trader:traderpass@localhost:5432/ai_trader_live_entry_acceptance'
+$env:DATABASE_URL='postgresql://trader:traderpass@127.0.0.1:5432/ai_trader_live_entry_acceptance'
 $env:NODE_ENV='production'
 $env:PORT='3000'
 $env:CORS_ALLOWED_ORIGINS='http://localhost:5173'
@@ -29,6 +29,8 @@ $env:MASSIVE_NEWS_WORKER_ENABLED='false'
 $env:MANUAL_ACCEPTANCE_HARNESS='I_UNDERSTAND_THIS_IS_SYNTHETIC'
 $env:MANUAL_ACCEPTANCE_CONTROL_TOKEN='local-control-token-acceptance'
 ```
+
+On this Windows/Docker Desktop environment, use `127.0.0.1` rather than `localhost`. Node resolves `localhost` to `::1` first here, which can cause PostgreSQL connection resets through Docker's IPv6 published listener.
 
 ## Reset and start
 

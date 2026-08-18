@@ -1,21 +1,57 @@
 import { useState } from "react";
 import { Alert, Badge, Button, Card, Group, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { useGrantLiveWriteApproval, useLiveWriteApprovals, useRevokeLiveWriteApproval } from "../../../hooks";
-import type { LiveWriteCapability, TradingAccountReadinessAssessment } from "../../../types";
+import type { LiveWriteCapability, TradingAccount, TradingAccountReadinessAssessment } from "../../../types";
 
-function CapabilityCard({ accountId, token, capability, latest }: {
-  accountId: number; token: string | null; capability: LiveWriteCapability;
+function CapabilityCard({ account, token, capability, latest }: {
+  account: Pick<TradingAccount, "id" | "status" | "tradingEnabled" | "killSwitchEnabled">;
+  token: string | null; capability: LiveWriteCapability;
   latest: TradingAccountReadinessAssessment | null;
 }) {
-  const state = useLiveWriteApprovals(accountId, token);
-  const grant = useGrantLiveWriteApproval(accountId, token);
-  const revoke = useRevokeLiveWriteApproval(accountId, token);
+  const state = useLiveWriteApprovals(account.id, token);
+  const grant = useGrantLiveWriteApproval(account.id, token);
+  const revoke = useRevokeLiveWriteApproval(account.id, token);
   const item = state.data?.capabilities.find((candidate) => candidate.capability === capability);
   const [reason, setReason] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
+  const [expirationIsFuture, setExpirationIsFuture] = useState(false);
   const revision = item?.approval?.revision ?? 0;
-  const canGrant = Boolean(state.data?.deploymentCanWrite && latest && item?.fingerprints);
+  const expectedConfirmation = `APPROVE LIVE ${capability}`;
+  const expiration = expiresAt ? new Date(expiresAt) : null;
+  const isDisarmedLatch = !account.tradingEnabled && account.killSwitchEnabled;
+  const readinessMatches = capability === "ENTRY"
+    ? latest?.purpose === "LIVE_ENTRY_ARMING" &&
+      latest.evidence.prerequisitesForEntryGrantPassed === true
+    : (account.status === "PAUSED" &&
+        isDisarmedLatch &&
+        latest?.purpose === "LIVE_ACTIVATION") ||
+      (account.status === "ACTIVE" &&
+        isDisarmedLatch &&
+        latest?.purpose === "LIVE_ENTRY_ARMING" &&
+        latest.evidence.prerequisitesForRiskReducingGrantPassed === true);
+  const canGrant = Boolean(
+    state.data?.deploymentCanWrite === true &&
+    latest?.validity === "CURRENT" &&
+    item?.fingerprints &&
+    reason.trim() &&
+    confirmation === expectedConfirmation &&
+    !grant.isPending &&
+    !revoke.isPending &&
+    isDisarmedLatch &&
+    readinessMatches &&
+    (capability !== "ENTRY" || expirationIsFuture),
+  );
+  const clearForm = () => {
+    setReason("");
+    setConfirmation("");
+    setExpiresAt("");
+    setExpirationIsFuture(false);
+  };
+  const resetErrors = () => {
+    grant.reset();
+    revoke.reset();
+  };
 
   return <Card withBorder>
     <Group justify="space-between"><Title order={4}>{capability.replace("_", " ")}</Title>
@@ -26,29 +62,36 @@ function CapabilityCard({ accountId, token, capability, latest }: {
     <Text size="sm">Expires: {item?.approval?.expiresAt ? new Date(item.approval.expiresAt).toLocaleString() : "no expiration"}</Text>
     {item?.approval?.invalidationReason && <Alert color="yellow" mt="sm">{item.approval.invalidationReason}</Alert>}
     {state.data?.deploymentCanWrite && <Stack gap="xs" mt="md">
-      <TextInput label="Reason" value={reason} onChange={(event) => setReason(event.currentTarget.value)} />
-      <TextInput label={`Type APPROVE LIVE ${capability}`} value={confirmation} onChange={(event) => setConfirmation(event.currentTarget.value)} />
-      {capability === "ENTRY" && <TextInput type="datetime-local" label="Expiration" value={expiresAt} onChange={(event) => setExpiresAt(event.currentTarget.value)} />}
+      <TextInput label="Reason" value={reason} onChange={(event) => { resetErrors(); setReason(event.currentTarget.value); }} />
+      <TextInput label={`Type ${expectedConfirmation}`} value={confirmation} onChange={(event) => { resetErrors(); setConfirmation(event.currentTarget.value); }} />
+      {capability === "ENTRY" && <TextInput type="datetime-local" label="Expiration" value={expiresAt} onChange={(event) => {
+        resetErrors();
+        const value = event.currentTarget.value;
+        const parsed = new Date(value);
+        setExpiresAt(value);
+        setExpirationIsFuture(Boolean(value && !Number.isNaN(parsed.getTime()) && parsed.getTime() > Date.now()));
+      }} />}
       <Group>
-        <Button disabled={!canGrant || !reason} loading={grant.isPending} onClick={() => item?.fingerprints && latest && grant.mutate({ capability, payload: {
+        <Button disabled={!canGrant} loading={grant.isPending} onClick={() => item?.fingerprints && latest && grant.mutate({ capability, payload: {
           reason, typedConfirmation: confirmation, readinessAssessmentId: latest.id,
           expectedConfigurationFingerprint: item.fingerprints.configurationFingerprint,
           expectedCredentialFingerprint: item.fingerprints.credentialFingerprint,
           expectedRevision: revision,
-          ...(capability === "ENTRY" ? { expiresAt: new Date(expiresAt).toISOString() } : {}),
-        } })}>Grant</Button>
-        <Button color="red" variant="outline" disabled={!item?.approval || !reason} loading={revoke.isPending}
-          onClick={() => revoke.mutate({ capability, payload: { reason, expectedRevision: revision } })}>Revoke</Button>
+          ...(capability === "ENTRY" ? { expiresAt: expiration!.toISOString() } : {}),
+        } }, { onSuccess: () => { clearForm(); resetErrors(); } })}>Grant</Button>
+        <Button color="red" variant="outline" disabled={!item?.approval || !reason.trim() || grant.isPending || revoke.isPending} loading={revoke.isPending}
+          onClick={() => revoke.mutate({ capability, payload: { reason, expectedRevision: revision } }, { onSuccess: () => { clearForm(); resetErrors(); } })}>Revoke</Button>
       </Group>
     </Stack>}
     {(grant.isError || revoke.isError) && <Alert color="red" mt="sm">{(grant.error ?? revoke.error)?.message}</Alert>}
   </Card>;
 }
 
-export function LiveWriteAuthorizationCard({ accountId, token, latest }: {
-  accountId: number; token: string | null; latest: TradingAccountReadinessAssessment | null;
+export function LiveWriteAuthorizationCard({ account, token, latest }: {
+  account: Pick<TradingAccount, "id" | "status" | "tradingEnabled" | "killSwitchEnabled">;
+  token: string | null; latest: TradingAccountReadinessAssessment | null;
 }) {
-  const state = useLiveWriteApprovals(accountId, token);
+  const state = useLiveWriteApprovals(account.id, token);
   return <Stack gap="md">
     <Card withBorder>
       <Title order={3}>Live Write Authorization</Title>
@@ -58,8 +101,8 @@ export function LiveWriteAuthorizationCard({ accountId, token, latest }: {
       </Alert>}
     </Card>
     <SimpleGrid cols={{ base: 1, lg: 2 }}>
-      <CapabilityCard accountId={accountId} token={token} capability="RISK_REDUCING" latest={latest} />
-      <CapabilityCard accountId={accountId} token={token} capability="ENTRY" latest={latest} />
+      <CapabilityCard account={account} token={token} capability="RISK_REDUCING" latest={latest} />
+      <CapabilityCard account={account} token={token} capability="ENTRY" latest={latest} />
     </SimpleGrid>
     <Card withBorder><Title order={4} mb="sm">Approval history</Title>
       <Table striped><Table.Thead><Table.Tr><Table.Th>Time</Table.Th><Table.Th>Capability</Table.Th><Table.Th>Decision</Table.Th><Table.Th>Actor</Table.Th><Table.Th>Reason</Table.Th></Table.Tr></Table.Thead>

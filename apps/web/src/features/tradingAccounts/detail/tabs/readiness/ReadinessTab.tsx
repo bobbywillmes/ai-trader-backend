@@ -281,7 +281,7 @@ export function ReadinessTab({
         </ScrollArea>
       </Card>
       <LiveWriteAuthorizationCard
-        accountId={account.id}
+        account={account}
         token={token}
         latest={latest.data?.assessment ?? null}
       />
