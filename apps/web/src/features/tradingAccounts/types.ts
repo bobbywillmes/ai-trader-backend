@@ -42,6 +42,14 @@ export type TradingAccount = {
     armedAt: string;
     terminations: Array<{ type: 'DISARMED' | 'INVALIDATED' | 'EXPIRED' | 'CONSUMED'; occurredAt: string }>;
   };
+  latestLiveEntryArming?: null | {
+    id: number;
+    entryApprovalRevision: number;
+    tradingAccountSubscriptionId: number;
+    entryApprovalExpiresAt: string;
+    armedAt: string;
+    terminations: Array<{ type: 'DISARMED' | 'INVALIDATED' | 'EXPIRED' | 'CONSUMED'; occurredAt: string }>;
+  };
   estimatedTradingCapital: number | null;
   maxDeployableNotional: number | null;
   enabledAllocatedNotional: number;

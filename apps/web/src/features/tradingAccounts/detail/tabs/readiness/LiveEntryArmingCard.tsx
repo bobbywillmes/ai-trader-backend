@@ -8,6 +8,7 @@ import {
   useTradingAccountSubscriptions,
 } from '../../../hooks';
 import type { TradingAccount, TradingAccountReadinessAssessment } from '../../../types';
+import { LiveEntrySetupProgress } from './LiveEntrySetupProgress';
 
 export function LiveEntryArmingCard({ account, assessment, token }: {
   account: TradingAccount;
@@ -23,13 +24,27 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
   const [confirmation, setConfirmation] = useState('');
   const rsp = assignments.data?.accountSubscriptions.find((item) => item.subscription.key === 'rsp_dip_core');
   const entry = approvals.data?.capabilities.find((item) => item.capability === 'ENTRY');
+  const risk = approvals.data?.capabilities.find((item) => item.capability === 'RISK_REDUCING');
   const preview = assessment?.evidence.selectedCanary;
   const armed = Boolean(account.activeLiveEntryArmingId && account.tradingEnabled && !account.killSwitchEnabled);
   const staged = Boolean(rsp?.entriesEnabled && !armed);
   const posture = armed ? 'ACTIVE · ENTRIES ARMED' : staged ? 'ACTIVE · ENTRY STAGED' : 'ACTIVE · ENTRY DISARMED';
   const canArm = Boolean(assessment?.purpose === 'LIVE_ENTRY_ARMING' && assessment.result === 'PASSED' && assessment.validity === 'CURRENT' && entry?.effective && entry.approval && rsp);
 
-  return <Card withBorder>
+  const armRequirements = [
+    ['Live Entry Arming assessment selected', assessment?.purpose === 'LIVE_ENTRY_ARMING'],
+    ['Assessment passed', assessment?.result === 'PASSED'],
+    ['Assessment is current', assessment?.validity === 'CURRENT'],
+    ['ENTRY authorization is effective', entry?.effective === true && Boolean(entry.approval)],
+    ['RSP canary assignment exists', Boolean(rsp)],
+    ['Operator reason entered', Boolean(reason.trim())],
+    ['Exact ARM LIVE ENTRIES confirmation entered', confirmation === 'ARM LIVE ENTRIES'],
+    ['No ARM request is pending', !arm.isPending],
+  ] as const;
+
+  return <Stack gap="md">
+    <LiveEntrySetupProgress account={account} assessment={assessment} canaryStaged={staged || armed} riskEffective={risk?.effective === true} entryEffective={entry?.effective === true} />
+    <Card withBorder>
     <Group justify="space-between"><Title order={3}>Live entry authority</Title><Badge color={armed ? 'red' : staged ? 'yellow' : 'gray'}>{posture}</Badge></Group>
     <Stack gap="sm" mt="md">
       <Text size="sm">Deployment entry permission: {assessment?.evidence.policy?.allowLiveTrading ? 'enabled' : 'disabled'}</Text>
@@ -49,11 +64,13 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
         ARMING LIVE ENTRIES CAN ALLOW REAL-MONEY BROKER ORDERS.
       </Alert>
       <TextInput label="Type ARM LIVE ENTRIES" value={confirmation} onChange={(event) => setConfirmation(event.currentTarget.value)} />
+      <Card withBorder><Text fw={700} size="sm">Requirements to ARM</Text>{armRequirements.map(([label, met]) => <Text size="sm" c={met ? 'green' : 'dimmed'} key={label}>{met ? '✓' : '○'} {label}</Text>)}</Card>
       <Button color="red" disabled={!canArm || !reason || confirmation !== 'ARM LIVE ENTRIES' || arm.isPending}
         onClick={() => entry?.approval && rsp && assessment && arm.mutate({ reason, typedConfirmation: confirmation, readinessAssessmentId: assessment.id, tradingAccountSubscriptionId: rsp.id, entryApprovalId: entry.approval.id, entryApprovalRevision: entry.approval.revision, expectedUpdatedAt: account.updatedAt })}>
         ARM LIVE ENTRIES
       </Button>
       {(stage.isError || arm.isError || disarm.isError) && <Alert color="red">{(stage.error ?? arm.error ?? disarm.error)?.message}</Alert>}
     </Stack>
-  </Card>;
+    </Card>
+  </Stack>;
 }

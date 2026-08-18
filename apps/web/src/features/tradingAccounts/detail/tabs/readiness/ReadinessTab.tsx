@@ -48,7 +48,17 @@ function outcomeColor(
   return 'red';
 }
 
-function AssessmentDetails({
+function purposeLabel(purpose: TradingAccountReadinessAssessment['purpose']) {
+  return purpose === 'LIVE_ENTRY_ARMING' ? 'Live Entry Arming' : 'Live Activation';
+}
+
+function isNonAuthoritativeLifecycleStage(assessment: TradingAccountReadinessAssessment, stageKey: string) {
+  return assessment.purpose === 'LIVE_ENTRY_ARMING'
+    ? stageKey === 'ACTIVATION_READY' || stageKey === 'ENTRY_READY'
+    : stageKey === 'ENTRY_READY' || stageKey === 'LIVE_ENTRY_ARMING_READY';
+}
+
+export function AssessmentDetails({
   assessment,
 }: {
   assessment: TradingAccountReadinessAssessment;
@@ -57,6 +67,7 @@ function AssessmentDetails({
   return (
     <Stack gap="md">
       <Group>
+        <Text fw={700}>Assessment purpose: {purposeLabel(assessment.purpose)}</Text>
         <Badge color={outcomeColor(assessment.result)}>
           {assessment.result}
         </Badge>
@@ -76,20 +87,22 @@ function AssessmentDetails({
         </Alert>
       )}
       <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }}>
-        {assessment.stages.map((stage) => (
-          <Card key={stage.key} withBorder>
+        {assessment.stages.map((stage) => {
+          const nonAuthoritative = isNonAuthoritativeLifecycleStage(assessment, stage.key);
+          return <Card key={stage.key} withBorder opacity={nonAuthoritative ? 0.55 : 1}>
             <Group justify="space-between">
               <Text fw={600}>{stageLabels[stage.key] ?? stage.key}</Text>
               <Badge color={outcomeColor(stage.outcome)}>{stage.outcome}</Badge>
             </Group>
+            {nonAuthoritative && <Badge color="gray" variant="light">NOT REQUIRED FOR THIS ASSESSMENT</Badge>}
             <Text size="sm" c="dimmed" mt="xs">
               {stage.summary}
             </Text>
             <Text size="xs" mt="xs">
               {stage.blockerCount} blockers · {stage.warningCount} warnings
             </Text>
-          </Card>
-        ))}
+          </Card>;
+        })}
       </SimpleGrid>
       <Card withBorder>
         <Title order={4}>Evidence summary</Title>
@@ -169,7 +182,10 @@ export function ReadinessTab({
   const run = useRunTradingAccountReadiness(account.id, token, purpose);
   const [selected, setSelected] =
     useState<TradingAccountReadinessAssessment | null>(null);
+  const [showAllHistory, setShowAllHistory] = useState(false);
   const assessment = selected ?? latest.data?.assessment ?? null;
+  const allAssessments = history.data?.assessments ?? [];
+  const visibleAssessments = showAllHistory ? allAssessments : allAssessments.slice(0, 5);
 
   if (account.environment !== 'LIVE') {
     return (
@@ -229,14 +245,16 @@ export function ReadinessTab({
       />
       {account.status === 'ACTIVE' && <LiveEntryArmingCard account={account} assessment={latest.data?.assessment ?? null} token={token} />}
       <Card withBorder>
-        <Title order={4} mb="sm">
-          Assessment history
-        </Title>
-        <ScrollArea>
+        <Group justify="space-between" mb="sm">
+          <div><Title order={4}>Assessment history</Title><Text size="sm" c="dimmed">Showing {showAllHistory ? 'all' : `latest ${Math.min(5, allAssessments.length)}`} of {allAssessments.length}</Text></div>
+          {allAssessments.length > 5 && <Button size="xs" variant="subtle" onClick={() => setShowAllHistory((value) => !value)}>{showAllHistory ? 'Collapse / Show recent' : 'Show all'}</Button>}
+        </Group>
+        <ScrollArea h={showAllHistory ? 420 : undefined} type={showAllHistory ? 'auto' : 'never'}>
           <Table striped highlightOnHover style={{ minWidth: 720 }}>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Time</Table.Th>
+                <Table.Th>Purpose</Table.Th>
                 <Table.Th>Result</Table.Th>
                 <Table.Th>Validity</Table.Th>
                 <Table.Th>Counts</Table.Th>
@@ -244,7 +262,7 @@ export function ReadinessTab({
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {(history.data?.assessments ?? []).map((item) => (
+              {visibleAssessments.map((item) => (
                 <Table.Tr
                   key={item.id}
                   onClick={() => setSelected(item)}
@@ -253,6 +271,7 @@ export function ReadinessTab({
                   <Table.Td>
                     {new Date(item.completedAt).toLocaleString()}
                   </Table.Td>
+                  <Table.Td>{purposeLabel(item.purpose)}</Table.Td>
                   <Table.Td>
                     <Badge color={outcomeColor(item.result)}>
                       {item.result}

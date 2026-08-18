@@ -63,8 +63,11 @@ describe('LiveWriteAuthorizationCard', () => {
   it('enables ENTRY Grant only after every client-side ceremony requirement passes', async () => {
     renderCard();
     expect(grantButtons()[1]!.hasAttribute('disabled')).toBe(true);
+    expect(screen.getAllByText('○ Reason is entered')).toHaveLength(2);
+    expect(screen.getByText('○ Expiration is valid and in the future')).toBeTruthy();
     await completeEntryCeremony();
     expect(grantButtons()[1]!.hasAttribute('disabled')).toBe(false);
+    expect(screen.getByText('✓ Exact APPROVE LIVE ENTRY confirmation is entered')).toBeTruthy();
   });
 
   it.each([

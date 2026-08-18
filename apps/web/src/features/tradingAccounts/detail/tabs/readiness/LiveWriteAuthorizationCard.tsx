@@ -52,6 +52,17 @@ function CapabilityCard({ account, token, capability, latest }: {
     grant.reset();
     revoke.reset();
   };
+  const grantRequirements = [
+    ["Deployment permits Live writes", state.data?.deploymentCanWrite === true],
+    ["Account is entry-disarmed", isDisarmedLatch],
+    ["Lifecycle-appropriate readiness is selected", readinessMatches],
+    ["Readiness is current", latest?.validity === "CURRENT"],
+    ["Expected fingerprints are available", Boolean(item?.fingerprints)],
+    ["Reason is entered", Boolean(reason.trim())],
+    [`Exact ${expectedConfirmation} confirmation is entered`, confirmation === expectedConfirmation],
+    ...(capability === "ENTRY" ? [["Expiration is valid and in the future", expirationIsFuture] as const] : []),
+    ["No approval operation is pending", !grant.isPending && !revoke.isPending],
+  ] as const;
 
   return <Card withBorder>
     <Group justify="space-between"><Title order={4}>{capability.replace("_", " ")}</Title>
@@ -71,6 +82,7 @@ function CapabilityCard({ account, token, capability, latest }: {
         setExpiresAt(value);
         setExpirationIsFuture(Boolean(value && !Number.isNaN(parsed.getTime()) && parsed.getTime() > Date.now()));
       }} />}
+      <Card withBorder><Text fw={700} size="sm">Requirements to Grant</Text>{grantRequirements.map(([label, met]) => <Text size="sm" c={met ? "green" : "dimmed"} key={label}>{met ? "✓" : "○"} {label}</Text>)}</Card>
       <Group>
         <Button disabled={!canGrant} loading={grant.isPending} onClick={() => item?.fingerprints && latest && grant.mutate({ capability, payload: {
           reason, typedConfirmation: confirmation, readinessAssessmentId: latest.id,
