@@ -1209,6 +1209,10 @@ async function gatherAndPersist(
           })) ?? [],
         prerequisitesForEntryGrantPassed,
         prerequisitesForRiskReducingGrantPassed,
+        liveWriteApprovalRevisions: {
+          riskReducing: riskReducingApproval.approval?.revision ?? null,
+          entry: entryApproval.approval?.revision ?? null,
+        },
         selectedCanary: canary ? {
           tradingAccountSubscriptionId: canary.id,
           subscriptionId: canary.subscriptionId,

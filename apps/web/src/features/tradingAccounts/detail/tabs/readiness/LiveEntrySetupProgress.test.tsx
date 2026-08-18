@@ -4,20 +4,42 @@ import { MantineProvider } from '@mantine/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TradingAccount, TradingAccountReadinessAssessment } from '../../../types';
 import { LiveEntrySetupProgress } from './LiveEntrySetupProgress';
+import { deriveLiveEntrySetupState } from './liveEntrySetupState';
 
-const account = { id: 1, status: 'ACTIVE', tradingEnabled: false, killSwitchEnabled: true, activeLiveEntryArmingId: null, credential: {} } as unknown as TradingAccount;
-const readiness = { purpose: 'LIVE_ENTRY_ARMING', result: 'PASSED', validity: 'CURRENT', credentialVerifiedAt: '2026-08-18T19:00:00Z' } as TradingAccountReadinessAssessment;
+const account = { id: 1, status: 'ACTIVE', tradingEnabled: false, killSwitchEnabled: true, activeLiveEntryArmingId: null, credential: { verifiedAt: '2026-08-18T19:00:00Z' } } as unknown as TradingAccount;
+const readiness = { purpose: 'LIVE_ENTRY_ARMING', result: 'PASSED', validity: 'CURRENT', credentialVerifiedAt: '2026-08-18T19:00:00Z', evidence: { liveWriteApprovalRevisions: { riskReducing: 1, entry: 2 } } } as TradingAccountReadinessAssessment;
 
-function show(overrides: { account?: TradingAccount; assessment?: TradingAccountReadinessAssessment | null; staged?: boolean; risk?: boolean; entry?: boolean } = {}) {
-  render(<MantineProvider><LiveEntrySetupProgress account={overrides.account ?? account} assessment={overrides.assessment === undefined ? readiness : overrides.assessment} canaryStaged={overrides.staged ?? true} riskEffective={overrides.risk ?? true} entryEffective={overrides.entry ?? true} /></MantineProvider>);
+function show(overrides: { account?: TradingAccount; assessment?: TradingAccountReadinessAssessment | null; staged?: boolean; risk?: boolean; entry?: boolean; riskRevision?: number; entryRevision?: number } = {}) {
+  const risk = overrides.risk ?? true;
+  const entry = overrides.entry ?? true;
+  render(<MantineProvider><LiveEntrySetupProgress account={overrides.account ?? account} assessment={overrides.assessment === undefined ? readiness : overrides.assessment} canaryStaged={overrides.staged ?? true} riskApproval={{ effective: risk, approval: risk ? { revision: overrides.riskRevision ?? 1 } : null }} entryApproval={{ effective: entry, approval: entry ? { revision: overrides.entryRevision ?? 2 } : null }} /></MantineProvider>);
   return screen.getByTestId('live-entry-next-action').textContent;
 }
 
 describe('LiveEntrySetupProgress', () => {
   afterEach(cleanup);
-  it('directs an operator to grant ENTRY when it is missing', () => expect(show({ entry: false, assessment: { ...readiness, result: 'BLOCKED' } })).toContain('Grant ENTRY authorization'));
+  it('directs an operator to grant ENTRY when current readiness exposes the backend grant prerequisite', () => expect(show({ entry: false, assessment: { ...readiness, result: 'BLOCKED', evidence: { ...readiness.evidence, prerequisitesForEntryGrantPassed: true } } })).toContain('Grant ENTRY authorization'));
   it('directs an operator to run readiness when ENTRY is effective but readiness is stale', () => expect(show({ assessment: { ...readiness, validity: 'STALE' } })).toContain('Run a fresh Live Entry Arming assessment'));
   it('labels PASSED/CURRENT readiness as ready to arm', () => { show(); expect(screen.getByText('READY TO ARM')).toBeTruthy(); expect(screen.getByTestId('live-entry-next-action').textContent).toContain('ARM LIVE ENTRIES'); });
+  it('does not present current ENTRY as effective when the approval query says INVALIDATED', () => {
+    show({ entry: false });
+    expect(screen.getByText('ENTRY effective').closest('li')?.textContent).toContain('PENDING');
+    expect(screen.queryByText('READY TO ARM')).toBeNull();
+  });
+  it('rejects current-looking readiness bound to stale approval revisions', () => {
+    expect(show({ riskRevision: 3, entryRevision: 4 })).toContain('Run a fresh Live Entry Arming assessment');
+    expect(screen.getByText('Live Entry Arming assessment passed and current').closest('li')?.textContent).toContain('NEXT');
+    expect(screen.queryByText('READY TO ARM')).toBeNull();
+  });
+  it('requires fresh post-approval readiness when both approvals are current', () => {
+    expect(show({ assessment: null })).toContain('Run a fresh Live Entry Arming assessment');
+  });
+  it('derives matching readiness milestone and next action from one canonical state', () => {
+    const state = deriveLiveEntrySetupState({ account, assessment: readiness, canaryStaged: true, riskApproval: { effective: true, approval: { revision: 1 } }, entryApproval: { effective: true, approval: { revision: 2 } } });
+    expect(state.milestones.find((item) => item.key === 'readiness')?.status).toBe('DONE');
+    expect(state.nextAction).toBe('ARM LIVE ENTRIES.');
+    expect(state.readyToArm).toBe(true);
+  });
   it('directs an armed operator to execute the one-shot canary', () => expect(show({ account: { ...account, activeLiveEntryArmingId: 4, tradingEnabled: true, killSwitchEnabled: false } })).toContain('Execute the one-shot RSP canary'));
   it('directs a consumed operator to verify evidence and disarm', () => expect(show({ account: { ...account, latestLiveEntryArming: { id: 4, entryApprovalRevision: 1, tradingAccountSubscriptionId: 2, entryApprovalExpiresAt: '2026-08-18T20:00:00Z', armedAt: '2026-08-18T19:00:00Z', terminations: [{ type: 'CONSUMED', occurredAt: '2026-08-18T19:10:00Z' }] } } })).toContain('Verify execution evidence and DISARM'));
   it('keeps canonical safety requirements in a theme-aware, readable next-step panel', () => {

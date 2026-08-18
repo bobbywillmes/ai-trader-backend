@@ -13,8 +13,8 @@ vi.mock('../../../hooks', () => ({
 }));
 import { LiveEntryArmingCard } from './LiveEntryArmingCard';
 
-const account = { id: 1, status: 'ACTIVE', environment: 'LIVE', tradingEnabled: false, killSwitchEnabled: true, activeLiveEntryArmingId: null, updatedAt: '2026-08-18T19:00:00Z' } as TradingAccount;
-const assessment = { id: 5, purpose: 'LIVE_ENTRY_ARMING', result: 'PASSED', validity: 'CURRENT', credentialVerifiedAt: '2026-08-18T19:00:00Z', evidence: {} } as TradingAccountReadinessAssessment;
+const account = { id: 1, status: 'ACTIVE', environment: 'LIVE', tradingEnabled: false, killSwitchEnabled: true, activeLiveEntryArmingId: null, updatedAt: '2026-08-18T19:00:00Z', credential: { verifiedAt: '2026-08-18T19:00:00Z' } } as TradingAccount;
+const assessment = { id: 5, purpose: 'LIVE_ENTRY_ARMING', result: 'PASSED', validity: 'CURRENT', credentialVerifiedAt: '2026-08-18T19:00:00Z', evidence: { liveWriteApprovalRevisions: { riskReducing: 1, entry: 2 } } } as TradingAccountReadinessAssessment;
 
 describe('LiveEntryArmingCard requirements', () => {
   afterEach(cleanup);

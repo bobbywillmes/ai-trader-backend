@@ -9,6 +9,7 @@ import {
 } from '../../../hooks';
 import type { TradingAccount, TradingAccountReadinessAssessment } from '../../../types';
 import { LiveEntrySetupProgress } from './LiveEntrySetupProgress';
+import { deriveLiveEntrySetupState } from './liveEntrySetupState';
 
 export function LiveEntryArmingCard({ account, assessment, token }: {
   account: TradingAccount;
@@ -29,16 +30,11 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
   const armed = Boolean(account.activeLiveEntryArmingId && account.tradingEnabled && !account.killSwitchEnabled);
   const staged = Boolean(rsp?.entriesEnabled && !armed);
   const posture = armed ? 'ACTIVE · ENTRIES ARMED' : staged ? 'ACTIVE · ENTRY STAGED' : 'ACTIVE · ENTRY DISARMED';
-  const canArm = Boolean(assessment?.purpose === 'LIVE_ENTRY_ARMING' && assessment.result === 'PASSED' && assessment.validity === 'CURRENT' && entry?.effective && entry.approval && rsp);
+  const workflow = deriveLiveEntrySetupState({ account, assessment, canaryStaged: staged || armed, riskApproval: risk ?? null, entryApproval: entry ?? null });
+  const canArm = Boolean(workflow.readyToArm && rsp);
 
   const armDisabledMessage = !canArm
-    ? assessment?.purpose !== 'LIVE_ENTRY_ARMING' || assessment.result !== 'PASSED' || assessment.validity !== 'CURRENT'
-      ? 'Run a fresh Live Entry Arming assessment to continue.'
-      : !entry?.effective || !entry.approval
-        ? 'Grant ENTRY authorization to continue.'
-        : !rsp
-          ? 'Stage the RSP canary to continue.'
-          : null
+    ? `Next step: ${workflow.nextAction}`
     : !reason.trim()
       ? 'Enter an operator reason to continue.'
       : confirmation !== 'ARM LIVE ENTRIES'
@@ -48,7 +44,7 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
           : null;
 
   return <Stack gap="md">
-    <LiveEntrySetupProgress account={account} assessment={assessment} canaryStaged={staged || armed} riskEffective={risk?.effective === true} entryEffective={entry?.effective === true} />
+    <LiveEntrySetupProgress account={account} assessment={assessment} canaryStaged={staged || armed} riskApproval={risk ?? null} entryApproval={entry ?? null} />
     <Card withBorder>
     <Group justify="space-between"><Title order={3}>Live entry authority</Title><Badge color={armed ? 'red' : staged ? 'yellow' : 'gray'}>{posture}</Badge></Group>
     <Stack gap="sm" mt="md">
