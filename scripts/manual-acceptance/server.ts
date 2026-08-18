@@ -3,6 +3,7 @@ import http from 'node:http';
 import { installMockAlpacaTransport, mockAlpacaState } from './mock-alpaca-transport.js';
 import { MANUAL_ACCEPTANCE_ENTRYPOINT } from '../../src/services/manual-acceptance-environment.js';
 import { buildManualAcceptanceState } from './state.js';
+import { clearSyntheticAcceptanceMarketClockCache } from './startup-cache.js';
 
 const databaseUrl = process.env.DATABASE_URL ?? '';
 if (new URL(databaseUrl).pathname !== '/ai_trader_live_entry_acceptance') {
@@ -19,6 +20,7 @@ const controlToken = process.env.MANUAL_ACCEPTANCE_CONTROL_TOKEN;
 if (!controlToken || controlToken.length < 16) throw new Error('MANUAL_ACCEPTANCE_CONTROL_TOKEN must be at least 16 characters.');
 
 const { prisma } = await import('../../src/db/prisma.js');
+await clearSyntheticAcceptanceMarketClockCache(prisma);
 const { processEntryForAccountSubscription } = await import('../../src/services/signal-entry.service.js');
 const { processPendingOrders } = await import('../../src/workers/order.worker.js');
 const { getLiveWriteApprovalState } = await import('../../src/services/live-write-approval.service.js');

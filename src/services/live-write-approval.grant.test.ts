@@ -257,6 +257,7 @@ describe('ENTRY approval regular-session expiration boundary', () => {
 
   it.each([
     '2026-08-18T19:00:00.000Z',
+    '2026-08-18T19:30:00.000Z',
     '2026-08-18T20:00:00.000Z',
   ])('accepts expiration at %s', async (expiresAt) => {
     await expect(grantEntry(currentTx, new Date(expiresAt))).resolves.toMatchObject({
