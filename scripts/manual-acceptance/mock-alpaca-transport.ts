@@ -8,8 +8,78 @@ type MockRequest = {
 };
 
 const ALPACA_HOSTS = new Set(['api.alpaca.markets', 'paper-api.alpaca.markets']);
+const MARKET_TIME_ZONE = 'America/New_York';
 const requests: MockRequest[] = [];
 let nextOrderId = 1;
+
+function marketDateParts(now: Date) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: MARKET_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const values = new Map(parts.map((part) => [part.type, part.value]));
+  return `${values.get('year')}-${values.get('month')}-${values.get('day')}`;
+}
+
+function addCalendarDays(date: string, days: number) {
+  const [year, month, day] = date.split('-').map(Number);
+  return new Date(Date.UTC(year!, month! - 1, day! + days)).toISOString().slice(0, 10);
+}
+
+function isWeekday(date: string) {
+  const day = new Date(`${date}T12:00:00.000Z`).getUTCDay();
+  return day !== 0 && day !== 6;
+}
+
+function nextTradingDate(date: string) {
+  let candidate = addCalendarDays(date, 1);
+  while (!isWeekday(candidate)) candidate = addCalendarDays(candidate, 1);
+  return candidate;
+}
+
+function marketInstant(date: string, hour: number, minute: number) {
+  const [year, month, day] = date.split('-').map(Number);
+  const wallClockAsUtc = new Date(Date.UTC(year!, month! - 1, day!, hour, minute));
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: MARKET_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(wallClockAsUtc);
+  const values = new Map(parts.map((part) => [part.type, part.value]));
+  const representedAsUtc = Date.UTC(
+    Number(values.get('year')),
+    Number(values.get('month')) - 1,
+    Number(values.get('day')),
+    Number(values.get('hour')),
+    Number(values.get('minute')),
+    Number(values.get('second')),
+  );
+  return new Date(wallClockAsUtc.getTime() - (representedAsUtc - wallClockAsUtc.getTime()));
+}
+
+function marketClock(now = new Date()) {
+  const today = marketDateParts(now);
+  const todayOpen = marketInstant(today, 9, 30);
+  const todayClose = marketInstant(today, 16, 0);
+  const todayIsTradingDay = isWeekday(today);
+  const isOpen = todayIsTradingDay && now >= todayOpen && now < todayClose;
+  const useToday = todayIsTradingDay && now < todayOpen;
+  const upcomingDate = useToday ? today : nextTradingDate(today);
+
+  return {
+    timestamp: now.toISOString(),
+    is_open: isOpen,
+    next_open: marketInstant(upcomingDate, 9, 30).toISOString(),
+    next_close: (isOpen ? todayClose : marketInstant(upcomingDate, 16, 0)).toISOString(),
+  };
+}
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), {
@@ -76,11 +146,11 @@ export function installMockAlpacaTransport() {
       });
     }
     if (url.pathname === '/v2/calendar') {
-      const day = new Date().toISOString().slice(0, 10);
-      return json([{ date: day, open: '00:00', close: '23:59' }]);
+      const day = url.searchParams.get('start') ?? marketDateParts(new Date());
+      return json(isWeekday(day) ? [{ date: day, open: '09:30', close: '16:00' }] : []);
     }
     if (url.pathname === '/v2/clock') {
-      return json({ timestamp: new Date().toISOString(), is_open: true, next_open: new Date().toISOString(), next_close: new Date(Date.now() + 3_600_000).toISOString() });
+      return json(marketClock());
     }
     if (url.pathname.startsWith('/v2/account/activities')) return json([]);
 

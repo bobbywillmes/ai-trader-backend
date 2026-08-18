@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   LiveWriteApprovalStatus,
   LiveWriteCapability,
@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   computeReadinessFingerprints: vi.fn(),
   credentialCurrent: vi.fn(),
+  getMarketSession: vi.fn(),
 }));
 
 vi.mock('../config/env.js', () => ({ env: mocks.env }));
@@ -27,7 +28,7 @@ vi.mock('./trading-account-readiness.service.js', () => ({
 }));
 vi.mock('../integrations/alpaca/orders.adapter.js', () => ({ getOpenAlpacaOrders: vi.fn() }));
 vi.mock('../integrations/alpaca/positions.adapter.js', () => ({ getAlpacaPositions: vi.fn() }));
-vi.mock('../integrations/alpaca/market-session.adapter.js', () => ({ getAlpacaMarketSessionSnapshot: vi.fn() }));
+vi.mock('../integrations/alpaca/market-session.adapter.js', () => ({ getAlpacaMarketSessionSnapshot: mocks.getMarketSession }));
 
 import {
   computeLiveWriteApprovalFingerprints,
@@ -121,6 +122,40 @@ async function grantRisk(tx: ReturnType<typeof makeTx>['tx']) {
   });
 }
 
+async function grantEntry(tx: ReturnType<typeof makeTx>['tx'], expiresAt: Date) {
+  const entryFingerprints = await computeLiveWriteApprovalFingerprints(2, LiveWriteCapability.ENTRY, tx as never);
+  const riskFingerprints = await computeLiveWriteApprovalFingerprints(2, LiveWriteCapability.RISK_REDUCING, tx as never);
+  tx.tradingAccountLiveWriteApproval.findUnique.mockImplementation(async ({ where }) => {
+    const capability = where.tradingAccountId_capability?.capability;
+    if (capability === LiveWriteCapability.RISK_REDUCING) {
+      return {
+        id: 1,
+        status: LiveWriteApprovalStatus.GRANTED,
+        revision: 3,
+        expiresAt: null,
+        ...riskFingerprints!,
+      };
+    }
+    return null;
+  });
+  tx.tradingAccountLiveWriteApproval.create.mockImplementation(async ({ data }) => ({ id: 2, ...data }));
+
+  return grantLiveWriteApproval({
+    tradingAccountId: 2,
+    capability: LiveWriteCapability.ENTRY,
+    actorUserId: 1,
+    input: {
+      reason: 'Authorize synthetic entry.',
+      typedConfirmation: 'APPROVE LIVE ENTRY',
+      readinessAssessmentId: 9,
+      expectedConfigurationFingerprint: entryFingerprints!.configurationFingerprint,
+      expectedCredentialFingerprint: entryFingerprints!.credentialFingerprint,
+      expectedRevision: 0,
+      expiresAt,
+    },
+  });
+}
+
 describe('RISK_REDUCING grant readiness contract', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -195,5 +230,44 @@ describe('RISK_REDUCING grant readiness contract', () => {
     expect(resolveGrantReadinessPurpose(LiveWriteCapability.ENTRY, {
       status: 'ACTIVE', tradingEnabled: false, killSwitchEnabled: true,
     })).toBe(TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING);
+  });
+});
+
+describe('ENTRY approval regular-session expiration boundary', () => {
+  let currentTx: ReturnType<typeof makeTx>['tx'];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-18T18:00:00.000Z'));
+    mocks.computeReadinessFingerprints.mockResolvedValue(readinessFingerprints);
+    mocks.credentialCurrent.mockReturnValue(true);
+    mocks.getMarketSession.mockResolvedValue({
+      sessionOpenAt: '2026-08-18T13:30:00.000Z',
+      sessionCloseAt: '2026-08-18T20:00:00.000Z',
+      nextOpenAt: '2026-08-19T13:30:00.000Z',
+      nextCloseAt: '2026-08-18T20:00:00.000Z',
+    });
+    const setup = makeTx({ evidence: { prerequisitesForEntryGrantPassed: true } });
+    currentTx = setup.tx;
+    mocks.transaction.mockImplementation(async (callback) => callback(currentTx));
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  it.each([
+    '2026-08-18T19:00:00.000Z',
+    '2026-08-18T20:00:00.000Z',
+  ])('accepts expiration at %s', async (expiresAt) => {
+    await expect(grantEntry(currentTx, new Date(expiresAt))).resolves.toMatchObject({
+      status: LiveWriteApprovalStatus.GRANTED,
+      expiresAt: new Date(expiresAt),
+    });
+  });
+
+  it('rejects expiration one minute after the regular-session close', async () => {
+    await expect(grantEntry(currentTx, new Date('2026-08-18T20:01:00.000Z')))
+      .rejects.toThrow('must not extend beyond');
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
 });
