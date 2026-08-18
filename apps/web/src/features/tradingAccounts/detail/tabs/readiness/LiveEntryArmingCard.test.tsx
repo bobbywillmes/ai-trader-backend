@@ -18,16 +18,16 @@ const assessment = { id: 5, purpose: 'LIVE_ENTRY_ARMING', result: 'PASSED', vali
 
 describe('LiveEntryArmingCard requirements', () => {
   afterEach(cleanup);
-  it('explains disabled ARM predicates and enables only when remaining ceremony fields match', async () => {
+  it('keeps ARM predicates while replacing the duplicate checklist with concise guidance', async () => {
     render(<MantineProvider><LiveEntryArmingCard account={account} assessment={assessment} token="token" /></MantineProvider>);
     const arm = screen.getByRole('button', { name: 'ARM LIVE ENTRIES' });
     expect(arm.hasAttribute('disabled')).toBe(true);
-    expect(screen.getByText('○ Operator reason entered')).toBeTruthy();
-    expect(screen.getByText('○ Exact ARM LIVE ENTRIES confirmation entered')).toBeTruthy();
+    expect(screen.queryByText('Requirements to ARM')).toBeNull();
+    expect(screen.getByTestId('arm-disabled-guidance').textContent).toBe('Enter an operator reason to continue.');
     const user = userEvent.setup();
     await user.type(screen.getByLabelText('Operator reason'), 'Arm canary');
     await user.type(screen.getByLabelText('Type ARM LIVE ENTRIES'), 'ARM LIVE ENTRIES');
     expect(arm.hasAttribute('disabled')).toBe(false);
-    expect(screen.getByText('✓ Assessment passed')).toBeTruthy();
+    expect(screen.queryByTestId('arm-disabled-guidance')).toBeNull();
   });
 });

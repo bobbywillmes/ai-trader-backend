@@ -20,5 +20,14 @@ describe('LiveEntrySetupProgress', () => {
   it('labels PASSED/CURRENT readiness as ready to arm', () => { show(); expect(screen.getByText('READY TO ARM')).toBeTruthy(); expect(screen.getByTestId('live-entry-next-action').textContent).toContain('ARM LIVE ENTRIES'); });
   it('directs an armed operator to execute the one-shot canary', () => expect(show({ account: { ...account, activeLiveEntryArmingId: 4, tradingEnabled: true, killSwitchEnabled: false } })).toContain('Execute the one-shot RSP canary'));
   it('directs a consumed operator to verify evidence and disarm', () => expect(show({ account: { ...account, latestLiveEntryArming: { id: 4, entryApprovalRevision: 1, tradingAccountSubscriptionId: 2, entryApprovalExpiresAt: '2026-08-18T20:00:00Z', armedAt: '2026-08-18T19:00:00Z', terminations: [{ type: 'CONSUMED', occurredAt: '2026-08-18T19:10:00Z' }] } } })).toContain('Verify execution evidence and DISARM'));
-  it('states that ENTRY approval alone does not authorize broker entry', () => { show(); expect(screen.getByText('ENTRY approval alone does not authorize a broker entry.')).toBeTruthy(); expect(screen.getByText('No broker order has been sent.')).toBeTruthy(); });
+  it('keeps canonical safety requirements in a theme-aware, readable next-step panel', () => {
+    show();
+    expect(screen.getByText('ENTRY approval alone does not authorize a broker entry.')).toBeTruthy();
+    expect(screen.getByText('No broker order has been sent.')).toBeTruthy();
+    expect(screen.getByText('What happens next').textContent).toBe('What happens next');
+    const style = screen.getByTestId('live-entry-next-panel').getAttribute('style') ?? '';
+    expect(style).toContain('var(--mantine-color-default)');
+    expect(style).toContain('var(--mantine-color-default-color)');
+    expect(style).not.toContain('gray.0');
+  });
 });

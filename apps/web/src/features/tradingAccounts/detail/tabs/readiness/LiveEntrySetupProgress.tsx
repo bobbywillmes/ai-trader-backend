@@ -69,16 +69,18 @@ export function LiveEntrySetupProgress({ account, assessment, canaryStaged, risk
           return <List.Item key={milestone.label} icon={<Badge color={milestone.complete ? 'green' : current ? 'blue' : 'gray'} size="xs">{milestone.complete ? 'DONE' : current ? 'CURRENT' : 'PENDING'}</Badge>}><Text size="sm">{milestone.label}</Text></List.Item>;
         })}</List>
       </Stack>
-      <Stack gap="xs">
-        <Text fw={700}>What happens next</Text>
-        <Text data-testid="live-entry-next-action">Next step: {next}</Text>
-        {!armed && !consumed && <Card withBorder bg="gray.0">
-          <Text size="sm">No broker order has been sent.</Text>
-          <Text size="sm">Account trading remains disabled.</Text>
-          <Text size="sm">Kill switch remains enabled.</Text>
-          <Text size="sm" fw={700}>ENTRY approval alone does not authorize a broker entry.</Text>
-        </Card>}
-      </Stack>
+      <Card withBorder bg="var(--mantine-color-default)" c="var(--mantine-color-default-color)" data-testid="live-entry-next-panel">
+        <Stack gap="xs">
+          <Text fw={700} size="lg">What happens next</Text>
+          <Text fw={700} data-testid="live-entry-next-action">Next step: {next}</Text>
+          {!armed && !consumed && <Stack gap={2} mt="xs">
+            <Text size="sm">No broker order has been sent.</Text>
+            <Text size="sm">Account trading remains disabled.</Text>
+            <Text size="sm">Kill switch remains enabled.</Text>
+            <Text size="sm" fw={600}>ENTRY approval alone does not authorize a broker entry.</Text>
+          </Stack>}
+        </Stack>
+      </Card>
     </SimpleGrid>
   </Card>;
 }
