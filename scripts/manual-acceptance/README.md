@@ -4,6 +4,8 @@ This harness runs the real backend, frontend, authorization services, order work
 
 The harness is deliberately outside `src/`, requires an explicit sentinel, refuses any database except `ai_trader_live_entry_acceptance`, and binds its control API to `127.0.0.1`. It is not a production runtime mode.
 
+At startup, the guarded harness sets only the isolated database's global `tradingEnabled=true` and `killSwitchEnabled=false` runtime controls. The real risk gate requires these global emergency controls in addition to the synthetic account's arming latches. This adjustment requires the exact harness sentinel, internal entrypoint marker, acceptance database name, and loopback UI origin; ordinary production startup cannot activate it. The legacy global `paperMode` setting is left unchanged because broker routing is owned by `TradingAccount.environment`.
+
 ## Prerequisites and environment
 
 Start the repository's local PostgreSQL container. In a fresh PowerShell window at the repository root, set synthetic process-local values (do not edit `.env`):

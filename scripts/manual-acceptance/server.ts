@@ -4,6 +4,7 @@ import { installMockAlpacaTransport, mockAlpacaState } from './mock-alpaca-trans
 import { MANUAL_ACCEPTANCE_ENTRYPOINT } from '../../src/services/manual-acceptance-environment.js';
 import { buildManualAcceptanceState } from './state.js';
 import { clearSyntheticAcceptanceMarketClockCache } from './startup-cache.js';
+import { enforceManualAcceptanceRuntimeSettings } from './startup-runtime-settings.js';
 
 const databaseUrl = process.env.DATABASE_URL ?? '';
 if (new URL(databaseUrl).pathname !== '/ai_trader_live_entry_acceptance') {
@@ -20,6 +21,15 @@ const controlToken = process.env.MANUAL_ACCEPTANCE_CONTROL_TOKEN;
 if (!controlToken || controlToken.length < 16) throw new Error('MANUAL_ACCEPTANCE_CONTROL_TOKEN must be at least 16 characters.');
 
 const { prisma } = await import('../../src/db/prisma.js');
+await enforceManualAcceptanceRuntimeSettings(prisma, {
+  sentinel: process.env.MANUAL_ACCEPTANCE_HARNESS,
+  entrypoint: process.env.MANUAL_ACCEPTANCE_ENTRYPOINT,
+  databaseUrl,
+  allowedOrigins: (process.env.CORS_ALLOWED_ORIGINS ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+});
 await clearSyntheticAcceptanceMarketClockCache(prisma);
 const { processEntryForAccountSubscription } = await import('../../src/services/signal-entry.service.js');
 const { processPendingOrders } = await import('../../src/workers/order.worker.js');
