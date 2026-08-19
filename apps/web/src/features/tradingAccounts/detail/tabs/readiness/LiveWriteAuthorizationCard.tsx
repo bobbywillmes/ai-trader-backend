@@ -2,9 +2,10 @@ import { useState } from "react";
 import { Alert, Badge, Button, Card, Group, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { useGrantLiveWriteApproval, useLiveWriteApprovals, useRevokeLiveWriteApproval } from "../../../hooks";
 import type { LiveWriteCapability, TradingAccount, TradingAccountReadinessAssessment } from "../../../types";
+import { deriveLiveEntryAuthorizationState } from "./liveEntrySetupState";
 
 function CapabilityCard({ account, token, capability, latest }: {
-  account: Pick<TradingAccount, "id" | "status" | "tradingEnabled" | "killSwitchEnabled">;
+  account: Pick<TradingAccount, "id" | "status" | "tradingEnabled" | "killSwitchEnabled" | "credential">;
   token: string | null; capability: LiveWriteCapability;
   latest: TradingAccountReadinessAssessment | null;
 }) {
@@ -20,16 +21,16 @@ function CapabilityCard({ account, token, capability, latest }: {
   const expectedConfirmation = `APPROVE LIVE ${capability}`;
   const expiration = expiresAt ? new Date(expiresAt) : null;
   const isDisarmedLatch = !account.tradingEnabled && account.killSwitchEnabled;
+  const riskApproval = state.data?.capabilities.find((candidate) => candidate.capability === "RISK_REDUCING") ?? null;
+  const authorization = deriveLiveEntryAuthorizationState({ account, assessment: latest, riskApproval });
   const readinessMatches = capability === "ENTRY"
-    ? latest?.purpose === "LIVE_ENTRY_ARMING" &&
-      latest.evidence.prerequisitesForEntryGrantPassed === true
+    ? authorization.entryGrantExecutable
     : (account.status === "PAUSED" &&
         isDisarmedLatch &&
         latest?.purpose === "LIVE_ACTIVATION") ||
       (account.status === "ACTIVE" &&
         isDisarmedLatch &&
-        latest?.purpose === "LIVE_ENTRY_ARMING" &&
-        latest.evidence.prerequisitesForRiskReducingGrantPassed === true);
+        authorization.riskGrantExecutable);
   const canGrant = Boolean(
     state.data?.deploymentCanWrite === true &&
     latest?.validity === "CURRENT" &&
@@ -56,10 +57,14 @@ function CapabilityCard({ account, token, capability, latest }: {
     ? "This deployment cannot grant Live authorization."
     : !isDisarmedLatch
       ? "Return the account to its entry-disarmed posture to continue."
-      : !latest || latest.validity !== "CURRENT"
+      : !latest
         ? `Run a fresh ${capability === "ENTRY" || account.status === "ACTIVE" ? "Live Entry Arming" : "Live Activation"} assessment to continue.`
+        : latest.validity !== "CURRENT"
+          ? capability === "ENTRY" ? authorization.entryGrantGuidance
+            : account.status === "ACTIVE" ? authorization.riskGrantGuidance
+              : "Run a fresh Live Activation assessment to continue."
         : !readinessMatches
-          ? "Current readiness prerequisites are not satisfied."
+          ? capability === "ENTRY" ? authorization.entryGrantGuidance : authorization.riskGrantGuidance
           : !item?.fingerprints
             ? "Refresh readiness evidence to continue."
             : !reason.trim()
@@ -99,7 +104,7 @@ function CapabilityCard({ account, token, capability, latest }: {
           expectedRevision: revision,
           ...(capability === "ENTRY" ? { expiresAt: expiration!.toISOString() } : {}),
         } }, { onSuccess: () => { clearForm(); resetErrors(); } })}>Grant</Button>
-        <Button color="red" variant="outline" disabled={!item?.approval || !reason.trim() || grant.isPending || revoke.isPending} loading={revoke.isPending}
+        <Button color="red" variant="outline" disabled={item?.effective !== true || !reason.trim() || grant.isPending || revoke.isPending} loading={revoke.isPending}
           onClick={() => revoke.mutate({ capability, payload: { reason, expectedRevision: revision } }, { onSuccess: () => { clearForm(); resetErrors(); } })}>Revoke</Button>
       </Group>
     </Stack>}
@@ -108,7 +113,7 @@ function CapabilityCard({ account, token, capability, latest }: {
 }
 
 export function LiveWriteAuthorizationCard({ account, token, latest }: {
-  account: Pick<TradingAccount, "id" | "status" | "tradingEnabled" | "killSwitchEnabled">;
+  account: Pick<TradingAccount, "id" | "status" | "tradingEnabled" | "killSwitchEnabled" | "credential">;
   token: string | null; latest: TradingAccountReadinessAssessment | null;
 }) {
   const state = useLiveWriteApprovals(account.id, token);

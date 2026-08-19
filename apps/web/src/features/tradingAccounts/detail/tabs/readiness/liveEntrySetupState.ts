@@ -5,6 +5,96 @@ export type CurrentApproval = {
   approval: { revision: number } | null;
 };
 
+type LiveEntryWorkflowAccount = Pick<
+  TradingAccount,
+  'status' | 'tradingEnabled' | 'killSwitchEnabled' | 'activeLiveEntryArmingId' |
+  'latestLiveEntryArming' | 'credential'
+>;
+
+const RISK_GRANT_ALLOWED_BLOCKERS = new Set([
+  'ARMING_RISK_REDUCING_APPROVAL',
+  'ARMING_ENTRY_APPROVAL_CURRENT',
+]);
+
+function armingGates(assessment: TradingAccountReadinessAssessment | null) {
+  return assessment?.purpose === 'LIVE_ENTRY_ARMING'
+    ? assessment.stages?.find((stage) => stage.key === 'LIVE_ENTRY_ARMING_READY')?.gates ?? []
+    : [];
+}
+
+function credentialState(account: LiveEntryWorkflowAccount, assessment: TradingAccountReadinessAssessment | null) {
+  if (!account.credential?.verifiedAt) return 'NEVER_VERIFIED' as const;
+  if (assessment?.purpose !== 'LIVE_ENTRY_ARMING') return 'ASSESSMENT_REQUIRED' as const;
+  if (assessment.validity !== 'CURRENT') return 'STALE' as const;
+  const gate = armingGates(assessment).find(
+    (item) => item.code === 'ARMING_CREDENTIAL_VERIFICATION_CURRENT',
+  );
+  if (!gate) return 'ASSESSMENT_REQUIRED' as const;
+  return gate.outcome === 'PASSED' ? 'CURRENT' as const : 'STALE' as const;
+}
+
+function firstRiskGrantBlocker(assessment: TradingAccountReadinessAssessment | null) {
+  return armingGates(assessment).find(
+    (gate) => gate.outcome === 'BLOCKED' && !RISK_GRANT_ALLOWED_BLOCKERS.has(gate.code),
+  ) ?? null;
+}
+
+export function deriveLiveEntryAuthorizationState({ account, assessment, riskApproval }: {
+  account: LiveEntryWorkflowAccount;
+  assessment: TradingAccountReadinessAssessment | null;
+  riskApproval: CurrentApproval | null;
+}) {
+  const credentials = credentialState(account, assessment);
+  const riskGrantExecutable = Boolean(
+    assessment?.purpose === 'LIVE_ENTRY_ARMING' &&
+    assessment.validity === 'CURRENT' &&
+    assessment.evidence.prerequisitesForRiskReducingGrantPassed === true,
+  );
+  const entryGrantExecutable = Boolean(
+    assessment?.purpose === 'LIVE_ENTRY_ARMING' &&
+    assessment.validity === 'CURRENT' &&
+    assessment.evidence.prerequisitesForEntryGrantPassed === true,
+  );
+  const riskBlocker = firstRiskGrantBlocker(assessment);
+  const capturedRiskRevision = assessment?.evidence.liveWriteApprovalRevisions?.riskReducing;
+  const freshAssessmentGuidance = 'Run a fresh Live Entry Arming assessment.';
+  const riskGrantGuidance = riskGrantExecutable ? null
+    : !account.credential?.verifiedAt
+      ? 'Verify broker credentials, then run a fresh Live Entry Arming assessment.'
+      : assessment?.purpose !== 'LIVE_ENTRY_ARMING'
+        ? freshAssessmentGuidance
+        : assessment.validity === 'EXPIRED'
+          ? 'The selected readiness assessment has expired. Run a fresh Live Entry Arming assessment.'
+          : assessment.validity !== 'CURRENT'
+            ? freshAssessmentGuidance
+            : riskBlocker?.code === 'ARMING_CREDENTIAL_VERIFICATION_CURRENT'
+              ? 'Broker credential verification is no longer current. Verify credentials and run a fresh Live Entry Arming assessment.'
+              : riskBlocker
+                ? `${riskBlocker.message} Resolve this prerequisite and run a fresh Live Entry Arming assessment.`
+                : freshAssessmentGuidance;
+  const entryGrantGuidance = entryGrantExecutable ? null
+    : assessment?.purpose !== 'LIVE_ENTRY_ARMING'
+      ? freshAssessmentGuidance
+      : assessment.validity === 'EXPIRED'
+        ? 'The selected readiness assessment has expired. Run a fresh Live Entry Arming assessment.'
+        : assessment.validity !== 'CURRENT'
+          ? freshAssessmentGuidance
+          : riskApproval?.effective && capturedRiskRevision !== riskApproval.approval?.revision
+            ? 'ENTRY approval requires a fresh readiness assessment containing the current RISK_REDUCING revision.'
+            : riskBlocker?.code === 'ARMING_CREDENTIAL_VERIFICATION_CURRENT'
+              ? 'Broker credential verification is no longer current. Verify credentials and run a fresh Live Entry Arming assessment.'
+              : freshAssessmentGuidance;
+
+  return {
+    credentials,
+    riskGrantExecutable,
+    riskGrantBlocker: riskBlocker,
+    riskGrantGuidance,
+    entryGrantExecutable,
+    entryGrantGuidance,
+  };
+}
+
 export function deriveLiveEntrySetupState({ account, assessment, canaryStaged, riskApproval, entryApproval }: {
   account: TradingAccount;
   assessment: TradingAccountReadinessAssessment | null;
@@ -12,48 +102,39 @@ export function deriveLiveEntrySetupState({ account, assessment, canaryStaged, r
   riskApproval: CurrentApproval | null;
   entryApproval: CurrentApproval | null;
 }) {
+  const authorization = deriveLiveEntryAuthorizationState({ account, assessment, riskApproval });
   const riskEffective = riskApproval?.effective === true && Boolean(riskApproval.approval);
   const entryEffective = entryApproval?.effective === true && Boolean(entryApproval.approval);
   const approvalRevisions = assessment?.evidence.liveWriteApprovalRevisions;
   const assessmentMatchesCurrentApprovals = Boolean(
-    assessment?.purpose === 'LIVE_ENTRY_ARMING' &&
-    assessment.result === 'PASSED' &&
-    assessment.validity === 'CURRENT' &&
-    riskEffective &&
-    entryEffective &&
+    assessment?.purpose === 'LIVE_ENTRY_ARMING' && assessment.result === 'PASSED' &&
+    assessment.validity === 'CURRENT' && riskEffective && entryEffective &&
     approvalRevisions?.riskReducing === riskApproval?.approval?.revision &&
     approvalRevisions?.entry === entryApproval?.approval?.revision,
   );
-  const credentialsCurrent = Boolean(account.credential?.verifiedAt);
+  const credentialsCurrent = authorization.credentials === 'CURRENT';
   const armed = Boolean(account.activeLiveEntryArmingId && account.tradingEnabled && !account.killSwitchEnabled);
   const consumedHistorically = account.latestLiveEntryArming?.terminations.some((item) => item.type === 'CONSUMED') === true;
-  const entryGrantReady = Boolean(
-    assessment?.purpose === 'LIVE_ENTRY_ARMING' &&
-    assessment.validity === 'CURRENT' &&
-    assessment.evidence.prerequisitesForEntryGrantPassed === true,
-  );
-
-  const nextKey = consumedHistorically ? 'consumed'
-    : armed ? 'consume'
-      : !canaryStaged ? 'canary'
-        : !credentialsCurrent ? 'credentials'
-          : !riskEffective ? 'risk'
-            : !entryEffective ? (entryGrantReady ? 'entry' : 'readiness')
-              : !assessmentMatchesCurrentApprovals ? 'readiness'
-                : 'arm';
-  const nextAction = nextKey === 'consumed' ? 'Verify execution evidence and DISARM.'
-    : nextKey === 'consume' ? 'Execute the one-shot RSP canary.'
-      : nextKey === 'canary' ? 'Stage the RSP canary.'
-        : nextKey === 'credentials' ? 'Verify credentials and run a fresh Live Entry Arming assessment.'
-          : nextKey === 'risk' ? 'Grant RISK_REDUCING authorization.'
-            : nextKey === 'entry' ? 'Grant ENTRY authorization.'
-              : nextKey === 'readiness' ? 'Run a fresh Live Entry Arming assessment.'
-                : 'ARM LIVE ENTRIES.';
-
+  const next = consumedHistorically ? { key: 'consumed', action: 'Verify execution evidence and DISARM.' }
+    : armed ? { key: 'consume', action: 'Execute the one-shot RSP canary.' }
+      : !canaryStaged ? { key: 'canary', action: 'Stage the RSP canary.' }
+        : !riskEffective && !authorization.riskGrantExecutable
+          ? { key: authorization.credentials === 'CURRENT' ? 'readiness' : 'credentials', action: authorization.riskGrantGuidance! }
+          : !credentialsCurrent ? { key: 'credentials', action: authorization.riskGrantGuidance ?? 'Run a fresh Live Entry Arming assessment.' }
+            : !riskEffective ? { key: 'risk', action: 'Grant RISK_REDUCING authorization.' }
+              : !entryEffective ? authorization.entryGrantExecutable
+                ? { key: 'entry', action: 'Grant ENTRY authorization.' }
+                : { key: 'readiness', action: authorization.entryGrantGuidance! }
+                : !assessmentMatchesCurrentApprovals ? { key: 'readiness', action: 'Run a fresh Live Entry Arming assessment.' }
+                  : { key: 'arm', action: 'ARM LIVE ENTRIES.' };
+  const credentialLabel = authorization.credentials === 'NEVER_VERIFIED' ? 'Broker credentials never verified'
+    : authorization.credentials === 'ASSESSMENT_REQUIRED' ? 'Broker credentials verified; fresh arming assessment required'
+      : authorization.credentials === 'STALE' ? 'Broker credential verification stale for arming'
+        : 'Credentials recently verified';
   const milestoneValues = [
     ['activated', 'Account activated', account.status === 'ACTIVE'],
     ['canary', 'RSP canary staged', canaryStaged],
-    ['credentials', 'Credentials recently verified', credentialsCurrent],
+    ['credentials', credentialLabel, credentialsCurrent],
     ['risk', 'RISK_REDUCING effective', riskEffective],
     ['entry', 'ENTRY effective', entryEffective],
     ['readiness', 'Live Entry Arming assessment passed and current', assessmentMatchesCurrentApprovals],
@@ -62,14 +143,14 @@ export function deriveLiveEntrySetupState({ account, assessment, canaryStaged, r
   ] as const;
 
   return {
+    ...authorization,
     armed,
     consumedHistorically,
     readyToArm: assessmentMatchesCurrentApprovals && !armed && !consumedHistorically,
-    nextAction,
+    nextAction: next.action,
     milestones: milestoneValues.map(([key, label, complete]) => ({
-      key,
-      label,
-      status: complete ? 'DONE' as const : key === nextKey ? 'NEXT' as const : 'PENDING' as const,
+      key, label,
+      status: complete ? 'DONE' as const : key === next.key ? 'NEXT' as const : 'PENDING' as const,
     })),
   };
 }

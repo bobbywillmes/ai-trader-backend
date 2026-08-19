@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   grantPending: false, revokePending: false,
   grantError: null as Error | null, revokeError: null as Error | null,
   deploymentCanWrite: true,
+  riskEffective: true, riskStatus: 'GRANTED' as string | null, riskReason: null as string | null,
+  entryEffective: false, entryStatus: null as string | null, entryReason: 'MISSING' as string | null,
 }));
 
 vi.mock('../../../hooks', () => ({
@@ -18,18 +20,18 @@ vi.mock('../../../hooks', () => ({
   useLiveWriteApprovals: () => ({ data: {
     deploymentCanWrite: mocks.deploymentCanWrite, deploymentRole: 'PRODUCTION_EXECUTOR', history: [],
     capabilities: [
-      { capability: 'RISK_REDUCING', effective: false, reason: 'INVALIDATED', approval: { revision: 2, status: 'INVALIDATED', grantedAt: null, expiresAt: null, invalidationReason: 'Credential changed.' }, fingerprints: { configurationFingerprint: 'a'.repeat(64), credentialFingerprint: 'b'.repeat(64) } },
-      { capability: 'ENTRY', effective: false, reason: 'MISSING', approval: null, fingerprints: { configurationFingerprint: 'c'.repeat(64), credentialFingerprint: 'd'.repeat(64) } },
+      { capability: 'RISK_REDUCING', effective: mocks.riskEffective, reason: mocks.riskReason, approval: mocks.riskStatus ? { revision: 2, status: mocks.riskStatus, grantedAt: null, expiresAt: null, invalidationReason: null } : null, fingerprints: { configurationFingerprint: 'a'.repeat(64), credentialFingerprint: 'b'.repeat(64) } },
+      { capability: 'ENTRY', effective: mocks.entryEffective, reason: mocks.entryReason, approval: mocks.entryStatus ? { revision: 3, status: mocks.entryStatus, grantedAt: null, expiresAt: null, invalidationReason: null } : null, fingerprints: { configurationFingerprint: 'c'.repeat(64), credentialFingerprint: 'd'.repeat(64) } },
     ],
   } }),
 }));
 
 import { LiveWriteAuthorizationCard } from './LiveWriteAuthorizationCard';
 
-const activeAccount = { id: 2, status: 'ACTIVE', tradingEnabled: false, killSwitchEnabled: true } as Pick<TradingAccount, 'id' | 'status' | 'tradingEnabled' | 'killSwitchEnabled'>;
+const activeAccount = { id: 2, status: 'ACTIVE', tradingEnabled: false, killSwitchEnabled: true, credential: { verifiedAt: '2026-08-19T14:00:00Z' } } as Pick<TradingAccount, 'id' | 'status' | 'tradingEnabled' | 'killSwitchEnabled' | 'credential'>;
 
 function assessment(overrides: Partial<TradingAccountReadinessAssessment> = {}) {
-  return { id: 91, purpose: 'LIVE_ENTRY_ARMING', validity: 'CURRENT', evidence: { prerequisitesForEntryGrantPassed: true, prerequisitesForRiskReducingGrantPassed: true }, ...overrides } as TradingAccountReadinessAssessment;
+  return { id: 91, purpose: 'LIVE_ENTRY_ARMING', validity: 'CURRENT', stages: [{ key: 'LIVE_ENTRY_ARMING_READY', gates: [{ code: 'ARMING_CREDENTIAL_VERIFICATION_CURRENT', outcome: 'PASSED', message: 'Current.' }] }], evidence: { prerequisitesForEntryGrantPassed: true, prerequisitesForRiskReducingGrantPassed: true }, ...overrides } as TradingAccountReadinessAssessment;
 }
 
 function renderCard(latest: TradingAccountReadinessAssessment | null = assessment(), account = activeAccount) {
@@ -57,6 +59,8 @@ describe('LiveWriteAuthorizationCard', () => {
     vi.clearAllMocks();
     mocks.grantPending = false; mocks.revokePending = false;
     mocks.grantError = null; mocks.revokeError = null; mocks.deploymentCanWrite = true;
+    mocks.riskEffective = true; mocks.riskStatus = 'GRANTED'; mocks.riskReason = null;
+    mocks.entryEffective = false; mocks.entryStatus = null; mocks.entryReason = 'MISSING';
   });
   afterEach(cleanup);
 
@@ -119,6 +123,44 @@ describe('LiveWriteAuthorizationCard', () => {
     await user.type(screen.getAllByLabelText('Reason')[0]!, 'Reason');
     await user.type(screen.getByLabelText('Type APPROVE LIVE RISK_REDUCING'), 'approve live risk_reducing');
     expect(grantButtons()[0]!.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('shows the authoritative credential correction when RISK_REDUCING prerequisites are blocked', async () => {
+    mocks.riskEffective = false; mocks.riskStatus = 'REVOKED'; mocks.riskReason = 'REVOKED';
+    renderCard(assessment({ result: 'BLOCKED', stages: [{ key: 'LIVE_ENTRY_ARMING_READY', outcome: 'BLOCKED', summary: 'Arming prerequisites.', blockerCount: 3, warningCount: 0, gates: [
+      { code: 'ARMING_RISK_REDUCING_APPROVAL', outcome: 'BLOCKED', message: 'Revoked.' },
+      { code: 'ARMING_CREDENTIAL_VERIFICATION_CURRENT', outcome: 'BLOCKED', message: 'Stale.' },
+      { code: 'ARMING_ENTRY_APPROVAL_CURRENT', outcome: 'BLOCKED', message: 'Revoked.' },
+    ] }], evidence: { prerequisitesForRiskReducingGrantPassed: false } }));
+    const user = userEvent.setup();
+    await user.type(screen.getAllByLabelText('Reason')[0]!, 'Reauthorize');
+    await user.type(screen.getByLabelText('Type APPROVE LIVE RISK_REDUCING'), 'APPROVE LIVE RISK_REDUCING');
+    expect(screen.getByTestId('risk_reducing-grant-disabled-guidance').textContent).toContain('Broker credential verification is no longer current');
+    expect(grantButtons()[0]!.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('explains when the selected arming assessment has expired', () => {
+    renderCard(assessment({ validity: 'EXPIRED' }));
+    expect(screen.getByTestId('risk_reducing-grant-disabled-guidance').textContent).toContain('selected readiness assessment has expired');
+    expect(screen.getByTestId('entry-grant-disabled-guidance').textContent).toContain('selected readiness assessment has expired');
+  });
+
+  it('enables Revoke only for an effective approval', async () => {
+    renderCard();
+    await userEvent.setup().type(screen.getAllByLabelText('Reason')[0]!, 'Revoke approval');
+    expect(screen.getAllByRole('button', { name: 'Revoke' })[0]!.hasAttribute('disabled')).toBe(false);
+  });
+
+  it.each([
+    ['REVOKED', false, 'REVOKED'],
+    ['INVALIDATED', false, 'INVALIDATED'],
+    ['expired', false, 'EXPIRED'],
+    ['missing', false, null],
+  ])('disables Revoke for %s approval state', async (_label, effective, status) => {
+    mocks.riskEffective = effective; mocks.riskStatus = status; mocks.riskReason = String(_label).toUpperCase();
+    renderCard();
+    await userEvent.setup().type(screen.getAllByLabelText('Reason')[0]!, 'Revoke approval');
+    expect(screen.getAllByRole('button', { name: 'Revoke' })[0]!.hasAttribute('disabled')).toBe(true);
   });
 
   it('allows the PAUSED disarmed LIVE_ACTIVATION path without duplicating backend evidence', async () => {
