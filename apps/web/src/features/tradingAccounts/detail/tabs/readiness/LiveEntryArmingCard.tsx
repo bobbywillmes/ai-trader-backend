@@ -30,7 +30,7 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
   const armed = Boolean(account.activeLiveEntryArmingId && account.tradingEnabled && !account.killSwitchEnabled);
   const staged = Boolean(rsp?.entriesEnabled && !armed);
   const posture = armed ? 'ACTIVE · ENTRIES ARMED' : staged ? 'ACTIVE · ENTRY STAGED' : 'ACTIVE · ENTRY DISARMED';
-  const workflow = deriveLiveEntrySetupState({ account, assessment, canaryStaged: staged || armed, riskApproval: risk ?? null, entryApproval: entry ?? null });
+  const workflow = deriveLiveEntrySetupState({ account, assessment, canaryPresent: Boolean(rsp), canaryStaged: staged || armed, riskApproval: risk ?? null, entryApproval: entry ?? null });
   const canArm = Boolean(workflow.readyToArm && rsp);
 
   const armDisabledMessage = !canArm
@@ -44,7 +44,7 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
           : null;
 
   return <Stack gap="md">
-    <LiveEntrySetupProgress account={account} assessment={assessment} canaryStaged={staged || armed} riskApproval={risk ?? null} entryApproval={entry ?? null} />
+    <LiveEntrySetupProgress account={account} assessment={assessment} canaryPresent={Boolean(rsp)} canaryStaged={staged || armed} riskApproval={risk ?? null} entryApproval={entry ?? null} />
     <Card withBorder>
     <Group justify="space-between"><Title order={3}>Live entry authority</Title><Badge color={armed ? 'red' : staged ? 'yellow' : 'gray'}>{posture}</Badge></Group>
     <Stack gap="sm" mt="md">

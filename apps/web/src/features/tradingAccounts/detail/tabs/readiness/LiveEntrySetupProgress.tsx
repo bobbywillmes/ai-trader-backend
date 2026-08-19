@@ -2,19 +2,22 @@ import { Badge, Card, Group, List, SimpleGrid, Stack, Text, Title } from '@manti
 import type { TradingAccount, TradingAccountReadinessAssessment } from '../../../types';
 import { deriveLiveEntrySetupState, type CurrentApproval } from './liveEntrySetupState';
 
-export function LiveEntrySetupProgress({ account, assessment, canaryStaged, riskApproval, entryApproval }: {
+export function LiveEntrySetupProgress({ account, assessment, canaryPresent, canaryStaged, riskApproval, entryApproval }: {
   account: TradingAccount;
   assessment: TradingAccountReadinessAssessment | null;
+  canaryPresent: boolean;
   canaryStaged: boolean;
   riskApproval: CurrentApproval | null;
   entryApproval: CurrentApproval | null;
 }) {
-  const workflow = deriveLiveEntrySetupState({ account, assessment, canaryStaged, riskApproval, entryApproval });
+  const workflow = deriveLiveEntrySetupState({ account, assessment, canaryPresent, canaryStaged, riskApproval, entryApproval });
 
   return <Card withBorder>
     <Group justify="space-between" align="flex-start">
       <div><Title order={3}>Live Entry Setup Progress</Title><Text size="sm" c="dimmed">First-canary operator workflow</Text></div>
-      <Badge color={workflow.armed ? 'red' : workflow.readyToArm ? 'green' : 'yellow'}>{workflow.armed ? 'ARMED' : workflow.readyToArm ? 'READY TO ARM' : 'IN PROGRESS'}</Badge>
+      <Badge color={workflow.cleanupRequired ? 'red' : workflow.completed || workflow.readyToArm ? 'green' : workflow.armed ? 'red' : 'yellow'}>
+        {workflow.cleanupRequired ? 'ACTION REQUIRED' : workflow.completed ? 'CANARY COMPLETE' : workflow.armed ? 'ARMED' : workflow.readyToArm ? 'READY TO ARM' : 'IN PROGRESS'}
+      </Badge>
     </Group>
     <SimpleGrid cols={{ base: 1, md: 2 }} mt="md">
       <Stack gap="xs">
@@ -26,7 +29,7 @@ export function LiveEntrySetupProgress({ account, assessment, canaryStaged, risk
       <Card withBorder bg="var(--mantine-color-default)" c="var(--mantine-color-default-color)" data-testid="live-entry-next-panel">
         <Stack gap="xs">
           <Text fw={700} size="lg">What happens next</Text>
-          <Text fw={700} data-testid="live-entry-next-action">Next step: {workflow.nextAction}</Text>
+          <Text fw={700} data-testid="live-entry-next-action">{workflow.completed ? workflow.nextAction : `Next step: ${workflow.nextAction}`}</Text>
           {!workflow.armed && !workflow.consumedHistorically && <Stack gap={2} mt="xs">
             <Text size="sm">No broker order has been sent.</Text>
             <Text size="sm">Account trading remains disabled.</Text>

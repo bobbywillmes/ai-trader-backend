@@ -14,11 +14,12 @@ const approvalBlockers = [
   { code: 'ARMING_ENTRY_APPROVAL_CURRENT', outcome: 'BLOCKED', message: 'ENTRY approval is REVOKED.' },
 ] as const;
 const readiness = { purpose: 'LIVE_ENTRY_ARMING', result: 'PASSED', validity: 'CURRENT', credentialVerifiedAt: '2026-08-18T19:00:00Z', stages: [{ key: 'LIVE_ENTRY_ARMING_READY', gates: [passedGate] }], evidence: { liveWriteApprovalRevisions: { riskReducing: 1, entry: 2 } } } as TradingAccountReadinessAssessment;
+const consumedArming = { id: 4, entryApprovalRevision: 1, tradingAccountSubscriptionId: 2, entryApprovalExpiresAt: '2026-08-18T20:00:00Z', armedAt: '2026-08-18T19:00:00Z', terminations: [{ type: 'CONSUMED', occurredAt: '2026-08-18T19:10:00Z' }] } as TradingAccount['latestLiveEntryArming'];
 
 function show(overrides: { account?: TradingAccount; assessment?: TradingAccountReadinessAssessment | null; staged?: boolean; risk?: boolean; entry?: boolean; riskRevision?: number; entryRevision?: number } = {}) {
   const risk = overrides.risk ?? true;
   const entry = overrides.entry ?? true;
-  render(<MantineProvider><LiveEntrySetupProgress account={overrides.account ?? account} assessment={overrides.assessment === undefined ? readiness : overrides.assessment} canaryStaged={overrides.staged ?? true} riskApproval={{ effective: risk, approval: risk ? { revision: overrides.riskRevision ?? 1 } : null }} entryApproval={{ effective: entry, approval: entry ? { revision: overrides.entryRevision ?? 2 } : null }} /></MantineProvider>);
+  render(<MantineProvider><LiveEntrySetupProgress account={overrides.account ?? account} assessment={overrides.assessment === undefined ? readiness : overrides.assessment} canaryPresent canaryStaged={overrides.staged ?? true} riskApproval={{ effective: risk, approval: risk ? { revision: overrides.riskRevision ?? 1 } : null }} entryApproval={{ effective: entry, approval: entry ? { revision: overrides.entryRevision ?? 2 } : null }} /></MantineProvider>);
   return screen.getByTestId('live-entry-next-action').textContent;
 }
 
@@ -37,6 +38,9 @@ describe('LiveEntrySetupProgress', () => {
   it('advances from effective RISK_REDUCING to fresh ENTRY readiness when ENTRY is ineffective', () => {
     expect(show({ entry: false, assessment: { ...readiness, result: 'BLOCKED', evidence: { ...readiness.evidence, prerequisitesForEntryGrantPassed: false } } })).toContain('Run a fresh Live Entry Arming assessment');
   });
+  it('keeps ordinary incomplete setup directed to canary staging', () => {
+    expect(show({ staged: false })).toContain('Stage the RSP canary');
+  });
   it('directs an operator to run readiness when ENTRY is effective but readiness is stale', () => expect(show({ assessment: { ...readiness, validity: 'STALE' } })).toContain('Run a fresh Live Entry Arming assessment'));
   it('labels PASSED/CURRENT readiness as ready to arm', () => { show(); expect(screen.getByText('READY TO ARM')).toBeTruthy(); expect(screen.getByTestId('live-entry-next-action').textContent).toContain('ARM LIVE ENTRIES'); });
   it('does not present current ENTRY as effective when the approval query says INVALIDATED', () => {
@@ -53,13 +57,30 @@ describe('LiveEntrySetupProgress', () => {
     expect(show({ assessment: null })).toContain('Run a fresh Live Entry Arming assessment');
   });
   it('derives matching readiness milestone and next action from one canonical state', () => {
-    const state = deriveLiveEntrySetupState({ account, assessment: readiness, canaryStaged: true, riskApproval: { effective: true, approval: { revision: 1 } }, entryApproval: { effective: true, approval: { revision: 2 } } });
+    const state = deriveLiveEntrySetupState({ account, assessment: readiness, canaryPresent: true, canaryStaged: true, riskApproval: { effective: true, approval: { revision: 1 } }, entryApproval: { effective: true, approval: { revision: 2 } } });
     expect(state.milestones.find((item) => item.key === 'readiness')?.status).toBe('DONE');
     expect(state.nextAction).toBe('ARM LIVE ENTRIES.');
     expect(state.readyToArm).toBe(true);
   });
-  it('directs an armed operator to execute the one-shot canary', () => expect(show({ account: { ...account, activeLiveEntryArmingId: 4, tradingEnabled: true, killSwitchEnabled: false } })).toContain('Execute the one-shot RSP canary'));
-  it('directs a consumed operator to verify evidence and disarm', () => expect(show({ account: { ...account, latestLiveEntryArming: { id: 4, entryApprovalRevision: 1, tradingAccountSubscriptionId: 2, entryApprovalExpiresAt: '2026-08-18T20:00:00Z', armedAt: '2026-08-18T19:00:00Z', terminations: [{ type: 'CONSUMED', occurredAt: '2026-08-18T19:10:00Z' }] } } })).toContain('Verify execution evidence and DISARM'));
+  it('directs an armed pre-consumption operator to execute the one-shot canary', () => expect(show({ account: { ...account, activeLiveEntryArmingId: 4, tradingEnabled: true, killSwitchEnabled: false } })).toContain('Execute the one-shot RSP canary'));
+  it('shows terminal completion when consumed authority has complete safe cleanup', () => {
+    const next = show({ staged: false, risk: false, entry: false, assessment: { ...readiness, validity: 'EXPIRED' }, account: { ...account, latestLiveEntryArming: consumedArming } });
+    expect(screen.getByText('CANARY COMPLETE')).toBeTruthy();
+    expect(next).toContain('Acceptance canary completed successfully');
+    expect(next).toContain('account is safely disarmed');
+    expect(next).not.toContain('Next step:');
+    expect(screen.getByText('RSP canary was staged for consumed ceremony').closest('li')?.textContent).toContain('DONE');
+    expect(screen.getByText('ENTRY was effective for consumed ceremony').closest('li')?.textContent).toContain('DONE');
+    expect(screen.getByText('Live Entry Arming assessment passed for consumed ceremony').closest('li')?.textContent).toContain('DONE');
+    expect(screen.getByText('Live entries were armed for consumed ceremony').closest('li')?.textContent).toContain('DONE');
+    expect(screen.getByText('Account safely disarmed after canary').closest('li')?.textContent).toContain('DONE');
+  });
+  it('requires cleanup when consumption exists but the account remains armed', () => {
+    const next = show({ account: { ...account, activeLiveEntryArmingId: 4, tradingEnabled: true, killSwitchEnabled: false, latestLiveEntryArming: consumedArming } });
+    expect(screen.getByText('ACTION REQUIRED')).toBeTruthy();
+    expect(next).toContain('DISARM and restore');
+    expect(screen.getByText('Account safely disarmed after canary').closest('li')?.textContent).toContain('NEXT');
+  });
   it('keeps canonical safety requirements in a theme-aware, readable next-step panel', () => {
     show();
     expect(screen.getByText('ENTRY approval alone does not authorize a broker entry.')).toBeTruthy();
