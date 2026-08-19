@@ -33,6 +33,23 @@ export type TradingAccount = {
   status: TradingAccountStatus;
   tradingEnabled: boolean;
   killSwitchEnabled: boolean;
+  activeLiveEntryArmingId?: number | null;
+  activeLiveEntryArming?: null | {
+    id: number;
+    entryApprovalRevision: number;
+    tradingAccountSubscriptionId: number;
+    entryApprovalExpiresAt: string;
+    armedAt: string;
+    terminations: Array<{ type: 'DISARMED' | 'INVALIDATED' | 'EXPIRED' | 'CONSUMED'; occurredAt: string }>;
+  };
+  latestLiveEntryArming?: null | {
+    id: number;
+    entryApprovalRevision: number;
+    tradingAccountSubscriptionId: number;
+    entryApprovalExpiresAt: string;
+    armedAt: string;
+    terminations: Array<{ type: 'DISARMED' | 'INVALIDATED' | 'EXPIRED' | 'CONSUMED'; occurredAt: string }>;
+  };
   estimatedTradingCapital: number | null;
   maxDeployableNotional: number | null;
   enabledAllocatedNotional: number;
@@ -81,7 +98,7 @@ export type ReadinessStage = {
 export type TradingAccountReadinessAssessment = {
   id: number;
   tradingAccountId: number;
-  purpose: 'LIVE_ACTIVATION';
+  purpose: 'LIVE_ACTIVATION' | 'LIVE_ENTRY_ARMING';
   result: 'PASSED' | 'BLOCKED' | 'ERROR';
   assessmentVersion: number;
   startedAt: string;
@@ -117,6 +134,28 @@ export type TradingAccountReadinessAssessment = {
       status: string;
       applicable: boolean;
     }>;
+    prerequisitesForEntryGrantPassed?: boolean;
+    prerequisitesForRiskReducingGrantPassed?: boolean;
+    liveWriteApprovalRevisions?: {
+      riskReducing: number | null;
+      entry: number | null;
+    };
+    selectedCanary?: null | {
+      tradingAccountSubscriptionId: number;
+      subscriptionId: number;
+      securityId: number;
+      symbol: string;
+      sizingType: string;
+      maxPositionNotional: number | string | null;
+      reservedNotional: number | string | null;
+      accountLimits: {
+        maxDailyEntryOrders?: number | null;
+        maxDailyEntryNotional?: number | string | null;
+        maxOpenPositions?: number | null;
+        maxSymbolOpenNotional?: number | string | null;
+      } | null;
+      allocation: { maxAllocatedNotional?: number | string | null } | null;
+    };
   };
   reconciliationSummary: {
     mode: string;
@@ -173,6 +212,7 @@ export type LiveWriteApprovalStateResponse = {
       credentialFingerprint: string;
     } | null;
     approval: null | {
+      id: number;
       status: 'GRANTED' | 'REVOKED' | 'INVALIDATED';
       revision: number;
       grantedAt: string | null;

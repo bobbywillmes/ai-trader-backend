@@ -74,29 +74,43 @@ export function activateTradingAccount(
   );
 }
 
-export function getLatestTradingAccountReadiness(id: number, token: string) {
+export type TradingAccountReadinessPurpose = 'LIVE_ACTIVATION' | 'LIVE_ENTRY_ARMING';
+
+export function getLatestTradingAccountReadiness(id: number, token: string, purpose: TradingAccountReadinessPurpose = 'LIVE_ACTIVATION') {
   return apiRequest<TradingAccountReadinessAssessmentResponse>(
-    `/api/trading-accounts/${id}/readiness-assessments/latest?purpose=LIVE_ACTIVATION`,
+    `/api/trading-accounts/${id}/readiness-assessments/latest?purpose=${purpose}`,
     { token },
   );
 }
 
-export function listTradingAccountReadiness(id: number, token: string) {
+export function listTradingAccountReadiness(id: number, token: string, purpose: TradingAccountReadinessPurpose = 'LIVE_ACTIVATION') {
   return apiRequest<TradingAccountReadinessHistoryResponse>(
-    `/api/trading-accounts/${id}/readiness-assessments?purpose=LIVE_ACTIVATION&limit=20`,
+    `/api/trading-accounts/${id}/readiness-assessments?purpose=${purpose}&limit=20`,
     { token },
   );
 }
 
-export function runTradingAccountReadiness(id: number, token: string) {
+export function runTradingAccountReadiness(id: number, token: string, purpose: TradingAccountReadinessPurpose = 'LIVE_ACTIVATION') {
   return apiRequest<TradingAccountReadinessAssessmentResponse>(
     `/api/trading-accounts/${id}/readiness-assessments`,
     {
       method: 'POST',
       token,
-      body: { purpose: 'LIVE_ACTIVATION' },
+      body: { purpose },
     },
   );
+}
+
+export function stageLiveEntryCanary(id: number, payload: unknown, token: string) {
+  return apiRequest(`/api/trading-accounts/${id}/stage-live-entry-canary`, { method: 'POST', token, body: payload });
+}
+
+export function armLiveEntries(id: number, payload: unknown, token: string) {
+  return apiRequest(`/api/trading-accounts/${id}/arm-live-entries`, { method: 'POST', token, body: payload });
+}
+
+export function disarmLiveEntries(id: number, payload: unknown, token: string) {
+  return apiRequest(`/api/trading-accounts/${id}/disarm-live-entries`, { method: 'POST', token, body: payload });
 }
 
 export function getLiveWriteApprovals(id: number, token: string) {

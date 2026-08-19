@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   getNormalizedAccount: vi.fn(),
   getTradingAccountForAdmin: vi.fn(),
+  invalidateLiveWriteApprovals: vi.fn(),
+  disarmLiveEntries: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -38,6 +40,12 @@ vi.mock('./account.service.js', () => ({
 
 vi.mock('./trading-account.service.js', () => ({
   getTradingAccountForAdmin: mocks.getTradingAccountForAdmin,
+}));
+vi.mock('./live-write-approval.service.js', () => ({
+  invalidateLiveWriteApprovals: mocks.invalidateLiveWriteApprovals,
+}));
+vi.mock('./live-entry-arming.service.js', () => ({
+  disarmLiveEntries: mocks.disarmLiveEntries,
 }));
 
 import { verifyTradingAccountCredential } from './trading-account-credential-verification.service.js';
@@ -143,6 +151,35 @@ describe('trading account credential verification service', () => {
         tradingAccountId: 1,
       }),
     });
+  });
+
+  it('preserves ACTIVE entry-disarmed posture on successful Live re-verification', async () => {
+    mocks.tradingAccountFindUnique.mockResolvedValue({
+      id: 1,
+      status: TradingAccountStatus.ACTIVE,
+      tradingEnabled: false,
+      killSwitchEnabled: true,
+      credential: {
+        id: 10,
+        status: BrokerCredentialStatus.ACTIVE,
+        keyFingerprint: 'sha256:fingerprint',
+        revokedAt: null,
+        updatedAt: new Date('2026-07-24T00:00:00.000Z'),
+      },
+    });
+
+    await verifyTradingAccountCredential(1, 7);
+
+    expect(mocks.disarmLiveEntries).not.toHaveBeenCalled();
+    expect(mocks.tradingAccountUpdate).toHaveBeenCalledWith({
+      where: { id: 1 },
+      data: expect.objectContaining({
+        status: TradingAccountStatus.ACTIVE,
+        tradingEnabled: false,
+        killSwitchEnabled: true,
+      }),
+    });
+    expect(mocks.invalidateLiveWriteApprovals).toHaveBeenCalled();
   });
 
   it('marks credentials invalid and keeps trading disabled on verification failure', async () => {

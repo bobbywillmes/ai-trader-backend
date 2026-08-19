@@ -67,6 +67,7 @@ export type AlpacaRequestMetadata = {
   requestClass: AlpacaApiRequestClass;
   operationClass: AlpacaBrokerOperationClass;
   deferDuringRateLimit: boolean;
+  newPositionEntryContext?: import('../../services/live-entry-arming.service.js').NewPositionEntryAuthorizationContext;
 };
 
 export function assertKnownAlpacaOperation(

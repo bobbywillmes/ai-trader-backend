@@ -275,6 +275,7 @@ describe('order worker entry-session recheck', () => {
       }),
       {
         tradingAccountId: 1,
+        orderIntentId: 102,
       }
     );
   });

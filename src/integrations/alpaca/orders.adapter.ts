@@ -1,6 +1,7 @@
 import { alpacaRequestForAccount } from './client.js';
 import type { AlpacaOrder } from './alpaca.types.js';
 import type { AlpacaApiOperation, AlpacaBrokerOperationClass } from './request-metadata.js';
+import type { NewPositionEntryAuthorizationContext } from '../../services/live-entry-arming.service.js';
 
 type AlpacaCreateOrderRequest = {
   symbol: string;
@@ -83,7 +84,8 @@ export async function getAlpacaOrderByClientOrderId(
 export async function placeAlpacaOrder(
   tradingAccountId: number,
   payload: AlpacaCreateOrderRequest,
-  operation: AlpacaApiOperation = 'pending_order_submission'
+  operation: AlpacaApiOperation = 'pending_order_submission',
+  newPositionEntryContext?: NewPositionEntryAuthorizationContext,
 ): Promise<AlpacaOrder> {
   return alpacaRequestForAccount(tradingAccountId, '/v2/orders', {
     method: 'POST',
@@ -98,6 +100,7 @@ export async function placeAlpacaOrder(
           ? 'ENTRY_WRITE'
           : 'RISK_REDUCING_WRITE',
       deferDuringRateLimit: false,
+      ...(newPositionEntryContext ? { newPositionEntryContext } : {}),
     },
   });
 }

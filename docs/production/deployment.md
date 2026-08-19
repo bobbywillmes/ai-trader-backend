@@ -1,5 +1,7 @@
 # Production Deployment Checklist
 
+Deploying `ALLOW_LIVE_TRADING=true` does not arm an account. New Live entry additionally requires exact approvals, active immutable arming, exact assignment, account latches, and runtime gates. Apply the arming migration before deploying this code.
+
 ## Phase 1 multi-account routing
 
 Broker routing is account-derived. Global `ALPACA_BASE_URL` and `paperMode`

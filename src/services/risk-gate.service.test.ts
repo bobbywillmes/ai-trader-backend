@@ -246,6 +246,30 @@ describe('risk gate entry session integration', () => {
     });
   });
 
+  it('continues to block when the production global trading control is disabled', async () => {
+    mocks.getRuntimeTradingConfig.mockResolvedValue({
+      ...config,
+      tradingEnabled: false,
+    });
+
+    await expect(evaluateOrderRisk({
+      symbol: 'SPY',
+      side: 'buy',
+      orderType: 'market',
+      timeInForce: 'day',
+      notional: 100,
+      extendedHours: false,
+      signalType: 'entry',
+    })).resolves.toEqual({
+      allowed: false,
+      statusCode: 403,
+      reason: 'Trading is disabled.',
+      details: { rule: 'tradingEnabled', tradingEnabled: false },
+    });
+    expect(mocks.securityFindUnique).not.toHaveBeenCalled();
+    expect(mocks.evaluateEntrySessionGuard).not.toHaveBeenCalled();
+  });
+
   it('checks the entry-session guard for entry orders', async () => {
     const result = await evaluateOrderRisk({
       symbol: 'SPY',

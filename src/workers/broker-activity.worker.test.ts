@@ -5,6 +5,7 @@ import { runBrokerActivitySync } from './broker-activity.worker.js';
 const mocks = vi.hoisted(() => ({
   enumerate: vi.fn(),
   syncForAccount: vi.fn(),
+  runWorkflow: vi.fn(),
 }));
 
 vi.mock('../services/lifecycle-account-eligibility.service.js', () => ({
@@ -13,6 +14,10 @@ vi.mock('../services/lifecycle-account-eligibility.service.js', () => ({
 
 vi.mock('../services/broker-activity.service.js', () => ({
   syncBrokerActivitiesForAccount: mocks.syncForAccount,
+}));
+
+vi.mock('../services/trading-account-workflow-runner.service.js', () => ({
+  runTradingAccountWorkflow: mocks.runWorkflow,
 }));
 
 function eligible(id: number) {
@@ -32,6 +37,13 @@ function eligible(id: number) {
 describe('broker activity account coordinator', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.runWorkflow.mockImplementation(async ({ execute }) => {
+      try {
+        return { outcome: 'PROCESSED', value: await execute() };
+      } catch (error) {
+        return { outcome: 'FAILED', error };
+      }
+    });
   });
 
   it('continues in stable account order after one API failure', async () => {

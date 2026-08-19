@@ -59,6 +59,9 @@ import {
   liveWriteCapabilitySchema,
   grantLiveWriteApprovalSchema,
   revokeLiveWriteApprovalSchema,
+  stageLiveEntryCanarySchema,
+  armLiveEntriesSchema,
+  disarmLiveEntriesSchema,
 } from '../validators/trading-account.schema.js';
 import { verifyTradingAccountCredential } from '../services/trading-account-credential-verification.service.js';
 import {
@@ -80,6 +83,35 @@ import {
   listLiveWriteApprovalHistory,
   revokeLiveWriteApproval,
 } from '../services/live-write-approval.service.js';
+import {
+  armLiveEntries,
+  disarmLiveEntries,
+  stageLiveEntryCanary,
+} from '../services/live-entry-arming.service.js';
+
+export async function stageLiveEntryCanaryController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const tradingAccountId = parseTradingAccountId(req.params.id);
+    const input = stageLiveEntryCanarySchema.parse(req.body);
+    res.status(200).json(await stageLiveEntryCanary({ tradingAccountId, actorUserId: requireActorUserId(res), ...input }));
+  } catch (error) { next(error); }
+}
+
+export async function armLiveEntriesController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const tradingAccountId = parseTradingAccountId(req.params.id);
+    const input = armLiveEntriesSchema.parse(req.body);
+    res.status(200).json(await armLiveEntries(tradingAccountId, requireActorUserId(res), input));
+  } catch (error) { next(error); }
+}
+
+export async function disarmLiveEntriesController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const tradingAccountId = parseTradingAccountId(req.params.id);
+    const input = disarmLiveEntriesSchema.parse(req.body);
+    res.status(200).json(await disarmLiveEntries(tradingAccountId, requireActorUserId(res), input.reason));
+  } catch (error) { next(error); }
+}
 
 function parseAssessmentId(value: unknown) {
   const id = typeof value === 'string' ? Number(value) : NaN;

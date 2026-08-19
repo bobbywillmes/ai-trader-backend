@@ -3,6 +3,7 @@ import {
   useQueries,
   useQuery,
   useQueryClient,
+  type QueryClient,
 } from '@tanstack/react-query';
 import {
   createTradingAccountAllocation,
@@ -34,7 +35,11 @@ import {
   grantLiveWriteApproval,
   revokeLiveWriteApproval,
   activateTradingAccount,
+  stageLiveEntryCanary,
+  armLiveEntries,
+  disarmLiveEntries,
 } from './api';
+import type { TradingAccountReadinessPurpose } from './api';
 import type {
   AccountSubscriptionMarketContextStatus,
   AccountSubscriptionPriceHistoryRange,
@@ -99,6 +104,13 @@ export const tradingAccountKeys = {
     ] as const,
 };
 
+function invalidateLiveEntryProgressQueries(queryClient: QueryClient, id: number) {
+  queryClient.invalidateQueries({ queryKey: tradingAccountKeys.detail(id) });
+  queryClient.invalidateQueries({ queryKey: tradingAccountKeys.accountSubscriptions(id) });
+  queryClient.invalidateQueries({ queryKey: tradingAccountKeys.readiness(id) });
+  queryClient.invalidateQueries({ queryKey: tradingAccountKeys.liveWriteApprovals(id) });
+}
+
 export function useTradingAccounts(token: string | null) {
   return useQuery({
     queryKey: tradingAccountKeys.lists(),
@@ -138,13 +150,14 @@ export function useTradingAccount(
 export function useLatestTradingAccountReadiness(
   id: number | undefined,
   token: string | null,
+  purpose: TradingAccountReadinessPurpose = 'LIVE_ACTIVATION',
 ) {
   return useQuery({
     queryKey: id
       ? tradingAccountKeys.readiness(id)
       : [...tradingAccountKeys.all, 'readiness'],
     queryFn: () =>
-      getLatestTradingAccountReadiness(id as number, token as string),
+      getLatestTradingAccountReadiness(id as number, token as string, purpose),
     enabled: Boolean(token && id),
   });
 }
@@ -152,12 +165,13 @@ export function useLatestTradingAccountReadiness(
 export function useTradingAccountReadinessHistory(
   id: number | undefined,
   token: string | null,
+  purpose: TradingAccountReadinessPurpose = 'LIVE_ACTIVATION',
 ) {
   return useQuery({
     queryKey: id
       ? tradingAccountKeys.readinessHistory(id)
       : [...tradingAccountKeys.all, 'readinessHistory'],
-    queryFn: () => listTradingAccountReadiness(id as number, token as string),
+    queryFn: () => listTradingAccountReadiness(id as number, token as string, purpose),
     enabled: Boolean(token && id),
   });
 }
@@ -165,13 +179,14 @@ export function useTradingAccountReadinessHistory(
 export function useRunTradingAccountReadiness(
   id: number,
   token: string | null,
+  purpose: TradingAccountReadinessPurpose = 'LIVE_ACTIVATION',
 ) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => {
       if (!token)
         throw new Error('Admin session is missing. Please log in again.');
-      return runTradingAccountReadiness(id, token);
+      return runTradingAccountReadiness(id, token, purpose);
     },
     onSuccess: ({ assessment }) => {
       queryClient.setQueryData(tradingAccountKeys.readiness(id), {
@@ -180,9 +195,26 @@ export function useRunTradingAccountReadiness(
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.readinessHistory(id),
       });
+      queryClient.invalidateQueries({ queryKey: tradingAccountKeys.detail(id) });
+      queryClient.invalidateQueries({ queryKey: tradingAccountKeys.accountSubscriptions(id) });
+      queryClient.invalidateQueries({ queryKey: tradingAccountKeys.liveWriteApprovals(id) });
     },
   });
 }
+
+function useLiveEntryOperation(id: number, token: string | null, operation: (id: number, payload: unknown, token: string) => Promise<unknown>) {
+  const queryClient = useQueryClient();
+  return useMutation({ mutationFn: (payload: unknown) => {
+    if (!token) throw new Error('Admin session is missing.');
+    return operation(id, payload, token);
+  }, onSuccess: () => {
+    invalidateLiveEntryProgressQueries(queryClient, id);
+  }});
+}
+
+export const useStageLiveEntryCanary = (id: number, token: string | null) => useLiveEntryOperation(id, token, stageLiveEntryCanary);
+export const useArmLiveEntries = (id: number, token: string | null) => useLiveEntryOperation(id, token, armLiveEntries);
+export const useDisarmLiveEntries = (id: number, token: string | null) => useLiveEntryOperation(id, token, disarmLiveEntries);
 
 export function useActivateTradingAccount(id: number, token: string | null) {
   const queryClient = useQueryClient();
@@ -193,16 +225,8 @@ export function useActivateTradingAccount(id: number, token: string | null) {
       return activateTradingAccount(id, payload, token);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: tradingAccountKeys.detail(id),
-      });
+      invalidateLiveEntryProgressQueries(queryClient, id);
       queryClient.invalidateQueries({ queryKey: tradingAccountKeys.lists() });
-      queryClient.invalidateQueries({
-        queryKey: tradingAccountKeys.readiness(id),
-      });
-      queryClient.invalidateQueries({
-        queryKey: tradingAccountKeys.liveWriteApprovals(id),
-      });
     },
   });
 }
@@ -228,10 +252,7 @@ export function useGrantLiveWriteApproval(id: number, token: string | null) {
       if (!token) throw new Error('Admin session is missing.');
       return grantLiveWriteApproval(id, capability, payload, token);
     },
-    onSuccess: () =>
-      queryClient.invalidateQueries({
-        queryKey: tradingAccountKeys.liveWriteApprovals(id),
-      }),
+    onSuccess: () => invalidateLiveEntryProgressQueries(queryClient, id),
   });
 }
 
@@ -248,10 +269,7 @@ export function useRevokeLiveWriteApproval(id: number, token: string | null) {
       if (!token) throw new Error('Admin session is missing.');
       return revokeLiveWriteApproval(id, capability, payload, token);
     },
-    onSuccess: () =>
-      queryClient.invalidateQueries({
-        queryKey: tradingAccountKeys.liveWriteApprovals(id),
-      }),
+    onSuccess: () => invalidateLiveEntryProgressQueries(queryClient, id),
   });
 }
 
@@ -445,6 +463,7 @@ export function useUpdateTradingAccount(token: string | null) {
       queryClient.setQueryData(tradingAccountKeys.detail(account.id), {
         account,
       });
+      invalidateLiveEntryProgressQueries(queryClient, account.id);
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.riskHealth(account.id),
       });
@@ -474,6 +493,7 @@ export function useUpsertTradingAccountCredential(token: string | null) {
       queryClient.setQueryData(tradingAccountKeys.detail(account.id), {
         account,
       });
+      invalidateLiveEntryProgressQueries(queryClient, account.id);
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.riskHealth(account.id),
       });
@@ -497,6 +517,7 @@ export function useVerifyTradingAccountCredential(token: string | null) {
       queryClient.setQueryData(tradingAccountKeys.detail(account.id), {
         account,
       });
+      invalidateLiveEntryProgressQueries(queryClient, account.id);
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.riskHealth(account.id),
       });
@@ -520,6 +541,7 @@ export function useRevokeTradingAccountCredential(token: string | null) {
       queryClient.setQueryData(tradingAccountKeys.detail(account.id), {
         account,
       });
+      invalidateLiveEntryProgressQueries(queryClient, account.id);
       queryClient.invalidateQueries({
         queryKey: tradingAccountKeys.riskHealth(account.id),
       });

@@ -1,5 +1,7 @@
 # AI Trader Backend
 
+Live entry safety uses explicit revision-bound one-shot arming. An effective ENTRY approval is not armed authority, and an ACTIVE account is not necessarily entry-armed. See `docs/architecture/live-entry-arming.md`.
+
 AI Trader Backend is the broker/control layer between the n8n AI Trader workflows, the web UI, and Alpaca paper/live brokerage accounts.
 
 n8n decides what it wants to do. The backend decides whether that request is allowed, records the intent, submits approved orders to Alpaca, tracks the resulting position, imports broker-confirmed activity, evaluates exits, and records a durable audit trail.

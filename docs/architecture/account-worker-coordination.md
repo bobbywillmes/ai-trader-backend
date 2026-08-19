@@ -1,5 +1,7 @@
 # Trading Account Worker Coordination
 
+Live ARM lock order is `ORDER_LIFECYCLE` then `OPERATIONAL_STATE`. DISARM closes latches before draining `ORDER_LIFECYCLE`; timeout preserves the safer local state and emits attention evidence.
+
 Coordinator `WorkerHealthState` remains process-wide. `TradingAccountWorkerHealthState`
 adds one durable row per account/workflow and records applicability, freshness,
 failures, contention, and retry state without storing credentials or broker payloads.

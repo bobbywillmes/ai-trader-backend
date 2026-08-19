@@ -34,6 +34,9 @@ import {
   getLiveWriteApprovalsController,
   grantLiveWriteApprovalController,
   revokeLiveWriteApprovalController,
+  stageLiveEntryCanaryController,
+  armLiveEntriesController,
+  disarmLiveEntriesController,
 } from '../controllers/trading-accounts.controller.js';
 import {
   requirePermission,
@@ -98,6 +101,9 @@ router.post(
   requireSystemOwnerAccess,
   deactivateTradingAccountController,
 );
+router.post('/:id/stage-live-entry-canary', requireSystemOwnerAccess, stageLiveEntryCanaryController);
+router.post('/:id/arm-live-entries', requireSystemOwnerAccess, armLiveEntriesController);
+router.post('/:id/disarm-live-entries', requireSystemOwnerAccess, disarmLiveEntriesController);
 router.post(
   '/:id/readiness-assessments',
   requireSystemOwnerAccess,

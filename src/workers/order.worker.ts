@@ -439,6 +439,7 @@ export async function processPendingOrdersForAccount(
 
       const result = await submitOrderToBroker(resolvedInput, {
         tradingAccountId: intent.tradingAccountId,
+        orderIntentId: intent.id,
       });
       const brokerOrder = result.order;
 

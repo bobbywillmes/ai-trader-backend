@@ -27,6 +27,7 @@ const RISK_HEALTH_ACCOUNT_SELECT = {
   status: true,
   tradingEnabled: true,
   killSwitchEnabled: true,
+  activeLiveEntryArmingId: true,
   estimatedTradingCapital: true,
   maxDeployableNotional: true,
   brokerAccountId: true,
@@ -960,6 +961,22 @@ export async function getTradingAccountRiskHealth(
       })
     : [];
   const activeSubscriptions = activeAccountSubscriptions(accountSubscriptions);
+
+  if (
+    account.environment === TradingAccountEnvironment.LIVE &&
+    account.status === TradingAccountStatus.ACTIVE &&
+    account.tradingEnabled &&
+    !account.killSwitchEnabled &&
+    account.activeLiveEntryArmingId === null
+  ) {
+    checks.push(createCheck({
+      id: 'live_entry_disarm_required',
+      label: 'Live entry latches have exact arming authority',
+      severity: 'blocker',
+      status: 'fail',
+      message: 'ACTIVE Live entry latches are permissive without an active LiveEntryArming binding. Immediate local disarm is required.',
+    }));
+  }
 
   for (const workerState of workerHealthStates) {
     const workerStatus = deriveTradingAccountWorkerStatus(

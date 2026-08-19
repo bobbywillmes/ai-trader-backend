@@ -123,6 +123,7 @@ function tradingAccount(
   overrides: Partial<TradingAccount> = {},
 ): TradingAccount {
   return {
+    activeLiveEntryArmingId: null,
     id: 1,
     accountHolderUserId: 1,
     displayName: 'Bobby Paper',
@@ -300,6 +301,14 @@ describe('trading account service', () => {
       ...tradingAccount({ maxDeployableNotional: 20_000 }),
       accountHolder: { name: 'Bobby W' },
       credential: null,
+      liveEntryArmings: [{
+        id: 9,
+        entryApprovalRevision: 2,
+        tradingAccountSubscriptionId: 4,
+        entryApprovalExpiresAt: new Date('2026-08-18T20:00:00.000Z'),
+        armedAt: new Date('2026-08-18T19:00:00.000Z'),
+        terminations: [{ type: 'CONSUMED', occurredAt: new Date('2026-08-18T19:05:00.000Z') }],
+      }],
       allocations: [
         { maxAllocatedNotional: 7_500 },
         { maxAllocatedNotional: 2_500 },
@@ -320,6 +329,7 @@ describe('trading account service', () => {
         enabledAllocatedNotional: 10_000,
         remainingDeployableNotional: 10_000,
         totalOpenPositionNotional: 750,
+        latestLiveEntryArming: expect.objectContaining({ id: 9, terminations: [expect.objectContaining({ type: 'CONSUMED' })] }),
         credential: {
           exists: false,
           status: null,
