@@ -24,9 +24,11 @@ export async function createOrderIntent(
   options: {
     tradingAccountSubscriptionId?: number | null;
     accountSubscriptionSizing?: AccountSubscriptionSizingSnapshot | null;
-  } = {}
+    liveEntryAcceptanceRunId?: number | null;
+  } = {},
+  db: Prisma.TransactionClient | typeof prisma = prisma,
 ) {
-  return prisma.orderIntent.create({
+  return db.orderIntent.create({
     data: {
       source,
       symbol: input.symbol,
@@ -43,6 +45,7 @@ export async function createOrderIntent(
       tradingAccountId,
       tradingAccountSubscriptionId:
         options.tradingAccountSubscriptionId ?? null,
+      liveEntryAcceptanceRunId: options.liveEntryAcceptanceRunId ?? null,
       status: 'received',
       rawRequestJson: {
         ...input,

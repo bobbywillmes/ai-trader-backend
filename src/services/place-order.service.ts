@@ -1,3 +1,5 @@
+import type { Prisma } from '@prisma/client';
+
 import { HttpError } from '../errors/http-error.js';
 import { prisma } from '../db/prisma.js';
 import {
@@ -33,7 +35,20 @@ import { evaluateAssignmentEntry } from './assignment-entry-evaluation.service.j
 type SubmitOrderOptions = {
   entryDecisionKey?: string;
   clientOrderId?: string;
+  liveEntryAcceptanceExecution?: {
+    runId: number;
+    actorUserId: number;
+    requestKey: string;
+    expectedPreviewRevision: number;
+    expectedPreviewFingerprint: string;
+  };
 };
+
+function previewOrder(value: Prisma.JsonValue | null) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const order = value.order;
+  return order && typeof order === 'object' && !Array.isArray(order) ? order : null;
+}
 
 function isEntrySubscriptionOrder(
   input: ResolvedPlaceOrderInput
@@ -116,7 +131,7 @@ export async function submitOrder(
   }
   const account = await prisma.tradingAccount.findUniqueOrThrow({
     where: { id: tradingAccountId },
-    select: { environment: true },
+    select: { environment: true, activeLiveEntryArmingId: true },
   });
   const clientOrderId =
     options.clientOrderId ??
@@ -125,19 +140,99 @@ export async function submitOrder(
       environment: account.environment,
     });
 
-  const intent = await createOrderIntent(
-    resolvedInput,
-    'api',
-    clientOrderId,
-    tradingAccountId,
-    runtimeSizing.sizing
-      ? {
-          tradingAccountSubscriptionId:
-            runtimeSizing.sizing.tradingAccountSubscriptionId,
-          accountSubscriptionSizing: runtimeSizing.sizing.snapshot,
+  const intentOptions = runtimeSizing.sizing
+    ? {
+        tradingAccountSubscriptionId:
+          runtimeSizing.sizing.tradingAccountSubscriptionId,
+        accountSubscriptionSizing: runtimeSizing.sizing.snapshot,
+      }
+    : {};
+  let duplicateAcceptanceExecution = false;
+  const intent = options.liveEntryAcceptanceExecution
+    ? await prisma.$transaction(async (tx) => {
+        const execution = options.liveEntryAcceptanceExecution!;
+        await tx.$queryRaw`SELECT id FROM "LiveEntryAcceptanceRun" WHERE id = ${execution.runId} FOR UPDATE`;
+        const run = await tx.liveEntryAcceptanceRun.findFirst({
+          where: { id: execution.runId, tradingAccountId },
+          include: {
+            orderIntent: true,
+            liveEntryArming: true,
+          },
+        });
+        if (!run) throw new HttpError(404, 'Live-entry acceptance run not found.');
+        if (run.orderIntent) {
+          if (run.executionRequestKey !== execution.requestKey) {
+            throw new HttpError(409, 'Acceptance execution was already claimed by another request.');
+          }
+          duplicateAcceptanceExecution = true;
+          return run.orderIntent;
         }
-      : {}
-  );
+        if (run.terminalAt || run.executionClaimedAt || run.executionUncertainAt) {
+          throw new HttpError(409, 'Acceptance execution is no longer claimable.');
+        }
+        if (
+          run.previewRevision !== execution.expectedPreviewRevision ||
+          run.previewFingerprint !== execution.expectedPreviewFingerprint
+        ) {
+          throw new HttpError(409, 'Acceptance execution preview is stale.');
+        }
+        const reviewed = previewOrder(run.previewJson);
+        if (
+          !reviewed ||
+          reviewed.symbol !== resolvedInput.symbol ||
+          reviewed.side !== resolvedInput.side ||
+          reviewed.qty !== resolvedInput.qty ||
+          reviewed.orderType !== resolvedInput.orderType ||
+          reviewed.timeInForce !== resolvedInput.timeInForce ||
+          reviewed.extendedHours !== resolvedInput.extendedHours
+        ) {
+          throw new HttpError(409, 'Current canonical order no longer matches the reviewed preview.');
+        }
+        if (
+          !run.liveEntryArming ||
+          run.liveEntryArming.id !== account.activeLiveEntryArmingId ||
+          run.liveEntryArming.liveEntryAcceptanceRunId !== run.id ||
+          run.liveEntryArming.entryApprovalExpiresAt <= new Date()
+        ) {
+          throw new HttpError(409, 'Acceptance execution requires its exact active unexpired arming.');
+        }
+        await tx.liveEntryAcceptanceRun.update({
+          where: { id: run.id },
+          data: {
+            executionClaimedAt: new Date(),
+            executionRequestedByUserId: execution.actorUserId,
+            executionRequestKey: execution.requestKey,
+          },
+        });
+        return createOrderIntent(
+          resolvedInput,
+          'live_entry_acceptance',
+          clientOrderId,
+          tradingAccountId,
+          {
+            ...intentOptions,
+            liveEntryAcceptanceRunId: run.id,
+          },
+          tx,
+        );
+      })
+    : await createOrderIntent(
+        resolvedInput,
+        'api',
+        clientOrderId,
+        tradingAccountId,
+        intentOptions,
+      );
+
+  if (duplicateAcceptanceExecution) {
+    return {
+      ok: true,
+      intentId: intent.id,
+      status: intent.status,
+      duplicate: true,
+      entryDecisionKey: options.entryDecisionKey ?? null,
+    };
+  }
 
   if (options.entryDecisionKey) {
     await linkEntryDecisionToOrderIntent({

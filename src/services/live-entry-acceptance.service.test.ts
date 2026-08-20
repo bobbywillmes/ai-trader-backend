@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { deriveLiveEntryAcceptancePhase } from './live-entry-acceptance.service.js';
+import {
+  deriveLiveEntryAcceptancePhase,
+  liveEntryAcceptancePreviewFingerprint,
+} from './live-entry-acceptance.service.js';
 
 const base = {
   terminalOutcome: null,
@@ -35,5 +38,16 @@ describe('Live-entry acceptance phase derivation', () => {
       executionClaimedAt: new Date(),
       executionUncertainAt: new Date(),
     })).toBe('ACTION_REQUIRED');
+  });
+});
+
+describe('Live-entry acceptance preview fingerprint', () => {
+  it('is stable across object key ordering and changes with material order data', () => {
+    const first = liveEntryAcceptancePreviewFingerprint({ order: { symbol: 'RSP', qty: 4 }, revision: 1 });
+    const reordered = liveEntryAcceptancePreviewFingerprint({ revision: 1, order: { qty: 4, symbol: 'RSP' } });
+    const changed = liveEntryAcceptancePreviewFingerprint({ revision: 1, order: { qty: 5, symbol: 'RSP' } });
+
+    expect(first).toBe(reordered);
+    expect(changed).not.toBe(first);
   });
 });
