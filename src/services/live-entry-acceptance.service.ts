@@ -11,6 +11,7 @@ import { syncSubmittedOrdersForAccount } from '../workers/order.worker.js';
 import { syncBrokerActivitiesForAccount } from './broker-activity.service.js';
 import { syncTrackedPositionsForAccount } from './position-tracking.service.js';
 import { reconcileTradingAccount } from './reconciliation.service.js';
+import { computeReadinessFingerprints } from './trading-account-readiness.service.js';
 
 export const liveEntryAcceptancePhases = [
   'SETUP',
@@ -123,7 +124,7 @@ function currentApprovalRevisions(value: Prisma.JsonValue | null) {
 }
 
 async function derivePrerequisites(run: AcceptanceRunEvidence) {
-  const [approvals, readiness] = await Promise.all([
+  const [approvals, readiness, fingerprints] = await Promise.all([
     prisma.tradingAccountLiveWriteApproval.findMany({
       where: { tradingAccountId: run.tradingAccountId },
       select: { capability: true, status: true, revision: true, expiresAt: true },
@@ -136,8 +137,12 @@ async function derivePrerequisites(run: AcceptanceRunEvidence) {
         result: true,
         expiresAt: true,
         evidenceJson: true,
+        configurationFingerprint: true,
+        credentialFingerprint: true,
+        policyFingerprint: true,
       },
     }),
+    computeReadinessFingerprints(run.tradingAccountId),
   ]);
   const now = new Date();
   const risk = approvals.find((item) => item.capability === 'RISK_REDUCING');
@@ -148,6 +153,10 @@ async function derivePrerequisites(run: AcceptanceRunEvidence) {
   const readinessReady = Boolean(
     readiness?.result === 'PASSED' &&
       readiness.expiresAt > now &&
+      fingerprints !== null &&
+      readiness.configurationFingerprint === fingerprints.configurationFingerprint &&
+      readiness.credentialFingerprint === fingerprints.credentialFingerprint &&
+      readiness.policyFingerprint === fingerprints.policyFingerprint &&
       revisions?.riskReducing === risk?.revision &&
       revisions?.entry === entry?.revision,
   );
