@@ -486,7 +486,7 @@ model LiveEntryAcceptanceRun {
   updatedAt                       DateTime @updatedAt
 
   @@index([tradingAccountId, createdAt])
-  @@index([tradingAccountSubscriptionId, createdAt])
+  @@index([tradingAccountSubscriptionId, createdAt], map: "LiveEntryAcceptanceRun_tradingAccountSubscriptionId_created_idx")
   @@index([terminalOutcome, terminalAt])
   @@index([executionUncertainAt])
 }

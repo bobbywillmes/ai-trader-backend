@@ -1,0 +1,2 @@
+ALTER INDEX "LiveEntryAcceptanceRun_tradingAccountSubscriptionId_createdAt_i"
+  RENAME TO "LiveEntryAcceptanceRun_tradingAccountSubscriptionId_created_idx";

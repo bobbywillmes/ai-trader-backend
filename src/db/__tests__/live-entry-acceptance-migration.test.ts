@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 
 const migrationPath =
   'prisma/migrations/20260820120000_add_live_entry_acceptance_runs/migration.sql';
+const indexAlignmentMigrationPath =
+  'prisma/migrations/20260820130000_align_live_entry_acceptance_index_name/migration.sql';
 
 describe('Live-entry acceptance migration safety constraints', () => {
   it('keeps ACTION_REQUIRED derived and reserves terminal outcomes for resolved runs', async () => {
@@ -32,5 +34,30 @@ describe('Live-entry acceptance migration safety constraints', () => {
     expect(sql).toContain(
       "RAISE EXCEPTION 'Executed Live-entry acceptance preview is immutable'",
     );
+  });
+
+  it('aligns the PostgreSQL-truncated subscription index with the mapped schema name', async () => {
+    const sql = await readFile(indexAlignmentMigrationPath, 'utf8');
+
+    expect(sql).toContain(
+      'ALTER INDEX "LiveEntryAcceptanceRun_tradingAccountSubscriptionId_createdAt_i"',
+    );
+    expect(sql).toContain(
+      'RENAME TO "LiveEntryAcceptanceRun_tradingAccountSubscriptionId_created_idx"',
+    );
+  });
+
+  it('has no other explicitly named migration objects above the PostgreSQL identifier limit', async () => {
+    const sql = await readFile(migrationPath, 'utf8');
+    const objectNames = Array.from(
+      sql.matchAll(
+        /(?:INDEX|CONSTRAINT|FUNCTION|TRIGGER|TYPE|TABLE)\s+"([^"]+)"/giu,
+      ),
+      (match) => match[1],
+    );
+
+    expect(objectNames.filter((name) => name.length > 63)).toEqual([
+      'LiveEntryAcceptanceRun_tradingAccountSubscriptionId_createdAt_idx',
+    ]);
   });
 });
