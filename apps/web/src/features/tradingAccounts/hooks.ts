@@ -38,6 +38,12 @@ import {
   stageLiveEntryCanary,
   armLiveEntries,
   disarmLiveEntries,
+  abortLiveEntryAcceptance,
+  createLiveEntryAcceptance,
+  executeLiveEntryAcceptance,
+  getCurrentLiveEntryAcceptance,
+  previewLiveEntryAcceptance,
+  verifyLiveEntryAcceptance,
 } from './api';
 import type { TradingAccountReadinessPurpose } from './api';
 import type {
@@ -72,6 +78,8 @@ export const tradingAccountKeys = {
     [...tradingAccountKeys.readiness(id), 'history'] as const,
   liveWriteApprovals: (id: number) =>
     [...tradingAccountKeys.detail(id), 'liveWriteApprovals'] as const,
+  liveEntryAcceptance: (id: number) =>
+    [...tradingAccountKeys.detail(id), 'liveEntryAcceptance'] as const,
   allocations: (id: number) =>
     [...tradingAccountKeys.detail(id), 'allocations'] as const,
   accountSubscriptions: (id: number) =>
@@ -109,6 +117,7 @@ function invalidateLiveEntryProgressQueries(queryClient: QueryClient, id: number
   queryClient.invalidateQueries({ queryKey: tradingAccountKeys.accountSubscriptions(id) });
   queryClient.invalidateQueries({ queryKey: tradingAccountKeys.readiness(id) });
   queryClient.invalidateQueries({ queryKey: tradingAccountKeys.liveWriteApprovals(id) });
+  queryClient.invalidateQueries({ queryKey: tradingAccountKeys.liveEntryAcceptance(id) });
 }
 
 export function useTradingAccounts(token: string | null) {
@@ -215,6 +224,40 @@ function useLiveEntryOperation(id: number, token: string | null, operation: (id:
 export const useStageLiveEntryCanary = (id: number, token: string | null) => useLiveEntryOperation(id, token, stageLiveEntryCanary);
 export const useArmLiveEntries = (id: number, token: string | null) => useLiveEntryOperation(id, token, armLiveEntries);
 export const useDisarmLiveEntries = (id: number, token: string | null) => useLiveEntryOperation(id, token, disarmLiveEntries);
+
+export function useCurrentLiveEntryAcceptance(id: number, token: string | null) {
+  return useQuery({
+    queryKey: tradingAccountKeys.liveEntryAcceptance(id),
+    queryFn: () => getCurrentLiveEntryAcceptance(id, token as string),
+    enabled: Boolean(token),
+    refetchInterval: 5_000,
+  });
+}
+
+function useAcceptanceMutation(id: number, token: string | null, operation: (token: string) => Promise<unknown>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => {
+      if (!token) throw new Error('Admin session is missing.');
+      return operation(token);
+    },
+    onSuccess: () => {
+      invalidateLiveEntryProgressQueries(queryClient, id);
+      queryClient.invalidateQueries({ queryKey: tradingAccountKeys.liveEntryAcceptance(id) });
+    },
+  });
+}
+
+export const useCreateLiveEntryAcceptance = (id: number, token: string | null, payload: unknown) =>
+  useAcceptanceMutation(id, token, (value) => createLiveEntryAcceptance(id, payload, value));
+export const usePreviewLiveEntryAcceptance = (id: number, runId: number | undefined, token: string | null) =>
+  useAcceptanceMutation(id, token, (value) => previewLiveEntryAcceptance(id, runId as number, value));
+export const useExecuteLiveEntryAcceptance = (id: number, runId: number | undefined, token: string | null, payload: unknown) =>
+  useAcceptanceMutation(id, token, (value) => executeLiveEntryAcceptance(id, runId as number, payload, value));
+export const useVerifyLiveEntryAcceptance = (id: number, runId: number | undefined, token: string | null) =>
+  useAcceptanceMutation(id, token, (value) => verifyLiveEntryAcceptance(id, runId as number, value));
+export const useAbortLiveEntryAcceptance = (id: number, runId: number | undefined, token: string | null, payload: unknown) =>
+  useAcceptanceMutation(id, token, (value) => abortLiveEntryAcceptance(id, runId as number, payload, value));
 
 export function useActivateTradingAccount(id: number, token: string | null) {
   const queryClient = useQueryClient();

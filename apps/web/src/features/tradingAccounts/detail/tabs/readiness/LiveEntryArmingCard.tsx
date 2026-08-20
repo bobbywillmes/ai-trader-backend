@@ -2,6 +2,7 @@ import { Alert, Badge, Button, Card, Group, Stack, Text, TextInput, Title } from
 import { useState } from 'react';
 import {
   useArmLiveEntries,
+  useCurrentLiveEntryAcceptance,
   useDisarmLiveEntries,
   useLiveWriteApprovals,
   useStageLiveEntryCanary,
@@ -10,6 +11,7 @@ import {
 import type { TradingAccount, TradingAccountReadinessAssessment } from '../../../types';
 import { LiveEntrySetupProgress } from './LiveEntrySetupProgress';
 import { deriveLiveEntrySetupState } from './liveEntrySetupState';
+import { LiveEntryAcceptanceWorkflow } from './LiveEntryAcceptanceWorkflow';
 
 export function LiveEntryArmingCard({ account, assessment, token }: {
   account: TradingAccount;
@@ -21,6 +23,7 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
   const stage = useStageLiveEntryCanary(account.id, token);
   const arm = useArmLiveEntries(account.id, token);
   const disarm = useDisarmLiveEntries(account.id, token);
+  const acceptance = useCurrentLiveEntryAcceptance(account.id, token);
   const [reason, setReason] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const rsp = assignments.data?.accountSubscriptions.find((item) => item.subscription.key === 'rsp_dip_core');
@@ -44,6 +47,7 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
           : null;
 
   return <Stack gap="md">
+    <LiveEntryAcceptanceWorkflow account={account} assignment={rsp} token={token} />
     <LiveEntrySetupProgress account={account} assessment={assessment} canaryPresent={Boolean(rsp)} canaryStaged={staged || armed} riskApproval={risk ?? null} entryApproval={entry ?? null} />
     <Card withBorder>
     <Group justify="space-between"><Title order={3}>Live entry authority</Title><Badge color={armed ? 'red' : staged ? 'yellow' : 'gray'}>{posture}</Badge></Group>
@@ -67,7 +71,7 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
       <TextInput label="Type ARM LIVE ENTRIES" value={confirmation} onChange={(event) => setConfirmation(event.currentTarget.value)} />
       {armDisabledMessage && <Text size="sm" c="dimmed" data-testid="arm-disabled-guidance">{armDisabledMessage}</Text>}
       <Button color="red" disabled={!canArm || !reason || confirmation !== 'ARM LIVE ENTRIES' || arm.isPending}
-        onClick={() => entry?.approval && rsp && assessment && arm.mutate({ reason, typedConfirmation: confirmation, readinessAssessmentId: assessment.id, tradingAccountSubscriptionId: rsp.id, entryApprovalId: entry.approval.id, entryApprovalRevision: entry.approval.revision, expectedUpdatedAt: account.updatedAt })}>
+        onClick={() => entry?.approval && rsp && assessment && arm.mutate({ reason, typedConfirmation: confirmation, readinessAssessmentId: assessment.id, tradingAccountSubscriptionId: rsp.id, entryApprovalId: entry.approval.id, entryApprovalRevision: entry.approval.revision, expectedUpdatedAt: account.updatedAt, ...(acceptance.data?.run?.run.id ? { liveEntryAcceptanceRunId: acceptance.data.run.run.id } : {}) })}>
         ARM LIVE ENTRIES
       </Button>
       {(stage.isError || arm.isError || disarm.isError) && <Alert color="red">{(stage.error ?? arm.error ?? disarm.error)?.message}</Alert>}

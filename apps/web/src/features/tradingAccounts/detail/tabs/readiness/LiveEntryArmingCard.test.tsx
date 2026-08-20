@@ -10,7 +10,9 @@ vi.mock('../../../hooks', () => ({
   useTradingAccountSubscriptions: () => ({ data: { accountSubscriptions: [{ id: 8, enabled: true, entriesEnabled: true, subscription: { key: 'rsp_dip_core' } }] } }),
   useLiveWriteApprovals: () => ({ data: { capabilities: [{ capability: 'ENTRY', effective: true, approval: { id: 4, revision: 2 } }, { capability: 'RISK_REDUCING', effective: true, approval: { id: 3, revision: 1 } }] } }),
   useStageLiveEntryCanary: () => mutation, useArmLiveEntries: () => mutation, useDisarmLiveEntries: () => mutation,
+  useCurrentLiveEntryAcceptance: () => ({ data: { run: null } }),
 }));
+vi.mock('./LiveEntryAcceptanceWorkflow', () => ({ LiveEntryAcceptanceWorkflow: () => <div>Acceptance workflow</div> }));
 import { LiveEntryArmingCard } from './LiveEntryArmingCard';
 
 const account = { id: 1, status: 'ACTIVE', environment: 'LIVE', tradingEnabled: false, killSwitchEnabled: true, activeLiveEntryArmingId: null, updatedAt: '2026-08-18T19:00:00Z', credential: { verifiedAt: '2026-08-18T19:00:00Z' } } as TradingAccount;

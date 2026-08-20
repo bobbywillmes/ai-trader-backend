@@ -29,6 +29,8 @@ import type {
   LiveWriteCapability,
   ActivateTradingAccountPayload,
   ActivateTradingAccountResponse,
+  CurrentLiveEntryAcceptanceResponse,
+  LiveEntryAcceptanceProjection,
 } from './types';
 
 type ListMarketContextOptions = {
@@ -111,6 +113,30 @@ export function armLiveEntries(id: number, payload: unknown, token: string) {
 
 export function disarmLiveEntries(id: number, payload: unknown, token: string) {
   return apiRequest(`/api/trading-accounts/${id}/disarm-live-entries`, { method: 'POST', token, body: payload });
+}
+
+export function getCurrentLiveEntryAcceptance(id: number, token: string) {
+  return apiRequest<CurrentLiveEntryAcceptanceResponse>(`/api/trading-accounts/${id}/live-entry-acceptance-runs/current`, { token });
+}
+
+export function createLiveEntryAcceptance(id: number, payload: unknown, token: string) {
+  return apiRequest<LiveEntryAcceptanceProjection>(`/api/trading-accounts/${id}/live-entry-acceptance-runs`, { method: 'POST', token, body: payload });
+}
+
+export function previewLiveEntryAcceptance(id: number, runId: number, token: string) {
+  return apiRequest<LiveEntryAcceptanceProjection>(`/api/trading-accounts/${id}/live-entry-acceptance-runs/${runId}/preview`, { method: 'POST', token });
+}
+
+export function executeLiveEntryAcceptance(id: number, runId: number, payload: unknown, token: string) {
+  return apiRequest<LiveEntryAcceptanceProjection>(`/api/trading-accounts/${id}/live-entry-acceptance-runs/${runId}/execute`, { method: 'POST', token, body: payload });
+}
+
+export function verifyLiveEntryAcceptance(id: number, runId: number, token: string) {
+  return apiRequest<LiveEntryAcceptanceProjection>(`/api/trading-accounts/${id}/live-entry-acceptance-runs/${runId}/verify`, { method: 'POST', token });
+}
+
+export function abortLiveEntryAcceptance(id: number, runId: number, payload: unknown, token: string) {
+  return apiRequest<LiveEntryAcceptanceProjection>(`/api/trading-accounts/${id}/live-entry-acceptance-runs/${runId}/abort`, { method: 'POST', token, body: payload });
 }
 
 export function getLiveWriteApprovals(id: number, token: string) {
