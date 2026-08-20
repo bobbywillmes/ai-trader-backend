@@ -7,6 +7,7 @@ import {
   syncSubmittedOrdersAcrossAccounts,
 } from './order.worker.js';
 import { assertAccountCoordinatorHealthy } from '../services/worker-coordinator-result.service.js';
+import { BrokerWriteDeliveryError } from '../errors/broker-write-delivery-error.js';
 
 const mocks = vi.hoisted(() => ({
   orderIntentFindMany: vi.fn(),
@@ -37,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   resolveSubscriptionOrderInput: vi.fn(),
   enumerateLifecycleAccounts: vi.fn(),
   trackedPositionUpdateMany: vi.fn(),
+  acceptanceRunUpdateMany: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -191,6 +193,43 @@ describe('order worker entry-session recheck', () => {
       nextDueAt: null,
       reason: 'startup_due',
     });
+    mocks.prismaTransaction.mockImplementation(
+      async (callback: (tx: unknown) => Promise<unknown>) => callback({
+        orderIntent: {
+          update: mocks.orderIntentUpdate,
+          updateMany: mocks.orderIntentUpdateMany,
+        },
+        liveEntryAcceptanceRun: { updateMany: mocks.acceptanceRunUpdateMany },
+      }),
+    );
+  });
+
+  it('retains an uncertain acceptance submission without making it retryable', async () => {
+    mocks.orderIntentFindMany.mockResolvedValue([{
+      ...baseIntent,
+      liveEntryAcceptanceRunId: 71,
+    }]);
+    mocks.submitOrderToBroker.mockRejectedValue(new BrokerWriteDeliveryError({
+      classification: 'DELIVERY_UNCERTAIN',
+      message: 'response timeout after possible broker acceptance',
+    }));
+    mocks.acceptanceRunUpdateMany.mockResolvedValue({ count: 1 });
+
+    await processPendingOrdersForAccount(1);
+
+    expect(mocks.orderIntentUpdate).toHaveBeenCalledWith({
+      where: { id: 101 },
+      data: {
+        status: 'submitting',
+        blockReason: expect.stringContaining('BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN'),
+      },
+    });
+    expect(mocks.acceptanceRunUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 71, terminalAt: null },
+        data: expect.objectContaining({ executionUncertainAt: expect.any(Date) }),
+      }),
+    );
   });
 
   it('blocks an entry intent at worker-time without submitting to Alpaca', async () => {
@@ -836,6 +875,7 @@ describe('stale submitting intent recovery', () => {
           },
           orderIntent: { updateMany: mocks.orderIntentUpdateMany },
           trackedPosition: { updateMany: mocks.trackedPositionUpdateMany },
+          liveEntryAcceptanceRun: { updateMany: mocks.acceptanceRunUpdateMany },
         })
     );
   });
@@ -904,6 +944,35 @@ describe('stale submitting intent recovery', () => {
       },
     });
     expect(result).toMatchObject({ linked: 0, retryable: 1 });
+  });
+
+  it('never requeues an acceptance entry after broker submission may have begun', async () => {
+    mocks.orderIntentFindMany.mockResolvedValue([{
+      ...baseIntent,
+      liveEntryAcceptanceRunId: 71,
+      status: 'submitting',
+      blockReason: 'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:timeout',
+      brokerOrders: [],
+      updatedAt: new Date('2026-06-22T13:00:00.000Z'),
+    }]);
+    mocks.getAlpacaOrderByClientOrderId.mockResolvedValue(null);
+    mocks.acceptanceRunUpdateMany.mockResolvedValue({ count: 1 });
+
+    const result = await recoverStaleSubmittingIntentsForAccount(
+      1,
+      new Date('2026-06-22T14:00:00.000Z'),
+    );
+
+    expect(mocks.orderIntentUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'pending' }) }),
+    );
+    expect(mocks.acceptanceRunUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 71, terminalAt: null }),
+        data: expect.objectContaining({ executionUncertainAt: expect.any(Date) }),
+      }),
+    );
+    expect(result).toMatchObject({ retryable: 0, retained: 1 });
   });
 
   it('releases a stale exit claim recorded as definitely not sent', async () => {
