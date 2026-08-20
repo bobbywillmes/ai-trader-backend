@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  acceptanceRunBindingMatches,
   assertArmingCredentialVerificationCurrent,
   evaluateLiveEntryArmingBinding,
 } from './live-entry-arming.service.js';
@@ -50,6 +51,18 @@ describe('Live entry arming binding', () => {
 
   it('rejects replacement risk-reducing authority', () => {
     expect(evaluateLiveEntryArmingBinding({ ...current, riskReducingApproval: { id: 20, revision: 5 } })).toEqual({ valid: false, reason: 'RISK_REDUCING_APPROVAL_MISMATCH' });
+  });
+});
+
+describe('Live-entry acceptance arming boundary binding', () => {
+  it('requires a run-bound arming and intent to name the same run', () => {
+    expect(acceptanceRunBindingMatches({ armingAcceptanceRunId: 7, intentAcceptanceRunId: 7 })).toBe(true);
+    expect(acceptanceRunBindingMatches({ armingAcceptanceRunId: 7, intentAcceptanceRunId: 8 })).toBe(false);
+    expect(acceptanceRunBindingMatches({ armingAcceptanceRunId: 7, intentAcceptanceRunId: null })).toBe(false);
+  });
+
+  it('preserves the existing boundary for ordinary unbound armings', () => {
+    expect(acceptanceRunBindingMatches({ armingAcceptanceRunId: null, intentAcceptanceRunId: null })).toBe(true);
   });
 });
 

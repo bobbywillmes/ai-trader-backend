@@ -119,6 +119,7 @@ export const armLiveEntriesSchema = z.strictObject({
   tradingAccountSubscriptionId: z.coerce.number().int().positive(),
   entryApprovalId: z.coerce.number().int().positive(),
   entryApprovalRevision: z.coerce.number().int().positive(),
+  liveEntryAcceptanceRunId: z.coerce.number().int().positive().optional(),
   expectedUpdatedAt: z.coerce.date(),
 });
 
