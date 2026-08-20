@@ -39,6 +39,15 @@ describe('Live-entry acceptance phase derivation', () => {
       executionUncertainAt: new Date(),
     })).toBe('ACTION_REQUIRED');
   });
+
+  it('keeps activation in SETUP even when downstream evidence already exists', () => {
+    expect(deriveLiveEntryAcceptancePhase({
+      ...base,
+      setupReady: false,
+      authorizationReady: true,
+      readinessReady: true,
+    })).toBe('SETUP');
+  });
 });
 
 describe('Live-entry acceptance preview fingerprint', () => {

@@ -81,10 +81,10 @@ export function deriveLiveEntryAcceptancePhase(
   if (input.executionUncertainAt) return 'ACTION_REQUIRED';
   if (input.executionClaimedAt || input.orderIntent) return 'VERIFICATION';
   if (input.liveEntryArming) return 'EXECUTION';
-  if (input.readinessReady) return 'ARMING';
-  if (input.authorizationReady) return 'READINESS';
-  if (input.setupReady) return 'AUTHORIZATION';
-  return 'SETUP';
+  if (!input.setupReady) return 'SETUP';
+  if (!input.authorizationReady) return 'AUTHORIZATION';
+  if (!input.readinessReady) return 'READINESS';
+  return 'ARMING';
 }
 
 const RUN_INCLUDE = {
@@ -195,7 +195,11 @@ export async function projectLiveEntryAcceptanceRun(run: AcceptanceRunEvidence) 
     run,
     phase,
     unresolved: phase === 'ACTION_REQUIRED',
-    setup: { ready: setupReady, assignmentMatches },
+    setup: {
+      ready: setupReady,
+      accountActive: run.tradingAccount.status === 'ACTIVE',
+      assignmentMatches,
+    },
     authorization: {
       ready: prerequisites.authorizationReady,
       approvals: prerequisites.approvals,
@@ -255,7 +259,15 @@ export async function createLiveEntryAcceptanceRun(args: {
       tradingAccountId: args.tradingAccountId,
     },
     include: {
-      tradingAccount: { select: { environment: true, status: true } },
+      tradingAccount: {
+        select: {
+          environment: true,
+          status: true,
+          tradingEnabled: true,
+          killSwitchEnabled: true,
+          activeLiveEntryArmingId: true,
+        },
+      },
       subscription: { include: { security: true } },
     },
   });
@@ -263,8 +275,25 @@ export async function createLiveEntryAcceptanceRun(args: {
   if (assignment.tradingAccount.environment !== TradingAccountEnvironment.LIVE) {
     throw new HttpError(409, 'Live-entry acceptance applies only to LIVE accounts.');
   }
-  if (assignment.tradingAccount.status !== 'ACTIVE') {
-    throw new HttpError(409, 'Live-entry acceptance requires an ACTIVE account.');
+  if (
+    assignment.tradingAccount.status !== 'ACTIVE' &&
+    assignment.tradingAccount.status !== 'PAUSED'
+  ) {
+    throw new HttpError(
+      409,
+      'Live-entry acceptance requires an ACTIVE or safely PAUSED account.',
+    );
+  }
+  if (
+    assignment.tradingAccount.status === 'PAUSED' &&
+    (assignment.tradingAccount.tradingEnabled ||
+      !assignment.tradingAccount.killSwitchEnabled ||
+      assignment.tradingAccount.activeLiveEntryArmingId !== null)
+  ) {
+    throw new HttpError(
+      409,
+      'A PAUSED Live-entry acceptance account must be entry-disarmed.',
+    );
   }
   try {
     const run = await prisma.liveEntryAcceptanceRun.create({

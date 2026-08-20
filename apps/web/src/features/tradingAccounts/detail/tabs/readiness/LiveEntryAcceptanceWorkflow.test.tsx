@@ -8,7 +8,7 @@ const mutation = { mutate: vi.fn(), isPending: false, error: null };
 vi.mock('../../../hooks', () => ({
   useCurrentLiveEntryAcceptance: () => ({ data: { run: {
     phase: 'EXECUTION', unresolved: false,
-    setup: { ready: true, assignmentMatches: true }, authorization: { ready: true }, readiness: { ready: true },
+    setup: { ready: true, accountActive: true, assignmentMatches: true }, authorization: { ready: true }, readiness: { ready: true },
     execution: { claimed: false, uncertain: false, previewFrozen: false },
     run: {
       id: 9, tradingAccountSubscriptionId: 8, subscriptionId: 3, securityId: 4,
@@ -47,4 +47,3 @@ describe('LiveEntryAcceptanceWorkflow', () => {
     expect(screen.getByRole('button', { name: 'Submit real broker order' }).hasAttribute('disabled')).toBe(true);
   });
 });
-

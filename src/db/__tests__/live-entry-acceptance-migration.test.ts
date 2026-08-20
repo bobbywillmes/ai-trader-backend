@@ -53,7 +53,7 @@ describe('Live-entry acceptance migration safety constraints', () => {
       sql.matchAll(
         /(?:INDEX|CONSTRAINT|FUNCTION|TRIGGER|TYPE|TABLE)\s+"([^"]+)"/giu,
       ),
-      (match) => match[1],
+      (match) => match[1]!,
     );
 
     expect(objectNames.filter((name) => name.length > 63)).toEqual([
