@@ -44,6 +44,9 @@ Table User {
   liveWriteApprovalDecisions TradingAccountLiveWriteApprovalDecision [not null]
   liveEntryArmings LiveEntryArming [not null]
   liveEntryArmingTerminations LiveEntryArmingTermination [not null]
+  liveEntryAcceptanceRunsCreated LiveEntryAcceptanceRun [not null]
+  liveEntryAcceptanceExecutions LiveEntryAcceptanceRun [not null]
+  liveEntryAcceptanceTerminations LiveEntryAcceptanceRun [not null]
   lifecycleRepairCasesCreated LifecycleRepairCase [not null]
   lifecycleRepairExecutions LifecycleRepairExecution [not null]
 }
@@ -116,6 +119,7 @@ Table TradingAccount {
   liveWriteApprovals TradingAccountLiveWriteApproval [not null]
   liveWriteApprovalDecisions TradingAccountLiveWriteApprovalDecision [not null]
   liveEntryArmings LiveEntryArming [not null]
+  liveEntryAcceptanceRuns LiveEntryAcceptanceRun [not null]
   activeLiveEntryArmingId Int [unique]
   activeLiveEntryArming LiveEntryArming
   lifecycleExerciseTargets TradingLifecycleExerciseTarget [not null]
@@ -282,6 +286,43 @@ Table LiveEntryArming {
   typedConfirmation String [not null]
   armedAt DateTime [default: `now()`, not null]
   terminations LiveEntryArmingTermination [not null]
+  liveEntryAcceptanceRunId Int [unique]
+  liveEntryAcceptanceRun LiveEntryAcceptanceRun
+}
+
+Table LiveEntryAcceptanceRun {
+  id Int [pk, increment]
+  tradingAccountId Int [not null]
+  tradingAccount TradingAccount [not null]
+  tradingAccountSubscriptionId Int [not null]
+  tradingAccountSubscription TradingAccountSubscription [not null]
+  subscriptionId Int [not null]
+  subscription Subscription [not null]
+  securityId Int [not null]
+  security Security [not null]
+  createdByUserId Int [not null]
+  createdByUser User [not null]
+  reason String [not null]
+  previewRevision Int [not null, default: 0]
+  previewFingerprint String
+  previewJson Json
+  previewedAt DateTime
+  executionClaimedAt DateTime
+  executionRequestedByUserId Int
+  executionRequestedByUser User
+  executionRequestKey String [unique]
+  executionUncertainAt DateTime
+  executionFailureJson Json
+  terminalOutcome LiveEntryAcceptanceTerminalOutcome
+  terminalReason String
+  terminalEvidenceJson Json
+  terminalAt DateTime
+  terminatedByUserId Int
+  terminatedByUser User
+  liveEntryArming LiveEntryArming
+  orderIntent OrderIntent
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
 }
 
 Table LiveEntryArmingTermination {
@@ -417,6 +458,7 @@ Table TradingAccountSubscription {
   entryDecisions EntryDecision [not null]
   lifecycleExerciseTargets TradingLifecycleExerciseTarget [not null]
   liveEntryArmings LiveEntryArming [not null]
+  liveEntryAcceptanceRuns LiveEntryAcceptanceRun [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 
@@ -512,6 +554,7 @@ Table Security {
   catalystTickerImpacts CatalystTickerImpact [not null]
   momentumCandidates MomentumCandidate [not null]
   liveEntryArmings LiveEntryArming [not null]
+  liveEntryAcceptanceRuns LiveEntryAcceptanceRun [not null]
 }
 
 Table MomentumUniverseMember {
@@ -560,6 +603,8 @@ Table OrderIntent {
   brokerActivities BrokerActivity [not null]
   entryDecision EntryDecision
   lifecycleExerciseTarget TradingLifecycleExerciseTarget
+  liveEntryAcceptanceRunId Int [unique]
+  liveEntryAcceptanceRun LiveEntryAcceptanceRun
 }
 
 Table BrokerOrder {
@@ -1160,6 +1205,7 @@ Table Subscription {
   accountSubscriptions TradingAccountSubscription [not null]
   lifecycleExercises TradingLifecycleExercise [not null]
   liveEntryArmings LiveEntryArming [not null]
+  liveEntryAcceptanceRuns LiveEntryAcceptanceRun [not null]
 }
 
 Enum PlatformRole {
@@ -1200,6 +1246,12 @@ Enum LiveEntryArmingTerminationType {
   INVALIDATED
   EXPIRED
   CONSUMED
+}
+
+Enum LiveEntryAcceptanceTerminalOutcome {
+  CANARY_COMPLETE
+  FAILED_SAFE
+  OPERATOR_ABORTED
 }
 
 Enum TradingAccountReadinessResult {
@@ -1471,6 +1523,22 @@ Ref: LiveEntryArming.securityId > Security.id [delete: Restrict]
 
 Ref: LiveEntryArming.armedByUserId > User.id [delete: Restrict]
 
+Ref: LiveEntryArming.liveEntryAcceptanceRunId - LiveEntryAcceptanceRun.id [delete: Restrict]
+
+Ref: LiveEntryAcceptanceRun.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: LiveEntryAcceptanceRun.tradingAccountSubscriptionId > TradingAccountSubscription.id [delete: Restrict]
+
+Ref: LiveEntryAcceptanceRun.subscriptionId > Subscription.id [delete: Restrict]
+
+Ref: LiveEntryAcceptanceRun.securityId > Security.id [delete: Restrict]
+
+Ref: LiveEntryAcceptanceRun.createdByUserId > User.id [delete: Restrict]
+
+Ref: LiveEntryAcceptanceRun.executionRequestedByUserId > User.id [delete: Restrict]
+
+Ref: LiveEntryAcceptanceRun.terminatedByUserId > User.id [delete: Restrict]
+
 Ref: LiveEntryArmingTermination.liveEntryArmingId > LiveEntryArming.id [delete: Restrict]
 
 Ref: LiveEntryArmingTermination.actorUserId > User.id [delete: Set Null]
@@ -1520,6 +1588,8 @@ Ref: OrderIntent.trackedPositionId > TrackedPosition.id [delete: Set Null]
 Ref: OrderIntent.tradingAccountId > TradingAccount.id [delete: Set Null]
 
 Ref: OrderIntent.tradingAccountSubscriptionId > TradingAccountSubscription.id [delete: Set Null]
+
+Ref: OrderIntent.liveEntryAcceptanceRunId - LiveEntryAcceptanceRun.id [delete: Restrict]
 
 Ref: BrokerOrder.securityId > Security.id
 

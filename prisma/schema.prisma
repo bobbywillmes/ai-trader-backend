@@ -63,6 +63,9 @@ model User {
   liveWriteApprovalDecisions  TradingAccountLiveWriteApprovalDecision[] @relation("LiveWriteApprovalDecisionActor")
   liveEntryArmings            LiveEntryArming[] @relation("LiveEntryArmingActor")
   liveEntryArmingTerminations LiveEntryArmingTermination[] @relation("LiveEntryArmingTerminationActor")
+  liveEntryAcceptanceRunsCreated LiveEntryAcceptanceRun[] @relation("LiveEntryAcceptanceRunCreator")
+  liveEntryAcceptanceExecutions LiveEntryAcceptanceRun[] @relation("LiveEntryAcceptanceRunExecutor")
+  liveEntryAcceptanceTerminations LiveEntryAcceptanceRun[] @relation("LiveEntryAcceptanceRunTerminator")
   lifecycleRepairCasesCreated LifecycleRepairCase[]       @relation("LifecycleRepairCaseCreator")
   lifecycleRepairExecutions   LifecycleRepairExecution[]  @relation("LifecycleRepairExecutionActor")
 }
@@ -141,6 +144,12 @@ enum LiveEntryArmingTerminationType {
   INVALIDATED
   EXPIRED
   CONSUMED
+}
+
+enum LiveEntryAcceptanceTerminalOutcome {
+  CANARY_COMPLETE
+  FAILED_SAFE
+  OPERATOR_ABORTED
 }
 
 enum TradingAccountReadinessResult {
@@ -224,6 +233,7 @@ model TradingAccount {
   liveWriteApprovals        TradingAccountLiveWriteApproval[]
   liveWriteApprovalDecisions TradingAccountLiveWriteApprovalDecision[]
   liveEntryArmings           LiveEntryArming[] @relation("LiveEntryArmingAccount")
+  liveEntryAcceptanceRuns    LiveEntryAcceptanceRun[]
   activeLiveEntryArmingId    Int? @unique
   activeLiveEntryArming      LiveEntryArming? @relation("ActiveLiveEntryArming", fields: [activeLiveEntryArmingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   lifecycleExerciseTargets  TradingLifecycleExerciseTarget[]
@@ -432,11 +442,53 @@ model LiveEntryArming {
   typedConfirmation               String
   armedAt                         DateTime @default(now())
   terminations                    LiveEntryArmingTermination[]
+  liveEntryAcceptanceRunId        Int? @unique
+  liveEntryAcceptanceRun          LiveEntryAcceptanceRun? @relation(fields: [liveEntryAcceptanceRunId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([tradingAccountId, armedAt])
   @@index([entryApprovalId, entryApprovalRevision])
   @@index([tradingAccountSubscriptionId, armedAt])
   @@index([entryApprovalExpiresAt])
+}
+
+model LiveEntryAcceptanceRun {
+  id                              Int @id @default(autoincrement())
+  tradingAccountId                Int
+  tradingAccount                  TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  tradingAccountSubscriptionId    Int
+  tradingAccountSubscription      TradingAccountSubscription @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  subscriptionId                  Int
+  subscription                    Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  securityId                      Int
+  security                        Security @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdByUserId                 Int
+  createdByUser                   User @relation("LiveEntryAcceptanceRunCreator", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reason                          String
+  previewRevision                 Int @default(0)
+  previewFingerprint              String?
+  previewJson                     Json?
+  previewedAt                     DateTime?
+  executionClaimedAt              DateTime?
+  executionRequestedByUserId      Int?
+  executionRequestedByUser        User? @relation("LiveEntryAcceptanceRunExecutor", fields: [executionRequestedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  executionRequestKey             String? @unique
+  executionUncertainAt            DateTime?
+  executionFailureJson            Json?
+  terminalOutcome                 LiveEntryAcceptanceTerminalOutcome?
+  terminalReason                  String?
+  terminalEvidenceJson            Json?
+  terminalAt                      DateTime?
+  terminatedByUserId              Int?
+  terminatedByUser                User? @relation("LiveEntryAcceptanceRunTerminator", fields: [terminatedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  liveEntryArming                 LiveEntryArming?
+  orderIntent                     OrderIntent?
+  createdAt                       DateTime @default(now())
+  updatedAt                       DateTime @updatedAt
+
+  @@index([tradingAccountId, createdAt])
+  @@index([tradingAccountSubscriptionId, createdAt])
+  @@index([terminalOutcome, terminalAt])
+  @@index([executionUncertainAt])
 }
 
 model LiveEntryArmingTermination {
@@ -640,6 +692,7 @@ model TradingAccountSubscription {
   entryDecisions        EntryDecision[]
   lifecycleExerciseTargets TradingLifecycleExerciseTarget[]
   liveEntryArmings       LiveEntryArming[]
+  liveEntryAcceptanceRuns LiveEntryAcceptanceRun[]
 
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -807,6 +860,7 @@ model Security {
   catalystTickerImpacts  CatalystTickerImpact[] @relation("SecurityCatalystTickerImpacts")
   momentumCandidates     MomentumCandidate[] @relation("SecurityMomentumCandidates")
   liveEntryArmings       LiveEntryArming[]
+  liveEntryAcceptanceRuns LiveEntryAcceptanceRun[]
 
   @@index([enabled])
   @@index([assetType])
@@ -881,6 +935,8 @@ model OrderIntent {
   brokerActivities BrokerActivity[]
   entryDecision    EntryDecision?
   lifecycleExerciseTarget TradingLifecycleExerciseTarget?
+  liveEntryAcceptanceRunId Int? @unique
+  liveEntryAcceptanceRun   LiveEntryAcceptanceRun? @relation(fields: [liveEntryAcceptanceRunId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([trackedPositionId])
   @@index([tradingAccountId])
@@ -1834,6 +1890,7 @@ model Subscription {
   accountSubscriptions    TradingAccountSubscription[]
   lifecycleExercises      TradingLifecycleExercise[]
   liveEntryArmings        LiveEntryArming[]
+  liveEntryAcceptanceRuns LiveEntryAcceptanceRun[]
 
   @@index([symbol])
   @@index([strategyId])
