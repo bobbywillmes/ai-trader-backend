@@ -32,4 +32,18 @@ describe('LiveEntryArmingCard requirements', () => {
     expect(arm.hasAttribute('disabled')).toBe(false);
     expect(screen.queryByTestId('arm-disabled-guidance')).toBeNull();
   });
+
+  it('shows paused Live setup guidance while keeping ARM unavailable', () => {
+    const pausedAccount = { ...account, status: 'PAUSED' as const };
+    render(<MantineProvider><LiveEntryArmingCard account={pausedAccount} assessment={assessment} token="token" /></MantineProvider>);
+
+    expect(screen.getByText('Acceptance workflow')).toBeTruthy();
+    expect(screen.getByTestId('live-entry-next-action').textContent).toBe(
+      'Next step: Activate the Live account with entries disarmed.',
+    );
+    expect(screen.getByRole('button', { name: 'ARM LIVE ENTRIES' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByTestId('arm-disabled-guidance').textContent).toContain(
+      'Activate the Live account with entries disarmed.',
+    );
+  });
 });

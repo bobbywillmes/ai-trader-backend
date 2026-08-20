@@ -125,6 +125,7 @@ export function deriveLiveEntrySetupState({ account, assessment, canaryPresent, 
     ? { key: 'complete', action: 'Acceptance canary completed successfully. One-shot authority was consumed and the account is safely disarmed.' }
     : cleanupRequired ? { key: 'cleanup', action: 'DISARM and restore the account, arming binding, and canary assignment to the safe posture.' }
       : armed ? { key: 'consume', action: 'Execute the one-shot RSP canary.' }
+      : account.status !== 'ACTIVE' ? { key: 'activated', action: 'Activate the Live account with entries disarmed.' }
       : !canaryStaged ? { key: 'canary', action: 'Stage the RSP canary.' }
         : !riskEffective && !authorization.riskGrantExecutable
           ? { key: authorization.credentials === 'CURRENT' ? 'readiness' : 'credentials', action: authorization.riskGrantGuidance! }
@@ -158,7 +159,7 @@ export function deriveLiveEntrySetupState({ account, assessment, canaryPresent, 
     consumedHistorically,
     completed: safelyDisarmedAfterConsumption,
     cleanupRequired,
-    readyToArm: assessmentMatchesCurrentApprovals && !armed && !consumedHistorically,
+    readyToArm: account.status === 'ACTIVE' && assessmentMatchesCurrentApprovals && !armed && !consumedHistorically,
     nextAction: next.action,
     milestones: milestoneValues.map(([key, label, complete]) => ({
       key, label,

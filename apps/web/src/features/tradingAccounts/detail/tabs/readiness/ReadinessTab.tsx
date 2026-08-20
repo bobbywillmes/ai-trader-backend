@@ -243,7 +243,13 @@ export function ReadinessTab({
         assessment={latest.data?.assessment ?? null}
         token={token}
       />
-      {account.status === 'ACTIVE' && <LiveEntryArmingCard account={account} assessment={latest.data?.assessment ?? null} token={token} />}
+      {(account.status === 'ACTIVE' || account.status === 'PAUSED') && (
+        <LiveEntryArmingCard
+          account={account}
+          assessment={latest.data?.assessment ?? null}
+          token={token}
+        />
+      )}
       <Card withBorder>
         <Group justify="space-between" mb="sm">
           <div><Title order={4}>Assessment history</Title><Text size="sm" c="dimmed">Showing {showAllHistory ? 'all' : `latest ${Math.min(5, allAssessments.length)}`} of {allAssessments.length}</Text></div>
