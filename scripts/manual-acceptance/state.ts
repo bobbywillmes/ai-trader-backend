@@ -71,6 +71,14 @@ export async function buildManualAcceptanceState(args: {
           },
         },
       },
+      liveEntryAcceptanceRuns: {
+        orderBy: { id: 'desc' },
+        take: 1,
+        include: {
+          liveEntryArming: { include: { terminations: true } },
+          orderIntent: { include: { brokerOrders: true } },
+        },
+      },
     },
   });
   if (!account) throw new Error('Synthetic Live Acceptance account was not found.');
@@ -120,6 +128,7 @@ export async function buildManualAcceptanceState(args: {
       } : null,
       terminations: latestArming.terminations.map((item: any) => ({ ...item, occurredAt: item.occurredAt.toISOString() })),
     } : null,
+    acceptanceRun: account.liveEntryAcceptanceRuns?.[0] ?? null,
     mockTransport: args.getTransportState(),
   };
 }

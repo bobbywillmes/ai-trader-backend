@@ -31,6 +31,7 @@ import {
   type RuntimeAccountSubscriptionSizingResult,
 } from './account-subscription-runtime-sizing.service.js';
 import { evaluateAssignmentEntry } from './assignment-entry-evaluation.service.js';
+import { validateActiveLiveEntryArming } from './live-entry-arming.service.js';
 
 type SubmitOrderOptions = {
   entryDecisionKey?: string;
@@ -195,6 +196,17 @@ export async function submitOrder(
           run.liveEntryArming.entryApprovalExpiresAt <= new Date()
         ) {
           throw new HttpError(409, 'Acceptance execution requires its exact active unexpired arming.');
+        }
+        const currentAuthority = await validateActiveLiveEntryArming(tradingAccountId, tx);
+        if (
+          !currentAuthority.valid ||
+          currentAuthority.arming.id !== run.liveEntryArming.id ||
+          currentAuthority.arming.liveEntryAcceptanceRunId !== run.id
+        ) {
+          throw new HttpError(
+            409,
+            `Acceptance execution authority changed after preview: ${currentAuthority.valid ? 'ARMING_MISMATCH' : currentAuthority.reason}.`,
+          );
         }
         await tx.liveEntryAcceptanceRun.update({
           where: { id: run.id },

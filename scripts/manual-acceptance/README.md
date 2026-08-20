@@ -66,15 +66,19 @@ Open `http://localhost:5173` and log in with:
 3. Run `LIVE_ENTRY_ARMING` readiness. Confirm `BLOCKED`, `prerequisitesForEntryGrantPassed=true`, and ENTRY authorization is the only blocker.
 4. In Live write authorization, grant ENTRY. Use a future expiration before the displayed synthetic session close and type `APPROVE LIVE ENTRY`. Confirm revision 1, immutable history, effective RISK_REDUCING, unchanged account latches, and zero POSTs.
 5. Run `LIVE_ENTRY_ARMING` again. Confirm `PASSED / CURRENT`, the exact account, ENTRY revision, RSP assignment, fingerprints, estimated quantity/notional, and the one-entry/$1,000 controls.
-6. Enter a reason, type `ARM LIVE ENTRIES`, and click **ARM LIVE ENTRIES**. Confirm `ACTIVE · ENTRIES ARMED`, permissive latches, an active immutable arming bound to the exact approval and assignment, and zero POSTs.
-7. Trigger one legitimate synthetic signal and the real order worker:
+6. Start a durable acceptance run in **Live Entry Acceptance**, enter a reason, then type `ARM LIVE ENTRIES` and click **ARM LIVE ENTRIES**. Confirm `ACTIVE · ENTRIES ARMED`, permissive latches, an active immutable arming bound to the run and exact assignment, and zero POSTs.
+7. Generate the execution preview. Confirm LIVE, the synthetic account and RSP assignment, BUY, exact quantity, MARKET / DAY, reference price/notional, arming expiration, and the one-shot consumption warning. Type `BUY RSP` and submit through the UI.
+
+   The harness returns a deterministic accepted broker order without a fill. The run must remain in Verification rather than falsely reporting CANARY COMPLETE. Use `/state` to confirm one acceptance-linked OrderIntent, one run-bound consumed arming, and exactly one POST.
+
+   The legacy direct-signal control remains available for lower-level arming regression checks:
 
    ```powershell
    Invoke-RestMethod -Method Post -Uri http://127.0.0.1:3101/entry -Headers @{Authorization='Bearer local-control-token-acceptance'}
    ```
 
    Confirm `postCount` is 1, the OrderIntent/BrokerOrder exists, and the arming has a `CONSUMED` termination with order-intent/client-order evidence.
-8. Force the same real worker path to retry that intent:
+8. Force the same real worker path to retry that intent only for the legacy direct-signal regression:
 
    ```powershell
    Invoke-RestMethod -Method Post -Uri http://127.0.0.1:3101/retry-consumed -Headers @{Authorization='Bearer local-control-token-acceptance'}
