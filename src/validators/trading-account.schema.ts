@@ -109,6 +109,7 @@ export const revokeLiveWriteApprovalSchema = z.strictObject({
 
 export const stageLiveEntryCanarySchema = z.strictObject({
   tradingAccountSubscriptionId: z.coerce.number().int().positive(),
+  liveEntryAcceptanceRunId: z.coerce.number().int().positive().optional(),
   reason: z.string().trim().min(1).max(1_000),
 });
 

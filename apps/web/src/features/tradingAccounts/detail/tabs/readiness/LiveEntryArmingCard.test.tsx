@@ -2,15 +2,16 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MantineProvider } from '@mantine/core';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TradingAccount, TradingAccountReadinessAssessment } from '../../../types';
 
 const mutation = { mutate: vi.fn(), isPending: false, isError: false, error: null };
+const mocks = vi.hoisted(() => ({ acceptanceRun: null as null | { run: { id: number; terminalAt: string | null; tradingAccountSubscriptionId: number } } }));
 vi.mock('../../../hooks', () => ({
   useTradingAccountSubscriptions: () => ({ data: { accountSubscriptions: [{ id: 8, enabled: true, entriesEnabled: true, subscription: { key: 'rsp_dip_core' } }] } }),
   useLiveWriteApprovals: () => ({ data: { capabilities: [{ capability: 'ENTRY', effective: true, approval: { id: 4, revision: 2 } }, { capability: 'RISK_REDUCING', effective: true, approval: { id: 3, revision: 1 } }] } }),
   useStageLiveEntryCanary: () => mutation, useArmLiveEntries: () => mutation, useDisarmLiveEntries: () => mutation,
-  useCurrentLiveEntryAcceptance: () => ({ data: { run: null } }),
+  useCurrentLiveEntryAcceptance: () => ({ data: { run: mocks.acceptanceRun } }),
 }));
 vi.mock('./LiveEntryAcceptanceWorkflow', () => ({ LiveEntryAcceptanceWorkflow: () => <div>Acceptance workflow</div> }));
 import { LiveEntryArmingCard } from './LiveEntryArmingCard';
@@ -19,7 +20,10 @@ const account = { id: 1, status: 'ACTIVE', environment: 'LIVE', tradingEnabled: 
 const assessment = { id: 5, purpose: 'LIVE_ENTRY_ARMING', result: 'PASSED', validity: 'CURRENT', credentialVerifiedAt: '2026-08-18T19:00:00Z', evidence: { liveWriteApprovalRevisions: { riskReducing: 1, entry: 2 } } } as TradingAccountReadinessAssessment;
 
 describe('LiveEntryArmingCard requirements', () => {
-  afterEach(() => { cleanup(); vi.clearAllMocks(); });
+  afterEach(() => { cleanup(); vi.clearAllMocks(); mocks.acceptanceRun = null; });
+  beforeEach(() => {
+    mocks.acceptanceRun = { run: { id: 10, terminalAt: null, tradingAccountSubscriptionId: 8 } };
+  });
   it('keeps ARM predicates while replacing the duplicate checklist with concise guidance', async () => {
     render(<MantineProvider><LiveEntryArmingCard account={account} assessment={assessment} token="token" /></MantineProvider>);
     const arm = screen.getByRole('button', { name: 'ARM LIVE ENTRIES' });
@@ -79,5 +83,46 @@ describe('LiveEntryArmingCard requirements', () => {
 
     expect(screen.getByText('Deployment entry permission: not yet assessed')).toBeTruthy();
     expect(screen.queryByText('Deployment entry permission: disabled')).toBeNull();
+  });
+
+  it('blocks staging and ARM when only terminal Run 1 exists', () => {
+    mocks.acceptanceRun = { run: { id: 9, terminalAt: '2026-08-21T12:00:00.000Z', tradingAccountSubscriptionId: 8 } };
+    render(<MantineProvider><LiveEntryArmingCard account={account} assessment={assessment} token="token" /></MantineProvider>);
+
+    expect(screen.getByText('Acceptance run required')).toBeTruthy();
+    expect(screen.getAllByText(/Start a new Live Entry Acceptance run first/).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Stage RSP canary' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'ARM LIVE ENTRIES' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('blocks the acceptance UI when there is no unresolved run', () => {
+    mocks.acceptanceRun = null;
+    render(<MantineProvider><LiveEntryArmingCard account={account} assessment={assessment} token="token" /></MantineProvider>);
+
+    fireEvent.change(screen.getByLabelText('Arming reason'), { target: { value: 'Cannot arm without run' } });
+    fireEvent.change(screen.getByLabelText('Type ARM LIVE ENTRIES'), { target: { value: 'ARM LIVE ENTRIES' } });
+    fireEvent.click(screen.getByRole('button', { name: 'ARM LIVE ENTRIES' }));
+
+    expect(screen.getByRole('button', { name: 'ARM LIVE ENTRIES' }).hasAttribute('disabled')).toBe(true);
+    expect(mutation.mutate).not.toHaveBeenCalled();
+  });
+
+  it('binds Run 2 staging and ARM requests to the unresolved run', () => {
+    render(<MantineProvider><LiveEntryArmingCard account={account} assessment={assessment} token="token" /></MantineProvider>);
+
+    fireEvent.change(screen.getByLabelText('Canary staging reason'), { target: { value: 'Stage Run 2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Stage RSP canary' }));
+    expect(mutation.mutate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ liveEntryAcceptanceRunId: 10, tradingAccountSubscriptionId: 8 }),
+      expect.any(Object),
+    );
+
+    fireEvent.change(screen.getByLabelText('Arming reason'), { target: { value: 'Arm Run 2' } });
+    fireEvent.change(screen.getByLabelText('Type ARM LIVE ENTRIES'), { target: { value: 'ARM LIVE ENTRIES' } });
+    fireEvent.click(screen.getByRole('button', { name: 'ARM LIVE ENTRIES' }));
+    expect(mutation.mutate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ liveEntryAcceptanceRunId: 10, tradingAccountSubscriptionId: 8 }),
+      expect.any(Object),
+    );
   });
 });

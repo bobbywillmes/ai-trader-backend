@@ -238,7 +238,7 @@ export async function getCurrentLiveEntryAcceptanceRun(tradingAccountId: number)
   const run = await prisma.liveEntryAcceptanceRun.findFirst({
     where: { tradingAccountId },
     include: RUN_INCLUDE,
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
   });
   return run ? projectLiveEntryAcceptanceRun(run) : null;
 }
@@ -247,7 +247,7 @@ export async function listLiveEntryAcceptanceRuns(tradingAccountId: number) {
   const runs = await prisma.liveEntryAcceptanceRun.findMany({
     where: { tradingAccountId },
     include: RUN_INCLUDE,
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: 50,
   });
   return Promise.all(runs.map(projectLiveEntryAcceptanceRun));
@@ -450,6 +450,7 @@ export async function executeLiveEntryAcceptanceRun(args: {
     include: RUN_INCLUDE,
   });
   if (!run) throw new HttpError(404, 'Live-entry acceptance run not found.');
+  if (run.terminalAt) throw new HttpError(409, 'A terminal acceptance run cannot be executed again.');
   if (run.orderIntent) {
     if (run.executionRequestKey !== args.requestKey) {
       throw new HttpError(409, 'Acceptance execution was already claimed by another request.');

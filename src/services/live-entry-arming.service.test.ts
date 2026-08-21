@@ -3,6 +3,7 @@ import {
   acceptanceRunBindingMatches,
   assertArmingCredentialVerificationCurrent,
   evaluateLiveEntryArmingBinding,
+  requireAcceptanceRunForCanary,
 } from './live-entry-arming.service.js';
 
 const arming = {
@@ -63,6 +64,32 @@ describe('Live-entry acceptance arming boundary binding', () => {
 
   it('preserves the existing boundary for ordinary unbound armings', () => {
     expect(acceptanceRunBindingMatches({ armingAcceptanceRunId: null, intentAcceptanceRunId: null })).toBe(true);
+  });
+});
+
+describe('Live-entry acceptance run transition guard', () => {
+  const unresolved = { id: 2, terminalAt: null };
+  const terminal = { id: 1, terminalAt: new Date('2026-08-21T12:00:00Z') };
+
+  it('rejects staging and arming when the latest acceptance run is terminal', () => {
+    expect(() => requireAcceptanceRunForCanary(terminal, undefined, 'staging'))
+      .toThrow('Start a new Live Entry Acceptance run before staging');
+    expect(() => requireAcceptanceRunForCanary(terminal, undefined, 'arming'))
+      .toThrow('Start a new Live Entry Acceptance run before arming');
+  });
+
+  it('requires the exact unresolved run for acceptance-scoped staging and ARM', () => {
+    expect(() => requireAcceptanceRunForCanary(unresolved, undefined, 'staging'))
+      .toThrow('must explicitly own canary staging');
+    expect(() => requireAcceptanceRunForCanary(unresolved, 1, 'arming'))
+      .toThrow('must explicitly own canary arming');
+    expect(requireAcceptanceRunForCanary(unresolved, 2, 'arming')).toBe(unresolved);
+  });
+
+  it('preserves generic unbound arming only for accounts with no acceptance history', () => {
+    expect(requireAcceptanceRunForCanary(null, undefined, 'arming')).toBeNull();
+    expect(() => requireAcceptanceRunForCanary(null, 2, 'arming'))
+      .toThrow('requested Live-entry acceptance run is not active');
   });
 });
 

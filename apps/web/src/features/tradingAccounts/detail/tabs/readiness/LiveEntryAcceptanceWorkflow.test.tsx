@@ -1,14 +1,17 @@
 // @vitest-environment happy-dom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MantineProvider } from '@mantine/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TradingAccount, TradingAccountSubscription } from '../../../types';
 
 const mutation = { mutate: vi.fn(), isPending: false, error: null };
-const mocks = vi.hoisted(() => ({ current: null as unknown }));
+const mocks = vi.hoisted(() => ({ current: null as unknown, createPayload: null as unknown }));
 vi.mock('../../../hooks', () => ({
   useCurrentLiveEntryAcceptance: () => ({ data: { run: mocks.current } }),
-  useCreateLiveEntryAcceptance: () => mutation,
+  useCreateLiveEntryAcceptance: (_id: number, _token: string | null, payload: unknown) => {
+    mocks.createPayload = payload;
+    return mutation;
+  },
   usePreviewLiveEntryAcceptance: () => mutation,
   useExecuteLiveEntryAcceptance: () => mutation,
   useVerifyLiveEntryAcceptance: () => mutation,
@@ -79,7 +82,7 @@ const completedProjection = {
 import { LiveEntryAcceptanceWorkflow } from './LiveEntryAcceptanceWorkflow';
 
 describe('LiveEntryAcceptanceWorkflow', () => {
-  afterEach(() => { cleanup(); mocks.current = null; });
+  afterEach(() => { cleanup(); mocks.current = null; mocks.createPayload = null; vi.clearAllMocks(); });
 
   it('shows the exact reviewed Live order and one-shot consumption warning', () => {
     mocks.current = executionProjection;
@@ -201,5 +204,44 @@ describe('LiveEntryAcceptanceWorkflow', () => {
 
     expect(screen.getByText('NOT STARTED')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Start acceptance run' })).toBeTruthy();
+  });
+
+  it('keeps terminal Run 1 visible while offering a fresh-reason transition to Run 2', () => {
+    const terminalRun1 = {
+      ...completedProjection,
+      run: {
+        ...completedProjection.run,
+        id: 9,
+        executionClaimedAt: null,
+        terminalOutcome: 'OPERATOR_ABORTED',
+        terminalReason: 'Production rehearsal stopped before execution.',
+        orderIntent: null,
+        liveEntryArming: null,
+      },
+    };
+    mocks.current = terminalRun1;
+    const account = { id: 1, displayName: 'Bobby Live' } as TradingAccount;
+    const assignment = { id: 8 } as TradingAccountSubscription;
+    const view = render(<MantineProvider><LiveEntryAcceptanceWorkflow account={account} assignment={assignment} token="token" /></MantineProvider>);
+
+    expect(screen.getAllByText(/Run #9/).length).toBeGreaterThan(0);
+    expect(screen.getByText('OPERATOR ABORTED', { selector: 'h4' })).toBeTruthy();
+    const start = screen.getByRole('button', { name: 'Start new acceptance run' });
+    expect(start.hasAttribute('disabled')).toBe(true);
+    fireEvent.change(screen.getByLabelText('New acceptance run reason'), { target: { value: 'Real production canary Run 2' } });
+    expect(start.hasAttribute('disabled')).toBe(false);
+    expect(mocks.createPayload).toEqual({ tradingAccountSubscriptionId: 8, reason: 'Real production canary Run 2' });
+    fireEvent.click(start);
+    expect(mutation.mutate).toHaveBeenCalledTimes(1);
+
+    mocks.current = {
+      ...executionProjection,
+      phase: 'SETUP',
+      run: { ...executionProjection.run, id: 10, previewJson: null, previewRevision: 0, previewFingerprint: null },
+    };
+    view.rerender(<MantineProvider><LiveEntryAcceptanceWorkflow account={account} assignment={assignment} token="token" /></MantineProvider>);
+    expect(screen.getByText(/Run #10/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Start new acceptance run' })).toBeNull();
+    expect(screen.queryByText('NOT STARTED')).toBeNull();
   });
 });

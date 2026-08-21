@@ -45,12 +45,14 @@ export function LiveEntryAcceptanceWorkflow({
   const current = useCurrentLiveEntryAcceptance(account.id, token);
   const projection = current.data?.run ?? null;
   const run = projection?.run;
-  const [reason, setReason] = useState('');
+  const loadingRun = current.isLoading;
+  const [newRunReason, setNewRunReason] = useState('');
+  const [abortReason, setAbortReason] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [requestKey, setRequestKey] = useState(() => crypto.randomUUID());
   const create = useCreateLiveEntryAcceptance(account.id, token, {
     tradingAccountSubscriptionId: assignment?.id,
-    reason,
+    reason: newRunReason,
   });
   const preview = usePreviewLiveEntryAcceptance(account.id, run?.id, token);
   const execute = useExecuteLiveEntryAcceptance(account.id, run?.id, token, {
@@ -60,7 +62,7 @@ export function LiveEntryAcceptanceWorkflow({
     typedConfirmation: confirmation,
   });
   const verify = useVerifyLiveEntryAcceptance(account.id, run?.id, token);
-  const abort = useAbortLiveEntryAcceptance(account.id, run?.id, token, { reason });
+  const abort = useAbortLiveEntryAcceptance(account.id, run?.id, token, { reason: abortReason });
   const reviewed = run?.previewJson;
   const expectedConfirmation = reviewed ? `BUY ${reviewed.order.symbol}` : '';
   const activeIndex = projection && projection.phase !== 'ACTION_REQUIRED'
@@ -81,7 +83,7 @@ export function LiveEntryAcceptanceWorkflow({
         <Text size="sm" c="dimmed">Durable first-canary ceremony</Text>
       </div>
       <Badge color={projection?.phase === 'ACTION_REQUIRED' ? 'red' : run?.terminalOutcome === 'CANARY_COMPLETE' ? 'green' : 'yellow'}>
-        {projection?.phase ?? 'NOT STARTED'}
+        {loadingRun ? 'LOADING' : projection?.phase ?? 'NOT STARTED'}
       </Badge>
     </Group>
 
@@ -125,10 +127,16 @@ export function LiveEntryAcceptanceWorkflow({
       </Card>
     )}
 
-    {!run && <Stack mt="md" gap="sm">
-      <Alert color="blue">Create one durable ceremony for the selected Live account and canary assignment.</Alert>
-      <TextInput label="Operator reason" value={reason} onChange={(event) => setReason(event.currentTarget.value)} />
-      <Button disabled={!assignment || !reason.trim() || create.isPending} onClick={() => create.mutate()}>Start acceptance run</Button>
+    {(!loadingRun && (!run || run.terminalAt)) && <Stack mt="md" gap="sm" data-testid="acceptance-new-run-transition">
+      <Alert color="blue" title={run ? `Run #${run.id} is closed` : 'No acceptance run recorded'}>
+        {run
+          ? 'The terminal record remains visible below. Start a new durable run before staging or arming the next controlled canary.'
+          : 'Create one durable ceremony for the selected Live account and canary assignment.'}
+      </Alert>
+      <TextInput label={run ? 'New acceptance run reason' : 'Operator reason'} value={newRunReason} onChange={(event) => setNewRunReason(event.currentTarget.value)} />
+      <Button disabled={!assignment || !newRunReason.trim() || create.isPending} onClick={() => create.mutate(undefined, { onSuccess: () => setNewRunReason('') })}>
+        {run ? 'Start new acceptance run' : 'Start acceptance run'}
+      </Button>
     </Stack>}
 
     {run && <Stack mt="md" gap="sm">
@@ -136,7 +144,7 @@ export function LiveEntryAcceptanceWorkflow({
       {projection?.phase === 'ACTION_REQUIRED' && <Alert color="red" title="ACTION REQUIRED">
         Execution remains unresolved. This run blocks re-arming and replacement ceremonies until authoritative broker/local evidence resolves it. Verification is read-only at the broker boundary and never resubmits the order.
       </Alert>}
-      {!run.executionClaimedAt && <Group>
+      {!run.executionClaimedAt && !run.terminalAt && <Group>
         <Button variant="default" disabled={!account.activeLiveEntryArmingId || preview.isPending} onClick={() => preview.mutate()}>
           {reviewed ? 'Regenerate execution preview' : 'Generate execution preview'}
         </Button>
@@ -207,8 +215,8 @@ export function LiveEntryAcceptanceWorkflow({
         {run.terminalReason}
       </Alert>}
       {!run.executionClaimedAt && !run.terminalAt && <Stack>
-        <TextInput label="Abort reason" value={reason} onChange={(event) => setReason(event.currentTarget.value)} />
-        <Button color="red" variant="outline" disabled={!reason.trim() || abort.isPending} onClick={() => abort.mutate()}>Abort before execution</Button>
+        <TextInput label="Abort reason" value={abortReason} onChange={(event) => setAbortReason(event.currentTarget.value)} />
+        <Button color="red" variant="outline" disabled={!abortReason.trim() || abort.isPending} onClick={() => abort.mutate(undefined, { onSuccess: () => setAbortReason('') })}>Abort before execution</Button>
       </Stack>}
     </Stack>}
     {error && <Alert color="red" mt="md">{error.message}</Alert>}

@@ -147,6 +147,7 @@ async function closeEntryAuthority(
 export async function stageLiveEntryCanary(args: {
   tradingAccountId: number;
   tradingAccountSubscriptionId: number;
+  liveEntryAcceptanceRunId?: number | undefined;
   actorUserId: number;
   reason: string;
 }) {
@@ -167,6 +168,15 @@ export async function stageLiveEntryCanary(args: {
       });
       if (!assignment || assignment.subscription.key !== 'rsp_dip_core' || assignment.subscription.security.symbol !== 'RSP') {
         throw new HttpError(409, 'The first Live canary must be the account rsp_dip_core RSP assignment.');
+      }
+      const latestAcceptanceRun = await tx.liveEntryAcceptanceRun.findFirst({
+        where: { tradingAccountId: args.tradingAccountId },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: { id: true, terminalAt: true, tradingAccountSubscriptionId: true },
+      });
+      requireAcceptanceRunForCanary(latestAcceptanceRun, args.liveEntryAcceptanceRunId, 'staging');
+      if (latestAcceptanceRun && latestAcceptanceRun.tradingAccountSubscriptionId !== assignment.id) {
+        throw new HttpError(409, 'The acceptance run is not bound to the staged assignment.');
       }
       if (!assignment.enabled || !assignment.exitsEnabled || !assignment.subscription.enabled || !assignment.subscription.security.enabled || !assignment.subscription.strategy.enabled || !assignment.subscription.exitProfile.enabled || assignment.allocation?.key !== 'core_etf' || !assignment.allocation.enabled) {
         throw new HttpError(409, 'The rsp_dip_core assignment hierarchy is not ready for canary staging.');
@@ -216,6 +226,23 @@ export type ArmLiveEntriesInput = {
   expectedUpdatedAt: Date;
 };
 
+export function requireAcceptanceRunForCanary<T extends { id: number; terminalAt: Date | null }>(
+  latestAcceptanceRun: T | null,
+  requestedRunId: number | undefined,
+  operation: 'staging' | 'arming',
+) {
+  if (latestAcceptanceRun?.terminalAt) {
+    throw new HttpError(409, `Start a new Live Entry Acceptance run before ${operation} the first Live canary.`);
+  }
+  if (latestAcceptanceRun && requestedRunId !== latestAcceptanceRun.id) {
+    throw new HttpError(409, `Active acceptance run ${latestAcceptanceRun.id} must explicitly own canary ${operation}.`);
+  }
+  if (!latestAcceptanceRun && requestedRunId !== undefined) {
+    throw new HttpError(409, 'The requested Live-entry acceptance run is not active.');
+  }
+  return latestAcceptanceRun;
+}
+
 export function assertArmingCredentialVerificationCurrent(
   credentialVerifiedAt: Date | null,
   now = new Date(),
@@ -236,10 +263,12 @@ async function armInsideTransaction(tx: Prisma.TransactionClient, tradingAccount
   if (!account) throw new HttpError(404, 'Trading account not found.');
   if (account.environment !== 'LIVE' || account.status !== 'ACTIVE' || account.tradingEnabled || !account.killSwitchEnabled || account.activeLiveEntryArmingId) throw new HttpError(409, 'ARM requires exact ACTIVE / entry-disarmed posture with no active binding.');
   if (account.updatedAt.getTime() !== input.expectedUpdatedAt.getTime()) throw new HttpError(409, 'Trading Account changed; refresh and retry ARM.');
-  const acceptanceRun = await tx.liveEntryAcceptanceRun.findFirst({
-    where: { tradingAccountId, terminalAt: null },
+  const latestAcceptanceRun = await tx.liveEntryAcceptanceRun.findFirst({
+    where: { tradingAccountId },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     select: {
       id: true,
+      terminalAt: true,
       tradingAccountSubscriptionId: true,
       executionClaimedAt: true,
       executionUncertainAt: true,
@@ -247,20 +276,16 @@ async function armInsideTransaction(tx: Prisma.TransactionClient, tradingAccount
       orderIntent: { select: { id: true } },
     },
   });
+  const acceptanceRun = requireAcceptanceRunForCanary(
+    latestAcceptanceRun,
+    input.liveEntryAcceptanceRunId,
+    'arming',
+  );
   if (acceptanceRun?.executionUncertainAt) {
     throw new HttpError(
       409,
       `Live entry arming is blocked while acceptance run ${acceptanceRun.id} requires execution resolution.`,
     );
-  }
-  if (acceptanceRun && input.liveEntryAcceptanceRunId !== acceptanceRun.id) {
-    throw new HttpError(
-      409,
-      `The active acceptance run ${acceptanceRun.id} must explicitly own this arming.`,
-    );
-  }
-  if (!acceptanceRun && input.liveEntryAcceptanceRunId !== undefined) {
-    throw new HttpError(409, 'The requested Live-entry acceptance run is not active.');
   }
   if (acceptanceRun && (acceptanceRun.executionClaimedAt || acceptanceRun.orderIntent || acceptanceRun.liveEntryArming)) {
     throw new HttpError(409, 'The active acceptance run cannot create another Live-entry arming.');
