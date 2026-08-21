@@ -10,6 +10,13 @@ The harness lives outside `src/`, requires an explicit sentinel and entrypoint,
 accepts only the exact disposable database and loopback UI origin, and is not a
 production runtime broker mode.
 
+Normal development remains `OBSERVATION_ONLY`: it may display the ceremony and
+authoritative blockers, but it cannot grant Live approvals, activate, arm, or
+execute. Use this isolated harness only when an interactive synthetic ceremony
+is needed. A deployed production ceremony uses the normal application and
+broker transport; it requires no harness commands, SQL, PowerShell repair,
+curl, Postman, or control endpoint.
+
 ## Environment
 
 Start the repository PostgreSQL container. In a fresh PowerShell window at the
@@ -95,6 +102,10 @@ Refresh the browser. The durable run ID and effective `RISK_REDUCING` approval
 must be unchanged. The new process intentionally has a different readiness
 policy fingerprint, so use fresh entry-profile readiness evidence.
 
+This is a backend-only profile restart. Leave the Vite UI running; do not reload
+or replace the disposable database. The same durable acceptance run is expected
+to reconstruct after the backend returns.
+
 ### Entry profile
 
 7. Enter a reason and click **Stage RSP canary**. Confirm only `rsp_dip_core` allows entries, exits remain enabled, and the account stays `ACTIVE / entry-disarmed`.
@@ -106,6 +117,11 @@ policy fingerprint, so use fresh entry-profile readiness evidence.
 13. Type `BUY RSP` and submit. The normal worker sends exactly one intercepted POST. The mock then exposes one deterministic full fill and matching RSP broker position through the exact read routes used by verification.
 14. Wait for OrderIntent and BrokerOrder evidence to appear, then click **Refresh authoritative verification**. If a worker poll reports not-yet-due, wait briefly and refresh verification again; verification performs reads only and never resubmits.
 15. Confirm `CANARY COMPLETE`, filled OrderIntent/BrokerOrder, correctly attributed TrackedPosition and exit lifecycle, consumed arming, no active arming, disabled account trading, enabled kill switch, disabled assignment entries, and no reconciliation discrepancy.
+
+After success, a subsequent `LIVE_ENTRY_ARMING` assessment may be stale or
+blocked because one-shot authority was consumed and entry policy/latches were
+closed. That is the expected fail-closed posture and does not invalidate the
+durable `CANARY_COMPLETE` outcome.
 
 Stop the backend and UI with Ctrl+C. Repeat the complete reset/migrate/seed/
 paused-fixture sequence for another pristine ceremony. Never rerun the fixture

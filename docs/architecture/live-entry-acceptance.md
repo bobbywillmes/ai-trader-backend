@@ -13,6 +13,11 @@ to one Live account, account subscription assignment, subscription, and
 security. PostgreSQL permits at most one run with `terminalAt IS NULL` per
 account. Terminal runs are never reset or reused.
 
+The current-run API returns the unresolved run when one exists; otherwise it
+returns the newest terminal run. Only an account with no run history returns no
+run/`NOT STARTED`. List and detail APIs retain access to older ceremonies after
+subsequent runs are created.
+
 An acceptance run has at most one `LiveEntryArming` and one `OrderIntent` via
 unique optional foreign keys on those records. If an active arming is bound to
 an acceptance run, the final broker boundary requires the consuming intent to
@@ -97,3 +102,10 @@ entry.
 position, consumed arming, no active arming, disabled account trading, enabled
 kill switch, disabled entry assignments, healthy exit lifecycle, and no
 relevant reconciliation finding.
+
+The resulting successful posture is intentionally `ACTIVE / ENTRY DISARMED`:
+account trading disabled, kill switch enabled, canary assignment entries
+disabled, no active arming, and consumed one-shot authority. A future
+`LIVE_ENTRY_ARMING` assessment may therefore be stale or blocked until a new,
+separately authorized ceremony establishes fresh evidence. That later readiness
+state is not evidence that the completed canary failed.
