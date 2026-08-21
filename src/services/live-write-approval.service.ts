@@ -207,8 +207,8 @@ export async function getLiveWriteApprovalState(
     manualAcceptanceHarness: isIsolatedManualAcceptanceEnvironment({
       sentinel: process.env.MANUAL_ACCEPTANCE_HARNESS,
       entrypoint: process.env.MANUAL_ACCEPTANCE_ENTRYPOINT,
-      databaseUrl: env.DATABASE_URL,
-      allowedOrigins: env.CORS_ALLOWED_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean),
+      databaseUrl: env.DATABASE_URL ?? '',
+      allowedOrigins: (env.CORS_ALLOWED_ORIGINS ?? '').split(',').map((origin) => origin.trim()).filter(Boolean),
     }),
     capabilities,
   };

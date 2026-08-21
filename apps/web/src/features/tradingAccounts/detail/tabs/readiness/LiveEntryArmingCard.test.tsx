@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MantineProvider } from '@mantine/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -35,29 +35,28 @@ describe('LiveEntryArmingCard requirements', () => {
 
   it('clears only the successful action reason and preserves failed input', async () => {
     render(<MantineProvider><LiveEntryArmingCard account={account} assessment={assessment} token="token" /></MantineProvider>);
-    const user = userEvent.setup();
     const stageReason = screen.getByLabelText('Canary staging reason') as HTMLInputElement;
     const armReason = screen.getByLabelText('Arming reason') as HTMLInputElement;
     const confirmation = screen.getByLabelText('Type ARM LIVE ENTRIES') as HTMLInputElement;
     const disarmReason = screen.getByLabelText('Disarm reason') as HTMLInputElement;
 
-    await user.type(stageReason, 'Stage once');
-    await user.click(screen.getByRole('button', { name: 'Stage RSP canary' }));
+    fireEvent.change(stageReason, { target: { value: 'Stage once' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Stage RSP canary' }));
     expect(stageReason.value).toBe('Stage once');
     const stageOptions = mutation.mutate.mock.calls.at(-1)?.[1] as { onSuccess: () => void };
     act(() => stageOptions.onSuccess());
     expect(stageReason.value).toBe('');
 
-    await user.type(armReason, 'Arm once');
-    await user.type(confirmation, 'ARM LIVE ENTRIES');
-    await user.click(screen.getByRole('button', { name: 'ARM LIVE ENTRIES' }));
+    fireEvent.change(armReason, { target: { value: 'Arm once' } });
+    fireEvent.change(confirmation, { target: { value: 'ARM LIVE ENTRIES' } });
+    fireEvent.click(screen.getByRole('button', { name: 'ARM LIVE ENTRIES' }));
     const armOptions = mutation.mutate.mock.calls.at(-1)?.[1] as { onSuccess: () => void };
     act(() => armOptions.onSuccess());
     expect(armReason.value).toBe('');
     expect(confirmation.value).toBe('');
 
-    await user.type(disarmReason, 'Do not reuse staging reason');
-    await user.click(screen.getByRole('button', { name: 'DISARM LIVE ENTRIES' }));
+    fireEvent.change(disarmReason, { target: { value: 'Do not reuse staging reason' } });
+    fireEvent.click(screen.getByRole('button', { name: 'DISARM LIVE ENTRIES' }));
     expect(disarmReason.value).toBe('Do not reuse staging reason');
   });
 
