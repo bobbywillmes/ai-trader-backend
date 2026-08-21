@@ -1,14 +1,19 @@
-# Live-entry-arming manual acceptance harness
+# Live-entry acceptance manual harness
 
-This harness runs the real backend, frontend, authorization services, order worker, and Prisma schema against a disposable local database. It replaces the process-global `fetch` transport for the exact Alpaca calls and the single Massive RSP latest-price snapshot required by this ceremony. Those requests are answered in memory. Every other hostname, Massive endpoint or symbol, and unrelated outbound request is denied; no accepted request reaches the network.
+This harness runs the real backend, browser UI, authorization services, workers,
+and Prisma schema against the disposable `ai_trader_live_entry_acceptance`
+database. It intercepts the exact Alpaca and Massive requests needed by the
+ceremony in memory. Every unexpected hostname, route, method, symbol, or request
+fails closed; no accepted request reaches the network.
 
-The harness is deliberately outside `src/`, requires an explicit sentinel, refuses any database except `ai_trader_live_entry_acceptance`, and binds its control API to `127.0.0.1`. It is not a production runtime mode.
+The harness lives outside `src/`, requires an explicit sentinel and entrypoint,
+accepts only the exact disposable database and loopback UI origin, and is not a
+production runtime broker mode.
 
-At startup, the guarded harness sets only the isolated database's global `tradingEnabled=true` and `killSwitchEnabled=false` runtime controls. The real risk gate requires these global emergency controls in addition to the synthetic account's arming latches. This adjustment requires the exact harness sentinel, internal entrypoint marker, acceptance database name, and loopback UI origin; ordinary production startup cannot activate it. The legacy global `paperMode` setting is left unchanged because broker routing is owned by `TradingAccount.environment`.
+## Environment
 
-## Prerequisites and environment
-
-Start the repository's local PostgreSQL container. In a fresh PowerShell window at the repository root, set synthetic process-local values (do not edit `.env`):
+Start the repository PostgreSQL container. In a fresh PowerShell window at the
+repository root, set these process-local values without editing `.env`:
 
 ```powershell
 $env:DATABASE_URL='postgresql://trader:traderpass@127.0.0.1:5432/ai_trader_live_entry_acceptance'
@@ -24,29 +29,33 @@ $env:AI_TRADER_ADMIN_API_KEY='synthetic-admin-key-acceptance'
 $env:TRADING_CREDENTIAL_ENCRYPTION_KEY='AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE='
 $env:TRADING_CREDENTIAL_ENCRYPTION_KEY_ID='manual-acceptance-v1'
 $env:LIVE_WRITE_DEPLOYMENT_ROLE='PRODUCTION_EXECUTOR'
-$env:ALLOW_LIVE_RISK_REDUCING_WRITES='true'
-$env:ALLOW_LIVE_TRADING='true'
 $env:ALLOW_TRADING_ENABLED_ON_START='true'
 $env:MASSIVE_NEWS_WORKER_ENABLED='false'
 $env:MANUAL_ACCEPTANCE_HARNESS='I_UNDERSTAND_THIS_IS_SYNTHETIC'
 $env:MANUAL_ACCEPTANCE_CONTROL_TOKEN='local-control-token-acceptance'
 ```
 
-On this Windows/Docker Desktop environment, use `127.0.0.1` rather than `localhost`. Node resolves `localhost` to `::1` first here, which can cause PostgreSQL connection resets through Docker's IPv6 published listener.
+Do not set `ALLOW_LIVE_TRADING` for this rehearsal. The guarded server commands
+set the exact activation or entry policy before importing the application. Both
+profiles enable risk-reducing writes; only the explicit entry profile enables
+Live entry writes.
 
-## Reset and start
+Use `127.0.0.1` rather than `localhost` for PostgreSQL on Windows/Docker Desktop
+because Node may resolve `localhost` to the Docker IPv6 listener first.
 
-Resetting terminates connections only to the exactly named disposable database, drops it, and recreates it. It cannot target the ordinary development database because the reset script checks the URL path first.
+## Reset and activation-profile start
+
+Resetting can target only the exactly named disposable database. Run:
 
 ```powershell
 npm.cmd run acceptance:live-entry:reset
 npx.cmd prisma migrate deploy
 npx.cmd tsx src/db/seed.ts
-npm.cmd run acceptance:live-entry:fixture
-npm.cmd run acceptance:live-entry:server
+npm.cmd run acceptance:live-entry:fixture:paused
+npm.cmd run acceptance:live-entry:server:activation
 ```
 
-In a second PowerShell window, start the actual UI. Its existing `/api` proxy points to the isolated backend on port 3000:
+The last command stays running. In a second PowerShell window, start the UI:
 
 ```powershell
 Set-Location apps/web
@@ -59,70 +68,55 @@ Open `http://localhost:5173` and log in with:
 - Password: `Synthetic-Acceptance-Only-2026!`
 - Account: `Synthetic Live Acceptance`
 
-## Ceremony
+## Complete browser ceremony
 
-The current fixture intentionally begins at `ACTIVE / ENTRY DISARMED` with an
-effective bootstrapped `RISK_REDUCING` approval. It supports the real browser UI
-and real application HTTP/services from durable run creation onward, but it does
-not currently exercise PAUSED activation or the initial RISK_REDUCING grant.
+The PAUSED fixture contains no approval, arming, intent, or acceptance run. All
+steps below use the browser UI; no SQL, control endpoint, curl, or Postman action
+is part of the rehearsal.
 
-1. On the account readiness tab, confirm `ACTIVE · ENTRY DISARMED`, deployment permission enabled, effective `RISK_REDUCING`, missing `ENTRY`, no staged canary, and closed account latches.
-2. Start a durable acceptance run in **Live Entry Acceptance**. Confirm the run remains in Setup until its staged-assignment prerequisite is satisfied.
-3. Enter a reason and click **Stage RSP canary**. Confirm only `rsp_dip_core` has entries enabled, exits remain enabled, the account is still `ACTIVE` with `tradingEnabled=false` and `killSwitchEnabled=true`, and the UI reads `ACTIVE · ENTRY STAGED`.
-4. Run `LIVE_ENTRY_ARMING` readiness. Confirm `BLOCKED`, `prerequisitesForEntryGrantPassed=true`, and ENTRY authorization is the only blocker.
-5. In Live write authorization, grant ENTRY. Use a future expiration before the displayed synthetic session close and type `APPROVE LIVE ENTRY`. Confirm revision 1, immutable history, effective RISK_REDUCING, unchanged account latches, and zero POSTs.
-6. Run `LIVE_ENTRY_ARMING` again. Confirm `PASSED / CURRENT`, the exact account, ENTRY revision, RSP assignment, fingerprints, estimated quantity/notional, and the one-entry/$1,000 controls.
-7. Type `ARM LIVE ENTRIES` and click **ARM LIVE ENTRIES**. Confirm `ACTIVE · ENTRIES ARMED`, permissive latches, an active immutable arming bound to the run and exact assignment, and zero POSTs.
-8. Generate the execution preview. Confirm LIVE, the synthetic account and RSP assignment, BUY, exact quantity, MARKET / DAY, reference price/notional, arming expiration, and the one-shot consumption warning. Type `BUY RSP` and submit through the UI.
+### Activation profile
 
-   The harness returns a deterministic accepted broker order without a fill. The run must remain in Verification rather than falsely reporting CANARY COMPLETE. Use `/state` to confirm one acceptance-linked OrderIntent, one run-bound consumed arming, and exactly one POST.
+1. Confirm `PAUSED · ENTRY DISARMED`, missing `RISK_REDUCING` and `ENTRY`, disabled account trading, enabled kill switch, and no staged canary.
+2. Start a durable run in **Live Entry Acceptance**. Record its run ID and confirm phase `SETUP`.
+3. Run Live Activation readiness. Confirm it is current and blocked by missing `RISK_REDUCING` authority rather than an entry-write policy.
+4. In **Live Write Authorization**, grant `RISK_REDUCING` using that assessment and type `APPROVE LIVE RISK_REDUCING`.
+5. Run Live Activation readiness again. Confirm `PASSED / CURRENT`.
+6. In **Activate Live account**, enter a reason, type `ACTIVATE LIVE ACCOUNT`, and activate. Confirm `ACTIVE · ENTRY DISARMED`, trading disabled, kill switch enabled, and the same acceptance run still in `SETUP`.
 
-   The legacy direct-signal control remains available for lower-level arming regression checks:
-
-   ```powershell
-   Invoke-RestMethod -Method Post -Uri http://127.0.0.1:3101/entry -Headers @{Authorization='Bearer local-control-token-acceptance'}
-   ```
-
-   Confirm `postCount` is 1, the OrderIntent/BrokerOrder exists, and the arming has a `CONSUMED` termination with order-intent/client-order evidence.
-9. Force the same real worker path to retry that intent only for the legacy direct-signal regression:
-
-   ```powershell
-   Invoke-RestMethod -Method Post -Uri http://127.0.0.1:3101/retry-consumed -Headers @{Authorization='Bearer local-control-token-acceptance'}
-   ```
-
-   Confirm local rejection/audit evidence and `postCount` remains 1.
-10. In the UI click **DISARM LIVE ENTRIES**. Confirm `ACTIVE · ENTRY DISARMED`, closed latches, no active arming, disabled entry assignments, ineffective ENTRY, preserved RISK_REDUCING, and no additional POST.
-
-At any time inspect the complete in-memory transport ledger and isolated account evidence:
+Stop only the backend/harness process with Ctrl+C. Do not reset, migrate, seed,
+or rerun the fixture. In the same PowerShell window, restart against the same
+database and environment:
 
 ```powershell
-Invoke-RestMethod -Uri http://127.0.0.1:3101/state -Headers @{Authorization='Bearer local-control-token-acceptance'} | ConvertTo-Json -Depth 12
+npm.cmd run acceptance:live-entry:server:entry
 ```
 
-Stop both processes with Ctrl+C. Repeat the reset/migrate/seed/fixture sequence for a pristine ceremony. The ordinary `ai_trader` database is never opened by the harness processes.
+Refresh the browser. The durable run ID and effective `RISK_REDUCING` approval
+must be unchanged. The new process intentionally has a different readiness
+policy fingerprint, so use fresh entry-profile readiness evidence.
 
-## Failure ceremonies
+### Entry profile
 
-Run each on a freshly armed fixture and inspect `/state` before and after. Approval expiry can use a short same-session expiry. Approval replacement uses the normal ENTRY grant UI after disarming/re-staging; the prior arm must not transfer. Assignment mutation uses the Subscriptions tab. Credential re-verification uses the Credentials UI and the in-memory `/v2/account` response. Deployment-policy mismatch is best covered by stopping the harness, setting `ALLOW_LIVE_TRADING=false`, and restarting; startup/monitor/final authorization must fail closed. After each mutation, call `/retry-consumed` or allow the two-second arming monitor tick, then confirm closed latches, an immutable invalidation/expiry termination, preserved RISK_REDUCING where designed, and unchanged mock POST count.
+7. Enter a reason and click **Stage RSP canary**. Confirm only `rsp_dip_core` allows entries, exits remain enabled, and the account stays `ACTIVE / entry-disarmed`.
+8. Run Live Entry Arming readiness. Confirm it is current and blocked by missing `ENTRY` authorization, with the deployment entry policy enabled.
+9. Grant `ENTRY`; choose a future expiration within the displayed synthetic regular session and type `APPROVE LIVE ENTRY`.
+10. Run Live Entry Arming readiness again. Confirm `PASSED / CURRENT` with the exact approval revisions, assignment, sizing, and fingerprints.
+11. Enter an arming reason, type `ARM LIVE ENTRIES`, and arm. Confirm the arming is bound to the same durable run and no broker POST has occurred.
+12. Generate the preview. Review LIVE, account, assignment, BUY RSP, exact quantity, MARKET / DAY, price/notional, expiration, and one-shot consumption warning.
+13. Type `BUY RSP` and submit. The normal worker sends exactly one intercepted POST. The mock then exposes one deterministic full fill and matching RSP broker position through the exact read routes used by verification.
+14. Wait for OrderIntent and BrokerOrder evidence to appear, then click **Refresh authoritative verification**. If a worker poll reports not-yet-due, wait briefly and refresh verification again; verification performs reads only and never resubmits.
+15. Confirm `CANARY COMPLETE`, filled OrderIntent/BrokerOrder, correctly attributed TrackedPosition and exit lifecycle, consumed arming, no active arming, disabled account trading, enabled kill switch, disabled assignment entries, and no reconciliation discrepancy.
 
-The initial RISK_REDUCING grant is fixture bootstrap data with an immutable decision row. All ceremony operations after reset—including canary staging, ENTRY grant, readiness, arm, entry authorization/consumption, retry rejection, and disarm—use real application services or HTTP/UI routes.
+Stop the backend and UI with Ctrl+C. Repeat the complete reset/migrate/seed/
+paused-fixture sequence for another pristine ceremony. Never rerun the fixture
+between the two server profiles because the durable run must survive the restart.
 
-## Pre-activation coverage gap
+## Profiles and legacy regression controls
 
-The production prerequisite order before the supported harness starting point is:
+- `server:activation` forces `ALLOW_LIVE_RISK_REDUCING_WRITES=true` and `ALLOW_LIVE_TRADING=false` inside the guarded harness process.
+- `server:entry` forces both permissions true inside a newly started guarded harness process.
+- `fixture:paused` is the complete-ceremony fixture.
+- The legacy `acceptance:live-entry:fixture` command still bootstraps ACTIVE plus `RISK_REDUCING` for lower-level post-activation regression work.
 
-1. Safely PAUSED account with entries disarmed.
-2. Current `LIVE_ACTIVATION` assessment used as RISK_REDUCING grant evidence.
-3. Effective `RISK_REDUCING` approval.
-4. A new passing `LIVE_ACTIVATION` assessment with that approval effective.
-5. Activation to `ACTIVE` while trading remains disabled and the kill switch remains enabled.
-
-The smallest safe enhancement for exercising those steps is a second guarded
-fixture/profile for the same isolated database. It should leave the account
-PAUSED without a bootstrapped approval and start the harness with
-`ALLOW_LIVE_TRADING=false`; after activation, the harness must be stopped and
-restarted explicitly in its existing entry-enabled profile. This preserves the
-real deployment-policy boundaries and avoids any runtime fake-broker switch or
-in-process policy toggle. Until that profile exists, use the current harness for
-the browser-driven post-activation ceremony and automated tests for the
-pre-activation graph.
+The loopback control API remains available for automated and lower-level harness
+diagnostics, but it is not used by the complete browser ceremony.

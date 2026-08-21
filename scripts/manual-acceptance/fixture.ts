@@ -1,11 +1,13 @@
 import { BrokerCredentialAuthType, LiveWriteApprovalAction, LiveWriteApprovalStatus, LiveWriteCapability, PlatformRole, TradingAccountEnvironment, TradingAccountStatus } from '@prisma/client';
 
 import { installMockAlpacaTransport } from './mock-alpaca-transport.js';
+import { parseManualAcceptanceFixtureProfile } from './profile.js';
 
 const databaseUrl = process.env.DATABASE_URL ?? '';
 if (new URL(databaseUrl).pathname !== '/ai_trader_live_entry_acceptance') {
   throw new Error('Fixture refuses DATABASE_URL unless the database is ai_trader_live_entry_acceptance.');
 }
+const fixtureProfile = parseManualAcceptanceFixtureProfile(process.argv[2]);
 installMockAlpacaTransport();
 
 const { prisma } = await import('../../src/db/prisma.js');
@@ -85,10 +87,12 @@ await upsertTradingAccountApiKeyCredential(account.id, {
 const verification = await verifyTradingAccountCredential(account.id, owner.id);
 if (!verification?.ok) throw new Error(`Synthetic credential verification failed: ${verification?.message}`);
 
-await prisma.tradingAccount.update({
-  where: { id: account.id },
-  data: { status: TradingAccountStatus.ACTIVE, tradingEnabled: false, killSwitchEnabled: true },
-});
+if (fixtureProfile === 'entry-ready') {
+  await prisma.tradingAccount.update({
+    where: { id: account.id },
+    data: { status: TradingAccountStatus.ACTIVE, tradingEnabled: false, killSwitchEnabled: true },
+  });
+}
 
 for (const workerKey of ['pending_order_processing', 'submitted_order_sync', 'broker_activity_sync', 'tracked_position_sync', 'exit_evaluation', 'account_snapshot_scheduler'] as const) {
   await recordTradingAccountWorkerAttempt({
@@ -101,33 +105,35 @@ for (const workerKey of ['pending_order_processing', 'submitted_order_sync', 'br
   });
 }
 
-const fingerprints = await computeLiveWriteApprovalFingerprints(account.id, LiveWriteCapability.RISK_REDUCING);
-if (!fingerprints) throw new Error('Could not compute RISK_REDUCING fingerprints.');
-const riskApproval = await prisma.tradingAccountLiveWriteApproval.create({
-  data: {
-    tradingAccountId: account.id,
-    capability: LiveWriteCapability.RISK_REDUCING,
-    status: LiveWriteApprovalStatus.GRANTED,
-    revision: 1,
-    ...fingerprints,
-    grantedByUserId: owner.id,
-    grantedAt: new Date(),
-    grantReason: 'Synthetic fixture bootstrap for isolated manual acceptance.',
-  },
-});
-await prisma.tradingAccountLiveWriteApprovalDecision.create({
-  data: {
-    tradingAccountId: account.id,
-    capability: LiveWriteCapability.RISK_REDUCING,
-    action: LiveWriteApprovalAction.GRANT,
-    actorUserId: owner.id,
-    reason: 'Synthetic fixture bootstrap for isolated manual acceptance.',
-    ...fingerprints,
-    deploymentEnvironment: 'manual_acceptance_harness',
-    priorRevision: 0,
-    resultingRevision: riskApproval.revision,
-  },
-});
+if (fixtureProfile === 'entry-ready') {
+  const fingerprints = await computeLiveWriteApprovalFingerprints(account.id, LiveWriteCapability.RISK_REDUCING);
+  if (!fingerprints) throw new Error('Could not compute RISK_REDUCING fingerprints.');
+  const riskApproval = await prisma.tradingAccountLiveWriteApproval.create({
+    data: {
+      tradingAccountId: account.id,
+      capability: LiveWriteCapability.RISK_REDUCING,
+      status: LiveWriteApprovalStatus.GRANTED,
+      revision: 1,
+      ...fingerprints,
+      grantedByUserId: owner.id,
+      grantedAt: new Date(),
+      grantReason: 'Synthetic fixture bootstrap for isolated manual acceptance.',
+    },
+  });
+  await prisma.tradingAccountLiveWriteApprovalDecision.create({
+    data: {
+      tradingAccountId: account.id,
+      capability: LiveWriteCapability.RISK_REDUCING,
+      action: LiveWriteApprovalAction.GRANT,
+      actorUserId: owner.id,
+      reason: 'Synthetic fixture bootstrap for isolated manual acceptance.',
+      ...fingerprints,
+      deploymentEnvironment: 'manual_acceptance_harness',
+      priorRevision: 0,
+      resultingRevision: riskApproval.revision,
+    },
+  });
+}
 
 console.log(JSON.stringify({
   accountId: account.id,
@@ -135,5 +141,6 @@ console.log(JSON.stringify({
   password,
   brokerIdentity: 'manual-acceptance-live-account',
   database: 'ai_trader_live_entry_acceptance',
+  fixtureProfile,
 }, null, 2));
 await prisma.$disconnect();
