@@ -1,4 +1,4 @@
-import { Alert, Badge, Button, Card, Group, List, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
+import { Alert, Badge, Button, Card, Group, List, SimpleGrid, Stack, Table, Text, TextInput, Title } from '@mantine/core';
 import { useState } from 'react';
 
 import {
@@ -6,6 +6,8 @@ import {
   useCreateLiveEntryAcceptance,
   useCurrentLiveEntryAcceptance,
   useExecuteLiveEntryAcceptance,
+  useLiveEntryAcceptanceDetail,
+  useLiveEntryAcceptanceHistory,
   usePreviewLiveEntryAcceptance,
   useVerifyLiveEntryAcceptance,
 } from '../../../hooks';
@@ -45,12 +47,17 @@ export function LiveEntryAcceptanceWorkflow({
   const current = useCurrentLiveEntryAcceptance(account.id, token);
   const projection = current.data?.run ?? null;
   const run = projection?.run;
-  const [reason, setReason] = useState('');
+  const loadingRun = current.isLoading;
+  const [newRunReason, setNewRunReason] = useState('');
+  const [abortReason, setAbortReason] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [requestKey, setRequestKey] = useState(() => crypto.randomUUID());
+  const [selectedHistoryRunId, setSelectedHistoryRunId] = useState<number | null>(null);
+  const history = useLiveEntryAcceptanceHistory(account.id, token);
+  const historicalDetail = useLiveEntryAcceptanceDetail(account.id, selectedHistoryRunId, token);
   const create = useCreateLiveEntryAcceptance(account.id, token, {
     tradingAccountSubscriptionId: assignment?.id,
-    reason,
+    reason: newRunReason,
   });
   const preview = usePreviewLiveEntryAcceptance(account.id, run?.id, token);
   const execute = useExecuteLiveEntryAcceptance(account.id, run?.id, token, {
@@ -60,7 +67,7 @@ export function LiveEntryAcceptanceWorkflow({
     typedConfirmation: confirmation,
   });
   const verify = useVerifyLiveEntryAcceptance(account.id, run?.id, token);
-  const abort = useAbortLiveEntryAcceptance(account.id, run?.id, token, { reason });
+  const abort = useAbortLiveEntryAcceptance(account.id, run?.id, token, { reason: abortReason });
   const reviewed = run?.previewJson;
   const expectedConfirmation = reviewed ? `BUY ${reviewed.order.symbol}` : '';
   const activeIndex = projection && projection.phase !== 'ACTION_REQUIRED'
@@ -73,6 +80,8 @@ export function LiveEntryAcceptanceWorkflow({
   const brokerOrder = run?.orderIntent?.brokerOrders[0];
   const fills = run?.orderIntent?.brokerActivities.filter((activity) => activity.activityType === 'FILL') ?? [];
   const armingTermination = run?.liveEntryArming?.terminations.at(-1);
+  const priorRuns = (history.data?.runs ?? []).filter((item) => item.run.id !== run?.id);
+  const inspected = historicalDetail.data;
 
   return <Card withBorder data-testid="live-entry-acceptance-workflow">
     <Group justify="space-between" align="flex-start">
@@ -81,7 +90,7 @@ export function LiveEntryAcceptanceWorkflow({
         <Text size="sm" c="dimmed">Durable first-canary ceremony</Text>
       </div>
       <Badge color={projection?.phase === 'ACTION_REQUIRED' ? 'red' : run?.terminalOutcome === 'CANARY_COMPLETE' ? 'green' : 'yellow'}>
-        {projection?.phase ?? 'NOT STARTED'}
+        {loadingRun ? 'LOADING' : projection?.phase ?? 'NOT STARTED'}
       </Badge>
     </Group>
 
@@ -125,10 +134,16 @@ export function LiveEntryAcceptanceWorkflow({
       </Card>
     )}
 
-    {!run && <Stack mt="md" gap="sm">
-      <Alert color="blue">Create one durable ceremony for the selected Live account and canary assignment.</Alert>
-      <TextInput label="Operator reason" value={reason} onChange={(event) => setReason(event.currentTarget.value)} />
-      <Button disabled={!assignment || !reason.trim() || create.isPending} onClick={() => create.mutate()}>Start acceptance run</Button>
+    {(!loadingRun && (!run || run.terminalAt)) && <Stack mt="md" gap="sm" data-testid="acceptance-new-run-transition">
+      <Alert color="blue" title={run ? `Run #${run.id} is closed` : 'No acceptance run recorded'}>
+        {run
+          ? 'The terminal record remains visible below. Start a new durable run before staging or arming the next controlled canary.'
+          : 'Create one durable ceremony for the selected Live account and canary assignment.'}
+      </Alert>
+      <TextInput label={run ? 'New acceptance run reason' : 'Operator reason'} value={newRunReason} onChange={(event) => setNewRunReason(event.currentTarget.value)} />
+      <Button disabled={!assignment || !newRunReason.trim() || create.isPending} onClick={() => create.mutate(undefined, { onSuccess: () => setNewRunReason('') })}>
+        {run ? 'Start new acceptance run' : 'Start acceptance run'}
+      </Button>
     </Stack>}
 
     {run && <Stack mt="md" gap="sm">
@@ -136,7 +151,7 @@ export function LiveEntryAcceptanceWorkflow({
       {projection?.phase === 'ACTION_REQUIRED' && <Alert color="red" title="ACTION REQUIRED">
         Execution remains unresolved. This run blocks re-arming and replacement ceremonies until authoritative broker/local evidence resolves it. Verification is read-only at the broker boundary and never resubmits the order.
       </Alert>}
-      {!run.executionClaimedAt && <Group>
+      {!run.executionClaimedAt && !run.terminalAt && <Group>
         <Button variant="default" disabled={!account.activeLiveEntryArmingId || preview.isPending} onClick={() => preview.mutate()}>
           {reviewed ? 'Regenerate execution preview' : 'Generate execution preview'}
         </Button>
@@ -207,10 +222,52 @@ export function LiveEntryAcceptanceWorkflow({
         {run.terminalReason}
       </Alert>}
       {!run.executionClaimedAt && !run.terminalAt && <Stack>
-        <TextInput label="Abort reason" value={reason} onChange={(event) => setReason(event.currentTarget.value)} />
-        <Button color="red" variant="outline" disabled={!reason.trim() || abort.isPending} onClick={() => abort.mutate()}>Abort before execution</Button>
+        <TextInput label="Abort reason" value={abortReason} onChange={(event) => setAbortReason(event.currentTarget.value)} />
+        <Button color="red" variant="outline" disabled={!abortReason.trim() || abort.isPending} onClick={() => abort.mutate(undefined, { onSuccess: () => setAbortReason('') })}>Abort before execution</Button>
       </Stack>}
     </Stack>}
+    <Card withBorder mt="md" data-testid="acceptance-history">
+      <Group justify="space-between">
+        <div>
+          <Title order={4}>Acceptance history</Title>
+          <Text size="sm" c="dimmed">Prior durable ceremonies; the canonical run above remains the only active workflow.</Text>
+        </div>
+        <Badge color="gray">{priorRuns.length} PRIOR</Badge>
+      </Group>
+      {history.isLoading && <Text size="sm" c="dimmed" mt="sm">Loading acceptance historyâ€¦</Text>}
+      {!history.isLoading && priorRuns.length === 0 && <Text size="sm" c="dimmed" mt="sm">No prior acceptance runs.</Text>}
+      {priorRuns.length > 0 && <Table striped highlightOnHover mt="sm">
+        <Table.Thead><Table.Tr>
+          <Table.Th>Run</Table.Th><Table.Th>Assignment</Table.Th><Table.Th>Outcome / state</Table.Th><Table.Th>Created / terminal</Table.Th><Table.Th>Reason</Table.Th><Table.Th>Evidence</Table.Th>
+        </Table.Tr></Table.Thead>
+        <Table.Tbody>{priorRuns.map((item) => <Table.Tr key={item.run.id}>
+          <Table.Td>#{item.run.id}</Table.Td>
+          <Table.Td>{item.run.tradingAccountSubscription.subscription.key} (#{item.run.tradingAccountSubscriptionId})</Table.Td>
+          <Table.Td>{item.run.terminalOutcome?.replaceAll('_', ' ') ?? item.phase.replaceAll('_', ' ')}</Table.Td>
+          <Table.Td>{new Date(item.run.createdAt).toLocaleString()}<br />{item.run.terminalAt ? new Date(item.run.terminalAt).toLocaleString() : 'not terminal'}</Table.Td>
+          <Table.Td>{item.run.terminalReason ?? item.run.reason}</Table.Td>
+          <Table.Td><Button size="xs" variant="subtle" onClick={() => setSelectedHistoryRunId(item.run.id)}>Inspect Run #{item.run.id}</Button></Table.Td>
+        </Table.Tr>)}</Table.Tbody>
+      </Table>}
+      {selectedHistoryRunId && historicalDetail.isLoading && <Text size="sm" c="dimmed" mt="sm">Loading Run #{selectedHistoryRunId} evidenceâ€¦</Text>}
+      {inspected && <Card withBorder mt="sm" data-testid="acceptance-history-detail">
+        <Group justify="space-between"><Title order={5}>Run #{inspected.run.id} authoritative detail</Title><Button size="xs" variant="default" onClick={() => setSelectedHistoryRunId(null)}>Close</Button></Group>
+        <SimpleGrid cols={{ base: 1, md: 2 }} mt="xs">
+          <Text size="sm">State: <b>{inspected.run.terminalOutcome?.replaceAll('_', ' ') ?? inspected.phase.replaceAll('_', ' ')}</b></Text>
+          <Text size="sm">Assignment: <b>{inspected.run.tradingAccountSubscription.subscription.key} (#{inspected.run.tradingAccountSubscriptionId})</b></Text>
+          <Text size="sm">Created: <b>{new Date(inspected.run.createdAt).toLocaleString()}</b></Text>
+          <Text size="sm">Terminal: <b>{inspected.run.terminalAt ? new Date(inspected.run.terminalAt).toLocaleString() : 'not terminal'}</b></Text>
+          <Text size="sm">Operator reason: <b>{inspected.run.reason}</b></Text>
+          <Text size="sm">Terminal reason: <b>{inspected.run.terminalReason ?? 'not terminal'}</b></Text>
+          <Text size="sm">OrderIntent: <b>{inspected.run.orderIntent ? `#${inspected.run.orderIntent.id} Â· ${inspected.run.orderIntent.status}` : 'none'}</b></Text>
+          <Text size="sm">BrokerOrder: <b>{inspected.run.orderIntent?.brokerOrders[0] ? `${inspected.run.orderIntent.brokerOrders[0].brokerOrderId} Â· ${inspected.run.orderIntent.brokerOrders[0].status}` : 'none'}</b></Text>
+          <Text size="sm">TrackedPosition: <b>{inspected.run.orderIntent?.trackedPosition ? `#${inspected.run.orderIntent.trackedPosition.id} Â· ${inspected.run.orderIntent.trackedPosition.status}` : 'none'}</b></Text>
+          <Text size="sm">Arming termination: <b>{inspected.run.liveEntryArming?.terminations.at(-1)?.type ?? 'none'}</b></Text>
+        </SimpleGrid>
+        <Text size="xs" fw={700} mt="sm">Terminal evidence</Text>
+        <Text component="pre" size="xs" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(inspected.run.terminalEvidenceJson ?? {}, null, 2)}</Text>
+      </Card>}
+    </Card>
     {error && <Alert color="red" mt="md">{error.message}</Alert>}
   </Card>;
 }

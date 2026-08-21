@@ -1,14 +1,24 @@
 // @vitest-environment happy-dom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MantineProvider } from '@mantine/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TradingAccount, TradingAccountSubscription } from '../../../types';
 
 const mutation = { mutate: vi.fn(), isPending: false, error: null };
-const mocks = vi.hoisted(() => ({ current: null as unknown }));
+const mocks = vi.hoisted(() => ({
+  current: null as unknown,
+  createPayload: null as unknown,
+  history: [] as unknown[],
+  details: {} as Record<number, unknown>,
+}));
 vi.mock('../../../hooks', () => ({
   useCurrentLiveEntryAcceptance: () => ({ data: { run: mocks.current } }),
-  useCreateLiveEntryAcceptance: () => mutation,
+  useLiveEntryAcceptanceHistory: () => ({ data: { runs: mocks.history }, isLoading: false }),
+  useLiveEntryAcceptanceDetail: (_id: number, runId: number | null) => ({ data: runId ? mocks.details[runId] : undefined, isLoading: false }),
+  useCreateLiveEntryAcceptance: (_id: number, _token: string | null, payload: unknown) => {
+    mocks.createPayload = payload;
+    return mutation;
+  },
   usePreviewLiveEntryAcceptance: () => mutation,
   useExecuteLiveEntryAcceptance: () => mutation,
   useVerifyLiveEntryAcceptance: () => mutation,
@@ -24,6 +34,7 @@ const executionProjection = {
       previewRevision: 2, previewFingerprint: 'a'.repeat(64), executionClaimedAt: null,
       executionUncertainAt: null, executionFailureJson: null, terminalOutcome: null,
       terminalReason: null, terminalEvidenceJson: null, terminalAt: null, orderIntent: null,
+      createdAt: '2026-08-21T11:00:00.000Z', updatedAt: '2026-08-21T11:00:00.000Z',
       tradingAccountSubscription: { id: 8, subscriptionId: 3, enabled: true, entriesEnabled: true, exitsEnabled: true, subscription: { key: 'rsp_dip_core' } },
       previewJson: {
         environment: 'LIVE',
@@ -79,7 +90,9 @@ const completedProjection = {
 import { LiveEntryAcceptanceWorkflow } from './LiveEntryAcceptanceWorkflow';
 
 describe('LiveEntryAcceptanceWorkflow', () => {
-  afterEach(() => { cleanup(); mocks.current = null; });
+  afterEach(() => {
+    cleanup(); mocks.current = null; mocks.createPayload = null; mocks.history = []; mocks.details = {}; vi.clearAllMocks();
+  });
 
   it('shows the exact reviewed Live order and one-shot consumption warning', () => {
     mocks.current = executionProjection;
@@ -201,5 +214,124 @@ describe('LiveEntryAcceptanceWorkflow', () => {
 
     expect(screen.getByText('NOT STARTED')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Start acceptance run' })).toBeTruthy();
+  });
+
+  it('keeps terminal Run 1 visible while offering a fresh-reason transition to Run 2', () => {
+    const terminalRun1 = {
+      ...completedProjection,
+      run: {
+        ...completedProjection.run,
+        id: 9,
+        executionClaimedAt: null,
+        terminalOutcome: 'OPERATOR_ABORTED',
+        terminalReason: 'Production rehearsal stopped before execution.',
+        orderIntent: null,
+        liveEntryArming: null,
+      },
+    };
+    mocks.current = terminalRun1;
+    const account = { id: 1, displayName: 'Bobby Live' } as TradingAccount;
+    const assignment = { id: 8 } as TradingAccountSubscription;
+    const view = render(<MantineProvider><LiveEntryAcceptanceWorkflow account={account} assignment={assignment} token="token" /></MantineProvider>);
+
+    expect(screen.getAllByText(/Run #9/).length).toBeGreaterThan(0);
+    expect(screen.getByText('OPERATOR ABORTED', { selector: 'h4' })).toBeTruthy();
+    const start = screen.getByRole('button', { name: 'Start new acceptance run' });
+    expect(start.hasAttribute('disabled')).toBe(true);
+    fireEvent.change(screen.getByLabelText('New acceptance run reason'), { target: { value: 'Real production canary Run 2' } });
+    expect(start.hasAttribute('disabled')).toBe(false);
+    expect(mocks.createPayload).toEqual({ tradingAccountSubscriptionId: 8, reason: 'Real production canary Run 2' });
+    fireEvent.click(start);
+    expect(mutation.mutate).toHaveBeenCalledTimes(1);
+
+    mocks.current = {
+      ...executionProjection,
+      phase: 'SETUP',
+      run: { ...executionProjection.run, id: 10, previewJson: null, previewRevision: 0, previewFingerprint: null },
+    };
+    view.rerender(<MantineProvider><LiveEntryAcceptanceWorkflow account={account} assignment={assignment} token="token" /></MantineProvider>);
+    expect(screen.getByText(/Run #10/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Start new acceptance run' })).toBeNull();
+    expect(screen.queryByText('NOT STARTED')).toBeNull();
+  });
+
+  it('shows canonical Run 2 with historical OPERATOR_ABORTED Run 1 evidence', () => {
+    const run2 = { ...executionProjection, phase: 'SETUP', run: { ...executionProjection.run, id: 10, previewJson: null, previewRevision: 0, previewFingerprint: null } };
+    const run1 = {
+      ...completedProjection,
+      run: {
+        ...completedProjection.run,
+        id: 9,
+        reason: 'Production rehearsal',
+        terminalOutcome: 'OPERATOR_ABORTED',
+        terminalReason: 'Stopped before the real canary.',
+        terminalEvidenceJson: { cleanup: { attentionRequired: false }, enabledEntryAssignmentCount: 0 },
+        executionClaimedAt: null,
+        orderIntent: null,
+        liveEntryArming: null,
+      },
+    };
+    mocks.current = run2;
+    mocks.history = [run2, run1];
+    mocks.details = { 9: run1 };
+    render(<MantineProvider><LiveEntryAcceptanceWorkflow account={{ id: 1 } as TradingAccount} assignment={{ id: 8 } as TradingAccountSubscription} token="token" /></MantineProvider>);
+
+    expect(screen.getByText(/Run #10/)).toBeTruthy();
+    expect(screen.getByTestId('acceptance-history')).toBeTruthy();
+    expect(screen.getByText('OPERATOR ABORTED', { selector: 'td' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect Run #9' }));
+    expect(screen.getByTestId('acceptance-history-detail')).toBeTruthy();
+    expect(screen.getByText('Run #9 authoritative detail')).toBeTruthy();
+    expect(screen.getAllByText(/Stopped before the real canary/)).toHaveLength(2);
+    expect(screen.getByText(/enabledEntryAssignmentCount/)).toBeTruthy();
+  });
+
+  it('opens historical CANARY_COMPLETE broker and position evidence', () => {
+    const currentRun = { ...executionProjection, phase: 'SETUP', run: { ...executionProjection.run, id: 10, previewJson: null, previewRevision: 0, previewFingerprint: null } };
+    const completedRun = { ...completedProjection, run: { ...completedProjection.run, id: 8 } };
+    mocks.current = currentRun;
+    mocks.history = [currentRun, completedRun];
+    mocks.details = { 8: completedRun };
+    render(<MantineProvider><LiveEntryAcceptanceWorkflow account={{ id: 1 } as TradingAccount} assignment={{ id: 8 } as TradingAccountSubscription} token="token" /></MantineProvider>);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect Run #8' }));
+    expect(screen.getByText('CANARY COMPLETE', { selector: 'b' })).toBeTruthy();
+    expect(screen.getByText(/mock-order-1/)).toBeTruthy();
+    expect(screen.getByText(/TrackedPosition:/).textContent).toContain('#1');
+    expect(screen.getByText(/reconciliationRunIdentifier/)).toBeTruthy();
+  });
+
+  it('reconstructs current and historical runs after a browser reload', () => {
+    const run2 = { ...executionProjection, phase: 'SETUP', run: { ...executionProjection.run, id: 10, previewJson: null, previewRevision: 0, previewFingerprint: null } };
+    const run1 = { ...completedProjection, run: { ...completedProjection.run, id: 9, terminalOutcome: 'OPERATOR_ABORTED', terminalReason: 'Stopped.' } };
+    mocks.current = run2;
+    mocks.history = [run2, run1];
+    const props = { account: { id: 1 } as TradingAccount, assignment: { id: 8 } as TradingAccountSubscription, token: 'token' };
+    const first = render(<MantineProvider><LiveEntryAcceptanceWorkflow {...props} /></MantineProvider>);
+    first.unmount();
+    render(<MantineProvider><LiveEntryAcceptanceWorkflow {...props} /></MantineProvider>);
+
+    expect(screen.getByText(/Run #10/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Inspect Run #9' })).toBeTruthy();
+  });
+
+  it('moves Run 2 into history beside Run 1 when Run 3 becomes canonical', () => {
+    const run1 = { ...completedProjection, run: { ...completedProjection.run, id: 9, terminalOutcome: 'OPERATOR_ABORTED', terminalReason: 'Stopped.' } };
+    const run2Terminal = { ...completedProjection, run: { ...completedProjection.run, id: 10, terminalOutcome: 'FAILED_SAFE', terminalReason: 'No broker submission occurred.' } };
+    const run2Current = { ...executionProjection, phase: 'SETUP', run: { ...executionProjection.run, id: 10, previewJson: null, previewRevision: 0, previewFingerprint: null } };
+    mocks.current = run2Current;
+    mocks.history = [run2Current, run1];
+    const props = { account: { id: 1 } as TradingAccount, assignment: { id: 8 } as TradingAccountSubscription, token: 'token' };
+    const view = render(<MantineProvider><LiveEntryAcceptanceWorkflow {...props} /></MantineProvider>);
+
+    const run3 = { ...executionProjection, phase: 'SETUP', run: { ...executionProjection.run, id: 11, previewJson: null, previewRevision: 0, previewFingerprint: null } };
+    mocks.current = run3;
+    mocks.history = [run3, run2Terminal, run1];
+    view.rerender(<MantineProvider><LiveEntryAcceptanceWorkflow {...props} /></MantineProvider>);
+
+    expect(screen.getByText(/Run #11/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Inspect Run #10' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Inspect Run #9' })).toBeTruthy();
+    expect(screen.getByText('2 PRIOR')).toBeTruthy();
   });
 });

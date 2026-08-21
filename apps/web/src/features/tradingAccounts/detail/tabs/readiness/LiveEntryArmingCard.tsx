@@ -33,18 +33,28 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
   const preview = assessment?.evidence.selectedCanary;
   const armed = Boolean(account.activeLiveEntryArmingId && account.tradingEnabled && !account.killSwitchEnabled);
   const staged = Boolean(rsp?.entriesEnabled && !armed);
+  const acceptanceRun = acceptance.data?.run?.run;
+  const unresolvedAcceptanceRun = acceptanceRun && !acceptanceRun.terminalAt ? acceptanceRun : null;
+  const acceptanceOwnsCanary = Boolean(
+    unresolvedAcceptanceRun && rsp &&
+    unresolvedAcceptanceRun.tradingAccountSubscriptionId === rsp.id,
+  );
   const posture = armed ? `${account.status} · ENTRIES ARMED` : staged ? `${account.status} · ENTRY STAGED` : `${account.status} · ENTRY DISARMED`;
   const workflow = deriveLiveEntrySetupState({ account, assessment, canaryPresent: Boolean(rsp), canaryStaged: staged || armed, riskApproval: risk ?? null, entryApproval: entry ?? null });
-  const canArm = Boolean(workflow.readyToArm && rsp);
+  const canArm = Boolean(workflow.readyToArm && rsp && acceptanceOwnsCanary);
   const canStage = Boolean(
     rsp &&
     account.status === 'ACTIVE' &&
     !account.tradingEnabled &&
     account.killSwitchEnabled &&
-    !armed,
+    !armed &&
+    acceptanceOwnsCanary,
   );
 
-  const armDisabledMessage = !canArm
+  const acceptanceDisabledMessage = !acceptanceOwnsCanary
+    ? 'Start a new Live Entry Acceptance run first. Staging and ARM must belong to an unresolved ceremony.'
+    : null;
+  const armDisabledMessage = acceptanceDisabledMessage ?? (!canArm
     ? `Next step: ${workflow.nextAction}`
     : !armReason.trim()
       ? 'Enter an operator reason to continue.'
@@ -52,7 +62,7 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
         ? 'Exact confirmation is required.'
         : arm.isPending
           ? 'ARM request is in progress.'
-          : null;
+          : null);
 
   return <Stack gap="md">
     <LiveEntryAcceptanceWorkflow
@@ -76,10 +86,13 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
       {preview && <Alert color="blue" title="First-canary sizing preview">
         {preview.symbol} assignment #{preview.tradingAccountSubscriptionId}: MAX_NOTIONAL {String(preview.maxPositionNotional ?? 'unavailable')}; estimated notional up to {String(preview.maxPositionNotional ?? 'unavailable')}; allocation limit {String(preview.allocation?.maxAllocatedNotional ?? 'unavailable')}; account limits {String(preview.accountLimits?.maxDailyEntryOrders ?? 'unavailable')} daily entry / {String(preview.accountLimits?.maxDailyEntryNotional ?? 'unavailable')} daily notional / {String(preview.accountLimits?.maxOpenPositions ?? 'unavailable')} open position / {String(preview.accountLimits?.maxSymbolOpenNotional ?? 'unavailable')} symbol notional. Quantity is shown when runtime pricing makes it available; market fills can exceed estimated notional.
       </Alert>}
+      {acceptanceDisabledMessage && <Alert color="yellow" title="Acceptance run required">
+        {acceptanceDisabledMessage}
+      </Alert>}
       <TextInput label="Canary staging reason" value={stageReason} onChange={(event) => setStageReason(event.currentTarget.value)} />
       <Group>
         <Button variant="default" disabled={!canStage || !stageReason.trim() || stage.isPending} onClick={() => rsp && stage.mutate(
-          { tradingAccountSubscriptionId: rsp.id, reason: stageReason },
+          { tradingAccountSubscriptionId: rsp.id, liveEntryAcceptanceRunId: unresolvedAcceptanceRun?.id, reason: stageReason },
           { onSuccess: () => setStageReason('') },
         )}>Stage RSP canary</Button>
       </Group>
@@ -90,8 +103,8 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
       <TextInput label="Arming reason" value={armReason} onChange={(event) => setArmReason(event.currentTarget.value)} />
       {armDisabledMessage && <Text size="sm" c="dimmed" data-testid="arm-disabled-guidance">{armDisabledMessage}</Text>}
       <Button color="red" disabled={!canArm || !armReason.trim() || confirmation !== 'ARM LIVE ENTRIES' || arm.isPending}
-        onClick={() => entry?.approval && rsp && assessment && arm.mutate(
-          { reason: armReason, typedConfirmation: confirmation, readinessAssessmentId: assessment.id, tradingAccountSubscriptionId: rsp.id, entryApprovalId: entry.approval.id, entryApprovalRevision: entry.approval.revision, expectedUpdatedAt: account.updatedAt, ...(acceptance.data?.run?.run.id ? { liveEntryAcceptanceRunId: acceptance.data.run.run.id } : {}) },
+        onClick={() => entry?.approval && rsp && assessment && unresolvedAcceptanceRun && arm.mutate(
+          { reason: armReason, typedConfirmation: confirmation, readinessAssessmentId: assessment.id, tradingAccountSubscriptionId: rsp.id, entryApprovalId: entry.approval.id, entryApprovalRevision: entry.approval.revision, expectedUpdatedAt: account.updatedAt, liveEntryAcceptanceRunId: unresolvedAcceptanceRun.id },
           { onSuccess: () => { setArmReason(''); setConfirmation(''); } },
         )}>
         ARM LIVE ENTRIES

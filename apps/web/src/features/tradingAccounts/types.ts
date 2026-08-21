@@ -235,6 +235,8 @@ export type LiveEntryAcceptanceProjection = {
     terminalReason: string | null;
     terminalEvidenceJson: Record<string, unknown> | null;
     terminalAt: string | null;
+    createdAt: string;
+    updatedAt: string;
     tradingAccount: {
       id: number;
       displayName: string;
@@ -307,6 +309,10 @@ export type LiveEntryAcceptanceProjection = {
 
 export type CurrentLiveEntryAcceptanceResponse = {
   run: LiveEntryAcceptanceProjection | null;
+};
+
+export type LiveEntryAcceptanceHistoryResponse = {
+  runs: LiveEntryAcceptanceProjection[];
 };
 
 export type LiveWriteCapability = 'RISK_REDUCING' | 'ENTRY';

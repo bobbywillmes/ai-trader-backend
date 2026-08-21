@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   assignmentFindFirst: vi.fn(),
   runCreate: vi.fn(),
   runFindFirst: vi.fn(),
+  runFindMany: vi.fn(),
   approvalFindMany: vi.fn(),
   readinessFindFirst: vi.fn(),
   computeReadinessFingerprints: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock('../db/prisma.js', () => ({
     liveEntryAcceptanceRun: {
       create: mocks.runCreate,
       findFirst: mocks.runFindFirst,
+      findMany: mocks.runFindMany,
     },
     tradingAccountLiveWriteApproval: { findMany: mocks.approvalFindMany },
     tradingAccountReadinessAssessment: { findFirst: mocks.readinessFindFirst },
@@ -42,6 +44,7 @@ import {
   createLiveEntryAcceptanceRun,
   executeLiveEntryAcceptanceRun,
   getCurrentLiveEntryAcceptanceRun,
+  listLiveEntryAcceptanceRuns,
   previewLiveEntryAcceptanceRun,
 } from './live-entry-acceptance.service.js';
 
@@ -235,7 +238,7 @@ describe('Live-entry acceptance run creation posture', () => {
 
     expect(mocks.runFindFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { tradingAccountId: 1 },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     }));
     expect(projection?.phase).toBe('COMPLETION');
     expect(projection?.run.terminalOutcome).toBe('CANARY_COMPLETE');
@@ -259,5 +262,58 @@ describe('Live-entry acceptance run creation posture', () => {
     mocks.runFindFirst.mockResolvedValue(null);
 
     await expect(getCurrentLiveEntryAcceptanceRun(1)).resolves.toBeNull();
+  });
+
+  it('creates Run 2 while preserving terminal Run 1 in history and making Run 2 current', async () => {
+    const run1 = {
+      ...run('ACTIVE'),
+      id: 9,
+      terminalOutcome: 'OPERATOR_ABORTED' as const,
+      terminalReason: 'Production rehearsal stopped before execution.',
+      terminalAt: new Date('2026-08-21T12:00:00.000Z'),
+    };
+    const run2 = { ...run('ACTIVE'), id: 10, reason: 'Real production canary' };
+    mocks.assignmentFindFirst.mockResolvedValue(assignment('ACTIVE'));
+    mocks.runCreate.mockResolvedValue(run2);
+    mocks.runFindFirst.mockResolvedValue(run2);
+    mocks.runFindMany.mockResolvedValue([run2, run1]);
+
+    const created = await createLiveEntryAcceptanceRun({
+      ...createArgs,
+      reason: 'Real production canary',
+    });
+    const current = await getCurrentLiveEntryAcceptanceRun(1);
+    const history = await listLiveEntryAcceptanceRuns(1);
+
+    expect(created.run.id).toBe(10);
+    expect(current?.run.id).toBe(10);
+    expect(history.map((item) => item.run.id)).toEqual([10, 9]);
+    expect(history[1]?.run).toMatchObject({
+      id: 9,
+      terminalOutcome: 'OPERATOR_ABORTED',
+      terminalReason: 'Production rehearsal stopped before execution.',
+    });
+  });
+
+  it('does not allow terminal Run 1 to be previewed or executed again', async () => {
+    mocks.runFindFirst.mockResolvedValue({
+      ...run('ACTIVE'),
+      terminalOutcome: 'OPERATOR_ABORTED',
+      terminalReason: 'Stopped.',
+      terminalAt: new Date('2026-08-21T12:00:00.000Z'),
+    });
+
+    await expect(previewLiveEntryAcceptanceRun({ tradingAccountId: 1, runId: 9 }))
+      .rejects.toThrow('completed acceptance run cannot be previewed again');
+    await expect(executeLiveEntryAcceptanceRun({
+      tradingAccountId: 1,
+      runId: 9,
+      actorUserId: 2,
+      requestKey: 'terminal-run-request',
+      expectedPreviewRevision: 0,
+      expectedPreviewFingerprint: 'a'.repeat(64),
+      typedConfirmation: 'BUY RSP',
+    })).rejects.toThrow('terminal acceptance run cannot be executed again');
+    expect(mocks.submitOrder).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTradingAccountSchema, updateTradingAccountSchema } from './trading-account.schema.js';
+import { createTradingAccountSchema, stageLiveEntryCanarySchema, updateTradingAccountSchema } from './trading-account.schema.js';
 
 describe('Trading Account identity validation', () => {
   it.each(['PAPER', 'LIVE'] as const)('accepts explicit %s creation with only provisioning fields', (environment) => {
@@ -30,5 +30,19 @@ describe('Trading Account identity validation', () => {
 
   it('allows normal updates without identity fields', () => {
     expect(updateTradingAccountSchema.parse({ displayName: 'Updated', notes: 'Safe update' })).toEqual({ displayName: 'Updated', notes: 'Safe update' });
+  });
+});
+
+describe('Live canary staging validation', () => {
+  it('accepts the unresolved acceptance run binding', () => {
+    expect(stageLiveEntryCanarySchema.parse({
+      tradingAccountSubscriptionId: 8,
+      liveEntryAcceptanceRunId: 10,
+      reason: 'Stage Run 2',
+    })).toEqual({
+      tradingAccountSubscriptionId: 8,
+      liveEntryAcceptanceRunId: 10,
+      reason: 'Stage Run 2',
+    });
   });
 });
