@@ -14,6 +14,13 @@ import type { deriveLiveEntrySetupState } from './liveEntrySetupState';
 
 const steps = ['SETUP', 'AUTHORIZATION', 'READINESS', 'ARMING', 'EXECUTION', 'VERIFICATION', 'COMPLETION'] as const;
 
+function evidenceText(value: unknown, fallback = 'not recorded') {
+  if (value === null || value === undefined || value === '') return fallback;
+  if (Array.isArray(value)) return value.length === 0 ? 'none' : JSON.stringify(value);
+  if (typeof value === 'boolean') return value ? 'yes' : 'no';
+  return String(value);
+}
+
 export function LiveEntryAcceptanceWorkflow({
   account,
   assignment,
@@ -53,6 +60,11 @@ export function LiveEntryAcceptanceWorkflow({
     : -1;
   const error = create.error ?? preview.error ?? execute.error ?? verify.error ?? abort.error;
   const observationOnly = deploymentRole === 'OBSERVATION_ONLY';
+  const canaryComplete = run?.terminalOutcome === 'CANARY_COMPLETE';
+  const terminalEvidence = run?.terminalEvidenceJson ?? {};
+  const brokerOrder = run?.orderIntent?.brokerOrders[0];
+  const fills = run?.orderIntent?.brokerActivities.filter((activity) => activity.activityType === 'FILL') ?? [];
+  const armingTermination = run?.liveEntryArming?.terminations.at(-1);
 
   return <Card withBorder data-testid="live-entry-acceptance-workflow">
     <Group justify="space-between" align="flex-start">
@@ -68,8 +80,8 @@ export function LiveEntryAcceptanceWorkflow({
     <SimpleGrid cols={{ base: 2, md: 7 }} mt="md">
       {steps.map((step, index) => <Card withBorder p="xs" key={step}>
         <Text size="xs" fw={700}>{index + 1}. {step}</Text>
-        <Badge size="xs" color={run?.terminalAt || activeIndex > index ? 'green' : activeIndex === index ? 'blue' : 'gray'}>
-          {run?.terminalAt || activeIndex > index ? 'DONE' : activeIndex === index ? 'CURRENT' : 'PENDING'}
+        <Badge size="xs" color={canaryComplete || activeIndex > index ? 'green' : activeIndex === index ? 'blue' : 'gray'}>
+          {canaryComplete || activeIndex > index ? 'DONE' : activeIndex === index ? 'CURRENT' : 'PENDING'}
         </Badge>
       </Card>)}
     </SimpleGrid>
@@ -146,12 +158,36 @@ export function LiveEntryAcceptanceWorkflow({
       {run.executionClaimedAt && <Group>
         <Button disabled={verify.isPending} onClick={() => verify.mutate()}>Refresh authoritative verification</Button>
       </Group>}
-      {run.orderIntent && <Card withBorder>
+      {run.orderIntent && <Card withBorder data-testid="acceptance-post-execution-evidence">
         <Title order={4}>Post-execution evidence</Title>
         <Text size="sm">OrderIntent #{run.orderIntent.id}: {run.orderIntent.status}</Text>
         <Text size="sm">Client identity: {run.orderIntent.clientOrderId ?? 'unavailable'}</Text>
+        <Text size="sm">Broker client identity: {brokerOrder?.clientOrderId ?? 'not observed'}</Text>
+        <Text size="sm">Fill evidence: {fills.length > 0
+          ? fills.map((fill) => `${fill.activityId}: qty ${evidenceText(fill.qty)} @ ${evidenceText(fill.price)} (${fill.transactionTime ? new Date(fill.transactionTime).toLocaleString() : 'time unavailable'})`).join('; ')
+          : 'not observed'}</Text>
+        <Text size="sm">Position attribution: subscription #{run.orderIntent.trackedPosition?.subscriptionId ?? 'not observed'}, assignment #{run.orderIntent.trackedPosition?.tradingAccountSubscriptionId ?? 'not observed'}</Text>
+        <Text size="sm">Position / exit lifecycle: {run.orderIntent.trackedPosition?.exitState
+          ? `${run.orderIntent.trackedPosition.exitState.status}; attention required: ${run.orderIntent.trackedPosition.exitState.attentionRequired ? 'yes' : 'no'}`
+          : 'not observed'}</Text>
         <Text size="sm">BrokerOrder: {run.orderIntent.brokerOrders[0]?.brokerOrderId ?? 'not observed'} · {run.orderIntent.brokerOrders[0]?.status ?? 'not observed'}</Text>
         <Text size="sm">TrackedPosition: {run.orderIntent.trackedPosition ? `#${run.orderIntent.trackedPosition.id} · ${run.orderIntent.trackedPosition.status} · qty ${run.orderIntent.trackedPosition.qty}` : 'not observed'}</Text>
+      </Card>}
+      {run.terminalOutcome && <Card withBorder data-testid="acceptance-terminal-summary">
+        <Title order={4}>{run.terminalOutcome.replaceAll('_', ' ')}</Title>
+        <Text size="sm">{run.terminalReason}</Text>
+        <SimpleGrid cols={{ base: 1, md: 2 }}>
+          <Text size="sm">Terminal time: <b>{run.terminalAt ? new Date(run.terminalAt).toLocaleString() : 'not recorded'}</b></Text>
+          <Text size="sm">Arming: <b>#{run.liveEntryArming?.id ?? 'not observed'}; {armingTermination?.type ?? 'termination not observed'}</b></Text>
+          <Text size="sm">Arming termination: <b>{armingTermination ? `${armingTermination.reason} (${new Date(armingTermination.occurredAt).toLocaleString()})` : 'not observed'}</b></Text>
+          <Text size="sm">Active arming absent: <b>{evidenceText(terminalEvidence.activeArmingAbsent)}</b></Text>
+          <Text size="sm">Account trading disabled: <b>{run.tradingAccount.tradingEnabled ? 'no' : 'yes'}</b></Text>
+          <Text size="sm">Kill switch enabled: <b>{run.tradingAccount.killSwitchEnabled ? 'yes' : 'no'}</b></Text>
+          <Text size="sm">Assignment entries disabled: <b>{run.tradingAccountSubscription.entriesEnabled ? 'no' : 'yes'}</b></Text>
+          <Text size="sm">Reconciliation run: <b>{evidenceText(terminalEvidence.reconciliationRunIdentifier)}</b></Text>
+          <Text size="sm">Reconciliation discrepancies: <b>{evidenceText(terminalEvidence.relevantReconciliationFindings)}</b></Text>
+          <Text size="sm">Lifecycle healthy: <b>{evidenceText(terminalEvidence.lifecycleHealthy)}</b></Text>
+        </SimpleGrid>
       </Card>}
       {run.terminalOutcome && <Alert color={run.terminalOutcome === 'CANARY_COMPLETE' ? 'green' : 'yellow'} title={run.terminalOutcome.replaceAll('_', ' ')}>
         {run.terminalReason}

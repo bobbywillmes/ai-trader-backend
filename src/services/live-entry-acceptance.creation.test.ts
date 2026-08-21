@@ -41,6 +41,7 @@ vi.mock('./reconciliation.service.js', () => ({ reconcileTradingAccount: vi.fn()
 import {
   createLiveEntryAcceptanceRun,
   executeLiveEntryAcceptanceRun,
+  getCurrentLiveEntryAcceptanceRun,
   previewLiveEntryAcceptanceRun,
 } from './live-entry-acceptance.service.js';
 
@@ -219,5 +220,44 @@ describe('Live-entry acceptance run creation posture', () => {
       typedConfirmation: 'BUY RSP',
     })).rejects.toThrow('Typed confirmation must exactly match');
     expect(mocks.submitOrder).not.toHaveBeenCalled();
+  });
+
+  it('returns the latest completed run after verification instead of masquerading as pristine', async () => {
+    const completedRun = {
+      ...run('ACTIVE'),
+      terminalOutcome: 'CANARY_COMPLETE' as const,
+      terminalReason: 'The Live-entry canary and all required safety invariants were verified.',
+      terminalAt: new Date('2026-08-21T14:03:12.778Z'),
+    };
+    mocks.runFindFirst.mockResolvedValue(completedRun);
+
+    const projection = await getCurrentLiveEntryAcceptanceRun(1);
+
+    expect(mocks.runFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { tradingAccountId: 1 },
+      orderBy: { createdAt: 'desc' },
+    }));
+    expect(projection?.phase).toBe('COMPLETION');
+    expect(projection?.run.terminalOutcome).toBe('CANARY_COMPLETE');
+  });
+
+  it('keeps an uncertain run visible as unresolved ACTION_REQUIRED', async () => {
+    mocks.runFindFirst.mockResolvedValue({
+      ...run('ACTIVE'),
+      executionClaimedAt: new Date('2026-08-21T14:01:00.000Z'),
+      executionUncertainAt: new Date('2026-08-21T14:01:30.000Z'),
+      executionFailureJson: { code: 'BROKER_OBSERVATION_UNRESOLVED' },
+    });
+
+    const projection = await getCurrentLiveEntryAcceptanceRun(1);
+
+    expect(projection?.phase).toBe('ACTION_REQUIRED');
+    expect(projection?.unresolved).toBe(true);
+  });
+
+  it('returns null only when the account has no acceptance-run history', async () => {
+    mocks.runFindFirst.mockResolvedValue(null);
+
+    await expect(getCurrentLiveEntryAcceptanceRun(1)).resolves.toBeNull();
   });
 });

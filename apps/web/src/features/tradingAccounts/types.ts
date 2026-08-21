@@ -234,6 +234,34 @@ export type LiveEntryAcceptanceProjection = {
     terminalReason: string | null;
     terminalEvidenceJson: Record<string, unknown> | null;
     terminalAt: string | null;
+    tradingAccount: {
+      id: number;
+      displayName: string;
+      environment: TradingAccountEnvironment;
+      status: TradingAccountStatus;
+      tradingEnabled: boolean;
+      killSwitchEnabled: boolean;
+      activeLiveEntryArmingId: number | null;
+    };
+    tradingAccountSubscription: {
+      id: number;
+      subscriptionId: number;
+      enabled: boolean;
+      entriesEnabled: boolean;
+      exitsEnabled: boolean;
+    };
+    liveEntryArming: null | {
+      id: number;
+      entryApprovalExpiresAt: string;
+      terminations: Array<{
+        id: number;
+        type: string;
+        reason: string;
+        orderIntentId: number | null;
+        clientOrderId: string | null;
+        occurredAt: string;
+      }>;
+    };
     orderIntent: null | {
       id: number;
       status: string;
@@ -244,6 +272,16 @@ export type LiveEntryAcceptanceProjection = {
         clientOrderId: string;
         status: string;
       }>;
+      brokerActivities: Array<{
+        id: number;
+        activityId: string;
+        activityType: string;
+        qty: number | null;
+        cumQty: number | null;
+        price: number | null;
+        orderId: string | null;
+        transactionTime: string | null;
+      }>;
       trackedPosition: null | {
         id: number;
         status: string;
@@ -251,6 +289,11 @@ export type LiveEntryAcceptanceProjection = {
         avgEntryPrice: number;
         subscriptionId: number | null;
         tradingAccountSubscriptionId: number | null;
+        exitState: null | {
+          status: string;
+          attentionRequired: boolean;
+          attentionCode: string | null;
+        };
       };
     };
   };

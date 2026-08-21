@@ -32,6 +32,49 @@ const executionProjection = {
     },
   };
 
+const completedProjection = {
+  ...executionProjection,
+  phase: 'COMPLETION',
+  execution: { claimed: true, uncertain: false, previewFrozen: true },
+  run: {
+    ...executionProjection.run,
+    executionClaimedAt: '2026-08-21T14:01:00.000Z',
+    terminalOutcome: 'CANARY_COMPLETE',
+    terminalReason: 'The Live-entry canary and all required safety invariants were verified.',
+    terminalAt: '2026-08-21T14:03:12.778Z',
+    terminalEvidenceJson: {
+      activeArmingAbsent: true,
+      lifecycleHealthy: true,
+      reconciliationRunIdentifier: 'reconciliation-run-1',
+      relevantReconciliationFindings: [],
+    },
+    tradingAccount: {
+      id: 1, displayName: 'Bobby Live', environment: 'LIVE', status: 'ACTIVE',
+      tradingEnabled: false, killSwitchEnabled: true, activeLiveEntryArmingId: null,
+    },
+    tradingAccountSubscription: {
+      id: 8, subscriptionId: 3, enabled: true, entriesEnabled: false, exitsEnabled: true,
+    },
+    liveEntryArming: {
+      id: 7,
+      entryApprovalExpiresAt: '2026-08-21T14:10:00.000Z',
+      terminations: [{
+        id: 1, type: 'CONSUMED', reason: 'Consumed before outbound submission.',
+        orderIntentId: 1, clientOrderId: 'ai-accept-run1-rev1', occurredAt: '2026-08-21T14:01:08.339Z',
+      }],
+    },
+    orderIntent: {
+      id: 1, status: 'filled', clientOrderId: 'ai-accept-run1-rev1',
+      brokerOrders: [{ id: 1, brokerOrderId: 'mock-order-1', clientOrderId: 'ai-accept-run1-rev1', status: 'filled' }],
+      brokerActivities: [{ id: 1, activityId: 'fill-mock-order-1', activityType: 'FILL', qty: 4, cumQty: 4, price: 250, orderId: 'mock-order-1', transactionTime: '2026-08-21T14:01:08.352Z' }],
+      trackedPosition: {
+        id: 1, status: 'open', qty: 4, avgEntryPrice: 250, subscriptionId: 3, tradingAccountSubscriptionId: 8,
+        exitState: { status: 'watching', attentionRequired: false, attentionCode: null },
+      },
+    },
+  },
+};
+
 import { LiveEntryAcceptanceWorkflow } from './LiveEntryAcceptanceWorkflow';
 
 describe('LiveEntryAcceptanceWorkflow', () => {
@@ -84,5 +127,59 @@ describe('LiveEntryAcceptanceWorkflow', () => {
     expect(screen.getByText(/manual-acceptance harness/)).toBeTruthy();
     expect(screen.getByText('CURRENT BLOCKER')).toBeTruthy();
     expect(screen.queryByText('Live Entry Setup Progress')).toBeNull();
+  });
+
+  it('keeps a completed run and its authoritative evidence visible after verification refetch', () => {
+    mocks.current = { ...executionProjection, phase: 'VERIFICATION', run: { ...completedProjection.run, terminalOutcome: null, terminalReason: null, terminalAt: null } };
+    const account = { id: 1, displayName: 'Bobby Live', activeLiveEntryArmingId: null } as TradingAccount;
+    const assignment = { id: 8 } as TradingAccountSubscription;
+    const view = render(<MantineProvider><LiveEntryAcceptanceWorkflow account={account} assignment={assignment} token="token" /></MantineProvider>);
+
+    mocks.current = completedProjection;
+    view.rerender(<MantineProvider><LiveEntryAcceptanceWorkflow account={account} assignment={assignment} token="token" /></MantineProvider>);
+
+    expect(screen.getByTestId('acceptance-terminal-summary')).toBeTruthy();
+    expect(screen.getByText('CANARY COMPLETE', { selector: 'h4' })).toBeTruthy();
+    expect(screen.getAllByText(/mock-order-1/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/fill-mock-order-1/)).toBeTruthy();
+    expect(screen.getByText(/subscription #3, assignment #8/)).toBeTruthy();
+    expect(screen.getByText(/Reconciliation run:/).textContent).toContain('reconciliation-run-1');
+    expect(screen.queryByText('NOT STARTED')).toBeNull();
+    expect(screen.getAllByText('DONE')).toHaveLength(7);
+  });
+
+  it('reconstructs the same terminal summary on a full component reload', () => {
+    mocks.current = completedProjection;
+    const account = { id: 1, displayName: 'Bobby Live' } as TradingAccount;
+    const assignment = { id: 8 } as TradingAccountSubscription;
+    const first = render(<MantineProvider><LiveEntryAcceptanceWorkflow account={account} assignment={assignment} token="token" /></MantineProvider>);
+    first.unmount();
+    render(<MantineProvider><LiveEntryAcceptanceWorkflow account={account} assignment={assignment} token="token" /></MantineProvider>);
+
+    expect(screen.getAllByText(/all required safety invariants were verified/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Account trading disabled:/).textContent).toContain('yes');
+    expect(screen.getByText(/Kill switch enabled:/).textContent).toContain('yes');
+    expect(screen.getByText(/Assignment entries disabled:/).textContent).toContain('yes');
+  });
+
+  it('keeps ACTION_REQUIRED visible while execution remains unresolved', () => {
+    mocks.current = {
+      ...completedProjection,
+      phase: 'ACTION_REQUIRED', unresolved: true,
+      run: { ...completedProjection.run, terminalOutcome: null, terminalReason: null, terminalAt: null, executionUncertainAt: '2026-08-21T14:02:00.000Z' },
+    };
+    render(<MantineProvider><LiveEntryAcceptanceWorkflow account={{ id: 1 } as TradingAccount} assignment={{ id: 8 } as TradingAccountSubscription} token="token" /></MantineProvider>);
+
+    expect(screen.getAllByText('ACTION REQUIRED').length).toBeGreaterThan(0);
+    expect(screen.getByText(/blocks re-arming and replacement ceremonies/)).toBeTruthy();
+    expect(screen.queryByText('NOT STARTED')).toBeNull();
+  });
+
+  it('uses NOT STARTED only for a pristine account with no run', () => {
+    mocks.current = null;
+    render(<MantineProvider><LiveEntryAcceptanceWorkflow account={{ id: 1 } as TradingAccount} assignment={{ id: 8 } as TradingAccountSubscription} token="token" /></MantineProvider>);
+
+    expect(screen.getByText('NOT STARTED')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Start acceptance run' })).toBeTruthy();
   });
 });

@@ -236,7 +236,7 @@ export async function getLiveEntryAcceptanceRun(
 
 export async function getCurrentLiveEntryAcceptanceRun(tradingAccountId: number) {
   const run = await prisma.liveEntryAcceptanceRun.findFirst({
-    where: { tradingAccountId, terminalAt: null },
+    where: { tradingAccountId },
     include: RUN_INCLUDE,
     orderBy: { createdAt: 'desc' },
   });
