@@ -46,6 +46,16 @@ import {
 import { PlatformPermission } from '../types/platform-rbac.js';
 import { runTradingAccountReconciliationController } from '../controllers/reconciliation.controller.js';
 import { getTradingAccountDashboardController } from '../controllers/dashboard.controller.js';
+import {
+  abortLiveEntryAcceptanceRunController,
+  createLiveEntryAcceptanceRunController,
+  currentLiveEntryAcceptanceRunController,
+  executeLiveEntryAcceptanceRunController,
+  getLiveEntryAcceptanceRunController,
+  listLiveEntryAcceptanceRunsController,
+  previewLiveEntryAcceptanceRunController,
+  verifyLiveEntryAcceptanceRunController,
+} from '../controllers/live-entry-acceptance.controller.js';
 
 const router = Router();
 
@@ -104,6 +114,14 @@ router.post(
 router.post('/:id/stage-live-entry-canary', requireSystemOwnerAccess, stageLiveEntryCanaryController);
 router.post('/:id/arm-live-entries', requireSystemOwnerAccess, armLiveEntriesController);
 router.post('/:id/disarm-live-entries', requireSystemOwnerAccess, disarmLiveEntriesController);
+router.post('/:id/live-entry-acceptance-runs', requireSystemOwnerAccess, createLiveEntryAcceptanceRunController);
+router.get('/:id/live-entry-acceptance-runs/current', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), currentLiveEntryAcceptanceRunController);
+router.get('/:id/live-entry-acceptance-runs', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), listLiveEntryAcceptanceRunsController);
+router.get('/:id/live-entry-acceptance-runs/:runId', requireTradingAccountAccess('id'), requirePermission(PlatformPermission.TRADING_ACCOUNT_READ), getLiveEntryAcceptanceRunController);
+router.post('/:id/live-entry-acceptance-runs/:runId/preview', requireSystemOwnerAccess, previewLiveEntryAcceptanceRunController);
+router.post('/:id/live-entry-acceptance-runs/:runId/execute', requireSystemOwnerAccess, executeLiveEntryAcceptanceRunController);
+router.post('/:id/live-entry-acceptance-runs/:runId/verify', requireSystemOwnerAccess, verifyLiveEntryAcceptanceRunController);
+router.post('/:id/live-entry-acceptance-runs/:runId/abort', requireSystemOwnerAccess, abortLiveEntryAcceptanceRunController);
 router.post(
   '/:id/readiness-assessments',
   requireSystemOwnerAccess,

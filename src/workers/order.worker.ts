@@ -32,6 +32,7 @@ import { getSizingEstimatedNotional } from '../services/trading-account-entry-ri
 import { recordOrderIntentRiskEvaluation } from '../services/order-audit.service.js';
 import { resolveSubscriptionOrderInput } from '../services/subscription.service.js';
 import { getAlpacaOrderByClientOrderId } from '../integrations/alpaca/orders.adapter.js';
+import { getBrokerWriteDeliveryClassification } from '../errors/broker-write-delivery-error.js';
 
 export type SubmittedOrderSyncResult = {
   found: number;
@@ -186,6 +187,51 @@ export async function recoverStaleSubmittingIntentsForAccount(
         } as Prisma.InputJsonValue,
       });
       linked += 1;
+      continue;
+    }
+
+    if (intent.liveEntryAcceptanceRunId != null) {
+      const recorded = getRecordedDeliveryClassification(intent.blockReason);
+      await prisma.$transaction(async (tx) => {
+        await tx.orderIntent.updateMany({
+          where: { id: intent.id, status: 'submitting' },
+          data: {
+            blockReason:
+              intent.blockReason ??
+              'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:acceptance broker lookup found no order',
+          },
+        });
+        await tx.liveEntryAcceptanceRun.updateMany({
+          where: {
+            id: intent.liveEntryAcceptanceRunId!,
+            terminalAt: null,
+            executionClaimedAt: { not: null },
+          },
+          data: {
+            executionUncertainAt: new Date(),
+            executionFailureJson: {
+              classification: recorded ?? 'DELIVERY_UNCERTAIN',
+              source: 'stale_submitting_recovery',
+              orderIntentId: intent.id,
+              clientOrderId: intent.clientOrderId,
+              brokerLookup: 'NOT_FOUND_OR_UNRESOLVED',
+            },
+          },
+        });
+      });
+      await createSystemEvent({
+        type: 'live_entry_acceptance.execution_action_required',
+        entityType: 'LiveEntryAcceptanceRun',
+        entityId: intent.liveEntryAcceptanceRunId,
+        tradingAccountId,
+        payloadJson: {
+          orderIntentId: intent.id,
+          clientOrderId: intent.clientOrderId,
+          recovery: 'acceptance_entry_not_requeued',
+          deliveryClassification: recorded ?? 'DELIVERY_UNCERTAIN',
+        } as Prisma.InputJsonValue,
+      });
+      retained += 1;
       continue;
     }
 
@@ -526,14 +572,43 @@ export async function processPendingOrdersForAccount(
       logger.trace({ orderIntentId: intent.id }, 'Order intent submitted.');
       submitted += 1;
     } catch (error) {
-      await prisma.orderIntent.update({
-        where: { id: intent.id },
-        data: {
-          status: 'failed',
-          blockReason:
-            error instanceof Error ? error.message : 'Unknown worker error.',
-        },
-      });
+      const classification = getBrokerWriteDeliveryClassification(error);
+      const message = error instanceof Error ? error.message : 'Unknown worker error.';
+      const blockReason = classification
+        ? `BROKER_WRITE_DELIVERY:${classification}:${message}`
+        : message;
+      if (intent.liveEntryAcceptanceRunId != null) {
+        await prisma.$transaction(async (tx) => {
+          await tx.orderIntent.update({
+            where: { id: intent.id },
+            data: {
+              status: classification === 'DELIVERY_UNCERTAIN' ? 'submitting' :
+                classification === 'NOT_SENT_BLOCKED' ? 'blocked' : 'failed',
+              blockReason,
+            },
+          });
+          await tx.liveEntryAcceptanceRun.updateMany({
+            where: { id: intent.liveEntryAcceptanceRunId!, terminalAt: null },
+            data: {
+              ...(classification === 'DELIVERY_UNCERTAIN'
+                ? { executionUncertainAt: new Date() }
+                : {}),
+              executionFailureJson: {
+                classification: classification ?? 'LOCAL_FAILURE',
+                source: 'pending_order_submission',
+                orderIntentId: intent.id,
+                clientOrderId: intent.clientOrderId,
+                message,
+              },
+            },
+          });
+        });
+      } else {
+        await prisma.orderIntent.update({
+          where: { id: intent.id },
+          data: { status: 'failed', blockReason },
+        });
+      }
 
       logger.trace({ orderIntentId: intent.id, error },
         'Order intent broker submission failed before account health persistence.');

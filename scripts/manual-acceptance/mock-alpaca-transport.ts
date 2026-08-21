@@ -16,6 +16,55 @@ const MASSIVE_RSP_PRICE_AT = Date.parse('2026-08-18T17:00:00.000Z');
 const MARKET_TIME_ZONE = 'America/New_York';
 const requests: MockRequest[] = [];
 let nextOrderId = 1;
+let submittedOrder: Record<string, unknown> | null = null;
+
+function filledOrder() {
+  if (!submittedOrder) return null;
+  return {
+    ...submittedOrder,
+    status: 'filled',
+    filled_qty: submittedOrder.qty,
+    filled_avg_price: String(MASSIVE_RSP_PRICE),
+    filled_at: submittedOrder.submitted_at,
+  };
+}
+
+function filledPosition() {
+  if (!submittedOrder) return null;
+  const qty = String(submittedOrder.qty);
+  const notional = Number(qty) * MASSIVE_RSP_PRICE;
+  return {
+    asset_id: 'manual-acceptance-rsp-asset',
+    symbol: 'RSP',
+    qty,
+    avg_entry_price: String(MASSIVE_RSP_PRICE),
+    market_value: String(notional),
+    cost_basis: String(notional),
+    unrealized_pl: '0',
+    unrealized_plpc: '0',
+    current_price: String(MASSIVE_RSP_PRICE),
+    side: 'long',
+  };
+}
+
+function fillActivity() {
+  if (!submittedOrder) return null;
+  const qty = String(submittedOrder.qty);
+  return {
+    id: `fill-${String(submittedOrder.id)}`,
+    activity_type: 'FILL',
+    type: 'fill',
+    symbol: 'RSP',
+    side: 'buy',
+    qty,
+    cum_qty: qty,
+    leaves_qty: '0',
+    price: String(MASSIVE_RSP_PRICE),
+    net_amount: String(-(Number(qty) * MASSIVE_RSP_PRICE)),
+    order_id: submittedOrder.id,
+    transaction_time: submittedOrder.submitted_at,
+  };
+}
 
 function marketDateParts(now: Date) {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -116,6 +165,9 @@ export function installMockAlpacaTransport() {
   if (process.env.MANUAL_ACCEPTANCE_HARNESS !== MANUAL_ACCEPTANCE_SENTINEL) {
     throw new Error('Manual acceptance transport requires the explicit harness sentinel.');
   }
+  requests.length = 0;
+  nextOrderId = 1;
+  submittedOrder = null;
 
   globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
     const rawUrl = input instanceof Request ? input.url : String(input);
@@ -147,13 +199,26 @@ export function installMockAlpacaTransport() {
     }
 
     if (url.pathname === '/v2/account') return json(account());
-    if (url.pathname === '/v2/positions') return json([]);
+    if (url.pathname === '/v2/positions') {
+      const position = filledPosition();
+      return json(position ? [position] : []);
+    }
     if (url.pathname === '/v2/orders' && method === 'GET') return json([]);
-    if (url.pathname.startsWith('/v2/orders:by_client_order_id') && method === 'GET') return json({ message: 'not found' }, 404);
-    if (url.pathname.startsWith('/v2/orders/') && method === 'GET') return json({ message: 'not found' }, 404);
+    if (url.pathname.startsWith('/v2/orders:by_client_order_id') && method === 'GET') {
+      const order = filledOrder();
+      return order && url.searchParams.get('client_order_id') === order.client_order_id
+        ? json(order)
+        : json({ message: 'not found' }, 404);
+    }
+    if (url.pathname.startsWith('/v2/orders/') && method === 'GET') {
+      const order = filledOrder();
+      return order && url.pathname === `/v2/orders/${String(order.id)}`
+        ? json(order)
+        : json({ message: 'not found' }, 404);
+    }
     if (url.pathname === '/v2/orders' && method === 'POST') {
       const order = body as Record<string, unknown>;
-      return json({
+      submittedOrder = {
         id: `mock-order-${nextOrderId++}`,
         client_order_id: order.client_order_id,
         symbol: order.symbol,
@@ -165,7 +230,8 @@ export function installMockAlpacaTransport() {
         status: 'accepted',
         created_at: new Date().toISOString(),
         submitted_at: new Date().toISOString(),
-      });
+      };
+      return json(submittedOrder);
     }
     if (url.pathname === '/v2/calendar') {
       const day = url.searchParams.get('start') ?? marketDateParts(new Date());
@@ -174,7 +240,10 @@ export function installMockAlpacaTransport() {
     if (url.pathname === '/v2/clock') {
       return json(marketClock());
     }
-    if (url.pathname.startsWith('/v2/account/activities')) return json([]);
+    if (url.pathname.startsWith('/v2/account/activities')) {
+      const activity = fillActivity();
+      return json(activity ? [activity] : []);
+    }
 
     throw new Error(`Manual acceptance Alpaca mock has no route for ${method} ${url.pathname}${url.search}`);
   };
@@ -185,6 +254,7 @@ export function mockAlpacaState() {
     totalRequests: requests.length,
     getCount: requests.filter((item) => item.method === 'GET').length,
     postCount: requests.filter((item) => ALPACA_HOSTS.has(item.host) && item.method === 'POST').length,
+    submittedOrder: filledOrder(),
     recentRequests: requests.slice(-50),
   };
 }

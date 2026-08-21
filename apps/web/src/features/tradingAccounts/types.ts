@@ -197,12 +197,125 @@ export type TradingAccountReadinessHistoryResponse = {
   assessments: TradingAccountReadinessAssessment[];
 };
 
+export type LiveEntryAcceptancePhase =
+  | 'SETUP' | 'AUTHORIZATION' | 'READINESS' | 'ARMING'
+  | 'EXECUTION' | 'VERIFICATION' | 'COMPLETION' | 'ACTION_REQUIRED';
+
+export type LiveEntryAcceptanceProjection = {
+  phase: LiveEntryAcceptancePhase;
+  unresolved: boolean;
+  run: {
+    id: number;
+    tradingAccountId: number;
+    tradingAccountSubscriptionId: number;
+    subscriptionId: number;
+    securityId: number;
+    reason: string;
+    previewRevision: number;
+    previewFingerprint: string | null;
+    previewJson: null | {
+      environment: 'LIVE';
+      order: {
+        symbol: string;
+        side: 'buy';
+        qty: number;
+        orderType: string;
+        timeInForce: string;
+        referencePrice: number | null;
+        referencePriceAt: string | null;
+        referencePriceSource: string;
+        estimatedNotional: number | null;
+      };
+      arming: { id: number; expiresAt: string };
+    };
+    executionClaimedAt: string | null;
+    executionUncertainAt: string | null;
+    executionFailureJson: Record<string, unknown> | null;
+    terminalOutcome: 'CANARY_COMPLETE' | 'FAILED_SAFE' | 'OPERATOR_ABORTED' | null;
+    terminalReason: string | null;
+    terminalEvidenceJson: Record<string, unknown> | null;
+    terminalAt: string | null;
+    tradingAccount: {
+      id: number;
+      displayName: string;
+      environment: TradingAccountEnvironment;
+      status: TradingAccountStatus;
+      tradingEnabled: boolean;
+      killSwitchEnabled: boolean;
+      activeLiveEntryArmingId: number | null;
+    };
+    tradingAccountSubscription: {
+      id: number;
+      subscriptionId: number;
+      enabled: boolean;
+      entriesEnabled: boolean;
+      exitsEnabled: boolean;
+      subscription: { key: string };
+    };
+    liveEntryArming: null | {
+      id: number;
+      entryApprovalExpiresAt: string;
+      terminations: Array<{
+        id: number;
+        type: string;
+        reason: string;
+        orderIntentId: number | null;
+        clientOrderId: string | null;
+        occurredAt: string;
+      }>;
+    };
+    orderIntent: null | {
+      id: number;
+      status: string;
+      clientOrderId: string | null;
+      brokerOrders: Array<{
+        id: number;
+        brokerOrderId: string;
+        clientOrderId: string;
+        status: string;
+      }>;
+      brokerActivities: Array<{
+        id: number;
+        activityId: string;
+        activityType: string;
+        qty: number | null;
+        cumQty: number | null;
+        price: number | null;
+        orderId: string | null;
+        transactionTime: string | null;
+      }>;
+      trackedPosition: null | {
+        id: number;
+        status: string;
+        qty: number;
+        avgEntryPrice: number;
+        subscriptionId: number | null;
+        tradingAccountSubscriptionId: number | null;
+        exitState: null | {
+          status: string;
+          attentionRequired: boolean;
+          attentionCode: string | null;
+        };
+      };
+    };
+  };
+  setup: { ready: boolean; accountActive: boolean; assignmentMatches: boolean; canaryStaged: boolean };
+  authorization: { ready: boolean };
+  readiness: { ready: boolean };
+  execution: { claimed: boolean; uncertain: boolean; previewFrozen: boolean };
+};
+
+export type CurrentLiveEntryAcceptanceResponse = {
+  run: LiveEntryAcceptanceProjection | null;
+};
+
 export type LiveWriteCapability = 'RISK_REDUCING' | 'ENTRY';
 export type LiveWriteApprovalStateResponse = {
   tradingAccountId: number;
   environment: TradingAccountEnvironment;
   deploymentRole: 'OBSERVATION_ONLY' | 'PRODUCTION_EXECUTOR';
   deploymentCanWrite: boolean;
+  manualAcceptanceHarness: boolean;
   capabilities: Array<{
     capability: LiveWriteCapability;
     effective: boolean;

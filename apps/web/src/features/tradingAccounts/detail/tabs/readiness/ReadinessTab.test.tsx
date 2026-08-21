@@ -12,7 +12,12 @@ vi.mock('../../../hooks', () => ({
   useRunTradingAccountReadiness: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
 }));
 vi.mock('./LiveAccountActivationCard', () => ({ LiveAccountActivationCard: () => null }));
-vi.mock('./LiveEntryArmingCard', () => ({ LiveEntryArmingCard: () => <div>Live Entry Authority</div> }));
+vi.mock('./LiveEntryArmingCard', () => ({
+  LiveEntryArmingCard: () => <div>
+    <div>Live Entry Authority</div>
+    <div data-testid="live-entry-acceptance-workflow">Live Entry Acceptance</div>
+  </div>,
+}));
 vi.mock('./LiveWriteAuthorizationCard', () => ({ LiveWriteAuthorizationCard: () => null }));
 
 import { AssessmentDetails, ReadinessTab } from './ReadinessTab';
@@ -75,5 +80,16 @@ describe('Readiness presentation', () => {
     render(<MantineProvider><ReadinessTab account={account} token="token" /></MantineProvider>);
     expect(screen.getByText('Current posture')).toBeTruthy();
     expect(screen.getByText('Live Entry Authority')).toBeTruthy();
+  });
+
+  it.each(['PAUSED', 'ACTIVE'] as const)('shows the Live acceptance workflow host for a %s Live account', (status) => {
+    render(<MantineProvider><ReadinessTab account={{ ...account, status }} token="token" /></MantineProvider>);
+    expect(screen.getByTestId('live-entry-acceptance-workflow')).toBeTruthy();
+  });
+
+  it('does not show the Live acceptance workflow host for a Paper account', () => {
+    render(<MantineProvider><ReadinessTab account={{ ...account, environment: 'PAPER' }} token="token" /></MantineProvider>);
+    expect(screen.queryByTestId('live-entry-acceptance-workflow')).toBeNull();
+    expect(screen.getByText(/apply only to LIVE Trading Accounts/)).toBeTruthy();
   });
 });

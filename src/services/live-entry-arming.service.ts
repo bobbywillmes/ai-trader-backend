@@ -61,6 +61,14 @@ export function evaluateLiveEntryArmingBinding(args: {
   return { valid: true as const };
 }
 
+export function acceptanceRunBindingMatches(args: {
+  armingAcceptanceRunId: number | null;
+  intentAcceptanceRunId: number | null;
+}) {
+  return args.armingAcceptanceRunId === null ||
+    args.intentAcceptanceRunId === args.armingAcceptanceRunId;
+}
+
 function policyFingerprint() {
   return import('./trading-account-readiness.service.js').then(({ readinessFingerprint }) =>
     readinessFingerprint({
@@ -204,6 +212,7 @@ export type ArmLiveEntriesInput = {
   tradingAccountSubscriptionId: number;
   entryApprovalId: number;
   entryApprovalRevision: number;
+  liveEntryAcceptanceRunId?: number | undefined;
   expectedUpdatedAt: Date;
 };
 
@@ -227,6 +236,35 @@ async function armInsideTransaction(tx: Prisma.TransactionClient, tradingAccount
   if (!account) throw new HttpError(404, 'Trading account not found.');
   if (account.environment !== 'LIVE' || account.status !== 'ACTIVE' || account.tradingEnabled || !account.killSwitchEnabled || account.activeLiveEntryArmingId) throw new HttpError(409, 'ARM requires exact ACTIVE / entry-disarmed posture with no active binding.');
   if (account.updatedAt.getTime() !== input.expectedUpdatedAt.getTime()) throw new HttpError(409, 'Trading Account changed; refresh and retry ARM.');
+  const acceptanceRun = await tx.liveEntryAcceptanceRun.findFirst({
+    where: { tradingAccountId, terminalAt: null },
+    select: {
+      id: true,
+      tradingAccountSubscriptionId: true,
+      executionClaimedAt: true,
+      executionUncertainAt: true,
+      liveEntryArming: { select: { id: true } },
+      orderIntent: { select: { id: true } },
+    },
+  });
+  if (acceptanceRun?.executionUncertainAt) {
+    throw new HttpError(
+      409,
+      `Live entry arming is blocked while acceptance run ${acceptanceRun.id} requires execution resolution.`,
+    );
+  }
+  if (acceptanceRun && input.liveEntryAcceptanceRunId !== acceptanceRun.id) {
+    throw new HttpError(
+      409,
+      `The active acceptance run ${acceptanceRun.id} must explicitly own this arming.`,
+    );
+  }
+  if (!acceptanceRun && input.liveEntryAcceptanceRunId !== undefined) {
+    throw new HttpError(409, 'The requested Live-entry acceptance run is not active.');
+  }
+  if (acceptanceRun && (acceptanceRun.executionClaimedAt || acceptanceRun.orderIntent || acceptanceRun.liveEntryArming)) {
+    throw new HttpError(409, 'The active acceptance run cannot create another Live-entry arming.');
+  }
   const assessment = await tx.tradingAccountReadinessAssessment.findFirst({ where: {
     id: input.readinessAssessmentId, tradingAccountId, purpose: TradingAccountReadinessPurpose.LIVE_ENTRY_ARMING,
   }});
@@ -242,6 +280,9 @@ async function armInsideTransaction(tx: Prisma.TransactionClient, tradingAccount
   const assignment = account.accountSubscriptions.find((item) => item.id === input.tradingAccountSubscriptionId);
   const enabledEntries = account.accountSubscriptions.filter((item) => item.enabled && item.entriesEnabled);
   if (!assignment || enabledEntries.length !== 1 || enabledEntries[0]?.id !== assignment.id || assignment.subscription.key !== 'rsp_dip_core' || assignment.subscription.security.symbol !== 'RSP' || !assignment.exitsEnabled) throw new HttpError(409, 'The exact sole staged rsp_dip_core assignment is required.');
+  if (acceptanceRun && acceptanceRun.tradingAccountSubscriptionId !== assignment.id) {
+    throw new HttpError(409, 'The acceptance run is not bound to the staged assignment.');
+  }
   const [positions, intents, orders] = await Promise.all([
     tx.trackedPosition.count({ where: { tradingAccountId, status: { in: ['open', 'closing'] } } }),
     tx.orderIntent.count({ where: { tradingAccountId, side: 'buy', status: { in: [...NONTERMINAL_INTENT_STATUSES] } } }),
@@ -262,6 +303,7 @@ async function armInsideTransaction(tx: Prisma.TransactionClient, tradingAccount
     entryApprovalExpiresAt: entry.approval.expiresAt,
     accountUpdatedAtEvidence: account.updatedAt, armedByUserId: actorUserId,
     reason: input.reason, typedConfirmation: input.typedConfirmation,
+    liveEntryAcceptanceRunId: acceptanceRun?.id ?? null,
   }});
   await tx.tradingAccount.update({ where: { id: tradingAccountId }, data: {
     status: TradingAccountStatus.ACTIVE, tradingEnabled: true, killSwitchEnabled: false,
@@ -270,7 +312,7 @@ async function armInsideTransaction(tx: Prisma.TransactionClient, tradingAccount
   await tx.systemEvent.create({ data: {
     type: 'trading_account.live_entries_armed', entityType: 'LiveEntryArming', entityId: String(arming.id), tradingAccountId, actorUserId,
     message: `Trading account ${tradingAccountId} armed one-shot Live entries for rsp_dip_core.`,
-    payloadJson: { armingId: arming.id, readinessAssessmentId: assessment.id, entryApprovalId: entry.approval.id, entryApprovalRevision: entry.approval.revision, riskReducingApprovalId: risk.approval.id, riskReducingApprovalRevision: risk.approval.revision, tradingAccountSubscriptionId: assignment.id, entryApprovalExpiresAt: entry.approval.expiresAt, fingerprintPrefixes: { configuration: fingerprints.configurationFingerprint.slice(0, 12), credential: fingerprints.credentialFingerprint.slice(0, 12), policy: assessment.policyFingerprint.slice(0, 12) } },
+    payloadJson: { armingId: arming.id, liveEntryAcceptanceRunId: acceptanceRun?.id ?? null, readinessAssessmentId: assessment.id, entryApprovalId: entry.approval.id, entryApprovalRevision: entry.approval.revision, riskReducingApprovalId: risk.approval.id, riskReducingApprovalRevision: risk.approval.revision, tradingAccountSubscriptionId: assignment.id, entryApprovalExpiresAt: entry.approval.expiresAt, fingerprintPrefixes: { configuration: fingerprints.configurationFingerprint.slice(0, 12), credential: fingerprints.credentialFingerprint.slice(0, 12), policy: assessment.policyFingerprint.slice(0, 12) } },
   }});
   return arming;
 }
@@ -357,6 +399,15 @@ export async function authorizeAndConsumeNewPositionEntry(tradingAccountId: numb
     if (!authority.valid) throw new HttpError(403, `LIVE NEW_POSITION_ENTRY blocked: ${authority.reason}.`);
     const intent = await tx.orderIntent.findFirst({ where: { id: context.orderIntentId, tradingAccountId, tradingAccountSubscriptionId: context.tradingAccountSubscriptionId, subscriptionId: context.subscriptionId, status: 'submitting', side: 'buy', clientOrderId: context.clientOrderId } });
     if (!intent) throw new HttpError(403, 'LIVE NEW_POSITION_ENTRY blocked: intent identity or state mismatch.');
+    if (!acceptanceRunBindingMatches({
+      armingAcceptanceRunId: authority.arming.liveEntryAcceptanceRunId,
+      intentAcceptanceRunId: intent.liveEntryAcceptanceRunId,
+    })) {
+      throw new HttpError(
+        403,
+        'LIVE NEW_POSITION_ENTRY blocked: acceptance run intent and arming binding mismatch.',
+      );
+    }
     const assignment = await tx.tradingAccountSubscription.findFirst({ where: { id: context.tradingAccountSubscriptionId, tradingAccountId }, include: { subscription: { include: { security: true } } } });
     if (!assignment || !assignment.enabled || !assignment.entriesEnabled || assignment.subscriptionId !== context.subscriptionId || assignment.subscription.security.symbol !== context.symbol || assignment.id !== authority.arming.tradingAccountSubscriptionId || assignment.subscriptionId !== authority.arming.subscriptionId || assignment.subscription.securityId !== authority.arming.securityId) throw new HttpError(403, 'LIVE NEW_POSITION_ENTRY blocked: assignment is not the exact armed canary.');
     await terminateArming(tx, { armingId: authority.arming.id, type: LiveEntryArmingTerminationType.CONSUMED, reason: 'One-shot authority consumed before outbound broker submission attempt.', orderIntentId: intent.id, clientOrderId: context.clientOrderId, evidence: { tradingAccountSubscriptionId: assignment.id, subscriptionId: assignment.subscriptionId, securityId: assignment.subscription.securityId, symbol: context.symbol } });

@@ -5,6 +5,10 @@ import { MANUAL_ACCEPTANCE_ENTRYPOINT } from '../../src/services/manual-acceptan
 import { buildManualAcceptanceState } from './state.js';
 import { clearSyntheticAcceptanceMarketClockCache } from './startup-cache.js';
 import { enforceManualAcceptanceRuntimeSettings } from './startup-runtime-settings.js';
+import {
+  applyManualAcceptanceProfile,
+  parseManualAcceptanceProfile,
+} from './profile.js';
 
 const databaseUrl = process.env.DATABASE_URL ?? '';
 if (new URL(databaseUrl).pathname !== '/ai_trader_live_entry_acceptance') {
@@ -13,6 +17,8 @@ if (new URL(databaseUrl).pathname !== '/ai_trader_live_entry_acceptance') {
 if (process.env.NODE_ENV !== 'production') {
   throw new Error('Manual acceptance server requires NODE_ENV=production for the real PRODUCTION_EXECUTOR policy gate.');
 }
+const profile = parseManualAcceptanceProfile(process.argv[2]);
+const profilePolicy = applyManualAcceptanceProfile(profile);
 
 installMockAlpacaTransport();
 process.env.MANUAL_ACCEPTANCE_ENTRYPOINT = MANUAL_ACCEPTANCE_ENTRYPOINT;
@@ -31,6 +37,7 @@ await enforceManualAcceptanceRuntimeSettings(prisma, {
     .filter(Boolean),
 });
 await clearSyntheticAcceptanceMarketClockCache(prisma);
+console.log(JSON.stringify({ manualAcceptanceProfile: profilePolicy }, null, 2));
 const { processEntryForAccountSubscription } = await import('../../src/services/signal-entry.service.js');
 const { processPendingOrders } = await import('../../src/workers/order.worker.js');
 const { getLiveWriteApprovalState } = await import('../../src/services/live-write-approval.service.js');

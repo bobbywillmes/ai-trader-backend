@@ -29,6 +29,42 @@ describe('manual acceptance Alpaca transport boundary', () => {
     await expect(response.json()).resolves.toMatchObject({ id: 'manual-acceptance-live-account' });
   });
 
+  it('materializes one deterministic fill and broker position after the sole order POST', async () => {
+    const orderResponse = await fetch('https://api.alpaca.markets/v2/orders', {
+      method: 'POST',
+      body: JSON.stringify({
+        client_order_id: 'ai-accept-run9-rev1',
+        symbol: 'RSP',
+        side: 'buy',
+        type: 'market',
+        time_in_force: 'day',
+        qty: '4',
+      }),
+    });
+    const order = await orderResponse.json() as { id: string };
+    const activities = await fetch('https://api.alpaca.markets/v2/account/activities/FILL');
+    const positions = await fetch('https://api.alpaca.markets/v2/positions');
+    const lookup = await fetch(`https://api.alpaca.markets/v2/orders/${order.id}`);
+
+    await expect(activities.json()).resolves.toEqual([
+      expect.objectContaining({
+        activity_type: 'FILL',
+        order_id: order.id,
+        symbol: 'RSP',
+        qty: '4',
+        cum_qty: '4',
+        leaves_qty: '0',
+      }),
+    ]);
+    await expect(positions.json()).resolves.toEqual([
+      expect.objectContaining({ symbol: 'RSP', qty: '4', side: 'long' }),
+    ]);
+    await expect(lookup.json()).resolves.toEqual(
+      expect.objectContaining({ id: order.id, status: 'filled', filled_qty: '4' }),
+    );
+    expect(mockAlpacaState().postCount).toBe(1);
+  });
+
   it.each([
     'https://api.massive.com/v2/snapshot/locale/us/markets/stocks/tickers/RSP',
     'https://api.massive.com/v2/snapshot/locale/us/markets/stocks/tickers/RSP?_=1787072400000',
