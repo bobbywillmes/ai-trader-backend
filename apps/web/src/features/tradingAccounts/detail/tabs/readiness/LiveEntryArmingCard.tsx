@@ -9,7 +9,6 @@ import {
   useTradingAccountSubscriptions,
 } from '../../../hooks';
 import type { TradingAccount, TradingAccountReadinessAssessment } from '../../../types';
-import { LiveEntrySetupProgress } from './LiveEntrySetupProgress';
 import { deriveLiveEntrySetupState } from './liveEntrySetupState';
 import { LiveEntryAcceptanceWorkflow } from './LiveEntryAcceptanceWorkflow';
 
@@ -32,9 +31,16 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
   const preview = assessment?.evidence.selectedCanary;
   const armed = Boolean(account.activeLiveEntryArmingId && account.tradingEnabled && !account.killSwitchEnabled);
   const staged = Boolean(rsp?.entriesEnabled && !armed);
-  const posture = armed ? 'ACTIVE · ENTRIES ARMED' : staged ? 'ACTIVE · ENTRY STAGED' : 'ACTIVE · ENTRY DISARMED';
+  const posture = armed ? `${account.status} · ENTRIES ARMED` : staged ? `${account.status} · ENTRY STAGED` : `${account.status} · ENTRY DISARMED`;
   const workflow = deriveLiveEntrySetupState({ account, assessment, canaryPresent: Boolean(rsp), canaryStaged: staged || armed, riskApproval: risk ?? null, entryApproval: entry ?? null });
   const canArm = Boolean(workflow.readyToArm && rsp);
+  const canStage = Boolean(
+    rsp &&
+    account.status === 'ACTIVE' &&
+    !account.tradingEnabled &&
+    account.killSwitchEnabled &&
+    !armed,
+  );
 
   const armDisabledMessage = !canArm
     ? `Next step: ${workflow.nextAction}`
@@ -47,8 +53,13 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
           : null;
 
   return <Stack gap="md">
-    <LiveEntryAcceptanceWorkflow account={account} assignment={rsp} token={token} />
-    <LiveEntrySetupProgress account={account} assessment={assessment} canaryPresent={Boolean(rsp)} canaryStaged={staged || armed} riskApproval={risk ?? null} entryApproval={entry ?? null} />
+    <LiveEntryAcceptanceWorkflow
+      account={account}
+      assignment={rsp}
+      token={token}
+      prerequisiteState={workflow}
+      deploymentRole={approvals.data?.deploymentRole}
+    />
     <Card withBorder>
     <Group justify="space-between"><Title order={3}>Live entry authority</Title><Badge color={armed ? 'red' : staged ? 'yellow' : 'gray'}>{posture}</Badge></Group>
     <Stack gap="sm" mt="md">
@@ -62,7 +73,7 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
       </Alert>}
       <TextInput label="Operator reason" value={reason} onChange={(event) => setReason(event.currentTarget.value)} />
       <Group>
-        <Button variant="default" disabled={!rsp || !reason || stage.isPending || armed} onClick={() => rsp && stage.mutate({ tradingAccountSubscriptionId: rsp.id, reason })}>Stage RSP canary</Button>
+        <Button variant="default" disabled={!canStage || !reason || stage.isPending} onClick={() => rsp && stage.mutate({ tradingAccountSubscriptionId: rsp.id, reason })}>Stage RSP canary</Button>
         <Button color="red" variant="outline" disabled={!reason || disarm.isPending} onClick={() => disarm.mutate({ reason })}>DISARM LIVE ENTRIES</Button>
       </Group>
       <Alert color="red" title="Real-money authorization">

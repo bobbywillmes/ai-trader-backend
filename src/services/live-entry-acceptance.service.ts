@@ -174,10 +174,15 @@ export async function projectLiveEntryAcceptanceRun(run: AcceptanceRunEvidence) 
     run.tradingAccountSubscription.tradingAccountId === run.tradingAccountId &&
     run.tradingAccountSubscription.subscriptionId === run.subscriptionId &&
     run.tradingAccountSubscription.subscription.securityId === run.securityId;
+  const canaryStaged =
+    run.tradingAccountSubscription.enabled &&
+    run.tradingAccountSubscription.entriesEnabled &&
+    run.tradingAccountSubscription.exitsEnabled;
   const setupReady =
     run.tradingAccount.environment === 'LIVE' &&
     run.tradingAccount.status === 'ACTIVE' &&
-    assignmentMatches;
+    assignmentMatches &&
+    canaryStaged;
   const phase = deriveLiveEntryAcceptancePhase({
     terminalOutcome: run.terminalOutcome,
     terminalAt: run.terminalAt,
@@ -199,6 +204,7 @@ export async function projectLiveEntryAcceptanceRun(run: AcceptanceRunEvidence) 
       ready: setupReady,
       accountActive: run.tradingAccount.status === 'ACTIVE',
       assignmentMatches,
+      canaryStaged,
     },
     authorization: {
       ready: prerequisites.authorizationReady,

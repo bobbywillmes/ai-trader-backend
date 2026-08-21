@@ -1,4 +1,4 @@
-import { Alert, Badge, Button, Card, Group, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
+import { Alert, Badge, Button, Card, Group, List, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useState } from 'react';
 
 import {
@@ -10,13 +10,22 @@ import {
   useVerifyLiveEntryAcceptance,
 } from '../../../hooks';
 import type { TradingAccount, TradingAccountSubscription } from '../../../types';
+import type { deriveLiveEntrySetupState } from './liveEntrySetupState';
 
 const steps = ['SETUP', 'AUTHORIZATION', 'READINESS', 'ARMING', 'EXECUTION', 'VERIFICATION', 'COMPLETION'] as const;
 
-export function LiveEntryAcceptanceWorkflow({ account, assignment, token }: {
+export function LiveEntryAcceptanceWorkflow({
+  account,
+  assignment,
+  token,
+  prerequisiteState,
+  deploymentRole,
+}: {
   account: TradingAccount;
   assignment: TradingAccountSubscription | undefined;
   token: string | null;
+  prerequisiteState?: ReturnType<typeof deriveLiveEntrySetupState>;
+  deploymentRole?: 'OBSERVATION_ONLY' | 'PRODUCTION_EXECUTOR';
 }) {
   const current = useCurrentLiveEntryAcceptance(account.id, token);
   const projection = current.data?.run ?? null;
@@ -43,6 +52,7 @@ export function LiveEntryAcceptanceWorkflow({ account, assignment, token }: {
     ? steps.indexOf(projection.phase as (typeof steps)[number])
     : -1;
   const error = create.error ?? preview.error ?? execute.error ?? verify.error ?? abort.error;
+  const observationOnly = deploymentRole === 'OBSERVATION_ONLY';
 
   return <Card withBorder data-testid="live-entry-acceptance-workflow">
     <Group justify="space-between" align="flex-start">
@@ -63,6 +73,37 @@ export function LiveEntryAcceptanceWorkflow({ account, assignment, token }: {
         </Badge>
       </Card>)}
     </SimpleGrid>
+
+    {run && prerequisiteState && !run.executionClaimedAt && !run.terminalAt && (
+      <Card withBorder mt="md" data-testid="acceptance-current-guidance">
+        <Title order={4}>Current ceremony guidance</Title>
+        <Text size="sm" c="dimmed">
+          The acceptance phase is authoritative. These checks explain the evidence and controls required to advance it.
+        </Text>
+        {observationOnly ? (
+          <Alert color="blue" title="Observation-only deployment" mt="sm">
+            This deployment cannot grant Live authorization, activate the Live account, arm entries, or submit the canary. No hidden button or manual backend action is required here. Run the interactive broker-isolated portion through the repository&apos;s manual-acceptance harness.
+          </Alert>
+        ) : (
+          <Alert color="blue" title={`Next operator action · ${projection?.phase ?? 'SETUP'}`} mt="sm">
+            {prerequisiteState.nextAction}
+          </Alert>
+        )}
+        <Title order={5} mt="md">Supporting prerequisite evidence</Title>
+        <List spacing="xs" mt="xs">
+          {prerequisiteState.milestones.map((milestone) => (
+            <List.Item
+              key={milestone.key}
+              icon={<Badge size="xs" color={milestone.status === 'DONE' ? 'green' : milestone.status === 'NEXT' ? 'blue' : 'gray'}>
+                {milestone.status === 'DONE' ? 'SATISFIED' : milestone.status === 'NEXT' ? 'CURRENT BLOCKER' : 'NOT YET'}
+              </Badge>}
+            >
+              <Text size="sm">{milestone.label}</Text>
+            </List.Item>
+          ))}
+        </List>
+      </Card>
+    )}
 
     {!run && <Stack mt="md" gap="sm">
       <Alert color="blue">Create one durable ceremony for the selected Live account and canary assignment.</Alert>
@@ -123,4 +164,3 @@ export function LiveEntryAcceptanceWorkflow({ account, assignment, token }: {
     {error && <Alert color="red" mt="md">{error.message}</Alert>}
   </Card>;
 }
-

@@ -98,6 +98,9 @@ function run(status: 'ACTIVE' | 'PAUSED') {
     },
     tradingAccountSubscription: {
       ...assignment(status),
+      enabled: true,
+      entriesEnabled: false,
+      exitsEnabled: true,
       subscription: {
         id: 3,
         key: 'rsp_dip_core',
@@ -134,6 +137,7 @@ describe('Live-entry acceptance run creation posture', () => {
       ready: false,
       accountActive: false,
       assignmentMatches: true,
+      canaryStaged: false,
     });
     expect(mocks.runCreate).toHaveBeenCalledTimes(1);
     expect(mocks.validateActiveLiveEntryArming).not.toHaveBeenCalled();
@@ -147,8 +151,9 @@ describe('Live-entry acceptance run creation posture', () => {
 
     const projection = await createLiveEntryAcceptanceRun(createArgs);
 
-    expect(projection.phase).toBe('AUTHORIZATION');
+    expect(projection.phase).toBe('SETUP');
     expect(projection.setup.accountActive).toBe(true);
+    expect(projection.setup.canaryStaged).toBe(false);
   });
 
   it('rejects Paper and nonparticipating Live account states', async () => {

@@ -38,12 +38,12 @@ describe('LiveEntryArmingCard requirements', () => {
     render(<MantineProvider><LiveEntryArmingCard account={pausedAccount} assessment={assessment} token="token" /></MantineProvider>);
 
     expect(screen.getByText('Acceptance workflow')).toBeTruthy();
-    expect(screen.getByTestId('live-entry-next-action').textContent).toBe(
-      'Next step: Activate the Live account with entries disarmed.',
-    );
+    expect(screen.queryByText('Live Entry Setup Progress')).toBeNull();
+    expect(screen.getByText('PAUSED · ENTRY STAGED')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Stage RSP canary' }).hasAttribute('disabled')).toBe(true);
     expect(screen.getByRole('button', { name: 'ARM LIVE ENTRIES' }).hasAttribute('disabled')).toBe(true);
     expect(screen.getByTestId('arm-disabled-guidance').textContent).toContain(
-      'Activate the Live account with entries disarmed.',
+      'Run a fresh Live Activation assessment with RISK_REDUCING authorization effective.',
     );
   });
 });

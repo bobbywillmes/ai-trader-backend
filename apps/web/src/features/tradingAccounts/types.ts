@@ -254,7 +254,7 @@ export type LiveEntryAcceptanceProjection = {
       };
     };
   };
-  setup: { ready: boolean; accountActive: boolean; assignmentMatches: boolean };
+  setup: { ready: boolean; accountActive: boolean; assignmentMatches: boolean; canaryStaged: boolean };
   authorization: { ready: boolean };
   readiness: { ready: boolean };
   execution: { claimed: boolean; uncertain: boolean; previewFrozen: boolean };

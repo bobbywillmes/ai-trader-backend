@@ -121,10 +121,22 @@ export function deriveLiveEntrySetupState({ account, assessment, canaryPresent, 
     !account.tradingEnabled && account.killSwitchEnabled && canaryPresent && !canaryStaged,
   );
   const cleanupRequired = consumedHistorically && !safelyDisarmedAfterConsumption;
+  const activationAssessmentCurrent = Boolean(
+    assessment?.purpose === 'LIVE_ACTIVATION' && assessment.validity === 'CURRENT',
+  );
+  const activationAssessmentPassed = Boolean(
+    activationAssessmentCurrent && assessment?.result === 'PASSED',
+  );
   const next = safelyDisarmedAfterConsumption
     ? { key: 'complete', action: 'Acceptance canary completed successfully. One-shot authority was consumed and the account is safely disarmed.' }
     : cleanupRequired ? { key: 'cleanup', action: 'DISARM and restore the account, arming binding, and canary assignment to the safe posture.' }
       : armed ? { key: 'consume', action: 'Execute the one-shot RSP canary.' }
+      : account.status === 'PAUSED' && !riskEffective && !activationAssessmentCurrent
+        ? { key: 'activation-readiness', action: 'Run a fresh Live Activation assessment to establish current RISK_REDUCING authorization evidence.' }
+      : account.status === 'PAUSED' && !riskEffective
+        ? { key: 'risk', action: 'Grant RISK_REDUCING authorization from the current Live Activation assessment.' }
+      : account.status === 'PAUSED' && !activationAssessmentPassed
+        ? { key: 'activation-readiness', action: 'Run a fresh Live Activation assessment with RISK_REDUCING authorization effective.' }
       : account.status !== 'ACTIVE' ? { key: 'activated', action: 'Activate the Live account with entries disarmed.' }
       : !canaryStaged ? { key: 'canary', action: 'Stage the RSP canary.' }
         : !riskEffective && !authorization.riskGrantExecutable
@@ -142,10 +154,11 @@ export function deriveLiveEntrySetupState({ account, assessment, canaryPresent, 
         : 'Credentials recently verified';
   const ceremonyCompleted = consumedHistorically;
   const milestoneValues = [
-    ['activated', 'Account activated', ceremonyCompleted || account.status === 'ACTIVE'],
-    ['canary', ceremonyCompleted ? 'RSP canary was staged for consumed ceremony' : 'RSP canary staged', ceremonyCompleted || canaryStaged],
     ['credentials', ceremonyCompleted ? 'Credentials were current for consumed ceremony' : credentialLabel, ceremonyCompleted || credentialsCurrent],
     ['risk', ceremonyCompleted ? 'RISK_REDUCING was effective for consumed ceremony' : 'RISK_REDUCING effective', ceremonyCompleted || riskEffective],
+    ['activation-readiness', ceremonyCompleted ? 'Live Activation readiness passed for consumed ceremony' : 'Live Activation readiness passed and current', ceremonyCompleted || activationAssessmentPassed || account.status === 'ACTIVE'],
+    ['activated', 'Account activated with entries disarmed', ceremonyCompleted || account.status === 'ACTIVE'],
+    ['canary', ceremonyCompleted ? 'RSP canary was staged for consumed ceremony' : 'RSP canary staged', ceremonyCompleted || canaryStaged],
     ['entry', ceremonyCompleted ? 'ENTRY was effective for consumed ceremony' : 'ENTRY effective', ceremonyCompleted || entryEffective],
     ['readiness', ceremonyCompleted ? 'Live Entry Arming assessment passed for consumed ceremony' : 'Live Entry Arming assessment passed and current', ceremonyCompleted || assessmentMatchesCurrentApprovals],
     ['arm', ceremonyCompleted ? 'Live entries were armed for consumed ceremony' : 'Live entries armed with an active binding', ceremonyCompleted || armed],

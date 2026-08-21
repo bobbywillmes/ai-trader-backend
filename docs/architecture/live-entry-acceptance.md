@@ -48,6 +48,31 @@ The client order ID is deterministic for the run and preview revision. Duplicate
 or concurrent execute requests therefore converge on zero or one intent and
 zero or one broker submission.
 
+## Prerequisite graph
+
+The ceremony is not a simple account-status wizard. A safely PAUSED account may
+own the durable run, but activation depends on risk-reducing authority:
+
+```text
+PAUSED / entry-disarmed
+-> LIVE_ACTIVATION evidence for RISK_REDUCING grant
+-> effective RISK_REDUCING approval
+-> fresh passing LIVE_ACTIVATION readiness
+-> ACTIVE / entry-disarmed
+-> stage the bound canary assignment
+-> LIVE_ENTRY_ARMING evidence for ENTRY grant
+-> effective session-bounded ENTRY approval
+-> fresh passing LIVE_ENTRY_ARMING readiness
+-> run-bound one-shot arming
+-> preview and execute
+```
+
+The high-level run phase remains derived from authoritative evidence. Detailed
+guidance may therefore expose prerequisites within Setup rather than pretending
+that approval, readiness, and activation are independent linear wizard steps.
+Observation-only deployments can inspect this evidence and create the durable
+run, but cannot advance Live-write prerequisites.
+
 ## Uncertain delivery
 
 Acceptance-linked intents never use ordinary stale-entry requeue after
@@ -72,4 +97,3 @@ entry.
 position, consumed arming, no active arming, disabled account trading, enabled
 kill switch, disabled entry assignments, healthy exit lifecycle, and no
 relevant reconciliation finding.
-

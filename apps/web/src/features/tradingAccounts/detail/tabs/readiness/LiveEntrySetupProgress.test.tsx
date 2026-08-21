@@ -41,6 +41,27 @@ describe('LiveEntrySetupProgress', () => {
   it('keeps ordinary incomplete setup directed to canary staging', () => {
     expect(show({ staged: false })).toContain('Stage the RSP canary');
   });
+  it('projects the real paused activation dependency graph', () => {
+    const paused = { ...account, status: 'PAUSED' as const };
+    const activation = {
+      ...readiness,
+      purpose: 'LIVE_ACTIVATION' as const,
+      result: 'BLOCKED' as const,
+      validity: 'CURRENT' as const,
+    };
+
+    expect(show({ account: paused, risk: false, entry: false, assessment: null }))
+      .toContain('Run a fresh Live Activation assessment to establish current RISK_REDUCING authorization evidence');
+    cleanup();
+    expect(show({ account: paused, risk: false, entry: false, assessment: activation }))
+      .toContain('Grant RISK_REDUCING authorization from the current Live Activation assessment');
+    cleanup();
+    expect(show({ account: paused, risk: true, entry: false, assessment: activation }))
+      .toContain('Run a fresh Live Activation assessment with RISK_REDUCING authorization effective');
+    cleanup();
+    expect(show({ account: paused, risk: true, entry: false, assessment: { ...activation, result: 'PASSED' } }))
+      .toContain('Activate the Live account with entries disarmed');
+  });
   it('directs an operator to run readiness when ENTRY is effective but readiness is stale', () => expect(show({ assessment: { ...readiness, validity: 'STALE' } })).toContain('Run a fresh Live Entry Arming assessment'));
   it('labels PASSED/CURRENT readiness as ready to arm', () => { show(); expect(screen.getByText('READY TO ARM')).toBeTruthy(); expect(screen.getByTestId('live-entry-next-action').textContent).toContain('ARM LIVE ENTRIES'); });
   it('does not present current ENTRY as effective when the approval query says INVALIDATED', () => {
