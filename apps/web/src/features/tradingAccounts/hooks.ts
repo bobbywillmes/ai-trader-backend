@@ -42,6 +42,8 @@ import {
   createLiveEntryAcceptance,
   executeLiveEntryAcceptance,
   getCurrentLiveEntryAcceptance,
+  getLiveEntryAcceptance,
+  listLiveEntryAcceptance,
   previewLiveEntryAcceptance,
   verifyLiveEntryAcceptance,
 } from './api';
@@ -80,6 +82,12 @@ export const tradingAccountKeys = {
     [...tradingAccountKeys.detail(id), 'liveWriteApprovals'] as const,
   liveEntryAcceptance: (id: number) =>
     [...tradingAccountKeys.detail(id), 'liveEntryAcceptance'] as const,
+  liveEntryAcceptanceCurrent: (id: number) =>
+    [...tradingAccountKeys.liveEntryAcceptance(id), 'current'] as const,
+  liveEntryAcceptanceHistory: (id: number) =>
+    [...tradingAccountKeys.liveEntryAcceptance(id), 'history'] as const,
+  liveEntryAcceptanceDetail: (id: number, runId: number) =>
+    [...tradingAccountKeys.liveEntryAcceptance(id), 'detail', runId] as const,
   allocations: (id: number) =>
     [...tradingAccountKeys.detail(id), 'allocations'] as const,
   accountSubscriptions: (id: number) =>
@@ -227,10 +235,28 @@ export const useDisarmLiveEntries = (id: number, token: string | null) => useLiv
 
 export function useCurrentLiveEntryAcceptance(id: number, token: string | null) {
   return useQuery({
-    queryKey: tradingAccountKeys.liveEntryAcceptance(id),
+    queryKey: tradingAccountKeys.liveEntryAcceptanceCurrent(id),
     queryFn: () => getCurrentLiveEntryAcceptance(id, token as string),
     enabled: Boolean(token),
     refetchInterval: 5_000,
+  });
+}
+
+export function useLiveEntryAcceptanceHistory(id: number, token: string | null) {
+  return useQuery({
+    queryKey: tradingAccountKeys.liveEntryAcceptanceHistory(id),
+    queryFn: () => listLiveEntryAcceptance(id, token as string),
+    enabled: Boolean(token),
+  });
+}
+
+export function useLiveEntryAcceptanceDetail(id: number, runId: number | null, token: string | null) {
+  return useQuery({
+    queryKey: runId
+      ? tradingAccountKeys.liveEntryAcceptanceDetail(id, runId)
+      : [...tradingAccountKeys.liveEntryAcceptance(id), 'detail'],
+    queryFn: () => getLiveEntryAcceptance(id, runId as number, token as string),
+    enabled: Boolean(token && runId),
   });
 }
 

@@ -1,4 +1,4 @@
-import { Alert, Badge, Button, Card, Group, List, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
+import { Alert, Badge, Button, Card, Group, List, SimpleGrid, Stack, Table, Text, TextInput, Title } from '@mantine/core';
 import { useState } from 'react';
 
 import {
@@ -6,6 +6,8 @@ import {
   useCreateLiveEntryAcceptance,
   useCurrentLiveEntryAcceptance,
   useExecuteLiveEntryAcceptance,
+  useLiveEntryAcceptanceDetail,
+  useLiveEntryAcceptanceHistory,
   usePreviewLiveEntryAcceptance,
   useVerifyLiveEntryAcceptance,
 } from '../../../hooks';
@@ -50,6 +52,9 @@ export function LiveEntryAcceptanceWorkflow({
   const [abortReason, setAbortReason] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [requestKey, setRequestKey] = useState(() => crypto.randomUUID());
+  const [selectedHistoryRunId, setSelectedHistoryRunId] = useState<number | null>(null);
+  const history = useLiveEntryAcceptanceHistory(account.id, token);
+  const historicalDetail = useLiveEntryAcceptanceDetail(account.id, selectedHistoryRunId, token);
   const create = useCreateLiveEntryAcceptance(account.id, token, {
     tradingAccountSubscriptionId: assignment?.id,
     reason: newRunReason,
@@ -75,6 +80,8 @@ export function LiveEntryAcceptanceWorkflow({
   const brokerOrder = run?.orderIntent?.brokerOrders[0];
   const fills = run?.orderIntent?.brokerActivities.filter((activity) => activity.activityType === 'FILL') ?? [];
   const armingTermination = run?.liveEntryArming?.terminations.at(-1);
+  const priorRuns = (history.data?.runs ?? []).filter((item) => item.run.id !== run?.id);
+  const inspected = historicalDetail.data;
 
   return <Card withBorder data-testid="live-entry-acceptance-workflow">
     <Group justify="space-between" align="flex-start">
@@ -219,6 +226,48 @@ export function LiveEntryAcceptanceWorkflow({
         <Button color="red" variant="outline" disabled={!abortReason.trim() || abort.isPending} onClick={() => abort.mutate(undefined, { onSuccess: () => setAbortReason('') })}>Abort before execution</Button>
       </Stack>}
     </Stack>}
+    <Card withBorder mt="md" data-testid="acceptance-history">
+      <Group justify="space-between">
+        <div>
+          <Title order={4}>Acceptance history</Title>
+          <Text size="sm" c="dimmed">Prior durable ceremonies; the canonical run above remains the only active workflow.</Text>
+        </div>
+        <Badge color="gray">{priorRuns.length} PRIOR</Badge>
+      </Group>
+      {history.isLoading && <Text size="sm" c="dimmed" mt="sm">Loading acceptance historyâ€¦</Text>}
+      {!history.isLoading && priorRuns.length === 0 && <Text size="sm" c="dimmed" mt="sm">No prior acceptance runs.</Text>}
+      {priorRuns.length > 0 && <Table striped highlightOnHover mt="sm">
+        <Table.Thead><Table.Tr>
+          <Table.Th>Run</Table.Th><Table.Th>Assignment</Table.Th><Table.Th>Outcome / state</Table.Th><Table.Th>Created / terminal</Table.Th><Table.Th>Reason</Table.Th><Table.Th>Evidence</Table.Th>
+        </Table.Tr></Table.Thead>
+        <Table.Tbody>{priorRuns.map((item) => <Table.Tr key={item.run.id}>
+          <Table.Td>#{item.run.id}</Table.Td>
+          <Table.Td>{item.run.tradingAccountSubscription.subscription.key} (#{item.run.tradingAccountSubscriptionId})</Table.Td>
+          <Table.Td>{item.run.terminalOutcome?.replaceAll('_', ' ') ?? item.phase.replaceAll('_', ' ')}</Table.Td>
+          <Table.Td>{new Date(item.run.createdAt).toLocaleString()}<br />{item.run.terminalAt ? new Date(item.run.terminalAt).toLocaleString() : 'not terminal'}</Table.Td>
+          <Table.Td>{item.run.terminalReason ?? item.run.reason}</Table.Td>
+          <Table.Td><Button size="xs" variant="subtle" onClick={() => setSelectedHistoryRunId(item.run.id)}>Inspect Run #{item.run.id}</Button></Table.Td>
+        </Table.Tr>)}</Table.Tbody>
+      </Table>}
+      {selectedHistoryRunId && historicalDetail.isLoading && <Text size="sm" c="dimmed" mt="sm">Loading Run #{selectedHistoryRunId} evidenceâ€¦</Text>}
+      {inspected && <Card withBorder mt="sm" data-testid="acceptance-history-detail">
+        <Group justify="space-between"><Title order={5}>Run #{inspected.run.id} authoritative detail</Title><Button size="xs" variant="default" onClick={() => setSelectedHistoryRunId(null)}>Close</Button></Group>
+        <SimpleGrid cols={{ base: 1, md: 2 }} mt="xs">
+          <Text size="sm">State: <b>{inspected.run.terminalOutcome?.replaceAll('_', ' ') ?? inspected.phase.replaceAll('_', ' ')}</b></Text>
+          <Text size="sm">Assignment: <b>{inspected.run.tradingAccountSubscription.subscription.key} (#{inspected.run.tradingAccountSubscriptionId})</b></Text>
+          <Text size="sm">Created: <b>{new Date(inspected.run.createdAt).toLocaleString()}</b></Text>
+          <Text size="sm">Terminal: <b>{inspected.run.terminalAt ? new Date(inspected.run.terminalAt).toLocaleString() : 'not terminal'}</b></Text>
+          <Text size="sm">Operator reason: <b>{inspected.run.reason}</b></Text>
+          <Text size="sm">Terminal reason: <b>{inspected.run.terminalReason ?? 'not terminal'}</b></Text>
+          <Text size="sm">OrderIntent: <b>{inspected.run.orderIntent ? `#${inspected.run.orderIntent.id} Â· ${inspected.run.orderIntent.status}` : 'none'}</b></Text>
+          <Text size="sm">BrokerOrder: <b>{inspected.run.orderIntent?.brokerOrders[0] ? `${inspected.run.orderIntent.brokerOrders[0].brokerOrderId} Â· ${inspected.run.orderIntent.brokerOrders[0].status}` : 'none'}</b></Text>
+          <Text size="sm">TrackedPosition: <b>{inspected.run.orderIntent?.trackedPosition ? `#${inspected.run.orderIntent.trackedPosition.id} Â· ${inspected.run.orderIntent.trackedPosition.status}` : 'none'}</b></Text>
+          <Text size="sm">Arming termination: <b>{inspected.run.liveEntryArming?.terminations.at(-1)?.type ?? 'none'}</b></Text>
+        </SimpleGrid>
+        <Text size="xs" fw={700} mt="sm">Terminal evidence</Text>
+        <Text component="pre" size="xs" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(inspected.run.terminalEvidenceJson ?? {}, null, 2)}</Text>
+      </Card>}
+    </Card>
     {error && <Alert color="red" mt="md">{error.message}</Alert>}
   </Card>;
 }

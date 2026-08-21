@@ -30,6 +30,7 @@ import type {
   ActivateTradingAccountPayload,
   ActivateTradingAccountResponse,
   CurrentLiveEntryAcceptanceResponse,
+  LiveEntryAcceptanceHistoryResponse,
   LiveEntryAcceptanceProjection,
 } from './types';
 
@@ -117,6 +118,14 @@ export function disarmLiveEntries(id: number, payload: unknown, token: string) {
 
 export function getCurrentLiveEntryAcceptance(id: number, token: string) {
   return apiRequest<CurrentLiveEntryAcceptanceResponse>(`/api/trading-accounts/${id}/live-entry-acceptance-runs/current`, { token });
+}
+
+export function listLiveEntryAcceptance(id: number, token: string) {
+  return apiRequest<LiveEntryAcceptanceHistoryResponse>(`/api/trading-accounts/${id}/live-entry-acceptance-runs`, { token });
+}
+
+export function getLiveEntryAcceptance(id: number, runId: number, token: string) {
+  return apiRequest<LiveEntryAcceptanceProjection>(`/api/trading-accounts/${id}/live-entry-acceptance-runs/${runId}`, { token });
 }
 
 export function createLiveEntryAcceptance(id: number, payload: unknown, token: string) {
