@@ -223,6 +223,7 @@ export type LiveEntryAcceptanceProjection = {
         timeInForce: string;
         referencePrice: number | null;
         referencePriceAt: string | null;
+        referencePriceSource: string;
         estimatedNotional: number | null;
       };
       arming: { id: number; expiresAt: string };
@@ -249,6 +250,7 @@ export type LiveEntryAcceptanceProjection = {
       enabled: boolean;
       entriesEnabled: boolean;
       exitsEnabled: boolean;
+      subscription: { key: string };
     };
     liveEntryArming: null | {
       id: number;
@@ -313,6 +315,7 @@ export type LiveWriteApprovalStateResponse = {
   environment: TradingAccountEnvironment;
   deploymentRole: 'OBSERVATION_ONLY' | 'PRODUCTION_EXECUTOR';
   deploymentCanWrite: boolean;
+  manualAcceptanceHarness: boolean;
   capabilities: Array<{
     capability: LiveWriteCapability;
     effective: boolean;

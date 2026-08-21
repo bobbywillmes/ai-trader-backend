@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
+import { isIsolatedManualAcceptanceEnvironment } from './manual-acceptance-environment.js';
 import type { AlpacaBrokerOperationClass } from '../integrations/alpaca/request-metadata.js';
 import { getOpenAlpacaOrders } from '../integrations/alpaca/orders.adapter.js';
 import { getAlpacaPositions } from '../integrations/alpaca/positions.adapter.js';
@@ -203,6 +204,12 @@ export async function getLiveWriteApprovalState(
     deploymentCanWrite:
       env.NODE_ENV === 'production' &&
       env.LIVE_WRITE_DEPLOYMENT_ROLE === 'PRODUCTION_EXECUTOR',
+    manualAcceptanceHarness: isIsolatedManualAcceptanceEnvironment({
+      sentinel: process.env.MANUAL_ACCEPTANCE_HARNESS,
+      entrypoint: process.env.MANUAL_ACCEPTANCE_ENTRYPOINT,
+      databaseUrl: env.DATABASE_URL,
+      allowedOrigins: env.CORS_ALLOWED_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean),
+    }),
     capabilities,
   };
 }

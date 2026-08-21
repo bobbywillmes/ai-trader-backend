@@ -24,9 +24,10 @@ const executionProjection = {
       previewRevision: 2, previewFingerprint: 'a'.repeat(64), executionClaimedAt: null,
       executionUncertainAt: null, executionFailureJson: null, terminalOutcome: null,
       terminalReason: null, terminalEvidenceJson: null, terminalAt: null, orderIntent: null,
+      tradingAccountSubscription: { id: 8, subscriptionId: 3, enabled: true, entriesEnabled: true, exitsEnabled: true, subscription: { key: 'rsp_dip_core' } },
       previewJson: {
         environment: 'LIVE',
-        order: { symbol: 'RSP', side: 'buy', qty: 4, orderType: 'market', timeInForce: 'day', referencePrice: 250, referencePriceAt: '2026-08-20T17:00:00Z', estimatedNotional: 1000 },
+        order: { symbol: 'RSP', side: 'buy', qty: 4, orderType: 'market', timeInForce: 'day', referencePrice: 250, referencePriceAt: '2026-08-20T17:00:00Z', referencePriceSource: 'alpaca_latest_trade', estimatedNotional: 1000 },
         arming: { id: 7, expiresAt: '2026-08-20T20:00:00Z' },
       },
     },
@@ -53,7 +54,7 @@ const completedProjection = {
       tradingEnabled: false, killSwitchEnabled: true, activeLiveEntryArmingId: null,
     },
     tradingAccountSubscription: {
-      id: 8, subscriptionId: 3, enabled: true, entriesEnabled: false, exitsEnabled: true,
+      id: 8, subscriptionId: 3, enabled: true, entriesEnabled: false, exitsEnabled: true, subscription: { key: 'rsp_dip_core' },
     },
     liveEntryArming: {
       id: 7,
@@ -89,9 +90,28 @@ describe('LiveEntryAcceptanceWorkflow', () => {
     expect(screen.getByText('LIVE', { selector: 'b' })).toBeTruthy();
     expect(screen.getByText('BUY 4 RSP')).toBeTruthy();
     expect(screen.getByText('MARKET / DAY')).toBeTruthy();
+    expect(screen.getByText('rsp_dip_core (#8)')).toBeTruthy();
+    expect(screen.getByText('$250.00')).toBeTruthy();
+    expect(screen.getByText('$1,000.00')).toBeTruthy();
+    expect(screen.getByText(/alpaca_latest_trade/)).toBeTruthy();
     expect(screen.getByText(/One-shot Live entry authority is consumed transactionally before outbound submission/)).toBeTruthy();
     expect(screen.getByLabelText('Type BUY RSP')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Submit real broker order' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('labels the guarded harness preview as synthetic without weakening confirmation', () => {
+    mocks.current = executionProjection;
+    render(<MantineProvider><LiveEntryAcceptanceWorkflow
+      account={{ id: 1, displayName: 'Synthetic Live Acceptance', activeLiveEntryArmingId: 7 } as TradingAccount}
+      assignment={{ id: 8 } as TradingAccountSubscription}
+      token="token"
+      manualAcceptanceHarness
+    /></MantineProvider>);
+
+    expect(screen.getByText('SYNTHETIC BROKER-ISOLATED ORDER')).toBeTruthy();
+    expect(screen.getByText(/Outbound broker traffic is intercepted and no real Alpaca order can leave/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Submit intercepted synthetic order' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByLabelText('Type BUY RSP')).toBeTruthy();
   });
 
   it('makes the durable ceremony canonical and explains observation-only blocking', () => {

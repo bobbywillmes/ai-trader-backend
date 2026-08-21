@@ -23,7 +23,9 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
   const arm = useArmLiveEntries(account.id, token);
   const disarm = useDisarmLiveEntries(account.id, token);
   const acceptance = useCurrentLiveEntryAcceptance(account.id, token);
-  const [reason, setReason] = useState('');
+  const [stageReason, setStageReason] = useState('');
+  const [armReason, setArmReason] = useState('');
+  const [disarmReason, setDisarmReason] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const rsp = assignments.data?.accountSubscriptions.find((item) => item.subscription.key === 'rsp_dip_core');
   const entry = approvals.data?.capabilities.find((item) => item.capability === 'ENTRY');
@@ -44,7 +46,7 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
 
   const armDisabledMessage = !canArm
     ? `Next step: ${workflow.nextAction}`
-    : !reason.trim()
+    : !armReason.trim()
       ? 'Enter an operator reason to continue.'
       : confirmation !== 'ARM LIVE ENTRIES'
         ? 'Exact confirmation is required.'
@@ -59,11 +61,14 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
       token={token}
       prerequisiteState={workflow}
       deploymentRole={approvals.data?.deploymentRole}
+      manualAcceptanceHarness={approvals.data?.manualAcceptanceHarness === true}
     />
     <Card withBorder>
     <Group justify="space-between"><Title order={3}>Live entry authority</Title><Badge color={armed ? 'red' : staged ? 'yellow' : 'gray'}>{posture}</Badge></Group>
     <Stack gap="sm" mt="md">
-      <Text size="sm">Deployment entry permission: {assessment?.evidence.policy?.allowLiveTrading ? 'enabled' : 'disabled'}</Text>
+      <Text size="sm">Deployment entry permission: {assessment
+        ? assessment.evidence.policy?.allowLiveTrading ? 'enabled' : 'disabled'
+        : 'not yet assessed'}</Text>
       <Text size="sm">ENTRY approval: {entry?.effective ? `effective revision ${entry.approval?.revision}` : entry?.reason ?? 'missing'}</Text>
       <Text size="sm">Canary assignment: {rsp ? `rsp_dip_core #${rsp.id} · entries ${rsp.entriesEnabled ? 'enabled' : 'disabled'}` : 'not provisioned'}</Text>
       <Text size="sm">Account latches: trading {account.tradingEnabled ? 'enabled' : 'disabled'} · kill switch {account.killSwitchEnabled ? 'enabled' : 'disabled'}</Text>
@@ -71,20 +76,31 @@ export function LiveEntryArmingCard({ account, assessment, token }: {
       {preview && <Alert color="blue" title="First-canary sizing preview">
         {preview.symbol} assignment #{preview.tradingAccountSubscriptionId}: MAX_NOTIONAL {String(preview.maxPositionNotional ?? 'unavailable')}; estimated notional up to {String(preview.maxPositionNotional ?? 'unavailable')}; allocation limit {String(preview.allocation?.maxAllocatedNotional ?? 'unavailable')}; account limits {String(preview.accountLimits?.maxDailyEntryOrders ?? 'unavailable')} daily entry / {String(preview.accountLimits?.maxDailyEntryNotional ?? 'unavailable')} daily notional / {String(preview.accountLimits?.maxOpenPositions ?? 'unavailable')} open position / {String(preview.accountLimits?.maxSymbolOpenNotional ?? 'unavailable')} symbol notional. Quantity is shown when runtime pricing makes it available; market fills can exceed estimated notional.
       </Alert>}
-      <TextInput label="Operator reason" value={reason} onChange={(event) => setReason(event.currentTarget.value)} />
+      <TextInput label="Canary staging reason" value={stageReason} onChange={(event) => setStageReason(event.currentTarget.value)} />
       <Group>
-        <Button variant="default" disabled={!canStage || !reason || stage.isPending} onClick={() => rsp && stage.mutate({ tradingAccountSubscriptionId: rsp.id, reason })}>Stage RSP canary</Button>
-        <Button color="red" variant="outline" disabled={!reason || disarm.isPending} onClick={() => disarm.mutate({ reason })}>DISARM LIVE ENTRIES</Button>
+        <Button variant="default" disabled={!canStage || !stageReason.trim() || stage.isPending} onClick={() => rsp && stage.mutate(
+          { tradingAccountSubscriptionId: rsp.id, reason: stageReason },
+          { onSuccess: () => setStageReason('') },
+        )}>Stage RSP canary</Button>
       </Group>
       <Alert color="red" title="Real-money authorization">
         ARMING LIVE ENTRIES CAN ALLOW REAL-MONEY BROKER ORDERS.
       </Alert>
       <TextInput label="Type ARM LIVE ENTRIES" value={confirmation} onChange={(event) => setConfirmation(event.currentTarget.value)} />
+      <TextInput label="Arming reason" value={armReason} onChange={(event) => setArmReason(event.currentTarget.value)} />
       {armDisabledMessage && <Text size="sm" c="dimmed" data-testid="arm-disabled-guidance">{armDisabledMessage}</Text>}
-      <Button color="red" disabled={!canArm || !reason || confirmation !== 'ARM LIVE ENTRIES' || arm.isPending}
-        onClick={() => entry?.approval && rsp && assessment && arm.mutate({ reason, typedConfirmation: confirmation, readinessAssessmentId: assessment.id, tradingAccountSubscriptionId: rsp.id, entryApprovalId: entry.approval.id, entryApprovalRevision: entry.approval.revision, expectedUpdatedAt: account.updatedAt, ...(acceptance.data?.run?.run.id ? { liveEntryAcceptanceRunId: acceptance.data.run.run.id } : {}) })}>
+      <Button color="red" disabled={!canArm || !armReason.trim() || confirmation !== 'ARM LIVE ENTRIES' || arm.isPending}
+        onClick={() => entry?.approval && rsp && assessment && arm.mutate(
+          { reason: armReason, typedConfirmation: confirmation, readinessAssessmentId: assessment.id, tradingAccountSubscriptionId: rsp.id, entryApprovalId: entry.approval.id, entryApprovalRevision: entry.approval.revision, expectedUpdatedAt: account.updatedAt, ...(acceptance.data?.run?.run.id ? { liveEntryAcceptanceRunId: acceptance.data.run.run.id } : {}) },
+          { onSuccess: () => { setArmReason(''); setConfirmation(''); } },
+        )}>
         ARM LIVE ENTRIES
       </Button>
+      <TextInput label="Disarm reason" value={disarmReason} onChange={(event) => setDisarmReason(event.currentTarget.value)} />
+      <Button color="red" variant="outline" disabled={!disarmReason.trim() || disarm.isPending} onClick={() => disarm.mutate(
+        { reason: disarmReason },
+        { onSuccess: () => setDisarmReason('') },
+      )}>DISARM LIVE ENTRIES</Button>
       {(stage.isError || arm.isError || disarm.isError) && <Alert color="red">{(stage.error ?? arm.error ?? disarm.error)?.message}</Alert>}
     </Stack>
     </Card>

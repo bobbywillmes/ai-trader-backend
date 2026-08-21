@@ -21,18 +21,26 @@ function evidenceText(value: unknown, fallback = 'not recorded') {
   return String(value);
 }
 
+function currency(value: number | null) {
+  return value === null
+    ? 'unavailable'
+    : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
+}
+
 export function LiveEntryAcceptanceWorkflow({
   account,
   assignment,
   token,
   prerequisiteState,
   deploymentRole,
+  manualAcceptanceHarness = false,
 }: {
   account: TradingAccount;
   assignment: TradingAccountSubscription | undefined;
   token: string | null;
   prerequisiteState?: ReturnType<typeof deriveLiveEntrySetupState>;
   deploymentRole?: 'OBSERVATION_ONLY' | 'PRODUCTION_EXECUTOR';
+  manualAcceptanceHarness?: boolean;
 }) {
   const current = useCurrentLiveEntryAcceptance(account.id, token);
   const projection = current.data?.run ?? null;
@@ -138,20 +146,23 @@ export function LiveEntryAcceptanceWorkflow({
         <SimpleGrid cols={{ base: 1, md: 2 }} mt="sm">
           <Text size="sm">Environment: <b>{reviewed.environment}</b></Text>
           <Text size="sm">Account: <b>{account.displayName}</b></Text>
-          <Text size="sm">Assignment: <b>#{run.tradingAccountSubscriptionId}</b></Text>
+          <Text size="sm">Assignment: <b>{run.tradingAccountSubscription.subscription.key} (#{run.tradingAccountSubscriptionId})</b></Text>
           <Text size="sm">Order: <b>{reviewed.order.side.toUpperCase()} {reviewed.order.qty} {reviewed.order.symbol}</b></Text>
           <Text size="sm">Type / TIF: <b>{reviewed.order.orderType.toUpperCase()} / {reviewed.order.timeInForce.toUpperCase()}</b></Text>
-          <Text size="sm">Reference price: <b>{reviewed.order.referencePrice ?? 'unavailable'}</b></Text>
-          <Text size="sm">Estimated notional: <b>{reviewed.order.estimatedNotional ?? 'unavailable'}</b></Text>
+          <Text size="sm">Reference price: <b>{currency(reviewed.order.referencePrice)}</b></Text>
+          <Text size="sm">Reference evidence: <b>{reviewed.order.referencePriceSource} Â· {reviewed.order.referencePriceAt ? new Date(reviewed.order.referencePriceAt).toLocaleString() : 'time unavailable'}</b></Text>
+          <Text size="sm">Estimated notional: <b>{currency(reviewed.order.estimatedNotional)}</b></Text>
           <Text size="sm">Arming expires: <b>{new Date(reviewed.arming.expiresAt).toLocaleString()}</b></Text>
         </SimpleGrid>
         {!run.executionClaimedAt && <Stack mt="md">
-          <Alert color="red" title="REAL LIVE ORDER">
-            A real broker BUY order will be submitted. One-shot Live entry authority is consumed transactionally before outbound submission.
+          <Alert color={manualAcceptanceHarness ? 'blue' : 'red'} title={manualAcceptanceHarness ? 'SYNTHETIC BROKER-ISOLATED ORDER' : 'REAL LIVE ORDER'}>
+            {manualAcceptanceHarness
+              ? 'This guarded manual-acceptance ceremony is synthetic. Outbound broker traffic is intercepted and no real Alpaca order can leave the harness.'
+              : 'A real broker BUY order will be submitted.'} One-shot Live entry authority is consumed transactionally before outbound submission.
           </Alert>
           <TextInput label={`Type ${expectedConfirmation}`} value={confirmation} onChange={(event) => setConfirmation(event.currentTarget.value)} />
           <Button color="red" disabled={confirmation !== expectedConfirmation || execute.isPending} onClick={() => execute.mutate(undefined, { onSuccess: () => setRequestKey(crypto.randomUUID()) })}>
-            Submit real broker order
+            {manualAcceptanceHarness ? 'Submit intercepted synthetic order' : 'Submit real broker order'}
           </Button>
         </Stack>}
       </Card>}
@@ -189,6 +200,9 @@ export function LiveEntryAcceptanceWorkflow({
           <Text size="sm">Lifecycle healthy: <b>{evidenceText(terminalEvidence.lifecycleHealthy)}</b></Text>
         </SimpleGrid>
       </Card>}
+      {canaryComplete && <Alert color="green" title="Expected post-canary safe posture">
+        This ceremony succeeded. Live entry authority is closed after one-shot consumption, so a stale or blocked future LIVE_ENTRY_ARMING assessment is expected until a separately authorized future ceremony establishes fresh evidence.
+      </Alert>}
       {run.terminalOutcome && <Alert color={run.terminalOutcome === 'CANARY_COMPLETE' ? 'green' : 'yellow'} title={run.terminalOutcome.replaceAll('_', ' ')}>
         {run.terminalReason}
       </Alert>}
