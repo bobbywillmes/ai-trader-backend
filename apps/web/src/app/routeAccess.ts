@@ -19,7 +19,8 @@ export type AppRouteId =
   | "systemEvents"
   | "users"
   | "securities"
-  | "settings";
+  | "settings"
+  | "liveOperations";
 
 type RouteAccessPolicy = {
   allowedRoles: PlatformRole[];
@@ -33,6 +34,7 @@ const OWNER_ONLY: PlatformRole[] = ["SYSTEM_OWNER"];
 export const routeAccessPolicies: Record<AppRouteId, RouteAccessPolicy> = {
   dashboard: { allowedRoles: ALL_ROLES, requiredPermission: "reports.read" },
   positions: { allowedRoles: ALL_ROLES, requiredPermission: "tradingAccount.read" },
+  liveOperations: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "tradingAccount.read" },
   orders: { allowedRoles: ALL_ROLES, requiredPermission: "tradingAccount.read" },
   entryDecisions: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "tradingAccount.read" },
   strategies: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "strategy.read" },
