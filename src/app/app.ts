@@ -39,6 +39,7 @@ import tradingAccountsRoutes from '../routes/trading-accounts.routes.js';
 import usersRoutes from '../routes/users.routes.js';
 import tradingLifecycleExercisesRoutes from '../routes/trading-lifecycle-exercises.routes.js';
 import lifecycleRepairsRoutes from '../routes/lifecycle-repairs.routes.js';
+import liveOperationsRoutes from '../routes/live-operations.routes.js';
 
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
@@ -113,6 +114,7 @@ export function createApp() {
   app.use('/api/trading-accounts', requireAdminAccess, tradingAccountsRoutes);
   app.use('/api/trading-lifecycle-exercises', requireAdminAccess, tradingLifecycleExercisesRoutes);
   app.use('/api/lifecycle-repairs', requireAdminAccess, lifecycleRepairsRoutes);
+  app.use('/api/live-operations', requireAdminAccess, liveOperationsRoutes);
   app.use('/api/users', usersRoutes);
   app.use('/api/config', requireAdminAccess, configRoutes);
   app.use('/api/strategies', requireAdminAccess, strategiesRoutes);
