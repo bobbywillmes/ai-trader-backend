@@ -9,12 +9,12 @@ import { TradingAccountScopeSelector } from "./TradingAccountScopeSelector";
 import type { TradingAccountScopeContextValue } from "./types";
 
 const base = { id: 1, displayName: "Primary Paper", accountHolderName: "Alex", broker: "ALPACA", environment: "PAPER" } as TradingAccount;
-function renderSelector(overrides: Partial<TradingAccountScopeContextValue> = {}, mode: "SYSTEM" | "ACCOUNT_FILTERABLE" | "ACCOUNT_SPECIFIC" = "ACCOUNT_FILTERABLE", mobile = false) {
+function renderSelector(overrides: Partial<TradingAccountScopeContextValue> = {}, mode: "SYSTEM" | "ACCOUNT_FILTERABLE" | "ACCOUNT_SPECIFIC" = "ACCOUNT_FILTERABLE", mobile = false, liveOnly = false) {
   const value: TradingAccountScopeContextValue = {
     scope: { type: "ALL" }, selectedAccount: null, accessibleAccounts: [base, { ...base, id: 2, displayName: "Primary Live", environment: "LIVE" }],
     isAll: true, isLoading: false, isError: false, error: null, setScope: vi.fn(), isAccountAccessible: () => true, ...overrides,
   };
-  render(<MantineProvider><TradingAccountScopeContext.Provider value={value}><TradingAccountScopeSelector mode={mode} expanded mobile={mobile} /></TradingAccountScopeContext.Provider></MantineProvider>);
+  render(<MantineProvider><TradingAccountScopeContext.Provider value={value}><TradingAccountScopeSelector mode={mode} expanded mobile={mobile} {...(liveOnly ? { environment: "LIVE" as const, scopeLabel: "LIVE ACCOUNT SCOPE", allLabel: "All Live Accounts" } : {})} /></TradingAccountScopeContext.Provider></MantineProvider>);
   return value;
 }
 afterEach(cleanup);
@@ -22,7 +22,7 @@ afterEach(cleanup);
 describe("TradingAccountScopeSelector", () => {
   it("renders aggregate and explicit PAPER/LIVE account identity", async () => {
     renderSelector();
-    await userEvent.setup().click(screen.getByRole("button", { name: /Trading Account scope: All Trading Accounts/ }));
+    await userEvent.setup().click(screen.getByRole("button", { name: /TRADING ACCOUNT SCOPE: All Trading Accounts/ }));
     expect(screen.getAllByText("All Trading Accounts")).toHaveLength(2);
     expect(screen.getByText("Primary Paper")).toBeTruthy();
     expect(screen.getByText("Primary Live")).toBeTruthy();
@@ -33,9 +33,17 @@ describe("TradingAccountScopeSelector", () => {
   });
   it("changes scope through the context action", async () => {
     const value = renderSelector();
-    await userEvent.setup().click(screen.getByRole("button", { name: /Trading Account scope/ }));
+    await userEvent.setup().click(screen.getByRole("button", { name: /TRADING ACCOUNT SCOPE/ }));
     await userEvent.setup().click(screen.getByText("Primary Live"));
     expect(value.setScope).toHaveBeenCalledWith({ type: "ACCOUNT", tradingAccountId: 2 });
+  });
+  it("shows only accessible Live accounts and normalizes an excluded selection visually", async () => {
+    renderSelector({ scope: { type: "ACCOUNT", tradingAccountId: 1 }, selectedAccount: base, isAll: false }, "ACCOUNT_FILTERABLE", false, true);
+    expect(screen.getByRole("button", { name: /LIVE ACCOUNT SCOPE: All Live Accounts/ })).toBeTruthy();
+    await userEvent.setup().click(screen.getByRole("button", { name: /LIVE ACCOUNT SCOPE/ }));
+    expect(screen.getAllByText("All Live Accounts")).toHaveLength(2);
+    expect(screen.getByText("Primary Live")).toBeTruthy();
+    expect(screen.queryByText("Primary Paper")).toBeNull();
   });
   it("hides scope affordance on SYSTEM pages", () => {
     renderSelector({}, "SYSTEM");
@@ -48,8 +56,8 @@ describe("TradingAccountScopeSelector", () => {
   });
   it("opens the mobile menu below the drawer control at a viewport-safe width", async () => {
     renderSelector({}, "ACCOUNT_FILTERABLE", true);
-    await userEvent.setup().click(screen.getByRole("button", { name: /Trading Account scope/ }));
-    const menu = document.querySelector<HTMLElement>('[role="menu"][aria-label="Choose Trading Account scope"]');
+    await userEvent.setup().click(screen.getByRole("button", { name: /TRADING ACCOUNT SCOPE/ }));
+    const menu = document.querySelector<HTMLElement>('[role="menu"][aria-label="Choose TRADING ACCOUNT SCOPE"]');
     expect(menu).toBeTruthy();
     expect(menu?.getAttribute("data-position")).toBe("bottom-start");
     expect(menu?.className).toContain("mobileDropdown");
