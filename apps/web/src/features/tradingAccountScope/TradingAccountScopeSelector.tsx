@@ -6,22 +6,27 @@ import { useTradingAccountScope } from "./useTradingAccountScope";
 import type { PageScopeMode, TradingAccountScope } from "./types";
 import classes from "./TradingAccountScopeSelector.module.css";
 
-type Props = { mode: PageScopeMode; expanded: boolean; mobile?: boolean; variant?: "sidebar" | "dashboard"; onMenuChange?: (open: boolean) => void };
+type Props = { mode: PageScopeMode; expanded: boolean; mobile?: boolean; variant?: "sidebar" | "dashboard"; onMenuChange?: (open: boolean) => void; environment?: TradingAccount["environment"]; scopeLabel?: string; allLabel?: string };
 
 function accountLabel(account: TradingAccount) {
   return `${account.displayName} — ${account.environment}`;
 }
 
-export function TradingAccountScopeSelector({ mode, expanded, mobile = false, variant = "sidebar", onMenuChange }: Props) {
+export function TradingAccountScopeSelector({ mode, expanded, mobile = false, variant = "sidebar", onMenuChange, environment, scopeLabel = "TRADING ACCOUNT SCOPE", allLabel = "All Trading Accounts" }: Props) {
   const context = useTradingAccountScope();
   if (mode !== "ACCOUNT_FILTERABLE") return null;
 
   if (context.isLoading) return <SelectorState expanded={expanded} label="Loading Trading Accounts" icon={<Loader size={18} />} />;
   if (context.isError) return <SelectorState expanded={expanded} label="Trading Accounts unavailable" />;
-  if (context.accessibleAccounts.length === 0) return <SelectorState expanded={expanded} label="No accessible Trading Accounts" />;
+  const availableAccounts = environment
+    ? context.accessibleAccounts.filter((account) => account.environment === environment)
+    : context.accessibleAccounts;
+  if (availableAccounts.length === 0) return <SelectorState expanded={expanded} label={`No accessible ${environment ? `${environment} ` : ""}Trading Accounts`} />;
 
-  const selectedLabel = context.isAll ? "All Trading Accounts" : context.selectedAccount ? accountLabel(context.selectedAccount) : "Trading Account";
-  const accountGroups = context.accessibleAccounts.reduce((groups, account) => {
+  const selectedAvailable = context.selectedAccount && availableAccounts.some((account) => account.id === context.selectedAccount?.id);
+  const effectiveScope = selectedAvailable ? context.scope : { type: "ALL" } as const;
+  const selectedLabel = effectiveScope.type === "ALL" ? allLabel : context.selectedAccount ? accountLabel(context.selectedAccount) : allLabel;
+  const accountGroups = availableAccounts.reduce((groups, account) => {
     const holder = account.accountHolderName?.trim() || "Account holder unavailable";
     groups.set(holder, [...(groups.get(holder) ?? []), account]);
     return groups;
@@ -29,18 +34,18 @@ export function TradingAccountScopeSelector({ mode, expanded, mobile = false, va
   const opensBelow = mobile || variant === "dashboard";
   return <Menu position={opensBelow ? "bottom-start" : "right-start"} offset={8} width={300} shadow="lg" withinPortal onChange={onMenuChange} classNames={opensBelow ? { dropdown: classes.mobileDropdown } : undefined}>
     <Menu.Target>
-      <UnstyledButton className={`${classes.trigger} ${variant === "dashboard" ? classes.dashboardTrigger : ""}`} aria-label={`Trading Account scope: ${selectedLabel}`}>
+      <UnstyledButton className={`${classes.trigger} ${variant === "dashboard" ? classes.dashboardTrigger : ""}`} aria-label={`${scopeLabel}: ${selectedLabel}`}>
         <IconBuildingBank size={20} aria-hidden="true" />
-        {expanded && <><div className={classes.triggerText}><Text size="xs" c="dimmed">TRADING ACCOUNT SCOPE</Text><Text size="sm" fw={650} truncate>{selectedLabel}</Text></div><IconChevronDown size={16} aria-hidden="true" /></>}
+        {expanded && <><div className={classes.triggerText}><Text size="xs" c="dimmed">{scopeLabel}</Text><Text size="sm" fw={650} truncate>{selectedLabel}</Text></div><IconChevronDown size={16} aria-hidden="true" /></>}
       </UnstyledButton>
     </Menu.Target>
-    <Menu.Dropdown aria-label="Choose Trading Account scope">
-      <Menu.Label>Trading Account scope</Menu.Label>
-      <ScopeItem label="All Trading Accounts" scope={{ type: "ALL" }} current={context.scope} onSelect={context.setScope} />
+    <Menu.Dropdown aria-label={`Choose ${scopeLabel}`}>
+      <Menu.Label>{scopeLabel}</Menu.Label>
+      <ScopeItem label={allLabel} scope={{ type: "ALL" }} current={effectiveScope} onSelect={context.setScope} />
       <Menu.Divider />
       {[...accountGroups.entries()].map(([holder, accounts]) => <div key={holder}>
         <Menu.Label>{holder}</Menu.Label>
-        {accounts.map((account) => <ScopeItem key={account.id} account={account} label={account.displayName} scope={{ type: "ACCOUNT", tradingAccountId: account.id }} current={context.scope} onSelect={context.setScope} />)}
+        {accounts.map((account) => <ScopeItem key={account.id} account={account} label={account.displayName} scope={{ type: "ACCOUNT", tradingAccountId: account.id }} current={effectiveScope} onSelect={context.setScope} />)}
       </div>)}
     </Menu.Dropdown>
   </Menu>;

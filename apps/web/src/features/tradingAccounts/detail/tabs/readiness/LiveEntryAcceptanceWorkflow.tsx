@@ -216,7 +216,8 @@ export function LiveEntryAcceptanceWorkflow({
         </SimpleGrid>
       </Card>}
       {canaryComplete && <Alert color="green" title="Expected post-canary safe posture">
-        This ceremony succeeded. Live entry authority is closed after one-shot consumption, so a stale or blocked future LIVE_ENTRY_ARMING assessment is expected until a separately authorized future ceremony establishes fresh evidence.
+        This ceremony succeeded and the account now has Live exposure. Live entry authority is closed after one-shot consumption; current position-management and operational health lives on Live Operations.
+        <Button component="a" href={`/live-operations?account=${account.id}`} variant="light" color="green" mt="sm">Open Live Operations</Button>
       </Alert>}
       {run.terminalOutcome && <Alert color={run.terminalOutcome === 'CANARY_COMPLETE' ? 'green' : 'yellow'} title={run.terminalOutcome.replaceAll('_', ' ')}>
         {run.terminalReason}

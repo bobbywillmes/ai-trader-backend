@@ -3,7 +3,7 @@ import type { PageScopeMode } from "../features/tradingAccountScope/types";
 type RouteScopeDefinition = { pattern: RegExp; mode: PageScopeMode; routeAccountIdGroup?: number };
 
 const routeScopes: RouteScopeDefinition[] = [
-  { pattern: /^\/(dashboard|positions\/open|orders\/open|trade-history|entry-decisions|system\/events|reports(?:\/[^/]+)?)\/?$/, mode: "ACCOUNT_FILTERABLE" },
+  { pattern: /^\/(dashboard|live-operations|positions\/open|orders\/open|trade-history|entry-decisions|system\/events|reports(?:\/[^/]+)?)\/?$/, mode: "ACCOUNT_FILTERABLE" },
   { pattern: /^\/trading-accounts\/(\d+)\/?$/, mode: "ACCOUNT_SPECIFIC", routeAccountIdGroup: 1 },
   { pattern: /^\/trading-accounts\/(\d+)\/reconciliation\/?$/, mode: "ACCOUNT_SPECIFIC", routeAccountIdGroup: 1 },
 ];

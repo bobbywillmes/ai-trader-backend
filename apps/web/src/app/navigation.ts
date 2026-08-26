@@ -5,6 +5,7 @@ import {
   IconChartCandle, IconClipboardData, IconDashboard, IconFileAnalytics,
   IconFlask, IconHistory, IconListCheck, IconReportAnalytics, IconRoute, IconTool,
   IconSettings, IconShieldCheck, IconTargetArrow, IconUsers,
+  IconHeartbeat,
 } from "@tabler/icons-react";
 import type { PlatformRole } from "../features/auth/types";
 import type { AppRouteId } from "./routeAccess";
@@ -47,6 +48,7 @@ export const adminNavGroups: AdminNavGroup[] = [
     { routeId: "dashboard", to: "/dashboard", label: "Dashboard", icon: IconDashboard },
   ] },
   { label: "Trading", items: [
+    { routeId: "liveOperations", to: "/live-operations", label: "Live Operations", icon: IconHeartbeat },
     { routeId: "positions", to: "/positions/open", label: "Open Positions", icon: IconChartCandle },
     { routeId: "orders", to: "/orders/open", label: "Open Orders", icon: IconListCheck },
     { routeId: "entryDecisions", to: "/entry-decisions", label: "Entry Decisions", icon: IconTargetArrow },

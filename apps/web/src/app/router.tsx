@@ -45,6 +45,7 @@ import { UsersPage } from "../features/users/UsersPage";
 import { LifecycleExercisesPage } from "../features/lifecycleExercises/LifecycleExercisesPage";
 import { LifecycleExerciseDetailPage } from "../features/lifecycleExercises/LifecycleExerciseDetailPage";
 import { LifecycleRepairsPage } from "../features/lifecycleRepairs/LifecycleRepairsPage";
+import { LiveOperationsPage } from "../features/liveOperations/LiveOperationsPage";
 
 const responsiveDataPreviewRoute = import.meta.env.DEV
   ? [{ path: "dev/responsive-data-primitives", lazy: async () => ({ Component: (await import("../features/dev/ResponsiveDataPrimitivesPreview")).ResponsiveDataPrimitivesPreview }) }]
@@ -77,6 +78,10 @@ export const router = createBrowserRouter([
               {
                 path: "dashboard",
                 element: authorize("dashboard", <DashboardPage />),
+              },
+              {
+                path: "live-operations",
+                element: authorize("liveOperations", <LiveOperationsPage />),
               },
               {
                 path: "positions/open",
