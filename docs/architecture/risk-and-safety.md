@@ -315,6 +315,11 @@ attention and is never replayed blindly.
 
 Attention states are separate from the normal lifecycle `status`: `status` describes where the exit lifecycle is, while `attentionRequired` indicates that the operator should review the position.
 
+These fields remain a temporary position-exit compatibility projection. General
+current operational state is modeled by `OperationalAttention`; this phase does
+not migrate or dual-write existing exit attention. See
+`docs/architecture/operational-attention.md`.
+
 ---
 
 ## 🛡 Current Safety Controls

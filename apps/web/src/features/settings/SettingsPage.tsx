@@ -1730,10 +1730,6 @@ export function SettingsPage() {
                       <Text size="sm" c="dimmed" mt="xs">
                         Closing: {systemStatus.workers.closingTrackedPositionCount}
                       </Text>
-                      <Text size="sm" c="dimmed">
-                        Unprocessed events:{" "}
-                        {systemStatus.workers.unprocessedSystemEventCount}
-                      </Text>
                     </Card>
                   </SimpleGrid>
 

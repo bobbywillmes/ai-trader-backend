@@ -8,7 +8,7 @@ function parsePayload(ev: SystemEvent): EventPayload {
   if (!ev.payloadJson) return {};
   if (typeof ev.payloadJson === "object") return ev.payloadJson as EventPayload;
   try {
-    return JSON.parse(ev.payloadJson) as EventPayload;
+    return JSON.parse(String(ev.payloadJson)) as EventPayload;
   } catch {
     return {};
   }
@@ -125,8 +125,16 @@ export function rawPayload(ev: SystemEvent): string {
   if (!ev.payloadJson) return "{}";
   if (typeof ev.payloadJson === "object") return JSON.stringify(ev.payloadJson, null, 2);
   try {
-    return JSON.stringify(JSON.parse(ev.payloadJson), null, 2);
+    return JSON.stringify(JSON.parse(String(ev.payloadJson)), null, 2);
   } catch {
     return String(ev.payloadJson);
   }
+}
+
+export function systemEventTone(event: Pick<SystemEvent, "severity">) {
+  return event.severity === "CRITICAL" || event.severity === "ERROR"
+    ? ("danger" as const)
+    : event.severity === "WARNING"
+      ? ("warning" as const)
+      : ("informational" as const);
 }

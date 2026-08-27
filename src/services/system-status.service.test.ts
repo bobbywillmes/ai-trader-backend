@@ -9,7 +9,6 @@ const mocks = vi.hoisted(() => ({
   getLatestBrokerActivity: vi.fn(),
   orderIntentCount: vi.fn(),
   trackedPositionCount: vi.fn(),
-  systemEventCount: vi.fn(),
   workerHealthSnapshot: vi.fn(),
   alpacaUsageSnapshot: vi.fn(),
   alpacaUsagePersistenceSnapshot: vi.fn(),
@@ -21,7 +20,6 @@ vi.mock('../db/prisma.js', () => ({
   prisma: {
     orderIntent: { count: mocks.orderIntentCount },
     trackedPosition: { count: mocks.trackedPositionCount },
-    systemEvent: { count: mocks.systemEventCount },
   },
 }));
 
@@ -224,7 +222,6 @@ describe('system status health semantics', () => {
     mocks.getLatestBrokerActivity.mockResolvedValue(null);
     mocks.orderIntentCount.mockResolvedValue(0);
     mocks.trackedPositionCount.mockResolvedValue(0);
-    mocks.systemEventCount.mockResolvedValue(0);
   });
 
   it('does not mark the backend unhealthy when entry policy blocks canEnter', async () => {
@@ -251,6 +248,7 @@ describe('system status health semantics', () => {
       mode: 'market_closed_idle',
     });
     expect(mocks.adaptivePollingSnapshot).toHaveBeenCalledTimes(1);
+    expect(status.workers).not.toHaveProperty('unprocessedSystemEventCount');
   });
 
   it('surfaces degraded adaptive polling without changing readiness semantics', async () => {

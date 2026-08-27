@@ -32,7 +32,6 @@ export async function getSystemStatus() {
     submittedOrderCount,
     openTrackedPositionCount,
     closingTrackedPositionCount,
-    unprocessedSystemEventCount,
   ] = await Promise.all([
     getHealthStatus(),
     getRuntimeTradingConfig(),
@@ -60,9 +59,6 @@ export async function getSystemStatus() {
       where: { status: 'closing' },
     }),
 
-    prisma.systemEvent.count({
-      where: { processed: false },
-    }),
   ]);
   const workerHealth = workerHealthRegistry.getSnapshot();
   const alpacaApiUsage = alpacaApiUsageRegistry.getSnapshot();
@@ -122,7 +118,6 @@ export async function getSystemStatus() {
       submittedOrderCount,
       openTrackedPositionCount,
       closingTrackedPositionCount,
-      unprocessedSystemEventCount,
     },
     alpacaApiUsage: {
       ...alpacaApiUsage,

@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { SystemEventSeverity, type Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 
 import { logger } from '../config/logger.js';
@@ -584,6 +584,14 @@ function buildReconciliationEventType(code: ReconciliationFindingCode) {
   return `reconciliation.${code}`;
 }
 
+export function mapReconciliationSeverity(severity: ReconciliationSeverity) {
+  switch (severity) {
+    case 'critical': return SystemEventSeverity.CRITICAL;
+    case 'warn': return SystemEventSeverity.WARNING;
+    default: return SystemEventSeverity.INFO;
+  }
+}
+
 function buildReconciliationEventPayload(
   finding: ReconciliationFinding,
   account: RunReconciliationCheckResult['account'],
@@ -798,6 +806,7 @@ let skippedDuplicateEventCount = 0;
         entityId: finding.entityId,
         tradingAccountId,
         message: finding.message,
+        severity: mapReconciliationSeverity(finding.severity),
         payloadJson: buildReconciliationEventPayload(
           finding,
           {

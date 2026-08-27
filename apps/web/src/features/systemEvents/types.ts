@@ -9,7 +9,7 @@ export type SystemEvent = {
   entityId: string;
   message: string | null;
   payloadJson: unknown;
-  processed: boolean;
+  severity: "INFO" | "WARNING" | "ERROR" | "CRITICAL";
   createdAt: string;
 };
 

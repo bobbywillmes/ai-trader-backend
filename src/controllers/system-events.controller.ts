@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { getAccessibleSystemEvents } from '../services/system-event.service.js';
 import { getSecurityActivity } from '../services/system-event.service.js';
 import { HttpError } from '../errors/http-error.js';
+import { SystemEventSeverity } from '@prisma/client';
 
 export async function systemEventsController(
   req: Request,
@@ -17,11 +18,17 @@ export async function systemEventsController(
     const page = getQueryNumber(req.query.page, 1);
     const pageSize = getQueryNumber(req.query.pageSize, 25);
     const type = typeof req.query.type === 'string' && req.query.type !== 'all' ? req.query.type : undefined;
+    const severityValue = typeof req.query.severity === 'string' && req.query.severity !== 'all' ? req.query.severity : undefined;
+    const severity = severityValue && Object.values(SystemEventSeverity).includes(severityValue as SystemEventSeverity)
+      ? severityValue as SystemEventSeverity
+      : undefined;
+    if (severityValue && !severity) throw new HttpError(400, 'Invalid SystemEvent severity.');
     const search = typeof req.query.search === 'string' ? req.query.search : undefined;
     const events = await getAccessibleSystemEvents(res.locals.user, account, {
       page,
       pageSize,
       ...(type ? { type } : {}),
+      ...(severity ? { severity } : {}),
       ...(search ? { search } : {}),
     });
 

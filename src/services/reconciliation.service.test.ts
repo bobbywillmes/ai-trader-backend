@@ -464,6 +464,7 @@ describe('runReconciliationCheck', () => {
       tradingAccountId: 1,
       message:
         'SPY target is unlocked, but no protective trailing-stop order is linked.',
+      severity: 'CRITICAL',
       payloadJson: expect.objectContaining({
         code: 'trail_order_missing_after_unlock',
         severity: 'critical',
