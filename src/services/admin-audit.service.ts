@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { prisma } from '../db/prisma.js';
+import { createSystemEvent } from './system-event.service.js';
 
 type AdminAuditEventInput = {
   eventType: string;
@@ -10,14 +10,12 @@ type AdminAuditEventInput = {
 };
 
 export async function createAdminAuditEvent(input: AdminAuditEventInput) {
-  return prisma.systemEvent.create({
-    data: {
-      type: input.eventType,
-      entityType: input.entityType,
-      entityId: String(input.entityId),
-      message: input.message,
-      payloadJson: input.payload,
-    },
+  return createSystemEvent({
+    type: input.eventType,
+    entityType: input.entityType,
+    entityId: input.entityId,
+    message: input.message,
+    payloadJson: input.payload,
   });
 }
 

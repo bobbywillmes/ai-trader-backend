@@ -26,6 +26,8 @@ describe('platform role permissions', () => {
       PlatformPermission.EXIT_PROFILE_READ,
       PlatformPermission.REPORTS_READ,
       PlatformPermission.SYSTEM_EVENTS_READ,
+      PlatformPermission.OPERATIONAL_ATTENTION_READ,
+      PlatformPermission.OPERATIONAL_ATTENTION_ACKNOWLEDGE,
     ]);
   });
 
@@ -38,6 +40,17 @@ describe('platform role permissions', () => {
       PlatformPermission.REPORTS_READ,
       PlatformPermission.SYSTEM_EVENTS_READ,
     ]);
+  });
+
+  it('does not grant operational attention permissions to account users', () => {
+    expect(getPlatformPermissionsForRole(PlatformRole.ACCOUNT_USER)).not.toEqual(
+      expect.arrayContaining([
+        PlatformPermission.OPERATIONAL_ATTENTION_READ,
+        PlatformPermission.OPERATIONAL_ATTENTION_ACKNOWLEDGE,
+        PlatformPermission.OPERATIONAL_ATTENTION_RESOLVE,
+        PlatformPermission.OPERATIONAL_ATTENTION_MANUAL_RESOLVE,
+      ]),
+    );
   });
 
   it('does not grant legacy admin owner access', () => {
