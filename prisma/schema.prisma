@@ -55,6 +55,8 @@ model User {
   heldTradingAccounts         TradingAccount[]           @relation("TradingAccountHolder")
   tradingAccountMemberships   TradingAccountMembership[]
   systemEventsActed           SystemEvent[]               @relation("SystemEventActor")
+  operationalAttentionsAcknowledged OperationalAttention[] @relation("OperationalAttentionAcknowledgedBy")
+  operationalAttentionsResolved     OperationalAttention[] @relation("OperationalAttentionResolvedBy")
   readinessAssessmentsRequested TradingAccountReadinessAssessment[] @relation("ReadinessAssessmentRequester")
   lifecycleExercisesCreated   TradingLifecycleExercise[]  @relation("LifecycleExerciseCreator")
   lifecycleExerciseTargets    TradingLifecycleExerciseTarget[] @relation("LifecycleExerciseAccountHolder")
@@ -227,6 +229,7 @@ model TradingAccount {
   accountSnapshots          AccountSnapshot[]
   entryDecisions            EntryDecision[]
   systemEvents              SystemEvent[]
+  operationalAttentions    OperationalAttention[]
   alpacaApiUsageBuckets     AlpacaApiUsageBucket[]
   workerHealthStates        TradingAccountWorkerHealthState[]
   readinessAssessments      TradingAccountReadinessAssessment[]
@@ -933,6 +936,7 @@ model OrderIntent {
 
   brokerOrders     BrokerOrder[]
   brokerActivities BrokerActivity[]
+  operationalAttentions OperationalAttention[]
   entryDecision    EntryDecision?
   lifecycleExerciseTarget TradingLifecycleExerciseTarget?
   liveEntryAcceptanceRunId Int? @unique
@@ -973,6 +977,7 @@ model BrokerOrder {
 
   brokerActivities BrokerActivity[]
   entryDecision    EntryDecision?
+  operationalAttentions OperationalAttention[]
 
   // Partial account-scoped uniqueness is enforced by PostgreSQL migration SQL.
   @@index([broker, brokerOrderId])
@@ -983,6 +988,13 @@ model BrokerOrder {
   @@index([tradingAccountId, symbol])
 }
 
+enum SystemEventSeverity {
+  INFO
+  WARNING
+  ERROR
+  CRITICAL
+}
+
 model SystemEvent {
   id          Int      @id @default(autoincrement())
   type        String
@@ -990,16 +1002,105 @@ model SystemEvent {
   entityId    String
   message     String?
   payloadJson Json
+  severity    SystemEventSeverity @default(INFO)
+  // Deprecated machine-processing placeholder. No current consumer uses it.
   processed   Boolean  @default(false)
   createdAt   DateTime @default(now())
   tradingAccountId  Int?
   tradingAccount    TradingAccount? @relation(fields: [tradingAccountId], references: [id], onDelete: SetNull)
   actorUserId       Int?
   actorUser         User? @relation("SystemEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  operationalAttentionEvidence OperationalAttentionSystemEvent[]
 
   @@index([tradingAccountId])
   @@index([tradingAccountId, createdAt])
   @@index([actorUserId])
+}
+
+enum OperationalAttentionStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum OperationalAttentionResolutionPolicy {
+  AUTHORITATIVE_ONLY
+  MANUAL_ALLOWED
+}
+
+enum OperationalAttentionResolutionMethod {
+  AUTHORITATIVE
+  MANUAL
+}
+
+enum OperationalAttentionEventRelationKind {
+  OPENED
+  OBSERVED
+  ESCALATED
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+model OperationalAttention {
+  id                          Int @id @default(autoincrement())
+  tradingAccountId            Int
+  code                        String
+  source                      String
+  status                      OperationalAttentionStatus @default(OPEN)
+  severity                    SystemEventSeverity
+  title                       String
+  message                     String
+  detailsJson                 Json
+  fingerprint                 String
+  activeKey                   String? @unique
+  occurrenceCount             Int @default(1)
+  firstObservedAt             DateTime @default(now())
+  lastObservedAt              DateTime @default(now())
+  revision                    Int @default(1)
+  resolutionPolicy            OperationalAttentionResolutionPolicy
+  acknowledgedAt              DateTime?
+  acknowledgedByUserId        Int?
+  acknowledgedByUserIdSnapshot Int?
+  resolvedAt                  DateTime?
+  resolvedByUserId            Int?
+  resolvedByUserIdSnapshot    Int?
+  resolutionMethod            OperationalAttentionResolutionMethod?
+  resolutionReason            String?
+  trackedPositionId           Int?
+  orderIntentId               Int?
+  brokerOrderId               Int?
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  tradingAccount              TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  acknowledgedByUser          User? @relation("OperationalAttentionAcknowledgedBy", fields: [acknowledgedByUserId], references: [id], onDelete: SetNull)
+  resolvedByUser              User? @relation("OperationalAttentionResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+  trackedPosition             TrackedPosition? @relation(fields: [trackedPositionId], references: [id], onDelete: Restrict)
+  orderIntent                 OrderIntent? @relation(fields: [orderIntentId], references: [id], onDelete: Restrict)
+  brokerOrder                 BrokerOrder? @relation(fields: [brokerOrderId], references: [id], onDelete: Restrict)
+  evidenceEvents              OperationalAttentionSystemEvent[]
+
+  @@index([tradingAccountId, status, severity])
+  @@index([tradingAccountId, lastObservedAt])
+  @@index([fingerprint])
+  @@index([trackedPositionId])
+  @@index([orderIntentId])
+  @@index([brokerOrderId])
+  @@index([acknowledgedByUserId])
+  @@index([resolvedByUserId])
+}
+
+model OperationalAttentionSystemEvent {
+  operationalAttentionId Int
+  systemEventId           Int
+  relationKind            OperationalAttentionEventRelationKind
+  createdAt               DateTime @default(now())
+
+  operationalAttention    OperationalAttention @relation(fields: [operationalAttentionId], references: [id], onDelete: Restrict)
+  systemEvent             SystemEvent @relation(fields: [systemEventId], references: [id], onDelete: Restrict)
+
+  @@id([operationalAttentionId, systemEventId])
+  @@index([systemEventId])
 }
 
 model WorkerHealthState {
@@ -1644,6 +1745,7 @@ model TrackedPosition {
   orderIntents     OrderIntent[]
   brokerOrders     BrokerOrder[]
   brokerActivities BrokerActivity[]
+  operationalAttentions OperationalAttention[]
   entryDecision    EntryDecision?
 
   exitState PositionExitState?
