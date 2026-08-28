@@ -8,6 +8,25 @@ type UserScope = { id: number; platformRole: PlatformRole };
 const unresolved = [OperationalAttentionStatus.OPEN, OperationalAttentionStatus.ACKNOWLEDGED];
 const severityOrder: Record<SystemEventSeverity, number> = { CRITICAL: 0, ERROR: 1, WARNING: 2, INFO: 3 };
 
+export function compareOperationalAttention(a: {
+  id: number; status: OperationalAttentionStatus; severity: SystemEventSeverity;
+  firstObservedAt: Date; resolvedAt: Date | null;
+}, b: {
+  id: number; status: OperationalAttentionStatus; severity: SystemEventSeverity;
+  firstObservedAt: Date; resolvedAt: Date | null;
+}) {
+  const aResolved = a.status === OperationalAttentionStatus.RESOLVED;
+  const bResolved = b.status === OperationalAttentionStatus.RESOLVED;
+  if (aResolved !== bResolved) return aResolved ? 1 : -1;
+  if (aResolved && bResolved) {
+    return (b.resolvedAt?.getTime() ?? 0) - (a.resolvedAt?.getTime() ?? 0) || b.id - a.id;
+  }
+  return severityOrder[a.severity] - severityOrder[b.severity]
+    || (a.status === b.status ? 0 : a.status === OperationalAttentionStatus.OPEN ? -1 : 1)
+    || a.firstObservedAt.getTime() - b.firstObservedAt.getTime()
+    || a.id - b.id;
+}
+
 function links(row: { tradingAccountId: number; trackedPositionId: number | null; orderIntentId: number | null; brokerOrderId: number | null }) {
   return {
     account: `/trading-accounts/${row.tradingAccountId}`,
@@ -42,16 +61,13 @@ export async function listOperationalAttention(user: UserScope, args: {
     ...(args.source ? { source: args.source } : {}),
     ...(args.code ? { code: args.code } : {}),
   };
-  const [rows, total] = await Promise.all([
-    prisma.operationalAttention.findMany({
+  const rows = await prisma.operationalAttention.findMany({
       where, include: { tradingAccount: { select: { id: true, displayName: true, environment: true } } },
-      orderBy: [{ severity: 'desc' }, { status: 'asc' }, { firstObservedAt: 'asc' }, { id: 'asc' }],
-      skip: (args.page - 1) * args.pageSize, take: args.pageSize,
-    }),
-    prisma.operationalAttention.count({ where }),
-  ]);
-  rows.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity] || (a.status === 'OPEN' ? -1 : 1) || a.firstObservedAt.getTime() - b.firstObservedAt.getTime() || a.id - b.id);
-  return { items: rows.map((row) => present(row, user)), pagination: { page: args.page, pageSize: args.pageSize, total, totalPages: Math.ceil(total / args.pageSize) } };
+    });
+  rows.sort(compareOperationalAttention);
+  const total = rows.length;
+  const pageRows = rows.slice((args.page - 1) * args.pageSize, args.page * args.pageSize);
+  return { items: pageRows.map((row) => present(row, user)), pagination: { page: args.page, pageSize: args.pageSize, total, totalPages: Math.ceil(total / args.pageSize) } };
 }
 
 export async function summarizeOperationalAttention(user: UserScope, accountId: number | null) {
