@@ -311,6 +311,21 @@ Lifecycle-review additions:
 
 Stores internal state transition events for audit and UI activity feeds.
 
+`severity` stores immutable `INFO`, `WARNING`, `ERROR`, or `CRITICAL` evidence.
+Existing rows receive `INFO`; no event-name inference or attention backfill is
+performed. The retained `processed` column is deprecated and unused.
+
+### OperationalAttention
+
+Stores account-scoped mutable attention episodes. A nullable unique `activeKey`
+deduplicates unresolved observations while permitting later recurrences after a
+resolved episode releases its key. Check constraints enforce active/resolved
+state consistency and manual-resolution evidence. Explicit optional foreign keys
+link the primary position, intent, and broker order. The
+`OperationalAttentionSystemEvent` table preserves append-only transition
+evidence without mutating SystemEvents. Existing `PositionExitState` attention
+records are not migrated or changed by this migration.
+
 ### Strategy
 
 Top-level/reusable trading logic identity, such as Dip N Ride, Momentum, or quick test strategies.

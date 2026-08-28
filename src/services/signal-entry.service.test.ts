@@ -27,7 +27,15 @@ import {
   processEntryForAccountSubscription,
   processSubscriptionEntrySignal,
   processTargetedEntrySignal,
+  signalEntryOutcomeSeverity,
 } from './signal-entry.service.js';
+
+it('maps structured signal outcomes to intentional severity', () => {
+  expect(signalEntryOutcomeSeverity('INTENT_CREATED')).toBe('INFO');
+  expect(signalEntryOutcomeSeverity('DUPLICATE')).toBe('INFO');
+  expect(signalEntryOutcomeSeverity('BLOCKED')).toBe('WARNING');
+  expect(signalEntryOutcomeSeverity('FAILED')).toBe('ERROR');
+});
 
 function assignment(id: number, name: string, environment: 'PAPER' | 'LIVE') {
   return {

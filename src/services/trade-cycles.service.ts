@@ -118,7 +118,19 @@ type TrackedPositionSystemEvent = {
   message: string | null;
   createdAt: Date;
   payloadJson: Prisma.JsonValue;
+  severity: 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
+  entityId: string;
 };
+
+const TRACKED_POSITION_SYSTEM_EVENT_SELECT = {
+  id: true,
+  type: true,
+  message: true,
+  createdAt: true,
+  payloadJson: true,
+  severity: true,
+  entityId: true,
+} satisfies Prisma.SystemEventSelect;
 
 function isJsonObject(value: Prisma.JsonValue): value is Prisma.JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -407,6 +419,7 @@ export async function listTradeCyclesForTradingAccount(
   });
 
   const systemEvents = await prisma.systemEvent.findMany({
+    select: TRACKED_POSITION_SYSTEM_EVENT_SELECT,
     where: {
       entityType: 'trackedPosition',
       entityId: {
@@ -486,6 +499,7 @@ async function listTradeCyclesForAccountIds(accountIds: number[], filters: Trade
     prisma.trackedPosition.count({ where }),
   ]);
   const systemEvents = await prisma.systemEvent.findMany({
+    select: TRACKED_POSITION_SYSTEM_EVENT_SELECT,
     where: {
       entityType: 'trackedPosition',
       entityId: { in: cycles.map((cycle) => String(cycle.id)) },
@@ -530,6 +544,7 @@ export async function getTradeCycleById(id: number) {
   }
 
   const systemEvents = await prisma.systemEvent.findMany({
+    select: TRACKED_POSITION_SYSTEM_EVENT_SELECT,
     where: {
       entityType: 'trackedPosition',
       entityId: String(id),
@@ -592,6 +607,7 @@ export async function getAccessibleTradeCycleById(
   });
   if (!position) throw new HttpError(404, `Trade cycle ${id} was not found.`);
   const systemEvents = await prisma.systemEvent.findMany({
+    select: TRACKED_POSITION_SYSTEM_EVENT_SELECT,
     where: { entityType: 'trackedPosition', entityId: String(id), tradingAccountId: position.tradingAccountId },
     orderBy: { createdAt: 'asc' },
   });

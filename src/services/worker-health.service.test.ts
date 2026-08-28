@@ -364,6 +364,7 @@ describe('WorkerHealthRegistry', () => {
       1,
       expect.objectContaining({
         type: 'worker_health.failing',
+        severity: 'ERROR',
         entityType: 'worker',
         entityId: 'pending_order_processing',
       })
@@ -372,6 +373,7 @@ describe('WorkerHealthRegistry', () => {
       2,
       expect.objectContaining({
         type: 'worker_health.recovered',
+        severity: 'INFO',
         entityType: 'worker',
         entityId: 'pending_order_processing',
       })
@@ -393,6 +395,7 @@ describe('WorkerHealthRegistry', () => {
     expect(mocks.createSystemEvent).toHaveBeenCalledTimes(1);
     expect(mocks.createSystemEvent).toHaveBeenCalledWith(expect.objectContaining({
       type: 'worker_health.recovered',
+      severity: 'INFO',
       payloadJson: expect.objectContaining({
         previousStatus: 'degraded',
         nextStatus: 'healthy',
@@ -416,6 +419,7 @@ describe('WorkerHealthRegistry', () => {
     expect(mocks.createSystemEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'worker_health.stale',
+        severity: 'ERROR',
         entityType: 'worker',
         entityId: 'pending_order_processing',
       })

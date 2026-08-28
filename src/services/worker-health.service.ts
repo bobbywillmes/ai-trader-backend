@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-import type { Prisma } from '@prisma/client';
+import { SystemEventSeverity, type Prisma } from '@prisma/client';
 import { logger } from '../config/logger.js';
 import { prisma } from '../db/prisma.js';
 import { createSystemEvent } from './system-event.service.js';
@@ -601,6 +601,9 @@ export class WorkerHealthRegistry {
           : `worker_health.${nextStatus}`,
       entityType: 'worker',
       entityId: state.key,
+      severity: nextStatus === 'healthy'
+        ? SystemEventSeverity.INFO
+        : SystemEventSeverity.ERROR,
       message:
         nextStatus === 'healthy'
           ? `${state.displayName} recovered.`

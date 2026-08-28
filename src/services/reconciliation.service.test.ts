@@ -74,7 +74,14 @@ import {
   reconcileSnapshots,
   ReconciliationBrokerUnavailableError,
   runReconciliationCheck,
+  reconciliationExposureUnavailableSeverity,
 } from './reconciliation.service.js';
+
+it('classifies credentialless exposure by authority and environment', () => {
+  expect(reconciliationExposureUnavailableSeverity('LIVE', true)).toBe('CRITICAL');
+  expect(reconciliationExposureUnavailableSeverity('LIVE', false)).toBe('WARNING');
+  expect(reconciliationExposureUnavailableSeverity('PAPER', false)).toBe('ERROR');
+});
 
 describe('reconcileSnapshots', () => {
   it('reports an active tracked position missing from broker open positions', () => {
@@ -464,6 +471,7 @@ describe('runReconciliationCheck', () => {
       tradingAccountId: 1,
       message:
         'SPY target is unlocked, but no protective trailing-stop order is linked.',
+      severity: 'CRITICAL',
       payloadJson: expect.objectContaining({
         code: 'trail_order_missing_after_unlock',
         severity: 'critical',
@@ -767,6 +775,7 @@ describe('reconcileEligibleTradingAccounts', () => {
       expect.objectContaining({
         type: 'reconciliation.credentials_unavailable_with_exposure',
         tradingAccountId: 3,
+        severity: 'WARNING',
       })
     );
   });

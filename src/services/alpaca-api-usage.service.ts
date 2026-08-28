@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { Prisma } from '@prisma/client';
+import { SystemEventSeverity, type Prisma } from '@prisma/client';
 
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
@@ -763,6 +763,11 @@ export class AlpacaApiUsageRegistry {
       type,
       entityType: 'alpacaApiUsage',
       entityId: 'alpaca',
+      severity:
+        type === 'alpaca_api.rate_limit_started' ||
+        type === 'alpaca_api.volume_warning_started'
+          ? SystemEventSeverity.WARNING
+          : SystemEventSeverity.INFO,
       payloadJson: payloadJson as Prisma.InputJsonValue,
     }).catch((error) => {
       logger.warn({ error, eventType: type }, 'Alpaca API usage event write failed.');

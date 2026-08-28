@@ -1,5 +1,5 @@
-import { Prisma } from '@prisma/client';
-import { prisma } from '../db/prisma.js';
+import { Prisma, SystemEventSeverity } from '@prisma/client';
+import { createSystemEvent } from './system-event.service.js';
 
 type AdminAuditEventInput = {
   eventType: string;
@@ -7,17 +7,21 @@ type AdminAuditEventInput = {
   entityId: string | number;
   message: string;
   payload: Prisma.InputJsonValue;
+  severity?: SystemEventSeverity;
+  tradingAccountId?: number | null;
+  actorUserId?: number | null;
 };
 
 export async function createAdminAuditEvent(input: AdminAuditEventInput) {
-  return prisma.systemEvent.create({
-    data: {
-      type: input.eventType,
-      entityType: input.entityType,
-      entityId: String(input.entityId),
-      message: input.message,
-      payloadJson: input.payload,
-    },
+  return createSystemEvent({
+    type: input.eventType,
+    entityType: input.entityType,
+    entityId: input.entityId,
+    message: input.message,
+    severity: input.severity ?? SystemEventSeverity.INFO,
+    tradingAccountId: input.tradingAccountId ?? null,
+    actorUserId: input.actorUserId ?? null,
+    payloadJson: input.payload,
   });
 }
 

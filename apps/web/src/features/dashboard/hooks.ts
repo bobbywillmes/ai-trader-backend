@@ -17,8 +17,9 @@ export const dashboardKeys = {
     page: number,
     pageSize: number,
     type: string,
+    severity: string,
     search: string,
-  ) => ["system-events", account, page, pageSize, type, search] as const,
+  ) => ["system-events", account, page, pageSize, type, severity, search] as const,
   account: (tradingAccountId: number) =>
     ["dashboard", "account", tradingAccountId] as const,
   accountsOverview: ["dashboard", "scope", "all", "accounts-overview"] as const,
@@ -57,12 +58,13 @@ export function useSystemEvents(
   page = 1,
   pageSize = 25,
   type = "all",
+  severity = "all",
   search = "",
 ) {
   return useQuery({
-    queryKey: dashboardKeys.systemEvents(account, page, pageSize, type, search),
+    queryKey: dashboardKeys.systemEvents(account, page, pageSize, type, severity, search),
     queryFn: () =>
-      getSystemEvents(token as string, account, page, pageSize, type, search),
+      getSystemEvents(token as string, account, page, pageSize, type, severity, search),
     enabled: Boolean(token),
     refetchInterval: 15000,
   });

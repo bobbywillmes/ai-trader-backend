@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TradingAccountReadinessPurpose } from '@prisma/client';
+import { TradingAccountReadinessPurpose, TradingAccountReadinessResult } from '@prisma/client';
 import {
   blockingAccountWorkers,
   deriveReadinessValidity,
@@ -8,7 +8,14 @@ import {
   liveEntryArmingWorkerGate,
   readinessAssessmentLifetimeMs,
   readinessFingerprint,
+  readinessSeverity,
 } from './trading-account-readiness.service.js';
+
+it('maps readiness results without inferring from messages', () => {
+  expect(readinessSeverity(TradingAccountReadinessResult.PASSED)).toBe('INFO');
+  expect(readinessSeverity(TradingAccountReadinessResult.BLOCKED)).toBe('WARNING');
+  expect(readinessSeverity(TradingAccountReadinessResult.ERROR)).toBe('ERROR');
+});
 
 describe('account worker readiness blockers', () => {
   it('blocks only unhealthy applicable workers without mutating health', () => {

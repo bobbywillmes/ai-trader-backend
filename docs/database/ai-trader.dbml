@@ -36,6 +36,8 @@ Table User {
   heldTradingAccounts TradingAccount [not null]
   tradingAccountMemberships TradingAccountMembership [not null]
   systemEventsActed SystemEvent [not null]
+  operationalAttentionsAcknowledged OperationalAttention [not null]
+  operationalAttentionsResolved OperationalAttention [not null]
   readinessAssessmentsRequested TradingAccountReadinessAssessment [not null]
   lifecycleExercisesCreated TradingLifecycleExercise [not null]
   lifecycleExerciseTargets TradingLifecycleExerciseTarget [not null]
@@ -113,6 +115,7 @@ Table TradingAccount {
   accountSnapshots AccountSnapshot [not null]
   entryDecisions EntryDecision [not null]
   systemEvents SystemEvent [not null]
+  operationalAttentions OperationalAttention [not null]
   alpacaApiUsageBuckets AlpacaApiUsageBucket [not null]
   workerHealthStates TradingAccountWorkerHealthState [not null]
   readinessAssessments TradingAccountReadinessAssessment [not null]
@@ -601,6 +604,7 @@ Table OrderIntent {
   tradingAccountSubscription TradingAccountSubscription
   brokerOrders BrokerOrder [not null]
   brokerActivities BrokerActivity [not null]
+  operationalAttentions OperationalAttention [not null]
   entryDecision EntryDecision
   lifecycleExerciseTarget TradingLifecycleExerciseTarget
   liveEntryAcceptanceRunId Int [unique]
@@ -628,6 +632,7 @@ Table BrokerOrder {
   tradingAccount TradingAccount
   brokerActivities BrokerActivity [not null]
   entryDecision EntryDecision
+  operationalAttentions OperationalAttention [not null]
 }
 
 Table SystemEvent {
@@ -637,12 +642,66 @@ Table SystemEvent {
   entityId String [not null]
   message String
   payloadJson Json [not null]
+  severity SystemEventSeverity [not null, default: 'INFO']
   processed Boolean [not null, default: false]
   createdAt DateTime [default: `now()`, not null]
   tradingAccountId Int
   tradingAccount TradingAccount
   actorUserId Int
   actorUser User
+  operationalAttentionEvidence OperationalAttentionSystemEvent [not null]
+}
+
+Table OperationalAttention {
+  id Int [pk, increment]
+  tradingAccountId Int [not null]
+  code String [not null]
+  source String [not null]
+  status OperationalAttentionStatus [not null, default: 'OPEN']
+  severity SystemEventSeverity [not null]
+  title String [not null]
+  message String [not null]
+  detailsJson Json [not null]
+  fingerprint String [not null]
+  activeKey String [unique]
+  occurrenceCount Int [not null, default: 1]
+  firstObservedAt DateTime [default: `now()`, not null]
+  lastObservedAt DateTime [default: `now()`, not null]
+  revision Int [not null, default: 1]
+  resolutionPolicy OperationalAttentionResolutionPolicy [not null]
+  acknowledgedAt DateTime
+  acknowledgedByUserId Int
+  acknowledgedByUserIdSnapshot Int
+  resolvedAt DateTime
+  resolvedByUserId Int
+  resolvedByUserIdSnapshot Int
+  resolutionMethod OperationalAttentionResolutionMethod
+  resolutionReason String
+  trackedPositionId Int
+  orderIntentId Int
+  brokerOrderId Int
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  tradingAccount TradingAccount [not null]
+  acknowledgedByUser User
+  resolvedByUser User
+  trackedPosition TrackedPosition
+  orderIntent OrderIntent
+  brokerOrder BrokerOrder
+  evidenceEvents OperationalAttentionSystemEvent [not null]
+}
+
+Table OperationalAttentionSystemEvent {
+  operationalAttentionId Int [not null]
+  systemEventId Int [not null]
+  relationKind OperationalAttentionEventRelationKind [not null]
+  createdAt DateTime [default: `now()`, not null]
+  operationalAttention OperationalAttention [not null]
+  systemEvent SystemEvent [not null]
+
+  indexes {
+    (operationalAttentionId, systemEventId) [pk]
+  }
 }
 
 Table WorkerHealthState {
@@ -1041,6 +1100,7 @@ Table TrackedPosition {
   orderIntents OrderIntent [not null]
   brokerOrders BrokerOrder [not null]
   brokerActivities BrokerActivity [not null]
+  operationalAttentions OperationalAttention [not null]
   entryDecision EntryDecision
   exitState PositionExitState
   configSnapshotJson Json
@@ -1377,6 +1437,37 @@ Enum MomentumUniverseReason {
   IMPORTED
 }
 
+Enum SystemEventSeverity {
+  INFO
+  WARNING
+  ERROR
+  CRITICAL
+}
+
+Enum OperationalAttentionStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+Enum OperationalAttentionResolutionPolicy {
+  AUTHORITATIVE_ONLY
+  MANUAL_ALLOWED
+}
+
+Enum OperationalAttentionResolutionMethod {
+  AUTHORITATIVE
+  MANUAL
+}
+
+Enum OperationalAttentionEventRelationKind {
+  OPENED
+  OBSERVED
+  ESCALATED
+  ACKNOWLEDGED
+  RESOLVED
+}
+
 Enum CatalystSource {
   MASSIVE_NEWS
   MASSIVE_BENZINGA
@@ -1602,6 +1693,22 @@ Ref: BrokerOrder.tradingAccountId > TradingAccount.id [delete: Set Null]
 Ref: SystemEvent.tradingAccountId > TradingAccount.id [delete: Set Null]
 
 Ref: SystemEvent.actorUserId > User.id [delete: Set Null]
+
+Ref: OperationalAttention.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: OperationalAttention.acknowledgedByUserId > User.id [delete: Set Null]
+
+Ref: OperationalAttention.resolvedByUserId > User.id [delete: Set Null]
+
+Ref: OperationalAttention.trackedPositionId > TrackedPosition.id [delete: Restrict]
+
+Ref: OperationalAttention.orderIntentId > OrderIntent.id [delete: Restrict]
+
+Ref: OperationalAttention.brokerOrderId > BrokerOrder.id [delete: Restrict]
+
+Ref: OperationalAttentionSystemEvent.operationalAttentionId > OperationalAttention.id [delete: Restrict]
+
+Ref: OperationalAttentionSystemEvent.systemEventId > SystemEvent.id [delete: Restrict]
 
 Ref: TradingAccountWorkerHealthState.tradingAccountId > TradingAccount.id [delete: Cascade]
 

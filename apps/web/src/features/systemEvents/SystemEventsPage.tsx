@@ -29,7 +29,7 @@ import {
   type SummaryField,
 } from "../../components/data-display";
 import { getAdminToken } from "../../lib/api";
-import { describeEvent, rawPayload } from "../dashboard/eventUtils";
+import { describeEvent, rawPayload, systemEventTone } from "../dashboard/eventUtils";
 import { useSystemEvents } from "../dashboard/hooks";
 import type { SystemEvent } from "../dashboard/types";
 import classes from "./SystemEventsPage.module.css";
@@ -38,14 +38,6 @@ import { useTradingAccountScope } from "../tradingAccountScope/useTradingAccount
 
 const eventTitle = (type: string) =>
   type.split(".").map(formatStatusLabel).join(" ");
-const eventTone = (event: SystemEvent) =>
-  /rejected|failed|error|critical/.test(event.type)
-    ? ("danger" as const)
-    : /warning|blocked|cancel|expired|attention/.test(event.type)
-      ? ("warning" as const)
-      : event.processed
-        ? ("neutral" as const)
-        : ("informational" as const);
 const formatDate = (value: string) => new Date(value).toLocaleString();
 function Details({ event }: { event: SystemEvent }) {
   const meta = describeEvent(event);
@@ -66,8 +58,8 @@ function Details({ event }: { event: SystemEvent }) {
                   value: meta.description || "No summary was provided",
                 },
                 {
-                  label: "Processing state",
-                  value: event.processed ? "Processed" : "Recorded",
+                  label: "Severity",
+                  value: formatStatusLabel(event.severity),
                 },
               ],
             },
@@ -168,6 +160,7 @@ export function SystemEventsPage() {
       return next;
     });
   const [type, setType] = useState("all");
+  const [severity, setSeverity] = useState("all");
   const [search, setSearch] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -179,6 +172,7 @@ export function SystemEventsPage() {
     page,
     pageSize,
     type,
+    severity,
     appliedSearch,
   );
   const events = useMemo(() => query.data?.events ?? [], [query.data]);
@@ -196,6 +190,7 @@ export function SystemEventsPage() {
     setSearch("");
     setAppliedSearch("");
     setType("all");
+    setSeverity("all");
     updatePage(1);
   };
   const active = [
@@ -204,6 +199,12 @@ export function SystemEventsPage() {
       active: type !== "all",
       label: `Event: ${eventTitle(type)}`,
       remove: () => setType("all"),
+    },
+    {
+      key: "severity",
+      active: severity !== "all",
+      label: `Severity: ${formatStatusLabel(severity)}`,
+      remove: () => setSeverity("all"),
     },
   ]
     .filter((item) => item.active)
@@ -260,7 +261,7 @@ export function SystemEventsPage() {
       <Table.Thead>
         <Table.Tr>
           <Table.Th>Event</Table.Th>
-          <Table.Th>State</Table.Th>
+          <Table.Th>Severity</Table.Th>
           <Table.Th>Summary / context</Table.Th>
           <Table.Th>Account</Table.Th>
           <Table.Th>Timestamp</Table.Th>
@@ -274,9 +275,9 @@ export function SystemEventsPage() {
               <Table.Td>{identity(event)}</Table.Td>
               <Table.Td>
                 <StatusBadge
-                  status={event.processed ? "processed" : "recorded"}
-                  label={event.processed ? "Processed" : "Recorded"}
-                  tone={eventTone(event)}
+                  status={event.severity}
+                  label={formatStatusLabel(event.severity)}
+                  tone={systemEventTone(event)}
                   size="compact"
                 />
               </Table.Td>
@@ -401,6 +402,18 @@ export function SystemEventsPage() {
                     onChange={updatePageSize}
                     data={["25", "50", "100"]}
                   />
+                  <Select
+                    label="Severity"
+                    value={severity}
+                    onChange={(value) => {
+                      setSeverity(value ?? "all");
+                      updatePage(1);
+                    }}
+                    data={["all", "INFO", "WARNING", "ERROR", "CRITICAL"].map((value) => ({
+                      value,
+                      label: formatStatusLabel(value),
+                    }))}
+                  />
                 </>
               }
               activeFilters={active}
@@ -458,9 +471,9 @@ export function SystemEventsPage() {
                     renderIdentity={identity}
                     renderStatus={(event) => (
                       <StatusBadge
-                        status={event.processed ? "processed" : "recorded"}
-                        label={event.processed ? "Processed" : "Recorded"}
-                        tone={eventTone(event)}
+                        status={event.severity}
+                        label={formatStatusLabel(event.severity)}
+                        tone={systemEventTone(event)}
                         size="compact"
                       />
                     )}

@@ -10,7 +10,10 @@ Market Diary remains a read-only view of the current market-state record and rec
 
 ## Diagnostic details and raw metadata
 
-System Event names are humanized for display without changing their stored type. The API does not currently return a severity or source field, so the page does not manufacture those values. Processing state, trading-account context, entity links, and timestamps remain explicit.
+System Event names are humanized for display without changing their stored type.
+The API returns persisted severity and the page does not infer it from event-name
+substrings. The deprecated processing flag is not presented; trading-account
+context, entity links, and timestamps remain explicit.
 
 Payloads, internal IDs, raw event types, and routing keys are collapsed by default. Technical values wrap at arbitrary boundaries inside their detail container and must never determine page width. Drawers trap focus, close with Escape, and return focus to their opener.
 

@@ -3,6 +3,7 @@ import {
   LiveWriteApprovalStatus,
   LiveWriteCapability,
   Prisma,
+  SystemEventSeverity,
   TradingAccountEnvironment,
   TradingAccountReadinessPurpose,
 } from '@prisma/client';
@@ -16,6 +17,7 @@ import type { AlpacaBrokerOperationClass } from '../integrations/alpaca/request-
 import { getOpenAlpacaOrders } from '../integrations/alpaca/orders.adapter.js';
 import { getAlpacaPositions } from '../integrations/alpaca/positions.adapter.js';
 import { getAlpacaMarketSessionSnapshot } from '../integrations/alpaca/market-session.adapter.js';
+import { createSystemEvent } from './system-event.service.js';
 
 export { LiveWriteCapability };
 
@@ -560,13 +562,13 @@ export async function grantLiveWriteApproval(args: {
           expiresAt: args.input.expiresAt ?? null,
         },
       });
-      await tx.systemEvent.create({
-        data: {
+      await createSystemEvent({
           type: 'trading_account.live_write_approval_granted',
           entityType: 'TradingAccount',
           entityId: String(args.tradingAccountId),
           tradingAccountId: args.tradingAccountId,
           actorUserId: args.actorUserId,
+          severity: SystemEventSeverity.INFO,
           message: `${args.capability} Live write approval granted.`,
           payloadJson: {
             capability: args.capability,
@@ -578,8 +580,7 @@ export async function grantLiveWriteApproval(args: {
               credential: fingerprints.credentialFingerprint.slice(0, 12),
             },
           },
-        },
-      });
+      }, tx);
       return approval;
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -694,8 +695,7 @@ async function changeApprovalState(
         expiresAt: current.expiresAt,
       },
     });
-    await tx.systemEvent.create({
-      data: {
+    await createSystemEvent({
         type:
           args.action === LiveWriteApprovalAction.REVOKE
             ? 'trading_account.live_write_approval_revoked'
@@ -704,14 +704,16 @@ async function changeApprovalState(
         entityId: String(args.tradingAccountId),
         tradingAccountId: args.tradingAccountId,
         actorUserId: args.actorUserId,
+        severity: args.action === LiveWriteApprovalAction.REVOKE
+          ? SystemEventSeverity.INFO
+          : SystemEventSeverity.WARNING,
         message: `${args.capability} Live write approval ${args.action.toLowerCase()}d.`,
         payloadJson: {
           capability: args.capability,
           revision: resultingRevision,
           reason: args.reason,
         },
-      },
-    });
+    }, tx);
     return approval;
   };
   return '$transaction' in db

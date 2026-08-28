@@ -3,6 +3,7 @@ import {
   Prisma,
   TradingAccountStatus,
   LiveWriteCapability,
+  SystemEventSeverity,
 } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
@@ -12,6 +13,7 @@ import type { TradingAccountAdminResponse } from './trading-account.service.js';
 import { withAccountRiskConfigurationTransaction } from './trading-account-risk-configuration.service.js';
 import { invalidateLiveWriteApprovals } from './live-write-approval.service.js';
 import { disarmLiveEntries } from './live-entry-arming.service.js';
+import { createSystemEvent } from './system-event.service.js';
 
 export type TradingAccountCredentialVerificationResult =
   | {
@@ -151,13 +153,13 @@ export async function verifyTradingAccountCredential(
         where: { id: tradingAccountId },
         data: after,
       });
-      await tx.systemEvent.create({
-        data: {
+      await createSystemEvent({
           type: 'trading_account.credential_verification_failed',
           entityType: 'tradingAccountCredential',
           entityId: String(credentialId),
           tradingAccountId,
           actorUserId: actorUserId > 0 ? actorUserId : null,
+          severity: SystemEventSeverity.ERROR,
           message: `Trading account ${tradingAccountId} credential verification failed.`,
           payloadJson: {
             actorUserId,
@@ -179,8 +181,7 @@ export async function verifyTradingAccountCredential(
               ),
             ],
           } satisfies Prisma.InputJsonValue,
-        },
-      });
+      }, tx);
     });
 
     return {
@@ -269,13 +270,13 @@ export async function verifyTradingAccountCredential(
       [LiveWriteCapability.RISK_REDUCING, LiveWriteCapability.ENTRY],
       'Broker credentials were re-verified and credential evidence changed.',
     );
-    await tx.systemEvent.create({
-      data: {
+    await createSystemEvent({
         type: 'trading_account.credential_verified',
         entityType: 'tradingAccountCredential',
         entityId: String(credentialId),
         tradingAccountId,
         actorUserId: actorUserId > 0 ? actorUserId : null,
+        severity: SystemEventSeverity.INFO,
         message: `Trading account ${tradingAccountId} credential was verified.`,
         payloadJson: {
           actorUserId,
@@ -300,8 +301,7 @@ export async function verifyTradingAccountCredential(
             ),
           ],
         } satisfies Prisma.InputJsonValue,
-      },
-    });
+    }, tx);
     }
   );
 

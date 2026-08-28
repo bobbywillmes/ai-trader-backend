@@ -2,6 +2,7 @@ import {
   LiveEntryArmingTerminationType,
   LiveWriteCapability,
   Prisma,
+  SystemEventSeverity,
   TradingAccountEnvironment,
   TradingAccountReadinessPurpose,
   TradingAccountReadinessResult,
@@ -25,6 +26,7 @@ import {
   assertAccountRiskConfiguration,
   withAccountRiskConfigurationTransaction,
 } from './trading-account-risk-configuration.service.js';
+import { createSystemEvent } from './system-event.service.js';
 import {
   ACCOUNT_WORKFLOW_LOCK_FAMILIES,
   withTradingAccountWorkflowLock,
@@ -201,12 +203,13 @@ export async function stageLiveEntryCanary(args: {
         where: { id: assignment.id }, data: { entriesEnabled: true },
       });
       await invalidateLiveWriteApprovals(tx, args.tradingAccountId, [LiveWriteCapability.ENTRY], 'Live entry canary was staged.');
-      await tx.systemEvent.create({ data: {
+      await createSystemEvent({
         type: 'trading_account.live_entry_canary_staged', entityType: 'TradingAccount', entityId: String(args.tradingAccountId),
         tradingAccountId: args.tradingAccountId, actorUserId: args.actorUserId,
+        severity: SystemEventSeverity.INFO,
         message: `Trading account ${args.tradingAccountId} staged rsp_dip_core as its sole Live entry canary.`,
         payloadJson: { reason: args.reason, tradingAccountSubscriptionId: assignment.id, subscriptionId: assignment.subscriptionId, securityId: assignment.subscription.securityId, previousArmingId: old.armingId, entryIntentsBlocked: old.entryIntentsBlocked },
-      }});
+      }, tx);
       return { tradingAccountSubscriptionId: assignment.id, subscriptionId: assignment.subscriptionId, symbol: 'RSP' };
     }),
   });
@@ -334,11 +337,12 @@ async function armInsideTransaction(tx: Prisma.TransactionClient, tradingAccount
     status: TradingAccountStatus.ACTIVE, tradingEnabled: true, killSwitchEnabled: false,
     activeLiveEntryArmingId: arming.id,
   }});
-  await tx.systemEvent.create({ data: {
+  await createSystemEvent({
     type: 'trading_account.live_entries_armed', entityType: 'LiveEntryArming', entityId: String(arming.id), tradingAccountId, actorUserId,
     message: `Trading account ${tradingAccountId} armed one-shot Live entries for rsp_dip_core.`,
+    severity: SystemEventSeverity.INFO,
     payloadJson: { armingId: arming.id, liveEntryAcceptanceRunId: acceptanceRun?.id ?? null, readinessAssessmentId: assessment.id, entryApprovalId: entry.approval.id, entryApprovalRevision: entry.approval.revision, riskReducingApprovalId: risk.approval.id, riskReducingApprovalRevision: risk.approval.revision, tradingAccountSubscriptionId: assignment.id, entryApprovalExpiresAt: entry.approval.expiresAt, fingerprintPrefixes: { configuration: fingerprints.configurationFingerprint.slice(0, 12), credential: fingerprints.credentialFingerprint.slice(0, 12), policy: assessment.policyFingerprint.slice(0, 12) } },
-  }});
+  }, tx);
   return arming;
 }
 
@@ -378,17 +382,40 @@ export async function disarmLiveEntries(
     if (account.environment !== 'LIVE') throw new HttpError(409, 'Live entry disarm applies only to LIVE accounts.');
     const result = await closeEntryAuthority(tx, tradingAccountId, { reason, actorUserId, type });
     await invalidateLiveWriteApprovals(tx, tradingAccountId, [LiveWriteCapability.ENTRY], reason);
-    await tx.systemEvent.create({ data: {
+    await createSystemEvent({
       type: type === LiveEntryArmingTerminationType.EXPIRED ? 'trading_account.live_entry_approval_expired_while_armed' : type === LiveEntryArmingTerminationType.INVALIDATED ? 'trading_account.live_entry_arming_invalidated' : 'trading_account.live_entries_disarmed',
       entityType: 'TradingAccount', entityId: String(tradingAccountId), tradingAccountId, actorUserId,
       message: `Trading account ${tradingAccountId} Live entries were locally disarmed.`,
+      severity: type === LiveEntryArmingTerminationType.DISARMED
+        ? SystemEventSeverity.INFO
+        : SystemEventSeverity.WARNING,
       payloadJson: { reason, previousArmingId: result.armingId, assignmentsDisabled: result.assignmentsDisabled, entryIntentsBlocked: result.entryIntentsBlocked, statusPreserved: account.status },
-    }});
+    }, tx);
     return result;
   });
   const drained = await acquireDrain(tradingAccountId, actorUserId ?? 0);
   if (!drained) {
-    await prisma.systemEvent.create({ data: { type: 'trading_account.live_entry_disarm_drain_attention', entityType: 'TradingAccount', entityId: String(tradingAccountId), tradingAccountId, actorUserId, message: 'Local Live entry disarm succeeded, but order-lifecycle drain timed out.', payloadJson: { reason, localDisarmApplied: true } } });
+    const uncertainSubmission = await prisma.orderIntent.count({
+      where: {
+        tradingAccountId,
+        OR: [
+          { status: 'submitting' },
+          { blockReason: { contains: 'DELIVERY_UNCERTAIN' } },
+        ],
+      },
+    });
+    await createSystemEvent({
+      type: 'trading_account.live_entry_disarm_drain_attention',
+      entityType: 'TradingAccount',
+      entityId: String(tradingAccountId),
+      tradingAccountId,
+      actorUserId,
+      severity: uncertainSubmission > 0
+        ? SystemEventSeverity.CRITICAL
+        : SystemEventSeverity.WARNING,
+      message: 'Local Live entry disarm succeeded, but order-lifecycle drain timed out.',
+      payloadJson: { reason, localDisarmApplied: true, uncertainSubmissionCount: uncertainSubmission },
+    });
   }
   return { ...local, localDisarmApplied: true, lifecycleDrained: drained, attentionRequired: !drained };
 }
@@ -438,7 +465,7 @@ export async function authorizeAndConsumeNewPositionEntry(tradingAccountId: numb
     await terminateArming(tx, { armingId: authority.arming.id, type: LiveEntryArmingTerminationType.CONSUMED, reason: 'One-shot authority consumed before outbound broker submission attempt.', orderIntentId: intent.id, clientOrderId: context.clientOrderId, evidence: { tradingAccountSubscriptionId: assignment.id, subscriptionId: assignment.subscriptionId, securityId: assignment.subscription.securityId, symbol: context.symbol } });
     await tx.tradingAccount.update({ where: { id: tradingAccountId }, data: { activeLiveEntryArmingId: null, tradingEnabled: false, killSwitchEnabled: true } });
     await tx.tradingAccountSubscription.updateMany({ where: { tradingAccountId, entriesEnabled: true }, data: { entriesEnabled: false } });
-    await tx.systemEvent.create({ data: { type: 'trading_account.live_entry_one_shot_consumed', entityType: 'LiveEntryArming', entityId: String(authority.arming.id), tradingAccountId, message: `One-shot Live entry arming ${authority.arming.id} was consumed before broker submission.`, payloadJson: { armingId: authority.arming.id, orderIntentId: intent.id, clientOrderId: context.clientOrderId, tradingAccountSubscriptionId: assignment.id } } });
+    await createSystemEvent({ type: 'trading_account.live_entry_one_shot_consumed', entityType: 'LiveEntryArming', entityId: String(authority.arming.id), tradingAccountId, severity: SystemEventSeverity.INFO, message: `One-shot Live entry arming ${authority.arming.id} was consumed before broker submission.`, payloadJson: { armingId: authority.arming.id, orderIntentId: intent.id, clientOrderId: context.clientOrderId, tradingAccountSubscriptionId: assignment.id } }, tx);
     return { armingId: authority.arming.id };
   });
 }

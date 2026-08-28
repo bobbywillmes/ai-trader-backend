@@ -277,8 +277,8 @@ export type SystemEvent = {
   type: string;
   entityType: string | null;
   entityId: string | null;
-  payloadJson: string | null;
-  processed: boolean;
+  payloadJson: unknown;
+  severity: "INFO" | "WARNING" | "ERROR" | "CRITICAL";
   createdAt: string;
 };
 

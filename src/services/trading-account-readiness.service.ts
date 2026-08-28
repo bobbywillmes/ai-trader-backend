@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   BrokerCredentialStatus,
   Prisma,
+  SystemEventSeverity,
   TradingAccountEnvironment,
   TradingAccountReadinessPurpose,
   TradingAccountReadinessResult,
@@ -16,6 +17,7 @@ import { getNormalizedPositions } from './positions.service.js';
 import { reconcileSnapshots } from './reconciliation.service.js';
 import { listTradingAccountWorkerHealth } from './trading-account-worker-health.service.js';
 import { getLiveWriteApprovalState } from './live-write-approval.service.js';
+import { createSystemEvent } from './system-event.service.js';
 import {
   ACCOUNT_WORKFLOW_LOCK_FAMILIES,
   withTradingAccountWorkflowLock,
@@ -23,6 +25,17 @@ import {
 
 export const READINESS_ASSESSMENT_VERSION = 1;
 export const LIVE_ENTRY_ARMING_READINESS_VERSION = 2;
+
+export function readinessSeverity(result: TradingAccountReadinessResult) {
+  switch (result) {
+    case TradingAccountReadinessResult.PASSED:
+      return SystemEventSeverity.INFO;
+    case TradingAccountReadinessResult.BLOCKED:
+      return SystemEventSeverity.WARNING;
+    case TradingAccountReadinessResult.ERROR:
+      return SystemEventSeverity.ERROR;
+  }
+}
 export const LIVE_ACTIVATION_ASSESSMENT_LIFETIME_MS = 5 * 60_000;
 export const LIVE_ENTRY_ARMING_ASSESSMENT_LIFETIME_MS = 15 * 60_000;
 export const CREDENTIAL_VERIFICATION_MAX_AGE_MS = 15 * 60_000;
@@ -1228,13 +1241,13 @@ async function gatherAndPersist(
       requestedByUserId,
     },
   });
-  await prisma.systemEvent.create({
-    data: {
+  await createSystemEvent({
       type: 'trading_account.readiness_assessed',
       entityType: 'TradingAccountReadinessAssessment',
       entityId: String(created.id),
       tradingAccountId,
       actorUserId: requestedByUserId,
+      severity: readinessSeverity(result),
       message: `Trading account ${tradingAccountId} readiness assessed as ${result}.`,
       payloadJson: {
         assessmentId: created.id,
@@ -1256,7 +1269,6 @@ async function gatherAndPersist(
         },
         actorUserId: requestedByUserId,
       },
-    },
   });
   return mapAssessment(created, fingerprints);
 }
@@ -1354,13 +1366,13 @@ export async function runTradingAccountReadinessAssessment(
               },
             },
           );
-          await prisma.systemEvent.create({
-            data: {
+          await createSystemEvent({
               type: 'trading_account.readiness_assessed',
               entityType: 'TradingAccountReadinessAssessment',
               entityId: String(created.id),
               tradingAccountId,
               actorUserId: requestedByUserId,
+              severity: SystemEventSeverity.ERROR,
               message: `Trading account ${tradingAccountId} readiness assessment ended with ERROR.`,
               payloadJson: {
                 assessmentId: created.id,
@@ -1372,7 +1384,6 @@ export async function runTradingAccountReadinessAssessment(
                 expiresAt: created.expiresAt,
                 errorCode: 'READINESS_ASSESSMENT_ERROR',
               },
-            },
           });
           return mapAssessment(created, fingerprints);
         } catch {

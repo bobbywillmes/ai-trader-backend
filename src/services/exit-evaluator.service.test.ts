@@ -51,7 +51,14 @@ vi.mock('./protective-order-sync.service.js', () => ({
 import {
   evaluateExitsForAccount,
   evaluateExitsForEligibleAccounts,
+  exposureUnavailableSeverity,
 } from './exit-evaluator.service.js';
+
+it('classifies unavailable exit credentials by authority and environment', () => {
+  expect(exposureUnavailableSeverity('LIVE', true)).toBe('CRITICAL');
+  expect(exposureUnavailableSeverity('LIVE', false)).toBe('WARNING');
+  expect(exposureUnavailableSeverity('PAPER', false)).toBe('ERROR');
+});
 
 function assignment(overrides: Record<string, unknown> = {}) {
   return {

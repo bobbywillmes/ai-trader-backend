@@ -174,7 +174,6 @@ export type SystemStatusResponse = {
     submittedOrderCount: number;
     openTrackedPositionCount: number;
     closingTrackedPositionCount: number;
-    unprocessedSystemEventCount: number;
   };
   alpacaApiUsage: {
     evaluatedAt: string;

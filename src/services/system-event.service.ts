@@ -1,8 +1,9 @@
-import { PlatformRole, type Prisma } from '@prisma/client';
+import { PlatformRole, SystemEventSeverity, type Prisma } from '@prisma/client';
 import { HttpError } from '../errors/http-error.js';
 import { logger } from '../config/logger.js';
 import { prisma } from '../db/prisma.js';
-import { TRADING_ACCOUNT_SUMMARY_SELECT } from './trading-account.service.js';
+
+export type SystemEventWriter = Pick<Prisma.TransactionClient, 'systemEvent'>;
 
 export async function createSystemEvent(args: {
   type: string;
@@ -11,15 +12,16 @@ export async function createSystemEvent(args: {
   tradingAccountId?: number | null;
   actorUserId?: number | null;
   message?: string;
+  severity?: SystemEventSeverity;
   payloadJson: Prisma.InputJsonValue;
-}) {
+}, db: SystemEventWriter = prisma) {
   logger.trace({
     eventType: args.type,
     entityType: args.entityType,
     entityId: args.entityId,
   }, 'Creating system event.');
 
-  return prisma.systemEvent.create({
+  return db.systemEvent.create({
     data: {
       type: args.type,
       entityType: args.entityType,
@@ -27,19 +29,36 @@ export async function createSystemEvent(args: {
       tradingAccountId: args.tradingAccountId ?? null,
       actorUserId: args.actorUserId ?? null,
       message: args.message ?? null,
+      severity: args.severity ?? SystemEventSeverity.INFO,
       payloadJson: args.payloadJson,
-      processed: false,
     },
   });
 }
 
+const PUBLIC_SYSTEM_EVENT_SELECT = {
+  id: true,
+  tradingAccountId: true,
+  tradingAccount: { select: {
+    id: true,
+    displayName: true,
+    accountHolderUserId: true,
+    broker: true,
+    environment: true,
+    status: true,
+  } },
+  actorUserId: true,
+  type: true,
+  entityType: true,
+  entityId: true,
+  message: true,
+  payloadJson: true,
+  severity: true,
+  createdAt: true,
+} satisfies Prisma.SystemEventSelect;
+
 export async function getRecentSystemEvents(limit = 50) {
   return prisma.systemEvent.findMany({
-    include: {
-      tradingAccount: {
-        select: TRADING_ACCOUNT_SUMMARY_SELECT,
-      },
-    },
+    select: PUBLIC_SYSTEM_EVENT_SELECT,
     orderBy: { createdAt: 'desc' },
     take: limit
   });
@@ -48,7 +67,7 @@ export async function getRecentSystemEvents(limit = 50) {
 export async function getAccessibleSystemEvents(
   user: { id: number; platformRole: PlatformRole },
   accountId: number | null,
-  filters: { page?: number; pageSize?: number; type?: string; search?: string } = {}
+  filters: { page?: number; pageSize?: number; type?: string; severity?: SystemEventSeverity; search?: string } = {}
 ) {
   if (user.platformRole === PlatformRole.ACCOUNT_USER) {
     throw new HttpError(403, 'System events are not available to Account Users.');
@@ -72,6 +91,7 @@ export async function getAccessibleSystemEvents(
   const where: Prisma.SystemEventWhereInput = {
       ...accountScope,
       ...(filters.type ? { type: filters.type } : {}),
+      ...(filters.severity ? { severity: filters.severity } : {}),
       ...(search ? { OR: [
         { type: { contains: search, mode: 'insensitive' } },
         { entityType: { contains: search, mode: 'insensitive' } },
@@ -84,7 +104,7 @@ export async function getAccessibleSystemEvents(
   const [events, total] = await Promise.all([
     prisma.systemEvent.findMany({
       where,
-    include: { tradingAccount: { select: TRADING_ACCOUNT_SUMMARY_SELECT } },
+    select: PUBLIC_SYSTEM_EVENT_SELECT,
     orderBy: { createdAt: 'desc' },
       skip: (page - 1) * pageSize,
       take: pageSize,
@@ -116,11 +136,7 @@ export async function getSecurityActivity(symbol: string, limit = 10) {
         },
       ],
     },
-    include: {
-      tradingAccount: {
-        select: TRADING_ACCOUNT_SUMMARY_SELECT,
-      },
-    },
+    select: PUBLIC_SYSTEM_EVENT_SELECT,
     orderBy: {
       createdAt: 'desc',
     },

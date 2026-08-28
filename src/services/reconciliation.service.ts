@@ -1,7 +1,8 @@
-import type { Prisma } from '@prisma/client';
+import { SystemEventSeverity, type Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 
 import { logger } from '../config/logger.js';
+import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
 import { getOpenAlpacaOrders } from '../integrations/alpaca/orders.adapter.js';
 import {
@@ -22,6 +23,18 @@ import { runTradingAccountWorkflow } from './trading-account-workflow-runner.ser
 import { diagnoseHistoricalOrderLifecycle } from './historical-order-lifecycle-diagnostic.service.js';
 
 export type ReconciliationSeverity = 'info' | 'warn' | 'critical';
+
+export function reconciliationExposureUnavailableSeverity(
+  environment: 'PAPER' | 'LIVE',
+  authoritativeProductionExecutor =
+    env.NODE_ENV === 'production' &&
+    env.LIVE_WRITE_DEPLOYMENT_ROLE === 'PRODUCTION_EXECUTOR'
+) {
+  if (environment === 'PAPER') return SystemEventSeverity.ERROR;
+  return authoritativeProductionExecutor
+    ? SystemEventSeverity.CRITICAL
+    : SystemEventSeverity.WARNING;
+}
 
 export type ReconciliationFindingCode =
   | 'tracked_position_missing_at_broker'
@@ -584,6 +597,14 @@ function buildReconciliationEventType(code: ReconciliationFindingCode) {
   return `reconciliation.${code}`;
 }
 
+export function mapReconciliationSeverity(severity: ReconciliationSeverity) {
+  switch (severity) {
+    case 'critical': return SystemEventSeverity.CRITICAL;
+    case 'warn': return SystemEventSeverity.WARNING;
+    default: return SystemEventSeverity.INFO;
+  }
+}
+
 function buildReconciliationEventPayload(
   finding: ReconciliationFinding,
   account: RunReconciliationCheckResult['account'],
@@ -798,6 +819,7 @@ let skippedDuplicateEventCount = 0;
         entityId: finding.entityId,
         tradingAccountId,
         message: finding.message,
+        severity: mapReconciliationSeverity(finding.severity),
         payloadJson: buildReconciliationEventPayload(
           finding,
           {
@@ -1004,6 +1026,9 @@ export async function reconcileEligibleTradingAccounts(
             entityType: 'tradingAccount',
             entityId: account.tradingAccountId,
             tradingAccountId: account.tradingAccountId,
+            severity: reconciliationExposureUnavailableSeverity(
+              account.environment
+            ),
             message: `Reconciliation cannot access credentials for ${account.displayName} while lifecycle exposure exists.`,
             payloadJson: {
               tradingAccountId: account.tradingAccountId,

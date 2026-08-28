@@ -31,6 +31,7 @@ export function getSystemEvents(
   page = 1,
   pageSize = 25,
   type?: string,
+  severity?: string,
   search?: string,
 ) {
   const query = new URLSearchParams({
@@ -39,6 +40,7 @@ export function getSystemEvents(
     pageSize: String(pageSize),
   });
   if (type && type !== "all") query.set("type", type);
+  if (severity && severity !== "all") query.set("severity", severity);
   if (search?.trim()) query.set("search", search.trim());
   return apiRequest<SystemEventsResponse>(
     `/api/system-events?${query.toString()}`,

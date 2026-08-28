@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   deriveTradingAccountWorkerStatus,
   isAccountWorkerRecoveryTransition,
+  accountWorkerTransitionSeverity,
 } from './trading-account-worker-health.service.js';
 import { getWorkerDefinition } from '../workers/worker-health.definitions.js';
 
@@ -13,6 +14,13 @@ const base = {
   backoffUntil: null, lastLockSkippedAt: null, totalLockSkips: 0,
   createdAt: now,
 };
+
+it('reserves CRITICAL for stale authoritative Live exposure responsibility', () => {
+  expect(accountWorkerTransitionSeverity({ recovered: false, nextStatus: 'STALE', environment: 'LIVE', authoritativeProductionExecutor: true, exposureCritical: true })).toBe('CRITICAL');
+  expect(accountWorkerTransitionSeverity({ recovered: false, nextStatus: 'STALE', environment: 'LIVE', authoritativeProductionExecutor: true, exposureCritical: false })).toBe('ERROR');
+  expect(accountWorkerTransitionSeverity({ recovered: false, nextStatus: 'FAILING', environment: 'LIVE', authoritativeProductionExecutor: true, exposureCritical: true })).toBe('ERROR');
+  expect(accountWorkerTransitionSeverity({ recovered: true, nextStatus: 'HEALTHY', environment: 'LIVE', authoritativeProductionExecutor: true, exposureCritical: true })).toBe('INFO');
+});
 
 describe('deriveTradingAccountWorkerStatus', () => {
   it('keeps dormant workflows from becoming stale without a success', () => {

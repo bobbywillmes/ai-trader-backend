@@ -219,7 +219,7 @@ describe('trade cycle service', () => {
       },
       take: 10,
     });
-    expect(mocks.systemEventFindMany).toHaveBeenCalledWith({
+    expect(mocks.systemEventFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: {
         entityType: 'trackedPosition',
         entityId: {
@@ -231,7 +231,7 @@ describe('trade cycle service', () => {
       orderBy: {
         createdAt: 'asc',
       },
-    });
+    }));
   });
 
   it('uses position.closed event payloads as a legacy close summary fallback', async () => {
@@ -445,7 +445,7 @@ describe('trade cycle service', () => {
         }),
       }),
     });
-    expect(mocks.systemEventFindMany).toHaveBeenCalledWith({
+    expect(mocks.systemEventFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: {
         entityType: 'trackedPosition',
         entityId: '101',
@@ -454,7 +454,7 @@ describe('trade cycle service', () => {
       orderBy: {
         createdAt: 'asc',
       },
-    });
+    }));
 
     expect(result.cycle).toEqual(
       expect.objectContaining({

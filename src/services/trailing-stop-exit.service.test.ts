@@ -81,6 +81,7 @@ function buildPosition(overrides: Record<string, unknown> = {}) {
     symbol: 'SPY',
     qty: 3,
     tradingAccountId: 1,
+    tradingAccount: { environment: 'PAPER' },
     securityId: 11,
     subscriptionId: 22,
     side: 'long',
@@ -418,6 +419,20 @@ describe('submitTrailingStopExitOrder', () => {
     await expect(
       submitTrailingStopExitOrder(1, 101)
     ).rejects.toMatchObject({ classification: 'DELIVERY_UNCERTAIN' });
+    expect(mocks.createSystemEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'exit.trailing_stop_submission_uncertain',
+        severity: 'ERROR',
+        tradingAccountId: 1,
+        entityId: 101,
+        payloadJson: expect.objectContaining({
+          orderIntentId: 301,
+          securityId: 11,
+          clientOrderId: expect.any(String),
+          deliveryClassification: 'DELIVERY_UNCERTAIN',
+        }),
+      })
+    );
 
     mocks.trackedPositionFindUnique.mockReset().mockResolvedValue(buildPosition());
     mocks.orderIntentFindFirst
@@ -437,5 +452,8 @@ describe('submitTrailingStopExitOrder', () => {
       brokerOrderId: 'alpaca-accepted-before-persist',
     });
     expect(mocks.placeAlpacaOrder).toHaveBeenCalledOnce();
+    expect(mocks.createSystemEvent.mock.calls.filter(([event]) =>
+      event.type === 'exit.trailing_stop_submission_uncertain'
+    )).toHaveLength(1);
   });
 });

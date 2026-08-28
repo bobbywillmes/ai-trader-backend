@@ -518,6 +518,12 @@ subscription.disabled
 
 System Events are the full internal audit log.
 
+SystemEvent rows are append-only. Their required persisted severity is one of
+`INFO`, `WARNING`, `ERROR`, or `CRITICAL` and is immutable historical evidence.
+The legacy `processed` Boolean is deprecated and has no active consumer. Current
+operator awareness and resolution state belongs to `OperationalAttention`, not
+to SystemEvent.
+
 ### Dashboard vs Reports vs System Events
 
 The admin UI intentionally separates these views:

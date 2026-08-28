@@ -63,6 +63,8 @@ describe('user access metadata', () => {
             PlatformPermission.EXIT_PROFILE_READ,
             PlatformPermission.REPORTS_READ,
             PlatformPermission.SYSTEM_EVENTS_READ,
+            PlatformPermission.OPERATIONAL_ATTENTION_READ,
+            PlatformPermission.OPERATIONAL_ATTENTION_ACKNOWLEDGE,
           ]
         : [
             PlatformPermission.TRADING_ACCOUNT_READ,

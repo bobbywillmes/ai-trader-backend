@@ -18,6 +18,10 @@ export enum PlatformPermission {
   EXIT_PROFILE_WRITE = 'exitProfile.write',
   REPORTS_READ = 'reports.read',
   SYSTEM_EVENTS_READ = 'systemEvents.read',
+  OPERATIONAL_ATTENTION_READ = 'operationalAttention.read',
+  OPERATIONAL_ATTENTION_ACKNOWLEDGE = 'operationalAttention.acknowledge',
+  OPERATIONAL_ATTENTION_RESOLVE = 'operationalAttention.resolve',
+  OPERATIONAL_ATTENTION_MANUAL_RESOLVE = 'operationalAttention.manualResolve',
   TRADING_LIFECYCLE_EXERCISE_READ = 'tradingLifecycleExercise.read',
   TRADING_LIFECYCLE_EXERCISE_WRITE = 'tradingLifecycleExercise.write',
 }
@@ -34,6 +38,8 @@ export const PLATFORM_ROLE_PERMISSIONS: Record<PlatformRole, PlatformPermission[
     PlatformPermission.EXIT_PROFILE_READ,
     PlatformPermission.REPORTS_READ,
     PlatformPermission.SYSTEM_EVENTS_READ,
+    PlatformPermission.OPERATIONAL_ATTENTION_READ,
+    PlatformPermission.OPERATIONAL_ATTENTION_ACKNOWLEDGE,
   ],
   [PlatformRole.ACCOUNT_USER]: [
     PlatformPermission.TRADING_ACCOUNT_READ,

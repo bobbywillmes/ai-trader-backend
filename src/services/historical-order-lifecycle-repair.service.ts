@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Prisma } from '@prisma/client';
+import { SystemEventSeverity, type Prisma } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
 import { getTradingAccountEntryRiskUsage } from './trading-account-entry-risk-usage.service.js';
@@ -12,6 +12,7 @@ import {
   validateExistingHistoricalPositionLink,
 } from './historical-order-lifecycle-diagnostic.service.js';
 import { withTradingAccountWorkflowLock } from './trading-account-workflow-lock.service.js';
+import { createSystemEvent } from './system-event.service.js';
 
 export const HISTORICAL_ORDER_REPAIR_CONFIRMATION =
   'REPAIR HISTORICAL ORDER LIFECYCLE';
@@ -409,12 +410,12 @@ async function applyProposals(args: {
           },
         });
       }
-      await tx.systemEvent.create({
-        data: {
+      await createSystemEvent({
           type: 'historical_order_lifecycle.repaired',
           entityType: 'brokerOrder',
           entityId: String(currentOrder.id),
           tradingAccountId: args.tradingAccountId,
+          severity: SystemEventSeverity.INFO,
           message: `Repaired historical lifecycle for ${currentOrder.symbol}.`,
           payloadJson: {
             tradingAccountId: args.tradingAccountId,
@@ -437,8 +438,7 @@ async function applyProposals(args: {
             repairRunId: args.runId,
             actor: 'script:historical-order-lifecycle-repair',
           } satisfies Prisma.InputJsonValue,
-        },
-      });
+      }, tx);
       repaired.push({
         orderIntentId: currentOrder.orderIntentId,
         brokerOrderRecordId: currentOrder.id,
@@ -449,12 +449,12 @@ async function applyProposals(args: {
         newOrderIntentStatus: proposal.orderIntentStatus,
       });
     }
-    await tx.systemEvent.create({
-      data: {
+    await createSystemEvent({
         type: 'historical_order_lifecycle.repair_run_completed',
         entityType: 'tradingAccount',
         entityId: String(args.tradingAccountId),
         tradingAccountId: args.tradingAccountId,
+        severity: SystemEventSeverity.INFO,
         message: `Historical lifecycle repair completed for ${repaired.length} groups.`,
         payloadJson: {
           tradingAccountId: args.tradingAccountId,
@@ -462,8 +462,7 @@ async function applyProposals(args: {
           repairedCount: repaired.length,
           actor: 'script:historical-order-lifecycle-repair',
         },
-      },
-    });
+    }, tx);
     return repaired;
   });
 }
