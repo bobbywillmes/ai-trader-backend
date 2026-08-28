@@ -8,6 +8,7 @@ const allPermissions: PlatformPermission[] = [
   "tradingAccount.read", "tradingAccount.write", "tradingAccount.risk.write", "subscription.read",
   "subscription.write", "strategy.read", "strategy.write", "exitProfile.read", "exitProfile.write",
   "reports.read", "systemEvents.read", "tradingLifecycleExercise.read", "tradingLifecycleExercise.write",
+  "operationalAttention.read", "operationalAttention.acknowledge", "operationalAttention.resolve", "operationalAttention.manualResolve",
 ];
 
 function visibleLabels(role: PlatformRole, permissions = allPermissions) {
@@ -31,7 +32,7 @@ describe("role-aware navigation configuration", () => {
 
   it("gives operators broad operations without owner-critical destinations", () => {
     const labels = visibleLabels("OPERATOR");
-    expect(labels).toEqual(expect.arrayContaining(["Dashboard", "Live Operations", "Open Positions", "Open Orders", "Entry Decisions", "Trading Setup", "Momentum Scanner", "Reports", "Trading Accounts", "System Events"]));
+    expect(labels).toEqual(expect.arrayContaining(["Dashboard", "Live Operations", "Open Positions", "Open Orders", "Entry Decisions", "Trading Setup", "Momentum Scanner", "Reports", "Trading Accounts", "System Events", "Operational Attention"]));
     expect(labels).not.toEqual(expect.arrayContaining(["Users & Access", "Settings", "Securities", "Reconciliation", "Lifecycle Exercises", "Lifecycle Repairs"]));
   });
 
@@ -40,6 +41,7 @@ describe("role-aware navigation configuration", () => {
     expect(visibleLabels("ACCOUNT_USER")).toEqual(["Dashboard", "Open Positions", "Open Orders", "Reports", "Trade History", "My Accounts"]);
     expect(groups.map((group) => group.label)).toEqual(["Dashboard", "Trading", "Reports", "Accounts"]);
     expect(groups.find((group) => group.label === "Accounts")?.items.map((item) => item.label)).toEqual(["My Accounts"]);
+    expect(visibleLabels("ACCOUNT_USER")).not.toContain("Operational Attention");
   });
 
   it("prefers Reconciliation over Trading Accounts for account reconciliation routes", () => {

@@ -18,6 +18,8 @@ export const OPERATIONAL_ATTENTION_CODES = {
   BROKER_EXPOSURE_UNVERIFIABLE: 'BROKER_EXPOSURE_UNVERIFIABLE',
   PROTECTIVE_EXIT_UNAVAILABLE: 'PROTECTIVE_EXIT_UNAVAILABLE',
   LIFECYCLE_REVIEW_REQUIRED: 'LIFECYCLE_REVIEW_REQUIRED',
+  ACCOUNT_WORKER_UNHEALTHY: 'ACCOUNT_WORKER_UNHEALTHY',
+  DEMO_OPERATIONAL_ATTENTION: 'DEMO_OPERATIONAL_ATTENTION',
 } as const;
 
 export type OperationalAttentionCode =
@@ -29,6 +31,7 @@ export const OPERATIONAL_ATTENTION_SOURCES = {
   WORKER: 'WORKER',
   MANUAL_DIAGNOSIS: 'MANUAL_DIAGNOSIS',
   SYSTEM: 'SYSTEM',
+  DEMO: 'DEMO',
 } as const;
 
 export type OperationalAttentionSource =
@@ -77,6 +80,7 @@ type OpenOrObserveArgs = LifecycleLinks & {
   fingerprint: string;
   resolutionPolicy: OperationalAttentionResolutionPolicy;
   observedAt?: Date;
+  observedSystemEventId?: number | null;
 };
 
 function requireText(value: string, label: string) {
@@ -199,8 +203,23 @@ async function openOrObserveTransaction(args: OpenOrObserveArgs) {
           message,
           revision: { increment: 1 },
           ...(escalated ? { severity: args.severity } : {}),
+          ...(escalated && existing.status === OperationalAttentionStatus.ACKNOWLEDGED
+            ? {
+                status: OperationalAttentionStatus.OPEN,
+                acknowledgedAt: null,
+                acknowledgedByUserId: null,
+                acknowledgedByUserIdSnapshot: null,
+              }
+            : {}),
         },
       });
+      if (args.observedSystemEventId) {
+        await tx.operationalAttentionSystemEvent.upsert({
+          where: { operationalAttentionId_systemEventId: { operationalAttentionId: updated.id, systemEventId: args.observedSystemEventId } },
+          create: { operationalAttentionId: updated.id, systemEventId: args.observedSystemEventId, relationKind: OperationalAttentionEventRelationKind.OBSERVED },
+          update: {},
+        });
+      }
       if (escalated) {
         await createTransitionEvidence({
           tx,
@@ -246,6 +265,13 @@ async function openOrObserveTransaction(args: OpenOrObserveArgs) {
       severity: created.severity,
       extra: { observedAt: now, details: detailsJson },
     });
+    if (args.observedSystemEventId) {
+      await tx.operationalAttentionSystemEvent.upsert({
+        where: { operationalAttentionId_systemEventId: { operationalAttentionId: created.id, systemEventId: args.observedSystemEventId } },
+        create: { operationalAttentionId: created.id, systemEventId: args.observedSystemEventId, relationKind: OperationalAttentionEventRelationKind.OBSERVED },
+        update: {},
+      });
+    }
     return { attention: created, created: true, escalated: false };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }

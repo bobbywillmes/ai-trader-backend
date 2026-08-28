@@ -32,6 +32,7 @@ import momentumCandidatesRoutes from '../routes/momentum-candidates.routes.js';
 import momentumScannerRoutes from '../routes/momentum-scanner.routes.js';
 import etfWatchRoutes from '../routes/etf-watch.routes.js';
 import reconciliationRoutes from '../routes/reconciliation.routes.js';
+import operationalAttentionRoutes from '../routes/operational-attention.routes.js';
 import tradeCyclesRoutes from '../routes/trade-cycles.routes.js';
 import tradePerformanceRoutes from '../routes/trade-performance.routes.js';
 import entryDecisionsRoutes from '../routes/entry-decisions.routes.js';
@@ -100,6 +101,7 @@ export function createApp() {
   app.use('/api/system-status', requireAdminAccess, systemStatusRoutes);
   app.use('/api/system-events', requireAdminAccess, systemEventsRoutes);
   app.use('/api/reconciliation', requireAdminAccess, reconciliationRoutes);
+  app.use('/api/operational-attention', requireAdminAccess, operationalAttentionRoutes);
   app.use('/api/account', requireAdminAccess, accountRoutes);
   app.use('/api/account-snapshots', requireAdminAccess, accountSnapshotsRoutes);
   app.use('/api/broker-activities', requireAdminAccess, brokerActivitiesRoutes);

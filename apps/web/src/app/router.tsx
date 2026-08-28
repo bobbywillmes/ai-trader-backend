@@ -46,6 +46,7 @@ import { LifecycleExercisesPage } from "../features/lifecycleExercises/Lifecycle
 import { LifecycleExerciseDetailPage } from "../features/lifecycleExercises/LifecycleExerciseDetailPage";
 import { LifecycleRepairsPage } from "../features/lifecycleRepairs/LifecycleRepairsPage";
 import { LiveOperationsPage } from "../features/liveOperations/LiveOperationsPage";
+import { OperationalAttentionPage } from "../features/operationalAttention/OperationalAttentionPage";
 
 const responsiveDataPreviewRoute = import.meta.env.DEV
   ? [{ path: "dev/responsive-data-primitives", lazy: async () => ({ Component: (await import("../features/dev/ResponsiveDataPrimitivesPreview")).ResponsiveDataPrimitivesPreview }) }]
@@ -182,6 +183,10 @@ export const router = createBrowserRouter([
               {
                 path: "system/events",
                 element: authorize("systemEvents", <SystemEventsPage />),
+              },
+              {
+                path: "operational-attention",
+                element: authorize("operationalAttention", <OperationalAttentionPage />),
               },
               {
                 path: "system/reconciliation",

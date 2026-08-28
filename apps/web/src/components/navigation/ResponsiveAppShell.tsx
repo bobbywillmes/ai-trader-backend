@@ -1,5 +1,5 @@
 import {
-  AppShell, Avatar, Burger, Divider, Drawer, Menu, ScrollArea,
+  AppShell, Avatar, Badge, Burger, Divider, Drawer, Menu, ScrollArea,
   Text, Tooltip, UnstyledButton,
 } from "@mantine/core";
 import { IconChevronDown, IconChevronRight, IconChevronUp, IconLogout, IconPin, IconPinnedOff, IconUser } from "@tabler/icons-react";
@@ -180,7 +180,7 @@ function SidebarLink({ item, expanded, onNavigate, preserveTradingAccountScope, 
   const { pathname, search } = useLocation(); const navigate = useNavigate(); const active = isNavigationItemActive(item, pathname); const Icon = item.icon;
   const to = item.to ?? "/";
   const target = preserveTradingAccountScope ? createScopedNavigationTarget(to, search) : to;
-  const link = <UnstyledButton className={`${classes.navLink} ${nested ? classes.nestedLink : ""}`} data-active={active || undefined} aria-current={active ? "page" : undefined} onClick={() => { navigate(target); window.scrollTo({ top: 0, left: 0, behavior: "auto" }); onNavigate?.(); }}><Icon size={nested ? 17 : 21} stroke={1.8} aria-hidden="true" /><span className={expanded ? classes.linkLabel : classes.visuallyHidden}>{item.label}</span>{expanded && !nested && <IconChevronRight className={classes.linkChevron} size={15} aria-hidden="true" />}</UnstyledButton>;
+  const link = <UnstyledButton className={`${classes.navLink} ${nested ? classes.nestedLink : ""}`} data-active={active || undefined} aria-current={active ? "page" : undefined} onClick={() => { navigate(target); window.scrollTo({ top: 0, left: 0, behavior: "auto" }); onNavigate?.(); }}><Icon size={nested ? 17 : 21} stroke={1.8} aria-hidden="true" /><span className={expanded ? classes.linkLabel : classes.visuallyHidden}>{item.label}</span>{item.badge && <Badge color={item.badge.color} size="xs" aria-label={item.badge.label} title={item.badge.label}>{item.badge.count > 99 ? "99+" : item.badge.count}</Badge>}{expanded && !nested && <IconChevronRight className={classes.linkChevron} size={15} aria-hidden="true" />}</UnstyledButton>;
   return expanded ? link : <Tooltip label={item.label} position="right" openDelay={350}>{link}</Tooltip>;
 }
 

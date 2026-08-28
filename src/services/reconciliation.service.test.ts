@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   brokerActivityFindMany: vi.fn(),
   orderIntentFindMany: vi.fn(),
   positionExitStateFindMany: vi.fn(),
+  projectReconciliationOperationalAttention: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -64,6 +65,9 @@ vi.mock('./trading-account.service.js', () => ({
 }));
 vi.mock('./lifecycle-account-eligibility.service.js', () => ({
   enumerateLifecycleAccounts: mocks.enumerateLifecycleAccounts,
+}));
+vi.mock('./reconciliation-operational-attention.service.js', () => ({
+  projectReconciliationOperationalAttention: mocks.projectReconciliationOperationalAttention,
 }));
 
 import {
@@ -393,6 +397,7 @@ describe('runReconciliationCheck', () => {
     mocks.brokerActivityFindMany.mockResolvedValue([]);
     mocks.orderIntentFindMany.mockResolvedValue([]);
     mocks.positionExitStateFindMany.mockResolvedValue([]);
+    mocks.projectReconciliationOperationalAttention.mockResolvedValue({ updated: 0, resolved: 0 });
   });
 
   it('loads backend and broker snapshots, then creates system events for findings', async () => {

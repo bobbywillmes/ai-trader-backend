@@ -1,0 +1,24 @@
+import { Alert, Anchor, Badge, Button, Card, Group, Skeleton, Stack, Text } from "@mantine/core";
+import { Link } from "react-router-dom";
+import type { AttentionSeverity } from "./types";
+import type { DashboardAttentionState } from "./useDashboardOperationalAttention";
+
+const colors: Record<AttentionSeverity, string> = { CRITICAL: "red", ERROR: "orange", WARNING: "yellow", INFO: "blue" };
+export function DashboardOperationalAttentionBanner({ state }: { state: DashboardAttentionState }) {
+  if (!state.visible || state.query.isLoading) return null;
+  if (state.query.isError) return <Alert role="alert" color="yellow" title="Operational attention unavailable"><Group justify="space-between" align="center"><Text size="sm">Current operational-attention status could not be loaded. Review the Operational Attention page or retry.</Text><Group gap="xs"><Button component={Link} to={`/operational-attention?account=${state.account}`} variant="light" size="xs">Review</Button><Button variant="default" size="xs" onClick={() => state.query.refetch()}>Retry</Button></Group></Group></Alert>;
+  const summary = state.query.data;
+  if (!summary?.totalUnresolved) return null;
+  const single = summary.totalUnresolved === 1 ? summary.preview[0] : null;
+  const accountNames = [...new Set(summary.preview.map((item) => `${item.tradingAccount.displayName} · ${item.tradingAccount.environment}`))];
+  return <Alert role="alert" color={colors[summary.highestSeverity ?? "INFO"]} title={single ? `1 operational issue requires attention · ${single.severity}` : `${summary.totalUnresolved} operational issues require attention · Highest severity ${summary.highestSeverity ?? "UNKNOWN"}`}><Group justify="space-between" align="center"><div>{single ? <><Text size="sm" fw={700}>{single.tradingAccount.displayName} · {single.tradingAccount.environment}: {single.title}</Text>{single.status === "ACKNOWLEDGED" && <Badge mt={4} variant="outline">ACKNOWLEDGED · UNRESOLVED</Badge>}</> : <Text size="sm">{accountNames.length === 1 ? `${accountNames[0]} is affected.` : `${accountNames.length} trading accounts are represented in the current preview.`}</Text>}</div><Button component={Link} to={single ? `/operational-attention?account=${single.tradingAccountId}&attention=${single.id}` : `/operational-attention?account=${state.account}`} variant="light" size="xs">{single ? "Review" : "Review all"}</Button></Group></Alert>;
+}
+
+export function DashboardOperationalAttentionSection({ state }: { state: DashboardAttentionState }) {
+  if (!state.visible) return null;
+  if (state.query.isLoading) return <Card withBorder aria-label="Operational Attention"><Skeleton height={48} /></Card>;
+  if (state.query.isError) return <Card withBorder><Group justify="space-between"><div><Text fw={800}>Operational Attention</Text><Text size="sm" c="dimmed">Current state is unavailable.</Text></div><Anchor component={Link} to={`/operational-attention?account=${state.account}`}>Review</Anchor></Group></Card>;
+  const summary = state.query.data;
+  if (!summary?.totalUnresolved) return <Card withBorder py="sm"><Group justify="space-between"><Group gap="xs"><Text fw={800}>Operational Attention</Text><Text size="sm" c="dimmed">· No unresolved conditions</Text></Group><Anchor component={Link} to={`/operational-attention?account=${state.account}&status=all`}>View history</Anchor></Group></Card>;
+  return <Card withBorder style={summary.highestSeverity === "CRITICAL" ? { borderColor: "var(--mantine-color-red-6)" } : undefined}><Group justify="space-between"><div><Text fw={800}>Operational Attention</Text><Text size="xs" c="dimmed">Unresolved current conditions; acknowledged items remain counted.</Text></div><Anchor component={Link} to={`/operational-attention?account=${state.account}`}>Review all</Anchor></Group><Stack mt="md"><Group>{(["CRITICAL", "ERROR", "WARNING"] as const).map((severity) => summary.bySeverity[severity] ? <Badge key={severity} color={colors[severity]}>{severity} {summary.bySeverity[severity]}</Badge> : null)}</Group>{summary.preview.map((item) => <Card withBorder key={item.id}><Group justify="space-between" align="flex-start"><div><Group gap="xs"><Badge color={colors[item.severity]}>{item.severity}</Badge><Badge variant="outline">{item.status}</Badge></Group><Text fw={700}>{item.title}</Text><Text size="sm">{item.tradingAccount.displayName} · {item.tradingAccount.environment}</Text><Text size="xs" c="dimmed">Observed {new Date(item.lastObservedAt).toLocaleString()} · {item.occurrenceCount} occurrences</Text></div><Stack gap="xs"><Button component={Link} to={`/operational-attention?account=${item.tradingAccountId}&attention=${item.id}`} variant="light" size="xs">Review</Button>{item.allowedActions.acknowledge && <Button variant="default" size="xs" loading={state.acknowledge.isPending} onClick={() => state.acknowledge.mutate({ id: item.id, revision: item.revision })}>Acknowledge</Button>}</Stack></Group></Card>)}</Stack></Card>;
+}

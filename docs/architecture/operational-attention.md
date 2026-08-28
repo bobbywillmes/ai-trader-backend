@@ -39,24 +39,20 @@ resolution evidence.
 ## Compatibility and access
 
 The existing `PositionExitState.attention*` fields remain the position-exit
-domain projection. This foundation does not migrate, replace, clear, or dual-write
-them. Reconciliation integration belongs to a later branch.
+domain compatibility projection. Reconciliation continues to update qualifying
+exit-state findings while current operator surfaces use `OperationalAttention`.
 
 RBAC reserves four permissions. System Owners receive read, acknowledge,
 resolve, and manual-resolve permissions. Operators receive read and acknowledge
 permissions and must remain account-membership scoped when routes are added.
-Account Users receive none. This branch provides no attention routes or UI.
+Account Users receive none. Membership-scoped routes and operator UI enforce
+these permissions.
 
 ## Deferred operational work
 
-The planned Dashboard will show unresolved attention and offer **Review & close**
-only where the backend derives an available corrective action. It will open the
-correct account-scoped position context and label the action **Close remaining
-broker position**, never **Resolve attention**. Confirmation will use a
-server-derived preview and final execution will reverify Alpaca immediately
-before submission. Only authoritative broker/lifecycle evidence resolves the
-episode; removing exposure may instead downgrade it to lifecycle review when the
-accounting remains unexplained.
+The Dashboard shows unresolved attention and review links only. Corrective
+broker actions such as **Close remaining broker position** remain deferred to a
+separately authorized workflow with fresh broker verification.
 
 No corrective action is persisted as a potentially stale database flag. Future
 actions are derived from attention code, state, authority, role, and fresh
@@ -96,5 +92,68 @@ without account and exposure scope; the account-scoped consequence carries that
 severity instead.
 
 A critical SystemEvent remains immutable evidence, not current attention.
-Automatic creation or resolution of OperationalAttention from these events is
-deferred to the integration phase.
+High-severity events do not create attention generically. Only explicit domain
+producers with authoritative current-state rules may open or resolve episodes.
+
+## Current surfacing and producers
+
+`OperationalAttention` is now the authoritative current-state store for the
+Dashboard, dedicated page, and navigation badge. `SystemEvent` remains the
+immutable evidence store. `PositionExitState.attention*` remains a compatibility
+projection and reconciliation continues to update it for qualifying exit-state
+findings; it can be derived or removed only after its remaining consumers have
+migrated.
+
+Reconciliation uses an explicit eligibility registry rather than severity
+alone. Missing authoritative lifecycle attribution, unavailable or problematic
+protective trailing exits, broker/local quantity or side disagreement, and a
+tracked position missing at the broker are eligible. A complete authoritative
+run opens or refreshes present fingerprints and resolves only absent
+reconciliation-owned fingerprints. Failed, partial, dry, and observation-only
+Live runs do not resolve or create action-required local episodes. Expected
+observer limitations remain visible as findings and SystemEvent evidence.
+
+Account worker attention is also consequence-aware. A failing or stale
+exposure-critical worker creates attention only when persisted local open
+positions, unresolved order delivery, or pending fill attribution makes the
+failure operationally relevant. Stale authoritative Live evidence is critical;
+Paper and pre-stale failures are errors. Lock contention remains historical
+evidence. Healthy recovery resolves only the matching account/worker episode.
+
+Operators may read and acknowledge member-account attention; System Owners have
+global scope and may manually resolve only `MANUAL_ALLOWED` episodes. Account
+Users have no attention API or UI. Acknowledgement means “seen” and stays in
+unresolved counts. Dashboard scope follows the selected account but unions in
+accessible critical Live episodes so Paper selection cannot hide them. Failed
+queries render unknown/unavailable, never the healthy empty state.
+
+The dedicated page defaults to unresolved (`OPEN` plus `ACKNOWLEDGED`). Its
+canonical mixed-history filter is `status=all`, which includes `OPEN`,
+`ACKNOWLEDGED`, and `RESOLVED` in one server query. Unresolved episodes sort
+before resolved history; resolved episodes sort by most recent resolution.
+The navigation badge is the membership-scoped unresolved episode count, not an
+unread-notification count. Acknowledgement therefore remains counted. A later
+material severity escalation returns an acknowledged episode to `OPEN` and
+appends immutable escalation evidence without creating another episode.
+
+## Safe local Paper demonstration
+
+The demo command uses the real attention service and no broker adapter. It
+refuses production, production-executor authority, Live accounts, and invalid
+account IDs. Replace `2` with an explicit local Paper TradingAccount ID:
+
+```powershell
+npm.cmd run demo:operational-attention -- 2 WARNING
+npm.cmd run demo:operational-attention -- 2 ERROR
+npm.cmd run demo:operational-attention -- 2 CRITICAL
+```
+
+The first command opens a `MANUAL_ALLOWED` demo episode. Repeating a severity
+refreshes the same episode and increments occurrence count; a higher severity
+escalates it. Use the printed URL to acknowledge and manually resolve it with a
+reason. Run the warning command after resolution to create a new recurrence,
+then verify Dashboard, badge, list, detail, evidence, System Events, and resolved
+history. Historical episodes are never deleted.
+
+This branch contains no broker corrective action or trading control. Closing
+remaining broker exposure and broker quantity verification remain deferred.

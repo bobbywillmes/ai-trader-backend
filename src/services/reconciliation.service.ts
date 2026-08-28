@@ -21,6 +21,7 @@ import {
 import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from './trading-account-workflow-lock.service.js';
 import { runTradingAccountWorkflow } from './trading-account-workflow-runner.service.js';
 import { diagnoseHistoricalOrderLifecycle } from './historical-order-lifecycle-diagnostic.service.js';
+import { projectReconciliationOperationalAttention } from './reconciliation-operational-attention.service.js';
 
 export type ReconciliationSeverity = 'info' | 'warn' | 'critical';
 
@@ -797,6 +798,7 @@ export async function reconcileTradingAccount(
 
 let eventCount = 0;
 let skippedDuplicateEventCount = 0;
+const persistedEventIds = new Map<string, number>();
 
   if (persistEvents) {
     for (const finding of findings) {
@@ -813,7 +815,7 @@ let skippedDuplicateEventCount = 0;
         }
       }
 
-      await createSystemEvent({
+      const event = await createSystemEvent({
         type: buildReconciliationEventType(finding.code),
         entityType: finding.entityType,
         entityId: finding.entityId,
@@ -830,6 +832,7 @@ let skippedDuplicateEventCount = 0;
           runIdentifier
         ),
       });
+      persistedEventIds.set(`${finding.entityType}:${finding.entityId}:${finding.code}`, event.id);
 
       eventCount += 1;
     }
@@ -861,6 +864,14 @@ let skippedDuplicateEventCount = 0;
 
       attentionUpdateCount += 1;
     }
+    const projected = await projectReconciliationOperationalAttention({
+      tradingAccountId,
+      environment: account.environment,
+      findings,
+      eventIds: persistedEventIds,
+      runIdentifier,
+    });
+    attentionUpdateCount += projected.updated + projected.resolved;
   }
 
   return {
