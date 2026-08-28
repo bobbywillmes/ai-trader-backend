@@ -8,6 +8,7 @@ import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
 import { createSystemEvent } from './system-event.service.js';
 import { getWorkerDefinition, type WorkerKey } from '../workers/worker-health.definitions.js';
+import { projectWorkerOperationalAttention } from './worker-operational-attention.service.js';
 
 export type AccountWorkerStatus =
   | 'HEALTHY' | 'DORMANT' | 'STARTING' | 'DEGRADED'
@@ -211,14 +212,9 @@ async function emitTransition(args: {
     unresolvedOrderCount: 0,
     pendingFillAttributionCount: 0,
   };
-  if (
-    args.nextStatus === 'STALE' &&
-    account.environment === 'LIVE' &&
-    env.NODE_ENV === 'production' &&
-    env.LIVE_WRITE_DEPLOYMENT_ROLE === 'PRODUCTION_EXECUTOR'
-  ) {
+  if (!recovered && TRANSITION_EVENT_STATUSES.has(args.nextStatus)) {
     const [activePositionCount, unresolvedOrderCount, pendingFillAttributionCount] = await Promise.all([
-      POSITION_EXPOSURE_WORKERS.has(args.state.workerKey as WorkerKey)
+      POSITION_EXPOSURE_WORKERS.has(args.state.workerKey as WorkerKey) && db.trackedPosition?.count
         ? db.trackedPosition.count({
             where: {
               tradingAccountId: args.state.tradingAccountId,
@@ -226,7 +222,7 @@ async function emitTransition(args: {
             },
           })
         : 0,
-      ORDER_EXPOSURE_WORKERS.has(args.state.workerKey as WorkerKey)
+      ORDER_EXPOSURE_WORKERS.has(args.state.workerKey as WorkerKey) && db.orderIntent?.count
         ? db.orderIntent.count({
             where: {
               tradingAccountId: args.state.tradingAccountId,
@@ -237,7 +233,7 @@ async function emitTransition(args: {
             },
           })
         : 0,
-      args.state.workerKey === 'broker_activity_sync'
+      args.state.workerKey === 'broker_activity_sync' && db.positionExitState?.count
         ? db.positionExitState.count({
             where: {
               attentionRequired: true,
@@ -267,7 +263,7 @@ async function emitTransition(args: {
       });
     }
   }
-  await emitSystemEvent({
+  const event = await emitSystemEvent({
     type: recovered ? 'account_worker_health.recovered' :
       args.nextStatus === 'STALE' ? 'account_worker_health.stale' : 'account_worker_health.failing',
     entityType: 'tradingAccountWorker',
@@ -291,6 +287,19 @@ async function emitTransition(args: {
       deploymentRole: env.LIVE_WRITE_DEPLOYMENT_ROLE,
     },
   });
+  if (!dependencies.db) {
+    await projectWorkerOperationalAttention({
+      tradingAccountId: args.state.tradingAccountId,
+      workerKey: args.state.workerKey as WorkerKey,
+      displayName: account.displayName,
+      environment: account.environment,
+      recovered,
+      nextStatus: args.nextStatus,
+      reason: args.reason,
+      ...(event?.id ? { eventId: event.id } : {}),
+      ...exposureContext,
+    });
+  }
 }
 
 export async function recordTradingAccountWorkerAttempt(args: {

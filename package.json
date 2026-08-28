@@ -16,6 +16,7 @@
     "momentum:reconcile-eligibility": "tsx scripts/reconcile-momentum-eligibility.ts",
     "diagnose:account-worker-health": "tsx scripts/diagnose-account-worker-health.ts",
     "diagnose:historical-order-lifecycle": "tsx scripts/historical-order-lifecycle.ts",
+    "demo:operational-attention": "tsx scripts/demo-operational-attention.ts",
     "repair:historical-order-lifecycle": "tsx scripts/historical-order-lifecycle.ts",
     "test": "vitest run",
     "test:watch": "vitest",
