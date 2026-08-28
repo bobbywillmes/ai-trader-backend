@@ -127,6 +127,13 @@ describe('operational attention lifecycle', () => {
     expect(state.links[1].relationKind).toBe('ESCALATED');
   });
 
+  it('reopens acknowledged attention when the condition materially escalates', async () => {
+    const opened = await openOrObserveOperationalAttention(base);
+    await acknowledgeOperationalAttention({ id: opened.attention.id, actorUserId: 7, expectedRevision: 1 });
+    const escalated = await openOrObserveOperationalAttention({ ...base, severity: SystemEventSeverity.CRITICAL });
+    expect(escalated.attention).toMatchObject({ status: OperationalAttentionStatus.OPEN, severity: SystemEventSeverity.CRITICAL, acknowledgedAt: null, acknowledgedByUserId: null });
+  });
+
   it('rejects informational attention and lifecycle ownership mismatches', async () => {
     await expect(openOrObserveOperationalAttention({ ...base, severity: SystemEventSeverity.INFO } as never)).rejects.toBeDefined();
     await expect(openOrObserveOperationalAttention({ ...base, trackedPositionId: 81 })).rejects.toMatchObject({ statusCode: 409 });
