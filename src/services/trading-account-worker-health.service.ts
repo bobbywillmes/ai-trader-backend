@@ -1,5 +1,10 @@
-import type { Prisma, TradingAccountWorkerHealthState } from '@prisma/client';
+import {
+  SystemEventSeverity,
+  type Prisma,
+  type TradingAccountWorkerHealthState,
+} from '@prisma/client';
 import { logger } from '../config/logger.js';
+import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
 import { createSystemEvent } from './system-event.service.js';
 import { getWorkerDefinition, type WorkerKey } from '../workers/worker-health.definitions.js';
@@ -13,6 +18,32 @@ const TRANSITION_EVENT_STATUSES = new Set<AccountWorkerStatus>(['FAILING', 'STAL
 const RECOVERABLE_STATUSES = new Set<AccountWorkerStatus>([
   'FAILING', 'STALE', 'DEGRADED', 'BACKING_OFF',
 ]);
+const POSITION_EXPOSURE_WORKERS = new Set<WorkerKey>([
+  'exit_evaluation',
+  'tracked_position_sync',
+  'scheduled_reconciliation',
+]);
+const ORDER_EXPOSURE_WORKERS = new Set<WorkerKey>([
+  'submitted_order_sync',
+  'broker_activity_sync',
+]);
+
+export function accountWorkerTransitionSeverity(args: {
+  recovered: boolean;
+  nextStatus: AccountWorkerStatus;
+  environment: 'PAPER' | 'LIVE';
+  authoritativeProductionExecutor: boolean;
+  exposureCritical: boolean;
+}) {
+  if (args.recovered) return SystemEventSeverity.INFO;
+  if (
+    args.nextStatus === 'STALE' &&
+    args.environment === 'LIVE' &&
+    args.authoritativeProductionExecutor &&
+    args.exposureCritical
+  ) return SystemEventSeverity.CRITICAL;
+  return SystemEventSeverity.ERROR;
+}
 type HealthLogger = Pick<typeof logger, 'trace' | 'info' | 'warn' | 'error'>;
 
 function safeError(error: unknown) {
@@ -166,12 +197,83 @@ async function emitTransition(args: {
     args.nextStatus
   );
   if (!recovered && !TRANSITION_EVENT_STATUSES.has(args.nextStatus)) return;
+  let severity: SystemEventSeverity = accountWorkerTransitionSeverity({
+    recovered,
+    nextStatus: args.nextStatus,
+    environment: account.environment,
+    authoritativeProductionExecutor:
+      env.NODE_ENV === 'production' &&
+      env.LIVE_WRITE_DEPLOYMENT_ROLE === 'PRODUCTION_EXECUTOR',
+    exposureCritical: false,
+  });
+  let exposureContext = {
+    activePositionCount: 0,
+    unresolvedOrderCount: 0,
+    pendingFillAttributionCount: 0,
+  };
+  if (
+    args.nextStatus === 'STALE' &&
+    account.environment === 'LIVE' &&
+    env.NODE_ENV === 'production' &&
+    env.LIVE_WRITE_DEPLOYMENT_ROLE === 'PRODUCTION_EXECUTOR'
+  ) {
+    const [activePositionCount, unresolvedOrderCount, pendingFillAttributionCount] = await Promise.all([
+      POSITION_EXPOSURE_WORKERS.has(args.state.workerKey as WorkerKey)
+        ? db.trackedPosition.count({
+            where: {
+              tradingAccountId: args.state.tradingAccountId,
+              status: { in: ['open', 'closing'] },
+            },
+          })
+        : 0,
+      ORDER_EXPOSURE_WORKERS.has(args.state.workerKey as WorkerKey)
+        ? db.orderIntent.count({
+            where: {
+              tradingAccountId: args.state.tradingAccountId,
+              OR: [
+                { status: { in: ['submitting', 'submitted'] } },
+                { blockReason: { contains: 'DELIVERY_UNCERTAIN' } },
+              ],
+            },
+          })
+        : 0,
+      args.state.workerKey === 'broker_activity_sync'
+        ? db.positionExitState.count({
+            where: {
+              attentionRequired: true,
+              trackedPosition: {
+                tradingAccountId: args.state.tradingAccountId,
+              },
+            },
+          })
+        : 0,
+    ]);
+    exposureContext = {
+      activePositionCount,
+      unresolvedOrderCount,
+      pendingFillAttributionCount,
+    };
+    if (
+      activePositionCount > 0 ||
+      unresolvedOrderCount > 0 ||
+      pendingFillAttributionCount > 0
+    ) {
+      severity = accountWorkerTransitionSeverity({
+        recovered,
+        nextStatus: args.nextStatus,
+        environment: account.environment,
+        authoritativeProductionExecutor: true,
+        exposureCritical: true,
+      });
+    }
+  }
   await emitSystemEvent({
     type: recovered ? 'account_worker_health.recovered' :
       args.nextStatus === 'STALE' ? 'account_worker_health.stale' : 'account_worker_health.failing',
     entityType: 'tradingAccountWorker',
     entityId: `${args.state.tradingAccountId}:${args.state.workerKey}`,
     tradingAccountId: args.state.tradingAccountId,
+    severity,
     message: `${account.displayName} ${args.state.workerKey} changed from ${args.previousStatus} to ${args.nextStatus}.`,
     payloadJson: {
       tradingAccountId: args.state.tradingAccountId,
@@ -185,6 +287,8 @@ async function emitTransition(args: {
       consecutiveFailures: args.state.consecutiveFailures,
       lastSucceededAt: args.state.lastSucceededAt,
       lastFailedAt: args.state.lastFailedAt,
+      ...exposureContext,
+      deploymentRole: env.LIVE_WRITE_DEPLOYMENT_ROLE,
     },
   });
 }
@@ -359,6 +463,7 @@ export async function recordTradingAccountWorkflowLockContention(args: {
         entityType: 'tradingAccountWorker',
         entityId: `${args.tradingAccountId}:${args.workerKey}`,
         tradingAccountId: args.tradingAccountId,
+        severity: SystemEventSeverity.WARNING,
         message: `${account.displayName} ${args.workerKey} skipped because another process owns the workflow lock.`,
         payloadJson: {
           tradingAccountId: args.tradingAccountId,
@@ -438,6 +543,7 @@ export async function startTradingAccountWorkerRun(args: {
       entityType: 'tradingAccountWorker',
       entityId: `${args.tradingAccountId}:${args.workerKey}`,
       tradingAccountId: args.tradingAccountId,
+      severity: SystemEventSeverity.ERROR,
       message: `Account workflow ${args.workerKey} was interrupted in a previous process.`,
       payloadJson: {
         tradingAccountId: args.tradingAccountId,

@@ -113,7 +113,15 @@ import {
   getTrackedPositions,
   syncTrackedPositions,
   syncTrackedPositionsAcrossAccounts,
+  positionAttributionSeverity,
 } from './position-tracking.service.js';
+
+it('classifies position attribution from environment and authority', () => {
+  expect(positionAttributionSeverity({ environment: 'PAPER', resolved: true, expectedCanonical: true })).toBe('INFO');
+  expect(positionAttributionSeverity({ environment: 'PAPER', resolved: false, expectedCanonical: false })).toBe('ERROR');
+  expect(positionAttributionSeverity({ environment: 'LIVE', resolved: false, expectedCanonical: false, authoritativeProductionExecutor: true })).toBe('CRITICAL');
+  expect(positionAttributionSeverity({ environment: 'LIVE', resolved: false, expectedCanonical: false, authoritativeProductionExecutor: false })).toBe('WARNING');
+});
 
 const brokerPosition = {
   broker: 'alpaca',

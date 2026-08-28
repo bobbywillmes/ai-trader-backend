@@ -1,5 +1,6 @@
-import type { Prisma } from '@prisma/client';
+import { SystemEventSeverity, type Prisma } from '@prisma/client';
 import { logger } from '../config/logger.js';
+import { env } from '../config/env.js';
 
 import { prisma } from '../db/prisma.js';
 import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
@@ -48,6 +49,23 @@ export type TrackedPositionSyncResult = {
   effectiveIntervalMs?: number | null;
   nextDueAt?: string | null;
 };
+
+export function positionAttributionSeverity(args: {
+  environment: 'PAPER' | 'LIVE';
+  resolved: boolean;
+  expectedCanonical: boolean;
+  authoritativeProductionExecutor?: boolean;
+}) {
+  if (args.resolved && args.expectedCanonical) return SystemEventSeverity.INFO;
+  if (args.environment === 'PAPER') return SystemEventSeverity.ERROR;
+  const authoritative = args.authoritativeProductionExecutor ?? (
+    env.NODE_ENV === 'production' &&
+    env.LIVE_WRITE_DEPLOYMENT_ROLE === 'PRODUCTION_EXECUTOR'
+  );
+  return authoritative
+    ? SystemEventSeverity.CRITICAL
+    : SystemEventSeverity.WARNING;
+}
 
 
 function getCloseFillSide(positionSide: string): 'buy' | 'sell' {
@@ -138,6 +156,7 @@ async function createSubscriptionResolutionEvent(args: {
   tradingAccountId: number;
   symbol: string;
   result: SubscriptionResolutionResult;
+  environment: 'PAPER' | 'LIVE';
 }) {
   const eventType =
     args.result.status === 'resolved'
@@ -162,6 +181,13 @@ async function createSubscriptionResolutionEvent(args: {
     entityType: 'trackedPosition',
     entityId: args.trackedPositionId,
     tradingAccountId: args.tradingAccountId,
+    severity: positionAttributionSeverity({
+      environment: args.environment,
+      resolved: args.result.status === 'resolved',
+      expectedCanonical:
+        args.result.status === 'resolved' &&
+        args.result.source !== 'unique_observer_fallback',
+    }),
     message:
       args.result.status === 'resolved'
         ? `${args.symbol} subscription resolved via ${args.result.source}.`
@@ -177,6 +203,11 @@ async function createSubscriptionResolutionEvent(args: {
         args.result.tradingAccountSubscriptionId,
       reason: args.result.reason,
       evidence: args.result.evidence,
+      environment: args.environment,
+      deploymentRole: env.LIVE_WRITE_DEPLOYMENT_ROLE,
+      authoritativeProductionExecutor:
+        env.NODE_ENV === 'production' &&
+        env.LIVE_WRITE_DEPLOYMENT_ROLE === 'PRODUCTION_EXECUTOR',
     } as Prisma.InputJsonValue,
   });
 }
@@ -193,6 +224,7 @@ async function applySubscriptionResolution(args: {
   initialObservation: boolean;
   qty: number;
   avgEntryPrice: number;
+  environment: 'PAPER' | 'LIVE';
 }) {
   if (args.currentSubscriptionId !== null) {
     if (args.configSnapshotJson === null) {
@@ -225,6 +257,7 @@ async function applySubscriptionResolution(args: {
       tradingAccountId: args.tradingAccountId,
       symbol: args.symbol,
       result: resolution,
+      environment: args.environment,
     });
 
     return resolution;
@@ -264,13 +297,15 @@ async function applySubscriptionResolution(args: {
     tradingAccountId: args.tradingAccountId,
     symbol: args.symbol,
     result: resolution,
+    environment: args.environment,
   });
 
   return resolution;
 }
 
 export async function syncTrackedPositionsForAccount(
-  tradingAccountId: number
+  tradingAccountId: number,
+  environment: 'PAPER' | 'LIVE' = 'PAPER'
 ): Promise<TrackedPositionSyncResult> {
   const decision = await adaptivePollingCoordinator.getDecision(
     tradingAccountId,
@@ -419,6 +454,7 @@ export async function syncTrackedPositionsForAccount(
               initialObservation: true,
               qty: created.qty,
               avgEntryPrice: created.avgEntryPrice,
+              environment,
             });
 
           await createSystemEvent({
@@ -426,6 +462,16 @@ export async function syncTrackedPositionsForAccount(
             entityType: 'trackedPosition',
             entityId: created.id,
             tradingAccountId,
+            severity: positionAttributionSeverity({
+              environment,
+              resolved:
+                openingSubscriptionResolution === null ||
+                openingSubscriptionResolution.status === 'resolved',
+              expectedCanonical:
+                openingSubscriptionResolution === null ||
+                (openingSubscriptionResolution.status === 'resolved' &&
+                  openingSubscriptionResolution.source !== 'unique_observer_fallback'),
+            }),
             message: `Position opened: ${created.symbol}`,
             payloadJson: {
               symbol: created.symbol,
@@ -438,6 +484,8 @@ export async function syncTrackedPositionsForAccount(
                 openingSubscriptionResolution?.source ?? null,
               subscriptionResolutionStatus:
                 openingSubscriptionResolution?.status ?? null,
+              environment,
+              deploymentRole: env.LIVE_WRITE_DEPLOYMENT_ROLE,
             } as Prisma.InputJsonValue,
           });
 
@@ -478,6 +526,7 @@ export async function syncTrackedPositionsForAccount(
         initialObservation: false,
         qty: updated.qty,
         avgEntryPrice: updated.avgEntryPrice,
+        environment,
       });
     } catch (error) {
       const message =
@@ -574,6 +623,7 @@ export async function syncTrackedPositionsForAccount(
         entityType: 'trackedPosition',
         entityId: closed.id,
         tradingAccountId: closed.tradingAccountId,
+        severity: SystemEventSeverity.ERROR,
         message: `${closed.symbol} close-fill attribution is ambiguous.`,
         payloadJson: {
           symbol: closed.symbol,
@@ -592,6 +642,7 @@ export async function syncTrackedPositionsForAccount(
       entityType: 'trackedPosition',
       entityId: closed.id,
       tradingAccountId: closed.tradingAccountId,
+      severity: SystemEventSeverity.INFO,
       payloadJson: {
         symbol: closed.symbol,
         previousStatus: tracked.status,
@@ -678,7 +729,10 @@ export async function syncTrackedPositionsAcrossAccounts() {
         tradingAccountId: account.tradingAccountId,
         workerKey: 'tracked_position_sync',
         lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.POSITION_SYNC,
-        execute: () => syncTrackedPositionsForAccount(account.tradingAccountId),
+        execute: () => syncTrackedPositionsForAccount(
+          account.tradingAccountId,
+          account.environment
+        ),
         classify: (result) => result.symbolErrors.length > 0
           ? {
               outcome: 'failure',

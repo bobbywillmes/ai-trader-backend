@@ -2,6 +2,7 @@ import { SystemEventSeverity, type Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 
 import { logger } from '../config/logger.js';
+import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
 import { getOpenAlpacaOrders } from '../integrations/alpaca/orders.adapter.js';
 import {
@@ -22,6 +23,18 @@ import { runTradingAccountWorkflow } from './trading-account-workflow-runner.ser
 import { diagnoseHistoricalOrderLifecycle } from './historical-order-lifecycle-diagnostic.service.js';
 
 export type ReconciliationSeverity = 'info' | 'warn' | 'critical';
+
+export function reconciliationExposureUnavailableSeverity(
+  environment: 'PAPER' | 'LIVE',
+  authoritativeProductionExecutor =
+    env.NODE_ENV === 'production' &&
+    env.LIVE_WRITE_DEPLOYMENT_ROLE === 'PRODUCTION_EXECUTOR'
+) {
+  if (environment === 'PAPER') return SystemEventSeverity.ERROR;
+  return authoritativeProductionExecutor
+    ? SystemEventSeverity.CRITICAL
+    : SystemEventSeverity.WARNING;
+}
 
 export type ReconciliationFindingCode =
   | 'tracked_position_missing_at_broker'
@@ -1013,6 +1026,9 @@ export async function reconcileEligibleTradingAccounts(
             entityType: 'tradingAccount',
             entityId: account.tradingAccountId,
             tradingAccountId: account.tradingAccountId,
+            severity: reconciliationExposureUnavailableSeverity(
+              account.environment
+            ),
             message: `Reconciliation cannot access credentials for ${account.displayName} while lifecycle exposure exists.`,
             payloadJson: {
               tradingAccountId: account.tradingAccountId,

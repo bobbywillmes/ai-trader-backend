@@ -1,6 +1,8 @@
-import type { Prisma } from '@prisma/client';
+import { SystemEventSeverity, type Prisma } from '@prisma/client';
 
 import { logger } from '../config/logger.js';
+import { env } from '../config/env.js';
+import { getBrokerWriteDeliveryClassification } from '../errors/broker-write-delivery-error.js';
 import { prisma } from '../db/prisma.js';
 import { closePosition } from './close-position.service.js';
 import { createSystemEvent } from './system-event.service.js';
@@ -64,8 +66,35 @@ function isUnlockTrailingProfile(exitProfile: { exitMode: string }) {
   return exitProfile.exitMode === 'unlock_trailing_stop';
 }
 
+export function exposureUnavailableSeverity(
+  environment: 'PAPER' | 'LIVE',
+  authoritativeProductionExecutor =
+    env.NODE_ENV === 'production' &&
+    env.LIVE_WRITE_DEPLOYMENT_ROLE === 'PRODUCTION_EXECUTOR'
+) {
+  if (environment === 'PAPER') return SystemEventSeverity.ERROR;
+  return authoritativeProductionExecutor
+    ? SystemEventSeverity.CRITICAL
+    : SystemEventSeverity.WARNING;
+}
+
+function trailingFailureSeverity(args: {
+  environment: 'PAPER' | 'LIVE';
+  classification: ReturnType<typeof getBrokerWriteDeliveryClassification>;
+  hasProtection: boolean;
+}) {
+  if (args.classification === 'DELIVERY_UNCERTAIN') {
+    return args.environment === 'LIVE'
+      ? SystemEventSeverity.CRITICAL
+      : SystemEventSeverity.ERROR;
+  }
+  if (args.hasProtection) return SystemEventSeverity.WARNING;
+  return SystemEventSeverity.ERROR;
+}
+
 export async function evaluateExitsForAccount(
-  tradingAccountId: number
+  tradingAccountId: number,
+  environment: 'PAPER' | 'LIVE' = 'PAPER'
 ): Promise<{
   counts: ExitEvaluationCounts;
   failures: Array<{ trackedPositionId: number; error: string }>;
@@ -174,6 +203,7 @@ export async function evaluateExitsForAccount(
             entityType: 'trackedPosition',
             entityId: position.id,
             tradingAccountId,
+            severity: SystemEventSeverity.INFO,
             message: `${position.symbol} reached target unlock for trailing stop exit.`,
             payloadJson: {
               symbol: position.symbol,
@@ -195,18 +225,30 @@ export async function evaluateExitsForAccount(
             counts.closeIntentsCreated += 1;
           } catch (error) {
             const payloadJson = errorToPayloadJson(error);
+            const deliveryClassification =
+              getBrokerWriteDeliveryClassification(error);
             await markTrailingStopOrderSubmitFailed(position.id, payloadJson);
-            await createSystemEvent({
-              type: 'exit.trailing_stop_submit_failed',
-              entityType: 'trackedPosition',
-              entityId: position.id,
-              tradingAccountId,
-              message: `${position.symbol} trailing stop exit order submission failed.`,
-              payloadJson: {
-                symbol: position.symbol,
-                error: payloadJson,
-              } as Prisma.InputJsonValue,
-            });
+            if (deliveryClassification !== 'DELIVERY_UNCERTAIN') {
+              await createSystemEvent({
+                type: 'exit.trailing_stop_submit_failed',
+                entityType: 'trackedPosition',
+                entityId: position.id,
+                tradingAccountId,
+                severity: trailingFailureSeverity({
+                  environment,
+                  classification: deliveryClassification,
+                  hasProtection: Boolean(exitState.trailBrokerOrderId),
+                }),
+                message: `${position.symbol} trailing stop exit order submission failed.`,
+                payloadJson: {
+                  symbol: position.symbol,
+                  environment,
+                  deliveryClassification: deliveryClassification ?? 'INTERNAL_FAILURE',
+                  hasVerifiedProtection: Boolean(exitState.trailBrokerOrderId),
+                  error: payloadJson,
+                } as Prisma.InputJsonValue,
+              });
+            }
             throw error;
           }
         }
@@ -233,6 +275,7 @@ export async function evaluateExitsForAccount(
         entityType: 'trackedPosition',
         entityId: position.id,
         tradingAccountId,
+        severity: SystemEventSeverity.INFO,
         payloadJson: {
           symbol: position.symbol,
           reason,
@@ -285,6 +328,7 @@ export async function evaluateExitsForEligibleAccounts() {
             entityType: 'tradingAccount',
             entityId: account.tradingAccountId,
             tradingAccountId: account.tradingAccountId,
+            severity: exposureUnavailableSeverity(account.environment),
             message: `Exit evaluation cannot safely access broker credentials for ${account.displayName}.`,
             payloadJson: {
               workflow: 'exit_evaluation',
@@ -312,7 +356,10 @@ export async function evaluateExitsForEligibleAccounts() {
         tradingAccountId: account.tradingAccountId,
         workerKey: 'exit_evaluation',
         lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.EXIT_EVALUATION,
-        execute: () => evaluateExitsForAccount(account.tradingAccountId),
+        execute: () => evaluateExitsForAccount(
+          account.tradingAccountId,
+          account.environment
+        ),
         classify: (result) => result.counts.failedPositions > 0
           ? {
               outcome: 'failure',

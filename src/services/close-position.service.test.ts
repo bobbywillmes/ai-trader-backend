@@ -52,8 +52,18 @@ vi.mock('./adaptive-polling.service.js', () => ({
   },
 }));
 
-import { closePosition } from './close-position.service.js';
+import { closeFailureSeverity, closePosition } from './close-position.service.js';
 import { BrokerWriteDeliveryError } from '../errors/broker-write-delivery-error.js';
+
+describe('close failure severity', () => {
+  it('distinguishes protection, rejection, and delivery uncertainty', () => {
+    expect(closeFailureSeverity({ classification: 'NOT_SENT_RETRYABLE', environment: 'LIVE', hasVerifiedProtection: true })).toBe('WARNING');
+    expect(closeFailureSeverity({ classification: 'NOT_SENT_RETRYABLE', environment: 'LIVE', hasVerifiedProtection: false })).toBe('ERROR');
+    expect(closeFailureSeverity({ classification: 'BROKER_REJECTED', environment: 'LIVE', hasVerifiedProtection: false })).toBe('ERROR');
+    expect(closeFailureSeverity({ classification: 'DELIVERY_UNCERTAIN', environment: 'LIVE', hasVerifiedProtection: false })).toBe('CRITICAL');
+    expect(closeFailureSeverity({ classification: 'DELIVERY_UNCERTAIN', environment: 'PAPER', hasVerifiedProtection: false })).toBe('ERROR');
+  });
+});
 
 function position(overrides: Record<string, unknown> = {}) {
   return {
@@ -65,6 +75,7 @@ function position(overrides: Record<string, unknown> = {}) {
     securityId: 11,
     subscriptionId: 21,
     tradingAccountId: 31,
+    tradingAccount: { environment: 'PAPER' },
     tradingAccountSubscriptionId: 41,
     orderIntents: [],
     brokerOrders: [],
@@ -222,6 +233,7 @@ describe('closePosition claim-before-write', () => {
       expect.objectContaining({
         type: 'position.close_submission_uncertain',
         tradingAccountId: 31,
+        severity: 'ERROR',
       })
     );
   });
@@ -253,7 +265,7 @@ describe('closePosition claim-before-write', () => {
         data: { status: 'open', lastSyncedAt: expect.any(Date) },
       });
       expect(mocks.createSystemEvent).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'position.close_not_sent' })
+        expect.objectContaining({ type: 'position.close_not_sent', severity: 'ERROR' })
       );
     }
   );

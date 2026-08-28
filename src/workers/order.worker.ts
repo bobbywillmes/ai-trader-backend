@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { SystemEventSeverity, type Prisma } from '@prisma/client';
 import { logger } from '../config/logger.js';
 
 import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
@@ -98,6 +98,39 @@ function getRecordedDeliveryClassification(blockReason: string | null) {
   return match?.[1] ?? null;
 }
 
+export function brokerOrderStatusSeverity(status: string): SystemEventSeverity {
+  switch (status) {
+    case 'accepted':
+    case 'accepted_for_bidding':
+    case 'new':
+    case 'pending_new':
+    case 'partially_filled':
+    case 'filled':
+    case 'canceled':
+    case 'cancelled':
+    case 'expired':
+    case 'replaced':
+    case 'done_for_day':
+    case 'calculated':
+      return SystemEventSeverity.INFO;
+    case 'rejected':
+      return SystemEventSeverity.ERROR;
+    case 'pending_cancel':
+    case 'pending_replace':
+    case 'stopped':
+    case 'suspended':
+      return SystemEventSeverity.WARNING;
+    default:
+      return SystemEventSeverity.ERROR;
+  }
+}
+
+export function recoveryDeferredSeverity(environment: 'PAPER' | 'LIVE') {
+  return environment === 'LIVE'
+    ? SystemEventSeverity.CRITICAL
+    : SystemEventSeverity.ERROR;
+}
+
 export async function recoverStaleSubmittingIntentsForAccount(
   tradingAccountId: number,
   now = new Date()
@@ -110,7 +143,10 @@ export async function recoverStaleSubmittingIntentsForAccount(
         lte: new Date(now.getTime() - STALE_SUBMITTING_INTENT_THRESHOLD_MS),
       },
     },
-    include: { brokerOrders: true },
+    include: {
+      brokerOrders: true,
+      tradingAccount: { select: { environment: true } },
+    },
     orderBy: { updatedAt: 'asc' },
     take: 5,
   });
@@ -180,10 +216,15 @@ export async function recoverStaleSubmittingIntentsForAccount(
         entityType: 'orderIntent',
         entityId: intent.id,
         tradingAccountId,
+        severity: SystemEventSeverity.INFO,
         payloadJson: {
+          previousDeliveryClassification:
+            getRecordedDeliveryClassification(intent.blockReason),
           clientOrderId: intent.clientOrderId,
           brokerOrderId: brokerOrder.id,
           recovery: 'broker_order_materialized',
+          recoveredAt: new Date().toISOString(),
+          reason: 'Stable client-order ID matched an existing broker order.',
         } as Prisma.InputJsonValue,
       });
       linked += 1;
@@ -224,6 +265,7 @@ export async function recoverStaleSubmittingIntentsForAccount(
         entityType: 'LiveEntryAcceptanceRun',
         entityId: intent.liveEntryAcceptanceRunId,
         tradingAccountId,
+        severity: SystemEventSeverity.CRITICAL,
         payloadJson: {
           orderIntentId: intent.id,
           clientOrderId: intent.clientOrderId,
@@ -269,6 +311,9 @@ export async function recoverStaleSubmittingIntentsForAccount(
           entityType: 'orderIntent',
           entityId: intent.id,
           tradingAccountId,
+          severity: recoveryDeferredSeverity(
+            intent.tradingAccount?.environment === 'LIVE' ? 'LIVE' : 'PAPER'
+          ),
           payloadJson: {
             clientOrderId: intent.clientOrderId,
             deliveryClassification:
@@ -300,6 +345,7 @@ export async function recoverStaleSubmittingIntentsForAccount(
         entityType: 'orderIntent',
         entityId: intent.id,
         tradingAccountId,
+        severity: SystemEventSeverity.WARNING,
         payloadJson: {
           clientOrderId: intent.clientOrderId,
           recovery: 'broker_order_absent_entry_requeued',
@@ -881,6 +927,7 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
           entityType: 'brokerOrder',
           entityId: brokerOrder.id,
           tradingAccountId: brokerOrder.tradingAccountId,
+          severity: brokerOrderStatusSeverity(nextStatus),
           payloadJson: {
             orderIntentId: brokerOrder.orderIntentId,
             brokerOrderId: brokerOrder.brokerOrderId,

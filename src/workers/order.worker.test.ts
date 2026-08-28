@@ -5,9 +5,26 @@ import {
   recoverStaleSubmittingIntentsForAccount,
   syncSubmittedOrders,
   syncSubmittedOrdersAcrossAccounts,
+  brokerOrderStatusSeverity,
+  recoveryDeferredSeverity,
 } from './order.worker.js';
 import { assertAccountCoordinatorHealthy } from '../services/worker-coordinator-result.service.js';
 import { BrokerWriteDeliveryError } from '../errors/broker-write-delivery-error.js';
+
+describe('broker order event severity', () => {
+  it.each(['accepted', 'new', 'partially_filled', 'filled', 'canceled', 'expired', 'replaced'])(
+    'classifies %s as INFO',
+    (status) => expect(brokerOrderStatusSeverity(status)).toBe('INFO')
+  );
+  it('classifies rejection as ERROR and unknown states fail safely', () => {
+    expect(brokerOrderStatusSeverity('rejected')).toBe('ERROR');
+    expect(brokerOrderStatusSeverity('future_unknown')).toBe('ERROR');
+  });
+  it('classifies deferred recovery by account environment', () => {
+    expect(recoveryDeferredSeverity('LIVE')).toBe('CRITICAL');
+    expect(recoveryDeferredSeverity('PAPER')).toBe('ERROR');
+  });
+});
 
 const mocks = vi.hoisted(() => ({
   orderIntentFindMany: vi.fn(),
@@ -152,6 +169,7 @@ const baseIntent = {
   subscriptionKey: 'spy_dip_core',
   trackedPositionId: null,
   tradingAccountId: 1,
+  tradingAccount: { environment: 'PAPER' as const },
   tradingAccountSubscriptionId: 44,
 };
 
@@ -917,6 +935,9 @@ describe('stale submitting intent recovery', () => {
       })
     );
     expect(result).toMatchObject({ linked: 1, retryable: 0 });
+    expect(mocks.createSystemEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'order.submission_recovered', severity: 'INFO' })
+    );
   });
 
   it('requeues an entry only after account-specific broker lookup confirms absence', async () => {
@@ -944,6 +965,9 @@ describe('stale submitting intent recovery', () => {
       },
     });
     expect(result).toMatchObject({ linked: 0, retryable: 1 });
+    expect(mocks.createSystemEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'order.submission_retry_scheduled', severity: 'WARNING' })
+    );
   });
 
   it('never requeues an acceptance entry after broker submission may have begun', async () => {
@@ -973,6 +997,9 @@ describe('stale submitting intent recovery', () => {
       }),
     );
     expect(result).toMatchObject({ retryable: 0, retained: 1 });
+    expect(mocks.createSystemEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'live_entry_acceptance.execution_action_required', severity: 'CRITICAL' })
+    );
   });
 
   it('releases a stale exit claim recorded as definitely not sent', async () => {
@@ -1014,6 +1041,7 @@ describe('stale submitting intent recovery', () => {
           status: 'submitting',
           rawRequestJson: { signalType: 'exit' },
           blockReason: 'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:timeout',
+          tradingAccount: { environment: 'LIVE' },
           brokerOrders: [],
           updatedAt: new Date('2026-06-22T13:00:00.000Z'),
         },
@@ -1025,6 +1053,7 @@ describe('stale submitting intent recovery', () => {
           rawRequestJson: { signalType: 'exit' },
           blockReason:
             'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:timeout:RECOVERY_DEFERRED_EVENT_RECORDED',
+          tradingAccount: { environment: 'LIVE' },
           brokerOrders: [],
           updatedAt: new Date('2026-06-22T13:00:00.000Z'),
         },
@@ -1041,5 +1070,8 @@ describe('stale submitting intent recovery', () => {
     );
 
     expect(mocks.createSystemEvent).toHaveBeenCalledTimes(1);
+    expect(mocks.createSystemEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'order.submission_recovery_deferred', severity: 'CRITICAL' })
+    );
   });
 });

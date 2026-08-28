@@ -1,4 +1,8 @@
-import { Prisma, type Prisma as PrismaTypes } from '@prisma/client';
+import {
+  Prisma,
+  SystemEventSeverity,
+  type Prisma as PrismaTypes,
+} from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
 import { placeAlpacaOrder } from '../integrations/alpaca/orders.adapter.js';
@@ -40,6 +44,24 @@ function getDeliveryClassification(error: unknown): BrokerWriteDeliveryClassific
     : 'DELIVERY_UNCERTAIN';
 }
 
+export function closeFailureSeverity(args: {
+  classification: BrokerWriteDeliveryClassification;
+  environment: 'PAPER' | 'LIVE';
+  hasVerifiedProtection: boolean;
+}) {
+  if (args.classification === 'DELIVERY_UNCERTAIN') {
+    return args.environment === 'LIVE'
+      ? SystemEventSeverity.CRITICAL
+      : SystemEventSeverity.ERROR;
+  }
+  if (args.classification === 'BROKER_REJECTED') {
+    return SystemEventSeverity.ERROR;
+  }
+  return args.hasVerifiedProtection
+    ? SystemEventSeverity.WARNING
+    : SystemEventSeverity.ERROR;
+}
+
 export async function closePosition(
   trackedPositionId: number,
   options: ClosePositionOptions = {}
@@ -51,6 +73,7 @@ export async function closePosition(
       const position = await tx.trackedPosition.findUnique({
         where: { id: trackedPositionId },
         include: {
+          tradingAccount: { select: { environment: true } },
           tradingAccountSubscription: {
             select: {
               id: true,
@@ -231,6 +254,11 @@ export async function closePosition(
         entityType: 'trackedPosition',
         entityId: claim.position.id,
         tradingAccountId,
+        severity: closeFailureSeverity({
+          classification,
+          environment: claim.position.tradingAccount!.environment,
+          hasVerifiedProtection: false,
+        }),
         message:
           classification === 'BROKER_REJECTED'
             ? `${upperSymbol} close was rejected and no broker order exists; the local claim was released.`
@@ -259,6 +287,11 @@ export async function closePosition(
         entityType: 'trackedPosition',
         entityId: claim.position.id,
         tradingAccountId,
+        severity: closeFailureSeverity({
+          classification: 'DELIVERY_UNCERTAIN',
+          environment: claim.position.tradingAccount!.environment,
+          hasVerifiedProtection: false,
+        }),
         message: `${upperSymbol} close delivery is uncertain; deterministic recovery is required.`,
         payloadJson: {
           trackedPositionId: claim.position.id,
@@ -318,6 +351,7 @@ export async function closePosition(
     entityType: 'trackedPosition',
     entityId: claim.position.id,
     tradingAccountId,
+    severity: SystemEventSeverity.INFO,
     payloadJson: {
       symbol: upperSymbol,
       broker: 'alpaca',

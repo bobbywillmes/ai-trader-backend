@@ -1,4 +1,9 @@
-import { Prisma, type Prisma as PrismaTypes } from '@prisma/client';
+import {
+  Prisma,
+  SystemEventSeverity,
+  type Prisma as PrismaTypes,
+} from '@prisma/client';
+import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
 import type { AlpacaOrder } from '../integrations/alpaca/alpaca.types.js';
 import {
@@ -28,6 +33,43 @@ function getDeliveryClassification(blockReason: string | null) {
 
 function safeError(error: unknown) {
   return error instanceof Error ? error.message : 'Unknown protective write error.';
+}
+
+async function recordTrailingStopSubmissionUncertain(args: {
+  tradingAccountId: number;
+  environment: 'PAPER' | 'LIVE';
+  trackedPositionId: number;
+  orderIntentId: number;
+  securityId: number;
+  symbol: string;
+  clientOrderId: string;
+  error: unknown;
+}) {
+  await createSystemEvent({
+    type: 'exit.trailing_stop_submission_uncertain',
+    entityType: 'trackedPosition',
+    entityId: args.trackedPositionId,
+    tradingAccountId: args.tradingAccountId,
+    severity: args.environment === 'LIVE'
+      ? SystemEventSeverity.CRITICAL
+      : SystemEventSeverity.ERROR,
+    message: `${args.symbol} trailing-stop submission delivery is uncertain.`,
+    payloadJson: {
+      environment: args.environment,
+      deploymentRole: env.LIVE_WRITE_DEPLOYMENT_ROLE,
+      authoritativeProductionExecutor:
+        env.NODE_ENV === 'production' &&
+        env.LIVE_WRITE_DEPLOYMENT_ROLE === 'PRODUCTION_EXECUTOR',
+      trackedPositionId: args.trackedPositionId,
+      orderIntentId: args.orderIntentId,
+      securityId: args.securityId,
+      symbol: args.symbol,
+      clientOrderId: args.clientOrderId,
+      deliveryClassification: 'DELIVERY_UNCERTAIN',
+      error: safeError(args.error),
+      observedAt: new Date().toISOString(),
+    } as Prisma.InputJsonValue,
+  });
 }
 
 function compactDate(date: Date) {
@@ -80,6 +122,7 @@ async function persistTrailingStopOrder(args: {
       subscription: true,
       exitState: true,
       tradingAccountSubscription: true,
+      tradingAccount: { select: { environment: true } },
     },
   });
 
@@ -209,6 +252,7 @@ export async function submitTrailingStopExitOrder(
       subscription: true,
       exitState: true,
       tradingAccountSubscription: true,
+      tradingAccount: { select: { environment: true } },
     },
   });
 
@@ -485,6 +529,18 @@ export async function submitTrailingStopExitOrder(
         blockReason: `${DELIVERY_PREFIX}:${classification}:${safeError(error)}`,
       },
     });
+    if (classification === 'DELIVERY_UNCERTAIN') {
+      await recordTrailingStopSubmissionUncertain({
+        tradingAccountId,
+        environment: position.tradingAccount!.environment,
+        trackedPositionId: position.id,
+        orderIntentId: claim.intent.id,
+        securityId: position.securityId,
+        symbol: position.symbol,
+        clientOrderId,
+        error,
+      });
+    }
     throw error;
   }
 
@@ -508,6 +564,16 @@ export async function submitTrailingStopExitOrder(
         blockReason: `${DELIVERY_PREFIX}:DELIVERY_UNCERTAIN:broker accepted before local persistence completed`,
       },
     });
+    await recordTrailingStopSubmissionUncertain({
+      tradingAccountId,
+      environment: position.tradingAccount!.environment,
+      trackedPositionId: position.id,
+      orderIntentId: claim.intent.id,
+      securityId: position.securityId,
+      symbol: position.symbol,
+      clientOrderId,
+      error,
+    });
     throw new BrokerWriteDeliveryError({
       classification: 'DELIVERY_UNCERTAIN',
       message:
@@ -521,6 +587,7 @@ export async function submitTrailingStopExitOrder(
     entityType: 'trackedPosition',
     entityId: position.id,
     tradingAccountId,
+    severity: SystemEventSeverity.INFO,
     message: `${position.symbol} trailing stop exit order submitted after target unlock.`,
     payloadJson: {
       symbol: position.symbol,
