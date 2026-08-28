@@ -33,4 +33,5 @@ describe("Operational Attention page status filtering", () => {
     expect(screen.getByLabelText("location").textContent).toContain("account=2"); expect(screen.getByLabelText("location").textContent).toContain("severity=ERROR"); expect(screen.getByLabelText("location").textContent).toContain("page=1"); expect(screen.getByLabelText("location").textContent).toContain("status=all");
   });
   it("normalizes invalid status with replace semantics to the default view", async () => { renderPage("/operational-attention?account=2&status=unread&severity=WARNING&page=5"); await vi.waitFor(() => expect(screen.getByLabelText("location").textContent).toBe("?account=2&severity=WARNING&page=1")); });
+  it("uses neutral page wording for unresolved and historical filters", () => { renderPage("/operational-attention?status=all"); expect(screen.getByText("Account-scoped operational conditions and their history.")).toBeTruthy(); });
 });
