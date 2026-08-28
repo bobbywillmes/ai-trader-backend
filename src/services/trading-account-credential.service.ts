@@ -2,6 +2,7 @@ import {
   BrokerCredentialAuthType,
   BrokerCredentialStatus,
   Prisma,
+  SystemEventSeverity,
   TradingAccountStatus,
   type TradingAccountCredential,
 } from '@prisma/client';
@@ -15,6 +16,7 @@ import {
 } from './trading-credential-crypto.service.js';
 import { withAccountRiskConfigurationTransaction } from './trading-account-risk-configuration.service.js';
 import { invalidateLiveWriteApprovals, LiveWriteCapability } from './live-write-approval.service.js';
+import { createSystemEvent } from './system-event.service.js';
 
 export type ActiveTradingAccountApiKeyCredential = {
   credentialId: number;
@@ -219,8 +221,7 @@ export async function upsertTradingAccountApiKeyCredential(
     const after = { ...SAFE_CREDENTIAL_ACCOUNT_STATE };
     const replaced = account.credential !== null;
     const occurredAt = new Date();
-    await tx.systemEvent.create({
-      data: {
+    await createSystemEvent({
         type: replaced
           ? 'trading_account.credential_replaced'
           : 'trading_account.credential_saved',
@@ -228,6 +229,7 @@ export async function upsertTradingAccountApiKeyCredential(
         entityId: String(credential.id),
         tradingAccountId,
         actorUserId: actorUserId > 0 ? actorUserId : null,
+        severity: SystemEventSeverity.INFO,
         message: `Trading account ${tradingAccountId} credential was ${
           replaced ? 'replaced' : 'saved'
         } and requires verification.`,
@@ -250,8 +252,7 @@ export async function upsertTradingAccountApiKeyCredential(
             'credential.keyFingerprint',
           ],
         },
-      },
-    });
+    }, tx);
 
     return credential;
   });
@@ -304,13 +305,13 @@ export async function revokeTradingAccountCredential(
       [LiveWriteCapability.RISK_REDUCING, LiveWriteCapability.ENTRY], 'Broker credentials were revoked.');
 
     const after = { ...SAFE_CREDENTIAL_ACCOUNT_STATE };
-    await tx.systemEvent.create({
-      data: {
+    await createSystemEvent({
         type: 'trading_account.credential_revoked',
         entityType: 'tradingAccountCredential',
         entityId: String(account.credential.id),
         tradingAccountId,
         actorUserId: actorUserId > 0 ? actorUserId : null,
+        severity: SystemEventSeverity.INFO,
         message: `Trading account ${tradingAccountId} credential was revoked.`,
         payloadJson: {
           actorUserId,
@@ -328,8 +329,7 @@ export async function revokeTradingAccountCredential(
             'credential.revokedAt',
           ],
         },
-      },
-    });
+    }, tx);
 
     return {
       revoked: true,

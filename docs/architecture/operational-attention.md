@@ -68,3 +68,33 @@ Automatic exit-quantity clamping remains deferred. Current trade-cycle and fill
 attribution semantics can misstate quantity and realized P&L when a smaller
 broker quantity is exited. This foundation changes no exit evaluation, order
 submission, position close, reconciliation attention, or broker behavior.
+
+## SystemEvent severity policy
+
+Every production event producer assigns severity intentionally. Routine audit
+helpers deliberately default to `INFO`; failure and safety-sensitive domains
+derive severity from structured state rather than event-name text.
+
+- `INFO` records expected success, normal lifecycle transitions, and successful
+  deterministic recovery. Recovery payloads retain stable client-order and
+  broker-order identity so they can later provide resolution evidence.
+- `WARNING` records bounded degradation where a safety control worked, including
+  policy blocks, lock contention, approval invalidation, and global Alpaca API
+  volume or rate-limit thresholds.
+- `ERROR` records known-contained failures such as definite rejection, Paper
+  delivery uncertainty, failed credential verification, and close-fill
+  attribution ambiguity after exposure is authoritatively zero.
+- `CRITICAL` is reserved for potentially unmanaged or unverifiable Live exposure,
+  including Live delivery uncertainty, unattributed authoritative Live positions,
+  and stale exposure-critical account workers in the production executor.
+
+Context-derived decisions use persisted account environment, deployment role,
+delivery classification, attribution provenance, worker responsibility, and
+local exposure/order evidence already available at the producer. They do not add
+broker calls. Global worker and Alpaca API events are never promoted to critical
+without account and exposure scope; the account-scoped consequence carries that
+severity instead.
+
+A critical SystemEvent remains immutable evidence, not current attention.
+Automatic creation or resolution of OperationalAttention from these events is
+deferred to the integration phase.

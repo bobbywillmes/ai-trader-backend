@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { Prisma } from '@prisma/client';
+import { Prisma, SystemEventSeverity } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
@@ -8,6 +8,7 @@ import { resolveExactBrokerOrderAttribution } from './attribution-evidence-resol
 import { withTradingAccountWorkflowLock } from './trading-account-workflow-lock.service.js';
 import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from './trading-account-workflow-lock.service.js';
 import { getLifecycleRepairHandlerMetadata } from './lifecycle-repair-registry.service.js';
+import { createSystemEvent } from './system-event.service.js';
 
 export const POSITION_ATTRIBUTION_REPAIR_TYPE = 'RESOLVE_POSITION_ATTRIBUTION' as const;
 export const POSITION_ATTRIBUTION_REPAIR_CONFIRMATION = 'APPLY POSITION ATTRIBUTION REPAIR';
@@ -402,12 +403,13 @@ export async function applyPositionAttributionRepair(args: {
           confirmation: args.confirmation, diagnosticFingerprint: repairCase.diagnosticFingerprint,
           beforeJson: json(repairCase.beforeJson), afterJson: json(after), validationJson: json(validation),
         } });
-        await tx.systemEvent.create({ data: {
+        await createSystemEvent({
           type: 'lifecycle_repair.position_attribution_resolved', entityType: 'trackedPosition', entityId: repairCase.targetId,
           tradingAccountId: repairCase.tradingAccountId, actorUserId: args.actorUserId,
+          severity: SystemEventSeverity.INFO,
           message: `Applied deterministic local position-attribution repair for ${updated.symbol}.`,
           payloadJson: json({ caseId: repairCase.id, executionId: execution.id, repairType: repairCase.repairType, impact: 'LOCAL_ONLY', confidence: repairCase.confidence, resolutionSource: repairCase.resolutionSource, diagnosticFingerprint: repairCase.diagnosticFingerprint, brokerImpact: BROKER_IMPACT }),
-        } });
+        }, tx);
         return execution;
       });
     },

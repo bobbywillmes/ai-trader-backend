@@ -161,6 +161,7 @@ describe('AlpacaApiUsageRegistry', () => {
     expect(mocks.createSystemEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'alpaca_api.volume_warning_started',
+        severity: 'WARNING',
       })
     );
     expect(registry.getSnapshot().warning.active).toBe(true);
@@ -172,6 +173,7 @@ describe('AlpacaApiUsageRegistry', () => {
     expect(mocks.createSystemEvent).toHaveBeenLastCalledWith(
       expect.objectContaining({
         type: 'alpaca_api.volume_warning_recovered',
+        severity: 'INFO',
       })
     );
     expect(registry.getSnapshot().warning.active).toBe(false);
@@ -220,11 +222,13 @@ describe('AlpacaApiUsageRegistry', () => {
     expect(mocks.createSystemEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'alpaca_api.rate_limit_started',
+        severity: 'WARNING',
       })
     );
     expect(mocks.createSystemEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'alpaca_api.rate_limit_recovered',
+        severity: 'INFO',
       })
     );
   });

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import {
   Prisma,
+  SystemEventSeverity,
   TradingLifecycleExerciseLaunchOutcome,
   TradingLifecycleExerciseStatus,
   TradingLifecycleExerciseTargetStatus,
@@ -23,6 +24,23 @@ export const LIFECYCLE_EXERCISE_MAX_TARGETS = 25;
 export const LIFECYCLE_EXERCISE_PREVIEW_TTL_MS = 5 * 60_000;
 export const LIFECYCLE_EXERCISE_DISPATCH_STALE_MS = 5 * 60_000;
 export const LIFECYCLE_EXERCISE_CONFIRMATION = 'LAUNCH PAPER EXERCISE';
+
+export function exerciseOutcomeSeverity(outcome: string) {
+  switch (outcome) {
+    case 'INTENT_CREATED':
+    case 'DUPLICATE':
+    case 'SELECTED':
+      return SystemEventSeverity.INFO;
+    case 'BLOCKED':
+    case 'SKIPPED':
+    case 'EXCLUDED':
+      return SystemEventSeverity.WARNING;
+    case 'FAILED':
+      return SystemEventSeverity.ERROR;
+    default:
+      return SystemEventSeverity.ERROR;
+  }
+}
 
 function stable(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
@@ -396,6 +414,7 @@ export async function previewSubscriptionEntryLifecycleExercise(
   await createSystemEvent({
     type: 'trading_lifecycle_exercise.previewed', entityType: 'tradingLifecycleExercise',
     entityId: exercise.id, actorUserId,
+    severity: SystemEventSeverity.INFO,
     message: `Paper lifecycle exercise ${exercise.id} previewed from explicit assignments.`,
     payloadJson: json({
       exerciseId: exercise.id, subscriptionId: subscription.id, subscriptionKey: subscription.key,
@@ -520,6 +539,7 @@ export async function previewTradingLifecycleExercise(
   await createSystemEvent({
     type: 'trading_lifecycle_exercise.previewed', entityType: 'tradingLifecycleExercise',
     entityId: exercise.id, actorUserId,
+    severity: SystemEventSeverity.INFO,
     message: `Paper lifecycle exercise ${exercise.id} previewed.`,
     payloadJson: json({ exerciseId: exercise.id, subscriptionId: subscription.id, subscriptionKey: subscription.key, environment: 'PAPER', targetCount: targets.length }),
   });
@@ -624,6 +644,7 @@ export async function launchTradingLifecycleExercise(id: number, actorUserId: nu
     await createSystemEvent({
       type: 'trading_lifecycle_exercise.target_outcome', entityType: 'tradingLifecycleExerciseTarget',
       entityId: target.id, tradingAccountId: target.tradingAccountId, actorUserId,
+      severity: exerciseOutcomeSeverity(result.outcome),
       message: result.message,
       payloadJson: json({ exerciseId: id, targetId: target.id, subscriptionId: exercise.subscriptionId, environment: 'PAPER', resultCode: result.code, outcome: result.outcome, orderIntentId: result.orderIntentId, tradingAccountSubscriptionId: target.tradingAccountSubscriptionId }),
     });
@@ -635,6 +656,7 @@ export async function launchTradingLifecycleExercise(id: number, actorUserId: nu
   await createSystemEvent({
     type: 'trading_lifecycle_exercise.launched', entityType: 'tradingLifecycleExercise',
     entityId: id, actorUserId, message: `Paper lifecycle exercise ${id} launch processed.`,
+    severity: unsuccessful > 0 ? SystemEventSeverity.WARNING : SystemEventSeverity.INFO,
     payloadJson: json({ exerciseId: id, subscriptionId: exercise.subscriptionId, environment: 'PAPER', activeCount: active, blockedOrFailedCount: unsuccessful }),
   });
   return getExerciseOrThrow(id);
@@ -653,6 +675,13 @@ async function recordRecoveryEvent(args: {
   await createSystemEvent({
     type: args.type, entityType: 'tradingLifecycleExerciseTarget', entityId: args.target.id,
     tradingAccountId: args.target.tradingAccountId, actorUserId: args.actorUserId, message: args.message,
+    severity: args.type === 'trading_lifecycle_exercise.dispatch_recovery_ambiguous'
+      ? SystemEventSeverity.ERROR
+      : args.type === 'trading_lifecycle_exercise.dispatch_target_reclaimed'
+        ? SystemEventSeverity.WARNING
+        : args.evidence?.outcome
+          ? exerciseOutcomeSeverity(String(args.evidence.outcome))
+          : SystemEventSeverity.INFO,
     payloadJson: json({
       exerciseId: args.exerciseId, targetId: args.target.id,
       tradingAccountId: args.target.tradingAccountId,
@@ -688,9 +717,15 @@ export async function recoverStaleTradingLifecycleExerciseDispatches(
   await createSystemEvent({
     type: 'trading_lifecycle_exercise.dispatch_recovery_started', entityType: 'tradingLifecycleExercise',
     entityId: exerciseId, actorUserId, message: `Dispatch recovery started for lifecycle exercise ${exerciseId}.`,
+    severity: SystemEventSeverity.INFO,
     payloadJson: json({ exerciseId, environment: exercise.environment, staleBefore: staleBefore.toISOString(), targetCount: exercise.targets.length }),
   });
-  const results: Array<{ targetId: number; code: string; orderIntentId: number | null }> = [];
+  const results: Array<{
+    targetId: number;
+    code: string;
+    outcome: string;
+    orderIntentId: number | null;
+  }> = [];
   for (const target of exercise.targets) {
     const identity = exerciseTargetIdentity(exerciseId, target.id);
     const clientOrderId = buildSignalEntryClientOrderId({
@@ -719,7 +754,7 @@ export async function recoverStaleTradingLifecycleExerciseDispatches(
         },
       });
       if (changed.count) await recordRecoveryEvent({ type: 'trading_lifecycle_exercise.dispatch_recovery_ambiguous', message: 'Ambiguous OrderIntent recovery refused.', exerciseId, target, actorUserId, code: 'RECOVERY_AMBIGUOUS_ORDER_INTENT', evidence });
-      results.push({ targetId: target.id, code: 'RECOVERY_AMBIGUOUS_ORDER_INTENT', orderIntentId: null });
+      results.push({ targetId: target.id, code: 'RECOVERY_AMBIGUOUS_ORDER_INTENT', outcome: 'FAILED', orderIntentId: null });
       continue;
     }
     if (matches.length === 1) {
@@ -736,7 +771,7 @@ export async function recoverStaleTradingLifecycleExerciseDispatches(
       });
       const code = target.orderIntentId ? 'RECOVERED_LINKED_ORDER_INTENT' : 'RECOVERED_DISCOVERED_ORDER_INTENT';
       if (changed.count) await recordRecoveryEvent({ type: 'trading_lifecycle_exercise.dispatch_order_intent_recovered', message: 'Existing OrderIntent recovered and linked without redispatch.', exerciseId, target, actorUserId, code, orderIntentId: intent.id, evidence: { clientOrderId } });
-      results.push({ targetId: target.id, code, orderIntentId: intent.id });
+      results.push({ targetId: target.id, code, outcome: 'INTENT_CREATED', orderIntentId: intent.id });
       continue;
     }
     const reclaimed = await prisma.tradingLifecycleExerciseTarget.updateMany({
@@ -761,11 +796,21 @@ export async function recoverStaleTradingLifecycleExerciseDispatches(
       },
     });
     await recordRecoveryEvent({ type: 'trading_lifecycle_exercise.dispatch_recovery_completed', message: result.message, exerciseId, target, actorUserId, code: result.code, orderIntentId: result.orderIntentId, evidence: { clientOrderId, outcome: result.outcome } });
-    results.push({ targetId: target.id, code: result.code, orderIntentId: result.orderIntentId });
+    results.push({
+      targetId: target.id,
+      code: result.code,
+      outcome: result.outcome,
+      orderIntentId: result.orderIntentId,
+    });
   }
   await createSystemEvent({
     type: 'trading_lifecycle_exercise.dispatch_recovery_completed', entityType: 'tradingLifecycleExercise',
     entityId: exerciseId, actorUserId, message: `Dispatch recovery completed for lifecycle exercise ${exerciseId}.`,
+    severity: results.some((item) => item.outcome === 'FAILED')
+      ? SystemEventSeverity.ERROR
+      : results.some((item) => item.outcome === 'BLOCKED')
+        ? SystemEventSeverity.WARNING
+        : SystemEventSeverity.INFO,
     payloadJson: json({ exerciseId, environment: exercise.environment, staleBefore: staleBefore.toISOString(), results }),
   });
   return { exercise: await getExerciseOrThrow(exerciseId), recovery: { staleBefore, results } };
@@ -785,6 +830,7 @@ export async function cancelTradingLifecycleExercise(id: number, reason: string,
   await createSystemEvent({
     type: 'trading_lifecycle_exercise.cancelled', entityType: 'tradingLifecycleExercise',
     entityId: id, actorUserId, message: reason,
+    severity: SystemEventSeverity.INFO,
     payloadJson: json({ exerciseId: id, environment: 'PAPER', reason, lifecycleContinuesForDispatchedTargets: true }),
   });
   return getExerciseOrThrow(id);
@@ -826,6 +872,7 @@ export async function reconcileTradingLifecycleExerciseTarget(exerciseId: number
   await createSystemEvent({
     type: 'trading_lifecycle_exercise.reconciled', entityType: 'tradingLifecycleExerciseTarget',
     entityId: target.id, tradingAccountId: target.tradingAccountId, actorUserId,
+    severity: summary.clean ? SystemEventSeverity.INFO : SystemEventSeverity.WARNING,
     message: reconciled ? 'Lifecycle exercise target reconciliation is clean and lifecycle-terminal.' : summary.clean ? 'Reconciliation is clean; lifecycle work remains active.' : 'Lifecycle exercise target reconciliation requires attention.',
     payloadJson: json({ exerciseId, targetId, tradingAccountId: target.tradingAccountId, environment: 'PAPER', clean: summary.clean, lifecycleTerminal, reconciled, findingCount: summary.findingCount }),
   });

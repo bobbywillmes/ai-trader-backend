@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, SystemEventSeverity } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
@@ -12,6 +12,7 @@ import type {
   StrategyDetailQuery,
   UpdateStrategyEnabledInput,
 } from '../validators/strategy.validator.js';
+import { createSystemEvent } from './system-event.service.js';
 
 const strategyUsageSubscriptionSelect = {
   id: true,
@@ -261,11 +262,11 @@ export async function updateStrategyEnabled(
       ).length;
     }
 
-    await transaction.systemEvent.create({
-      data: {
+    await createSystemEvent({
         type: updated.enabled ? 'strategy_enabled' : 'strategy_disabled',
         entityType: 'strategy',
         entityId: String(updated.id),
+        severity: SystemEventSeverity.INFO,
         message: `Strategy ${updated.key} was ${
           updated.enabled ? 'enabled' : 'disabled'
         }.`,
@@ -282,8 +283,7 @@ export async function updateStrategyEnabled(
           qualifyingMomentumSubscriptions,
           actorUserId,
         },
-      },
-    });
+    }, transaction);
 
     return {
       strategy: serializeStrategyRecord(updated),

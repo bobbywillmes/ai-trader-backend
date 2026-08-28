@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { SystemEventSeverity, type Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import {
   getAlpacaAccountActivities,
@@ -429,6 +429,7 @@ export async function syncBrokerActivitiesForAccount(
       entityType: 'brokerActivity',
       entityId: 'alpaca',
       tradingAccountId,
+      severity: SystemEventSeverity.INFO,
       payloadJson: {
         broker: 'alpaca',
         mode,

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { Prisma } from '@prisma/client';
+import { SystemEventSeverity, type Prisma } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
@@ -31,6 +31,19 @@ export type SignalEntryResult = {
 };
 
 type AccountSignal = Omit<EntrySignalInput, 'subscriptionKey'>;
+
+export function signalEntryOutcomeSeverity(outcome: SignalEntryOutcome) {
+  switch (outcome) {
+    case 'INTENT_CREATED':
+    case 'DUPLICATE':
+    case 'SKIPPED':
+      return SystemEventSeverity.INFO;
+    case 'BLOCKED':
+      return SystemEventSeverity.WARNING;
+    case 'FAILED':
+      return SystemEventSeverity.ERROR;
+  }
+}
 
 function signalIdentity(signal: AccountSignal) {
   if (signal.decisionKey) return `decision:${signal.decisionKey}`;
@@ -78,6 +91,7 @@ async function recordOutcome(
     entityType: 'trading_account_subscription',
     entityId: result.tradingAccountSubscriptionId,
     tradingAccountId: result.tradingAccountId,
+    severity: signalEntryOutcomeSeverity(result.outcome),
     message: result.message,
     payloadJson: {
       signalIdentity: identity,

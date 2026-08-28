@@ -1,6 +1,7 @@
 import {
   BrokerCredentialStatus,
   Prisma,
+  SystemEventSeverity,
   TradingAccountEnvironment,
   TradingAccountReadinessPurpose,
   TradingAccountReadinessResult,
@@ -25,6 +26,7 @@ import {
   invalidateLiveWriteApprovals,
   LiveWriteCapability,
 } from './live-write-approval.service.js';
+import { createSystemEvent } from './system-event.service.js';
 import { getLiveWriteApprovalState } from './live-write-approval.service.js';
 import {
   CREDENTIAL_VERIFICATION_MAX_AGE_MS,
@@ -549,13 +551,13 @@ export async function deactivateTradingAccountForAdmin(
         );
 
         const occurredAt = new Date();
-        await tx.systemEvent.create({
-          data: {
+        await createSystemEvent({
             type: 'trading_account.deactivated',
             entityType: 'tradingAccount',
             entityId: String(id),
             tradingAccountId: id,
             actorUserId: actorUserId > 0 ? actorUserId : null,
+            severity: SystemEventSeverity.INFO,
             message: `Trading account ${id} was deactivated.`,
             payloadJson: {
               actorUserId,
@@ -568,8 +570,7 @@ export async function deactivateTradingAccountForAdmin(
               affectedPendingEntryIntentCount: blockedEntries.count,
               affectedEntryEnabledAssignmentCount: disabledAssignments.count,
             },
-          },
-        });
+        }, tx);
 
         return {
           before,
@@ -829,13 +830,13 @@ export async function activateTradingAccountForAdmin(
           where: { id },
           data: { ...after, pausedReason: null },
         });
-        await tx.systemEvent.create({
-          data: {
+        await createSystemEvent({
             type: 'trading_account.activated',
             entityType: 'tradingAccount',
             entityId: String(id),
             tradingAccountId: id,
             actorUserId,
+            severity: SystemEventSeverity.INFO,
             message: `Trading account ${id} activated with entries disarmed.`,
             payloadJson: {
               actorUserId,
@@ -877,8 +878,7 @@ export async function activateTradingAccountForAdmin(
                 exitAttention,
               },
             },
-          },
-        });
+        }, tx);
         return {
           outcome: 'activated' as const,
           before,

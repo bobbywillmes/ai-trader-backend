@@ -29,7 +29,15 @@ vi.mock('./reconciliation.service.js', () => ({ reconcileTradingAccountWithLock:
 import {
   listSubscriptionEntryCandidates,
   previewSubscriptionEntryLifecycleExercise,
+  exerciseOutcomeSeverity,
 } from './trading-lifecycle-exercise.service.js';
+
+it('keeps Paper exercise severity below CRITICAL', () => {
+  expect(exerciseOutcomeSeverity('INTENT_CREATED')).toBe('INFO');
+  expect(exerciseOutcomeSeverity('BLOCKED')).toBe('WARNING');
+  expect(exerciseOutcomeSeverity('FAILED')).toBe('ERROR');
+  expect(exerciseOutcomeSeverity('FAILED')).not.toBe('CRITICAL');
+});
 
 function identity(id: number, subscriptionId = 7, environment = 'PAPER') {
   return { id, subscriptionId, tradingAccount: { id: id + 100, environment } };

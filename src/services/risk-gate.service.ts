@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { SystemEventSeverity, type Prisma } from '@prisma/client';
 import { HttpError } from '../errors/http-error.js';
 import { prisma } from '../db/prisma.js';
 import { getNormalizedAccount } from './account.service.js';
@@ -1030,6 +1030,9 @@ export async function logRiskGateBlockedOrder(args: {
     entityType: 'orderIntent',
     entityId: args.orderIntentId,
     tradingAccountId: args.tradingAccountId ?? null,
+    severity: args.result.statusCode >= 500
+      ? SystemEventSeverity.ERROR
+      : SystemEventSeverity.WARNING,
     payloadJson: {
       orderIntentId: args.orderIntentId,
       symbol: args.input.symbol,
