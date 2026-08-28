@@ -15,6 +15,7 @@ import type { ReactNode } from "react";
 import { TradingAccountScopeProvider } from "../features/tradingAccountScope/TradingAccountScopeProvider";
 import { getPageScope } from "../app/pageScope";
 import { useAttentionSummary } from "../features/operationalAttention/hooks";
+import { operationalAttentionBadgeLabel } from "../features/operationalAttention/badgeAccessibility";
 
 export function AdminLayout() {
   const token = getAdminToken();
@@ -46,7 +47,7 @@ function AuthenticatedShell() {
   const { pathname } = useLocation();
   const attentionVisible = access?.permissions.includes("operationalAttention.read") === true;
   const attention = useAttentionSummary(getAdminToken(), "all", attentionVisible);
-  const groups = filterNavigationGroups(adminNavGroups, access?.platformRole, access?.permissions).map((group) => ({ ...group, items: group.items.map((item) => item.routeId === "operationalAttention" && attention.data?.totalUnresolved ? { ...item, badge: { count: attention.data.totalUnresolved, color: attention.data.highestSeverity === "CRITICAL" ? "red" : attention.data.highestSeverity === "ERROR" ? "orange" : "yellow", label: `${attention.data.totalUnresolved} unresolved operational attention` } } : item) }));
+  const groups = filterNavigationGroups(adminNavGroups, access?.platformRole, access?.permissions).map((group) => ({ ...group, items: group.items.map((item) => item.routeId === "operationalAttention" && attention.data?.totalUnresolved ? { ...item, badge: { count: attention.data.totalUnresolved, color: attention.data.highestSeverity === "CRITICAL" ? "red" : attention.data.highestSeverity === "ERROR" ? "orange" : "yellow", label: operationalAttentionBadgeLabel(attention.data.totalUnresolved, attention.data.highestSeverity) } } : item) }));
 
   async function handleLogout() {
     await logoutMutation.mutateAsync();

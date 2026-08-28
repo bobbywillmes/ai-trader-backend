@@ -127,6 +127,15 @@ unresolved counts. Dashboard scope follows the selected account but unions in
 accessible critical Live episodes so Paper selection cannot hide them. Failed
 queries render unknown/unavailable, never the healthy empty state.
 
+The dedicated page defaults to unresolved (`OPEN` plus `ACKNOWLEDGED`). Its
+canonical mixed-history filter is `status=all`, which includes `OPEN`,
+`ACKNOWLEDGED`, and `RESOLVED` in one server query. Unresolved episodes sort
+before resolved history; resolved episodes sort by most recent resolution.
+The navigation badge is the membership-scoped unresolved episode count, not an
+unread-notification count. Acknowledgement therefore remains counted. A later
+material severity escalation returns an acknowledged episode to `OPEN` and
+appends immutable escalation evidence without creating another episode.
+
 ## Safe local Paper demonstration
 
 The demo command uses the real attention service and no broker adapter. It
