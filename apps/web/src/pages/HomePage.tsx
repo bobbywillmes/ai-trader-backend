@@ -6,17 +6,18 @@ import {
   Center,
   Grid,
   Group,
+  Image,
   Loader,
   PasswordInput,
   Stack,
   Text,
   TextInput,
-  ThemeIcon,
   Title,
 } from "@mantine/core";
 import { getAdminToken } from "../lib/api";
 import { useLogin, useMe } from "../features/auth/hooks";
 import { getAuthenticatedHomePath } from "../features/auth/roleUtils";
+import aiTraderMark from "../assets/branding/ai-trader-mark.png";
 
 const features = [
   {
@@ -88,11 +89,7 @@ export function HomePage() {
         >
           <Stack gap="xl" maw={520}>
             <Group gap="sm">
-              <ThemeIcon size={48} radius="md" color="cyan" variant="filled">
-                <Text size="lg" fw={800} c="white">
-                  AT
-                </Text>
-              </ThemeIcon>
+              <Image src={aiTraderMark} alt="AI Trader" w={48} h={48} fit="contain" />
               <div>
                 <Title order={1} size="h2" fw={700} c="white">
                   AI Trader
@@ -153,7 +150,7 @@ export function HomePage() {
                 Sign in
               </Title>
               <Text size="sm" c="dimmed">
-                Admin access only.
+                Sign in to your account.
               </Text>
             </Stack>
 
