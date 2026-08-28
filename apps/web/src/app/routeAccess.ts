@@ -20,7 +20,8 @@ export type AppRouteId =
   | "users"
   | "securities"
   | "settings"
-  | "liveOperations";
+  | "liveOperations"
+  | "operationalAttention";
 
 type RouteAccessPolicy = {
   allowedRoles: PlatformRole[];
@@ -35,6 +36,7 @@ export const routeAccessPolicies: Record<AppRouteId, RouteAccessPolicy> = {
   dashboard: { allowedRoles: ALL_ROLES, requiredPermission: "reports.read" },
   positions: { allowedRoles: ALL_ROLES, requiredPermission: "tradingAccount.read" },
   liveOperations: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "tradingAccount.read" },
+  operationalAttention: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "operationalAttention.read" },
   orders: { allowedRoles: ALL_ROLES, requiredPermission: "tradingAccount.read" },
   entryDecisions: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "tradingAccount.read" },
   strategies: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "strategy.read" },

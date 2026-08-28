@@ -17,7 +17,11 @@ export type PlatformPermission =
   | "reports.read"
   | "systemEvents.read"
   | "tradingLifecycleExercise.read"
-  | "tradingLifecycleExercise.write";
+  | "tradingLifecycleExercise.write"
+  | "operationalAttention.read"
+  | "operationalAttention.acknowledge"
+  | "operationalAttention.resolve"
+  | "operationalAttention.manualResolve";
 
 export type User = {
   id: number;
