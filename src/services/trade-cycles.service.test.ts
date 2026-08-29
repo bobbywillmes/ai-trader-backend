@@ -199,23 +199,134 @@ describe('trade cycle service', () => {
     expect(result.cycles[0]?.returnPct).toBeCloseTo(0.04666666666666671);
   });
 
-  it('uses prior and corrective fills for a complete 4 / 2 / 2 lifecycle', async () => {
-    mocks.trackedPositionFindMany.mockResolvedValue([buildCycle({ qty: 4, brokerActivities: [
-      { id: 1, activityType: 'FILL', side: 'buy', qty: 4, price: 100, orderId: 'entry', transactionTime: new Date('2026-06-12T14:31:00Z'), createdAt: new Date('2026-06-12T14:31:00Z') },
-      { id: 2, activityType: 'FILL', side: 'sell', qty: 2, price: 105, orderId: 'prior-exit', transactionTime: new Date('2026-06-12T17:00:00Z'), createdAt: new Date('2026-06-12T17:00:00Z') },
-      { id: 3, activityType: 'FILL', side: 'sell', qty: 2, price: 107, orderId: 'corrective-exit', transactionTime: new Date('2026-06-12T18:00:00Z'), createdAt: new Date('2026-06-12T18:00:00Z') },
-    ] })]);
+  it('withholds results when broker disappearance closes a partially attributed lifecycle', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      buildCycle({
+        qty: 4,
+        brokerActivities: [
+          { id: 1, activityId: 'entry', activityType: 'FILL', side: 'buy', qty: 4, price: 100 },
+          { id: 2, activityId: 'partial-exit', activityType: 'FILL', side: 'sell', qty: 2, price: 105 },
+        ],
+      }),
+    ]);
+
     const result = await listTradeCycles({ status: 'closed' });
-    expect(result.cycles[0]).toMatchObject({ closeFillQty: 4, avgExitPrice: 106, realizedPnl: 24, returnPct: 0.06 });
+
+    expect(result.cycles[0]).toMatchObject({
+      status: 'closed',
+      closeFillQty: 2,
+      avgExitPrice: 105,
+      realizedPnl: null,
+      returnPct: null,
+    });
   });
 
-  it('does not finalize P&L while attributed close quantity is incomplete', async () => {
-    mocks.trackedPositionFindMany.mockResolvedValue([buildCycle({ qty: 4, brokerActivities: [
-      { id: 1, activityType: 'FILL', side: 'buy', qty: 4, price: 100, orderId: 'entry', transactionTime: new Date('2026-06-12T14:31:00Z'), createdAt: new Date('2026-06-12T14:31:00Z') },
-      { id: 2, activityType: 'FILL', side: 'sell', qty: 2, price: 105, orderId: 'partial-exit', transactionTime: new Date('2026-06-12T17:00:00Z'), createdAt: new Date('2026-06-12T17:00:00Z') },
-    ] })]);
+  it('withholds results when broker disappearance has no attributed close fill', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      buildCycle({
+        qty: 4,
+        brokerActivities: [
+          { id: 1, activityId: 'entry', activityType: 'FILL', side: 'buy', qty: 4, price: 100 },
+        ],
+      }),
+    ]);
+
     const result = await listTradeCycles({ status: 'closed' });
-    expect(result.cycles[0]).toMatchObject({ closeFillQty: 2, avgExitPrice: 105, realizedPnl: null, returnPct: null });
+
+    expect(result.cycles[0]).toMatchObject({
+      status: 'closed',
+      closeFillQty: null,
+      avgExitPrice: null,
+      realizedPnl: null,
+      returnPct: null,
+    });
+  });
+
+  it('finalizes results from multiple attributed fills totaling the tracked quantity', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      buildCycle({
+        qty: 4,
+        brokerActivities: [
+          { id: 1, activityId: 'entry', activityType: 'FILL', side: 'buy', qty: 4, price: 100 },
+          { id: 2, activityId: 'exit-1', activityType: 'FILL', side: 'sell', qty: 2, price: 105, cumQty: 2 },
+          { id: 3, activityId: 'exit-2', activityType: 'FILL', side: 'sell', qty: 2, price: 107, cumQty: 4 },
+        ],
+      }),
+    ]);
+
+    const result = await listTradeCycles({ status: 'closed' });
+
+    expect(result.cycles[0]).toMatchObject({
+      closeFillQty: 4,
+      avgExitPrice: 106,
+      realizedPnl: 24,
+      returnPct: 0.06,
+    });
+  });
+
+  it('does not count duplicate activity delivery or cumulative quantities twice', async () => {
+    const duplicate = { id: 3, activityId: 'exit-1', activityType: 'FILL', side: 'sell', qty: 2, price: 105, cumQty: 2 };
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      buildCycle({
+        qty: 4,
+        brokerActivities: [
+          { id: 1, activityId: 'entry', activityType: 'FILL', side: 'buy', qty: 4, price: 100 },
+          { ...duplicate, id: 2 },
+          duplicate,
+        ],
+      }),
+    ]);
+
+    const result = await listTradeCycles({ status: 'closed' });
+
+    expect(result.cycles[0]).toMatchObject({
+      closeFillQty: 2,
+      avgExitPrice: 105,
+      realizedPnl: null,
+      returnPct: null,
+    });
+  });
+
+  it('does not finalize a partial fill while the tracked position remains open', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      buildCycle({
+        status: 'open',
+        closedAt: null,
+        qty: 4,
+        brokerActivities: [
+          { id: 1, activityId: 'entry', activityType: 'FILL', side: 'buy', qty: 4, price: 100 },
+          { id: 2, activityId: 'partial-exit', activityType: 'FILL', side: 'sell', qty: 2, price: 105 },
+        ],
+      }),
+    ]);
+
+    const result = await listTradeCycles({ status: 'open' });
+
+    expect(result.cycles[0]).toMatchObject({
+      status: 'open',
+      closeFillQty: 2,
+      realizedPnl: null,
+      returnPct: null,
+    });
+  });
+
+  it('compares decimal close quantities exactly without floating-point addition', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([
+      buildCycle({
+        qty: 0.3,
+        brokerActivities: [
+          { id: 1, activityId: 'entry', activityType: 'FILL', side: 'buy', qty: 0.3, price: 100 },
+          { id: 2, activityId: 'exit-1', activityType: 'FILL', side: 'sell', qty: 0.1, price: 105 },
+          { id: 3, activityId: 'exit-2', activityType: 'FILL', side: 'sell', qty: 0.2, price: 105 },
+        ],
+      }),
+    ]);
+
+    const result = await listTradeCycles({ status: 'closed' });
+
+    expect(result.cycles[0]?.closeFillQty).toBeCloseTo(0.3);
+    expect(result.cycles[0]?.realizedPnl).toBeCloseTo(1.5);
+    expect(result.cycles[0]?.returnPct).toBeCloseTo(0.05);
   });
 
   it('lists trade cycles for an explicit trading account without resolving the default account', async () => {
