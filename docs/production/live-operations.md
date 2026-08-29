@@ -20,9 +20,17 @@ The overview never blends account conclusions: it reports counts and worst sever
 
 Exit evaluation is exposure-driven and continues when account trading is disabled. The kill switch and account trading flag gate entries, not risk-reducing evaluation. Live risk-reducing writes are finally gated in the Alpaca client by production mode, `PRODUCTION_EXECUTOR`, `ALLOW_LIVE_RISK_REDUCING_WRITES`, and effective `RISK_REDUCING` approval. A due decision can therefore create durable local submitting/failed state before final authorization refuses delivery; later polling and broker lookup recovery reconsider it.
 
-Stable client order IDs, serializable claims, account workflow locks, exact client-ID broker recovery, and delivery-uncertainty classifications reduce duplicate submission risk. However, market and trailing exits currently size from local `TrackedPosition.qty` and do not clamp against a fresh broker-held quantity immediately before submission. Correcting that is separate write-path work.
+Stable client order IDs, serializable claims, and delivery-uncertainty classifications reduce duplicate submission risk. Every new equity sell now crosses the shared account-scoped `EXIT_SUBMISSION` lock and recovers the stable client ID before inspecting quantity. It then requires an exact full-position match among local intended quantity, Alpaca-held `qty`, and Alpaca `qty_available`, rejects unrelated active sell reservations, rechecks final Live risk-reducing authorization, and submits `position_intent=sell_to_close`. Missing or ambiguous broker evidence fails closed; quantity is never clamped and an available residual is never sold.
 
 Local development is structurally observation-only for Live writes because authorization requires production mode and the production-executor role. Database-backed per-account locks coordinate this application, but the application cannot prove that no separate external Live writer exists. Live Operations therefore reports configured deployment policy and never claims exclusive writer ownership.
+
+If Alpaca reports a short equity position, AI Trader blocks further sell automation,
+does not normalize the short into a managed long, and does not automatically buy
+to cover. Reconciliation and position observation open or refresh account-scoped
+authoritative-only Operational Attention with sanitized broker side and quantity
+evidence. Resolve the broker condition externally and confirm it through a complete
+authoritative reconciliation. The separate **Close remaining broker position**
+workflow is deferred and is not available from Operational Attention.
 
 No database model or continuously persisted “Live Operations assessment” is used; the read model is derived on request from existing durable evidence.
 
