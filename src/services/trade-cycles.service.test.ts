@@ -199,6 +199,25 @@ describe('trade cycle service', () => {
     expect(result.cycles[0]?.returnPct).toBeCloseTo(0.04666666666666671);
   });
 
+  it('uses prior and corrective fills for a complete 4 / 2 / 2 lifecycle', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([buildCycle({ qty: 4, brokerActivities: [
+      { id: 1, activityType: 'FILL', side: 'buy', qty: 4, price: 100, orderId: 'entry', transactionTime: new Date('2026-06-12T14:31:00Z'), createdAt: new Date('2026-06-12T14:31:00Z') },
+      { id: 2, activityType: 'FILL', side: 'sell', qty: 2, price: 105, orderId: 'prior-exit', transactionTime: new Date('2026-06-12T17:00:00Z'), createdAt: new Date('2026-06-12T17:00:00Z') },
+      { id: 3, activityType: 'FILL', side: 'sell', qty: 2, price: 107, orderId: 'corrective-exit', transactionTime: new Date('2026-06-12T18:00:00Z'), createdAt: new Date('2026-06-12T18:00:00Z') },
+    ] })]);
+    const result = await listTradeCycles({ status: 'closed' });
+    expect(result.cycles[0]).toMatchObject({ closeFillQty: 4, avgExitPrice: 106, realizedPnl: 24, returnPct: 0.06 });
+  });
+
+  it('does not finalize P&L while attributed close quantity is incomplete', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([buildCycle({ qty: 4, brokerActivities: [
+      { id: 1, activityType: 'FILL', side: 'buy', qty: 4, price: 100, orderId: 'entry', transactionTime: new Date('2026-06-12T14:31:00Z'), createdAt: new Date('2026-06-12T14:31:00Z') },
+      { id: 2, activityType: 'FILL', side: 'sell', qty: 2, price: 105, orderId: 'partial-exit', transactionTime: new Date('2026-06-12T17:00:00Z'), createdAt: new Date('2026-06-12T17:00:00Z') },
+    ] })]);
+    const result = await listTradeCycles({ status: 'closed' });
+    expect(result.cycles[0]).toMatchObject({ closeFillQty: 2, avgExitPrice: 105, realizedPnl: null, returnPct: null });
+  });
+
   it('lists trade cycles for an explicit trading account without resolving the default account', async () => {
     mocks.trackedPositionFindMany.mockResolvedValue([buildCycle({ tradingAccountId: 7 })]);
 

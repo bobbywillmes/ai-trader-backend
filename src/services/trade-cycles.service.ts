@@ -1,14 +1,14 @@
-import { PlatformRole, type BrokerActivity, type Prisma } from '@prisma/client';
-import { prisma } from '../db/prisma.js';
-import { HttpError } from '../errors/http-error.js';
+import { PlatformRole, type BrokerActivity, type Prisma } from "@prisma/client";
+import { prisma } from "../db/prisma.js";
+import { HttpError } from "../errors/http-error.js";
 import {
   resolveDefaultTradingAccountId,
   TRADING_ACCOUNT_SUMMARY_SELECT,
-} from './trading-account.service.js';
+} from "./trading-account.service.js";
 
 export type TradeCycleFilters = {
   symbol?: string;
-  status?: 'open' | 'closed' | 'closing';
+  status?: "open" | "closed" | "closing";
   dateFrom?: Date;
   dateTo?: Date;
   closedDateFrom?: Date;
@@ -23,18 +23,18 @@ export type TradeCycleFilters = {
   pageSize?: number;
 };
 
-function getCloseSide(positionSide: string): 'buy' | 'sell' {
-  return positionSide.toLowerCase() === 'short' ? 'buy' : 'sell';
+function getCloseSide(positionSide: string): "buy" | "sell" {
+  return positionSide.toLowerCase() === "short" ? "buy" : "sell";
 }
 
-function getEntrySide(positionSide: string): 'buy' | 'sell' {
-  return positionSide.toLowerCase() === 'short' ? 'sell' : 'buy';
+function getEntrySide(positionSide: string): "buy" | "sell" {
+  return positionSide.toLowerCase() === "short" ? "sell" : "buy";
 }
 
 function averageFillPrice(fills: BrokerActivity[]) {
   const totalQty = fills.reduce(
     (total, fill) => total + Math.abs(fill.qty ?? 0),
-    0
+    0,
   );
 
   if (totalQty === 0) {
@@ -43,7 +43,7 @@ function averageFillPrice(fills: BrokerActivity[]) {
 
   const notional = fills.reduce(
     (total, fill) => total + Math.abs(fill.qty ?? 0) * (fill.price ?? 0),
-    0
+    0,
   );
 
   return notional / totalQty;
@@ -54,10 +54,7 @@ function sumFillQty(fills: BrokerActivity[]) {
   return total > 0 ? total : null;
 }
 
-function getHoldingDurationMs(args: {
-  openedAt: Date;
-  closedAt: Date | null;
-}) {
+function getHoldingDurationMs(args: { openedAt: Date; closedAt: Date | null }) {
   if (!args.closedAt) {
     return null;
   }
@@ -77,7 +74,7 @@ function getRealizedPnl(args: {
 
   const qty = Math.abs(args.qty);
 
-  if (args.side.toLowerCase() === 'short') {
+  if (args.side.toLowerCase() === "short") {
     return (args.avgEntryPrice - args.avgExitPrice) * qty;
   }
 
@@ -93,7 +90,7 @@ function getReturnPct(args: {
     return null;
   }
 
-  if (args.side.toLowerCase() === 'short') {
+  if (args.side.toLowerCase() === "short") {
     return (args.avgEntryPrice - args.avgExitPrice) / args.avgEntryPrice;
   }
 
@@ -105,7 +102,7 @@ function parseExitReason(position: {
 }) {
   const status = position.exitState?.status ?? null;
 
-  if (status === 'closed') {
+  if (status === "closed") {
     return null;
   }
 
@@ -118,7 +115,7 @@ type TrackedPositionSystemEvent = {
   message: string | null;
   createdAt: Date;
   payloadJson: Prisma.JsonValue;
-  severity: 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
+  severity: "INFO" | "WARNING" | "ERROR" | "CRITICAL";
   entityId: string;
 };
 
@@ -133,12 +130,12 @@ const TRACKED_POSITION_SYSTEM_EVENT_SELECT = {
 } satisfies Prisma.SystemEventSelect;
 
 function isJsonObject(value: Prisma.JsonValue): value is Prisma.JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function readPayloadNumber(
   payload: Prisma.JsonValue,
-  key: string
+  key: string,
 ): number | null {
   if (!isJsonObject(payload)) {
     return null;
@@ -146,12 +143,12 @@ function readPayloadNumber(
 
   const value = payload[key];
 
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function readSnapshotObject(
   snapshot: Prisma.JsonValue | null | undefined,
-  key: string
+  key: string,
 ) {
   if (!snapshot || !isJsonObject(snapshot)) {
     return null;
@@ -164,23 +161,23 @@ function readSnapshotObject(
 
 function readSnapshotString(
   value: Prisma.JsonObject | null,
-  key: string
+  key: string,
 ): string | null {
   const field = value?.[key];
-  return typeof field === 'string' ? field : null;
+  return typeof field === "string" ? field : null;
 }
 
 function readSnapshotNumber(
   value: Prisma.JsonObject | null,
-  key: string
+  key: string,
 ): number | null {
   const field = value?.[key];
-  return typeof field === 'number' && Number.isFinite(field) ? field : null;
+  return typeof field === "number" && Number.isFinite(field) ? field : null;
 }
 
 function getLatestPositionClosedEvent(events: TrackedPositionSystemEvent[]) {
   return events
-    .filter((event) => event.type === 'position.closed')
+    .filter((event) => event.type === "position.closed")
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
 }
 
@@ -201,36 +198,45 @@ function buildCycleSummary(
       };
     };
   }>,
-  systemEvents: TrackedPositionSystemEvent[] = []
+  systemEvents: TrackedPositionSystemEvent[] = [],
 ) {
   const entrySide = getEntrySide(position.side);
   const closeSide = getCloseSide(position.side);
   const entryFills = position.brokerActivities.filter(
-    (activity) => activity.activityType === 'FILL' && activity.side === entrySide
+    (activity) =>
+      activity.activityType === "FILL" && activity.side === entrySide,
   );
   const closeFills = position.brokerActivities.filter(
-    (activity) => activity.activityType === 'FILL' && activity.side === closeSide
+    (activity) =>
+      activity.activityType === "FILL" && activity.side === closeSide,
   );
   const avgEntryPrice =
     averageFillPrice(entryFills) ?? position.avgEntryPrice ?? null;
   const closedEvent = getLatestPositionClosedEvent(systemEvents);
   const snapshot = position.configSnapshotJson as Prisma.JsonValue | null;
-  const snapshotStrategy = readSnapshotObject(snapshot, 'strategy');
-  const snapshotSubscription = readSnapshotObject(snapshot, 'subscription');
-  const snapshotExitProfile = readSnapshotObject(snapshot, 'exitProfile');
+  const snapshotStrategy = readSnapshotObject(snapshot, "strategy");
+  const snapshotSubscription = readSnapshotObject(snapshot, "subscription");
+  const snapshotExitProfile = readSnapshotObject(snapshot, "exitProfile");
   const eventClosePrice = closedEvent
-    ? readPayloadNumber(closedEvent.payloadJson, 'closePrice')
+    ? readPayloadNumber(closedEvent.payloadJson, "closePrice")
     : null;
   const eventCloseQty = closedEvent
-    ? readPayloadNumber(closedEvent.payloadJson, 'closeQty')
+    ? readPayloadNumber(closedEvent.payloadJson, "closeQty")
     : null;
   const avgExitPrice = averageFillPrice(closeFills) ?? eventClosePrice;
-  const realizedPnl = getRealizedPnl({
-    side: position.side,
-    qty: position.qty,
-    avgEntryPrice,
-    avgExitPrice,
-  });
+  const attributedCloseQty = sumFillQty(closeFills) ?? eventCloseQty;
+  const lifecycleComplete =
+    position.status === "closed" &&
+    attributedCloseQty !== null &&
+    Math.abs(attributedCloseQty - Math.abs(position.qty)) <= 0.000001;
+  const realizedPnl = lifecycleComplete
+    ? getRealizedPnl({
+        side: position.side,
+        qty: position.qty,
+        avgEntryPrice,
+        avgExitPrice,
+      })
+    : null;
 
   return {
     id: position.id,
@@ -246,58 +252,61 @@ function buildCycleSummary(
     avgEntryPrice,
     avgExitPrice,
     realizedPnl,
-    returnPct: getReturnPct({
-      side: position.side,
-      avgEntryPrice,
-      avgExitPrice,
-    }),
+    returnPct: lifecycleComplete
+      ? getReturnPct({
+          side: position.side,
+          avgEntryPrice,
+          avgExitPrice,
+        })
+      : null,
     holdingDurationMs: getHoldingDurationMs({
       openedAt: position.openedAt,
       closedAt: position.closedAt,
     }),
     entryFillQty: sumFillQty(entryFills),
-    closeFillQty: sumFillQty(closeFills) ?? eventCloseQty,
+    closeFillQty: attributedCloseQty,
     strategy: snapshotStrategy
       ? {
-          id: readSnapshotNumber(snapshotStrategy, 'id'),
-          key: readSnapshotString(snapshotStrategy, 'key'),
-          name: readSnapshotString(snapshotStrategy, 'name'),
+          id: readSnapshotNumber(snapshotStrategy, "id"),
+          key: readSnapshotString(snapshotStrategy, "key"),
+          name: readSnapshotString(snapshotStrategy, "name"),
         }
       : position.subscription?.strategy
-      ? {
-          id: position.subscription.strategy.id,
-          key: position.subscription.strategy.key,
-          name: position.subscription.strategy.name,
-        }
-      : null,
+        ? {
+            id: position.subscription.strategy.id,
+            key: position.subscription.strategy.key,
+            name: position.subscription.strategy.name,
+          }
+        : null,
     subscription: snapshotSubscription
       ? {
-          id: readSnapshotNumber(snapshotSubscription, 'id'),
-          key: readSnapshotString(snapshotSubscription, 'key'),
-          name: readSnapshotString(snapshotSubscription, 'name'),
-          brokerMode: readSnapshotString(snapshotSubscription, 'brokerMode'),
+          id: readSnapshotNumber(snapshotSubscription, "id"),
+          key: readSnapshotString(snapshotSubscription, "key"),
+          name: readSnapshotString(snapshotSubscription, "name"),
+          brokerMode: readSnapshotString(snapshotSubscription, "brokerMode"),
         }
       : position.subscription
-      ? {
-          id: position.subscription.id,
-          key: position.subscription.key,
-          name: position.subscription.name,
-          brokerMode: position.tradingAccount?.environment.toLowerCase() ?? null,
-        }
-      : null,
+        ? {
+            id: position.subscription.id,
+            key: position.subscription.key,
+            name: position.subscription.name,
+            brokerMode:
+              position.tradingAccount?.environment.toLowerCase() ?? null,
+          }
+        : null,
     exitProfile: snapshotExitProfile
       ? {
-          id: readSnapshotNumber(snapshotExitProfile, 'id'),
-          key: readSnapshotString(snapshotExitProfile, 'key'),
-          name: readSnapshotString(snapshotExitProfile, 'name'),
+          id: readSnapshotNumber(snapshotExitProfile, "id"),
+          key: readSnapshotString(snapshotExitProfile, "key"),
+          name: readSnapshotString(snapshotExitProfile, "name"),
         }
       : position.subscription?.exitProfile
-      ? {
-          id: position.subscription.exitProfile.id,
-          key: position.subscription.exitProfile.key,
-          name: position.subscription.exitProfile.name,
-        }
-      : null,
+        ? {
+            id: position.subscription.exitProfile.id,
+            key: position.subscription.exitProfile.key,
+            name: position.subscription.exitProfile.name,
+          }
+        : null,
     exitReason: parseExitReason(position),
     exitStateStatus: position.exitState?.status ?? null,
     entryDecision: position.entryDecision
@@ -319,7 +328,7 @@ function buildCycleSummary(
 
 function buildWhere(
   filters: TradeCycleFilters,
-  tradingAccountScope: number | { in: number[] }
+  tradingAccountScope: number | { in: number[] },
 ): Prisma.TrackedPositionWhereInput {
   const where: Prisma.TrackedPositionWhereInput = {
     tradingAccountId: tradingAccountScope,
@@ -389,7 +398,7 @@ const tradeCycleInclude = {
   },
   brokerActivities: {
     orderBy: {
-      transactionTime: 'asc',
+      transactionTime: "asc",
     },
   },
   entryDecision: true,
@@ -406,14 +415,14 @@ export async function listTradeCycles(filters: TradeCycleFilters = {}) {
 
 export async function listTradeCyclesForTradingAccount(
   tradingAccountId: number,
-  filters: TradeCycleFilters = {}
+  filters: TradeCycleFilters = {},
 ) {
-  const take = filters.limit === null ? undefined : filters.limit ?? 50;
+  const take = filters.limit === null ? undefined : (filters.limit ?? 50);
   const cycles = await prisma.trackedPosition.findMany({
     where: buildWhere(filters, tradingAccountId),
     include: tradeCycleInclude,
     orderBy: {
-      openedAt: 'desc',
+      openedAt: "desc",
     },
     ...(take !== undefined ? { take } : {}),
   });
@@ -421,15 +430,15 @@ export async function listTradeCyclesForTradingAccount(
   const systemEvents = await prisma.systemEvent.findMany({
     select: TRACKED_POSITION_SYSTEM_EVENT_SELECT,
     where: {
-      entityType: 'trackedPosition',
+      entityType: "trackedPosition",
       entityId: {
         in: cycles.map((cycle) => String(cycle.id)),
       },
       tradingAccountId,
-      type: 'position.closed',
+      type: "position.closed",
     },
     orderBy: {
-      createdAt: 'asc',
+      createdAt: "asc",
     },
   });
 
@@ -448,8 +457,8 @@ export async function listTradeCyclesForTradingAccount(
     cycles: cycles.map((cycle) =>
       buildCycleSummary(
         cycle,
-        systemEventsByTrackedPositionId.get(String(cycle.id)) ?? []
-      )
+        systemEventsByTrackedPositionId.get(String(cycle.id)) ?? [],
+      ),
     ),
   };
 }
@@ -457,56 +466,81 @@ export async function listTradeCyclesForTradingAccount(
 export async function listAccessibleTradeCycles(
   user: { id: number; platformRole: PlatformRole },
   tradingAccountId: number | null,
-  filters: TradeCycleFilters = {}
+  filters: TradeCycleFilters = {},
 ) {
   if (user.platformRole === PlatformRole.ACCOUNT_USER) {
-    throw new HttpError(403, 'Administrative trade-history scope is not available to Account Users.');
+    throw new HttpError(
+      403,
+      "Administrative trade-history scope is not available to Account Users.",
+    );
   }
 
   let accountIds: number[];
   if (tradingAccountId !== null) {
     if (user.platformRole !== PlatformRole.SYSTEM_OWNER) {
       const membership = await prisma.tradingAccountMembership.findUnique({
-        where: { tradingAccountId_userId: { tradingAccountId, userId: user.id } },
+        where: {
+          tradingAccountId_userId: { tradingAccountId, userId: user.id },
+        },
         select: { id: true },
       });
-      if (!membership) throw new HttpError(403, 'Access to this trading account is not permitted.');
+      if (!membership)
+        throw new HttpError(
+          403,
+          "Access to this trading account is not permitted.",
+        );
     }
     accountIds = [tradingAccountId];
   } else if (user.platformRole === PlatformRole.SYSTEM_OWNER) {
-    accountIds = (await prisma.tradingAccount.findMany({ select: { id: true } })).map(({ id }) => id);
+    accountIds = (
+      await prisma.tradingAccount.findMany({ select: { id: true } })
+    ).map(({ id }) => id);
   } else {
-    accountIds = (await prisma.tradingAccountMembership.findMany({
-      where: { userId: user.id },
-      select: { tradingAccountId: true },
-    })).map(({ tradingAccountId: id }) => id);
+    accountIds = (
+      await prisma.tradingAccountMembership.findMany({
+        where: { userId: user.id },
+        select: { tradingAccountId: true },
+      })
+    ).map(({ tradingAccountId: id }) => id);
   }
 
   if (accountIds.length === 0) {
     const page = filters.page ?? 1;
     const pageSize = Math.min(filters.pageSize ?? 25, 100);
-    return { cycles: [], pagination: { page, pageSize, total: 0, totalPages: 1 } };
+    return {
+      cycles: [],
+      pagination: { page, pageSize, total: 0, totalPages: 1 },
+    };
   }
   return listTradeCyclesForAccountIds(accountIds, filters);
 }
 
-async function listTradeCyclesForAccountIds(accountIds: number[], filters: TradeCycleFilters) {
+async function listTradeCyclesForAccountIds(
+  accountIds: number[],
+  filters: TradeCycleFilters,
+) {
   const page = filters.page ?? 1;
   const pageSize = Math.min(filters.pageSize ?? 25, 100);
   const where = buildWhere(filters, { in: accountIds });
   const [cycles, total] = await Promise.all([
-    prisma.trackedPosition.findMany({ where, include: tradeCycleInclude, orderBy: { openedAt: 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
+    prisma.trackedPosition.findMany({
+      where,
+      include: tradeCycleInclude,
+      orderBy: { openedAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
     prisma.trackedPosition.count({ where }),
   ]);
   const systemEvents = await prisma.systemEvent.findMany({
     select: TRACKED_POSITION_SYSTEM_EVENT_SELECT,
     where: {
-      entityType: 'trackedPosition',
+      entityType: "trackedPosition",
       entityId: { in: cycles.map((cycle) => String(cycle.id)) },
       tradingAccountId: { in: accountIds },
-      type: 'position.closed',
+      type: "position.closed",
     },
-    orderBy: { createdAt: 'asc' },
+    orderBy: { createdAt: "asc" },
   });
   const byPosition = new Map<string, TrackedPositionSystemEvent[]>();
   for (const event of systemEvents) {
@@ -514,7 +548,17 @@ async function listTradeCyclesForAccountIds(accountIds: number[], filters: Trade
     existing.push(event);
     byPosition.set(event.entityId, existing);
   }
-  return { cycles: cycles.map((cycle) => buildCycleSummary(cycle, byPosition.get(String(cycle.id)) ?? [])), pagination: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) } };
+  return {
+    cycles: cycles.map((cycle) =>
+      buildCycleSummary(cycle, byPosition.get(String(cycle.id)) ?? []),
+    ),
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    },
+  };
 }
 
 export async function getTradeCycleById(id: number) {
@@ -528,12 +572,12 @@ export async function getTradeCycleById(id: number) {
           brokerOrders: true,
         },
         orderBy: {
-          createdAt: 'asc',
+          createdAt: "asc",
         },
       },
       brokerOrders: {
         orderBy: {
-          createdAt: 'asc',
+          createdAt: "asc",
         },
       },
     },
@@ -546,12 +590,12 @@ export async function getTradeCycleById(id: number) {
   const systemEvents = await prisma.systemEvent.findMany({
     select: TRACKED_POSITION_SYSTEM_EVENT_SELECT,
     where: {
-      entityType: 'trackedPosition',
+      entityType: "trackedPosition",
       entityId: String(id),
       tradingAccountId,
     },
     orderBy: {
-      createdAt: 'asc',
+      createdAt: "asc",
     },
   });
 
@@ -587,10 +631,13 @@ export async function getTradeCycleById(id: number) {
 
 export async function getAccessibleTradeCycleById(
   user: { id: number; platformRole: PlatformRole },
-  id: number
+  id: number,
 ) {
   if (user.platformRole === PlatformRole.ACCOUNT_USER) {
-    throw new HttpError(403, 'Administrative trade-history scope is not available to Account Users.');
+    throw new HttpError(
+      403,
+      "Administrative trade-history scope is not available to Account Users.",
+    );
   }
   const position = await prisma.trackedPosition.findFirst({
     where: {
@@ -601,15 +648,22 @@ export async function getAccessibleTradeCycleById(
     },
     include: {
       ...tradeCycleInclude,
-      orderIntents: { include: { brokerOrders: true }, orderBy: { createdAt: 'asc' } },
-      brokerOrders: { orderBy: { createdAt: 'asc' } },
+      orderIntents: {
+        include: { brokerOrders: true },
+        orderBy: { createdAt: "asc" },
+      },
+      brokerOrders: { orderBy: { createdAt: "asc" } },
     },
   });
   if (!position) throw new HttpError(404, `Trade cycle ${id} was not found.`);
   const systemEvents = await prisma.systemEvent.findMany({
     select: TRACKED_POSITION_SYSTEM_EVENT_SELECT,
-    where: { entityType: 'trackedPosition', entityId: String(id), tradingAccountId: position.tradingAccountId },
-    orderBy: { createdAt: 'asc' },
+    where: {
+      entityType: "trackedPosition",
+      entityId: String(id),
+      tradingAccountId: position.tradingAccountId,
+    },
+    orderBy: { createdAt: "asc" },
   });
   return {
     cycle: {
@@ -628,7 +682,15 @@ export async function getAccessibleTradeCycleById(
       brokerActivities: position.brokerActivities,
       entryDecision: position.entryDecision,
       systemEvents,
-      timeline: buildTimeline({ openedAt: position.openedAt, closedAt: position.closedAt, entryDecision: position.entryDecision, orderIntents: position.orderIntents, brokerOrders: position.brokerOrders, brokerActivities: position.brokerActivities, systemEvents }),
+      timeline: buildTimeline({
+        openedAt: position.openedAt,
+        closedAt: position.closedAt,
+        entryDecision: position.entryDecision,
+        orderIntents: position.orderIntents,
+        brokerOrders: position.brokerOrders,
+        brokerActivities: position.brokerActivities,
+        systemEvents,
+      }),
     },
   };
 }
@@ -667,10 +729,10 @@ function buildTimeline(args: {
 }) {
   const items = [
     {
-      type: 'position.opened',
+      type: "position.opened",
       occurredAt: args.openedAt,
-      source: 'tracked_position',
-      summary: 'Position tracking started',
+      source: "tracked_position",
+      summary: "Position tracking started",
       entityId: null,
     },
     ...(args.entryDecision
@@ -678,7 +740,7 @@ function buildTimeline(args: {
           {
             type: `entry_decision.${args.entryDecision.decisionState}`,
             occurredAt: args.entryDecision.evaluatedAt,
-            source: 'entry_decision',
+            source: "entry_decision",
             summary:
               args.entryDecision.decisionReason ??
               args.entryDecision.decisionState,
@@ -689,47 +751,45 @@ function buildTimeline(args: {
     ...args.orderIntents.map((intent) => ({
       type: `order_intent.${intent.status}`,
       occurredAt: intent.createdAt,
-      source: 'order_intent',
+      source: "order_intent",
       summary: `${intent.side.toUpperCase()} intent from ${intent.source}`,
       entityId: intent.id,
     })),
     ...args.brokerOrders.map((order) => ({
       type: `broker_order.${order.status}`,
       occurredAt: order.createdAt,
-      source: 'broker_order',
+      source: "broker_order",
       summary: `${order.side.toUpperCase()} broker order ${order.status}`,
       entityId: order.id,
     })),
     ...args.brokerActivities.map((activity) => ({
       type: `broker_activity.${activity.activityType.toLowerCase()}`,
       occurredAt: activity.transactionTime ?? activity.createdAt,
-      source: 'broker_activity',
-      summary: `${activity.activityType} ${activity.side ?? ''} ${
-        activity.qty ?? ''
-      } @ ${activity.price ?? ''}`.trim(),
+      source: "broker_activity",
+      summary: `${activity.activityType} ${activity.side ?? ""} ${
+        activity.qty ?? ""
+      } @ ${activity.price ?? ""}`.trim(),
       entityId: activity.id,
     })),
     ...args.systemEvents.map((event) => ({
       type: event.type,
       occurredAt: event.createdAt,
-      source: 'system_event',
+      source: "system_event",
       summary: event.message ?? event.type,
       entityId: event.id,
     })),
     ...(args.closedAt
       ? [
           {
-            type: 'position.closed',
+            type: "position.closed",
             occurredAt: args.closedAt,
-            source: 'tracked_position',
-            summary: 'Position tracking closed',
+            source: "tracked_position",
+            summary: "Position tracking closed",
             entityId: null,
           },
         ]
       : []),
   ];
 
-  return items.sort(
-    (a, b) => a.occurredAt.getTime() - b.occurredAt.getTime()
-  );
+  return items.sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime());
 }

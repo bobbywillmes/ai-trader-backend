@@ -1,11 +1,54 @@
-import { Router } from 'express';
-import { PlatformPermission } from '../types/platform-rbac.js';
-import { requirePermission, requireSystemOwnerAccess } from '../middleware/rbac.js';
-import { acknowledgeOperationalAttentionController, listOperationalAttentionController, manualResolveOperationalAttentionController, operationalAttentionDetailController, operationalAttentionSummaryController } from '../controllers/operational-attention.controller.js';
+import { Router } from "express";
+import { PlatformPermission } from "../types/platform-rbac.js";
+import {
+  requirePermission,
+  requireSystemOwnerAccess,
+} from "../middleware/rbac.js";
+import {
+  acknowledgeOperationalAttentionController,
+  listOperationalAttentionController,
+  manualResolveOperationalAttentionController,
+  operationalAttentionDetailController,
+  operationalAttentionSummaryController,
+  remainingExposureCloseController,
+  remainingExposureClosePreviewController,
+} from "../controllers/operational-attention.controller.js";
 const router = Router();
-router.get('/', requirePermission(PlatformPermission.OPERATIONAL_ATTENTION_READ), listOperationalAttentionController);
-router.get('/summary', requirePermission(PlatformPermission.OPERATIONAL_ATTENTION_READ), operationalAttentionSummaryController);
-router.get('/:id', requirePermission(PlatformPermission.OPERATIONAL_ATTENTION_READ), operationalAttentionDetailController);
-router.post('/:id/acknowledge', requirePermission(PlatformPermission.OPERATIONAL_ATTENTION_ACKNOWLEDGE), acknowledgeOperationalAttentionController);
-router.post('/:id/manual-resolve', requireSystemOwnerAccess, requirePermission(PlatformPermission.OPERATIONAL_ATTENTION_MANUAL_RESOLVE), manualResolveOperationalAttentionController);
+router.get(
+  "/",
+  requirePermission(PlatformPermission.OPERATIONAL_ATTENTION_READ),
+  listOperationalAttentionController,
+);
+router.get(
+  "/summary",
+  requirePermission(PlatformPermission.OPERATIONAL_ATTENTION_READ),
+  operationalAttentionSummaryController,
+);
+router.get(
+  "/:id/remaining-exposure-close-preview",
+  requirePermission(PlatformPermission.OPERATIONAL_ATTENTION_READ),
+  remainingExposureClosePreviewController,
+);
+router.post(
+  "/:id/remaining-exposure-close",
+  requireSystemOwnerAccess,
+  requirePermission(PlatformPermission.OPERATIONAL_ATTENTION_CORRECTIVE_CLOSE),
+  remainingExposureCloseController,
+);
+router.get(
+  "/:id",
+  requirePermission(PlatformPermission.OPERATIONAL_ATTENTION_READ),
+  operationalAttentionDetailController,
+);
+router.post(
+  "/:id/acknowledge",
+  requirePermission(PlatformPermission.OPERATIONAL_ATTENTION_ACKNOWLEDGE),
+  acknowledgeOperationalAttentionController,
+);
+router.post(
+  "/:id/manual-resolve",
+  requireSystemOwnerAccess,
+  requirePermission(PlatformPermission.OPERATIONAL_ATTENTION_MANUAL_RESOLVE),
+  manualResolveOperationalAttentionController,
+);
 export default router;
