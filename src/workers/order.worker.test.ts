@@ -299,7 +299,7 @@ describe('order worker entry-session recheck', () => {
     );
   });
 
-  it('submits non-entry orders without the entry-session recheck', async () => {
+  it('blocks legacy sell intents from bypassing the verified exit boundary', async () => {
     const exitIntent = {
       ...baseIntent,
       id: 102,
@@ -324,17 +324,14 @@ describe('order worker entry-session recheck', () => {
     await processPendingOrdersForAccount(1);
 
     expect(mocks.evaluateOrderRisk).not.toHaveBeenCalled();
-    expect(mocks.submitOrderToBroker).toHaveBeenCalledWith(
-      expect.objectContaining({
-        symbol: 'SPY',
-        side: 'sell',
-        clientOrderId: 'client-101',
-      }),
-      {
-        tradingAccountId: 1,
-        orderIntentId: 102,
-      }
-    );
+    expect(mocks.submitOrderToBroker).not.toHaveBeenCalled();
+    expect(mocks.orderIntentUpdate).toHaveBeenCalledWith({
+      where: { id: 102 },
+      data: {
+        status: 'blocked',
+        blockReason: 'LONG_ONLY_SELL_REQUIRES_VERIFIED_EXIT_BOUNDARY',
+      },
+    });
   });
 
   it('links entry decisions to newly created broker order records', async () => {

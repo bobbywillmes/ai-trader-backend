@@ -34,6 +34,7 @@ export const alpacaApiEndpoints = [
   'GET /v2/orders/:orderId',
   'GET /v2/orders:by_client_order_id',
   'GET /v2/positions',
+  'GET /v2/positions/:symbol',
   'DELETE /v2/orders',
   'DELETE /v2/orders/:orderId',
   'DELETE /v2/positions/:symbol',

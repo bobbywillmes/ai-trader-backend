@@ -17,6 +17,7 @@ export type AlpacaPosition = {
   asset_id: string;
   symbol: string;
   qty: string;
+  qty_available?: string | null;
   avg_entry_price: string;
   market_value: string;
   cost_basis: string;

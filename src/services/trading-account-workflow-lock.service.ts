@@ -11,6 +11,7 @@ export const ACCOUNT_WORKFLOW_LOCK_FAMILIES = {
   BROKER_ACTIVITY: 'broker-activity',
   POSITION_SYNC: 'position-sync',
   EXIT_EVALUATION: 'exit-evaluation',
+  EXIT_SUBMISSION: 'exit-submission',
   RECONCILIATION: 'reconciliation',
   ACCOUNT_SNAPSHOT: 'account-snapshot',
   READINESS_ASSESSMENT: 'readiness-assessment',

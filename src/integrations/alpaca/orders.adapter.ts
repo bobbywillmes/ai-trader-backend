@@ -3,9 +3,8 @@ import type { AlpacaOrder } from './alpaca.types.js';
 import type { AlpacaApiOperation, AlpacaBrokerOperationClass } from './request-metadata.js';
 import type { NewPositionEntryAuthorizationContext } from '../../services/live-entry-arming.service.js';
 
-type AlpacaCreateOrderRequest = {
+type AlpacaCreateOrderBase = {
   symbol: string;
-  side: 'buy' | 'sell';
   type: 'market' | 'limit' | 'stop' | 'stop_limit' | 'trailing_stop';
   time_in_force: 'day' | 'gtc';
   qty?: string;
@@ -15,6 +14,16 @@ type AlpacaCreateOrderRequest = {
   trail_percent?: string;
   extended_hours?: boolean;
   client_order_id: string;
+};
+
+export type AlpacaEntryOrderRequest = AlpacaCreateOrderBase & {
+  side: 'buy';
+  position_intent?: 'buy_to_open';
+};
+
+export type VerifiedAlpacaExitOrderRequest = AlpacaCreateOrderBase & {
+  side: 'sell';
+  position_intent: 'sell_to_close';
 };
 
 export async function getOpenAlpacaOrders(
@@ -81,9 +90,9 @@ export async function getAlpacaOrderByClientOrderId(
   );
 }
 
-export async function placeAlpacaOrder(
+async function placeAlpacaOrder(
   tradingAccountId: number,
-  payload: AlpacaCreateOrderRequest,
+  payload: AlpacaEntryOrderRequest | VerifiedAlpacaExitOrderRequest,
   operation: AlpacaApiOperation = 'pending_order_submission',
   newPositionEntryContext?: NewPositionEntryAuthorizationContext,
 ): Promise<AlpacaOrder> {
@@ -103,6 +112,32 @@ export async function placeAlpacaOrder(
       ...(newPositionEntryContext ? { newPositionEntryContext } : {}),
     },
   });
+}
+
+export function submitAlpacaEntryOrder(
+  tradingAccountId: number,
+  payload: AlpacaEntryOrderRequest,
+  newPositionEntryContext?: NewPositionEntryAuthorizationContext,
+) {
+  return placeAlpacaOrder(
+    tradingAccountId,
+    payload,
+    'pending_order_submission',
+    newPositionEntryContext,
+  );
+}
+
+/**
+ * Final adapter used only by VerifiedExitSubmissionService after it owns fresh
+ * broker verification and final authorization. Production callers must not
+ * expose or re-export this function through a generic order API.
+ */
+export function submitVerifiedAlpacaExitOrder(
+  tradingAccountId: number,
+  payload: VerifiedAlpacaExitOrderRequest,
+  operation: 'position_close' | 'protective_order_submission',
+) {
+  return placeAlpacaOrder(tradingAccountId, payload, operation);
 }
 
 export async function cancelAlpacaOrder(

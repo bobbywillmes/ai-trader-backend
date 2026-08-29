@@ -4,7 +4,7 @@ import { HttpError } from '../errors/http-error.js';
 import { prisma } from '../db/prisma.js';
 import {
   getAlpacaOrderByClientOrderId,
-  placeAlpacaOrder,
+  submitAlpacaEntryOrder,
 } from '../integrations/alpaca/orders.adapter.js';
 import {
   createOrderIntent,
@@ -97,6 +97,12 @@ export async function submitOrder(
   input: PlaceOrderInput,
   options: SubmitOrderOptions = {}
 ) {
+  if ((input.signalType ?? 'entry') !== 'entry' || input.side === 'sell') {
+    throw new HttpError(
+      400,
+      'Sell-side and generic exit OrderIntents are prohibited. Equity sells must use the verified tracked-position exit boundary.',
+    );
+  }
   if (options.entryDecisionKey) {
     await ensureEntryDecisionCanLink(options.entryDecisionKey);
   }
@@ -298,6 +304,7 @@ export async function submitOrder(
 }
 
 export type BrokerOrderSubmissionInput = ResolvedPlaceOrderInput & {
+  side: 'buy';
   clientOrderId: string;
 };
 
@@ -312,6 +319,9 @@ export async function submitOrderToBroker(
       500,
       'Cannot submit broker order without a stable clientOrderId.'
     );
+  }
+  if (input.side !== 'buy' || (input.signalType ?? 'entry') !== 'entry') {
+    throw new HttpError(400, 'The entry broker boundary accepts BUY entry orders only.');
   }
 
   const existing = await getAlpacaOrderByClientOrderId(
@@ -329,7 +339,7 @@ export async function submitOrderToBroker(
 
   const payload: {
     symbol: string;
-    side: 'buy' | 'sell';
+    side: 'buy';
     type: 'market' | 'limit';
     time_in_force: 'day' | 'gtc';
     qty?: string;
@@ -350,10 +360,9 @@ export async function submitOrderToBroker(
   if (input.limitPrice !== undefined) payload.limit_price = String(input.limitPrice);
   if (input.extendedHours) payload.extended_hours = true;
 
-  const created = await placeAlpacaOrder(
+  const created = await submitAlpacaEntryOrder(
     options.tradingAccountId,
     payload,
-    'pending_order_submission',
     isEntrySubscriptionOrder(input)
       ? {
           subtype: 'NEW_POSITION_ENTRY',

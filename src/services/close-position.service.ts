@@ -5,8 +5,6 @@ import {
 } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
-import { placeAlpacaOrder } from '../integrations/alpaca/orders.adapter.js';
-import { getAlpacaOrderByClientOrderId } from '../integrations/alpaca/orders.adapter.js';
 import { HttpError } from '../errors/http-error.js';
 import {
   BrokerWriteDeliveryError,
@@ -15,6 +13,7 @@ import {
 import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
 import { createSystemEvent } from './system-event.service.js';
 import { NONTERMINAL_BROKER_ORDER_PRISMA_FILTER } from './broker-order-lifecycle-status.service.js';
+import { submitVerifiedExit } from './verified-exit-submission.service.js';
 
 export type ClosePositionMode = 'AUTOMATED_STRATEGY' | 'MANUAL_EMERGENCY_CLOSE';
 
@@ -113,6 +112,9 @@ export async function closePosition(
           `Tracked position ${position.id} has no TradingAccount identity.`
         );
       }
+      if (position.side.toLowerCase() !== 'long') {
+        throw new HttpError(409, 'AI Trader does not automatically cover or manage short exposure.');
+      }
       const assignment = position.tradingAccountSubscription;
       if (
         !assignment ||
@@ -163,7 +165,7 @@ export async function closePosition(
         data: {
           source: 'close-position',
           symbol: position.symbol.toUpperCase(),
-          side: position.side === 'short' ? 'buy' : 'sell',
+          side: 'sell',
           orderType: 'market',
           timeInForce: 'day',
           qty: Math.abs(position.qty),
@@ -198,37 +200,36 @@ export async function closePosition(
   let brokerOrder;
 
   try {
-    brokerOrder = await placeAlpacaOrder(
+    const result = await submitVerifiedExit({
       tradingAccountId,
-      {
+      trackedPositionId: claim.position.id,
+      orderIntentId: claim.intent.id,
+      securityId: claim.position.securityId,
+      symbol: upperSymbol,
+      localTrackedQty: claim.position.qty,
+      intendedQty: Math.abs(claim.position.qty),
+      clientOrderId: claim.clientOrderId,
+      correlationId: `${mode}:${claim.position.id}`,
+      order: { type: 'market', timeInForce: 'day' },
+    });
+    if (result.outcome === 'RECOVERED_LOCAL') {
+      await prisma.orderIntent.updateMany({
+        where: { id: claim.intent.id },
+        data: { status: 'submitted', blockReason: null },
+      });
+      return {
+        ok: true,
+        trackedPositionId: claim.position.id,
         symbol: upperSymbol,
-        side: claim.position.side === 'short' ? 'buy' : 'sell',
-        type: 'market',
-        time_in_force: 'day',
-        qty: String(Math.abs(claim.position.qty)),
-        client_order_id: claim.clientOrderId,
-        extended_hours: false,
-      },
-      'position_close'
-    );
-  } catch (error) {
-    let classification = getDeliveryClassification(error);
-
-    if (classification === 'BROKER_REJECTED') {
-      try {
-        brokerOrder = await getAlpacaOrderByClientOrderId(
-          tradingAccountId,
-          claim.clientOrderId,
-          'pending_order_idempotency_check'
-        );
-      } catch {
-        classification = 'DELIVERY_UNCERTAIN';
-      }
-      if (brokerOrder) {
-        // Alpaca accepted the deterministic order despite the response error.
-        // Continue into the normal idempotent materialization path below.
-      }
+        tradingAccountId,
+        orderIntentId: claim.intent.id,
+        brokerOrderId: result.brokerOrderId,
+        clientOrderId: claim.clientOrderId,
+      };
     }
+    brokerOrder = result.order;
+  } catch (error) {
+    const classification = getDeliveryClassification(error);
 
     if (!brokerOrder && classification !== 'DELIVERY_UNCERTAIN') {
       const intentStatus =
