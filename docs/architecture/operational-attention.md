@@ -157,3 +157,7 @@ history. Historical episodes are never deleted.
 
 This branch contains no broker corrective action or trading control. Closing
 remaining broker exposure and broker quantity verification remain deferred.
+
+## Corrective actions
+
+Exit-verification quantity episodes may expose a read-only remaining-exposure preview. Only a System Owner may confirm it, and authoritative resolution still requires zero broker exposure plus complete attributed lifecycle closure. See [Remaining Broker Exposure Close](remaining-broker-exposure-close.md).

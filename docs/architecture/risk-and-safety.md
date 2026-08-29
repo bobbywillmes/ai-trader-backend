@@ -460,3 +460,7 @@ The worker is disabled by default. When enabled, it runs reconciliation on the c
 Reconciliation events are de-duplicated within a recent time window so a persistent mismatch does not create repeated identical system events.
 
 Manual reconciliation should be used first when validating broker/backend state. The scheduled worker should only be enabled after a clean manual dry run and when automatic monitoring is intentionally desired.
+
+## Corrective broker remainder
+
+The exceptional remaining-exposure workflow is documented in [Remaining Broker Exposure Close](remaining-broker-exposure-close.md). It extends the same verified `sell_to_close` boundary with a distinct corrective equation and never relaxes normal exact-match exits.
