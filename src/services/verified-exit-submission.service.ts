@@ -22,6 +22,7 @@ import {
   OPERATIONAL_ATTENTION_CODES,
   OPERATIONAL_ATTENTION_SOURCES,
   openOrObserveOperationalAttention,
+  resolveOperationalAttentionAuthoritatively,
 } from './operational-attention.service.js';
 import { createSystemEvent } from './system-event.service.js';
 import {
@@ -134,7 +135,12 @@ async function block(args: {
     authorizationResult: 'NOT_ATTEMPTED',
     ...args.evidence,
   };
-  const event = await createSystemEvent({
+  const fingerprint = `exit-safety:${args.context.tradingAccountId}:${args.context.trackedPositionId}:${args.outcome}`;
+  const existingAttention = await prisma.operationalAttention.findUnique({
+    where: { activeKey: fingerprint },
+    select: { id: true },
+  });
+  const event = existingAttention ? null : await createSystemEvent({
     type: `exit.verification_blocked.${args.outcome.toLowerCase()}`,
     entityType: 'trackedPosition',
     entityId: args.context.trackedPositionId,
@@ -143,7 +149,6 @@ async function block(args: {
     message: args.message,
     payloadJson: evidence as Prisma.InputJsonValue,
   });
-  const fingerprint = `exit-safety:${args.context.tradingAccountId}:${args.context.trackedPositionId}:${args.outcome}`;
   await openOrObserveOperationalAttention({
     tradingAccountId: args.context.tradingAccountId,
     trackedPositionId: args.context.trackedPositionId,
@@ -167,7 +172,7 @@ async function block(args: {
     fingerprint,
     resolutionPolicy: OperationalAttentionResolutionPolicy.AUTHORITATIVE_ONLY,
     observedAt,
-    observedSystemEventId: event.id,
+    observedSystemEventId: event?.id ?? null,
   });
   await prisma.orderIntent.updateMany({
     where: { id: args.context.orderIntentId },
@@ -239,6 +244,34 @@ async function executeVerifiedExit(context: VerifiedExitContext): Promise<Verifi
   if (conflicts.length) return block({ context, environment: account.environment, outcome: 'CONFLICTING_OPEN_SELL_ORDER', message: `${symbol} has an unrelated active sell reservation; no close order was submitted.`, evidence: { brokerPositionSide: position.side, brokerHeldQty: held.canonical, brokerAvailableQty: available.canonical, conflictingActiveSellOrders: conflicts } });
   if (!equalDecimal(held, intended) || !equalDecimal(held, local)) return block({ context, environment: account.environment, outcome: 'QUANTITY_MISMATCH', message: `${symbol} held, local, and intended quantities do not match exactly.`, evidence: { brokerPositionSide: position.side, brokerHeldQty: held.canonical, brokerAvailableQty: available.canonical } });
   if (!equalDecimal(held, available)) return block({ context, environment: account.environment, outcome: 'RESERVED_QUANTITY', message: `${symbol} broker-available quantity is lower than held quantity; no sell was submitted.`, evidence: { brokerPositionSide: position.side, brokerHeldQty: held.canonical, brokerAvailableQty: available.canonical, conflictingActiveSellOrders: conflicts } });
+
+  const clearedAttentions = await prisma.operationalAttention.findMany({
+    where: {
+      tradingAccountId: context.tradingAccountId,
+      trackedPositionId: context.trackedPositionId,
+      source: OPERATIONAL_ATTENTION_SOURCES.EXIT_VERIFICATION,
+      status: { in: ['OPEN', 'ACKNOWLEDGED'] },
+    },
+    select: { id: true, revision: true, fingerprint: true },
+  });
+  for (const attention of clearedAttentions) {
+    await resolveOperationalAttentionAuthoritatively({
+      id: attention.id,
+      expectedRevision: attention.revision,
+      reason: 'A complete fresh broker verification no longer observed this exit-safety condition.',
+      evidence: {
+        fingerprint: attention.fingerprint,
+        tradingAccountId: context.tradingAccountId,
+        trackedPositionId: context.trackedPositionId,
+        symbol,
+        brokerPositionSide: position.side,
+        brokerHeldQty: held.canonical,
+        brokerAvailableQty: available.canonical,
+        intendedQty: intended.canonical,
+        verifiedAt: new Date().toISOString(),
+      },
+    });
+  }
 
   await authorizeLiveBrokerWrite(context.tradingAccountId, 'RISK_REDUCING_WRITE');
   const payload: VerifiedAlpacaExitOrderRequest = {

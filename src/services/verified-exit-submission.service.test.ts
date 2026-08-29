@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  account: vi.fn(), localOrder: vi.fn(), updateIntent: vi.fn(),
+  account: vi.fn(), localOrder: vi.fn(), updateIntent: vi.fn(), findAttention: vi.fn(), findAttentions: vi.fn(),
   recover: vi.fn(), position: vi.fn(), openOrders: vi.fn(), post: vi.fn(),
   authorize: vi.fn(), event: vi.fn(), attention: vi.fn(), lock: vi.fn(),
 }));
@@ -11,6 +11,7 @@ vi.mock('../db/prisma.js', () => ({ prisma: {
   tradingAccount: { findUniqueOrThrow: mocks.account },
   brokerOrder: { findFirst: mocks.localOrder },
   orderIntent: { updateMany: mocks.updateIntent },
+  operationalAttention: { findUnique: mocks.findAttention, findMany: mocks.findAttentions },
 } }));
 vi.mock('../integrations/alpaca/orders.adapter.js', () => ({
   getAlpacaOrderByClientOrderId: mocks.recover,
@@ -27,6 +28,7 @@ vi.mock('./operational-attention.service.js', () => ({
   },
   OPERATIONAL_ATTENTION_SOURCES: { EXIT_VERIFICATION: 'EXIT_VERIFICATION' },
   openOrObserveOperationalAttention: mocks.attention,
+  resolveOperationalAttentionAuthoritatively: vi.fn(),
 }));
 vi.mock('./trading-account-workflow-lock.service.js', () => ({
   ACCOUNT_WORKFLOW_LOCK_FAMILIES: { EXIT_SUBMISSION: 'exit-submission' },
@@ -56,6 +58,8 @@ describe('verified exit submission boundary', () => {
     mocks.event.mockResolvedValue({ id: 101 });
     mocks.attention.mockResolvedValue({});
     mocks.updateIntent.mockResolvedValue({ count: 1 });
+    mocks.findAttention.mockResolvedValue(null);
+    mocks.findAttentions.mockResolvedValue([]);
   });
 
   it('compares decimal quantities precisely without floating point equality', () => {
@@ -119,5 +123,13 @@ describe('verified exit submission boundary', () => {
     mocks.lock.mockResolvedValueOnce({ outcome: 'NOT_ACQUIRED', scope: 'exit' });
     await expect(submitVerifiedExit(context)).rejects.toMatchObject({ statusCode: 503 });
     expect(mocks.post).not.toHaveBeenCalled();
+  });
+
+  it('refreshes an existing blocked episode without duplicate immutable events', async () => {
+    mocks.position.mockResolvedValue(null);
+    mocks.findAttention.mockResolvedValue({ id: 88 });
+    await expect(submitVerifiedExit(context)).rejects.toMatchObject({ statusCode: 409 });
+    expect(mocks.event).not.toHaveBeenCalled();
+    expect(mocks.attention).toHaveBeenCalledOnce();
   });
 });
