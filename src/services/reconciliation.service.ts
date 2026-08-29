@@ -45,6 +45,7 @@ export type ReconciliationFindingCode =
   | 'trail_order_status_mismatch'
   | 'position_quantity_mismatch'
   | 'position_side_mismatch'
+  | 'unexpected_short_position'
   | 'local_nonterminal_order_missing_at_broker'
   | 'local_order_status_stale_terminal_broker_order'
   | 'broker_order_untracked'
@@ -208,6 +209,17 @@ function getTrailProblemAttentionCode(status: string) {
 export function reconcileSnapshots(input: ReconciliationInput) {
   const defaultBroker = input.defaultBroker ?? 'alpaca';
   const findings: ReconciliationFinding[] = [];
+
+  for (const brokerPosition of input.brokerPositions) {
+    if (brokerPosition.side?.trim().toLowerCase() !== 'short') continue;
+    const key = positionKey({ broker: brokerPosition.broker, symbol: brokerPosition.symbol, defaultBroker });
+    findings.push({
+      code: 'unexpected_short_position', severity: 'critical', entityType: 'brokerPosition', entityId: key,
+      symbol: normalizeSymbol(brokerPosition.symbol),
+      message: `${brokerPosition.symbol} is short at the broker. Sell automation is blocked and AI Trader will not automatically buy to cover.`,
+      details: { broker: normalizeBroker(brokerPosition.broker, defaultBroker), brokerSide: brokerPosition.side, brokerQty: brokerPosition.qty ?? null },
+    });
+  }
 
   const activeTrackedPositions = input.trackedPositions.filter((position) =>
     ACTIVE_TRACKED_POSITION_STATUSES.has(position.status)

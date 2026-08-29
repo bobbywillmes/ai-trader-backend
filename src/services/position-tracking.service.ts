@@ -33,6 +33,7 @@ import {
 import { runTradingAccountWorkflow } from './trading-account-workflow-runner.service.js';
 import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from './trading-account-workflow-lock.service.js';
 import { enumerateLifecycleAccounts } from './lifecycle-account-eligibility.service.js';
+import { observeUnexpectedShortExposure } from './unexpected-short-exposure.service.js';
 
 export type TrackedPositionSyncResult = {
   polled: boolean;
@@ -385,6 +386,15 @@ export async function syncTrackedPositionsForAccount(
 
   for (const position of brokerPositions) {
     try {
+      if (position.side.toLowerCase() === 'short') {
+        const existingShort = await findActiveTrackedPosition({ broker: position.broker, symbol: position.symbol, tradingAccountId });
+        await observeUnexpectedShortExposure({
+          tradingAccountId, environment, symbol: position.symbol, brokerQty: position.qty,
+          brokerSide: position.side, broker: position.broker,
+          trackedPositionId: existingShort?.id ?? null, source: 'POSITION_SYNC',
+        });
+        continue;
+      }
       let existing = await findActiveTrackedPosition({
         broker: position.broker,
         symbol: position.symbol,

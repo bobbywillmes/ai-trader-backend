@@ -25,6 +25,7 @@ const RULES: Partial<Record<ReconciliationFindingCode, Rule>> = {
   position_quantity_mismatch: { code: OPERATIONAL_ATTENTION_CODES.EXIT_QUANTITY_MISMATCH, title: (finding) => `${finding.symbol} broker exposure differs from tracked quantity` },
   position_side_mismatch: { code: OPERATIONAL_ATTENTION_CODES.BROKER_EXCESS_EXPOSURE, title: (finding) => `${finding.symbol} broker exposure side differs` },
   tracked_position_missing_at_broker: { code: OPERATIONAL_ATTENTION_CODES.BROKER_EXPOSURE_UNVERIFIABLE, title: (finding) => `${finding.symbol} tracked exposure is missing at broker` },
+  unexpected_short_position: { code: OPERATIONAL_ATTENTION_CODES.UNEXPECTED_SHORT_POSITION, title: (finding) => `Unexpected short exposure: ${finding.symbol}` },
 };
 
 export function reconciliationAttentionFingerprint(tradingAccountId: number, finding: ReconciliationFinding) {

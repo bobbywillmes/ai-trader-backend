@@ -831,6 +831,7 @@ describe('expanded account-scoped reconciliation findings', () => {
       expect.arrayContaining([
         'position_quantity_mismatch',
         'position_side_mismatch',
+        'unexpected_short_position',
         'local_nonterminal_order_missing_at_broker',
         'broker_order_untracked',
       ])
