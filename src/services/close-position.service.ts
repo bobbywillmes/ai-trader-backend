@@ -43,6 +43,12 @@ function getDeliveryClassification(error: unknown): BrokerWriteDeliveryClassific
     : 'DELIVERY_UNCERTAIN';
 }
 
+function isExitVerificationBlock(error: unknown): error is HttpError {
+  if (!(error instanceof HttpError) || !error.details || typeof error.details !== 'object') return false;
+  const details = error.details as Record<string, unknown>;
+  return typeof details.verificationOutcome === 'string' && details.authorizationResult === 'NOT_ATTEMPTED';
+}
+
 export function closeFailureSeverity(args: {
   classification: BrokerWriteDeliveryClassification;
   environment: 'PAPER' | 'LIVE';
@@ -229,6 +235,15 @@ export async function closePosition(
     }
     brokerOrder = result.order;
   } catch (error) {
+    if (isExitVerificationBlock(error)) {
+      await prisma.$transaction(async (tx) => {
+        await tx.trackedPosition.updateMany({
+          where: { id: claim.position.id, status: 'closing' },
+          data: { status: 'open', lastSyncedAt: new Date() },
+        });
+      });
+      throw error;
+    }
     const classification = getDeliveryClassification(error);
 
     if (!brokerOrder && classification !== 'DELIVERY_UNCERTAIN') {

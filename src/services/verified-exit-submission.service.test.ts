@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   authorize: vi.fn(),
   event: vi.fn(),
   attention: vi.fn(),
+  resolveAttention: vi.fn(),
   lock: vi.fn(),
 }));
 
@@ -53,7 +54,7 @@ vi.mock("./operational-attention.service.js", () => ({
   },
   OPERATIONAL_ATTENTION_SOURCES: { EXIT_VERIFICATION: "EXIT_VERIFICATION" },
   openOrObserveOperationalAttention: mocks.attention,
-  resolveOperationalAttentionAuthoritatively: vi.fn(),
+  resolveOperationalAttentionAuthoritatively: mocks.resolveAttention,
 }));
 vi.mock("./trading-account-workflow-lock.service.js", () => ({
   ACCOUNT_WORKFLOW_LOCK_FAMILIES: { EXIT_SUBMISSION: "exit-submission" },
@@ -61,6 +62,7 @@ vi.mock("./trading-account-workflow-lock.service.js", () => ({
 }));
 
 import {
+  parseExactNonNegativeDecimal,
   parseExactPositiveDecimal,
   submitVerifiedExit,
 } from "./verified-exit-submission.service.js";
@@ -121,6 +123,9 @@ describe("verified exit submission boundary", () => {
       "0.100000000000000001",
     );
     expect(parseExactPositiveDecimal("NaN")).toBeNull();
+    expect(parseExactNonNegativeDecimal("0")?.canonical).toBe("0");
+    expect(parseExactNonNegativeDecimal("0.000")?.canonical).toBe("0");
+    expect(parseExactNonNegativeDecimal("-1")).toBeNull();
   });
 
   it("recovers by stable ID before broker state inspection or POST", async () => {
@@ -336,6 +341,53 @@ describe("verified exit submission boundary", () => {
     },
   );
 
+  it("classifies a full external limit reservation when available quantity is zero", async () => {
+    mocks.position.mockResolvedValue({ asset_id: "asset-iwm", symbol: "IWM", side: "long", qty: "8", qty_available: "0" });
+    mocks.openOrders.mockResolvedValue([{
+      ...brokerOrder, id: "external-iwm", client_order_id: "external-iwm", symbol: "IWM",
+      type: "limit", qty: "8", filled_qty: "0", limit_price: "400", status: "new",
+    }]);
+    await expect(submitVerifiedExit({ ...context, symbol: "IWM", localTrackedQty: "8", intendedQty: "8" })).rejects.toMatchObject({
+      message: "IWM cannot be closed because an existing open limit sell order at limit $400.00, status NEW, 8 original, 0 filled, 8 remaining reserves position quantity. Broker holds 8 shares and reports 0 available. Review or cancel that order, or allow it to complete, then retry. No additional sell was submitted.",
+      details: expect.objectContaining({
+        verificationOutcome: "CONFLICTING_OPEN_SELL_ORDER", brokerHeldQty: "8", brokerAvailableQty: "0",
+        conflictingActiveSellOrders: [expect.objectContaining({ limitPrice: "400", remainingQty: "8" })],
+      }),
+    });
+    expect(mocks.post).not.toHaveBeenCalled();
+    expect(mocks.attention).toHaveBeenCalledWith(expect.objectContaining({
+      code: "CONFLICTING_EXIT_RESERVATION", severity: "ERROR",
+      title: "Exit blocked by existing sell order", message: expect.stringContaining("limit sell order"),
+    }));
+  });
+
+  it("aggregates multiple active reservations with type-specific exact evidence", async () => {
+    mocks.position.mockResolvedValue({ asset_id: "a", symbol: "SPY", side: "long", qty: "4", qty_available: "1" });
+    mocks.openOrders.mockResolvedValue([
+      { ...brokerOrder, id: "trail", client_order_id: "trail", type: "trailing_stop", qty: "2", filled_qty: "0", trail_percent: "2.5", status: "accepted" },
+      { ...brokerOrder, id: "stop", client_order_id: "stop", type: "stop_limit", qty: "2", filled_qty: "1", stop_price: "490", limit_price: "489.50", status: "partially_filled" },
+    ]);
+    await expect(submitVerifiedExit(context)).rejects.toMatchObject({ details: expect.objectContaining({
+      conflictingActiveSellOrders: [
+        expect.objectContaining({ trailPercent: "2.5", remainingQty: "2" }),
+        expect.objectContaining({ stopPrice: "490", limitPrice: "489.50", remainingQty: "1" }),
+      ],
+    }) });
+    expect(mocks.post).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, null, "", "NaN", "-1"])("rejects malformed or negative available quantity %s", async (qtyAvailable) => {
+    mocks.position.mockResolvedValue({ asset_id: "a", symbol: "SPY", side: "long", qty: "4", qty_available: qtyAvailable });
+    await expect(submitVerifiedExit(context)).rejects.toMatchObject({ details: expect.objectContaining({ verificationOutcome: "BROKER_STATE_UNAVAILABLE" }) });
+    expect(mocks.post).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when available quantity exceeds held quantity", async () => {
+    mocks.position.mockResolvedValue({ asset_id: "a", symbol: "SPY", side: "long", qty: "4", qty_available: "5" });
+    await expect(submitVerifiedExit(context)).rejects.toMatchObject({ details: expect.objectContaining({ failureClassification: "AVAILABLE_QUANTITY_EXCEEDS_HELD" }) });
+    expect(mocks.post).not.toHaveBeenCalled();
+  });
+
   it("ignores terminal sell orders under the shared status taxonomy", async () => {
     mocks.openOrders.mockResolvedValue([
       {
@@ -387,5 +439,19 @@ describe("verified exit submission boundary", () => {
     });
     expect(mocks.event).not.toHaveBeenCalled();
     expect(mocks.attention).toHaveBeenCalledOnce();
+  });
+
+  it("uses critical severity for Live conflicts", async () => {
+    mocks.account.mockResolvedValue({ environment: "LIVE" });
+    mocks.position.mockResolvedValue({ asset_id: "a", symbol: "SPY", side: "long", qty: "4", qty_available: "0" });
+    mocks.openOrders.mockResolvedValue([{ ...brokerOrder, id: "other", client_order_id: "other", type: "stop", qty: "4", filled_qty: "0", stop_price: "480", status: "new" }]);
+    await expect(submitVerifiedExit(context)).rejects.toMatchObject({ statusCode: 409 });
+    expect(mocks.attention).toHaveBeenCalledWith(expect.objectContaining({ severity: "CRITICAL", fingerprint: "exit-safety:7:11:CONFLICTING_OPEN_SELL_ORDER" }));
+  });
+
+  it("resolves an active exit-verification episode after a fresh normal verification", async () => {
+    mocks.findAttentions.mockResolvedValue([{ id: 77, revision: 3, fingerprint: "exit-safety:7:11:CONFLICTING_OPEN_SELL_ORDER" }]);
+    await submitVerifiedExit(context);
+    expect(mocks.resolveAttention).toHaveBeenCalledWith(expect.objectContaining({ id: 77, expectedRevision: 3 }));
   });
 });
