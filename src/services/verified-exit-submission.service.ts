@@ -65,17 +65,28 @@ export type VerifiedExitSubmissionResult =
 type ExactDecimal = { coefficient: bigint; scale: number; canonical: string };
 
 export function parseExactPositiveDecimal(value: unknown): ExactDecimal | null {
+  const parsed = parseExactNonNegativeDecimal(value);
+  return parsed && parsed.coefficient > 0n ? parsed : null;
+}
+
+export function parseExactNonNegativeDecimal(value: unknown): ExactDecimal | null {
   const text = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
   if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(text)) return null;
   const [whole, fraction = ''] = text.split('.');
   const trimmedFraction = fraction.replace(/0+$/, '');
   const coefficient = BigInt(`${whole}${trimmedFraction}` || '0');
-  if (coefficient <= 0n) return null;
   return {
     coefficient,
     scale: trimmedFraction.length,
     canonical: trimmedFraction ? `${whole}.${trimmedFraction}` : whole!,
   };
+}
+
+function compareDecimal(left: ExactDecimal, right: ExactDecimal) {
+  const scale = Math.max(left.scale, right.scale);
+  const leftCoefficient = left.coefficient * 10n ** BigInt(scale - left.scale);
+  const rightCoefficient = right.coefficient * 10n ** BigInt(scale - right.scale);
+  return leftCoefficient < rightCoefficient ? -1 : leftCoefficient > rightCoefficient ? 1 : 0;
 }
 
 function equalDecimal(left: ExactDecimal, right: ExactDecimal) {
@@ -95,6 +106,44 @@ function subtractDecimal(left: ExactDecimal, right: ExactDecimal): string | null
   const whole = padded.slice(0, -scale);
   const fraction = padded.slice(-scale).replace(/0+$/, '');
   return fraction ? `${whole}.${fraction}` : whole;
+}
+
+
+function describeConflictingOrder(order: {
+  type: string;
+  status: string;
+  qty: string | null;
+  filledQty: string | null;
+  remainingQty: string | null;
+  limitPrice: string | null;
+  stopPrice: string | null;
+  trailPrice: string | null;
+  trailPercent: string | null;
+}) {
+  const type = order.type.replaceAll('_', ' ');
+  const money = (value: string) => {
+    const [whole, fraction = ''] = value.split('.');
+    return `${whole}.${fraction.padEnd(2, '0').slice(0, 2)}`;
+  };
+  const price = order.stopPrice && order.limitPrice
+    ? ` at stop $${money(order.stopPrice)} and limit $${money(order.limitPrice)}`
+    : order.limitPrice
+      ? ` at limit $${money(order.limitPrice)}`
+      : order.stopPrice
+        ? ` at stop $${money(order.stopPrice)}`
+        : order.trailPrice
+        ? ` with $${order.trailPrice} trail`
+        : order.trailPercent
+          ? ` with ${order.trailPercent}% trail`
+          : '';
+  return `${type} sell order${price}, status ${order.status.toUpperCase()}, ${order.qty} original, ${order.filledQty ?? '0'} filled, ${order.remainingQty} remaining`;
+}
+
+function conflictMessage(symbol: string, held: string, available: string, conflicts: Array<Parameters<typeof describeConflictingOrder>[0]>) {
+  const summary = conflicts.length === 1
+    ? `an existing open ${describeConflictingOrder(conflicts[0]!)}`
+    : `${conflicts.length} existing open sell orders (${conflicts.slice(0, 3).map((order) => `${order.type.replaceAll('_', ' ')} ${order.status.toUpperCase()}, ${order.remainingQty} remaining`).join('; ')}${conflicts.length > 3 ? '; additional orders in details' : ''})`;
+  return `${symbol} cannot be closed because ${summary} reserve${conflicts.length === 1 ? 's' : ''} position quantity. Broker holds ${held} shares and reports ${available} available. Review or cancel ${conflicts.length === 1 ? 'that order' : 'those orders'}, or allow ${conflicts.length === 1 ? 'it' : 'them'} to complete, then retry. No additional sell was submitted.`;
 }
 
 function severity(environment: 'PAPER' | 'LIVE') {
@@ -163,11 +212,9 @@ async function block(args: {
     source: OPERATIONAL_ATTENTION_SOURCES.EXIT_VERIFICATION,
     severity: severity(args.environment),
     title: args.outcome === 'CONFLICTING_OPEN_SELL_ORDER'
-      ? 'Conflicting sell order detected'
+      ? 'Exit blocked by existing sell order'
       : `Exit verification blocked: ${args.outcome}`,
-    message: args.outcome === 'CONFLICTING_OPEN_SELL_ORDER'
-      ? 'No close order was submitted. Review or cancel the existing order, then retry.'
-      : args.message,
+    message: args.message,
     details: evidence,
     fingerprint,
     resolutionPolicy: OperationalAttentionResolutionPolicy.AUTHORITATIVE_ONLY,
@@ -226,7 +273,7 @@ async function executeVerifiedExit(context: VerifiedExitContext): Promise<Verifi
   }
 
   const held = parseExactPositiveDecimal(position.qty);
-  const available = parseExactPositiveDecimal(position.qty_available);
+  const available = parseExactNonNegativeDecimal(position.qty_available);
   const intended = parseExactPositiveDecimal(context.intendedQty);
   const local = parseExactPositiveDecimal(context.localTrackedQty);
   if (!held || !available || !intended || !local) return block({ context, environment: account.environment, outcome: 'BROKER_STATE_UNAVAILABLE', message: `${symbol} quantity evidence is missing or malformed; no sell was submitted.`, evidence: { brokerPositionSide: position.side, brokerHeldQty: position.qty, brokerAvailableQty: position.qty_available ?? null } });
@@ -236,13 +283,20 @@ async function executeVerifiedExit(context: VerifiedExitContext): Promise<Verifi
     .map((order) => {
       const qty = parseExactPositiveDecimal(order.qty);
       const filled = order.filled_qty === undefined || order.filled_qty === null
-        ? { coefficient: 0n, scale: 0, canonical: '0' }
-        : parseExactPositiveDecimal(order.filled_qty) ?? (String(order.filled_qty).trim() === '0' ? { coefficient: 0n, scale: 0, canonical: '0' } : null);
-      return { brokerOrderId: order.id, clientOrderId: order.client_order_id, type: order.type, status: order.status, qty: order.qty ?? null, filledQty: order.filled_qty ?? null, remainingQty: qty && filled ? subtractDecimal(qty, filled) : null };
+        ? parseExactNonNegativeDecimal('0')
+        : parseExactNonNegativeDecimal(order.filled_qty);
+      return {
+        brokerOrderId: order.id, clientOrderId: order.client_order_id, type: order.type,
+        status: order.status, qty: order.qty ?? null, filledQty: order.filled_qty ?? null,
+        remainingQty: qty && filled ? subtractDecimal(qty, filled) : null,
+        limitPrice: order.limit_price ?? null, stopPrice: order.stop_price ?? null,
+        trailPrice: order.trail_price ?? null, trailPercent: order.trail_percent ?? null,
+      };
     });
   if (conflicts.some((order) => order.remainingQty === null)) return block({ context, environment: account.environment, outcome: 'BROKER_STATE_UNAVAILABLE', message: `${symbol} has an active sell order with ambiguous remaining quantity.`, evidence: { brokerPositionSide: position.side, brokerHeldQty: held.canonical, brokerAvailableQty: available.canonical, conflictingActiveSellOrders: conflicts } });
-  if (conflicts.length) return block({ context, environment: account.environment, outcome: 'CONFLICTING_OPEN_SELL_ORDER', message: `${symbol} has an unrelated active sell reservation; no close order was submitted.`, evidence: { brokerPositionSide: position.side, brokerHeldQty: held.canonical, brokerAvailableQty: available.canonical, conflictingActiveSellOrders: conflicts } });
+  if (conflicts.length) return block({ context, environment: account.environment, outcome: 'CONFLICTING_OPEN_SELL_ORDER', message: conflictMessage(symbol, held.canonical, available.canonical, conflicts), evidence: { brokerPositionSide: position.side, brokerHeldQty: held.canonical, brokerAvailableQty: available.canonical, conflictingActiveSellOrders: conflicts, nextAction: 'Review or cancel the active sell order(s), or allow them to complete, then retry.' } });
   if (!equalDecimal(held, intended) || !equalDecimal(held, local)) return block({ context, environment: account.environment, outcome: 'QUANTITY_MISMATCH', message: `${symbol} held, local, and intended quantities do not match exactly.`, evidence: { brokerPositionSide: position.side, brokerHeldQty: held.canonical, brokerAvailableQty: available.canonical } });
+  if (compareDecimal(available, held) > 0) return block({ context, environment: account.environment, outcome: 'RESERVED_QUANTITY', message: `${symbol} broker-available quantity exceeds held quantity; no sell was submitted.`, evidence: { brokerPositionSide: position.side, brokerHeldQty: held.canonical, brokerAvailableQty: available.canonical, failureClassification: 'AVAILABLE_QUANTITY_EXCEEDS_HELD' } });
   if (!equalDecimal(held, available)) return block({ context, environment: account.environment, outcome: 'RESERVED_QUANTITY', message: `${symbol} broker-available quantity is lower than held quantity; no sell was submitted.`, evidence: { brokerPositionSide: position.side, brokerHeldQty: held.canonical, brokerAvailableQty: available.canonical, conflictingActiveSellOrders: conflicts } });
 
   const clearedAttentions = await prisma.operationalAttention.findMany({

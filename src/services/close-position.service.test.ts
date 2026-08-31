@@ -58,6 +58,7 @@ vi.mock('./adaptive-polling.service.js', () => ({
 
 import { closeFailureSeverity, closePosition } from './close-position.service.js';
 import { BrokerWriteDeliveryError } from '../errors/broker-write-delivery-error.js';
+import { HttpError } from '../errors/http-error.js';
 
 describe('close failure severity', () => {
   it('distinguishes protection, rejection, and delivery uncertainty', () => {
@@ -248,6 +249,25 @@ describe('closePosition claim-before-write', () => {
         severity: 'ERROR',
       })
     );
+  });
+
+  it('releases a pre-submit verification block without recording delivery uncertainty', async () => {
+    mocks.submitVerifiedExit.mockRejectedValue(new HttpError(409, 'existing sell reserves shares', {
+      verificationOutcome: 'CONFLICTING_OPEN_SELL_ORDER',
+      authorizationResult: 'NOT_ATTEMPTED',
+    }));
+
+    await expect(closePosition(101)).rejects.toMatchObject({ statusCode: 409 });
+
+    expect(mocks.placeAlpacaOrder).not.toHaveBeenCalled();
+    expect(mocks.orderIntentUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.trackedPositionUpdateMany).toHaveBeenLastCalledWith({
+      where: { id: 101, status: 'closing' },
+      data: { status: 'open', lastSyncedAt: expect.any(Date) },
+    });
+    expect(mocks.createSystemEvent).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: 'position.close_submission_uncertain',
+    }));
   });
 
   it.each([
