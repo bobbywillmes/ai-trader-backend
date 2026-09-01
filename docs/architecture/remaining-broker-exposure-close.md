@@ -13,6 +13,8 @@ expected remainder = Alpaca held quantity = Alpaca available quantity > 0
 
 Broker activities qualify only when they are account-scoped, unique Alpaca `FILL` rows durably linked to the same `TrackedPosition`. Their raw broker JSON supplies the original decimal quantity string. Unlinked external fills, malformed quantities, zero prior fills, over-attribution, shorts, absent positions, reserved shares, and unexplained broker excess or deficit all fail closed. The workflow never derives attribution from symbol/time proximity or arithmetic difference alone.
 
+Activity identity is `broker + mode + activityId`. Repeated identical copies are counted once; duplicate identities with conflicting individual quantities fail closed. Only individual activity `qty` participates in the equation. Cumulative `cumQty` and `leavesQty` may prove broker-order completion elsewhere, but are never summed as individual lifecycle fills.
+
 ## Preview and execution
 
 `GET /api/operational-attention/:id/remaining-exposure-close-preview` is available to users with Operational Attention read access within their account scope. It returns sanitized lifecycle, broker, active-order, regular-session, deployment, and authorization conclusions with a 30-second evidence fingerprint.
@@ -30,3 +32,17 @@ Trade-cycle realized P&L and return remain `null` until a closed lifecycle has c
 ## Explicit exclusions
 
 This is not a generic flatten control. It does not close unexplained excess, cover shorts, accept browser quantity, support partial operator-selected exits or extended hours, bypass verification, cancel conflicting orders, or grant Live authority. Live writes require production `PRODUCTION_EXECUTOR`, deployment risk-reducing policy, current account credentials, and effective `RISK_REDUCING` approval. Development Live views are observation-only.
+
+## Safe verification
+
+There is no deterministic real Paper exercise for this state. It requires a naturally occurring partial fill from an AI Trader-owned close order, durable import of each individual fill, cancellation or terminalization of the unfilled remainder, and exact agreement with the remaining long broker position. An Alpaca-console sell is external evidence and must remain ineligible; intentionally seeking a market partial fill is unpredictable and unsafe.
+
+Broker-mocked integration tests and isolated test databases are therefore authoritative. Manual UI verification should use existing local fixtures or test mocks to inspect eligible, blocked, expired, rejected, uncertain, recovered, and responsive states without enabling trading or changing stored lifecycle evidence. In real operation the panel becomes eligible only after the canonical partial-close condition occurs naturally and reconciliation opens an unresolved, account-scoped exit-verification episode.
+
+## Historical stale-order diagnostic
+
+The reconciliation message “terminal lifecycle evidence but remains nonterminal locally” refers specifically to a nonterminal local `BrokerOrder` status. `FULL_FILL_LOCAL_EVIDENCE` means its linked activity stream contains a terminal cumulative fill marker; it does not mutate the historical row during the read-only diagnostic. Current activity ingestion terminalizes the linked `BrokerOrder` and `OrderIntent`, but old activity outside the normal overlap window can retain legacy status.
+
+`POSITION_LINK_MISSING` means no existing position link was present and no unique entry-position candidate satisfied account, broker, symbol, subscription, assignment, quantity, price, and five-second completion-time tolerances. For full local fill evidence, `brokerLookup: null` is intentional: the diagnostic already has terminal evidence and reserves bounded broker lookups for candidates lacking it.
+
+This warning does not create OperationalAttention because stale historical order status is not an actionable reconciliation projection rule and its severity is `WARN`. A duplicate finding event inside the deduplication window is correctly counted as skipped. The stale BUY row is not an active broker reservation and does not by itself affect verified exits, corrective eligibility, close-fill attribution, trade-cycle P/L, or broker open-order checks. It does keep reconciliation health visibly non-clean and should be handled, if desired, as a separate reviewed historical lifecycle-repair task rather than automatic remediation in this workflow.
