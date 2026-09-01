@@ -109,7 +109,7 @@ function subtractDecimal(left: ExactDecimal, right: ExactDecimal): string | null
 }
 
 
-function describeConflictingOrder(order: {
+type ConflictingOrderEvidence = {
   type: string;
   status: string;
   qty: string | null;
@@ -119,31 +119,28 @@ function describeConflictingOrder(order: {
   stopPrice: string | null;
   trailPrice: string | null;
   trailPercent: string | null;
-}) {
-  const type = order.type.replaceAll('_', ' ');
-  const money = (value: string) => {
-    const [whole, fraction = ''] = value.split('.');
-    return `${whole}.${fraction.padEnd(2, '0').slice(0, 2)}`;
-  };
-  const price = order.stopPrice && order.limitPrice
-    ? ` at stop $${money(order.stopPrice)} and limit $${money(order.limitPrice)}`
-    : order.limitPrice
-      ? ` at limit $${money(order.limitPrice)}`
-      : order.stopPrice
-        ? ` at stop $${money(order.stopPrice)}`
-        : order.trailPrice
-        ? ` with $${order.trailPrice} trail`
-        : order.trailPercent
-          ? ` with ${order.trailPercent}% trail`
-          : '';
-  return `${type} sell order${price}, status ${order.status.toUpperCase()}, ${order.qty} original, ${order.filledQty ?? '0'} filled, ${order.remainingQty} remaining`;
+};
+
+function formatBrokerPrice(value: string) {
+  const [whole, fraction = ''] = value.split('.');
+  return `${whole}.${fraction.padEnd(2, '0')}`;
 }
 
-function conflictMessage(symbol: string, held: string, available: string, conflicts: Array<Parameters<typeof describeConflictingOrder>[0]>) {
-  const summary = conflicts.length === 1
-    ? `an existing open ${describeConflictingOrder(conflicts[0]!)}`
-    : `${conflicts.length} existing open sell orders (${conflicts.slice(0, 3).map((order) => `${order.type.replaceAll('_', ' ')} ${order.status.toUpperCase()}, ${order.remainingQty} remaining`).join('; ')}${conflicts.length > 3 ? '; additional orders in details' : ''})`;
-  return `${symbol} cannot be closed because ${summary} reserve${conflicts.length === 1 ? 's' : ''} position quantity. Broker holds ${held} shares and reports ${available} available. Review or cancel ${conflicts.length === 1 ? 'that order' : 'those orders'}, or allow ${conflicts.length === 1 ? 'it' : 'them'} to complete, then retry. No additional sell was submitted.`;
+function conflictMessage(symbol: string, held: string, conflicts: ConflictingOrderEvidence[]) {
+  if (conflicts.length === 1) {
+    const order = conflicts[0]!;
+    const price = order.limitPrice
+      ? `$${formatBrokerPrice(order.limitPrice)} limit`
+      : order.stopPrice
+        ? `$${formatBrokerPrice(order.stopPrice)} stop`
+        : order.trailPercent
+          ? `${order.trailPercent}% trailing-stop`
+          : order.trailPrice
+            ? `$${formatBrokerPrice(order.trailPrice)} trailing-stop`
+            : order.type.replaceAll('_', ' ');
+    return `Close blocked: ${symbol}'s ${held} shares are reserved by an open ${price} sell. Cancel or complete that order, then retry. No additional sell was submitted.`;
+  }
+  return `Close blocked: ${symbol}'s ${held} shares are reserved by ${conflicts.length} open sell orders. Review or cancel those orders, or allow them to complete, then retry. No additional sell was submitted.`;
 }
 
 function severity(environment: 'PAPER' | 'LIVE') {
@@ -185,46 +182,71 @@ async function block(args: {
     ...args.evidence,
   };
   const fingerprint = `exit-safety:${args.context.tradingAccountId}:${args.context.trackedPositionId}:${args.outcome}`;
-  const existingAttention = await prisma.operationalAttention.findUnique({
-    where: { activeKey: fingerprint },
-    select: { id: true },
-  });
-  const event = existingAttention ? null : await createSystemEvent({
-    type: `exit.verification_blocked.${args.outcome.toLowerCase()}`,
-    entityType: 'trackedPosition',
-    entityId: args.context.trackedPositionId,
-    tradingAccountId: args.context.tradingAccountId,
-    severity: severity(args.environment),
-    message: args.message,
-    payloadJson: evidence as Prisma.InputJsonValue,
-  });
-  await openOrObserveOperationalAttention({
-    tradingAccountId: args.context.tradingAccountId,
-    trackedPositionId: args.context.trackedPositionId,
-    orderIntentId: args.context.orderIntentId,
-    code: args.outcome === 'UNEXPECTED_SHORT_POSITION'
-      ? OPERATIONAL_ATTENTION_CODES.UNEXPECTED_SHORT_POSITION
-      : args.outcome === 'CONFLICTING_OPEN_SELL_ORDER' || args.outcome === 'RESERVED_QUANTITY'
-        ? OPERATIONAL_ATTENTION_CODES.CONFLICTING_EXIT_RESERVATION
-        : args.outcome === 'QUANTITY_MISMATCH'
-          ? OPERATIONAL_ATTENTION_CODES.EXIT_QUANTITY_MISMATCH
-          : OPERATIONAL_ATTENTION_CODES.BROKER_EXPOSURE_UNVERIFIABLE,
-    source: OPERATIONAL_ATTENTION_SOURCES.EXIT_VERIFICATION,
-    severity: severity(args.environment),
-    title: args.outcome === 'CONFLICTING_OPEN_SELL_ORDER'
-      ? 'Exit blocked by existing sell order'
-      : `Exit verification blocked: ${args.outcome}`,
-    message: args.message,
-    details: evidence,
-    fingerprint,
-    resolutionPolicy: OperationalAttentionResolutionPolicy.AUTHORITATIVE_ONLY,
-    observedAt,
-    observedSystemEventId: event?.id ?? null,
-  });
   await prisma.orderIntent.updateMany({
     where: { id: args.context.orderIntentId },
     data: { status: 'blocked', blockReason: `EXIT_VERIFICATION:${args.outcome}` },
   });
+  try {
+    const existingAttention = await prisma.operationalAttention.findUnique({
+      where: { activeKey: fingerprint },
+      select: { id: true },
+    });
+    const event = existingAttention ? null : await createSystemEvent({
+      type: `exit.verification_blocked.${args.outcome.toLowerCase()}`,
+      entityType: 'trackedPosition',
+      entityId: args.context.trackedPositionId,
+      tradingAccountId: args.context.tradingAccountId,
+      severity: severity(args.environment),
+      message: args.message,
+      payloadJson: evidence as Prisma.InputJsonValue,
+    });
+    await openOrObserveOperationalAttention({
+      tradingAccountId: args.context.tradingAccountId,
+      trackedPositionId: args.context.trackedPositionId,
+      orderIntentId: args.context.orderIntentId,
+      orderIntentIsObservationContext: true,
+      code: args.outcome === 'UNEXPECTED_SHORT_POSITION'
+        ? OPERATIONAL_ATTENTION_CODES.UNEXPECTED_SHORT_POSITION
+        : args.outcome === 'CONFLICTING_OPEN_SELL_ORDER' || args.outcome === 'RESERVED_QUANTITY'
+          ? OPERATIONAL_ATTENTION_CODES.CONFLICTING_EXIT_RESERVATION
+          : args.outcome === 'QUANTITY_MISMATCH'
+            ? OPERATIONAL_ATTENTION_CODES.EXIT_QUANTITY_MISMATCH
+            : OPERATIONAL_ATTENTION_CODES.BROKER_EXPOSURE_UNVERIFIABLE,
+      source: OPERATIONAL_ATTENTION_SOURCES.EXIT_VERIFICATION,
+      severity: severity(args.environment),
+      title: args.outcome === 'CONFLICTING_OPEN_SELL_ORDER'
+        ? 'Exit blocked by existing sell order'
+        : `Exit verification blocked: ${args.outcome}`,
+      message: args.message,
+      details: evidence,
+      fingerprint,
+      resolutionPolicy: OperationalAttentionResolutionPolicy.AUTHORITATIVE_ONLY,
+      observedAt,
+      observedSystemEventId: event?.id ?? null,
+    });
+  } catch (error) {
+    try {
+      await createSystemEvent({
+        type: 'exit.verification_attention_persistence_failed',
+        entityType: 'trackedPosition',
+        entityId: args.context.trackedPositionId,
+        tradingAccountId: args.context.tradingAccountId,
+        severity: severity(args.environment),
+        message: `${args.context.symbol.toUpperCase()} exit was safely blocked before broker submission, but operational attention could not be recorded.`,
+        payloadJson: {
+          ...evidence,
+          attentionPersistenceErrorType: error instanceof Error ? error.name : 'UnknownError',
+        } as Prisma.InputJsonValue,
+      });
+    } catch {
+      // The primary pre-submit block remains authoritative even if diagnostic persistence also fails.
+    }
+    throw new HttpError(
+      503,
+      `${args.context.symbol.toUpperCase()} close was safely blocked before broker submission, but operational attention could not be refreshed. Retry after the internal issue is corrected. No sell was submitted.`,
+      { ...evidence, attentionPersistenceFailed: true },
+    );
+  }
   throw new HttpError(409, args.message, evidence);
 }
 
@@ -294,7 +316,7 @@ async function executeVerifiedExit(context: VerifiedExitContext): Promise<Verifi
       };
     });
   if (conflicts.some((order) => order.remainingQty === null)) return block({ context, environment: account.environment, outcome: 'BROKER_STATE_UNAVAILABLE', message: `${symbol} has an active sell order with ambiguous remaining quantity.`, evidence: { brokerPositionSide: position.side, brokerHeldQty: held.canonical, brokerAvailableQty: available.canonical, conflictingActiveSellOrders: conflicts } });
-  if (conflicts.length) return block({ context, environment: account.environment, outcome: 'CONFLICTING_OPEN_SELL_ORDER', message: conflictMessage(symbol, held.canonical, available.canonical, conflicts), evidence: { brokerPositionSide: position.side, brokerHeldQty: held.canonical, brokerAvailableQty: available.canonical, conflictingActiveSellOrders: conflicts, nextAction: 'Review or cancel the active sell order(s), or allow them to complete, then retry.' } });
+  if (conflicts.length) return block({ context, environment: account.environment, outcome: 'CONFLICTING_OPEN_SELL_ORDER', message: conflictMessage(symbol, held.canonical, conflicts), evidence: { brokerPositionSide: position.side, brokerHeldQty: held.canonical, brokerAvailableQty: available.canonical, conflictingActiveSellOrders: conflicts, nextAction: 'Review or cancel the active sell order(s), or allow them to complete, then retry.' } });
   if (!equalDecimal(held, intended) || !equalDecimal(held, local)) return block({ context, environment: account.environment, outcome: 'QUANTITY_MISMATCH', message: `${symbol} held, local, and intended quantities do not match exactly.`, evidence: { brokerPositionSide: position.side, brokerHeldQty: held.canonical, brokerAvailableQty: available.canonical } });
   if (compareDecimal(available, held) > 0) return block({ context, environment: account.environment, outcome: 'RESERVED_QUANTITY', message: `${symbol} broker-available quantity exceeds held quantity; no sell was submitted.`, evidence: { brokerPositionSide: position.side, brokerHeldQty: held.canonical, brokerAvailableQty: available.canonical, failureClassification: 'AVAILABLE_QUANTITY_EXCEEDS_HELD' } });
   if (!equalDecimal(held, available)) return block({ context, environment: account.environment, outcome: 'RESERVED_QUANTITY', message: `${symbol} broker-available quantity is lower than held quantity; no sell was submitted.`, evidence: { brokerPositionSide: position.side, brokerHeldQty: held.canonical, brokerAvailableQty: available.canonical, conflictingActiveSellOrders: conflicts } });

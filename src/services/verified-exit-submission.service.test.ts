@@ -120,7 +120,7 @@ describe('verified exit submission boundary', () => {
     const iwmContext = { ...context, symbol: 'IWM', localTrackedQty: '8', intendedQty: '8' };
 
     await expect(submitVerifiedExit(iwmContext)).rejects.toMatchObject({
-      message: 'IWM cannot be closed because an existing open limit sell order at limit $400.00, status NEW, 8 original, 0 filled, 8 remaining reserves position quantity. Broker holds 8 shares and reports 0 available. Review or cancel that order, or allow it to complete, then retry. No additional sell was submitted.',
+      message: "Close blocked: IWM's 8 shares are reserved by an open $400.00 limit sell. Cancel or complete that order, then retry. No additional sell was submitted.",
       details: expect.objectContaining({
         verificationOutcome: 'CONFLICTING_OPEN_SELL_ORDER', brokerHeldQty: '8', brokerAvailableQty: '0',
         conflictingActiveSellOrders: [expect.objectContaining({ limitPrice: '400', remainingQty: '8' })],
@@ -130,7 +130,7 @@ describe('verified exit submission boundary', () => {
     expect(mocks.post).not.toHaveBeenCalled();
     expect(mocks.attention).toHaveBeenCalledWith(expect.objectContaining({
       code: 'CONFLICTING_EXIT_RESERVATION', severity: 'ERROR',
-      title: 'Exit blocked by existing sell order', message: expect.stringContaining('limit sell order'),
+      title: 'Exit blocked by existing sell order', message: expect.stringContaining('$400.00 limit sell'),
       details: expect.objectContaining({ brokerHeldQty: '8', brokerAvailableQty: '0' }),
     }));
   });
@@ -148,7 +148,7 @@ describe('verified exit submission boundary', () => {
         expect.objectContaining({ type: 'stop_limit', stopPrice: '490', limitPrice: '489.50', qty: '2', filledQty: '1', remainingQty: '1' }),
       ],
     }) });
-    expect(mocks.attention).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('2 existing open sell orders') }));
+    expect(mocks.attention).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('2 open sell orders') }));
     expect(mocks.post).not.toHaveBeenCalled();
   });
 
@@ -187,6 +187,27 @@ describe('verified exit submission boundary', () => {
     await expect(submitVerifiedExit(context)).rejects.toMatchObject({ statusCode: 409 });
     expect(mocks.event).not.toHaveBeenCalled();
     expect(mocks.attention).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed with a structured pre-submit result when attention refresh fails', async () => {
+    mocks.position.mockResolvedValue({ asset_id: 'a', symbol: 'SPY', side: 'long', qty: '4', qty_available: '0' });
+    mocks.openOrders.mockResolvedValue([{ ...brokerOrder, id: 'external', client_order_id: 'external', type: 'limit', qty: '4', filled_qty: '0', limit_price: '500', status: 'new' }]);
+    mocks.findAttention.mockResolvedValue({ id: 88 });
+    mocks.attention.mockRejectedValue(new Error('active attention persistence unavailable'));
+
+    await expect(submitVerifiedExit(context)).rejects.toMatchObject({
+      statusCode: 503,
+      message: expect.stringContaining('safely blocked before broker submission'),
+      details: expect.objectContaining({
+        verificationOutcome: 'CONFLICTING_OPEN_SELL_ORDER',
+        authorizationResult: 'NOT_ATTEMPTED',
+        attentionPersistenceFailed: true,
+      }),
+    });
+    expect(mocks.updateIntent.mock.invocationCallOrder[0]).toBeLessThan(mocks.attention.mock.invocationCallOrder[0]!);
+    expect(mocks.updateIntent).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'blocked' }) }));
+    expect(mocks.post).not.toHaveBeenCalled();
+    expect(mocks.event).toHaveBeenCalledWith(expect.objectContaining({ type: 'exit.verification_attention_persistence_failed' }));
   });
 
   it('uses account-and-position fingerprinting and critical severity for Live conflicts', async () => {

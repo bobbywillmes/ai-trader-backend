@@ -21,7 +21,11 @@ import {
 import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from './trading-account-workflow-lock.service.js';
 import { runTradingAccountWorkflow } from './trading-account-workflow-runner.service.js';
 import { diagnoseHistoricalOrderLifecycle } from './historical-order-lifecycle-diagnostic.service.js';
-import { projectReconciliationOperationalAttention } from './reconciliation-operational-attention.service.js';
+import {
+  projectReconciliationOperationalAttention,
+  resolveClearedExitReservationAttention,
+} from './reconciliation-operational-attention.service.js';
+import { recoverDeterministicallyAbsentStaleCloseIntents } from './stale-close-intent-recovery.service.js';
 
 export type ReconciliationSeverity = 'info' | 'warn' | 'critical';
 
@@ -784,7 +788,14 @@ export async function reconcileTradingAccount(
   for (const finding of findings) {
     finding.tradingAccountId = tradingAccountId;
   }
+  const safelyFinalizedIntentIds = await recoverDeterministicallyAbsentStaleCloseIntents(staleIntents);
+  const safelyReopenedPositionIds = new Set(
+    staleIntents
+      .filter((intent) => safelyFinalizedIntentIds.has(intent.id) && intent.trackedPositionId)
+      .map((intent) => intent.trackedPositionId!),
+  );
   for (const intent of staleIntents) {
+    if (safelyFinalizedIntentIds.has(intent.id)) continue;
     findings.push({
       tradingAccountId,
       code: 'stale_submitting_intent',
@@ -884,6 +895,36 @@ const persistedEventIds = new Map<string, number>();
       runIdentifier,
     });
     attentionUpdateCount += projected.updated + projected.resolved;
+    attentionUpdateCount += await resolveClearedExitReservationAttention({
+      tradingAccountId,
+      environment: account.environment,
+      trackedPositions: trackedPositions.map((position) => ({
+        id: position.id,
+        tradingAccountId: position.tradingAccountId,
+        broker: position.broker,
+        symbol: position.symbol,
+        status: safelyReopenedPositionIds.has(position.id) ? 'open' : position.status,
+        side: position.side,
+        qty: position.qty,
+      })),
+      brokerPositions: brokerPositions.map((position) => ({
+        broker: position.broker ?? null,
+        symbol: position.symbol,
+        qty: position.qty ?? null,
+        side: position.side ?? null,
+      })),
+      brokerOrders: brokerOrders.map((order) => ({
+        broker: 'alpaca',
+        id: order.id ?? null,
+        client_order_id: order.client_order_id ?? null,
+        symbol: order.symbol,
+        side: order.side ?? null,
+        qty: order.qty ?? null,
+        type: order.type ?? null,
+        status: order.status ?? null,
+      })),
+      runIdentifier,
+    });
   }
 
   return {
