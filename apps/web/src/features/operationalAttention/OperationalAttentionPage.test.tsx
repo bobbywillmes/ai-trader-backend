@@ -160,6 +160,22 @@ describe("Operational Attention page status filtering", () => {
     expect(screen.getByText(/remainingQty/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /cancel|replace|quantity/i })).toBeNull();
   });
+  it("explains that repeated observations are aggregated without manufacturing events", () => {
+    mocks.detail = {
+      id: 4, tradingAccountId: 7, code: "CONFLICTING_EXIT_RESERVATION", source: "EXIT_VERIFICATION", status: "OPEN", severity: "ERROR",
+      title: "Exit blocked", message: "Close blocked.", detailsJson: {}, occurrenceCount: 3,
+      firstObservedAt: "2026-09-01T10:00:00Z", lastObservedAt: "2026-09-01T15:27:43Z", revision: 3,
+      resolutionPolicy: "AUTHORITATIVE_ONLY", acknowledgedAt: null, resolvedAt: null, resolutionReason: null,
+      trackedPositionId: 79, orderIntentId: 272, brokerOrderId: null,
+      tradingAccount: { id: 7, displayName: "Bobby Paper", environment: "PAPER" },
+      links: { account: "/accounts/7", position: "/positions/79", order: null, reconciliation: "/reconciliation", systemEvents: "/events" },
+      allowedActions: { acknowledge: true, manualResolve: false }, evidenceEvents: [],
+    };
+    renderPage("/operational-attention?attention=4");
+    expect(screen.getByText(/Occurrences:/).parentElement?.textContent).toContain("Occurrences: 3");
+    expect(screen.getByText(/2 repeated observations were aggregated/).textContent).toContain("Most recently observed at");
+    expect(screen.queryByText(/evidence event/i)).toBeNull();
+  });
   it("does not display internal active-key errors", () => {
     mocks.detailError = new Error("Active attention key conflicts with a different condition.");
     renderPage("/operational-attention?attention=4");

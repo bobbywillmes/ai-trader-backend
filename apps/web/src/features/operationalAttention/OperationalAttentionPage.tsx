@@ -251,6 +251,13 @@ export function OperationalAttentionPage() {
                   />
                 )}
                 <Text size="sm">
+                  <b>Occurrences:</b> {detail.data.occurrenceCount}
+                  <br />
+                  {detail.data.occurrenceCount === 1
+                    ? "This condition was observed once."
+                    : `${detail.data.occurrenceCount - 1} repeated ${detail.data.occurrenceCount === 2 ? "observation was" : "observations were"} aggregated. Most recently observed at ${stamp(detail.data.lastObservedAt)}.`}
+                </Text>
+                <Text size="sm">
                   <b>First observed:</b> {stamp(detail.data.firstObservedAt)}
                   <br />
                   <b>Last observed:</b> {stamp(detail.data.lastObservedAt)}
