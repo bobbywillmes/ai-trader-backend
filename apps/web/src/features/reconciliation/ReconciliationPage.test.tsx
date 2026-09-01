@@ -10,7 +10,7 @@ const accounts = [
   { id: 1, displayName: "Bobby Paper", accountHolderName: "Bobby W", broker: "ALPACA", environment: "PAPER", status: "ACTIVE", credential: { exists: true, status: "ACTIVE" } },
   { id: 2, displayName: "Bobby Live", accountHolderName: "Bobby W", broker: "ALPACA", environment: "LIVE", status: "NEEDS_CREDENTIALS", credential: { exists: false, status: null } },
 ] as TradingAccount[];
-const mocks = vi.hoisted(() => ({ mutate: vi.fn(), requestedAccountIds: [] as number[] }));
+const mocks = vi.hoisted(() => ({ mutate: vi.fn(), requestedAccountIds: [] as number[], result: undefined as unknown }));
 
 vi.mock("../tradingAccounts/hooks", () => ({
   useTradingAccount: (id: number) => {
@@ -21,7 +21,7 @@ vi.mock("../tradingAccounts/hooks", () => ({
   useTradingAccounts: () => ({ data: { accounts }, isLoading: false, isError: false, error: null }),
 }));
 vi.mock("./hooks", () => ({
-  useRunReconciliation: (id: number) => ({ mutate: (payload: unknown) => mocks.mutate(id, payload), data: undefined, error: null, isError: false, isPending: false }),
+  useRunReconciliation: (id: number) => ({ mutate: (payload: unknown) => mocks.mutate(id, payload), data: mocks.result, error: null, isError: false, isPending: false }),
 }));
 vi.mock("../../lib/api", () => ({
   getAdminToken: () => "token",
@@ -44,10 +44,23 @@ function renderLegacy(entry: string) {
   </Routes></MemoryRouter></MantineProvider>);
 }
 
-beforeEach(() => { mocks.mutate.mockClear(); mocks.requestedAccountIds.length = 0; });
+beforeEach(() => { mocks.mutate.mockClear(); mocks.requestedAccountIds.length = 0; mocks.result = undefined; });
 afterEach(cleanup);
 
 describe("account-specific Reconciliation routing", () => {
+  it("uses explicit persisted-effect counter labels", () => {
+    mocks.result = {
+      ok: true, dryRun: false, findings: [], eventCount: 0, attentionUpdateCount: 1,
+      operationalAttentionTransitionCount: 1, legacyExitStateProjectionCount: 0,
+      skippedDuplicateEventCount: 1, persistedEvents: true, persistedAttention: true,
+      runIdentifier: "run-1", account: { tradingAccountId: 1, displayName: "Bobby Paper", environment: "PAPER" },
+    };
+    renderCanonical("/trading-accounts/1/reconciliation");
+    expect(screen.getByText("Finding events")).toBeTruthy();
+    expect(screen.getByText("Persisted attention effects").parentElement?.textContent).toContain("1");
+    expect(screen.getByText("Duplicate finding events skipped")).toBeTruthy();
+    expect(screen.queryByText("Attention updates")).toBeNull();
+  });
   it("uses the path account even when dormant operational scope names another account", async () => {
     renderCanonical("/trading-accounts/2/reconciliation?account=1");
     expect(screen.getByRole("heading", { name: "Bobby Live" })).toBeTruthy();

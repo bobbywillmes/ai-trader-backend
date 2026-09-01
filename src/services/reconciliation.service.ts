@@ -596,6 +596,8 @@ export type RunReconciliationCheckResult = {
   eventCount: number;
   skippedDuplicateEventCount: number;
   attentionUpdateCount: number;
+  legacyExitStateProjectionCount: number;
+  operationalAttentionTransitionCount: number;
   persistedEvents: boolean;
   persistedAttention: boolean;
 };
@@ -861,7 +863,8 @@ const persistedEventIds = new Map<string, number>();
     }
   }
 
-  let attentionUpdateCount = 0;
+  let legacyExitStateProjectionCount = 0;
+  let operationalAttentionTransitionCount = 0;
 
   if (persistAttention) {
     for (const finding of findings) {
@@ -885,7 +888,7 @@ const persistedEventIds = new Map<string, number>();
         message: finding.message,
       });
 
-      attentionUpdateCount += 1;
+      legacyExitStateProjectionCount += 1;
     }
     const projected = await projectReconciliationOperationalAttention({
       tradingAccountId,
@@ -894,8 +897,8 @@ const persistedEventIds = new Map<string, number>();
       eventIds: persistedEventIds,
       runIdentifier,
     });
-    attentionUpdateCount += projected.updated + projected.resolved;
-    attentionUpdateCount += await resolveClearedExitReservationAttention({
+    operationalAttentionTransitionCount += projected.updated + projected.resolved;
+    operationalAttentionTransitionCount += await resolveClearedExitReservationAttention({
       tradingAccountId,
       environment: account.environment,
       trackedPositions: trackedPositions.map((position) => ({
@@ -937,7 +940,10 @@ const persistedEventIds = new Map<string, number>();
     findings,
     eventCount,
     skippedDuplicateEventCount,
-    attentionUpdateCount,
+    attentionUpdateCount:
+      legacyExitStateProjectionCount + operationalAttentionTransitionCount,
+    legacyExitStateProjectionCount,
+    operationalAttentionTransitionCount,
     persistedEvents: persistEvents,
     persistedAttention: persistAttention,
   };

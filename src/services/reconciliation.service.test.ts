@@ -492,6 +492,8 @@ describe('runReconciliationCheck', () => {
     });
 
     expect(result.attentionUpdateCount).toBe(1);
+    expect(result.legacyExitStateProjectionCount).toBe(1);
+    expect(result.operationalAttentionTransitionCount).toBe(0);
     expect(result.persistedAttention).toBe(true);
 
     expect(result.skippedDuplicateEventCount).toBe(0);
@@ -697,6 +699,20 @@ describe('runReconciliationCheck', () => {
       message:
         'SPY target is unlocked, but no protective trailing-stop order is linked.',
     });
+  });
+
+  it('reports OperationalAttention transitions separately from legacy exit-state projections', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([]);
+    mocks.getNormalizedPositions.mockResolvedValue([]);
+    mocks.getOpenAlpacaOrders.mockResolvedValue([]);
+    mocks.projectReconciliationOperationalAttention.mockResolvedValue({ updated: 0, resolved: 1 });
+    mocks.resolveClearedExitReservationAttention.mockResolvedValue(1);
+
+    const result = await runReconciliationCheck({ persistEvents: true, persistAttention: true });
+
+    expect(result.operationalAttentionTransitionCount).toBe(2);
+    expect(result.legacyExitStateProjectionCount).toBe(0);
+    expect(result.attentionUpdateCount).toBe(2);
   });
 
 });
