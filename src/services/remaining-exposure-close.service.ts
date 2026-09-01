@@ -100,6 +100,36 @@ function fillQty(activity: {
   }
   return exact(activity.qty);
 }
+
+type AttributedFillEvidence = {
+  broker: string;
+  mode: string;
+  activityId: string;
+  qty: number | null;
+  rawBrokerJson: Prisma.JsonValue;
+};
+
+export function summarizeAttributedFillQuantities(
+  fills: AttributedFillEvidence[],
+) {
+  const identities = new Map<string, Exact>();
+  for (const fill of fills) {
+    const activityId = fill.activityId.trim();
+    const quantity = fillQty(fill);
+    if (!activityId || !quantity || quantity.coefficient <= 0n)
+      return { valid: false as const, quantity: null, reason: "MALFORMED_FILL" as const };
+    const identity = `${fill.broker.toLowerCase()}:${fill.mode.toLowerCase()}:${activityId}`;
+    const existing = identities.get(identity);
+    if (existing && !eq(existing, quantity))
+      return { valid: false as const, quantity: null, reason: "CONFLICTING_DUPLICATE_IDENTITY" as const };
+    identities.set(identity, quantity);
+  }
+  return {
+    valid: true as const,
+    quantity: add([...identities.values()]),
+    reason: null,
+  };
+}
 function remaining(order: AlpacaOrder) {
   const qty = exact(order.qty);
   const filled = exact(order.filled_qty ?? "0");
@@ -244,17 +274,17 @@ async function evidence(
         orderBy: [{ transactionTime: "asc" }, { id: "asc" }],
       })
     : [];
-  const parsedFills = fills.map(fillQty);
-  if (parsedFills.some((qty) => !qty || qty.coefficient <= 0n))
+  const fillSummary = summarizeAttributedFillQuantities(fills);
+  if (!fillSummary.valid)
     blockers.push({
       code: "FILL_ATTRIBUTION_INCOMPLETE",
-      message: "Attributed fill quantity is missing or malformed.",
+      message:
+        fillSummary.reason === "CONFLICTING_DUPLICATE_IDENTITY"
+          ? "Duplicate attributed activity identities contain conflicting quantities."
+          : "Attributed fill identity or quantity is missing or malformed.",
       nextAction: "Review reconciliation.",
     });
-  const attributed =
-    parsedFills.length && parsedFills.every(Boolean)
-      ? add(parsedFills as Exact[])
-      : exact("0")!;
+  const attributed = fillSummary.valid ? fillSummary.quantity : exact("0")!;
   if (attributed.coefficient === 0n)
     blockers.push({
       code: "NO_ATTRIBUTED_EXIT_FILL",
@@ -861,13 +891,13 @@ export async function reconcileRemainingExposureCloseAfterPositionClosure(args: 
       transactionTime: { gte: position.openedAt },
     },
   });
-  const quantities = fills.map(fillQty);
+  const fillSummary = summarizeAttributedFillQuantities(fills);
   const tracked = exact(position.qty);
   if (
     !tracked ||
-    !quantities.length ||
-    quantities.some((qty) => !qty || qty.coefficient <= 0n) ||
-    !eq(add(quantities as Exact[]), tracked)
+    !fills.length ||
+    !fillSummary.valid ||
+    !eq(fillSummary.quantity, tracked)
   )
     return false;
   const activeCorrectiveOrders = await prisma.brokerOrder.count({
