@@ -4,8 +4,13 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { OperationalAttention } from "./types";
 
-const mocks = vi.hoisted(() => ({ searches: [] as string[] }));
+const mocks = vi.hoisted(() => ({
+  searches: [] as string[],
+  detail: undefined as OperationalAttention | undefined,
+  detailError: null as Error | null,
+}));
 vi.mock("../../lib/api", () => ({ getAdminToken: () => "token" }));
 vi.mock("../tradingAccountScope/TradingAccountScopeSelector", () => ({
   TradingAccountScopeSelector: () => <div>Account scope</div>,
@@ -24,9 +29,10 @@ vi.mock("./hooks", () => ({
     };
   },
   useAttentionDetail: () => ({
-    data: undefined,
+    data: mocks.detail,
     isLoading: false,
-    isError: false,
+    isError: Boolean(mocks.detailError),
+    error: mocks.detailError,
   }),
   useAcknowledgeAttention: () => ({ mutate: vi.fn(), isPending: false }),
   useManualResolveAttention: () => ({ mutate: vi.fn(), isPending: false }),
@@ -67,6 +73,8 @@ function renderPage(entry: string) {
 }
 beforeEach(() => {
   mocks.searches.length = 0;
+  mocks.detail = undefined;
+  mocks.detailError = null;
 });
 afterEach(cleanup);
 
@@ -132,5 +140,30 @@ describe("Operational Attention page status filtering", () => {
         "Account-scoped operational conditions and their history.",
       ),
     ).toBeTruthy();
+  });
+  it("shows the stable condition code and full current evidence for resolved history", () => {
+    mocks.detail = {
+      id: 4, tradingAccountId: 7, code: "CONFLICTING_EXIT_RESERVATION", source: "EXIT_VERIFICATION", status: "RESOLVED", severity: "ERROR",
+      title: "Exit blocked by existing sell order", message: "Close blocked.", detailsJson: {
+        brokerOrderId: "external-qqq", type: "limit", side: "sell", status: "NEW", limitPrice: "800",
+        qty: "3", filledQty: "0", remainingQty: "3", brokerHeldQty: "3", brokerAvailableQty: "0",
+      }, occurrenceCount: 2, firstObservedAt: "2026-09-01T10:00:00Z", lastObservedAt: "2026-09-01T11:00:00Z",
+      revision: 3, resolutionPolicy: "AUTHORITATIVE_ONLY", acknowledgedAt: null, resolvedAt: "2026-09-01T12:00:00Z",
+      resolutionReason: "Reservation absent.", trackedPositionId: 79, orderIntentId: 272, brokerOrderId: null,
+      tradingAccount: { id: 7, displayName: "Bobby Paper", environment: "PAPER" },
+      links: { account: "/accounts/7", position: "/positions/79", order: null, reconciliation: "/reconciliation", systemEvents: "/events" },
+      allowedActions: { acknowledge: false, manualResolve: false }, evidenceEvents: [],
+    };
+    renderPage("/operational-attention?status=all&attention=4");
+    expect(screen.getByText("CONFLICTING_EXIT_RESERVATION")).toBeTruthy();
+    expect(screen.getByText(/external-qqq/)).toBeTruthy();
+    expect(screen.getByText(/remainingQty/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /cancel|replace|quantity/i })).toBeNull();
+  });
+  it("does not display internal active-key errors", () => {
+    mocks.detailError = new Error("Active attention key conflicts with a different condition.");
+    renderPage("/operational-attention?attention=4");
+    expect(screen.getByText("Operational attention details could not be refreshed. Retry shortly.")).toBeTruthy();
+    expect(screen.queryByText(/active attention key/i)).toBeNull();
   });
 });

@@ -260,7 +260,13 @@ describe('closePosition claim-before-write', () => {
     await expect(closePosition(101)).rejects.toMatchObject({ statusCode: 409 });
 
     expect(mocks.placeAlpacaOrder).not.toHaveBeenCalled();
-    expect(mocks.orderIntentUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.orderIntentUpdateMany).toHaveBeenCalledWith({
+      where: { id: 501, status: { in: ['pending', 'submitting'] } },
+      data: {
+        status: 'blocked',
+        blockReason: 'EXIT_VERIFICATION:CONFLICTING_OPEN_SELL_ORDER',
+      },
+    });
     expect(mocks.trackedPositionUpdateMany).toHaveBeenLastCalledWith({
       where: { id: 101, status: 'closing' },
       data: { status: 'open', lastSyncedAt: expect.any(Date) },

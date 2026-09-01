@@ -25,6 +25,14 @@ import { useTradingAccountScope } from "../tradingAccountScope/useTradingAccount
 import type { TrackedPosition } from "./types";
 import classes from "./PositionsPage.module.css";
 
+function closePositionErrorMessage(error: unknown, symbol: string) {
+  const message = error instanceof Error ? error.message : "";
+  if (/active attention key|activeKey|fingerprint/i.test(message)) {
+    return `Close for ${symbol} was safely blocked before broker submission. Refresh and retry after reviewing Operational Attention.`;
+  }
+  return message || `Failed to close ${symbol}.`;
+}
+
 const MISSING_VALUE = "Not available";
 
 function finite(value: number | null | undefined) {
@@ -194,7 +202,7 @@ export function PositionsDataView({ positions, token, selectedTradingAccountId, 
           await closeMutation.mutateAsync({ tradingAccountId: position.tradingAccountId as number, trackedPositionId: position.id });
           notifications.show({ message: `Close order submitted for ${position.symbol}.`, color: "teal" });
         } catch (error) {
-          notifications.show({ message: error instanceof Error ? error.message : `Failed to close ${position.symbol}.`, color: "red" });
+          notifications.show({ message: closePositionErrorMessage(error, position.symbol), color: "red" });
         }
       },
     });

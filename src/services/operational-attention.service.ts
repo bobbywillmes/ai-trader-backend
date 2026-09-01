@@ -83,6 +83,7 @@ type OpenOrObserveArgs = LifecycleLinks & {
   resolutionPolicy: OperationalAttentionResolutionPolicy;
   observedAt?: Date;
   observedSystemEventId?: number | null;
+  orderIntentIsObservationContext?: boolean;
 };
 
 function requireText(value: string, label: string) {
@@ -189,7 +190,8 @@ async function openOrObserveTransaction(args: OpenOrObserveArgs) {
         existing.code !== args.code ||
         existing.source !== args.source ||
         existing.trackedPositionId !== (args.trackedPositionId ?? null) ||
-        existing.orderIntentId !== (args.orderIntentId ?? null) ||
+        (!args.orderIntentIsObservationContext &&
+          existing.orderIntentId !== (args.orderIntentId ?? null)) ||
         existing.brokerOrderId !== (args.brokerOrderId ?? null)
       ) {
         throw new HttpError(409, 'Active attention key conflicts with a different condition.');

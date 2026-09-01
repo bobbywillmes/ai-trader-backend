@@ -6,6 +6,13 @@ import {
 import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
 import type { ReconciliationFinding, ReconciliationFindingCode } from './reconciliation.service.js';
+import type {
+  ReconciliationBrokerOrder,
+  ReconciliationBrokerPosition,
+  ReconciliationTrackedPosition,
+} from './reconciliation.service.js';
+import { isNonterminalBrokerOrderStatus } from './broker-order-lifecycle-status.service.js';
+import { parseExactPositiveDecimal } from './verified-exit-submission.service.js';
 import {
   OPERATIONAL_ATTENTION_CODES,
   OPERATIONAL_ATTENTION_SOURCES,
@@ -87,6 +94,79 @@ export async function projectReconciliationOperationalAttention(args: {
     resolved += 1;
   }
   return { updated, resolved };
+}
+
+export async function resolveClearedExitReservationAttention(args: {
+  tradingAccountId: number;
+  environment: string;
+  trackedPositions: ReconciliationTrackedPosition[];
+  brokerPositions: ReconciliationBrokerPosition[];
+  brokerOrders: ReconciliationBrokerOrder[];
+  runIdentifier: string;
+}) {
+  if (!isAuthoritativeReconciliationEnvironment(args.environment)) return 0;
+  const active = await prisma.operationalAttention.findMany({
+    where: {
+      tradingAccountId: args.tradingAccountId,
+      code: OPERATIONAL_ATTENTION_CODES.CONFLICTING_EXIT_RESERVATION,
+      source: OPERATIONAL_ATTENTION_SOURCES.EXIT_VERIFICATION,
+      status: { in: ['OPEN', 'ACKNOWLEDGED'] },
+    },
+  });
+  let resolved = 0;
+  for (const attention of active) {
+    if (!attention.trackedPositionId) continue;
+    const local = args.trackedPositions.filter(
+      (position) => position.id === attention.trackedPositionId,
+    );
+    if (local.length !== 1 || local[0]!.status !== 'open' || local[0]!.side?.toLowerCase() !== 'long') continue;
+    const localQty = parseExactPositiveDecimal(local[0]!.qty);
+    if (!localQty) continue;
+    const symbol = local[0]!.symbol.trim().toUpperCase();
+    const broker = args.brokerPositions.filter(
+      (position) => position.symbol.trim().toUpperCase() === symbol,
+    );
+    if (broker.length !== 1 || broker[0]!.side?.trim().toLowerCase() !== 'long') continue;
+    const brokerQty = parseExactPositiveDecimal(broker[0]!.qty);
+    if (!brokerQty || brokerQty.canonical !== localQty.canonical) continue;
+    const activeSellReservations = args.brokerOrders.filter(
+      (order) =>
+        order.symbol.trim().toUpperCase() === symbol &&
+        order.side?.trim().toLowerCase() === 'sell' &&
+        isNonterminalBrokerOrderStatus(order.status ?? ''),
+    );
+    if (activeSellReservations.length > 0) continue;
+    const unresolvedIntent = await prisma.orderIntent.findFirst({
+      where: {
+        tradingAccountId: args.tradingAccountId,
+        trackedPositionId: attention.trackedPositionId,
+        source: 'close-position',
+        status: { in: ['pending', 'submitting', 'submitted'] },
+      },
+      select: { id: true },
+    });
+    if (unresolvedIntent) continue;
+    await resolveOperationalAttentionAuthoritatively({
+      id: attention.id,
+      expectedRevision: attention.revision,
+      reason: 'Authoritative reconciliation confirmed that no active sell reservation remains.',
+      evidence: {
+        runIdentifier: args.runIdentifier,
+        tradingAccountId: args.tradingAccountId,
+        trackedPositionId: attention.trackedPositionId,
+        symbol,
+        brokerPositionSide: broker[0]!.side,
+        brokerHeldQty: brokerQty.canonical,
+        localTrackedQty: localQty.canonical,
+        activeSellReservationCount: 0,
+        brokerOpenOrdersReadSucceeded: true,
+        resolvedAt: new Date().toISOString(),
+        resolutionBasis: 'CONFLICTING_EXIT_RESERVATION_ABSENT',
+      },
+    });
+    resolved += 1;
+  }
+  return resolved;
 }
 
 export const RECONCILIATION_ATTENTION_ELIGIBILITY = RULES;

@@ -121,6 +121,28 @@ describe("Open Positions responsive page", () => {
     expect(mocks.mutateAsync).toHaveBeenCalledWith({ tradingAccountId: 7, trackedPositionId: 101 });
   });
 
+  it("shows backend concise close blocks and never exposes internal active-key errors", async () => {
+    renderPage(); resize?.(390); await screen.findByText(/2 open positions/);
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole("button", { name: "More actions" })[0]);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Close SPY position", hidden: true }));
+    const first = mocks.confirm.mock.calls[0][0] as { onConfirm: () => Promise<void> };
+    const concise = "Close blocked: SPY's 6 shares are reserved by an open $800.00 limit sell. Cancel or complete that order, then retry. No additional sell was submitted.";
+    mocks.mutateAsync.mockRejectedValueOnce(new Error(concise));
+    await first.onConfirm();
+    expect(mocks.notify).toHaveBeenLastCalledWith({ message: concise, color: "red" });
+
+    await user.click(screen.getAllByRole("button", { name: "More actions" })[0]);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Close SPY position", hidden: true }));
+    const second = mocks.confirm.mock.calls[1][0] as { onConfirm: () => Promise<void> };
+    mocks.mutateAsync.mockRejectedValueOnce(new Error("Active attention key conflicts with a different condition."));
+    await second.onConfirm();
+    expect(mocks.notify.mock.calls.at(-1)?.[0]).toMatchObject({
+      message: expect.stringContaining("safely blocked before broker submission"),
+    });
+    expect(JSON.stringify(mocks.notify.mock.calls.at(-1)?.[0])).not.toContain("active attention key");
+  });
+
   it("keeps position details and lifecycle drawers mutually exclusive", async () => {
     mocks.lifecycleOpened = true;
     renderPage(); resize?.(390); await screen.findByText("2 open positions · 1 requiring attention");

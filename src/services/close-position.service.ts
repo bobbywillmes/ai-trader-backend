@@ -237,6 +237,13 @@ export async function closePosition(
   } catch (error) {
     if (isExitVerificationBlock(error)) {
       await prisma.$transaction(async (tx) => {
+        await tx.orderIntent.updateMany({
+          where: { id: claim.intent.id, status: { in: ['pending', 'submitting'] } },
+          data: {
+            status: 'blocked',
+            blockReason: `EXIT_VERIFICATION:${String((error.details as Record<string, unknown>).verificationOutcome)}`,
+          },
+        });
         await tx.trackedPosition.updateMany({
           where: { id: claim.position.id, status: 'closing' },
           data: { status: 'open', lastSyncedAt: new Date() },

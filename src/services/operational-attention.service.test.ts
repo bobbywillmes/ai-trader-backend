@@ -107,6 +107,32 @@ describe('operational attention lifecycle', () => {
     expect(state.events).toHaveLength(1);
   });
 
+  it('treats changing attempt intent IDs as observation context when explicitly requested', async () => {
+    tx.orderIntent.findUnique.mockResolvedValue({ tradingAccountId: 2 } as never);
+    const first = await openOrObserveOperationalAttention({
+      ...base,
+      orderIntentId: 272,
+      orderIntentIsObservationContext: true,
+    });
+    const second = await openOrObserveOperationalAttention({
+      ...base,
+      orderIntentId: 273,
+      orderIntentIsObservationContext: true,
+      details: { ...base.details, orderIntentId: 273, correlationId: 'attempt-2' },
+    });
+    expect(second.attention).toMatchObject({ id: first.attention.id, orderIntentId: 272, occurrenceCount: 2 });
+    expect(second.attention.detailsJson).toMatchObject({ orderIntentId: 273, correlationId: 'attempt-2' });
+    expect(state.events).toHaveLength(1);
+  });
+
+  it('still rejects genuinely different durable lifecycle identity', async () => {
+    await openOrObserveOperationalAttention(base);
+    await expect(openOrObserveOperationalAttention({
+      ...base,
+      brokerOrderId: 991,
+    })).rejects.toMatchObject({ statusCode: 409 });
+  });
+
   it('converges concurrent observations on one active episode', async () => {
     const [first, second] = await Promise.all([
       openOrObserveOperationalAttention(base),

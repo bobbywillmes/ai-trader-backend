@@ -22,6 +22,15 @@ Exit evaluation is exposure-driven and continues when account trading is disable
 
 Stable client order IDs, serializable claims, and delivery-uncertainty classifications reduce duplicate submission risk. Every new equity sell now crosses the shared account-scoped `EXIT_SUBMISSION` lock and recovers the stable client ID before inspecting quantity. It then requires an exact full-position match among local intended quantity, Alpaca-held `qty`, and Alpaca `qty_available`, rejects unrelated active sell reservations, rechecks final Live risk-reducing authorization, and submits `position_intent=sell_to_close`. Missing or ambiguous broker evidence fails closed; quantity is never clamped and an available residual is never sold.
 
+A block during recovery or verification occurs before broker delivery: the
+OrderIntent becomes non-pending, the tracked position returns to `open`, and no
+delivery-uncertain event is emitted. Repeated active reservations refresh one
+account/position condition episode even though each attempt has its own intent
+evidence. Authoritative reconciliation may resolve the episode after fresh
+position and open-order reads prove the reservation is gone, but cancellation or
+resolution never submits another sell. The external untracked-order warning
+remains immutable historical evidence.
+
 Local development is structurally observation-only for Live writes because authorization requires production mode and the production-executor role. Database-backed per-account locks coordinate this application, but the application cannot prove that no separate external Live writer exists. Live Operations therefore reports configured deployment policy and never claims exclusive writer ownership.
 
 If Alpaca reports a short equity position, AI Trader blocks further sell automation,
