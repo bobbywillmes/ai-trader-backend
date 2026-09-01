@@ -330,6 +330,23 @@ reconciliation may resolve the matching condition when broker evidence proves it
 has cleared; disappearing exposure is synchronized rather than converted into a
 new sell or invented fill/P&L.
 
+A verification block before the broker POST terminalizes that attempt as
+`blocked`; it is not pending broker delivery and must not leave the position in
+`closing`. Repeated attempts create distinct historical intents but refresh one
+durable condition episode identified by account, tracked position, and condition
+code. Attempt IDs, correlations, timestamps, and broker snapshots are observation
+evidence, not episode identity. If attention persistence fails, the close still
+fails closed and releases its local claim without being reclassified as delivery
+uncertainty.
+
+Fresh authoritative reconciliation can resolve `CONFLICTING_EXIT_RESERVATION`
+without submitting an order only after it proves one positive long broker
+position exactly matches local quantity, no active sell reservation remains, and
+no pending, submitted, or delivery-uncertain AI Trader close remains. External
+untracked-order events remain immutable historical evidence. Cancellation never
+automatically submits a replacement close; a later explicit Close action repeats
+stable-ID recovery and the full verification sequence.
+
 Broker-reported equity shorts are exceptional external exposure. Position sync
 does not normalize them into the managed-long lifecycle, no sell or automatic
 cover is submitted, and reconciliation surfaces dedicated operational evidence.
