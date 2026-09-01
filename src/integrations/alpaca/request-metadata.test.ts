@@ -12,9 +12,10 @@ import {
   getAlpacaOrderByClientOrderId,
   getAlpacaOrderById,
   getOpenAlpacaOrders,
-  placeAlpacaOrder,
+  submitAlpacaEntryOrder,
+  submitVerifiedAlpacaExitOrder,
 } from './orders.adapter.js';
-import { closeAlpacaPosition, getAlpacaPositions } from './positions.adapter.js';
+import { getAlpacaPositionBySymbol, getAlpacaPositions } from './positions.adapter.js';
 import { getAlpacaAccount } from './account.adapter.js';
 import { getAlpacaAccountActivities } from './activities.adapter.js';
 
@@ -31,7 +32,7 @@ describe('Alpaca adapter request metadata', () => {
       'client-abc-123',
       'pending_order_idempotency_check'
     );
-    await closeAlpacaPosition(1, 'SPY', 'position_close');
+    await getAlpacaPositionBySymbol(1, 'SPY', 'manual_admin_action');
 
     expect(mocks.alpacaRequestForAccount).toHaveBeenNthCalledWith(
       1,
@@ -59,7 +60,7 @@ describe('Alpaca adapter request metadata', () => {
       '/v2/positions/SPY',
       expect.objectContaining({
         metadata: expect.objectContaining({
-          endpoint: 'DELETE /v2/positions/:symbol',
+          endpoint: 'GET /v2/positions/:symbol',
         }),
       })
     );
@@ -125,7 +126,7 @@ describe('Alpaca adapter request metadata', () => {
   });
 
   it('classifies critical writes separately from deferable reads', async () => {
-    await placeAlpacaOrder(
+    await submitAlpacaEntryOrder(
       1,
       {
         symbol: 'SPY',
@@ -134,8 +135,7 @@ describe('Alpaca adapter request metadata', () => {
         time_in_force: 'day',
         qty: '1',
         client_order_id: 'client-1',
-      },
-      'pending_order_submission'
+      }
     );
     await getOpenAlpacaOrders(1, 'submitted_order_sync');
 
@@ -166,11 +166,12 @@ describe('Alpaca adapter request metadata', () => {
   });
 
   it('classifies position closes as risk-reducing writes', async () => {
-    await placeAlpacaOrder(
+    await submitVerifiedAlpacaExitOrder(
       1,
       {
         symbol: 'SPY',
         side: 'sell',
+        position_intent: 'sell_to_close',
         type: 'market',
         time_in_force: 'day',
         qty: '1',

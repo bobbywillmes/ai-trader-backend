@@ -30,6 +30,13 @@ sanitized details, and may escalate severity. Severity never silently decreases.
 After resolution, a recurrence creates a new episode with the same fingerprint
 and a new ID.
 
+Durable exit-reservation identity is account-, tracked-position-, source-, and
+condition-code scoped. A newly created OrderIntent ID, correlation ID,
+observation timestamp, evidence revision, or changing broker snapshot is current
+observation context and does not create a second episode. The first linked intent
+and immutable opening event remain reviewable while `detailsJson` advances to the
+latest sanitized attempt evidence.
+
 Opening, escalation, acknowledgement, and resolution create immutable
 SystemEvents in the same transaction. `OperationalAttentionSystemEvent` links
 those events to the episode. Identical repeated observations do not emit event
@@ -112,6 +119,21 @@ run opens or refreshes present fingerprints and resolves only absent
 reconciliation-owned fingerprints. Failed, partial, dry, and observation-only
 Live runs do not resolve or create action-required local episodes. Expected
 observer limitations remain visible as findings and SystemEvent evidence.
+
+The exit-verification producer also owns
+`CONFLICTING_EXIT_RESERVATION`. A complete authoritative reconciliation snapshot
+may resolve that episode only when current broker position and open-order evidence
+proves the tracked long still exists with exact quantity, every active sell
+reservation is absent, and no unresolved AI Trader close attempt remains. A
+failed, stale, ambiguous, short, missing, or quantity-mismatched observation does
+not resolve it. Historical `reconciliation.broker_order_untracked` evidence is
+never deleted when the external order later becomes terminal or absent.
+
+A pre-submit verification block is a definitely-not-delivered attempt. It is
+terminalized and releases the local closing claim even if attention refresh
+fails. Broker-delivery uncertainty remains reserved for a POST that was actually
+attempted. Resolving attention or observing external cancellation never triggers
+another sell; the operator must initiate a later explicit close.
 
 Account worker attention is also consequence-aware. A failing or stale
 exposure-critical worker creates attention only when persisted local open

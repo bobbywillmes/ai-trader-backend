@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   orderIntentFindMany: vi.fn(),
   positionExitStateFindMany: vi.fn(),
   projectReconciliationOperationalAttention: vi.fn(),
+  resolveClearedExitReservationAttention: vi.fn(async () => 0),
+  recoverDeterministicallyAbsentStaleCloseIntents: vi.fn(async () => new Set<number>()),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -68,6 +70,10 @@ vi.mock('./lifecycle-account-eligibility.service.js', () => ({
 }));
 vi.mock('./reconciliation-operational-attention.service.js', () => ({
   projectReconciliationOperationalAttention: mocks.projectReconciliationOperationalAttention,
+  resolveClearedExitReservationAttention: mocks.resolveClearedExitReservationAttention,
+}));
+vi.mock('./stale-close-intent-recovery.service.js', () => ({
+  recoverDeterministicallyAbsentStaleCloseIntents: mocks.recoverDeterministicallyAbsentStaleCloseIntents,
 }));
 
 import {
@@ -831,6 +837,7 @@ describe('expanded account-scoped reconciliation findings', () => {
       expect.arrayContaining([
         'position_quantity_mismatch',
         'position_side_mismatch',
+        'unexpected_short_position',
         'local_nonterminal_order_missing_at_broker',
         'broker_order_untracked',
       ])

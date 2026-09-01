@@ -3,6 +3,7 @@ import {
   Badge,
   Button,
   Card,
+  Code,
   Group,
   Modal,
   Pagination,
@@ -39,6 +40,12 @@ const colors: Record<AttentionSeverity, string> = {
 };
 const stamp = (value: string | null) =>
   value ? new Date(value).toLocaleString() : "Not recorded";
+const detailErrorMessage = (error: unknown) => {
+  const message = error instanceof Error ? error.message : "";
+  return /active attention key|activeKey|fingerprint/i.test(message)
+    ? "Operational attention details could not be refreshed. Retry shortly."
+    : message || "Operational attention details could not be loaded.";
+};
 function Episode({
   item,
   review,
@@ -201,7 +208,7 @@ export function OperationalAttentionPage() {
           {detail.isLoading ? (
             <DataState state="loading" />
           ) : detail.isError ? (
-            <Alert color="red">{detail.error.message}</Alert>
+            <Alert color="red">{detailErrorMessage(detail.error)}</Alert>
           ) : (
             detail.data && (
               <>
@@ -212,6 +219,10 @@ export function OperationalAttentionPage() {
                   <Badge>{detail.data.status}</Badge>
                 </Group>
                 <Text>{detail.data.message}</Text>
+                <Text size="sm">
+                  <b>Condition code:</b>{" "}
+                  <Code>{detail.data.code}</Code>
+                </Text>
                 <Text size="sm">
                   <b>Account:</b> {detail.data.tradingAccount.displayName} ·{" "}
                   {detail.data.tradingAccount.environment}
@@ -289,6 +300,8 @@ export function OperationalAttentionPage() {
                     <Text size="sm">{event.systemEvent.message}</Text>
                   </Card>
                 ))}
+                <Title order={4}>Current structured evidence</Title>
+                <Code block>{JSON.stringify(detail.data.detailsJson, null, 2)}</Code>
               </>
             )
           )}

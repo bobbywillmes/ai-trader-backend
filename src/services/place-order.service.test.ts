@@ -386,7 +386,7 @@ describe('place order service entry decision attribution', () => {
     expect(createdInput).not.toHaveProperty('notional');
   });
 
-  it('does not apply entry runtime sizing to exit subscription orders', async () => {
+  it('rejects generic exit submission before creating an OrderIntent', async () => {
     const exitInput = {
       ...resolvedInput,
       side: 'sell' as const,
@@ -396,21 +396,15 @@ describe('place order service entry decision attribution', () => {
     };
     mocks.resolveSubscriptionOrderInput.mockResolvedValue(exitInput);
 
-    await submitOrder({
+    await expect(submitOrder({
       tradingAccountSubscriptionId: 25,
       subscriptionKey: 'spy_dip_core',
       signalType: 'exit',
       extendedHours: false,
-    });
+    })).rejects.toThrow('verified tracked-position exit boundary');
 
     expect(mocks.resolveRuntimeAccountSubscriptionSizing).not.toHaveBeenCalled();
-    expect(mocks.createOrderIntent).toHaveBeenCalledWith(
-      exitInput,
-      'api',
-      'client-101',
-      1,
-      {}
-    );
+    expect(mocks.createOrderIntent).not.toHaveBeenCalled();
   });
 
   it.each([

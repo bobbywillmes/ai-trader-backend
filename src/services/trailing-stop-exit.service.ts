@@ -8,9 +8,9 @@ import { prisma } from '../db/prisma.js';
 import type { AlpacaOrder } from '../integrations/alpaca/alpaca.types.js';
 import {
   getAlpacaOrderByClientOrderId,
-  placeAlpacaOrder,
 } from '../integrations/alpaca/orders.adapter.js';
 import { createSystemEvent } from './system-event.service.js';
+import { submitVerifiedExit } from './verified-exit-submission.service.js';
 import {
   ensurePositionExitState,
   markTrailingStopOrderSubmitted,
@@ -264,6 +264,9 @@ export async function submitTrailingStopExitOrder(
       `TrackedPosition ${position.id} does not belong to TradingAccount ${tradingAccountId}; refusing trailing-stop broker access.`
     );
   }
+  if (position.side.toLowerCase() !== 'long') {
+    throw new Error('AI Trader does not automatically cover or manage short exposure.');
+  }
   if (
     !position.tradingAccountSubscription ||
     position.tradingAccountSubscription.tradingAccountId !== tradingAccountId ||
@@ -378,7 +381,7 @@ export async function submitTrailingStopExitOrder(
         data: {
           source: 'exit-evaluator',
           symbol: position.symbol,
-          side: position.side === 'short' ? 'buy' : 'sell',
+          side: 'sell',
           orderType: 'trailing_stop',
           timeInForce: TRAILING_STOP_TIME_IN_FORCE,
           qty: position.qty,
@@ -469,23 +472,33 @@ export async function submitTrailingStopExitOrder(
     };
   }
 
-  const payload = {
-    symbol: position.symbol,
-    side: position.side === 'short' ? 'buy' as const : 'sell' as const,
-    type: 'trailing_stop' as const,
-    time_in_force: TRAILING_STOP_TIME_IN_FORCE,
-    qty,
-    trail_percent: String(trailingStopPct),
-    client_order_id: clientOrderId,
-  };
-
   let created;
   try {
-    created = await placeAlpacaOrder(
+    const result = await submitVerifiedExit({
       tradingAccountId,
-      payload,
-      'protective_order_submission'
-    );
+      trackedPositionId: position.id,
+      orderIntentId: claim.intent.id,
+      securityId: position.securityId,
+      symbol: position.symbol,
+      localTrackedQty: position.qty,
+      intendedQty: qty,
+      clientOrderId,
+      correlationId: `trailing-stop:${exitState.id}`,
+      order: {
+        type: 'trailing_stop',
+        timeInForce: TRAILING_STOP_TIME_IN_FORCE,
+        trailPercent: String(trailingStopPct),
+      },
+    });
+    if (result.outcome === 'RECOVERED_LOCAL') {
+      return {
+        submitted: false,
+        reason: 'already_persisted',
+        brokerOrderId: String(result.brokerOrderId),
+        clientOrderId,
+      };
+    }
+    created = result.order;
   } catch (error) {
     let classification =
       error instanceof BrokerWriteDeliveryError

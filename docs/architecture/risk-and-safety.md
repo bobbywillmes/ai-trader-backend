@@ -298,6 +298,72 @@ operator review and do not replace risk-gate enforcement.
 
 The backend records explicit exit attention states for protective trailing-stop failures.
 
+### Long-only equity sell invariant
+
+AI Trader is structurally long-only: it must never submit an equity order intended
+to open or increase short exposure. Every equity sell is a full-position,
+risk-reducing exit and is submitted with Alpaca `position_intent=sell_to_close`.
+Generic sell-side entries, `sell_to_open`, unverified sells, partial exits, and
+automatic buy-to-cover behavior are unsupported.
+
+All new equity sells cross `VerifiedExitSubmissionService` under the account-scoped
+`EXIT_SUBMISSION` advisory lock. Inside that lock the service:
+
+1. Loads the stable client-order ID and recovers a matching local or Alpaca order.
+2. Only when no matching order exists, reads the exact account's current broker
+   position and open orders.
+3. Requires a positive `long` position whose held `qty`, `qty_available`, local
+   tracked quantity, and intended full-close quantity are exactly equal using
+   decimal-safe comparison.
+4. Rejects every unrelated active sell reservation. Remaining reservation is
+   calculated from `qty - filled_qty` using the shared normalized terminal-order
+   taxonomy; ambiguous order state fails closed.
+5. Revalidates final Live `RISK_REDUCING_WRITE` authorization immediately before
+   the broker POST and submits only `sell_to_close`.
+
+The service never clamps to broker availability, sells a residual, cancels or
+replaces a conflicting order, or manufactures partial-exit behavior. Blocked
+verification creates sanitized immutable `SystemEvent` evidence and opens or
+refreshes one account-scoped, authoritative-only `OperationalAttention` episode.
+A later attempt always repeats the complete fresh verification. Authoritative
+reconciliation may resolve the matching condition when broker evidence proves it
+has cleared; disappearing exposure is synchronized rather than converted into a
+new sell or invented fill/P&L.
+
+A verification block before the broker POST terminalizes that attempt as
+`blocked`; it is not pending broker delivery and must not leave the position in
+`closing`. Repeated attempts create distinct historical intents but refresh one
+durable condition episode identified by account, tracked position, and condition
+code. Attempt IDs, correlations, timestamps, and broker snapshots are observation
+evidence, not episode identity. If attention persistence fails, the close still
+fails closed and releases its local claim without being reclassified as delivery
+uncertainty.
+
+Fresh authoritative reconciliation can resolve `CONFLICTING_EXIT_RESERVATION`
+without submitting an order only after it proves one positive long broker
+position exactly matches local quantity, no active sell reservation remains, and
+no pending, submitted, or delivery-uncertain AI Trader close remains. External
+untracked-order events remain immutable historical evidence. Cancellation never
+automatically submits a replacement close; a later explicit Close action repeats
+stable-ID recovery and the full verification sequence.
+
+Broker-reported equity shorts are exceptional external exposure. Position sync
+does not normalize them into the managed-long lifecycle, no sell or automatic
+cover is submitted, and reconciliation surfaces dedicated operational evidence.
+Authoritative Live evidence is `CRITICAL`; Paper is `ERROR`; an observation-only
+Live deployment states that it cannot correct production exposure.
+
+The GET/recovery/verification/POST sequence cannot be atomic with Alpaca. The
+account lock coordinates AI Trader writers only. Stable IDs, recovery-first
+ordering, fresh held/available quantities, open-order inspection,
+`sell_to_close`, Alpaca availability enforcement, and delivery classification
+prevent AI Trader from intentionally sending a naked or excessive sell, but do
+not prove exclusive ownership against a simultaneous external writer.
+
+The operator workflow to **Close remaining broker position** remains separately
+deferred. Operational Attention remains read-only: it adds no cancel, replace,
+close, approval, or arming control.
+
 `PositionExitState` can mark `attentionRequired` when a protective trailing-stop
 submission is blocked or uncertain, or when its broker order becomes
 `canceled`, `expired`, `rejected`, `replaced`, `done_for_day`, or `calculated`.

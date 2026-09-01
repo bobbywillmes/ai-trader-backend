@@ -49,6 +49,49 @@ function averageFillPrice(fills: BrokerActivity[]) {
   return notional / totalQty;
 }
 
+type ExactQuantity = { coefficient: bigint; scale: number };
+
+function parseExactQuantity(value: number | null): ExactQuantity | null {
+  if (value === null || !Number.isFinite(value) || value < 0) return null;
+  const text = String(value);
+  if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(text)) return null;
+  const [whole, fraction = ''] = text.split('.');
+  const trimmedFraction = fraction.replace(/0+$/, '');
+  return {
+    coefficient: BigInt(`${whole}${trimmedFraction}`),
+    scale: trimmedFraction.length,
+  };
+}
+
+function quantitiesExactlyEqual(values: Array<number | null>, target: number) {
+  const parsedTarget = parseExactQuantity(Math.abs(target));
+  const parsedValues = values.map(parseExactQuantity);
+  if (!parsedTarget || parsedValues.some((value) => value === null)) return false;
+  const quantities = parsedValues as ExactQuantity[];
+  const scale = Math.max(
+    parsedTarget.scale,
+    ...quantities.map((value) => value.scale)
+  );
+  const total = quantities.reduce(
+    (coefficient, value) =>
+      coefficient + value.coefficient * 10n ** BigInt(scale - value.scale),
+    0n
+  );
+  const expected =
+    parsedTarget.coefficient * 10n ** BigInt(scale - parsedTarget.scale);
+  return total === expected;
+}
+
+function uniqueActivities(activities: BrokerActivity[]) {
+  const seen = new Set<string>();
+  return activities.filter((activity) => {
+    const key = activity.activityId || `record:${activity.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function sumFillQty(fills: BrokerActivity[]) {
   const total = fills.reduce((sum, fill) => sum + Math.abs(fill.qty ?? 0), 0);
   return total > 0 ? total : null;
@@ -205,10 +248,11 @@ function buildCycleSummary(
 ) {
   const entrySide = getEntrySide(position.side);
   const closeSide = getCloseSide(position.side);
-  const entryFills = position.brokerActivities.filter(
+  const attributedActivities = uniqueActivities(position.brokerActivities);
+  const entryFills = attributedActivities.filter(
     (activity) => activity.activityType === 'FILL' && activity.side === entrySide
   );
-  const closeFills = position.brokerActivities.filter(
+  const closeFills = attributedActivities.filter(
     (activity) => activity.activityType === 'FILL' && activity.side === closeSide
   );
   const avgEntryPrice =
@@ -225,12 +269,25 @@ function buildCycleSummary(
     ? readPayloadNumber(closedEvent.payloadJson, 'closeQty')
     : null;
   const avgExitPrice = averageFillPrice(closeFills) ?? eventClosePrice;
-  const realizedPnl = getRealizedPnl({
-    side: position.side,
-    qty: position.qty,
-    avgEntryPrice,
-    avgExitPrice,
-  });
+  const fillCloseQty = sumFillQty(closeFills);
+  const attributedCloseQty = fillCloseQty ?? eventCloseQty;
+  const lifecycleComplete =
+    position.status === 'closed' &&
+    (fillCloseQty !== null
+      ? quantitiesExactlyEqual(
+          closeFills.map((fill) => Math.abs(fill.qty ?? 0)),
+          position.qty
+        )
+      : eventCloseQty !== null &&
+        quantitiesExactlyEqual([Math.abs(eventCloseQty)], position.qty));
+  const realizedPnl = lifecycleComplete
+    ? getRealizedPnl({
+        side: position.side,
+        qty: position.qty,
+        avgEntryPrice,
+        avgExitPrice,
+      })
+    : null;
 
   return {
     id: position.id,
@@ -246,17 +303,19 @@ function buildCycleSummary(
     avgEntryPrice,
     avgExitPrice,
     realizedPnl,
-    returnPct: getReturnPct({
-      side: position.side,
-      avgEntryPrice,
-      avgExitPrice,
-    }),
+    returnPct: lifecycleComplete
+      ? getReturnPct({
+          side: position.side,
+          avgEntryPrice,
+          avgExitPrice,
+        })
+      : null,
     holdingDurationMs: getHoldingDurationMs({
       openedAt: position.openedAt,
       closedAt: position.closedAt,
     }),
     entryFillQty: sumFillQty(entryFills),
-    closeFillQty: sumFillQty(closeFills) ?? eventCloseQty,
+    closeFillQty: attributedCloseQty,
     strategy: snapshotStrategy
       ? {
           id: readSnapshotNumber(snapshotStrategy, 'id'),

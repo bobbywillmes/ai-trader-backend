@@ -471,10 +471,22 @@ export async function processPendingOrdersForAccount(
         );
       }
 
+      if (intent.side !== 'buy' || rawInput.signalType === 'exit') {
+        await prisma.orderIntent.update({
+          where: { id: intent.id },
+          data: {
+            status: 'blocked',
+            blockReason: 'LONG_ONLY_SELL_REQUIRES_VERIFIED_EXIT_BOUNDARY',
+          },
+        });
+        blocked += 1;
+        continue;
+      }
+
       const resolvedInput: BrokerOrderSubmissionInput = {
         ...rawInput,
         symbol: intent.symbol,
-        side: intent.side as 'buy' | 'sell',
+        side: 'buy',
         orderType: intent.orderType as 'market' | 'limit',
         timeInForce: intent.timeInForce as 'day' | 'gtc',
         tradingAccountId: intent.tradingAccountId,

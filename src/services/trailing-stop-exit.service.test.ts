@@ -52,6 +52,12 @@ vi.mock('../integrations/alpaca/orders.adapter.js', () => ({
   getAlpacaOrderByClientOrderId: mocks.getAlpacaOrderByClientOrderId,
   placeAlpacaOrder: mocks.placeAlpacaOrder,
 }));
+vi.mock('./verified-exit-submission.service.js', () => ({
+  submitVerifiedExit: async () => ({
+    outcome: 'SUBMITTED',
+    order: await mocks.placeAlpacaOrder(),
+  }),
+}));
 
 vi.mock('./system-event.service.js', () => ({
   createSystemEvent: mocks.createSystemEvent,

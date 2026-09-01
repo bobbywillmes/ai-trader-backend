@@ -23,21 +23,25 @@ export async function getAlpacaPositions(
     },
   });
 }
-
-export async function closeAlpacaPosition(
+export async function getAlpacaPositionBySymbol(
   tradingAccountId: number,
   symbol: string,
-  operation: AlpacaApiOperation = 'position_close'
-) {
-  return alpacaRequestForAccount(tradingAccountId, `/v2/positions/${symbol}`, {
-    method: 'DELETE',
-    metadata: {
-      operation,
-      endpoint: 'DELETE /v2/positions/:symbol',
-      method: 'DELETE',
-      requestClass: 'critical_write',
-      operationClass: 'RISK_REDUCING_WRITE',
-      deferDuringRateLimit: false,
-    },
-  });
+  operation: AlpacaApiOperation = 'tracked_position_sync'
+): Promise<AlpacaPosition | null> {
+  return alpacaRequestForAccount<AlpacaPosition>(
+    tradingAccountId,
+    `/v2/positions/${encodeURIComponent(symbol.toUpperCase())}`,
+    {
+      returnNullOn404: true,
+      metadata: {
+        operation,
+        endpoint: 'GET /v2/positions/:symbol',
+        method: 'GET',
+        requestClass: 'synchronization_read',
+        operationClass: 'LIFECYCLE_READ',
+        deferDuringRateLimit: false,
+      },
+    }
+  );
 }
+

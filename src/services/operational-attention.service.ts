@@ -16,6 +16,8 @@ export const OPERATIONAL_ATTENTION_CODES = {
   EXIT_QUANTITY_MISMATCH: 'EXIT_QUANTITY_MISMATCH',
   BROKER_EXCESS_EXPOSURE: 'BROKER_EXCESS_EXPOSURE',
   BROKER_EXPOSURE_UNVERIFIABLE: 'BROKER_EXPOSURE_UNVERIFIABLE',
+  CONFLICTING_EXIT_RESERVATION: 'CONFLICTING_EXIT_RESERVATION',
+  UNEXPECTED_SHORT_POSITION: 'UNEXPECTED_SHORT_POSITION',
   PROTECTIVE_EXIT_UNAVAILABLE: 'PROTECTIVE_EXIT_UNAVAILABLE',
   LIFECYCLE_REVIEW_REQUIRED: 'LIFECYCLE_REVIEW_REQUIRED',
   ACCOUNT_WORKER_UNHEALTHY: 'ACCOUNT_WORKER_UNHEALTHY',
@@ -81,6 +83,7 @@ type OpenOrObserveArgs = LifecycleLinks & {
   resolutionPolicy: OperationalAttentionResolutionPolicy;
   observedAt?: Date;
   observedSystemEventId?: number | null;
+  orderIntentIsObservationContext?: boolean;
 };
 
 function requireText(value: string, label: string) {
@@ -187,7 +190,8 @@ async function openOrObserveTransaction(args: OpenOrObserveArgs) {
         existing.code !== args.code ||
         existing.source !== args.source ||
         existing.trackedPositionId !== (args.trackedPositionId ?? null) ||
-        existing.orderIntentId !== (args.orderIntentId ?? null) ||
+        (!args.orderIntentIsObservationContext &&
+          existing.orderIntentId !== (args.orderIntentId ?? null)) ||
         existing.brokerOrderId !== (args.brokerOrderId ?? null)
       ) {
         throw new HttpError(409, 'Active attention key conflicts with a different condition.');

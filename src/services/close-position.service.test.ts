@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   getAlpacaOrderByClientOrderId: vi.fn(),
   createSystemEvent: vi.fn(),
   forceAfterBrokerPositionWrite: vi.fn(),
+  submitVerifiedExit: vi.fn(),
 }));
 
 const transactionClient = {
@@ -43,6 +44,9 @@ vi.mock('../integrations/alpaca/orders.adapter.js', () => ({
   placeAlpacaOrder: mocks.placeAlpacaOrder,
   getAlpacaOrderByClientOrderId: mocks.getAlpacaOrderByClientOrderId,
 }));
+vi.mock('./verified-exit-submission.service.js', () => ({
+  submitVerifiedExit: mocks.submitVerifiedExit,
+}));
 vi.mock('./system-event.service.js', () => ({
   createSystemEvent: mocks.createSystemEvent,
 }));
@@ -54,6 +58,7 @@ vi.mock('./adaptive-polling.service.js', () => ({
 
 import { closeFailureSeverity, closePosition } from './close-position.service.js';
 import { BrokerWriteDeliveryError } from '../errors/broker-write-delivery-error.js';
+import { HttpError } from '../errors/http-error.js';
 
 describe('close failure severity', () => {
   it('distinguishes protection, rejection, and delivery uncertainty', () => {
@@ -111,6 +116,17 @@ describe('closePosition claim-before-write', () => {
       side: 'sell',
       status: 'accepted',
     });
+    mocks.submitVerifiedExit.mockImplementation(async () => {
+      try {
+        return { outcome: 'SUBMITTED', order: await mocks.placeAlpacaOrder() };
+      } catch (error) {
+        if (error instanceof BrokerWriteDeliveryError && error.classification === 'BROKER_REJECTED') {
+          const recovered = await mocks.getAlpacaOrderByClientOrderId(31, 'ai-exit-close-31-101', 'pending_order_idempotency_check');
+          if (recovered) return { outcome: 'RECOVERED_BROKER', order: recovered };
+        }
+        throw error;
+      }
+    });
     mocks.getAlpacaOrderByClientOrderId.mockResolvedValue(null);
   });
 
@@ -135,16 +151,13 @@ describe('closePosition claim-before-write', () => {
         trackedPositionId: 101,
       }),
     });
-    expect(mocks.placeAlpacaOrder).toHaveBeenCalledWith(
-      31,
-      expect.objectContaining({
-        symbol: 'AAPL',
-        side: 'sell',
-        qty: '2',
-        client_order_id: 'ai-exit-close-31-101',
-      }),
-      'position_close'
-    );
+    expect(mocks.submitVerifiedExit).toHaveBeenCalledWith(expect.objectContaining({
+      tradingAccountId: 31,
+      trackedPositionId: 101,
+      intendedQty: 2,
+      clientOrderId: 'ai-exit-close-31-101',
+      order: { type: 'market', timeInForce: 'day' },
+    }));
     expect(
       mocks.trackedPositionUpdateMany.mock.invocationCallOrder[0]
     ).toBeLessThan(mocks.placeAlpacaOrder.mock.invocationCallOrder[0]!);
@@ -236,6 +249,31 @@ describe('closePosition claim-before-write', () => {
         severity: 'ERROR',
       })
     );
+  });
+
+  it('releases a pre-submit verification block without recording delivery uncertainty', async () => {
+    mocks.submitVerifiedExit.mockRejectedValue(new HttpError(409, 'existing sell reserves shares', {
+      verificationOutcome: 'CONFLICTING_OPEN_SELL_ORDER',
+      authorizationResult: 'NOT_ATTEMPTED',
+    }));
+
+    await expect(closePosition(101)).rejects.toMatchObject({ statusCode: 409 });
+
+    expect(mocks.placeAlpacaOrder).not.toHaveBeenCalled();
+    expect(mocks.orderIntentUpdateMany).toHaveBeenCalledWith({
+      where: { id: 501, status: { in: ['pending', 'submitting'] } },
+      data: {
+        status: 'blocked',
+        blockReason: 'EXIT_VERIFICATION:CONFLICTING_OPEN_SELL_ORDER',
+      },
+    });
+    expect(mocks.trackedPositionUpdateMany).toHaveBeenLastCalledWith({
+      where: { id: 101, status: 'closing' },
+      data: { status: 'open', lastSyncedAt: expect.any(Date) },
+    });
+    expect(mocks.createSystemEvent).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: 'position.close_submission_uncertain',
+    }));
   });
 
   it.each([
