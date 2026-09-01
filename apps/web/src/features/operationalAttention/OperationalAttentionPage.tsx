@@ -23,7 +23,10 @@ import {
   useAttentionDetail,
   useAttentionList,
   useManualResolveAttention,
+  useRemainingExposureClosePreview,
+  useExecuteRemainingExposureClose,
 } from "./hooks";
+import { RemainingExposureClosePanel } from "./RemainingExposureClosePanel";
 import type { AttentionSeverity, OperationalAttention } from "./types";
 import {
   applyAttentionStatusFilter,
@@ -98,6 +101,8 @@ export function OperationalAttentionPage() {
   const detail = useAttentionDetail(token, detailId);
   const acknowledge = useAcknowledgeAttention(token);
   const resolve = useManualResolveAttention(token);
+  const correctivePreview = useRemainingExposureClosePreview(token, detailId);
+  const correctiveClose = useExecuteRemainingExposureClose(token);
   useEffect(() => {
     if (!statusState.invalid) return;
     const next = new URLSearchParams(params);
@@ -130,7 +135,7 @@ export function OperationalAttentionPage() {
           <div>
             <Title order={2}>Operational Attention</Title>
             <Text c="dimmed" size="sm">
-            Account-scoped operational conditions and their history.
+              Account-scoped operational conditions and their history.
             </Text>
           </div>
           <TradingAccountScopeSelector
@@ -226,6 +231,31 @@ export function OperationalAttentionPage() {
                 <Text size="sm">
                   <b>Account:</b> {detail.data.tradingAccount.displayName} ·{" "}
                   {detail.data.tradingAccount.environment}
+                </Text>
+                {correctivePreview.data && (
+                  <RemainingExposureClosePanel
+                    preview={correctivePreview.data}
+                    pending={correctiveClose.isPending}
+                    error={
+                      correctiveClose.error instanceof Error
+                        ? correctiveClose.error.message
+                        : null
+                    }
+                    onConfirm={() =>
+                      correctiveClose.mutate({
+                        id: correctivePreview.data!.attentionId,
+                        revision: correctivePreview.data!.revision,
+                        fingerprint: correctivePreview.data!.previewFingerprint,
+                      })
+                    }
+                  />
+                )}
+                <Text size="sm">
+                  <b>Occurrences:</b> {detail.data.occurrenceCount}
+                  <br />
+                  {detail.data.occurrenceCount === 1
+                    ? "This condition was observed once."
+                    : `${detail.data.occurrenceCount - 1} repeated ${detail.data.occurrenceCount === 2 ? "observation was" : "observations were"} aggregated. Most recently observed at ${stamp(detail.data.lastObservedAt)}.`}
                 </Text>
                 <Text size="sm">
                   <b>First observed:</b> {stamp(detail.data.firstObservedAt)}

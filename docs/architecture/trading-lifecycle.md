@@ -603,9 +603,14 @@ Why this matters:
 - Gives Alpaca a stable idempotency key.
 
 The order worker must reuse the `clientOrderId` stored on the `OrderIntent`. It should not generate a fresh client order ID during broker submission.
+
 # Phase 5A readiness evidence
 
 Persisted Live Trading Account readiness assessments are implemented. They
 provide immutable, short-lived read-only evidence for a later activation
 decision. Live activation, write authorization, lifecycle exercises, and the
 first Live entry are not implemented.
+
+## Partial exit recovery
+
+When known attributed exit fills precede a corrective remainder fill, trade-cycle aggregation uses the complete attributed fill set. Final realized P&L and return are withheld until attributed close quantity equals canonical tracked quantity. See [Remaining Broker Exposure Close](remaining-broker-exposure-close.md).

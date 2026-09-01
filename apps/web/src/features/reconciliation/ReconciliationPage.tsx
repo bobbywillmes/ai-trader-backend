@@ -42,7 +42,15 @@ function AccountIdentity({ account }: { account: TradingAccount }) {
 }
 
 function Metric({ label, value }: { label: string; value: string | number }) {
-  return <Card withBorder radius="md" className={classes.metric}><Text size="xs" c="dimmed">{label}</Text><Text fw={800} size="xl">{value}</Text></Card>;
+  const truthfulLabel =
+    label === "Events created"
+      ? "Finding events"
+      : label === "Attention updates"
+        ? "Persisted attention effects"
+        : label === "Duplicates skipped"
+          ? "Duplicate finding events skipped"
+          : label;
+  return <Card withBorder radius="md" className={classes.metric}><Text size="xs" c="dimmed">{truthfulLabel}</Text><Text fw={800} size="xl">{value}</Text></Card>;
 }
 
 function Details({ finding, result }: { finding: ReconciliationFinding; result: RunReconciliationResult }) {

@@ -24,6 +24,8 @@ export type RunReconciliationResult = {
   findings: ReconciliationFinding[];
   eventCount: number;
   attentionUpdateCount: number;
+  legacyExitStateProjectionCount: number;
+  operationalAttentionTransitionCount: number;
   persistedEvents: boolean;
   persistedAttention: boolean;
   skippedDuplicateEventCount: number;

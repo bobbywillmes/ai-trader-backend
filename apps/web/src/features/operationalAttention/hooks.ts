@@ -1,8 +1,98 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { acknowledgeAttention, getOperationalAttention, getOperationalAttentionSummary, listOperationalAttention, manuallyResolveAttention } from "./api";
-export const attentionKeys = { all: ["operationalAttention"] as const, list: (search: string) => ["operationalAttention", "list", search] as const, summary: (account: string) => ["operationalAttention", "summary", account] as const, detail: (id: number) => ["operationalAttention", "detail", id] as const };
-export function useAttentionList(token: string | null, search: string) { return useQuery({ queryKey: attentionKeys.list(search), queryFn: () => listOperationalAttention(token!, search), enabled: Boolean(token), staleTime: 30_000 }); }
-export function useAttentionSummary(token: string | null, account: string, enabled = true) { return useQuery({ queryKey: attentionKeys.summary(account), queryFn: () => getOperationalAttentionSummary(token!, account), enabled: Boolean(token) && enabled, staleTime: 30_000, refetchInterval: 60_000 }); }
-export function useAttentionDetail(token: string | null, id: number | null) { return useQuery({ queryKey: attentionKeys.detail(id ?? 0), queryFn: () => getOperationalAttention(token!, id!), enabled: Boolean(token && id) }); }
-export function useAcknowledgeAttention(token: string | null) { const client = useQueryClient(); return useMutation({ mutationFn: ({ id, revision }: { id: number; revision: number }) => acknowledgeAttention(token!, id, revision), onSuccess: () => client.invalidateQueries({ queryKey: attentionKeys.all }) }); }
-export function useManualResolveAttention(token: string | null) { const client = useQueryClient(); return useMutation({ mutationFn: ({ id, revision, reason }: { id: number; revision: number; reason: string }) => manuallyResolveAttention(token!, id, revision, reason), onSuccess: () => client.invalidateQueries({ queryKey: attentionKeys.all }) }); }
+import {
+  acknowledgeAttention,
+  executeRemainingExposureClose,
+  getOperationalAttention,
+  getOperationalAttentionSummary,
+  getRemainingExposureClosePreview,
+  listOperationalAttention,
+  manuallyResolveAttention,
+} from "./api";
+export const attentionKeys = {
+  all: ["operationalAttention"] as const,
+  list: (search: string) => ["operationalAttention", "list", search] as const,
+  summary: (account: string) =>
+    ["operationalAttention", "summary", account] as const,
+  detail: (id: number) => ["operationalAttention", "detail", id] as const,
+};
+export function useAttentionList(token: string | null, search: string) {
+  return useQuery({
+    queryKey: attentionKeys.list(search),
+    queryFn: () => listOperationalAttention(token!, search),
+    enabled: Boolean(token),
+    staleTime: 30_000,
+  });
+}
+export function useAttentionSummary(
+  token: string | null,
+  account: string,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: attentionKeys.summary(account),
+    queryFn: () => getOperationalAttentionSummary(token!, account),
+    enabled: Boolean(token) && enabled,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+}
+export function useAttentionDetail(token: string | null, id: number | null) {
+  return useQuery({
+    queryKey: attentionKeys.detail(id ?? 0),
+    queryFn: () => getOperationalAttention(token!, id!),
+    enabled: Boolean(token && id),
+  });
+}
+export function useAcknowledgeAttention(token: string | null) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, revision }: { id: number; revision: number }) =>
+      acknowledgeAttention(token!, id, revision),
+    onSuccess: () => client.invalidateQueries({ queryKey: attentionKeys.all }),
+  });
+}
+export function useManualResolveAttention(token: string | null) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      revision,
+      reason,
+    }: {
+      id: number;
+      revision: number;
+      reason: string;
+    }) => manuallyResolveAttention(token!, id, revision, reason),
+    onSuccess: () => client.invalidateQueries({ queryKey: attentionKeys.all }),
+  });
+}
+export function useRemainingExposureClosePreview(
+  token: string | null,
+  id: number | null,
+) {
+  return useQuery({
+    queryKey: [
+      ...attentionKeys.detail(id ?? 0),
+      "remaining-exposure-close-preview",
+    ],
+    queryFn: () => getRemainingExposureClosePreview(token!, id!),
+    enabled: Boolean(token && id),
+    staleTime: 10_000,
+    refetchInterval: 20_000,
+  });
+}
+export function useExecuteRemainingExposureClose(token: string | null) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      revision,
+      fingerprint,
+    }: {
+      id: number;
+      revision: number;
+      fingerprint: string;
+    }) => executeRemainingExposureClose(token!, id, revision, fingerprint),
+    onSuccess: () => client.invalidateQueries({ queryKey: attentionKeys.all }),
+  });
+}

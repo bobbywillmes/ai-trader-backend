@@ -1,32 +1,36 @@
-import { PlatformRole } from '@prisma/client';
+import { PlatformRole } from "@prisma/client";
 
 export { PlatformRole };
 
 export enum PlatformPermission {
-  SYSTEM_SETTINGS_READ = 'system.settings.read',
-  SYSTEM_SETTINGS_WRITE = 'system.settings.write',
-  SYSTEM_SECURITY_READ = 'system.security.read',
-  SYSTEM_SECURITY_WRITE = 'system.security.write',
-  TRADING_ACCOUNT_READ = 'tradingAccount.read',
-  TRADING_ACCOUNT_WRITE = 'tradingAccount.write',
-  TRADING_ACCOUNT_RISK_WRITE = 'tradingAccount.risk.write',
-  SUBSCRIPTION_READ = 'subscription.read',
-  SUBSCRIPTION_WRITE = 'subscription.write',
-  STRATEGY_READ = 'strategy.read',
-  STRATEGY_WRITE = 'strategy.write',
-  EXIT_PROFILE_READ = 'exitProfile.read',
-  EXIT_PROFILE_WRITE = 'exitProfile.write',
-  REPORTS_READ = 'reports.read',
-  SYSTEM_EVENTS_READ = 'systemEvents.read',
-  OPERATIONAL_ATTENTION_READ = 'operationalAttention.read',
-  OPERATIONAL_ATTENTION_ACKNOWLEDGE = 'operationalAttention.acknowledge',
-  OPERATIONAL_ATTENTION_RESOLVE = 'operationalAttention.resolve',
-  OPERATIONAL_ATTENTION_MANUAL_RESOLVE = 'operationalAttention.manualResolve',
-  TRADING_LIFECYCLE_EXERCISE_READ = 'tradingLifecycleExercise.read',
-  TRADING_LIFECYCLE_EXERCISE_WRITE = 'tradingLifecycleExercise.write',
+  SYSTEM_SETTINGS_READ = "system.settings.read",
+  SYSTEM_SETTINGS_WRITE = "system.settings.write",
+  SYSTEM_SECURITY_READ = "system.security.read",
+  SYSTEM_SECURITY_WRITE = "system.security.write",
+  TRADING_ACCOUNT_READ = "tradingAccount.read",
+  TRADING_ACCOUNT_WRITE = "tradingAccount.write",
+  TRADING_ACCOUNT_RISK_WRITE = "tradingAccount.risk.write",
+  SUBSCRIPTION_READ = "subscription.read",
+  SUBSCRIPTION_WRITE = "subscription.write",
+  STRATEGY_READ = "strategy.read",
+  STRATEGY_WRITE = "strategy.write",
+  EXIT_PROFILE_READ = "exitProfile.read",
+  EXIT_PROFILE_WRITE = "exitProfile.write",
+  REPORTS_READ = "reports.read",
+  SYSTEM_EVENTS_READ = "systemEvents.read",
+  OPERATIONAL_ATTENTION_READ = "operationalAttention.read",
+  OPERATIONAL_ATTENTION_ACKNOWLEDGE = "operationalAttention.acknowledge",
+  OPERATIONAL_ATTENTION_RESOLVE = "operationalAttention.resolve",
+  OPERATIONAL_ATTENTION_MANUAL_RESOLVE = "operationalAttention.manualResolve",
+  OPERATIONAL_ATTENTION_CORRECTIVE_CLOSE = "operationalAttention.correctiveClose",
+  TRADING_LIFECYCLE_EXERCISE_READ = "tradingLifecycleExercise.read",
+  TRADING_LIFECYCLE_EXERCISE_WRITE = "tradingLifecycleExercise.write",
 }
 
-export const PLATFORM_ROLE_PERMISSIONS: Record<PlatformRole, PlatformPermission[]> = {
+export const PLATFORM_ROLE_PERMISSIONS: Record<
+  PlatformRole,
+  PlatformPermission[]
+> = {
   [PlatformRole.SYSTEM_OWNER]: Object.values(PlatformPermission),
   [PlatformRole.OPERATOR]: [
     PlatformPermission.TRADING_ACCOUNT_READ,
@@ -69,5 +73,7 @@ export function platformRoleHasPermission(
   role: PlatformRole | string,
   permission: PlatformPermission | string,
 ): boolean {
-  return getPlatformPermissionsForRole(role).includes(permission as PlatformPermission);
+  return getPlatformPermissionsForRole(role).includes(
+    permission as PlatformPermission,
+  );
 }
