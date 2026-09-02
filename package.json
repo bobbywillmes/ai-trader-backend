@@ -26,6 +26,9 @@
     "acceptance:live-entry:server": "tsx scripts/manual-acceptance/server.ts entry",
     "acceptance:live-entry:server:activation": "tsx scripts/manual-acceptance/server.ts activation",
     "acceptance:live-entry:server:entry": "tsx scripts/manual-acceptance/server.ts entry",
+    "acceptance:lifecycle-repair:test": "vitest run --config vitest.lifecycle-repair-acceptance.config.ts",
+    "acceptance:lifecycle-repair:reset": "tsx scripts/lifecycle-repair-acceptance/reset-schema.ts",
+    "acceptance:lifecycle-repair:server": "tsx scripts/lifecycle-repair-acceptance/server.ts",
     "acceptance:live-entry:test": "vitest run --config vitest.acceptance.config.ts"
   },
   "devDependencies": {

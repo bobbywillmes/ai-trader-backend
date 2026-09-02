@@ -14,6 +14,41 @@ lifecycle fingerprints, confidence, provenance, and broker impact. Refreshing
 diagnosis creates a new case and supersedes older cases for the same target.
 
 Only `DETERMINISTIC` PAPER cases can be applied. LIVE diagnosis is read-only.
+
+## Historical filled-entry lifecycle repair
+
+`REPAIR_HISTORICAL_ENTRY_LIFECYCLE` handles a historical BUY whose directly
+owned local fill stream proves completion while local statuses or position
+ownership remain incomplete. Reconciliation projects one
+`HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE` attention episode per account and local
+BrokerOrder. Its identity remains stable when terminalization removes
+`STALE_ORDER_STATUS` and leaves `MISSING_POSITION_LINK`.
+
+Full-fill evidence requires exact account, BrokerOrder, OrderIntent, and
+BrokerActivity ownership; cumulative FILL quantity equal to ordered quantity;
+zero leaves; and no identity, terminal-marker, priced-quantity, or missing-price
+contradiction. Terminalization changes only local statuses. Position linking is
+independent and changes only backend-proposed relationships and link provenance.
+Neither action changes broker payloads, fill facts, financial values, exposure,
+or timestamps, and neither calls the broker.
+
+A unique closed candidate rejected only by the strict price predicate is
+`OPERATOR_CONFIRMATION_REQUIRED`. Broker-average arithmetic is shown only as
+non-authoritative corroboration. Refusal is immutable for the action fingerprint
+and leaves attention unresolved. Reconsideration creates freshly fingerprinted
+evidence and supersedes stale pending actions.
+
+All routes are SYSTEM_OWNER-only. Preview supports PAPER and LIVE; Apply rejects
+LIVE. Apply uses account and row locks, conditional updates, attempt-key
+idempotency, before/after audit, and structural verification. Applying one action
+supersedes sibling proposals and requires a fresh preview for the next stage.
+Authoritative reconciliation resolves attention only after every invariant is
+complete. Unchanged observations update occurrence count and `lastObservedAt`
+without another event.
+
+The July `historical-order-lifecycle` script remains available for read-only
+diagnosis. Script Apply mode is deprecated; removal is deferred until the
+Workbench demonstrates parity and the real case completes production review.
 Apply requires a reason, the typed confirmation
 `APPLY POSITION ATTRIBUTION REPAIR`, and a unique attempt key. Executions are
 append-only and preserve before/after state, validation, failure evidence, and

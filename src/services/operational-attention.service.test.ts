@@ -107,6 +107,16 @@ describe('operational attention lifecycle', () => {
     expect(state.events).toHaveLength(1);
   });
 
+  it('aggregates ten unchanged reconciliation observations into one opening event', async () => {
+    for (let index = 0; index < 10; index += 1) {
+      await openOrObserveOperationalAttention({ ...base, observedAt: new Date(`2026-08-27T12:00:${String(index).padStart(2, '0')}Z`) });
+    }
+    expect(state.attentions).toHaveLength(1);
+    expect(state.attentions[0]).toMatchObject({ occurrenceCount: 10, revision: 10 });
+    expect(state.events).toHaveLength(1);
+    expect(state.events[0]).toMatchObject({ type: 'operational_attention.opened' });
+  });
+
   it('treats changing attempt intent IDs as observation context when explicitly requested', async () => {
     tx.orderIntent.findUnique.mockResolvedValue({ tradingAccountId: 2 } as never);
     const first = await openOrObserveOperationalAttention({
