@@ -218,6 +218,7 @@ export function OperationalAttentionPage() {
             detail.data && (
               <>
                 <Group>
+                  {detail.data.code === "HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE" && <Button component={Link} to={`/system/lifecycle-repairs?account=${detail.data.tradingAccountId}&attention=${detail.data.id}`}>Open lifecycle repair workbench</Button>}
                   <Badge color={colors[detail.data.severity]}>
                     {detail.data.severity}
                   </Badge>
