@@ -227,6 +227,15 @@ async function applySubscriptionResolution(args: {
   environment: "PAPER" | "LIVE";
 }) {
   if (args.currentSubscriptionId !== null) {
+    await linkLocalEntryOwnership({
+      trackedPositionId: args.trackedPositionId,
+      tradingAccountId: args.tradingAccountId,
+      broker: args.broker,
+      symbol: args.symbol,
+      side: args.side,
+      openedAt: args.openedAt,
+      expectedSubscriptionId: args.currentSubscriptionId,
+    });
     if (args.configSnapshotJson === null) {
       await captureTrackedPositionConfigSnapshot({
         trackedPositionId: args.trackedPositionId,
@@ -263,14 +272,6 @@ async function applySubscriptionResolution(args: {
     return resolution;
   }
 
-  await prisma.trackedPosition.update({
-    where: { id: args.trackedPositionId },
-    data: {
-      subscriptionId: resolution.subscriptionId,
-      tradingAccountSubscriptionId: resolution.tradingAccountSubscriptionId,
-    },
-  });
-
   if (resolution.source === "local_order_intent") {
     await linkLocalEntryOwnership({
       trackedPositionId: args.trackedPositionId,
@@ -279,6 +280,17 @@ async function applySubscriptionResolution(args: {
       symbol: args.symbol,
       side: args.side,
       openedAt: args.openedAt,
+      expectedSubscriptionId: resolution.subscriptionId,
+      expectedTradingAccountSubscriptionId:
+        resolution.tradingAccountSubscriptionId,
+    });
+  } else {
+    await prisma.trackedPosition.update({
+      where: { id: args.trackedPositionId },
+      data: {
+        subscriptionId: resolution.subscriptionId,
+        tradingAccountSubscriptionId: resolution.tradingAccountSubscriptionId,
+      },
     });
   }
 

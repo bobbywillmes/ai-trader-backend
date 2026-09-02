@@ -9,6 +9,16 @@ import {
   listLifecycleRepairCases,
 } from '../services/lifecycle-repair.service.js';
 import { applyLifecycleRepairSchema, diagnosePositionAttributionRepairSchema } from '../validators/lifecycle-repair.schema.js';
+import {
+  applyLifecycleRepairActionSchema,
+  decideLifecycleRepairActionSchema,
+  previewHistoricalEntryLifecycleSchema,
+} from '../validators/lifecycle-repair.schema.js';
+import {
+  applyHistoricalLifecycleAction,
+  decideHistoricalLifecycleAction,
+  previewHistoricalEntryLifecycleRepair,
+} from '../services/historical-entry-lifecycle-workbench.service.js';
 
 function actor(res: Response) {
   if (!res.locals.user) throw new HttpError(401, 'Authentication required.');
@@ -50,4 +60,25 @@ export async function applyLifecycleRepairController(req: Request, res: Response
   } catch (error) {
     next(error instanceof ZodError ? new HttpError(400, 'Invalid lifecycle repair Apply request.', error.flatten()) : error);
   }
+}
+
+export async function previewHistoricalEntryLifecycleController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const input = previewHistoricalEntryLifecycleSchema.parse(req.body);
+    res.status(201).json({ case: await previewHistoricalEntryLifecycleRepair({ ...input, actorUserId: actor(res) }) });
+  } catch (error) { next(error instanceof ZodError ? new HttpError(400, 'Invalid historical lifecycle preview request.', error.flatten()) : error); }
+}
+
+export async function decideLifecycleRepairActionController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const input = decideLifecycleRepairActionSchema.parse(req.body);
+    res.status(200).json({ action: await decideHistoricalLifecycleAction({ actionId: id(req.params.actionId, 'lifecycle repair action id'), actorUserId: actor(res), ...input }) });
+  } catch (error) { next(error instanceof ZodError ? new HttpError(400, 'Invalid lifecycle repair action decision.', error.flatten()) : error); }
+}
+
+export async function applyLifecycleRepairActionController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const input = applyLifecycleRepairActionSchema.parse(req.body);
+    res.status(200).json(await applyHistoricalLifecycleAction({ actionId: id(req.params.actionId, 'lifecycle repair action id'), actorUserId: actor(res), ...input }));
+  } catch (error) { next(error instanceof ZodError ? new HttpError(400, 'Invalid lifecycle repair action Apply request.', error.flatten()) : error); }
 }

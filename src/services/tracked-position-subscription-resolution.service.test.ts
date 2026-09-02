@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  orderIntentFindFirst: vi.fn(),
+  orderIntentFindMany: vi.fn(),
   orderIntentUpdateMany: vi.fn(),
+  orderIntentCount: vi.fn(),
   trackedPositionUpdateMany: vi.fn(),
   brokerOrderUpdateMany: vi.fn(),
+  brokerOrderCount: vi.fn(),
   brokerActivityUpdateMany: vi.fn(),
+  brokerActivityCount: vi.fn(),
   transaction: vi.fn(),
   brokerActivityFindMany: vi.fn(),
   subscriptionFindMany: vi.fn(),
@@ -18,7 +21,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../db/prisma.js', () => ({
   prisma: {
     orderIntent: {
-      findFirst: mocks.orderIntentFindFirst,
+      findMany: mocks.orderIntentFindMany,
       updateMany: mocks.orderIntentUpdateMany,
     },
     trackedPosition: {
@@ -74,7 +77,7 @@ describe('tracked position subscription resolution', () => {
     mocks.tradingAccountFindUniqueOrThrow.mockResolvedValue({
       environment: 'PAPER',
     });
-    mocks.orderIntentFindFirst.mockResolvedValue(null);
+    mocks.orderIntentFindMany.mockResolvedValue([]);
     mocks.brokerActivityFindMany.mockResolvedValue([]);
     mocks.subscriptionFindMany.mockResolvedValue([]);
     mocks.subscriptionFindFirst.mockResolvedValue(null);
@@ -86,16 +89,19 @@ describe('tracked position subscription resolution', () => {
     mocks.linkEntryDecisionToTrackedPosition.mockResolvedValue({ count: 1 });
     mocks.transaction.mockImplementation((callback) =>
       callback({
-        orderIntent: { updateMany: mocks.orderIntentUpdateMany },
+        orderIntent: { updateMany: mocks.orderIntentUpdateMany, count: mocks.orderIntentCount },
         trackedPosition: { updateMany: mocks.trackedPositionUpdateMany },
-        brokerOrder: { updateMany: mocks.brokerOrderUpdateMany },
-        brokerActivity: { updateMany: mocks.brokerActivityUpdateMany },
+        brokerOrder: { updateMany: mocks.brokerOrderUpdateMany, count: mocks.brokerOrderCount },
+        brokerActivity: { updateMany: mocks.brokerActivityUpdateMany, count: mocks.brokerActivityCount },
       })
     );
+    mocks.orderIntentCount.mockResolvedValue(0);
+    mocks.brokerOrderCount.mockResolvedValue(0);
+    mocks.brokerActivityCount.mockResolvedValue(0);
   });
 
   it('resolves a locally submitted entry through its local order intent', async () => {
-    mocks.orderIntentFindFirst.mockResolvedValue({
+    mocks.orderIntentFindMany.mockResolvedValue([{
       id: 101,
       tradingAccountId: 1,
       tradingAccountSubscriptionId: 44,
@@ -108,7 +114,7 @@ describe('tracked position subscription resolution', () => {
       subscriptionId: 22,
       subscription: subscription(),
       brokerOrders: [{ id: 201 }],
-    });
+    }]);
 
     const result = await resolveTrackedPositionSubscription({
       tradingAccountId: 1,
@@ -152,7 +158,7 @@ describe('tracked position subscription resolution', () => {
       source: 'unique_observer_fallback',
       subscriptionId: 23,
     });
-    expect(mocks.orderIntentFindFirst).toHaveBeenCalledWith(
+    expect(mocks.orderIntentFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ tradingAccountId: 2 }),
       })
@@ -281,7 +287,7 @@ describe('tracked position subscription resolution', () => {
       openedAt: new Date('2026-06-16T15:00:00.000Z'),
     });
 
-    expect(mocks.orderIntentFindFirst).toHaveBeenCalledWith(
+    expect(mocks.orderIntentFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           OR: [
@@ -302,7 +308,7 @@ describe('tracked position subscription resolution', () => {
   });
 
   it('links local entry ownership to the recovered tracked position', async () => {
-    mocks.orderIntentFindFirst.mockResolvedValue({
+    mocks.orderIntentFindMany.mockResolvedValue([{
       id: 101,
       tradingAccountId: 1,
       tradingAccountSubscriptionId: 44,
@@ -315,7 +321,7 @@ describe('tracked position subscription resolution', () => {
       subscriptionId: 22,
       subscription: subscription(),
       brokerOrders: [{ id: 201 }],
-    });
+    }]);
 
     await linkLocalEntryOwnership({
       trackedPositionId: 303,

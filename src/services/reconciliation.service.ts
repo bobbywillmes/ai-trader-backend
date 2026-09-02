@@ -52,6 +52,7 @@ export type ReconciliationFindingCode =
   | 'unexpected_short_position'
   | 'local_nonterminal_order_missing_at_broker'
   | 'local_order_status_stale_terminal_broker_order'
+  | 'historical_filled_entry_position_link_missing'
   | 'broker_order_untracked'
   | 'stale_submitting_intent'
   | 'position_attribution_missing';
@@ -782,11 +783,55 @@ export async function reconcileTradingAccount(
   const historicalDiagnostic = await diagnoseHistoricalOrderLifecycle({
     tradingAccountId,
     openOrders: brokerOrders,
+    includeTerminalMissingPositionLinks: true,
   });
   refineHistoricalMissingOrderFindings(
     findings,
     historicalDiagnostic.candidates
   );
+  for (const candidate of historicalDiagnostic.candidates) {
+    if (
+      candidate.side.toLowerCase() !== 'buy' ||
+      !candidate.classifications.includes('FULL_FILL_LOCAL_EVIDENCE') ||
+      candidate.classifications.includes('POSITION_LINK_EXISTING_VALID')
+    ) continue;
+    const existing = findings.find((finding) =>
+      finding.code === 'local_order_status_stale_terminal_broker_order' &&
+      (finding.entityId === `broker:${candidate.brokerOrderId}` || finding.entityId === `client:${candidate.clientOrderId}`)
+    );
+    const unresolvedComponents = [
+      ...(existing ? ['STALE_ORDER_STATUS'] : []),
+      'MISSING_POSITION_LINK',
+    ];
+    const details = {
+      unresolvedComponents,
+      orderIntentId: candidate.orderIntentId,
+      brokerOrderRecordId: candidate.brokerOrderRecordId,
+      brokerOrderId: candidate.brokerOrderId,
+      clientOrderId: candidate.clientOrderId,
+      linkedBrokerActivityCount: candidate.fillEvidence.activityCount,
+      classifications: candidate.classifications,
+      matchedTrackedPositionId: candidate.matchedTrackedPositionId,
+      candidatePositionEvaluations: candidate.candidatePositionEvaluations,
+      fillEvidence: candidate.fillEvidence,
+    };
+    if (existing) {
+      existing.attentionCode = 'HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE';
+      existing.entityId = String(candidate.brokerOrderRecordId);
+      existing.message = `Historical ${candidate.symbol} BUY BrokerOrder has full-fill evidence but retains a nonterminal local status. Its position link is unresolved.`;
+      existing.details = details;
+    } else {
+      findings.push({
+        tradingAccountId,
+        code: 'historical_filled_entry_position_link_missing', severity: 'warn',
+        entityType: 'brokerOrder', entityId: String(candidate.brokerOrderRecordId),
+        symbol: candidate.symbol,
+        attentionCode: 'HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE',
+        message: `Historical ${candidate.symbol} BUY BrokerOrder is filled locally, but its position link remains unresolved.`,
+        details,
+      });
+    }
+  }
   for (const finding of findings) {
     finding.tradingAccountId = tradingAccountId;
   }
@@ -827,6 +872,7 @@ const persistedEventIds = new Map<string, number>();
 
   if (persistEvents) {
     for (const finding of findings) {
+      if (finding.attentionCode === 'HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE') continue;
       if (dedupeEvents) {
         const duplicateExists = await hasRecentReconciliationEvent(
           finding,

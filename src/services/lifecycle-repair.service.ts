@@ -295,6 +295,7 @@ export async function listLifecycleRepairCases(tradingAccountId?: number) {
         include: { executedByUser: { select: { id: true, name: true, email: true } } },
         orderBy: { executedAt: 'desc' },
       },
+      actions: { include: { executions: { orderBy: { executedAt: 'desc' } }, decidedByUser: { select: { id: true, name: true, email: true } } }, orderBy: { ordinal: 'asc' } },
     },
     orderBy: { createdAt: 'desc' }, take: 100,
   });
@@ -308,7 +309,7 @@ export async function listLifecycleRepairCases(tradingAccountId?: number) {
 export async function getLifecycleRepairCase(id: number) {
   const row = await prisma.lifecycleRepairCase.findUnique({
     where: { id },
-    include: { tradingAccount: { select: { id: true, displayName: true, environment: true } }, createdByUser: { select: { id: true, name: true, email: true } }, executions: { include: { executedByUser: { select: { id: true, name: true, email: true } } }, orderBy: { executedAt: 'desc' } } },
+    include: { tradingAccount: { select: { id: true, displayName: true, environment: true } }, createdByUser: { select: { id: true, name: true, email: true } }, executions: { include: { executedByUser: { select: { id: true, name: true, email: true } } }, orderBy: { executedAt: 'desc' } }, actions: { include: { executions: { orderBy: { executedAt: 'desc' } }, decidedByUser: { select: { id: true, name: true, email: true } } }, orderBy: { ordinal: 'asc' } } },
   });
   if (!row) throw new HttpError(404, 'Lifecycle repair case not found.');
   const newer = await prisma.lifecycleRepairCase.findFirst({

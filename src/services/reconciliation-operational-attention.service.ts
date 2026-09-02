@@ -33,9 +33,15 @@ const RULES: Partial<Record<ReconciliationFindingCode, Rule>> = {
   position_side_mismatch: { code: OPERATIONAL_ATTENTION_CODES.BROKER_EXCESS_EXPOSURE, title: (finding) => `${finding.symbol} broker exposure side differs` },
   tracked_position_missing_at_broker: { code: OPERATIONAL_ATTENTION_CODES.BROKER_EXPOSURE_UNVERIFIABLE, title: (finding) => `${finding.symbol} tracked exposure is missing at broker` },
   unexpected_short_position: { code: OPERATIONAL_ATTENTION_CODES.UNEXPECTED_SHORT_POSITION, title: (finding) => `Unexpected short exposure: ${finding.symbol}` },
+  local_order_status_stale_terminal_broker_order: { code: OPERATIONAL_ATTENTION_CODES.HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE, title: (finding) => `${finding.symbol} historical entry lifecycle is incomplete` },
+  historical_filled_entry_position_link_missing: { code: OPERATIONAL_ATTENTION_CODES.HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE, title: (finding) => `${finding.symbol} historical entry lifecycle is incomplete` },
 };
 
 export function reconciliationAttentionFingerprint(tradingAccountId: number, finding: ReconciliationFinding) {
+  if (finding.attentionCode === OPERATIONAL_ATTENTION_CODES.HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE) {
+    const brokerOrderRecordId = finding.details?.brokerOrderRecordId ?? finding.entityId;
+    return `account:${tradingAccountId}|historical-entry-lifecycle:brokerOrder:${brokerOrderRecordId}`;
+  }
   return `account:${tradingAccountId}|reconciliation:${finding.code}|${finding.entityType}:${finding.entityId}`;
 }
 
@@ -75,6 +81,8 @@ export async function projectReconciliationOperationalAttention(args: {
       resolutionPolicy: OperationalAttentionResolutionPolicy.AUTHORITATIVE_ONLY,
       ...(finding.entityType === 'trackedPosition' ? { trackedPositionId: Number(finding.entityId) } : {}),
       ...(finding.entityType === 'orderIntent' ? { orderIntentId: Number(finding.entityId) } : {}),
+      ...(finding.entityType === 'brokerOrder' ? { brokerOrderId: Number(finding.details?.brokerOrderRecordId ?? finding.entityId) } : {}),
+      ...(typeof finding.details?.orderIntentId === 'number' ? { orderIntentId: finding.details.orderIntentId, orderIntentIsObservationContext: true } : {}),
       observedSystemEventId: args.eventIds.get(`${finding.entityType}:${finding.entityId}:${finding.code}`) ?? null,
     });
     updated += 1;

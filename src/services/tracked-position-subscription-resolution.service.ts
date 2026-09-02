@@ -78,7 +78,7 @@ async function findLocalOpeningOrderIntent(args: {
 }) {
   const entrySide = getOpenFillSide(args.side);
 
-  return prisma.orderIntent.findFirst({
+  const candidates = await prisma.orderIntent.findMany({
     where: {
       symbol: normalizeSymbol(args.symbol),
       tradingAccountId: args.tradingAccountId,
@@ -124,7 +124,9 @@ async function findLocalOpeningOrderIntent(args: {
     orderBy: {
       createdAt: 'desc',
     },
+    take: 2,
   });
+  return candidates.length === 1 ? candidates[0]! : null;
 }
 
 function extractClientOrderIdFromRawBrokerJson(value: Prisma.JsonValue) {
@@ -464,17 +466,50 @@ export async function linkLocalEntryOwnership(args: {
   symbol: string;
   side: string;
   openedAt: Date;
+  expectedSubscriptionId?: number;
+  expectedTradingAccountSubscriptionId?: number;
 }) {
   const intent = await findLocalOpeningOrderIntent({
     ...args,
   });
 
   if (!intent) {
-    return;
+    return false;
   }
 
+  if (
+    args.expectedSubscriptionId !== undefined &&
+    intent.subscriptionId !== args.expectedSubscriptionId
+  ) return false;
+  if (
+    args.expectedTradingAccountSubscriptionId !== undefined &&
+    intent.tradingAccountSubscriptionId !== args.expectedTradingAccountSubscriptionId
+  ) return false;
+
   const linkedAt = new Date();
-  await prisma.$transaction(async (tx) => {
+  const linked = await prisma.$transaction(async (tx) => {
+    const conflicts = await Promise.all([
+      tx.orderIntent.count({ where: { id: intent.id, trackedPositionId: { not: null }, NOT: { trackedPositionId: args.trackedPositionId } } }),
+      tx.brokerOrder.count({ where: { orderIntentId: intent.id, tradingAccountId: args.tradingAccountId, trackedPositionId: { not: null }, NOT: { trackedPositionId: args.trackedPositionId } } }),
+      tx.brokerActivity.count({ where: { orderIntentId: intent.id, tradingAccountId: args.tradingAccountId, activityType: 'FILL', trackedPositionId: { not: null }, NOT: { trackedPositionId: args.trackedPositionId } } }),
+    ]);
+    if (conflicts.some(Boolean)) return false;
+    await tx.trackedPosition.updateMany({
+      where: {
+        id: args.trackedPositionId,
+        tradingAccountId: args.tradingAccountId,
+        OR: [
+          { subscriptionId: null },
+          { subscriptionId: intent.subscriptionId },
+        ],
+      },
+      data: {
+        subscriptionId: intent.subscriptionId,
+        ...(intent.tradingAccountSubscriptionId !== null && {
+          tradingAccountSubscriptionId: intent.tradingAccountSubscriptionId,
+        }),
+      },
+    });
     await tx.orderIntent.updateMany({
       where: {
         id: intent.id,
@@ -526,7 +561,10 @@ export async function linkLocalEntryOwnership(args: {
         trackedPositionLinkedAt: linkedAt,
       },
     });
+    return true;
   });
+
+  if (!linked) return false;
 
   await linkEntryDecisionToTrackedPosition({
     orderIntentId: intent.id,
@@ -534,4 +572,5 @@ export async function linkLocalEntryOwnership(args: {
     tradingAccountId: intent.tradingAccountId,
     tradingAccountSubscriptionId: intent.tradingAccountSubscriptionId,
   });
+  return true;
 }
