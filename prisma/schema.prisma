@@ -70,6 +70,7 @@ model User {
   liveEntryAcceptanceTerminations LiveEntryAcceptanceRun[] @relation("LiveEntryAcceptanceRunTerminator")
   lifecycleRepairCasesCreated LifecycleRepairCase[]       @relation("LifecycleRepairCaseCreator")
   lifecycleRepairExecutions   LifecycleRepairExecution[]  @relation("LifecycleRepairExecutionActor")
+  lifecycleRepairActionDecisions LifecycleRepairAction[]  @relation("LifecycleRepairActionDecisionActor")
 }
 
 model UserSetupToken {
@@ -256,6 +257,7 @@ model TradingAccount {
 
 enum LifecycleRepairType {
   RESOLVE_POSITION_ATTRIBUTION
+  REPAIR_HISTORICAL_ENTRY_LIFECYCLE
 }
 
 enum LifecycleRepairImpact {
@@ -278,6 +280,26 @@ enum LifecycleRepairConfidence {
 enum LifecycleRepairExecutionResult {
   SUCCEEDED
   FAILED
+}
+
+enum LifecycleRepairActionType {
+  TERMINALIZE_ORDER_LIFECYCLE
+  LINK_ENTRY_LIFECYCLE_TO_POSITION
+}
+
+enum LifecycleRepairActionClassification {
+  DETERMINISTIC
+  OPERATOR_CONFIRMATION_REQUIRED
+}
+
+enum LifecycleRepairActionStatus {
+  PROPOSED
+  APPROVED
+  REFUSED
+  APPLIED
+  VERIFIED
+  FAILED
+  SUPERSEDED
 }
 
 model LifecycleRepairCase {
@@ -309,6 +331,7 @@ model LifecycleRepairCase {
   createdAt                  DateTime @default(now())
   expiresAt                  DateTime
   executions                 LifecycleRepairExecution[]
+  actions                    LifecycleRepairAction[]
 
   @@unique([repairType, targetType, targetId, diagnosticFingerprint], map: "LifecycleRepairCase_type_target_fingerprint_key")
   @@index([tradingAccountId, createdAt])
@@ -318,10 +341,47 @@ model LifecycleRepairCase {
   @@index([createdByUserId, createdAt])
 }
 
+model LifecycleRepairAction {
+  id                         Int @id @default(autoincrement())
+  caseId                     Int
+  repairCase                 LifecycleRepairCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  actionType                 LifecycleRepairActionType
+  ordinal                    Int
+  classification             LifecycleRepairActionClassification
+  status                     LifecycleRepairActionStatus @default(PROPOSED)
+  revision                   Int @default(1)
+  actionFingerprint          String
+  proposedMutationsJson      Json
+  preconditionsJson          Json
+  evidenceJson               Json
+  decidedByUserId            Int?
+  decidedByUser              User? @relation("LifecycleRepairActionDecisionActor", fields: [decidedByUserId], references: [id], onDelete: SetNull)
+  decidedByUserIdSnapshot    Int?
+  decidedAt                  DateTime?
+  decisionReason             String?
+  supersedesActionId         Int?
+  supersedesAction           LifecycleRepairAction? @relation("LifecycleRepairActionSupersession", fields: [supersedesActionId], references: [id], onDelete: Restrict)
+  supersededBy               LifecycleRepairAction[] @relation("LifecycleRepairActionSupersession")
+  beforeJson                 Json
+  afterJson                  Json?
+  verificationJson           Json?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+  executions                 LifecycleRepairExecution[]
+
+  @@unique([caseId, ordinal])
+  @@unique([actionType, actionFingerprint])
+  @@index([caseId, status])
+  @@index([decidedByUserId, decidedAt])
+  @@index([supersedesActionId])
+}
+
 model LifecycleRepairExecution {
   id                    Int @id @default(autoincrement())
   caseId                Int
   repairCase            LifecycleRepairCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  actionId              Int?
+  action                LifecycleRepairAction? @relation(fields: [actionId], references: [id], onDelete: Restrict)
   attemptKey            String @unique
   result                LifecycleRepairExecutionResult
   executedByUserId      Int
@@ -336,6 +396,7 @@ model LifecycleRepairExecution {
   executedAt            DateTime @default(now())
 
   @@index([caseId, executedAt])
+  @@index([actionId, executedAt])
   @@index([executedByUserId, executedAt])
 }
 
