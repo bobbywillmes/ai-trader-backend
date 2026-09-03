@@ -14,6 +14,12 @@ Never use SQL or operator-entered lifecycle values.
 6. Apply an approved PAPER link and run authoritative reconciliation.
 7. Confirm attention resolves once and audit evidence remains available.
 
+If links are partial or conflicting, stop: the Workbench must leave the episode
+active and must not offer an applicable link mutation. Refusal also leaves the
+episode active. Reconsideration requires a new reason and freshly rebuilt
+evidence. `APPLIED` records a structurally valid local transaction; it is not
+authoritative `VERIFIED` until reconciliation no longer observes the invariant.
+
 For synthetic rehearsal use
 `scripts/lifecycle-repair-acceptance/README.md`. The harness refuses every
 database except `ai_trader_lifecycle_repair_acceptance` and installs the

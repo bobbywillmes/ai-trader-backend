@@ -12,7 +12,9 @@ $env:LIFECYCLE_REPAIR_ACCEPTANCE='I_UNDERSTAND_THIS_IS_DISPOSABLE_LIFECYCLE_REPA
 ```
 
 Then run `npm.cmd run acceptance:lifecycle-repair:reset`, deploy migrations to
-that disposable database, seed wholly synthetic fixtures, and start with
-`npm.cmd run acceptance:lifecycle-repair:server`. The normal application has no
+that disposable database, run `npm.cmd run acceptance:lifecycle-repair:fixture`,
+and start with `npm.cmd run acceptance:lifecycle-repair:server`. The fixture prints
+its generated owner login and attention ID for opening `/operational-attention`
+and the linked Lifecycle Repair Workbench. Reset is the teardown procedure. The normal application has no
 fixture or reset endpoint. Synthetic fixture IDs must be generated locally and
 must never copy a production identity.

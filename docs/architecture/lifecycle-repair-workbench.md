@@ -24,6 +24,11 @@ ownership remain incomplete. Reconciliation projects one
 BrokerOrder. Its identity remains stable when terminalization removes
 `STALE_ORDER_STATUS` and leaves `MISSING_POSITION_LINK`.
 
+The terminal-order invariant classifies ownership across OrderIntent,
+BrokerOrder, and every owned entry FILL as all missing, partial, consistent, or
+conflicting. Partial and conflicting states remain visible after terminalization
+and are non-executable; the initial link action is limited to all-missing state.
+
 Full-fill evidence requires exact account, BrokerOrder, OrderIntent, and
 BrokerActivity ownership; cumulative FILL quantity equal to ordered quantity;
 zero leaves; and no identity, terminal-marker, priced-quantity, or missing-price
@@ -35,16 +40,21 @@ or timestamps, and neither calls the broker.
 A unique closed candidate rejected only by the strict price predicate is
 `OPERATOR_CONFIRMATION_REQUIRED`. Broker-average arithmetic is shown only as
 non-authoritative corroboration. Refusal is immutable for the action fingerprint
-and leaves attention unresolved. Reconsideration creates freshly fingerprinted
-evidence and supersedes stale pending actions.
+and leaves attention unresolved. Explicit reconsideration requires a reason,
+rebuilds evidence, and creates a new generation linked by `supersedesActionId`.
 
 All routes are SYSTEM_OWNER-only. Preview supports PAPER and LIVE; Apply rejects
-LIVE. Apply uses account and row locks, conditional updates, attempt-key
-idempotency, before/after audit, and structural verification. Applying one action
+LIVE. Position sync, activity ingestion, reconciliation, and repair share the
+account-level `lifecycle-mutation` advisory barrier. Repair also locks the case,
+action, attention, lifecycle rows, activities, and candidate position. Apply
+uses count-checked conditional updates, attempt-key idempotency, before/after
+audit, and structural validation. Applying one action
 supersedes sibling proposals and requires a fresh preview for the next stage.
 Authoritative reconciliation resolves attention only after every invariant is
 complete. Unchanged observations update occurrence count and `lastObservedAt`
-without another event.
+without another event; a material evidence change emits one transition event.
+A committed local mutation is `APPLIED`, not `VERIFIED`; authoritative
+verification belongs to subsequent reconciliation.
 
 The July `historical-order-lifecycle` script remains available for read-only
 diagnosis. Script Apply mode is deprecated; removal is deferred until the
