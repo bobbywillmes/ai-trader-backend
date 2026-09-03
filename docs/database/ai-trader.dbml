@@ -179,6 +179,7 @@ Table LifecycleRepairAction {
   repairCase LifecycleRepairCase [not null]
   actionType LifecycleRepairActionType [not null]
   ordinal Int [not null]
+  generation Int [not null, default: 1]
   classification LifecycleRepairActionClassification [not null]
   status LifecycleRepairActionStatus [not null, default: 'PROPOSED']
   revision Int [not null, default: 1]
@@ -191,6 +192,9 @@ Table LifecycleRepairAction {
   decidedByUserIdSnapshot Int
   decidedAt DateTime
   decisionReason String
+  reconsiderationReason String
+  reconsideredByUserIdSnapshot Int
+  reconsideredAt DateTime
   supersedesActionId Int
   supersedesAction LifecycleRepairAction
   supersededBy LifecycleRepairAction [not null]
@@ -203,7 +207,7 @@ Table LifecycleRepairAction {
 
   indexes {
     (caseId, ordinal) [unique]
-    (actionType, actionFingerprint) [unique]
+    (caseId, actionType, generation) [unique]
   }
 }
 
@@ -701,6 +705,7 @@ Table OperationalAttention {
   message String [not null]
   detailsJson Json [not null]
   fingerprint String [not null]
+  materialFingerprint String
   activeKey String [unique]
   occurrenceCount Int [not null, default: 1]
   firstObservedAt DateTime [default: `now()`, not null]

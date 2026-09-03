@@ -36,7 +36,7 @@ export async function runBrokerActivitySync() {
         const run = await runTradingAccountWorkflow({
           tradingAccountId: account.tradingAccountId,
           workerKey: 'broker_activity_sync',
-          lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.BROKER_ACTIVITY,
+          lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION,
           execute: () => syncBrokerActivitiesForAccount(account.tradingAccountId, {
             activityType: 'FILL',
             pageSize: 100,

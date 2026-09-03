@@ -774,7 +774,7 @@ export async function syncTrackedPositionsAcrossAccounts() {
       const run = await runTradingAccountWorkflow({
         tradingAccountId: account.tradingAccountId,
         workerKey: "tracked_position_sync",
-        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.POSITION_SYNC,
+        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION,
         execute: () =>
           syncTrackedPositionsForAccount(
             account.tradingAccountId,

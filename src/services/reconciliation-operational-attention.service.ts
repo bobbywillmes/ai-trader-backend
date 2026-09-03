@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   OperationalAttentionResolutionPolicy,
   SystemEventSeverity,
@@ -36,6 +37,16 @@ const RULES: Partial<Record<ReconciliationFindingCode, Rule>> = {
   local_order_status_stale_terminal_broker_order: { code: OPERATIONAL_ATTENTION_CODES.HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE, title: (finding) => `${finding.symbol} historical entry lifecycle is incomplete` },
   historical_filled_entry_position_link_missing: { code: OPERATIONAL_ATTENTION_CODES.HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE, title: (finding) => `${finding.symbol} historical entry lifecycle is incomplete` },
 };
+
+function stableMaterial(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableMaterial).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.entries(value as Record<string, unknown>).filter(([key]) => !['runIdentifier', 'occurrenceCount', 'lastObservedAt', 'revision'].includes(key)).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => `${JSON.stringify(key)}:${stableMaterial(child)}`).join(',')}}`;
+  return JSON.stringify(value);
+}
+
+export function reconciliationAttentionMaterialFingerprint(finding: ReconciliationFinding) {
+  return createHash('sha256').update(stableMaterial({ code: finding.code, severity: finding.severity, entityType: finding.entityType, entityId: finding.entityId, details: finding.details ?? {} })).digest('hex');
+}
 
 export function reconciliationAttentionFingerprint(tradingAccountId: number, finding: ReconciliationFinding) {
   if (finding.attentionCode === OPERATIONAL_ATTENTION_CODES.HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE) {
@@ -78,6 +89,7 @@ export async function projectReconciliationOperationalAttention(args: {
       message: finding.message,
       details: { runIdentifier: args.runIdentifier, findingCode: finding.code, symbol: finding.symbol, ...(finding.details ?? {}) },
       fingerprint,
+      materialFingerprint: reconciliationAttentionMaterialFingerprint(finding),
       resolutionPolicy: OperationalAttentionResolutionPolicy.AUTHORITATIVE_ONLY,
       ...(finding.entityType === 'trackedPosition' ? { trackedPositionId: Number(finding.entityId) } : {}),
       ...(finding.entityType === 'orderIntent' ? { orderIntentId: Number(finding.entityId) } : {}),

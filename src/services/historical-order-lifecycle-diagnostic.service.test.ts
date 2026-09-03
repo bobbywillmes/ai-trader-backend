@@ -12,6 +12,7 @@ import {
   summarizeLocalFillEvidence,
   validateExistingHistoricalPositionLink,
   assessHistoricalFullFillEvidence,
+  classifyHistoricalLifecycleLinks,
 } from './historical-order-lifecycle-diagnostic.service.js';
 
 describe('historical full-fill repair evidence', () => {
@@ -36,6 +37,22 @@ describe('historical full-fill repair evidence', () => {
     const result = assessHistoricalFullFillEvidence({ orderQty: 2, tradingAccountId: 7, brokerOrderRecordId: 11, brokerOrderId: 'synthetic-order', activities: [changed] });
     expect(result.deterministic).toBe(false);
     expect(result.contradictions).toContain(reason);
+  });
+});
+
+describe('historical lifecycle ownership invariant', () => {
+  it.each([
+    ['all null', null, null, [null], 'ALL_MISSING'],
+    ['intent only', 41, null, [null], 'PARTIAL'],
+    ['order only', null, 41, [null], 'PARTIAL'],
+    ['activity only', null, null, [41], 'PARTIAL'],
+    ['one activity missing', 41, 41, [41, null], 'PARTIAL'],
+    ['consistent', 41, 41, [41, 41], 'CONSISTENT'],
+    ['intent conflicts', 42, 41, [41], 'CONFLICTING'],
+    ['order conflicts', 41, 42, [41], 'CONFLICTING'],
+    ['activity conflicts', 41, 41, [42], 'CONFLICTING'],
+  ])('classifies %s links without hiding incomplete terminal lifecycles', (_label, intentId, orderId, activityIds, state) => {
+    expect(classifyHistoricalLifecycleLinks({ orderIntentTrackedPositionId: intentId, brokerOrderTrackedPositionId: orderId, activityTrackedPositionIds: activityIds })).toMatchObject({ state });
   });
 });
 

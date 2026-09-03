@@ -66,6 +66,30 @@ export type HistoricalPositionRejectionReason =
   | 'price_outside_tolerance'
   | 'time_outside_window';
 
+export type HistoricalLifecycleLinkState =
+  | 'ALL_MISSING'
+  | 'PARTIAL'
+  | 'CONSISTENT'
+  | 'CONFLICTING';
+
+export function classifyHistoricalLifecycleLinks(args: {
+  orderIntentTrackedPositionId: number | null;
+  brokerOrderTrackedPositionId: number | null;
+  activityTrackedPositionIds: Array<number | null>;
+}) {
+  const links = [args.orderIntentTrackedPositionId, args.brokerOrderTrackedPositionId, ...args.activityTrackedPositionIds];
+  const populated = links.filter((id): id is number => id !== null);
+  const unique = [...new Set(populated)];
+  const state: HistoricalLifecycleLinkState = populated.length === 0
+    ? 'ALL_MISSING'
+    : unique.length > 1
+      ? 'CONFLICTING'
+      : populated.length !== links.length
+        ? 'PARTIAL'
+        : 'CONSISTENT';
+  return { state, trackedPositionId: unique.length === 1 ? unique[0]! : null, requiredLinkCount: links.length, linkedCount: populated.length, uniqueTrackedPositionIds: unique };
+}
+
 export function evaluateHistoricalPositionCandidates(
   input: HistoricalPositionMatchInput,
   candidates: HistoricalPositionCandidate[]
@@ -568,10 +592,8 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
         ...(args.includeTerminalMissingPositionLinks
           ? [{
               side: { equals: 'buy', mode: 'insensitive' as const },
-              trackedPositionId: null,
-              orderIntent: { is: { trackedPositionId: null } },
               brokerActivities: {
-                some: { activityType: 'FILL', trackedPositionId: null },
+                some: { activityType: 'FILL' },
               },
             }]
           : []),
@@ -606,6 +628,13 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
           ].filter((id): id is number => id !== null)
         )
       );
+      const lifecycleLinkState = classifyHistoricalLifecycleLinks({
+        orderIntentTrackedPositionId: order.orderIntent.trackedPositionId,
+        brokerOrderTrackedPositionId: order.trackedPositionId,
+        activityTrackedPositionIds: order.brokerActivities
+          .filter((activity) => activity.activityType.toUpperCase() === 'FILL')
+          .map((activity) => activity.trackedPositionId),
+      });
       const positionCandidateWhere =
         buildHistoricalPositionCandidateWhere({
           includeEntryMatchCandidates:
@@ -667,6 +696,7 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
         fillSummary,
         positionMatch,
         existingLinkValidation,
+        lifecycleLinkState,
         classifications,
       };
     })
@@ -763,6 +793,7 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
         rejectionReasons:
           candidate.existingLinkValidation.rejectionReasons,
       },
+      lifecycleLinkState: candidate.lifecycleLinkState,
       candidateTrackedPositionIds: candidate.positionMatch.matches.map(
         (position) => position.id
       ),

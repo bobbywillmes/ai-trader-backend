@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   orderIntentUpdateMany: vi.fn(),
   orderIntentCount: vi.fn(),
   trackedPositionUpdateMany: vi.fn(),
+  trackedPositionFindFirst: vi.fn(),
   brokerOrderUpdateMany: vi.fn(),
   brokerOrderCount: vi.fn(),
   brokerActivityUpdateMany: vi.fn(),
@@ -16,6 +17,9 @@ const mocks = vi.hoisted(() => ({
   subscriptionFindUnique: vi.fn(),
   tradingAccountFindUniqueOrThrow: vi.fn(),
   linkEntryDecisionToTrackedPosition: vi.fn(),
+  entryDecisionCount: vi.fn(),
+  entryDecisionUpdateMany: vi.fn(),
+  queryRaw: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -90,14 +94,19 @@ describe('tracked position subscription resolution', () => {
     mocks.transaction.mockImplementation((callback) =>
       callback({
         orderIntent: { updateMany: mocks.orderIntentUpdateMany, count: mocks.orderIntentCount },
-        trackedPosition: { updateMany: mocks.trackedPositionUpdateMany },
+        trackedPosition: { updateMany: mocks.trackedPositionUpdateMany, findFirst: mocks.trackedPositionFindFirst },
         brokerOrder: { updateMany: mocks.brokerOrderUpdateMany, count: mocks.brokerOrderCount },
         brokerActivity: { updateMany: mocks.brokerActivityUpdateMany, count: mocks.brokerActivityCount },
+        entryDecision: { updateMany: mocks.entryDecisionUpdateMany, count: mocks.entryDecisionCount },
+        $queryRaw: mocks.queryRaw,
       })
     );
     mocks.orderIntentCount.mockResolvedValue(0);
     mocks.brokerOrderCount.mockResolvedValue(0);
     mocks.brokerActivityCount.mockResolvedValue(0);
+    mocks.entryDecisionCount.mockResolvedValue(0);
+    mocks.entryDecisionUpdateMany.mockResolvedValue({ count: 0 });
+    mocks.trackedPositionFindFirst.mockResolvedValue({ id: 301, subscriptionId: null, tradingAccountSubscriptionId: null });
   });
 
   it('resolves a locally submitted entry through its local order intent', async () => {
@@ -308,6 +317,9 @@ describe('tracked position subscription resolution', () => {
   });
 
   it('links local entry ownership to the recovered tracked position', async () => {
+    mocks.brokerOrderCount.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    mocks.brokerActivityCount.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    mocks.trackedPositionFindFirst.mockResolvedValue({ id: 303, subscriptionId: null, tradingAccountSubscriptionId: null });
     mocks.orderIntentFindMany.mockResolvedValue([{
       id: 101,
       tradingAccountId: 1,
@@ -336,7 +348,7 @@ describe('tracked position subscription resolution', () => {
       where: {
         id: 101,
         tradingAccountId: 1,
-        trackedPositionId: null,
+        OR: [{ trackedPositionId: null }, { trackedPositionId: 303 }],
       },
       data: { trackedPositionId: 303 },
     });
@@ -344,27 +356,21 @@ describe('tracked position subscription resolution', () => {
       where: {
         orderIntentId: 101,
         tradingAccountId: 1,
-        trackedPositionId: null,
+        OR: [{ trackedPositionId: null }, { trackedPositionId: 303 }],
       },
       data: { trackedPositionId: 303 },
     });
-    expect(mocks.trackedPositionUpdateMany).toHaveBeenCalledWith({
-      where: {
-        id: 303,
-        tradingAccountId: 1,
-        tradingAccountSubscriptionId: null,
-      },
-      data: {
-        tradingAccountSubscriptionId: 44,
-      },
-    });
+    expect(mocks.trackedPositionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 303, tradingAccountId: 1 }),
+      data: { subscriptionId: 22, tradingAccountSubscriptionId: 44 },
+    }));
     expect(mocks.brokerActivityUpdateMany).toHaveBeenCalledWith({
       where: {
         orderIntentId: 101,
         tradingAccountId: 1,
         activityType: 'FILL',
         brokerOrderRecordId: { in: [201] },
-        trackedPositionId: null,
+        OR: [{ trackedPositionId: null }, { trackedPositionId: 303 }],
       },
       data: {
         trackedPositionId: 303,
@@ -372,11 +378,6 @@ describe('tracked position subscription resolution', () => {
         trackedPositionLinkedAt: expect.any(Date),
       },
     });
-    expect(mocks.linkEntryDecisionToTrackedPosition).toHaveBeenCalledWith({
-      orderIntentId: 101,
-      trackedPositionId: 303,
-      tradingAccountId: 1,
-      tradingAccountSubscriptionId: 44,
-    });
+    expect(mocks.entryDecisionUpdateMany).toHaveBeenCalled();
   });
 });

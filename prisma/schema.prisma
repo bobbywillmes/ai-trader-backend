@@ -347,6 +347,7 @@ model LifecycleRepairAction {
   repairCase                 LifecycleRepairCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
   actionType                 LifecycleRepairActionType
   ordinal                    Int
+  generation                 Int @default(1)
   classification             LifecycleRepairActionClassification
   status                     LifecycleRepairActionStatus @default(PROPOSED)
   revision                   Int @default(1)
@@ -359,6 +360,9 @@ model LifecycleRepairAction {
   decidedByUserIdSnapshot    Int?
   decidedAt                  DateTime?
   decisionReason             String?
+  reconsiderationReason      String?
+  reconsideredByUserIdSnapshot Int?
+  reconsideredAt             DateTime?
   supersedesActionId         Int?
   supersedesAction           LifecycleRepairAction? @relation("LifecycleRepairActionSupersession", fields: [supersedesActionId], references: [id], onDelete: Restrict)
   supersededBy               LifecycleRepairAction[] @relation("LifecycleRepairActionSupersession")
@@ -370,7 +374,8 @@ model LifecycleRepairAction {
   executions                 LifecycleRepairExecution[]
 
   @@unique([caseId, ordinal])
-  @@unique([actionType, actionFingerprint])
+  @@unique([caseId, actionType, generation])
+  @@index([actionType, actionFingerprint])
   @@index([caseId, status])
   @@index([decidedByUserId, decidedAt])
   @@index([supersedesActionId])
@@ -1113,6 +1118,7 @@ model OperationalAttention {
   message                     String
   detailsJson                 Json
   fingerprint                 String
+  materialFingerprint         String?
   activeKey                   String? @unique
   occurrenceCount             Int @default(1)
   firstObservedAt             DateTime @default(now())

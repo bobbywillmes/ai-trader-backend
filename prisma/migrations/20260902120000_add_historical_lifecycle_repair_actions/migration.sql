@@ -4,11 +4,14 @@ CREATE TYPE "LifecycleRepairActionType" AS ENUM ('TERMINALIZE_ORDER_LIFECYCLE', 
 CREATE TYPE "LifecycleRepairActionClassification" AS ENUM ('DETERMINISTIC', 'OPERATOR_CONFIRMATION_REQUIRED');
 CREATE TYPE "LifecycleRepairActionStatus" AS ENUM ('PROPOSED', 'APPROVED', 'REFUSED', 'APPLIED', 'VERIFIED', 'FAILED', 'SUPERSEDED');
 
+ALTER TABLE "OperationalAttention" ADD COLUMN "materialFingerprint" TEXT;
+
 CREATE TABLE "LifecycleRepairAction" (
     "id" SERIAL NOT NULL,
     "caseId" INTEGER NOT NULL,
     "actionType" "LifecycleRepairActionType" NOT NULL,
     "ordinal" INTEGER NOT NULL,
+    "generation" INTEGER NOT NULL DEFAULT 1,
     "classification" "LifecycleRepairActionClassification" NOT NULL,
     "status" "LifecycleRepairActionStatus" NOT NULL DEFAULT 'PROPOSED',
     "revision" INTEGER NOT NULL DEFAULT 1,
@@ -20,6 +23,9 @@ CREATE TABLE "LifecycleRepairAction" (
     "decidedByUserIdSnapshot" INTEGER,
     "decidedAt" TIMESTAMP(3),
     "decisionReason" TEXT,
+    "reconsiderationReason" TEXT,
+    "reconsideredByUserIdSnapshot" INTEGER,
+    "reconsideredAt" TIMESTAMP(3),
     "supersedesActionId" INTEGER,
     "beforeJson" JSONB NOT NULL,
     "afterJson" JSONB,
@@ -38,7 +44,8 @@ CREATE TABLE "LifecycleRepairAction" (
 ALTER TABLE "LifecycleRepairExecution" ADD COLUMN "actionId" INTEGER;
 
 CREATE UNIQUE INDEX "LifecycleRepairAction_caseId_ordinal_key" ON "LifecycleRepairAction"("caseId", "ordinal");
-CREATE UNIQUE INDEX "LifecycleRepairAction_actionType_actionFingerprint_key" ON "LifecycleRepairAction"("actionType", "actionFingerprint");
+CREATE UNIQUE INDEX "LifecycleRepairAction_caseId_actionType_generation_key" ON "LifecycleRepairAction"("caseId", "actionType", "generation");
+CREATE INDEX "LifecycleRepairAction_actionType_actionFingerprint_idx" ON "LifecycleRepairAction"("actionType", "actionFingerprint");
 CREATE INDEX "LifecycleRepairAction_caseId_status_idx" ON "LifecycleRepairAction"("caseId", "status");
 CREATE INDEX "LifecycleRepairAction_decidedByUserId_decidedAt_idx" ON "LifecycleRepairAction"("decidedByUserId", "decidedAt");
 CREATE INDEX "LifecycleRepairAction_supersedesActionId_idx" ON "LifecycleRepairAction"("supersedesActionId");

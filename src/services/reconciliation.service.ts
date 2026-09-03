@@ -793,7 +793,8 @@ export async function reconcileTradingAccount(
     if (
       candidate.side.toLowerCase() !== 'buy' ||
       !candidate.classifications.includes('FULL_FILL_LOCAL_EVIDENCE') ||
-      candidate.classifications.includes('POSITION_LINK_EXISTING_VALID')
+      (candidate.lifecycleLinkState.state === 'CONSISTENT' &&
+        candidate.classifications.includes('POSITION_LINK_EXISTING_VALID'))
     ) continue;
     const existing = findings.find((finding) =>
       finding.code === 'local_order_status_stale_terminal_broker_order' &&
@@ -801,7 +802,11 @@ export async function reconcileTradingAccount(
     );
     const unresolvedComponents = [
       ...(existing ? ['STALE_ORDER_STATUS'] : []),
-      'MISSING_POSITION_LINK',
+      ...(candidate.lifecycleLinkState.state === 'ALL_MISSING' ? ['MISSING_POSITION_LINK'] : []),
+      ...(candidate.lifecycleLinkState.state === 'PARTIAL' ? ['PARTIAL_POSITION_LINK'] : []),
+      ...(candidate.lifecycleLinkState.state === 'CONFLICTING' ||
+      (candidate.lifecycleLinkState.state === 'CONSISTENT' && !candidate.classifications.includes('POSITION_LINK_EXISTING_VALID'))
+        ? ['CONFLICTING_POSITION_LINK'] : []),
     ];
     const details = {
       unresolvedComponents,
@@ -814,6 +819,7 @@ export async function reconcileTradingAccount(
       matchedTrackedPositionId: candidate.matchedTrackedPositionId,
       candidatePositionEvaluations: candidate.candidatePositionEvaluations,
       fillEvidence: candidate.fillEvidence,
+      lifecycleLinkState: candidate.lifecycleLinkState,
     };
     if (existing) {
       existing.attentionCode = 'HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE';
@@ -1022,7 +1028,7 @@ function runReconciliationAccount(
   return runTradingAccountWorkflow({
     tradingAccountId,
     workerKey: 'scheduled_reconciliation',
-    lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.RECONCILIATION,
+    lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION,
     execute: () => reconcileTradingAccount(tradingAccountId, options),
     classify: (result) => ({
       outcome: 'success',

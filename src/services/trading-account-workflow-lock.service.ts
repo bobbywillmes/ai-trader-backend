@@ -7,6 +7,9 @@ const pool = new Pool({ connectionString: env.DATABASE_URL, max: 8 });
 const APP_NAMESPACE = 'ai-trader';
 
 export const ACCOUNT_WORKFLOW_LOCK_FAMILIES = {
+  // Shared barrier for writers/readers whose lifecycle conclusions overlap.
+  // Each account acquires this one key, so no nested lock ordering is needed.
+  LIFECYCLE_MUTATION: 'lifecycle-mutation',
   ORDER_LIFECYCLE: 'order-lifecycle',
   BROKER_ACTIVITY: 'broker-activity',
   POSITION_SYNC: 'position-sync',

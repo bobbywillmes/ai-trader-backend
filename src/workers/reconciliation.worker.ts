@@ -31,7 +31,7 @@ export async function runScheduledReconciliation() {
       const idle = await propagateScheduledAccountDecision({
         workflow: 'reconciliation',
         workerKey: 'scheduled_reconciliation',
-        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.RECONCILIATION,
+        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION,
         decision: 'disabled',
       });
       return {
@@ -55,7 +55,7 @@ export async function runScheduledReconciliation() {
       const idle = await propagateScheduledAccountDecision({
         workflow: 'reconciliation',
         workerKey: 'scheduled_reconciliation',
-        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.RECONCILIATION,
+        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION,
         decision: 'not_due',
       });
       return {
