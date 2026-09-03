@@ -9,6 +9,7 @@ export type LifecycleRepairExecution = {
 export type LifecycleRepairAction = {
   id: number; actionType: "TERMINALIZE_ORDER_LIFECYCLE" | "LINK_ENTRY_LIFECYCLE_TO_POSITION";
   ordinal: number; classification: "DETERMINISTIC" | "OPERATOR_CONFIRMATION_REQUIRED";
+  generation: number; supersedesActionId: number | null; reconsiderationReason: string | null;
   status: "PROPOSED" | "APPROVED" | "REFUSED" | "APPLIED" | "VERIFIED" | "FAILED" | "SUPERSEDED";
   revision: number; actionFingerprint: string; proposedMutationsJson: unknown;
   preconditionsJson: unknown; evidenceJson: unknown; decisionReason: string | null;
@@ -43,6 +44,10 @@ export function decideLifecycleRepairAction(token: string, input: { actionId: nu
 export function applyLifecycleRepairAction(token: string, input: { actionId: number; expectedRevision: number; reason: string; confirmation: string; attemptKey: string }) {
   const { actionId, ...body } = input;
   return apiRequest<{ execution: LifecycleRepairExecution; idempotent: boolean }>(`/api/lifecycle-repairs/actions/${actionId}/apply`, { method: "POST", token, body });
+}
+export function reconsiderLifecycleRepairAction(token: string, input: { actionId: number; expectedRevision: number; reason: string }) {
+  const { actionId, ...body } = input;
+  return apiRequest<{ action: LifecycleRepairAction }>(`/api/lifecycle-repairs/actions/${actionId}/reconsider`, { method: "POST", token, body });
 }
 export function diagnosePositionAttribution(token: string, tradingAccountId: number, trackedPositionId: number) {
   return apiRequest<{ case: LifecycleRepairCase }>("/api/lifecycle-repairs/diagnose", { method: "POST", token, body: { repairType: "RESOLVE_POSITION_ATTRIBUTION", tradingAccountId, trackedPositionId } });

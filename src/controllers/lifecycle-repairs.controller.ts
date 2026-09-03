@@ -13,11 +13,13 @@ import {
   applyLifecycleRepairActionSchema,
   decideLifecycleRepairActionSchema,
   previewHistoricalEntryLifecycleSchema,
+  reconsiderLifecycleRepairActionSchema,
 } from '../validators/lifecycle-repair.schema.js';
 import {
   applyHistoricalLifecycleAction,
   decideHistoricalLifecycleAction,
   previewHistoricalEntryLifecycleRepair,
+  reconsiderHistoricalLifecycleAction,
 } from '../services/historical-entry-lifecycle-workbench.service.js';
 
 function actor(res: Response) {
@@ -81,4 +83,11 @@ export async function applyLifecycleRepairActionController(req: Request, res: Re
     const input = applyLifecycleRepairActionSchema.parse(req.body);
     res.status(200).json(await applyHistoricalLifecycleAction({ actionId: id(req.params.actionId, 'lifecycle repair action id'), actorUserId: actor(res), ...input }));
   } catch (error) { next(error instanceof ZodError ? new HttpError(400, 'Invalid lifecycle repair action Apply request.', error.flatten()) : error); }
+}
+
+export async function reconsiderLifecycleRepairActionController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const input = reconsiderLifecycleRepairActionSchema.parse(req.body);
+    res.status(201).json({ action: await reconsiderHistoricalLifecycleAction({ actionId: id(req.params.actionId, 'lifecycle repair action id'), actorUserId: actor(res), ...input }) });
+  } catch (error) { next(error instanceof ZodError ? new HttpError(400, 'Invalid lifecycle repair reconsideration request.', error.flatten()) : error); }
 }

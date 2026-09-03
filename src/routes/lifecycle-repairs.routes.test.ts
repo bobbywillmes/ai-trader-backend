@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   preview: vi.fn((_req, res) => res.status(201).json({ case: { id: 2 } })),
   decideAction: vi.fn((_req, res) => res.status(200).json({ action: { id: 3 } })),
   applyAction: vi.fn((_req, res) => res.status(200).json({ execution: { id: 4 } })),
+  reconsiderAction: vi.fn((_req, res) => res.status(201).json({ action: { id: 5 } })),
 }));
 vi.mock('../controllers/lifecycle-repairs.controller.js', () => ({
   diagnoseLifecycleRepairController: mocks.diagnose,
@@ -21,6 +22,7 @@ vi.mock('../controllers/lifecycle-repairs.controller.js', () => ({
   previewHistoricalEntryLifecycleController: mocks.preview,
   decideLifecycleRepairActionController: mocks.decideAction,
   applyLifecycleRepairActionController: mocks.applyAction,
+  reconsiderLifecycleRepairActionController: mocks.reconsiderAction,
 }));
 import router from './lifecycle-repairs.routes.js';
 
@@ -37,7 +39,7 @@ async function requestAs(role: PlatformRole, method: string, path: string) {
 
 describe('Lifecycle Repair Workbench RBAC', () => {
   afterEach(async () => { await new Promise<void>((resolve) => server?.close(() => resolve())); server = undefined; vi.clearAllMocks(); });
-  it.each([['GET', '/api/lifecycle-repairs', 'list'], ['POST', '/api/lifecycle-repairs/diagnose', 'diagnose'], ['POST', '/api/lifecycle-repairs/historical-entry/preview', 'preview'], ['POST', '/api/lifecycle-repairs/actions/1/decision', 'decideAction'], ['POST', '/api/lifecycle-repairs/actions/1/apply', 'applyAction'], ['GET', '/api/lifecycle-repairs/1', 'get'], ['POST', '/api/lifecycle-repairs/1/apply', 'apply']] as const)('rejects non-owners from %s %s', async (method, path, name) => {
+  it.each([['GET', '/api/lifecycle-repairs', 'list'], ['POST', '/api/lifecycle-repairs/diagnose', 'diagnose'], ['POST', '/api/lifecycle-repairs/historical-entry/preview', 'preview'], ['POST', '/api/lifecycle-repairs/actions/1/decision', 'decideAction'], ['POST', '/api/lifecycle-repairs/actions/1/apply', 'applyAction'], ['POST', '/api/lifecycle-repairs/actions/1/reconsider', 'reconsiderAction'], ['GET', '/api/lifecycle-repairs/1', 'get'], ['POST', '/api/lifecycle-repairs/1/apply', 'apply']] as const)('rejects non-owners from %s %s', async (method, path, name) => {
     expect((await requestAs(PlatformRole.OPERATOR, method, path)).status).toBe(403);
     expect(mocks[name]).not.toHaveBeenCalled();
   });
