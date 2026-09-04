@@ -681,6 +681,9 @@ export async function reconcileTradingAccount(
   tradingAccountId: number,
   options: RunReconciliationCheckOptions = {}
 ): Promise<RunReconciliationCheckResult> {
+  // Unlocked core. Callers must either hold the account's LIFECYCLE_MUTATION
+  // barrier (for an orchestrated multi-step workflow) or use
+  // reconcileTradingAccountWithLock().
   const account = await prisma.tradingAccount.findUniqueOrThrow({
     where: { id: tradingAccountId },
     select: { id: true, displayName: true, environment: true },
@@ -1221,8 +1224,9 @@ export async function reconcileEligibleTradingAccounts(
 export async function runReconciliationCheck(
   options: RunReconciliationCheckOptions = {}
 ) {
-  // Legacy internal compatibility wrapper. New callers must use
-  // reconcileTradingAccount() with an explicit, authorized account ID.
+  // Legacy default-account compatibility wrapper. It still participates in
+  // the shared lifecycle barrier; explicit callers should use
+  // reconcileTradingAccountWithLock().
   const tradingAccountId = await resolveDefaultTradingAccountId();
-  return reconcileTradingAccount(tradingAccountId, options);
+  return reconcileTradingAccountWithLock(tradingAccountId, options);
 }

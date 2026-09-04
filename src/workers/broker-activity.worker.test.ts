@@ -13,7 +13,7 @@ vi.mock('../services/lifecycle-account-eligibility.service.js', () => ({
 }));
 
 vi.mock('../services/broker-activity.service.js', () => ({
-  syncBrokerActivitiesForAccount: mocks.syncForAccount,
+  syncBrokerActivitiesForAccountUnlocked: mocks.syncForAccount,
 }));
 
 vi.mock('../services/trading-account-workflow-runner.service.js', () => ({

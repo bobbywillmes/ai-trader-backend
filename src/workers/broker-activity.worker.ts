@@ -1,5 +1,5 @@
 import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
-import { syncBrokerActivitiesForAccount } from '../services/broker-activity.service.js';
+import { syncBrokerActivitiesForAccountUnlocked } from '../services/broker-activity.service.js';
 import { enumerateLifecycleAccounts } from '../services/lifecycle-account-eligibility.service.js';
 import { runTradingAccountWorkflow } from '../services/trading-account-workflow-runner.service.js';
 import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from '../services/trading-account-workflow-lock.service.js';
@@ -37,7 +37,7 @@ export async function runBrokerActivitySync() {
           tradingAccountId: account.tradingAccountId,
           workerKey: 'broker_activity_sync',
           lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION,
-          execute: () => syncBrokerActivitiesForAccount(account.tradingAccountId, {
+          execute: () => syncBrokerActivitiesForAccountUnlocked(account.tradingAccountId, {
             activityType: 'FILL',
             pageSize: 100,
             maxPages: 3,

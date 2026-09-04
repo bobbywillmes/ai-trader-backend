@@ -9,7 +9,7 @@ import { createSystemEvent } from "./system-event.service.js";
 import { recordAccountSnapshot } from "./account-snapshot.service.js";
 import {
   attributeCloseFillsForTrackedPosition,
-  syncBrokerActivitiesForAccount,
+  syncBrokerActivitiesForAccountUnlocked,
 } from "./broker-activity.service.js";
 import {
   ensurePositionExitState,
@@ -31,7 +31,8 @@ import {
   TRADING_ACCOUNT_SUMMARY_SELECT,
 } from "./trading-account.service.js";
 import { runTradingAccountWorkflow } from "./trading-account-workflow-runner.service.js";
-import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from "./trading-account-workflow-lock.service.js";
+import { ACCOUNT_WORKFLOW_LOCK_FAMILIES, withTradingAccountWorkflowLock } from "./trading-account-workflow-lock.service.js";
+import { HttpError } from "../errors/http-error.js";
 import { enumerateLifecycleAccounts } from "./lifecycle-account-eligibility.service.js";
 import { observeUnexpectedShortExposure } from "./unexpected-short-exposure.service.js";
 import { reconcileRemainingExposureCloseAfterPositionClosure } from "./remaining-exposure-close.service.js";
@@ -314,7 +315,8 @@ async function applySubscriptionResolution(args: {
   return resolution;
 }
 
-export async function syncTrackedPositionsForAccount(
+/** Internal operation: caller must hold the account lifecycle-mutation barrier. */
+export async function syncTrackedPositionsForAccountUnlocked(
   tradingAccountId: number,
   environment: "PAPER" | "LIVE" = "PAPER",
 ): Promise<TrackedPositionSyncResult> {
@@ -635,7 +637,7 @@ export async function syncTrackedPositionsForAccount(
       continue;
     }
 
-    await syncBrokerActivitiesForAccount(tradingAccountId, {
+    await syncBrokerActivitiesForAccountUnlocked(tradingAccountId, {
       activityType: "FILL",
       pageSize: 100,
       maxPages: 2,
@@ -754,6 +756,17 @@ export async function syncTrackedPositionsForAccount(
   };
 }
 
+/** Public/manual operation: acquires the account lifecycle-mutation barrier. */
+export async function syncTrackedPositionsForAccount(tradingAccountId: number, environment?: "PAPER" | "LIVE") {
+  const result = await withTradingAccountWorkflowLock({
+    tradingAccountId, workflowKey: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION,
+    processInstanceId: `tracked-position-sync:${Date.now()}`,
+    execute: () => syncTrackedPositionsForAccountUnlocked(tradingAccountId, environment),
+  });
+  if (result.outcome !== 'ACQUIRED_AND_COMPLETED') throw (result.outcome === 'WORKFLOW_ERROR' || result.outcome === 'LOCK_ERROR' ? result.error : new HttpError(409, 'Lifecycle mutation is already in progress.'));
+  return result.value;
+}
+
 export async function syncTrackedPositionsAcrossAccounts() {
   const accounts = await enumerateLifecycleAccounts("positions");
   const results = [];
@@ -776,7 +789,7 @@ export async function syncTrackedPositionsAcrossAccounts() {
         workerKey: "tracked_position_sync",
         lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION,
         execute: () =>
-          syncTrackedPositionsForAccount(
+          syncTrackedPositionsForAccountUnlocked(
             account.tradingAccountId,
             account.environment,
           ),

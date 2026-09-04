@@ -1,11 +1,13 @@
 import { SystemEventSeverity, type Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
+import { HttpError } from '../errors/http-error.js';
 import {
   getAlpacaAccountActivities,
   type AlpacaAccountActivity,
 } from '../integrations/alpaca/activities.adapter.js';
 import type { AlpacaApiOperation } from '../integrations/alpaca/request-metadata.js';
 import { createSystemEvent } from './system-event.service.js';
+import { ACCOUNT_WORKFLOW_LOCK_FAMILIES, withTradingAccountWorkflowLock } from './trading-account-workflow-lock.service.js';
 import {
   resolveDefaultTradingAccountId,
   TRADING_ACCOUNT_SUMMARY_SELECT,
@@ -336,7 +338,8 @@ async function upsertBrokerActivity(args: {
   return 'created' as const;
 }
 
-export async function syncBrokerActivitiesForAccount(
+/** Internal operation: caller must hold the account lifecycle-mutation barrier. */
+export async function syncBrokerActivitiesForAccountUnlocked(
   tradingAccountId: number,
   input: SyncBrokerActivitiesInput = {}
 ) {
@@ -455,6 +458,17 @@ export async function syncBrokerActivitiesForAccount(
     created,
     updated,
   };
+}
+
+/** Public/manual operation: acquires the account lifecycle-mutation barrier. */
+export async function syncBrokerActivitiesForAccount(tradingAccountId: number, input: SyncBrokerActivitiesInput = {}) {
+  const result = await withTradingAccountWorkflowLock({
+    tradingAccountId, workflowKey: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION,
+    processInstanceId: `broker-activity-sync:${Date.now()}`,
+    execute: () => syncBrokerActivitiesForAccountUnlocked(tradingAccountId, input),
+  });
+  if (result.outcome !== 'ACQUIRED_AND_COMPLETED') throw (result.outcome === 'WORKFLOW_ERROR' || result.outcome === 'LOCK_ERROR' ? result.error : new HttpError(409, 'Lifecycle mutation is already in progress.'));
+  return result.value;
 }
 
 export async function syncBrokerActivities(input: SyncBrokerActivitiesInput = {}) {
