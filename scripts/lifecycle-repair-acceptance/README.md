@@ -13,6 +13,10 @@ $env:LIFECYCLE_REPAIR_ACCEPTANCE='I_UNDERSTAND_THIS_IS_DISPOSABLE_LIFECYCLE_REPA
 
 Then run `npm.cmd run acceptance:lifecycle-repair:reset`, deploy migrations to
 that disposable database, run `npm.cmd run acceptance:lifecycle-repair:fixture`,
+verify the database-backed preview with
+`npm.cmd run acceptance:lifecycle-repair:verify-fixture`,
+exercise the staged mutation and authoritative-verification slice with
+`npm.cmd run acceptance:lifecycle-repair:staged-path`,
 and start with `npm.cmd run acceptance:lifecycle-repair:server`. The fixture prints
 its generated owner login and attention ID for opening `/operational-attention`
 and the linked Lifecycle Repair Workbench. Reset is the teardown procedure. The normal application has no

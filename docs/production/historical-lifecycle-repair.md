@@ -14,6 +14,12 @@ Never use SQL or operator-entered lifecycle values.
 6. Apply an approved PAPER link and run authoritative reconciliation.
 7. Confirm attention resolves once and audit evidence remains available.
 
+If Preview expires or Apply fails, request a fresh preview. The old case,
+action, execution, and failure event remain immutable; the renewed case carries
+typed supersession lineage and requires a new attempt key. Current unchanged
+Preview is idempotent. Preview cannot renew an unchanged refusal: use explicit
+Reconsider with a nonblank reason.
+
 If links are partial or conflicting, stop: the Workbench must leave the episode
 active and must not offer an applicable link mutation. Refusal also leaves the
 episode active. Reconsideration requires a new reason and freshly rebuilt

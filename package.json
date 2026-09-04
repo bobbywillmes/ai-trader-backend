@@ -29,6 +29,8 @@
     "acceptance:lifecycle-repair:test": "vitest run --config vitest.lifecycle-repair-acceptance.config.ts",
     "acceptance:lifecycle-repair:reset": "tsx scripts/lifecycle-repair-acceptance/reset-schema.ts",
     "acceptance:lifecycle-repair:fixture": "tsx scripts/lifecycle-repair-acceptance/fixture.ts",
+    "acceptance:lifecycle-repair:verify-fixture": "tsx scripts/lifecycle-repair-acceptance/verify-fixture.ts",
+    "acceptance:lifecycle-repair:staged-path": "tsx scripts/lifecycle-repair-acceptance/staged-path.ts",
     "acceptance:lifecycle-repair:server": "tsx scripts/lifecycle-repair-acceptance/server.ts",
     "acceptance:live-entry:test": "vitest run --config vitest.acceptance.config.ts"
   },

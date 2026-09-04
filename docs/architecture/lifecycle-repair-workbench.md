@@ -7,13 +7,17 @@ that handler `LOCAL_ONLY` with no broker write methods.
 
 ## Immutable diagnosis and execution
 
-Diagnosis creates an immutable `LifecycleRepairCase` that expires after ten
-minutes. The case freezes target identity, sanitized evidence, candidates and
+Diagnosis creates an immutable, numbered `LifecycleRepairCase` generation that
+expires after ten minutes. The case freezes target identity, sanitized evidence, candidates and
 rejections, before state, exact proposed mutations, configuration and local
 lifecycle fingerprints, confidence, provenance, and broker impact. Refreshing
 diagnosis creates a new case and supersedes older cases for the same target.
 
-Only `DETERMINISTIC` PAPER cases can be applied. LIVE diagnosis is read-only.
+An unchanged usable generation is returned idempotently. Expired or failed
+generations are replaced by a freshly built case linked through
+`supersedesCaseId`. Refused evidence remains immutable and Preview cannot bypass
+it; Reconsider is the only unchanged-evidence renewal path. Only eligible PAPER
+actions can be applied. LIVE diagnosis is read-only.
 
 ## Historical filled-entry lifecycle repair
 
@@ -53,8 +57,21 @@ supersedes sibling proposals and requires a fresh preview for the next stage.
 Authoritative reconciliation resolves attention only after every invariant is
 complete. Unchanged observations update occurrence count and `lastObservedAt`
 without another event; a material evidence change emits one transition event.
-A committed local mutation is `APPLIED`, not `VERIFIED`; authoritative
-verification belongs to subsequent reconciliation.
+A committed local mutation is `APPLIED`, not `VERIFIED`. Subsequent
+authoritative reconciliation independently proves terminal status or complete
+position ownership, stores verification evidence, and emits one verified event.
+Terminalization may verify while link-only attention remains active. A typed
+`operationalAttentionId` relationship connects every historical case to its
+episode.
+
+Manual BrokerActivity synchronization acquires the lifecycle barrier. Scheduled
+BrokerActivity and position workflows call explicitly named unlocked operations
+only below their outer barrier. Submitted-order workflows use the same barrier,
+and Live-entry verification acquires it once around order, activity, position,
+and reconciliation observations. One account-level lock avoids nested
+non-reentrant acquisition and cross-family ordering cycles. Repair additionally
+uses a serializable transaction and row locks to detect membership changes at
+the transaction boundary.
 
 The July `historical-order-lifecycle` script remains available for read-only
 diagnosis. Script Apply mode is deprecated; removal is deferred until the

@@ -3,19 +3,21 @@ import { randomUUID } from 'node:crypto';
 import { assertLifecycleRepairAcceptanceEnvironment } from './guard.js';
 import { installMockAlpacaTransport } from '../manual-acceptance/mock-alpaca-transport.js';
 import { MANUAL_ACCEPTANCE_SENTINEL } from '../../src/services/manual-acceptance-environment.js';
+import { SYNTHETIC_HISTORICAL_FILL_AT } from './fixture-values.js';
 
 assertLifecycleRepairAcceptanceEnvironment();
 process.env.MANUAL_ACCEPTANCE_HARNESS = MANUAL_ACCEPTANCE_SENTINEL;
 installMockAlpacaTransport();
 
-const [{ prisma }, { hashPassword }, attentionService] = await Promise.all([
+const [{ prisma }, { hashPassword }, attentionService, credentialCrypto] = await Promise.all([
   import('../../src/db/prisma.js'),
   import('../../src/services/auth.service.js'),
   import('../../src/services/operational-attention.service.js'),
+  import('../../src/services/trading-credential-crypto.service.js'),
 ]);
 
 const suffix = randomUUID();
-const fillAt = new Date('2031-04-08T15:30:00.000Z');
+const fillAt = SYNTHETIC_HISTORICAL_FILL_AT;
 const owner = await prisma.user.create({ data: {
   email: `lifecycle-owner-${suffix}@example.invalid`, name: 'Lifecycle Repair Acceptance Owner',
   platformRole: 'SYSTEM_OWNER', passwordHash: await hashPassword('LifecycleRepairAcceptanceOnly!2031'),
@@ -25,6 +27,14 @@ const account = await prisma.tradingAccount.create({ data: {
   accountHolderUserId: owner.id, displayName: `Synthetic Lifecycle PAPER ${suffix.slice(0, 8)}`,
   environment: 'PAPER', status: 'ACTIVE', tradingEnabled: false, killSwitchEnabled: true,
   brokerAccountId: `synthetic-paper-${suffix}`,
+} });
+await prisma.tradingAccountCredential.create({ data: {
+  tradingAccountId: account.id,
+  status: 'ACTIVE',
+  apiKeyCiphertext: credentialCrypto.encryptSecret(`synthetic-key-${suffix}`),
+  apiSecretCiphertext: credentialCrypto.encryptSecret(`synthetic-secret-${suffix}`),
+  keyFingerprint: credentialCrypto.fingerprintSecret(`synthetic-key-${suffix}`),
+  verifiedAt: new Date(),
 } });
 const security = await prisma.security.create({ data: { symbol: `ZX${suffix.slice(0, 4).toUpperCase()}`, name: 'Synthetic Acceptance Equity', assetType: 'STOCK' } });
 const strategy = await prisma.strategy.create({ data: { key: `synthetic_strategy_${suffix}`, name: 'Synthetic Acceptance Strategy' } });

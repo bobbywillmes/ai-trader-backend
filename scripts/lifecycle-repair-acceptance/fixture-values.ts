@@ -1,0 +1,1 @@
+export const SYNTHETIC_HISTORICAL_FILL_AT = new Date('2020-04-08T15:30:00.000Z');
