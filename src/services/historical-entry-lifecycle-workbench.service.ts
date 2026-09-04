@@ -82,6 +82,8 @@ function lifecycleState(order: any) {
       tradingAccountId: activity.tradingAccountId,
       brokerOrderRecordId: activity.brokerOrderRecordId,
       orderIntentId: activity.orderIntentId, trackedPositionId: activity.trackedPositionId,
+      trackedPositionLinkSource: activity.trackedPositionLinkSource,
+      trackedPositionLinkedAt: activity.trackedPositionLinkedAt?.toISOString() ?? null,
       qty: activity.qty, cumQty: activity.cumQty, leavesQty: activity.leavesQty,
       price: activity.price, transactionTime: activity.transactionTime?.toISOString() ?? null,
     })),

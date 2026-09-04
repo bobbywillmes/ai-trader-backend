@@ -13,12 +13,12 @@ import { lifecycleRepairCaseLabels } from "./caseLabels";
 
 function displayDate(value: string) { return new Date(value).toLocaleString(); }
 
-function CaseListItem({ item, selected, onSelect }: { item: LifecycleRepairCase; selected: boolean; onSelect: () => void }) {
+export function CaseListItem({ item, selected, onSelect }: { item: LifecycleRepairCase; selected: boolean; onSelect: () => void }) {
   const state = lifecycleRepairCaseState(item);
   const latest = item.executions[0];
   const labels = lifecycleRepairCaseLabels(item);
   return <Button className={classes.caseButton} variant={selected ? "filled" : "light"} color={selected ? "blue" : "gray"} onClick={onSelect} fullWidth>
-    <Group justify="space-between" wrap="nowrap" w="100%"><div className={classes.caseIdentity}><Text fw={700}>{labels.identity}</Text><Text size="xs" c={selected ? undefined : "dimmed"}>{item.tradingAccount.displayName} · {labels.description}</Text><Text size="xs" c={selected ? undefined : "dimmed"}>Created {displayDate(item.createdAt)} · {item.executed ? `Executed ${latest ? displayDate(latest.executedAt) : ""}` : `Expires ${displayDate(item.expiresAt)}`}</Text></div><Group gap={6} wrap="wrap" justify="flex-end"><Badge color={item.confidence === "DETERMINISTIC" ? "teal" : "orange"}>{item.confidence}</Badge><Badge color={state.color}>{state.label}</Badge>{latest && <Badge color={latest.result === "SUCCEEDED" ? "teal" : "red"}>{latest.result}</Badge>}</Group></Group>
+    <Group justify="space-between" wrap="nowrap" w="100%"><div className={classes.caseIdentity}><Text fw={700}>{labels.identity}</Text><Text size="xs" c={selected ? undefined : "dimmed"}>{item.tradingAccount.displayName} · {labels.description}</Text><Text size="xs" c={selected ? undefined : "dimmed"}>Created {displayDate(item.createdAt)} · {item.repairType === "REPAIR_HISTORICAL_ENTRY_LIFECYCLE" ? `Preview expires ${displayDate(item.expiresAt)}` : item.executed ? `Executed ${latest ? displayDate(latest.executedAt) : ""}` : `Expires ${displayDate(item.expiresAt)}`}</Text></div><Group gap={6} wrap="wrap" justify="flex-end"><Badge color={item.confidence === "DETERMINISTIC" ? "teal" : "orange"}>{item.confidence}</Badge><Badge color={state.color}>{state.label}</Badge>{latest && item.repairType !== "REPAIR_HISTORICAL_ENTRY_LIFECYCLE" && <Badge color={latest.result === "SUCCEEDED" ? "teal" : "red"}>{latest.result}</Badge>}</Group></Group>
   </Button>;
 }
 

@@ -3,7 +3,7 @@ import { MantineProvider } from "@mantine/core";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { LifecycleRepairCase, LifecycleRepairExecution } from "./api";
+import type { LifecycleRepairAction, LifecycleRepairCase, LifecycleRepairExecution } from "./api";
 import { LifecycleRepairCaseDetail } from "./LifecycleRepairCaseDetail";
 
 const snapshot = {
@@ -38,7 +38,7 @@ function renderDetail(item: LifecycleRepairCase = base, onDiagnoseAgain = vi.fn(
   return { onApply, onDiagnoseAgain };
 }
 
-const historicalAction = (id: number, actionType: "TERMINALIZE_ORDER_LIFECYCLE" | "LINK_ENTRY_LIFECYCLE_TO_POSITION", status: "PROPOSED" | "APPROVED" = "PROPOSED") => ({
+const historicalAction = (id: number, actionType: "TERMINALIZE_ORDER_LIFECYCLE" | "LINK_ENTRY_LIFECYCLE_TO_POSITION", status: "PROPOSED" | "APPROVED" | "APPLIED" | "VERIFIED" | "SUPERSEDED" = "PROPOSED"): LifecycleRepairAction => ({
   id, actionType, ordinal: id, classification: actionType === "TERMINALIZE_ORDER_LIFECYCLE" ? "DETERMINISTIC" as const : "OPERATOR_CONFIRMATION_REQUIRED" as const,
   generation: 1, supersedesActionId: null, reconsiderationReason: null, status, revision: 1,
   actionFingerprint: `fingerprint-${id}`, proposedMutationsJson: {}, preconditionsJson: {}, evidenceJson: {},
@@ -132,6 +132,34 @@ describe("Lifecycle Repair operator review", () => {
     const raw = screen.getByText(/"brokerOrderId"/);
     expect(raw.tagName).toBe("PRE");
     expect(raw.className).toContain("raw");
+  });
+
+  it("renders terminalization execution checks without legacy attribution validations", () => {
+    const action = historicalAction(21, "TERMINALIZE_ORDER_LIFECYCLE", "APPLIED");
+    action.executions = [{ ...success, id: 21, beforeJson: { brokerOrder: { id: 91, tradingAccountId: 1, broker: "alpaca", brokerOrderId: "synthetic-order", clientOrderId: "synthetic-client", status: "new", trackedPositionId: null }, orderIntent: { id: 92, tradingAccountId: 1, status: "new", trackedPositionId: null }, activities: [{ id: 94, trackedPositionId: null }] }, afterJson: { brokerOrder: { id: 91, tradingAccountId: 1, broker: "alpaca", brokerOrderId: "synthetic-order", clientOrderId: "synthetic-client", status: "filled", trackedPositionId: null }, orderIntent: { id: 92, tradingAccountId: 1, status: "filled", trackedPositionId: null }, activities: [{ id: 94, trackedPositionId: null }] }, validationJson: { valid: true, brokerWrites: 0, exposureChanged: false, financialValuesChanged: false } }];
+    renderDetail(historical([action]));
+    const result = screen.getByText("Execution 21").closest("div[data-result]") as HTMLElement;
+    expect(within(result).getByText(/BrokerOrder reached filled status/)).toBeTruthy();
+    expect(within(result).getByText(/OrderIntent reached filled status/)).toBeTruthy();
+    expect(within(result).getByText(/No position relationship changed/)).toBeTruthy();
+    expect(within(result).getByText(/Structural validation: PASS/)).toBeTruthy();
+    expect(within(result).getByText(/Authoritative reconciliation verification: pending/)).toBeTruthy();
+    expect(within(result).queryByText(/Attribution/)).toBeNull();
+    expect(within(result).queryByText(/Frozen snapshot/)).toBeNull();
+    expect(within(result).queryByText(/Exit state hydrated/)).toBeNull();
+  });
+
+  it("renders linking execution checks and authoritative verified state", () => {
+    const action = historicalAction(22, "LINK_ENTRY_LIFECYCLE_TO_POSITION", "VERIFIED"); action.proposedMutationsJson = { trackedPositionId: 93, brokerActivityIds: [94] };
+    action.executions = [{ ...success, id: 22, beforeJson: { brokerOrder: { id: 91, tradingAccountId: 1, broker: "alpaca", brokerOrderId: "synthetic-order", clientOrderId: "synthetic-client", trackedPositionId: null }, orderIntent: { id: 92, tradingAccountId: 1, trackedPositionId: null }, activities: [{ id: 94, trackedPositionId: null }] }, afterJson: { brokerOrder: { id: 91, tradingAccountId: 1, broker: "alpaca", brokerOrderId: "synthetic-order", clientOrderId: "synthetic-client", trackedPositionId: 93 }, orderIntent: { id: 92, tradingAccountId: 1, trackedPositionId: 93 }, activities: [{ id: 94, trackedPositionId: 93, trackedPositionLinkSource: "historical_order_lifecycle_repair" }] }, validationJson: { valid: true, brokerWrites: 0, exposureChanged: false, financialValuesChanged: false } }];
+    renderDetail(historical([action]));
+    const result = screen.getByText("Execution 22").closest("div[data-result]") as HTMLElement;
+    expect(within(result).getByText(/OrderIntent linked to backend-selected/)).toBeTruthy();
+    expect(within(result).getByText(/BrokerOrder linked to the same/)).toBeTruthy();
+    expect(within(result).getByText(/Eligible BrokerActivity rows linked consistently/)).toBeTruthy();
+    expect(within(result).getByText(/Link provenance recorded/)).toBeTruthy();
+    expect(within(result).getByText(/Authoritative reconciliation verification: VERIFIED/)).toBeTruthy();
+    expect(within(result).queryByText(/Exit state hydrated/)).toBeNull();
   });
 
   it("keeps typed reasons independent and enables approval only for the populated action", async () => {
