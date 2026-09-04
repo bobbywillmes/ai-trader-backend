@@ -11,7 +11,60 @@ import {
   matchHistoricalEntryPosition,
   summarizeLocalFillEvidence,
   validateExistingHistoricalPositionLink,
+  assessHistoricalFullFillEvidence,
+  classifyHistoricalLifecycleLinks,
 } from './historical-order-lifecycle-diagnostic.service.js';
+
+describe('historical full-fill repair evidence', () => {
+  const activity = {
+    id: 101, activityType: 'FILL', qty: 2, cumQty: 2, leavesQty: 0,
+    price: 125.5, transactionTime: fillTime, tradingAccountId: 7,
+    brokerOrderRecordId: 11, orderId: 'synthetic-order', broker: 'alpaca',
+  };
+
+  it('accepts exact owned full-fill evidence without changing financial values', () => {
+    expect(assessHistoricalFullFillEvidence({ orderQty: 2, tradingAccountId: 7, brokerOrderRecordId: 11, brokerOrderId: 'synthetic-order', expectedBroker: 'ALPACA', activities: [activity] })).toMatchObject({
+      deterministic: true, contradictions: [], ownedActivityIds: [101],
+      summary: { classification: 'full', weightedAveragePrice: 125.5 },
+    });
+  });
+
+  it.each([
+    ['missing price', { ...activity, price: null }, 'missing_or_invalid_fill_price'],
+    ['quantity contradiction', { ...activity, qty: 1 }, 'priced_fill_quantity_conflicts_with_order_quantity'],
+    ['broker identity contradiction', { ...activity, orderId: 'different-order' }, 'conflicting_broker_order_identity'],
+  ])('refuses deterministic terminalization for %s', (_label, changed, reason) => {
+    const result = assessHistoricalFullFillEvidence({ orderQty: 2, tradingAccountId: 7, brokerOrderRecordId: 11, brokerOrderId: 'synthetic-order', expectedBroker: 'alpaca', activities: [changed] });
+    expect(result.deterministic).toBe(false);
+    expect(result.contradictions).toContain(reason);
+  });
+
+  it.each([
+    ['case-normalized', 'ALPACA', true],
+    ['missing', '', false],
+    ['conflicting', 'other-broker', false],
+  ])('validates %s BrokerActivity broker identity', (_label, broker, deterministic) => {
+    const result = assessHistoricalFullFillEvidence({ orderQty: 2, tradingAccountId: 7, brokerOrderRecordId: 11, brokerOrderId: 'synthetic-order', expectedBroker: 'alpaca', activities: [{ ...activity, broker }] });
+    expect(result.deterministic).toBe(deterministic);
+    expect(result.contradictions.includes('conflicting_or_missing_broker_identity')).toBe(!deterministic);
+  });
+});
+
+describe('historical lifecycle ownership invariant', () => {
+  it.each([
+    ['all null', null, null, [null], 'ALL_MISSING'],
+    ['intent only', 41, null, [null], 'PARTIAL'],
+    ['order only', null, 41, [null], 'PARTIAL'],
+    ['activity only', null, null, [41], 'PARTIAL'],
+    ['one activity missing', 41, 41, [41, null], 'PARTIAL'],
+    ['consistent', 41, 41, [41, 41], 'CONSISTENT'],
+    ['intent conflicts', 42, 41, [41], 'CONFLICTING'],
+    ['order conflicts', 41, 42, [41], 'CONFLICTING'],
+    ['activity conflicts', 41, 41, [42], 'CONFLICTING'],
+  ])('classifies %s links without hiding incomplete terminal lifecycles', (_label, intentId, orderId, activityIds, state) => {
+    expect(classifyHistoricalLifecycleLinks({ orderIntentTrackedPositionId: intentId, brokerOrderTrackedPositionId: orderId, activityTrackedPositionIds: activityIds })).toMatchObject({ state });
+  });
+});
 
 const fillTime = new Date('2026-01-02T12:00:00.000Z');
 const input = {

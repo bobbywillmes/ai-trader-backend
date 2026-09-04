@@ -69,6 +69,7 @@ export function useManualResolveAttention(token: string | null) {
 export function useRemainingExposureClosePreview(
   token: string | null,
   id: number | null,
+  applicable = true,
 ) {
   return useQuery({
     queryKey: [
@@ -76,7 +77,7 @@ export function useRemainingExposureClosePreview(
       "remaining-exposure-close-preview",
     ],
     queryFn: () => getRemainingExposureClosePreview(token!, id!),
-    enabled: Boolean(token && id),
+    enabled: Boolean(token && id && applicable),
     staleTime: 10_000,
     refetchInterval: 20_000,
   });

@@ -459,9 +459,12 @@ export async function recordTradingAccountWorkflowLockContention(args: {
     },
   });
 
-  if (!previous?.lastLockSkippedAt ||
-      args.attemptedAt.getTime() - previous.lastLockSkippedAt.getTime() >=
-        definition.staleAfterMs) {
+  const nextStatus = deriveTradingAccountWorkerStatus(
+    state, definition, args.attemptedAt
+  );
+  // DELAYED opens the contention episode. A later STALE escalation is emitted
+  // by emitTransition(), avoiding two immutable events for the same change.
+  if (previousStatus !== nextStatus && nextStatus === 'DELAYED') {
     const account = await db.tradingAccount.findUnique({
       where: { id: args.tradingAccountId },
       select: { displayName: true, environment: true },
@@ -485,9 +488,7 @@ export async function recordTradingAccountWorkflowLockContention(args: {
           contenderProcessInstanceId: args.contenderProcessInstanceId,
           lockFamily: args.lockFamily,
           previousStatus,
-          nextStatus: deriveTradingAccountWorkerStatus(
-            state, definition, args.attemptedAt
-          ),
+          nextStatus,
           reason: 'lock_not_acquired',
           consecutiveFailures: state.consecutiveFailures,
           totalLockSkips: state.totalLockSkips,
@@ -497,9 +498,6 @@ export async function recordTradingAccountWorkflowLockContention(args: {
       });
     }
   }
-  const nextStatus = deriveTradingAccountWorkerStatus(
-    state, definition, args.attemptedAt
-  );
   await logHealthTransition(
     previous,
     state,

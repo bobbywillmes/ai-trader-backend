@@ -369,6 +369,7 @@ describe('account workflow health logging', () => {
       attemptedAt: new Date(),
     }, dependencies);
     expect(healthLogger.warn).not.toHaveBeenCalled();
+    expect(emitSystemEvent).not.toHaveBeenCalled();
 
     const oldCreatedAt = new Date(Date.now() - definition.delayedAfterMs - 1);
     state = {
@@ -384,6 +385,16 @@ describe('account workflow health logging', () => {
       attemptedAt: new Date(),
     }, dependencies);
     expect(healthLogger.warn).toHaveBeenCalledTimes(1);
-    expect(state?.totalLockSkips).toBe(2);
+    expect(emitSystemEvent).toHaveBeenCalledTimes(1);
+    expect(emitSystemEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'account_worker_health.lock_contention' }));
+    await recordTradingAccountWorkflowLockContention({
+      tradingAccountId: 7,
+      workerKey: 'exit_evaluation',
+      contenderProcessInstanceId: 'contender',
+      lockFamily: 'exit-evaluation',
+      attemptedAt: new Date(),
+    }, dependencies);
+    expect(emitSystemEvent).toHaveBeenCalledTimes(1);
+    expect(state?.totalLockSkips).toBe(3);
   });
 });

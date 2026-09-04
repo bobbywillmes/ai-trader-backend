@@ -51,6 +51,7 @@ Table User {
   liveEntryAcceptanceTerminations LiveEntryAcceptanceRun [not null]
   lifecycleRepairCasesCreated LifecycleRepairCase [not null]
   lifecycleRepairExecutions LifecycleRepairExecution [not null]
+  lifecycleRepairActionDecisions LifecycleRepairAction [not null]
 }
 
 Table UserSetupToken {
@@ -138,12 +139,18 @@ Table TradingAccount {
 
 Table LifecycleRepairCase {
   id Int [pk, increment]
+  generation Int [not null, default: 1]
   repairType LifecycleRepairType [not null]
   repairVersion Int [not null]
   impact LifecycleRepairImpact [not null]
   source LifecycleRepairSource [not null]
   tradingAccountId Int [not null]
   tradingAccount TradingAccount [not null]
+  operationalAttentionId Int
+  operationalAttention OperationalAttention
+  supersedesCaseId Int
+  supersedesCase LifecycleRepairCase
+  supersededByCases LifecycleRepairCase [not null]
   targetType String [not null]
   targetId String [not null]
   confidence LifecycleRepairConfidence [not null]
@@ -165,9 +172,48 @@ Table LifecycleRepairCase {
   createdAt DateTime [default: `now()`, not null]
   expiresAt DateTime [not null]
   executions LifecycleRepairExecution [not null]
+  actions LifecycleRepairAction [not null]
 
   indexes {
-    (repairType, targetType, targetId, diagnosticFingerprint) [unique]
+    (repairType, targetType, targetId, diagnosticFingerprint, generation) [unique]
+  }
+}
+
+Table LifecycleRepairAction {
+  id Int [pk, increment]
+  caseId Int [not null]
+  repairCase LifecycleRepairCase [not null]
+  actionType LifecycleRepairActionType [not null]
+  ordinal Int [not null]
+  generation Int [not null, default: 1]
+  classification LifecycleRepairActionClassification [not null]
+  status LifecycleRepairActionStatus [not null, default: 'PROPOSED']
+  revision Int [not null, default: 1]
+  actionFingerprint String [not null]
+  proposedMutationsJson Json [not null]
+  preconditionsJson Json [not null]
+  evidenceJson Json [not null]
+  decidedByUserId Int
+  decidedByUser User
+  decidedByUserIdSnapshot Int
+  decidedAt DateTime
+  decisionReason String
+  reconsiderationReason String
+  reconsideredByUserIdSnapshot Int
+  reconsideredAt DateTime
+  supersedesActionId Int
+  supersedesAction LifecycleRepairAction
+  supersededBy LifecycleRepairAction [not null]
+  beforeJson Json [not null]
+  afterJson Json
+  verificationJson Json
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  executions LifecycleRepairExecution [not null]
+
+  indexes {
+    (caseId, ordinal) [unique]
+    (caseId, actionType, generation) [unique]
   }
 }
 
@@ -175,6 +221,8 @@ Table LifecycleRepairExecution {
   id Int [pk, increment]
   caseId Int [not null]
   repairCase LifecycleRepairCase [not null]
+  actionId Int
+  action LifecycleRepairAction
   attemptKey String [unique, not null]
   result LifecycleRepairExecutionResult [not null]
   executedByUserId Int [not null]
@@ -663,6 +711,7 @@ Table OperationalAttention {
   message String [not null]
   detailsJson Json [not null]
   fingerprint String [not null]
+  materialFingerprint String
   activeKey String [unique]
   occurrenceCount Int [not null, default: 1]
   firstObservedAt DateTime [default: `now()`, not null]
@@ -689,6 +738,7 @@ Table OperationalAttention {
   orderIntent OrderIntent
   brokerOrder BrokerOrder
   evidenceEvents OperationalAttentionSystemEvent [not null]
+  lifecycleRepairCases LifecycleRepairCase [not null]
 }
 
 Table OperationalAttentionSystemEvent {
@@ -1339,6 +1389,7 @@ Enum LiveWriteApprovalAction {
 
 Enum LifecycleRepairType {
   RESOLVE_POSITION_ATTRIBUTION
+  REPAIR_HISTORICAL_ENTRY_LIFECYCLE
 }
 
 Enum LifecycleRepairImpact {
@@ -1361,6 +1412,26 @@ Enum LifecycleRepairConfidence {
 Enum LifecycleRepairExecutionResult {
   SUCCEEDED
   FAILED
+}
+
+Enum LifecycleRepairActionType {
+  TERMINALIZE_ORDER_LIFECYCLE
+  LINK_ENTRY_LIFECYCLE_TO_POSITION
+}
+
+Enum LifecycleRepairActionClassification {
+  DETERMINISTIC
+  OPERATOR_CONFIRMATION_REQUIRED
+}
+
+Enum LifecycleRepairActionStatus {
+  PROPOSED
+  APPROVED
+  REFUSED
+  APPLIED
+  VERIFIED
+  FAILED
+  SUPERSEDED
 }
 
 Enum BrokerCredentialAuthType {
@@ -1578,9 +1649,21 @@ Ref: TradingAccount.activeLiveEntryArmingId - LiveEntryArming.id
 
 Ref: LifecycleRepairCase.tradingAccountId > TradingAccount.id [delete: Restrict]
 
+Ref: LifecycleRepairCase.operationalAttentionId > OperationalAttention.id [delete: Restrict]
+
+Ref: LifecycleRepairCase.supersedesCaseId - LifecycleRepairCase.id [delete: Restrict]
+
 Ref: LifecycleRepairCase.createdByUserId > User.id [delete: Restrict]
 
+Ref: LifecycleRepairAction.caseId > LifecycleRepairCase.id [delete: Restrict]
+
+Ref: LifecycleRepairAction.decidedByUserId > User.id [delete: Set Null]
+
+Ref: LifecycleRepairAction.supersedesActionId - LifecycleRepairAction.id [delete: Restrict]
+
 Ref: LifecycleRepairExecution.caseId > LifecycleRepairCase.id [delete: Restrict]
+
+Ref: LifecycleRepairExecution.actionId > LifecycleRepairAction.id [delete: Restrict]
 
 Ref: LifecycleRepairExecution.executedByUserId > User.id [delete: Restrict]
 

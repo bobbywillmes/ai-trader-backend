@@ -7,11 +7,12 @@ import { evaluateAssignmentEntry } from './assignment-entry-evaluation.service.j
 import { validateActiveLiveEntryArming } from './live-entry-arming.service.js';
 import { submitOrder } from './place-order.service.js';
 import { disarmLiveEntries } from './live-entry-arming.service.js';
-import { syncSubmittedOrdersForAccount } from '../workers/order.worker.js';
-import { syncBrokerActivitiesForAccount } from './broker-activity.service.js';
-import { syncTrackedPositionsForAccount } from './position-tracking.service.js';
+import { syncSubmittedOrdersForAccountUnlocked } from '../workers/order.worker.js';
+import { syncBrokerActivitiesForAccountUnlocked } from './broker-activity.service.js';
+import { syncTrackedPositionsForAccountUnlocked } from './position-tracking.service.js';
 import { reconcileTradingAccount } from './reconciliation.service.js';
 import { computeReadinessFingerprints } from './trading-account-readiness.service.js';
+import { ACCOUNT_WORKFLOW_LOCK_FAMILIES, withTradingAccountWorkflowLock } from './trading-account-workflow-lock.service.js';
 
 export const liveEntryAcceptancePhases = [
   'SETUP',
@@ -563,10 +564,23 @@ export async function verifyLiveEntryAcceptanceRun(args: {
   if (!before.run.executionClaimedAt || !before.run.orderIntent) {
     throw new HttpError(409, 'Acceptance verification requires an executed OrderIntent.');
   }
+  let reconciliation;
   try {
-    await syncSubmittedOrdersForAccount(args.tradingAccountId);
-    await syncBrokerActivitiesForAccount(args.tradingAccountId);
-    await syncTrackedPositionsForAccount(args.tradingAccountId);
+    const observation = await withTradingAccountWorkflowLock({
+      tradingAccountId: args.tradingAccountId,
+      workflowKey: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION,
+      processInstanceId: `live-entry-verification:${args.runId}`,
+      execute: async () => {
+        await syncSubmittedOrdersForAccountUnlocked(args.tradingAccountId);
+        await syncBrokerActivitiesForAccountUnlocked(args.tradingAccountId);
+        await syncTrackedPositionsForAccountUnlocked(args.tradingAccountId);
+        return reconcileTradingAccount(args.tradingAccountId);
+      },
+    });
+    if (observation.outcome !== 'ACQUIRED_AND_COMPLETED') {
+      throw (observation.outcome === 'WORKFLOW_ERROR' || observation.outcome === 'LOCK_ERROR' ? observation.error : new Error('Lifecycle verification lock unavailable.'));
+    }
+    reconciliation = observation.value;
   } catch (error) {
     await prisma.liveEntryAcceptanceRun.updateMany({
       where: { id: args.runId, tradingAccountId: args.tradingAccountId, terminalAt: null },
@@ -576,23 +590,6 @@ export async function verifyLiveEntryAcceptanceRun(args: {
           classification: 'DELIVERY_UNCERTAIN',
           source: 'acceptance_verification_observation',
           message: error instanceof Error ? error.message : 'Verification observation failed.',
-        },
-      },
-    });
-    return getLiveEntryAcceptanceRun(args.tradingAccountId, args.runId);
-  }
-  let reconciliation;
-  try {
-    reconciliation = await reconcileTradingAccount(args.tradingAccountId);
-  } catch (error) {
-    await prisma.liveEntryAcceptanceRun.updateMany({
-      where: { id: args.runId, tradingAccountId: args.tradingAccountId, terminalAt: null },
-      data: {
-        executionUncertainAt: new Date(),
-        executionFailureJson: {
-          classification: 'DELIVERY_UNCERTAIN',
-          source: 'acceptance_reconciliation',
-          message: error instanceof Error ? error.message : 'Reconciliation failed.',
         },
       },
     });

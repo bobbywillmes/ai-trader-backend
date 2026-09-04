@@ -1,5 +1,11 @@
 # Operational attention foundation
 
+Historical filled-entry lifecycle inconsistencies use
+`HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE`. One episode follows the account and
+BrokerOrder across staged repair even when its unresolved components change.
+Refusing an action is audit evidence, not resolution. Only authoritative
+reconciliation absence resolves the episode.
+
 `SystemEvent` and `OperationalAttention` answer different questions.
 `SystemEvent` is append-only evidence of what happened at a particular time.
 Its persisted `severity` is immutable and is never inferred from the event type.

@@ -18,7 +18,7 @@ import {
   enumerateLifecycleAccounts,
   type LifecycleAccountEligibility,
 } from './lifecycle-account-eligibility.service.js';
-import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from './trading-account-workflow-lock.service.js';
+import { ACCOUNT_WORKFLOW_LOCK_FAMILIES, withTradingAccountWorkflowLock } from './trading-account-workflow-lock.service.js';
 import { runTradingAccountWorkflow } from './trading-account-workflow-runner.service.js';
 import { diagnoseHistoricalOrderLifecycle } from './historical-order-lifecycle-diagnostic.service.js';
 import {
@@ -52,6 +52,7 @@ export type ReconciliationFindingCode =
   | 'unexpected_short_position'
   | 'local_nonterminal_order_missing_at_broker'
   | 'local_order_status_stale_terminal_broker_order'
+  | 'historical_filled_entry_position_link_missing'
   | 'broker_order_untracked'
   | 'stale_submitting_intent'
   | 'position_attribution_missing';
@@ -680,6 +681,9 @@ export async function reconcileTradingAccount(
   tradingAccountId: number,
   options: RunReconciliationCheckOptions = {}
 ): Promise<RunReconciliationCheckResult> {
+  // Unlocked core. Callers must either hold the account's LIFECYCLE_MUTATION
+  // barrier (for an orchestrated multi-step workflow) or use
+  // reconcileTradingAccountWithLock().
   const account = await prisma.tradingAccount.findUniqueOrThrow({
     where: { id: tradingAccountId },
     select: { id: true, displayName: true, environment: true },
@@ -782,11 +786,61 @@ export async function reconcileTradingAccount(
   const historicalDiagnostic = await diagnoseHistoricalOrderLifecycle({
     tradingAccountId,
     openOrders: brokerOrders,
+    includeTerminalMissingPositionLinks: true,
   });
   refineHistoricalMissingOrderFindings(
     findings,
     historicalDiagnostic.candidates
   );
+  for (const candidate of historicalDiagnostic.candidates) {
+    if (
+      candidate.side.toLowerCase() !== 'buy' ||
+      !candidate.classifications.includes('FULL_FILL_LOCAL_EVIDENCE') ||
+      (candidate.lifecycleLinkState.state === 'CONSISTENT' &&
+        candidate.classifications.includes('POSITION_LINK_EXISTING_VALID'))
+    ) continue;
+    const existing = findings.find((finding) =>
+      finding.code === 'local_order_status_stale_terminal_broker_order' &&
+      (finding.entityId === `broker:${candidate.brokerOrderId}` || finding.entityId === `client:${candidate.clientOrderId}`)
+    );
+    const unresolvedComponents = [
+      ...(existing ? ['STALE_ORDER_STATUS'] : []),
+      ...(candidate.lifecycleLinkState.state === 'ALL_MISSING' ? ['MISSING_POSITION_LINK'] : []),
+      ...(candidate.lifecycleLinkState.state === 'PARTIAL' ? ['PARTIAL_POSITION_LINK'] : []),
+      ...(candidate.lifecycleLinkState.state === 'CONFLICTING' ||
+      (candidate.lifecycleLinkState.state === 'CONSISTENT' && !candidate.classifications.includes('POSITION_LINK_EXISTING_VALID'))
+        ? ['CONFLICTING_POSITION_LINK'] : []),
+    ];
+    const details = {
+      unresolvedComponents,
+      orderIntentId: candidate.orderIntentId,
+      brokerOrderRecordId: candidate.brokerOrderRecordId,
+      brokerOrderId: candidate.brokerOrderId,
+      clientOrderId: candidate.clientOrderId,
+      linkedBrokerActivityCount: candidate.fillEvidence.activityCount,
+      classifications: candidate.classifications,
+      matchedTrackedPositionId: candidate.matchedTrackedPositionId,
+      candidatePositionEvaluations: candidate.candidatePositionEvaluations,
+      fillEvidence: candidate.fillEvidence,
+      lifecycleLinkState: candidate.lifecycleLinkState,
+    };
+    if (existing) {
+      existing.attentionCode = 'HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE';
+      existing.entityId = String(candidate.brokerOrderRecordId);
+      existing.message = `Historical ${candidate.symbol} BUY BrokerOrder has full-fill evidence but retains a nonterminal local status. Its position link is unresolved.`;
+      existing.details = details;
+    } else {
+      findings.push({
+        tradingAccountId,
+        code: 'historical_filled_entry_position_link_missing', severity: 'warn',
+        entityType: 'brokerOrder', entityId: String(candidate.brokerOrderRecordId),
+        symbol: candidate.symbol,
+        attentionCode: 'HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE',
+        message: `Historical ${candidate.symbol} BUY BrokerOrder is filled locally, but its position link remains unresolved.`,
+        details,
+      });
+    }
+  }
   for (const finding of findings) {
     finding.tradingAccountId = tradingAccountId;
   }
@@ -827,6 +881,7 @@ const persistedEventIds = new Map<string, number>();
 
   if (persistEvents) {
     for (const finding of findings) {
+      if (finding.attentionCode === 'HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE') continue;
       if (dedupeEvents) {
         const duplicateExists = await hasRecentReconciliationEvent(
           finding,
@@ -953,18 +1008,17 @@ export async function reconcileTradingAccountWithLock(
   tradingAccountId: number,
   options: RunReconciliationCheckOptions = {}
 ): Promise<RunReconciliationCheckResult> {
-  const run = await runReconciliationAccount(tradingAccountId, options);
-  if (run.outcome === 'PROCESSED') return run.value;
-  if (run.outcome === 'LOCK_SKIPPED') {
+  // Operator/API reconciliation shares the lifecycle safety barrier but is
+  // deliberately not a scheduled-worker attempt and cannot mutate its health.
+  const run = await withTradingAccountWorkflowLock({
+    tradingAccountId,
+    workflowKey: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION,
+    processInstanceId: `manual-reconciliation:${randomUUID()}`,
+    execute: () => reconcileTradingAccount(tradingAccountId, options),
+  });
+  if (run.outcome === 'ACQUIRED_AND_COMPLETED') return run.value;
+  if (run.outcome === 'NOT_ACQUIRED') {
     throw new Error(`Reconciliation already running for TradingAccount ${tradingAccountId}.`);
-  }
-  if (run.outcome === 'BACKING_OFF') {
-    throw new Error(
-      `Reconciliation is backing off for TradingAccount ${tradingAccountId} until ${run.backoffUntil.toISOString()}.`
-    );
-  }
-  if (run.outcome === 'SKIPPED') {
-    throw new Error(`Reconciliation skipped for TradingAccount ${tradingAccountId}.`);
   }
   throw run.error;
 }
@@ -976,7 +1030,7 @@ function runReconciliationAccount(
   return runTradingAccountWorkflow({
     tradingAccountId,
     workerKey: 'scheduled_reconciliation',
-    lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.RECONCILIATION,
+    lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION,
     execute: () => reconcileTradingAccount(tradingAccountId, options),
     classify: (result) => ({
       outcome: 'success',
@@ -1169,8 +1223,9 @@ export async function reconcileEligibleTradingAccounts(
 export async function runReconciliationCheck(
   options: RunReconciliationCheckOptions = {}
 ) {
-  // Legacy internal compatibility wrapper. New callers must use
-  // reconcileTradingAccount() with an explicit, authorized account ID.
+  // Legacy default-account compatibility wrapper. It still participates in
+  // the shared lifecycle barrier; explicit callers should use
+  // reconcileTradingAccountWithLock().
   const tradingAccountId = await resolveDefaultTradingAccountId();
-  return reconcileTradingAccount(tradingAccountId, options);
+  return reconcileTradingAccountWithLock(tradingAccountId, options);
 }

@@ -348,7 +348,7 @@ async function armInsideTransaction(tx: Prisma.TransactionClient, tradingAccount
 
 export async function armLiveEntries(tradingAccountId: number, actorUserId: number, input: ArmLiveEntriesInput) {
   if (input.typedConfirmation !== 'ARM LIVE ENTRIES') throw new HttpError(400, 'Typed confirmation must exactly match "ARM LIVE ENTRIES".');
-  const orderLock = await withTradingAccountWorkflowLock({ tradingAccountId, workflowKey: ACCOUNT_WORKFLOW_LOCK_FAMILIES.ORDER_LIFECYCLE, processInstanceId: `arm-entry:${actorUserId}`, execute: async () => {
+  const orderLock = await withTradingAccountWorkflowLock({ tradingAccountId, workflowKey: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION, processInstanceId: `arm-entry:${actorUserId}`, execute: async () => {
     const operational = await withTradingAccountWorkflowLock({ tradingAccountId, workflowKey: ACCOUNT_WORKFLOW_LOCK_FAMILIES.OPERATIONAL_STATE, processInstanceId: `arm-entry:${actorUserId}`, execute: () => withAccountRiskConfigurationTransaction((tx) => armInsideTransaction(tx, tradingAccountId, actorUserId, input)) });
     if (operational.outcome !== 'ACQUIRED_AND_COMPLETED') throw operational.outcome === 'NOT_ACQUIRED' ? new HttpError(409, 'An account operational-state change is already running.') : operational.error;
     return operational.value;
@@ -361,7 +361,7 @@ export async function armLiveEntries(tradingAccountId: number, actorUserId: numb
 async function acquireDrain(tradingAccountId: number, actorUserId: number) {
   const deadline = Date.now() + 5_000;
   do {
-    const result = await withTradingAccountWorkflowLock({ tradingAccountId, workflowKey: ACCOUNT_WORKFLOW_LOCK_FAMILIES.ORDER_LIFECYCLE, processInstanceId: `disarm-drain:${actorUserId}`, execute: async () => true });
+    const result = await withTradingAccountWorkflowLock({ tradingAccountId, workflowKey: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION, processInstanceId: `disarm-drain:${actorUserId}`, execute: async () => true });
     if (result.outcome === 'ACQUIRED_AND_COMPLETED') return true;
     if (result.outcome !== 'NOT_ACQUIRED') return false;
     await new Promise((resolve) => setTimeout(resolve, 50));

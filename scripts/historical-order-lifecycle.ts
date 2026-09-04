@@ -6,6 +6,9 @@ import {
   repairHistoricalOrderLifecycle,
 } from '../src/services/historical-order-lifecycle-repair.service.js';
 
+// Apply mode is deprecated. Retain this script for read-only diagnosis while
+// the durable owner-authorized Lifecycle Repair Workbench demonstrates parity.
+
 function option(name: string) {
   const prefix = `--${name}=`;
   return process.argv.find((value) => value.startsWith(prefix))?.slice(prefix.length);

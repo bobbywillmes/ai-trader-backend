@@ -66,6 +66,30 @@ export type HistoricalPositionRejectionReason =
   | 'price_outside_tolerance'
   | 'time_outside_window';
 
+export type HistoricalLifecycleLinkState =
+  | 'ALL_MISSING'
+  | 'PARTIAL'
+  | 'CONSISTENT'
+  | 'CONFLICTING';
+
+export function classifyHistoricalLifecycleLinks(args: {
+  orderIntentTrackedPositionId: number | null;
+  brokerOrderTrackedPositionId: number | null;
+  activityTrackedPositionIds: Array<number | null>;
+}) {
+  const links = [args.orderIntentTrackedPositionId, args.brokerOrderTrackedPositionId, ...args.activityTrackedPositionIds];
+  const populated = links.filter((id): id is number => id !== null);
+  const unique = [...new Set(populated)];
+  const state: HistoricalLifecycleLinkState = populated.length === 0
+    ? 'ALL_MISSING'
+    : unique.length > 1
+      ? 'CONFLICTING'
+      : populated.length !== links.length
+        ? 'PARTIAL'
+        : 'CONSISTENT';
+  return { state, trackedPositionId: unique.length === 1 ? unique[0]! : null, requiredLinkCount: links.length, linkedCount: populated.length, uniqueTrackedPositionIds: unique };
+}
+
 export function evaluateHistoricalPositionCandidates(
   input: HistoricalPositionMatchInput,
   candidates: HistoricalPositionCandidate[]
@@ -444,6 +468,63 @@ export function classifyLocalFillEvidence(args: {
   return summarizeLocalFillEvidence(args).classification;
 }
 
+export function assessHistoricalFullFillEvidence(args: {
+  orderQty: number | null;
+  tradingAccountId: number;
+  brokerOrderRecordId: number;
+  brokerOrderId: string;
+  expectedBroker: string;
+  activities: Array<FillEvidenceActivity & {
+    id: number;
+    orderId?: string | null;
+    broker?: string;
+    rawBrokerJson?: unknown;
+  }>;
+}) {
+  const summary = summarizeLocalFillEvidence(args);
+  const owned = args.activities.filter(
+    (activity) =>
+      activity.activityType.toUpperCase() === 'FILL' &&
+      activity.tradingAccountId === args.tradingAccountId &&
+      activity.brokerOrderRecordId === args.brokerOrderRecordId
+  );
+  const contradictions: string[] = [];
+  const expectedBroker = args.expectedBroker.trim().toLowerCase();
+  if (!expectedBroker || owned.some((activity) => !activity.broker?.trim() || activity.broker.trim().toLowerCase() !== expectedBroker)) {
+    contradictions.push('conflicting_or_missing_broker_identity');
+  }
+  const terminalMarkers = owned.filter(
+    (activity) =>
+      activity.cumQty !== null &&
+      activity.leavesQty !== null &&
+      args.orderQty !== null &&
+      closeEnough(Math.abs(activity.cumQty), Math.abs(args.orderQty), HISTORICAL_QUANTITY_TOLERANCE) &&
+      closeEnough(Math.abs(activity.leavesQty), 0, HISTORICAL_QUANTITY_TOLERANCE)
+  );
+  if (owned.some((activity) => activity.orderId && activity.orderId !== args.brokerOrderId)) {
+    contradictions.push('conflicting_broker_order_identity');
+  }
+  const terminalQuantities = new Set(terminalMarkers.map((activity) => `${activity.cumQty}:${activity.leavesQty}`));
+  if (terminalQuantities.size > 1) contradictions.push('conflicting_terminal_markers');
+  if (owned.some((activity) => activity.price === null || !Number.isFinite(activity.price))) {
+    contradictions.push('missing_or_invalid_fill_price');
+  }
+  const pricedQty = owned.reduce((total, activity) => total + (
+    activity.qty !== null && activity.price !== null && Number.isFinite(activity.qty) && Number.isFinite(activity.price)
+      ? Math.abs(activity.qty)
+      : 0
+  ), 0);
+  if (args.orderQty !== null && pricedQty > 0 && !closeEnough(pricedQty, Math.abs(args.orderQty), HISTORICAL_QUANTITY_TOLERANCE)) {
+    contradictions.push('priced_fill_quantity_conflicts_with_order_quantity');
+  }
+  return {
+    summary,
+    contradictions: [...new Set(contradictions)],
+    deterministic: summary.classification === 'full' && contradictions.length === 0,
+    ownedActivityIds: owned.map((activity) => activity.id),
+  };
+}
+
 const candidateInclude = {
   orderIntent: true,
   brokerActivities: true,
@@ -500,6 +581,7 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
   now?: Date;
   lookupBudget?: number;
   openOrders?: AlpacaOrder[];
+  includeTerminalMissingPositionLinks?: boolean;
 }) {
   const now = args.now ?? new Date();
   const cutoff = new Date(now.getTime() - HISTORICAL_ORDER_MINIMUM_AGE_MS);
@@ -510,7 +592,17 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
   const localCandidates = await prisma.brokerOrder.findMany({
     where: {
       tradingAccountId: args.tradingAccountId,
-      status: NONTERMINAL_BROKER_ORDER_PRISMA_FILTER,
+      OR: [
+        { status: NONTERMINAL_BROKER_ORDER_PRISMA_FILTER },
+        ...(args.includeTerminalMissingPositionLinks
+          ? [{
+              side: { equals: 'buy', mode: 'insensitive' as const },
+              brokerActivities: {
+                some: { activityType: 'FILL' },
+              },
+            }]
+          : []),
+      ],
       createdAt: { lt: cutoff },
     },
     include: candidateInclude,
@@ -541,6 +633,13 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
           ].filter((id): id is number => id !== null)
         )
       );
+      const lifecycleLinkState = classifyHistoricalLifecycleLinks({
+        orderIntentTrackedPositionId: order.orderIntent.trackedPositionId,
+        brokerOrderTrackedPositionId: order.trackedPositionId,
+        activityTrackedPositionIds: order.brokerActivities
+          .filter((activity) => activity.activityType.toUpperCase() === 'FILL')
+          .map((activity) => activity.trackedPositionId),
+      });
       const positionCandidateWhere =
         buildHistoricalPositionCandidateWhere({
           includeEntryMatchCandidates:
@@ -602,6 +701,7 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
         fillSummary,
         positionMatch,
         existingLinkValidation,
+        lifecycleLinkState,
         classifications,
       };
     })
@@ -698,6 +798,7 @@ export async function diagnoseHistoricalOrderLifecycle(args: {
         rejectionReasons:
           candidate.existingLinkValidation.rejectionReasons,
       },
+      lifecycleLinkState: candidate.lifecycleLinkState,
       candidateTrackedPositionIds: candidate.positionMatch.matches.map(
         (position) => position.id
       ),

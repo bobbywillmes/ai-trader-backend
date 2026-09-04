@@ -23,7 +23,7 @@ import {
 } from '../services/lifecycle-account-eligibility.service.js';
 import { resolveDefaultTradingAccountId } from '../services/trading-account.service.js';
 import { runTradingAccountWorkflow } from '../services/trading-account-workflow-runner.service.js';
-import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from '../services/trading-account-workflow-lock.service.js';
+import { ACCOUNT_WORKFLOW_LOCK_FAMILIES, withTradingAccountWorkflowLock } from '../services/trading-account-workflow-lock.service.js';
 import {
   evaluateOrderRisk,
   logRiskGateBlockedOrder,
@@ -376,7 +376,7 @@ export async function recoverStaleSubmittingIntents() {
       const run = await runTradingAccountWorkflow({
         tradingAccountId: account.tradingAccountId,
         workerKey: 'pending_order_processing',
-        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.ORDER_LIFECYCLE,
+        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION,
         execute: () => recoverStaleSubmittingIntentsForAccount(account.tradingAccountId),
       });
       if (run.outcome === 'FAILED') {
@@ -701,7 +701,7 @@ export async function processPendingOrders() {
       const run = await runTradingAccountWorkflow({
         tradingAccountId: account.tradingAccountId,
         workerKey: 'pending_order_processing',
-        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.ORDER_LIFECYCLE,
+        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION,
         execute: () => processPendingOrdersForAccount(account.tradingAccountId),
         classify: (result) => result.failed > 0
           ? {
@@ -773,7 +773,8 @@ export async function processPendingOrders() {
   };
 }
 
-export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
+/** Internal operation: caller must hold the account lifecycle-mutation barrier. */
+export async function syncSubmittedOrdersForAccountUnlocked(tradingAccountId: number) {
   const submittedIntents = await prisma.orderIntent.findMany({
     where: {
       status: 'submitted',
@@ -1007,6 +1008,17 @@ export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
   } satisfies SubmittedOrderSyncResult;
 }
 
+/** Public/manual operation: acquires the account lifecycle-mutation barrier. */
+export async function syncSubmittedOrdersForAccount(tradingAccountId: number) {
+  const result = await withTradingAccountWorkflowLock({
+    tradingAccountId, workflowKey: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION,
+    processInstanceId: `submitted-order-sync:${Date.now()}`,
+    execute: () => syncSubmittedOrdersForAccountUnlocked(tradingAccountId),
+  });
+  if (result.outcome !== 'ACQUIRED_AND_COMPLETED') throw (result.outcome === 'WORKFLOW_ERROR' || result.outcome === 'LOCK_ERROR' ? result.error : new Error('Lifecycle mutation is already in progress.'));
+  return result.value;
+}
+
 export async function syncSubmittedOrdersAcrossAccounts() {
   const accounts = await enumerateLifecycleAccounts('submitted_orders');
   const results: SubmittedOrderAccountResult[] = [];
@@ -1025,8 +1037,8 @@ export async function syncSubmittedOrdersAcrossAccounts() {
       const run = await runTradingAccountWorkflow({
         tradingAccountId: account.tradingAccountId,
         workerKey: 'submitted_order_sync',
-        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.ORDER_LIFECYCLE,
-        execute: () => syncSubmittedOrdersForAccount(account.tradingAccountId),
+        lockFamily: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION,
+        execute: () => syncSubmittedOrdersForAccountUnlocked(account.tradingAccountId),
         classify: (result) => result.failed > 0
           ? {
               outcome: 'failure',

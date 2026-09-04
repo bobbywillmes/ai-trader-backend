@@ -2,7 +2,6 @@ import type { Prisma } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
 import { parseSubscriptionKeyFromClientOrderId } from './client-order-id.service.js';
-import { linkEntryDecisionToTrackedPosition } from './entry-decision.service.js';
 import {
   attributionEvidenceJson,
   resolveExactBrokerOrderAttribution,
@@ -78,7 +77,7 @@ async function findLocalOpeningOrderIntent(args: {
 }) {
   const entrySide = getOpenFillSide(args.side);
 
-  return prisma.orderIntent.findFirst({
+  const candidates = await prisma.orderIntent.findMany({
     where: {
       symbol: normalizeSymbol(args.symbol),
       tradingAccountId: args.tradingAccountId,
@@ -124,7 +123,9 @@ async function findLocalOpeningOrderIntent(args: {
     orderBy: {
       createdAt: 'desc',
     },
+    take: 2,
   });
+  return candidates.length === 1 ? candidates[0]! : null;
 }
 
 function extractClientOrderIdFromRawBrokerJson(value: Prisma.JsonValue) {
@@ -464,61 +465,92 @@ export async function linkLocalEntryOwnership(args: {
   symbol: string;
   side: string;
   openedAt: Date;
+  expectedSubscriptionId?: number;
+  expectedTradingAccountSubscriptionId?: number;
 }) {
   const intent = await findLocalOpeningOrderIntent({
     ...args,
   });
 
   if (!intent) {
-    return;
+    return false;
   }
 
+  if (
+    args.expectedSubscriptionId !== undefined &&
+    intent.subscriptionId !== args.expectedSubscriptionId
+  ) return false;
+  if (
+    args.expectedTradingAccountSubscriptionId !== undefined &&
+    intent.tradingAccountSubscriptionId !== args.expectedTradingAccountSubscriptionId
+  ) return false;
+
   const linkedAt = new Date();
-  await prisma.$transaction(async (tx) => {
-    await tx.orderIntent.updateMany({
+  const linked = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "TrackedPosition" WHERE id = ${args.trackedPositionId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM "OrderIntent" WHERE id = ${intent.id} FOR UPDATE`;
+    const position = await tx.trackedPosition.findFirst({ where: { id: args.trackedPositionId, tradingAccountId: args.tradingAccountId } });
+    if (!position || (position.subscriptionId !== null && position.subscriptionId !== intent.subscriptionId) ||
+      (position.tradingAccountSubscriptionId !== null && position.tradingAccountSubscriptionId !== intent.tradingAccountSubscriptionId)) return false;
+    const conflicts = await Promise.all([
+      tx.orderIntent.count({ where: { id: intent.id, trackedPositionId: { not: null }, NOT: { trackedPositionId: args.trackedPositionId } } }),
+      tx.brokerOrder.count({ where: { orderIntentId: intent.id, tradingAccountId: args.tradingAccountId, trackedPositionId: { not: null }, NOT: { trackedPositionId: args.trackedPositionId } } }),
+      tx.brokerActivity.count({ where: { orderIntentId: intent.id, tradingAccountId: args.tradingAccountId, activityType: 'FILL', trackedPositionId: { not: null }, NOT: { trackedPositionId: args.trackedPositionId } } }),
+      tx.entryDecision.count({ where: { orderIntentId: intent.id, trackedPositionId: { not: null }, NOT: { trackedPositionId: args.trackedPositionId } } }),
+    ]);
+    if (conflicts.some(Boolean)) return false;
+    const positionUpdate = await tx.trackedPosition.updateMany({
+      where: {
+        id: args.trackedPositionId,
+        tradingAccountId: args.tradingAccountId,
+        AND: [
+          { OR: [{ subscriptionId: null }, { subscriptionId: intent.subscriptionId }] },
+          { OR: [{ tradingAccountSubscriptionId: null }, { tradingAccountSubscriptionId: intent.tradingAccountSubscriptionId }] },
+        ],
+      },
+      data: {
+        subscriptionId: intent.subscriptionId,
+        ...(intent.tradingAccountSubscriptionId !== null && {
+          tradingAccountSubscriptionId: intent.tradingAccountSubscriptionId,
+        }),
+      },
+    });
+    if (positionUpdate.count !== 1) throw new Error('TrackedPosition ownership assignment changed during propagation.');
+    const intentUpdate = await tx.orderIntent.updateMany({
       where: {
         id: intent.id,
         tradingAccountId: args.tradingAccountId,
-        trackedPositionId: null,
+        OR: [{ trackedPositionId: null }, { trackedPositionId: args.trackedPositionId }],
       },
       data: {
         trackedPositionId: args.trackedPositionId,
       },
     });
-
-    if (intent.tradingAccountSubscriptionId !== null) {
-      await tx.trackedPosition.updateMany({
-        where: {
-          id: args.trackedPositionId,
-          tradingAccountId: args.tradingAccountId,
-          tradingAccountSubscriptionId: null,
-        },
-        data: {
-          tradingAccountSubscriptionId: intent.tradingAccountSubscriptionId,
-        },
-      });
-    }
-
-    await tx.brokerOrder.updateMany({
+    if (intentUpdate.count !== 1) throw new Error('OrderIntent ownership propagation did not affect exactly one row.');
+    const expectedOrderCount = await tx.brokerOrder.count({ where: { orderIntentId: intent.id, tradingAccountId: args.tradingAccountId } });
+    const orderUpdate = await tx.brokerOrder.updateMany({
       where: {
         orderIntentId: intent.id,
         tradingAccountId: args.tradingAccountId,
-        trackedPositionId: null,
+        OR: [{ trackedPositionId: null }, { trackedPositionId: args.trackedPositionId }],
       },
       data: {
         trackedPositionId: args.trackedPositionId,
       },
     });
+    if (expectedOrderCount === 0 || orderUpdate.count !== expectedOrderCount) throw new Error('BrokerOrder ownership propagation affected an unexpected row count.');
 
-    await tx.brokerActivity.updateMany({
+    const eligibleActivityWhere = {
+      orderIntentId: intent.id,
+      tradingAccountId: args.tradingAccountId,
+      activityType: 'FILL',
+      brokerOrderRecordId: { in: intent.brokerOrders.map((order) => order.id) },
+    } satisfies Prisma.BrokerActivityWhereInput;
+    const expectedActivityCount = await tx.brokerActivity.count({ where: eligibleActivityWhere });
+    const activityUpdate = await tx.brokerActivity.updateMany({
       where: {
-        orderIntentId: intent.id,
-        tradingAccountId: args.tradingAccountId,
-        activityType: 'FILL',
-        brokerOrderRecordId: {
-          in: intent.brokerOrders.map((order) => order.id),
-        },
-        trackedPositionId: null,
+        ...eligibleActivityWhere,
+        OR: [{ trackedPositionId: null }, { trackedPositionId: args.trackedPositionId }],
       },
       data: {
         trackedPositionId: args.trackedPositionId,
@@ -526,12 +558,16 @@ export async function linkLocalEntryOwnership(args: {
         trackedPositionLinkedAt: linkedAt,
       },
     });
+    if (activityUpdate.count !== expectedActivityCount) throw new Error('BrokerActivity ownership propagation affected an unexpected row count.');
+    const expectedDecisionCount = await tx.entryDecision.count({ where: { orderIntentId: intent.id } });
+    const decisionUpdate = await tx.entryDecision.updateMany({
+      where: { orderIntentId: intent.id, OR: [{ trackedPositionId: null }, { trackedPositionId: args.trackedPositionId }] },
+      data: { trackedPositionId: args.trackedPositionId, tradingAccountId: intent.tradingAccountId, tradingAccountSubscriptionId: intent.tradingAccountSubscriptionId },
+    });
+    if (decisionUpdate.count !== expectedDecisionCount) throw new Error('EntryDecision ownership propagation affected an unexpected row count.');
+    return true;
   });
 
-  await linkEntryDecisionToTrackedPosition({
-    orderIntentId: intent.id,
-    trackedPositionId: args.trackedPositionId,
-    tradingAccountId: intent.tradingAccountId,
-    tradingAccountSubscriptionId: intent.tradingAccountSubscriptionId,
-  });
+  if (!linked) return false;
+  return true;
 }

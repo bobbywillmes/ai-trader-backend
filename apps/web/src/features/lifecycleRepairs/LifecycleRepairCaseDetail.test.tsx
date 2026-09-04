@@ -3,7 +3,7 @@ import { MantineProvider } from "@mantine/core";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { LifecycleRepairCase, LifecycleRepairExecution } from "./api";
+import type { LifecycleRepairAction, LifecycleRepairCase, LifecycleRepairExecution } from "./api";
 import { LifecycleRepairCaseDetail } from "./LifecycleRepairCaseDetail";
 
 const snapshot = {
@@ -19,7 +19,7 @@ const success: LifecycleRepairExecution = {
   validationJson: { valid: true, checks: { attribution: true, frozenSnapshot: true, exitStateHydrated: true, brokerMutationPerformed: false } }, failureJson: null,
 };
 const base: LifecycleRepairCase = {
-  id: 3, repairType: "RESOLVE_POSITION_ATTRIBUTION", repairVersion: 1, impact: "LOCAL_ONLY", targetType: "TrackedPosition", targetId: "73",
+  id: 3, generation: 1, operationalAttentionId: null, supersedesCaseId: null, repairType: "RESOLVE_POSITION_ATTRIBUTION", repairVersion: 1, impact: "LOCAL_ONLY", targetType: "TrackedPosition", targetId: "73",
   confidence: "DETERMINISTIC", resolutionSource: "BROKER_CLIENT_ORDER_ID", diagnosticFingerprint: "diagnostic-fingerprint-73", configurationFingerprint: "config-fingerprint-73",
   evidenceJson: { confidence: "DETERMINISTIC", brokerOrderId: "17ab373f-cf57-43bc-a30c-d320a099c656", clientOrderId: "ai-entry-tas4-fc7fee7e1652deb4f9d502c49f99baaaaadec24f3b3112f504977ca594b85e92", assignment: { id: 4, subscriptionId: 38, subscriptionKey: "aapl_dip_core", exitProfileId: 8, exitProfileKey: "exit_stock_dip_core_target", symbol: "AAPL" }, activities: [{ id: 214, qty: 2, price: 303.18 }, { id: 215, qty: 1, price: 303.18 }], fillQty: 3, weightedAveragePrice: 303.18 },
   candidateResolutionsJson: [{ assignmentId: 4, subscriptionId: 38, subscriptionKey: "aapl_dip_core" }, { assignmentId: 6, subscriptionId: 40, subscriptionKey: "aapl_momentum_core" }],
@@ -37,6 +37,28 @@ function renderDetail(item: LifecycleRepairCase = base, onDiagnoseAgain = vi.fn(
   render(<MantineProvider><LifecycleRepairCaseDetail item={item} onApply={onApply} onDiagnoseAgain={onDiagnoseAgain} /></MantineProvider>);
   return { onApply, onDiagnoseAgain };
 }
+
+const historicalAction = (id: number, actionType: "TERMINALIZE_ORDER_LIFECYCLE" | "LINK_ENTRY_LIFECYCLE_TO_POSITION", status: "PROPOSED" | "APPROVED" | "APPLIED" | "VERIFIED" | "SUPERSEDED" = "PROPOSED"): LifecycleRepairAction => ({
+  id, actionType, ordinal: id, classification: actionType === "TERMINALIZE_ORDER_LIFECYCLE" ? "DETERMINISTIC" as const : "OPERATOR_CONFIRMATION_REQUIRED" as const,
+  generation: 1, supersedesActionId: null, reconsiderationReason: null, status, revision: 1,
+  actionFingerprint: `fingerprint-${id}`, proposedMutationsJson: {}, preconditionsJson: {}, evidenceJson: {},
+  decisionReason: status === "APPROVED" ? "Approved for regression test." : null, decidedAt: status === "APPROVED" ? "2026-09-04T10:00:00Z" : null,
+  beforeJson: {}, afterJson: null, verificationJson: null, executions: [],
+});
+
+const historical = (actions: NonNullable<LifecycleRepairCase["actions"]>): LifecycleRepairCase => ({
+  ...base,
+  repairType: "REPAIR_HISTORICAL_ENTRY_LIFECYCLE",
+  targetType: "BrokerOrder",
+  targetId: "91",
+  evidenceJson: {
+    unresolvedComponents: ["STALE_ORDER_STATUS", "MISSING_POSITION_LINK"],
+    lifecycle: { brokerOrder: { id: 91, symbol: "ZXQ", status: "new", brokerOrderId: "synthetic-order" }, orderIntent: { id: 92, status: "new", qty: 1 } },
+    fillAssessment: { summary: { cumulativeQty: 1, leavesQty: 0, weightedAveragePrice: 100 } },
+    positionCandidates: [{ trackedPositionId: 93, rejectionReasons: ["price_outside_tolerance"], comparison: { fillDerivedExpectedPrice: 100, candidateAverageEntryPrice: 100.5, absolutePriceDifference: 0.5, priceTolerance: 0.0001, absoluteTimeDifferenceMs: 1000, timeToleranceMs: 300000 } }],
+  },
+  actions,
+});
 
 afterEach(cleanup);
 
@@ -110,5 +132,80 @@ describe("Lifecycle Repair operator review", () => {
     const raw = screen.getByText(/"brokerOrderId"/);
     expect(raw.tagName).toBe("PRE");
     expect(raw.className).toContain("raw");
+  });
+
+  it("renders terminalization execution checks without legacy attribution validations", () => {
+    const action = historicalAction(21, "TERMINALIZE_ORDER_LIFECYCLE", "APPLIED");
+    action.executions = [{ ...success, id: 21, beforeJson: { brokerOrder: { id: 91, tradingAccountId: 1, broker: "alpaca", brokerOrderId: "synthetic-order", clientOrderId: "synthetic-client", status: "new", trackedPositionId: null }, orderIntent: { id: 92, tradingAccountId: 1, status: "new", trackedPositionId: null }, activities: [{ id: 94, trackedPositionId: null }] }, afterJson: { brokerOrder: { id: 91, tradingAccountId: 1, broker: "alpaca", brokerOrderId: "synthetic-order", clientOrderId: "synthetic-client", status: "filled", trackedPositionId: null }, orderIntent: { id: 92, tradingAccountId: 1, status: "filled", trackedPositionId: null }, activities: [{ id: 94, trackedPositionId: null }] }, validationJson: { valid: true, brokerWrites: 0, exposureChanged: false, financialValuesChanged: false } }];
+    renderDetail(historical([action]));
+    const result = screen.getByText("Execution 21").closest("div[data-result]") as HTMLElement;
+    expect(within(result).getByText(/BrokerOrder reached filled status/)).toBeTruthy();
+    expect(within(result).getByText(/OrderIntent reached filled status/)).toBeTruthy();
+    expect(within(result).getByText(/No position relationship changed/)).toBeTruthy();
+    expect(within(result).getByText(/Structural validation: PASS/)).toBeTruthy();
+    expect(within(result).getByText(/Authoritative reconciliation verification: pending/)).toBeTruthy();
+    expect(within(result).queryByText(/Attribution/)).toBeNull();
+    expect(within(result).queryByText(/Frozen snapshot/)).toBeNull();
+    expect(within(result).queryByText(/Exit state hydrated/)).toBeNull();
+  });
+
+  it("renders linking execution checks and authoritative verified state", () => {
+    const action = historicalAction(22, "LINK_ENTRY_LIFECYCLE_TO_POSITION", "VERIFIED"); action.proposedMutationsJson = { trackedPositionId: 93, brokerActivityIds: [94] };
+    action.executions = [{ ...success, id: 22, beforeJson: { brokerOrder: { id: 91, tradingAccountId: 1, broker: "alpaca", brokerOrderId: "synthetic-order", clientOrderId: "synthetic-client", trackedPositionId: null }, orderIntent: { id: 92, tradingAccountId: 1, trackedPositionId: null }, activities: [{ id: 94, trackedPositionId: null }] }, afterJson: { brokerOrder: { id: 91, tradingAccountId: 1, broker: "alpaca", brokerOrderId: "synthetic-order", clientOrderId: "synthetic-client", trackedPositionId: 93 }, orderIntent: { id: 92, tradingAccountId: 1, trackedPositionId: 93 }, activities: [{ id: 94, trackedPositionId: 93, trackedPositionLinkSource: "historical_order_lifecycle_repair" }] }, validationJson: { valid: true, brokerWrites: 0, exposureChanged: false, financialValuesChanged: false } }];
+    renderDetail(historical([action]));
+    const result = screen.getByText("Execution 22").closest("div[data-result]") as HTMLElement;
+    expect(within(result).getByText(/OrderIntent linked to backend-selected/)).toBeTruthy();
+    expect(within(result).getByText(/BrokerOrder linked to the same/)).toBeTruthy();
+    expect(within(result).getByText(/Eligible BrokerActivity rows linked consistently/)).toBeTruthy();
+    expect(within(result).getByText(/Link provenance recorded/)).toBeTruthy();
+    expect(within(result).getByText(/Authoritative reconciliation verification: VERIFIED/)).toBeTruthy();
+    expect(within(result).queryByText(/Exit state hydrated/)).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Required action reason" })).toBeNull();
+    expect(screen.getByText(/Recorded action reason:/)).toBeTruthy();
+  });
+
+  it("keeps typed reasons independent and enables approval only for the populated action", async () => {
+    const actions = [historicalAction(11, "TERMINALIZE_ORDER_LIFECYCLE"), historicalAction(12, "LINK_ENTRY_LIFECYCLE_TO_POSITION")];
+    renderDetail(historical(actions));
+    const user = userEvent.setup();
+    const reasons = screen.getAllByRole("textbox", { name: "Required action reason" }) as HTMLInputElement[];
+    const approve = screen.getAllByRole("button", { name: "Approve" }) as HTMLButtonElement[];
+    expect(approve[0]!.disabled).toBe(true);
+    expect(approve[1]!.disabled).toBe(true);
+    await user.type(reasons[0]!, "Terminalize");
+    expect(reasons[0]!.value).toBe("Terminalize");
+    expect(reasons[1]!.value).toBe("");
+    expect(approve[0]!.disabled).toBe(false);
+    expect(approve[1]!.disabled).toBe(true);
+    await user.type(reasons[1]!, "Link");
+    expect(reasons[0]!.value).toBe("Terminalize");
+    expect(reasons[1]!.value).toBe("Link");
+    expect(screen.getByTestId("historical-entry-repair-case-detail")).toBeTruthy();
+  });
+
+  it("requires and retains the exact approved-action confirmation", async () => {
+    renderDetail(historical([historicalAction(13, "TERMINALIZE_ORDER_LIFECYCLE", "APPROVED")]));
+    const user = userEvent.setup();
+    const reason = screen.getByRole("textbox", { name: "Required action reason" }) as HTMLInputElement;
+    const confirmation = screen.getByRole("textbox", { name: "Type TERMINALIZE HISTORICAL ORDER LIFECYCLE" }) as HTMLInputElement;
+    const apply = screen.getByRole("button", { name: "Apply approved action" }) as HTMLButtonElement;
+    await user.type(reason, "Apply synthetic terminalization");
+    await user.type(confirmation, "TERMINALIZE HISTORICAL ORDER");
+    expect(apply.disabled).toBe(true);
+    await user.type(confirmation, " LIFECYCLE");
+    expect(confirmation.value).toBe("TERMINALIZE HISTORICAL ORDER LIFECYCLE");
+    expect(reason.value).toBe("Apply synthetic terminalization");
+    expect(apply.disabled).toBe(false);
+  }, 15_000);
+
+  it("shows operator-facing candidate price and timing comparisons", () => {
+    renderDetail(historical([]));
+    expect(screen.getAllByText("$100.00").length).toBeGreaterThan(0);
+    expect(screen.getByText("$100.50")).toBeTruthy();
+    expect(screen.getByText("$0.50")).toBeTruthy();
+    expect(screen.getByText("$0.00")).toBeTruthy();
+    expect(screen.getByText("1000 ms")).toBeTruthy();
+    expect(screen.getByText("300000 ms")).toBeTruthy();
+    expect(screen.getAllByText(/price_outside_tolerance/).length).toBeGreaterThan(0);
   });
 });

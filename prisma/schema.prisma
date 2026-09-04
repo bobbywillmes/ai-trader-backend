@@ -70,6 +70,7 @@ model User {
   liveEntryAcceptanceTerminations LiveEntryAcceptanceRun[] @relation("LiveEntryAcceptanceRunTerminator")
   lifecycleRepairCasesCreated LifecycleRepairCase[]       @relation("LifecycleRepairCaseCreator")
   lifecycleRepairExecutions   LifecycleRepairExecution[]  @relation("LifecycleRepairExecutionActor")
+  lifecycleRepairActionDecisions LifecycleRepairAction[]  @relation("LifecycleRepairActionDecisionActor")
 }
 
 model UserSetupToken {
@@ -256,6 +257,7 @@ model TradingAccount {
 
 enum LifecycleRepairType {
   RESOLVE_POSITION_ATTRIBUTION
+  REPAIR_HISTORICAL_ENTRY_LIFECYCLE
 }
 
 enum LifecycleRepairImpact {
@@ -280,14 +282,40 @@ enum LifecycleRepairExecutionResult {
   FAILED
 }
 
+enum LifecycleRepairActionType {
+  TERMINALIZE_ORDER_LIFECYCLE
+  LINK_ENTRY_LIFECYCLE_TO_POSITION
+}
+
+enum LifecycleRepairActionClassification {
+  DETERMINISTIC
+  OPERATOR_CONFIRMATION_REQUIRED
+}
+
+enum LifecycleRepairActionStatus {
+  PROPOSED
+  APPROVED
+  REFUSED
+  APPLIED
+  VERIFIED
+  FAILED
+  SUPERSEDED
+}
+
 model LifecycleRepairCase {
   id                         Int @id @default(autoincrement())
+  generation                 Int @default(1)
   repairType                 LifecycleRepairType
   repairVersion              Int
   impact                     LifecycleRepairImpact
   source                     LifecycleRepairSource
   tradingAccountId           Int
   tradingAccount             TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  operationalAttentionId     Int?
+  operationalAttention       OperationalAttention? @relation(fields: [operationalAttentionId], references: [id], onDelete: Restrict)
+  supersedesCaseId           Int?
+  supersedesCase             LifecycleRepairCase? @relation("LifecycleRepairCaseSupersession", fields: [supersedesCaseId], references: [id], onDelete: Restrict)
+  supersededByCases          LifecycleRepairCase[] @relation("LifecycleRepairCaseSupersession")
   targetType                 String
   targetId                   String
   confidence                 LifecycleRepairConfidence
@@ -309,19 +337,64 @@ model LifecycleRepairCase {
   createdAt                  DateTime @default(now())
   expiresAt                  DateTime
   executions                 LifecycleRepairExecution[]
+  actions                    LifecycleRepairAction[]
 
-  @@unique([repairType, targetType, targetId, diagnosticFingerprint], map: "LifecycleRepairCase_type_target_fingerprint_key")
+  @@unique([repairType, targetType, targetId, diagnosticFingerprint, generation], map: "LifecycleRepairCase_type_target_fingerprint_generation_key")
   @@index([tradingAccountId, createdAt])
   @@index([repairType, targetType, targetId, createdAt], map: "LifecycleRepairCase_type_target_createdAt_idx")
   @@index([confidence, createdAt])
   @@index([expiresAt])
   @@index([createdByUserId, createdAt])
+  @@index([operationalAttentionId, createdAt])
+  @@index([supersedesCaseId])
+}
+
+model LifecycleRepairAction {
+  id                         Int @id @default(autoincrement())
+  caseId                     Int
+  repairCase                 LifecycleRepairCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  actionType                 LifecycleRepairActionType
+  ordinal                    Int
+  generation                 Int @default(1)
+  classification             LifecycleRepairActionClassification
+  status                     LifecycleRepairActionStatus @default(PROPOSED)
+  revision                   Int @default(1)
+  actionFingerprint          String
+  proposedMutationsJson      Json
+  preconditionsJson          Json
+  evidenceJson               Json
+  decidedByUserId            Int?
+  decidedByUser              User? @relation("LifecycleRepairActionDecisionActor", fields: [decidedByUserId], references: [id], onDelete: SetNull)
+  decidedByUserIdSnapshot    Int?
+  decidedAt                  DateTime?
+  decisionReason             String?
+  reconsiderationReason      String?
+  reconsideredByUserIdSnapshot Int?
+  reconsideredAt             DateTime?
+  supersedesActionId         Int?
+  supersedesAction           LifecycleRepairAction? @relation("LifecycleRepairActionSupersession", fields: [supersedesActionId], references: [id], onDelete: Restrict)
+  supersededBy               LifecycleRepairAction[] @relation("LifecycleRepairActionSupersession")
+  beforeJson                 Json
+  afterJson                  Json?
+  verificationJson           Json?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+  executions                 LifecycleRepairExecution[]
+
+  @@unique([caseId, ordinal])
+  @@unique([caseId, actionType, generation])
+  @@index([actionType, actionFingerprint])
+  @@index([caseId, status])
+  @@index([decidedByUserId, decidedAt])
+  @@index([supersedesActionId])
 }
 
 model LifecycleRepairExecution {
   id                    Int @id @default(autoincrement())
   caseId                Int
   repairCase            LifecycleRepairCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  actionId              Int?
+  action                LifecycleRepairAction? @relation(fields: [actionId], references: [id], onDelete: Restrict)
   attemptKey            String @unique
   result                LifecycleRepairExecutionResult
   executedByUserId      Int
@@ -336,6 +409,7 @@ model LifecycleRepairExecution {
   executedAt            DateTime @default(now())
 
   @@index([caseId, executedAt])
+  @@index([actionId, executedAt])
   @@index([executedByUserId, executedAt])
 }
 
@@ -1052,6 +1126,7 @@ model OperationalAttention {
   message                     String
   detailsJson                 Json
   fingerprint                 String
+  materialFingerprint         String?
   activeKey                   String? @unique
   occurrenceCount             Int @default(1)
   firstObservedAt             DateTime @default(now())
@@ -1079,6 +1154,7 @@ model OperationalAttention {
   orderIntent                 OrderIntent? @relation(fields: [orderIntentId], references: [id], onDelete: Restrict)
   brokerOrder                 BrokerOrder? @relation(fields: [brokerOrderId], references: [id], onDelete: Restrict)
   evidenceEvents              OperationalAttentionSystemEvent[]
+  lifecycleRepairCases        LifecycleRepairCase[]
 
   @@index([tradingAccountId, status, severity])
   @@index([tradingAccountId, lastObservedAt])

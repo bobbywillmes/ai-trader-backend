@@ -35,9 +35,9 @@ vi.mock('./live-entry-arming.service.js', () => ({
 }));
 vi.mock('./place-order.service.js', () => ({ submitOrder: mocks.submitOrder }));
 vi.mock('./assignment-entry-evaluation.service.js', () => ({ evaluateAssignmentEntry: vi.fn() }));
-vi.mock('../workers/order.worker.js', () => ({ syncSubmittedOrdersForAccount: vi.fn() }));
-vi.mock('./broker-activity.service.js', () => ({ syncBrokerActivitiesForAccount: vi.fn() }));
-vi.mock('./position-tracking.service.js', () => ({ syncTrackedPositionsForAccount: vi.fn() }));
+vi.mock('../workers/order.worker.js', () => ({ syncSubmittedOrdersForAccountUnlocked: vi.fn() }));
+vi.mock('./broker-activity.service.js', () => ({ syncBrokerActivitiesForAccountUnlocked: vi.fn() }));
+vi.mock('./position-tracking.service.js', () => ({ syncTrackedPositionsForAccountUnlocked: vi.fn() }));
 vi.mock('./reconciliation.service.js', () => ({ reconcileTradingAccount: vi.fn() }));
 
 import {

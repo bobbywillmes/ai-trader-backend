@@ -1,7 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 
 import {
-  reconcileTradingAccount,
   reconcileTradingAccountWithLock,
   ReconciliationBrokerUnavailableError,
   runReconciliationCheck,

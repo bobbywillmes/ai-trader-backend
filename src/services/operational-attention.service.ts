@@ -22,6 +22,7 @@ export const OPERATIONAL_ATTENTION_CODES = {
   LIFECYCLE_REVIEW_REQUIRED: 'LIFECYCLE_REVIEW_REQUIRED',
   ACCOUNT_WORKER_UNHEALTHY: 'ACCOUNT_WORKER_UNHEALTHY',
   DEMO_OPERATIONAL_ATTENTION: 'DEMO_OPERATIONAL_ATTENTION',
+  HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE: 'HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE',
 } as const;
 
 export type OperationalAttentionCode =
@@ -80,6 +81,7 @@ type OpenOrObserveArgs = LifecycleLinks & {
   message: string;
   details: unknown;
   fingerprint: string;
+  materialFingerprint?: string;
   resolutionPolicy: OperationalAttentionResolutionPolicy;
   observedAt?: Date;
   observedSystemEventId?: number | null;
@@ -182,6 +184,7 @@ async function openOrObserveTransaction(args: OpenOrObserveArgs) {
     const title = requireText(args.title, 'Attention title');
     const message = requireText(args.message, 'Attention message');
     const detailsJson = sanitizeOperationalAttentionDetails(args.details);
+    const materialFingerprint = args.materialFingerprint ?? fingerprint;
     const existing = await tx.operationalAttention.findUnique({ where: { activeKey: fingerprint } });
     if (existing) {
       if (
@@ -197,6 +200,7 @@ async function openOrObserveTransaction(args: OpenOrObserveArgs) {
         throw new HttpError(409, 'Active attention key conflicts with a different condition.');
       }
       const escalated = severityRank[args.severity] > severityRank[existing.severity];
+      const materialChanged = existing.materialFingerprint !== null && existing.materialFingerprint !== materialFingerprint;
       const updated = await tx.operationalAttention.update({
         where: { id: existing.id },
         data: {
@@ -205,6 +209,7 @@ async function openOrObserveTransaction(args: OpenOrObserveArgs) {
           detailsJson,
           title,
           message,
+          materialFingerprint,
           revision: { increment: 1 },
           ...(escalated ? { severity: args.severity } : {}),
           ...(escalated && existing.status === OperationalAttentionStatus.ACKNOWLEDGED
@@ -235,7 +240,15 @@ async function openOrObserveTransaction(args: OpenOrObserveArgs) {
           extra: { previousSeverity: existing.severity, observedAt: now, details: detailsJson },
         });
       }
-      return { attention: updated, created: false, escalated };
+      if (materialChanged && !escalated) {
+        await createTransitionEvidence({
+          tx, attention: updated, type: 'operational_attention.material_changed',
+          relationKind: OperationalAttentionEventRelationKind.OBSERVED,
+          message: `${updated.title} materially changed.`, severity: updated.severity,
+          extra: { previousMaterialFingerprint: existing.materialFingerprint, materialFingerprint, details: detailsJson },
+        });
+      }
+      return { attention: updated, created: false, escalated, materialChanged };
     }
 
     const created = await tx.operationalAttention.create({
@@ -249,6 +262,7 @@ async function openOrObserveTransaction(args: OpenOrObserveArgs) {
         message,
         detailsJson,
         fingerprint,
+        materialFingerprint,
         activeKey: fingerprint,
         occurrenceCount: 1,
         firstObservedAt: now,

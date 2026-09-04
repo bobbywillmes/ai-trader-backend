@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   OperationalAttentionResolutionPolicy,
   SystemEventSeverity,
@@ -19,6 +20,7 @@ import {
   openOrObserveOperationalAttention,
   resolveOperationalAttentionAuthoritatively,
 } from './operational-attention.service.js';
+import { verifyAppliedHistoricalLifecycleActions } from './historical-entry-lifecycle-workbench.service.js';
 
 type Rule = {
   code: typeof OPERATIONAL_ATTENTION_CODES[keyof typeof OPERATIONAL_ATTENTION_CODES];
@@ -33,9 +35,25 @@ const RULES: Partial<Record<ReconciliationFindingCode, Rule>> = {
   position_side_mismatch: { code: OPERATIONAL_ATTENTION_CODES.BROKER_EXCESS_EXPOSURE, title: (finding) => `${finding.symbol} broker exposure side differs` },
   tracked_position_missing_at_broker: { code: OPERATIONAL_ATTENTION_CODES.BROKER_EXPOSURE_UNVERIFIABLE, title: (finding) => `${finding.symbol} tracked exposure is missing at broker` },
   unexpected_short_position: { code: OPERATIONAL_ATTENTION_CODES.UNEXPECTED_SHORT_POSITION, title: (finding) => `Unexpected short exposure: ${finding.symbol}` },
+  local_order_status_stale_terminal_broker_order: { code: OPERATIONAL_ATTENTION_CODES.HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE, title: (finding) => `${finding.symbol} historical entry lifecycle is incomplete` },
+  historical_filled_entry_position_link_missing: { code: OPERATIONAL_ATTENTION_CODES.HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE, title: (finding) => `${finding.symbol} historical entry lifecycle is incomplete` },
 };
 
+function stableMaterial(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableMaterial).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.entries(value as Record<string, unknown>).filter(([key]) => !['runIdentifier', 'occurrenceCount', 'lastObservedAt', 'revision'].includes(key)).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => `${JSON.stringify(key)}:${stableMaterial(child)}`).join(',')}}`;
+  return JSON.stringify(value);
+}
+
+export function reconciliationAttentionMaterialFingerprint(finding: ReconciliationFinding) {
+  return createHash('sha256').update(stableMaterial({ code: finding.code, severity: finding.severity, entityType: finding.entityType, entityId: finding.entityId, details: finding.details ?? {} })).digest('hex');
+}
+
 export function reconciliationAttentionFingerprint(tradingAccountId: number, finding: ReconciliationFinding) {
+  if (finding.attentionCode === OPERATIONAL_ATTENTION_CODES.HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE) {
+    const brokerOrderRecordId = finding.details?.brokerOrderRecordId ?? finding.entityId;
+    return `account:${tradingAccountId}|historical-entry-lifecycle:brokerOrder:${brokerOrderRecordId}`;
+  }
   return `account:${tradingAccountId}|reconciliation:${finding.code}|${finding.entityType}:${finding.entityId}`;
 }
 
@@ -63,7 +81,7 @@ export async function projectReconciliationOperationalAttention(args: {
     if (!rule) continue;
     const fingerprint = reconciliationAttentionFingerprint(args.tradingAccountId, finding);
     observedFingerprints.add(fingerprint);
-    await openOrObserveOperationalAttention({
+    const observed = await openOrObserveOperationalAttention({
       tradingAccountId: args.tradingAccountId,
       code: rule.code,
       source: OPERATIONAL_ATTENTION_SOURCES.RECONCILIATION,
@@ -72,11 +90,18 @@ export async function projectReconciliationOperationalAttention(args: {
       message: finding.message,
       details: { runIdentifier: args.runIdentifier, findingCode: finding.code, symbol: finding.symbol, ...(finding.details ?? {}) },
       fingerprint,
+      materialFingerprint: reconciliationAttentionMaterialFingerprint(finding),
       resolutionPolicy: OperationalAttentionResolutionPolicy.AUTHORITATIVE_ONLY,
       ...(finding.entityType === 'trackedPosition' ? { trackedPositionId: Number(finding.entityId) } : {}),
       ...(finding.entityType === 'orderIntent' ? { orderIntentId: Number(finding.entityId) } : {}),
+      ...(finding.entityType === 'brokerOrder' ? { brokerOrderId: Number(finding.details?.brokerOrderRecordId ?? finding.entityId) } : {}),
+      ...(typeof finding.details?.orderIntentId === 'number' ? { orderIntentId: finding.details.orderIntentId, orderIntentIsObservationContext: true } : {}),
       observedSystemEventId: args.eventIds.get(`${finding.entityType}:${finding.entityId}:${finding.code}`) ?? null,
     });
+    if (rule.code === OPERATIONAL_ATTENTION_CODES.HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE) {
+      const unresolved = Array.isArray(finding.details?.unresolvedComponents) ? finding.details.unresolvedComponents.filter((value): value is string => typeof value === 'string') : [];
+      await verifyAppliedHistoricalLifecycleActions({ attentionId: observed.attention.id, unresolvedComponents: unresolved, runIdentifier: args.runIdentifier });
+    }
     updated += 1;
   }
   const active = await prisma.operationalAttention.findMany({
@@ -85,6 +110,9 @@ export async function projectReconciliationOperationalAttention(args: {
   let resolved = 0;
   for (const attention of active) {
     if (observedFingerprints.has(attention.fingerprint)) continue;
+    if (attention.code === OPERATIONAL_ATTENTION_CODES.HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE) {
+      await verifyAppliedHistoricalLifecycleActions({ attentionId: attention.id, unresolvedComponents: [], runIdentifier: args.runIdentifier });
+    }
     await resolveOperationalAttentionAuthoritatively({
       id: attention.id,
       expectedRevision: attention.revision,
