@@ -38,6 +38,28 @@ function renderDetail(item: LifecycleRepairCase = base, onDiagnoseAgain = vi.fn(
   return { onApply, onDiagnoseAgain };
 }
 
+const historicalAction = (id: number, actionType: "TERMINALIZE_ORDER_LIFECYCLE" | "LINK_ENTRY_LIFECYCLE_TO_POSITION", status: "PROPOSED" | "APPROVED" = "PROPOSED") => ({
+  id, actionType, ordinal: id, classification: actionType === "TERMINALIZE_ORDER_LIFECYCLE" ? "DETERMINISTIC" as const : "OPERATOR_CONFIRMATION_REQUIRED" as const,
+  generation: 1, supersedesActionId: null, reconsiderationReason: null, status, revision: 1,
+  actionFingerprint: `fingerprint-${id}`, proposedMutationsJson: {}, preconditionsJson: {}, evidenceJson: {},
+  decisionReason: status === "APPROVED" ? "Approved for regression test." : null, decidedAt: status === "APPROVED" ? "2026-09-04T10:00:00Z" : null,
+  beforeJson: {}, afterJson: null, verificationJson: null, executions: [],
+});
+
+const historical = (actions: NonNullable<LifecycleRepairCase["actions"]>): LifecycleRepairCase => ({
+  ...base,
+  repairType: "REPAIR_HISTORICAL_ENTRY_LIFECYCLE",
+  targetType: "BrokerOrder",
+  targetId: "91",
+  evidenceJson: {
+    unresolvedComponents: ["STALE_ORDER_STATUS", "MISSING_POSITION_LINK"],
+    lifecycle: { brokerOrder: { id: 91, symbol: "ZXQ", status: "new", brokerOrderId: "synthetic-order" }, orderIntent: { id: 92, status: "new", qty: 1 } },
+    fillAssessment: { summary: { cumulativeQty: 1, leavesQty: 0, weightedAveragePrice: 100 } },
+    positionCandidates: [{ trackedPositionId: 93, rejectionReasons: ["price_outside_tolerance"], comparison: { fillDerivedExpectedPrice: 100, candidateAverageEntryPrice: 100.5, absolutePriceDifference: 0.5, priceTolerance: 0.0001, absoluteTimeDifferenceMs: 1000, timeToleranceMs: 300000 } }],
+  },
+  actions,
+});
+
 afterEach(cleanup);
 
 describe("Lifecycle Repair operator review", () => {
@@ -110,5 +132,50 @@ describe("Lifecycle Repair operator review", () => {
     const raw = screen.getByText(/"brokerOrderId"/);
     expect(raw.tagName).toBe("PRE");
     expect(raw.className).toContain("raw");
+  });
+
+  it("keeps typed reasons independent and enables approval only for the populated action", async () => {
+    const actions = [historicalAction(11, "TERMINALIZE_ORDER_LIFECYCLE"), historicalAction(12, "LINK_ENTRY_LIFECYCLE_TO_POSITION")];
+    renderDetail(historical(actions));
+    const user = userEvent.setup();
+    const reasons = screen.getAllByRole("textbox", { name: "Required action reason" }) as HTMLInputElement[];
+    const approve = screen.getAllByRole("button", { name: "Approve" }) as HTMLButtonElement[];
+    expect(approve[0]!.disabled).toBe(true);
+    expect(approve[1]!.disabled).toBe(true);
+    await user.type(reasons[0]!, "Terminalize");
+    expect(reasons[0]!.value).toBe("Terminalize");
+    expect(reasons[1]!.value).toBe("");
+    expect(approve[0]!.disabled).toBe(false);
+    expect(approve[1]!.disabled).toBe(true);
+    await user.type(reasons[1]!, "Link");
+    expect(reasons[0]!.value).toBe("Terminalize");
+    expect(reasons[1]!.value).toBe("Link");
+    expect(screen.getByTestId("historical-entry-repair-case-detail")).toBeTruthy();
+  });
+
+  it("requires and retains the exact approved-action confirmation", async () => {
+    renderDetail(historical([historicalAction(13, "TERMINALIZE_ORDER_LIFECYCLE", "APPROVED")]));
+    const user = userEvent.setup();
+    const reason = screen.getByRole("textbox", { name: "Required action reason" }) as HTMLInputElement;
+    const confirmation = screen.getByRole("textbox", { name: "Type TERMINALIZE HISTORICAL ORDER LIFECYCLE" }) as HTMLInputElement;
+    const apply = screen.getByRole("button", { name: "Apply approved action" }) as HTMLButtonElement;
+    await user.type(reason, "Apply synthetic terminalization");
+    await user.type(confirmation, "TERMINALIZE HISTORICAL ORDER");
+    expect(apply.disabled).toBe(true);
+    await user.type(confirmation, " LIFECYCLE");
+    expect(confirmation.value).toBe("TERMINALIZE HISTORICAL ORDER LIFECYCLE");
+    expect(reason.value).toBe("Apply synthetic terminalization");
+    expect(apply.disabled).toBe(false);
+  }, 15_000);
+
+  it("shows operator-facing candidate price and timing comparisons", () => {
+    renderDetail(historical([]));
+    expect(screen.getAllByText("$100.00").length).toBeGreaterThan(0);
+    expect(screen.getByText("$100.50")).toBeTruthy();
+    expect(screen.getByText("$0.50")).toBeTruthy();
+    expect(screen.getByText("$0.00")).toBeTruthy();
+    expect(screen.getByText("1000 ms")).toBeTruthy();
+    expect(screen.getByText("300000 ms")).toBeTruthy();
+    expect(screen.getAllByText(/price_outside_tolerance/).length).toBeGreaterThan(0);
   });
 });

@@ -14,6 +14,7 @@ import {
   assessHistoricalFullFillEvidence,
   classifyHistoricalLifecycleLinks,
   diagnoseHistoricalOrderLifecycle,
+  HISTORICAL_PRICE_TOLERANCE,
   HISTORICAL_POSITION_TIME_TOLERANCE_MS,
   validateExistingHistoricalPositionLink,
 } from './historical-order-lifecycle-diagnostic.service.js';
@@ -188,6 +189,20 @@ async function buildPreviewEvidence(attentionId: number) {
     lifecycle: lifecycleState(order), fillAssessment: assessment,
     positionCandidates: evaluations.map((evaluation) => ({
       ...evaluation,
+      comparison: {
+        fillDerivedExpectedPrice: row.fillEvidence.weightedAveragePrice,
+        candidateAverageEntryPrice: positionById.get(evaluation.trackedPositionId)?.avgEntryPrice ?? null,
+        absolutePriceDifference: row.fillEvidence.weightedAveragePrice === null || !positionById.has(evaluation.trackedPositionId)
+          ? null
+          : Math.abs(positionById.get(evaluation.trackedPositionId)!.avgEntryPrice - row.fillEvidence.weightedAveragePrice),
+        priceTolerance: HISTORICAL_PRICE_TOLERANCE,
+        fillCompletionAt: row.fillEvidence.completionTime,
+        positionOpenedAt: positionById.get(evaluation.trackedPositionId)?.openedAt.toISOString() ?? null,
+        absoluteTimeDifferenceMs: completionTime && positionById.has(evaluation.trackedPositionId)
+          ? Math.abs(positionById.get(evaluation.trackedPositionId)!.openedAt.getTime() - completionTime.getTime())
+          : null,
+        timeToleranceMs: HISTORICAL_POSITION_TIME_TOLERANCE_MS,
+      },
       position: positionById.get(evaluation.trackedPositionId) ? {
         id: positionById.get(evaluation.trackedPositionId)!.id,
         status: positionById.get(evaluation.trackedPositionId)!.status,

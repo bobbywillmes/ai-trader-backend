@@ -101,7 +101,11 @@ export function OperationalAttentionPage() {
   const detail = useAttentionDetail(token, detailId);
   const acknowledge = useAcknowledgeAttention(token);
   const resolve = useManualResolveAttention(token);
-  const correctivePreview = useRemainingExposureClosePreview(token, detailId);
+  const correctiveCloseApplicable = Boolean(
+    detail.data?.source === "EXIT_VERIFICATION" &&
+      ["EXIT_QUANTITY_MISMATCH", "BROKER_EXPOSURE_UNVERIFIABLE", "CONFLICTING_EXIT_RESERVATION"].includes(detail.data.code),
+  );
+  const correctivePreview = useRemainingExposureClosePreview(token, detailId, correctiveCloseApplicable);
   const correctiveClose = useExecuteRemainingExposureClose(token);
   useEffect(() => {
     if (!statusState.invalid) return;
@@ -233,7 +237,7 @@ export function OperationalAttentionPage() {
                   <b>Account:</b> {detail.data.tradingAccount.displayName} ·{" "}
                   {detail.data.tradingAccount.environment}
                 </Text>
-                {correctivePreview.data && (
+                {correctiveCloseApplicable && correctivePreview.data && (
                   <RemainingExposureClosePanel
                     preview={correctivePreview.data}
                     pending={correctiveClose.isPending}

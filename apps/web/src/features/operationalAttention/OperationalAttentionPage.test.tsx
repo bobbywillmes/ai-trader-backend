@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   searches: [] as string[],
   detail: undefined as OperationalAttention | undefined,
   detailError: null as Error | null,
+  correctiveApplicable: [] as boolean[],
+  correctiveData: undefined as unknown,
 }));
 vi.mock("../../lib/api", () => ({ getAdminToken: () => "token" }));
 vi.mock("../tradingAccountScope/TradingAccountScopeSelector", () => ({
@@ -36,11 +38,13 @@ vi.mock("./hooks", () => ({
   }),
   useAcknowledgeAttention: () => ({ mutate: vi.fn(), isPending: false }),
   useManualResolveAttention: () => ({ mutate: vi.fn(), isPending: false }),
-  useRemainingExposureClosePreview: () => ({
-    data: undefined,
+  useRemainingExposureClosePreview: (_token: string, _id: number, applicable: boolean) => {
+    mocks.correctiveApplicable.push(applicable);
+    return {
+    data: mocks.correctiveData,
     isLoading: false,
     isError: false,
-  }),
+  }; },
   useExecuteRemainingExposureClose: () => ({
     mutate: vi.fn(),
     isPending: false,
@@ -75,6 +79,8 @@ beforeEach(() => {
   mocks.searches.length = 0;
   mocks.detail = undefined;
   mocks.detailError = null;
+  mocks.correctiveApplicable.length = 0;
+  mocks.correctiveData = undefined;
 });
 afterEach(cleanup);
 
@@ -181,5 +187,23 @@ describe("Operational Attention page status filtering", () => {
     renderPage("/operational-attention?attention=4");
     expect(screen.getByText("Operational attention details could not be refreshed. Retry shortly.")).toBeTruthy();
     expect(screen.queryByText(/active attention key/i)).toBeNull();
+  });
+  it("does not request or render corrective-close evidence for historical lifecycle attention", () => {
+    mocks.correctiveData = { attentionId: 4, revision: 1 };
+    mocks.detail = {
+      id: 4, tradingAccountId: 7, code: "HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE", source: "RECONCILIATION", status: "OPEN", severity: "WARNING",
+      title: "Historical entry lifecycle incomplete", message: "Historical ZXQ BUY BrokerOrder requires review.", detailsJson: {}, occurrenceCount: 1,
+      firstObservedAt: "2026-09-01T10:00:00Z", lastObservedAt: "2026-09-01T10:00:00Z", revision: 1,
+      resolutionPolicy: "AUTHORITATIVE_ONLY", acknowledgedAt: null, resolvedAt: null, resolutionReason: null,
+      trackedPositionId: null, orderIntentId: 92, brokerOrderId: 91,
+      tradingAccount: { id: 7, displayName: "Synthetic Lifecycle PAPER", environment: "PAPER" },
+      links: { account: "/accounts/7", position: null, order: "/orders/91", reconciliation: "/reconciliation", systemEvents: "/events" },
+      allowedActions: { acknowledge: true, manualResolve: false }, evidenceEvents: [],
+    };
+    renderPage("/operational-attention?attention=4");
+    expect(mocks.correctiveApplicable.at(-1)).toBe(false);
+    expect(screen.queryByText(/corrective close/i)).toBeNull();
+    expect(screen.queryByText(/remaining exposure/i)).toBeNull();
+    expect(screen.getByRole("link", { name: "Open lifecycle repair workbench" })).toBeTruthy();
   });
 });
