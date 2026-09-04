@@ -160,6 +160,8 @@ describe("Lifecycle Repair operator review", () => {
     expect(within(result).getByText(/Link provenance recorded/)).toBeTruthy();
     expect(within(result).getByText(/Authoritative reconciliation verification: VERIFIED/)).toBeTruthy();
     expect(within(result).queryByText(/Exit state hydrated/)).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Required action reason" })).toBeNull();
+    expect(screen.getByText(/Recorded action reason:/)).toBeTruthy();
   });
 
   it("keeps typed reasons independent and enables approval only for the populated action", async () => {

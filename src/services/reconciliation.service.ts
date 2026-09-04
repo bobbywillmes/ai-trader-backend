@@ -18,7 +18,7 @@ import {
   enumerateLifecycleAccounts,
   type LifecycleAccountEligibility,
 } from './lifecycle-account-eligibility.service.js';
-import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from './trading-account-workflow-lock.service.js';
+import { ACCOUNT_WORKFLOW_LOCK_FAMILIES, withTradingAccountWorkflowLock } from './trading-account-workflow-lock.service.js';
 import { runTradingAccountWorkflow } from './trading-account-workflow-runner.service.js';
 import { diagnoseHistoricalOrderLifecycle } from './historical-order-lifecycle-diagnostic.service.js';
 import {
@@ -1008,18 +1008,17 @@ export async function reconcileTradingAccountWithLock(
   tradingAccountId: number,
   options: RunReconciliationCheckOptions = {}
 ): Promise<RunReconciliationCheckResult> {
-  const run = await runReconciliationAccount(tradingAccountId, options);
-  if (run.outcome === 'PROCESSED') return run.value;
-  if (run.outcome === 'LOCK_SKIPPED') {
+  // Operator/API reconciliation shares the lifecycle safety barrier but is
+  // deliberately not a scheduled-worker attempt and cannot mutate its health.
+  const run = await withTradingAccountWorkflowLock({
+    tradingAccountId,
+    workflowKey: ACCOUNT_WORKFLOW_LOCK_FAMILIES.LIFECYCLE_MUTATION,
+    processInstanceId: `manual-reconciliation:${randomUUID()}`,
+    execute: () => reconcileTradingAccount(tradingAccountId, options),
+  });
+  if (run.outcome === 'ACQUIRED_AND_COMPLETED') return run.value;
+  if (run.outcome === 'NOT_ACQUIRED') {
     throw new Error(`Reconciliation already running for TradingAccount ${tradingAccountId}.`);
-  }
-  if (run.outcome === 'BACKING_OFF') {
-    throw new Error(
-      `Reconciliation is backing off for TradingAccount ${tradingAccountId} until ${run.backoffUntil.toISOString()}.`
-    );
-  }
-  if (run.outcome === 'SKIPPED') {
-    throw new Error(`Reconciliation skipped for TradingAccount ${tradingAccountId}.`);
   }
   throw run.error;
 }

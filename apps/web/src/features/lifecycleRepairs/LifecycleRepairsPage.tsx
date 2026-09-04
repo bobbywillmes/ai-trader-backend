@@ -4,6 +4,7 @@ import { IconShieldCheck } from "@tabler/icons-react";
 import { useLocation } from "react-router-dom";
 import { getAdminToken } from "../../lib/api";
 import { useTradingAccounts } from "../tradingAccounts/hooks";
+import { useAttentionDetail } from "../operationalAttention/hooks";
 import type { LifecycleRepairCase } from "./api";
 import { LifecycleRepairCaseDetail } from "./LifecycleRepairCaseDetail";
 import classes from "./LifecycleRepairsPage.module.css";
@@ -30,6 +31,7 @@ export function LifecycleRepairsPage() {
   const [accountId, setAccountId] = useState<number | undefined>(() => { const value = Number(initialQuery.get("account")); return Number.isInteger(value) && value > 0 ? value : undefined; });
   const [positionId, setPositionId] = useState<number | string>(() => { const value = Number(initialQuery.get("position")); return Number.isInteger(value) && value > 0 ? value : ""; });
   const attentionId = useMemo(() => { const value = Number(initialQuery.get("attention")); return Number.isInteger(value) && value > 0 ? value : null; }, [initialQuery]);
+  const attention = useAttentionDetail(token, attentionId);
   const [selected, setSelected] = useState<LifecycleRepairCase | null>(null);
   const [applyOpen, setApplyOpen] = useState(false);
   const [reason, setReason] = useState("");
@@ -65,7 +67,7 @@ export function LifecycleRepairsPage() {
 
   return <main><Stack gap="lg">
     <div><Title order={1}>Lifecycle Repairs</Title><Text c="dimmed">Evidence-driven, typed local lifecycle recovery with independently reviewed actions.</Text></div>
-    {attentionId && <Card withBorder><Stack><Title order={3}>Historical lifecycle attention</Title><Text>The repair target and every proposed mutation will be derived by the backend from Operational Attention {attentionId}. No financial values or relationships can be entered here.</Text><Button onClick={() => previewHistorical.mutate(attentionId, { onSuccess: (result) => { setSelected(result.case); setAccountId(result.case.tradingAccount.id); } })} loading={previewHistorical.isPending}>Create or refresh preview</Button>{previewHistorical.isError && <Alert color="red">{previewHistorical.error.message}</Alert>}</Stack></Card>}
+    {attentionId && <Card withBorder><Stack><Title order={3}>Historical lifecycle attention</Title><Text>The repair target and every proposed mutation will be derived by the backend from Operational Attention {attentionId}. No financial values or relationships can be entered here.</Text>{attention.data?.status === "RESOLVED" ? <Alert color="teal" title="Lifecycle invariant resolved">Authoritative reconciliation found no remaining repairable invariant. No further preview can be created for this episode.</Alert> : <Button onClick={() => previewHistorical.mutate(attentionId, { onSuccess: (result) => { setSelected(result.case); setAccountId(result.case.tradingAccount.id); } })} loading={previewHistorical.isPending}>Create or refresh preview</Button>}{previewHistorical.isError && <Alert color="red">{previewHistorical.error.message}</Alert>}</Stack></Card>}
     {!attentionId && <Card withBorder><Stack><Title order={3}>Diagnose a position</Title>{initialQuery.has("position") && <Alert color="blue">Repair target loaded from reconciliation: TradingAccount {accountId ?? "—"}, TrackedPosition {positionId || "—"}.</Alert>}<SimpleGrid cols={{ base: 1, sm: 2 }}><Select label="TradingAccount" data={options} value={accountId ? String(accountId) : null} onChange={(value) => setAccountId(value ? Number(value) : undefined)} searchable /><NumberInput label="TrackedPosition ID" min={1} allowDecimal={false} value={positionId} onChange={setPositionId} /></SimpleGrid><Button onClick={runDiagnosis} loading={diagnose.isPending} disabled={!accountId || typeof positionId !== "number"}>Diagnose repair</Button>{diagnose.isError && <Alert color="red">{diagnose.error.message}</Alert>}</Stack></Card>}
     {(cases.data?.cases ?? []).length > 0 && <Card withBorder><Stack><div><Title order={3}>Repair cases</Title><Text size="sm" c="dimmed">Immutable diagnoses and their execution history, newest first.</Text></div>{cases.data!.cases.map((item) => <CaseListItem key={item.id} item={item} selected={current?.id === item.id} onSelect={() => setSelected(item)} />)}</Stack></Card>}
     {(decideAction.isError || applyAction.isError || reconsiderAction.isError) && <Alert color="red" title="Lifecycle action failed">{(decideAction.error ?? applyAction.error ?? reconsiderAction.error)?.message}</Alert>}

@@ -17,6 +17,12 @@ const mocks = vi.hoisted(() => ({
   projectReconciliationOperationalAttention: vi.fn(),
   resolveClearedExitReservationAttention: vi.fn(async () => 0),
   recoverDeterministicallyAbsentStaleCloseIntents: vi.fn(async () => new Set<number>()),
+  withWorkflowLock: vi.fn(async (args) => ({ outcome: 'ACQUIRED_AND_COMPLETED', value: await args.execute() })),
+  runAccountWorkflow: vi.fn(async (args) => {
+    const value = await args.execute();
+    const classification = args.classify(value);
+    return classification.outcome === 'success' ? { outcome: 'PROCESSED', value } : { outcome: 'SKIPPED', value };
+  }),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -75,6 +81,11 @@ vi.mock('./reconciliation-operational-attention.service.js', () => ({
 vi.mock('./stale-close-intent-recovery.service.js', () => ({
   recoverDeterministicallyAbsentStaleCloseIntents: mocks.recoverDeterministicallyAbsentStaleCloseIntents,
 }));
+vi.mock('./trading-account-workflow-lock.service.js', () => ({
+  ACCOUNT_WORKFLOW_LOCK_FAMILIES: { LIFECYCLE_MUTATION: 'lifecycle-mutation' },
+  withTradingAccountWorkflowLock: mocks.withWorkflowLock,
+}));
+vi.mock('./trading-account-workflow-runner.service.js', () => ({ runTradingAccountWorkflow: mocks.runAccountWorkflow }));
 
 import {
   refineHistoricalMissingOrderFindings,
@@ -438,6 +449,13 @@ describe('runReconciliationCheck', () => {
     mocks.createSystemEvent.mockResolvedValue({});
 
     const result = await runReconciliationCheck();
+
+    expect(mocks.withWorkflowLock).toHaveBeenCalledWith(expect.objectContaining({
+      tradingAccountId: 1,
+      workflowKey: 'lifecycle-mutation',
+      processInstanceId: expect.stringMatching(/^manual-reconciliation:/),
+    }));
+    expect(mocks.runAccountWorkflow).not.toHaveBeenCalled();
 
     expect(mocks.trackedPositionFindMany).toHaveBeenCalledWith({
       where: {

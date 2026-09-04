@@ -5,9 +5,10 @@ import {
   type LifecycleWorkflow,
 } from './lifecycle-account-eligibility.service.js';
 import {
-  runTradingAccountWorkflow,
   type AccountWorkflowClassification,
 } from './trading-account-workflow-runner.service.js';
+import { accountWorkflowProcessInstanceId } from './trading-account-workflow-runner.service.js';
+import { recordTradingAccountWorkerAttempt } from './trading-account-worker-health.service.js';
 
 export type ScheduledAccountDecision = 'not_due' | 'disabled';
 
@@ -17,6 +18,8 @@ export async function propagateScheduledAccountDecision(args: {
   lockFamily: string;
   decision: ScheduledAccountDecision;
 }) {
+  // Disabled/not-due propagation is worker-health bookkeeping only. It must
+  // not compete with actual lifecycle work for the account mutation barrier.
   const accounts = await enumerateLifecycleAccounts(args.workflow, {
     persistWorkerHealth: false,
   });
@@ -60,21 +63,41 @@ export async function propagateScheduledAccountDecision(args: {
       };
     };
 
-    const run = await runTradingAccountWorkflow({
-      tradingAccountId: account.tradingAccountId,
-      workerKey: args.workerKey,
-      lockFamily: args.lockFamily,
-      execute: async () => ({ decision: args.decision }),
-      classify: classification,
-      ignoreBackoffWhenInapplicable: args.decision === 'disabled',
-    });
+    const decision = classification();
+    const startedAt = new Date();
+    if (decision.outcome === 'failure') {
+      await recordTradingAccountWorkerAttempt({
+        tradingAccountId: account.tradingAccountId, workerKey: args.workerKey,
+        processInstanceId: accountWorkflowProcessInstanceId, outcome: 'failure',
+        error: decision.error,
+        ...(decision.errorCode !== undefined ? { errorCode: decision.errorCode } : {}),
+        ...(decision.eligible !== undefined ? { eligible: decision.eligible } : {}),
+        ...(decision.eligibilityReason !== undefined ? { eligibilityReason: decision.eligibilityReason } : {}),
+        ...(decision.summary !== undefined ? { summary: decision.summary } : {}), startedAt,
+      });
+    } else if (decision.outcome === 'dormant') {
+      await recordTradingAccountWorkerAttempt({
+        tradingAccountId: account.tradingAccountId, workerKey: args.workerKey,
+        processInstanceId: accountWorkflowProcessInstanceId, outcome: 'dormant',
+        applicable: false, eligible: false,
+        eligibilityReason: decision.eligibilityReason ?? null,
+        ...(decision.summary !== undefined ? { summary: decision.summary } : {}), startedAt,
+      });
+    } else {
+      await recordTradingAccountWorkerAttempt({
+        tradingAccountId: account.tradingAccountId, workerKey: args.workerKey,
+        processInstanceId: accountWorkflowProcessInstanceId, outcome: 'skipped',
+        skipReason: decision.outcome === 'skipped' ? decision.skipReason : 'not_due',
+        ...(decision.summary !== undefined ? { summary: decision.summary } : {}), startedAt,
+      });
+    }
+    const run = decision.outcome === 'failure'
+      ? { outcome: 'FAILED' as const, error: decision.error }
+      : { outcome: 'SKIPPED' as const, value: { decision: args.decision } };
 
     results.push({
       account,
       outcome: run.outcome,
-      ...(run.outcome === 'BACKING_OFF'
-        ? { backoffUntil: run.backoffUntil.toISOString() }
-        : {}),
       ...(run.outcome === 'FAILED'
         ? { error: run.error instanceof Error ? run.error.message : 'Unknown worker error.' }
         : {}),

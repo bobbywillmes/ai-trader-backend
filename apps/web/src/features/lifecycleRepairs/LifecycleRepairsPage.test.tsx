@@ -7,6 +7,8 @@ import type { LifecycleRepairCase } from "./api";
 
 vi.mock("../../lib/api", () => ({ getAdminToken: () => "token" }));
 vi.mock("../tradingAccounts/hooks", () => ({ useTradingAccounts: () => ({ data: { accounts: [] } }) }));
+const attentionMocks = vi.hoisted(() => ({ status: "OPEN" }));
+vi.mock("../operationalAttention/hooks", () => ({ useAttentionDetail: () => ({ data: { status: attentionMocks.status } }) }));
 vi.mock("./hooks", () => ({
   useLifecycleRepairs: () => ({ data: { cases: [] }, refetch: vi.fn() }),
   useDiagnoseLifecycleRepair: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
@@ -29,6 +31,14 @@ describe("Lifecycle Repairs attention workflow", () => {
     expect(screen.getByText("Historical lifecycle attention")).toBeTruthy();
     expect(screen.queryByText("Diagnose a position")).toBeNull();
     expect(screen.queryByLabelText("TrackedPosition ID")).toBeNull();
+  });
+
+  it("prevents another preview after the linked attention resolves", () => {
+    attentionMocks.status = "RESOLVED";
+    render(<MantineProvider><MemoryRouter initialEntries={["/system/lifecycle-repairs?account=7&attention=4"]}><LifecycleRepairsPage /></MemoryRouter></MantineProvider>);
+    expect(screen.getByText("Lifecycle invariant resolved")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Create or refresh preview" })).toBeNull();
+    attentionMocks.status = "OPEN";
   });
 
   it("uses repair-type-aware case identities", () => {
