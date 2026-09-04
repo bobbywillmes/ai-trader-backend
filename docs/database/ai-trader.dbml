@@ -139,12 +139,18 @@ Table TradingAccount {
 
 Table LifecycleRepairCase {
   id Int [pk, increment]
+  generation Int [not null, default: 1]
   repairType LifecycleRepairType [not null]
   repairVersion Int [not null]
   impact LifecycleRepairImpact [not null]
   source LifecycleRepairSource [not null]
   tradingAccountId Int [not null]
   tradingAccount TradingAccount [not null]
+  operationalAttentionId Int
+  operationalAttention OperationalAttention
+  supersedesCaseId Int
+  supersedesCase LifecycleRepairCase
+  supersededByCases LifecycleRepairCase [not null]
   targetType String [not null]
   targetId String [not null]
   confidence LifecycleRepairConfidence [not null]
@@ -169,7 +175,7 @@ Table LifecycleRepairCase {
   actions LifecycleRepairAction [not null]
 
   indexes {
-    (repairType, targetType, targetId, diagnosticFingerprint) [unique]
+    (repairType, targetType, targetId, diagnosticFingerprint, generation) [unique]
   }
 }
 
@@ -732,6 +738,7 @@ Table OperationalAttention {
   orderIntent OrderIntent
   brokerOrder BrokerOrder
   evidenceEvents OperationalAttentionSystemEvent [not null]
+  lifecycleRepairCases LifecycleRepairCase [not null]
 }
 
 Table OperationalAttentionSystemEvent {
@@ -1641,6 +1648,10 @@ Ref: TradingAccount.accountHolderUserId > User.id
 Ref: TradingAccount.activeLiveEntryArmingId - LiveEntryArming.id
 
 Ref: LifecycleRepairCase.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: LifecycleRepairCase.operationalAttentionId > OperationalAttention.id [delete: Restrict]
+
+Ref: LifecycleRepairCase.supersedesCaseId - LifecycleRepairCase.id [delete: Restrict]
 
 Ref: LifecycleRepairCase.createdByUserId > User.id [delete: Restrict]
 

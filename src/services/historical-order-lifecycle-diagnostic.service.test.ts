@@ -23,7 +23,7 @@ describe('historical full-fill repair evidence', () => {
   };
 
   it('accepts exact owned full-fill evidence without changing financial values', () => {
-    expect(assessHistoricalFullFillEvidence({ orderQty: 2, tradingAccountId: 7, brokerOrderRecordId: 11, brokerOrderId: 'synthetic-order', activities: [activity] })).toMatchObject({
+    expect(assessHistoricalFullFillEvidence({ orderQty: 2, tradingAccountId: 7, brokerOrderRecordId: 11, brokerOrderId: 'synthetic-order', expectedBroker: 'ALPACA', activities: [activity] })).toMatchObject({
       deterministic: true, contradictions: [], ownedActivityIds: [101],
       summary: { classification: 'full', weightedAveragePrice: 125.5 },
     });
@@ -34,9 +34,19 @@ describe('historical full-fill repair evidence', () => {
     ['quantity contradiction', { ...activity, qty: 1 }, 'priced_fill_quantity_conflicts_with_order_quantity'],
     ['broker identity contradiction', { ...activity, orderId: 'different-order' }, 'conflicting_broker_order_identity'],
   ])('refuses deterministic terminalization for %s', (_label, changed, reason) => {
-    const result = assessHistoricalFullFillEvidence({ orderQty: 2, tradingAccountId: 7, brokerOrderRecordId: 11, brokerOrderId: 'synthetic-order', activities: [changed] });
+    const result = assessHistoricalFullFillEvidence({ orderQty: 2, tradingAccountId: 7, brokerOrderRecordId: 11, brokerOrderId: 'synthetic-order', expectedBroker: 'alpaca', activities: [changed] });
     expect(result.deterministic).toBe(false);
     expect(result.contradictions).toContain(reason);
+  });
+
+  it.each([
+    ['case-normalized', 'ALPACA', true],
+    ['missing', '', false],
+    ['conflicting', 'other-broker', false],
+  ])('validates %s BrokerActivity broker identity', (_label, broker, deterministic) => {
+    const result = assessHistoricalFullFillEvidence({ orderQty: 2, tradingAccountId: 7, brokerOrderRecordId: 11, brokerOrderId: 'synthetic-order', expectedBroker: 'alpaca', activities: [{ ...activity, broker }] });
+    expect(result.deterministic).toBe(deterministic);
+    expect(result.contradictions.includes('conflicting_or_missing_broker_identity')).toBe(!deterministic);
   });
 });
 

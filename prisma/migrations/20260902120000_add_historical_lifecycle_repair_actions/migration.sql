@@ -6,6 +6,19 @@ CREATE TYPE "LifecycleRepairActionStatus" AS ENUM ('PROPOSED', 'APPROVED', 'REFU
 
 ALTER TABLE "OperationalAttention" ADD COLUMN "materialFingerprint" TEXT;
 
+ALTER TABLE "LifecycleRepairCase"
+ADD COLUMN "generation" INTEGER NOT NULL DEFAULT 1,
+ADD COLUMN "operationalAttentionId" INTEGER,
+ADD COLUMN "supersedesCaseId" INTEGER;
+
+DROP INDEX "LifecycleRepairCase_type_target_fingerprint_key";
+CREATE UNIQUE INDEX "LifecycleRepairCase_type_target_fingerprint_generation_key" ON "LifecycleRepairCase"("repairType", "targetType", "targetId", "diagnosticFingerprint", "generation");
+CREATE INDEX "LifecycleRepairCase_operationalAttentionId_createdAt_idx" ON "LifecycleRepairCase"("operationalAttentionId", "createdAt");
+CREATE INDEX "LifecycleRepairCase_supersedesCaseId_idx" ON "LifecycleRepairCase"("supersedesCaseId");
+
+ALTER TABLE "LifecycleRepairCase" ADD CONSTRAINT "LifecycleRepairCase_operationalAttentionId_fkey" FOREIGN KEY ("operationalAttentionId") REFERENCES "OperationalAttention"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "LifecycleRepairCase" ADD CONSTRAINT "LifecycleRepairCase_supersedesCaseId_fkey" FOREIGN KEY ("supersedesCaseId") REFERENCES "LifecycleRepairCase"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
 CREATE TABLE "LifecycleRepairAction" (
     "id" SERIAL NOT NULL,
     "caseId" INTEGER NOT NULL,

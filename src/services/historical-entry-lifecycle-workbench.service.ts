@@ -12,8 +12,10 @@ import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import {
   assessHistoricalFullFillEvidence,
+  classifyHistoricalLifecycleLinks,
   diagnoseHistoricalOrderLifecycle,
   HISTORICAL_POSITION_TIME_TOLERANCE_MS,
+  validateExistingHistoricalPositionLink,
 } from './historical-order-lifecycle-diagnostic.service.js';
 import { isTerminalBrokerOrderStatus } from './broker-order-lifecycle-status.service.js';
 import { ACCOUNT_WORKFLOW_LOCK_FAMILIES, withTradingAccountWorkflowLock } from './trading-account-workflow-lock.service.js';
@@ -23,6 +25,7 @@ export const HISTORICAL_ENTRY_REPAIR_TYPE = 'REPAIR_HISTORICAL_ENTRY_LIFECYCLE' 
 export const TERMINALIZE_CONFIRMATION = 'TERMINALIZE HISTORICAL ORDER LIFECYCLE';
 export const LINK_CONFIRMATION = 'LINK HISTORICAL ENTRY LIFECYCLE';
 const CASE_TTL_MS = 10 * 60_000;
+const SAME_ATTEMPT_REPLAY_WAIT_MS = 1_000;
 
 function stable(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
@@ -44,6 +47,10 @@ type HistoricalActionProposal = {
 
 function json(value: unknown) {
   return value as Prisma.InputJsonValue;
+}
+
+function persistedJson(value: unknown) {
+  return JSON.parse(JSON.stringify(value)) as unknown;
 }
 
 const orderInclude = {
@@ -112,6 +119,7 @@ async function buildPreviewEvidence(attentionId: number) {
     tradingAccountId: attention.tradingAccountId,
     brokerOrderRecordId: order.id,
     brokerOrderId: order.brokerOrderId,
+    expectedBroker: order.broker,
     activities: order.brokerActivities,
   });
   const diagnostic = await diagnoseHistoricalOrderLifecycle({
@@ -226,28 +234,47 @@ function buildActionProposals(built: Awaited<ReturnType<typeof buildPreviewEvide
   return proposals;
 }
 
+export function historicalPreviewReuseDecision(args: {
+  sameMaterialEvidence: boolean;
+  expiresAt: Date;
+  now: Date;
+  actionStatuses: LifecycleRepairActionStatus[];
+}) {
+  if (!args.sameMaterialEvidence) return 'CREATE_GENERATION' as const;
+  if (args.actionStatuses.includes(LifecycleRepairActionStatus.REFUSED)) return 'RETURN_IMMUTABLE_REFUSAL' as const;
+  if (args.expiresAt > args.now && !args.actionStatuses.some((status) => status === LifecycleRepairActionStatus.FAILED || status === LifecycleRepairActionStatus.SUPERSEDED)) return 'RETURN_CURRENT' as const;
+  return 'CREATE_GENERATION' as const;
+}
+
 export async function previewHistoricalEntryLifecycleRepair(args: { attentionId: number; actorUserId: number }) {
   const built = await buildPreviewEvidence(args.attentionId);
   const before = lifecycleState(built.order);
   const diagnosticFingerprint = hash(built.evidence);
   const expiresAt = new Date(Date.now() + CASE_TTL_MS);
   const proposals = buildActionProposals(built);
-  const existingCase = await prisma.lifecycleRepairCase.findUnique({
-    where: { repairType_targetType_targetId_diagnosticFingerprint: { repairType: HISTORICAL_ENTRY_REPAIR_TYPE, targetType: 'BrokerOrder', targetId: String(built.order.id), diagnosticFingerprint } },
-    include: { tradingAccount: true, actions: { include: { executions: true }, orderBy: { ordinal: 'asc' } }, executions: true },
-  });
-  if (existingCase) return existingCase;
   const repairCase = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "OperationalAttention" WHERE id = ${built.attention.id} FOR UPDATE`;
     const prior = await tx.lifecycleRepairCase.findMany({
       where: { repairType: HISTORICAL_ENTRY_REPAIR_TYPE, targetType: 'BrokerOrder', targetId: String(built.order.id) },
-      include: { actions: true },
+      include: { tradingAccount: true, actions: { include: { executions: true }, orderBy: { ordinal: 'asc' } }, executions: true },
+      orderBy: [{ generation: 'desc' }, { createdAt: 'desc' }],
     });
+    const sameEvidence = prior.find((item) => item.diagnosticFingerprint === diagnosticFingerprint);
+    const now = new Date();
+    if (sameEvidence) {
+      const decision = historicalPreviewReuseDecision({ sameMaterialEvidence: true, expiresAt: sameEvidence.expiresAt, now, actionStatuses: sameEvidence.actions.map((item) => item.status) });
+      if (decision !== 'CREATE_GENERATION') return sameEvidence;
+    }
+    const supersededCase = sameEvidence ?? prior[0] ?? null;
     await tx.lifecycleRepairAction.updateMany({
-      where: { caseId: { in: prior.map((item) => item.id) }, status: { in: ['PROPOSED', 'APPROVED', 'FAILED'] } },
+      where: { caseId: { in: prior.map((item) => item.id) }, status: { in: ['PROPOSED', 'APPROVED'] } },
       data: { status: 'SUPERSEDED', decidedAt: new Date(), decisionReason: 'Superseded by freshly validated evidence.', revision: { increment: 1 } },
     });
     return tx.lifecycleRepairCase.create({
       data: {
+        generation: (prior[0]?.generation ?? 0) + 1,
+        operationalAttentionId: built.attention.id,
+        supersedesCaseId: supersededCase?.id ?? null,
         repairType: HISTORICAL_ENTRY_REPAIR_TYPE, repairVersion: 1, impact: 'LOCAL_ONLY', source: 'RECONCILIATION',
         tradingAccountId: built.order.tradingAccountId!, targetType: 'BrokerOrder', targetId: String(built.order.id),
         confidence: proposals.some((item) => item.classification === 'OPERATOR_CONFIRMATION_REQUIRED') ? LifecycleRepairConfidence.STRONG : LifecycleRepairConfidence.DETERMINISTIC,
@@ -305,7 +332,8 @@ export async function reconsiderHistoricalLifecycleAction(args: {
   if (!source) throw new HttpError(404, 'Lifecycle repair action not found.');
   if (source.status !== 'REFUSED' || source.revision !== args.expectedRevision) throw new HttpError(409, 'Only the expected immutable refused action can be reconsidered.');
   const preconditions = source.repairCase.preconditionsJson as Record<string, unknown>;
-  const built = await buildPreviewEvidence(Number(preconditions.attentionId));
+  const attentionId = source.repairCase.operationalAttentionId ?? Number(preconditions.attentionId);
+  const built = await buildPreviewEvidence(attentionId);
   if (hash(built.evidence) !== source.repairCase.diagnosticFingerprint) throw new HttpError(409, 'Material evidence changed. Create a fresh preview instead.');
   const proposal = buildActionProposals(built).find((item) => item.actionType === source.actionType);
   if (!proposal) throw new HttpError(409, 'The refused action is no longer safely proposal-eligible.');
@@ -350,7 +378,8 @@ export async function applyHistoricalLifecycleAction(args: {
         return replay;
       }
       const preconditions = action.repairCase.preconditionsJson as Record<string, unknown>;
-      const attentionId = Number(preconditions.attentionId);
+      const attentionId = action.repairCase.operationalAttentionId ?? Number(preconditions.attentionId);
+      if (!Number.isInteger(attentionId) || attentionId <= 0) throw new HttpError(409, 'Repair case has no valid Operational Attention relationship.');
       const fresh = await buildPreviewEvidence(attentionId);
       if (fresh.attention.status === 'RESOLVED' || fresh.attention.activeKey !== preconditions.attentionFingerprint) {
         throw new HttpError(409, 'Operational Attention is no longer the active lifecycle condition.');
@@ -382,12 +411,13 @@ export async function applyHistoricalLifecycleAction(args: {
       const protectedBefore = protectedLifecycleValues(built.order);
       let after: unknown;
       if (action.actionType === LifecycleRepairActionType.TERMINALIZE_ORDER_LIFECYCLE) {
-        if (!built.assessment.deterministic) throw new HttpError(409, 'Full-fill evidence changed or became contradictory.');
+        if (!built.assessment.deterministic || stable(persistedJson(built.assessment)) !== stable(action.evidenceJson)) throw new HttpError(409, 'Full-fill evidence changed or became contradictory.');
         const orderUpdate = await tx.brokerOrder.updateMany({ where: { id: built.order.id, tradingAccountId: built.order.tradingAccountId, status: proposal.brokerOrder.status.before }, data: { status: 'filled' } });
         const intentUpdate = await tx.orderIntent.updateMany({ where: { id: built.order.orderIntentId, tradingAccountId: built.order.tradingAccountId, status: proposal.orderIntent.status.before }, data: { status: 'filled' } });
         if (orderUpdate.count !== 1 || intentUpdate.count !== 1) throw new HttpError(409, 'A conditional lifecycle status mutation did not affect exactly one row.');
       } else {
         const positionId = Number(proposal.trackedPositionId);
+        if (stable([...built.assessment.ownedActivityIds].sort((a, b) => a - b)) !== stable([...proposal.brokerActivityIds].sort((a: number, b: number) => a - b))) throw new HttpError(409, 'Eligible fill lifecycle membership changed.');
         await tx.$queryRaw`SELECT id FROM "TrackedPosition" WHERE id = ${positionId} FOR UPDATE`;
         const position = await tx.trackedPosition.findFirst({ where: { id: positionId, tradingAccountId: built.order.tradingAccountId, status: 'closed' } });
         if (!position || built.existingLinkIds.length) throw new HttpError(409, 'Position candidate or lifecycle links changed.');
@@ -415,13 +445,25 @@ export async function applyHistoricalLifecycleAction(args: {
       await tx.lifecycleRepairAction.updateMany({ where: { caseId: action.caseId, id: { not: action.id }, status: { in: ['PROPOSED', 'APPROVED'] } }, data: { status: 'SUPERSEDED', decidedAt: new Date(), decisionReason: 'Sibling action applied; refresh authoritative evidence.', revision: { increment: 1 } } });
       await createSystemEvent({ type: 'lifecycle_repair.action_applied', entityType: 'lifecycleRepairAction', entityId: action.id, tradingAccountId: built.order.tradingAccountId, actorUserId: args.actorUserId, severity: SystemEventSeverity.INFO, message: `${action.actionType} was applied and structurally verified.`, payloadJson: json({ caseId: action.caseId, actionId: action.id, executionId: execution.id, brokerImpact: 'NONE' }) }, tx);
       return execution;
-        });
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
       } catch (error) {
         await persistFailedExecution({ action, args, error });
         throw error;
       }
     },
   });
+  if (lock.outcome === 'NOT_ACQUIRED') {
+    const deadline = Date.now() + SAME_ATTEMPT_REPLAY_WAIT_MS;
+    while (Date.now() < deadline) {
+      const replay = await prisma.lifecycleRepairExecution.findUnique({ where: { attemptKey: args.attemptKey } });
+      if (replay) {
+        if (replay.actionId !== args.actionId) throw new HttpError(409, 'Attempt key belongs to another action.');
+        return { execution: replay, idempotent: true };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new HttpError(409, 'Lifecycle repair lock is busy.');
+  }
   if (lock.outcome !== 'ACQUIRED_AND_COMPLETED') throw (lock.outcome === 'WORKFLOW_ERROR' || lock.outcome === 'LOCK_ERROR' ? lock.error : new HttpError(409, 'Lifecycle repair lock is busy.'));
   return { execution: lock.value, idempotent: false };
 }
@@ -459,6 +501,58 @@ async function buildPreviewEvidenceForTransaction(tx: Prisma.TransactionClient, 
   await tx.$queryRaw`SELECT id FROM "OrderIntent" WHERE id = ${order.orderIntentId} FOR UPDATE`;
   const activityIds = order.brokerActivities.map((item) => item.id);
   if (activityIds.length) await tx.$queryRawUnsafe(`SELECT id FROM "BrokerActivity" WHERE id IN (${activityIds.map((_, index) => `$${index + 1}`).join(',')}) FOR UPDATE`, ...activityIds);
-  const assessment = assessHistoricalFullFillEvidence({ orderQty: order.orderIntent.qty, tradingAccountId, brokerOrderRecordId: order.id, brokerOrderId: order.brokerOrderId, activities: order.brokerActivities });
+  const assessment = assessHistoricalFullFillEvidence({ orderQty: order.orderIntent.qty, tradingAccountId, brokerOrderRecordId: order.id, brokerOrderId: order.brokerOrderId, expectedBroker: order.broker, activities: order.brokerActivities });
   return { order, assessment, existingLinkIds: [...new Set([order.trackedPositionId, order.orderIntent.trackedPositionId, ...order.brokerActivities.map((item) => item.trackedPositionId)].filter((id): id is number => id !== null))] };
+}
+
+export async function verifyAppliedHistoricalLifecycleActions(args: {
+  attentionId: number;
+  unresolvedComponents: string[];
+  runIdentifier: string;
+}) {
+  const cases = await prisma.lifecycleRepairCase.findMany({
+    where: { operationalAttentionId: args.attentionId, repairType: HISTORICAL_ENTRY_REPAIR_TYPE },
+    include: { actions: { where: { status: 'APPLIED' } } },
+  });
+  const applied = cases.flatMap((repairCase) => repairCase.actions.map((action) => ({ repairCase, action })));
+  if (!applied.length) return { verified: 0 };
+  const attention = await prisma.operationalAttention.findUnique({ where: { id: args.attentionId } });
+  if (!attention?.brokerOrderId) return { verified: 0 };
+  const order = await prisma.brokerOrder.findFirst({ where: { id: attention.brokerOrderId, tradingAccountId: attention.tradingAccountId }, include: { orderIntent: true, brokerActivities: true } });
+  if (!order) return { verified: 0 };
+  const fill = assessHistoricalFullFillEvidence({ orderQty: order.orderIntent.qty, tradingAccountId: attention.tradingAccountId, brokerOrderRecordId: order.id, brokerOrderId: order.brokerOrderId, expectedBroker: order.broker, activities: order.brokerActivities });
+  let verified = 0;
+  for (const item of applied) {
+    let evidence: Record<string, unknown> | null = null;
+    if (item.action.actionType === 'TERMINALIZE_ORDER_LIFECYCLE') {
+      if (fill.deterministic && isTerminalBrokerOrderStatus(order.status) && isTerminalBrokerOrderStatus(order.orderIntent.status) && !args.unresolvedComponents.includes('STALE_ORDER_STATUS')) {
+        evidence = { runIdentifier: args.runIdentifier, fullFillEvidence: fill, brokerOrderStatus: order.status, orderIntentStatus: order.orderIntent.status, terminalStatusComponentAbsent: true };
+      }
+    } else {
+      const proposal = item.action.proposedMutationsJson as Record<string, unknown>;
+      const positionId = Number(proposal.trackedPositionId);
+      const ownedFills = order.brokerActivities.filter((activity) => fill.ownedActivityIds.includes(activity.id));
+      const linkState = classifyHistoricalLifecycleLinks({ orderIntentTrackedPositionId: order.orderIntent.trackedPositionId, brokerOrderTrackedPositionId: order.trackedPositionId, activityTrackedPositionIds: ownedFills.map((activity) => activity.trackedPositionId) });
+      const position = Number.isInteger(positionId) ? await prisma.trackedPosition.findUnique({ where: { id: positionId } }) : null;
+      const validation = validateExistingHistoricalPositionLink({
+        existingPositionIds: [order.orderIntent.trackedPositionId, order.trackedPositionId, ...ownedFills.map((activity) => activity.trackedPositionId)].filter((id): id is number => id !== null),
+        tradingAccountId: order.tradingAccountId, broker: order.broker, symbol: order.symbol,
+        subscriptionId: order.orderIntent.subscriptionId, tradingAccountSubscriptionId: order.orderIntent.tradingAccountSubscriptionId,
+        positions: position ? [position] : [],
+      });
+      const linkComponentAbsent = !args.unresolvedComponents.some((component) => ['MISSING_POSITION_LINK', 'PARTIAL_POSITION_LINK', 'CONFLICTING_POSITION_LINK'].includes(component));
+      if (fill.deterministic && linkState.state === 'CONSISTENT' && linkState.trackedPositionId === positionId && validation.status === 'valid' && linkComponentAbsent) {
+        evidence = { runIdentifier: args.runIdentifier, fullFillEvidence: fill, lifecycleLinkState: linkState, existingLinkValidation: validation, positionLinkComponentAbsent: true };
+      }
+    }
+    if (!evidence) continue;
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "LifecycleRepairAction" WHERE id = ${item.action.id} FOR UPDATE`;
+      const changed = await tx.lifecycleRepairAction.updateMany({ where: { id: item.action.id, status: 'APPLIED' }, data: { status: 'VERIFIED', revision: { increment: 1 }, verificationJson: json({ authoritative: true, verifiedAt: new Date().toISOString(), evidence }) } });
+      if (changed.count !== 1) return;
+      await createSystemEvent({ type: 'lifecycle_repair.action_verified', entityType: 'lifecycleRepairAction', entityId: item.action.id, tradingAccountId: order.tradingAccountId, severity: SystemEventSeverity.INFO, message: `${item.action.actionType} was verified by authoritative reconciliation.`, payloadJson: json({ caseId: item.repairCase.id, actionId: item.action.id, attentionId: args.attentionId, evidence }) }, tx);
+      verified += 1;
+    });
+  }
+  return { verified };
 }

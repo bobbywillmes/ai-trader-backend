@@ -18,6 +18,7 @@ export type LifecycleRepairAction = {
 };
 export type LifecycleRepairCase = {
   id: number; repairType: "RESOLVE_POSITION_ATTRIBUTION" | "REPAIR_HISTORICAL_ENTRY_LIFECYCLE"; repairVersion: number;
+  generation: number; operationalAttentionId: number | null; supersedesCaseId: number | null;
   impact: "LOCAL_ONLY"; targetType: string; targetId: string; confidence: RepairConfidence;
   resolutionSource: string | null; diagnosticFingerprint: string; localLifecycleFingerprint?: string; configurationFingerprint?: string | null; evidenceJson: Record<string, unknown>;
   candidateResolutionsJson: unknown[]; rejectedAlternativesJson: unknown[];

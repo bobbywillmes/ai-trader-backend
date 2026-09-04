@@ -473,6 +473,7 @@ export function assessHistoricalFullFillEvidence(args: {
   tradingAccountId: number;
   brokerOrderRecordId: number;
   brokerOrderId: string;
+  expectedBroker: string;
   activities: Array<FillEvidenceActivity & {
     id: number;
     orderId?: string | null;
@@ -488,6 +489,10 @@ export function assessHistoricalFullFillEvidence(args: {
       activity.brokerOrderRecordId === args.brokerOrderRecordId
   );
   const contradictions: string[] = [];
+  const expectedBroker = args.expectedBroker.trim().toLowerCase();
+  if (!expectedBroker || owned.some((activity) => !activity.broker?.trim() || activity.broker.trim().toLowerCase() !== expectedBroker)) {
+    contradictions.push('conflicting_or_missing_broker_identity');
+  }
   const terminalMarkers = owned.filter(
     (activity) =>
       activity.cumQty !== null &&

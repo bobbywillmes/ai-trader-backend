@@ -304,12 +304,18 @@ enum LifecycleRepairActionStatus {
 
 model LifecycleRepairCase {
   id                         Int @id @default(autoincrement())
+  generation                 Int @default(1)
   repairType                 LifecycleRepairType
   repairVersion              Int
   impact                     LifecycleRepairImpact
   source                     LifecycleRepairSource
   tradingAccountId           Int
   tradingAccount             TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict)
+  operationalAttentionId     Int?
+  operationalAttention       OperationalAttention? @relation(fields: [operationalAttentionId], references: [id], onDelete: Restrict)
+  supersedesCaseId           Int?
+  supersedesCase             LifecycleRepairCase? @relation("LifecycleRepairCaseSupersession", fields: [supersedesCaseId], references: [id], onDelete: Restrict)
+  supersededByCases          LifecycleRepairCase[] @relation("LifecycleRepairCaseSupersession")
   targetType                 String
   targetId                   String
   confidence                 LifecycleRepairConfidence
@@ -333,12 +339,14 @@ model LifecycleRepairCase {
   executions                 LifecycleRepairExecution[]
   actions                    LifecycleRepairAction[]
 
-  @@unique([repairType, targetType, targetId, diagnosticFingerprint], map: "LifecycleRepairCase_type_target_fingerprint_key")
+  @@unique([repairType, targetType, targetId, diagnosticFingerprint, generation], map: "LifecycleRepairCase_type_target_fingerprint_generation_key")
   @@index([tradingAccountId, createdAt])
   @@index([repairType, targetType, targetId, createdAt], map: "LifecycleRepairCase_type_target_createdAt_idx")
   @@index([confidence, createdAt])
   @@index([expiresAt])
   @@index([createdByUserId, createdAt])
+  @@index([operationalAttentionId, createdAt])
+  @@index([supersedesCaseId])
 }
 
 model LifecycleRepairAction {
@@ -1146,6 +1154,7 @@ model OperationalAttention {
   orderIntent                 OrderIntent? @relation(fields: [orderIntentId], references: [id], onDelete: Restrict)
   brokerOrder                 BrokerOrder? @relation(fields: [brokerOrderId], references: [id], onDelete: Restrict)
   evidenceEvents              OperationalAttentionSystemEvent[]
+  lifecycleRepairCases        LifecycleRepairCase[]
 
   @@index([tradingAccountId, status, severity])
   @@index([tradingAccountId, lastObservedAt])

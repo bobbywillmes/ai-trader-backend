@@ -19,7 +19,7 @@ const success: LifecycleRepairExecution = {
   validationJson: { valid: true, checks: { attribution: true, frozenSnapshot: true, exitStateHydrated: true, brokerMutationPerformed: false } }, failureJson: null,
 };
 const base: LifecycleRepairCase = {
-  id: 3, repairType: "RESOLVE_POSITION_ATTRIBUTION", repairVersion: 1, impact: "LOCAL_ONLY", targetType: "TrackedPosition", targetId: "73",
+  id: 3, generation: 1, operationalAttentionId: null, supersedesCaseId: null, repairType: "RESOLVE_POSITION_ATTRIBUTION", repairVersion: 1, impact: "LOCAL_ONLY", targetType: "TrackedPosition", targetId: "73",
   confidence: "DETERMINISTIC", resolutionSource: "BROKER_CLIENT_ORDER_ID", diagnosticFingerprint: "diagnostic-fingerprint-73", configurationFingerprint: "config-fingerprint-73",
   evidenceJson: { confidence: "DETERMINISTIC", brokerOrderId: "17ab373f-cf57-43bc-a30c-d320a099c656", clientOrderId: "ai-entry-tas4-fc7fee7e1652deb4f9d502c49f99baaaaadec24f3b3112f504977ca594b85e92", assignment: { id: 4, subscriptionId: 38, subscriptionKey: "aapl_dip_core", exitProfileId: 8, exitProfileKey: "exit_stock_dip_core_target", symbol: "AAPL" }, activities: [{ id: 214, qty: 2, price: 303.18 }, { id: 215, qty: 1, price: 303.18 }], fillQty: 3, weightedAveragePrice: 303.18 },
   candidateResolutionsJson: [{ assignmentId: 4, subscriptionId: 38, subscriptionKey: "aapl_dip_core" }, { assignmentId: 6, subscriptionId: 40, subscriptionKey: "aapl_momentum_core" }],

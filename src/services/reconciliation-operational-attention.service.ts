@@ -20,6 +20,7 @@ import {
   openOrObserveOperationalAttention,
   resolveOperationalAttentionAuthoritatively,
 } from './operational-attention.service.js';
+import { verifyAppliedHistoricalLifecycleActions } from './historical-entry-lifecycle-workbench.service.js';
 
 type Rule = {
   code: typeof OPERATIONAL_ATTENTION_CODES[keyof typeof OPERATIONAL_ATTENTION_CODES];
@@ -80,7 +81,7 @@ export async function projectReconciliationOperationalAttention(args: {
     if (!rule) continue;
     const fingerprint = reconciliationAttentionFingerprint(args.tradingAccountId, finding);
     observedFingerprints.add(fingerprint);
-    await openOrObserveOperationalAttention({
+    const observed = await openOrObserveOperationalAttention({
       tradingAccountId: args.tradingAccountId,
       code: rule.code,
       source: OPERATIONAL_ATTENTION_SOURCES.RECONCILIATION,
@@ -97,6 +98,10 @@ export async function projectReconciliationOperationalAttention(args: {
       ...(typeof finding.details?.orderIntentId === 'number' ? { orderIntentId: finding.details.orderIntentId, orderIntentIsObservationContext: true } : {}),
       observedSystemEventId: args.eventIds.get(`${finding.entityType}:${finding.entityId}:${finding.code}`) ?? null,
     });
+    if (rule.code === OPERATIONAL_ATTENTION_CODES.HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE) {
+      const unresolved = Array.isArray(finding.details?.unresolvedComponents) ? finding.details.unresolvedComponents.filter((value): value is string => typeof value === 'string') : [];
+      await verifyAppliedHistoricalLifecycleActions({ attentionId: observed.attention.id, unresolvedComponents: unresolved, runIdentifier: args.runIdentifier });
+    }
     updated += 1;
   }
   const active = await prisma.operationalAttention.findMany({
@@ -105,6 +110,9 @@ export async function projectReconciliationOperationalAttention(args: {
   let resolved = 0;
   for (const attention of active) {
     if (observedFingerprints.has(attention.fingerprint)) continue;
+    if (attention.code === OPERATIONAL_ATTENTION_CODES.HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE) {
+      await verifyAppliedHistoricalLifecycleActions({ attentionId: attention.id, unresolvedComponents: [], runIdentifier: args.runIdentifier });
+    }
     await resolveOperationalAttentionAuthoritatively({
       id: attention.id,
       expectedRevision: attention.revision,
