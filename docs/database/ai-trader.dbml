@@ -7,6 +7,85 @@ Project "AI Trader Backend" {
   Note: 'Generated from prisma/schema.prisma. Do not edit manually.'
 }
 
+Table ExternalSignalSource {
+  id Int [pk, increment]
+  name String [not null]
+  provider ExternalSignalProvider [not null]
+  enabled Boolean [not null, default: true]
+  authMethod ExternalSignalAuthMethod [not null, default: 'URL_TOKEN']
+  webhookTokenHash String [unique, not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  bindings StrategySignalBinding [not null]
+  deliveries SignalDelivery [not null]
+  signals Signal [not null]
+}
+
+Table StrategySignalBinding {
+  id Int [pk, increment]
+  signalSourceId Int [not null]
+  strategyId Int [not null]
+  externalStrategyKey String [not null]
+  expectedRevision String [not null]
+  enabled Boolean [not null, default: true]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  signalSource ExternalSignalSource [not null]
+  strategy Strategy [not null]
+  signals Signal [not null]
+
+  indexes {
+    (signalSourceId, externalStrategyKey) [unique]
+  }
+}
+
+Table SignalDelivery {
+  id Int [pk, increment]
+  signalSourceId Int [not null]
+  signalId Int
+  requestId String [not null]
+  receivedAt DateTime [not null]
+  processedAt DateTime [not null]
+  status SignalDeliveryStatus [not null]
+  contentType String
+  bodySizeBytes Int [not null]
+  rawPayloadHash String [not null]
+  rawPayloadRedacted Json [not null]
+  rejectionCode SignalDeliveryRejectionCode
+  rejectionDetails Json
+  createdAt DateTime [default: `now()`, not null]
+  signalSource ExternalSignalSource [not null]
+  signal Signal
+}
+
+Table Signal {
+  id Int [pk, increment]
+  signalSourceId Int [not null]
+  strategySignalBindingId Int [not null]
+  strategyId Int [not null]
+  securityId Int [not null]
+  schemaVersion Int [not null]
+  externalEventKey String [not null]
+  strategyRevision String [not null]
+  event SignalEvent [not null]
+  symbol String [not null]
+  timeframe String [not null]
+  signalTime DateTime [not null]
+  barTime DateTime
+  metadata Json
+  canonicalPayloadHash String [not null]
+  createdAt DateTime [default: `now()`, not null]
+  signalSource ExternalSignalSource [not null]
+  strategySignalBinding StrategySignalBinding [not null]
+  strategy Strategy [not null]
+  security Security [not null]
+  deliveries SignalDelivery [not null]
+
+  indexes {
+    (signalSourceId, externalEventKey) [unique]
+  }
+}
+
 Table Setting {
   id Int [pk, increment]
   key String [unique, not null]
@@ -588,6 +667,7 @@ Table TradingLifecycleExerciseTarget {
 }
 
 Table Security {
+  signals Signal [not null]
   id Int [pk, increment]
   symbol String [unique, not null]
   name String [not null]
@@ -1264,6 +1344,8 @@ Table BrokerActivity {
 }
 
 Table Strategy {
+  signalBindings StrategySignalBinding [not null]
+  signals Signal [not null]
   id Int [pk, increment]
   key String [unique, not null]
   name String [not null]
@@ -1316,6 +1398,44 @@ Table Subscription {
   lifecycleExercises TradingLifecycleExercise [not null]
   liveEntryArmings LiveEntryArming [not null]
   liveEntryAcceptanceRuns LiveEntryAcceptanceRun [not null]
+}
+
+Enum ExternalSignalProvider {
+  TRADINGVIEW
+  TRENDSPIDER
+  GENERIC_WEBHOOK
+}
+
+Enum ExternalSignalAuthMethod {
+  URL_TOKEN
+}
+
+Enum SignalDeliveryStatus {
+  NORMALIZED
+  DUPLICATE
+  REJECTED
+}
+
+Enum SignalEvent {
+  ENTRY_LONG
+  EXIT_LONG
+}
+
+Enum SignalDeliveryRejectionCode {
+  SOURCE_DISABLED
+  INVALID_CONTENT_TYPE
+  INVALID_JSON
+  PAYLOAD_TOO_LARGE
+  UNSUPPORTED_SCHEMA_VERSION
+  INVALID_ENVELOPE
+  UNKNOWN_STRATEGY_BINDING
+  STRATEGY_BINDING_DISABLED
+  STRATEGY_REVISION_MISMATCH
+  UNKNOWN_SYMBOL
+  INVALID_EVENT
+  INVALID_TIMEFRAME
+  INVALID_TIMESTAMP
+  EVENT_KEY_CONFLICT
 }
 
 Enum PlatformRole {
@@ -1636,6 +1756,22 @@ Enum MomentumPipelineStage {
   HANDOFF_PREPARATION
   HANDOFF_DELIVERY
 }
+
+Ref: StrategySignalBinding.signalSourceId > ExternalSignalSource.id [delete: Restrict]
+
+Ref: StrategySignalBinding.strategyId > Strategy.id [delete: Restrict]
+
+Ref: SignalDelivery.signalSourceId > ExternalSignalSource.id [delete: Restrict]
+
+Ref: SignalDelivery.signalId > Signal.id [delete: Restrict]
+
+Ref: Signal.signalSourceId > ExternalSignalSource.id [delete: Restrict]
+
+Ref: Signal.strategySignalBindingId > StrategySignalBinding.id [delete: Restrict]
+
+Ref: Signal.strategyId > Strategy.id [delete: Restrict]
+
+Ref: Signal.securityId > Security.id [delete: Restrict]
 
 Ref: User.invitedByUserId - User.id [delete: Set Null]
 

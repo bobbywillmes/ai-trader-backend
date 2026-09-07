@@ -15,6 +15,138 @@ datasource db {
   provider = "postgresql"
 }
 
+enum ExternalSignalProvider {
+  TRADINGVIEW
+  TRENDSPIDER
+  GENERIC_WEBHOOK
+}
+
+enum ExternalSignalAuthMethod {
+  URL_TOKEN
+}
+
+enum SignalDeliveryStatus {
+  NORMALIZED
+  DUPLICATE
+  REJECTED
+}
+
+enum SignalEvent {
+  ENTRY_LONG
+  EXIT_LONG
+}
+
+enum SignalDeliveryRejectionCode {
+  SOURCE_DISABLED
+  INVALID_CONTENT_TYPE
+  INVALID_JSON
+  PAYLOAD_TOO_LARGE
+  UNSUPPORTED_SCHEMA_VERSION
+  INVALID_ENVELOPE
+  UNKNOWN_STRATEGY_BINDING
+  STRATEGY_BINDING_DISABLED
+  STRATEGY_REVISION_MISMATCH
+  UNKNOWN_SYMBOL
+  INVALID_EVENT
+  INVALID_TIMEFRAME
+  INVALID_TIMESTAMP
+  EVENT_KEY_CONFLICT
+}
+
+model ExternalSignalSource {
+  id               Int                      @id @default(autoincrement())
+  name             String
+  provider         ExternalSignalProvider
+  enabled          Boolean                  @default(true)
+  authMethod       ExternalSignalAuthMethod @default(URL_TOKEN)
+  webhookTokenHash  String                   @unique
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  bindings         StrategySignalBinding[]
+  deliveries       SignalDelivery[]
+  signals          Signal[]
+}
+
+model StrategySignalBinding {
+  id                  Int      @id @default(autoincrement())
+  signalSourceId      Int
+  strategyId          Int
+  externalStrategyKey String
+  expectedRevision    String
+  enabled             Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  signalSource ExternalSignalSource @relation(fields: [signalSourceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  strategy     Strategy             @relation(fields: [strategyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  signals      Signal[]
+
+  @@unique([signalSourceId, externalStrategyKey])
+  @@index([strategyId])
+}
+
+// Terminal webhook evidence: application code only inserts and reads these rows.
+model SignalDelivery {
+  id                 Int                         @id @default(autoincrement())
+  signalSourceId     Int
+  signalId           Int?
+  requestId          String
+  receivedAt         DateTime
+  processedAt        DateTime
+  status             SignalDeliveryStatus
+  contentType        String?
+  bodySizeBytes      Int
+  rawPayloadHash     String
+  rawPayloadRedacted Json
+  rejectionCode      SignalDeliveryRejectionCode?
+  rejectionDetails   Json?
+  createdAt          DateTime                    @default(now())
+
+  signalSource ExternalSignalSource @relation(fields: [signalSourceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  signal       Signal?              @relation(fields: [signalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([signalSourceId, receivedAt])
+  @@index([status, receivedAt])
+  @@index([signalId])
+  @@index([rejectionCode, receivedAt])
+  @@index([receivedAt])
+}
+
+// Account-independent recognized events. No execution authority or mutable status.
+model Signal {
+  id                      Int         @id @default(autoincrement())
+  signalSourceId          Int
+  strategySignalBindingId Int
+  strategyId              Int
+  securityId              Int
+  schemaVersion           Int
+  externalEventKey        String
+  strategyRevision        String
+  event                   SignalEvent
+  symbol                  String
+  timeframe               String
+  signalTime              DateTime
+  barTime                 DateTime?
+  metadata                Json?
+  canonicalPayloadHash    String
+  createdAt               DateTime    @default(now())
+
+  signalSource          ExternalSignalSource  @relation(fields: [signalSourceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  strategySignalBinding StrategySignalBinding @relation(fields: [strategySignalBindingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  strategy              Strategy              @relation(fields: [strategyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  security              Security              @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  deliveries            SignalDelivery[]
+
+  @@unique([signalSourceId, externalEventKey])
+  @@index([strategySignalBindingId])
+  @@index([strategyId, signalTime])
+  @@index([securityId, signalTime])
+  @@index([event, signalTime])
+  @@index([signalTime])
+  @@index([createdAt])
+}
+
 model Setting {
   id        Int      @id @default(autoincrement())
   key       String   @unique
@@ -918,6 +1050,7 @@ enum AssetType {
 }
 
 model Security {
+  signals   Signal[]
   id        Int       @id @default(autoincrement())
   symbol    String    @unique
   name      String
@@ -2011,6 +2144,8 @@ model BrokerActivity {
 }
 
 model Strategy {
+  signalBindings StrategySignalBinding[]
+  signals        Signal[]
   id                 Int      @id @default(autoincrement())
   key                String   @unique
   name               String
