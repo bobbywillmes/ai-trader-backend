@@ -1,0 +1,15 @@
+.page { min-width: 0; }
+.tabs { overflow-x: auto; scrollbar-width: thin; }
+.tabList { flex-wrap: nowrap; min-width: max-content; }
+.toolbar { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: var(--mantine-spacing-sm); align-items: end; }
+.cell { max-width: 220px; min-width: 0; overflow-wrap: anywhere; }
+.truncate { display: block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.json { margin: 0; padding: var(--mantine-spacing-sm); border-radius: var(--mantine-radius-sm); background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-8)); white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--mantine-font-size-xs); max-height: 400px; overflow-y: auto; }
+.copyValue { min-width: 0; overflow-wrap: anywhere; }
+.copyText { font-family: var(--mantine-font-family-monospace); white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--mantine-font-size-xs); }
+.footer { flex-wrap: wrap; }
+@media (max-width: 48em) {
+  .footer { justify-content: center; }
+  .tabList button { padding-inline: 12px; }
+  .cell, .truncate { max-width: 100%; }
+}

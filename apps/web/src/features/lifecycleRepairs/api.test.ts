@@ -20,7 +20,8 @@ describe("Lifecycle Repair Apply API", () => {
 
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("/api/lifecycle-repairs/73/apply");
+    // Deployments may use a separate API origin through VITE_API_BASE_URL.
+    expect(new URL(url, "http://test.local").pathname).toBe("/api/lifecycle-repairs/73/apply");
     expect(JSON.parse(String(options.body))).toEqual({
       reason: "Recover deterministic TAS ownership.",
       confirmation: "APPLY POSITION ATTRIBUTION REPAIR",

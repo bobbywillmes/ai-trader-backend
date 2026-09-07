@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "./api";
+import { useStrategies } from "../strategies/hooks";
 import type { CreateBinding, CreateSource, Credential, Section, UpdateBinding, UpdateSource } from "./types";
 
 export const externalSignalKeys = {
@@ -16,6 +17,14 @@ export function useExternalDetail<K extends Section>(section: K, id: number | nu
 }
 export function useSourceCatalog(token: string | null) {
   return useQuery({ queryKey: externalSignalKeys.catalog, queryFn: () => api.getSourceCatalog(token), enabled: Boolean(token) });
+}
+export function useCatalogs(token: string | null) {
+  const sources = useSourceCatalog(token);
+  const strategies = useStrategies(token);
+  return { sources, strategies,
+    sourceName: (id: number) => sources.data?.find(source => source.id === id)?.name ?? `Source #${id}`,
+    strategyName: (id: number) => strategies.data?.find(strategy => strategy.id === id)?.name ?? `Strategy #${id}`,
+  };
 }
 export function useSourceMutations(token: string | null, onCredential: (value: Credential) => void) {
   const client = useQueryClient();
