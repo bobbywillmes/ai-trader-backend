@@ -141,6 +141,57 @@ emit `external_signal_source_created`, `external_signal_source_updated`,
 `strategy_signal_binding_updated`, with actor attribution and changed fields but no
 credentials. Updates include enable/disable and expected-revision changes.
 
+## Owner console
+
+SYSTEM_OWNER users can open **System → External Signals** at
+`/system/external-signals`. OPERATOR and ACCOUNT_USER cannot see the navigation
+item or access the route directly. This is a global system page with no trading
+account scope selector.
+
+The four tabs separate mutable configuration from immutable evidence:
+
+- **Sources:** create, inspect, rename, enable/disable, or rotate a webhook token.
+  Enable/disable and rotation require confirmation. Creation and rotation open a
+  one-time credential dialog with Copy Token and Copy Webhook URL actions. The URL
+  follows `VITE_API_BASE_URL`, falling back to the current origin. Closing the
+  dialog clears the plaintext; the normal source view can never reveal it. Lost
+  tokens must be rotated, and rotation invalidates the old credential immediately.
+- **Strategy Bindings:** select an existing source and Strategy, then supply the
+  external key and expected revision. Editing allows only revision/enabled changes,
+  with acknowledgment that future acceptance changes. Existing identity fields are
+  read-only. Strategy names link to their normal detail page.
+- **Signals:** filter and page through canonical events, then open a read-only
+  detail drawer with metadata JSON, identifiers, timestamps, event key, and hash.
+  “View related deliveries” opens the delivery list filtered to that Signal.
+- **Deliveries:** filter by source, processing status, rejection code, linked
+  Signal, and received-time bounds. Details show redacted payload/rejection JSON,
+  raw hash, size, and timestamps. Normalized/duplicate deliveries link to their
+  Signal. A rejected delivery with no Signal is displayed as not normalized.
+
+Tabs (`section`), applied filters, `page`, `pageSize`, and selected detail (`detail`)
+are URL-authoritative. Example bookmarks:
+
+```text
+/system/external-signals?section=signals&symbol=QQQ&event=ENTRY_LONG&pageSize=50
+/system/external-signals?section=signals&detail=42
+/system/external-signals?section=deliveries&signalId=42
+```
+
+Apply filters to commit draft fields to the URL. Filters and section changes reset
+the page while preserving page size. Back/Forward and refresh restore the view.
+Date controls use the browser's local time and send UTC ISO bounds. Desktop views
+use the shared data table; compact/mobile views use record cards and detail drawers.
+Long technical values wrap in details and support copying; JSON is formatted.
+
+The UI lives in `apps/web/src/features/externalSignals/` with feature-local HTTP
+DTOs, API clients, TanStack Query hooks, URL helpers, Mantine components and CSS
+modules. It reuses the existing Strategy catalog and loads all source catalog pages.
+Configuration mutations invalidate only the relevant source/binding queries.
+Plaintext webhook credentials are passed directly into transient dialog state and
+are not returned as mutation data, used as mutation variables, or written to query
+data, storage, URLs, or logs. Credential mutations also reset when the dialog closes.
+The console exposes no execution, replay, Signal/Delivery edit or deletion actions.
+
 ## Owner APIs and a test sender
 
 All management/read APIs live under `/api/external-signal-admin` and require
@@ -197,7 +248,9 @@ provider identity or execution authority is inferred from metadata.
 Apply `20260907120000_external_signal_ingestion` through the normal Prisma migration
 deployment workflow and regenerate the Prisma client before starting this backend.
 The migration is additive; there is no backfill, historical rewrite or trading
-configuration change. No frontend build is needed for this feature.
+configuration change. The owner console additionally requires building and deploying
+`apps/web` using the normal frontend deployment workflow; it requires no further
+backend changes or migrations.
 
 Run `npm run check`, `npm test`, `npm run build`, `npx prisma validate`, and
 `git diff --check`. There is no separate backend lint script. Real database tests:
@@ -210,5 +263,9 @@ npm.cmd test -- src/db/__tests__/external-signal-ingestion.integration.test.ts
 These tests create/drop a random isolated PostgreSQL schema, apply the actual new
 migration, and exercise concurrent duplicate/conflicting requests, atomic rollback,
 restrictive foreign keys, and ingestion in a schema with no trading tables.
+Frontend verification from `apps/web`: `npm test`, `npm run lint`, and
+`npm run build`. Tests cover owner-only access, configuration workflows, one-time
+credential cleanup/cache boundaries, evidence-only actions, formatted JSON,
+URL navigation/filters/pagination, API-origin handling, and narrow-screen cards.
 Future phases own subscription fan-out, strategy eligibility, market regime,
 staleness policy, entry decisions, sizing, risk evaluation and paper/live execution.

@@ -274,6 +274,12 @@ Keep UI changes:
 
 Only rebuild the web UI when UI code changes.
 
+The owner-only External Signals console lives at `/system/external-signals` under
+`apps/web/src/features/externalSignals/`. Keep section, applied filter, pagination,
+and detail state URL-authoritative. Webhook credentials belong only in transient
+one-time dialog state: never place them in query/mutation data, storage, URLs, or
+logs. Keep Signals and Deliveries read-only and account-independent.
+
 When building apps/web, Vite may report a large-chunk warning. This is expected for this internal web application and does not need to be highlighted unless the build fails or the warning materially changes.
 
 ## Documentation Rules
