@@ -39,7 +39,9 @@ export function externalSignalAdminController(resource: ExternalSignalResource,
         if (error.code === 'P2025') return next(new HttpError(404, 'Resource not found.'));
         if (error.code === 'P2003') return next(new HttpError(400, 'Referenced resource does not exist.'));
       }
-      next(error);
+      // Prisma failures can embed write arguments (including a token hash).
+      // Only deliberate, sanitized HTTP errors may reach the shared handler.
+      next(error instanceof HttpError ? error : new HttpError(500, 'External signal management unavailable.'));
     }
   };
 }

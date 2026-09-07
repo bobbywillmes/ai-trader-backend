@@ -133,6 +133,12 @@ Documents permission-protected trading account read/update endpoints and account
 
 Integration docs describe how external systems interact with the backend.
 
+### [External Signal Ingestion](integrations/external-signals.md)
+
+Provider-neutral, evidence-only webhook ingestion: source credentials, strategy
+bindings, canonical envelopes, terminal delivery history, owner APIs, and tests.
+Phase 1 cannot create trades or invoke the existing entry/exit pipeline.
+
 ### [n8n Integration](integrations/n8n.md)
 
 Documents the broader n8n → backend contract, including:

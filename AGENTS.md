@@ -211,6 +211,14 @@ Be especially careful when editing:
 
 ## Trade Lifecycle Notes
 
+External signal ingestion Phase 1 is a separate evidence-only subsystem:
+`/api/external-signals/:token` authenticates and records terminal `SignalDelivery`
+and immutable `Signal` rows. It must not invoke the existing `/api/signals` trading
+pipeline or create trading side effects. Sources and strategy bindings are mutable
+configuration; binding source/key/Strategy identity is fixed. Do not add normal
+application update/delete paths for Signal or SignalDelivery. Keep URL credentials
+out of logs and persisted evidence. See `docs/integrations/external-signals.md`.
+
 The intended lifecycle is:
 
 ```text

@@ -421,6 +421,7 @@ Automated trading should only be enabled deliberately after production health, b
 ### Integrations:
 
 - [n8n Integration](docs/integrations/n8n.md)
+- [External Signal Ingestion (evidence only)](docs/integrations/external-signals.md)
 - [Alpaca Integration](docs/integrations/alpaca.md)
 
 ### Production:
