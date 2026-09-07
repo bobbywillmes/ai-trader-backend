@@ -42,28 +42,18 @@ import tradingLifecycleExercisesRoutes from '../routes/trading-lifecycle-exercis
 import lifecycleRepairsRoutes from '../routes/lifecycle-repairs.routes.js';
 import liveOperationsRoutes from '../routes/live-operations.routes.js';
 import externalSignalAdminRoutes from '../routes/external-signal-admin.routes.js';
+import externalSignalIngressRoutes from '../routes/external-signal-ingress.routes.js';
+import { redactSensitiveRequestUrl } from '../middleware/redact-request-url.js';
 
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
 import { requireSignalApiKey, requireAdminAccess } from '../middleware/api-key-auth.js';
-
-function redactSensitiveRequestUrl(url?: string) {
-  if (!url) {
-    return url;
-  }
-
-  return url.replace(
-    /(\/api\/auth\/setup\/)[^/?#]+/g,
-    '$1[redacted]',
-  );
-}
 
 export function createApp() {
   const app = express();
 
   app.use(helmet());
   app.use(cors(corsOptions));
-  app.use(express.json());
 
   app.use(
     pinoHttp({
@@ -81,6 +71,10 @@ export function createApp() {
       },
     })
   );
+
+  // Authenticate and hash exact bytes before the ordinary JSON parser runs.
+  app.use('/api/external-signals', externalSignalIngressRoutes);
+  app.use(express.json());
 
   app.get('/', (_req, res) => {
     res.json({
