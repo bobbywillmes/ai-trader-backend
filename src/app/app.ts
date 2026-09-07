@@ -41,6 +41,7 @@ import usersRoutes from '../routes/users.routes.js';
 import tradingLifecycleExercisesRoutes from '../routes/trading-lifecycle-exercises.routes.js';
 import lifecycleRepairsRoutes from '../routes/lifecycle-repairs.routes.js';
 import liveOperationsRoutes from '../routes/live-operations.routes.js';
+import externalSignalAdminRoutes from '../routes/external-signal-admin.routes.js';
 
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
@@ -97,6 +98,7 @@ export function createApp() {
   app.use('/api/signals', requireSignalApiKey, signalsRoutes);
 
   // Admin routes
+  app.use('/api/external-signal-admin', requireAdminAccess, externalSignalAdminRoutes);
   app.use('/api/bootstrap', requireAdminAccess, bootstrapRoutes);
   app.use('/api/system-status', requireAdminAccess, systemStatusRoutes);
   app.use('/api/system-events', requireAdminAccess, systemEventsRoutes);
