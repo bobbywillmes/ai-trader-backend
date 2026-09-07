@@ -7,6 +7,7 @@ import {
   IconSettings, IconShieldCheck, IconTargetArrow, IconUsers,
   IconHeartbeat,
   IconAlertTriangle,
+  IconWebhook,
 } from "@tabler/icons-react";
 import type { PlatformRole } from "../features/auth/types";
 import type { AppRouteId } from "./routeAccess";
@@ -67,6 +68,7 @@ export const adminNavGroups: AdminNavGroup[] = [
     { routeId: "tradingAccounts", to: "/trading-accounts", label: "Trading Accounts", labelByRole: { ACCOUNT_USER: "My Accounts" }, icon: IconBuildingBank, isActive: matchesTradingAccountsRoute },
     { routeId: "reconciliation", to: "/system/reconciliation", label: "Reconciliation", icon: IconAdjustments, isActive: (path) => path === "/system/reconciliation" || path.startsWith("/system/reconciliation/") || /^\/trading-accounts\/\d+\/reconciliation\/?$/.test(path) },
     { routeId: "systemEvents", to: "/system/events", label: "System Events", icon: IconActivity },
+    { routeId: "externalSignals", to: "/system/external-signals", label: "External Signals", icon: IconWebhook },
     { routeId: "operationalAttention", to: "/operational-attention", label: "Operational Attention", icon: IconAlertTriangle },
     { routeId: "lifecycleExercises", to: "/lifecycle-exercises", label: "Lifecycle Exercises", icon: IconFlask },
     { routeId: "lifecycleRepairs", to: "/system/lifecycle-repairs", label: "Lifecycle Repairs", icon: IconTool },

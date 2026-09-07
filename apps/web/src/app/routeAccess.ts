@@ -17,6 +17,7 @@ export type AppRouteId =
   | "tradingAccounts"
   | "reconciliation"
   | "systemEvents"
+  | "externalSignals"
   | "users"
   | "securities"
   | "settings"
@@ -51,6 +52,7 @@ export const routeAccessPolicies: Record<AppRouteId, RouteAccessPolicy> = {
   tradingAccounts: { allowedRoles: ALL_ROLES, requiredPermission: "tradingAccount.read" },
   reconciliation: { allowedRoles: OWNER_ONLY, requiredPermission: "system.security.read" },
   systemEvents: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "systemEvents.read" },
+  externalSignals: { allowedRoles: OWNER_ONLY },
   users: { allowedRoles: OWNER_ONLY, requiredPermission: "system.settings.read" },
   securities: { allowedRoles: OWNER_ONLY, requiredPermission: "system.security.read" },
   settings: { allowedRoles: OWNER_ONLY, requiredPermission: "system.settings.read" },

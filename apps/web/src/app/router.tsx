@@ -23,6 +23,7 @@ import { PositionsPage } from "../features/positions/PositionsPage";
 import { OrdersPage } from "../features/orders/OrdersPage";
 import { SecuritiesPage } from "../features/securities/SecuritiesPage";
 import { SystemEventsPage } from "../features/systemEvents/SystemEventsPage";
+import { ExternalSignalsPage } from "../features/externalSignals/ExternalSignalsPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { SecurityDetailPage } from "../features/securities/SecurityDetailPage";
 import { ReportsPage } from "../features/reports/ReportsPage";
@@ -183,6 +184,10 @@ export const router = createBrowserRouter([
               {
                 path: "system/events",
                 element: authorize("systemEvents", <SystemEventsPage />),
+              },
+              {
+                path: "system/external-signals",
+                element: authorize("externalSignals", <ExternalSignalsPage />),
               },
               {
                 path: "operational-attention",

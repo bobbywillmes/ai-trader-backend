@@ -1,5 +1,9 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() || '';
 
+export function getApiUrl(path: string) {
+  return new URL(`${API_BASE_URL}${path}`, window.location.origin).href;
+}
+
 const TOKEN_STORAGE_KEY = 'ai_trader_admin_token';
 
 export class ApiError extends Error {
