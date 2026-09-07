@@ -2,7 +2,7 @@ import { Prisma, type ExternalSignalSource } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { hashWebhookToken } from './external-signal-config.service.js';
 import { createSystemEvent } from './system-event.service.js';
-import { hashCanonicalPayload, inspectSignalEvidence, normalizeSignalEnvelope, SignalRejection } from './external-signal-normalization.js';
+import { canonicalJson, hashCanonicalPayload, inspectSignalEvidence, MAX_SIGNAL_BODY_BYTES, normalizeSignalEnvelope, SignalRejection } from './external-signal-normalization.js';
 
 export type SignalRequestEvidence = {
   requestId: string; receivedAt: Date; contentType: string | null;
@@ -21,8 +21,8 @@ export async function ingestExternalSignal(source: ExternalSignalSource, token: 
   let payload: unknown;
   let rawPayloadRedacted: Prisma.InputJsonValue = { omitted: 'unparseable_or_oversized_body' };
   let preflightRejection: SignalRejection | undefined;
-  if (evidence.tooLarge) preflightRejection = new SignalRejection('PAYLOAD_TOO_LARGE');
-  else if (!evidence.validContentType) preflightRejection = new SignalRejection('INVALID_CONTENT_TYPE');
+  if (evidence.tooLarge) preflightRejection = new SignalRejection('PAYLOAD_TOO_LARGE', { bodySizeBytes: evidence.bodySizeBytes, maxBodySizeBytes: MAX_SIGNAL_BODY_BYTES });
+  else if (!evidence.validContentType) preflightRejection = new SignalRejection('INVALID_CONTENT_TYPE', { requiredContentType: 'application/json', requiredCharset: 'utf-8', compressionAllowed: false });
   else {
     try {
       payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(evidence.body));
@@ -34,7 +34,7 @@ export async function ingestExternalSignal(source: ExternalSignalSource, token: 
         });
       }
     } catch {
-      preflightRejection = new SignalRejection('INVALID_JSON');
+      preflightRejection = new SignalRejection('INVALID_JSON', { reason: 'body_not_valid_utf8_json' });
     }
   }
   const deliveryBase = {
@@ -46,13 +46,15 @@ export async function ingestExternalSignal(source: ExternalSignalSource, token: 
   const persist = () => db.$transaction(async tx => {
     const reject = (rejection: SignalRejection) => tx.signalDelivery.create({ data: {
       ...deliveryBase, processedAt: new Date(), status: 'REJECTED',
-      rejectionCode: rejection.code, rejectionDetails: rejection.details,
+      rejectionCode: rejection.code, rejectionDetails: rejection.details !== null &&
+        (typeof rejection.details !== 'object' || Object.keys(rejection.details).length > 0)
+        ? rejection.details : Prisma.DbNull,
     } });
     // Recheck configuration after the body has arrived. Rotation invalidates an
     // in-flight credential; disabling a source or binding applies prospectively.
     const currentSource = await tx.externalSignalSource.findUnique({ where: { id: source.id } });
     if (!currentSource || currentSource.webhookTokenHash !== hashWebhookToken(token)) return null;
-    if (!currentSource.enabled) return reject(new SignalRejection('SOURCE_DISABLED'));
+    if (!currentSource.enabled) return reject(new SignalRejection('SOURCE_DISABLED', { reason: 'source_not_enabled' }));
     if (preflightRejection) return reject(preflightRejection);
 
     try {
@@ -60,11 +62,13 @@ export async function ingestExternalSignal(source: ExternalSignalSource, token: 
       const binding = await tx.strategySignalBinding.findUnique({ where: {
         signalSourceId_externalStrategyKey: { signalSourceId: source.id, externalStrategyKey: normalized.externalStrategyKey },
       } });
-      if (!binding) throw new SignalRejection('UNKNOWN_STRATEGY_BINDING');
-      if (!binding.enabled) throw new SignalRejection('STRATEGY_BINDING_DISABLED');
-      if (binding.expectedRevision !== normalized.strategyRevision) throw new SignalRejection('STRATEGY_REVISION_MISMATCH');
+      if (!binding) throw new SignalRejection('UNKNOWN_STRATEGY_BINDING', { fields: ['externalStrategyKey'], reason: 'no_binding_for_source_and_key' });
+      if (!binding.enabled) throw new SignalRejection('STRATEGY_BINDING_DISABLED', { strategySignalBindingId: binding.id, reason: 'binding_not_enabled' });
+      if (binding.expectedRevision !== normalized.strategyRevision) throw new SignalRejection('STRATEGY_REVISION_MISMATCH', {
+        fields: ['strategyRevision'], strategySignalBindingId: binding.id, reason: 'revision_does_not_match_binding',
+      });
       const security = await tx.security.findUnique({ where: { symbol: normalized.symbol }, select: { id: true, symbol: true } });
-      if (!security) throw new SignalRejection('UNKNOWN_SYMBOL');
+      if (!security) throw new SignalRejection('UNKNOWN_SYMBOL', { fields: ['symbol'], reason: 'symbol_not_in_security_catalog' });
       const content = {
         signalSourceId: source.id, strategySignalBindingId: binding.id, strategyId: binding.strategyId,
         securityId: security.id, symbol: security.symbol, schemaVersion: normalized.schemaVersion,
@@ -79,7 +83,13 @@ export async function ingestExternalSignal(source: ExternalSignalSource, token: 
       } });
       if (existing) {
         if (existing.canonicalPayloadHash !== canonicalPayloadHash) {
-          const delivery = await reject(new SignalRejection('EVENT_KEY_CONFLICT'));
+          const previousContent = { ...existing, signalTime: existing.signalTime.toISOString(), barTime: existing.barTime?.toISOString() ?? null };
+          const differingFields = (Object.keys(content) as (keyof typeof content)[])
+            .filter(field => canonicalJson(content[field]) !== canonicalJson(previousContent[field]));
+          const delivery = await reject(new SignalRejection('EVENT_KEY_CONFLICT', {
+            fields: ['eventKey'], existingSignalId: existing.id, differingFields,
+            reason: 'event_key_already_used_for_different_content',
+          }));
           await createSystemEvent({ type: 'external_signal_event_key_conflict', entityType: 'signal_delivery',
             entityId: delivery.id, severity: 'WARNING', payloadJson: {
               signalSourceId: source.id, existingSignalId: existing.id, deliveryId: delivery.id,

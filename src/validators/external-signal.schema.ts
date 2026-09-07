@@ -3,6 +3,11 @@ import { ExternalSignalProvider, SignalDeliveryRejectionCode, SignalDeliveryStat
 
 export const externalSignalIdSchema = z.coerce.number().int().positive().max(2147483647);
 const identity = z.string().trim().min(1).max(200);
+// Creation only: historical binding keys and webhook lookup retain their identity.
+export const newExternalStrategyKeySchema = z.string()
+  .transform(value => value.trim().toLowerCase().replace(/\s+/g, '-').replace(/-+/g, '-'))
+  .pipe(z.string().min(1).max(200).regex(/^[a-z0-9_-]+$/,
+    'Use only lowercase letters, digits, hyphens, and underscores.'));
 export const createExternalSignalSourceSchema = z.object({
   name: identity,
   provider: z.enum(ExternalSignalProvider),
@@ -14,7 +19,7 @@ export const updateExternalSignalSourceSchema = z.object({
 export const createStrategySignalBindingSchema = z.object({
   signalSourceId: externalSignalIdSchema,
   strategyId: externalSignalIdSchema,
-  externalStrategyKey: identity,
+  externalStrategyKey: newExternalStrategyKeySchema,
   expectedRevision: identity,
   enabled: z.boolean().optional(),
 }).strict();

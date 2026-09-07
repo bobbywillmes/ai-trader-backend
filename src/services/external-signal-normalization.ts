@@ -55,7 +55,7 @@ export function inspectSignalEvidence(value: unknown, credentials: readonly stri
 
 export class SignalRejection extends Error {
   constructor(public code: SignalDeliveryRejectionCode,
-    public details: Prisma.InputJsonValue = {}) { super(code); }
+    public details: Prisma.InputJsonValue | null = null) { super(code); }
 }
 
 export function normalizeSignalEnvelope(value: unknown, receivedAt: Date) {
@@ -68,16 +68,27 @@ export function normalizeSignalEnvelope(value: unknown, receivedAt: Date) {
       : fields.includes('timeframe') ? 'INVALID_TIMEFRAME'
       : fields.some(field => field === 'signalTime' || field === 'barTime') ? 'INVALID_TIMESTAMP'
       : 'INVALID_ENVELOPE';
-    throw new SignalRejection(code, { fields: [...new Set(fields)] });
+    // Only schema-owned field names and diagnostic codes: never reflect values,
+    // unknown keys, nested metadata paths, or parser messages into these details.
+    throw new SignalRejection(code, {
+      fields: [...new Set(fields)],
+      issues: result.error.issues.map(issue => ({ field: String(issue.path[0] ?? 'envelope'), code: issue.code })),
+      ...(code === 'INVALID_EVENT' ? { allowedEvents: ['ENTRY_LONG', 'EXIT_LONG'] } : {}),
+      ...(code === 'UNSUPPORTED_SCHEMA_VERSION' ? { supportedSchemaVersions: [1] } : {}),
+    });
   }
   const input = result.data;
   const timeframe = Object.hasOwn(timeframeAliases, input.timeframe) ? timeframeAliases[input.timeframe] : undefined;
-  if (!timeframe) throw new SignalRejection('INVALID_TIMEFRAME', { fields: ['timeframe'] });
+  if (!timeframe) throw new SignalRejection('INVALID_TIMEFRAME', {
+    fields: ['timeframe'], reason: 'unsupported_timeframe',
+    canonicalTimeframes: ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'],
+  });
   const signalTime = new Date(input.signalTime);
   const barTime = input.barTime ? new Date(input.barTime) : null;
   // A bounded allowance for sender clock skew, not a trading staleness policy.
-  if (signalTime.getTime() > receivedAt.getTime() + 5 * 60 * 1000 || (barTime && barTime > signalTime)) {
-    throw new SignalRejection('INVALID_TIMESTAMP', { fields: ['signalTime', 'barTime'] });
+  if (signalTime.getTime() > receivedAt.getTime() + 5 * 60 * 1000) {
+    throw new SignalRejection('INVALID_TIMESTAMP', { fields: ['signalTime'], reason: 'signal_time_in_future', allowedClockSkewSeconds: 300 });
   }
+  if (barTime && barTime > signalTime) throw new SignalRejection('INVALID_TIMESTAMP', { fields: ['barTime'], reason: 'bar_time_after_signal_time' });
   return { ...input, timeframe, signalTime, barTime };
 }

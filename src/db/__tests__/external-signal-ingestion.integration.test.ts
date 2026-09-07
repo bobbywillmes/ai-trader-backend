@@ -7,6 +7,7 @@ import { Client } from 'pg';
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { ingestExternalSignal, type SignalRequestEvidence } from '../../services/external-signal-ingestion.service.js';
 import { hashWebhookToken } from '../../services/external-signal-config.service.js';
+import { createStrategySignalBindingSchema } from '../../validators/external-signal.schema.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const describeDatabase = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && databaseUrl ? describe : describe.skip;
@@ -58,6 +59,12 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     return ingestExternalSignal(source, token, evidence, db);
   }
 
+  it('enforces uniqueness when two new binding inputs normalize to the same key', async () => {
+    const input = (externalStrategyKey: string) => createStrategySignalBindingSchema.parse({ signalSourceId: 1, strategyId: 1, externalStrategyKey, expectedRevision: 'r1', enabled: true });
+    await db.strategySignalBinding.create({ data: { ...input('  Mean\tReversion -- V2  '), enabled: true } });
+    await expect(db.strategySignalBinding.create({ data: { ...input('mean---reversion-v2'), enabled: true } })).rejects.toMatchObject({ code: 'P2002' });
+    expect(await db.strategySignalBinding.count({ where: { externalStrategyKey: 'mean-reversion-v2' } })).toBe(1);
+  });
   it('uses database uniqueness for 12 concurrent identical retries', async () => {
     const results = await Promise.all(Array.from({ length: 12 }, () => ingest('concurrent')));
     expect(results.filter(row => row?.status === 'NORMALIZED')).toHaveLength(1);

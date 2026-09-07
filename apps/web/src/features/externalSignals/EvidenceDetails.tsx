@@ -42,6 +42,7 @@ export function DeliveryDetails({ delivery, token, navigate }: { delivery: Deliv
     <section><Text size="sm" fw={600} mb="xs">Request ID</Text><CopyValue value={delivery.requestId} name="request ID" /></section>
     <section><Text size="sm" fw={600} mb="xs">Raw payload hash</Text><CopyValue value={delivery.rawPayloadHash} name="raw hash" /></section>
     <JsonEvidence title="Redacted raw payload" value={delivery.rawPayloadRedacted} />
-    <JsonEvidence title="Rejection details" value={delivery.rejectionDetails} />
+    {delivery.rejectionDetails != null && typeof delivery.rejectionDetails === 'object' && Object.keys(delivery.rejectionDetails).length > 0 &&
+      <JsonEvidence title="Rejection details" value={delivery.rejectionDetails} />}
   </Stack>;
 }

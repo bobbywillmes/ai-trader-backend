@@ -1,5 +1,6 @@
 import type { Server } from 'node:http';
 import express from 'express';
+import { Prisma } from '@prisma/client';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   externalSignalSource: { findMany: vi.fn(), findUnique: vi.fn(), count: vi.fn(), create: vi.fn(), update: vi.fn() },
@@ -51,6 +52,22 @@ describe('external signal owner management and read routes', () => {
     expect((await fetch(`${baseUrl}/signals`, { headers: { authorization: 'Bearer session' } })).status).toBe(200);
     expect((await fetch(`${baseUrl}/signals?pageSize=101`, { headers })).status).toBe(400);
     expect((await fetch(`${baseUrl}/signals?from=2026-09-07T00:00:00Z&to=2026-01-01T00:00:00Z`, { headers })).status).toBe(400);
+  });
+  it('normalizes direct owner creation and returns 409 for a canonical key collision', async () => {
+    mocks.strategy.findUnique.mockResolvedValue({ id: 2 });
+    const keys = new Set<string>();
+    mocks.strategySignalBinding.create.mockImplementation(async ({ data }) => {
+      if (keys.has(data.externalStrategyKey)) throw new Prisma.PrismaClientKnownRequestError('Unique constraint', { code: 'P2002', clientVersion: '7' });
+      keys.add(data.externalStrategyKey); return { ...data, id: 3 };
+    });
+    const post = (externalStrategyKey: string) => fetch(`${baseUrl}/bindings`, { method: 'POST', headers,
+      body: JSON.stringify({ signalSourceId: 1, strategyId: 2, externalStrategyKey, expectedRevision: 'r1' }) });
+    const first = await post('  Mean\tReversion -- V2  ');
+    expect(first.status).toBe(201);
+    expect(await first.json()).toMatchObject({ externalStrategyKey: 'mean-reversion-v2' });
+    expect((await post('mean---reversion-v2')).status).toBe(409);
+    expect(keys.size).toBe(1);
+    expect((await post('mean/reversion')).status).toBe(400);
   });
   it('returns token only from creation and rotation with no-store and safe source selections', async () => {
     const created = await fetch(`${baseUrl}/sources`, { method: 'POST', headers,

@@ -13,6 +13,7 @@ vi.mock('../db/prisma.js', () => ({ prisma: { ...mocks, $transaction: mocks.tran
 import { authenticateExternalSignal, ingestExternalSignal, type SignalRequestEvidence } from './external-signal-ingestion.service.js';
 import { hashWebhookToken } from './external-signal-config.service.js';
 import { canonicalJson, MAX_SIGNAL_BODY_BYTES } from './external-signal-normalization.js';
+import * as normalization from './external-signal-normalization.js';
 
 const token = 'a'.repeat(43);
 const source: ExternalSignalSource = { id: 1, name: 'Test', provider: 'GENERIC_WEBHOOK', enabled: true,
@@ -48,6 +49,36 @@ describe('external signal ingestion evidence boundary', () => {
     });
   });
   const ingest = (value: unknown = envelope) => ingestExternalSignal(source, token, evidence(value));
+
+  it('provides safe diagnostic context for unknown symbols and revision mismatches', async () => {
+    mocks.security.findUnique.mockResolvedValue(null);
+    expect((await ingest())?.rejectionDetails).toEqual({ fields: ['symbol'], reason: 'symbol_not_in_security_catalog' });
+    mocks.strategySignalBinding.findUnique.mockResolvedValue({ ...binding, expectedRevision: `Bearer ${token}` });
+    const result = await ingest();
+    expect(result?.rejectionDetails).toEqual({ fields: ['strategyRevision'], strategySignalBindingId: binding.id, reason: 'revision_does_not_match_binding' });
+    expect(JSON.stringify(result?.rejectionDetails)).not.toContain(token);
+    expect(JSON.stringify(result?.rejectionDetails)).not.toContain(source.webhookTokenHash);
+  });
+  it('identifies conflict fields and the original Signal without payload values or hashes', async () => {
+    await ingest(); const before = canonicalJson(signals);
+    const result = await ingest({ ...envelope, metadata: { diagnostics: 'private-context' }, event: 'EXIT_LONG' });
+    expect(result?.rejectionDetails).toEqual({ fields: ['eventKey'], existingSignalId: signals[0]!.id,
+      differingFields: ['event', 'metadata'], reason: 'event_key_already_used_for_different_content' });
+    for (const value of ['private-context', source.webhookTokenHash, signals[0]!.canonicalPayloadHash, token]) {
+      expect(JSON.stringify(result?.rejectionDetails)).not.toContain(value);
+    }
+    expect(canonicalJson(signals)).toBe(before);
+  });
+  it('explains invalid events without reflecting untrusted values', async () => {
+    const result = await ingest({ ...envelope, event: { arbitrary: 'private-context' } });
+    expect(result?.rejectionDetails).toMatchObject({ fields: ['event'], allowedEvents: ['ENTRY_LONG', 'EXIT_LONG'], issues: [{ field: 'event', code: 'invalid_value' }] });
+    expect(JSON.stringify(result?.rejectionDetails)).not.toContain('private-context');
+  });
+  it.each([null, {}])('persists SQL null instead of empty details: %j', async details => {
+    const spy = vi.spyOn(normalization, 'normalizeSignalEnvelope').mockImplementationOnce(() => { throw new normalization.SignalRejection('INVALID_ENVELOPE', details); });
+    try { expect((await ingest())?.rejectionDetails).toBe(Prisma.DbNull); } finally { spy.mockRestore(); }
+    expect(new normalization.SignalRejection('INVALID_ENVELOPE').details).toBeNull();
+  });
 
   it.each(['ENTRY_LONG', 'EXIT_LONG'])('records %s without any trading dependency or authority', async event => {
     const result = await ingest({ ...envelope, event, metadata: { tradingAccountId: 99, quantity: 1000000, bypassRisk: true } });

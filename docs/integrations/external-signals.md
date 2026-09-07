@@ -22,6 +22,13 @@ POST webhook -> token authentication -> validation / normalization / binding
 Provider labels are `TRADINGVIEW`, `TRENDSPIDER`, and `GENERIC_WEBHOOK`; all use the
 same envelope and `URL_TOKEN` authentication. There are no provider adapters.
 Source/key uniqueness prevents silent rebinding. No deletion endpoints exist.
+New binding keys are normalized on owner API/UI creation: trim, lowercase, replace
+whitespace runs with `-`, and collapse repeated `-`. The result must be 1–200 ASCII
+letters, digits, hyphens, or underscores; other characters are rejected, not removed.
+For example, `  ETF  -- Mean_Reversion  ` becomes `etf-mean_reversion`. The creation
+form previews the exact key to use in webhook envelopes. Two inputs that normalize
+to the same key for one source collide with HTTP 409. Existing keys are not migrated
+or editable, and webhook lookup retains its prior exact-key semantics.
 All new foreign keys restrict deletion and identity updates. Existing Strategies
 and Securities are referenced, never created from webhook input. Their trading
 eligibility/enabled flags are not signal-ingestion policy.
@@ -132,6 +139,14 @@ Rejection codes are `SOURCE_DISABLED`, `INVALID_CONTENT_TYPE`, `INVALID_JSON`,
 `INVALID_TIMEFRAME`, `INVALID_TIMESTAMP`, and `EVENT_KEY_CONFLICT`.
 Structured details contain safe field/reason information. Public rejection responses
 only expose a generic error and requestId; owners inspect the delivery for details.
+New rejections include concise diagnostic context: catalog/binding lookup reasons,
+the binding ID for a revision mismatch, supported event/schema/timeframe values,
+validation issue codes, body limits, and timestamp ordering/skew reasons. Event-key
+conflicts identify the existing Signal ID and differing canonical field names.
+Details intentionally do not copy free-form payload/configuration values, credentials,
+hashes, authorization headers, or parser messages. When no meaningful detail exists,
+SQL null is stored rather than `{}`. The delivery drawer omits null/empty rejection details,
+including older empty objects; previously persisted evidence is never rewritten.
 
 There are no normal-success SystemEvents. Conflicts emit
 `external_signal_event_key_conflict` with WARNING severity. Unexpected failures emit

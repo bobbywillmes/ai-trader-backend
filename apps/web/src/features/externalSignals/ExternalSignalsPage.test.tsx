@@ -106,10 +106,11 @@ describe("External Signals configuration", () => {
     fireEvent.click(await screen.findByRole("option", { name: "Research feed (#1)" }));
     fireEvent.click(dialog.getByLabelText("Internal Strategy", { exact: false }));
     fireEvent.click(await screen.findByRole("option", { name: "Mean reversion (#3)" }));
-    fireEvent.change(dialog.getByLabelText("External strategy key", { exact: false }), { target: { value: "other_strategy" } });
+    fireEvent.change(dialog.getByLabelText("External strategy key", { exact: false }), { target: { value: "  Other   -- Strategy_Name  " } });
+    expect(dialog.getByText("other-strategy_name")).toBeTruthy();
     fireEvent.change(dialog.getByLabelText("Expected revision", { exact: false }), { target: { value: "r2" } });
     fireEvent.click(dialog.getByRole("button", { name: "Create binding" }));
-    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith(`${root}/bindings`, expect.objectContaining({ method: "POST", body: { signalSourceId: 1, strategyId: 3, externalStrategyKey: "other_strategy", expectedRevision: "r2", enabled: true } })));
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith(`${root}/bindings`, expect.objectContaining({ method: "POST", body: { signalSourceId: 1, strategyId: 3, externalStrategyKey: "other-strategy_name", expectedRevision: "r2", enabled: true } })));
   });
   it("edits only revision/enabled with prospective-change acknowledgment", async () => {
     mount("?section=bindings&detail=2"); fireEvent.click(await screen.findByRole("button", { name: "Edit binding" }));
@@ -136,6 +137,11 @@ describe("External Signals configuration", () => {
 });
 
 describe("External Signals immutable evidence", () => {
+  it.each([null, {}, []])("omits null or empty rejection details: %j", async rejectionDetails => {
+    deliveries = [{ ...delivery, rejectionDetails }]; mount("?section=deliveries&detail=6");
+    await screen.findByLabelText("Redacted raw payload");
+    expect(screen.queryByText("Rejection details")).toBeNull();
+  });
   it("renders Signal history and formatted metadata without execution or editing actions", async () => {
     mount("?section=signals&detail=4");
     expect(await screen.findByLabelText("Metadata")).toBeTruthy();
