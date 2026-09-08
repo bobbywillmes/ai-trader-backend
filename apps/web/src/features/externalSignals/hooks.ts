@@ -52,3 +52,15 @@ export function useBindingMutations(token: string | null) {
     update: useMutation({ mutationFn: ({ id, input }: { id: number; input: UpdateBinding }) => api.updateBinding(id, input, token), onSuccess: invalidate }),
   };
 }
+
+export function useRevisions(id: number, token: string | null) {
+  return useQuery({ queryKey: [...externalSignalKeys.section("bindings"), id, "revisions"],
+    queryFn: () => api.listRevisions(id, token), enabled: Boolean(token) });
+}
+export function useRevisionMutation(id: number, token: string | null) {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: (input: { action: "prepare" | "activate" | "retire"; revisionId: number | null; changeNote: string }) =>
+    api.changeRevision(id, input.action, input.revisionId, input.changeNote, token),
+    onSuccess: () => client.invalidateQueries({ queryKey: externalSignalKeys.section("bindings") }),
+  });
+}

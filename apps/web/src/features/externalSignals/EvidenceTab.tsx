@@ -30,7 +30,7 @@ export function EvidenceTab({ section, token }: { section: "signals" | "deliveri
           { label: "Signal time", value: item => stamp(item.signalTime) }, { label: "Symbol / event", value: item => <Stack gap={4}><Text fw={600}>{item.symbol}</Text><EvidenceBadge value={item.event} /></Stack> },
           { label: "Strategy", value: item => <StrategyLink id={item.strategyId} name={catalogs.strategyName(item.strategyId)} /> },
           { label: "Source", value: item => <ShortValue value={catalogs.sourceName(item.signalSourceId)} /> },
-          { label: "Timeframe / revision", value: item => <Stack gap={2}><Text size="sm">{item.timeframe}</Text><ShortValue value={item.strategyRevision} /></Stack> }, { label: "Created", value: item => stamp(item.createdAt) },
+          { label: "Timeframe / revision", value: item => <Stack gap={2}><Text size="sm">{item.timeframe}</Text><ShortValue value={item.strategyRevision !== null ? `Revision ${item.strategyRevision}` : `Legacy: ${item.legacyStrategyRevision}`} /></Stack> }, { label: "Created", value: item => stamp(item.createdAt) },
         ]} /> :
         <Records title="Deliveries" records={records as Delivery[]} open={open} identity={item => <Text fw={700}>Delivery #{item.id}</Text>} status={item => <EvidenceBadge value={item.status} />} columns={[
           { label: "Received", value: item => stamp(item.receivedAt) }, { label: "Source", value: item => <ShortValue value={catalogs.sourceName(item.signalSourceId)} /> },

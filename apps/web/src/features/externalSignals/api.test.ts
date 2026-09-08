@@ -21,8 +21,8 @@ describe("external signal API contract", () => {
   it("sends binding updates containing only prospective fields and no identity changes", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("{}")); vi.stubGlobal("fetch", fetchMock);
     const { updateBinding } = await import("./api");
-    await updateBinding(2, { expectedRevision: "r2", enabled: false }, "owner-session");
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ expectedRevision: "r2", enabled: false });
+    await updateBinding(2, { enabled: false }, "owner-session");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ enabled: false });
     expect(fetchMock.mock.calls[0][0]).toContain("/external-signal-admin/bindings/2");
   });
 });

@@ -8,6 +8,7 @@ import { useBindingMutations, useExternalDetail, useExternalList, useCatalogs } 
 import { changeExternalParams, clearExternalFilters, readExternalParams } from "./url";
 import { CopyValue, EnabledBadge, ListFooter, Records, ShortValue, StrategyLink } from "./components";
 import { stamp } from "./presentation";
+import { RevisionHistory } from "./RevisionHistory";
 import { BindingEditor } from "./BindingEditor";
 import { Filters } from "./Filters";
 import type { Binding, CreateBinding, UpdateBinding } from "./types";
@@ -40,7 +41,7 @@ export function BindingsTab({ token }: { token: string | null }) {
         { label: "Source", value: item => <ShortValue value={catalogs.sourceName(item.signalSourceId)} /> },
         { label: "External key", value: item => <ShortValue value={item.externalStrategyKey} /> },
         { label: "Strategy", value: item => <StrategyLink id={item.strategyId} name={catalogs.strategyName(item.strategyId)} /> },
-        { label: "Expected revision", value: item => <ShortValue value={item.expectedRevision} /> },
+        { label: "Active revision", value: item => `Revision ${item.revisions.find(row => row.status === "ACTIVE")?.revision ?? "unavailable"}` },
         { label: "Status", value: item => <EnabledBadge enabled={item.enabled} /> },
         { label: "Created", value: item => stamp(item.createdAt) }, { label: "Updated", value: item => stamp(item.updatedAt) },
       ]} />}
@@ -49,9 +50,10 @@ export function BindingsTab({ token }: { token: string | null }) {
     <ResponsiveDetails opened={Boolean(state.detail)} onClose={() => change({ detail: null }, false)} title={`Strategy binding #${state.detail}`} returnFocusTo={opener}>
       {detail.isPending ? <DataState state="loading" /> : detail.isError ? <DataState state="error" title="Unable to load binding" onRetry={() => void detail.refetch()} /> : binding && <Stack>
         <EnabledBadge enabled={binding.enabled} />
-        <RecordDetailsGrid sections={[{ items: [{ label: "Source", value: catalogs.sourceName(binding.signalSourceId) }, { label: "Strategy", value: <StrategyLink id={binding.strategyId} name={catalogs.strategyName(binding.strategyId)} /> }, { label: "External strategy key", value: <CopyValue value={binding.externalStrategyKey} name="external key" /> }, { label: "Expected revision", value: binding.expectedRevision }, { label: "Created", value: stamp(binding.createdAt) }, { label: "Updated", value: stamp(binding.updatedAt) }] }]} />
+        <RecordDetailsGrid sections={[{ items: [{ label: "Source", value: catalogs.sourceName(binding.signalSourceId) }, { label: "Strategy", value: <StrategyLink id={binding.strategyId} name={catalogs.strategyName(binding.strategyId)} /> }, { label: "External strategy key", value: <CopyValue value={binding.externalStrategyKey} name="external key" /> }, { label: "Created", value: stamp(binding.createdAt) }, { label: "Updated", value: stamp(binding.updatedAt) }] }]} />
         <Text size="sm" c="dimmed">Source, Strategy, and external key form a fixed identity. Revision and enabled status apply prospectively.</Text>
         <Button variant="light" onClick={() => { setError(null); setEditor({ binding }); }}>Edit binding</Button>
+        <RevisionHistory key={binding.id} binding={binding} token={token} />
       </Stack>}
     </ResponsiveDetails>
     {editor && <BindingEditor binding={editor.binding} token={token} pending={mutations.create.isPending || mutations.update.isPending} error={error} submit={input => void save(input)} close={() => setEditor(null)} />}

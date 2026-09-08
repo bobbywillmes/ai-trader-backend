@@ -1,5 +1,5 @@
 import { apiRequest, getApiUrl } from "../../lib/api";
-import type { CreateBinding, CreateSource, ListResult, Resources, Section, Source, UpdateBinding, UpdateSource } from "./types";
+import type { CreateBinding, CreateSource, ListResult, Resources, Section, Source, UpdateBinding, UpdateSource, Revision } from "./types";
 const root = "/api/external-signal-admin";
 export function listExternalSignals<K extends Section>(section: K, query: string, token: string | null) {
   return apiRequest<ListResult<K>>(`${root}/${section}?${query}`, { token });
@@ -34,3 +34,11 @@ export function updateBinding(id: number, input: UpdateBinding, token: string | 
   return apiRequest<Resources["bindings"]>(`${root}/bindings/${id}`, { method: "PATCH", token, body: input });
 }
 export function webhookUrl(token: string) { return getApiUrl(`/api/external-signals/${encodeURIComponent(token)}`); }
+export function listRevisions(id: number, token: string | null) {
+  return apiRequest<Revision[]>(`${root}/bindings/${id}/revisions`, { token });
+}
+export function changeRevision(id: number, action: "prepare" | "activate" | "retire", revisionId: number | null, changeNote: string, token: string | null) {
+  return apiRequest<Revision>(`${root}/bindings/${id}/revisions${action === "prepare" ? "" : `/${revisionId}/${action}`}`, {
+    method: "POST", token, body: action === "prepare" && changeNote.trim() ? { changeNote: changeNote.trim() } : {},
+  });
+}

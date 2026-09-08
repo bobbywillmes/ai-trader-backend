@@ -17,6 +17,7 @@ let sources = [{ ...source }];
 let bindings = [{ ...binding }];
 let signals = [{ ...signal }];
 let deliveries = [{ ...delivery }];
+let revisions = [...binding.revisions];
 let sourceFailure = false;
 let sourceLoading = false;
 let mutationFailure = false;
@@ -31,17 +32,22 @@ function mount(search = "") {
 beforeEach(() => {
   vi.clearAllMocks(); Object.defineProperty(window, "innerWidth", { value: 1400, configurable: true });
   sources = [{ ...source }]; bindings = [{ ...binding }]; signals = [{ ...signal }]; deliveries = [{ ...delivery }];
+  revisions = [...binding.revisions];
   sourceFailure = false; sourceLoading = false; mutationFailure = false;
   mocks.request.mockImplementation(async (path: string, options: { method?: string; body?: Record<string, unknown> }) => {
     if (path === "/api/strategies") return [{ id: 3, name: "Mean reversion", key: "mean_reversion", enabled: true }];
     if (options.method && options.method !== "GET") {
       if (mutationFailure) throw new Error("Unavailable");
+      if (path === `${root}/bindings/2/revisions`) { const row = { ...binding.revisions[0], id: 11, revision: 2, status: "PREPARED" as const, activatedAt: null, changeNote: String(options.body?.changeNote ?? "") }; revisions.unshift(row); return row; }
+      if (path.endsWith("/11/activate")) { revisions = revisions.map(row => ({ ...row, status: row.id === 11 ? "ACTIVE" as const : "RETIRED" as const })); return revisions[0]; }
+      if (path.endsWith("/11/retire")) { revisions = revisions.map(row => row.id === 11 ? { ...row, status: "RETIRED" as const } : row); return revisions[0]; }
       if (path.endsWith("rotate-token")) return { source, token: plaintext };
       if (path === `${root}/sources`) { const created = { ...source, ...options.body, id: 7 }; sources.push(created); return { source: created, token: plaintext }; }
       if (path === `${root}/sources/1`) { sources[0] = { ...sources[0], ...options.body }; return sources[0]; }
       if (path === `${root}/bindings`) { const created = { ...binding, ...options.body, id: 8 }; bindings.push(created); return created; }
       if (path === `${root}/bindings/2`) { bindings[0] = { ...bindings[0], ...options.body }; return bindings[0]; }
     }
+    if (path.endsWith("/revisions")) return revisions;
     const match = path.match(/\/external-signal-admin\/(sources|bindings|signals|deliveries)(?:\/(\d+))?/)!;
     const resource = match[1] as "sources" | "bindings" | "signals" | "deliveries";
     if (resource === "sources" && sourceLoading) return new Promise(() => {});
@@ -55,6 +61,47 @@ beforeEach(() => {
 afterEach(() => { cleanup(); client?.clear(); });
 
 describe("External Signals configuration", () => {
+  it("abandons a prepared candidate with confirmation and preserves active state", async () => {
+    revisions = [{ ...binding.revisions[0], id: 11, revision: 2, status: "PREPARED", activatedAt: null }, ...binding.revisions];
+    mount("?section=bindings&detail=2");
+    fireEvent.click(await screen.findByRole("button", { name: "Abandon revision 2" }));
+    expect(await screen.findByText(/Its number will never be reused/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm abandonment" }));
+    expect(await screen.findByText("RETIRED")).toBeTruthy();
+    expect(screen.getByText("Active revision: Revision 1")).toBeTruthy();
+  });
+  it("keeps failed activation open with safe error context", async () => {
+    revisions = [{ ...binding.revisions[0], id: 11, revision: 2, status: "PREPARED", activatedAt: null }, ...binding.revisions];
+    mutationFailure = true; mount("?section=bindings&detail=2");
+    fireEvent.click(await screen.findByRole("button", { name: "Activate revision 2" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm activation" }));
+    expect(await screen.findByText(/Unable to change revision/)).toBeTruthy();
+    expect(screen.getByText("ACTIVE")).toBeTruthy();
+    expect(screen.getByText("PREPARED")).toBeTruthy();
+  });
+  it("prepares a backend-numbered revision and confirms activation with revision history", async () => {
+    mount("?section=bindings&detail=2");
+    const prepare = await screen.findByRole("button", { name: "Prepare new revision" });
+    await waitFor(() => expect(prepare.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(prepare);
+    const dialog = within(await screen.findByRole("dialog", { name: "Prepare new revision" }));
+    expect(dialog.getByText("Revision 2 will be prepared.")).toBeTruthy();
+    expect(dialog.queryByRole("spinbutton")).toBeNull();
+    fireEvent.change(dialog.getByLabelText("Change note"), { target: { value: "Added ADX confirmation" } });
+    fireEvent.click(dialog.getByRole("button", { name: "Prepare revision" }));
+    expect(await screen.findByText("PREPARED")).toBeTruthy();
+    expect(mocks.request).toHaveBeenCalledWith(`${root}/bindings/2/revisions`, expect.objectContaining({ method: "POST", body: { changeNote: "Added ADX confirmation" } }));
+    expect(screen.getByText(/"strategyRevision": 2/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Activate revision 2" }));
+    expect(screen.getByText(/Signals still sending revision 1 will be rejected/)).toBeTruthy();
+    expect(mocks.request.mock.calls.some(([path]) => path.endsWith("/activate"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm activation" }));
+    expect(await screen.findByText("RETIRED")).toBeTruthy();
+    expect(screen.getByText("Active revision: Revision 2")).toBeTruthy();
+    expect(screen.getByText("ACTIVE")).toBeTruthy();
+    for (const action of [/execute/i, /create order/i, /evaluate/i, /broker/i]) expect(screen.queryByRole("button", { name: action })).toBeNull();
+    expect(mocks.request.mock.calls.every(([path]) => path.startsWith(root) || path === "/api/strategies")).toBe(true);
+  });
   it("loads sources and communicates global evidence-only scope", async () => {
     mount(); expect(await screen.findByText("Research feed")).toBeTruthy();
     expect(screen.getByText(/cannot create orders or modify positions/)).toBeTruthy();
@@ -106,19 +153,21 @@ describe("External Signals configuration", () => {
     fireEvent.click(await screen.findByRole("option", { name: "Research feed (#1)" }));
     fireEvent.click(dialog.getByLabelText("Internal Strategy", { exact: false }));
     fireEvent.click(await screen.findByRole("option", { name: "Mean reversion (#3)" }));
-    fireEvent.change(dialog.getByLabelText("External strategy key", { exact: false }), { target: { value: "  Other   -- Strategy_Name  " } });
-    expect(dialog.getByText("other-strategy_name")).toBeTruthy();
-    fireEvent.change(dialog.getByLabelText("Expected revision", { exact: false }), { target: { value: "r2" } });
+    fireEvent.change(dialog.getByLabelText("External strategy key", { exact: false }), { target: { value: "  SPY   Dip Test 1  " } });
+    expect(dialog.getByText("spy-dip-test-1")).toBeTruthy();
+    expect(dialog.queryByLabelText("Expected revision", { exact: false })).toBeNull();
+    expect(dialog.getByText("Revision 1 will be created automatically.")).toBeTruthy();
     fireEvent.click(dialog.getByRole("button", { name: "Create binding" }));
-    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith(`${root}/bindings`, expect.objectContaining({ method: "POST", body: { signalSourceId: 1, strategyId: 3, externalStrategyKey: "other-strategy_name", expectedRevision: "r2", enabled: true } })));
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith(`${root}/bindings`, expect.objectContaining({ method: "POST", body: { signalSourceId: 1, strategyId: 3, externalStrategyKey: "spy-dip-test-1", enabled: true } })));
   });
-  it("edits only revision/enabled with prospective-change acknowledgment", async () => {
+  it("edits only enabled with prospective-change acknowledgment", async () => {
     mount("?section=bindings&detail=2"); fireEvent.click(await screen.findByRole("button", { name: "Edit binding" }));
-    fireEvent.change(screen.getByLabelText("Expected revision", { exact: false }), { target: { value: "r2" } });
+    expect(screen.queryByLabelText("Expected revision", { exact: false })).toBeNull();
+    fireEvent.click(screen.getByLabelText("Enable this binding"));
     expect(screen.getByRole("button", { name: "Save binding" }).hasAttribute("disabled")).toBe(true);
     fireEvent.click(screen.getByLabelText("I understand these changes apply to future deliveries."));
     fireEvent.click(screen.getByRole("button", { name: "Save binding" }));
-    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith(`${root}/bindings/2`, expect.objectContaining({ method: "PATCH", body: { expectedRevision: "r2", enabled: true } })));
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith(`${root}/bindings/2`, expect.objectContaining({ method: "PATCH", body: { enabled: false } })));
   });
   it("has loading, empty, API-error and retry states", async () => {
     sourceLoading = true; const first = mount(); expect(screen.getByText("Loading sources…")).toBeTruthy(); first.unmount(); client.clear();
@@ -137,6 +186,17 @@ describe("External Signals configuration", () => {
 });
 
 describe("External Signals immutable evidence", () => {
+  it("shows legacy labels truthfully without a numeric revision relationship", async () => {
+    signals = [{ ...signal, strategyRevision: null, strategySignalRevisionId: null, legacyStrategyRevision: "acceptance-2" }];
+    mount("?section=signals&detail=4");
+    expect(await screen.findByText("Legacy revision: acceptance-2")).toBeTruthy();
+    expect(screen.getByText(/has no numeric revision relationship/)).toBeTruthy();
+  });
+  it("presents numeric mismatch context", async () => {
+    deliveries = [{ ...delivery, rejectionCode: "STRATEGY_REVISION_MISMATCH", rejectionDetails: { activeRevision: 2, receivedRevision: 1 } }];
+    mount("?section=deliveries&detail=6");
+    expect(await screen.findByText(/Active revision: 2.*Received revision: 1/)).toBeTruthy();
+  });
   it.each([null, {}, []])("omits null or empty rejection details: %j", async rejectionDetails => {
     deliveries = [{ ...delivery, rejectionDetails }]; mount("?section=deliveries&detail=6");
     await screen.findByLabelText("Redacted raw payload");

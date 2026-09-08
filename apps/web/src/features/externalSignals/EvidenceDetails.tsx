@@ -17,10 +17,11 @@ export function SignalDetails({ signal, token, navigate }: { signal: Signal; tok
       { label: "Strategy binding", value: <Button size="compact-xs" variant="subtle" onClick={() => navigate({ section: "bindings", detail: String(signal.strategySignalBindingId) })}>Binding #{signal.strategySignalBindingId}</Button> },
       { label: "Strategy", value: <StrategyLink id={signal.strategyId} name={catalogs.strategyName(signal.strategyId)} /> },
       { label: "Strategy ID", value: signal.strategyId }, { label: "Security / symbol", value: `${signal.symbol} · Security #${signal.securityId}` },
-      { label: "Schema version", value: signal.schemaVersion }, { label: "Strategy revision", value: signal.strategyRevision },
+      { label: "Schema version", value: signal.schemaVersion }, { label: "Strategy revision", value: signal.strategyRevision !== null ? `Revision ${signal.strategyRevision} (revision record #${signal.strategySignalRevisionId})` : `Legacy revision: ${signal.legacyStrategyRevision}` },
     ] }, { title: "Timestamps", items: [
       { label: "Signal time", value: stamp(signal.signalTime) }, { label: "Bar time", value: stamp(signal.barTime) }, { label: "Created", value: stamp(signal.createdAt) },
     ] }]} />
+    {signal.strategySignalRevisionId === null && <Text size="sm" c="dimmed">Recorded before numeric revisions. This original label has no numeric revision relationship.</Text>}
     <section><Text size="sm" fw={600} mb="xs">External event key</Text><CopyValue value={signal.externalEventKey} name="event key" /></section>
     <section><Text size="sm" fw={600} mb="xs">Canonical payload hash</Text><CopyValue value={signal.canonicalPayloadHash} name="canonical hash" /></section>
     <JsonEvidence title="Metadata" value={signal.metadata} />
@@ -29,6 +30,7 @@ export function SignalDetails({ signal, token, navigate }: { signal: Signal; tok
 }
 export function DeliveryDetails({ delivery, token, navigate }: { delivery: Delivery; token: string | null; navigate: Navigate }) {
   const catalogs = useCatalogs(token);
+  const details = delivery.rejectionDetails as Record<string, unknown> | null;
   return <Stack gap="lg">
     <Group><Text fw={700}>Delivery #{delivery.id}</Text><EvidenceBadge value={delivery.status} /></Group>
     <Text size="sm" c="dimmed">Immutable transport and processing evidence. Payload credentials have been redacted by the backend.</Text>
@@ -41,6 +43,7 @@ export function DeliveryDetails({ delivery, token, navigate }: { delivery: Deliv
     ] }]} />
     <section><Text size="sm" fw={600} mb="xs">Request ID</Text><CopyValue value={delivery.requestId} name="request ID" /></section>
     <section><Text size="sm" fw={600} mb="xs">Raw payload hash</Text><CopyValue value={delivery.rawPayloadHash} name="raw hash" /></section>
+    {delivery.rejectionCode === "STRATEGY_REVISION_MISMATCH" && typeof details?.receivedRevision === "number" && <Text size="sm">Active revision: {typeof details.activeRevision === "number" ? details.activeRevision : "Unavailable"} · Received revision: {details.receivedRevision}</Text>}
     <JsonEvidence title="Redacted raw payload" value={delivery.rawPayloadRedacted} />
     {delivery.rejectionDetails != null && typeof delivery.rejectionDetails === 'object' && Object.keys(delivery.rejectionDetails).length > 0 &&
       <JsonEvidence title="Rejection details" value={delivery.rejectionDetails} />}
