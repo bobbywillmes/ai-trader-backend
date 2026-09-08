@@ -21,18 +21,36 @@ Table ExternalSignalSource {
   signals Signal [not null]
 }
 
+Table StrategySignalRevision {
+  id Int [pk, increment]
+  strategySignalBindingId Int [not null]
+  revision Int [not null]
+  status StrategySignalRevisionStatus [not null]
+  changeNote String
+  createdAt DateTime [default: `now()`, not null]
+  activatedAt DateTime
+  retiredAt DateTime
+  binding StrategySignalBinding [not null]
+  signals Signal [not null]
+
+  indexes {
+    (strategySignalBindingId, revision) [unique]
+    (id, strategySignalBindingId, revision) [unique]
+  }
+}
+
 Table StrategySignalBinding {
   id Int [pk, increment]
   signalSourceId Int [not null]
   strategyId Int [not null]
   externalStrategyKey String [not null]
-  expectedRevision String [not null]
   enabled Boolean [not null, default: true]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
   signalSource ExternalSignalSource [not null]
   strategy Strategy [not null]
   signals Signal [not null]
+  revisions StrategySignalRevision [not null]
 
   indexes {
     (signalSourceId, externalStrategyKey) [unique]
@@ -66,7 +84,9 @@ Table Signal {
   securityId Int [not null]
   schemaVersion Int [not null]
   externalEventKey String [not null]
-  strategyRevision String [not null]
+  legacyStrategyRevision String
+  strategyRevision Int
+  strategySignalRevisionId Int
   event SignalEvent [not null]
   symbol String [not null]
   timeframe String [not null]
@@ -80,6 +100,7 @@ Table Signal {
   strategy Strategy [not null]
   security Security [not null]
   deliveries SignalDelivery [not null]
+  strategySignalRevision StrategySignalRevision
 
   indexes {
     (signalSourceId, externalEventKey) [unique]
@@ -1438,6 +1459,12 @@ Enum SignalDeliveryRejectionCode {
   EVENT_KEY_CONFLICT
 }
 
+Enum StrategySignalRevisionStatus {
+  PREPARED
+  ACTIVE
+  RETIRED
+}
+
 Enum PlatformRole {
   SYSTEM_OWNER
   OPERATOR
@@ -1757,6 +1784,8 @@ Enum MomentumPipelineStage {
   HANDOFF_DELIVERY
 }
 
+Ref: StrategySignalRevision.strategySignalBindingId > StrategySignalBinding.id [delete: Restrict]
+
 Ref: StrategySignalBinding.signalSourceId > ExternalSignalSource.id [delete: Restrict]
 
 Ref: StrategySignalBinding.strategyId > Strategy.id [delete: Restrict]
@@ -1772,6 +1801,8 @@ Ref: Signal.strategySignalBindingId > StrategySignalBinding.id [delete: Restrict
 Ref: Signal.strategyId > Strategy.id [delete: Restrict]
 
 Ref: Signal.securityId > Security.id [delete: Restrict]
+
+Ref: Signal.(strategySignalRevisionId, strategySignalBindingId, strategyRevision) > StrategySignalRevision.(id, strategySignalBindingId, revision) [delete: Restrict]
 
 Ref: User.invitedByUserId - User.id [delete: Set Null]
 

@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
-import { externalSignalSourceSelect } from './external-signal-config.service.js';
+import { externalSignalSourceSelect, bindingRevisionInclude } from './external-signal-config.service.js';
 import type { ExternalSignalListFilters } from '../validators/external-signal.schema.js';
 
 export type ExternalSignalResource = 'sources' | 'bindings' | 'deliveries' | 'signals';
@@ -10,7 +10,7 @@ export async function getExternalSignalResource(resource: ExternalSignalResource
   const where = { id };
   const result = resource === 'sources'
     ? await prisma.externalSignalSource.findUnique({ where, select: externalSignalSourceSelect })
-    : resource === 'bindings' ? await prisma.strategySignalBinding.findUnique({ where })
+    : resource === 'bindings' ? await prisma.strategySignalBinding.findUnique({ where, include: bindingRevisionInclude })
     : resource === 'deliveries' ? await prisma.signalDelivery.findUnique({ where })
     : await prisma.signal.findUnique({ where });
   if (!result) throw new HttpError(404, 'Resource not found.');
@@ -33,7 +33,7 @@ export async function listExternalSignalResources(resource: ExternalSignalResour
   } else if (resource === 'bindings') {
     const where = { ...(signalSourceId ? { signalSourceId } : {}), ...(strategyId ? { strategyId } : {}) };
     [rows, total] = await Promise.all([
-      prisma.strategySignalBinding.findMany({ ...options, where }), prisma.strategySignalBinding.count({ where }),
+      prisma.strategySignalBinding.findMany({ ...options, where, include: bindingRevisionInclude }), prisma.strategySignalBinding.count({ where }),
     ]);
   } else if (resource === 'deliveries') {
     const where: Prisma.SignalDeliveryWhereInput = {

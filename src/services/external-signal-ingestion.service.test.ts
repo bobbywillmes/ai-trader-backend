@@ -4,6 +4,7 @@ import { Prisma, type ExternalSignalSource } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  $queryRaw: vi.fn(), strategySignalRevision: { findFirst: vi.fn() },
   externalSignalSource: { findUnique: vi.fn() },
   strategySignalBinding: { findUnique: vi.fn() }, security: { findUnique: vi.fn() },
   signal: { findUnique: vi.fn(), create: vi.fn() }, signalDelivery: { create: vi.fn() },
@@ -18,8 +19,8 @@ import * as normalization from './external-signal-normalization.js';
 const token = 'a'.repeat(43);
 const source: ExternalSignalSource = { id: 1, name: 'Test', provider: 'GENERIC_WEBHOOK', enabled: true,
   authMethod: 'URL_TOKEN', webhookTokenHash: hashWebhookToken(token), createdAt: new Date(), updatedAt: new Date() };
-const binding = { id: 2, signalSourceId: 1, strategyId: 3, externalStrategyKey: 'mean_reversion', expectedRevision: 'r1', enabled: true };
-const envelope = { schemaVersion: 1, externalStrategyKey: 'mean_reversion', strategyRevision: 'r1',
+const binding = { id: 2, signalSourceId: 1, strategyId: 3, externalStrategyKey: 'mean_reversion', enabled: true };
+const envelope = { schemaVersion: 1, externalStrategyKey: 'mean_reversion', strategyRevision: 1,
   event: 'ENTRY_LONG', symbol: 'QQQ', timeframe: '15m', signalTime: '2026-09-07T15:45:00Z',
   barTime: '2026-09-07T15:30:00Z', eventKey: 'event-1', metadata: { triggerPrice: 600.25, rsi: 28.4 } };
 
@@ -39,6 +40,7 @@ describe('external signal ingestion evidence boundary', () => {
     mocks.transaction.mockImplementation(async fn => fn(mocks));
     mocks.externalSignalSource.findUnique.mockResolvedValue(source);
     mocks.strategySignalBinding.findUnique.mockResolvedValue(binding);
+    mocks.strategySignalRevision.findFirst.mockResolvedValue({ id: 7, revision: 1, status: 'ACTIVE' });
     mocks.security.findUnique.mockResolvedValue({ id: 4, symbol: 'QQQ' });
     mocks.signal.findUnique.mockImplementation(async () => signals[0] ?? null);
     mocks.signal.create.mockImplementation(async ({ data }) => {
@@ -53,9 +55,9 @@ describe('external signal ingestion evidence boundary', () => {
   it('provides safe diagnostic context for unknown symbols and revision mismatches', async () => {
     mocks.security.findUnique.mockResolvedValue(null);
     expect((await ingest())?.rejectionDetails).toEqual({ fields: ['symbol'], reason: 'symbol_not_in_security_catalog' });
-    mocks.strategySignalBinding.findUnique.mockResolvedValue({ ...binding, expectedRevision: `Bearer ${token}` });
+    mocks.strategySignalRevision.findFirst.mockResolvedValue({ id: 8, revision: 2 });
     const result = await ingest();
-    expect(result?.rejectionDetails).toEqual({ fields: ['strategyRevision'], strategySignalBindingId: binding.id, reason: 'revision_does_not_match_binding' });
+    expect(result?.rejectionDetails).toEqual({ strategySignalBindingId: binding.id, activeRevision: 2, receivedRevision: 1 });
     expect(JSON.stringify(result?.rejectionDetails)).not.toContain(token);
     expect(JSON.stringify(result?.rejectionDetails)).not.toContain(source.webhookTokenHash);
   });
@@ -133,10 +135,11 @@ describe('external signal ingestion evidence boundary', () => {
     ['SOURCE_DISABLED', 'externalSignalSource', { ...source, enabled: false }],
     ['UNKNOWN_STRATEGY_BINDING', 'strategySignalBinding', null],
     ['STRATEGY_BINDING_DISABLED', 'strategySignalBinding', { ...binding, enabled: false }],
-    ['STRATEGY_REVISION_MISMATCH', 'strategySignalBinding', { ...binding, expectedRevision: 'r2' }],
+    ['STRATEGY_REVISION_MISMATCH', 'strategySignalRevision', { id: 8, revision: 2 }],
     ['UNKNOWN_SYMBOL', 'security', null],
   ] as const)('rejects %s', async (code, delegate, value) => {
-    mocks[delegate].findUnique.mockResolvedValue(value);
+    if (delegate === 'strategySignalRevision') mocks.strategySignalRevision.findFirst.mockResolvedValue(value);
+    else mocks[delegate].findUnique.mockResolvedValue(value);
     expect((await ingest())?.rejectionCode).toBe(code); expect(signals).toHaveLength(0);
   });
   it.each([
@@ -184,7 +187,7 @@ describe('external signal ingestion evidence boundary', () => {
   });
   it('configuration changes affect new deliveries without rewriting historical Signals', async () => {
     await ingest(); const before = canonicalJson(signals);
-    mocks.strategySignalBinding.findUnique.mockResolvedValue({ ...binding, expectedRevision: 'r2' });
+    mocks.strategySignalRevision.findFirst.mockResolvedValue({ id: 8, revision: 2 });
     expect((await ingest())?.rejectionCode).toBe('STRATEGY_REVISION_MISMATCH');
     mocks.externalSignalSource.findUnique.mockResolvedValue({ ...source, enabled: false });
     expect((await ingest())?.rejectionCode).toBe('SOURCE_DISABLED');

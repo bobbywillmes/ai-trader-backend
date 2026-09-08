@@ -63,14 +63,17 @@ export async function ingestExternalSignal(source: ExternalSignalSource, token: 
         signalSourceId_externalStrategyKey: { signalSourceId: source.id, externalStrategyKey: normalized.externalStrategyKey },
       } });
       if (!binding) throw new SignalRejection('UNKNOWN_STRATEGY_BINDING', { fields: ['externalStrategyKey'], reason: 'no_binding_for_source_and_key' });
+      await tx.$queryRaw`SELECT id FROM "StrategySignalBinding" WHERE id = ${binding.id} FOR UPDATE`;
+      const active = await tx.strategySignalRevision.findFirst({ where: { strategySignalBindingId: binding.id, status: 'ACTIVE' } });
       if (!binding.enabled) throw new SignalRejection('STRATEGY_BINDING_DISABLED', { strategySignalBindingId: binding.id, reason: 'binding_not_enabled' });
-      if (binding.expectedRevision !== normalized.strategyRevision) throw new SignalRejection('STRATEGY_REVISION_MISMATCH', {
-        fields: ['strategyRevision'], strategySignalBindingId: binding.id, reason: 'revision_does_not_match_binding',
+      if (!active || active.revision !== normalized.strategyRevision) throw new SignalRejection('STRATEGY_REVISION_MISMATCH', {
+        strategySignalBindingId: binding.id, activeRevision: active?.revision ?? null, receivedRevision: normalized.strategyRevision,
       });
       const security = await tx.security.findUnique({ where: { symbol: normalized.symbol }, select: { id: true, symbol: true } });
       if (!security) throw new SignalRejection('UNKNOWN_SYMBOL', { fields: ['symbol'], reason: 'symbol_not_in_security_catalog' });
       const content = {
         signalSourceId: source.id, strategySignalBindingId: binding.id, strategyId: binding.strategyId,
+        strategySignalRevisionId: active.id,
         securityId: security.id, symbol: security.symbol, schemaVersion: normalized.schemaVersion,
         externalEventKey: normalized.eventKey, strategyRevision: normalized.strategyRevision,
         event: normalized.event, timeframe: normalized.timeframe,

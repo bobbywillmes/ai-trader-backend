@@ -18,7 +18,7 @@ export function hashWebhookToken(token: string) {
   return createHash('sha256').update(token).digest('hex');
 }
 
-async function audit(db: Prisma.TransactionClient, type: string, entityType: string,
+export async function audit(db: Prisma.TransactionClient, type: string, entityType: string,
   entityId: number, actorUserId: number, payloadJson: Prisma.InputJsonValue) {
   return createSystemEvent({ type, entityType, entityId,
     actorUserId: actorUserId > 0 ? actorUserId : null, payloadJson }, db);
@@ -65,15 +65,17 @@ export async function rotateExternalSignalToken(id: number, actorUserId: number)
 }
 
 export async function createStrategySignalBinding(
-  input: z.infer<typeof createStrategySignalBindingSchema>, actorUserId: number,
+  input: z.infer<typeof createStrategySignalBindingSchema>, actorUserId: number, client = prisma,
 ) {
-  return prisma.$transaction(async db => {
+  return client.$transaction(async db => {
     const [source, strategy] = await Promise.all([
       db.externalSignalSource.findUnique({ where: { id: input.signalSourceId }, select: { id: true } }),
       db.strategy.findUnique({ where: { id: input.strategyId }, select: { id: true } }),
     ]);
     if (!source || !strategy) throw new HttpError(400, 'Source and Strategy must already exist.');
-    const binding = await db.strategySignalBinding.create({ data: { ...input, enabled: input.enabled ?? true } });
+    const binding = await db.strategySignalBinding.create({ data: { ...input, enabled: input.enabled ?? true,
+      revisions: { create: { revision: 1, status: 'ACTIVE', activatedAt: new Date() } },
+    }, include: bindingRevisionInclude });
     await audit(db, 'strategy_signal_binding_created', 'strategy_signal_binding', binding.id,
       actorUserId, input);
     return binding;
@@ -84,10 +86,14 @@ export async function updateStrategySignalBinding(id: number,
   input: z.infer<typeof updateStrategySignalBindingSchema>, actorUserId: number) {
   return prisma.$transaction(async db => {
     const binding = await db.strategySignalBinding.update({ where: { id }, data: {
-      ...(input.expectedRevision !== undefined ? { expectedRevision: input.expectedRevision } : {}),
       ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
-    } });
+    }, include: bindingRevisionInclude });
     await audit(db, 'strategy_signal_binding_updated', 'strategy_signal_binding', id, actorUserId, input);
     return binding;
   });
 }
+
+// Only current deployment state accompanies normal binding reads; full history has its own API.
+export const bindingRevisionInclude = {
+  revisions: { where: { status: { in: ['ACTIVE', 'PREPARED'] } }, orderBy: { revision: 'desc' } },
+} satisfies Prisma.StrategySignalBindingInclude;

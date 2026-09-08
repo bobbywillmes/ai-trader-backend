@@ -15,7 +15,8 @@ POST webhook -> token authentication -> validation / normalization / binding
 | Model | Purpose | Mutation policy |
 | --- | --- | --- |
 | ExternalSignalSource | Named origin, provider label, enabled flag, hashed URL credential | Rename, enable/disable, rotate credential |
-| StrategySignalBinding | Source/key identity mapped to an existing Strategy and required revision | Change only enabled or expectedRevision |
+| StrategySignalBinding | Source/key identity mapped to an existing Strategy | Change only enabled; dedicated revision lifecycle actions |
+| StrategySignalRevision | Backend-numbered deployed strategy version | Fixed identity/note; lifecycle status and timestamps advance |
 | SignalDelivery | Terminal known-source request evidence | Insert/read only |
 | Signal | Canonical account-independent strategy event | Insert/read only |
 
@@ -39,13 +40,80 @@ Application immutability is enforced by insert/read-only service paths and APIs;
 this migration does not install database update/delete prohibition triggers.
 Privileged direct SQL must continue to respect audit-sensitive history.
 
+## Backend-managed revision lifecycle
+
+`externalStrategyKey` is stable identity, such as `spy-dip-test-1`,
+`etf-mean-reversion`, or `qqq-momentum-breakout`. A symbol in the key is optional.
+`strategyRevision` identifies the deployed version as a positive JSON integer:
+1, 2, 3, and so on. AI Trader assigns it; operators never type a revision label.
+The pre-release envelope remains schemaVersion 1. Strings, including `"1"`, fail.
+
+Binding creation atomically creates ACTIVE Revision 1. Each binding has one ACTIVE
+and at most one PREPARED revision. Revision identity, number and optional change
+note are fixed. Only status and lifecycle timestamps advance; no edit/delete API
+exists. Notes are at most 500 characters and must not contain credentials.
+
+1. In binding detail, choose **Prepare new revision**. The backend assigns the
+   greatest historical number plus one. PREPARED revisions are not accepted yet.
+2. Copy the signal configuration and configure the external sender. This fragment
+   contains the external key and numeric revision only, never credentials.
+3. Choose **Activate revision N** and confirm. The previous ACTIVE revision becomes
+   RETIRED immediately. Only the new ACTIVE revision can normalize deliveries.
+   Old-revision retries fail closed even when their event key already exists.
+4. Discard an unused candidate with **Abandon revision N**. It becomes RETIRED
+   without activation. Its number stays consumed; prepare the next number.
+
+For example, external key `spy-dip-test-1`, active revision **3**:
+
+```json
+{
+  "externalStrategyKey": "spy-dip-test-1",
+  "strategyRevision": 3
+}
+```
+
+Owner API paths relative to `/api/external-signal-admin`:
+
+| Method | Path | Body / behavior |
+| --- | --- | --- |
+| GET | /bindings/:id/revisions | Newest-first history with status, note and lifecycle timestamps |
+| POST | /bindings/:id/revisions | Optional `{ "changeNote": "Added ADX confirmation" }`; creates PREPARED |
+| POST | /bindings/:id/revisions/:revisionId/activate | Empty object; activate PREPARED only |
+| POST | /bindings/:id/revisions/:revisionId/retire | Empty object; abandon PREPARED only |
+
+Caller-provided numbers and generic revision PATCHes fail validation. Competing
+prepared candidates or invalid transitions return 409; missing records return 404.
+Retired revisions cannot be reactivated. Preparation and activation hold a binding
+row lock transactionally. Ingress takes the same lock before resolving ACTIVE state,
+so acceptance and activation serialize without a two-revision grace window.
+PostgreSQL unique indexes enforce binding+number uniqueness and at most one ACTIVE
+and PREPARED row. A composite Signal foreign key enforces agreement between the
+revision record, binding and number. Canonical hashing includes numeric revision
+identity and its record ID. Signal/Delivery atomicity and evidence-only scope remain.
+
+## Additive migration and local historical compatibility
+
+Apply `20260908120000_strategy_signal_revisions` after the original ingestion
+migration; the applied original is unchanged. Stop the old backend before migration
+and start the updated backend/UI together. Update local sender fixtures to integer
+Revision 1 before resuming ingestion. Existing bindings receive ACTIVE Revision 1
+at migration time with a fixed migration-context note. The old mutable
+`expectedRevision` column is removed.
+
+Existing Signal labels are preserved verbatim by renaming the old string column to
+`legacyStrategyRevision`. Their new `strategyRevision` and `strategySignalRevisionId`
+remain null. The migration invents no link to Revision 1 and does not rewrite hashes
+or Delivery evidence. Read APIs expose the legacy label explicitly; the UI identifies
+pre-numeric history. New Signals always have a numeric revision and exact revision
+relationship, with null legacy label. No historical backfill is intended.
+
 ## Canonical Signal Envelope v1
 
 ```json
 {
   "schemaVersion": 1,
   "externalStrategyKey": "etf_mean_reversion",
-  "strategyRevision": "2026-09-07.1",
+  "strategyRevision": 1,
   "event": "ENTRY_LONG",
   "symbol": "QQQ",
   "timeframe": "15m",
@@ -130,7 +198,7 @@ aliases, symbol casing and equivalent timestamp offsets cannot change the hash.
 Missing metadata/barTime normalize to null. A losing concurrent insert rolls back
 and compares the winning row in a new transaction. Delivery insertion failure also
 rolls back the new Signal. Retries still need an enabled source/binding and the
-current expected revision; a revision change does not grandfather old retries.
+current ACTIVE revision; a revision change does not grandfather old retries.
 
 Rejection codes are `SOURCE_DISABLED`, `INVALID_CONTENT_TYPE`, `INVALID_JSON`,
 `PAYLOAD_TOO_LARGE`, `UNSUPPORTED_SCHEMA_VERSION`, `INVALID_ENVELOPE`,
@@ -140,7 +208,7 @@ Rejection codes are `SOURCE_DISABLED`, `INVALID_CONTENT_TYPE`, `INVALID_JSON`,
 Structured details contain safe field/reason information. Public rejection responses
 only expose a generic error and requestId; owners inspect the delivery for details.
 New rejections include concise diagnostic context: catalog/binding lookup reasons,
-the binding ID for a revision mismatch, supported event/schema/timeframe values,
+the binding ID and active/received integer revisions for a revision mismatch, supported event/schema/timeframe values,
 validation issue codes, body limits, and timestamp ordering/skew reasons. Event-key
 conflicts identify the existing Signal ID and differing canonical field names.
 Details intentionally do not copy free-form payload/configuration values, credentials,
@@ -154,7 +222,10 @@ There are no normal-success SystemEvents. Conflicts emit
 emit `external_signal_source_created`, `external_signal_source_updated`,
 `external_signal_source_credential_rotated`, `strategy_signal_binding_created`, or
 `strategy_signal_binding_updated`, with actor attribution and changed fields but no
-credentials. Updates include enable/disable and expected-revision changes.
+credentials. Binding PATCH only changes enabled. Revision lifecycle emits
+`strategy_signal_revision_prepared`, `strategy_signal_revision_activated`, and
+`strategy_signal_revision_retired`, with binding ID and revision number, never notes
+or credentials. Activation and retirement audits commit with the state change.
 
 ## Owner console
 
@@ -172,7 +243,7 @@ The four tabs separate mutable configuration from immutable evidence:
   dialog clears the plaintext; the normal source view can never reveal it. Lost
   tokens must be rotated, and rotation invalidates the old credential immediately.
 - **Strategy Bindings:** select an existing source and Strategy, then supply the
-  external key and expected revision. Editing allows only revision/enabled changes,
+  stable external key. Revision 1 is automatic. Editing allows only enabled changes,
   with acknowledgment that future acceptance changes. Existing identity fields are
   read-only. Strategy names link to their normal detail page.
 - **Signals:** filter and page through canonical events, then open a read-only
@@ -219,8 +290,8 @@ SYSTEM_OWNER via the existing admin API key or owner session bearer token.
 | POST | /sources | name, provider, optional enabled |
 | PATCH | /sources/:id | name and/or enabled |
 | POST | /sources/:id/rotate-token | Return replacement token once |
-| POST | /bindings | signalSourceId, strategyId, externalStrategyKey, expectedRevision, optional enabled |
-| PATCH | /bindings/:id | expectedRevision and/or enabled |
+| POST | /bindings | signalSourceId, strategyId, externalStrategyKey, optional enabled |
+| PATCH | /bindings/:id | enabled |
 
 Lists return the plural resource key plus
 `pagination: { page, pageSize, total, totalPages }`; defaults are page 1 and size 25,
@@ -241,7 +312,7 @@ curl "$BASE_URL/api/external-signal-admin/sources" \
 # Use the returned source ID and an existing Strategy ID. QQQ must already exist.
 curl "$BASE_URL/api/external-signal-admin/bindings" \
   -H "ai-trader-api-key: $ADMIN_API_KEY" -H 'Content-Type: application/json' \
-  --data '{"signalSourceId":1,"strategyId":1,"externalStrategyKey":"etf_mean_reversion","expectedRevision":"2026-09-07.1"}'
+  --data '{"signalSourceId":1,"strategyId":1,"externalStrategyKey":"etf_mean_reversion"}'
 
 # Set TEST_WEBHOOK_TOKEN to the one-time token; save the example envelope above as signal.json.
 curl "$BASE_URL/api/external-signals/$TEST_WEBHOOK_TOKEN" \

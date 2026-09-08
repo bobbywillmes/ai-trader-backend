@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { HttpError } from '../errors/http-error.js';
 import * as schemas from '../validators/external-signal.schema.js';
 import * as config from '../services/external-signal-config.service.js';
+import { changeStrategySignalRevision, listStrategySignalRevisions } from '../services/strategy-signal-revision.service.js';
 import { getExternalSignalResource, listExternalSignalResources, type ExternalSignalResource } from '../services/external-signal-read.service.js';
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
@@ -11,6 +12,23 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   if (!result.success) throw new HttpError(400, 'Invalid external signal request.',
     result.error.issues.map(issue => ({ path: issue.path, code: issue.code })));
   return result.data;
+}
+
+export function strategySignalRevisionController(action: 'list' | 'prepare' | 'activate' | 'retire') {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      if (!res.locals.user) throw new HttpError(401, 'Authentication required.');
+      const bindingId = parse(schemas.externalSignalIdSchema, req.params.id);
+      if (action === 'list') { res.json(await listStrategySignalRevisions(bindingId)); return; }
+      const input = parse(action === 'prepare' ? schemas.prepareStrategySignalRevisionSchema : schemas.strategySignalRevisionActionSchema, req.body ?? {});
+      const revisionId = action === 'prepare' ? null : parse(schemas.externalSignalIdSchema, req.params.revisionId);
+      const row = await changeStrategySignalRevision(bindingId, action, revisionId, 'changeNote' in input ? input.changeNote as string | undefined : undefined, res.locals.user.id);
+      res.status(action === 'prepare' ? 201 : 200).json(row);
+    } catch (error) {
+      next(error instanceof HttpError ? error : new HttpError(500, 'Revision management unavailable.'));
+    }
+  };
 }
 
 export function externalSignalAdminController(resource: ExternalSignalResource,

@@ -20,12 +20,15 @@ export const createStrategySignalBindingSchema = z.object({
   signalSourceId: externalSignalIdSchema,
   strategyId: externalSignalIdSchema,
   externalStrategyKey: newExternalStrategyKeySchema,
-  expectedRevision: identity,
   enabled: z.boolean().optional(),
 }).strict();
 export const updateStrategySignalBindingSchema = z.object({
-  expectedRevision: identity.optional(), enabled: z.boolean().optional(),
+  enabled: z.boolean().optional(),
 }).strict().refine(value => Object.keys(value).length > 0);
+export const prepareStrategySignalRevisionSchema = z.object({
+  changeNote: z.string().trim().min(1).max(500).optional(),
+}).strict();
+export const strategySignalRevisionActionSchema = z.object({}).strict();
 
 // Offset-bearing ISO timestamps, millisecond precision, and valid calendar dates.
 export const signalTimestampSchema = z.iso.datetime({ offset: true })
@@ -55,7 +58,7 @@ export type ExternalSignalListFilters = z.infer<typeof externalSignalListSchema>
 export const externalSignalEnvelopeSchema = z.object({
   schemaVersion: z.literal(1),
   externalStrategyKey: identity,
-  strategyRevision: identity,
+  strategyRevision: z.number().int().positive().max(2147483647),
   event: z.enum(SignalEvent),
   symbol: z.string().trim().min(1).max(32).regex(/^[A-Za-z0-9.\-/^]+$/).transform(value => value.toUpperCase()),
   timeframe: z.string().trim().min(1).max(32),

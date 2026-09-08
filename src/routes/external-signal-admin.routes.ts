@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireSystemOwnerAccess } from '../middleware/rbac.js';
 import { externalSignalAdminController as controller } from '../controllers/external-signal-admin.controller.js';
+import { strategySignalRevisionController as revisions } from '../controllers/external-signal-admin.controller.js';
 
 const router = Router();
 router.use(requireSystemOwnerAccess);
@@ -13,4 +14,8 @@ for (const resource of ['sources', 'bindings'] as const) {
   router.patch(`/${resource}/:id`, controller(resource, 'update'));
 }
 router.post('/sources/:id/rotate-token', controller('sources', 'rotate'));
+router.get('/bindings/:id/revisions', revisions('list'));
+router.post('/bindings/:id/revisions', revisions('prepare'));
+router.post('/bindings/:id/revisions/:revisionId/activate', revisions('activate'));
+router.post('/bindings/:id/revisions/:revisionId/retire', revisions('retire'));
 export default router;

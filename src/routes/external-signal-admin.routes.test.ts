@@ -3,6 +3,8 @@ import express from 'express';
 import { Prisma } from '@prisma/client';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
+  $queryRaw: vi.fn(),
+  strategySignalRevision: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
   externalSignalSource: { findMany: vi.fn(), findUnique: vi.fn(), count: vi.fn(), create: vi.fn(), update: vi.fn() },
   strategySignalBinding: { findMany: vi.fn(), findUnique: vi.fn(), count: vi.fn(), create: vi.fn(), update: vi.fn() },
   signal: { findMany: vi.fn(), findUnique: vi.fn(), count: vi.fn() },
@@ -29,6 +31,9 @@ describe('external signal owner management and read routes', () => {
     }
     mocks.externalSignalSource.create.mockResolvedValue({ id: 1, name: 'Test', provider: 'GENERIC_WEBHOOK', enabled: true });
     mocks.externalSignalSource.update.mockResolvedValue({ id: 1 });
+    mocks.strategySignalRevision.findMany.mockResolvedValue([{ id: 5, revision: 1, status: 'ACTIVE' }]);
+    mocks.strategySignalRevision.findFirst.mockImplementation(async ({ where }) => where.status === 'PREPARED' ? null : { id: 5, revision: 1, status: 'ACTIVE' });
+    mocks.strategySignalRevision.create.mockImplementation(async ({ data }) => ({ id: 6, ...data }));
     const app = express(); app.use(express.json());
     app.use('/api/external-signal-admin', requireAdminAccess, routes); app.use(errorHandler);
     server = app.listen(0); await new Promise<void>(resolve => server.once('listening', resolve));
@@ -40,6 +45,24 @@ describe('external signal owner management and read routes', () => {
     else process.env.AI_TRADER_ADMIN_API_KEY = oldAdminKey;
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  });
+  it('provides owner revision history and preparation while rejecting caller-assigned numbers', async () => {
+    expect(await (await fetch(`${baseUrl}/bindings/1/revisions`, { headers })).json()).toMatchObject([{ revision: 1, status: 'ACTIVE' }]);
+    const prepare = () => fetch(`${baseUrl}/bindings/1/revisions`, { method: 'POST', headers, body: '{}' });
+    expect(await (await prepare()).json()).toMatchObject({ revision: 2, status: 'PREPARED' });
+    for (const body of [{ revision: 99 }, { expectedRevision: 'v1' }, { strategyRevision: 99 }]) {
+      expect((await fetch(`${baseUrl}/bindings/1/revisions`, { method: 'POST', headers, body: JSON.stringify(body) })).status).toBe(400);
+    }
+    mocks.strategySignalRevision.findFirst.mockResolvedValue({ id: 6, revision: 2, status: 'PREPARED' });
+    expect((await prepare()).status).toBe(409);
+  });
+  it.each(['OPERATOR', 'ACCOUNT_USER'])('denies %s every revision lifecycle endpoint', async platformRole => {
+    mocks.session.mockResolvedValue({ user: { id: 1, platformRole } });
+    for (const [path, method] of [['/revisions', 'GET'], ['/revisions', 'POST'], ['/revisions/6/activate', 'POST'], ['/revisions/6/retire', 'POST']] as const) {
+      expect((await fetch(`${baseUrl}/bindings/1${path}`, { method, headers: { authorization: 'Bearer session' } })).status).toBe(403);
+    }
+    expect(mocks.strategySignalRevision.create).not.toHaveBeenCalled();
+    expect(mocks.strategySignalRevision.update).not.toHaveBeenCalled();
   });
   it.each(['sources', 'bindings', 'signals', 'deliveries'])('requires owner access to %s', async resource => {
     expect((await fetch(`${baseUrl}/${resource}`)).status).toBe(401);
@@ -61,7 +84,7 @@ describe('external signal owner management and read routes', () => {
       keys.add(data.externalStrategyKey); return { ...data, id: 3 };
     });
     const post = (externalStrategyKey: string) => fetch(`${baseUrl}/bindings`, { method: 'POST', headers,
-      body: JSON.stringify({ signalSourceId: 1, strategyId: 2, externalStrategyKey, expectedRevision: 'r1' }) });
+      body: JSON.stringify({ signalSourceId: 1, strategyId: 2, externalStrategyKey }) });
     const first = await post('  Mean\tReversion -- V2  ');
     expect(first.status).toBe(201);
     expect(await first.json()).toMatchObject({ externalStrategyKey: 'mean-reversion-v2' });
