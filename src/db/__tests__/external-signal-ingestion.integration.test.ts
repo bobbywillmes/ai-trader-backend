@@ -5,10 +5,13 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { Client } from 'pg';
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
+import express from 'express';
+import { createExternalSignalIngressController } from '../../controllers/external-signal-ingress.controller.js';
 import { authenticateExternalSignal, ingestExternalSignal, type SignalRequestEvidence } from '../../services/external-signal-ingestion.service.js';
 import { getExternalSignalWebhook, regenerateExternalSignalWebhook, hashWebhookKey, createStrategySignalBinding } from '../../services/external-signal-config.service.js';
 import { changeStrategySignalRevision } from '../../services/strategy-signal-revision.service.js';
 import { createStrategySignalBindingSchema } from '../../validators/external-signal.schema.js';
+import { canonicalSignalPayload, hashCanonicalPayload } from '../../services/external-signal-normalization.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const describeDatabase = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && databaseUrl ? describe : describe.skip;
@@ -93,6 +96,43 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     expect(source.webhookKeyHash).toBe(hashWebhookKey(token));
   });
 
+  it.each([undefined, { test: 'revised smaller signal', nested: { rsi: 28.4 } }])('HTTP exact-byte retry is a duplicate and changed metadata conflicts: %j', async metadata => {
+    const app = express();
+    app.post('/api/external-signals/:webhookKey', createExternalSignalIngressController(db));
+    const server = app.listen(0);
+    await new Promise<void>(resolve => server.once('listening', resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('No HTTP port');
+      const input = { externalStrategyKey: 'test', strategyRevision: 1, event: 'ENTRY_LONG', symbol: 'QQQ', timeframe: '15m',
+        signalTime: occurrence(`http-${metadata === undefined ? 'minimal' : 'metadata'}`), metadata };
+      const body = JSON.stringify(input);
+      const post = (bytes: string) => fetch(`http://127.0.0.1:${address.port}/api/external-signals/${token}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: bytes });
+      const first = await post(body);
+      expect(first.status).toBe(201);
+      const firstResponse = await first.json() as { status: string; requestId: string };
+      expect(firstResponse.status).toBe('NORMALIZED');
+      const initialDelivery = await db.signalDelivery.findFirstOrThrow({ where: { requestId: firstResponse.requestId } });
+      const original = await db.signal.findUniqueOrThrow({ where: { id: initialDelivery.signalId! } });
+      const retry = await post(body);
+      expect(retry.status).toBe(200);
+      const retryResponse = await retry.json() as { status: string; requestId: string };
+      expect(retryResponse.status).toBe('DUPLICATE');
+      const retryDelivery = await db.signalDelivery.findFirstOrThrow({ where: { requestId: retryResponse.requestId } });
+      expect(retryDelivery.signalId).toBe(original.id);
+      expect(retryDelivery.rawPayloadHash).toBe(initialDelivery.rawPayloadHash);
+      const conflict = await post(JSON.stringify({ ...input, metadata: { test: 'revised smaller signal.' } }));
+      expect(conflict.status).toBe(400);
+      const conflictResponse = await conflict.json() as { requestId: string };
+      expect(await db.signalDelivery.findFirst({ where: { requestId: conflictResponse.requestId } })).toMatchObject({ status: 'REJECTED', rejectionCode: 'EVENT_FINGERPRINT_CONFLICT', signalId: null });
+      expect(await db.signal.count({ where: { signalSourceId: 1, eventFingerprint: original.eventFingerprint } })).toBe(1);
+      expect(await db.signal.findUnique({ where: { id: original.id } })).toEqual(original);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
   it('uses bar identity while treating changed signalTime or metadata as a payload conflict', async () => {
     const bar = '2025-12-31T23:45:00Z';
     expect((await ingest('bar-event', {}, 'ENTRY_LONG', 1, bar))?.status).toBe('NORMALIZED');
@@ -100,6 +140,21 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     expect((await ingest('bar-event', { rsi: 20 }, 'ENTRY_LONG', 1, bar))?.rejectionCode).toBe('EVENT_FINGERPRINT_CONFLICT');
     expect((await ingest('changed-signal-time', {}, 'ENTRY_LONG', 1, bar))?.rejectionCode).toBe('EVENT_FINGERPRINT_CONFLICT');
     expect((await ingest('bar-event', {}, 'ENTRY_LONG', 1, '2025-12-31T23:30:00Z'))?.status).toBe('NORMALIZED');
+  });
+
+  it('compares an older storage-inclusive hash through the same payload projection without rewriting it', async () => {
+    const signalTime = occurrence('prior-hash-representation');
+    const active = await db.strategySignalRevision.findFirstOrThrow({ where: { strategySignalBindingId: 1, status: 'ACTIVE' } });
+    const identity = { signalSourceId: 1, strategySignalBindingId: 1, strategySignalRevisionId: active.id,
+      securityId: 1, event: 'ENTRY_LONG' as const, timeframe: '15m' };
+    const oldContent = { ...identity, strategyId: 1, symbol: 'QQQ', schemaVersion: 1, strategyRevision: 1,
+      eventFingerprint: hashCanonicalPayload({ ...identity, eventOccurrenceTime: signalTime }), signalTime, barTime: null, metadata: {} };
+    // Historical fixture is inserted with the exact previous hash representation.
+    const original = await db.signal.create({ data: { ...oldContent, signalTime: new Date(signalTime), canonicalPayloadHash: hashCanonicalPayload(oldContent) } });
+    expect(hashCanonicalPayload(canonicalSignalPayload(original, 'test'))).not.toBe(original.canonicalPayloadHash);
+    expect(await ingest('prior-hash-representation')).toMatchObject({ status: 'DUPLICATE', signalId: original.id });
+    expect(await ingest('prior-hash-representation', { changed: true })).toMatchObject({ status: 'REJECTED', rejectionCode: 'EVENT_FINGERPRINT_CONFLICT' });
+    expect(await db.signal.findUnique({ where: { id: original.id } })).toEqual(original);
   });
 
   it('atomically creates initial active revision and rolls back on audit failure', async () => {

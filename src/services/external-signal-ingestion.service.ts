@@ -2,7 +2,7 @@ import { Prisma, type ExternalSignalSource } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { hashWebhookKey } from './external-signal-config.service.js';
 import { createSystemEvent } from './system-event.service.js';
-import { canonicalJson, hashCanonicalPayload, inspectSignalEvidence, MAX_SIGNAL_BODY_BYTES, normalizeSignalEnvelope, SignalRejection } from './external-signal-normalization.js';
+import { canonicalJson, canonicalSignalPayload, hashCanonicalPayload, inspectSignalEvidence, MAX_SIGNAL_BODY_BYTES, normalizeSignalEnvelope, SignalRejection } from './external-signal-normalization.js';
 
 export type SignalRequestEvidence = {
   requestId: string; receivedAt: Date; contentType: string | null;
@@ -86,15 +86,18 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
         signalTime: normalized.signalTime.toISOString(), barTime: normalized.barTime?.toISOString() ?? null,
         metadata: normalized.metadata ?? null,
       };
-      const canonicalPayloadHash = hashCanonicalPayload(content);
+      const incomingPayload = canonicalSignalPayload(content, binding.externalStrategyKey);
+      const canonicalPayloadHash = hashCanonicalPayload(incomingPayload);
       const existing = await tx.signal.findUnique({ where: {
         signalSourceId_eventFingerprint: { signalSourceId: source.id, eventFingerprint },
       } });
       if (existing) {
-        if (existing.canonicalPayloadHash !== canonicalPayloadHash) {
-          const previousContent = { ...existing, signalTime: existing.signalTime.toISOString(), barTime: existing.barTime?.toISOString() ?? null };
-          const differingFields = (Object.keys(content) as (keyof typeof content)[])
-            .filter(field => canonicalJson(content[field]) !== canonicalJson(previousContent[field]));
+        // Compare both sides through the same projection. Older immutable hashes
+        // included storage fields; do not rewrite them or mix hash representations.
+        const previousPayload = canonicalSignalPayload(existing, binding.externalStrategyKey);
+        if (hashCanonicalPayload(previousPayload) !== canonicalPayloadHash) {
+          const differingFields = (Object.keys(incomingPayload) as (keyof typeof incomingPayload)[])
+            .filter(field => canonicalJson(incomingPayload[field]) !== canonicalJson(previousPayload[field]));
           const delivery = await reject(new SignalRejection('EVENT_FINGERPRINT_CONFLICT', {
             eventFingerprint, existingSignalId: existing.id, differingFields,
             reason: 'same_event_identity_different_canonical_payload',

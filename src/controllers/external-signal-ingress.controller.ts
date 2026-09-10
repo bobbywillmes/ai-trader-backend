@@ -4,6 +4,7 @@ import { authenticateExternalSignal, ingestExternalSignal, type SignalRequestEvi
 import { MAX_SIGNAL_BODY_BYTES } from '../services/external-signal-normalization.js';
 import { createSystemEvent } from '../services/system-event.service.js';
 import { logger } from '../config/logger.js';
+import { prisma } from '../db/prisma.js';
 
 export async function readSignalRequest(req: Request, requestId: string, receivedAt: Date): Promise<SignalRequestEvidence> {
   const hash = createHash('sha256');
@@ -30,37 +31,41 @@ export async function readSignalRequest(req: Request, requestId: string, receive
     validContentType, contentType: mediaType === 'application/json' ? 'application/json' : null };
 }
 
-export async function externalSignalIngressController(req: Request, res: Response) {
-  const receivedAt = new Date();
-  const requestId = randomUUID();
-  res.setHeader('Cache-Control', 'no-store');
-  let sourceId: number | null = null;
-  try {
-    const webhookKey = String(req.params.webhookKey ?? '');
-    const source = await authenticateExternalSignal(webhookKey);
-    if (!source) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    sourceId = source.id;
-    const evidence = await readSignalRequest(req, requestId, receivedAt);
-    const delivery = await ingestExternalSignal(source, webhookKey, evidence);
-    if (!delivery) { res.status(401).json({ error: 'Unauthorized' }); return; }
-    if (delivery.status === 'REJECTED') {
-      res.status(delivery.rejectionCode === 'PAYLOAD_TOO_LARGE' ? 413 : 400).json({ error: 'Signal rejected', requestId });
-      return;
-    }
-    res.status(delivery.status === 'NORMALIZED' ? 201 : 200).json({ status: delivery.status, requestId });
-  } catch {
-    // Never forward raw parser/Prisma errors to the shared handler: they can
-    // contain attacker-supplied credentials, JSON fragments or request URLs.
-    logger.error({ requestId, signalSourceId: sourceId }, 'External signal processing failed.');
+export function createExternalSignalIngressController(db = prisma) {
+  return async (req: Request, res: Response) => {
+    const receivedAt = new Date();
+    const requestId = randomUUID();
+    res.setHeader('Cache-Control', 'no-store');
+    let sourceId: number | null = null;
     try {
-      await createSystemEvent({ type: 'external_signal_processing_failed', entityType: 'external_signal_source',
-        entityId: sourceId ?? 'unknown', severity: 'ERROR', payloadJson: { requestId, signalSourceId: sourceId } });
+      const webhookKey = String(req.params.webhookKey ?? '');
+      const source = await authenticateExternalSignal(webhookKey, db);
+      if (!source) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+      sourceId = source.id;
+      const evidence = await readSignalRequest(req, requestId, receivedAt);
+      const delivery = await ingestExternalSignal(source, webhookKey, evidence, db);
+      if (!delivery) { res.status(401).json({ error: 'Unauthorized' }); return; }
+      if (delivery.status === 'REJECTED') {
+        res.status(delivery.rejectionCode === 'PAYLOAD_TOO_LARGE' ? 413 : 400).json({ error: 'Signal rejected', requestId });
+        return;
+      }
+      res.status(delivery.status === 'NORMALIZED' ? 201 : 200).json({ status: delivery.status, requestId });
     } catch {
-      logger.error({ requestId }, 'Could not persist external signal processing failure event.');
+      // Never forward raw parser/Prisma errors to the shared handler: they can
+      // contain attacker-supplied credentials, JSON fragments or request URLs.
+      logger.error({ requestId, signalSourceId: sourceId }, 'External signal processing failed.');
+      try {
+        await createSystemEvent({ type: 'external_signal_processing_failed', entityType: 'external_signal_source',
+          entityId: sourceId ?? 'unknown', severity: 'ERROR', payloadJson: { requestId, signalSourceId: sourceId } }, db);
+      } catch {
+        logger.error({ requestId }, 'Could not persist external signal processing failure event.');
+      }
+      if (!res.headersSent && !res.destroyed) res.status(503).json({ error: 'Signal processing unavailable', requestId });
     }
-    if (!res.headersSent && !res.destroyed) res.status(503).json({ error: 'Signal processing unavailable', requestId });
-  }
+  };
 }
+
+export const externalSignalIngressController = createExternalSignalIngressController();

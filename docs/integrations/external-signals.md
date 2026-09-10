@@ -140,6 +140,14 @@ Metadata, receivedAt, requestId and raw JSON field ordering do not participate i
 identity. The complete accepted canonical content, including metadata and both event
 timestamps, separately participates in canonicalPayloadHash.
 
+Creation and retry comparison use one explicit payload projection: schemaVersion,
+externalStrategyKey, strategyRevision, event, symbol, timeframe, signalTime, barTime
+and metadata. Event timestamps normalize to ISO strings. Database IDs, relation IDs,
+eventFingerprint and createdAt are excluded. Existing Signals are projected using
+the same function before comparison, since older stored hashes included storage
+fields. Those historical hashes and rows remain untouched; no backfill is required.
+A punctuation change inside metadata is changed content and correctly conflicts.
+
 | Delivery | Outcome |
 | --- | --- |
 | New fingerprint | One Signal plus linked NORMALIZED Delivery, in one transaction |

@@ -23,6 +23,21 @@ export function hashCanonicalPayload(value: unknown) {
   return createHash('sha256').update(canonicalJson(value)).digest('hex');
 }
 
+// One projection for incoming normalized content and persisted evidence. Storage
+// identities belong in eventFingerprint, not in the payload comparison domain.
+export function canonicalSignalPayload(value: {
+  schemaVersion: number; strategyRevision: number | null; event: string; symbol: string;
+  timeframe: string; signalTime: Date | string; barTime: Date | string | null; metadata: unknown;
+}, externalStrategyKey: string) {
+  return {
+    schemaVersion: value.schemaVersion, externalStrategyKey, strategyRevision: value.strategyRevision,
+    event: value.event, symbol: value.symbol, timeframe: value.timeframe,
+    signalTime: new Date(value.signalTime).toISOString(),
+    barTime: value.barTime === null ? null : new Date(value.barTime).toISOString(),
+    metadata: value.metadata,
+  };
+}
+
 // Bounded recursive traversal before Zod's recursive JSON validator. Never retain
 // malformed text; parseable evidence is recursively scrubbed, including key names.
 export function inspectSignalEvidence(value: unknown, credentials: readonly string[], depth = 0): {

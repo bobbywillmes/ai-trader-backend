@@ -82,7 +82,7 @@ describe('public external signal HTTP boundary', () => {
     expect(response.status).toBe(503);
     expect(JSON.stringify(await response.json())).not.toContain(token);
     expect(mocks.logs.join('')).not.toContain(token);
-    expect(JSON.stringify(mocks.event.mock.calls)).not.toContain(token);
+    expect(JSON.stringify(mocks.event.mock.calls.map(([event]) => event))).not.toContain(token);
     expect(mocks.event.mock.calls[0]![0].type).toBe('external_signal_processing_failed');
   });
   it('handles malformed percent encoding without forwarding credential-bearing errors', async () => {
