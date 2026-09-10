@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "./api";
 import { useStrategies } from "../strategies/hooks";
-import type { CreateBinding, CreateSource, Credential, Section, UpdateBinding, UpdateSource } from "./types";
+import type { CreateBinding, CreateSource, Section, UpdateBinding, UpdateSource } from "./types";
 
 export const externalSignalKeys = {
   section: (section: Section) => ["externalSignals", section] as const,
@@ -26,23 +26,14 @@ export function useCatalogs(token: string | null) {
     strategyName: (id: number) => strategies.data?.find(strategy => strategy.id === id)?.name ?? `Strategy #${id}`,
   };
 }
-export function useSourceMutations(token: string | null, onCredential: (value: Credential) => void) {
+export function useSourceMutations(token: string | null) {
   const client = useQueryClient();
   const invalidate = () => { void client.invalidateQueries({ queryKey: externalSignalKeys.section("sources") }); };
-  // Plaintext never becomes mutation data or variables. The only owner is the
-  // transient credential dialog. gcTime/reset also remove completed operations.
-  const create = useMutation({ gcTime: 0, mutationFn: async (input: CreateSource) => {
-    const result = await api.createSource(input, token);
-    onCredential({ ...result, rotated: false });
-    return result.source;
-  }, onSuccess: invalidate });
-  const rotate = useMutation({ gcTime: 0, mutationFn: async (id: number) => {
-    const result = await api.rotateSource(id, token);
-    onCredential({ ...result, rotated: true });
-    return result.source;
-  }, onSuccess: invalidate });
-  const update = useMutation({ mutationFn: ({ id, input }: { id: number; input: UpdateSource }) => api.updateSource(id, input, token), onSuccess: invalidate });
-  return { create, rotate, update };
+  return {
+    create: useMutation({ mutationFn: (input: CreateSource) => api.createSource(input, token), onSuccess: invalidate }),
+    regenerate: useMutation({ mutationFn: (id: number) => api.regenerateSource(id, token), onSuccess: invalidate }),
+    update: useMutation({ mutationFn: ({ id, input }: { id: number; input: UpdateSource }) => api.updateSource(id, input, token), onSuccess: invalidate }),
+  };
 }
 export function useBindingMutations(token: string | null) {
   const client = useQueryClient();

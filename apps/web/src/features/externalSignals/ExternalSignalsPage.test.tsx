@@ -10,7 +10,8 @@ vi.mock("../../lib/api", () => ({ apiRequest: mocks.request, getAdminToken: () =
 vi.mock("@mantine/notifications", () => ({ notifications: { show: mocks.notify } }));
 import { ExternalSignalsPage } from "./ExternalSignalsPage";
 
-const plaintext = "one-time-credential-" + "x".repeat(24);
+const plaintext = "x".repeat(43);
+let currentWebhookKey = plaintext;
 const root = "/api/external-signal-admin";
 let client: QueryClient;
 let sources = [{ ...source }];
@@ -30,19 +31,21 @@ function mount(search = "") {
   return render(<MantineProvider><QueryClientProvider client={client}><MemoryRouter initialEntries={[`/system/external-signals${search}`]}><ExternalSignalsPage /><Location /></MemoryRouter></QueryClientProvider></MantineProvider>);
 }
 beforeEach(() => {
+  currentWebhookKey = plaintext;
   vi.clearAllMocks(); Object.defineProperty(window, "innerWidth", { value: 1400, configurable: true });
   sources = [{ ...source }]; bindings = [{ ...binding }]; signals = [{ ...signal }]; deliveries = [{ ...delivery }];
   revisions = [...binding.revisions];
   sourceFailure = false; sourceLoading = false; mutationFailure = false;
   mocks.request.mockImplementation(async (path: string, options: { method?: string; body?: Record<string, unknown> }) => {
     if (path === "/api/strategies") return [{ id: 3, name: "Mean reversion", key: "mean_reversion", enabled: true }];
+    if (path.endsWith("/webhook")) return { webhookKey: currentWebhookKey };
     if (options.method && options.method !== "GET") {
       if (mutationFailure) throw new Error("Unavailable");
       if (path === `${root}/bindings/2/revisions`) { const row = { ...binding.revisions[0], id: 11, revision: 2, status: "PREPARED" as const, activatedAt: null, changeNote: String(options.body?.changeNote ?? "") }; revisions.unshift(row); return row; }
       if (path.endsWith("/11/activate")) { revisions = revisions.map(row => ({ ...row, status: row.id === 11 ? "ACTIVE" as const : "RETIRED" as const })); return revisions[0]; }
       if (path.endsWith("/11/retire")) { revisions = revisions.map(row => row.id === 11 ? { ...row, status: "RETIRED" as const } : row); return revisions[0]; }
-      if (path.endsWith("rotate-token")) return { source, token: plaintext };
-      if (path === `${root}/sources`) { const created = { ...source, ...options.body, id: 7 }; sources.push(created); return { source: created, token: plaintext }; }
+      if (path.endsWith("regenerate-webhook")) { currentWebhookKey = "y".repeat(43); return source; }
+      if (path === `${root}/sources`) { const created = { ...source, ...options.body, id: 7 }; sources.push(created); return created; }
       if (path === `${root}/sources/1`) { sources[0] = { ...sources[0], ...options.body }; return sources[0]; }
       if (path === `${root}/bindings`) { const created = { ...binding, ...options.body, id: 8 }; bindings.push(created); return created; }
       if (path === `${root}/bindings/2`) { bindings[0] = { ...bindings[0], ...options.body }; return bindings[0]; }
@@ -108,31 +111,32 @@ describe("External Signals configuration", () => {
     expect(screen.queryByText("Trading account")).toBeNull();
     expect(screen.getByText("Generic webhook")).toBeTruthy();
   });
-  it("creates a source, shows one-time credentials, then removes plaintext from UI and caches", async () => {
-    const storage = vi.spyOn(Storage.prototype, "setItem"); mount();
+  it("creates a source and retrieves its stable URL later without storing it in caches or browser storage", async () => {
+    const storage = vi.spyOn(Storage.prototype, "setItem"); const first = mount();
     fireEvent.click(await screen.findByRole("button", { name: "Create source" }));
+    expect(screen.queryByText(/shown once|only once|cannot be retrieved/i)).toBeNull();
     fireEvent.change(screen.getByLabelText("Source name", { exact: false }), { target: { value: "New feed" } });
     fireEvent.submit(screen.getByLabelText("Source name", { exact: false }).closest("form")!);
-    expect(await screen.findByText(plaintext)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Copy Token" })).toBeTruthy();
-    expect(screen.getByText(`https://api.example.test/api/external-signals/${plaintext}`)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Copy Webhook URL" })).toBeTruthy();
-    await waitFor(() => expect(client.getMutationCache().getAll().every(item => item.state.status !== "pending")).toBe(true));
-    expect(JSON.stringify(client.getMutationCache().getAll().map(item => item.state))).not.toContain(plaintext);
-    fireEvent.click(screen.getByRole("button", { name: "Done — clear credential" }));
-    expect(screen.queryByText(plaintext)).toBeNull();
+    expect(await screen.findByText(`https://api.example.test/api/external-signals/${plaintext}`)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy webhook URL" })).toBeTruthy();
     expect(JSON.stringify(client.getQueryCache().getAll().map(item => item.state.data))).not.toContain(plaintext);
+    expect(JSON.stringify(client.getMutationCache().getAll().map(item => item.state))).not.toContain(plaintext);
     expect(screen.getByLabelText("Location").textContent).not.toContain(plaintext);
-    expect(storage).not.toHaveBeenCalled(); storage.mockRestore();
+    expect(storage).not.toHaveBeenCalled();
+    first.unmount(); client.clear(); mount("?detail=7");
+    expect(await screen.findByText(`https://api.example.test/api/external-signals/${plaintext}`)).toBeTruthy();
+    storage.mockRestore();
   });
-  it("confirms token rotation before sending the request and clears the new token on close", async () => {
-    mount("?detail=1"); fireEvent.click(await screen.findByRole("button", { name: "Rotate webhook token" }));
-    expect(screen.getByText(/immediately invalidates/)).toBeTruthy();
-    expect(mocks.request.mock.calls.some(([path]) => path.endsWith("rotate-token"))).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Rotate token" }));
-    expect(await screen.findByText(plaintext)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Done — clear credential" }));
-    expect(screen.queryByText(plaintext)).toBeNull();
+  it("confirms deliberate URL regeneration and displays its retrievable replacement", async () => {
+    mount("?detail=1");
+    expect(await screen.findByText(`https://api.example.test/api/external-signals/${plaintext}`)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate webhook URL" }));
+    expect(screen.getByText(/Every external alert using the old URL must be updated/)).toBeTruthy();
+    expect(mocks.request.mock.calls.some(([path]) => path.endsWith("regenerate-webhook"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate URL" }));
+    expect(await screen.findByText(`https://api.example.test/api/external-signals/${"y".repeat(43)}`)).toBeTruthy();
+    expect(screen.queryByText(`https://api.example.test/api/external-signals/${plaintext}`)).toBeNull();
+    expect(screen.queryByText(/only once|shown only now/i)).toBeNull();
   });
   it.each([true, false])("requires confirmation to change source enabled state from %s", async enabled => {
     sources = [{ ...source, enabled }];
@@ -186,11 +190,21 @@ describe("External Signals configuration", () => {
 });
 
 describe("External Signals immutable evidence", () => {
+  it("renders fingerprint conflicts with useful linked-evidence context", async () => {
+    deliveries = [{ ...delivery, rejectionCode: "EVENT_FINGERPRINT_CONFLICT", rejectionDetails: { existingSignalId: 4, eventFingerprint: "f".repeat(64), reason: "same_event_identity_different_canonical_payload" } }];
+    mount("?section=deliveries&detail=6");
+    expect(await screen.findByLabelText("Rejection details")).toBeTruthy();
+    expect(screen.getByLabelText("Rejection details").textContent).toContain('"existingSignalId": 4');
+    expect(screen.getByLabelText("Rejection details").textContent).toContain("f".repeat(64));
+    expect(screen.queryByRole("button", { name: /execute|replay|create order/i })).toBeNull();
+  });
   it("shows legacy labels truthfully without a numeric revision relationship", async () => {
-    signals = [{ ...signal, strategyRevision: null, strategySignalRevisionId: null, legacyStrategyRevision: "acceptance-2" }];
+    signals = [{ ...signal, strategyRevision: null, strategySignalRevisionId: null, legacyStrategyRevision: "acceptance-2", externalEventKey: "original-event-key", eventFingerprint: null }];
     mount("?section=signals&detail=4");
     expect(await screen.findByText("Legacy revision: acceptance-2")).toBeTruthy();
     expect(screen.getByText(/has no numeric revision relationship/)).toBeTruthy();
+    expect(screen.getByText("Legacy external event key")).toBeTruthy();
+    expect(screen.getByText("original-event-key")).toBeTruthy();
   });
   it("presents numeric mismatch context", async () => {
     deliveries = [{ ...delivery, rejectionCode: "STRATEGY_REVISION_MISMATCH", rejectionDetails: { activeRevision: 2, receivedRevision: 1 } }];
@@ -207,7 +221,8 @@ describe("External Signals immutable evidence", () => {
     expect(await screen.findByLabelText("Metadata")).toBeTruthy();
     expect(screen.getByLabelText("Metadata").textContent).toContain('"rsi": 28.4');
     expect(screen.getByLabelText("Metadata").textContent).toContain('"triggerPrice": 600.25');
-    expect(screen.getByText("deterministic-event-key")).toBeTruthy();
+    expect(screen.getByText("f".repeat(64))).toBeTruthy();
+    expect(screen.getByText("Generated by AI Trader from canonical strategy-event identity.")).toBeTruthy();
     expect(screen.getByText("c".repeat(64))).toBeTruthy();
     for (const action of [/execute/i, /accept signal/i, /reject signal/i, /edit signal/i, /delete/i, /replay/i, /create order/i]) {
       expect(screen.queryByRole("button", { name: action })).toBeNull();

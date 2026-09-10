@@ -19,10 +19,10 @@ export async function getSourceCatalog(token: string | null) {
   }
 }
 export function createSource(input: CreateSource, token: string | null) {
-  return apiRequest<{ source: Source; token: string }>(`${root}/sources`, { method: "POST", token, body: input });
+  return apiRequest<Source>(`${root}/sources`, { method: "POST", token, body: input });
 }
-export function rotateSource(id: number, token: string | null) {
-  return apiRequest<{ source: Source; token: string }>(`${root}/sources/${id}/rotate-token`, { method: "POST", token });
+export function regenerateSource(id: number, token: string | null) {
+  return apiRequest<Source>(`${root}/sources/${id}/regenerate-webhook`, { method: "POST", token });
 }
 export function updateSource(id: number, input: UpdateSource, token: string | null) {
   return apiRequest<Source>(`${root}/sources/${id}`, { method: "PATCH", token, body: input });
@@ -33,7 +33,7 @@ export function createBinding(input: CreateBinding, token: string | null) {
 export function updateBinding(id: number, input: UpdateBinding, token: string | null) {
   return apiRequest<Resources["bindings"]>(`${root}/bindings/${id}`, { method: "PATCH", token, body: input });
 }
-export function webhookUrl(token: string) { return getApiUrl(`/api/external-signals/${encodeURIComponent(token)}`); }
+export function webhookUrl(webhookKey: string) { return getApiUrl(`/api/external-signals/${encodeURIComponent(webhookKey)}`); }
 export function listRevisions(id: number, token: string | null) {
   return apiRequest<Revision[]>(`${root}/bindings/${id}/revisions`, { token });
 }
@@ -42,3 +42,5 @@ export function changeRevision(id: number, action: "prepare" | "activate" | "ret
     method: "POST", token, body: action === "prepare" && changeNote.trim() ? { changeNote: changeNote.trim() } : {},
   });
 }
+
+export function getSourceWebhook(id: number, token: string | null) { return apiRequest<{ webhookKey: string }>(`${root}/sources/${id}/webhook`, { token }); }

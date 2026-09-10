@@ -4,12 +4,12 @@ export type Provider = typeof providers[number];
 export const events = ["ENTRY_LONG", "EXIT_LONG"] as const;
 export const statuses = ["NORMALIZED", "DUPLICATE", "REJECTED"] as const;
 export const timeframes = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"] as const;
-export const rejectionCodes = ["SOURCE_DISABLED", "INVALID_CONTENT_TYPE", "INVALID_JSON", "PAYLOAD_TOO_LARGE", "UNSUPPORTED_SCHEMA_VERSION", "INVALID_ENVELOPE", "UNKNOWN_STRATEGY_BINDING", "STRATEGY_BINDING_DISABLED", "STRATEGY_REVISION_MISMATCH", "UNKNOWN_SYMBOL", "INVALID_EVENT", "INVALID_TIMEFRAME", "INVALID_TIMESTAMP", "EVENT_KEY_CONFLICT"] as const;
+export const rejectionCodes = ["SOURCE_DISABLED", "INVALID_CONTENT_TYPE", "INVALID_JSON", "PAYLOAD_TOO_LARGE", "UNSUPPORTED_SCHEMA_VERSION", "INVALID_ENVELOPE", "UNKNOWN_STRATEGY_BINDING", "STRATEGY_BINDING_DISABLED", "STRATEGY_REVISION_MISMATCH", "UNKNOWN_SYMBOL", "INVALID_EVENT", "INVALID_TIMEFRAME", "INVALID_TIMESTAMP", "EVENT_FINGERPRINT_CONFLICT", "EVENT_KEY_CONFLICT"] as const;
 export type Source = { id: number; name: string; provider: Provider; enabled: boolean; authMethod: "URL_TOKEN"; createdAt: string; updatedAt: string };
 export type Binding = { id: number; signalSourceId: number; strategyId: number; externalStrategyKey: string; revisions: Revision[]; enabled: boolean; createdAt: string; updatedAt: string };
 export type Signal = {
   id: number; signalSourceId: number; strategySignalBindingId: number; strategyId: number; securityId: number;
-  schemaVersion: number; externalEventKey: string; strategyRevision: number | null; legacyStrategyRevision: string | null; strategySignalRevisionId: number | null; event: typeof events[number];
+  schemaVersion: number; externalEventKey: string | null; eventFingerprint: string | null; strategyRevision: number | null; legacyStrategyRevision: string | null; strategySignalRevisionId: number | null; event: typeof events[number];
   symbol: string; timeframe: string; signalTime: string; barTime: string | null; metadata: unknown;
   canonicalPayloadHash: string; createdAt: string;
 };
@@ -27,6 +27,5 @@ export type CreateSource = Pick<Source, "name" | "provider"> & { enabled: boolea
 export type UpdateSource = Partial<Pick<Source, "name" | "enabled">>;
 export type CreateBinding = Pick<Binding, "signalSourceId" | "strategyId" | "externalStrategyKey" | "enabled">;
 export type UpdateBinding = Pick<Binding, "enabled">;
-export type Credential = { source: Source; token: string; rotated: boolean };
 
 export type Revision = { id: number; strategySignalBindingId: number; revision: number; status: "PREPARED" | "ACTIVE" | "RETIRED"; changeNote: string | null; createdAt: string; activatedAt: string | null; retiredAt: string | null };
