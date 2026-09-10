@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
+  $queryRaw: vi.fn(),
   externalSignalSource: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn() },
   strategySignalBinding: { create: vi.fn(), update: vi.fn() },
   strategy: { findUnique: vi.fn() }, systemEvent: { create: vi.fn() },
 }));
 vi.mock('../db/prisma.js', () => ({ prisma: { ...mocks, $transaction: (fn: (db: typeof mocks) => unknown) => fn(mocks) } }));
-import { createExternalSignalSource, rotateExternalSignalToken, bindingRevisionInclude, hashWebhookToken, createStrategySignalBinding, updateStrategySignalBinding } from './external-signal-config.service.js';
+vi.mock('./trading-credential-crypto.service.js', () => ({ encryptSecret: (value: string) => `encrypted:${value}`, decryptSecret: (value: string) => value.slice(10) }));
+import { getExternalSignalWebhook, createExternalSignalSource, regenerateExternalSignalWebhook, bindingRevisionInclude, hashWebhookKey, createStrategySignalBinding, updateStrategySignalBinding } from './external-signal-config.service.js';
 import { updateStrategySignalBindingSchema, updateExternalSignalSourceSchema } from '../validators/external-signal.schema.js';
 
 describe('external signal configuration', () => {
@@ -18,23 +20,28 @@ describe('external signal configuration', () => {
     mocks.strategySignalBinding.create.mockResolvedValue({ id: 3 });
     mocks.strategySignalBinding.update.mockResolvedValue({ id: 3 });
   });
-  it('returns a 256-bit token once and stores only its hash; ordinary selections exclude credentials', async () => {
+  it('creates encrypted 256-bit stable keys retrievable later without exposing credentials in ordinary DTOs', async () => {
     const result = await createExternalSignalSource({ name: 'Test', provider: 'GENERIC_WEBHOOK' }, -1);
-    expect(result.token).toMatch(/^[\w-]{43}$/);
     const call = mocks.externalSignalSource.create.mock.calls[0]![0];
-    expect(call.data.webhookTokenHash).toBe(hashWebhookToken(result.token));
-    expect(call.select).not.toHaveProperty('webhookTokenHash');
-    expect(JSON.stringify(mocks.systemEvent.create.mock.calls)).not.toContain(result.token);
-    expect(JSON.stringify(mocks.systemEvent.create.mock.calls)).not.toContain(call.data.webhookTokenHash);
-    expect(mocks.systemEvent.create.mock.calls[0]![0].data.actorUserId).toBeNull();
-    expect(result.source).not.toHaveProperty('webhookTokenHash');
+    const key = call.data.webhookKeyCiphertext.slice(10);
+    expect(key).toMatch(/^[\w-]{43}$/);
+    expect(call.data.webhookKeyHash).toBe(hashWebhookKey(key));
+    mocks.externalSignalSource.findUnique.mockResolvedValue({ id: 1, ...call.data });
+    expect(await getExternalSignalWebhook(1, -1)).toEqual({ webhookKey: key });
+    expect(await getExternalSignalWebhook(1, -1)).toEqual({ webhookKey: key });
+    expect(call.select).not.toHaveProperty('webhookKeyHash');
+    expect(call.select).not.toHaveProperty('webhookKeyCiphertext');
+    expect(result).not.toHaveProperty('webhookKey');
+    expect(JSON.stringify(mocks.systemEvent.create.mock.calls)).not.toContain(key);
   });
-  it('rotates to a fresh credential and audits without including credentials', async () => {
-    const first = await rotateExternalSignalToken(1, -1);
-    const second = await rotateExternalSignalToken(1, -1);
-    expect(first.token).not.toBe(second.token);
-    expect(mocks.externalSignalSource.update.mock.calls[1]![0].data.webhookTokenHash).toBe(hashWebhookToken(second.token));
-    expect(JSON.stringify(mocks.systemEvent.create.mock.calls)).not.toContain(second.token);
+  it('regenerates a fresh key without auditing or returning capability material', async () => {
+    await regenerateExternalSignalWebhook(1, -1);
+    const result = await regenerateExternalSignalWebhook(1, -1);
+    const first = mocks.externalSignalSource.update.mock.calls[0]![0].data;
+    const second = mocks.externalSignalSource.update.mock.calls[1]![0].data;
+    expect(first.webhookKeyHash).not.toBe(second.webhookKeyHash);
+    expect(result).not.toHaveProperty('webhookKey');
+    expect(JSON.stringify(mocks.systemEvent.create.mock.calls)).not.toContain(second.webhookKeyCiphertext.slice(10));
   });
   it('requires existing source and strategy', async () => {
     mocks.strategy.findUnique.mockResolvedValue(null);
@@ -46,7 +53,7 @@ describe('external signal configuration', () => {
     for (const field of ['strategyId', 'signalSourceId', 'externalStrategyKey']) {
       expect(updateStrategySignalBindingSchema.safeParse({ [field]: 4, enabled: false }).success).toBe(false);
     }
-    expect(updateExternalSignalSourceSchema.safeParse({ webhookTokenHash: 'secret' }).success).toBe(false);
+    expect(updateExternalSignalSourceSchema.safeParse({ webhookKeyHash: 'secret' }).success).toBe(false);
     await updateStrategySignalBinding(3, { enabled: false }, -1);
     expect(mocks.strategySignalBinding.update).toHaveBeenCalledWith({ where: { id: 3 }, data: { enabled: false }, include: bindingRevisionInclude });
     expect(mocks.systemEvent.create).toHaveBeenCalledOnce();

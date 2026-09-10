@@ -13,7 +13,8 @@ Table ExternalSignalSource {
   provider ExternalSignalProvider [not null]
   enabled Boolean [not null, default: true]
   authMethod ExternalSignalAuthMethod [not null, default: 'URL_TOKEN']
-  webhookTokenHash String [unique, not null]
+  webhookKeyHash String [unique, not null]
+  webhookKeyCiphertext String
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
   bindings StrategySignalBinding [not null]
@@ -83,7 +84,8 @@ Table Signal {
   strategyId Int [not null]
   securityId Int [not null]
   schemaVersion Int [not null]
-  externalEventKey String [not null]
+  externalEventKey String
+  eventFingerprint String
   legacyStrategyRevision String
   strategyRevision Int
   strategySignalRevisionId Int
@@ -104,6 +106,7 @@ Table Signal {
 
   indexes {
     (signalSourceId, externalEventKey) [unique]
+    (signalSourceId, eventFingerprint) [unique]
   }
 }
 
@@ -1456,6 +1459,7 @@ Enum SignalDeliveryRejectionCode {
   INVALID_EVENT
   INVALID_TIMEFRAME
   INVALID_TIMESTAMP
+  EVENT_FINGERPRINT_CONFLICT
   EVENT_KEY_CONFLICT
 }
 

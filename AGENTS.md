@@ -212,7 +212,7 @@ Be especially careful when editing:
 ## Trade Lifecycle Notes
 
 External signal ingestion Phase 1 is a separate evidence-only subsystem:
-`/api/external-signals/:token` authenticates and records terminal `SignalDelivery`
+`/api/external-signals/:webhookKey` authenticates and records terminal `SignalDelivery`
 and immutable `Signal` rows. It must not invoke the existing `/api/signals` trading
 pipeline or create trading side effects. Sources and strategy bindings are mutable
 configuration; binding source/key/Strategy identity is fixed. Do not add normal
@@ -277,8 +277,8 @@ Only rebuild the web UI when UI code changes.
 The owner-only External Signals console lives at `/system/external-signals` under
 `apps/web/src/features/externalSignals/`. Keep section, applied filter, pagination,
 and detail state URL-authoritative. Webhook credentials belong only in transient
-one-time dialog state: never place them in query/mutation data, storage, URLs, or
-logs. Keep Signals and Deliveries read-only and account-independent.
+source-detail component state: never place them in query/mutation data, storage, browser URL state, or
+logs. Owner-only retrieval decrypts stable source capability URLs using existing credential encryption; regenerate only for deliberate invalidation. New ingress derives eventFingerprint and internal schemaVersion instead of accepting them from senders. Keep Signals and Deliveries read-only and account-independent.
 
 When building apps/web, Vite may report a large-chunk warning. This is expected for this internal web application and does not need to be highlighted unless the build fails or the warning materially changes.
 

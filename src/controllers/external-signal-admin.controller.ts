@@ -32,18 +32,19 @@ export function strategySignalRevisionController(action: 'list' | 'prepare' | 'a
 }
 
 export function externalSignalAdminController(resource: ExternalSignalResource,
-  action: 'list' | 'read' | 'create' | 'update' | 'rotate') {
+  action: 'list' | 'read' | 'create' | 'update' | 'regenerate' | 'webhook') {
   return async (req: Request, res: Response, next: NextFunction) => {
     res.setHeader('Cache-Control', 'no-store');
     try {
       if (!res.locals.user) throw new HttpError(401, 'Authentication required.');
       const actorUserId = res.locals.user.id;
-      const id = action === 'read' || action === 'update' || action === 'rotate'
+      const id = action === 'read' || action === 'update' || action === 'regenerate' || action === 'webhook'
         ? parse(schemas.externalSignalIdSchema, req.params.id) : 0;
       let result: unknown;
       if (action === 'list') result = await listExternalSignalResources(resource, parse(schemas.externalSignalListSchema, req.query));
       else if (action === 'read') result = await getExternalSignalResource(resource, id);
-      else if (action === 'rotate') result = await config.rotateExternalSignalToken(id, actorUserId);
+      else if (action === 'webhook') result = await config.getExternalSignalWebhook(id, actorUserId);
+      else if (action === 'regenerate') result = await config.regenerateExternalSignalWebhook(id, actorUserId);
       else if (resource === 'sources') result = action === 'create'
         ? await config.createExternalSignalSource(parse(schemas.createExternalSignalSourceSchema, req.body), actorUserId)
         : await config.updateExternalSignalSource(id, parse(schemas.updateExternalSignalSourceSchema, req.body), actorUserId);

@@ -12,17 +12,17 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('../db/prisma.js', () => ({ prisma: { ...mocks, $transaction: mocks.transaction } }));
 import { authenticateExternalSignal, ingestExternalSignal, type SignalRequestEvidence } from './external-signal-ingestion.service.js';
-import { hashWebhookToken } from './external-signal-config.service.js';
+import { hashWebhookKey } from './external-signal-config.service.js';
 import { canonicalJson, MAX_SIGNAL_BODY_BYTES } from './external-signal-normalization.js';
 import * as normalization from './external-signal-normalization.js';
 
 const token = 'a'.repeat(43);
 const source: ExternalSignalSource = { id: 1, name: 'Test', provider: 'GENERIC_WEBHOOK', enabled: true,
-  authMethod: 'URL_TOKEN', webhookTokenHash: hashWebhookToken(token), createdAt: new Date(), updatedAt: new Date() };
+  authMethod: 'URL_TOKEN', webhookKeyCiphertext: null, webhookKeyHash: hashWebhookKey(token), createdAt: new Date(), updatedAt: new Date() };
 const binding = { id: 2, signalSourceId: 1, strategyId: 3, externalStrategyKey: 'mean_reversion', enabled: true };
-const envelope = { schemaVersion: 1, externalStrategyKey: 'mean_reversion', strategyRevision: 1,
+const envelope = { externalStrategyKey: 'mean_reversion', strategyRevision: 1,
   event: 'ENTRY_LONG', symbol: 'QQQ', timeframe: '15m', signalTime: '2026-09-07T15:45:00Z',
-  barTime: '2026-09-07T15:30:00Z', eventKey: 'event-1', metadata: { triggerPrice: 600.25, rsi: 28.4 } };
+  barTime: '2026-09-07T15:30:00Z', metadata: { triggerPrice: 600.25, rsi: 28.4 } };
 
 function evidence(value: unknown = envelope): SignalRequestEvidence {
   const body = Buffer.from(typeof value === 'string' ? value : JSON.stringify(value));
@@ -42,7 +42,7 @@ describe('external signal ingestion evidence boundary', () => {
     mocks.strategySignalBinding.findUnique.mockResolvedValue(binding);
     mocks.strategySignalRevision.findFirst.mockResolvedValue({ id: 7, revision: 1, status: 'ACTIVE' });
     mocks.security.findUnique.mockResolvedValue({ id: 4, symbol: 'QQQ' });
-    mocks.signal.findUnique.mockImplementation(async () => signals[0] ?? null);
+    mocks.signal.findUnique.mockImplementation(async ({ where }) => signals.find(row => row.eventFingerprint === where.signalSourceId_eventFingerprint.eventFingerprint) ?? null);
     mocks.signal.create.mockImplementation(async ({ data }) => {
       const row = { id: signals.length + 10, ...data }; signals.push(row); return row;
     });
@@ -52,6 +52,27 @@ describe('external signal ingestion evidence boundary', () => {
   });
   const ingest = (value: unknown = envelope) => ingestExternalSignal(source, token, evidence(value));
 
+  it('derives identity without sender eventKey or schemaVersion and records internal contract v1', async () => {
+    expect((await ingest())?.status).toBe('NORMALIZED');
+    expect(signals[0]).toMatchObject({ schemaVersion: 1, eventFingerprint: normalization.hashCanonicalPayload({
+      signalSourceId: 1, strategySignalBindingId: 2, strategySignalRevisionId: 7, securityId: 4,
+      event: 'ENTRY_LONG', timeframe: '15m', eventOccurrenceTime: '2026-09-07T15:30:00.000Z',
+    }) });
+    expect(signals[0]).not.toHaveProperty('externalEventKey');
+  });
+  it.each([{ event: 'EXIT_LONG' }, { timeframe: '30m' }, { barTime: '2026-09-07T15:00:00Z' }])('records different logical identity: %j', async change => {
+    await ingest();
+    expect((await ingest({ ...envelope, ...change }))?.status).toBe('NORMALIZED');
+    expect(signals).toHaveLength(2);
+    expect(signals[0]!.eventFingerprint).not.toBe(signals[1]!.eventFingerprint);
+  });
+  it('falls back to signalTime when barTime is absent', async () => {
+    const { barTime: _bar, ...input } = envelope;
+    await ingest(input);
+    expect((await ingest(input))?.status).toBe('DUPLICATE');
+    expect((await ingest({ ...input, signalTime: '2026-09-07T15:46:00Z' }))?.status).toBe('NORMALIZED');
+  });
+
   it('provides safe diagnostic context for unknown symbols and revision mismatches', async () => {
     mocks.security.findUnique.mockResolvedValue(null);
     expect((await ingest())?.rejectionDetails).toEqual({ fields: ['symbol'], reason: 'symbol_not_in_security_catalog' });
@@ -59,14 +80,14 @@ describe('external signal ingestion evidence boundary', () => {
     const result = await ingest();
     expect(result?.rejectionDetails).toEqual({ strategySignalBindingId: binding.id, activeRevision: 2, receivedRevision: 1 });
     expect(JSON.stringify(result?.rejectionDetails)).not.toContain(token);
-    expect(JSON.stringify(result?.rejectionDetails)).not.toContain(source.webhookTokenHash);
+    expect(JSON.stringify(result?.rejectionDetails)).not.toContain(source.webhookKeyHash);
   });
   it('identifies conflict fields and the original Signal without payload values or hashes', async () => {
     await ingest(); const before = canonicalJson(signals);
-    const result = await ingest({ ...envelope, metadata: { diagnostics: 'private-context' }, event: 'EXIT_LONG' });
-    expect(result?.rejectionDetails).toEqual({ fields: ['eventKey'], existingSignalId: signals[0]!.id,
-      differingFields: ['event', 'metadata'], reason: 'event_key_already_used_for_different_content' });
-    for (const value of ['private-context', source.webhookTokenHash, signals[0]!.canonicalPayloadHash, token]) {
+    const result = await ingest({ ...envelope, metadata: { diagnostics: 'private-context' } });
+    expect(result?.rejectionDetails).toEqual({ eventFingerprint: signals[0]!.eventFingerprint, existingSignalId: signals[0]!.id,
+      differingFields: ['metadata'], reason: 'same_event_identity_different_canonical_payload' });
+    for (const value of ['private-context', source.webhookKeyHash, signals[0]!.canonicalPayloadHash, token]) {
       expect(JSON.stringify(result?.rejectionDetails)).not.toContain(value);
     }
     expect(canonicalJson(signals)).toBe(before);
@@ -102,12 +123,11 @@ describe('external signal ingestion evidence boundary', () => {
     expect(canonicalJson(signals)).toBe(before);
   });
   it.each([
-    { metadata: { rsi: 29 } }, { event: 'EXIT_LONG' }, { barTime: '2026-09-07T15:00:00Z' },
-    { signalTime: '2026-09-07T15:46:00Z' }, { timeframe: '30m' },
+    { metadata: { rsi: 29 } }, { signalTime: '2026-09-07T15:46:00Z' },
   ])('rejects changed canonical content without mutating the original: %j', async change => {
     await ingest(); const before = canonicalJson(signals);
     const result = await ingest({ ...envelope, ...change });
-    expect(result?.rejectionCode).toBe('EVENT_KEY_CONFLICT');
+    expect(result?.rejectionCode).toBe('EVENT_FINGERPRINT_CONFLICT');
     expect(result?.signalId).toBeUndefined();
     expect(signals).toHaveLength(1); expect(canonicalJson(signals)).toBe(before);
     expect(mocks.systemEvent.create.mock.calls[0]![0].data.severity).toBe('WARNING');
@@ -151,7 +171,7 @@ describe('external signal ingestion evidence boundary', () => {
     ['INVALID_TIMESTAMP', { signalTime: '2026-09-07T15:45:00.1234Z' }],
     ['INVALID_TIMESTAMP', { signalTime: '2027-09-07T15:45:00Z' }],
     ['INVALID_TIMESTAMP', { barTime: '2026-09-07T16:00:00Z' }],
-    ['UNSUPPORTED_SCHEMA_VERSION', { schemaVersion: 2 }],
+    ['INVALID_ENVELOPE', { schemaVersion: 2 }],
     ['INVALID_ENVELOPE', { tradingAccountId: 1 }],
     ['INVALID_ENVELOPE', { eventKey: '' }],
     ['INVALID_ENVELOPE', { metadata: { note: 'x'.repeat(4097) } }],

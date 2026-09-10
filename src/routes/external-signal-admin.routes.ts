@@ -13,7 +13,8 @@ for (const resource of ['sources', 'bindings'] as const) {
   router.post(`/${resource}`, controller(resource, 'create'));
   router.patch(`/${resource}/:id`, controller(resource, 'update'));
 }
-router.post('/sources/:id/rotate-token', controller('sources', 'rotate'));
+router.get('/sources/:id/webhook', controller('sources', 'webhook'));
+router.post('/sources/:id/regenerate-webhook', controller('sources', 'regenerate'));
 router.get('/bindings/:id/revisions', revisions('list'));
 router.post('/bindings/:id/revisions', revisions('prepare'));
 router.post('/bindings/:id/revisions/:revisionId/activate', revisions('activate'));

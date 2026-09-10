@@ -23,8 +23,8 @@ export async function changeStrategySignalRevision(bindingId: number, action: 'p
       if (!latest || latest.revision >= 2147483647) throw new HttpError(409, 'Revision sequence unavailable.');
       // Notes are descriptive only. Reject common credential material; never echo notes in audits.
       if (changeNote) {
-        const source = await db.externalSignalSource.findUniqueOrThrow({ where: { id: binding.signalSourceId }, select: { webhookTokenHash: true } });
-        if (inspectSignalEvidence({ changeNote }, [source.webhookTokenHash]).sensitive || /[A-Za-z0-9_-]{43,}/.test(changeNote)) throw new HttpError(400, 'Change notes must not contain credentials.');
+        const source = await db.externalSignalSource.findUniqueOrThrow({ where: { id: binding.signalSourceId }, select: { webhookKeyHash: true } });
+        if (inspectSignalEvidence({ changeNote }, [source.webhookKeyHash]).sensitive || /[A-Za-z0-9_-]{43,}/.test(changeNote)) throw new HttpError(400, 'Change notes must not contain credentials.');
       }
       const row = await db.strategySignalRevision.create({ data: { strategySignalBindingId: bindingId, revision: latest.revision + 1, status: 'PREPARED', changeNote: changeNote ?? null } });
       await audit(db, 'strategy_signal_revision_prepared', 'strategy_signal_revision', row.id, actorUserId, { strategySignalBindingId: bindingId, revision: row.revision });

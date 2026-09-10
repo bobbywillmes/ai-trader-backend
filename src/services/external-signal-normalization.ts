@@ -62,9 +62,7 @@ export function normalizeSignalEnvelope(value: unknown, receivedAt: Date) {
   const result = externalSignalEnvelopeSchema.safeParse(value);
   if (!result.success) {
     const fields = result.error.issues.map(issue => String(issue.path[0] ?? 'envelope'));
-    const code = fields.includes('schemaVersion') && value !== null && typeof value === 'object'
-      && 'schemaVersion' in value && value.schemaVersion !== 1 ? 'UNSUPPORTED_SCHEMA_VERSION'
-      : fields.includes('event') ? 'INVALID_EVENT'
+    const code = fields.includes('event') ? 'INVALID_EVENT'
       : fields.includes('timeframe') ? 'INVALID_TIMEFRAME'
       : fields.some(field => field === 'signalTime' || field === 'barTime') ? 'INVALID_TIMESTAMP'
       : 'INVALID_ENVELOPE';
@@ -74,7 +72,6 @@ export function normalizeSignalEnvelope(value: unknown, receivedAt: Date) {
       fields: [...new Set(fields)],
       issues: result.error.issues.map(issue => ({ field: String(issue.path[0] ?? 'envelope'), code: issue.code })),
       ...(code === 'INVALID_EVENT' ? { allowedEvents: ['ENTRY_LONG', 'EXIT_LONG'] } : {}),
-      ...(code === 'UNSUPPORTED_SCHEMA_VERSION' ? { supportedSchemaVersions: [1] } : {}),
     });
   }
   const input = result.data;

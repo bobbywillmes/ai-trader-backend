@@ -56,7 +56,6 @@ export const externalSignalListSchema = z.object({
 export type ExternalSignalListFilters = z.infer<typeof externalSignalListSchema>;
 
 export const externalSignalEnvelopeSchema = z.object({
-  schemaVersion: z.literal(1),
   externalStrategyKey: identity,
   strategyRevision: z.number().int().positive().max(2147483647),
   event: z.enum(SignalEvent),
@@ -64,7 +63,6 @@ export const externalSignalEnvelopeSchema = z.object({
   timeframe: z.string().trim().min(1).max(32),
   signalTime: signalTimestampSchema,
   barTime: signalTimestampSchema.optional(),
-  eventKey: z.string().trim().min(1).max(512),
   metadata: z.record(z.string(), z.json()).optional()
     .refine(value => value === undefined || Buffer.byteLength(JSON.stringify(value)) <= 4096,
       'Metadata exceeds 4096 bytes.'),

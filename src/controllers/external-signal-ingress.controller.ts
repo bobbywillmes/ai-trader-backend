@@ -36,15 +36,15 @@ export async function externalSignalIngressController(req: Request, res: Respons
   res.setHeader('Cache-Control', 'no-store');
   let sourceId: number | null = null;
   try {
-    const token = String(req.params.token ?? '');
-    const source = await authenticateExternalSignal(token);
+    const webhookKey = String(req.params.webhookKey ?? '');
+    const source = await authenticateExternalSignal(webhookKey);
     if (!source) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
     sourceId = source.id;
     const evidence = await readSignalRequest(req, requestId, receivedAt);
-    const delivery = await ingestExternalSignal(source, token, evidence);
+    const delivery = await ingestExternalSignal(source, webhookKey, evidence);
     if (!delivery) { res.status(401).json({ error: 'Unauthorized' }); return; }
     if (delivery.status === 'REJECTED') {
       res.status(delivery.rejectionCode === 'PAYLOAD_TOO_LARGE' ? 413 : 400).json({ error: 'Signal rejected', requestId });

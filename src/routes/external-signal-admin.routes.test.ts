@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('../db/prisma.js', () => ({ prisma: { ...mocks, $transaction: (fn: (db: typeof mocks) => unknown) => fn(mocks) } }));
 vi.mock('../services/auth.service.js', () => ({ getUserSessionFromToken: mocks.session }));
+vi.mock('../services/trading-credential-crypto.service.js', () => ({ encryptSecret: (value: string) => `encrypted:${value}`, decryptSecret: () => 'a'.repeat(43) }));
 import routes from './external-signal-admin.routes.js';
 import { requireAdminAccess } from '../middleware/api-key-auth.js';
 import { errorHandler } from '../middleware/error-handler.js';
@@ -92,19 +93,22 @@ describe('external signal owner management and read routes', () => {
     expect(keys.size).toBe(1);
     expect((await post('mean/reversion')).status).toBe(400);
   });
-  it('returns token only from creation and rotation with no-store and safe source selections', async () => {
+  it('keeps source DTOs safe and provides no-store owner-only webhook retrieval', async () => {
     const created = await fetch(`${baseUrl}/sources`, { method: 'POST', headers,
       body: JSON.stringify({ name: 'Test', provider: 'GENERIC_WEBHOOK' }) });
-    expect(created.status).toBe(201); expect(created.headers.get('cache-control')).toBe('no-store');
-    expect((await created.json() as { token: string }).token).toMatch(/^[\w-]{43}$/);
-    const rotated = await fetch(`${baseUrl}/sources/1/rotate-token`, { method: 'POST', headers });
-    expect((await rotated.json() as { token: string }).token).toMatch(/^[\w-]{43}$/);
-    const listed = await fetch(`${baseUrl}/sources`, { headers });
-    expect(JSON.stringify(await listed.json())).not.toMatch(/token|hash/i);
-    const read = await fetch(`${baseUrl}/sources/1`, { headers });
-    expect(JSON.stringify(await read.json())).not.toMatch(/token|hash/i);
-    for (const method of ['findMany', 'findUnique', 'create', 'update'] as const) {
-      expect(mocks.externalSignalSource[method].mock.calls[0]![0].select).not.toHaveProperty('webhookTokenHash');
+    expect(created.status).toBe(201);
+    expect(await created.json()).not.toHaveProperty('token');
+    const regenerated = await fetch(`${baseUrl}/sources/1/regenerate-webhook`, { method: 'POST', headers });
+    expect(regenerated.status).toBe(200);
+    for (const method of ['create', 'update'] as const) expect(mocks.externalSignalSource[method].mock.calls[0]![0].select).not.toHaveProperty('webhookKeyCiphertext');
+    mocks.externalSignalSource.findUnique.mockResolvedValue({ id: 1, webhookKeyCiphertext: 'encrypted' });
+    const read = await fetch(`${baseUrl}/sources/1/webhook`, { headers });
+    expect(read.headers.get('cache-control')).toBe('no-store');
+    expect(await read.json()).toEqual({ webhookKey: 'a'.repeat(43) });
+    for (const platformRole of ['OPERATOR', 'ACCOUNT_USER']) {
+      mocks.session.mockResolvedValue({ user: { id: 1, platformRole } });
+      expect((await fetch(`${baseUrl}/sources/1/webhook`, { headers: { authorization: 'Bearer session' } })).status).toBe(403);
+      expect((await fetch(`${baseUrl}/sources/1/regenerate-webhook`, { method: 'POST', headers: { authorization: 'Bearer session' } })).status).toBe(403);
     }
   });
   it('sanitizes unexpected management errors that may contain stored hashes', async () => {

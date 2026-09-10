@@ -50,6 +50,7 @@ enum SignalDeliveryRejectionCode {
   INVALID_EVENT
   INVALID_TIMEFRAME
   INVALID_TIMESTAMP
+  EVENT_FINGERPRINT_CONFLICT
   EVENT_KEY_CONFLICT
 }
 
@@ -59,7 +60,8 @@ model ExternalSignalSource {
   provider         ExternalSignalProvider
   enabled          Boolean                  @default(true)
   authMethod       ExternalSignalAuthMethod @default(URL_TOKEN)
-  webhookTokenHash  String                   @unique
+  webhookKeyHash    String                   @unique
+  webhookKeyCiphertext String?
   createdAt        DateTime                 @default(now())
   updatedAt        DateTime                 @updatedAt
 
@@ -145,7 +147,8 @@ model Signal {
   strategyId              Int
   securityId              Int
   schemaVersion           Int
-  externalEventKey        String
+  externalEventKey        String?
+  eventFingerprint        String?
   // Pre-migration label values remain untouched; new evidence uses numeric revisions.
   legacyStrategyRevision  String?
   strategyRevision        Int?
@@ -167,6 +170,7 @@ model Signal {
   strategySignalRevision StrategySignalRevision? @relation(fields: [strategySignalRevisionId, strategySignalBindingId, strategyRevision], references: [id, strategySignalBindingId, revision], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([signalSourceId, externalEventKey])
+  @@unique([signalSourceId, eventFingerprint])
   @@index([strategySignalBindingId])
   @@index([strategySignalRevisionId, strategySignalBindingId, strategyRevision])
   @@index([strategyId, signalTime])

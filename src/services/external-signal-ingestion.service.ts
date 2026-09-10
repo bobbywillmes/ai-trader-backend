@@ -1,6 +1,6 @@
 import { Prisma, type ExternalSignalSource } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
-import { hashWebhookToken } from './external-signal-config.service.js';
+import { hashWebhookKey } from './external-signal-config.service.js';
 import { createSystemEvent } from './system-event.service.js';
 import { canonicalJson, hashCanonicalPayload, inspectSignalEvidence, MAX_SIGNAL_BODY_BYTES, normalizeSignalEnvelope, SignalRejection } from './external-signal-normalization.js';
 
@@ -11,12 +11,12 @@ export type SignalRequestEvidence = {
 };
 type SignalDb = Pick<typeof prisma, '$transaction' | 'externalSignalSource'>;
 
-export async function authenticateExternalSignal(token: string, db: SignalDb = prisma) {
-  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
-  return db.externalSignalSource.findUnique({ where: { webhookTokenHash: hashWebhookToken(token) } });
+export async function authenticateExternalSignal(webhookKey: string, db: SignalDb = prisma) {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(webhookKey)) return null;
+  return db.externalSignalSource.findUnique({ where: { webhookKeyHash: hashWebhookKey(webhookKey) } });
 }
 
-export async function ingestExternalSignal(source: ExternalSignalSource, token: string,
+export async function ingestExternalSignal(source: ExternalSignalSource, webhookKey: string,
   evidence: SignalRequestEvidence, db: SignalDb = prisma) {
   let payload: unknown;
   let rawPayloadRedacted: Prisma.InputJsonValue = { omitted: 'unparseable_or_oversized_body' };
@@ -26,7 +26,7 @@ export async function ingestExternalSignal(source: ExternalSignalSource, token: 
   else {
     try {
       payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(evidence.body));
-      const inspection = inspectSignalEvidence(payload, [token, source.webhookTokenHash]);
+      const inspection = inspectSignalEvidence(payload, [webhookKey, source.webhookKeyHash]);
       rawPayloadRedacted = inspection.redacted ?? { value: null };
       if (inspection.sensitive || inspection.tooDeep) {
         preflightRejection = new SignalRejection('INVALID_ENVELOPE', {
@@ -52,8 +52,9 @@ export async function ingestExternalSignal(source: ExternalSignalSource, token: 
     } });
     // Recheck configuration after the body has arrived. Rotation invalidates an
     // in-flight credential; disabling a source or binding applies prospectively.
+    await tx.$queryRaw`SELECT id FROM "ExternalSignalSource" WHERE id = ${source.id} FOR SHARE`;
     const currentSource = await tx.externalSignalSource.findUnique({ where: { id: source.id } });
-    if (!currentSource || currentSource.webhookTokenHash !== hashWebhookToken(token)) return null;
+    if (!currentSource || currentSource.webhookKeyHash !== hashWebhookKey(webhookKey)) return null;
     if (!currentSource.enabled) return reject(new SignalRejection('SOURCE_DISABLED', { reason: 'source_not_enabled' }));
     if (preflightRejection) return reject(preflightRejection);
 
@@ -71,29 +72,34 @@ export async function ingestExternalSignal(source: ExternalSignalSource, token: 
       });
       const security = await tx.security.findUnique({ where: { symbol: normalized.symbol }, select: { id: true, symbol: true } });
       if (!security) throw new SignalRejection('UNKNOWN_SYMBOL', { fields: ['symbol'], reason: 'symbol_not_in_security_catalog' });
+      const eventFingerprint = hashCanonicalPayload({
+        signalSourceId: source.id, strategySignalBindingId: binding.id, strategySignalRevisionId: active.id,
+        securityId: security.id, event: normalized.event, timeframe: normalized.timeframe,
+        eventOccurrenceTime: (normalized.barTime ?? normalized.signalTime).toISOString(),
+      });
       const content = {
         signalSourceId: source.id, strategySignalBindingId: binding.id, strategyId: binding.strategyId,
         strategySignalRevisionId: active.id,
-        securityId: security.id, symbol: security.symbol, schemaVersion: normalized.schemaVersion,
-        externalEventKey: normalized.eventKey, strategyRevision: normalized.strategyRevision,
+        securityId: security.id, symbol: security.symbol, schemaVersion: 1,
+        eventFingerprint, strategyRevision: normalized.strategyRevision,
         event: normalized.event, timeframe: normalized.timeframe,
         signalTime: normalized.signalTime.toISOString(), barTime: normalized.barTime?.toISOString() ?? null,
         metadata: normalized.metadata ?? null,
       };
       const canonicalPayloadHash = hashCanonicalPayload(content);
       const existing = await tx.signal.findUnique({ where: {
-        signalSourceId_externalEventKey: { signalSourceId: source.id, externalEventKey: normalized.eventKey },
+        signalSourceId_eventFingerprint: { signalSourceId: source.id, eventFingerprint },
       } });
       if (existing) {
         if (existing.canonicalPayloadHash !== canonicalPayloadHash) {
           const previousContent = { ...existing, signalTime: existing.signalTime.toISOString(), barTime: existing.barTime?.toISOString() ?? null };
           const differingFields = (Object.keys(content) as (keyof typeof content)[])
             .filter(field => canonicalJson(content[field]) !== canonicalJson(previousContent[field]));
-          const delivery = await reject(new SignalRejection('EVENT_KEY_CONFLICT', {
-            fields: ['eventKey'], existingSignalId: existing.id, differingFields,
-            reason: 'event_key_already_used_for_different_content',
+          const delivery = await reject(new SignalRejection('EVENT_FINGERPRINT_CONFLICT', {
+            eventFingerprint, existingSignalId: existing.id, differingFields,
+            reason: 'same_event_identity_different_canonical_payload',
           }));
-          await createSystemEvent({ type: 'external_signal_event_key_conflict', entityType: 'signal_delivery',
+          await createSystemEvent({ type: 'external_signal_event_fingerprint_conflict', entityType: 'signal_delivery',
             entityId: delivery.id, severity: 'WARNING', payloadJson: {
               signalSourceId: source.id, existingSignalId: existing.id, deliveryId: delivery.id,
             } }, tx);
