@@ -294,7 +294,8 @@ describeDatabase('account workflow locks and active position uniqueness', () => 
       expect(contended.lastSummaryJson).toMatchObject({
         contenderProcessInstanceId: 'contender-b',
       });
-      expect(contentionEvents).toHaveLength(1);
+      // A one-second contention preserves the owner without opening a delayed-health episode.
+      expect(contentionEvents).toHaveLength(0);
 
       await owner.end();
       ownerClosed = true;
