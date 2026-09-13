@@ -8,6 +8,8 @@ export const rejectionCodes = ["SOURCE_DISABLED", "INVALID_CONTENT_TYPE", "INVAL
 export type Source = { id: number; name: string; provider: Provider; enabled: boolean; authMethod: "URL_TOKEN"; createdAt: string; updatedAt: string };
 export type Binding = { id: number; signalSourceId: number; strategyId: number; externalStrategyKey: string; revisions: Revision[]; enabled: boolean; createdAt: string; updatedAt: string };
 export type Signal = {
+  strategySignalRevision?: Revision | null;
+  routingRun?: { id: number; authorityMode: AuthorityMode; status: "STOPPED" | "COMPLETED"; stopReason: string | null; routeCount: number; routes: SignalRoute[] } | null;
   id: number; signalSourceId: number; strategySignalBindingId: number; strategyId: number; securityId: number;
   schemaVersion: number; externalEventKey: string | null; eventFingerprint: string | null; strategyRevision: number | null; legacyStrategyRevision: string | null; strategySignalRevisionId: number | null; event: typeof events[number];
   symbol: string; timeframe: string; signalTime: string; barTime: string | null; metadata: unknown;
@@ -28,4 +30,9 @@ export type UpdateSource = Partial<Pick<Source, "name" | "enabled">>;
 export type CreateBinding = Pick<Binding, "signalSourceId" | "strategyId" | "externalStrategyKey" | "enabled">;
 export type UpdateBinding = Pick<Binding, "enabled">;
 
-export type Revision = { id: number; strategySignalBindingId: number; revision: number; status: "PREPARED" | "ACTIVE" | "RETIRED"; changeNote: string | null; createdAt: string; activatedAt: string | null; retiredAt: string | null };
+export const authorityModes = ["EVIDENCE_ONLY", "EVALUATION_ONLY", "TRADE_ELIGIBLE"] as const;
+export type AuthorityMode = typeof authorityModes[number];
+export type Revision = { id: number; strategySignalBindingId: number; revision: number; authorityMode: AuthorityMode; status: "PREPARED" | "ACTIVE" | "RETIRED"; changeNote: string | null; createdAt: string; activatedAt: string | null; retiredAt: string | null };
+export type SignalRoute = { id: number; tradingAccountId: number; tradingAccountSubscriptionId: number; subscriptionId: number;
+  targetSnapshot: { tradingAccountName: string; subscriptionKey: string; subscriptionName: string; strategy: { id: number; key: string; name: string }; security: { id: number; symbol: string } };
+};

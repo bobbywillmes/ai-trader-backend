@@ -41,7 +41,8 @@ beforeEach(() => {
     if (path.endsWith("/webhook")) return { webhookKey: currentWebhookKey };
     if (options.method && options.method !== "GET") {
       if (mutationFailure) throw new Error("Unavailable");
-      if (path === `${root}/bindings/2/revisions`) { const row = { ...binding.revisions[0], id: 11, revision: 2, status: "PREPARED" as const, activatedAt: null, changeNote: String(options.body?.changeNote ?? "") }; revisions.unshift(row); return row; }
+      if (path === `${root}/bindings/2/revisions`) { const row = { ...binding.revisions[0], id: 11, revision: 2, status: "PREPARED" as const, activatedAt: null, authorityMode: (options.body?.authorityMode ?? revisions.find(row => row.status === "ACTIVE")?.authorityMode) as typeof binding.revisions[0]["authorityMode"], changeNote: String(options.body?.changeNote ?? "") }; revisions.unshift(row); return row; }
+      if (path.endsWith("/11/authority")) { revisions = revisions.map(row => row.id === 11 ? { ...row, authorityMode: options.body?.authorityMode as typeof row.authorityMode } : row); return revisions[0]; }
       if (path.endsWith("/11/activate")) { revisions = revisions.map(row => ({ ...row, status: row.id === 11 ? "ACTIVE" as const : "RETIRED" as const })); return revisions[0]; }
       if (path.endsWith("/11/retire")) { revisions = revisions.map(row => row.id === 11 ? { ...row, status: "RETIRED" as const } : row); return revisions[0]; }
       if (path.endsWith("regenerate-webhook")) { currentWebhookKey = "y".repeat(43); return source; }
@@ -64,6 +65,45 @@ beforeEach(() => {
 afterEach(() => { cleanup(); client?.clear(); });
 
 describe("External Signals configuration", () => {
+  it("requires deliberate confirmation to promote prepared authority and keeps frozen revisions read-only", async () => {
+    revisions = [{ ...binding.revisions[0], id: 11, revision: 2, status: "PREPARED", activatedAt: null }, ...binding.revisions,
+      { ...binding.revisions[0], id: 9, revision: 0, status: "RETIRED" }];
+    mount("?section=bindings&detail=2");
+    fireEvent.click(await screen.findByRole("button", { name: "Change authority" }));
+    expect(screen.getAllByRole("button", { name: "Change authority" })).toHaveLength(1);
+    const dialog = within(await screen.findByRole("dialog", { name: "Change prepared authority" }));
+    fireEvent.click(dialog.getByRole("combobox", { name: "Authority mode" }));
+    fireEvent.click(await screen.findByRole("option", { name: "TRADE_ELIGIBLE" }));
+    const save = dialog.getByRole("button", { name: "Save authority" });
+    expect(save.hasAttribute("disabled")).toBe(true);
+    expect(dialog.getByText(/current implementation still cannot create trades/)).toBeTruthy();
+    fireEvent.click(dialog.getByRole("checkbox", { name: "I deliberately confirm TRADE_ELIGIBLE authority" }));
+    fireEvent.click(save);
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith(`${root}/bindings/2/revisions/11/authority`, expect.objectContaining({ method: "PATCH", body: { authorityMode: "TRADE_ELIGIBLE", confirmTradeEligible: true } })));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Change prepared authority" })).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Activate revision 2" }));
+    expect(screen.getByRole("button", { name: "Confirm activation" }).hasAttribute("disabled")).toBe(true);
+  });
+  it("shows inherited authority when preparing a revision", async () => {
+    revisions = [{ ...binding.revisions[0], authorityMode: "EVALUATION_ONLY" }];
+    mount("?section=bindings&detail=2");
+    const prepare = await screen.findByRole("button", { name: "Prepare new revision" });
+    await waitFor(() => expect(prepare.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(prepare);
+    expect(await screen.findByText(/Inherited authority: EVALUATION_ONLY/)).toBeTruthy();
+    expect((screen.getByRole("combobox", { name: "Authority mode" }) as HTMLInputElement).value).toBe("EVALUATION_ONLY");
+  });
+  it("shows read-only routing targets with historical labels and management links", async () => {
+    signals = [{ ...signal, strategySignalRevision: binding.revisions[0], routingRun: { id: 12, authorityMode: "TRADE_ELIGIBLE", status: "COMPLETED", stopReason: null, routeCount: 1,
+      routes: [{ id: 13, tradingAccountId: 7, tradingAccountSubscriptionId: 8, subscriptionId: 9, targetSnapshot: { tradingAccountName: "Bobby Paper", subscriptionKey: "qqq-core", subscriptionName: "Core", strategy: { id: 3, key: "momentum", name: "Momentum" }, security: { id: 5, symbol: "QQQ" } } }] } }];
+    mount("?section=signals&detail=4");
+    expect(await screen.findByText("Authority: TRADE_ELIGIBLE")).toBeTruthy();
+    expect(screen.getByText(/Routing: COMPLETED.*Routes: 1/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Bobby Paper/ }).getAttribute("href")).toBe("/trading-accounts/7");
+    expect(screen.getByText(/TradingAccountSubscription #8/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: /qqq-core/ }).getAttribute("href")).toBe("/subscriptions?search=qqq-core");
+    expect(screen.queryByRole("button", { name: /execute|evaluate|create order/i })).toBeNull();
+  });
   it("abandons a prepared candidate with confirmation and preserves active state", async () => {
     revisions = [{ ...binding.revisions[0], id: 11, revision: 2, status: "PREPARED", activatedAt: null }, ...binding.revisions];
     mount("?section=bindings&detail=2");
@@ -93,7 +133,7 @@ describe("External Signals configuration", () => {
     fireEvent.change(dialog.getByLabelText("Change note"), { target: { value: "Added ADX confirmation" } });
     fireEvent.click(dialog.getByRole("button", { name: "Prepare revision" }));
     expect(await screen.findByText("PREPARED")).toBeTruthy();
-    expect(mocks.request).toHaveBeenCalledWith(`${root}/bindings/2/revisions`, expect.objectContaining({ method: "POST", body: { changeNote: "Added ADX confirmation" } }));
+    expect(mocks.request).toHaveBeenCalledWith(`${root}/bindings/2/revisions`, expect.objectContaining({ method: "POST", body: { changeNote: "Added ADX confirmation", authorityMode: "EVIDENCE_ONLY", confirmTradeEligible: false } }));
     expect(screen.getByText(/"strategyRevision": 2/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Activate revision 2" }));
     expect(screen.getByText(/Signals still sending revision 1 will be rejected/)).toBeTruthy();

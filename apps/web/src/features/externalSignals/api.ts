@@ -1,5 +1,5 @@
 import { apiRequest, getApiUrl } from "../../lib/api";
-import type { CreateBinding, CreateSource, ListResult, Resources, Section, Source, UpdateBinding, UpdateSource, Revision } from "./types";
+import type { CreateBinding, CreateSource, ListResult, Resources, Section, Source, UpdateBinding, UpdateSource, Revision, AuthorityMode } from "./types";
 const root = "/api/external-signal-admin";
 export function listExternalSignals<K extends Section>(section: K, query: string, token: string | null) {
   return apiRequest<ListResult<K>>(`${root}/${section}?${query}`, { token });
@@ -37,9 +37,9 @@ export function webhookUrl(webhookKey: string) { return getApiUrl(`/api/external
 export function listRevisions(id: number, token: string | null) {
   return apiRequest<Revision[]>(`${root}/bindings/${id}/revisions`, { token });
 }
-export function changeRevision(id: number, action: "prepare" | "activate" | "retire", revisionId: number | null, changeNote: string, token: string | null) {
+export function changeRevision(id: number, action: "prepare" | "activate" | "retire" | "authority", revisionId: number | null, changeNote: string, token: string | null, authority?: { authorityMode: AuthorityMode; confirmTradeEligible: boolean }) {
   return apiRequest<Revision>(`${root}/bindings/${id}/revisions${action === "prepare" ? "" : `/${revisionId}/${action}`}`, {
-    method: "POST", token, body: action === "prepare" && changeNote.trim() ? { changeNote: changeNote.trim() } : {},
+    method: action === "authority" ? "PATCH" : "POST", token, body: action === "prepare" ? { ...(changeNote.trim() ? { changeNote: changeNote.trim() } : {}), ...authority } : action === "authority" ? authority : {},
   });
 }
 

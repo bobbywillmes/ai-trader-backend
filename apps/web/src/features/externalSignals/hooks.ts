@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "./api";
 import { useStrategies } from "../strategies/hooks";
-import type { CreateBinding, CreateSource, Section, UpdateBinding, UpdateSource } from "./types";
+import type { CreateBinding, CreateSource, Section, UpdateBinding, UpdateSource, AuthorityMode } from "./types";
 
 export const externalSignalKeys = {
   section: (section: Section) => ["externalSignals", section] as const,
@@ -50,8 +50,8 @@ export function useRevisions(id: number, token: string | null) {
 }
 export function useRevisionMutation(id: number, token: string | null) {
   const client = useQueryClient();
-  return useMutation({ mutationFn: (input: { action: "prepare" | "activate" | "retire"; revisionId: number | null; changeNote: string }) =>
-    api.changeRevision(id, input.action, input.revisionId, input.changeNote, token),
+  return useMutation({ mutationFn: (input: { action: "prepare" | "activate" | "retire" | "authority"; revisionId: number | null; changeNote: string; authority?: { authorityMode: AuthorityMode; confirmTradeEligible: boolean } }) =>
+    api.changeRevision(id, input.action, input.revisionId, input.changeNote, token, input.authority),
     onSuccess: () => client.invalidateQueries({ queryKey: externalSignalKeys.section("bindings") }),
   });
 }
