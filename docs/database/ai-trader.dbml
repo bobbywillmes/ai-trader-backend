@@ -27,6 +27,7 @@ Table StrategySignalRevision {
   strategySignalBindingId Int [not null]
   revision Int [not null]
   status StrategySignalRevisionStatus [not null]
+  authorityMode SignalAuthorityMode [not null, default: 'EVIDENCE_ONLY']
   changeNote String
   createdAt DateTime [default: `now()`, not null]
   activatedAt DateTime
@@ -102,11 +103,42 @@ Table Signal {
   strategy Strategy [not null]
   security Security [not null]
   deliveries SignalDelivery [not null]
+  routingRun SignalRoutingRun
   strategySignalRevision StrategySignalRevision
 
   indexes {
     (signalSourceId, externalEventKey) [unique]
     (signalSourceId, eventFingerprint) [unique]
+  }
+}
+
+Table SignalRoutingRun {
+  id Int [pk, increment]
+  signalId Int [unique, not null]
+  authorityMode SignalAuthorityMode [not null]
+  status SignalRoutingStatus [not null]
+  startedAt DateTime [not null]
+  completedAt DateTime [not null]
+  routeCount Int [not null]
+  stopReason String
+  createdAt DateTime [default: `now()`, not null]
+  signal Signal [not null]
+  routes SignalRoute [not null]
+}
+
+Table SignalRoute {
+  id Int [pk, increment]
+  signalRoutingRunId Int [not null]
+  tradingAccountId Int [not null]
+  tradingAccountSubscriptionId Int [not null]
+  subscriptionId Int [not null]
+  targetSnapshot Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  routingRun SignalRoutingRun [not null]
+  accountSubscription TradingAccountSubscription [not null]
+
+  indexes {
+    (signalRoutingRunId, tradingAccountId) [unique]
   }
 }
 
@@ -595,6 +627,9 @@ Table TradingAccountSubscription {
   tradingAccount TradingAccount [not null]
   subscriptionId Int [not null]
   subscription Subscription [not null]
+  routingStrategyId Int [not null, default: 0]
+  routingSecurityId Int [not null, default: 0]
+  signalRoutes SignalRoute [not null]
   allocationId Int
   allocation TradingAccountAllocation
   enabled Boolean [not null, default: true]
@@ -1422,6 +1457,10 @@ Table Subscription {
   lifecycleExercises TradingLifecycleExercise [not null]
   liveEntryArmings LiveEntryArming [not null]
   liveEntryAcceptanceRuns LiveEntryAcceptanceRun [not null]
+
+  indexes {
+    (id, strategyId, securityId) [unique]
+  }
 }
 
 Enum ExternalSignalProvider {
@@ -1467,6 +1506,17 @@ Enum StrategySignalRevisionStatus {
   PREPARED
   ACTIVE
   RETIRED
+}
+
+Enum SignalAuthorityMode {
+  EVIDENCE_ONLY
+  EVALUATION_ONLY
+  TRADE_ELIGIBLE
+}
+
+Enum SignalRoutingStatus {
+  STOPPED
+  COMPLETED
 }
 
 Enum PlatformRole {
@@ -1808,6 +1858,12 @@ Ref: Signal.securityId > Security.id [delete: Restrict]
 
 Ref: Signal.(strategySignalRevisionId, strategySignalBindingId, strategyRevision) > StrategySignalRevision.(id, strategySignalBindingId, revision) [delete: Restrict]
 
+Ref: SignalRoutingRun.signalId - Signal.id [delete: Restrict]
+
+Ref: SignalRoute.signalRoutingRunId > SignalRoutingRun.id [delete: Restrict]
+
+Ref: SignalRoute.tradingAccountSubscriptionId > TradingAccountSubscription.id [delete: Restrict]
+
 Ref: User.invitedByUserId - User.id [delete: Set Null]
 
 Ref: UserSetupToken.userId > User.id [delete: Cascade]
@@ -1906,7 +1962,7 @@ Ref: TradingAccountAllocation.tradingAccountId > TradingAccount.id [delete: Casc
 
 Ref: TradingAccountSubscription.tradingAccountId > TradingAccount.id [delete: Cascade]
 
-Ref: TradingAccountSubscription.subscriptionId > Subscription.id [delete: Cascade]
+Ref: TradingAccountSubscription.(subscriptionId, routingStrategyId, routingSecurityId) > Subscription.(id, strategyId, securityId) [delete: Cascade]
 
 Ref: TradingAccountSubscription.(allocationId, tradingAccountId) > TradingAccountAllocation.(id, tradingAccountId) [delete: Restrict]
 

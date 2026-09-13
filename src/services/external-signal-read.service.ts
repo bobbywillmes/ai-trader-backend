@@ -3,6 +3,7 @@ import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import { externalSignalSourceSelect, bindingRevisionInclude } from './external-signal-config.service.js';
 import type { ExternalSignalListFilters } from '../validators/external-signal.schema.js';
+import { routingRunInclude } from './signal-routing.service.js';
 
 export type ExternalSignalResource = 'sources' | 'bindings' | 'deliveries' | 'signals';
 
@@ -12,7 +13,7 @@ export async function getExternalSignalResource(resource: ExternalSignalResource
     ? await prisma.externalSignalSource.findUnique({ where, select: externalSignalSourceSelect })
     : resource === 'bindings' ? await prisma.strategySignalBinding.findUnique({ where, include: bindingRevisionInclude })
     : resource === 'deliveries' ? await prisma.signalDelivery.findUnique({ where })
-    : await prisma.signal.findUnique({ where });
+    : await prisma.signal.findUnique({ where, include: { strategySignalRevision: true, routingRun: { include: routingRunInclude } } });
   if (!result) throw new HttpError(404, 'Resource not found.');
   return result;
 }

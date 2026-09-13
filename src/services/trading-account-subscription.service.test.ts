@@ -396,7 +396,7 @@ describe('trading account subscription service', () => {
     ).rejects.toMatchObject({
       statusCode: 409,
       message:
-        'Trading account subscription already exists for this account and subscription.',
+        'Trading account subscription conflicts with an existing assignment. Only one enabled assignment per account, Strategy, and Security is allowed.',
     });
   });
 

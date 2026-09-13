@@ -89,7 +89,7 @@ function isUniqueConstraintError(error: unknown) {
 function accountSubscriptionConflictError() {
   return new HttpError(
     409,
-    'Trading account subscription already exists for this account and subscription.'
+    'Trading account subscription conflicts with an existing assignment. Only one enabled assignment per account, Strategy, and Security is allowed.'
   );
 }
 
@@ -309,6 +309,7 @@ export async function deleteTradingAccountSubscriptionForAdmin(
             orderIntents: true,
             trackedPositions: true,
             entryDecisions: true,
+            signalRoutes: true,
           },
         },
       },
@@ -319,7 +320,8 @@ export async function deleteTradingAccountSubscriptionForAdmin(
     const referenceCount =
       existing._count.orderIntents +
       existing._count.trackedPositions +
-      existing._count.entryDecisions;
+      existing._count.entryDecisions +
+      (existing._count.signalRoutes ?? 0);
     if (referenceCount > 0) {
       throw new HttpError(
         409,

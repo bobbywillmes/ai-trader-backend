@@ -76,12 +76,24 @@ enum StrategySignalRevisionStatus {
   RETIRED
 }
 
-// Identity and note are immutable; only lifecycle status/timestamps advance.
+enum SignalAuthorityMode {
+  EVIDENCE_ONLY
+  EVALUATION_ONLY
+  TRADE_ELIGIBLE
+}
+
+enum SignalRoutingStatus {
+  STOPPED
+  COMPLETED
+}
+
+// Identity and note are immutable; authority is mutable only while PREPARED.
 model StrategySignalRevision {
   id                      Int                          @id @default(autoincrement())
   strategySignalBindingId Int
   revision                Int
   status                  StrategySignalRevisionStatus
+  authorityMode           SignalAuthorityMode          @default(EVIDENCE_ONLY)
   changeNote              String?
   createdAt               DateTime                     @default(now())
   activatedAt             DateTime?
@@ -167,6 +179,7 @@ model Signal {
   strategy              Strategy              @relation(fields: [strategyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   security              Security              @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   deliveries            SignalDelivery[]
+  routingRun            SignalRoutingRun?
   strategySignalRevision StrategySignalRevision? @relation(fields: [strategySignalRevisionId, strategySignalBindingId, strategyRevision], references: [id, strategySignalBindingId, revision], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([signalSourceId, externalEventKey])
@@ -178,6 +191,37 @@ model Signal {
   @@index([event, signalTime])
   @@index([signalTime])
   @@index([createdAt])
+}
+
+// Inserted atomically with routes; terminal evidence is never updated or deleted.
+model SignalRoutingRun {
+  id            Int                 @id @default(autoincrement())
+  signalId      Int                 @unique
+  authorityMode SignalAuthorityMode
+  status        SignalRoutingStatus
+  startedAt     DateTime
+  completedAt   DateTime
+  routeCount    Int
+  stopReason    String?
+  createdAt     DateTime            @default(now())
+  signal        Signal             @relation(fields: [signalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  routes        SignalRoute[]
+}
+
+model SignalRoute {
+  id                           Int      @id @default(autoincrement())
+  signalRoutingRunId           Int
+  tradingAccountId             Int
+  tradingAccountSubscriptionId Int
+  subscriptionId              Int
+  // Labels and Strategy/Security identity at routing time, not mutable catalog joins.
+  targetSnapshot              Json
+  createdAt                   DateTime @default(now())
+  routingRun                  SignalRoutingRun @relation(fields: [signalRoutingRunId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  accountSubscription         TradingAccountSubscription @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([signalRoutingRunId, tradingAccountId])
+  @@index([tradingAccountSubscriptionId])
 }
 
 model Setting {
@@ -899,7 +943,11 @@ model TradingAccountSubscription {
   tradingAccount        TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Cascade)
 
   subscriptionId        Int
-  subscription          Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  subscription          Subscription @relation(fields: [subscriptionId, routingStrategyId, routingSecurityId], references: [id, strategyId, securityId], onDelete: Cascade, onUpdate: Cascade)
+  // Database trigger derives these identity mirrors from Subscription, never callers.
+  routingStrategyId     Int @default(0)
+  routingSecurityId     Int @default(0)
+  signalRoutes          SignalRoute[]
 
   allocationId          Int?
   allocation            TradingAccountAllocation? @relation("TradingAccountAllocationSubscriptions", fields: [allocationId, tradingAccountId], references: [id, tradingAccountId], onDelete: Restrict, onUpdate: Restrict)
@@ -2239,6 +2287,7 @@ model Subscription {
   liveEntryAcceptanceRuns LiveEntryAcceptanceRun[]
 
   @@index([symbol])
+  @@unique([id, strategyId, securityId])
   @@index([strategyId])
   @@index([exitProfileId])
 }

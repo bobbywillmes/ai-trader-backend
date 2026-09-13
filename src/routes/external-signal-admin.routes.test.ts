@@ -33,7 +33,7 @@ describe('external signal owner management and read routes', () => {
     mocks.externalSignalSource.create.mockResolvedValue({ id: 1, name: 'Test', provider: 'GENERIC_WEBHOOK', enabled: true });
     mocks.externalSignalSource.update.mockResolvedValue({ id: 1 });
     mocks.strategySignalRevision.findMany.mockResolvedValue([{ id: 5, revision: 1, status: 'ACTIVE' }]);
-    mocks.strategySignalRevision.findFirst.mockImplementation(async ({ where }) => where.status === 'PREPARED' ? null : { id: 5, revision: 1, status: 'ACTIVE' });
+    mocks.strategySignalRevision.findFirst.mockImplementation(async ({ where }) => where.status === 'PREPARED' ? null : { id: 5, revision: 1, status: 'ACTIVE', authorityMode: 'EVIDENCE_ONLY' });
     mocks.strategySignalRevision.create.mockImplementation(async ({ data }) => ({ id: 6, ...data }));
     const app = express(); app.use(express.json());
     app.use('/api/external-signal-admin', requireAdminAccess, routes); app.use(errorHandler);
@@ -59,11 +59,27 @@ describe('external signal owner management and read routes', () => {
   });
   it.each(['OPERATOR', 'ACCOUNT_USER'])('denies %s every revision lifecycle endpoint', async platformRole => {
     mocks.session.mockResolvedValue({ user: { id: 1, platformRole } });
-    for (const [path, method] of [['/revisions', 'GET'], ['/revisions', 'POST'], ['/revisions/6/activate', 'POST'], ['/revisions/6/retire', 'POST']] as const) {
+    for (const [path, method] of [['/revisions', 'GET'], ['/revisions', 'POST'], ['/revisions/6/activate', 'POST'], ['/revisions/6/retire', 'POST'], ['/revisions/6/authority', 'PATCH']] as const) {
       expect((await fetch(`${baseUrl}/bindings/1${path}`, { method, headers: { authorization: 'Bearer session' } })).status).toBe(403);
     }
     expect(mocks.strategySignalRevision.create).not.toHaveBeenCalled();
     expect(mocks.strategySignalRevision.update).not.toHaveBeenCalled();
+  });
+  it('requires confirmed promotion through the owner authority endpoint and rejects frozen revisions', async () => {
+    mocks.strategySignalRevision.findFirst.mockResolvedValue({ id: 6, revision: 2, status: 'PREPARED', authorityMode: 'EVIDENCE_ONLY' });
+    mocks.strategySignalRevision.update.mockImplementation(async ({ data }) => ({ id: 6, revision: 2, ...data }));
+    const patch = (body: object) => fetch(`${baseUrl}/bindings/1/revisions/6/authority`, { method: 'PATCH', headers, body: JSON.stringify(body) });
+    expect((await patch({ authorityMode: 'TRADE_ELIGIBLE' })).status).toBe(400);
+    const promoted = await patch({ authorityMode: 'TRADE_ELIGIBLE', confirmTradeEligible: true });
+    expect(promoted.status).toBe(200);
+    expect(promoted.headers.get('cache-control')).toBe('no-store');
+    expect(await promoted.json()).toMatchObject({ authorityMode: 'TRADE_ELIGIBLE' });
+    for (const status of ['ACTIVE', 'RETIRED']) {
+      mocks.strategySignalRevision.findFirst.mockResolvedValue({ id: 6, revision: 2, status, authorityMode: 'EVIDENCE_ONLY' });
+      expect((await patch({ authorityMode: 'EVALUATION_ONLY' })).status).toBe(409);
+    }
+    expect((await patch({ authorityMode: 'ADMIN' })).status).toBe(400);
+    expect((await patch({ authorityMode: 'EVALUATION_ONLY', tradingEnabled: true })).status).toBe(400);
   });
   it.each(['sources', 'bindings', 'signals', 'deliveries'])('requires owner access to %s', async resource => {
     expect((await fetch(`${baseUrl}/${resource}`)).status).toBe(401);

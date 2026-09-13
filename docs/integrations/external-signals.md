@@ -1,8 +1,9 @@
-# External signal ingestion - Phase 1
+# External signal ingestion, authority, and routing
 
 External Signals are immutable, account-independent strategy evidence. **They cannot
-trade.** Neither ENTRY_LONG nor EXIT_LONG invokes evaluation, subscription matching,
-risk gates, entry decisions, order intents, brokers or position/exit pipelines.
+trade.** Backend-owned revision authority may permit deterministic subscription routing.
+Neither ENTRY_LONG nor EXIT_LONG invokes evaluation, risk gates, entry decisions,
+order intents, brokers or position/exit pipelines.
 The existing n8n `/api/signals` trading pipeline remains separate.
 
 ## Operator workflow
@@ -14,7 +15,8 @@ The existing n8n `/api/signals` trading pipeline remains separate.
 4. Configure the external strategy with the key and backend-assigned revision.
 5. Send the minimal JSON payload below to the source URL.
 6. AI Trader authenticates, resolves the binding and Security, normalizes the event,
-   derives its fingerprint, and stores Signal/Delivery evidence. Processing stops there.
+   derives its fingerprint, and atomically stores Signal/Delivery and terminal routing
+   evidence. Processing stops after routing; EVIDENCE_ONLY records a stopped run.
 
 One source URL serves many strategies. All TradingView strategies may eventually use
 one TradingView Production URL; provider labels do not select an adapter. URLs can
@@ -43,8 +45,9 @@ digits, hyphens and underscores are allowed (1-200 characters). The UI previews 
 result. Keys that normalize identically for one source collide with HTTP 409.
 Existing source/key/Strategy identity cannot be reassigned or deleted through APIs.
 
-AI Trader may later combine resolved Strategy and Security to find backend-owned
-Subscriptions. This phase implements no Subscription linkage or trading authority.
+AI Trader combines resolved Strategy and Security to find backend-owned account
+assignments only when the accepting revision permits routing. External providers
+never select Conservative/Core/Aggressive variants. This phase has zero trading authority.
 
 ## Minimal provider contract
 
@@ -179,7 +182,8 @@ STRATEGY_REVISION_MISMATCH and active/received integer details. Historical Signa
 are never rewritten. Abandoning PREPARED retires it without activation and consumes
 its number permanently. Retired revisions cannot be reactivated.
 
-Identity, revision numbers and notes are fixed. Only status/timestamps advance.
+Identity, revision numbers and notes are fixed. Authority may change only while
+PREPARED; activation freezes it permanently. Status/timestamps follow the lifecycle.
 Optional notes are bounded to 500 characters and must contain no credentials.
 Binding locks serialize revision changes and ingress; partial unique indexes prevent
 competing ACTIVE/PREPARED rows. Composite Signal foreign keys tie numeric revision,
@@ -221,7 +225,8 @@ Paths below are relative to `/api/external-signal-admin`:
 | POST | /bindings | source ID, Strategy ID, externalStrategyKey, optional enabled |
 | PATCH | /bindings/:id | enabled only |
 | GET | /bindings/:id/revisions | Newest-first history |
-| POST | /bindings/:id/revisions | Optional changeNote; prepare next backend-assigned number |
+| POST | /bindings/:id/revisions | Optional changeNote, authorityMode, confirmTradeEligible; prepare next number, inheriting active authority by default |
+| PATCH | /bindings/:id/revisions/:revisionId/authority | PREPARED only; authorityMode and deliberate confirmTradeEligible for promotion |
 | POST | /bindings/:id/revisions/:revisionId/activate | Activate PREPARED |
 | POST | /bindings/:id/revisions/:revisionId/retire | Abandon PREPARED |
 
@@ -280,3 +285,137 @@ Validation covers full backend/frontend suites, PostgreSQL isolated migration,
 concurrency, rollback, regeneration and history checks, type/build/lint checks,
 Prisma validation/generation/drift and git diff --check. Database tests use
 RUN_DATABASE_INTEGRITY_TESTS=1 and disposable schemas, never trading tables.
+
+
+## Backend-owned signal authority
+
+`SignalAuthorityMode` belongs to **StrategySignalRevision**, never the binding or
+sender metadata. Revision 1 and every revision present before the authority migration
+are `EVIDENCE_ONLY`. Preparing a revision inherits the ACTIVE revision's authority,
+not the most recent abandoned candidate's authority. A prepared candidate can be
+changed repeatedly, including downgrades. ACTIVE and RETIRED authority is immutable
+in both the service and PostgreSQL; frozen revisions cannot be reopened.
+
+| Authority | Current behavior |
+| --- | --- |
+| EVIDENCE_ONLY | Persist a STOPPED run with EVIDENCE_ONLY_AUTHORITY and zero routes |
+| EVALUATION_ONLY | Resolve assignments, persist COMPLETED run and routes, stop |
+| TRADE_ELIGIBLE | Exactly the same routing behavior; record the different authority, stop |
+
+In System -> External Signals -> binding detail, prepare a revision, review inherited
+authority, optionally change it, configure the sender, and activate. Promoting to
+TRADE_ELIGIBLE requires explicit UI acknowledgment and `confirmTradeEligible: true`
+in the authority write API. The activation UI also requires acknowledgment for a
+TRADE_ELIGIBLE candidate. The warning explains possible future trading after additional
+gates and that the current implementation cannot trade. Activation freezes authority;
+a later downgrade or promotion requires another prepared revision.
+
+Authority writes and activation use the existing binding lock and transactional,
+sanitized SystemEvents. `strategy_signal_revision_authority_changed` includes old/new
+modes, binding/revision IDs and actor identity; activation records the frozen mode.
+Notes, credentials and provider metadata are not copied into these audits. An audit
+failure rolls back the authority change. Historical Signals use their exact revision,
+including after retirement. Legacy Signals without numeric revisions fail closed with
+`LEGACY_REVISION_NO_AUTHORITY`; current binding authority is never inferred for them.
+
+## Deterministic assignment invariant
+
+For each TradingAccount + Strategy + Security, at most one
+**enabled TradingAccountSubscription** may exist. `enabled` is the existing master
+assignment switch. Disabled historical alternatives coexist, and different accounts
+can select different Subscription variants. The existing account/subscription unique
+key remains in effect.
+
+The schema adds `routingStrategyId` and `routingSecurityId` identity mirrors to
+TradingAccountSubscription. A BEFORE trigger derives them from Subscription for every
+insert/update, ignoring caller values. Their zero defaults are insertion placeholders
+for existing Prisma callers; no zero identity is persisted. A composite foreign key
+back to Subscription(id, strategyId, securityId) guarantees consistency, including
+catalog identity changes via ON UPDATE CASCADE. A partial unique index on
+(account, mirrored Strategy, mirrored Security) WHERE enabled enforces the invariant
+under concurrency. This avoids a join-dependent check trigger with snapshot races,
+while retaining existing Subscription and assignment management boundaries.
+
+The invariant applies even if the catalog Subscription is disabled, so re-enabling
+catalog configuration cannot reveal ambiguous enabled assignments. Routing additionally
+requires Subscription.enabled. Account operational status, allocation state,
+entriesEnabled, exitsEnabled, Strategy enablement, risk settings, broker credentials,
+and position state are intentionally not routing filters: they are later evaluation
+or execution gates. Being routed never establishes readiness or permission to enter.
+
+Migration `20260913120000_signal_authority_routing` checks existing data under table
+locks and fails atomically with an explicit conflict message. It never deletes or
+reassigns configuration. Diagnose conflicts before deployment with:
+
+```sql
+SELECT a."tradingAccountId", s."strategyId", s."securityId",
+       array_agg(a.id ORDER BY a.id) AS "assignmentIds"
+FROM "TradingAccountSubscription" a
+JOIN "Subscription" s ON s.id = a."subscriptionId"
+WHERE a.enabled
+GROUP BY a."tradingAccountId", s."strategyId", s."securityId"
+HAVING count(*) > 1;
+```
+
+An operator must deliberately disable conflicting assignments before retrying.
+Deploy the migration before the updated backend. No historical Signals or Deliveries
+are rewritten. All existing revisions receive EVIDENCE_ONLY, including test bindings.
+DBML is regenerated with Prisma; custom triggers, checks, and partial indexes are
+maintained in SQL migrations and documented here.
+
+## Immutable routing evidence and retry semantics
+
+`SignalRoutingRun` has a unique signalId, frozen authority, terminal STOPPED/COMPLETED
+status, timestamps, routeCount, and optional stopReason. `SignalRoute` records the
+account ID, TradingAccountSubscription ID, Subscription ID and immutable target labels
+plus Strategy/Security identity in targetSnapshot. Labels describe routing time;
+management links open current configuration. There is no ELIGIBLE/BLOCKED state,
+market regime, buying power, risk assessment, or entry decision on a route.
+
+The independently callable `routeSignal` service wraps a transaction. Ingress calls
+`routeSignalInTransaction` after normalization in the same transaction as Signal and
+SignalDelivery creation. No worker or queue is needed. A Signal row lock serializes
+concurrent callers, a unique run per Signal prevents duplicate runs, and a unique
+account per run prevents duplicate account fan-out. A single matching query defines
+the configuration snapshot. Any ambiguous account result fails closed.
+
+The terminal run and all routes commit together. PostgreSQL prevents updating or
+deleting either evidence model; deferred count checks prevent partial or later
+appended fan-out. Route foreign keys preserve referenced assignments. Failed routing
+rolls back the whole ingress transaction and returns the existing sanitized processing
+failure response; it never reports success with partial routes. Retry the same delivery
+or call the domain service after resolving the failure. A committed run is returned
+unchanged even if assignment configuration has since changed.
+
+Existing Signals are not bulk-routed by migration or a UI action. Detail shows them
+as not processed until an explicit domain-service retry (or an accepted duplicate
+webhook for that exact revision) creates their first result. Their original revision
+is still authoritative. Zero matching assignments yields COMPLETED with zero routes;
+that result is also final. No update/delete/re-route management API is exposed.
+
+Signal detail displays the exact revision, authority, terminal result, reason, route
+count and historical account -> assignment -> subscription -> Strategy -> Security chain.
+Filters, pagination and detail navigation remain URL-authoritative. Routing evidence
+is owner-only and read-only.
+
+## Permanent rapid-fire TradingView harness
+
+`external-signal-pipeline-test` remains a normal TradingView Dev binding. Its operator
+may prepare an EVALUATION_ONLY revision and activate it to test TradingView -> Delivery
+-> Signal -> authority -> immutable routes. Keep its source capability URL and update the
+alert's numeric revision deliberately. No special case for this key exists in code.
+`metadata.testMode`, comments, provider labels and other sender fields confer no
+permission. Revision authority is the control; all current modes stop before future
+evaluation and trading. No broker credentials or live-trading flags need to change.
+
+## Verification of the routing boundary
+
+The PostgreSQL suite exercises migration conflict failure/backfill, concurrent enabled
+assignment conflicts, catalog identity cascades, authority inheritance/freeze/audit
+rollback, historical revision authority, both routable modes, zero routes, concurrent
+retries, immutable snapshots and route insertion rollback. It runs real ingress and
+routing for ENTRY_LONG and EXIT_LONG in an isolated schema **without** OrderIntent,
+BrokerOrder, BrokerActivity, TrackedPosition or exit tables. A dependency-boundary test
+also limits routing imports and database capabilities so broker/entry/exit services
+cannot be introduced unnoticed. UI tests cover inheritance, prepared-only controls,
+deliberate promotion and activation confirmation, read-only targets and links.

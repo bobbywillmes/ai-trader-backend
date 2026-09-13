@@ -19,4 +19,5 @@ router.get('/bindings/:id/revisions', revisions('list'));
 router.post('/bindings/:id/revisions', revisions('prepare'));
 router.post('/bindings/:id/revisions/:revisionId/activate', revisions('activate'));
 router.post('/bindings/:id/revisions/:revisionId/retire', revisions('retire'));
+router.patch('/bindings/:id/revisions/:revisionId/authority', revisions('authority'));
 export default router;

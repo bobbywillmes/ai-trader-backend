@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ExternalSignalProvider, SignalDeliveryRejectionCode, SignalDeliveryStatus, SignalEvent } from '@prisma/client';
+import { ExternalSignalProvider, SignalDeliveryRejectionCode, SignalDeliveryStatus, SignalEvent, SignalAuthorityMode } from '@prisma/client';
 
 export const externalSignalIdSchema = z.coerce.number().int().positive().max(2147483647);
 const identity = z.string().trim().min(1).max(200);
@@ -27,6 +27,11 @@ export const updateStrategySignalBindingSchema = z.object({
 }).strict().refine(value => Object.keys(value).length > 0);
 export const prepareStrategySignalRevisionSchema = z.object({
   changeNote: z.string().trim().min(1).max(500).optional(),
+  authorityMode: z.enum(SignalAuthorityMode).optional(),
+  confirmTradeEligible: z.boolean().optional(),
+}).strict();
+export const updateRevisionAuthoritySchema = z.object({
+  authorityMode: z.enum(SignalAuthorityMode), confirmTradeEligible: z.boolean().optional(),
 }).strict();
 export const strategySignalRevisionActionSchema = z.object({}).strict();
 

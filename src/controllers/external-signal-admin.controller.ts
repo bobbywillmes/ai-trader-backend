@@ -14,16 +14,18 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   return result.data;
 }
 
-export function strategySignalRevisionController(action: 'list' | 'prepare' | 'activate' | 'retire') {
+export function strategySignalRevisionController(action: 'list' | 'prepare' | 'activate' | 'retire' | 'authority') {
   return async (req: Request, res: Response, next: NextFunction) => {
     res.setHeader('Cache-Control', 'no-store');
     try {
       if (!res.locals.user) throw new HttpError(401, 'Authentication required.');
       const bindingId = parse(schemas.externalSignalIdSchema, req.params.id);
       if (action === 'list') { res.json(await listStrategySignalRevisions(bindingId)); return; }
-      const input = parse(action === 'prepare' ? schemas.prepareStrategySignalRevisionSchema : schemas.strategySignalRevisionActionSchema, req.body ?? {});
+      const input = parse(action === 'prepare' ? schemas.prepareStrategySignalRevisionSchema : action === 'authority' ? schemas.updateRevisionAuthoritySchema : schemas.strategySignalRevisionActionSchema, req.body ?? {});
       const revisionId = action === 'prepare' ? null : parse(schemas.externalSignalIdSchema, req.params.revisionId);
-      const row = await changeStrategySignalRevision(bindingId, action, revisionId, 'changeNote' in input ? input.changeNote as string | undefined : undefined, res.locals.user.id);
+      const authority = schemas.prepareStrategySignalRevisionSchema.parse(input);
+      const row = await changeStrategySignalRevision(bindingId, action, revisionId, authority.changeNote, res.locals.user.id, undefined,
+        authority.authorityMode ? { authorityMode: authority.authorityMode, confirmTradeEligible: authority.confirmTradeEligible } : undefined);
       res.status(action === 'prepare' ? 201 : 200).json(row);
     } catch (error) {
       next(error instanceof HttpError ? error : new HttpError(500, 'Revision management unavailable.'));

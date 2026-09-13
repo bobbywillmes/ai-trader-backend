@@ -2,6 +2,7 @@ import { Prisma, type ExternalSignalSource } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { hashWebhookKey } from './external-signal-config.service.js';
 import { createSystemEvent } from './system-event.service.js';
+import { routeSignalInTransaction } from './signal-routing.service.js';
 import { canonicalJson, canonicalSignalPayload, hashCanonicalPayload, inspectSignalEvidence, MAX_SIGNAL_BODY_BYTES, normalizeSignalEnvelope, SignalRejection } from './external-signal-normalization.js';
 
 export type SignalRequestEvidence = {
@@ -108,6 +109,7 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
             } }, tx);
           return delivery;
         }
+        await routeSignalInTransaction(existing.id, tx);
         return tx.signalDelivery.create({ data: { ...deliveryBase, processedAt: new Date(), status: 'DUPLICATE', signalId: existing.id } });
       }
       const signal = await tx.signal.create({ data: {
@@ -115,6 +117,7 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
         metadata: normalized.metadata as Prisma.InputJsonObject | undefined ?? Prisma.DbNull,
         canonicalPayloadHash,
       } });
+      await routeSignalInTransaction(signal.id, tx);
       return tx.signalDelivery.create({ data: { ...deliveryBase, processedAt: new Date(), status: 'NORMALIZED', signalId: signal.id } });
     } catch (error) {
       if (error instanceof SignalRejection) return reject(error);

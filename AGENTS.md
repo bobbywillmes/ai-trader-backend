@@ -211,9 +211,13 @@ Be especially careful when editing:
 
 ## Trade Lifecycle Notes
 
-External signal ingestion Phase 1 is a separate evidence-only subsystem:
+External signal ingestion and routing are a separate evidence-only subsystem:
 `/api/external-signals/:webhookKey` authenticates and records terminal `SignalDelivery`
-and immutable `Signal` rows. It must not invoke the existing `/api/signals` trading
+and immutable `Signal` rows. Revision-owned authority may permit immutable
+`SignalRoutingRun` / `SignalRoute` evidence, but all modes stop before evaluation
+or trading. Only PREPARED revision authority is mutable. Enabled account assignments
+are database-unique per Account + Strategy + Security; routing additionally requires
+an enabled catalog Subscription and never applies execution gates. It must not invoke the existing `/api/signals` trading
 pipeline or create trading side effects. Sources and strategy bindings are mutable
 configuration; binding source/key/Strategy identity is fixed. Do not add normal
 application update/delete paths for Signal or SignalDelivery. Keep URL credentials

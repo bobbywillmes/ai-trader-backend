@@ -12,6 +12,7 @@ import { getExternalSignalWebhook, regenerateExternalSignalWebhook, hashWebhookK
 import { changeStrategySignalRevision } from '../../services/strategy-signal-revision.service.js';
 import { createStrategySignalBindingSchema } from '../../validators/external-signal.schema.js';
 import { canonicalSignalPayload, hashCanonicalPayload } from '../../services/external-signal-normalization.js';
+import { routeSignal } from '../../services/signal-routing.service.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const describeDatabase = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && databaseUrl ? describe : describe.skip;
@@ -30,7 +31,7 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     await admin.query(`CREATE SCHEMA "${schema}"`);
     await admin.query(`SET search_path TO "${schema}"`);
     await admin.query(`
-      CREATE TABLE "Strategy" (id integer PRIMARY KEY);
+      CREATE TABLE "Strategy" (id integer PRIMARY KEY, key text DEFAULT 'momentum', name text DEFAULT 'Momentum');
       CREATE TABLE "Security" (id integer PRIMARY KEY, symbol text UNIQUE NOT NULL);
       CREATE TYPE "SystemEventSeverity" AS ENUM ('INFO', 'WARNING', 'ERROR', 'CRITICAL');
       CREATE TABLE "SystemEvent" (
@@ -40,8 +41,17 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
         "createdAt" timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         processed boolean NOT NULL DEFAULT false
       );
-      INSERT INTO "Strategy" VALUES (1);
+      INSERT INTO "Strategy" (id) VALUES (1);
       INSERT INTO "Security" VALUES (1, 'QQQ');
+      CREATE TABLE "TradingAccount" (id integer PRIMARY KEY, "displayName" text NOT NULL);
+      CREATE TABLE "Subscription" (id integer PRIMARY KEY, key text NOT NULL, name text NOT NULL,
+        "strategyId" integer NOT NULL REFERENCES "Strategy"(id), "securityId" integer NOT NULL REFERENCES "Security"(id), enabled boolean NOT NULL DEFAULT true);
+      CREATE TABLE "TradingAccountSubscription" (id serial PRIMARY KEY, "tradingAccountId" integer NOT NULL REFERENCES "TradingAccount"(id),
+        "subscriptionId" integer NOT NULL REFERENCES "Subscription"(id), enabled boolean NOT NULL DEFAULT true,
+        UNIQUE ("tradingAccountId", "subscriptionId"));
+      INSERT INTO "TradingAccount" VALUES (1, 'Paper'), (2, 'Live'), (3, 'Other');
+      INSERT INTO "Subscription" VALUES (1, 'conservative', 'Conservative', 1, 1, true), (2, 'core', 'Core', 1, 1, true), (3, 'aggressive', 'Aggressive', 1, 1, true);
+      INSERT INTO "TradingAccountSubscription" ("tradingAccountId", "subscriptionId") VALUES (1, 1), (1, 2);
     `);
     await admin.query(await readFile('prisma/migrations/20260907120000_external_signal_ingestion/migration.sql', 'utf8'));
     const url = new URL(databaseUrl!); url.searchParams.delete('schema');
@@ -56,6 +66,12 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     await admin.query(`INSERT INTO "Signal" ("signalSourceId", "strategySignalBindingId", "strategyId", "securityId", "schemaVersion", "externalEventKey", "strategyRevision", "strategySignalRevisionId", event, symbol, timeframe, "signalTime", "canonicalPayloadHash") VALUES (1, 1, 1, 1, 1, 'legacy-numeric-key', 1, 1, 'EXIT_LONG', 'QQQ', '15m', CURRENT_TIMESTAMP, 'numeric-original-hash')`);
     numericLegacySignal = (await admin.query('SELECT * FROM "Signal" WHERE id = 2')).rows[0];
     await admin.query(await readFile('prisma/migrations/20260910120000_external_signal_provider_contract/migration.sql', 'utf8'));
+    const routingMigration = await readFile('prisma/migrations/20260913120000_signal_authority_routing/migration.sql', 'utf8');
+    await expect(admin.query(routingMigration)).rejects.toThrow('Conflicting enabled TradingAccountSubscriptions');
+    await admin.query('ROLLBACK');
+    expect((await admin.query('SELECT count(*)::int AS count FROM "TradingAccountSubscription" WHERE enabled')).rows[0].count).toBe(2);
+    await admin.query('UPDATE "TradingAccountSubscription" SET enabled = false WHERE "subscriptionId" = 2');
+    await admin.query(routingMigration);
     expect(await db.externalSignalSource.findUnique({ where: { webhookKeyHash: hashWebhookKey(token) } })).toBeNull();
     token = (await getExternalSignalWebhook(1, -1, db)).webhookKey;
   });
@@ -83,7 +99,7 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     expect({ ...row, strategyRevision: legacyStrategyRevision }).toEqual(legacySignal);
     expect(eventFingerprint).toBeNull(); expect(strategyRevision).toBeNull(); expect(strategySignalRevisionId).toBeNull();
     expect((await admin.query('SELECT * FROM "SignalDelivery" WHERE id = 1')).rows[0]).toEqual(legacyDelivery);
-    expect(await db.strategySignalRevision.findMany({ where: { strategySignalBindingId: 1 } })).toMatchObject([{ revision: 1, status: 'ACTIVE' }]);
+    expect(await db.strategySignalRevision.findMany({ where: { strategySignalBindingId: 1 } })).toMatchObject([{ revision: 1, status: 'ACTIVE', authorityMode: 'EVIDENCE_ONLY' }]);
     const { eventFingerprint: fingerprint, ...numeric } = (await admin.query('SELECT * FROM "Signal" WHERE id = 2')).rows[0];
     expect(fingerprint).toBeNull(); expect(numeric).toEqual(numericLegacySignal);
   });
@@ -159,7 +175,7 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
 
   it('atomically creates initial active revision and rolls back on audit failure', async () => {
     const binding = await createStrategySignalBinding({ signalSourceId: 1, strategyId: 1, externalStrategyKey: 'initial' }, -1, db);
-    expect(binding.revisions).toMatchObject([{ revision: 1, status: 'ACTIVE' }]);
+    expect(binding.revisions).toMatchObject([{ revision: 1, status: 'ACTIVE', authorityMode: 'EVIDENCE_ONLY' }]);
     await admin.query(`ALTER TABLE "SystemEvent" ADD CONSTRAINT test_audit_failure CHECK (type <> 'strategy_signal_binding_created') NOT VALID`);
     try {
       await expect(createStrategySignalBinding({ signalSourceId: 1, strategyId: 1, externalStrategyKey: 'rolled-back-binding' }, -1, db)).rejects.toThrow();
@@ -200,10 +216,14 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     expect(await db.signal.count({ where: { signalTime: new Date(occurrence('conflicting-race')) } })).toBe(1);
   });
   it('rolls back Signal creation when normalized Delivery insertion fails', async () => {
+    const beforeRuns = await db.signalRoutingRun.count();
+    const beforeRoutes = await db.signalRoute.count();
     await admin.query(`ALTER TABLE "SignalDelivery" ADD CONSTRAINT test_delivery_failure CHECK (status <> 'NORMALIZED') NOT VALID`);
     try {
       await expect(ingest('rollback')).rejects.toThrow();
       expect(await db.signal.count({ where: { signalTime: new Date(occurrence('rollback')) } })).toBe(0);
+      expect(await db.signalRoutingRun.count()).toBe(beforeRuns);
+      expect(await db.signalRoute.count()).toBe(beforeRoutes);
     } finally {
       await admin.query(`ALTER TABLE "SignalDelivery" DROP CONSTRAINT test_delivery_failure`);
     }
@@ -278,4 +298,140 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     expect(await Promise.all([db.signal.findMany(), db.signalDelivery.findMany(), db.strategySignalBinding.findMany(), db.strategySignalRevision.findMany()])).toEqual(before);
     expect(JSON.stringify(await db.systemEvent.findMany())).not.toContain(token);
   });
+  async function routingFixture(mode: 'EVIDENCE_ONLY' | 'EVALUATION_ONLY' | 'TRADE_ELIGIBLE') {
+    const binding = await createStrategySignalBinding({ signalSourceId: 1, strategyId: 1, externalStrategyKey: `routing-${randomUUID()}` }, -1, db);
+    let revision = binding.revisions[0]!;
+    if (mode !== 'EVIDENCE_ONLY') {
+      const prepared = await changeStrategySignalRevision(binding.id, 'prepare', null, undefined, -1, db);
+      await changeStrategySignalRevision(binding.id, 'authority', prepared.id, undefined, -1, db, { authorityMode: mode, confirmTradeEligible: true });
+      revision = await changeStrategySignalRevision(binding.id, 'activate', prepared.id, undefined, -1, db);
+    }
+    const signal = await db.signal.create({ data: {
+      signalSourceId: 1, strategySignalBindingId: binding.id, strategySignalRevisionId: revision.id,
+      strategyRevision: revision.revision, strategyId: 1, securityId: 1, schemaVersion: 1,
+      eventFingerprint: randomUUID(), event: 'ENTRY_LONG', symbol: 'QQQ', timeframe: '1m',
+      signalTime: new Date(), canonicalPayloadHash: 'routing-fixture', metadata: { testMode: true, bypassRisk: true },
+    } });
+    return { signal, binding, revision };
+  }
+
+  it('enforces enabled identity while preserving inactive alternatives and cross-account variants', async () => {
+    await expect(admin.query('UPDATE "TradingAccountSubscription" SET enabled = true WHERE "tradingAccountId" = 1 AND "subscriptionId" = 2')).rejects.toMatchObject({ code: '23505' });
+    await admin.query('INSERT INTO "TradingAccountSubscription" ("tradingAccountId", "subscriptionId", enabled) VALUES (1, 3, false), (2, 2, true)');
+    expect((await admin.query('SELECT count(*)::int AS count FROM "TradingAccountSubscription" WHERE "tradingAccountId" = 1')).rows[0].count).toBe(3);
+    // Caller-supplied mirrors cannot bypass the invariant.
+    await expect(admin.query('INSERT INTO "TradingAccountSubscription" ("tradingAccountId", "subscriptionId", "routingStrategyId", "routingSecurityId") VALUES (2, 3, 999, 999)')).rejects.toMatchObject({ code: '23505' });
+  });
+
+  it('serializes concurrent conflicting inserts with a real unique index', async () => {
+    const results = await Promise.allSettled([1, 2].map(subscriptionId => db.$executeRaw`INSERT INTO "TradingAccountSubscription" ("tradingAccountId", "subscriptionId") VALUES (3, ${subscriptionId})`));
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect((await admin.query('SELECT count(*)::int AS count FROM "TradingAccountSubscription" WHERE "tradingAccountId" = 3 AND enabled')).rows[0].count).toBe(1);
+    await admin.query('UPDATE "TradingAccountSubscription" SET enabled = false WHERE "tradingAccountId" = 3');
+  });
+
+  it('keeps mirrors synchronized and prevents catalog identity edits from creating ambiguity', async () => {
+    await admin.query(`INSERT INTO "Security" VALUES (2, 'RSP'); INSERT INTO "Subscription" VALUES (4, 'rsp', 'RSP', 1, 2, true);
+      INSERT INTO "TradingAccountSubscription" ("tradingAccountId", "subscriptionId") VALUES (1, 4)`);
+    await expect(admin.query('UPDATE "Subscription" SET "securityId" = 1 WHERE id = 4')).rejects.toMatchObject({ code: '23505' });
+    expect((await admin.query('SELECT "securityId" FROM "Subscription" WHERE id = 4')).rows[0].securityId).toBe(2);
+    await admin.query('UPDATE "TradingAccountSubscription" SET enabled = false WHERE "subscriptionId" = 4');
+    await admin.query('UPDATE "Subscription" SET "securityId" = 1 WHERE id = 4');
+    expect((await admin.query('SELECT "routingSecurityId" FROM "TradingAccountSubscription" WHERE "subscriptionId" = 4')).rows[0].routingSecurityId).toBe(1);
+  });
+
+  it('inherits authority, audits deliberate promotion and downgrade, and freezes historical authority', async () => {
+    const { binding, signal, revision } = await routingFixture('EVALUATION_ONLY');
+    const prepared = await changeStrategySignalRevision(binding.id, 'prepare', null, undefined, -1, db);
+    expect(prepared.authorityMode).toBe('EVALUATION_ONLY');
+    await expect(changeStrategySignalRevision(binding.id, 'authority', prepared.id, undefined, -1, db, { authorityMode: 'TRADE_ELIGIBLE' })).rejects.toMatchObject({ statusCode: 400 });
+    await changeStrategySignalRevision(binding.id, 'authority', prepared.id, undefined, -1, db, { authorityMode: 'TRADE_ELIGIBLE', confirmTradeEligible: true });
+    expect(await db.systemEvent.findFirst({ where: { type: 'strategy_signal_revision_authority_changed', entityId: String(prepared.id) }, orderBy: { id: 'desc' } })).toMatchObject({ payloadJson: { previousAuthorityMode: 'EVALUATION_ONLY', authorityMode: 'TRADE_ELIGIBLE' } });
+    await changeStrategySignalRevision(binding.id, 'authority', prepared.id, undefined, -1, db, { authorityMode: 'EVIDENCE_ONLY' });
+    await changeStrategySignalRevision(binding.id, 'activate', prepared.id, undefined, -1, db);
+    for (const frozen of [revision, prepared]) {
+      await expect(changeStrategySignalRevision(binding.id, 'authority', frozen.id, undefined, -1, db, { authorityMode: 'TRADE_ELIGIBLE', confirmTradeEligible: true })).rejects.toMatchObject({ statusCode: 409 });
+      await expect(db.strategySignalRevision.update({ where: { id: frozen.id }, data: { authorityMode: 'TRADE_ELIGIBLE' } })).rejects.toThrow();
+      await expect(db.strategySignalRevision.update({ where: { id: frozen.id }, data: { status: 'PREPARED', activatedAt: null, retiredAt: null } })).rejects.toThrow();
+    }
+    expect(await routeSignal(signal.id, db)).toMatchObject({ authorityMode: 'EVALUATION_ONLY', status: 'COMPLETED', routeCount: 2 });
+    expect(await db.signal.findUnique({ where: { id: signal.id } })).toEqual(signal);
+  });
+
+  it('rolls back authority when its sanitized transactional audit fails', async () => {
+    const { binding } = await routingFixture('EVIDENCE_ONLY');
+    const prepared = await changeStrategySignalRevision(binding.id, 'prepare', null, undefined, -1, db);
+    await admin.query(`ALTER TABLE "SystemEvent" ADD CONSTRAINT authority_audit_failure CHECK (type <> 'strategy_signal_revision_authority_changed') NOT VALID`);
+    try {
+      await expect(changeStrategySignalRevision(binding.id, 'authority', prepared.id, undefined, -1, db, { authorityMode: 'TRADE_ELIGIBLE', confirmTradeEligible: true })).rejects.toThrow();
+      expect(await db.strategySignalRevision.findUnique({ where: { id: prepared.id } })).toMatchObject({ authorityMode: 'EVIDENCE_ONLY' });
+    } finally { await admin.query('ALTER TABLE "SystemEvent" DROP CONSTRAINT authority_audit_failure'); }
+  });
+
+  it('stops evidence-only and legacy Signals idempotently without inspecting subscriptions', async () => {
+    const { signal } = await routingFixture('EVIDENCE_ONLY');
+    const run = await routeSignal(signal.id, db);
+    expect(run).toMatchObject({ authorityMode: 'EVIDENCE_ONLY', status: 'STOPPED', stopReason: 'EVIDENCE_ONLY_AUTHORITY', routeCount: 0, routes: [] });
+    expect(await routeSignal(signal.id, db)).toEqual(run);
+    expect(await routeSignal(1, db)).toMatchObject({ authorityMode: 'EVIDENCE_ONLY', status: 'STOPPED', stopReason: 'LEGACY_REVISION_NO_AUTHORITY', routeCount: 0 });
+  });
+
+  it.each(['EVALUATION_ONLY', 'TRADE_ELIGIBLE'] as const)('fans out %s identically and cannot touch trading models', async mode => {
+    const { signal, binding, revision } = await routingFixture(mode);
+    const results = await Promise.all(Array.from({ length: 12 }, () => routeSignal(signal.id, db)));
+    expect(results.every(result => JSON.stringify(result) === JSON.stringify(results[0]))).toBe(true);
+    const run = results[0]!;
+    expect(run).toMatchObject({ authorityMode: mode, status: 'COMPLETED', routeCount: 2, stopReason: null });
+    expect(run.routes.map(route => [route.tradingAccountId, route.subscriptionId])).toEqual([[1, 1], [2, 2]]);
+    expect(await db.signalRoutingRun.count({ where: { signalId: signal.id } })).toBe(1);
+    expect(await db.signalRoute.count({ where: { signalRoutingRunId: run.id } })).toBe(2);
+    // Exercise the real normalization -> routing transaction for both event types too.
+    const source = await db.externalSignalSource.update({ where: { id: 1 }, data: { enabled: true } });
+    for (const event of ['ENTRY_LONG', 'EXIT_LONG']) {
+      const body = Buffer.from(JSON.stringify({ externalStrategyKey: binding.externalStrategyKey, strategyRevision: revision.revision,
+        event, symbol: 'QQQ', timeframe: '1m', signalTime: new Date().toISOString(), metadata: { testMode: true, quantity: 99999 } }));
+      const evidence: SignalRequestEvidence = { requestId: randomUUID(), receivedAt: new Date(), contentType: 'application/json',
+        bodySizeBytes: body.length, rawPayloadHash: createHash('sha256').update(body).digest('hex'), body, tooLarge: false, validContentType: true };
+      const delivery = await ingestExternalSignal(source, token, evidence, db);
+      expect(delivery?.status).toBe('NORMALIZED');
+      expect(await db.signalRoutingRun.findUnique({ where: { signalId: delivery!.signalId! } })).toMatchObject({ authorityMode: mode, routeCount: 2, status: 'COMPLETED' });
+    }
+    const tables = (await admin.query('SELECT table_name FROM information_schema.tables WHERE table_schema = $1', [schema])).rows.map(row => row.table_name);
+    for (const table of ['OrderIntent', 'BrokerOrder', 'BrokerActivity', 'TrackedPosition', 'EntryDecision', 'PositionCloseRequest']) expect(tables).not.toContain(table);
+  });
+
+  it('completes zero routes when the catalog is disabled and keeps retries frozen after configuration changes', async () => {
+    const { signal } = await routingFixture('EVALUATION_ONLY');
+    await admin.query('UPDATE "Subscription" SET enabled = false');
+    const run = await routeSignal(signal.id, db);
+    expect(run).toMatchObject({ status: 'COMPLETED', routeCount: 0, routes: [] });
+    await admin.query('UPDATE "Subscription" SET enabled = true');
+    expect(await routeSignal(signal.id, db)).toEqual(run);
+  });
+
+  it('preserves target snapshots and rejects evidence updates, deletes, and later appended routes', async () => {
+    const { signal } = await routingFixture('EVALUATION_ONLY');
+    const run = await routeSignal(signal.id, db);
+    await admin.query(`UPDATE "TradingAccount" SET "displayName" = 'Renamed' WHERE id = 1; UPDATE "Subscription" SET name = 'Renamed' WHERE id = 1`);
+    expect(await routeSignal(signal.id, db)).toEqual(run);
+    await expect(db.signalRoute.update({ where: { id: run.routes[0]!.id }, data: { subscriptionId: 3 } })).rejects.toThrow();
+    await expect(db.signalRoute.delete({ where: { id: run.routes[0]!.id } })).rejects.toThrow();
+    await expect(db.signalRoutingRun.update({ where: { id: run.id }, data: { routeCount: 3 } })).rejects.toThrow();
+    await expect(db.signalRoutingRun.delete({ where: { id: run.id } })).rejects.toThrow();
+    await expect(db.signalRoute.create({ data: { signalRoutingRunId: run.id, tradingAccountId: 3, tradingAccountSubscriptionId: run.routes[0]!.tradingAccountSubscriptionId, subscriptionId: 1, targetSnapshot: {} } })).rejects.toThrow();
+    expect(await routeSignal(signal.id, db)).toEqual(run);
+  });
+
+  it('rolls back the entire run when a route fails and succeeds on a clean retry', async () => {
+    const { signal } = await routingFixture('TRADE_ELIGIBLE');
+    const before = await db.signalRoute.count();
+    await admin.query('ALTER TABLE "SignalRoute" ADD CONSTRAINT route_failure CHECK ("tradingAccountId" <> 2) NOT VALID');
+    try {
+      await expect(routeSignal(signal.id, db)).rejects.toThrow();
+      expect(await db.signalRoutingRun.count({ where: { signalId: signal.id } })).toBe(0);
+      expect(await db.signalRoute.count()).toBe(before);
+    } finally { await admin.query('ALTER TABLE "SignalRoute" DROP CONSTRAINT route_failure'); }
+    expect(await routeSignal(signal.id, db)).toMatchObject({ routeCount: 2, status: 'COMPLETED' });
+  });
+
 });
