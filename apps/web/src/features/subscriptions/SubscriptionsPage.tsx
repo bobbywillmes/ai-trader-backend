@@ -29,11 +29,13 @@ const OWNED_SEARCH_PARAMS = [
 ] as const;
 
 type Draft = {
+  exitManagementMode: 'BACKEND_MANAGED' | 'EXTERNAL_SIGNAL';
   key: string; name: string; description: string; symbol: string;
   strategyId: string | null; exitProfileId: string | null; enabled: boolean;
 };
 
 const emptyDraft: Draft = {
+  exitManagementMode: 'BACKEND_MANAGED',
   key: "", name: "", description: "", symbol: "",
   strategyId: null, exitProfileId: null, enabled: true,
 };
@@ -92,6 +94,7 @@ function assignmentState(
 function SubscriptionDetails({ item }: { item: Subscription }) {
   const activeAssignments = item.accountSubscriptions.filter((assignment) => assignment.enabled).length;
   return <Stack gap="md" className={classes.details}>
+    <Text size="sm">Exit management mode: {item.exitManagementMode}. Changes apply to future positions; existing positions keep their snapshot.</Text>
     <section className={classes.detailCard}><Title order={3} size="h5">Catalog definition</Title><RecordDetailsGrid sections={[{ items: [{ label: "Display name", value: item.name }, { label: "Subscription key", value: item.key, technical: true }, { label: "Security", value: `${item.security.symbol} — ${item.security.name}` }, { label: "Strategy", value: `${item.strategy.name} (${item.strategy.key})` }, { label: "Description", value: item.description || "No description configured" }, { label: "Catalog status", value: item.enabled ? "Enabled" : "Retired" }] }]} /></section>
     <section className={classes.detailCard}><Title order={3} size="h5">Default behavior</Title><RecordDetailsGrid sections={[{ items: [{ label: "Default exit profile", value: `${item.exitProfile.name} (${item.exitProfile.key})` }, { label: "Signal routing", value: `Routes through ${item.strategy.name}` }, { label: "Account sizing", value: "Configured separately on each Trading Account assignment" }] }]} /></section>
     <section className={classes.detailCard}><Title order={3} size="h5">Assignment usage</Title><RecordDetailsGrid sections={[{ items: [{ label: "Assigned accounts", value: item.accountSubscriptions.length }, { label: "Active assignments", value: activeAssignments }, { label: "Disabled assignments", value: item.accountSubscriptions.length - activeAssignments }, { label: "Entry-capable assignments", value: item.accountSubscriptions.filter((assignment) => assignment.entriesEnabled).length }, { label: "Accounts", value: item.accountSubscriptions.length ? item.accountSubscriptions.map((assignment) => `${assignment.tradingAccount.displayName} (${assignment.tradingAccount.environment})`).join(", ") : "Not assigned to any account" }] }]} /></section>
@@ -229,7 +232,7 @@ export function SubscriptionsPage() {
     setDraft({
       key: item.key, name: item.name, description: item.description ?? "",
       symbol: item.security.symbol, strategyId: String(item.strategy.id),
-      exitProfileId: String(item.exitProfile.id), enabled: item.enabled,
+      exitProfileId: String(item.exitProfile.id), enabled: item.enabled, exitManagementMode: item.exitManagementMode,
     });
     setAutoPopulateId(false);
     setEditing(item);
@@ -270,7 +273,7 @@ export function SubscriptionsPage() {
       name: draft.name.trim(),
       description: draft.description.trim() || null, symbol: draft.symbol,
       strategyId: Number(draft.strategyId),
-      exitProfileId: Number(draft.exitProfileId), enabled: draft.enabled,
+      exitProfileId: Number(draft.exitProfileId), enabled: draft.enabled, exitManagementMode: draft.exitManagementMode,
     };
     try {
       if (editing === "new") {
@@ -466,6 +469,9 @@ export function SubscriptionsPage() {
             <Select searchable required label="Exit Profile" data={(exitProfilesQuery.data ?? []).map((item) => ({ value: String(item.id), label: `${item.key} — ${item.name}` }))} value={draft.exitProfileId} onChange={(value) => setDraft({ ...draft, exitProfileId: value })} />
           </Group>
           <Textarea label="Description / notes" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.currentTarget.value })} />
+          <Select label="Exit Management Mode" data={['BACKEND_MANAGED', 'EXTERNAL_SIGNAL']} value={draft.exitManagementMode} allowDeselect={false} onChange={(value) => setDraft({ ...draft, exitManagementMode: value as Draft['exitManagementMode'] })} />
+          <Text size="sm" c="dimmed">Existing positions retain their snapshotted exit ownership. Changes apply to future positions.</Text>
+          {draft.exitManagementMode === 'EXTERNAL_SIGNAL' && <Alert color="yellow">Future positions will wait for applicable external strategy exit signals for normal strategy exits. Safety and risk-reducing mechanisms remain available. External signals currently record evaluation evidence only and do not execute exits.</Alert>}
           <Switch label="Globally enabled for new entries" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.currentTarget.checked })} />
           <Alert color="blue">Creating a catalog definition assigns it to zero Trading Accounts.</Alert>
           <Group justify="flex-end"><Button variant="default" onClick={() => setEditing(null)}>Cancel</Button><Button loading={createMutation.isPending || updateMutation.isPending} onClick={save}>Save</Button></Group>

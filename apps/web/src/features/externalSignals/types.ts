@@ -34,5 +34,17 @@ export const authorityModes = ["EVIDENCE_ONLY", "EVALUATION_ONLY", "TRADE_ELIGIB
 export type AuthorityMode = typeof authorityModes[number];
 export type Revision = { id: number; strategySignalBindingId: number; revision: number; authorityMode: AuthorityMode; status: "PREPARED" | "ACTIVE" | "RETIRED"; changeNote: string | null; createdAt: string; activatedAt: string | null; retiredAt: string | null };
 export type SignalRoute = { id: number; tradingAccountId: number; tradingAccountSubscriptionId: number; subscriptionId: number;
+  evaluationVersion?: number | null;
+  evaluation?: SignalEvaluation | null;
   targetSnapshot: { tradingAccountName: string; subscriptionKey: string; subscriptionName: string; strategy: { id: number; key: string; name: string }; security: { id: number; symbol: string } };
+};
+
+export type SignalEvaluation = {
+  id: number; signalRouteId: number; evaluationVersion: number; event: typeof events[number];
+  intent: 'ENTRY' | 'EXIT'; riskDirection: 'RISK_INCREASING' | 'RISK_REDUCING';
+  status: 'COMPLETED' | 'FAILED'; outcome: 'ELIGIBLE' | 'BLOCKED' | 'NO_ACTION' | null; reasonCode: string | null;
+  prospectiveExitManagementMode: string | null; positionExitManagementMode: string | null;
+  trackedPositionId: number | null; positionExitStateId: number | null;
+  startedAt: string; completedAt: string; createdAt: string;
+  gates: { id: number; sequence: number; gateKey: string; result: string; reasonCode: string | null; evidenceJson: unknown; evaluatedAt: string }[];
 };

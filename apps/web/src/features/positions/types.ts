@@ -1,6 +1,7 @@
 import type { TradingAccountSummary } from "../../types/tradingAccount";
 
 export type PositionExitState = {
+  exitManagementModeSnapshot?: 'BACKEND_MANAGED' | 'EXTERNAL_SIGNAL';
   id?: number;
   trackedPositionId?: number;
 
