@@ -12,10 +12,12 @@ const mocks = vi.hoisted(() => ({
   captureTrackedPositionConfigSnapshot: vi.fn(),
   resolveTrackedPositionSubscription: vi.fn(),
   linkLocalEntryOwnership: vi.fn(),
+  linkLocalEntryOwnershipInTransaction: vi.fn(),
   securityFindUnique: vi.fn(),
   trackedPositionFindFirst: vi.fn(),
   trackedPositionCreate: vi.fn(),
   subscriptionFindUnique: vi.fn(),
+  positionExitStateCreate: vi.fn(),
   transaction: vi.fn(),
   trackedPositionUpdate: vi.fn(),
   trackedPositionUpdateMany: vi.fn(),
@@ -72,6 +74,7 @@ vi.mock('./trade-cycle-config-snapshot.service.js', () => ({
 vi.mock('./tracked-position-subscription-resolution.service.js', () => ({
   resolveTrackedPositionSubscription: mocks.resolveTrackedPositionSubscription,
   linkLocalEntryOwnership: mocks.linkLocalEntryOwnership,
+  linkLocalEntryOwnershipInTransaction: mocks.linkLocalEntryOwnershipInTransaction,
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -135,6 +138,14 @@ it('classifies position attribution from environment and authority', () => {
   expect(positionAttributionSeverity({ environment: 'LIVE', resolved: false, expectedCanonical: false, authoritativeProductionExecutor: false })).toBe('WARNING');
 });
 
+function mockCreationTransaction() {
+  mocks.transaction.mockImplementation(async (fn) => fn({
+    trackedPosition: { findFirst: mocks.trackedPositionFindFirst, create: mocks.trackedPositionCreate },
+    subscription: { findUnique: mocks.subscriptionFindUnique },
+    positionExitState: { create: mocks.positionExitStateCreate },
+  }));
+}
+
 const brokerPosition = {
   broker: 'alpaca',
   symbol: 'DIA',
@@ -149,30 +160,6 @@ const brokerPosition = {
 };
 
 describe('position tracking subscription recovery', () => {
-  it('retains observed exposure with backend ownership when initial attribution fails', async () => {
-    mocks.trackedPositionFindFirst.mockResolvedValue(null);
-    mocks.resolveTrackedPositionSubscription.mockRejectedValue(new Error('attribution unavailable'));
-    mocks.transaction.mockImplementation(async fn => fn({ trackedPosition: { findFirst: mocks.trackedPositionFindFirst, create: mocks.trackedPositionCreate }, subscription: { findUnique: mocks.subscriptionFindUnique } }));
-    mocks.trackedPositionCreate.mockImplementation(async ({ data }) => ({ id: 100, subscriptionId: null, configSnapshotJson: null, ...data }));
-    expect((await syncTrackedPositions()).created).toBe(1);
-    expect(mocks.trackedPositionCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ exitState: { create: { exitManagementModeSnapshot: 'BACKEND_MANAGED' } } }) });
-    expect(mocks.createSystemEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'position.subscription_resolution_unresolved' }));
-  });
-  it.each(['BACKEND_MANAGED', 'EXTERNAL_SIGNAL'])('atomically freezes %s ownership at new position creation', async mode => {
-    mocks.trackedPositionFindFirst.mockResolvedValue(null);
-    mocks.subscriptionFindUnique.mockResolvedValue({ id: 22, strategyId: 5, exitManagementMode: mode });
-    mocks.resolveTrackedPositionSubscription.mockResolvedValue({ status: 'resolved', source: 'local_order_intent',
-      subscriptionId: 22, tradingAccountSubscriptionId: 44, subscriptionKey: 'dia', evidence: {} });
-    mocks.transaction.mockImplementation(async fn => fn({ trackedPosition: { findFirst: mocks.trackedPositionFindFirst, create: mocks.trackedPositionCreate }, subscription: { findUnique: mocks.subscriptionFindUnique } }));
-    mocks.trackedPositionCreate.mockImplementation(async ({ data }) => ({ id: 100, subscriptionId: null, configSnapshotJson: null, ...data }));
-    const result = await syncTrackedPositions();
-    expect(result.symbolErrors).toEqual([]);
-    expect(mocks.trackedPositionCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ exitState: { create: {
-      exitManagementModeSnapshot: mode, exitOwnershipProvenance: { tradingAccountId: 1, tradingAccountSubscriptionId: 44,
-        subscriptionId: 22, strategyId: 5, securityId: 11, source: 'local_order_intent' },
-    } } }) });
-    expect(mocks.resolveTrackedPositionSubscription).toHaveBeenCalledOnce();
-  });
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.getNormalizedPositions.mockResolvedValue([brokerPosition]);
@@ -183,6 +170,10 @@ describe('position tracking subscription recovery', () => {
     mocks.ensurePositionExitState.mockResolvedValue({});
     mocks.trackedPositionFindMany.mockResolvedValue([]);
     mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
+    mocks.linkLocalEntryOwnership.mockResolvedValue(false);
+    mocks.linkLocalEntryOwnershipInTransaction.mockResolvedValue(false);
+    mocks.positionExitStateCreate.mockImplementation(async ({ data }) => ({ id: 200, ...data }));
+    mocks.trackedPositionCreate.mockImplementation(async ({ data }) => ({ id: 100, subscriptionId: null, configSnapshotJson: null, ...data }));
     mocks.adaptiveGetDecision.mockResolvedValue({
       due: true,
       mode: 'market_open_active',
@@ -190,6 +181,101 @@ describe('position tracking subscription recovery', () => {
       nextDueAt: null,
       reason: 'startup_due',
     });
+  });
+
+  it('retains observed exposure with backend ownership when initial attribution fails (unresolved)', async () => {
+    mocks.trackedPositionFindFirst.mockResolvedValue(null);
+    mocks.resolveTrackedPositionSubscription.mockRejectedValue(new Error('attribution unavailable'));
+    mockCreationTransaction();
+    expect((await syncTrackedPositions()).created).toBe(1);
+    expect(mocks.positionExitStateCreate).toHaveBeenCalledWith({ data: { trackedPositionId: 100, exitManagementModeSnapshot: 'BACKEND_MANAGED' } });
+    expect(mocks.linkLocalEntryOwnershipInTransaction).not.toHaveBeenCalled();
+    expect(mocks.subscriptionFindUnique).not.toHaveBeenCalled();
+    expect(mocks.createSystemEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'position.subscription_resolution_unresolved' }));
+  });
+
+  it('leaves ambiguous attribution BACKEND_MANAGED (D)', async () => {
+    mocks.trackedPositionFindFirst.mockResolvedValue(null);
+    mocks.resolveTrackedPositionSubscription.mockResolvedValue({ status: 'ambiguous', source: 'ambiguous',
+      subscriptionId: null, subscriptionKey: null, tradingAccountSubscriptionId: null,
+      reason: 'multiple_eligible_subscriptions_for_observed_position', evidence: {} });
+    mockCreationTransaction();
+    expect((await syncTrackedPositions()).created).toBe(1);
+    expect(mocks.positionExitStateCreate).toHaveBeenCalledWith({ data: { trackedPositionId: 100, exitManagementModeSnapshot: 'BACKEND_MANAGED' } });
+    expect(mocks.linkLocalEntryOwnershipInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('never confers EXTERNAL_SIGNAL ownership from unique_observer_fallback regardless of Subscription mode (C)', async () => {
+    mocks.trackedPositionFindFirst.mockResolvedValue(null);
+    mocks.resolveTrackedPositionSubscription.mockResolvedValue({ status: 'resolved', source: 'unique_observer_fallback',
+      subscriptionId: 22, subscriptionKey: 'dia', tradingAccountSubscriptionId: 44,
+      reason: 'single_eligible_subscription_for_observed_position', evidence: {} });
+    mockCreationTransaction();
+    const result = await syncTrackedPositions();
+    expect(result.symbolErrors).toEqual([]);
+    expect(mocks.positionExitStateCreate).toHaveBeenCalledWith({ data: { trackedPositionId: 100, exitManagementModeSnapshot: 'BACKEND_MANAGED' } });
+    expect(mocks.subscriptionFindUnique).not.toHaveBeenCalled();
+    expect(mocks.linkLocalEntryOwnershipInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('freezes EXTERNAL_SIGNAL ownership only once local entry linkage actually commits inside the creation transaction (A)', async () => {
+    mocks.trackedPositionFindFirst.mockResolvedValue(null);
+    mocks.subscriptionFindUnique.mockResolvedValue({ id: 22, strategyId: 5, exitManagementMode: 'EXTERNAL_SIGNAL' });
+    mocks.resolveTrackedPositionSubscription.mockResolvedValue({ status: 'resolved', source: 'local_order_intent',
+      subscriptionId: 22, tradingAccountSubscriptionId: 44, subscriptionKey: 'dia', evidence: {} });
+    mocks.linkLocalEntryOwnershipInTransaction.mockResolvedValue(true);
+    mockCreationTransaction();
+    const result = await syncTrackedPositions();
+    expect(result.symbolErrors).toEqual([]);
+    expect(mocks.linkLocalEntryOwnershipInTransaction).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      trackedPositionId: 100, expectedSubscriptionId: 22, expectedTradingAccountSubscriptionId: 44,
+    }));
+    expect(mocks.positionExitStateCreate).toHaveBeenCalledWith({ data: { trackedPositionId: 100,
+      exitManagementModeSnapshot: 'EXTERNAL_SIGNAL',
+      exitOwnershipProvenance: { tradingAccountId: 1, tradingAccountSubscriptionId: 44,
+        subscriptionId: 22, strategyId: 5, securityId: 11, source: 'local_order_intent' },
+    } });
+    expect(mocks.resolveTrackedPositionSubscription).toHaveBeenCalledOnce();
+  });
+
+  it('leaves a position BACKEND_MANAGED and never even reads the origin Subscription when local entry linkage fails to commit (B)', async () => {
+    mocks.trackedPositionFindFirst.mockResolvedValue(null);
+    mocks.subscriptionFindUnique.mockResolvedValue({ id: 22, strategyId: 5, exitManagementMode: 'EXTERNAL_SIGNAL' });
+    mocks.resolveTrackedPositionSubscription.mockResolvedValue({ status: 'resolved', source: 'local_order_intent',
+      subscriptionId: 22, tradingAccountSubscriptionId: 44, subscriptionKey: 'dia', evidence: {} });
+    mocks.linkLocalEntryOwnershipInTransaction.mockResolvedValue(false);
+    mocks.linkLocalEntryOwnership.mockResolvedValue(false);
+    mockCreationTransaction();
+    const result = await syncTrackedPositions();
+    expect(result.symbolErrors).toEqual([]);
+    expect(mocks.positionExitStateCreate).toHaveBeenCalledWith({ data: { trackedPositionId: 100, exitManagementModeSnapshot: 'BACKEND_MANAGED' } });
+    expect(mocks.subscriptionFindUnique).not.toHaveBeenCalled();
+    // The immediate post-creation recovery retry may still attempt to link subscriptionId for
+    // reporting, but the exit-ownership snapshot above is already committed and can never change.
+    expect(mocks.linkLocalEntryOwnership).toHaveBeenCalled();
+  });
+
+  it('never re-derives or rewrites exit ownership when recovering an already-open position, regardless of the Subscription\'s current mode (E/F)', async () => {
+    const openedAt = new Date('2026-06-16T15:00:00.000Z');
+    const existing = {
+      id: 101, broker: 'alpaca', symbol: 'DIA', side: 'long', status: 'open', tradingAccountId: 1, openedAt,
+      subscriptionId: 22, tradingAccountSubscriptionId: 44, configSnapshotJson: {},
+    };
+    mocks.trackedPositionFindFirst.mockResolvedValue(existing);
+    mocks.trackedPositionUpdate.mockResolvedValue({
+      ...existing, qty: 1, avgEntryPrice: 350, currentPrice: 351, marketValue: 351, costBasis: 350,
+      unrealizedPnL: 1, unrealizedPnLPct: 0.0028, rawPositionJson: brokerPosition,
+    });
+    // The Subscription now reports EXTERNAL_SIGNAL, but this already-open position's frozen
+    // ownership must never be re-derived or rewritten by the recovery/update path.
+    mocks.subscriptionFindUnique.mockResolvedValue({ id: 22, strategyId: 5, exitManagementMode: 'EXTERNAL_SIGNAL' });
+
+    await syncTrackedPositions();
+
+    expect(mocks.ensurePositionExitState).toHaveBeenCalledWith(101);
+    expect(mocks.positionExitStateCreate).not.toHaveBeenCalled();
+    expect(mocks.linkLocalEntryOwnershipInTransaction).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
   it('records adaptive polling failure when a symbol cannot be processed', async () => {
