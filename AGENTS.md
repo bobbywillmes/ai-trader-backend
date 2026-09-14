@@ -214,8 +214,13 @@ Be especially careful when editing:
 External signal ingestion and routing are a separate evidence-only subsystem:
 `/api/external-signals/:webhookKey` authenticates and records terminal `SignalDelivery`
 and immutable `Signal` rows. Revision-owned authority may permit immutable
-`SignalRoutingRun` / `SignalRoute` evidence, but all modes stop before evaluation
-or trading. Only PREPARED revision authority is mutable. Enabled account assignments
+`SignalRoutingRun` / `SignalRoute` and per-route `SignalEvaluation` / ordered gate
+evidence, but all modes stop before trading. Evaluation must never write trading
+models or invoke entry/exit pipelines. Pre-evaluation routes have a null evaluationVersion
+and must not be retroactively evaluated. Subscription exit ownership is prospective:
+PositionExitState freezes ownership and verified origin at position creation. External
+ownership suppresses normal strategy exits, not operator/protective/recovery actions.
+Only PREPARED revision authority is mutable. Enabled account assignments
 are database-unique per Account + Strategy + Security; routing additionally requires
 an enabled catalog Subscription and never applies execution gates. It must not invoke the existing `/api/signals` trading
 pipeline or create trading side effects. Sources and strategy bindings are mutable

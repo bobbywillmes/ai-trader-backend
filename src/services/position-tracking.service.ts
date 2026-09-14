@@ -223,6 +223,7 @@ async function applySubscriptionResolution(args: {
   currentSubscriptionId: number | null;
   configSnapshotJson: Prisma.JsonValue | null;
   initialObservation: boolean;
+  initialResolution?: SubscriptionResolutionResult;
   qty: number;
   avgEntryPrice: number;
   environment: "PAPER" | "LIVE";
@@ -248,7 +249,7 @@ async function applySubscriptionResolution(args: {
     return null;
   }
 
-  const resolution = await resolveTrackedPositionSubscription({
+  const resolution = args.initialResolution ?? await resolveTrackedPositionSubscription({
     tradingAccountId: args.tradingAccountId,
     broker: args.broker,
     symbol: args.symbol,
@@ -431,6 +432,21 @@ export async function syncTrackedPositionsForAccountUnlocked(
       }
 
       if (!existing) {
+        const openedAt = new Date();
+        let initialResolution: SubscriptionResolutionResult;
+        try {
+          initialResolution = await resolveTrackedPositionSubscription({
+            tradingAccountId, broker: position.broker, symbol: position.symbol,
+            side: position.side, openedAt, qty: position.qty, avgEntryPrice: position.avgEntryPrice,
+            brokerLookupPolicy: "ALLOW_EXACT_ORDER_ID_READ",
+          });
+        } catch {
+          // Attribution failure must not hide newly observed broker exposure.
+          // Persist safe ownership and let the existing recovery/diagnostic path run.
+          initialResolution = { status: "unresolved", source: "unresolved", subscriptionId: null,
+            subscriptionKey: null, tradingAccountSubscriptionId: null,
+            reason: "origin_resolution_failed_at_position_creation", evidence: {} };
+        }
         let positionCreated = false;
         const created = await prisma.$transaction(async (tx) => {
           const rechecked = await tx.trackedPosition.findFirst({
@@ -443,6 +459,10 @@ export async function syncTrackedPositionsForAccountUnlocked(
             orderBy: { openedAt: "desc" },
           });
           if (rechecked) return rechecked;
+          // Only verified originating context may confer external exit ownership.
+          // Unattributed/observer-discovered exposure keeps backend ownership forever.
+          const origin = initialResolution.status === "resolved" && initialResolution.source !== "unique_observer_fallback"
+            ? await tx.subscription.findUnique({ where: { id: initialResolution.subscriptionId } }) : null;
           positionCreated = true;
           return tx.trackedPosition.create({
             data: {
@@ -458,7 +478,15 @@ export async function syncTrackedPositionsForAccountUnlocked(
               unrealizedPnLPct: position.unrealizedPnLPct,
               status: "open",
               tradingAccountId,
-              openedAt: new Date(),
+              openedAt,
+              exitState: { create: {
+                exitManagementModeSnapshot: origin?.exitManagementMode ?? "BACKEND_MANAGED",
+                ...(origin && initialResolution.status === "resolved" ? { exitOwnershipProvenance: {
+                  tradingAccountId, tradingAccountSubscriptionId: initialResolution.tradingAccountSubscriptionId,
+                  subscriptionId: origin.id, strategyId: origin.strategyId, securityId: security.id,
+                  source: initialResolution.source,
+                } } : {}),
+              } },
               lastSyncedAt: new Date(),
               rawPositionJson: position as unknown as Prisma.InputJsonValue,
               securityId: security.id,
@@ -483,6 +511,7 @@ export async function syncTrackedPositionsForAccountUnlocked(
               configSnapshotJson:
                 created.configSnapshotJson as Prisma.JsonValue | null,
               initialObservation: true,
+              initialResolution,
               qty: created.qty,
               avgEntryPrice: created.avgEntryPrice,
               environment,

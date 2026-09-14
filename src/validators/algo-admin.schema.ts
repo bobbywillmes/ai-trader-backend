@@ -30,6 +30,7 @@ export const createSubscriptionSchema = z
 
     exitProfileId: z.coerce.number().int().positive().optional(),
     exitProfileKey: keySchema.optional(),
+    exitManagementMode: z.enum(['BACKEND_MANAGED', 'EXTERNAL_SIGNAL']).optional(),
 
     enabled: z.boolean().optional(),
   })
@@ -79,6 +80,7 @@ export const updateSubscriptionSchema = z
 
     exitProfileId: z.coerce.number().int().positive().optional(),
     exitProfileKey: keySchema.optional(),
+    exitManagementMode: z.enum(['BACKEND_MANAGED', 'EXTERNAL_SIGNAL']).optional(),
 
     enabled: z.boolean().optional(),
   })

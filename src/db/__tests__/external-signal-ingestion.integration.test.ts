@@ -13,6 +13,7 @@ import { changeStrategySignalRevision } from '../../services/strategy-signal-rev
 import { createStrategySignalBindingSchema } from '../../validators/external-signal.schema.js';
 import { canonicalSignalPayload, hashCanonicalPayload } from '../../services/external-signal-normalization.js';
 import { routeSignal } from '../../services/signal-routing.service.js';
+import { evaluateSignalRoute } from '../../services/signal-evaluation.service.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const describeDatabase = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && databaseUrl ? describe : describe.skip;
@@ -72,6 +73,19 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     expect((await admin.query('SELECT count(*)::int AS count FROM "TradingAccountSubscription" WHERE enabled')).rows[0].count).toBe(2);
     await admin.query('UPDATE "TradingAccountSubscription" SET enabled = false WHERE "subscriptionId" = 2');
     await admin.query(routingMigration);
+    await admin.query(`
+      ALTER TABLE "TradingAccountSubscription" ADD COLUMN "entriesEnabled" boolean NOT NULL DEFAULT true,
+        ADD COLUMN "exitsEnabled" boolean NOT NULL DEFAULT true;
+      ALTER TABLE "Subscription" ADD COLUMN "exitProfileId" integer;
+      CREATE TABLE "ExitProfile" (id integer PRIMARY KEY, key text, "exitMode" text, "takeProfitBehavior" text, "targetPct" double precision, "trailingStopPct" double precision);
+      CREATE TABLE "TrackedPosition" (id serial PRIMARY KEY, "tradingAccountId" integer, "tradingAccountSubscriptionId" integer,
+        "subscriptionId" integer, "securityId" integer, side text, status text);
+      CREATE TABLE "PositionExitState" (id serial PRIMARY KEY, "trackedPositionId" integer UNIQUE,
+        status text, "exitProfileKey" text, "exitMode" text, "takeProfitBehavior" text, "targetPct" double precision, "trailingStopPct" double precision,
+        "updatedAt" timestamp(3));
+      INSERT INTO "TrackedPosition" ("subscriptionId", status) VALUES (1, 'open');
+    `);
+    await admin.query(await readFile('prisma/migrations/20260914120000_signal_evaluation_exit_ownership/migration.sql', 'utf8'));
     expect(await db.externalSignalSource.findUnique({ where: { webhookKeyHash: hashWebhookKey(token) } })).toBeNull();
     token = (await getExternalSignalWebhook(1, -1, db)).webhookKey;
   });
@@ -228,13 +242,13 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
       await admin.query(`ALTER TABLE "SignalDelivery" DROP CONSTRAINT test_delivery_failure`);
     }
   });
-  it('records entry and exit metadata while trading tables do not even exist in its schema', async () => {
+  it('records entry and exit metadata without execution tables', async () => {
     for (const event of ['ENTRY_LONG', 'EXIT_LONG'] as const) {
       const result = await ingest(`no-trading-${event}`, { quantity: 999999, tradingAccountId: 42, bypassRisk: true }, event);
       expect(result?.status).toBe('NORMALIZED');
     }
     const tables = await admin.query(`SELECT table_name FROM information_schema.tables WHERE table_schema = $1`, [schema]);
-    for (const name of ['EntryDecision', 'OrderIntent', 'BrokerOrder', 'TrackedPosition']) {
+    for (const name of ['EntryDecision', 'OrderIntent', 'BrokerOrder', 'BrokerActivity']) {
       expect(tables.rows.map(row => row.table_name)).not.toContain(name);
     }
   });
@@ -397,7 +411,7 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
       expect(await db.signalRoutingRun.findUnique({ where: { signalId: delivery!.signalId! } })).toMatchObject({ authorityMode: mode, routeCount: 2, status: 'COMPLETED' });
     }
     const tables = (await admin.query('SELECT table_name FROM information_schema.tables WHERE table_schema = $1', [schema])).rows.map(row => row.table_name);
-    for (const table of ['OrderIntent', 'BrokerOrder', 'BrokerActivity', 'TrackedPosition', 'EntryDecision', 'PositionCloseRequest']) expect(tables).not.toContain(table);
+    for (const table of ['OrderIntent', 'BrokerOrder', 'BrokerActivity', 'EntryDecision', 'PositionCloseRequest']) expect(tables).not.toContain(table);
   });
 
   it('completes zero routes when the catalog is disabled and keeps retries frozen after configuration changes', async () => {
@@ -432,6 +446,87 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
       expect(await db.signalRoute.count()).toBe(before);
     } finally { await admin.query('ALTER TABLE "SignalRoute" DROP CONSTRAINT route_failure'); }
     expect(await routeSignal(signal.id, db)).toMatchObject({ routeCount: 2, status: 'COMPLETED' });
+  });
+
+  it('backfills existing positions and subscriptions without external ownership', async () => {
+    expect((await admin.query('SELECT "exitManagementMode" FROM "Subscription"')).rows.every(r => r.exitManagementMode === 'BACKEND_MANAGED')).toBe(true);
+    expect((await admin.query('SELECT "exitManagementModeSnapshot" FROM "PositionExitState" WHERE "trackedPositionId" = 1')).rows[0]).toEqual({ exitManagementModeSnapshot: 'BACKEND_MANAGED' });
+  });
+
+  it('serializes evaluations, freezes gates and rejects appended or retroactive evidence', async () => {
+    const { signal } = await routingFixture('EVALUATION_ONLY');
+    const run = await routeSignal(signal.id, db);
+    const route = run.routes[0]!;
+    const evaluations = await Promise.all(Array.from({ length: 12 }, () => evaluateSignalRoute(route.id, db)));
+    expect(evaluations.every(e => JSON.stringify(e) === JSON.stringify(evaluations[0]))).toBe(true);
+    const evaluation = evaluations[0]!;
+    expect(evaluation).toMatchObject({ status: 'COMPLETED', outcome: 'ELIGIBLE', gateCount: 4 });
+    expect(evaluation.gates.map(g => g.sequence)).toEqual([1, 2, 3, 4]);
+    await admin.query('UPDATE "TradingAccountSubscription" SET "entriesEnabled" = false WHERE id = $1', [route.tradingAccountSubscriptionId]);
+    expect(await evaluateSignalRoute(route.id, db)).toEqual(evaluation);
+    await admin.query('UPDATE "TradingAccountSubscription" SET "entriesEnabled" = true WHERE id = $1', [route.tradingAccountSubscriptionId]);
+    await expect(db.signalEvaluation.update({ where: { id: evaluation.id }, data: { outcome: 'BLOCKED' } })).rejects.toThrow('immutable');
+    await expect(db.signalEvaluation.delete({ where: { id: evaluation.id } })).rejects.toThrow('immutable');
+    await expect(db.signalEvaluationGate.update({ where: { id: evaluation.gates[0]!.id }, data: { result: 'BLOCKED' } })).rejects.toThrow('immutable');
+    await expect(db.signalEvaluationGate.delete({ where: { id: evaluation.gates[0]!.id } })).rejects.toThrow('immutable');
+    await expect(db.signalEvaluationGate.create({ data: { signalEvaluationId: evaluation.id, sequence: 5, gateKey: 'LATER', result: 'PASS', evaluatedAt: new Date() } })).rejects.toThrow();
+    const historicalSignal = (await routingFixture('EVALUATION_ONLY')).signal;
+    const historical = await db.signalRoutingRun.create({ data: { signalId: historicalSignal.id, authorityMode: 'EVALUATION_ONLY',
+      status: 'COMPLETED', routeCount: 1, startedAt: new Date(), completedAt: new Date(),
+      routes: { create: { tradingAccountId: route.tradingAccountId, tradingAccountSubscriptionId: route.tradingAccountSubscriptionId,
+        subscriptionId: route.subscriptionId, targetSnapshot: {} } } }, include: { routes: true } });
+    expect(await evaluateSignalRoute(historical.routes[0]!.id, db)).toBeNull();
+    expect(await db.signalEvaluation.count({ where: { signalRouteId: historical.routes[0]!.id } })).toBe(0);
+  });
+
+  it('uses frozen position ownership, never mutates positions and fails closed on ambiguity', async () => {
+    const fixture = await routingFixture('EVALUATION_ONLY');
+    async function exitRoute() {
+      const { id: _id, ...data } = fixture.signal;
+      const signal = await db.signal.create({ data: { ...data, metadata: {}, eventFingerprint: randomUUID(), event: 'EXIT_LONG' } });
+      return (await routeSignal(signal.id, db)).routes[0]!;
+    }
+    const route = await exitRoute();
+    const insertPosition = async () => (await admin.query(`INSERT INTO "TrackedPosition" ("tradingAccountId", "tradingAccountSubscriptionId", "subscriptionId", "securityId", side, status) VALUES ($1,$2,$3,1,'long','open') RETURNING id`, [route.tradingAccountId, route.tradingAccountSubscriptionId, route.subscriptionId])).rows[0];
+    const position = await insertPosition();
+    const provenance = { tradingAccountId: route.tradingAccountId, tradingAccountSubscriptionId: route.tradingAccountSubscriptionId, subscriptionId: route.subscriptionId, strategyId: 1, securityId: 1 };
+    await admin.query(`INSERT INTO "PositionExitState" ("trackedPositionId", "exitManagementModeSnapshot", "exitOwnershipProvenance") VALUES ($1,'EXTERNAL_SIGNAL',$2)`, [position.id, provenance]);
+    const before = (await admin.query('SELECT * FROM "PositionExitState" ORDER BY id')).rows;
+    const beforePositions = (await admin.query('SELECT * FROM "TrackedPosition" ORDER BY id')).rows;
+    expect(await evaluateSignalRoute(route.id, db)).toMatchObject({ outcome: 'ELIGIBLE', positionExitManagementMode: 'EXTERNAL_SIGNAL', trackedPositionId: position.id });
+    expect((await admin.query('SELECT * FROM "TrackedPosition" ORDER BY id')).rows).toEqual(beforePositions);
+    await admin.query(`UPDATE "Subscription" SET "exitManagementMode" = 'EXTERNAL_SIGNAL' WHERE id = $1`, [route.subscriptionId]);
+    expect((await admin.query('SELECT * FROM "PositionExitState" ORDER BY id')).rows).toEqual(before);
+    await expect(admin.query(`UPDATE "PositionExitState" SET "exitManagementModeSnapshot" = 'BACKEND_MANAGED' WHERE "trackedPositionId" = $1`, [position.id])).rejects.toThrow('immutable');
+    expect(await evaluateSignalRoute((await exitRoute()).id, db)).toMatchObject({ outcome: 'ELIGIBLE' });
+    const other = await insertPosition();
+    expect(await evaluateSignalRoute((await exitRoute()).id, db)).toMatchObject({ status: 'FAILED', outcome: null, reasonCode: 'AMBIGUOUS_MATCHING_POSITIONS' });
+    await admin.query(`UPDATE "TrackedPosition" SET status = 'closed' WHERE id IN ($1,$2)`, [position.id, other.id]);
+    await admin.query(`UPDATE "Subscription" SET "exitManagementMode" = 'BACKEND_MANAGED'`);
+    const backend = await insertPosition();
+    await admin.query('INSERT INTO "PositionExitState" ("trackedPositionId") VALUES ($1)', [backend.id]);
+    expect(await evaluateSignalRoute((await exitRoute()).id, db)).toMatchObject({ outcome: 'NO_ACTION', reasonCode: 'EXTERNAL_EXIT_NOT_APPLICABLE' });
+    await admin.query(`UPDATE "TrackedPosition" SET "subscriptionId" = 999 WHERE id = $1`, [backend.id]);
+    expect(await evaluateSignalRoute((await exitRoute()).id, db)).toMatchObject({ outcome: 'NO_ACTION', reasonCode: 'NO_MATCHING_OPEN_POSITION' });
+  });
+
+  it('preserves normalized ingress and records a sanitized failure after a database evaluation error', async () => {
+    const { binding, revision } = await routingFixture('EVALUATION_ONLY');
+    const source = await db.externalSignalSource.update({ where: { id: 1 }, data: { enabled: true } });
+    const body = Buffer.from(JSON.stringify({ externalStrategyKey: binding.externalStrategyKey, strategyRevision: revision.revision,
+      event: 'EXIT_LONG', symbol: 'QQQ', timeframe: '1m', signalTime: new Date().toISOString() }));
+    await admin.query('ALTER TABLE "TrackedPosition" RENAME COLUMN side TO temporary_side');
+    try {
+      const delivery = await ingestExternalSignal(source, token, { requestId: randomUUID(), receivedAt: new Date(), contentType: 'application/json',
+        bodySizeBytes: body.length, rawPayloadHash: createHash('sha256').update(body).digest('hex'), body, tooLarge: false, validContentType: true }, db);
+      expect(delivery?.status).toBe('NORMALIZED');
+      const evaluations = await db.signalEvaluation.findMany({ where: { route: { routingRun: { signalId: delivery!.signalId! } } }, include: { gates: true } });
+      expect(evaluations).toHaveLength(2);
+      for (const evaluation of evaluations) {
+        expect(evaluation).toMatchObject({ status: 'FAILED', outcome: null, reasonCode: 'EVALUATION_PROCESSING_FAILED', gates: [{ sequence: 1, gateKey: 'PROCESSING', result: 'FAILED' }] });
+        expect(JSON.stringify(evaluation)).not.toContain('temporary_side');
+      }
+    } finally { await admin.query('ALTER TABLE "TrackedPosition" RENAME COLUMN temporary_side TO side'); }
   });
 
 });

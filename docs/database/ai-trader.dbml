@@ -133,12 +133,53 @@ Table SignalRoute {
   tradingAccountSubscriptionId Int [not null]
   subscriptionId Int [not null]
   targetSnapshot Json [not null]
+  evaluationVersion Int
+  evaluation SignalEvaluation
   createdAt DateTime [default: `now()`, not null]
   routingRun SignalRoutingRun [not null]
   accountSubscription TradingAccountSubscription [not null]
 
   indexes {
     (signalRoutingRunId, tradingAccountId) [unique]
+  }
+}
+
+Table SignalEvaluation {
+  id Int [pk, increment]
+  signalRouteId Int [unique, not null]
+  evaluationVersion Int [not null]
+  event SignalEvent [not null]
+  intent String [not null]
+  riskDirection String [not null]
+  status SignalEvaluationStatus [not null]
+  outcome SignalEvaluationOutcome
+  reasonCode String
+  prospectiveExitManagementMode ExitManagementMode
+  positionExitManagementMode ExitManagementMode
+  trackedPositionId Int
+  positionExitStateId Int
+  gateCount Int [not null]
+  startedAt DateTime [not null]
+  completedAt DateTime [not null]
+  createdAt DateTime [default: `now()`, not null]
+  route SignalRoute [not null]
+  gates SignalEvaluationGate [not null]
+}
+
+Table SignalEvaluationGate {
+  id Int [pk, increment]
+  signalEvaluationId Int [not null]
+  sequence Int [not null]
+  gateKey String [not null]
+  result SignalEvaluationGateResult [not null]
+  reasonCode String
+  evidenceJson Json
+  evaluatedAt DateTime [not null]
+  evaluation SignalEvaluation [not null]
+
+  indexes {
+    (signalEvaluationId, sequence) [unique]
+    (signalEvaluationId, gateKey) [unique]
   }
 }
 
@@ -1314,6 +1355,8 @@ Table TrackedPosition {
 Table PositionExitState {
   id Int [pk, increment]
   trackedPositionId Int [unique, not null]
+  exitManagementModeSnapshot ExitManagementMode [not null, default: 'BACKEND_MANAGED']
+  exitOwnershipProvenance Json
   status String [not null, default: 'watching']
   targetUnlocked Boolean [not null, default: false]
   targetUnlockedAt DateTime
@@ -1441,6 +1484,7 @@ Table Subscription {
   name String [not null]
   description String
   symbol String [not null]
+  exitManagementMode ExitManagementMode [not null, default: 'BACKEND_MANAGED']
   enabled Boolean [not null, default: true]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
@@ -1517,6 +1561,29 @@ Enum SignalAuthorityMode {
 Enum SignalRoutingStatus {
   STOPPED
   COMPLETED
+}
+
+Enum ExitManagementMode {
+  BACKEND_MANAGED
+  EXTERNAL_SIGNAL
+}
+
+Enum SignalEvaluationStatus {
+  COMPLETED
+  FAILED
+}
+
+Enum SignalEvaluationOutcome {
+  ELIGIBLE
+  BLOCKED
+  NO_ACTION
+}
+
+Enum SignalEvaluationGateResult {
+  PASS
+  BLOCKED
+  NO_ACTION
+  FAILED
 }
 
 Enum PlatformRole {
@@ -1863,6 +1930,10 @@ Ref: SignalRoutingRun.signalId - Signal.id [delete: Restrict]
 Ref: SignalRoute.signalRoutingRunId > SignalRoutingRun.id [delete: Restrict]
 
 Ref: SignalRoute.tradingAccountSubscriptionId > TradingAccountSubscription.id [delete: Restrict]
+
+Ref: SignalEvaluation.signalRouteId - SignalRoute.id [delete: Restrict]
+
+Ref: SignalEvaluationGate.signalEvaluationId > SignalEvaluation.id [delete: Restrict]
 
 Ref: User.invitedByUserId - User.id [delete: Set Null]
 

@@ -216,12 +216,75 @@ model SignalRoute {
   subscriptionId              Int
   // Labels and Strategy/Security identity at routing time, not mutable catalog joins.
   targetSnapshot              Json
+  evaluationVersion           Int?
+  evaluation                  SignalEvaluation?
   createdAt                   DateTime @default(now())
   routingRun                  SignalRoutingRun @relation(fields: [signalRoutingRunId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   accountSubscription         TradingAccountSubscription @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([signalRoutingRunId, tradingAccountId])
   @@index([tradingAccountSubscriptionId])
+}
+
+enum ExitManagementMode {
+  BACKEND_MANAGED
+  EXTERNAL_SIGNAL
+}
+
+enum SignalEvaluationStatus {
+  COMPLETED
+  FAILED
+}
+
+enum SignalEvaluationOutcome {
+  ELIGIBLE
+  BLOCKED
+  NO_ACTION
+}
+
+enum SignalEvaluationGateResult {
+  PASS
+  BLOCKED
+  NO_ACTION
+  FAILED
+}
+
+// Terminal-only atomic evidence. Identity and authority are inherited from route -> signal.
+model SignalEvaluation {
+  id                           Int @id @default(autoincrement())
+  signalRouteId                Int @unique
+  evaluationVersion            Int
+  event                        SignalEvent
+  intent                       String
+  riskDirection                String
+  status                       SignalEvaluationStatus
+  outcome                      SignalEvaluationOutcome?
+  reasonCode                   String?
+  prospectiveExitManagementMode ExitManagementMode?
+  positionExitManagementMode    ExitManagementMode?
+  trackedPositionId            Int?
+  positionExitStateId          Int?
+  gateCount                    Int
+  startedAt                    DateTime
+  completedAt                  DateTime
+  createdAt                    DateTime @default(now())
+  route                        SignalRoute @relation(fields: [signalRouteId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  gates                        SignalEvaluationGate[]
+}
+
+model SignalEvaluationGate {
+  id                 Int @id @default(autoincrement())
+  signalEvaluationId Int
+  sequence           Int
+  gateKey            String
+  result             SignalEvaluationGateResult
+  reasonCode         String?
+  evidenceJson       Json?
+  evaluatedAt        DateTime
+  evaluation         SignalEvaluation @relation(fields: [signalEvaluationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([signalEvaluationId, sequence])
+  @@unique([signalEvaluationId, gateKey])
 }
 
 model Setting {
@@ -2083,6 +2146,8 @@ model TrackedPosition {
 model PositionExitState {
   id                Int @id @default(autoincrement())
   trackedPositionId Int @unique
+  exitManagementModeSnapshot ExitManagementMode @default(BACKEND_MANAGED)
+  exitOwnershipProvenance Json?
 
   status               String    @default("watching")
   targetUnlocked       Boolean   @default(false)
@@ -2265,6 +2330,7 @@ model Subscription {
   name        String
   description String?
   symbol      String
+  exitManagementMode ExitManagementMode @default(BACKEND_MANAGED)
   enabled     Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

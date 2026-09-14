@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   securityFindUnique: vi.fn(),
   trackedPositionFindFirst: vi.fn(),
   trackedPositionCreate: vi.fn(),
+  subscriptionFindUnique: vi.fn(),
+  transaction: vi.fn(),
   trackedPositionUpdate: vi.fn(),
   trackedPositionUpdateMany: vi.fn(),
   trackedPositionFindUnique: vi.fn(),
@@ -31,6 +33,15 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('./positions.service.js', () => ({
   getNormalizedPositions: mocks.getNormalizedPositions,
+}));
+
+// These unit tests exercise position persistence, not PostgreSQL advisory locks.
+// Real lock contention is covered by the database integration suite.
+vi.mock('./trading-account-workflow-lock.service.js', async importOriginal => ({
+  ...await importOriginal<typeof import('./trading-account-workflow-lock.service.js')>(),
+  withTradingAccountWorkflowLock: async ({ execute }: { execute: () => Promise<unknown> }) => ({
+    outcome: 'ACQUIRED_AND_COMPLETED', value: await execute(), scope: 'position-unit-test',
+  }),
 }));
 
 vi.mock('./system-event.service.js', () => ({
@@ -65,6 +76,7 @@ vi.mock('./tracked-position-subscription-resolution.service.js', () => ({
 
 vi.mock('../db/prisma.js', () => ({
   prisma: {
+    $transaction: mocks.transaction,
     security: {
       findUnique: mocks.securityFindUnique,
     },
@@ -137,6 +149,30 @@ const brokerPosition = {
 };
 
 describe('position tracking subscription recovery', () => {
+  it('retains observed exposure with backend ownership when initial attribution fails', async () => {
+    mocks.trackedPositionFindFirst.mockResolvedValue(null);
+    mocks.resolveTrackedPositionSubscription.mockRejectedValue(new Error('attribution unavailable'));
+    mocks.transaction.mockImplementation(async fn => fn({ trackedPosition: { findFirst: mocks.trackedPositionFindFirst, create: mocks.trackedPositionCreate }, subscription: { findUnique: mocks.subscriptionFindUnique } }));
+    mocks.trackedPositionCreate.mockImplementation(async ({ data }) => ({ id: 100, subscriptionId: null, configSnapshotJson: null, ...data }));
+    expect((await syncTrackedPositions()).created).toBe(1);
+    expect(mocks.trackedPositionCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ exitState: { create: { exitManagementModeSnapshot: 'BACKEND_MANAGED' } } }) });
+    expect(mocks.createSystemEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'position.subscription_resolution_unresolved' }));
+  });
+  it.each(['BACKEND_MANAGED', 'EXTERNAL_SIGNAL'])('atomically freezes %s ownership at new position creation', async mode => {
+    mocks.trackedPositionFindFirst.mockResolvedValue(null);
+    mocks.subscriptionFindUnique.mockResolvedValue({ id: 22, strategyId: 5, exitManagementMode: mode });
+    mocks.resolveTrackedPositionSubscription.mockResolvedValue({ status: 'resolved', source: 'local_order_intent',
+      subscriptionId: 22, tradingAccountSubscriptionId: 44, subscriptionKey: 'dia', evidence: {} });
+    mocks.transaction.mockImplementation(async fn => fn({ trackedPosition: { findFirst: mocks.trackedPositionFindFirst, create: mocks.trackedPositionCreate }, subscription: { findUnique: mocks.subscriptionFindUnique } }));
+    mocks.trackedPositionCreate.mockImplementation(async ({ data }) => ({ id: 100, subscriptionId: null, configSnapshotJson: null, ...data }));
+    const result = await syncTrackedPositions();
+    expect(result.symbolErrors).toEqual([]);
+    expect(mocks.trackedPositionCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ exitState: { create: {
+      exitManagementModeSnapshot: mode, exitOwnershipProvenance: { tradingAccountId: 1, tradingAccountSubscriptionId: 44,
+        subscriptionId: 22, strategyId: 5, securityId: 11, source: 'local_order_intent' },
+    } } }) });
+    expect(mocks.resolveTrackedPositionSubscription).toHaveBeenCalledOnce();
+  });
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.getNormalizedPositions.mockResolvedValue([brokerPosition]);

@@ -1,8 +1,8 @@
-# External signal ingestion, authority, and routing
+# External signal ingestion, authority, routing, and evaluation
 
 External Signals are immutable, account-independent strategy evidence. **They cannot
 trade.** Backend-owned revision authority may permit deterministic subscription routing.
-Neither ENTRY_LONG nor EXIT_LONG invokes evaluation, risk gates, entry decisions,
+ENTRY_LONG and EXIT_LONG now produce bounded evaluation evidence, never risk gates, entry decisions,
 order intents, brokers or position/exit pipelines.
 The existing n8n `/api/signals` trading pipeline remains separate.
 
@@ -16,7 +16,7 @@ The existing n8n `/api/signals` trading pipeline remains separate.
 5. Send the minimal JSON payload below to the source URL.
 6. AI Trader authenticates, resolves the binding and Security, normalizes the event,
    derives its fingerprint, and atomically stores Signal/Delivery and terminal routing
-   evidence. Processing stops after routing; EVIDENCE_ONLY records a stopped run.
+   evidence. New routes proceed to bounded evaluation; EVIDENCE_ONLY records a stopped run.
 
 One source URL serves many strategies. All TradingView strategies may eventually use
 one TradingView Production URL; provider labels do not select an adapter. URLs can
@@ -299,8 +299,8 @@ in both the service and PostgreSQL; frozen revisions cannot be reopened.
 | Authority | Current behavior |
 | --- | --- |
 | EVIDENCE_ONLY | Persist a STOPPED run with EVIDENCE_ONLY_AUTHORITY and zero routes |
-| EVALUATION_ONLY | Resolve assignments, persist COMPLETED run and routes, stop |
-| TRADE_ELIGIBLE | Exactly the same routing behavior; record the different authority, stop |
+| EVALUATION_ONLY | Resolve assignments, persist routes and bounded per-route evaluations, stop |
+| TRADE_ELIGIBLE | Same evaluation behavior with separate historical authority, stop before execution |
 
 In System -> External Signals -> binding detail, prepare a revision, review inherited
 authority, optionally change it, configure the sender, and activate. Promoting to
@@ -405,8 +405,8 @@ may prepare an EVALUATION_ONLY revision and activate it to test TradingView -> D
 -> Signal -> authority -> immutable routes. Keep its source capability URL and update the
 alert's numeric revision deliberately. No special case for this key exists in code.
 `metadata.testMode`, comments, provider labels and other sender fields confer no
-permission. Revision authority is the control; all current modes stop before future
-evaluation and trading. No broker credentials or live-trading flags need to change.
+permission. Revision authority is the control; all current modes stop after evidence,
+before trading. No broker credentials or live-trading flags need to change.
 
 ## Verification of the routing boundary
 
@@ -415,7 +415,112 @@ assignment conflicts, catalog identity cascades, authority inheritance/freeze/au
 rollback, historical revision authority, both routable modes, zero routes, concurrent
 retries, immutable snapshots and route insertion rollback. It runs real ingress and
 routing for ENTRY_LONG and EXIT_LONG in an isolated schema **without** OrderIntent,
-BrokerOrder, BrokerActivity, TrackedPosition or exit tables. A dependency-boundary test
+BrokerOrder or BrokerActivity tables. Position tables supply read-only evaluation context.
+A dependency-boundary test
 also limits routing imports and database capabilities so broker/entry/exit services
 cannot be introduced unnoticed. UI tests cover inheritance, prepared-only controls,
 deliberate promotion and activation confirmation, read-only targets and links.
+
+## Exit ownership and position snapshots
+
+`Subscription.exitManagementMode` is mutable catalog configuration:
+
+| Mode | Normal strategy exit timing |
+| --- | --- |
+| BACKEND_MANAGED | Existing backend ExitProfile evaluation owns strategy exits (default). External EXIT_LONG is deliberately informational. |
+| EXTERNAL_SIGNAL | Applicable external signals own normal strategy exit timing. This phase records evidence and does not execute those exits. |
+
+The position synchronizer resolves originating context before creating a position.
+The creation transaction inserts `PositionExitState.exitManagementModeSnapshot`
+and `exitOwnershipProvenance` (account, assignment, subscription, strategy, security
+IDs and resolution source) together with the TrackedPosition. Verified local order
+or exact broker attribution can establish originating ownership; an unresolved or
+unique-observer fallback position remains BACKEND_MANAGED. Later attribution recovery,
+configuration snapshot hydration and lifecycle repair cannot promote its ownership.
+The normal recovery helpers use BACKEND_MANAGED if lifecycle evidence is missing.
+
+Changing Subscription mode affects future positions only. Existing snapshots and
+origin evidence are protected against updates and standalone deletion in PostgreSQL.
+Backend-owned positions keep their behavior even after their Subscription switches
+to EXTERNAL_SIGNAL, and externally owned positions retain ownership after the reverse
+change. Position details display the persisted ownership snapshot.
+
+External ownership suppresses normal take-profit and target-triggered trailing-stop
+activation. Existing configured protective stop-loss behavior remains available.
+Protective-order synchronization still runs before strategy evaluation. Operator
+closes, emergency risk reduction, reconciliation, recovery, verified broker quantities,
+short prevention and account serialization retain their existing safety paths.
+EXTERNAL_SIGNAL is not a prohibition against reducing risk.
+
+## Per-route evaluation evidence, version 1
+
+Each new `SignalRoute` records `evaluationVersion = 1`. A unique `signalRouteId`
+identifies its authoritative `SignalEvaluation`. Account/subscription identity and
+historical authority are inherited through immutable route/run/signal/revision
+relations rather than copied into potentially conflicting columns.
+
+Evaluation stores the event, ENTRY/EXIT intent, RISK_INCREASING/RISK_REDUCING
+classification, processing status, optional domain outcome and reason, timestamps,
+version, prospective entry ownership or matched position/exit-state IDs and ownership.
+`SignalEvaluationGate` records unique contiguous sequences, gate keys, results,
+bounded allowlisted evidence (maximum 4096 bytes), reasons and evaluation timestamps.
+PostgreSQL prevents edits/deletes and enforces complete gate counts at commit,
+including prevention of later appended gates.
+
+Processing is synchronous and terminal-only: COMPLETED or FAILED. No committed
+IN_PROGRESS row is needed for this bounded version. FAILED has no domain outcome;
+structural/system problems emit sanitized SystemEvent diagnostics. COMPLETED has:
+
+| Outcome | Meaning |
+| --- | --- |
+| ELIGIBLE | Applicable candidate for a future pipeline; not order approval or execution permission. |
+| BLOCKED | A current assignment control prevents applicability. |
+| NO_ACTION | Valid event requires no action, such as no matching position or a backend-owned external exit. |
+
+Authority is not a gate. EVALUATION_ONLY + ELIGIBLE is expected, as is
+TRADE_ELIGIBLE + ELIGIBLE. Neither authorizes anything in this phase. Historical
+revision authority can never increase through later configuration edits; a future
+execution boundary must revalidate current safety controls, which may revoke
+actionability even for historical TRADE_ELIGIBLE evidence.
+
+ENTRY_LONG gates: ROUTE_TARGET integrity → SUBSCRIPTION_ACTIVE (`enabled`) →
+ALLOW_NEW_ENTRIES (`entriesEnabled`) → ENTRY_APPLICABILITY. Passing yields ELIGIBLE
+and records the current prospective exit mode without creating a position.
+
+EXIT_LONG gates: ROUTE_TARGET → SUBSCRIPTION_ACTIVE → ALLOW_EXIT_MANAGEMENT
+(`exitsEnabled`) → MATCHING_POSITION → EXIT_MANAGEMENT_MODE. Position matching
+requires the same account, originating assignment, subscription and security, long
+side and open status. No symbol-only match is used. Multiple matches are FAILED /
+AMBIGUOUS_MATCHING_POSITIONS; no match is NO_ACTION / NO_MATCHING_OPEN_POSITION.
+Missing exit evidence is FAILED. BACKEND_MANAGED is deliberately NO_ACTION /
+EXTERNAL_EXIT_NOT_APPLICABLE with no alarming event. EXTERNAL_SIGNAL additionally
+requires frozen origin IDs to match, so later mutable strategy changes cannot
+redirect a historical position; it then yields ELIGIBLE and stops.
+
+`signal-evaluation.service.ts` provides a callable transaction boundary and a
+transaction-scoped evaluator. Route locks serialize retries and concurrent callers.
+Ingress evaluates only newly normalized routes, using per-route savepoints to retain
+Signal/Delivery/routing evidence when evaluation processing fails. If the database
+cannot persist even the sanitized failure, the transaction fails rather than claiming
+success. Committed failures are terminal and are not silently re-evaluated later.
+
+Existing routes keep null evaluationVersion. Migration, duplicate delivery handling
+and explicit evaluator calls do not evaluate them using current configuration.
+The UI labels them “Not evaluated — predates SignalEvaluation.” No worker, bulk
+backfill or mutation API exists. Route-only domain-service calls remain independently
+testable; versioned routes may subsequently be evaluated explicitly.
+
+System → External Signals shows each target's read-only evaluation, separate authority,
+classification, status/outcome/reason, ordered gates and bounded evidence, timestamps,
+prospective ownership or position snapshot. Existing URL navigation remains authoritative.
+
+Migration `20260914120000_signal_evaluation_exit_ownership` defaults all existing
+Subscriptions and PositionExitStates to BACKEND_MANAGED and creates missing lifecycle
+rows for existing positions with that same safe ownership. It does not evaluate old
+routes or alter trading permissions. Deploy the migration before the backend/UI.
+
+No Market Regime, freshness thresholds, sizing, buying-power, exposure, daily-entry,
+broker-readiness or other pipeline risk gates are introduced. No OrderIntent, broker
+submission, sell activity or position/exit-state mutation may originate from evaluation.
+Future entry/exit handoffs must use the existing authoritative safety pipelines;
+those handoffs are intentionally absent here.

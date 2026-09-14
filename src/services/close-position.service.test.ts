@@ -96,6 +96,11 @@ function position(overrides: Record<string, unknown> = {}) {
 }
 
 describe('closePosition claim-before-write', () => {
+  it('allows operator risk reduction for externally managed positions through verified exit submission', async () => {
+    mocks.trackedPositionFindUnique.mockResolvedValue(position({ exitState: { exitManagementModeSnapshot: 'EXTERNAL_SIGNAL' } }));
+    await expect(closePosition(101)).resolves.toMatchObject({ ok: true });
+    expect(mocks.submitVerifiedExit).toHaveBeenCalledOnce();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.transaction.mockImplementation(

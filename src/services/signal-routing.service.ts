@@ -38,6 +38,7 @@ export async function routeSignalInTransaction(signalId: number, db: RoutingDb) 
     stopReason: stopped ? (signal.strategySignalRevision ? 'EVIDENCE_ONLY_AUTHORITY' : 'LEGACY_REVISION_NO_AUTHORITY') : null,
     routes: { create: targets.map(target => ({
       tradingAccountId: target.tradingAccountId, tradingAccountSubscriptionId: target.id, subscriptionId: target.subscriptionId,
+      evaluationVersion: 1,
       targetSnapshot: { tradingAccountName: target.tradingAccount.displayName, subscriptionKey: target.subscription.key,
         subscriptionName: target.subscription.name, strategy: target.subscription.strategy, security: target.subscription.security },
     })) },

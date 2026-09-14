@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   systemEvent: { create: vi.fn() }, transaction: vi.fn(),
 }));
 vi.mock('../db/prisma.js', () => ({ prisma: { ...mocks, $transaction: mocks.transaction } }));
-vi.mock('./signal-routing.service.js', () => ({ routeSignalInTransaction: vi.fn() }));
+vi.mock('./signal-routing.service.js', () => ({ routeSignalInTransaction: vi.fn().mockResolvedValue({ routes: [] }) }));
 import { authenticateExternalSignal, ingestExternalSignal, type SignalRequestEvidence } from './external-signal-ingestion.service.js';
 import { hashWebhookKey } from './external-signal-config.service.js';
 import { canonicalJson, MAX_SIGNAL_BODY_BYTES } from './external-signal-normalization.js';
