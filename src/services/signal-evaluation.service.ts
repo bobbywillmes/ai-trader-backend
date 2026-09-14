@@ -59,10 +59,16 @@ export async function evaluateSignalRouteInTransaction(signalRouteId: number, db
     strategyId: signal.strategyId, securityId: signal.securityId });
   if (entry) prospectiveExitManagementMode = assignment.subscription.exitManagementMode;
   if (!assignment.enabled) {
-    gate('SUBSCRIPTION_ACTIVE', 'BLOCKED', 'SUBSCRIPTION_INACTIVE', { enabled: false });
+    gate('SUBSCRIPTION_ACTIVE', 'BLOCKED', 'SUBSCRIPTION_INACTIVE',
+      { assignmentEnabled: false, subscriptionEnabled: assignment.subscription.enabled });
     return finish('BLOCKED', 'SUBSCRIPTION_INACTIVE');
   }
-  gate('SUBSCRIPTION_ACTIVE', 'PASS', null, { enabled: true });
+  if (!assignment.subscription.enabled) {
+    gate('SUBSCRIPTION_ACTIVE', 'BLOCKED', 'SUBSCRIPTION_CATALOG_DISABLED',
+      { assignmentEnabled: true, subscriptionEnabled: false });
+    return finish('BLOCKED', 'SUBSCRIPTION_CATALOG_DISABLED');
+  }
+  gate('SUBSCRIPTION_ACTIVE', 'PASS', null, { assignmentEnabled: true, subscriptionEnabled: true });
   if (entry) {
     if (!assignment.entriesEnabled) {
       gate('ALLOW_NEW_ENTRIES', 'BLOCKED', 'NEW_ENTRIES_DISABLED', { entriesEnabled: false });

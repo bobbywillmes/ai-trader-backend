@@ -11,14 +11,14 @@ describe('per-route evaluation evidence', () => {
   let route: { id: number; evaluationVersion: number | null; tradingAccountId: number; tradingAccountSubscriptionId: number; subscriptionId: number;
     routingRun: { authorityMode: string; signal: { event: string; strategyId: number; securityId: number } } };
   let assignment: { id: number; tradingAccountId: number; subscriptionId: number; enabled: boolean; entriesEnabled: boolean; exitsEnabled: boolean;
-    subscription: { strategyId: number; securityId: number; exitManagementMode: string } };
+    subscription: { strategyId: number; securityId: number; enabled: boolean; exitManagementMode: string } };
   const run = () => evaluateSignalRouteInTransaction(1, db as unknown as Prisma.TransactionClient);
   beforeEach(() => {
     vi.resetAllMocks();
     route = { id: 1, evaluationVersion: 1, tradingAccountId: 2, tradingAccountSubscriptionId: 3, subscriptionId: 4,
       routingRun: { authorityMode: 'EVALUATION_ONLY', signal: { event: 'ENTRY_LONG', strategyId: 5, securityId: 6 } } };
     assignment = { id: 3, tradingAccountId: 2, subscriptionId: 4, enabled: true, entriesEnabled: true, exitsEnabled: true,
-      subscription: { strategyId: 5, securityId: 6, exitManagementMode: 'EXTERNAL_SIGNAL' } };
+      subscription: { strategyId: 5, securityId: 6, enabled: true, exitManagementMode: 'EXTERNAL_SIGNAL' } };
     db.signalRoute.findUnique.mockImplementation(async () => route);
     db.tradingAccountSubscription.findUnique.mockImplementation(async () => assignment);
     db.signalEvaluation.create.mockImplementation(async ({ data }) => ({ id: 7, ...data }));
@@ -38,6 +38,40 @@ describe('per-route evaluation evidence', () => {
   it.each([['enabled', 'SUBSCRIPTION_INACTIVE'], ['entriesEnabled', 'NEW_ENTRIES_DISABLED']] as const)('blocks disabled %s', async (key, reason) => {
     assignment[key] = false;
     expect(await run()).toMatchObject({ status: 'COMPLETED', outcome: 'BLOCKED', reasonCode: reason });
+  });
+  it('blocks a disabled assignment before checking catalog enablement, with both flags in gate evidence', async () => {
+    assignment.enabled = false;
+    expect(await run()).toMatchObject({ status: 'COMPLETED', outcome: 'BLOCKED', reasonCode: 'SUBSCRIPTION_INACTIVE',
+      gates: { create: [ { sequence: 1, gateKey: 'ROUTE_TARGET', result: 'PASS' },
+        { sequence: 2, gateKey: 'SUBSCRIPTION_ACTIVE', result: 'BLOCKED', reasonCode: 'SUBSCRIPTION_INACTIVE',
+          evidenceJson: { assignmentEnabled: false, subscriptionEnabled: true } } ] } });
+  });
+  it('blocks when the catalog Subscription itself is disabled even though the assignment is active', async () => {
+    assignment.subscription.enabled = false;
+    expect(await run()).toMatchObject({ status: 'COMPLETED', outcome: 'BLOCKED', reasonCode: 'SUBSCRIPTION_CATALOG_DISABLED',
+      gates: { create: [ { sequence: 1, gateKey: 'ROUTE_TARGET', result: 'PASS' },
+        { sequence: 2, gateKey: 'SUBSCRIPTION_ACTIVE', result: 'BLOCKED', reasonCode: 'SUBSCRIPTION_CATALOG_DISABLED',
+          evidenceJson: { assignmentEnabled: true, subscriptionEnabled: false } } ] } });
+    expect(db.trackedPosition.findMany).not.toHaveBeenCalled();
+  });
+  it('respects catalog disablement for EXIT_LONG before matching any position', async () => {
+    route.routingRun.signal.event = 'EXIT_LONG';
+    assignment.subscription.enabled = false;
+    expect(await run()).toMatchObject({ outcome: 'BLOCKED', reasonCode: 'SUBSCRIPTION_CATALOG_DISABLED' });
+    expect(db.trackedPosition.findMany).not.toHaveBeenCalled();
+  });
+  it('continues past SUBSCRIPTION_ACTIVE with both flags true and records evidence for both layers', async () => {
+    expect(await run()).toMatchObject({ gates: { create: [ { sequence: 1, gateKey: 'ROUTE_TARGET', result: 'PASS' },
+      { sequence: 2, gateKey: 'SUBSCRIPTION_ACTIVE', result: 'PASS', evidenceJson: { assignmentEnabled: true, subscriptionEnabled: true } },
+      { sequence: 3, gateKey: 'ALLOW_NEW_ENTRIES', result: 'PASS' },
+      { sequence: 4, gateKey: 'ENTRY_APPLICABILITY', result: 'PASS' } ] } });
+  });
+  it('does not retroactively change a completed evaluation when Subscription.enabled changes afterward', async () => {
+    const original = { id: 11, outcome: 'BLOCKED', reasonCode: 'SUBSCRIPTION_CATALOG_DISABLED' };
+    db.signalEvaluation.findUnique.mockResolvedValue(original);
+    assignment.subscription.enabled = true;
+    expect(await run()).toBe(original);
+    expect(db.tradingAccountSubscription.findUnique).not.toHaveBeenCalled();
   });
   it('preserves historical routes without evaluating current context', async () => {
     route.evaluationVersion = null;

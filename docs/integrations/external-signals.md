@@ -433,11 +433,20 @@ deliberate promotion and activation confirmation, read-only targets and links.
 The position synchronizer resolves originating context before creating a position.
 The creation transaction inserts `PositionExitState.exitManagementModeSnapshot`
 and `exitOwnershipProvenance` (account, assignment, subscription, strategy, security
-IDs and resolution source) together with the TrackedPosition. Verified local order
-or exact broker attribution can establish originating ownership; an unresolved or
-unique-observer fallback position remains BACKEND_MANAGED. Later attribution recovery,
-configuration snapshot hydration and lifecycle repair cannot promote its ownership.
-The normal recovery helpers use BACKEND_MANAGED if lifecycle evidence is missing.
+IDs and resolution source) together with the TrackedPosition. Deterministic
+broker-fill-derived attribution (`broker_client_order_id`) is itself the resolution
+and can freeze ownership directly. A `local_order_intent` resolution is only a
+*candidate*: the position's OrderIntent/BrokerOrder/BrokerActivity/EntryDecision
+ownership must be linked with `linkLocalEntryOwnershipInTransaction` inside that
+same creation transaction before the snapshot may reflect it; if that linkage does
+not commit (conflicting claim, race, missing intent), the position is frozen
+BACKEND_MANAGED instead, and the Subscription's origin row is never even read. An
+unresolved, ambiguous, or unique-observer-fallback position always remains
+BACKEND_MANAGED. Later attribution recovery, configuration snapshot hydration and
+lifecycle repair cannot promote a position's ownership after this snapshot is
+written -- recovery may still attach `subscriptionId` for reporting, but never
+rewrites `exitManagementModeSnapshot`. The normal recovery helpers use
+BACKEND_MANAGED if lifecycle evidence is missing.
 
 Changing Subscription mode affects future positions only. Existing snapshots and
 origin evidence are protected against updates and standalone deletion in PostgreSQL.
@@ -483,9 +492,19 @@ revision authority can never increase through later configuration edits; a futur
 execution boundary must revalidate current safety controls, which may revoke
 actionability even for historical TRADE_ELIGIBLE evidence.
 
-ENTRY_LONG gates: ROUTE_TARGET integrity → SUBSCRIPTION_ACTIVE (`enabled`) →
-ALLOW_NEW_ENTRIES (`entriesEnabled`) → ENTRY_APPLICABILITY. Passing yields ELIGIBLE
-and records the current prospective exit mode without creating a position.
+SUBSCRIPTION_ACTIVE checks both layers of assignment: the
+TradingAccountSubscription (`enabled`) and the catalog Subscription itself
+(`subscription.enabled`), independently. A disabled assignment blocks with
+SUBSCRIPTION_INACTIVE before the catalog is even considered; an active
+assignment on a disabled catalog Subscription blocks with
+SUBSCRIPTION_CATALOG_DISABLED. Gate evidence always records both flags, e.g.
+`{ assignmentEnabled: true, subscriptionEnabled: false }`, so the UI can show
+which layer disabled the route.
+
+ENTRY_LONG gates: ROUTE_TARGET integrity → SUBSCRIPTION_ACTIVE (`enabled` and
+`subscription.enabled`) → ALLOW_NEW_ENTRIES (`entriesEnabled`) →
+ENTRY_APPLICABILITY. Passing yields ELIGIBLE and records the current prospective
+exit mode without creating a position.
 
 EXIT_LONG gates: ROUTE_TARGET → SUBSCRIPTION_ACTIVE → ALLOW_EXIT_MANAGEMENT
 (`exitsEnabled`) → MATCHING_POSITION → EXIT_MANAGEMENT_MODE. Position matching
