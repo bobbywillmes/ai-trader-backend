@@ -1194,6 +1194,7 @@ enum AssetType {
 }
 
 model Security {
+  marketBars MarketBar[]
   signals   Signal[]
   id        Int       @id @default(autoincrement())
   symbol    String    @unique
@@ -1560,6 +1561,98 @@ model AlpacaApiUsageBucket {
   @@index([tradingAccountId])
   @@index([tradingAccountId, bucketStart])
   @@index([tradingAccountId, updatedAt])
+}
+
+enum MarketCalendarExceptionType {
+  CLOSED
+  EARLY_CLOSE
+}
+
+model MarketCalendarException {
+  id                 Int                         @id @default(autoincrement())
+  sessionDate        DateTime                    @unique @db.Date
+  name               String
+  type               MarketCalendarExceptionType
+  closeTimeMinutesEt Int?
+  createdAt          DateTime                    @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime                    @updatedAt @db.Timestamptz(3)
+}
+
+enum MarketBarTimeframe {
+  DAY_1
+  MINUTE_15
+}
+
+enum MarketDataProvider {
+  MASSIVE
+}
+
+enum MarketBarAdjustmentMode {
+  UNADJUSTED
+}
+
+// Accepted provider observations; PostgreSQL rejects updates and deletes.
+model MarketBar {
+  id             Int                     @id @default(autoincrement())
+  securityId     Int
+  timeframe      MarketBarTimeframe
+  barStartAt     DateTime                @db.Timestamptz(3)
+  open           Decimal                 @db.Decimal(24, 10)
+  high           Decimal                 @db.Decimal(24, 10)
+  low            Decimal                 @db.Decimal(24, 10)
+  close          Decimal                 @db.Decimal(24, 10)
+  volume         Decimal                 @db.Decimal(30, 6)
+  provider       MarketDataProvider
+  adjustmentMode MarketBarAdjustmentMode
+  receivedAt     DateTime                @db.Timestamptz(3)
+  createdAt      DateTime                @default(now()) @db.Timestamptz(3)
+  security       Security               @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([securityId, timeframe, barStartAt])
+}
+
+enum MarketRegimeDimension {
+  TREND
+  VOLATILITY
+  BREADTH
+  INTRADAY_STRESS
+  PARTICIPATION
+  LEADERSHIP
+}
+
+enum MarketRegimeDimensionAssessmentStatus {
+  VALID
+  UNAVAILABLE
+  FAILED
+}
+
+// Production evidence foundation only. Research calibration never inserts here.
+model MarketRegimeDimensionAssessment {
+  id                   Int                                   @id @default(autoincrement())
+  dimension            MarketRegimeDimension
+  algorithmVersion     String
+  evidenceSchemaVersion Int
+  targetAt             DateTime                              @db.Timestamptz(3)
+  sessionDate          DateTime?                             @db.Date
+  attempt              Int
+  status               MarketRegimeDimensionAssessmentStatus
+  reasonCode           String?
+  rawState             String?
+  effectiveState       String?
+  dataThroughAt        DateTime?                             @db.Timestamptz(3)
+  validUntil           DateTime?                             @db.Timestamptz(3)
+  previousAssessmentId Int?
+  startedAt            DateTime                              @db.Timestamptz(3)
+  completedAt          DateTime                              @db.Timestamptz(3)
+  createdAt            DateTime                              @default(now()) @db.Timestamptz(3)
+  evidenceJson         Json
+  previousAssessment   MarketRegimeDimensionAssessment?      @relation("DimensionHistory", fields: [previousAssessmentId, dimension, algorithmVersion], references: [id, dimension, algorithmVersion], onDelete: Restrict, onUpdate: Restrict)
+  nextAssessments      MarketRegimeDimensionAssessment[]     @relation("DimensionHistory")
+
+  @@unique([dimension, algorithmVersion, targetAt, attempt], map: "RegimeDimension_attempt_key")
+  @@unique([id, dimension, algorithmVersion], map: "RegimeDimension_identity_key")
+  @@index([previousAssessmentId, dimension, algorithmVersion], map: "RegimeDimension_previous_idx")
+  // At most one VALID result per dimension/version/target is enforced in SQL.
 }
 
 model CurrentMarketState {

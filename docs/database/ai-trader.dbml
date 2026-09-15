@@ -767,6 +767,7 @@ Table TradingLifecycleExerciseTarget {
 }
 
 Table Security {
+  marketBars MarketBar [not null]
   signals Signal [not null]
   id Int [pk, increment]
   symbol String [unique, not null]
@@ -1021,6 +1022,65 @@ Table AlpacaApiUsageBucket {
   updatedAt DateTime [not null]
   tradingAccountId Int
   tradingAccount TradingAccount
+}
+
+Table MarketCalendarException {
+  id Int [pk, increment]
+  sessionDate DateTime [unique, not null]
+  name String [not null]
+  type MarketCalendarExceptionType [not null]
+  closeTimeMinutesEt Int
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+}
+
+Table MarketBar {
+  id Int [pk, increment]
+  securityId Int [not null]
+  timeframe MarketBarTimeframe [not null]
+  barStartAt DateTime [not null]
+  open Decimal [not null]
+  high Decimal [not null]
+  low Decimal [not null]
+  close Decimal [not null]
+  volume Decimal [not null]
+  provider MarketDataProvider [not null]
+  adjustmentMode MarketBarAdjustmentMode [not null]
+  receivedAt DateTime [not null]
+  createdAt DateTime [default: `now()`, not null]
+  security Security [not null]
+
+  indexes {
+    (securityId, timeframe, barStartAt) [unique]
+  }
+}
+
+Table MarketRegimeDimensionAssessment {
+  id Int [pk, increment]
+  dimension MarketRegimeDimension [not null]
+  algorithmVersion String [not null]
+  evidenceSchemaVersion Int [not null]
+  targetAt DateTime [not null]
+  sessionDate DateTime
+  attempt Int [not null]
+  status MarketRegimeDimensionAssessmentStatus [not null]
+  reasonCode String
+  rawState String
+  effectiveState String
+  dataThroughAt DateTime
+  validUntil DateTime
+  previousAssessmentId Int
+  startedAt DateTime [not null]
+  completedAt DateTime [not null]
+  createdAt DateTime [default: `now()`, not null]
+  evidenceJson Json [not null]
+  previousAssessment MarketRegimeDimensionAssessment
+  nextAssessments MarketRegimeDimensionAssessment [not null]
+
+  indexes {
+    (dimension, algorithmVersion, targetAt, attempt) [unique]
+    (id, dimension, algorithmVersion) [unique]
+  }
 }
 
 Table CurrentMarketState {
@@ -1807,6 +1867,39 @@ Enum OperationalAttentionEventRelationKind {
   RESOLVED
 }
 
+Enum MarketCalendarExceptionType {
+  CLOSED
+  EARLY_CLOSE
+}
+
+Enum MarketBarTimeframe {
+  DAY_1
+  MINUTE_15
+}
+
+Enum MarketDataProvider {
+  MASSIVE
+}
+
+Enum MarketBarAdjustmentMode {
+  UNADJUSTED
+}
+
+Enum MarketRegimeDimension {
+  TREND
+  VOLATILITY
+  BREADTH
+  INTRADAY_STRESS
+  PARTICIPATION
+  LEADERSHIP
+}
+
+Enum MarketRegimeDimensionAssessmentStatus {
+  VALID
+  UNAVAILABLE
+  FAILED
+}
+
 Enum CatalystSource {
   MASSIVE_NEWS
   MASSIVE_BENZINGA
@@ -2094,6 +2187,10 @@ Ref: OperationalAttentionSystemEvent.systemEventId > SystemEvent.id [delete: Res
 Ref: TradingAccountWorkerHealthState.tradingAccountId > TradingAccount.id [delete: Cascade]
 
 Ref: AlpacaApiUsageBucket.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: MarketBar.securityId > Security.id [delete: Restrict]
+
+Ref: MarketRegimeDimensionAssessment.(previousAssessmentId, dimension, algorithmVersion) - MarketRegimeDimensionAssessment.(id, dimension, algorithmVersion) [delete: Restrict]
 
 Ref: CatalystTickerImpact.catalystEventId > CatalystEvent.id [delete: Cascade]
 
