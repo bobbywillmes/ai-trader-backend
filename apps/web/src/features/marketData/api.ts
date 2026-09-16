@@ -1,0 +1,11 @@
+import { apiRequest, getAdminToken } from '../../lib/api';
+import type { BackfillResult, CalendarException, CalendarInput, MarketDataStatus, TrendDay, TrendLab, TrendProfile } from './types';
+const root = '/api/market-data';
+const options = () => ({ token: getAdminToken() ?? '' });
+export const getCalendar = (year: number) => apiRequest<CalendarException[]>(`${root}/calendar?year=${year}`, options());
+export const saveCalendar = (input: CalendarInput, id?: number) => apiRequest<CalendarException>(`${root}/calendar${id === undefined ? '' : `/${id}`}`, { ...options(), method: id === undefined ? 'POST' : 'PUT', body: input });
+export const deleteCalendar = (id: number) => apiRequest<void>(`${root}/calendar/${id}`, { ...options(), method: 'DELETE' });
+export const getMarketDataStatus = () => apiRequest<MarketDataStatus>(`${root}/status`, options());
+export const backfillMarketData = (from: string, to: string) => apiRequest<BackfillResult>(`${root}/backfill`, { ...options(), method: 'POST', body: { from, to } });
+export const getTrendLab = (from: string, to: string) => apiRequest<TrendLab>(`${root}/trend-lab?${new URLSearchParams({ from, to, refresh: 'true' })}`, options());
+export const getTrendDay = (datasetId: string, profile: TrendProfile, date: string) => apiRequest<TrendDay>(`${root}/trend-lab/day?${new URLSearchParams({ datasetId, profile, date })}`, options());

@@ -28,6 +28,8 @@ import { SettingsPage } from "../features/settings/SettingsPage";
 import { SecurityDetailPage } from "../features/securities/SecurityDetailPage";
 import { ReportsPage } from "../features/reports/ReportsPage";
 import { MarketDiaryPage } from "../features/marketDiary/MarketDiaryPage";
+import { MarketCalendarPage } from "../features/marketData/MarketCalendarPage";
+import { TrendLabPage } from "../features/marketData/TrendLabPage";
 import { ReconciliationPage, ReconciliationTargetPage } from "../features/reconciliation/ReconciliationPage";
 import { TradeHistoryPage } from "../features/tradeHistory/TradeHistoryPage";
 import { EntryDecisionsPage } from "../features/entryDecisions/EntryDecisionsPage";
@@ -77,6 +79,8 @@ export const router = createBrowserRouter([
             element: <AdminConsoleShell />,
             children: [
               ...responsiveDataPreviewRoute,
+              { path: "system/market-calendar", element: authorize("marketCalendar", <MarketCalendarPage />) },
+              { path: "system/trend-lab", element: authorize("trendLab", <TrendLabPage />) },
               {
                 path: "dashboard",
                 element: authorize("dashboard", <DashboardPage />),

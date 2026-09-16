@@ -3,6 +3,12 @@ import { canAccessRoute } from "./routeAccess";
 import { createScopedNavigationTarget } from "./navigationUtils";
 
 describe("shared route authorization", () => {
+  it.each(["marketCalendar", "trendLab"] as const)("limits %s to market-data operators and owners", route => {
+    expect(canAccessRoute(route, "OPERATOR", ["marketData.read"])).toBe(true);
+    expect(canAccessRoute(route, "SYSTEM_OWNER", ["marketData.read"])).toBe(true);
+    expect(canAccessRoute(route, "ACCOUNT_USER", ["marketData.read"])).toBe(false);
+    expect(canAccessRoute(route, "OPERATOR", [])).toBe(false);
+  });
   it("denies direct owner-route access to operators and account users", () => {
     expect(canAccessRoute("users", "OPERATOR", ["system.settings.read"])).toBe(false);
     expect(canAccessRoute("settings", "ACCOUNT_USER", ["system.settings.read"])).toBe(false);

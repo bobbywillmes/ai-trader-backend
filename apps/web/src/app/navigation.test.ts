@@ -4,6 +4,7 @@ import { filterNavigationGroups } from "./navigationUtils";
 import type { PlatformPermission, PlatformRole } from "../features/auth/types";
 
 const allPermissions: PlatformPermission[] = [
+  "marketData.read", "marketCalendar.write",
   "system.settings.read", "system.settings.write", "system.security.read", "system.security.write",
   "tradingAccount.read", "tradingAccount.write", "tradingAccount.risk.write", "subscription.read",
   "subscription.write", "strategy.read", "strategy.write", "exitProfile.read", "exitProfile.write",
@@ -27,6 +28,7 @@ describe("role-aware navigation configuration", () => {
     expect(groups.find((group) => group.label === "Trading")?.items.map((item) => item.label)).toEqual(["Live Operations", "Open Positions", "Open Orders", "Entry Decisions"]);
     expect(groups.find((group) => group.label === "System")?.items.map((item) => item.label)).toContain("Lifecycle Exercises");
     expect(groups.find((group) => group.label === "System")?.items.map((item) => item.label)).toContain("Lifecycle Repairs");
+    expect(groups.find((group) => group.label === "System")?.items.map((item) => item.label)).toEqual(expect.arrayContaining(["Market Calendar", "Trend Lab"]));
     expect(groups.find((group) => group.label === "Administration")?.items.map((item) => item.label)).toContain("Trading Setup");
   });
 
