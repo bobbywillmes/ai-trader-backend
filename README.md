@@ -417,6 +417,7 @@ Automated trading should only be enabled deliberately after production health, b
 - [Trading Lifecycle](docs/architecture/trading-lifecycle.md)
 - [Trading Lifecycle Exercises](docs/architecture/trading-lifecycle-exercises.md)
 - [Worker Health](docs/architecture/workers.md)
+- [Market Data and Trend Calibration](docs/architecture/market-data-trend.md)
 
 ### Integrations:
 

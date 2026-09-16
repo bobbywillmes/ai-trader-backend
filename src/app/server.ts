@@ -35,6 +35,8 @@ import { runMassiveNewsWorkerOnce } from '../workers/massive-news.worker.js';
 import { assertAccountCoordinatorHealthy } from '../services/worker-coordinator-result.service.js';
 import { closeTradingAccountWorkflowLockPool } from '../services/trading-account-workflow-lock.service.js';
 import { monitorLiveEntryArmings } from '../services/live-entry-arming.service.js';
+import { runMarketDataWorker } from '../workers/market-data.worker.js';
+import { closeMarketDataLockPool } from '../services/market-data-lock.service.js';
 
 const app = createApp();
 
@@ -142,6 +144,8 @@ async function runTradingWorkers() {
 
 function startWorkers() {
   workerHealthRegistry.startPersistence();
+  void runWorker('market_daily_evidence_sync', runMarketDataWorker);
+  setInterval(() => { void runWorker('market_daily_evidence_sync', runMarketDataWorker); }, 60_000);
 
   // This validity monitor is local-only. Final broker authorization remains
   // authoritative, while this loop promptly closes stale permissive latches.
@@ -338,6 +342,7 @@ async function shutdown(signal: NodeJS.Signals) {
   await Promise.race([
     Promise.all([
       workerHealthRegistry.shutdown(),
+      closeMarketDataLockPool(),
       closeTradingAccountWorkflowLockPool(),
     ]),
     new Promise((resolve) => setTimeout(resolve, 5_000)),

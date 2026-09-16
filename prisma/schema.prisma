@@ -1646,7 +1646,7 @@ model MarketRegimeDimensionAssessment {
   completedAt          DateTime                              @db.Timestamptz(3)
   createdAt            DateTime                              @default(now()) @db.Timestamptz(3)
   evidenceJson         Json
-  previousAssessment   MarketRegimeDimensionAssessment?      @relation("DimensionHistory", fields: [previousAssessmentId, dimension, algorithmVersion], references: [id, dimension, algorithmVersion], onDelete: Restrict, onUpdate: Restrict)
+  previousAssessment   MarketRegimeDimensionAssessment?      @relation("DimensionHistory", fields: [previousAssessmentId, dimension, algorithmVersion], references: [id, dimension, algorithmVersion], onDelete: Restrict, onUpdate: Restrict, map: "MarketRegimeDimensionAssessment_previousAssessmentId_dimensi_fk")
   nextAssessments      MarketRegimeDimensionAssessment[]     @relation("DimensionHistory")
 
   @@unique([dimension, algorithmVersion, targetAt, attempt], map: "RegimeDimension_attempt_key")

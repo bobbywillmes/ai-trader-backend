@@ -37,6 +37,15 @@ function thresholds(
 
 export const workerDefinitions = [
   {
+    key: 'market_daily_evidence_sync',
+    displayName: 'Daily market data',
+    description: 'Fills eligible missing SPY/RSP daily bars from Massive without rewriting evidence.',
+    criticality: 'informational',
+    expectedIntervalMs: 60_000,
+    enabledByDefault: true,
+    ...thresholds(60_000, 180_000),
+  },
+  {
     key: 'pending_order_processing',
     displayName: 'Pending order processing',
     description: 'Claims pending order intents and submits eligible broker orders.',

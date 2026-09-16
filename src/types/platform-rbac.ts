@@ -3,6 +3,8 @@ import { PlatformRole } from "@prisma/client";
 export { PlatformRole };
 
 export enum PlatformPermission {
+  MARKET_DATA_READ = "marketData.read",
+  MARKET_CALENDAR_WRITE = "marketCalendar.write",
   SYSTEM_SETTINGS_READ = "system.settings.read",
   SYSTEM_SETTINGS_WRITE = "system.settings.write",
   SYSTEM_SECURITY_READ = "system.security.read",
@@ -33,6 +35,8 @@ export const PLATFORM_ROLE_PERMISSIONS: Record<
 > = {
   [PlatformRole.SYSTEM_OWNER]: Object.values(PlatformPermission),
   [PlatformRole.OPERATOR]: [
+    PlatformPermission.MARKET_DATA_READ,
+    PlatformPermission.MARKET_CALENDAR_WRITE,
     PlatformPermission.TRADING_ACCOUNT_READ,
     PlatformPermission.TRADING_ACCOUNT_WRITE,
     PlatformPermission.TRADING_ACCOUNT_RISK_WRITE,

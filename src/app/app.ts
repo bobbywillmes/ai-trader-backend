@@ -27,6 +27,7 @@ import brokerActivitiesRoutes from '../routes/broker-activities.routes.js';
 import dashboardRoutes from '../routes/dashboard.routes.js';
 import marketStateRoutes from '../routes/market-state.routes.js';
 import marketDiaryRoutes from '../routes/market-diary.routes.js';
+import marketDataRoutes from '../routes/market-data.routes.js';
 import catalystEventsRoutes from '../routes/catalyst-events.routes.js';
 import momentumCandidatesRoutes from '../routes/momentum-candidates.routes.js';
 import momentumScannerRoutes from '../routes/momentum-scanner.routes.js';
@@ -121,6 +122,7 @@ export function createApp() {
   app.use('/api/securities', requireAdminAccess, securitiesRoutes);
   app.use('/api/market-state', requireAdminAccess, marketStateRoutes);
   app.use('/api/market-diary', requireAdminAccess, marketDiaryRoutes);
+  app.use('/api/market-data', requireAdminAccess, marketDataRoutes);
   app.use('/api/catalyst-events', requireAdminAccess, catalystEventsRoutes);
   app.use('/api/momentum-candidates', requireAdminAccess, momentumCandidatesRoutes);
   app.use('/api/momentum-scanner', requireAdminAccess, momentumScannerRoutes);

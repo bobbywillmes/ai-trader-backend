@@ -17,6 +17,8 @@ describe('platform role permissions', () => {
 
   it('preserves the operator permission mapping', () => {
     expect(getPlatformPermissionsForRole(PlatformRole.OPERATOR)).toEqual([
+      PlatformPermission.MARKET_DATA_READ,
+      PlatformPermission.MARKET_CALENDAR_WRITE,
       PlatformPermission.TRADING_ACCOUNT_READ,
       PlatformPermission.TRADING_ACCOUNT_WRITE,
       PlatformPermission.TRADING_ACCOUNT_RISK_WRITE,

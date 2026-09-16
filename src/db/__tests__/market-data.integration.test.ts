@@ -2,6 +2,10 @@ import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import { Client } from 'pg';
+import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { ingestDailyRange } from '../../services/market-bar-ingestion.service.js';
+import { etInstant } from '../../services/market-calendar.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.DATABASE_URL;
@@ -9,6 +13,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   const schema = `market_data_${randomUUID().replaceAll('-', '')}`;
   let db: Client;
   let admin: Client;
+  let prisma: PrismaClient;
   let securityId: number;
   beforeAll(async () => {
     admin = new Client({ connectionString: process.env.DATABASE_URL });
@@ -19,11 +24,13 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     url.searchParams.delete('schema');
     db = new Client({ connectionString: url.toString() });
     await db.connect();
+    prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: url.toString() }) });
     const migrations = (await readdir('prisma/migrations', { withFileTypes: true })).filter(x => x.isDirectory()).map(x => x.name).sort();
     for (const migration of migrations) await db.query(await readFile(`prisma/migrations/${migration}/migration.sql`, 'utf8'));
     securityId = (await db.query(`INSERT INTO "Security" (symbol, name, "assetType", "updatedAt") VALUES ('SPY', 'SPY fixture', 'ETF', now()) RETURNING id`)).rows[0].id;
   }, 120_000);
   afterAll(async () => {
+    await prisma?.$disconnect();
     if (db) { await db.query('ROLLBACK'); await db.end(); }
     // Only the randomly named database created by this test is removed.
     if (admin) { await admin.query(`DROP DATABASE IF EXISTS "${schema}"`); await admin.end(); }
@@ -79,5 +86,14 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   it('rejects assessment mutation', async () => {
     await expect(db.query(`UPDATE "MarketRegimeDimensionAssessment" SET "reasonCode"='CHANGED'`)).rejects.toThrow('immutable');
     await expect(db.query(`DELETE FROM "MarketRegimeDimensionAssessment"`)).rejects.toThrow('immutable');
+  });
+  it('real ingestion overlaps and concurrent inserts preserve original observations', async () => {
+    const makeBar = (date: string, close = '101') => ({barStartAt:etInstant(date,0),open:'100',high:'102',low:'99',close,volume:'1000',receivedAt:new Date('2026-09-16T00:00Z')});
+    const options = {db:prisma,now:new Date('2026-09-16T00:00Z'),fetchBars:async()=>[makeBar('2026-09-15')]};
+    const results=await Promise.all([ingestDailyRange('SPY','2026-09-15','2026-09-15',options),ingestDailyRange('SPY','2026-09-15','2026-09-15',options)]);
+    expect(results.reduce((sum,result)=>sum+result.inserted,0)).toBe(1);
+    const retry=await ingestDailyRange('SPY','2026-09-14','2026-09-15',{...options,fetchBars:async()=>[makeBar('2026-09-14','100'),makeBar('2026-09-15','100')]});
+    expect(retry.inserted).toBe(0);
+    expect((await prisma.marketBar.findMany({where:{securityId},orderBy:{barStartAt:'asc'}})).map(row=>row.close.toNumber())).toEqual([101,101]);
   });
 });

@@ -211,6 +211,13 @@ Be especially careful when editing:
 
 ## Trade Lifecycle Notes
 
+Market data and Trend calibration are an account-independent research subsystem.
+MarketBar is immutable, unadjusted Massive evidence; never use Alpaca fallback or
+rewrite stored OHLCV. Calendar exceptions are mutable operator configuration.
+TIGHT/MIDDLE/LOOSE are research-only profiles; Trend Lab must never insert into
+MarketRegimeDimensionAssessment or affect evaluation/trading. The assessment model
+is only a future production contract. See `docs/architecture/market-data-trend.md`.
+
 External signal ingestion and routing are a separate evidence-only subsystem:
 `/api/external-signals/:webhookKey` authenticates and records terminal `SignalDelivery`
 and immutable `Signal` rows. Revision-owned authority may permit immutable

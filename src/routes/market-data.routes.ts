@@ -1,0 +1,14 @@
+import { Router } from 'express';
+import { requirePermission, requireSystemOwnerAccess } from '../middleware/rbac.js';
+import { PlatformPermission } from '../types/platform-rbac.js';
+import { calendarCreateController, calendarDeleteController, calendarListController, calendarUpdateController, marketBackfillController, marketDataStatusController, trendDayController, trendLabController } from '../controllers/market-data.controller.js';
+const router = Router();
+router.get('/calendar', requirePermission(PlatformPermission.MARKET_DATA_READ), calendarListController);
+router.post('/calendar', requirePermission(PlatformPermission.MARKET_CALENDAR_WRITE), calendarCreateController);
+router.put('/calendar/:id', requirePermission(PlatformPermission.MARKET_CALENDAR_WRITE), calendarUpdateController);
+router.delete('/calendar/:id', requirePermission(PlatformPermission.MARKET_CALENDAR_WRITE), calendarDeleteController);
+router.get('/status', requirePermission(PlatformPermission.MARKET_DATA_READ), marketDataStatusController);
+router.get('/trend-lab', requirePermission(PlatformPermission.MARKET_DATA_READ), trendLabController);
+router.get('/trend-lab/day', requirePermission(PlatformPermission.MARKET_DATA_READ), trendDayController);
+router.post('/backfill', requireSystemOwnerAccess, marketBackfillController);
+export default router;

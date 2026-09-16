@@ -30,6 +30,9 @@ The root `README.md` is the project front door. These docs are the working manua
 
 ## 🧱 Architecture Docs
 
+- [Market Data and Trend Calibration](architecture/market-data-trend.md): immutable
+  Massive OHLCV, operator calendar exceptions and the research-only Trend Lab.
+
 Architecture docs explain how the backend is designed and why major pieces exist.
 
 ### [Risk and Safety](architecture/risk-and-safety.md)

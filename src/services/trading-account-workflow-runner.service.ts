@@ -12,6 +12,7 @@ import { withTradingAccountWorkflowLock } from './trading-account-workflow-lock.
 export const accountWorkflowProcessInstanceId = randomUUID();
 
 const BACKOFF_CAP_MS: Record<WorkerKey, number> = {
+  market_daily_evidence_sync: 3_600_000, // Global worker; does not use account coordination.
   pending_order_processing: 30_000,
   submitted_order_sync: 60_000,
   tracked_position_sync: 30_000,

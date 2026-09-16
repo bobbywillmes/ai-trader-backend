@@ -86,6 +86,7 @@ describe('WorkerHealthRegistry', () => {
 
     expect(new Set(keys).size).toBe(keys.length);
     expect(keys).toEqual([
+      'market_daily_evidence_sync',
       'pending_order_processing',
       'submitted_order_sync',
       'tracked_position_sync',
