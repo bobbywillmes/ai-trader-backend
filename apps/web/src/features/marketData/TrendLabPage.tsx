@@ -5,7 +5,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useIsSystemOwner } from '../auth/useAuth';
 import { DataState } from '../../components/data-display';
 import { backfillMarketData } from './api';
-import { useMarketDataStatus, useTrendDay, useTrendLab } from './hooks';
+import { useMarketDataStatus, useRefreshTrendLab, useTrendDay, useTrendLab } from './hooks';
 import { TrendEvidenceChart } from './TrendEvidenceChart';
 import type { InstrumentEvidence, TrendProfile, TrendState } from './types';
 
@@ -45,20 +45,20 @@ function DataStatus() {
   </Stack></Card>;
 }
 export function TrendLabPage() {
-  const queryClient=useQueryClient();
   const [params,setParams]=useSearchParams();const from=params.get('from')??`${new Date().getFullYear()-3}-01-01`;const to=params.get('to')??todayEt();
   const profile=profiles.includes(params.get('profile') as TrendProfile)?params.get('profile') as TrendProfile:'MIDDLE';
   const symbol=params.get('symbol')==='RSP'?'RSP':'SPY';
   const [rangeFrom,setRangeFrom]=useState(from);const [rangeTo,setRangeTo]=useState(to);
   const query=useTrendLab(from,to);const status=useMarketDataStatus();const data=query.data;const timeline=data?.profiles[profile].timeline;
-  const selected=params.get('date')??timeline?.at(-1)?.date;const detail=useTrendDay(data?.datasetId,profile,selected);
-  const refresh=async()=>{await query.refetch();await queryClient.invalidateQueries({queryKey:['trend-day']});};
+  const selected=params.get('date')??timeline?.at(-1)?.date;const detail=useTrendDay(data?.datasetId,profile,selected,from,to);
+  const refresh=useRefreshTrendLab(from,to);
   const update=(values:Record<string,string>,clearDate=false)=>{const next=new URLSearchParams(params);Object.entries(values).forEach(([key,value])=>next.set(key,value));if(clearDate)next.delete('date');setParams(next);};
   const selectedSeries=data?.series.find(s=>s.symbol===symbol);const index=timeline?.findIndex(day=>day.date===selected)??-1;
   return <main style={{minWidth:0}}><Stack gap="lg">
     <Group justify="space-between"><div><Title order={1}>Trend Calibration Lab</Title><Text c="dimmed">SPY + RSP · Daily structural Trend · Three research candidates</Text></div><Badge color="violet" size="lg">Research only</Badge></Group>
     <DataStatus/>
-    <Card withBorder><form onSubmit={e=>{e.preventDefault();update({from:rangeFrom,to:rangeTo},true);}}><Group align="flex-end"><TextInput type="date" required label="Research start" value={rangeFrom} min={status.data?.researchStart} max={rangeTo} onChange={e=>setRangeFrom(e.currentTarget.value)}/><TextInput type="date" required label="Research end" value={rangeTo} min={rangeFrom} max={todayEt()} onChange={e=>setRangeTo(e.currentTarget.value)}/><Button type="submit">Apply range</Button><Button variant="default" onClick={()=>void refresh()} loading={query.isFetching}>Refresh research</Button></Group></form></Card>
+    <Card withBorder><form onSubmit={e=>{e.preventDefault();update({from:rangeFrom,to:rangeTo},true);}}><Group align="flex-end"><TextInput type="date" required label="Research start" value={rangeFrom} min={status.data?.researchStart} max={rangeTo} onChange={e=>setRangeFrom(e.currentTarget.value)}/><TextInput type="date" required label="Research end" value={rangeTo} min={rangeFrom} max={todayEt()} onChange={e=>setRangeTo(e.currentTarget.value)}/><Button type="submit">Apply range</Button><Button variant="default" onClick={()=>refresh.mutate()} loading={query.isFetching||refresh.isPending}>Refresh research</Button></Group></form></Card>
+    {refresh.error&&<Alert color="red" title="Research refresh failed">{refresh.error.message}</Alert>}
     {query.isLoading&&<DataState state="loading" message="Reading stored bars and Massive split evidence…"/>}{query.error&&<DataState state="error" title="Trend research unavailable" message={query.error.message} onRetry={()=>void query.refetch()}/>}
     {data&&<>
       <Alert color="blue"><Stack gap={4}>{data.warnings.map(w=><Text key={w} size="sm">{w}</Text>)}</Stack></Alert>
@@ -67,7 +67,7 @@ export function TrendLabPage() {
         {selectedSeries?.bars.length&&timeline?<TrendEvidenceChart bars={selectedSeries.bars} timeline={timeline} onSelect={date=>update({date})}/>:<Text>No chart observations in this range.</Text>}
       </Stack></Card>
       <Group align="flex-end"><TextInput type="date" label="Evidence date" value={selected??''} min={from} max={to} onChange={e=>update({date:e.currentTarget.value})}/><Button variant="default" disabled={index<=0} onClick={()=>update({date:timeline![index-1].date})}>Previous session</Button><Button variant="default" disabled={index<0||index>=(timeline?.length??0)-1} onClick={()=>update({date:timeline![index+1].date})}>Next session</Button></Group>
-      {detail.isFetching&&<Text size="sm">Loading date evidence…</Text>}{detail.error&&<Alert color="red" title="Date evidence unavailable">{detail.error.message}<Button size="xs" variant="subtle" onClick={()=>void refresh()}>Refresh research snapshot</Button></Alert>}
+      {detail.isFetching&&<Text size="sm">Loading date evidence…</Text>}{detail.error&&<Alert color="red" title="Date evidence unavailable">{detail.error.message}<Button size="xs" variant="subtle" onClick={()=>refresh.mutate()}>Refresh research snapshot</Button></Alert>}
       {detail.data&&<Stack><Card withBorder><Stack gap="xs"><Title order={2} size="h4">{detail.data.date} · {profile} explanation</Title><Group><Text>Raw market Trend</Text><State state={detail.data.rawState}/><Text>Effective Trend</Text><State state={detail.data.effectiveState}/></Group><Text>{detail.data.marketReason}</Text><Text fw={600}>{detail.data.transition.reason}</Text><Text size="sm">Previous effective: {detail.data.transition.previousEffectiveState??'None (bootstrap)'} · Confirmation before: {detail.data.transition.confirmationBefore}/2 · Supporting count: {detail.data.transition.supportingCount}/2 · Carried confirmation: {detail.data.transition.recoveryConfirmation}/2</Text></Stack></Card>
         <SimpleGrid cols={{base:1,xl:2}}><Instrument symbol="SPY" evidence={detail.data.spy}/><Instrument symbol="RSP" evidence={detail.data.rsp}/></SimpleGrid>
       </Stack>}

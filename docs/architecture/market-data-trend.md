@@ -147,13 +147,19 @@ ACCOUNT_USER has neither permission.
 | DELETE `/api/market-data/calendar/:id` | Remove exception |
 | GET `/api/market-data/status` | Stored coverage, current gaps, retry status and recent backfill events |
 | POST `/api/market-data/backfill` | `{from,to}`, up to 370 calendar days, both SPY/RSP |
-| GET `/api/market-data/trend-lab?from=...&to=...&refresh=true` | Candidate summaries, chart series, timeline and dataset identity |
-| GET `/api/market-data/trend-lab/day?datasetId=...&profile=MIDDLE&date=...` | Exact per-date explanation from that research snapshot |
+| GET `/api/market-data/trend-lab?from=...&to=...` | Candidate summaries, chart series, timeline and dataset identity |
+| GET `/api/market-data/trend-lab/day?datasetId=...&profile=MIDDLE&date=...&from=...&to=...` | Exact per-date explanation from that research snapshot |
 
 The server holds at most two research snapshots for ten minutes; at most two range
 calculations may be in flight. Refresh explicitly rebuilds inputs. Date inspection
-never silently changes datasets; expired/evicted snapshots return 410. These caches
+never silently changes datasets; expired/evicted snapshots are rebuilt using the
+requested from/to range. Day evidence is returned only when the rebuilt datasetId
+matches; changed evidence returns 409 and requires explicit research refresh.
+Unknown dates in a verified dataset return 404. These caches
 are transient research results, not authoritative assessment persistence.
+
+Normal loads reuse the server snapshot. Only the explicit Refresh research action
+sends refresh=true, replaces the range query, and invalidates its date-detail queries.
 
 The UI lives at `/system/market-calendar` and `/system/trend-lab`. Date range,
 profile, instrument and selected evidence date are URL-backed. Calendar forms show

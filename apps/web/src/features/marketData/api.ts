@@ -7,5 +7,5 @@ export const saveCalendar = (input: CalendarInput, id?: number) => apiRequest<Ca
 export const deleteCalendar = (id: number) => apiRequest<void>(`${root}/calendar/${id}`, { ...options(), method: 'DELETE' });
 export const getMarketDataStatus = () => apiRequest<MarketDataStatus>(`${root}/status`, options());
 export const backfillMarketData = (from: string, to: string) => apiRequest<BackfillResult>(`${root}/backfill`, { ...options(), method: 'POST', body: { from, to } });
-export const getTrendLab = (from: string, to: string) => apiRequest<TrendLab>(`${root}/trend-lab?${new URLSearchParams({ from, to, refresh: 'true' })}`, options());
-export const getTrendDay = (datasetId: string, profile: TrendProfile, date: string) => apiRequest<TrendDay>(`${root}/trend-lab/day?${new URLSearchParams({ datasetId, profile, date })}`, options());
+export const getTrendLab = (from: string, to: string, refresh = false) => apiRequest<TrendLab>(`${root}/trend-lab?${new URLSearchParams({ from, to, ...(refresh ? { refresh: 'true' } : {}) })}`, options());
+export const getTrendDay = (datasetId: string, profile: TrendProfile, date: string, from: string, to: string) => apiRequest<TrendDay>(`${root}/trend-lab/day?${new URLSearchParams({ datasetId, profile, date, from, to })}`, options());

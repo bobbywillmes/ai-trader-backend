@@ -30,6 +30,6 @@ export const trendLabController = marketController(async (req, res) => {
   res.json(await getTrendLab(input.from,input.to,input.refresh==='true'));
 });
 export const trendDayController = marketController(async (req, res) => {
-  const input = z.object({ datasetId: z.string().regex(/^[a-f0-9]{64}$/), profile: z.enum(['TIGHT', 'MIDDLE', 'LOOSE']), date: marketDateSchema }).strict().parse(req.query);
-  res.json(getTrendDay(input.datasetId, input.profile, input.date));
+  const input = z.object({ datasetId: z.string().regex(/^[a-f0-9]{64}$/), profile: z.enum(['TIGHT', 'MIDDLE', 'LOOSE']), date: marketDateSchema, from: marketDateSchema, to: marketDateSchema }).strict().refine(row => row.from <= row.to, 'Start must not follow end.').parse(req.query);
+  res.json(await getTrendDay(input.datasetId, input.profile, input.date, input.from, input.to));
 });

@@ -62,7 +62,25 @@ describe('Trend Lab evidence UI',()=>{
     mount('lab');fireEvent.click(await screen.findByRole('button',{name:'Source bars and split normalization'}));expect(await screen.findAllByText(/No split events returned/)).toHaveLength(2);expect(screen.getAllByText(/recommended 250/)).toHaveLength(2);
   });
   it.each([390,768])('keeps chart selection and evidence usable at %s px',async width=>{mount('lab',width);fireEvent.click(await screen.findByRole('button',{name:'Select September 14 candle'}));expect(await screen.findByText('2026-09-14 · MIDDLE explanation')).toBeTruthy();expect(screen.getAllByText('Measurement 9')).toHaveLength(2);});
-  it('reports expired snapshots instead of silently changing evidence',async()=>{
-    const original=mocks.request.getMockImplementation()!;mocks.request.mockImplementation((path,options)=>path.includes('/trend-lab/day?')?Promise.reject(new Error('Research snapshot expired.')):original(path,options));mount('lab');expect(await screen.findByText('Research snapshot expired.')).toBeTruthy();expect(screen.getByRole('button',{name:'Refresh research snapshot'})).toBeTruthy();
+  it('reports changed snapshots instead of silently changing evidence',async()=>{
+    const original=mocks.request.getMockImplementation()!;mocks.request.mockImplementation((path,options)=>path.includes('/trend-lab/day?')?Promise.reject(new Error('Research evidence changed. Refresh the research snapshot before inspecting this date.')):original(path,options));mount('lab');expect(await screen.findByText('Research evidence changed. Refresh the research snapshot before inspecting this date.')).toBeTruthy();expect(screen.getByRole('button',{name:'Refresh research snapshot'})).toBeTruthy();
   });
+});
+
+it('uses ordinary loads and explicitly refreshes the snapshot and date evidence',async()=>{
+  mount('lab');await screen.findByText('SPY is UP; RSP is NEUTRAL. Equal-weight confirmation is incomplete.');
+  expect(mocks.request).toHaveBeenCalledWith('/api/market-data/trend-lab?from=2026-09-14&to=2026-09-15',expect.anything());
+  expect(mocks.request).toHaveBeenCalledWith(expect.stringContaining('date=2026-09-15&from=2026-09-14&to=2026-09-15'),expect.anything());
+  const original=mocks.request.getMockImplementation()!;
+  const updated={...lab,datasetId:'b'.repeat(64)};
+  client.setQueryData(['trend-day',lab.datasetId,'TIGHT','2026-09-14','2026-09-14','2026-09-15'],day('2026-09-14','TIGHT'));
+  mocks.request.mockImplementation((path,options)=>path.includes('refresh=true')?Promise.resolve(updated):original(path,options));
+  fireEvent.click(screen.getByRole('button',{name:'Refresh research'}));
+  await waitFor(()=>expect(client.getQueryData(['trend-lab','2026-09-14','2026-09-15'])).toEqual(updated));
+  expect(mocks.request).toHaveBeenCalledWith('/api/market-data/trend-lab?from=2026-09-14&to=2026-09-15&refresh=true',expect.anything());
+  await waitFor(()=>expect(mocks.request.mock.calls.some(([path])=>path.includes('/day?datasetId='+updated.datasetId))).toBe(true));
+  expect(client.getQueryState(['trend-day',lab.datasetId,'TIGHT','2026-09-14','2026-09-14','2026-09-15'])?.isInvalidated).toBe(true);
+  fireEvent.change(screen.getByLabelText(/Research start/),{target:{value:'2026-09-01'}});
+  fireEvent.click(screen.getByRole('button',{name:'Apply range'}));
+  await waitFor(()=>expect(mocks.request).toHaveBeenCalledWith(expect.stringContaining('date=2026-09-15&from=2026-09-01&to=2026-09-15'),expect.anything()));
 });

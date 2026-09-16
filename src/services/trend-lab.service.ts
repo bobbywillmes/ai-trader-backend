@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import { fetchSplitEvidence } from '../integrations/massive/evidence.client.js';
-import { addDays, barEligibility, datesBetween, etDate, etInstant, marketSession } from './market-calendar.js';
+import { addDays, barEligibility, datesBetween, etDate, etInstant, marketSession, validDate } from './market-calendar.js';
 import { calendarExceptions } from './market-calendar.service.js';
 import { TREND_DATA_START } from './market-bar-ingestion.service.js';
 import { TREND_PRE_ROLL_SESSIONS, TREND_RESEARCH_START, TREND_SYMBOLS } from './trend-lab.config.js';
@@ -48,7 +48,8 @@ export async function buildLab(from: string, to: string, now = new Date()) {
   const datasetId = createHash('sha256').update(JSON.stringify({ from, to, series, exceptions, operationalFrom, eligibleDates: ordered, evidenceSchemaVersion: TREND_EVIDENCE_SCHEMA_VERSION })).digest('hex');
   return { datasetId, from, to, generatedAt: now.toISOString(), evidenceSchemaVersion: TREND_EVIDENCE_SCHEMA_VERSION, profiles, series, warnings, missingDates: missing, preRollRequired: TREND_PRE_ROLL_SESSIONS };
 }
-export async function getTrendLab(from: string, to: string, refresh = false) {
+async function resolveRun(from: string, to: string, refresh = false): Promise<Run> {
+  if (!validDate(from) || !validDate(to) || from < TREND_RESEARCH_START || to > etDate(new Date()) || from > to) throw new HttpError(400, 'Invalid research date range.');
   const key = `${from}:${to}`; const existing = cache.get(key);
   let run: Run;
   if (!refresh && existing && existing.expiresAt > Date.now()) run = existing.run;
@@ -59,18 +60,24 @@ export async function getTrendLab(from: string, to: string, refresh = false) {
       pending = buildLab(from, to); inflight.set(key, pending);
     }
     try { run = await pending; } finally { inflight.delete(key); }
-    if (cache.size >= 2) cache.delete(cache.keys().next().value!);
+    if (!cache.has(key) && cache.size >= 2) cache.delete(cache.keys().next().value!);
     cache.set(key, { run, expiresAt: Date.now() + CACHE_MS });
   }
+  return run;
+}
+export async function getTrendLab(from: string, to: string, refresh = false) {
+  const run = await resolveRun(from, to, refresh);
   const { profiles, series, ...meta } = run;
   const common = new Map(profiles.MIDDLE.days.map(day => [day.date, day]));
   return { ...meta, profiles: Object.fromEntries(Object.entries(profiles).map(([profile, value]) => [profile, { summary: value.summary, timeline: value.days.map(day => ({ date: day.date, status: day.status, rawState: day.rawState, effectiveState: day.effectiveState, transitioned: day.transition.transitioned })) }])),
     series: series.map(s => ({ ...s, bars: s.bars.filter(bar => bar.date >= from).map(bar => { const evidence = common.get(bar.date)?.[s.symbol === 'SPY' ? 'spy' : 'rsp']; return { ...bar, ema10: evidence?.ema10 ?? null, ema20: evidence?.ema20 ?? null, ema50: evidence?.ema50 ?? null }; }) })) };
 }
-export function getTrendDay(datasetId: string, profile: TrendProfile, date: string) {
+export async function getTrendDay(datasetId: string, profile: TrendProfile, date: string, from: string, to: string) {
+  if (!validDate(from) || !validDate(to) || from > to) throw new HttpError(400, 'Invalid research date range.');
   const entry = [...cache.values()].find(value => value.run.datasetId === datasetId && value.expiresAt > Date.now());
-  if (!entry) throw new HttpError(410, 'Research snapshot expired. Refresh the lab before inspecting this date.');
-  const day = entry.run.profiles[profile].days.find(value => value.date === date);
+  const run = entry?.run ?? await resolveRun(from, to);
+  if (run.datasetId !== datasetId || run.from !== from || run.to !== to) throw new HttpError(409, 'Research evidence changed. Refresh the research snapshot before inspecting this date.');
+  const day = run.profiles[profile].days.find(value => value.date === date);
   if (!day) throw new HttpError(404, 'No known research session on this date.');
   return { datasetId, profile, evidenceSchemaVersion: TREND_EVIDENCE_SCHEMA_VERSION, ...day };
 }

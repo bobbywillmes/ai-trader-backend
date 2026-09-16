@@ -9,7 +9,7 @@ import router from './market-data.routes.js';
 import { HttpError } from '../errors/http-error.js';
 let server: Server; let base: string;
 beforeEach(async () => {
-  vi.clearAllMocks(); mocks.list.mockResolvedValue([]); mocks.save.mockResolvedValue({ id: 1 }); mocks.remove.mockResolvedValue({}); mocks.status.mockResolvedValue({ symbols: [] }); mocks.backfill.mockResolvedValue({ results: [] }); mocks.lab.mockResolvedValue({ profiles: {} }); mocks.day.mockReturnValue({ rawState: 'NEUTRAL' });
+  vi.clearAllMocks(); mocks.list.mockResolvedValue([]); mocks.save.mockResolvedValue({ id: 1 }); mocks.remove.mockResolvedValue({}); mocks.status.mockResolvedValue({ symbols: [] }); mocks.backfill.mockResolvedValue({ results: [] }); mocks.lab.mockResolvedValue({ profiles: {} }); mocks.day.mockResolvedValue({ rawState: 'NEUTRAL' });
   const app = express(); app.use(express.json());
   app.use((req, res, next) => { if (req.headers.role) Object.assign(res.locals, { user: { id: 1, platformRole: String(req.headers.role) } }); next(); });
   app.use('/api/market-data', router);
@@ -39,8 +39,19 @@ describe('market-data permissions and API', () => {
   });
   it('selects date/profile on a specific immutable research snapshot', async () => {
     const datasetId='a'.repeat(64);
-    expect((await fetch(`${base}/trend-lab/day?datasetId=${datasetId}&profile=LOOSE&date=2026-09-14`,{headers:{role:'OPERATOR'}})).status).toBe(200);
-    expect(mocks.day).toHaveBeenCalledWith(datasetId,'LOOSE','2026-09-14');
-    expect((await fetch(`${base}/trend-lab/day?datasetId=${datasetId}&profile=TREND_V1&date=2026-09-14`,{headers:{role:'OPERATOR'}})).status).toBe(400);
+    expect((await fetch(`${base}/trend-lab/day?datasetId=${datasetId}&profile=LOOSE&date=2026-09-14&from=2026-09-01&to=2026-09-15`,{headers:{role:'OPERATOR'}})).status).toBe(200);
+    expect(mocks.day).toHaveBeenCalledWith(datasetId,'LOOSE','2026-09-14','2026-09-01','2026-09-15');
+    expect((await fetch(`${base}/trend-lab/day?datasetId=${datasetId}&profile=TREND_V1&date=2026-09-14&from=2026-09-01&to=2026-09-15`,{headers:{role:'OPERATOR'}})).status).toBe(400);
   });
+});
+
+it('awaits stale and unknown-day errors and validates recovery ranges',async()=>{
+  const path=base+'/trend-lab/day?datasetId='+'a'.repeat(64)+'&profile=TIGHT&date=2022-08-31';
+  for(const range of ['', '&from=2022-02-30&to=2022-08-31','&from=2022-09-01&to=2022-08-31']) expect((await fetch(path+range,{headers:{role:'OPERATOR'}})).status).toBe(400);
+  expect(mocks.day).not.toHaveBeenCalled();
+  for(const code of [409,404]){
+    mocks.day.mockRejectedValueOnce(new HttpError(code,'Research evidence changed.'));
+    const response=await fetch(path+'&from=2022-06-01&to=2022-08-31',{headers:{role:'OPERATOR'}});
+    expect(response.status).toBe(code);expect(await response.json()).toEqual({message:'Research evidence changed.'});
+  }
 });
