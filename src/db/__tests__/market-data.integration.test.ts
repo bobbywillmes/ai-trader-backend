@@ -5,7 +5,8 @@ import { Client } from 'pg';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { ingestDailyRange } from '../../services/market-bar-ingestion.service.js';
-import { etInstant } from '../../services/market-calendar.js';
+import { datesBetween, etInstant, isWeekend } from '../../services/market-calendar.js';
+import { publishTrendAssessments } from '../../services/trend-assessment.service.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.DATABASE_URL;
@@ -95,5 +96,56 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const retry=await ingestDailyRange('SPY','2026-09-14','2026-09-15',{...options,fetchBars:async()=>[makeBar('2026-09-14','100'),makeBar('2026-09-15','100')]});
     expect(retry.inserted).toBe(0);
     expect((await prisma.marketBar.findMany({where:{securityId},orderBy:{barStartAt:'asc'}})).map(row=>row.close.toNumber())).toEqual([101,101]);
+  });
+  async function tradingCounts() {
+    const tables = ['OrderIntent', 'BrokerOrder', 'BrokerActivity', 'TrackedPosition', 'Subscription', 'Signal', 'SignalDelivery', 'SignalEvaluation', 'CurrentMarketState'];
+    const counts = [];
+    for (const table of tables) counts.push({ table, count: (await db.query(`SELECT count(*)::int n FROM "${table}"`)).rows[0].n });
+    return counts;
+  }
+  it('serializes real publishers under the transaction lock, bootstraps once, and has no trading writes', async () => {
+    await db.query(`INSERT INTO "Security" (symbol,name,"assetType","updatedAt") VALUES ('RSP','RSP fixture','ETF',now())`);
+    const securities = await prisma.security.findMany({ where: { symbol: { in: ['SPY', 'RSP'] } } });
+    const dates = datesBetween('2026-05-01', '2026-09-14').filter(date => !isWeekend(date));
+    await prisma.marketBar.createMany({ data: securities.flatMap(security => dates.map((date, i) => ({ securityId: security.id, timeframe: 'DAY_1' as const, barStartAt: etInstant(date, 0), open: String(100 + i), high: String(100 + i), low: String(100 + i), close: String(100 + i), volume: '1000', provider: 'MASSIVE' as const, adjustmentMode: 'UNADJUSTED' as const, receivedAt: new Date() }))), skipDuplicates: true });
+    const before = await tradingCounts();
+    let entered!: () => void; const inside = new Promise<void>(resolve => { entered = resolve; });
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    const options = { db: prisma, now: new Date('2026-09-14T20:31Z'), fetchSplits: async () => { entered(); await gate; return []; } };
+    const first = publishTrendAssessments(options);
+    await inside;
+    try { await expect(publishTrendAssessments(options)).rejects.toMatchObject({ statusCode: 409 }); }
+    finally { release(); }
+    expect(await first).toMatchObject({ published: 1, attempts: 1 });
+    expect(await publishTrendAssessments({ ...options, fetchSplits: async () => [] })).toMatchObject({ notDue: true });
+    const published = await prisma.marketRegimeDimensionAssessment.findMany({ where: { algorithmVersion: 'TREND_V1' } });
+    expect(published).toHaveLength(1);
+    expect(published[0]).toMatchObject({ status: 'VALID', previousAssessmentId: null, targetAt: new Date('2026-09-14T20:00Z'), dataThroughAt: new Date('2026-09-14T20:00Z') });
+    expect(published[0]!.evidenceJson).toMatchObject({ bootstrap: true, historicalReplay: { sessionCount: dates.length } });
+    expect(await tradingCounts()).toEqual(before);
+  });
+  it('recovers a real missing Tuesday before Wednesday with immutable attempts and correct links', async () => {
+    const rsp = await prisma.security.findUniqueOrThrow({ where: { symbol: 'RSP' } });
+    async function insert(securityId: number, date: string) {
+      await prisma.marketBar.create({ data: { securityId, timeframe: 'DAY_1', barStartAt: etInstant(date, 0), open: '190', high: '190', low: '190', close: '190', volume: '1000', provider: 'MASSIVE', adjustmentMode: 'UNADJUSTED', receivedAt: new Date() } });
+    }
+    await insert(securityId, '2026-09-16'); await insert(rsp.id, '2026-09-16');
+    const options = { db: prisma, now: new Date('2026-09-16T20:31Z'), fetchSplits: async () => [] };
+    const before = await tradingCounts();
+    expect(await publishTrendAssessments(options)).toMatchObject({ published: 0, blocked: { sessionDate: '2026-09-15', reasonCode: 'MISSING_MARKET_DATA' } });
+    expect(await publishTrendAssessments(options)).toMatchObject({ suppressed: true, attempts: 0 });
+    expect(await prisma.marketRegimeDimensionAssessment.count({ where: { algorithmVersion: 'TREND_V1', sessionDate: new Date('2026-09-16') } })).toBe(0);
+    await insert(rsp.id, '2026-09-15');
+    expect(await publishTrendAssessments(options)).toMatchObject({ published: 2, blocked: null });
+    const rows = await prisma.marketRegimeDimensionAssessment.findMany({ where: { algorithmVersion: 'TREND_V1' }, orderBy: { id: 'asc' } });
+    expect(rows.map(row => row.status)).toEqual(['VALID', 'UNAVAILABLE', 'VALID', 'VALID']);
+    expect(rows[2]!.attempt).toBe(2);
+    expect(rows[2]!.previousAssessmentId).toBe(rows[0]!.id);
+    expect(rows[3]!.previousAssessmentId).toBe(rows[2]!.id);
+    expect(await tradingCounts()).toEqual(before);
+    await expect(prisma.marketRegimeDimensionAssessment.update({ where: { id: rows[3]!.id }, data: { effectiveState: 'DOWN' } })).rejects.toThrow('immutable');
+    const { id: _id, createdAt: _created, ...duplicate } = rows[3]!;
+    await expect(prisma.marketRegimeDimensionAssessment.create({ data: { ...duplicate, attempt: 2, evidenceJson: {} } })).rejects.toMatchObject({ code: 'P2002' });
+    await expect(prisma.marketRegimeDimensionAssessment.create({ data: { ...duplicate, algorithmVersion: 'OTHER_VERSION', attempt: 1, evidenceJson: {} } })).rejects.toMatchObject({ code: 'P2003' });
   });
 });

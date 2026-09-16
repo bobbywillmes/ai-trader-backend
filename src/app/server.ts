@@ -36,6 +36,8 @@ import { assertAccountCoordinatorHealthy } from '../services/worker-coordinator-
 import { closeTradingAccountWorkflowLockPool } from '../services/trading-account-workflow-lock.service.js';
 import { monitorLiveEntryArmings } from '../services/live-entry-arming.service.js';
 import { runMarketDataWorker } from '../workers/market-data.worker.js';
+import { runTrendAssessmentWorker } from '../workers/trend-assessment.worker.js';
+import { TREND_ASSESSMENT_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { closeMarketDataLockPool } from '../services/market-data-lock.service.js';
 
 const app = createApp();
@@ -144,6 +146,8 @@ async function runTradingWorkers() {
 
 function startWorkers() {
   workerHealthRegistry.startPersistence();
+  void runWorker('trend_assessment_publication', runTrendAssessmentWorker);
+  setInterval(() => { void runWorker('trend_assessment_publication', runTrendAssessmentWorker); }, TREND_ASSESSMENT_WORKER_INTERVAL_MS);
   void runWorker('market_daily_evidence_sync', runMarketDataWorker);
   setInterval(() => { void runWorker('market_daily_evidence_sync', runMarketDataWorker); }, 60_000);
 

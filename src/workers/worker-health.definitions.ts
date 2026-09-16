@@ -19,6 +19,7 @@ export const BROKER_ACTIVITY_WORKER_INTERVAL_MS = 60_000;
 export const RECONCILIATION_SCHEDULER_INTERVAL_MS = 60_000;
 export const ALPACA_API_USAGE_PERSISTENCE_INTERVAL_MS = 60_000;
 export const MASSIVE_NEWS_WORKER_INTERVAL_MS = 60_000;
+export const TREND_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 
 function thresholds(
   expectedIntervalMs: number,
@@ -36,6 +37,15 @@ function thresholds(
 }
 
 export const workerDefinitions = [
+  {
+    key: 'trend_assessment_publication',
+    displayName: 'Daily Trend assessment',
+    description: 'Publishes immutable TREND_V1 evidence chronologically, without trading consumers.',
+    criticality: 'informational',
+    expectedIntervalMs: TREND_ASSESSMENT_WORKER_INTERVAL_MS,
+    enabledByDefault: true,
+    ...thresholds(TREND_ASSESSMENT_WORKER_INTERVAL_MS, 240_000),
+  },
   {
     key: 'market_daily_evidence_sync',
     displayName: 'Daily market data',

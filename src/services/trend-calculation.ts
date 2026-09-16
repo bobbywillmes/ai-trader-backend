@@ -1,8 +1,9 @@
-/** Pure research calculation. No database, clock, HTTP or trading dependencies. */
+/** Pure Trend calculation. No database, clock, HTTP or trading dependencies. */
 export type TrendState = 'DOWN' | 'NEUTRAL' | 'UP';
 export type MeasurementSign = 'NEGATIVE' | 'NEUTRAL' | 'POSITIVE';
 export type TrendProfile = 'TIGHT' | 'MIDDLE' | 'LOOSE';
 export type Horizon = 'SHORT' | 'MEDIUM' | 'STRUCTURAL';
+export type TrendThresholds = readonly number[];
 export const TREND_MINIMUM_SESSIONS = 60; // EMA50 seed (50) + ten-session slope.
 export const TREND_EVIDENCE_SCHEMA_VERSION = 1;
 export const MEASUREMENT_DEFINITIONS = [
@@ -106,10 +107,11 @@ function instrumentMeasurements(bars: readonly (NormalizedBar | null)[]) {
     return { values, ema10: e10, ema20: e20, ema50: e50, consecutiveSessions: consecutive };
   });
 }
-function classifyInstrument(input: ReturnType<typeof instrumentMeasurements>[number], profile: TrendProfile): InstrumentEvidence {
+function classifyInstrument(input: ReturnType<typeof instrumentMeasurements>[number], thresholds: TrendThresholds): InstrumentEvidence {
   const { values, ...base } = input;
   if (!values) return { ...base, state: null, horizons: null, measurements: [], reason: `Unavailable: ${base.consecutiveSessions}/${TREND_MINIMUM_SESSIONS} consecutive sessions; EMA50 plus its 10-session slope requires 60.` };
-  const measurements = values.map((value, i) => ({ ...MEASUREMENT_DEFINITIONS[i]!, value, deadband: TREND_PROFILES[profile][i]!, classification: measurementSign(value, TREND_PROFILES[profile][i]!) }));
+  const measurements = values.map((value, i) => ({ ...MEASUREMENT_DEFINITIONS[i]!, value, deadband: thresholds[i]!, classification: measurementSign(value, thresholds[i]!) }));
+  if (measurements.some(m => !Number.isFinite(m.value))) throw new Error('Non-finite Trend measurement.');
   const horizons = Object.fromEntries((['SHORT', 'MEDIUM', 'STRUCTURAL'] as const).map(h => [h, horizonState(measurements.filter(m => m.horizon === h).map(m => m.classification))])) as Record<Horizon, TrendState>;
   const state = instrumentState(horizons.SHORT, horizons.MEDIUM, horizons.STRUCTURAL);
   const reason = horizons.MEDIUM === horizons.STRUCTURAL
@@ -121,12 +123,16 @@ function classifyInstrument(input: ReturnType<typeof instrumentMeasurements>[num
 }
 export type TrendDay = { date: string; status: 'VALID' | 'UNAVAILABLE'; spy: InstrumentEvidence; rsp: InstrumentEvidence; rawState: TrendState | null; effectiveState: TrendState | null; marketReason: string; transition: TransitionEvidence };
 export function calculateTrend(dates: readonly string[], spy: readonly (NormalizedBar | null)[], rsp: readonly (NormalizedBar | null)[], profile: TrendProfile): TrendDay[] {
+  return calculateTrendWithThresholds(dates, spy, rsp, TREND_PROFILES[profile]);
+}
+export function calculateTrendWithThresholds(dates: readonly string[], spy: readonly (NormalizedBar | null)[], rsp: readonly (NormalizedBar | null)[], thresholds: TrendThresholds): TrendDay[] {
+  if (thresholds.length !== 9 || thresholds.some(value => !Number.isFinite(value) || value < 0)) throw new Error('Trend requires nine finite nonnegative thresholds.');
   if (dates.length !== spy.length || dates.length !== rsp.length || dates.some((date, i) => i > 0 && date <= dates[i - 1]!)) throw new Error('Trend requires aligned, unique chronological daily sessions.');
   if (spy.some((bar, i) => bar && bar.date !== dates[i]) || rsp.some((bar, i) => bar && bar.date !== dates[i])) throw new Error('Instrument session identity mismatch.');
   const a = instrumentMeasurements(spy), b = instrumentMeasurements(rsp);
   let history: HysteresisState = { effective: null, recoveryConfirmation: 0 };
   return dates.map((date, i) => {
-    const spyEvidence = classifyInstrument(a[i]!, profile), rspEvidence = classifyInstrument(b[i]!, profile);
+    const spyEvidence = classifyInstrument(a[i]!, thresholds), rspEvidence = classifyInstrument(b[i]!, thresholds);
     const rawState = spyEvidence.state === null || rspEvidence.state === null ? null : marketRawState(spyEvidence.state, rspEvidence.state);
     const transition = advanceTrend(history, rawState);
     history = { effective: transition.effectiveState, recoveryConfirmation: transition.recoveryConfirmation };

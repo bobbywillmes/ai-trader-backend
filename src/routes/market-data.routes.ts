@@ -1,8 +1,13 @@
 import { Router } from 'express';
 import { requirePermission, requireSystemOwnerAccess } from '../middleware/rbac.js';
 import { PlatformPermission } from '../types/platform-rbac.js';
+import { trendAssessmentLatestController, trendAssessmentListController, trendAssessmentDetailController, trendAssessmentRunController } from '../controllers/trend-assessment.controller.js';
 import { calendarCreateController, calendarDeleteController, calendarListController, calendarUpdateController, marketBackfillController, marketDataStatusController, trendDayController, trendLabController } from '../controllers/market-data.controller.js';
 const router = Router();
+router.get('/trend-assessments/latest', requirePermission(PlatformPermission.MARKET_DATA_READ), trendAssessmentLatestController);
+router.get('/trend-assessments', requirePermission(PlatformPermission.MARKET_DATA_READ), trendAssessmentListController);
+router.get('/trend-assessments/:id', requirePermission(PlatformPermission.MARKET_DATA_READ), trendAssessmentDetailController);
+router.post('/trend-assessments/run', requireSystemOwnerAccess, trendAssessmentRunController);
 router.get('/calendar', requirePermission(PlatformPermission.MARKET_DATA_READ), calendarListController);
 router.post('/calendar', requirePermission(PlatformPermission.MARKET_CALENDAR_WRITE), calendarCreateController);
 router.put('/calendar/:id', requirePermission(PlatformPermission.MARKET_CALENDAR_WRITE), calendarUpdateController);

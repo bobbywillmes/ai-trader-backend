@@ -1,4 +1,4 @@
-# Market data and Trend calibration
+# Market data, Trend calibration and TREND_V1 publication
 
 ## Authority and evidence
 
@@ -46,9 +46,91 @@ advance daily hysteresis.
 
 CurrentMarketState and Market Diary retain their narrative/n8n purpose. There is
 no Market Regime trading gate, strategy policy, overall regime calculation or
-execution integration. Next: operator review of the Trend Lab and selection of
-one profile. Only after that review will selected thresholds be frozen under a
-production identifier such as TREND_V1 and immutable assessments be published.
+execution integration. TIGHT was selected as the calibration basis for production
+TREND_V1. Production thresholds are independently frozen in
+`src/services/trend-v1.definition.ts`; editing research profiles cannot alter them.
+The next dimension is Volatility v1; it is not implemented here.
+
+## Authoritative daily TREND_V1
+
+`trend-assessment.service.ts` publishes only TREND / TREND_V1. Its independent
+definition uses percentage-point deadbands, in measurement order:
+`0.10, 0.02, 0.30; 0.15, 0.02, 0.10; 0.25, 0.01, 0.15`.
+The pure core takes explicit thresholds; the research wrapper maps profile names.
+The authoritative evidence envelope starts at version 1, scoped by algorithmVersion;
+the existing research evidence version and historical research labels stay unchanged.
+
+Bootstrap loads stored Massive SPY/RSP DAY_1 history, obtains split evidence,
+normalizes in memory, and replays the existing daily state machine. Only the latest
+calculable common eligible session is published, with null previousAssessmentId.
+No historical replay rows become authoritative. Bootstrap evidence states replay
+start, session count and data-through boundary. If a later expected session is
+already eligible but missing, the same run records the first gap and stops.
+If no session has sufficient warm-up, an UNAVAILABLE attempt records that condition.
+A failed initial attempt pins its session for retry instead of moving bootstrap
+past an unresolved target.
+
+After bootstrap, each session must resolve VALID before the next is processed.
+Missing bars or insufficient history produce UNAVAILABLE; split integration or
+validation failures produce FAILED / SPLIT_EVIDENCE_UNAVAILABLE; calculation or
+predecessor decoding failures produce FAILED / CALCULATION_FAILED. Missing bars
+use MISSING_MARKET_DATA and insufficient warm-up uses INSUFFICIENT_HISTORY.
+Neither non-valid status has raw/effective classifications. A Tuesday gap blocks
+Wednesday even if all Wednesday inputs are present. A later Tuesday VALID attempt
+then becomes Wednesday's predecessor. Predecessor effective state and confirmation
+come from immutable evidence, never a new replay of the predecessor's hysteresis.
+The bootstrap input floor and operational session floor are carried forward.
+
+targetAt is the ET session close (including early closes), not worker time.
+dataThroughAt equals that close for VALID rows; completedAt is actual completion.
+validUntil snapshots the next expected session close plus the existing DAY_1
+30-minute grace. Next-session date, close and relevant calendar exception are in
+evidence. Later calendar edits do not rewrite this snapshot. Retried attempted
+sessions preserve their original targetAt even if the configured close changes.
+
+Each run owns a PostgreSQL transaction-scoped advisory lock from predecessor read
+through insertion and SystemEvent writes. Lock loss rolls back writes on the same
+connection. The existing DB partial unique index remains the final VALID guard.
+A run handles at most 20 sessions, with a four-minute transaction timeout; subsequent
+runs continue catch-up. Concurrent callers receive 409 and workers report
+already_running. A uniqueness race is idempotent only after verifying a VALID winner.
+
+Attempts are append-only. A SHA-256 attempt fingerprint covers reason/status,
+algorithm/evidence version, source presence and canonical inputs, predecessor,
+and timing contract. Identical non-valid attempts do not insert another row or
+event. Every run retries split retrieval when applicable, so provider recovery can
+produce VALID without changing MarketBars. A changed input/reason creates the next
+attempt. Future bars beyond a blocked target do not defeat duplicate suppression.
+
+VALID evidence contains named thresholds, timing, Security IDs/symbols, input
+range/counts and endpoint bar IDs, a canonical hash of ordered inputs/session dates
+and splits, exact split events and price factors, normalization semantics,
+SPY/RSP EMAs and nine classified measurements, three horizon votes, instrument
+states/reasons, market raw state/reason, and the complete hysteresis transition.
+Raw bars and provider response bodies are not copied into evidence. Immutable bars
+remain available for provenance inspection. Historical replay uses observed session
+dates because the calendar does not reconstruct decades of missing holidays;
+operational publication requires every expected session from bootstrap onward.
+
+The `trend_assessment_publication` worker runs at startup and every 15 minutes,
+independently of ingestion and accounts. It is not_due when current through the
+latest eligible boundary. Unresolved attempts remain visible as failed worker
+health even when their duplicate rows are suppressed. The existing health registry
+persists WorkerHealthState. Publication emits events only for bootstrap, transitions,
+new blocked attempts, and recovery; no idle-tick or Market Diary events are added.
+
+Read operations use MARKET_DATA_READ (SYSTEM_OWNER / OPERATOR); manual publication
+requires SYSTEM_OWNER. Routes under `/api/market-data`:
+
+| Method | Route | Result |
+| --- | --- | --- |
+| GET | `/trend-assessments/latest` | latestAttempt and latestValid, so gaps remain visible |
+| GET | `/trend-assessments?limit=20&beforeId=123` | Recent attempts, descending insertion ID; limit 1–100 |
+| GET | `/trend-assessments/:id` | Full immutable evidence |
+| POST | `/trend-assessments/run` | Run/catch up, empty body; counts, suppression and blocked reason |
+
+There are no update/delete routes or profile/date overrides. No migration is needed.
+See [local acceptance](../development/trend-v1-acceptance.md).
 
 ## Research inputs and evidence
 
