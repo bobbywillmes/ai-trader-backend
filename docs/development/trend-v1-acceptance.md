@@ -73,4 +73,5 @@ Local DATABASE_URL must allow creating/dropping these isolated databases.
 No migration, schema change, frontend build, historical assessment backfill, or
 trading configuration change is needed for deployment. Calendar maintenance and
 working Massive split access are required. Publication becomes operational at the
-first startup/manual run; Volatility v1 and regime consumers remain future work.
+first startup/manual run. VOLATILITY_V1 now has its own
+[publication acceptance](volatility-v1-acceptance.md); regime consumers remain future work.

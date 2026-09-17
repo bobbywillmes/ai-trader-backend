@@ -1,4 +1,4 @@
-# Market data, Trend calibration and TREND_V1 publication
+# Market data, calibration and daily dimension publication
 
 ## Authority and evidence
 
@@ -25,7 +25,8 @@ bar are distinct. Missing bars are never synthesized.
 ## Assessment foundation
 
 MarketRegimeDimensionAssessment is an immutable terminal evidence contract.
-It has six dimension names, but only Trend's UP/NEUTRAL/DOWN vocabulary is defined.
+It has six dimension names. TREND supports UP/NEUTRAL/DOWN and VOLATILITY supports
+LOW/NORMAL/HIGH/EXTREME; both daily dimensions require sessionDate in PostgreSQL.
 UNAVAILABLE/FAILED rows have null states; missing data is never NEUTRAL. Attempts
 are unique per dimension/version/target/attempt, and at most one VALID result may
 exist per dimension/version/target. A previous assessment must share dimension and
@@ -49,7 +50,8 @@ no Market Regime trading gate, strategy policy, overall regime calculation or
 execution integration. TIGHT was selected as the calibration basis for production
 TREND_V1. Production thresholds are independently frozen in
 `src/services/trend-v1.definition.ts`; editing research profiles cannot alter them.
-The next dimension is Volatility v1; it is not implemented here.
+VOLATILITY_V1 is also authoritative, without trading consumers. BREADTH_V1 remains
+future work; Strategy gating and overall composition are not implemented.
 
 ## Authoritative daily TREND_V1
 
@@ -132,6 +134,68 @@ requires SYSTEM_OWNER. Routes under `/api/market-data`:
 There are no update/delete routes or profile/date overrides. No migration is needed.
 See [local acceptance](../development/trend-v1-acceptance.md).
 
+## Authoritative daily VOLATILITY_V1
+
+VOLATILITY_V1 uses the unchanged calibrated pure classifier: sample RV10/RV20
+of daily log returns, annualized by sqrt(252)*100, and Wilder ATR14/close*100.
+RV boundaries are 12/20/30; ATR percentage boundaries are 1.00/1.50/2.50. Bounds
+are lower-inclusive and upper-exclusive. LOW/NORMAL/HIGH/EXTREME have severities
+0/1/2/3. Each instrument takes the median severity; market raw takes max(SPY,RSP).
+Warm-up requires 21 consecutive usable sessions for each instrument. Missing
+expected sessions restart only the affected metrics. Unlike Trend deterioration,
+Volatility worsening jumps immediately to raw; recovery takes two valid supporting
+sessions per single downward severity step. Missing evidence pauses confirmation.
+
+The publisher follows the existing Trend transaction/attempt pattern without a
+shared speculative regime framework or changed Trend state machine. It internally
+replays all expected historical sessions, creates one bootstrap VALID row with no
+predecessor, and continues chronologically from actual prior VOLATILITY_V1 VALID
+rows. Missing/failed evidence pins the first unresolved target and stops catch-up;
+identical failure fingerprints suppress duplicate attempts. At most 20 targets
+are handled per invocation. The separate global advisory transaction lock protects
+manual/worker races; PostgreSQL uniqueness remains final protection.
+
+The static previously verified closure data now has an explicit insert-only
+operator bootstrap command, `npm run calendar:bootstrap -- --apply`. Preview is
+the default. All 59 known 2021–2026 CLOSED dates, including 2025-01-09, are checked
+under a table lock. Equivalent entries skip; any type/close/canonical-name conflict
+aborts all writes and is reported. There are no network calls, calendar deletions,
+silent operator overwrites, early-close seeding or automatic worker imports.
+The research runner still uses the same dates in memory; production calculations
+use persisted configuration. Missing known closure coverage blocks publication
+with CALENDAR_EVIDENCE_UNAVAILABLE. Future years remain owner-maintained.
+
+Only completed MASSIVE/UNADJUSTED SPY/RSP DAY_1 bars are loaded. Normalization uses
+the unchanged Massive split semantics in memory. Eligibility is close+30 minutes;
+targetAt and dataThroughAt identify that session's input close, and validUntil
+freezes next expected close+30 minutes, respecting weekends, holidays and early
+closes. Freshness is derived at read/use time, never by updating historical status.
+
+The version-1 evidence envelope contains the complete frozen definition, exact
+ordered MarketBar IDs and Security snapshots, date ranges/counts/hash, split events
+and normalization factors, three measurement values/states/severities per symbol,
+raw ATR, instrument and market reasons, persisted predecessor and hysteresis, and
+calendar/close/grace/validity evidence. Raw provider responses are not persisted.
+
+The monitored `volatility_assessment_publication` worker runs at startup and every
+15 minutes, account-independently. Current runs return zero publications/attempts
+and notDue true before any Massive requests. New terminal failures remain visible
+in worker health even if repeated identical attempts are suppressed. Writes are
+limited to dimension assessments/SystemEvents and monitored worker health; there
+is still no Strategy, SignalEvaluation, composition, entry or exit consumer.
+
+| Method | Route under `/api/market-data` | Access/result |
+| --- | --- | --- |
+| GET | `/volatility-assessments/latest` | MARKET_DATA_READ; latestAttempt/latestValid |
+| GET | `/volatility-assessments?limit=20&beforeId=123` | MARKET_DATA_READ; descending ID cursor, limit 1–100 |
+| GET | `/volatility-assessments/:id` | MARKET_DATA_READ; full immutable evidence |
+| POST | `/volatility-assessments/run` | SYSTEM_OWNER; empty body; published/attempts/suppressed/notDue/blocked |
+
+Deploy the additive constraint migration
+`20260917120000_volatility_v1_assessment_constraints`, then explicitly bootstrap
+the calendar before starting the new worker. No historical evidence is rewritten.
+See [Volatility acceptance and recorded local results](../development/volatility-v1-acceptance.md).
+
 ## Research inputs and evidence
 
 Research defaults live in `src/services/trend-lab.config.ts`: display history starts
@@ -201,7 +265,7 @@ instrument state, raw/effective market state, predecessor and confirmation count
 and an explanation. Source metadata contains exact ordered MarketBar IDs; chart
 bars retain IDs and normalization factors. Split dates/ratios remain inspectable.
 The same versioned daily evidence structure can later be persisted by a separate
-approved production publisher. The current application has no such publisher.
+approved production publisher. Authoritative publishers are separate from research execution.
 
 ## Operations and APIs
 

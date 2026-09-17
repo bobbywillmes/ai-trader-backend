@@ -222,11 +222,14 @@ immutable attempts under a transaction advisory lock. Unresolved sessions block
 later publication. Persisted predecessor evidence owns hysteresis continuation.
 No trading consumer exists. See `docs/architecture/market-data-trend.md`.
 
-Daily Volatility calibration is research-only: `npm run research:volatility` reads
-stored SPY/RSP DAY_1 bars and Massive splits without publishing assessments.
-Its pure classifier and asymmetric hysteresis are independent of TREND_V1.
-The runner uses a sourced 2021–2026 research calendar in memory; never persist it
-or reuse it in production workers implicitly. See `docs/development/volatility-calibration.md`.
+VOLATILITY_V1 adopts the frozen daily classifier and asymmetric hysteresis without
+threshold tuning. Its account-independent publisher follows Trend's transaction
+advisory lock, immutable attempts, one replay-initialized bootstrap and chronological
+continuation; it has no trading consumer. Historical replay requires every expected
+session using persisted calendar exceptions. `npm run calendar:bootstrap -- --apply`
+explicitly inserts the verified 2021–2026 closures, skips equivalent rows, and refuses
+all writes on conflicts. Workers never seed calendars. The research CLI remains
+read-only. See `docs/development/volatility-v1-acceptance.md`.
 
 External signal ingestion and routing are a separate evidence-only subsystem:
 `/api/external-signals/:webhookKey` authenticates and records terminal `SignalDelivery`

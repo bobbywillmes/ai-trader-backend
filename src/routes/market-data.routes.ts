@@ -1,9 +1,14 @@
 import { Router } from 'express';
+import { volatilityAssessmentLatestController, volatilityAssessmentListController, volatilityAssessmentDetailController, volatilityAssessmentRunController } from '../controllers/volatility-assessment.controller.js';
 import { requirePermission, requireSystemOwnerAccess } from '../middleware/rbac.js';
 import { PlatformPermission } from '../types/platform-rbac.js';
 import { trendAssessmentLatestController, trendAssessmentListController, trendAssessmentDetailController, trendAssessmentRunController } from '../controllers/trend-assessment.controller.js';
 import { calendarCreateController, calendarDeleteController, calendarListController, calendarUpdateController, marketBackfillController, marketDataStatusController, trendDayController, trendLabController } from '../controllers/market-data.controller.js';
 const router = Router();
+router.get('/volatility-assessments/latest', requirePermission(PlatformPermission.MARKET_DATA_READ), volatilityAssessmentLatestController);
+router.get('/volatility-assessments', requirePermission(PlatformPermission.MARKET_DATA_READ), volatilityAssessmentListController);
+router.get('/volatility-assessments/:id', requirePermission(PlatformPermission.MARKET_DATA_READ), volatilityAssessmentDetailController);
+router.post('/volatility-assessments/run', requireSystemOwnerAccess, volatilityAssessmentRunController);
 router.get('/trend-assessments/latest', requirePermission(PlatformPermission.MARKET_DATA_READ), trendAssessmentLatestController);
 router.get('/trend-assessments', requirePermission(PlatformPermission.MARKET_DATA_READ), trendAssessmentListController);
 router.get('/trend-assessments/:id', requirePermission(PlatformPermission.MARKET_DATA_READ), trendAssessmentDetailController);

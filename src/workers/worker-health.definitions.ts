@@ -20,6 +20,7 @@ export const RECONCILIATION_SCHEDULER_INTERVAL_MS = 60_000;
 export const ALPACA_API_USAGE_PERSISTENCE_INTERVAL_MS = 60_000;
 export const MASSIVE_NEWS_WORKER_INTERVAL_MS = 60_000;
 export const TREND_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
+export const VOLATILITY_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 
 function thresholds(
   expectedIntervalMs: number,
@@ -45,6 +46,15 @@ export const workerDefinitions = [
     expectedIntervalMs: TREND_ASSESSMENT_WORKER_INTERVAL_MS,
     enabledByDefault: true,
     ...thresholds(TREND_ASSESSMENT_WORKER_INTERVAL_MS, 240_000),
+  },
+  {
+    key: 'volatility_assessment_publication',
+    displayName: 'Daily Volatility assessment',
+    description: 'Publishes immutable VOLATILITY_V1 evidence chronologically, without trading consumers.',
+    criticality: 'informational',
+    expectedIntervalMs: VOLATILITY_ASSESSMENT_WORKER_INTERVAL_MS,
+    enabledByDefault: true,
+    ...thresholds(VOLATILITY_ASSESSMENT_WORKER_INTERVAL_MS, 240_000),
   },
   {
     key: 'market_daily_evidence_sync',

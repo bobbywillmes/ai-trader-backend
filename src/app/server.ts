@@ -37,6 +37,8 @@ import { closeTradingAccountWorkflowLockPool } from '../services/trading-account
 import { monitorLiveEntryArmings } from '../services/live-entry-arming.service.js';
 import { runMarketDataWorker } from '../workers/market-data.worker.js';
 import { runTrendAssessmentWorker } from '../workers/trend-assessment.worker.js';
+import { runVolatilityAssessmentWorker } from '../workers/volatility-assessment.worker.js';
+import { VOLATILITY_ASSESSMENT_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { TREND_ASSESSMENT_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { closeMarketDataLockPool } from '../services/market-data-lock.service.js';
 
@@ -147,6 +149,8 @@ async function runTradingWorkers() {
 function startWorkers() {
   workerHealthRegistry.startPersistence();
   void runWorker('trend_assessment_publication', runTrendAssessmentWorker);
+  void runWorker('volatility_assessment_publication', runVolatilityAssessmentWorker);
+  setInterval(() => { void runWorker('volatility_assessment_publication', runVolatilityAssessmentWorker); }, VOLATILITY_ASSESSMENT_WORKER_INTERVAL_MS);
   setInterval(() => { void runWorker('trend_assessment_publication', runTrendAssessmentWorker); }, TREND_ASSESSMENT_WORKER_INTERVAL_MS);
   void runWorker('market_daily_evidence_sync', runMarketDataWorker);
   setInterval(() => { void runWorker('market_daily_evidence_sync', runMarketDataWorker); }, 60_000);

@@ -420,6 +420,7 @@ Automated trading should only be enabled deliberately after production health, b
 - [Market Data, Trend Calibration and TREND_V1 Publication](docs/architecture/market-data-trend.md)
 - [TREND_V1 Local Acceptance](docs/development/trend-v1-acceptance.md)
 - [Daily Volatility Candidate Calibration](docs/development/volatility-calibration.md)
+- [VOLATILITY_V1 Publication and Local Acceptance](docs/development/volatility-v1-acceptance.md)
 
 ### Integrations:
 

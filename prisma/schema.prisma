@@ -1626,7 +1626,8 @@ enum MarketRegimeDimensionAssessmentStatus {
   FAILED
 }
 
-// Production evidence foundation only. Research calibration never inserts here.
+// Authoritative TREND_V1 and VOLATILITY_V1 evidence; research never inserts here.
+// SQL requires sessionDate for TREND/VOLATILITY and enforces dimension-specific states.
 model MarketRegimeDimensionAssessment {
   id                   Int                                   @id @default(autoincrement())
   dimension            MarketRegimeDimension

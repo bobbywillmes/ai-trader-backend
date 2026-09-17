@@ -1,5 +1,9 @@
 # Daily Volatility candidate calibration
 
+Historical calibration record. This candidate was subsequently adopted unchanged
+as [authoritative VOLATILITY_V1](volatility-v1-acceptance.md). The research runner
+still writes no assessments; this report is not mutable production configuration.
+
 This is a background daily Volatility behavior report, separate from future
 INTRADAY_STRESS. Thresholds remain candidates awaiting the owner's final
 VOLATILITY_V1 decision. Nothing here publishes authoritative assessments.
