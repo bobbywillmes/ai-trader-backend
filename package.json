@@ -13,6 +13,7 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc --noEmit",
     "research:volatility": "tsx scripts/volatility-report.ts",
+    "research:breadth": "tsx scripts/research-breadth.ts",
     "calendar:bootstrap": "tsx scripts/bootstrap-market-calendar.ts",
     "prisma:generate": "prisma generate",
     "momentum:reconcile-eligibility": "tsx scripts/reconcile-momentum-eligibility.ts",

@@ -231,6 +231,12 @@ explicitly inserts the verified 2021–2026 closures, skips equivalent rows, and
 all writes on conflicts. Workers never seed calendars. The research CLI remains
 read-only. See `docs/development/volatility-v1-acceptance.md`.
 
+BREADTH is calibration-only so far: `npm run research:breadth` fetches Massive's grouped
+daily bars and point-in-time common-stock reference universe into a resumable, gitignored
+disk cache (never Postgres), and never writes `MarketRegimeDimensionAssessment` or any
+trading model. No BREADTH vocabulary exists in the database constraint yet; that is a later
+productionization decision. See `docs/development/breadth-calibration.md`.
+
 External signal ingestion and routing are a separate evidence-only subsystem:
 `/api/external-signals/:webhookKey` authenticates and records terminal `SignalDelivery`
 and immutable `Signal` rows. Revision-owned authority may permit immutable
