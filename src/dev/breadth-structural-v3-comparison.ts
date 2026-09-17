@@ -17,11 +17,11 @@ function distributionByYear(days: readonly BreadthDay[], pick: (day: BreadthDay)
   return { overall: distributionOf(days, pick), byYear: byYear(days, pick) };
 }
 
-function meanRunLength(runs: readonly { validSessions: number }[]): number | null {
+export function meanRunLength(runs: readonly { validSessions: number }[]): number | null {
   return runs.length ? runs.reduce((sum, run) => sum + run.validSessions, 0) / runs.length : null;
 }
 
-function transitionStats(report: BreadthResearchReport) {
+export function transitionStats(report: BreadthResearchReport) {
   return {
     total: report.summary.transitionCount, medianRun: report.summary.medianRunDuration, meanRun: meanRunLength(report.summary.runs),
     oneDayRuns: report.summary.oneDayRuns, twoDayOrShorterRuns: report.summary.twoDayOrShorterRuns,

@@ -17,6 +17,7 @@
     "compare:breadth-thresholds": "tsx scripts/compare-breadth-thresholds.ts",
     "diagnose:breadth-distribution": "tsx scripts/diagnose-breadth-distribution.ts",
     "compare:breadth-structural-v3": "tsx scripts/compare-breadth-structural-v3.ts",
+    "compare:breadth-mild-deterioration": "tsx scripts/compare-breadth-mild-deterioration.ts",
     "calendar:bootstrap": "tsx scripts/bootstrap-market-calendar.ts",
     "prisma:generate": "prisma generate",
     "momentum:reconcile-eligibility": "tsx scripts/reconcile-momentum-eligibility.ts",

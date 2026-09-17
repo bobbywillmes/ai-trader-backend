@@ -30,7 +30,10 @@ export async function assertCacheComplete(options: Pick<BreadthResearchOptions, 
 
 export const pct = (count: number, total: number): number => total ? count / total * 100 : 0;
 export type Distribution = { sessions: number; percentages: Record<BreadthState, number> };
-export function distributionOf(days: readonly BreadthDay[], pick: (day: BreadthDay) => BreadthState | null): Distribution {
+/** Generic over the day-record shape (not just `BreadthDay`) so the same comparison
+ * machinery can be reused for hysteresis-only variants that replay a different effective
+ * state over the identical `rawState` sequence — see breadth-mild-deterioration-comparison.ts. */
+export function distributionOf<T>(days: readonly T[], pick: (day: T) => BreadthState | null): Distribution {
   const withState = days.filter(day => pick(day) !== null);
   const counts: Record<BreadthState, number> = { NEGATIVE: 0, MIXED: 0, POSITIVE: 0 };
   for (const day of withState) counts[pick(day)!]++;
@@ -38,11 +41,13 @@ export function distributionOf(days: readonly BreadthDay[], pick: (day: BreadthD
     NEGATIVE: pct(counts.NEGATIVE, withState.length), MIXED: pct(counts.MIXED, withState.length), POSITIVE: pct(counts.POSITIVE, withState.length),
   } };
 }
-export function byYear(days: readonly BreadthDay[], pick: (day: BreadthDay) => BreadthState | null): Record<string, Distribution> {
+export function byYear<T extends { date: string }>(days: readonly T[], pick: (day: T) => BreadthState | null): Record<string, Distribution> {
   const years = [...new Set(days.map(day => day.date.slice(0, 4)))].sort();
   return Object.fromEntries(years.map(year => [year, distributionOf(days.filter(day => day.date.startsWith(year)), pick)]));
 }
-export function transitionCategories(days: readonly BreadthDay[]): { categories: Record<string, number>; deteriorationCount: number; recoveryCount: number } {
+export function transitionCategories<T extends { hysteresis: { transitioned: boolean; previousEffectiveState: BreadthState | null }; effectiveState: BreadthState | null }>(
+  days: readonly T[],
+): { categories: Record<string, number>; deteriorationCount: number; recoveryCount: number } {
   const categories: Record<string, number> = {};
   let deteriorationCount = 0, recoveryCount = 0;
   for (const day of days) {
@@ -59,7 +64,10 @@ export function longestRunByState(runs: readonly { state: BreadthState; validSes
   for (const run of runs) longest[run.state] = Math.max(longest[run.state], run.validSessions);
   return longest;
 }
-export function periodStats(days: readonly BreadthDay[], from: string, to: string) {
+export function periodStats<T extends {
+  date: string; effectiveState: BreadthState | null; hysteresis: { transitioned: boolean };
+  breadth1: { state: BreadthState } | null; breadth5: { state: BreadthState } | null; breadth20: { state: BreadthState } | null;
+}>(days: readonly T[], from: string, to: string) {
   const scoped = days.filter(day => day.date >= from && day.date <= to);
   return { ...distributionOf(scoped, day => day.effectiveState), transitions: scoped.filter(day => day.hysteresis.transitioned).length,
     breadth1: distributionOf(scoped, day => day.breadth1?.state ?? null), breadth5: distributionOf(scoped, day => day.breadth5?.state ?? null),

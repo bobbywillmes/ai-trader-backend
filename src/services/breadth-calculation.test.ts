@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  advanceBreadth, aggregateStructuralV3, BASELINE_BREADTH_BANDS, BREADTH_STATES, calculateBreadthSeries,
+  advanceBreadth, advanceBreadthMildDeteriorationConfirmation, aggregateStructuralV3, applyMildDeteriorationConfirmation,
+  BASELINE_BREADTH_BANDS, BREADTH_STATES, calculateBreadthSeries,
   CANDIDATE_STRUCTURAL_V3_BANDS, classifyBreadthBand, classifyDirection,
   computeDailyBreadthObservation, medianBreadthState, summarizeBreadth,
-  type BreadthBandsByHorizon, type BreadthHistory, type BreadthState, type DailyBreadthObservation,
+  type BreadthBandsByHorizon, type BreadthHistory, type BreadthState, type DailyBreadthObservation, type MildDeteriorationHistory,
 } from './breadth-calculation.js';
 
 const advance = (state: BreadthState | null, raw: BreadthState | null, confirmation = 0) => advanceBreadth({ effectiveState: state, confirmation }, raw);
@@ -269,6 +270,99 @@ describe('CANDIDATE_STRUCTURAL_V3 one-level-per-assessment deterioration', () =>
   });
   it('unavailable evidence pauses effective state and confirmation without incrementing or resetting', () => {
     expect(advanceOneLevel('MIXED', null, 1)).toMatchObject({ effectiveState: 'MIXED', confirmationAfter: 1, transitioned: false });
+  });
+});
+
+describe('STRUCTURAL_V3_MILD_DETERIORATION_CONFIRMATION hysteresis', () => {
+  const advanceMild = (state: BreadthState | null, raw: BreadthState | null, recoveryConfirmation = 0, mildDeteriorationConfirmation = 0) =>
+    advanceBreadthMildDeteriorationConfirmation({ effectiveState: state, recoveryConfirmation, mildDeteriorationConfirmation }, raw);
+
+  it('bootstraps effective state from the first raw state with both counters zero', () => {
+    expect(advanceMild(null, 'MIXED')).toMatchObject({ effectiveState: 'MIXED', recoveryConfirmationAfter: 0, mildDeteriorationConfirmationAfter: 0, transitioned: false });
+  });
+
+  it('POSITIVE + first raw MIXED holds POSITIVE with mild-deterioration confirmation 1', () => {
+    expect(advanceMild('POSITIVE', 'MIXED')).toMatchObject({ effectiveState: 'POSITIVE', mildDeteriorationConfirmationAfter: 1, transitioned: false });
+  });
+  it('POSITIVE + second consecutive raw MIXED moves to MIXED', () => {
+    expect(advanceMild('POSITIVE', 'MIXED', 0, 1)).toMatchObject({ effectiveState: 'MIXED', recoveryConfirmationAfter: 0, mildDeteriorationConfirmationAfter: 0, transitioned: true });
+  });
+  it('POSITIVE / raw MIXED / raw POSITIVE never leaves POSITIVE and resets mild-deterioration confirmation', () => {
+    const day1 = advanceMild('POSITIVE', 'MIXED');
+    expect(day1).toMatchObject({ effectiveState: 'POSITIVE', mildDeteriorationConfirmationAfter: 1 });
+    const day2 = advanceMild(day1.effectiveState, 'POSITIVE', day1.recoveryConfirmationAfter, day1.mildDeteriorationConfirmationAfter);
+    expect(day2).toMatchObject({ effectiveState: 'POSITIVE', mildDeteriorationConfirmationAfter: 0, transitioned: false });
+  });
+  it('POSITIVE / raw MIXED / raw NEGATIVE drops to MIXED immediately, not waiting for a second MIXED', () => {
+    const day1 = advanceMild('POSITIVE', 'MIXED');
+    const day2 = advanceMild(day1.effectiveState, 'NEGATIVE', day1.recoveryConfirmationAfter, day1.mildDeteriorationConfirmationAfter);
+    expect(day2).toMatchObject({ effectiveState: 'MIXED', recoveryConfirmationAfter: 0, mildDeteriorationConfirmationAfter: 0, transitioned: true });
+  });
+  it('POSITIVE + raw NEGATIVE drops to MIXED immediately with no confirmation delay', () => {
+    expect(advanceMild('POSITIVE', 'NEGATIVE')).toMatchObject({ effectiveState: 'MIXED', transitioned: true });
+  });
+  it('a following raw NEGATIVE then drops MIXED -> NEGATIVE immediately (two assessments from POSITIVE at most)', () => {
+    const day1 = advanceMild('POSITIVE', 'NEGATIVE');
+    expect(day1.effectiveState).toBe('MIXED');
+    const day2 = advanceMild(day1.effectiveState, 'NEGATIVE', day1.recoveryConfirmationAfter, day1.mildDeteriorationConfirmationAfter);
+    expect(day2).toMatchObject({ effectiveState: 'NEGATIVE', transitioned: true });
+  });
+  it('MIXED + raw NEGATIVE drops to NEGATIVE immediately (no mild-deterioration concept below MIXED)', () => {
+    expect(advanceMild('MIXED', 'NEGATIVE')).toMatchObject({ effectiveState: 'NEGATIVE', transitioned: true });
+  });
+  it('direct POSITIVE -> NEGATIVE in one assessment is structurally impossible', () => {
+    const result = advanceMild('POSITIVE', 'NEGATIVE');
+    expect(result.effectiveState).not.toBe('NEGATIVE');
+    expect(result.effectiveState).toBe('MIXED');
+  });
+  it('MIXED recovery to POSITIVE requires two consecutive supporting raw POSITIVE assessments', () => {
+    const day1 = advanceMild('MIXED', 'POSITIVE');
+    expect(day1).toMatchObject({ effectiveState: 'MIXED', recoveryConfirmationAfter: 1, transitioned: false });
+    const day2 = advanceMild(day1.effectiveState, 'POSITIVE', day1.recoveryConfirmationAfter, day1.mildDeteriorationConfirmationAfter);
+    expect(day2).toMatchObject({ effectiveState: 'POSITIVE', recoveryConfirmationAfter: 0, transitioned: true });
+  });
+  it('NEGATIVE recovery requires two consecutive supporting raw MIXED (or POSITIVE) assessments', () => {
+    const day1 = advanceMild('NEGATIVE', 'MIXED');
+    expect(day1).toMatchObject({ effectiveState: 'NEGATIVE', recoveryConfirmationAfter: 1, transitioned: false });
+    const day2 = advanceMild(day1.effectiveState, 'MIXED', day1.recoveryConfirmationAfter, day1.mildDeteriorationConfirmationAfter);
+    expect(day2).toMatchObject({ effectiveState: 'MIXED', recoveryConfirmationAfter: 0, transitioned: true });
+  });
+  it('NEGATIVE + two consecutive raw POSITIVE recovers only to MIXED, never straight to POSITIVE', () => {
+    const day1 = advanceMild('NEGATIVE', 'POSITIVE');
+    expect(day1).toMatchObject({ effectiveState: 'NEGATIVE', recoveryConfirmationAfter: 1 });
+    const day2 = advanceMild(day1.effectiveState, 'POSITIVE', day1.recoveryConfirmationAfter, day1.mildDeteriorationConfirmationAfter);
+    expect(day2).toMatchObject({ effectiveState: 'MIXED', transitioned: true });
+    // A fresh two-session sequence is then required for MIXED -> POSITIVE.
+    const day3 = advanceMild(day2.effectiveState, 'POSITIVE', day2.recoveryConfirmationAfter, day2.mildDeteriorationConfirmationAfter);
+    expect(day3).toMatchObject({ effectiveState: 'MIXED', recoveryConfirmationAfter: 1, transitioned: false });
+  });
+  it('raw equal to effective holds and resets both counters', () => {
+    expect(advanceMild('MIXED', 'MIXED', 1, 1)).toMatchObject({ effectiveState: 'MIXED', recoveryConfirmationAfter: 0, mildDeteriorationConfirmationAfter: 0, transitioned: false });
+    expect(advanceMild('POSITIVE', 'POSITIVE', 1, 1)).toMatchObject({ effectiveState: 'POSITIVE', recoveryConfirmationAfter: 0, mildDeteriorationConfirmationAfter: 0, transitioned: false });
+    expect(advanceMild('NEGATIVE', 'NEGATIVE', 1, 1)).toMatchObject({ effectiveState: 'NEGATIVE', recoveryConfirmationAfter: 0, mildDeteriorationConfirmationAfter: 0, transitioned: false });
+  });
+  it('unavailable evidence pauses both confirmation counters without incrementing, resetting, or transitioning', () => {
+    const result = advanceMild('POSITIVE', null, 0, 1);
+    expect(result).toMatchObject({ effectiveState: 'POSITIVE', recoveryConfirmationAfter: 0, mildDeteriorationConfirmationAfter: 1, transitioned: false });
+  });
+  it('rejects an invalid persisted continuation', () => {
+    const invalid: MildDeteriorationHistory = { effectiveState: null, recoveryConfirmation: 1, mildDeteriorationConfirmation: 0 };
+    expect(() => advanceBreadthMildDeteriorationConfirmation(invalid, 'MIXED')).toThrow('Invalid hysteresis continuation.');
+  });
+
+  it('replaying a raw-state sequence never produces a POSITIVE -> NEGATIVE effective transition', () => {
+    const rawSequence: (BreadthState | null)[] = ['POSITIVE', 'NEGATIVE', 'POSITIVE', 'NEGATIVE', 'MIXED', 'POSITIVE', null, 'NEGATIVE', 'POSITIVE', 'POSITIVE'];
+    const replayed = applyMildDeteriorationConfirmation(rawSequence);
+    for (let i = 1; i < replayed.length; i++) {
+      if (replayed[i - 1]!.effectiveState === 'POSITIVE' && replayed[i]!.hysteresis.transitioned) {
+        expect(replayed[i]!.effectiveState).not.toBe('NEGATIVE');
+      }
+    }
+  });
+  it('reuses the exact input raw-state sequence rather than recomputing it (identity by construction)', () => {
+    const rawSequence: (BreadthState | null)[] = ['MIXED', 'POSITIVE', 'POSITIVE', null, 'NEGATIVE'];
+    const replayed = applyMildDeteriorationConfirmation(rawSequence);
+    expect(replayed.map(day => day.hysteresis.rawState)).toEqual(rawSequence);
   });
 });
 

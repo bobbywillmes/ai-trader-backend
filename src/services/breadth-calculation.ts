@@ -144,6 +144,66 @@ export function advanceBreadth(previous: BreadthHistory, raw: BreadthState | nul
   return { ...base, confirmationAfter: 1, reason: `Raw ${raw} supports ${target}; hold ${before} with recovery confirmation 1/2.` };
 }
 
+/** STRUCTURAL_V3_MILD_DETERIORATION_CONFIRMATION: an effective-state-only hysteresis variant
+ * replayed over an unmodified STRUCTURAL_V3 raw-state sequence (never recomputed here — see
+ * src/dev/breadth-mild-deterioration-comparison.ts). Two independent confirmation counters,
+ * never conflated: `mildDeteriorationConfirmation` gates a single ambiguous raw MIXED day
+ * against an established POSITIVE (one day holds, two consecutive days confirm the drop to
+ * MIXED); `recoveryConfirmation` gates a rise exactly as in `advanceBreadth`. A raw NEGATIVE
+ * reading is never mild — from POSITIVE or MIXED it still drops one level immediately with no
+ * confirmation, so POSITIVE -> NEGATIVE in one assessment remains structurally impossible. */
+export type MildDeteriorationHistory = { effectiveState: BreadthState | null; recoveryConfirmation: number; mildDeteriorationConfirmation: number };
+export type MildDeteriorationTransition = {
+  previousEffectiveState: BreadthState | null; rawState: BreadthState | null;
+  recoveryConfirmationBefore: number; mildDeteriorationConfirmationBefore: number;
+  recoveryConfirmationAfter: number; mildDeteriorationConfirmationAfter: number;
+  effectiveState: BreadthState | null; transitioned: boolean; reason: string;
+};
+export function advanceBreadthMildDeteriorationConfirmation(previous: MildDeteriorationHistory, raw: BreadthState | null): MildDeteriorationTransition {
+  if (![0, 1].includes(previous.recoveryConfirmation) || ![0, 1].includes(previous.mildDeteriorationConfirmation)
+    || (previous.effectiveState === null && (previous.recoveryConfirmation !== 0 || previous.mildDeteriorationConfirmation !== 0))) {
+    throw new Error('Invalid hysteresis continuation.');
+  }
+  const before = previous.effectiveState;
+  const base: MildDeteriorationTransition = {
+    previousEffectiveState: before, rawState: raw,
+    recoveryConfirmationBefore: previous.recoveryConfirmation, mildDeteriorationConfirmationBefore: previous.mildDeteriorationConfirmation,
+    recoveryConfirmationAfter: previous.recoveryConfirmation, mildDeteriorationConfirmationAfter: previous.mildDeteriorationConfirmation,
+    effectiveState: before, transitioned: false, reason: '',
+  };
+  if (raw === null) return { ...base, reason: 'Unavailable evidence: pause both recovery and mild-deterioration confirmation.' };
+  if (before === null) return { ...base, effectiveState: raw, recoveryConfirmationAfter: 0, mildDeteriorationConfirmationAfter: 0, reason: `Bootstrap from first valid raw state ${raw}.` };
+
+  if (before === 'POSITIVE') {
+    if (raw === 'POSITIVE') return { ...base, recoveryConfirmationAfter: 0, mildDeteriorationConfirmationAfter: 0, reason: 'Raw POSITIVE confirms effective POSITIVE; hold and reset both counters.' };
+    if (raw === 'NEGATIVE') return { ...base, effectiveState: 'MIXED', recoveryConfirmationAfter: 0, mildDeteriorationConfirmationAfter: 0, transitioned: true, reason: 'Raw NEGATIVE is genuine deterioration, never mild; move immediately one level to MIXED and reset both counters.' };
+    if (previous.mildDeteriorationConfirmation === 1) return { ...base, effectiveState: 'MIXED', recoveryConfirmationAfter: 0, mildDeteriorationConfirmationAfter: 0, transitioned: true, reason: 'Second consecutive raw MIXED confirms mild deterioration; move to MIXED and reset both counters.' };
+    return { ...base, mildDeteriorationConfirmationAfter: 1, reason: 'First raw MIXED is ambiguous, not deterioration; hold POSITIVE with mild-deterioration confirmation 1/2.' };
+  }
+  if (before === 'MIXED') {
+    if (raw === 'NEGATIVE') return { ...base, effectiveState: 'NEGATIVE', recoveryConfirmationAfter: 0, mildDeteriorationConfirmationAfter: 0, transitioned: true, reason: 'Raw NEGATIVE is genuine deterioration; move immediately to NEGATIVE and reset both counters.' };
+    if (raw === 'MIXED') return { ...base, recoveryConfirmationAfter: 0, mildDeteriorationConfirmationAfter: 0, reason: 'Raw MIXED confirms effective MIXED; hold and reset both counters.' };
+    if (previous.recoveryConfirmation === 1) return { ...base, effectiveState: 'POSITIVE', recoveryConfirmationAfter: 0, mildDeteriorationConfirmationAfter: 0, transitioned: true, reason: 'Second consecutive raw POSITIVE confirms recovery; move to POSITIVE and reset both counters.' };
+    return { ...base, recoveryConfirmationAfter: 1, reason: 'First raw POSITIVE supports recovery; hold MIXED with recovery confirmation 1/2.' };
+  }
+  // before === 'NEGATIVE'
+  if (raw === 'NEGATIVE') return { ...base, recoveryConfirmationAfter: 0, mildDeteriorationConfirmationAfter: 0, reason: 'Raw NEGATIVE confirms effective NEGATIVE; hold and reset both counters.' };
+  if (previous.recoveryConfirmation === 1) return { ...base, effectiveState: 'MIXED', recoveryConfirmationAfter: 0, mildDeteriorationConfirmationAfter: 0, transitioned: true, reason: `Second consecutive raw ${raw} supports recovery; move exactly one level to MIXED (never further) and reset both counters.` };
+  return { ...base, recoveryConfirmationAfter: 1, reason: `First raw ${raw} supports recovery; hold NEGATIVE with recovery confirmation 1/2.` };
+}
+
+/** Replays the mild-deterioration hysteresis over an already-computed raw-state sequence
+ * (e.g. CANDIDATE_STRUCTURAL_V3's `days[].rawState`) without recomputing it, so the raw
+ * sequence is identical by construction rather than merely asserted equal after the fact. */
+export function applyMildDeteriorationConfirmation(rawStates: readonly (BreadthState | null)[]): { effectiveState: BreadthState | null; hysteresis: MildDeteriorationTransition }[] {
+  let history: MildDeteriorationHistory = { effectiveState: null, recoveryConfirmation: 0, mildDeteriorationConfirmation: 0 };
+  return rawStates.map(raw => {
+    const hysteresis = advanceBreadthMildDeteriorationConfirmation(history, raw);
+    history = { effectiveState: hysteresis.effectiveState, recoveryConfirmation: hysteresis.recoveryConfirmationAfter, mildDeteriorationConfirmation: hysteresis.mildDeteriorationConfirmationAfter };
+    return { effectiveState: raw === null ? null : hysteresis.effectiveState, hysteresis };
+  });
+}
+
 export type BreadthMeasurement = { value: number; state: BreadthState };
 export type BreadthDay = {
   date: string; observation: DailyBreadthObservation | null; consecutiveValidSessions: number;
