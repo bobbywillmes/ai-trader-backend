@@ -65,7 +65,7 @@ function periodStats(days: readonly BreadthDay[], from: string, to: string) {
     breadth1: distributionOf(scoped, day => day.breadth1?.state ?? null), breadth5: distributionOf(scoped, day => day.breadth5?.state ?? null),
     breadth20: distributionOf(scoped, day => day.breadth20?.state ?? null) };
 }
-const PERIODS: { label: string; from: string; to: string }[] = [
+export const PERIODS: { label: string; from: string; to: string }[] = [
   { label: '2022', from: '2022-01-01', to: '2022-12-31' },
   { label: '2023', from: '2023-01-01', to: '2023-12-31' },
   { label: '2024', from: '2024-01-01', to: '2024-12-31' },

@@ -424,6 +424,7 @@ Automated trading should only be enabled deliberately after production health, b
 - [Daily Breadth Candidate Calibration](docs/development/breadth-calibration.md)
 - [Breadth Calibration Results](docs/development/breadth-calibration-results.md)
 - [Breadth Threshold Comparison (BASELINE vs CANDIDATE_HORIZON_V2)](docs/development/breadth-threshold-comparison.md)
+- [Breadth Distribution Diagnostic](docs/development/breadth-distribution-diagnostic.md)
 
 ### Integrations:
 

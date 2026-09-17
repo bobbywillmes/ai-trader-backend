@@ -15,6 +15,7 @@
     "research:volatility": "tsx scripts/volatility-report.ts",
     "research:breadth": "tsx scripts/research-breadth.ts",
     "compare:breadth-thresholds": "tsx scripts/compare-breadth-thresholds.ts",
+    "diagnose:breadth-distribution": "tsx scripts/diagnose-breadth-distribution.ts",
     "calendar:bootstrap": "tsx scripts/bootstrap-market-calendar.ts",
     "prisma:generate": "prisma generate",
     "momentum:reconcile-eligibility": "tsx scripts/reconcile-momentum-eligibility.ts",
