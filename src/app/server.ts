@@ -41,6 +41,9 @@ import { runVolatilityAssessmentWorker } from '../workers/volatility-assessment.
 import { VOLATILITY_ASSESSMENT_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { TREND_ASSESSMENT_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { closeMarketDataLockPool } from '../services/market-data-lock.service.js';
+import { runBreadthAssessmentWorker } from '../workers/breadth-assessment.worker.js';
+import { BREADTH_ASSESSMENT_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
+import { closeBreadthObservationLockPool } from '../services/breadth-observation-lock.service.js';
 
 const app = createApp();
 
@@ -154,6 +157,8 @@ function startWorkers() {
   setInterval(() => { void runWorker('trend_assessment_publication', runTrendAssessmentWorker); }, TREND_ASSESSMENT_WORKER_INTERVAL_MS);
   void runWorker('market_daily_evidence_sync', runMarketDataWorker);
   setInterval(() => { void runWorker('market_daily_evidence_sync', runMarketDataWorker); }, 60_000);
+  void runWorker('breadth_assessment_publication', runBreadthAssessmentWorker);
+  setInterval(() => { void runWorker('breadth_assessment_publication', runBreadthAssessmentWorker); }, BREADTH_ASSESSMENT_WORKER_INTERVAL_MS);
 
   // This validity monitor is local-only. Final broker authorization remains
   // authoritative, while this loop promptly closes stale permissive latches.
@@ -351,6 +356,7 @@ async function shutdown(signal: NodeJS.Signals) {
     Promise.all([
       workerHealthRegistry.shutdown(),
       closeMarketDataLockPool(),
+      closeBreadthObservationLockPool(),
       closeTradingAccountWorkflowLockPool(),
     ]),
     new Promise((resolve) => setTimeout(resolve, 5_000)),

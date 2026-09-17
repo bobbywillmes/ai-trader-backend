@@ -21,6 +21,7 @@ export const ALPACA_API_USAGE_PERSISTENCE_INTERVAL_MS = 60_000;
 export const MASSIVE_NEWS_WORKER_INTERVAL_MS = 60_000;
 export const TREND_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 export const VOLATILITY_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
+export const BREADTH_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 
 function thresholds(
   expectedIntervalMs: number,
@@ -55,6 +56,15 @@ export const workerDefinitions = [
     expectedIntervalMs: VOLATILITY_ASSESSMENT_WORKER_INTERVAL_MS,
     enabledByDefault: true,
     ...thresholds(VOLATILITY_ASSESSMENT_WORKER_INTERVAL_MS, 240_000),
+  },
+  {
+    key: 'breadth_assessment_publication',
+    displayName: 'Daily Breadth assessment',
+    description: 'Ensures due live MarketBreadthObservation ingestion, then publishes immutable BREADTH_V1 evidence chronologically, without trading consumers.',
+    criticality: 'informational',
+    expectedIntervalMs: BREADTH_ASSESSMENT_WORKER_INTERVAL_MS,
+    enabledByDefault: true,
+    ...thresholds(BREADTH_ASSESSMENT_WORKER_INTERVAL_MS, 240_000),
   },
   {
     key: 'market_daily_evidence_sync',

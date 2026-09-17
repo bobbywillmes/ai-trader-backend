@@ -14,6 +14,7 @@ export const accountWorkflowProcessInstanceId = randomUUID();
 const BACKOFF_CAP_MS: Record<WorkerKey, number> = {
   volatility_assessment_publication: 900_000, // Global worker; does not use account coordination.
   trend_assessment_publication: 900_000, // Global worker; does not use account coordination.
+  breadth_assessment_publication: 900_000, // Global worker; does not use account coordination.
   market_daily_evidence_sync: 3_600_000, // Global worker; does not use account coordination.
   pending_order_processing: 30_000,
   submitted_order_sync: 60_000,

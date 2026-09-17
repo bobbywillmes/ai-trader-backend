@@ -427,6 +427,7 @@ Automated trading should only be enabled deliberately after production health, b
 - [Breadth Distribution Diagnostic](docs/development/breadth-distribution-diagnostic.md)
 - [Breadth Structural Candidate (CANDIDATE_STRUCTURAL_V3)](docs/development/breadth-structural-v3-results.md)
 - [Breadth Hysteresis Experiment (STRUCTURAL_V3_MILD_DETERIORATION_CONFIRMATION)](docs/development/breadth-hysteresis-confirmation-results.md)
+- [BREADTH_V1 Publication and Local Acceptance](docs/development/breadth-v1-production.md)
 
 ### Integrations:
 

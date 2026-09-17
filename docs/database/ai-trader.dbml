@@ -1083,6 +1083,35 @@ Table MarketRegimeDimensionAssessment {
   }
 }
 
+Table MarketBreadthObservation {
+  id Int [pk, increment]
+  sessionDate DateTime [not null]
+  previousSessionDate DateTime [not null]
+  provider MarketDataProvider [not null]
+  universeDefinitionVersion String [not null]
+  evidenceSchemaVersion Int [not null]
+  universeCount Int [not null]
+  currentBarCount Int [not null]
+  priorBarCount Int [not null]
+  advancingCount Int [not null]
+  decliningCount Int [not null]
+  unchangedCount Int [not null]
+  directionalCount Int [not null]
+  excludedCount Int [not null]
+  advanceShare Decimal [not null]
+  netBreadth Decimal [not null]
+  dataThroughAt DateTime [not null]
+  canonicalInputHash String [not null]
+  evidenceJson Json [not null]
+  startedAt DateTime [not null]
+  completedAt DateTime [not null]
+  createdAt DateTime [default: `now()`, not null]
+
+  indexes {
+    (provider, universeDefinitionVersion, sessionDate) [unique]
+  }
+}
+
 Table CurrentMarketState {
   id Int [pk]
   marketBias String [not null, default: 'neutral']

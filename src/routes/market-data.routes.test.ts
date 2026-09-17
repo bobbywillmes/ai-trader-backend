@@ -1,17 +1,25 @@
 import express from 'express';
 import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ list: vi.fn(), save: vi.fn(), remove: vi.fn(), status: vi.fn(), backfill: vi.fn(), lab: vi.fn(), day: vi.fn(), latest: vi.fn(), assessments: vi.fn(), assessment: vi.fn(), publish: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  list: vi.fn(), save: vi.fn(), remove: vi.fn(), status: vi.fn(), backfill: vi.fn(), lab: vi.fn(), day: vi.fn(), latest: vi.fn(), assessments: vi.fn(), assessment: vi.fn(), publish: vi.fn(),
+  breadthLatest: vi.fn(), breadthAssessments: vi.fn(), breadthAssessment: vi.fn(), breadthPublish: vi.fn(),
+  observationLatest: vi.fn(), observationList: vi.fn(), observationGet: vi.fn(), observationRun: vi.fn(),
+}));
 vi.mock('../services/trend-assessment.service.js', () => ({ latestTrendAssessment: mocks.latest, listTrendAssessments: mocks.assessments, getTrendAssessment: mocks.assessment, publishTrendAssessments: mocks.publish }));
 vi.mock('../services/market-calendar.service.js', () => ({ listCalendar: mocks.list, saveCalendar: mocks.save, deleteCalendar: mocks.remove }));
 vi.mock('../services/market-bar-ingestion.service.js', () => ({ marketDataStatus: mocks.status, backfillDailyBars: mocks.backfill }));
 vi.mock('../services/trend-lab.service.js', () => ({ getTrendLab: mocks.lab, getTrendDay: mocks.day }));
+vi.mock('../services/breadth-v1-assessment.service.js', () => ({ latestBreadthV1Assessment: mocks.breadthLatest, listBreadthV1Assessments: mocks.breadthAssessments, getBreadthV1Assessment: mocks.breadthAssessment, publishBreadthV1Assessments: mocks.breadthPublish }));
+vi.mock('../services/breadth-observation-ingestion.service.js', () => ({ latestBreadthObservation: mocks.observationLatest, listBreadthObservations: mocks.observationList, getBreadthObservation: mocks.observationGet, ingestDueBreadthObservations: mocks.observationRun }));
 import router from './market-data.routes.js';
 import { HttpError } from '../errors/http-error.js';
 let server: Server; let base: string;
 beforeEach(async () => {
   vi.clearAllMocks(); mocks.list.mockResolvedValue([]); mocks.save.mockResolvedValue({ id: 1 }); mocks.remove.mockResolvedValue({}); mocks.status.mockResolvedValue({ symbols: [] }); mocks.backfill.mockResolvedValue({ results: [] }); mocks.lab.mockResolvedValue({ profiles: {} }); mocks.day.mockResolvedValue({ rawState: 'NEUTRAL' });
   mocks.latest.mockResolvedValue({ latestAttempt: null, latestValid: null }); mocks.assessments.mockResolvedValue([]); mocks.assessment.mockResolvedValue({ id: 7, evidenceJson: { bootstrap: true, exact: [0.1, 0.02] } }); mocks.publish.mockResolvedValue({ published: 1 });
+  mocks.breadthLatest.mockResolvedValue({ latestAttempt: null, latestValid: null }); mocks.breadthAssessments.mockResolvedValue([]); mocks.breadthAssessment.mockResolvedValue({ id: 9, rawState: 'POSITIVE' }); mocks.breadthPublish.mockResolvedValue({ published: 1 });
+  mocks.observationLatest.mockResolvedValue({ id: 1, advanceShare: '0.5' }); mocks.observationList.mockResolvedValue([]); mocks.observationGet.mockResolvedValue({ id: 1 }); mocks.observationRun.mockResolvedValue({ inserted: 0 });
   const app = express(); app.use(express.json());
   app.use((req, res, next) => { if (req.headers.role) Object.assign(res.locals, { user: { id: 1, platformRole: String(req.headers.role) } }); next(); });
   app.use('/api/market-data', router);
@@ -64,6 +72,37 @@ describe('market-data permissions and API', () => {
     expect((await fetch(`${base}/backfill`,{...request,headers:{...request.headers,role:'SYSTEM_OWNER'}})).status).toBe(200);
     expect((await fetch(`${base}/calendar`,{...request,body:JSON.stringify({sessionDate:'2026-02-30',name:'bad',type:'EARLY_CLOSE',closeTimeMinutesEt:960})})).status).toBe(400);
     expect(mocks.save).not.toHaveBeenCalled();
+  });
+  it.each(['SYSTEM_OWNER', 'OPERATOR'])('allows %s immutable Breadth assessment and observation reads', async role => {
+    const headers = { role };
+    expect(await (await fetch(`${base}/breadth-assessments/latest`, { headers })).json()).toEqual({ latestAttempt: null, latestValid: null });
+    expect((await fetch(`${base}/breadth-assessments?limit=5&beforeId=10`, { headers })).status).toBe(200);
+    expect(mocks.breadthAssessments).toHaveBeenCalledWith(5, 10);
+    expect((await fetch(`${base}/breadth-assessments/9`, { headers })).status).toBe(200);
+    expect(mocks.breadthAssessment).toHaveBeenCalledWith(9);
+    expect(await (await fetch(`${base}/breadth-observations/latest`, { headers })).json()).toEqual({ id: 1, advanceShare: '0.5' });
+    expect((await fetch(`${base}/breadth-observations?limit=5`, { headers })).status).toBe(200);
+    expect((await fetch(`${base}/breadth-observations/1`, { headers })).status).toBe(200);
+  });
+  it.each([undefined, 'ACCOUNT_USER'])('denies Breadth assessment/observation reads and manual runs for %s', async role => {
+    const headers = role ? { role } : {};
+    for (const path of ['/breadth-assessments', '/breadth-assessments/latest', '/breadth-observations', '/breadth-observations/latest']) {
+      expect((await fetch(base + path, { headers })).status).toBe(role ? 403 : 401);
+    }
+    expect((await fetch(`${base}/breadth-assessments/run`, { method: 'POST', headers })).status).toBe(role ? 403 : 401);
+    expect((await fetch(`${base}/breadth-observations/run`, { method: 'POST', headers })).status).toBe(role ? 403 : 401);
+    expect(mocks.breadthPublish).not.toHaveBeenCalled(); expect(mocks.observationRun).not.toHaveBeenCalled();
+  });
+  it('restricts Breadth manual runs to SYSTEM_OWNER and accepts no body', async () => {
+    expect((await fetch(`${base}/breadth-assessments/run`, { method: 'POST', headers: { role: 'OPERATOR' } })).status).toBe(403);
+    expect(mocks.breadthPublish).not.toHaveBeenCalled();
+    expect(await (await fetch(`${base}/breadth-assessments/run`, { method: 'POST', headers: { role: 'SYSTEM_OWNER' } })).json()).toEqual({ published: 1 });
+    expect(mocks.breadthPublish).toHaveBeenCalledTimes(1);
+    expect((await fetch(`${base}/breadth-assessments/run`, { method: 'POST', headers: { role: 'SYSTEM_OWNER', 'content-type': 'application/json' }, body: JSON.stringify({ force: true }) })).status).toBe(400);
+    expect((await fetch(`${base}/breadth-observations/run`, { method: 'POST', headers: { role: 'OPERATOR' } })).status).toBe(403);
+    expect(mocks.observationRun).not.toHaveBeenCalled();
+    expect(await (await fetch(`${base}/breadth-observations/run`, { method: 'POST', headers: { role: 'SYSTEM_OWNER' } })).json()).toEqual({ inserted: 0 });
+    expect(mocks.observationRun).toHaveBeenCalledTimes(1);
   });
   it('selects date/profile on a specific immutable research snapshot', async () => {
     const datasetId='a'.repeat(64);

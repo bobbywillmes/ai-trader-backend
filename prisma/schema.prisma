@@ -1656,6 +1656,38 @@ model MarketRegimeDimensionAssessment {
   // At most one VALID result per dimension/version/target is enforced in SQL.
 }
 
+// Immutable daily derived Breadth market-data fact (Massive point-in-time CS universe +
+// adjusted grouped daily bars). A row exists only when directionalCount > 0: there is no
+// "unavailable" row placeholder, mirroring MarketBar — absence of a row for an expected
+// session date is itself the unavailable signal for the BREADTH_V1 publisher.
+model MarketBreadthObservation {
+  id                        Int                 @id @default(autoincrement())
+  sessionDate               DateTime            @db.Date
+  previousSessionDate       DateTime            @db.Date
+  provider                  MarketDataProvider
+  universeDefinitionVersion String
+  evidenceSchemaVersion     Int
+  universeCount             Int
+  currentBarCount           Int
+  priorBarCount             Int
+  advancingCount            Int
+  decliningCount            Int
+  unchangedCount            Int
+  directionalCount          Int
+  excludedCount             Int
+  advanceShare              Decimal             @db.Decimal(7, 6)
+  netBreadth                Decimal             @db.Decimal(7, 6)
+  dataThroughAt             DateTime            @db.Timestamptz(3)
+  canonicalInputHash        String
+  evidenceJson              Json
+  startedAt                 DateTime            @db.Timestamptz(3)
+  completedAt               DateTime            @db.Timestamptz(3)
+  createdAt                 DateTime            @default(now()) @db.Timestamptz(3)
+
+  @@unique([provider, universeDefinitionVersion, sessionDate], map: "MarketBreadthObservation_identity_key")
+  @@index([sessionDate], map: "MarketBreadthObservation_sessionDate_idx")
+}
+
 model CurrentMarketState {
   id Int @id
 
