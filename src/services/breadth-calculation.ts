@@ -29,6 +29,13 @@ export const BASELINE_BREADTH_BANDS: BreadthBandsByHorizon = Object.freeze({
   breadth5: Object.freeze({ negativeMax: 0.45, positiveMin: 0.55 }),
   breadth20: Object.freeze({ negativeMax: 0.45, positiveMin: 0.55 }),
 });
+/** Same +/-5pp / +/-3pp / +/-2pp band widths as CANDIDATE_HORIZON_V2, recentered on the
+ * ~0.49 center the distribution diagnostic found at every horizon rather than on 0.50. */
+export const CANDIDATE_STRUCTURAL_V3_BANDS: BreadthBandsByHorizon = Object.freeze({
+  breadth1: Object.freeze({ negativeMax: 0.44, positiveMin: 0.54 }),
+  breadth5: Object.freeze({ negativeMax: 0.46, positiveMin: 0.52 }),
+  breadth20: Object.freeze({ negativeMax: 0.47, positiveMin: 0.51 }),
+});
 
 export type Direction = 'ADVANCING' | 'DECLINING' | 'UNCHANGED';
 export function classifyDirection(current: number, previous: number): Direction {
@@ -83,16 +90,41 @@ export function medianBreadthState(states: readonly [BreadthState, BreadthState,
   return BREADTH_STATES[states.map(rankOf).sort((a, b) => a - b)[1]!]!;
 }
 
+/** CANDIDATE_STRUCTURAL_V3's raw-aggregation rule: 5d and 20d are structural breadth and
+ * decide the raw state whenever they agree (directly, or one directional + the other MIXED
+ * confirmed by 1d); 1d never breaks a 5d/20d tie and never creates a directional raw state
+ * on its own. See docs/development/breadth-structural-v3-results.md for the rule table. */
+export function aggregateStructuralV3(breadth1: BreadthState, breadth5: BreadthState, breadth20: BreadthState): BreadthState {
+  if (breadth5 === breadth20) return breadth5;
+  if (breadth5 !== 'MIXED' && breadth20 !== 'MIXED') return 'MIXED'; // opposite directional states
+  const directional = breadth5 === 'MIXED' ? breadth20 : breadth5; // exactly one of the two is MIXED
+  if (directional === 'POSITIVE') return breadth1 === 'POSITIVE' ? 'POSITIVE' : 'MIXED';
+  return breadth1 === 'NEGATIVE' ? 'NEGATIVE' : 'MIXED';
+}
+
+export type RawAggregationRuleId = 'MEDIAN_OF_THREE' | 'STRUCTURAL_V3';
+const RAW_AGGREGATION_RULES: Record<RawAggregationRuleId, (breadth1: BreadthState, breadth5: BreadthState, breadth20: BreadthState) => BreadthState> = {
+  MEDIAN_OF_THREE: (breadth1, breadth5, breadth20) => medianBreadthState([breadth1, breadth5, breadth20]),
+  STRUCTURAL_V3: aggregateStructuralV3,
+};
+
 export type BreadthHistory = { effectiveState: BreadthState | null; confirmation: number };
 export type BreadthTransition = {
   previousEffectiveState: BreadthState | null; rawState: BreadthState | null;
   confirmationBefore: number; recoveryTarget: BreadthState | null; confirmationAfter: number;
   effectiveState: BreadthState | null; transitioned: boolean; reason: string;
 };
-/** Asymmetric hysteresis: NEGATIVE < MIXED < POSITIVE. Any drop is immediate; a rise
- * requires two supporting valid sessions and then recovers exactly one level. */
-export function advanceBreadth(previous: BreadthHistory, raw: BreadthState | null): BreadthTransition {
+export type DeteriorationMode = 'IMMEDIATE_TO_RAW' | 'ONE_LEVEL_PER_ASSESSMENT';
+/** Asymmetric hysteresis: NEGATIVE < MIXED < POSITIVE. A rise always requires two
+ * supporting valid sessions and then recovers exactly one level. A drop is always
+ * immediate (no confirmation needed), but how far it moves depends on `deteriorationMode`:
+ * `IMMEDIATE_TO_RAW` (the original BASELINE/CANDIDATE_HORIZON_V2 rule) jumps straight to the
+ * raw state in one assessment; `ONE_LEVEL_PER_ASSESSMENT` (CANDIDATE_STRUCTURAL_V3) still
+ * reacts immediately but moves only one level per valid assessment, so e.g. POSITIVE with a
+ * raw NEGATIVE reading lands on MIXED first, then NEGATIVE on the next still-NEGATIVE reading. */
+export function advanceBreadth(previous: BreadthHistory, raw: BreadthState | null, options: { deteriorationMode?: DeteriorationMode } = {}): BreadthTransition {
   if (![0, 1].includes(previous.confirmation) || (previous.effectiveState === null && previous.confirmation !== 0)) throw new Error('Invalid hysteresis continuation.');
+  const deteriorationMode = options.deteriorationMode ?? 'IMMEDIATE_TO_RAW';
   const before = previous.effectiveState;
   const target = before === null || before === 'POSITIVE' ? null : BREADTH_STATES[rankOf(before) + 1]!;
   const base: BreadthTransition = { previousEffectiveState: before, rawState: raw,
@@ -100,7 +132,13 @@ export function advanceBreadth(previous: BreadthHistory, raw: BreadthState | nul
     effectiveState: before, transitioned: false, reason: '' };
   if (raw === null) return { ...base, reason: 'Unavailable evidence: pause effective state and recovery confirmation.' };
   if (before === null) return { ...base, effectiveState: raw, confirmationAfter: 0, reason: `Bootstrap from first valid raw state ${raw}.` };
-  if (rankOf(raw) < rankOf(before)) return { ...base, effectiveState: raw, confirmationAfter: 0, transitioned: true, reason: `Raw ${raw} is below effective ${before}; move immediately to ${raw} and reset recovery.` };
+  if (rankOf(raw) < rankOf(before)) {
+    const deteriorated = deteriorationMode === 'ONE_LEVEL_PER_ASSESSMENT' ? BREADTH_STATES[rankOf(before) - 1]! : raw;
+    const reason = deteriorationMode === 'ONE_LEVEL_PER_ASSESSMENT'
+      ? `Raw ${raw} is below effective ${before}; move immediately but only one state, to ${deteriorated}, and reset recovery.`
+      : `Raw ${raw} is below effective ${before}; move immediately to ${raw} and reset recovery.`;
+    return { ...base, effectiveState: deteriorated, confirmationAfter: 0, transitioned: true, reason };
+  }
   if (raw === before) return { ...base, confirmationAfter: 0, reason: `Raw equals effective ${before}; hold and reset recovery.` };
   if (previous.confirmation === 1) return { ...base, effectiveState: target, confirmationAfter: 0, transitioned: true, reason: `Two valid assessments support at least ${target}; recover exactly one state and reset confirmation.` };
   return { ...base, confirmationAfter: 1, reason: `Raw ${raw} supports ${target}; hold ${before} with recovery confirmation 1/2.` };
@@ -113,12 +151,18 @@ export type BreadthDay = {
   rawState: BreadthState | null; effectiveState: BreadthState | null; hysteresis: BreadthTransition;
   definition: typeof BREADTH_DEFINITION;
 };
+export type BreadthAggregationOptions = { aggregationRuleId?: RawAggregationRuleId; deteriorationMode?: DeteriorationMode };
 /** `observations[i]` is null when evidence for that expected session could not be obtained at
  * all (provider gap); `status: 'UNAVAILABLE'` is a resolved observation with zero directional
  * names. Both break rolling continuity identically; only a VALID observation extends it. */
-export function calculateBreadthSeries(dates: readonly string[], observations: readonly (DailyBreadthObservation | null)[], bandsByHorizon: BreadthBandsByHorizon = BASELINE_BREADTH_BANDS): BreadthDay[] {
+export function calculateBreadthSeries(
+  dates: readonly string[], observations: readonly (DailyBreadthObservation | null)[],
+  bandsByHorizon: BreadthBandsByHorizon = BASELINE_BREADTH_BANDS, aggregationOptions: BreadthAggregationOptions = {},
+): BreadthDay[] {
   if (dates.length !== observations.length) throw new Error('Aligned dates and observations required.');
   if (dates.some((date, i) => i > 0 && date <= dates[i - 1]!)) throw new Error('Unique chronological dates required.');
+  const aggregate = RAW_AGGREGATION_RULES[aggregationOptions.aggregationRuleId ?? 'MEDIAN_OF_THREE'];
+  const deteriorationMode = aggregationOptions.deteriorationMode;
   let shares: number[] = [];
   let consecutive = 0;
   let history: BreadthHistory = { effectiveState: null, confirmation: 0 };
@@ -134,8 +178,8 @@ export function calculateBreadthSeries(dates: readonly string[], observations: r
       return { value, state: classifyBreadthBand(value, band) };
     };
     const breadth1 = measure(1, bandsByHorizon.breadth1), breadth5 = measure(5, bandsByHorizon.breadth5), breadth20 = measure(20, bandsByHorizon.breadth20);
-    const raw = breadth1 && breadth5 && breadth20 ? medianBreadthState([breadth1.state, breadth5.state, breadth20.state]) : null;
-    const hysteresis = advanceBreadth(history, raw);
+    const raw = breadth1 && breadth5 && breadth20 ? aggregate(breadth1.state, breadth5.state, breadth20.state) : null;
+    const hysteresis = advanceBreadth(history, raw, { ...(deteriorationMode !== undefined ? { deteriorationMode } : {}) });
     history = { effectiveState: hysteresis.effectiveState, confirmation: hysteresis.confirmationAfter };
     return { date, observation, consecutiveValidSessions: consecutive, breadth1, breadth5, breadth20,
       rawState: raw, effectiveState: raw === null ? null : hysteresis.effectiveState, hysteresis, definition: BREADTH_DEFINITION };

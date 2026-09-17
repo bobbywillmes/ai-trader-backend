@@ -28,9 +28,9 @@ export async function assertCacheComplete(options: Pick<BreadthResearchOptions, 
   }
 }
 
-const pct = (count: number, total: number): number => total ? count / total * 100 : 0;
-type Distribution = { sessions: number; percentages: Record<BreadthState, number> };
-function distributionOf(days: readonly BreadthDay[], pick: (day: BreadthDay) => BreadthState | null): Distribution {
+export const pct = (count: number, total: number): number => total ? count / total * 100 : 0;
+export type Distribution = { sessions: number; percentages: Record<BreadthState, number> };
+export function distributionOf(days: readonly BreadthDay[], pick: (day: BreadthDay) => BreadthState | null): Distribution {
   const withState = days.filter(day => pick(day) !== null);
   const counts: Record<BreadthState, number> = { NEGATIVE: 0, MIXED: 0, POSITIVE: 0 };
   for (const day of withState) counts[pick(day)!]++;
@@ -38,11 +38,11 @@ function distributionOf(days: readonly BreadthDay[], pick: (day: BreadthDay) => 
     NEGATIVE: pct(counts.NEGATIVE, withState.length), MIXED: pct(counts.MIXED, withState.length), POSITIVE: pct(counts.POSITIVE, withState.length),
   } };
 }
-function byYear(days: readonly BreadthDay[], pick: (day: BreadthDay) => BreadthState | null): Record<string, Distribution> {
+export function byYear(days: readonly BreadthDay[], pick: (day: BreadthDay) => BreadthState | null): Record<string, Distribution> {
   const years = [...new Set(days.map(day => day.date.slice(0, 4)))].sort();
   return Object.fromEntries(years.map(year => [year, distributionOf(days.filter(day => day.date.startsWith(year)), pick)]));
 }
-function transitionCategories(days: readonly BreadthDay[]): { categories: Record<string, number>; deteriorationCount: number; recoveryCount: number } {
+export function transitionCategories(days: readonly BreadthDay[]): { categories: Record<string, number>; deteriorationCount: number; recoveryCount: number } {
   const categories: Record<string, number> = {};
   let deteriorationCount = 0, recoveryCount = 0;
   for (const day of days) {
@@ -54,12 +54,12 @@ function transitionCategories(days: readonly BreadthDay[]): { categories: Record
   }
   return { categories, deteriorationCount, recoveryCount };
 }
-function longestRunByState(runs: readonly { state: BreadthState; validSessions: number }[]): Record<BreadthState, number> {
+export function longestRunByState(runs: readonly { state: BreadthState; validSessions: number }[]): Record<BreadthState, number> {
   const longest: Record<BreadthState, number> = { NEGATIVE: 0, MIXED: 0, POSITIVE: 0 };
   for (const run of runs) longest[run.state] = Math.max(longest[run.state], run.validSessions);
   return longest;
 }
-function periodStats(days: readonly BreadthDay[], from: string, to: string) {
+export function periodStats(days: readonly BreadthDay[], from: string, to: string) {
   const scoped = days.filter(day => day.date >= from && day.date <= to);
   return { ...distributionOf(scoped, day => day.effectiveState), transitions: scoped.filter(day => day.hysteresis.transitioned).length,
     breadth1: distributionOf(scoped, day => day.breadth1?.state ?? null), breadth5: distributionOf(scoped, day => day.breadth5?.state ?? null),

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  advanceBreadth, BASELINE_BREADTH_BANDS, BREADTH_STATES, calculateBreadthSeries, classifyBreadthBand, classifyDirection,
+  advanceBreadth, aggregateStructuralV3, BASELINE_BREADTH_BANDS, BREADTH_STATES, calculateBreadthSeries,
+  CANDIDATE_STRUCTURAL_V3_BANDS, classifyBreadthBand, classifyDirection,
   computeDailyBreadthObservation, medianBreadthState, summarizeBreadth,
   type BreadthBandsByHorizon, type BreadthHistory, type BreadthState, type DailyBreadthObservation,
 } from './breadth-calculation.js';
@@ -179,6 +180,95 @@ describe('hysteresis', () => {
   });
   it('rejects an invalid persisted continuation', () => {
     expect(() => advanceBreadth({ effectiveState: null, confirmation: 1 }, 'MIXED')).toThrow('Invalid hysteresis continuation.');
+  });
+});
+
+describe('CANDIDATE_STRUCTURAL_V3 thresholds', () => {
+  it.each([
+    [0.44, 'NEGATIVE'], [0.440001, 'MIXED'], [0.539999, 'MIXED'], [0.54, 'POSITIVE'],
+  ] as const)('breadth1: %s -> %s', (value, expected) => {
+    expect(classifyBreadthBand(value, CANDIDATE_STRUCTURAL_V3_BANDS.breadth1)).toBe(expected);
+  });
+  it.each([
+    [0.46, 'NEGATIVE'], [0.460001, 'MIXED'], [0.519999, 'MIXED'], [0.52, 'POSITIVE'],
+  ] as const)('breadth5: %s -> %s', (value, expected) => {
+    expect(classifyBreadthBand(value, CANDIDATE_STRUCTURAL_V3_BANDS.breadth5)).toBe(expected);
+  });
+  it.each([
+    [0.47, 'NEGATIVE'], [0.470001, 'MIXED'], [0.509999, 'MIXED'], [0.51, 'POSITIVE'],
+  ] as const)('breadth20: %s -> %s', (value, expected) => {
+    expect(classifyBreadthBand(value, CANDIDATE_STRUCTURAL_V3_BANDS.breadth20)).toBe(expected);
+  });
+});
+
+describe('CANDIDATE_STRUCTURAL_V3 raw aggregation (5d/20d structural, 1d confirms only)', () => {
+  it('5d/20d POSITIVE agreement wins regardless of 1d', () => {
+    expect(aggregateStructuralV3('POSITIVE', 'POSITIVE', 'POSITIVE')).toBe('POSITIVE');
+    expect(aggregateStructuralV3('NEGATIVE', 'POSITIVE', 'POSITIVE')).toBe('POSITIVE');
+  });
+  it('5d/20d NEGATIVE agreement wins regardless of 1d', () => {
+    expect(aggregateStructuralV3('POSITIVE', 'NEGATIVE', 'NEGATIVE')).toBe('NEGATIVE');
+    expect(aggregateStructuralV3('NEGATIVE', 'NEGATIVE', 'NEGATIVE')).toBe('NEGATIVE');
+  });
+  it('5d/20d opposite is always MIXED, 1d cannot break the tie', () => {
+    expect(aggregateStructuralV3('POSITIVE', 'POSITIVE', 'NEGATIVE')).toBe('MIXED');
+    expect(aggregateStructuralV3('NEGATIVE', 'NEGATIVE', 'POSITIVE')).toBe('MIXED');
+  });
+  it('one structural POSITIVE + one MIXED is POSITIVE only when 1d confirms POSITIVE', () => {
+    expect(aggregateStructuralV3('POSITIVE', 'POSITIVE', 'MIXED')).toBe('POSITIVE');
+    expect(aggregateStructuralV3('POSITIVE', 'MIXED', 'POSITIVE')).toBe('POSITIVE');
+    expect(aggregateStructuralV3('MIXED', 'POSITIVE', 'MIXED')).toBe('MIXED');
+    expect(aggregateStructuralV3('NEGATIVE', 'POSITIVE', 'MIXED')).toBe('MIXED');
+  });
+  it('one structural NEGATIVE + one MIXED is NEGATIVE only when 1d confirms NEGATIVE', () => {
+    expect(aggregateStructuralV3('NEGATIVE', 'NEGATIVE', 'MIXED')).toBe('NEGATIVE');
+    expect(aggregateStructuralV3('MIXED', 'NEGATIVE', 'MIXED')).toBe('MIXED');
+    expect(aggregateStructuralV3('POSITIVE', 'NEGATIVE', 'MIXED')).toBe('MIXED');
+  });
+  it('both structural horizons MIXED is always MIXED regardless of 1d', () => {
+    expect(aggregateStructuralV3('POSITIVE', 'MIXED', 'MIXED')).toBe('MIXED');
+    expect(aggregateStructuralV3('NEGATIVE', 'MIXED', 'MIXED')).toBe('MIXED');
+    expect(aggregateStructuralV3('MIXED', 'MIXED', 'MIXED')).toBe('MIXED');
+  });
+});
+
+describe('CANDIDATE_STRUCTURAL_V3 one-level-per-assessment deterioration', () => {
+  const advanceOneLevel = (state: BreadthState | null, raw: BreadthState | null, confirmation = 0) =>
+    advanceBreadth({ effectiveState: state, confirmation }, raw, { deteriorationMode: 'ONE_LEVEL_PER_ASSESSMENT' });
+
+  it('bootstraps identically to the default mode', () => {
+    expect(advanceOneLevel(null, 'MIXED')).toMatchObject({ effectiveState: 'MIXED', confirmationAfter: 0, transitioned: false });
+  });
+  it('POSITIVE with raw NEGATIVE moves only to MIXED, never straight to NEGATIVE', () => {
+    const result = advanceOneLevel('POSITIVE', 'NEGATIVE', 1);
+    expect(result).toMatchObject({ effectiveState: 'MIXED', confirmationAfter: 0, transitioned: true });
+  });
+  it('a second still-NEGATIVE assessment then moves MIXED -> NEGATIVE immediately', () => {
+    const day1 = advanceOneLevel('POSITIVE', 'NEGATIVE');
+    expect(day1.effectiveState).toBe('MIXED');
+    const day2 = advanceOneLevel(day1.effectiveState, 'NEGATIVE', day1.confirmationAfter);
+    expect(day2).toMatchObject({ effectiveState: 'NEGATIVE', confirmationAfter: 0, transitioned: true });
+  });
+  it('MIXED with raw NEGATIVE still drops to NEGATIVE immediately (already one level)', () => {
+    expect(advanceOneLevel('MIXED', 'NEGATIVE')).toMatchObject({ effectiveState: 'NEGATIVE', confirmationAfter: 0, transitioned: true });
+  });
+  it('recovery from NEGATIVE still requires two supporting sessions and only reaches MIXED', () => {
+    const day1 = advanceOneLevel('NEGATIVE', 'POSITIVE');
+    expect(day1).toMatchObject({ effectiveState: 'NEGATIVE', confirmationAfter: 1 });
+    const day2 = advanceOneLevel('NEGATIVE', 'POSITIVE', day1.confirmationAfter);
+    expect(day2).toMatchObject({ effectiveState: 'MIXED', recoveryTarget: 'MIXED', transitioned: true });
+  });
+  it('MIXED -> POSITIVE requires a fresh two-session confirmation after recovering to MIXED', () => {
+    const day1 = advanceOneLevel('MIXED', 'POSITIVE');
+    expect(day1).toMatchObject({ effectiveState: 'MIXED', confirmationAfter: 1 });
+    const day2 = advanceOneLevel('MIXED', 'POSITIVE', day1.confirmationAfter);
+    expect(day2).toMatchObject({ effectiveState: 'POSITIVE', confirmationAfter: 0, transitioned: true });
+  });
+  it('raw equal to effective holds and resets confirmation', () => {
+    expect(advanceOneLevel('MIXED', 'MIXED', 1)).toMatchObject({ effectiveState: 'MIXED', confirmationAfter: 0, transitioned: false });
+  });
+  it('unavailable evidence pauses effective state and confirmation without incrementing or resetting', () => {
+    expect(advanceOneLevel('MIXED', null, 1)).toMatchObject({ effectiveState: 'MIXED', confirmationAfter: 1, transitioned: false });
   });
 });
 
