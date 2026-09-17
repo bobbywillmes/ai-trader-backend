@@ -93,6 +93,17 @@ same cache reproduces this exact hash. The generator (`src/dev/breadth-v1-bootst
 STOPs if the required cache is missing rather than fetching anything, and never fabricates a
 row for a resolved provider failure or a zero-directional session.
 
+The artifact's top-level `from`/`through` (`2021-09-16..2026-09-16`) describe the **requested
+research-cache range** the generator scanned, not the range of rows actually produced. Sessions
+inside that range with no usable evidence — including the known entitlement-gap sessions at the
+very start of the cache — are correctly **not** written as fabricated rows; the generator skips
+them (`continue`), so `rowCount` (1,252) is smaller than the full calendar span implied by
+`from..through`. Concretely, `rows[0].sessionDate` is **`2021-09-21`**, not `2021-09-16`. At
+runtime, the BREADTH_V1 publisher never reads the artifact's `from` field for provenance — its
+`evidenceJson.provenance.inputFrom` is derived from the earliest **persisted**
+`MarketBreadthObservation.sessionDate`, which is this same `2021-09-21`, correctly reflecting the
+first actually usable historical observation rather than the requested cache boundary.
+
 ## Bootstrap import
 
 ```powershell

@@ -1,9 +1,12 @@
 import { env } from '../../config/env.js';
 import { HttpError } from '../../errors/http-error.js';
 
-/** Research-only Massive reads: broad-market grouped daily bars and the point-in-time
- * common-stock reference universe. Separate from the strict Trend/Volatility evidence
- * boundary; nothing here is persisted as immutable production evidence. */
+/** Massive point-in-time common-stock/reference data client: broad-market grouped daily
+ * bars and the point-in-time common-stock reference universe. Shared, generic Massive I/O
+ * with no research-specific logic — used by both the Breadth research pass and production
+ * BREADTH_V1 live observation ingestion (`breadth-observation-ingestion.service.ts`), which
+ * does persist its output into the immutable `MarketBreadthObservation` table. Separate from
+ * the strict Trend/Volatility evidence boundary. */
 
 type Page = { status?: unknown; results?: unknown; resultsCount?: unknown; next_url?: unknown };
 export type MassiveBreadthTransport = (path: string) => Promise<Page>;
