@@ -20,6 +20,16 @@ export const BREADTH_DEFINITION = Object.freeze({
 const BREADTH_RANK: Record<BreadthState, number> = { NEGATIVE: 0, MIXED: 1, POSITIVE: 2 };
 const rankOf = (state: BreadthState) => BREADTH_RANK[state];
 
+/** A classification band is an explicit, per-horizon research parameter, not a hard-coded
+ * constant, so alternative candidates can be compared against the same cached evidence. */
+export type BreadthBand = { negativeMax: number; positiveMin: number };
+export type BreadthBandsByHorizon = { breadth1: BreadthBand; breadth5: BreadthBand; breadth20: BreadthBand };
+export const BASELINE_BREADTH_BANDS: BreadthBandsByHorizon = Object.freeze({
+  breadth1: Object.freeze({ negativeMax: 0.45, positiveMin: 0.55 }),
+  breadth5: Object.freeze({ negativeMax: 0.45, positiveMin: 0.55 }),
+  breadth20: Object.freeze({ negativeMax: 0.45, positiveMin: 0.55 }),
+});
+
 export type Direction = 'ADVANCING' | 'DECLINING' | 'UNCHANGED';
 export function classifyDirection(current: number, previous: number): Direction {
   if (!Number.isFinite(current) || !Number.isFinite(previous) || current <= 0 || previous <= 0) throw new Error('Positive finite closes required.');
@@ -62,10 +72,11 @@ export function computeDailyBreadthObservation(universe: readonly string[], curr
   };
 }
 
-export function classifyBreadthBand(value: number): BreadthState {
+export function classifyBreadthBand(value: number, band: BreadthBand = BASELINE_BREADTH_BANDS.breadth1): BreadthState {
   if (!Number.isFinite(value)) throw new Error('Finite advance-share value required.');
-  if (value <= BREADTH_DEFINITION.bands.negative) return 'NEGATIVE';
-  if (value >= BREADTH_DEFINITION.bands.positive) return 'POSITIVE';
+  if (!(band.negativeMax < band.positiveMin)) throw new Error('Invalid band: negativeMax must be less than positiveMin.');
+  if (value <= band.negativeMax) return 'NEGATIVE';
+  if (value >= band.positiveMin) return 'POSITIVE';
   return 'MIXED';
 }
 export function medianBreadthState(states: readonly [BreadthState, BreadthState, BreadthState]): BreadthState {
@@ -105,7 +116,7 @@ export type BreadthDay = {
 /** `observations[i]` is null when evidence for that expected session could not be obtained at
  * all (provider gap); `status: 'UNAVAILABLE'` is a resolved observation with zero directional
  * names. Both break rolling continuity identically; only a VALID observation extends it. */
-export function calculateBreadthSeries(dates: readonly string[], observations: readonly (DailyBreadthObservation | null)[]): BreadthDay[] {
+export function calculateBreadthSeries(dates: readonly string[], observations: readonly (DailyBreadthObservation | null)[], bandsByHorizon: BreadthBandsByHorizon = BASELINE_BREADTH_BANDS): BreadthDay[] {
   if (dates.length !== observations.length) throw new Error('Aligned dates and observations required.');
   if (dates.some((date, i) => i > 0 && date <= dates[i - 1]!)) throw new Error('Unique chronological dates required.');
   let shares: number[] = [];
@@ -116,13 +127,13 @@ export function calculateBreadthSeries(dates: readonly string[], observations: r
     const isValid = observation !== null && observation.status === 'VALID';
     if (!isValid) { shares = []; consecutive = 0; }
     else { shares.push(observation.advanceShare!); shares = shares.slice(-20); consecutive++; }
-    const measure = (period: number): BreadthMeasurement | null => {
+    const measure = (period: number, band: BreadthBand): BreadthMeasurement | null => {
       if (consecutive < period) return null;
       const window = shares.slice(-period);
       const value = window.reduce((sum, share) => sum + share, 0) / window.length;
-      return { value, state: classifyBreadthBand(value) };
+      return { value, state: classifyBreadthBand(value, band) };
     };
-    const breadth1 = measure(1), breadth5 = measure(5), breadth20 = measure(20);
+    const breadth1 = measure(1, bandsByHorizon.breadth1), breadth5 = measure(5, bandsByHorizon.breadth5), breadth20 = measure(20, bandsByHorizon.breadth20);
     const raw = breadth1 && breadth5 && breadth20 ? medianBreadthState([breadth1.state, breadth5.state, breadth20.state]) : null;
     const hysteresis = advanceBreadth(history, raw);
     history = { effectiveState: hysteresis.effectiveState, confirmation: hysteresis.confirmationAfter };

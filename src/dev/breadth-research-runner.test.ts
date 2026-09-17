@@ -107,6 +107,35 @@ describe('read-only Breadth research runner', () => {
     expect(failedDay.consecutiveValidSessions).toBe(0);
   });
 
+  it('estimate reports exactly which dates are missing from cache, distinct from a recorded failure', async () => {
+    const first = fakeFetchers();
+    await runBreadthResearch({ from: FROM, to: TO, cacheDir, fetchFromProvider: true, fetchGrouped: first.fetchGrouped, fetchUniverse: first.fetchUniverse });
+    const complete = await estimateBreadthResearch({ from: FROM, to: TO, cacheDir });
+    expect(complete.missingGroupedDates).toEqual([]);
+    expect(complete.missingUniverseDates).toEqual([]);
+    // Delete one cache file outright (never attempted) rather than recording a failure.
+    await rm(path.join(cacheDir, 'universe', `${expectedSessions[3]}.json`));
+    const withGap = await estimateBreadthResearch({ from: FROM, to: TO, cacheDir });
+    expect(withGap.missingUniverseDates).toEqual([expectedSessions[3]]);
+    expect(withGap.missingGroupedDates).toEqual([]);
+  });
+
+  it('applies an explicit per-horizon band definition instead of the frozen baseline, without touching the underlying evidence', async () => {
+    const { fetchGrouped, fetchUniverse } = fakeFetchers();
+    const baseline = await runBreadthResearch({ from: FROM, to: TO, cacheDir, fetchFromProvider: true, fetchGrouped, fetchUniverse });
+    const candidateBands = {
+      breadth1: { negativeMax: 0.45, positiveMin: 0.55 },
+      breadth5: { negativeMax: 0.47, positiveMin: 0.53 },
+      breadth20: { negativeMax: 0.48, positiveMin: 0.52 },
+    };
+    const candidate = await runBreadthResearch({ from: FROM, to: TO, cacheDir, fetchFromProvider: false, bandsByHorizon: candidateBands });
+    expect(baseline.bandsByHorizon).not.toEqual(candidate.bandsByHorizon);
+    expect(candidate.bandsByHorizon).toEqual(candidateBands);
+    expect(baseline.datasetId).not.toBe(candidate.datasetId); // dataset identity includes the band definition used
+    // The underlying per-session observation evidence (universe/current/prior bar counts) is identical.
+    expect(baseline.days.map(day => day.observation)).toEqual(candidate.days.map(day => day.observation));
+  });
+
   it('has no Alpaca dependency anywhere in the research fetch/cache/runner code', () => {
     const sources = [
       readFileSync(new URL('./breadth-research-runner.ts', import.meta.url), 'utf8'),

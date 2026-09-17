@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  advanceBreadth, BREADTH_STATES, calculateBreadthSeries, classifyBreadthBand, classifyDirection,
+  advanceBreadth, BASELINE_BREADTH_BANDS, BREADTH_STATES, calculateBreadthSeries, classifyBreadthBand, classifyDirection,
   computeDailyBreadthObservation, medianBreadthState, summarizeBreadth,
-  type BreadthHistory, type BreadthState, type DailyBreadthObservation,
+  type BreadthBandsByHorizon, type BreadthHistory, type BreadthState, type DailyBreadthObservation,
 } from './breadth-calculation.js';
 
 const advance = (state: BreadthState | null, raw: BreadthState | null, confirmation = 0) => advanceBreadth({ effectiveState: state, confirmation }, raw);
@@ -58,6 +58,31 @@ describe('classification bands', () => {
     expect(medianBreadthState(['NEGATIVE', 'NEGATIVE', 'MIXED'])).toBe('NEGATIVE');
     expect(medianBreadthState(['POSITIVE', 'POSITIVE', 'MIXED'])).toBe('POSITIVE');
     expect(medianBreadthState(['MIXED', 'MIXED', 'MIXED'])).toBe('MIXED');
+  });
+  it('respects an explicit horizon-specific band instead of the baseline default', () => {
+    const candidate5d = { negativeMax: 0.47, positiveMin: 0.53 };
+    expect(classifyBreadthBand(0.47, candidate5d)).toBe('NEGATIVE');
+    expect(classifyBreadthBand(0.470001, candidate5d)).toBe('MIXED');
+    expect(classifyBreadthBand(0.529999, candidate5d)).toBe('MIXED');
+    expect(classifyBreadthBand(0.53, candidate5d)).toBe('POSITIVE');
+    const candidate20d = { negativeMax: 0.48, positiveMin: 0.52 };
+    expect(classifyBreadthBand(0.48, candidate20d)).toBe('NEGATIVE');
+    expect(classifyBreadthBand(0.480001, candidate20d)).toBe('MIXED');
+    expect(classifyBreadthBand(0.519999, candidate20d)).toBe('MIXED');
+    expect(classifyBreadthBand(0.52, candidate20d)).toBe('POSITIVE');
+  });
+  it('rejects an invalid band where negativeMax is not below positiveMin', () => {
+    expect(() => classifyBreadthBand(0.5, { negativeMax: 0.5, positiveMin: 0.5 })).toThrow('Invalid band');
+    expect(() => classifyBreadthBand(0.5, { negativeMax: 0.55, positiveMin: 0.45 })).toThrow('Invalid band');
+  });
+  it('defaults to the frozen baseline 45/55 band on every horizon when unspecified', () => {
+    expect(BASELINE_BREADTH_BANDS).toEqual({
+      breadth1: { negativeMax: 0.45, positiveMin: 0.55 },
+      breadth5: { negativeMax: 0.45, positiveMin: 0.55 },
+      breadth20: { negativeMax: 0.45, positiveMin: 0.55 },
+    });
+    expect(Object.isFrozen(BASELINE_BREADTH_BANDS)).toBe(true);
+    expect(Object.isFrozen(BASELINE_BREADTH_BANDS.breadth1)).toBe(true);
   });
 });
 
@@ -182,5 +207,31 @@ describe('end-to-end series and summary', () => {
     expect(summary.providerGaps).toBe(1);
     expect(summary.zeroDirectionalDays).toBe(1);
     expect(summary.unavailableObservations).toBe(2);
+  });
+  it('same evidence classifies differently only because of the band definition, with hysteresis and median-of-three otherwise unchanged', () => {
+    // 0.53 sits inside the baseline MIXED zone for every horizon (all share 0.45/0.55), but
+    // is >= a narrowed 5d positiveMin of 0.53 and a narrowed 20d positiveMin of 0.52.
+    const shares = Array(25).fill(0.53);
+    const observations = shares.map((share: number) => observation(share));
+    const baseline = calculateBreadthSeries(dates(25), observations);
+    const candidate: BreadthBandsByHorizon = {
+      breadth1: { negativeMax: 0.45, positiveMin: 0.55 },
+      breadth5: { negativeMax: 0.47, positiveMin: 0.53 },
+      breadth20: { negativeMax: 0.48, positiveMin: 0.52 },
+    };
+    const withCandidate = calculateBreadthSeries(dates(25), observations, candidate);
+    const last = { baseline: baseline[19]!, candidate: withCandidate[19]! }; // first day breadth20 exists (warm-up complete)
+    expect(last.baseline.breadth1).toEqual(last.candidate.breadth1); // 1d band unchanged between definitions
+    expect(last.baseline.breadth1!.value).toBe(last.candidate.breadth1!.value); // identical underlying evidence
+    expect(last.baseline.breadth5!.state).toBe('MIXED');
+    expect(last.candidate.breadth5!.state).toBe('POSITIVE');
+    expect(last.baseline.breadth20!.state).toBe('MIXED');
+    expect(last.candidate.breadth20!.state).toBe('POSITIVE');
+    expect(last.baseline.breadth20!.value).toBe(last.candidate.breadth20!.value); // identical underlying evidence
+    expect(last.baseline.rawState).toBe('MIXED');
+    expect(last.candidate.rawState).toBe('POSITIVE'); // 2 of 3 horizons (5d, 20d) now agree POSITIVE
+    // Hysteresis mechanics (bootstrap here) are identical in shape; only the raw input differs.
+    expect(last.baseline.hysteresis.reason).toContain('Bootstrap');
+    expect(last.candidate.hysteresis.reason).toContain('Bootstrap');
   });
 });

@@ -3,8 +3,8 @@ import { prisma } from '../db/prisma.js';
 import { fetchCommonStockUniverse, fetchGroupedDailyBars } from '../integrations/massive/breadth-reference.client.js';
 import { addDays, datesBetween, marketSession, type CalendarException } from '../services/market-calendar.js';
 import {
-  BREADTH_DEFINITION, calculateBreadthSeries, computeDailyBreadthObservation, summarizeBreadth,
-  type BreadthDay, type DailyBreadthObservation,
+  BASELINE_BREADTH_BANDS, BREADTH_DEFINITION, calculateBreadthSeries, computeDailyBreadthObservation, summarizeBreadth,
+  type BreadthBandsByHorizon, type BreadthDay, type DailyBreadthObservation,
 } from '../services/breadth-calculation.js';
 import { volatilityResearchExceptions } from './volatility-research-calendar.js';
 import { cachedFetch, DEFAULT_BREADTH_CACHE_DIR, mapWithConcurrency, readCached } from './breadth-research-cache.js';
@@ -32,6 +32,7 @@ export type BreadthResearchOptions = {
   fetchFromProvider?: boolean;
   refresh?: boolean;
   concurrency?: number;
+  bandsByHorizon?: BreadthBandsByHorizon;
 };
 
 function previousSession(date: string, exceptions: readonly CalendarException[]) {
@@ -63,6 +64,7 @@ export type BreadthResearchEstimate = {
   requestedRange: { from: string; to: string }; expectedSessions: number;
   cachedGroupedSessions: number; cachedUniverseSessions: number;
   newGroupedSessions: number; newUniverseSessions: number;
+  missingGroupedDates: string[]; missingUniverseDates: string[];
   estimatedNewGroupedRequests: number; estimatedNewUniverseRequests: number; estimatedTotalRequests: number;
   assumedUniversePagesPerSession: number;
 };
@@ -71,6 +73,8 @@ export async function estimateBreadthResearch(options: BreadthResearchOptions): 
   const { sessions, groupedDates } = await sessionPlan(options);
   const groupedCached = await Promise.all(groupedDates.map(date => readCached(cacheDir, 'grouped', date)));
   const universeCached = await Promise.all(sessions.map(date => readCached(cacheDir, 'universe', date)));
+  const missingGroupedDates = groupedDates.filter((_, i) => !groupedCached[i]);
+  const missingUniverseDates = sessions.filter((_, i) => !universeCached[i]);
   const cachedGroupedSessions = groupedCached.filter(Boolean).length;
   const cachedUniverseSessions = universeCached.filter(Boolean).length;
   const newGroupedSessions = groupedDates.length - cachedGroupedSessions;
@@ -79,6 +83,7 @@ export async function estimateBreadthResearch(options: BreadthResearchOptions): 
   return {
     requestedRange: { from: options.from, to: options.to }, expectedSessions: sessions.length,
     cachedGroupedSessions, cachedUniverseSessions, newGroupedSessions, newUniverseSessions,
+    missingGroupedDates, missingUniverseDates,
     estimatedNewGroupedRequests: newGroupedSessions, estimatedNewUniverseRequests,
     estimatedTotalRequests: newGroupedSessions + estimatedNewUniverseRequests,
     assumedUniversePagesPerSession: ASSUMED_UNIVERSE_PAGES_PER_SESSION,
@@ -86,7 +91,7 @@ export async function estimateBreadthResearch(options: BreadthResearchOptions): 
 }
 
 export type BreadthResearchReport = {
-  datasetId: string; definition: typeof BREADTH_DEFINITION;
+  datasetId: string; definition: typeof BREADTH_DEFINITION; bandsByHorizon: BreadthBandsByHorizon;
   requestedRange: { from: string; to: string }; calendarExceptions: CalendarException[];
   actualRequests: { grouped: number; universe: number };
   providerGaps: { date: string; kind: 'universe' | 'grouped'; error: string }[];
@@ -138,15 +143,16 @@ export async function runBreadthResearch(options: BreadthResearchOptions): Promi
     const prior = groupedResults.get(groupedDates[i]!) ?? null;
     return universe && current && prior ? computeDailyBreadthObservation(universe, current, prior) : null;
   });
-  const days = calculateBreadthSeries(sessions, observations);
-  const datasetId = createHash('sha256').update(JSON.stringify({ sessions, exceptions, definition: BREADTH_DEFINITION, from: options.from, to: options.to })).digest('hex');
+  const bandsByHorizon = options.bandsByHorizon ?? BASELINE_BREADTH_BANDS;
+  const days = calculateBreadthSeries(sessions, observations, bandsByHorizon);
+  const datasetId = createHash('sha256').update(JSON.stringify({ sessions, exceptions, definition: BREADTH_DEFINITION, bandsByHorizon, from: options.from, to: options.to })).digest('hex');
   const warnings = [
     'Candidate behavior report only. No authoritative assessments, MarketRegimeDimensionAssessment rows, or trading writes.',
     'Universe request counts above are an estimate (assumed pages/session); only grouped-daily request counts are exact, since pagination pages are not separately observable from the cache-hit boundary.',
     'Cached bars are Massive-adjusted at fetch time; a split occurring after a date was cached is not retroactively reflected without --refresh.',
   ];
   return {
-    datasetId, definition: BREADTH_DEFINITION, requestedRange: { from: options.from, to: options.to }, calendarExceptions: exceptions,
+    datasetId, definition: BREADTH_DEFINITION, bandsByHorizon, requestedRange: { from: options.from, to: options.to }, calendarExceptions: exceptions,
     actualRequests: { grouped: actualGroupedRequests, universe: actualUniverseRequests },
     providerGaps, cacheDir, days, summary: summarizeBreadth(days), warnings,
   };

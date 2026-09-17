@@ -423,6 +423,7 @@ Automated trading should only be enabled deliberately after production health, b
 - [VOLATILITY_V1 Publication and Local Acceptance](docs/development/volatility-v1-acceptance.md)
 - [Daily Breadth Candidate Calibration](docs/development/breadth-calibration.md)
 - [Breadth Calibration Results](docs/development/breadth-calibration-results.md)
+- [Breadth Threshold Comparison (BASELINE vs CANDIDATE_HORIZON_V2)](docs/development/breadth-threshold-comparison.md)
 
 ### Integrations:
 

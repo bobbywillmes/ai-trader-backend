@@ -14,6 +14,7 @@
     "check": "tsc --noEmit",
     "research:volatility": "tsx scripts/volatility-report.ts",
     "research:breadth": "tsx scripts/research-breadth.ts",
+    "compare:breadth-thresholds": "tsx scripts/compare-breadth-thresholds.ts",
     "calendar:bootstrap": "tsx scripts/bootstrap-market-calendar.ts",
     "prisma:generate": "prisma generate",
     "momentum:reconcile-eligibility": "tsx scripts/reconcile-momentum-eligibility.ts",
