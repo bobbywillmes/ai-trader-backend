@@ -211,6 +211,49 @@ Be especially careful when editing:
 
 ## Trade Lifecycle Notes
 
+Market data, Trend calibration, and authoritative TREND_V1 publication are account-independent.
+MarketBar is immutable, unadjusted Massive evidence; never use Alpaca fallback or
+rewrite stored OHLCV. Calendar exceptions are mutable operator configuration.
+TIGHT/MIDDLE/LOOSE are research-only profiles; Trend Lab must never insert into
+MarketRegimeDimensionAssessment or affect evaluation/trading. Production TREND_V1
+uses independently frozen thresholds selected from TIGHT. Its separate monitored
+worker publishes one replay-initialized bootstrap, then strictly chronological
+immutable attempts under a transaction advisory lock. Unresolved sessions block
+later publication. Persisted predecessor evidence owns hysteresis continuation.
+No trading consumer exists. See `docs/architecture/market-data-trend.md`.
+
+VOLATILITY_V1 adopts the frozen daily classifier and asymmetric hysteresis without
+threshold tuning. Its account-independent publisher follows Trend's transaction
+advisory lock, immutable attempts, one replay-initialized bootstrap and chronological
+continuation; it has no trading consumer. Historical replay requires every expected
+session using persisted calendar exceptions. `npm run calendar:bootstrap -- --apply`
+explicitly inserts the verified 2021–2026 closures, skips equivalent rows, and refuses
+all writes on conflicts. Workers never seed calendars. The research CLI remains
+read-only. See `docs/development/volatility-v1-acceptance.md`.
+
+BREADTH is calibration-only so far: `npm run research:breadth` fetches Massive's grouped
+daily bars and point-in-time common-stock reference universe into a resumable, gitignored
+disk cache (never Postgres), and never writes `MarketRegimeDimensionAssessment` or any
+trading model. No BREADTH vocabulary exists in the database constraint yet; that is a later
+productionization decision. See `docs/development/breadth-calibration.md`.
+
+External signal ingestion and routing are a separate evidence-only subsystem:
+`/api/external-signals/:webhookKey` authenticates and records terminal `SignalDelivery`
+and immutable `Signal` rows. Revision-owned authority may permit immutable
+`SignalRoutingRun` / `SignalRoute` and per-route `SignalEvaluation` / ordered gate
+evidence, but all modes stop before trading. Evaluation must never write trading
+models or invoke entry/exit pipelines. Pre-evaluation routes have a null evaluationVersion
+and must not be retroactively evaluated. Subscription exit ownership is prospective:
+PositionExitState freezes ownership and verified origin at position creation. External
+ownership suppresses normal strategy exits, not operator/protective/recovery actions.
+Only PREPARED revision authority is mutable. Enabled account assignments
+are database-unique per Account + Strategy + Security; routing additionally requires
+an enabled catalog Subscription and never applies execution gates. It must not invoke the existing `/api/signals` trading
+pipeline or create trading side effects. Sources and strategy bindings are mutable
+configuration; binding source/key/Strategy identity is fixed. Do not add normal
+application update/delete paths for Signal or SignalDelivery. Keep URL credentials
+out of logs and persisted evidence. See `docs/integrations/external-signals.md`.
+
 The intended lifecycle is:
 
 ```text
@@ -265,6 +308,12 @@ Keep UI changes:
 - connected to backend APIs through feature-specific `api.ts`, `hooks.ts`, and `types.ts`
 
 Only rebuild the web UI when UI code changes.
+
+The owner-only External Signals console lives at `/system/external-signals` under
+`apps/web/src/features/externalSignals/`. Keep section, applied filter, pagination,
+and detail state URL-authoritative. Webhook credentials belong only in transient
+source-detail component state: never place them in query/mutation data, storage, browser URL state, or
+logs. Owner-only retrieval decrypts stable source capability URLs using existing credential encryption; regenerate only for deliberate invalidation. New ingress derives eventFingerprint and internal schemaVersion instead of accepting them from senders. Keep Signals and Deliveries read-only and account-independent.
 
 When building apps/web, Vite may report a large-chunk warning. This is expected for this internal web application and does not need to be highlighted unless the build fails or the warning materially changes.
 

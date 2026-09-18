@@ -1,6 +1,8 @@
 import type { PlatformPermission, PlatformRole } from "../features/auth/types";
 
 export type AppRouteId =
+  | "marketCalendar"
+  | "trendLab"
   | "dashboard"
   | "positions"
   | "orders"
@@ -17,6 +19,7 @@ export type AppRouteId =
   | "tradingAccounts"
   | "reconciliation"
   | "systemEvents"
+  | "externalSignals"
   | "users"
   | "securities"
   | "settings"
@@ -33,6 +36,8 @@ const OPERATIONAL_ROLES: PlatformRole[] = ["SYSTEM_OWNER", "OPERATOR"];
 const OWNER_ONLY: PlatformRole[] = ["SYSTEM_OWNER"];
 
 export const routeAccessPolicies: Record<AppRouteId, RouteAccessPolicy> = {
+  marketCalendar: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "marketData.read" },
+  trendLab: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "marketData.read" },
   dashboard: { allowedRoles: ALL_ROLES, requiredPermission: "reports.read" },
   positions: { allowedRoles: ALL_ROLES, requiredPermission: "tradingAccount.read" },
   liveOperations: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "tradingAccount.read" },
@@ -51,6 +56,7 @@ export const routeAccessPolicies: Record<AppRouteId, RouteAccessPolicy> = {
   tradingAccounts: { allowedRoles: ALL_ROLES, requiredPermission: "tradingAccount.read" },
   reconciliation: { allowedRoles: OWNER_ONLY, requiredPermission: "system.security.read" },
   systemEvents: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "systemEvents.read" },
+  externalSignals: { allowedRoles: OWNER_ONLY },
   users: { allowedRoles: OWNER_ONLY, requiredPermission: "system.settings.read" },
   securities: { allowedRoles: OWNER_ONLY, requiredPermission: "system.security.read" },
   settings: { allowedRoles: OWNER_ONLY, requiredPermission: "system.settings.read" },

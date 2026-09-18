@@ -417,10 +417,22 @@ Automated trading should only be enabled deliberately after production health, b
 - [Trading Lifecycle](docs/architecture/trading-lifecycle.md)
 - [Trading Lifecycle Exercises](docs/architecture/trading-lifecycle-exercises.md)
 - [Worker Health](docs/architecture/workers.md)
+- [Market Data, Trend Calibration and TREND_V1 Publication](docs/architecture/market-data-trend.md)
+- [TREND_V1 Local Acceptance](docs/development/trend-v1-acceptance.md)
+- [Daily Volatility Candidate Calibration](docs/development/volatility-calibration.md)
+- [VOLATILITY_V1 Publication and Local Acceptance](docs/development/volatility-v1-acceptance.md)
+- [Daily Breadth Candidate Calibration](docs/development/breadth-calibration.md)
+- [Breadth Calibration Results](docs/development/breadth-calibration-results.md)
+- [Breadth Threshold Comparison (BASELINE vs CANDIDATE_HORIZON_V2)](docs/development/breadth-threshold-comparison.md)
+- [Breadth Distribution Diagnostic](docs/development/breadth-distribution-diagnostic.md)
+- [Breadth Structural Candidate (CANDIDATE_STRUCTURAL_V3)](docs/development/breadth-structural-v3-results.md)
+- [Breadth Hysteresis Experiment (STRUCTURAL_V3_MILD_DETERIORATION_CONFIRMATION)](docs/development/breadth-hysteresis-confirmation-results.md)
+- [BREADTH_V1 Publication and Local Acceptance](docs/development/breadth-v1-production.md)
 
 ### Integrations:
 
 - [n8n Integration](docs/integrations/n8n.md)
+- [External Signal Ingestion, Authority and Routing (evidence only)](docs/integrations/external-signals.md)
 - [Alpaca Integration](docs/integrations/alpaca.md)
 
 ### Production:

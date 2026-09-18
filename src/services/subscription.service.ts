@@ -439,6 +439,7 @@ export async function createSubscription(input: CreateSubscriptionInput) {
       securityId: security.id,
       strategyId,
       exitProfileId,
+      exitManagementMode: input.exitManagementMode ?? 'BACKEND_MANAGED',
       enabled,
     },
     include: subscriptionInclude,
@@ -457,6 +458,7 @@ export async function createSubscription(input: CreateSubscriptionInput) {
       assignmentCount: subscription.accountSubscriptions.length,
       strategyId: subscription.strategyId,
       exitProfileId: subscription.exitProfileId,
+      exitManagementMode: subscription.exitManagementMode,
     },
   });
 
@@ -510,6 +512,7 @@ export async function updateSubscription(
     ...(strategyId !== undefined && { strategyId }),
     ...(exitProfileId !== undefined && { exitProfileId }),
     ...(input.enabled !== undefined && { enabled: input.enabled }),
+    ...(input.exitManagementMode !== undefined && { exitManagementMode: input.exitManagementMode }),
   };
 
   const subscription = await prisma.subscription.update({
@@ -527,6 +530,7 @@ export async function updateSubscription(
     strategyId: beforeSubscription.strategyId,
     exitProfileId: beforeSubscription.exitProfileId,
     enabled: beforeSubscription.enabled,
+    exitManagementMode: beforeSubscription.exitManagementMode,
   };
 
   const after = {
@@ -537,6 +541,7 @@ export async function updateSubscription(
     strategyId: subscription.strategyId,
     exitProfileId: subscription.exitProfileId,
     enabled: subscription.enabled,
+    exitManagementMode: subscription.exitManagementMode,
   };
 
   const changedFields = getChangedFields(before, after);

@@ -6,6 +6,9 @@ The backend monitors every recurring background operation as an independent work
 
 | Key | Display name | Cadence | Criticality | Notes |
 | --- | --- | ---: | --- | --- |
+| `trend_assessment_publication` | Daily Trend assessment | startup + 15m | informational | Account-independent TREND_V1 publication; transaction advisory lock, chronological catch-up, persisted hysteresis. No trading consumer. |
+| `volatility_assessment_publication` | Daily Volatility assessment | startup + 15m | informational | Account-independent VOLATILITY_V1 publication; separate transaction advisory lock, chronological catch-up, persisted recovery confirmation. Requires calendar bootstrap; no trading consumer. |
+| `market_daily_evidence_sync` | Daily market data | 60s scheduler | informational | Account-independent Massive SPY/RSP daily gap sync; persistent retry timing and a global advisory lock. See [Market Data and Trend](market-data-trend.md). |
 | `pending_order_processing` | Pending order processing | 2s | critical | Claims pending `OrderIntent` rows and submits eligible broker orders. |
 | `submitted_order_sync` | Submitted order sync | 2s scheduler | critical | Adaptive Alpaca open-order read; keeps submitted order status fresh without polling every heartbeat. |
 | `tracked_position_sync` | Tracked position sync | 2s scheduler | critical | Adaptive Alpaca positions read; mirrors broker positions into `TrackedPosition` lifecycle state. |

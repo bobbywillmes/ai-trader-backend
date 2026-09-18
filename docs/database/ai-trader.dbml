@@ -7,6 +7,182 @@ Project "AI Trader Backend" {
   Note: 'Generated from prisma/schema.prisma. Do not edit manually.'
 }
 
+Table ExternalSignalSource {
+  id Int [pk, increment]
+  name String [not null]
+  provider ExternalSignalProvider [not null]
+  enabled Boolean [not null, default: true]
+  authMethod ExternalSignalAuthMethod [not null, default: 'URL_TOKEN']
+  webhookKeyHash String [unique, not null]
+  webhookKeyCiphertext String
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  bindings StrategySignalBinding [not null]
+  deliveries SignalDelivery [not null]
+  signals Signal [not null]
+}
+
+Table StrategySignalRevision {
+  id Int [pk, increment]
+  strategySignalBindingId Int [not null]
+  revision Int [not null]
+  status StrategySignalRevisionStatus [not null]
+  authorityMode SignalAuthorityMode [not null, default: 'EVIDENCE_ONLY']
+  changeNote String
+  createdAt DateTime [default: `now()`, not null]
+  activatedAt DateTime
+  retiredAt DateTime
+  binding StrategySignalBinding [not null]
+  signals Signal [not null]
+
+  indexes {
+    (strategySignalBindingId, revision) [unique]
+    (id, strategySignalBindingId, revision) [unique]
+  }
+}
+
+Table StrategySignalBinding {
+  id Int [pk, increment]
+  signalSourceId Int [not null]
+  strategyId Int [not null]
+  externalStrategyKey String [not null]
+  enabled Boolean [not null, default: true]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  signalSource ExternalSignalSource [not null]
+  strategy Strategy [not null]
+  signals Signal [not null]
+  revisions StrategySignalRevision [not null]
+
+  indexes {
+    (signalSourceId, externalStrategyKey) [unique]
+  }
+}
+
+Table SignalDelivery {
+  id Int [pk, increment]
+  signalSourceId Int [not null]
+  signalId Int
+  requestId String [not null]
+  receivedAt DateTime [not null]
+  processedAt DateTime [not null]
+  status SignalDeliveryStatus [not null]
+  contentType String
+  bodySizeBytes Int [not null]
+  rawPayloadHash String [not null]
+  rawPayloadRedacted Json [not null]
+  rejectionCode SignalDeliveryRejectionCode
+  rejectionDetails Json
+  createdAt DateTime [default: `now()`, not null]
+  signalSource ExternalSignalSource [not null]
+  signal Signal
+}
+
+Table Signal {
+  id Int [pk, increment]
+  signalSourceId Int [not null]
+  strategySignalBindingId Int [not null]
+  strategyId Int [not null]
+  securityId Int [not null]
+  schemaVersion Int [not null]
+  externalEventKey String
+  eventFingerprint String
+  legacyStrategyRevision String
+  strategyRevision Int
+  strategySignalRevisionId Int
+  event SignalEvent [not null]
+  symbol String [not null]
+  timeframe String [not null]
+  signalTime DateTime [not null]
+  barTime DateTime
+  metadata Json
+  canonicalPayloadHash String [not null]
+  createdAt DateTime [default: `now()`, not null]
+  signalSource ExternalSignalSource [not null]
+  strategySignalBinding StrategySignalBinding [not null]
+  strategy Strategy [not null]
+  security Security [not null]
+  deliveries SignalDelivery [not null]
+  routingRun SignalRoutingRun
+  strategySignalRevision StrategySignalRevision
+
+  indexes {
+    (signalSourceId, externalEventKey) [unique]
+    (signalSourceId, eventFingerprint) [unique]
+  }
+}
+
+Table SignalRoutingRun {
+  id Int [pk, increment]
+  signalId Int [unique, not null]
+  authorityMode SignalAuthorityMode [not null]
+  status SignalRoutingStatus [not null]
+  startedAt DateTime [not null]
+  completedAt DateTime [not null]
+  routeCount Int [not null]
+  stopReason String
+  createdAt DateTime [default: `now()`, not null]
+  signal Signal [not null]
+  routes SignalRoute [not null]
+}
+
+Table SignalRoute {
+  id Int [pk, increment]
+  signalRoutingRunId Int [not null]
+  tradingAccountId Int [not null]
+  tradingAccountSubscriptionId Int [not null]
+  subscriptionId Int [not null]
+  targetSnapshot Json [not null]
+  evaluationVersion Int
+  evaluation SignalEvaluation
+  createdAt DateTime [default: `now()`, not null]
+  routingRun SignalRoutingRun [not null]
+  accountSubscription TradingAccountSubscription [not null]
+
+  indexes {
+    (signalRoutingRunId, tradingAccountId) [unique]
+  }
+}
+
+Table SignalEvaluation {
+  id Int [pk, increment]
+  signalRouteId Int [unique, not null]
+  evaluationVersion Int [not null]
+  event SignalEvent [not null]
+  intent String [not null]
+  riskDirection String [not null]
+  status SignalEvaluationStatus [not null]
+  outcome SignalEvaluationOutcome
+  reasonCode String
+  prospectiveExitManagementMode ExitManagementMode
+  positionExitManagementMode ExitManagementMode
+  trackedPositionId Int
+  positionExitStateId Int
+  gateCount Int [not null]
+  startedAt DateTime [not null]
+  completedAt DateTime [not null]
+  createdAt DateTime [default: `now()`, not null]
+  route SignalRoute [not null]
+  gates SignalEvaluationGate [not null]
+}
+
+Table SignalEvaluationGate {
+  id Int [pk, increment]
+  signalEvaluationId Int [not null]
+  sequence Int [not null]
+  gateKey String [not null]
+  result SignalEvaluationGateResult [not null]
+  reasonCode String
+  evidenceJson Json
+  evaluatedAt DateTime [not null]
+  evaluation SignalEvaluation [not null]
+
+  indexes {
+    (signalEvaluationId, sequence) [unique]
+    (signalEvaluationId, gateKey) [unique]
+  }
+}
+
 Table Setting {
   id Int [pk, increment]
   key String [unique, not null]
@@ -492,6 +668,9 @@ Table TradingAccountSubscription {
   tradingAccount TradingAccount [not null]
   subscriptionId Int [not null]
   subscription Subscription [not null]
+  routingStrategyId Int [not null, default: 0]
+  routingSecurityId Int [not null, default: 0]
+  signalRoutes SignalRoute [not null]
   allocationId Int
   allocation TradingAccountAllocation
   enabled Boolean [not null, default: true]
@@ -588,6 +767,8 @@ Table TradingLifecycleExerciseTarget {
 }
 
 Table Security {
+  marketBars MarketBar [not null]
+  signals Signal [not null]
   id Int [pk, increment]
   symbol String [unique, not null]
   name String [not null]
@@ -841,6 +1022,94 @@ Table AlpacaApiUsageBucket {
   updatedAt DateTime [not null]
   tradingAccountId Int
   tradingAccount TradingAccount
+}
+
+Table MarketCalendarException {
+  id Int [pk, increment]
+  sessionDate DateTime [unique, not null]
+  name String [not null]
+  type MarketCalendarExceptionType [not null]
+  closeTimeMinutesEt Int
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+}
+
+Table MarketBar {
+  id Int [pk, increment]
+  securityId Int [not null]
+  timeframe MarketBarTimeframe [not null]
+  barStartAt DateTime [not null]
+  open Decimal [not null]
+  high Decimal [not null]
+  low Decimal [not null]
+  close Decimal [not null]
+  volume Decimal [not null]
+  provider MarketDataProvider [not null]
+  adjustmentMode MarketBarAdjustmentMode [not null]
+  receivedAt DateTime [not null]
+  createdAt DateTime [default: `now()`, not null]
+  security Security [not null]
+
+  indexes {
+    (securityId, timeframe, barStartAt) [unique]
+  }
+}
+
+Table MarketRegimeDimensionAssessment {
+  id Int [pk, increment]
+  dimension MarketRegimeDimension [not null]
+  algorithmVersion String [not null]
+  evidenceSchemaVersion Int [not null]
+  targetAt DateTime [not null]
+  sessionDate DateTime
+  attempt Int [not null]
+  status MarketRegimeDimensionAssessmentStatus [not null]
+  reasonCode String
+  rawState String
+  effectiveState String
+  dataThroughAt DateTime
+  validUntil DateTime
+  previousAssessmentId Int
+  startedAt DateTime [not null]
+  completedAt DateTime [not null]
+  createdAt DateTime [default: `now()`, not null]
+  evidenceJson Json [not null]
+  previousAssessment MarketRegimeDimensionAssessment
+  nextAssessments MarketRegimeDimensionAssessment [not null]
+
+  indexes {
+    (dimension, algorithmVersion, targetAt, attempt) [unique]
+    (id, dimension, algorithmVersion) [unique]
+  }
+}
+
+Table MarketBreadthObservation {
+  id Int [pk, increment]
+  sessionDate DateTime [not null]
+  previousSessionDate DateTime [not null]
+  provider MarketDataProvider [not null]
+  universeDefinitionVersion String [not null]
+  evidenceSchemaVersion Int [not null]
+  universeCount Int [not null]
+  currentBarCount Int [not null]
+  priorBarCount Int [not null]
+  advancingCount Int [not null]
+  decliningCount Int [not null]
+  unchangedCount Int [not null]
+  directionalCount Int [not null]
+  excludedCount Int [not null]
+  advanceShare Decimal [not null]
+  netBreadth Decimal [not null]
+  dataThroughAt DateTime [not null]
+  canonicalInputHash String [not null]
+  evidenceJson Json [not null]
+  startedAt DateTime [not null]
+  completedAt DateTime [not null]
+  createdAt DateTime [default: `now()`, not null]
+
+  indexes {
+    (provider, universeDefinitionVersion, sessionDate) [unique]
+  }
 }
 
 Table CurrentMarketState {
@@ -1175,6 +1444,8 @@ Table TrackedPosition {
 Table PositionExitState {
   id Int [pk, increment]
   trackedPositionId Int [unique, not null]
+  exitManagementModeSnapshot ExitManagementMode [not null, default: 'BACKEND_MANAGED']
+  exitOwnershipProvenance Json
   status String [not null, default: 'watching']
   targetUnlocked Boolean [not null, default: false]
   targetUnlockedAt DateTime
@@ -1264,6 +1535,8 @@ Table BrokerActivity {
 }
 
 Table Strategy {
+  signalBindings StrategySignalBinding [not null]
+  signals Signal [not null]
   id Int [pk, increment]
   key String [unique, not null]
   name String [not null]
@@ -1300,6 +1573,7 @@ Table Subscription {
   name String [not null]
   description String
   symbol String [not null]
+  exitManagementMode ExitManagementMode [not null, default: 'BACKEND_MANAGED']
   enabled Boolean [not null, default: true]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
@@ -1316,6 +1590,89 @@ Table Subscription {
   lifecycleExercises TradingLifecycleExercise [not null]
   liveEntryArmings LiveEntryArming [not null]
   liveEntryAcceptanceRuns LiveEntryAcceptanceRun [not null]
+
+  indexes {
+    (id, strategyId, securityId) [unique]
+  }
+}
+
+Enum ExternalSignalProvider {
+  TRADINGVIEW
+  TRENDSPIDER
+  GENERIC_WEBHOOK
+}
+
+Enum ExternalSignalAuthMethod {
+  URL_TOKEN
+}
+
+Enum SignalDeliveryStatus {
+  NORMALIZED
+  DUPLICATE
+  REJECTED
+}
+
+Enum SignalEvent {
+  ENTRY_LONG
+  EXIT_LONG
+}
+
+Enum SignalDeliveryRejectionCode {
+  SOURCE_DISABLED
+  INVALID_CONTENT_TYPE
+  INVALID_JSON
+  PAYLOAD_TOO_LARGE
+  UNSUPPORTED_SCHEMA_VERSION
+  INVALID_ENVELOPE
+  UNKNOWN_STRATEGY_BINDING
+  STRATEGY_BINDING_DISABLED
+  STRATEGY_REVISION_MISMATCH
+  UNKNOWN_SYMBOL
+  INVALID_EVENT
+  INVALID_TIMEFRAME
+  INVALID_TIMESTAMP
+  EVENT_FINGERPRINT_CONFLICT
+  EVENT_KEY_CONFLICT
+}
+
+Enum StrategySignalRevisionStatus {
+  PREPARED
+  ACTIVE
+  RETIRED
+}
+
+Enum SignalAuthorityMode {
+  EVIDENCE_ONLY
+  EVALUATION_ONLY
+  TRADE_ELIGIBLE
+}
+
+Enum SignalRoutingStatus {
+  STOPPED
+  COMPLETED
+}
+
+Enum ExitManagementMode {
+  BACKEND_MANAGED
+  EXTERNAL_SIGNAL
+}
+
+Enum SignalEvaluationStatus {
+  COMPLETED
+  FAILED
+}
+
+Enum SignalEvaluationOutcome {
+  ELIGIBLE
+  BLOCKED
+  NO_ACTION
+}
+
+Enum SignalEvaluationGateResult {
+  PASS
+  BLOCKED
+  NO_ACTION
+  FAILED
 }
 
 Enum PlatformRole {
@@ -1539,6 +1896,39 @@ Enum OperationalAttentionEventRelationKind {
   RESOLVED
 }
 
+Enum MarketCalendarExceptionType {
+  CLOSED
+  EARLY_CLOSE
+}
+
+Enum MarketBarTimeframe {
+  DAY_1
+  MINUTE_15
+}
+
+Enum MarketDataProvider {
+  MASSIVE
+}
+
+Enum MarketBarAdjustmentMode {
+  UNADJUSTED
+}
+
+Enum MarketRegimeDimension {
+  TREND
+  VOLATILITY
+  BREADTH
+  INTRADAY_STRESS
+  PARTICIPATION
+  LEADERSHIP
+}
+
+Enum MarketRegimeDimensionAssessmentStatus {
+  VALID
+  UNAVAILABLE
+  FAILED
+}
+
 Enum CatalystSource {
   MASSIVE_NEWS
   MASSIVE_BENZINGA
@@ -1636,6 +2026,36 @@ Enum MomentumPipelineStage {
   HANDOFF_PREPARATION
   HANDOFF_DELIVERY
 }
+
+Ref: StrategySignalRevision.strategySignalBindingId > StrategySignalBinding.id [delete: Restrict]
+
+Ref: StrategySignalBinding.signalSourceId > ExternalSignalSource.id [delete: Restrict]
+
+Ref: StrategySignalBinding.strategyId > Strategy.id [delete: Restrict]
+
+Ref: SignalDelivery.signalSourceId > ExternalSignalSource.id [delete: Restrict]
+
+Ref: SignalDelivery.signalId > Signal.id [delete: Restrict]
+
+Ref: Signal.signalSourceId > ExternalSignalSource.id [delete: Restrict]
+
+Ref: Signal.strategySignalBindingId > StrategySignalBinding.id [delete: Restrict]
+
+Ref: Signal.strategyId > Strategy.id [delete: Restrict]
+
+Ref: Signal.securityId > Security.id [delete: Restrict]
+
+Ref: Signal.(strategySignalRevisionId, strategySignalBindingId, strategyRevision) > StrategySignalRevision.(id, strategySignalBindingId, revision) [delete: Restrict]
+
+Ref: SignalRoutingRun.signalId - Signal.id [delete: Restrict]
+
+Ref: SignalRoute.signalRoutingRunId > SignalRoutingRun.id [delete: Restrict]
+
+Ref: SignalRoute.tradingAccountSubscriptionId > TradingAccountSubscription.id [delete: Restrict]
+
+Ref: SignalEvaluation.signalRouteId - SignalRoute.id [delete: Restrict]
+
+Ref: SignalEvaluationGate.signalEvaluationId > SignalEvaluation.id [delete: Restrict]
 
 Ref: User.invitedByUserId - User.id [delete: Set Null]
 
@@ -1735,7 +2155,7 @@ Ref: TradingAccountAllocation.tradingAccountId > TradingAccount.id [delete: Casc
 
 Ref: TradingAccountSubscription.tradingAccountId > TradingAccount.id [delete: Cascade]
 
-Ref: TradingAccountSubscription.subscriptionId > Subscription.id [delete: Cascade]
+Ref: TradingAccountSubscription.(subscriptionId, routingStrategyId, routingSecurityId) > Subscription.(id, strategyId, securityId) [delete: Cascade]
 
 Ref: TradingAccountSubscription.(allocationId, tradingAccountId) > TradingAccountAllocation.(id, tradingAccountId) [delete: Restrict]
 
@@ -1796,6 +2216,10 @@ Ref: OperationalAttentionSystemEvent.systemEventId > SystemEvent.id [delete: Res
 Ref: TradingAccountWorkerHealthState.tradingAccountId > TradingAccount.id [delete: Cascade]
 
 Ref: AlpacaApiUsageBucket.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: MarketBar.securityId > Security.id [delete: Restrict]
+
+Ref: MarketRegimeDimensionAssessment.(previousAssessmentId, dimension, algorithmVersion) - MarketRegimeDimensionAssessment.(id, dimension, algorithmVersion) [delete: Restrict]
 
 Ref: CatalystTickerImpact.catalystEventId > CatalystEvent.id [delete: Cascade]
 

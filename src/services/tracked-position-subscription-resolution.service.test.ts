@@ -57,6 +57,7 @@ vi.mock('./entry-decision.service.js', () => ({
 import { buildClientOrderId } from './client-order-id.service.js';
 import {
   linkLocalEntryOwnership,
+  linkLocalEntryOwnershipInTransaction,
   resolveTrackedPositionSubscription,
 } from './tracked-position-subscription-resolution.service.js';
 
@@ -379,5 +380,72 @@ describe('tracked position subscription resolution', () => {
       },
     });
     expect(mocks.entryDecisionUpdateMany).toHaveBeenCalled();
+  });
+
+  it('links local entry ownership atomically within a caller-supplied transaction, without opening its own', async () => {
+    mocks.brokerOrderCount.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    mocks.brokerActivityCount.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    mocks.orderIntentFindMany.mockResolvedValue([{
+      id: 101,
+      tradingAccountId: 1,
+      tradingAccountSubscriptionId: 44,
+      tradingAccountSubscription: { id: 44, tradingAccountId: 1, subscriptionId: 22 },
+      clientOrderId: 'ai-20260616T-DIA-buy-market-abcdef12',
+      subscriptionId: 22,
+      subscription: subscription(),
+      brokerOrders: [{ id: 201 }],
+    }]);
+
+    const tx = {
+      orderIntent: { findMany: mocks.orderIntentFindMany, updateMany: mocks.orderIntentUpdateMany, count: mocks.orderIntentCount },
+      trackedPosition: { updateMany: mocks.trackedPositionUpdateMany, findFirst: mocks.trackedPositionFindFirst },
+      brokerOrder: { updateMany: mocks.brokerOrderUpdateMany, count: mocks.brokerOrderCount },
+      brokerActivity: { updateMany: mocks.brokerActivityUpdateMany, count: mocks.brokerActivityCount },
+      entryDecision: { updateMany: mocks.entryDecisionUpdateMany, count: mocks.entryDecisionCount },
+      $queryRaw: mocks.queryRaw,
+    };
+
+    const linked = await linkLocalEntryOwnershipInTransaction(tx as never, {
+      trackedPositionId: 303,
+      tradingAccountId: 1,
+      broker: 'alpaca',
+      symbol: 'DIA',
+      side: 'long',
+      openedAt: new Date('2026-06-16T15:00:00.000Z'),
+      expectedSubscriptionId: 22,
+      expectedTradingAccountSubscriptionId: 44,
+    });
+
+    expect(linked).toBe(true);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.trackedPositionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: { subscriptionId: 22, tradingAccountSubscriptionId: 44 },
+    }));
+  });
+
+  it('rejects transaction-scoped linkage when the expected subscription does not match the found intent', async () => {
+    mocks.orderIntentFindMany.mockResolvedValue([{
+      id: 101,
+      tradingAccountId: 1,
+      tradingAccountSubscriptionId: 44,
+      tradingAccountSubscription: { id: 44, tradingAccountId: 1, subscriptionId: 22 },
+      clientOrderId: 'ai-20260616T-DIA-buy-market-abcdef12',
+      subscriptionId: 22,
+      subscription: subscription(),
+      brokerOrders: [{ id: 201 }],
+    }]);
+
+    const linked = await linkLocalEntryOwnershipInTransaction({ orderIntent: { findMany: mocks.orderIntentFindMany } } as never, {
+      trackedPositionId: 303,
+      tradingAccountId: 1,
+      broker: 'alpaca',
+      symbol: 'DIA',
+      side: 'long',
+      openedAt: new Date('2026-06-16T15:00:00.000Z'),
+      expectedSubscriptionId: 999,
+    });
+
+    expect(linked).toBe(false);
+    expect(mocks.trackedPositionUpdateMany).not.toHaveBeenCalled();
   });
 });

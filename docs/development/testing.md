@@ -25,6 +25,14 @@ Run the production build:
 npm run build
 ```
 
+For a complete backend run that avoids cross-file contention between legacy tests
+using the same real account advisory locks, use `npm test -- --no-file-parallelism`.
+Run PostgreSQL integrity tests separately with `RUN_DATABASE_INTEGRITY_TESTS=1`
+and `npm test -- src/db/__tests__` (PowerShell: `$env:RUN_DATABASE_INTEGRITY_TESTS='1'`).
+These database tests create isolated temporary schemas. External-signal coverage
+includes evaluation concurrency, terminal/gate immutability, ownership backfill,
+position matching and savepoint recovery without execution tables.
+
 ## Test/build separation
 
 Tests live beside the backend service code using the pattern:

@@ -1,14 +1,20 @@
 {
+  "attribution": {
+    "commit": ""
+  },
   "permissions": {
     "allow": [
       "Bash(npx eslint *)",
       "Bash(Get-ChildItem -Directory)",
       "Bash(Select-Object Name)",
       "Bash(npx tsc *)",
-      "Bash(Get-ChildItem \"c:\\\\Users\\\\bobby\\\\Desktop\\\\AI Trader Backend\\\\src\" -MaxDepth 1 -Name)"
+      "Bash(Get-ChildItem \"c:\\\\Users\\\\bobby\\\\Desktop\\\\AI Trader Backend\\\\src\" -MaxDepth 1 -Name)",
+      "Bash(docker compose *)",
+      "Bash(npm test *)",
+      "Bash(RUN_DATABASE_INTEGRITY_TESTS=1 npm test -- src/db/__tests__)",
+      "Bash(echo \"exit:$?\")",
+      "Bash(npx vitest *)",
+      "Bash(git commit -m ' *)"
     ]
-  },
-  "attribution": {
-    "commit": ""
   }
 }

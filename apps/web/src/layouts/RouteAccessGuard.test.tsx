@@ -9,7 +9,7 @@ import { RouteAccessGuard } from "./AdminLayout";
 
 afterEach(cleanup);
 
-function renderGuard(role: PlatformRole, routeId: "reports" | "users") {
+function renderGuard(role: PlatformRole, routeId: "reports" | "users" | "externalSignals") {
   const access: AccessMetadata = {
     platformRole: role,
     permissions: ["reports.read", "system.settings.read"],
@@ -22,6 +22,10 @@ function renderGuard(role: PlatformRole, routeId: "reports" | "users") {
 }
 
 describe("direct route authorization", () => {
+  it.each(["SYSTEM_OWNER", "OPERATOR", "ACCOUNT_USER"] as const)("protects External Signals from direct access by %s", (role) => {
+    renderGuard(role, "externalSignals");
+    expect(Boolean(screen.queryByText("Protected page"))).toBe(role === "SYSTEM_OWNER");
+  });
   it("renders a shared personal route for ACCOUNT_USER", () => {
     renderGuard("ACCOUNT_USER", "reports");
     expect(screen.getByText("Protected page")).toBeTruthy();

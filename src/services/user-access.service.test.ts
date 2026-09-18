@@ -54,6 +54,8 @@ describe('user access metadata', () => {
     expect(metadata.permissions).toEqual(
       platformRole === PlatformRole.OPERATOR
         ? [
+            PlatformPermission.MARKET_DATA_READ,
+            PlatformPermission.MARKET_CALENDAR_WRITE,
             PlatformPermission.TRADING_ACCOUNT_READ,
             PlatformPermission.TRADING_ACCOUNT_WRITE,
             PlatformPermission.TRADING_ACCOUNT_RISK_WRITE,

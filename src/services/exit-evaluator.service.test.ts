@@ -147,6 +147,22 @@ function account(
 }
 
 describe('account-scoped exit evaluation', () => {
+  it.each(['fixed', 'unlock_trailing_stop'])('does not trigger normal %s exits for external ownership', async mode => {
+    const candidate = mode === 'fixed' ? position({ unrealizedPnLPct: 0.1 }) : unlockPosition();
+    mocks.trackedPositionFindMany.mockResolvedValue([{ ...candidate, exitState: { exitManagementModeSnapshot: 'EXTERNAL_SIGNAL' } }]);
+    const result = await evaluateExitsForAccount(1);
+    expect(result.counts.exitSignalsTriggered).toBe(0);
+    expect(mocks.closePosition).not.toHaveBeenCalled();
+    expect(mocks.unlockTrailingStopExitState).not.toHaveBeenCalled();
+    expect(mocks.submitTrailingStopExitOrder).not.toHaveBeenCalled();
+    expect(mocks.syncProtectiveOrdersForAccount).toHaveBeenCalledWith(1);
+  });
+  it('retains protective stop-loss exits for external ownership', async () => {
+    mocks.trackedPositionFindMany.mockResolvedValue([position({ unrealizedPnLPct: -0.1, exitState: { exitManagementModeSnapshot: 'EXTERNAL_SIGNAL' } })]);
+    const result = await evaluateExitsForAccount(1);
+    expect(result.counts.closeIntentsCreated).toBe(1);
+    expect(mocks.closePosition).toHaveBeenCalledWith(101);
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.createSystemEvent.mockResolvedValue({});

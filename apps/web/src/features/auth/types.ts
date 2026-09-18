@@ -1,6 +1,8 @@
 export type PlatformRole = "SYSTEM_OWNER" | "OPERATOR" | "ACCOUNT_USER";
 
 export type PlatformPermission =
+  | "marketData.read"
+  | "marketCalendar.write"
   | "system.settings.read"
   | "system.settings.write"
   | "system.security.read"

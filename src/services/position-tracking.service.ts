@@ -1,4 +1,4 @@
-import { SystemEventSeverity, type Prisma } from "@prisma/client";
+import { SystemEventSeverity, type ExitManagementMode, type Prisma } from "@prisma/client";
 import { logger } from "../config/logger.js";
 import { env } from "../config/env.js";
 
@@ -19,6 +19,7 @@ import {
 import { captureTrackedPositionConfigSnapshot } from "./trade-cycle-config-snapshot.service.js";
 import {
   linkLocalEntryOwnership,
+  linkLocalEntryOwnershipInTransaction,
   resolveTrackedPositionSubscription,
   type SubscriptionResolutionResult,
 } from "./tracked-position-subscription-resolution.service.js";
@@ -223,6 +224,7 @@ async function applySubscriptionResolution(args: {
   currentSubscriptionId: number | null;
   configSnapshotJson: Prisma.JsonValue | null;
   initialObservation: boolean;
+  initialResolution?: SubscriptionResolutionResult;
   qty: number;
   avgEntryPrice: number;
   environment: "PAPER" | "LIVE";
@@ -248,7 +250,7 @@ async function applySubscriptionResolution(args: {
     return null;
   }
 
-  const resolution = await resolveTrackedPositionSubscription({
+  const resolution = args.initialResolution ?? await resolveTrackedPositionSubscription({
     tradingAccountId: args.tradingAccountId,
     broker: args.broker,
     symbol: args.symbol,
@@ -431,6 +433,21 @@ export async function syncTrackedPositionsForAccountUnlocked(
       }
 
       if (!existing) {
+        const openedAt = new Date();
+        let initialResolution: SubscriptionResolutionResult;
+        try {
+          initialResolution = await resolveTrackedPositionSubscription({
+            tradingAccountId, broker: position.broker, symbol: position.symbol,
+            side: position.side, openedAt, qty: position.qty, avgEntryPrice: position.avgEntryPrice,
+            brokerLookupPolicy: "ALLOW_EXACT_ORDER_ID_READ",
+          });
+        } catch {
+          // Attribution failure must not hide newly observed broker exposure.
+          // Persist safe ownership and let the existing recovery/diagnostic path run.
+          initialResolution = { status: "unresolved", source: "unresolved", subscriptionId: null,
+            subscriptionKey: null, tradingAccountSubscriptionId: null,
+            reason: "origin_resolution_failed_at_position_creation", evidence: {} };
+        }
         let positionCreated = false;
         const created = await prisma.$transaction(async (tx) => {
           const rechecked = await tx.trackedPosition.findFirst({
@@ -444,7 +461,7 @@ export async function syncTrackedPositionsForAccountUnlocked(
           });
           if (rechecked) return rechecked;
           positionCreated = true;
-          return tx.trackedPosition.create({
+          const createdPosition = await tx.trackedPosition.create({
             data: {
               broker: position.broker,
               symbol: position.symbol,
@@ -458,12 +475,67 @@ export async function syncTrackedPositionsForAccountUnlocked(
               unrealizedPnLPct: position.unrealizedPnLPct,
               status: "open",
               tradingAccountId,
-              openedAt: new Date(),
+              openedAt,
               lastSyncedAt: new Date(),
               rawPositionJson: position as unknown as Prisma.InputJsonValue,
               securityId: security.id,
             },
           });
+
+          // EXTERNAL_SIGNAL ownership may only be frozen once originating
+          // ownership is verified/committed in THIS transaction. A local-order
+          // resolution whose final linkage does not commit here must leave the
+          // position BACKEND_MANAGED for its lifetime -- later recovery/reconciliation
+          // may still attach subscriptionId for reporting, but can never promote
+          // exit ownership after this snapshot is written. Unattributed/observer
+          // -discovered exposure (unique_observer_fallback, unresolved, ambiguous)
+          // never confers external ownership.
+          let origin: { id: number; exitManagementMode: ExitManagementMode; strategyId: number } | null = null;
+          let provenanceSource: string | null = null;
+          let provenanceTradingAccountSubscriptionId: number | null = null;
+
+          if (initialResolution.status === "resolved" && initialResolution.source === "local_order_intent") {
+            const linked = await linkLocalEntryOwnershipInTransaction(tx, {
+              trackedPositionId: createdPosition.id,
+              tradingAccountId,
+              broker: position.broker,
+              symbol: position.symbol,
+              side: position.side,
+              openedAt,
+              expectedSubscriptionId: initialResolution.subscriptionId,
+              expectedTradingAccountSubscriptionId: initialResolution.tradingAccountSubscriptionId,
+            });
+            if (linked) {
+              origin = await tx.subscription.findUnique({ where: { id: initialResolution.subscriptionId },
+                select: { id: true, exitManagementMode: true, strategyId: true } });
+              provenanceSource = initialResolution.source;
+              provenanceTradingAccountSubscriptionId = initialResolution.tradingAccountSubscriptionId;
+            }
+          } else if (initialResolution.status === "resolved" && initialResolution.source !== "unique_observer_fallback") {
+            // Deterministic broker-fill-derived attribution is the resolution
+            // itself, not a separate linkage step that can fail afterward.
+            origin = await tx.subscription.findUnique({ where: { id: initialResolution.subscriptionId },
+              select: { id: true, exitManagementMode: true, strategyId: true } });
+            provenanceSource = initialResolution.source;
+            provenanceTradingAccountSubscriptionId = initialResolution.tradingAccountSubscriptionId;
+          }
+
+          await tx.positionExitState.create({
+            data: {
+              trackedPositionId: createdPosition.id,
+              exitManagementModeSnapshot: origin?.exitManagementMode ?? "BACKEND_MANAGED",
+              ...(origin ? { exitOwnershipProvenance: {
+                tradingAccountId, tradingAccountSubscriptionId: provenanceTradingAccountSubscriptionId,
+                subscriptionId: origin.id, strategyId: origin.strategyId, securityId: security.id,
+                source: provenanceSource,
+              } } : {}),
+            },
+          });
+
+          return provenanceSource === "local_order_intent"
+            ? { ...createdPosition, subscriptionId: initialResolution.subscriptionId,
+                tradingAccountSubscriptionId: provenanceTradingAccountSubscriptionId }
+            : createdPosition;
         });
 
         existing = created;
@@ -483,6 +555,7 @@ export async function syncTrackedPositionsForAccountUnlocked(
               configSnapshotJson:
                 created.configSnapshotJson as Prisma.JsonValue | null,
               initialObservation: true,
+              initialResolution,
               qty: created.qty,
               avgEntryPrice: created.avgEntryPrice,
               environment,

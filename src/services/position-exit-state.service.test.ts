@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  positionFindUnique: vi.fn(),
+  exitFindUnique: vi.fn(),
+  exitCreate: vi.fn(),
   positionExitStateUpdate: vi.fn(),
   positionExitStateUpdateMany: vi.fn(),
   positionExitStateUpsert: vi.fn(),
@@ -8,7 +11,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../db/prisma.js', () => ({
   prisma: {
+    trackedPosition: { findUnique: mocks.positionFindUnique },
     positionExitState: {
+      findUnique: mocks.exitFindUnique,
+      create: mocks.exitCreate,
       update: mocks.positionExitStateUpdate,
       updateMany: mocks.positionExitStateUpdateMany,
       upsert: mocks.positionExitStateUpsert,
@@ -17,6 +23,8 @@ vi.mock('../db/prisma.js', () => ({
 }));
 
 import {
+  ensurePositionExitState,
+  resetPositionExitStateForOpenPosition,
   markPositionExitStateAttentionRequired,
   markPositionExitStateClosed,
   markTrailingStopOrderSubmitted,
@@ -25,6 +33,19 @@ import {
 } from './position-exit-state.service.js';
 
 describe('position exit attention states', () => {
+  it('preserves an existing snapshot without resolving mutable subscription configuration', async () => {
+    mocks.exitFindUnique.mockResolvedValue({ exitManagementModeSnapshot: 'EXTERNAL_SIGNAL' });
+    expect(await ensurePositionExitState(101)).toEqual({ exitManagementModeSnapshot: 'EXTERNAL_SIGNAL' });
+    expect(mocks.positionFindUnique).not.toHaveBeenCalled();
+  });
+  it('does not rewrite ownership during lifecycle reset or infer external ownership during recovery', async () => {
+    mocks.positionFindUnique.mockResolvedValue({ subscription: { exitManagementMode: 'EXTERNAL_SIGNAL', exitProfile: null } });
+    await resetPositionExitStateForOpenPosition(101);
+    const write = mocks.positionExitStateUpsert.mock.calls[0]![0];
+    expect(write.update).not.toHaveProperty('exitManagementModeSnapshot');
+    expect(write.create).not.toHaveProperty('exitManagementModeSnapshot');
+    // Absence uses the schema's BACKEND_MANAGED default; existing ownership is never overwritten.
+  });
   beforeEach(() => {
     vi.clearAllMocks();
   });

@@ -175,6 +175,15 @@ export async function evaluateExitsForAccount(
       }
 
       const pnlPct = position.unrealizedPnLPct ?? 0;
+      // Ownership applies to normal strategy timing, never to broker protection,
+      // operator closes, recovery, or the configured protective stop loss.
+      const externalExitOwnership = position.exitState?.exitManagementModeSnapshot === 'EXTERNAL_SIGNAL';
+      const protectiveStopLoss = !isUnlockTrailingProfile(exitProfile) &&
+        exitProfile.stopLossPct !== null && pnlPct <= -(exitProfile.stopLossPct / 100);
+      if (externalExitOwnership && !protectiveStopLoss) {
+        counts.positionsSkipped += 1;
+        continue;
+      }
 
       if (isUnlockTrailingProfile(exitProfile)) {
         let exitState =

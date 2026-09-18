@@ -12,6 +12,7 @@ export type CatalogAssignment = {
 };
 
 export type Subscription = {
+  exitManagementMode: 'BACKEND_MANAGED' | 'EXTERNAL_SIGNAL';
   id: number;
   key: string;
   name: string;
@@ -27,6 +28,7 @@ export type Subscription = {
 };
 
 export type CreateSubscriptionPayload = {
+  exitManagementMode?: 'BACKEND_MANAGED' | 'EXTERNAL_SIGNAL';
   key: string;
   name: string;
   description?: string | null;

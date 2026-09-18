@@ -15,6 +15,278 @@ datasource db {
   provider = "postgresql"
 }
 
+enum ExternalSignalProvider {
+  TRADINGVIEW
+  TRENDSPIDER
+  GENERIC_WEBHOOK
+}
+
+enum ExternalSignalAuthMethod {
+  URL_TOKEN
+}
+
+enum SignalDeliveryStatus {
+  NORMALIZED
+  DUPLICATE
+  REJECTED
+}
+
+enum SignalEvent {
+  ENTRY_LONG
+  EXIT_LONG
+}
+
+enum SignalDeliveryRejectionCode {
+  SOURCE_DISABLED
+  INVALID_CONTENT_TYPE
+  INVALID_JSON
+  PAYLOAD_TOO_LARGE
+  UNSUPPORTED_SCHEMA_VERSION
+  INVALID_ENVELOPE
+  UNKNOWN_STRATEGY_BINDING
+  STRATEGY_BINDING_DISABLED
+  STRATEGY_REVISION_MISMATCH
+  UNKNOWN_SYMBOL
+  INVALID_EVENT
+  INVALID_TIMEFRAME
+  INVALID_TIMESTAMP
+  EVENT_FINGERPRINT_CONFLICT
+  EVENT_KEY_CONFLICT
+}
+
+model ExternalSignalSource {
+  id               Int                      @id @default(autoincrement())
+  name             String
+  provider         ExternalSignalProvider
+  enabled          Boolean                  @default(true)
+  authMethod       ExternalSignalAuthMethod @default(URL_TOKEN)
+  webhookKeyHash    String                   @unique
+  webhookKeyCiphertext String?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  bindings         StrategySignalBinding[]
+  deliveries       SignalDelivery[]
+  signals          Signal[]
+}
+
+enum StrategySignalRevisionStatus {
+  PREPARED
+  ACTIVE
+  RETIRED
+}
+
+enum SignalAuthorityMode {
+  EVIDENCE_ONLY
+  EVALUATION_ONLY
+  TRADE_ELIGIBLE
+}
+
+enum SignalRoutingStatus {
+  STOPPED
+  COMPLETED
+}
+
+// Identity and note are immutable; authority is mutable only while PREPARED.
+model StrategySignalRevision {
+  id                      Int                          @id @default(autoincrement())
+  strategySignalBindingId Int
+  revision                Int
+  status                  StrategySignalRevisionStatus
+  authorityMode           SignalAuthorityMode          @default(EVIDENCE_ONLY)
+  changeNote              String?
+  createdAt               DateTime                     @default(now())
+  activatedAt             DateTime?
+  retiredAt               DateTime?
+
+  binding StrategySignalBinding @relation(fields: [strategySignalBindingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  signals Signal[]
+
+  @@unique([strategySignalBindingId, revision])
+  @@unique([id, strategySignalBindingId, revision])
+}
+
+model StrategySignalBinding {
+  id                  Int      @id @default(autoincrement())
+  signalSourceId      Int
+  strategyId          Int
+  externalStrategyKey String
+  enabled             Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  signalSource ExternalSignalSource @relation(fields: [signalSourceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  strategy     Strategy             @relation(fields: [strategyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  signals      Signal[]
+  revisions    StrategySignalRevision[]
+
+  @@unique([signalSourceId, externalStrategyKey])
+  @@index([strategyId])
+}
+
+// Terminal webhook evidence: application code only inserts and reads these rows.
+model SignalDelivery {
+  id                 Int                         @id @default(autoincrement())
+  signalSourceId     Int
+  signalId           Int?
+  requestId          String
+  receivedAt         DateTime
+  processedAt        DateTime
+  status             SignalDeliveryStatus
+  contentType        String?
+  bodySizeBytes      Int
+  rawPayloadHash     String
+  rawPayloadRedacted Json
+  rejectionCode      SignalDeliveryRejectionCode?
+  rejectionDetails   Json?
+  createdAt          DateTime                    @default(now())
+
+  signalSource ExternalSignalSource @relation(fields: [signalSourceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  signal       Signal?              @relation(fields: [signalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([signalSourceId, receivedAt])
+  @@index([status, receivedAt])
+  @@index([signalId])
+  @@index([rejectionCode, receivedAt])
+  @@index([receivedAt])
+}
+
+// Account-independent recognized events. No execution authority or mutable status.
+model Signal {
+  id                      Int         @id @default(autoincrement())
+  signalSourceId          Int
+  strategySignalBindingId Int
+  strategyId              Int
+  securityId              Int
+  schemaVersion           Int
+  externalEventKey        String?
+  eventFingerprint        String?
+  // Pre-migration label values remain untouched; new evidence uses numeric revisions.
+  legacyStrategyRevision  String?
+  strategyRevision        Int?
+  strategySignalRevisionId Int?
+  event                   SignalEvent
+  symbol                  String
+  timeframe               String
+  signalTime              DateTime
+  barTime                 DateTime?
+  metadata                Json?
+  canonicalPayloadHash    String
+  createdAt               DateTime    @default(now())
+
+  signalSource          ExternalSignalSource  @relation(fields: [signalSourceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  strategySignalBinding StrategySignalBinding @relation(fields: [strategySignalBindingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  strategy              Strategy              @relation(fields: [strategyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  security              Security              @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  deliveries            SignalDelivery[]
+  routingRun            SignalRoutingRun?
+  strategySignalRevision StrategySignalRevision? @relation(fields: [strategySignalRevisionId, strategySignalBindingId, strategyRevision], references: [id, strategySignalBindingId, revision], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([signalSourceId, externalEventKey])
+  @@unique([signalSourceId, eventFingerprint])
+  @@index([strategySignalBindingId])
+  @@index([strategySignalRevisionId, strategySignalBindingId, strategyRevision])
+  @@index([strategyId, signalTime])
+  @@index([securityId, signalTime])
+  @@index([event, signalTime])
+  @@index([signalTime])
+  @@index([createdAt])
+}
+
+// Inserted atomically with routes; terminal evidence is never updated or deleted.
+model SignalRoutingRun {
+  id            Int                 @id @default(autoincrement())
+  signalId      Int                 @unique
+  authorityMode SignalAuthorityMode
+  status        SignalRoutingStatus
+  startedAt     DateTime
+  completedAt   DateTime
+  routeCount    Int
+  stopReason    String?
+  createdAt     DateTime            @default(now())
+  signal        Signal             @relation(fields: [signalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  routes        SignalRoute[]
+}
+
+model SignalRoute {
+  id                           Int      @id @default(autoincrement())
+  signalRoutingRunId           Int
+  tradingAccountId             Int
+  tradingAccountSubscriptionId Int
+  subscriptionId              Int
+  // Labels and Strategy/Security identity at routing time, not mutable catalog joins.
+  targetSnapshot              Json
+  evaluationVersion           Int?
+  evaluation                  SignalEvaluation?
+  createdAt                   DateTime @default(now())
+  routingRun                  SignalRoutingRun @relation(fields: [signalRoutingRunId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  accountSubscription         TradingAccountSubscription @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([signalRoutingRunId, tradingAccountId])
+  @@index([tradingAccountSubscriptionId])
+}
+
+enum ExitManagementMode {
+  BACKEND_MANAGED
+  EXTERNAL_SIGNAL
+}
+
+enum SignalEvaluationStatus {
+  COMPLETED
+  FAILED
+}
+
+enum SignalEvaluationOutcome {
+  ELIGIBLE
+  BLOCKED
+  NO_ACTION
+}
+
+enum SignalEvaluationGateResult {
+  PASS
+  BLOCKED
+  NO_ACTION
+  FAILED
+}
+
+// Terminal-only atomic evidence. Identity and authority are inherited from route -> signal.
+model SignalEvaluation {
+  id                           Int @id @default(autoincrement())
+  signalRouteId                Int @unique
+  evaluationVersion            Int
+  event                        SignalEvent
+  intent                       String
+  riskDirection                String
+  status                       SignalEvaluationStatus
+  outcome                      SignalEvaluationOutcome?
+  reasonCode                   String?
+  prospectiveExitManagementMode ExitManagementMode?
+  positionExitManagementMode    ExitManagementMode?
+  trackedPositionId            Int?
+  positionExitStateId          Int?
+  gateCount                    Int
+  startedAt                    DateTime
+  completedAt                  DateTime
+  createdAt                    DateTime @default(now())
+  route                        SignalRoute @relation(fields: [signalRouteId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  gates                        SignalEvaluationGate[]
+}
+
+model SignalEvaluationGate {
+  id                 Int @id @default(autoincrement())
+  signalEvaluationId Int
+  sequence           Int
+  gateKey            String
+  result             SignalEvaluationGateResult
+  reasonCode         String?
+  evidenceJson       Json?
+  evaluatedAt        DateTime
+  evaluation         SignalEvaluation @relation(fields: [signalEvaluationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([signalEvaluationId, sequence])
+  @@unique([signalEvaluationId, gateKey])
+}
+
 model Setting {
   id        Int      @id @default(autoincrement())
   key       String   @unique
@@ -734,7 +1006,11 @@ model TradingAccountSubscription {
   tradingAccount        TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Cascade)
 
   subscriptionId        Int
-  subscription          Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  subscription          Subscription @relation(fields: [subscriptionId, routingStrategyId, routingSecurityId], references: [id, strategyId, securityId], onDelete: Cascade, onUpdate: Cascade)
+  // Database trigger derives these identity mirrors from Subscription, never callers.
+  routingStrategyId     Int @default(0)
+  routingSecurityId     Int @default(0)
+  signalRoutes          SignalRoute[]
 
   allocationId          Int?
   allocation            TradingAccountAllocation? @relation("TradingAccountAllocationSubscriptions", fields: [allocationId, tradingAccountId], references: [id, tradingAccountId], onDelete: Restrict, onUpdate: Restrict)
@@ -918,6 +1194,8 @@ enum AssetType {
 }
 
 model Security {
+  marketBars MarketBar[]
+  signals   Signal[]
   id        Int       @id @default(autoincrement())
   symbol    String    @unique
   name      String
@@ -1283,6 +1561,131 @@ model AlpacaApiUsageBucket {
   @@index([tradingAccountId])
   @@index([tradingAccountId, bucketStart])
   @@index([tradingAccountId, updatedAt])
+}
+
+enum MarketCalendarExceptionType {
+  CLOSED
+  EARLY_CLOSE
+}
+
+model MarketCalendarException {
+  id                 Int                         @id @default(autoincrement())
+  sessionDate        DateTime                    @unique @db.Date
+  name               String
+  type               MarketCalendarExceptionType
+  closeTimeMinutesEt Int?
+  createdAt          DateTime                    @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime                    @updatedAt @db.Timestamptz(3)
+}
+
+enum MarketBarTimeframe {
+  DAY_1
+  MINUTE_15
+}
+
+enum MarketDataProvider {
+  MASSIVE
+}
+
+enum MarketBarAdjustmentMode {
+  UNADJUSTED
+}
+
+// Accepted provider observations; PostgreSQL rejects updates and deletes.
+model MarketBar {
+  id             Int                     @id @default(autoincrement())
+  securityId     Int
+  timeframe      MarketBarTimeframe
+  barStartAt     DateTime                @db.Timestamptz(3)
+  open           Decimal                 @db.Decimal(24, 10)
+  high           Decimal                 @db.Decimal(24, 10)
+  low            Decimal                 @db.Decimal(24, 10)
+  close          Decimal                 @db.Decimal(24, 10)
+  volume         Decimal                 @db.Decimal(30, 6)
+  provider       MarketDataProvider
+  adjustmentMode MarketBarAdjustmentMode
+  receivedAt     DateTime                @db.Timestamptz(3)
+  createdAt      DateTime                @default(now()) @db.Timestamptz(3)
+  security       Security               @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([securityId, timeframe, barStartAt])
+}
+
+enum MarketRegimeDimension {
+  TREND
+  VOLATILITY
+  BREADTH
+  INTRADAY_STRESS
+  PARTICIPATION
+  LEADERSHIP
+}
+
+enum MarketRegimeDimensionAssessmentStatus {
+  VALID
+  UNAVAILABLE
+  FAILED
+}
+
+// Authoritative TREND_V1 and VOLATILITY_V1 evidence; research never inserts here.
+// SQL requires sessionDate for TREND/VOLATILITY and enforces dimension-specific states.
+model MarketRegimeDimensionAssessment {
+  id                   Int                                   @id @default(autoincrement())
+  dimension            MarketRegimeDimension
+  algorithmVersion     String
+  evidenceSchemaVersion Int
+  targetAt             DateTime                              @db.Timestamptz(3)
+  sessionDate          DateTime?                             @db.Date
+  attempt              Int
+  status               MarketRegimeDimensionAssessmentStatus
+  reasonCode           String?
+  rawState             String?
+  effectiveState       String?
+  dataThroughAt        DateTime?                             @db.Timestamptz(3)
+  validUntil           DateTime?                             @db.Timestamptz(3)
+  previousAssessmentId Int?
+  startedAt            DateTime                              @db.Timestamptz(3)
+  completedAt          DateTime                              @db.Timestamptz(3)
+  createdAt            DateTime                              @default(now()) @db.Timestamptz(3)
+  evidenceJson         Json
+  previousAssessment   MarketRegimeDimensionAssessment?      @relation("DimensionHistory", fields: [previousAssessmentId, dimension, algorithmVersion], references: [id, dimension, algorithmVersion], onDelete: Restrict, onUpdate: Restrict, map: "MarketRegimeDimensionAssessment_previousAssessmentId_dimensi_fk")
+  nextAssessments      MarketRegimeDimensionAssessment[]     @relation("DimensionHistory")
+
+  @@unique([dimension, algorithmVersion, targetAt, attempt], map: "RegimeDimension_attempt_key")
+  @@unique([id, dimension, algorithmVersion], map: "RegimeDimension_identity_key")
+  @@index([previousAssessmentId, dimension, algorithmVersion], map: "RegimeDimension_previous_idx")
+  // At most one VALID result per dimension/version/target is enforced in SQL.
+}
+
+// Immutable daily derived Breadth market-data fact (Massive point-in-time CS universe +
+// adjusted grouped daily bars). A row exists only when directionalCount > 0: there is no
+// "unavailable" row placeholder, mirroring MarketBar — absence of a row for an expected
+// session date is itself the unavailable signal for the BREADTH_V1 publisher.
+model MarketBreadthObservation {
+  id                        Int                 @id @default(autoincrement())
+  sessionDate               DateTime            @db.Date
+  previousSessionDate       DateTime            @db.Date
+  provider                  MarketDataProvider
+  universeDefinitionVersion String
+  evidenceSchemaVersion     Int
+  universeCount             Int
+  currentBarCount           Int
+  priorBarCount             Int
+  advancingCount            Int
+  decliningCount            Int
+  unchangedCount            Int
+  directionalCount          Int
+  excludedCount             Int
+  advanceShare              Decimal             @db.Decimal(7, 6)
+  netBreadth                Decimal             @db.Decimal(7, 6)
+  dataThroughAt             DateTime            @db.Timestamptz(3)
+  canonicalInputHash        String
+  evidenceJson              Json
+  startedAt                 DateTime            @db.Timestamptz(3)
+  completedAt               DateTime            @db.Timestamptz(3)
+  createdAt                 DateTime            @default(now()) @db.Timestamptz(3)
+
+  @@unique([provider, universeDefinitionVersion, sessionDate], map: "MarketBreadthObservation_identity_key")
+  @@index([sessionDate], map: "MarketBreadthObservation_sessionDate_idx")
 }
 
 model CurrentMarketState {
@@ -1869,6 +2272,8 @@ model TrackedPosition {
 model PositionExitState {
   id                Int @id @default(autoincrement())
   trackedPositionId Int @unique
+  exitManagementModeSnapshot ExitManagementMode @default(BACKEND_MANAGED)
+  exitOwnershipProvenance Json?
 
   status               String    @default("watching")
   targetUnlocked       Boolean   @default(false)
@@ -2011,6 +2416,8 @@ model BrokerActivity {
 }
 
 model Strategy {
+  signalBindings StrategySignalBinding[]
+  signals        Signal[]
   id                 Int      @id @default(autoincrement())
   key                String   @unique
   name               String
@@ -2049,6 +2456,7 @@ model Subscription {
   name        String
   description String?
   symbol      String
+  exitManagementMode ExitManagementMode @default(BACKEND_MANAGED)
   enabled     Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -2071,6 +2479,7 @@ model Subscription {
   liveEntryAcceptanceRuns LiveEntryAcceptanceRun[]
 
   @@index([symbol])
+  @@unique([id, strategyId, securityId])
   @@index([strategyId])
   @@index([exitProfileId])
 }

@@ -155,6 +155,9 @@ async function getPositionWithExitProfile(trackedPositionId: number) {
 }
 
 export async function ensurePositionExitState(trackedPositionId: number) {
+  // Normal creation inserts the ownership snapshot atomically with TrackedPosition.
+  // Recovery of missing lifecycle evidence deliberately uses the database's
+  // BACKEND_MANAGED default, never today's mutable Subscription ownership.
   const existing = await prisma.positionExitState.findUnique({
     where: { trackedPositionId },
   });

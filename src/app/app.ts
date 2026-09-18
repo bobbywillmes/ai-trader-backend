@@ -27,6 +27,7 @@ import brokerActivitiesRoutes from '../routes/broker-activities.routes.js';
 import dashboardRoutes from '../routes/dashboard.routes.js';
 import marketStateRoutes from '../routes/market-state.routes.js';
 import marketDiaryRoutes from '../routes/market-diary.routes.js';
+import marketDataRoutes from '../routes/market-data.routes.js';
 import catalystEventsRoutes from '../routes/catalyst-events.routes.js';
 import momentumCandidatesRoutes from '../routes/momentum-candidates.routes.js';
 import momentumScannerRoutes from '../routes/momentum-scanner.routes.js';
@@ -41,28 +42,19 @@ import usersRoutes from '../routes/users.routes.js';
 import tradingLifecycleExercisesRoutes from '../routes/trading-lifecycle-exercises.routes.js';
 import lifecycleRepairsRoutes from '../routes/lifecycle-repairs.routes.js';
 import liveOperationsRoutes from '../routes/live-operations.routes.js';
+import externalSignalAdminRoutes from '../routes/external-signal-admin.routes.js';
+import externalSignalIngressRoutes from '../routes/external-signal-ingress.routes.js';
+import { redactSensitiveRequestUrl } from '../middleware/redact-request-url.js';
 
 import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
 import { requireSignalApiKey, requireAdminAccess } from '../middleware/api-key-auth.js';
-
-function redactSensitiveRequestUrl(url?: string) {
-  if (!url) {
-    return url;
-  }
-
-  return url.replace(
-    /(\/api\/auth\/setup\/)[^/?#]+/g,
-    '$1[redacted]',
-  );
-}
 
 export function createApp() {
   const app = express();
 
   app.use(helmet());
   app.use(cors(corsOptions));
-  app.use(express.json());
 
   app.use(
     pinoHttp({
@@ -81,6 +73,10 @@ export function createApp() {
     })
   );
 
+  // Authenticate and hash exact bytes before the ordinary JSON parser runs.
+  app.use('/api/external-signals', externalSignalIngressRoutes);
+  app.use(express.json());
+
   app.get('/', (_req, res) => {
     res.json({
       ok: true,
@@ -97,6 +93,7 @@ export function createApp() {
   app.use('/api/signals', requireSignalApiKey, signalsRoutes);
 
   // Admin routes
+  app.use('/api/external-signal-admin', requireAdminAccess, externalSignalAdminRoutes);
   app.use('/api/bootstrap', requireAdminAccess, bootstrapRoutes);
   app.use('/api/system-status', requireAdminAccess, systemStatusRoutes);
   app.use('/api/system-events', requireAdminAccess, systemEventsRoutes);
@@ -125,6 +122,7 @@ export function createApp() {
   app.use('/api/securities', requireAdminAccess, securitiesRoutes);
   app.use('/api/market-state', requireAdminAccess, marketStateRoutes);
   app.use('/api/market-diary', requireAdminAccess, marketDiaryRoutes);
+  app.use('/api/market-data', requireAdminAccess, marketDataRoutes);
   app.use('/api/catalyst-events', requireAdminAccess, catalystEventsRoutes);
   app.use('/api/momentum-candidates', requireAdminAccess, momentumCandidatesRoutes);
   app.use('/api/momentum-scanner', requireAdminAccess, momentumScannerRoutes);

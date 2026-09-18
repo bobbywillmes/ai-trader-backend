@@ -228,6 +228,7 @@ export function PositionsDataView({ positions, token, selectedTradingAccountId, 
         <div className={classes.exitHeading}><Title id={`position-${position.id}-exit-heading`} order={3} size="h5" className={classes.detailHeading}>Exit management</Title><StatusBadge status={conciseExitState(position)} label={conciseExitState(position)} tone={exitTone(position)} size="compact" /></div>
         <RecordDetailsGrid missingValue={MISSING_VALUE} sections={[{ items: [
           { label: "Exit strategy", value: exitStrategy(position) },
+          { label: "Exit ownership snapshot", value: position.exitState?.exitManagementModeSnapshot ?? 'Unavailable' },
           { label: "Target", value: `${formatPercent(targetPercent(position))} · ${formatCurrency(targetPrice(position))}` },
           { label: "Trail percentage", value: unlockTrailing(position) ? formatPercent(position.trailingStopTrailPercent) : MISSING_VALUE },
           { label: "High-water mark", value: unlockTrailing(position) ? formatCurrency(position.trailingStopHwm) : MISSING_VALUE },
