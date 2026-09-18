@@ -1,0 +1,2142 @@
+{
+  "datasetId": "c8b6e45297524c1d81d757b865b19143b8eedc984cfcc9421c7fdc65ab642154",
+  "measurementDigest": "1e10244c12c08921281763742e8b3faedd99ba1b622adddc9a5f4dc963e23226",
+  "providerRequests": 0,
+  "recoveryConfirmations": 2,
+  "comparison": "Fixed Candidate B: original / current-close acute SEVERE / plus fixed absolute HIGH",
+  "validTargets": 30905,
+  "unavailableTargets": 4800,
+  "validSessions": 1241,
+  "firstValid": "2021-10-07",
+  "lastValid": "2026-09-17",
+  "frequency": {
+    "originalB": {
+      "raw": {
+        "n": 30905,
+        "counts": [
+          27495,
+          3061,
+          315,
+          34
+        ],
+        "percentages": [
+          88.96618670118104,
+          9.904546189936903,
+          1.0192525481313703,
+          0.11001456075068758
+        ],
+        "severeSessions": 10
+      },
+      "effective": {
+        "n": 30905,
+        "counts": [
+          26322,
+          4086,
+          455,
+          42
+        ],
+        "percentages": [
+          85.17068435528232,
+          13.221161624332634,
+          1.4722536806342015,
+          0.13590033975084936
+        ],
+        "severeSessions": 10
+      }
+    },
+    "currentClose": {
+      "raw": {
+        "n": 30905,
+        "counts": [
+          27495,
+          3061,
+          316,
+          33
+        ],
+        "percentages": [
+          88.96618670118104,
+          9.904546189936903,
+          1.0224882705063907,
+          0.10677883837566736
+        ],
+        "severeSessions": 9
+      },
+      "effective": {
+        "n": 30905,
+        "counts": [
+          26322,
+          4087,
+          456,
+          40
+        ],
+        "percentages": [
+          85.17068435528232,
+          13.224397346707653,
+          1.4754894030092218,
+          0.12942889500080892
+        ],
+        "severeSessions": 9
+      }
+    },
+    "absoluteHigh": {
+      "raw": {
+        "n": 30905,
+        "counts": [
+          27484,
+          2919,
+          469,
+          33
+        ],
+        "percentages": [
+          88.93059375505582,
+          9.445073612684032,
+          1.5175537938844847,
+          0.10677883837566736
+        ],
+        "severeSessions": 9
+      },
+      "effective": {
+        "n": 30905,
+        "counts": [
+          26303,
+          3944,
+          618,
+          40
+        ],
+        "percentages": [
+          85.10920563015694,
+          12.761689047079761,
+          1.9996764277624979,
+          0.12942889500080892
+        ],
+        "severeSessions": 9
+      }
+    }
+  },
+  "byPeriod": {
+    "year_2021": {
+      "upgrades": 0,
+      "affectedSessions": 0,
+      "raw": {
+        "n": 1488,
+        "counts": [
+          1336,
+          139,
+          13,
+          0
+        ],
+        "percentages": [
+          89.78494623655914,
+          9.341397849462366,
+          0.8736559139784945,
+          0
+        ],
+        "severeSessions": 0
+      },
+      "effective": {
+        "n": 1488,
+        "counts": [
+          1293,
+          174,
+          21,
+          0
+        ],
+        "percentages": [
+          86.89516129032258,
+          11.693548387096774,
+          1.411290322580645,
+          0
+        ],
+        "severeSessions": 0
+      }
+    },
+    "year_2022": {
+      "upgrades": 120,
+      "affectedSessions": 28,
+      "raw": {
+        "n": 6263,
+        "counts": [
+          5673,
+          415,
+          172,
+          3
+        ],
+        "percentages": [
+          90.5795944435574,
+          6.626217467667252,
+          2.7462877215391988,
+          0.04790036723614881
+        ],
+        "severeSessions": 2
+      },
+      "effective": {
+        "n": 6263,
+        "counts": [
+          5490,
+          552,
+          217,
+          4
+        ],
+        "percentages": [
+          87.65767204215233,
+          8.813667571451381,
+          3.46479323008143,
+          0.06386715631486509
+        ],
+        "severeSessions": 2
+      }
+    },
+    "year_2023": {
+      "upgrades": 1,
+      "affectedSessions": 1,
+      "raw": {
+        "n": 6226,
+        "counts": [
+          5692,
+          499,
+          35,
+          0
+        ],
+        "percentages": [
+          91.4230645679409,
+          8.014776742691938,
+          0.56215868936717,
+          0
+        ],
+        "severeSessions": 0
+      },
+      "effective": {
+        "n": 6226,
+        "counts": [
+          5489,
+          675,
+          62,
+          0
+        ],
+        "percentages": [
+          88.16254416961131,
+          10.84163186636685,
+          0.9958239640218438,
+          0
+        ],
+        "severeSessions": 0
+      }
+    },
+    "year_2024": {
+      "upgrades": 0,
+      "affectedSessions": 0,
+      "raw": {
+        "n": 6264,
+        "counts": [
+          5511,
+          679,
+          73,
+          1
+        ],
+        "percentages": [
+          87.97892720306514,
+          10.839719029374201,
+          1.1653895274584931,
+          0.015964240102171137
+        ],
+        "severeSessions": 1
+      },
+      "effective": {
+        "n": 6264,
+        "counts": [
+          5252,
+          911,
+          100,
+          1
+        ],
+        "percentages": [
+          83.84418901660281,
+          14.543422733077904,
+          1.5964240102171137,
+          0.015964240102171137
+        ],
+        "severeSessions": 1
+      }
+    },
+    "year_2025": {
+      "upgrades": 32,
+      "affectedSessions": 6,
+      "raw": {
+        "n": 6214,
+        "counts": [
+          5395,
+          675,
+          118,
+          26
+        ],
+        "percentages": [
+          86.82008368200836,
+          10.862568393949147,
+          1.8989378822014804,
+          0.41841004184100417
+        ],
+        "severeSessions": 5
+      },
+      "effective": {
+        "n": 6214,
+        "counts": [
+          5130,
+          914,
+          139,
+          31
+        ],
+        "percentages": [
+          82.55551979401352,
+          14.708722240102992,
+          2.2368844544576763,
+          0.49887351142581265
+        ],
+        "severeSessions": 5
+      }
+    },
+    "year_2026": {
+      "upgrades": 0,
+      "affectedSessions": 0,
+      "raw": {
+        "n": 4450,
+        "counts": [
+          3877,
+          512,
+          58,
+          3
+        ],
+        "percentages": [
+          87.12359550561798,
+          11.50561797752809,
+          1.303370786516854,
+          0.06741573033707865
+        ],
+        "severeSessions": 1
+      },
+      "effective": {
+        "n": 4450,
+        "counts": [
+          3649,
+          718,
+          79,
+          4
+        ],
+        "percentages": [
+          82,
+          16.134831460674157,
+          1.7752808988764044,
+          0.0898876404494382
+        ],
+        "severeSessions": 1
+      }
+    },
+    "opening_1_4": {
+      "upgrades": 5,
+      "affectedSessions": 5,
+      "raw": {
+        "n": 4964,
+        "counts": [
+          4083,
+          826,
+          54,
+          1
+        ],
+        "percentages": [
+          82.2522159548751,
+          16.639806607574535,
+          1.087832393231265,
+          0.020145044319097503
+        ],
+        "severeSessions": 1
+      },
+      "effective": {
+        "n": 4964,
+        "counts": [
+          3644,
+          1229,
+          90,
+          1
+        ],
+        "percentages": [
+          73.40854149879131,
+          24.758259468170827,
+          1.813053988718775,
+          0.020145044319097503
+        ],
+        "severeSessions": 1
+      }
+    },
+    "nonopening_5_plus": {
+      "upgrades": 148,
+      "affectedSessions": 31,
+      "raw": {
+        "n": 25941,
+        "counts": [
+          23401,
+          2093,
+          415,
+          32
+        ],
+        "percentages": [
+          90.20855017154312,
+          8.068308854708762,
+          1.599784125515593,
+          0.12335684823252765
+        ],
+        "severeSessions": 9
+      },
+      "effective": {
+        "n": 25941,
+        "counts": [
+          22659,
+          2715,
+          528,
+          39
+        ],
+        "percentages": [
+          87.34821325315139,
+          10.466057592228518,
+          2.0353879958367065,
+          0.1503411587833931
+        ],
+        "severeSessions": 9
+      }
+    },
+    "quiet_both_ATR_lt_1pct": {
+      "upgrades": 0,
+      "affectedSessions": 0,
+      "raw": {
+        "n": 7039,
+        "counts": [
+          6059,
+          868,
+          108,
+          4
+        ],
+        "percentages": [
+          86.07756783634038,
+          12.33129705924137,
+          1.5343088506890183,
+          0.0568262537292229
+        ],
+        "severeSessions": 2
+      },
+      "effective": {
+        "n": 7039,
+        "counts": [
+          5726,
+          1165,
+          144,
+          4
+        ],
+        "percentages": [
+          81.34678221338258,
+          16.55064639863617,
+          2.0457451342520243,
+          0.0568262537292229
+        ],
+        "severeSessions": 2
+      }
+    },
+    "high_either_ATR_ge_2pct": {
+      "upgrades": 133,
+      "affectedSessions": 24,
+      "raw": {
+        "n": 3925,
+        "counts": [
+          3535,
+          196,
+          169,
+          25
+        ],
+        "percentages": [
+          90.06369426751593,
+          4.993630573248407,
+          4.305732484076433,
+          0.6369426751592357
+        ],
+        "severeSessions": 5
+      },
+      "effective": {
+        "n": 3925,
+        "counts": [
+          3434,
+          259,
+          201,
+          31
+        ],
+        "percentages": [
+          87.49044585987261,
+          6.598726114649682,
+          5.1210191082802545,
+          0.7898089171974522
+        ],
+        "severeSessions": 5
+      }
+    },
+    "middle_ATR": {
+      "upgrades": 20,
+      "affectedSessions": 11,
+      "raw": {
+        "n": 19941,
+        "counts": [
+          17890,
+          1855,
+          192,
+          4
+        ],
+        "percentages": [
+          89.71465824181335,
+          9.302442204503285,
+          0.9628403791183993,
+          0.020059174564966652
+        ],
+        "severeSessions": 2
+      },
+      "effective": {
+        "n": 19941,
+        "counts": [
+          17143,
+          2520,
+          273,
+          5
+        ],
+        "percentages": [
+          85.96860739180583,
+          12.637279975928992,
+          1.369038664058974,
+          0.025073968206208313
+        ],
+        "severeSessions": 2
+      }
+    }
+  },
+  "bySevereDate": [
+    {
+      "date": "2021-12-02",
+      "originalB": {
+        "rawSevere": 0,
+        "effectiveSevere": 0,
+        "maxRaw": "HIGH"
+      },
+      "currentClose": {
+        "rawSevere": 0,
+        "effectiveSevere": 0,
+        "maxRaw": "HIGH"
+      },
+      "absoluteHigh": {
+        "rawSevere": 0,
+        "effectiveSevere": 0,
+        "maxRaw": "HIGH"
+      }
+    },
+    {
+      "date": "2021-12-07",
+      "originalB": {
+        "rawSevere": 1,
+        "effectiveSevere": 2,
+        "maxRaw": "SEVERE"
+      },
+      "currentClose": {
+        "rawSevere": 0,
+        "effectiveSevere": 0,
+        "maxRaw": "HIGH"
+      },
+      "absoluteHigh": {
+        "rawSevere": 0,
+        "effectiveSevere": 0,
+        "maxRaw": "HIGH"
+      }
+    },
+    {
+      "date": "2022-05-20",
+      "originalB": {
+        "rawSevere": 1,
+        "effectiveSevere": 2,
+        "maxRaw": "SEVERE"
+      },
+      "currentClose": {
+        "rawSevere": 1,
+        "effectiveSevere": 2,
+        "maxRaw": "SEVERE"
+      },
+      "absoluteHigh": {
+        "rawSevere": 1,
+        "effectiveSevere": 2,
+        "maxRaw": "SEVERE"
+      }
+    },
+    {
+      "date": "2022-11-02",
+      "originalB": {
+        "rawSevere": 2,
+        "effectiveSevere": 2,
+        "maxRaw": "SEVERE"
+      },
+      "currentClose": {
+        "rawSevere": 2,
+        "effectiveSevere": 2,
+        "maxRaw": "SEVERE"
+      },
+      "absoluteHigh": {
+        "rawSevere": 2,
+        "effectiveSevere": 2,
+        "maxRaw": "SEVERE"
+      }
+    },
+    {
+      "date": "2024-12-18",
+      "originalB": {
+        "rawSevere": 1,
+        "effectiveSevere": 1,
+        "maxRaw": "SEVERE"
+      },
+      "currentClose": {
+        "rawSevere": 1,
+        "effectiveSevere": 1,
+        "maxRaw": "SEVERE"
+      },
+      "absoluteHigh": {
+        "rawSevere": 1,
+        "effectiveSevere": 1,
+        "maxRaw": "SEVERE"
+      }
+    },
+    {
+      "date": "2025-04-07",
+      "originalB": {
+        "rawSevere": 13,
+        "effectiveSevere": 16,
+        "maxRaw": "SEVERE"
+      },
+      "currentClose": {
+        "rawSevere": 13,
+        "effectiveSevere": 16,
+        "maxRaw": "SEVERE"
+      },
+      "absoluteHigh": {
+        "rawSevere": 13,
+        "effectiveSevere": 16,
+        "maxRaw": "SEVERE"
+      }
+    },
+    {
+      "date": "2025-04-08",
+      "originalB": {
+        "rawSevere": 8,
+        "effectiveSevere": 9,
+        "maxRaw": "SEVERE"
+      },
+      "currentClose": {
+        "rawSevere": 8,
+        "effectiveSevere": 9,
+        "maxRaw": "SEVERE"
+      },
+      "absoluteHigh": {
+        "rawSevere": 8,
+        "effectiveSevere": 9,
+        "maxRaw": "SEVERE"
+      }
+    },
+    {
+      "date": "2025-04-10",
+      "originalB": {
+        "rawSevere": 1,
+        "effectiveSevere": 2,
+        "maxRaw": "SEVERE"
+      },
+      "currentClose": {
+        "rawSevere": 1,
+        "effectiveSevere": 2,
+        "maxRaw": "SEVERE"
+      },
+      "absoluteHigh": {
+        "rawSevere": 1,
+        "effectiveSevere": 2,
+        "maxRaw": "SEVERE"
+      }
+    },
+    {
+      "date": "2025-10-10",
+      "originalB": {
+        "rawSevere": 3,
+        "effectiveSevere": 3,
+        "maxRaw": "SEVERE"
+      },
+      "currentClose": {
+        "rawSevere": 3,
+        "effectiveSevere": 3,
+        "maxRaw": "SEVERE"
+      },
+      "absoluteHigh": {
+        "rawSevere": 3,
+        "effectiveSevere": 3,
+        "maxRaw": "SEVERE"
+      }
+    },
+    {
+      "date": "2025-11-20",
+      "originalB": {
+        "rawSevere": 1,
+        "effectiveSevere": 1,
+        "maxRaw": "SEVERE"
+      },
+      "currentClose": {
+        "rawSevere": 1,
+        "effectiveSevere": 1,
+        "maxRaw": "SEVERE"
+      },
+      "absoluteHigh": {
+        "rawSevere": 1,
+        "effectiveSevere": 1,
+        "maxRaw": "SEVERE"
+      }
+    },
+    {
+      "date": "2026-06-09",
+      "originalB": {
+        "rawSevere": 3,
+        "effectiveSevere": 4,
+        "maxRaw": "SEVERE"
+      },
+      "currentClose": {
+        "rawSevere": 3,
+        "effectiveSevere": 4,
+        "maxRaw": "SEVERE"
+      },
+      "absoluteHigh": {
+        "rawSevere": 3,
+        "effectiveSevere": 4,
+        "maxRaw": "SEVERE"
+      }
+    }
+  ],
+  "severeChange": {
+    "removed": [
+      {
+        "date": "2021-12-07",
+        "index": 23,
+        "targetAt": "2021-12-07T20:15:00.000Z",
+        "raw": {
+          "originalB": 3,
+          "currentClose": 2,
+          "absoluteHigh": 2
+        },
+        "effective": {
+          "originalB": 3,
+          "currentClose": 2,
+          "absoluteHigh": 2
+        },
+        "spy": {
+          "symbol": "SPY",
+          "date": "2021-12-07",
+          "index": 23,
+          "targetAt": "2021-12-07T20:15:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.013831707240608898,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 468.18,
+          "trueRange15": 9.875399999999956,
+          "return15": -0.0005446623093682268,
+          "sessionOpen": 464.41,
+          "sessionPeak": 468.88,
+          "currentClose": 467.925,
+          "rollingStatus": "VALID",
+          "shockPct": 0.021093169293861243,
+          "shockAtrRatio": 1.5249866792967692,
+          "downsideExcursionPct": 0.020345593575120658,
+          "downsideExcursionAtrRatio": 1.4709387077964937,
+          "realizedMovement60Pct": 0.0005900723014147857,
+          "realizedMovement60AtrRatio": 0.04266084375198283,
+          "sessionDrawdownPct": 0.0020367684695444125,
+          "sessionDrawdownAtrRatio": 0.14725358439951697,
+          "pathLength60": 0.0009076934330374264,
+          "openToCurrentPct": 0.007568743136452616,
+          "peakFromOpenPct": 0.009625115738248535,
+          "acuteCloseDownsidePct": 0.000544662309368182,
+          "acuteCloseDownsideAtrRatio": 0.039377807807346635
+        },
+        "rsp": {
+          "symbol": "RSP",
+          "date": "2021-12-07",
+          "index": 23,
+          "targetAt": "2021-12-07T20:15:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.0151963239749829,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 159.81,
+          "trueRange15": 0.27000000000001023,
+          "return15": -0.0005738063950941896,
+          "sessionOpen": 158.38,
+          "sessionPeak": 160.2,
+          "currentClose": 159.7183,
+          "rollingStatus": "VALID",
+          "shockPct": 0.0016895062887179165,
+          "shockAtrRatio": 0.11117861737478638,
+          "downsideExcursionPct": 0.0009386146048432869,
+          "downsideExcursionAtrRatio": 0.06176589854154799,
+          "realizedMovement60Pct": 0.0007137684332114964,
+          "realizedMovement60AtrRatio": 0.0469698089081639,
+          "sessionDrawdownPct": 0.00300686641697871,
+          "sessionDrawdownAtrRatio": 0.19786801215404423,
+          "pathLength60": 0.0011996865489748432,
+          "openToCurrentPct": 0.008449930546786222,
+          "peakFromOpenPct": 0.01149134991791878,
+          "acuteCloseDownsidePct": 0.0005738063950941931,
+          "acuteCloseDownsideAtrRatio": 0.03775955264173281
+        }
+      }
+    ],
+    "new": [],
+    "disappearedSessions": [
+      "2021-12-07"
+    ],
+    "remainingSessions": [
+      "2022-05-20",
+      "2022-11-02",
+      "2024-12-18",
+      "2025-04-07",
+      "2025-04-08",
+      "2025-04-10",
+      "2025-10-10",
+      "2025-11-20",
+      "2026-06-09"
+    ]
+  },
+  "safeguards": {
+    "upgradedTargets": 153,
+    "affectedSessions": 35,
+    "dates": [
+      "2022-01-24",
+      "2022-01-26",
+      "2022-01-27",
+      "2022-02-11",
+      "2022-02-23",
+      "2022-03-07",
+      "2022-03-16",
+      "2022-04-21",
+      "2022-04-29",
+      "2022-05-02",
+      "2022-05-05",
+      "2022-05-06",
+      "2022-05-10",
+      "2022-05-11",
+      "2022-05-12",
+      "2022-05-18",
+      "2022-05-20",
+      "2022-06-28",
+      "2022-09-02",
+      "2022-09-13",
+      "2022-09-21",
+      "2022-09-29",
+      "2022-10-07",
+      "2022-10-14",
+      "2022-11-02",
+      "2022-11-04",
+      "2022-12-13",
+      "2022-12-22",
+      "2023-03-10",
+      "2025-04-04",
+      "2025-04-07",
+      "2025-04-08",
+      "2025-04-10",
+      "2025-04-11",
+      "2025-04-16"
+    ],
+    "acuteOnly": 6,
+    "drawdownOnly": 146,
+    "both": 1,
+    "originalEffectiveAlreadyHigh": 17,
+    "revisedEffectiveAlreadyHigh": 17,
+    "upgradedWithTriggerStillAboveOpen": [
+      {
+        "date": "2025-04-07",
+        "index": 16,
+        "targetAt": "2025-04-07T17:30:00.000Z",
+        "raw": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 2
+        },
+        "effective": {
+          "originalB": 3,
+          "currentClose": 3,
+          "absoluteHigh": 3
+        },
+        "spy": {
+          "symbol": "SPY",
+          "date": "2025-04-07",
+          "index": 16,
+          "targetAt": "2025-04-07T17:30:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.024698688481689147,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 501.51,
+          "trueRange15": 5.319999999999993,
+          "return15": 0.008195250343961291,
+          "sessionOpen": 489.19,
+          "sessionPeak": 523.17,
+          "currentClose": 505.62,
+          "rollingStatus": "VALID",
+          "shockPct": 0.010607963948874385,
+          "shockAtrRatio": 0.42949502993807975,
+          "downsideExcursionPct": 0.0017746405854319682,
+          "downsideExcursionAtrRatio": 0.07185161215129429,
+          "realizedMovement60Pct": 0.01536923851406787,
+          "realizedMovement60AtrRatio": 0.6222694182916698,
+          "sessionDrawdownPct": 0.033545501462239724,
+          "sessionDrawdownAtrRatio": 1.3581895851315884,
+          "pathLength60": 0.027738625588150767,
+          "openToCurrentPct": 0.03358613217768158,
+          "peakFromOpenPct": 0.0694617633230441,
+          "acuteCloseDownsidePct": 0,
+          "acuteCloseDownsideAtrRatio": 0
+        },
+        "rsp": {
+          "symbol": "RSP",
+          "date": "2025-04-07",
+          "index": 16,
+          "targetAt": "2025-04-07T17:30:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.021926793922015134,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 155.29,
+          "trueRange15": 1.5200000000000102,
+          "return15": 0.007856268916221154,
+          "sessionOpen": 153.64,
+          "sessionPeak": 161.69,
+          "currentClose": 156.51,
+          "rollingStatus": "VALID",
+          "shockPct": 0.009788138321849509,
+          "shockAtrRatio": 0.44640079879721656,
+          "downsideExcursionPct": 0.0014810998776482052,
+          "downsideExcursionAtrRatio": 0.06754748929168063,
+          "realizedMovement60Pct": 0.0150676179816954,
+          "realizedMovement60AtrRatio": 0.6871783460584758,
+          "sessionDrawdownPct": 0.032036613272311255,
+          "sessionDrawdownAtrRatio": 1.4610714811409602,
+          "pathLength60": 0.027981728296992192,
+          "openToCurrentPct": 0.018680031241864237,
+          "peakFromOpenPct": 0.05239520958083843,
+          "acuteCloseDownsidePct": 0,
+          "acuteCloseDownsideAtrRatio": 0
+        }
+      },
+      {
+        "date": "2025-04-07",
+        "index": 17,
+        "targetAt": "2025-04-07T17:45:00.000Z",
+        "raw": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 2
+        },
+        "effective": {
+          "originalB": 2,
+          "currentClose": 2,
+          "absoluteHigh": 2
+        },
+        "spy": {
+          "symbol": "SPY",
+          "date": "2025-04-07",
+          "index": 17,
+          "targetAt": "2025-04-07T17:45:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.024698688481689147,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 505.62,
+          "trueRange15": 4.939999999999998,
+          "return15": 0.0027293224160436225,
+          "sessionOpen": 489.19,
+          "sessionPeak": 523.17,
+          "currentClose": 507,
+          "rollingStatus": "VALID",
+          "shockPct": 0.009770183141489652,
+          "shockAtrRatio": 0.3955749775431585,
+          "downsideExcursionPct": 0.006843083738776116,
+          "downsideExcursionAtrRatio": 0.27706263609297993,
+          "realizedMovement60Pct": 0.01522976298187305,
+          "realizedMovement60AtrRatio": 0.6166223357634528,
+          "sessionDrawdownPct": 0.03090773553529438,
+          "sessionDrawdownAtrRatio": 1.251391771599874,
+          "pathLength60": 0.027044935753413712,
+          "openToCurrentPct": 0.036407121977145795,
+          "peakFromOpenPct": 0.0694617633230441,
+          "acuteCloseDownsidePct": 0,
+          "acuteCloseDownsideAtrRatio": 0
+        },
+        "rsp": {
+          "symbol": "RSP",
+          "date": "2025-04-07",
+          "index": 17,
+          "targetAt": "2025-04-07T17:45:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.021926793922015134,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 156.51,
+          "trueRange15": 1.4749999999999943,
+          "return15": 0.002747428279343156,
+          "sessionOpen": 153.64,
+          "sessionPeak": 161.69,
+          "currentClose": 156.94,
+          "rollingStatus": "VALID",
+          "shockPct": 0.009424317934956197,
+          "shockAtrRatio": 0.42980829611819854,
+          "downsideExcursionPct": 0.006453261772410651,
+          "downsideExcursionAtrRatio": 0.29430940954534124,
+          "realizedMovement60Pct": 0.01469320477150356,
+          "realizedMovement60AtrRatio": 0.6701027438740672,
+          "sessionDrawdownPct": 0.02937720329024677,
+          "sessionDrawdownAtrRatio": 1.339785624598369,
+          "pathLength60": 0.026405823679702234,
+          "openToCurrentPct": 0.02147878156730032,
+          "peakFromOpenPct": 0.05239520958083843,
+          "acuteCloseDownsidePct": 0,
+          "acuteCloseDownsideAtrRatio": 0
+        }
+      },
+      {
+        "date": "2025-04-07",
+        "index": 19,
+        "targetAt": "2025-04-07T18:15:00.000Z",
+        "raw": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 2
+        },
+        "effective": {
+          "originalB": 2,
+          "currentClose": 2,
+          "absoluteHigh": 2
+        },
+        "spy": {
+          "symbol": "SPY",
+          "date": "2025-04-07",
+          "index": 19,
+          "targetAt": "2025-04-07T18:15:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.024698688481689147,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 509.09,
+          "trueRange15": 4.819999999999993,
+          "return15": -0.005696438743640564,
+          "sessionOpen": 489.19,
+          "sessionPeak": 523.17,
+          "currentClose": 506.19,
+          "rollingStatus": "VALID",
+          "shockPct": 0.009467874049775076,
+          "shockAtrRatio": 0.3833350931485398,
+          "downsideExcursionPct": 0.007680370857805041,
+          "downsideExcursionAtrRatio": 0.3109627000437304,
+          "realizedMovement60Pct": 0.011137953200912836,
+          "realizedMovement60AtrRatio": 0.4509532240616814,
+          "sessionDrawdownPct": 0.03245598944893622,
+          "sessionDrawdownAtrRatio": 1.3140774447597936,
+          "pathLength60": 0.020743299472087195,
+          "openToCurrentPct": 0.03475132361659061,
+          "peakFromOpenPct": 0.0694617633230441,
+          "acuteCloseDownsidePct": 0.005696438743640569,
+          "acuteCloseDownsideAtrRatio": 0.2306372967076262
+        },
+        "rsp": {
+          "symbol": "RSP",
+          "date": "2025-04-07",
+          "index": 19,
+          "targetAt": "2025-04-07T18:15:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.021926793922015134,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 157.55,
+          "trueRange15": 1.3799999999999955,
+          "return15": -0.004696921612186711,
+          "sessionOpen": 153.64,
+          "sessionPeak": 161.69,
+          "currentClose": 156.81,
+          "rollingStatus": "VALID",
+          "shockPct": 0.008759124087591212,
+          "shockAtrRatio": 0.3994712641868175,
+          "downsideExcursionPct": 0.006664550936210798,
+          "downsideExcursionAtrRatio": 0.30394552709866973,
+          "realizedMovement60Pct": 0.010316873949195561,
+          "realizedMovement60AtrRatio": 0.47051447584578804,
+          "sessionDrawdownPct": 0.03018121095924297,
+          "sessionDrawdownAtrRatio": 1.376453441692639,
+          "pathLength60": 0.01918745454115245,
+          "openToCurrentPct": 0.020632647747982347,
+          "peakFromOpenPct": 0.05239520958083843,
+          "acuteCloseDownsidePct": 0.004696921612186665,
+          "acuteCloseDownsideAtrRatio": 0.21420922862191996
+        }
+      },
+      {
+        "date": "2025-04-07",
+        "index": 20,
+        "targetAt": "2025-04-07T18:30:00.000Z",
+        "raw": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 2
+        },
+        "effective": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 2
+        },
+        "spy": {
+          "symbol": "SPY",
+          "date": "2025-04-07",
+          "index": 20,
+          "targetAt": "2025-04-07T18:30:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.024698688481689147,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 506.19,
+          "trueRange15": 5.810000000000002,
+          "return15": -0.001975542780378925,
+          "sessionOpen": 489.19,
+          "sessionPeak": 523.17,
+          "currentClose": 505.19,
+          "rollingStatus": "VALID",
+          "shockPct": 0.011477903554001466,
+          "shockAtrRatio": 0.46471712708595164,
+          "downsideExcursionPct": 0.003022580453979677,
+          "downsideExcursionAtrRatio": 0.12237817632383703,
+          "realizedMovement60Pct": 0.007797091931139078,
+          "realizedMovement60AtrRatio": 0.31568850050153896,
+          "sessionDrawdownPct": 0.03436741403367923,
+          "sessionDrawdownAtrRatio": 1.3914671647103118,
+          "pathLength60": 0.01452359190850483,
+          "openToCurrentPct": 0.03270712810973242,
+          "peakFromOpenPct": 0.0694617633230441,
+          "acuteCloseDownsidePct": 0.001975542780378909,
+          "acuteCloseDownsideAtrRatio": 0.07998573615937202
+        },
+        "rsp": {
+          "symbol": "RSP",
+          "date": "2025-04-07",
+          "index": 20,
+          "targetAt": "2025-04-07T18:30:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.021926793922015134,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 156.81,
+          "trueRange15": 1.6299999999999955,
+          "return15": -0.0025508577259103493,
+          "sessionOpen": 153.64,
+          "sessionPeak": 161.69,
+          "currentClose": 156.41,
+          "rollingStatus": "VALID",
+          "shockPct": 0.010394745233084595,
+          "shockAtrRatio": 0.4740658971874575,
+          "downsideExcursionPct": 0.003571200816274487,
+          "downsideExcursionAtrRatio": 0.16286926529139759,
+          "realizedMovement60Pct": 0.0071570805456864775,
+          "realizedMovement60AtrRatio": 0.3264079815380835,
+          "sessionDrawdownPct": 0.032655080710000624,
+          "sessionDrawdownAtrRatio": 1.489277494290398,
+          "pathLength60": 0.013882043350841644,
+          "openToCurrentPct": 0.018029159073158052,
+          "peakFromOpenPct": 0.05239520958083843,
+          "acuteCloseDownsidePct": 0.0025508577259103736,
+          "acuteCloseDownsideAtrRatio": 0.11633518949385659
+        }
+      },
+      {
+        "date": "2025-04-07",
+        "index": 21,
+        "targetAt": "2025-04-07T18:45:00.000Z",
+        "raw": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 2
+        },
+        "effective": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 2
+        },
+        "spy": {
+          "symbol": "SPY",
+          "date": "2025-04-07",
+          "index": 21,
+          "targetAt": "2025-04-07T18:45:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.024698688481689147,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 505.19,
+          "trueRange15": 3.5299999999999727,
+          "return15": 0.002969179912508224,
+          "sessionOpen": 489.19,
+          "sessionPeak": 523.17,
+          "currentClose": 506.69,
+          "rollingStatus": "VALID",
+          "shockPct": 0.006987470060769161,
+          "shockAtrRatio": 0.28290854657928327,
+          "downsideExcursionPct": 0.0007521922445020595,
+          "downsideExcursionAtrRatio": 0.030454744390970876,
+          "realizedMovement60Pct": 0.007884254630893034,
+          "realizedMovement60AtrRatio": 0.31921754212731496,
+          "sessionDrawdownPct": 0.03150027715656472,
+          "sessionDrawdownAtrRatio": 1.2753825847845348,
+          "pathLength60": 0.014763449404969431,
+          "openToCurrentPct": 0.03577342137001982,
+          "peakFromOpenPct": 0.0694617633230441,
+          "acuteCloseDownsidePct": 0,
+          "acuteCloseDownsideAtrRatio": 0
+        },
+        "rsp": {
+          "symbol": "RSP",
+          "date": "2025-04-07",
+          "index": 21,
+          "targetAt": "2025-04-07T18:45:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.021926793922015134,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 156.41,
+          "trueRange15": 0.839999999999975,
+          "return15": 0.0016622978070455208,
+          "sessionOpen": 153.64,
+          "sessionPeak": 161.69,
+          "currentClose": 156.67,
+          "rollingStatus": "VALID",
+          "shockPct": 0.005370500607377885,
+          "shockAtrRatio": 0.24492867614292427,
+          "downsideExcursionPct": 0.0007032798414422685,
+          "downsideExcursionAtrRatio": 0.0320739933044272,
+          "realizedMovement60Pct": 0.006814592708784414,
+          "realizedMovement60AtrRatio": 0.3107883775905043,
+          "sessionDrawdownPct": 0.03104706537200823,
+          "sessionDrawdownAtrRatio": 1.4159418601018583,
+          "pathLength60": 0.012796912878544009,
+          "openToCurrentPct": 0.019721426711793777,
+          "peakFromOpenPct": 0.05239520958083843,
+          "acuteCloseDownsidePct": 0,
+          "acuteCloseDownsideAtrRatio": 0
+        }
+      },
+      {
+        "date": "2025-04-07",
+        "index": 22,
+        "targetAt": "2025-04-07T19:00:00.000Z",
+        "raw": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 2
+        },
+        "effective": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 2
+        },
+        "spy": {
+          "symbol": "SPY",
+          "date": "2025-04-07",
+          "index": 22,
+          "targetAt": "2025-04-07T19:00:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.024698688481689147,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 506.69,
+          "trueRange15": 5.400000000000034,
+          "return15": -0.006868104758333549,
+          "sessionOpen": 489.19,
+          "sessionPeak": 523.17,
+          "currentClose": 503.21,
+          "rollingStatus": "VALID",
+          "shockPct": 0.01065740393534515,
+          "shockAtrRatio": 0.4314967551109535,
+          "downsideExcursionPct": 0.008703546547198534,
+          "downsideExcursionAtrRatio": 0.3523890166739452,
+          "realizedMovement60Pct": 0.009609322346630008,
+          "realizedMovement60AtrRatio": 0.3890620489324389,
+          "sessionDrawdownPct": 0.038152034711470426,
+          "sessionDrawdownAtrRatio": 1.544698810212339,
+          "pathLength60": 0.01750926619486126,
+          "openToCurrentPct": 0.028659621006152936,
+          "peakFromOpenPct": 0.0694617633230441,
+          "acuteCloseDownsidePct": 0.006868104758333534,
+          "acuteCloseDownsideAtrRatio": 0.2780756866270586
+        },
+        "rsp": {
+          "symbol": "RSP",
+          "date": "2025-04-07",
+          "index": 22,
+          "targetAt": "2025-04-07T19:00:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.021926793922015134,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 156.67,
+          "trueRange15": 1.5,
+          "return15": -0.006574328205782853,
+          "sessionOpen": 153.64,
+          "sessionPeak": 161.69,
+          "currentClose": 155.64,
+          "rollingStatus": "VALID",
+          "shockPct": 0.009574264377353673,
+          "shockAtrRatio": 0.4366467989531673,
+          "downsideExcursionPct": 0.007914725218612247,
+          "downsideExcursionAtrRatio": 0.36096135380127936,
+          "realizedMovement60Pct": 0.008634406356288976,
+          "realizedMovement60AtrRatio": 0.3937833495858135,
+          "sessionDrawdownPct": 0.03741727998020911,
+          "sessionDrawdownAtrRatio": 1.7064637955410837,
+          "pathLength60": 0.015484405350925434,
+          "openToCurrentPct": 0.013017443374121251,
+          "peakFromOpenPct": 0.05239520958083843,
+          "acuteCloseDownsidePct": 0.006574328205782864,
+          "acuteCloseDownsideAtrRatio": 0.2998308019478419
+        }
+      }
+    ]
+  },
+  "absoluteConcern": {
+    "originalTargets": 164,
+    "originalSessions": 41,
+    "resolvedTargets": 153,
+    "sessionsWithResolvedTargets": 35,
+    "fullyResolvedSessions": 33,
+    "unresolvedTargets": 11,
+    "unresolvedSessions": 8,
+    "unresolved": [
+      {
+        "date": "2022-06-02",
+        "index": 13,
+        "targetAt": "2022-06-02T16:45:00.000Z",
+        "raw": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "effective": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "spy": {
+          "symbol": "SPY",
+          "date": "2022-06-02",
+          "index": 13,
+          "targetAt": "2022-06-02T16:45:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.02444373129271146,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 413.97,
+          "trueRange15": 4.796000000000049,
+          "return15": 0.000024156339831327145,
+          "sessionOpen": 409.42,
+          "sessionPeak": 414.6,
+          "currentClose": 413.98,
+          "rollingStatus": "VALID",
+          "shockPct": 0.011585380583134162,
+          "shockAtrRatio": 0.47396121502074634,
+          "downsideExcursionPct": 0.010063531173756681,
+          "downsideExcursionAtrRatio": 0.41170192280576196,
+          "realizedMovement60Pct": 0.003453305010687506,
+          "realizedMovement60AtrRatio": 0.1412756902509888,
+          "sessionDrawdownPct": 0.001495417269657512,
+          "sessionDrawdownAtrRatio": 0.06117794586063912,
+          "pathLength60": 0.004157266595547826,
+          "openToCurrentPct": 0.011137707000146602,
+          "peakFromOpenPct": 0.012652044355429659,
+          "acuteCloseDownsidePct": 0,
+          "acuteCloseDownsideAtrRatio": 0
+        },
+        "rsp": {
+          "symbol": "RSP",
+          "date": "2022-06-02",
+          "index": 13,
+          "targetAt": "2022-06-02T16:45:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.02327885056352458,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 148.9065,
+          "trueRange15": 0.30000000000001137,
+          "return15": -0.000715213909399437,
+          "sessionOpen": 147.45,
+          "sessionPeak": 149.09,
+          "currentClose": 148.8,
+          "rollingStatus": "VALID",
+          "shockPct": 0.0020146870687311256,
+          "shockAtrRatio": 0.08654581390233762,
+          "downsideExcursionPct": 0.0007823701450239046,
+          "downsideExcursionAtrRatio": 0.033608624398740426,
+          "realizedMovement60Pct": 0.003069485005998224,
+          "realizedMovement60AtrRatio": 0.13185724087287076,
+          "sessionDrawdownPct": 0.0019451338117914818,
+          "sessionDrawdownAtrRatio": 0.08355798352171624,
+          "pathLength60": 0.004867992497839202,
+          "openToCurrentPct": 0.009155645981688831,
+          "peakFromOpenPct": 0.011122414377755296,
+          "acuteCloseDownsidePct": 0.0007152139093994065,
+          "acuteCloseDownsideAtrRatio": 0.03072376393532371
+        }
+      },
+      {
+        "date": "2022-06-15",
+        "index": 19,
+        "targetAt": "2022-06-15T18:15:00.000Z",
+        "raw": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "effective": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "spy": {
+          "symbol": "SPY",
+          "date": "2022-06-15",
+          "index": 19,
+          "targetAt": "2022-06-15T18:15:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.02622340822138241,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 378.138,
+          "trueRange15": 6.230000000000018,
+          "return15": -0.006315154784761079,
+          "sessionOpen": 377.36,
+          "sessionPeak": 379.98,
+          "currentClose": 375.75,
+          "rollingStatus": "VALID",
+          "shockPct": 0.01647546662858538,
+          "shockAtrRatio": 0.6282732774281942,
+          "downsideExcursionPct": 0.011604229143857473,
+          "downsideExcursionAtrRatio": 0.44251414789003113,
+          "realizedMovement60Pct": 0.007010856080644375,
+          "realizedMovement60AtrRatio": 0.26735106365494343,
+          "sessionDrawdownPct": 0.011132164850781667,
+          "sessionDrawdownAtrRatio": 0.42451251022758235,
+          "pathLength60": 0.011079755367489952,
+          "openToCurrentPct": -0.004266482934068283,
+          "peakFromOpenPct": 0.006942972228111133,
+          "acuteCloseDownsidePct": 0.006315154784761058,
+          "acuteCloseDownsideAtrRatio": 0.24082128194197575
+        },
+        "rsp": {
+          "symbol": "RSP",
+          "date": "2022-06-15",
+          "index": 19,
+          "targetAt": "2022-06-15T18:15:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.02530374664217359,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 135.69,
+          "trueRange15": 2.0900000000000034,
+          "return15": -0.007148647652737816,
+          "sessionOpen": 135.55,
+          "sessionPeak": 136.44,
+          "currentClose": 134.72,
+          "rollingStatus": "VALID",
+          "shockPct": 0.015402756282703246,
+          "shockAtrRatio": 0.608714452468931,
+          "downsideExcursionPct": 0.01142309676468429,
+          "downsideExcursionAtrRatio": 0.45143894800327666,
+          "realizedMovement60Pct": 0.007861181915165405,
+          "realizedMovement60AtrRatio": 0.3106726456888888,
+          "sessionDrawdownPct": 0.01260627381999413,
+          "sessionDrawdownAtrRatio": 0.4981979150464356,
+          "pathLength60": 0.01200340494270924,
+          "openToCurrentPct": -0.006123201770564468,
+          "peakFromOpenPct": 0.006565842862412241,
+          "acuteCloseDownsidePct": 0.00714864765273785,
+          "acuteCloseDownsideAtrRatio": 0.2825134061697901
+        }
+      },
+      {
+        "date": "2022-06-29",
+        "index": 1,
+        "targetAt": "2022-06-29T13:45:00.000Z",
+        "raw": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "effective": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "spy": {
+          "symbol": "SPY",
+          "date": "2022-06-29",
+          "index": 1,
+          "targetAt": "2022-06-29T13:45:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.02546272628964165,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 381.23,
+          "trueRange15": 3.07000000000005,
+          "return15": -0.005665870996511391,
+          "sessionOpen": 381.23,
+          "sessionPeak": 381.72,
+          "currentClose": 379.07,
+          "rollingStatus": "NOT_APPLICABLE_SESSION_WARMUP",
+          "shockPct": 0.008052881462634236,
+          "shockAtrRatio": 0.31626155703170655,
+          "downsideExcursionPct": 0.006767568134721929,
+          "downsideExcursionAtrRatio": 0.26578332805921906,
+          "realizedMovement60Pct": null,
+          "realizedMovement60AtrRatio": null,
+          "sessionDrawdownPct": 0.0069422613433931515,
+          "sessionDrawdownAtrRatio": 0.2726440705690378,
+          "pathLength60": null,
+          "openToCurrentPct": -0.005665870996511391,
+          "peakFromOpenPct": 0.001285313327912263,
+          "acuteCloseDownsidePct": 0.005665870996511358,
+          "acuteCloseDownsideAtrRatio": 0.22251627465422896
+        },
+        "rsp": {
+          "symbol": "RSP",
+          "date": "2022-06-29",
+          "index": 1,
+          "targetAt": "2022-06-29T13:45:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.024356518324561604,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 135.94,
+          "trueRange15": 1.4439999999999884,
+          "return15": -0.009342356922171668,
+          "sessionOpen": 135.94,
+          "sessionPeak": 135.97,
+          "currentClose": 134.67,
+          "rollingStatus": "NOT_APPLICABLE_SESSION_WARMUP",
+          "shockPct": 0.010622333382374493,
+          "shockAtrRatio": 0.4361187112553241,
+          "downsideExcursionPct": 0.010401647785787754,
+          "downsideExcursionAtrRatio": 0.42705807320985295,
+          "realizedMovement60Pct": null,
+          "realizedMovement60AtrRatio": null,
+          "sessionDrawdownPct": 0.009560932558652728,
+          "sessionDrawdownAtrRatio": 0.3925410204877801,
+          "pathLength60": null,
+          "openToCurrentPct": -0.009342356922171668,
+          "peakFromOpenPct": 0.0002206855965867227,
+          "acuteCloseDownsidePct": 0.009342356922171622,
+          "acuteCloseDownsideAtrRatio": 0.38356701059160003
+        }
+      },
+      {
+        "date": "2022-09-08",
+        "index": 11,
+        "targetAt": "2022-09-08T16:15:00.000Z",
+        "raw": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "effective": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "spy": {
+          "symbol": "SPY",
+          "date": "2022-09-08",
+          "index": 11,
+          "targetAt": "2022-09-08T16:15:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.01748317990551614,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 399.49,
+          "trueRange15": 4.2900000000000205,
+          "return15": -0.00876117049237779,
+          "sessionOpen": 395.39,
+          "sessionPeak": 400.86,
+          "currentClose": 395.99,
+          "rollingStatus": "VALID",
+          "shockPct": 0.01073869183208596,
+          "shockAtrRatio": 0.6142298992586459,
+          "downsideExcursionPct": 0.01023805351823583,
+          "downsideExcursionAtrRatio": 0.585594472719783,
+          "realizedMovement60Pct": 0.008943127908514432,
+          "realizedMovement60AtrRatio": 0.511527534284125,
+          "sessionDrawdownPct": 0.012148879908197387,
+          "sessionDrawdownAtrRatio": 0.6948896009680869,
+          "pathLength60": 0.01145935742496107,
+          "openToCurrentPct": 0.0015174890614331193,
+          "peakFromOpenPct": 0.01383444194339778,
+          "acuteCloseDownsidePct": 0.008761170492377781,
+          "acuteCloseDownsideAtrRatio": 0.5011199644301283
+        },
+        "rsp": {
+          "symbol": "RSP",
+          "date": "2022-09-08",
+          "index": 11,
+          "targetAt": "2022-09-08T16:15:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.017184165303366705,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 143.3,
+          "trueRange15": 1.3868999999999971,
+          "return15": -0.007955338450802651,
+          "sessionOpen": 141.69,
+          "sessionPeak": 143.66,
+          "currentClose": 142.16,
+          "rollingStatus": "VALID",
+          "shockPct": 0.009678297278436825,
+          "shockAtrRatio": 0.5632102058830092,
+          "downsideExcursionPct": 0.009351011863224028,
+          "downsideExcursionAtrRatio": 0.5441644501285138,
+          "realizedMovement60Pct": 0.008119097070413632,
+          "realizedMovement60AtrRatio": 0.47247549863960786,
+          "sessionDrawdownPct": 0.010441319782820549,
+          "sessionDrawdownAtrRatio": 0.6076128574470182,
+          "pathLength60": 0.010185542191805896,
+          "openToCurrentPct": 0.0033171007128238728,
+          "peakFromOpenPct": 0.013903592349495453,
+          "acuteCloseDownsidePct": 0.007955338450802615,
+          "acuteCloseDownsideAtrRatio": 0.46294587548247185
+        }
+      },
+      {
+        "date": "2022-10-25",
+        "index": 9,
+        "targetAt": "2022-10-25T15:45:00.000Z",
+        "raw": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "effective": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "spy": {
+          "symbol": "SPY",
+          "date": "2022-10-25",
+          "index": 9,
+          "targetAt": "2022-10-25T15:45:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.023827852620837267,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 383.26,
+          "trueRange15": 5.187800000000038,
+          "return15": 0.0012785054532171714,
+          "sessionOpen": 378.79,
+          "sessionPeak": 383.86,
+          "currentClose": 383.75,
+          "rollingStatus": "VALID",
+          "shockPct": 0.013535980796326353,
+          "shockAtrRatio": 0.568073884446022,
+          "downsideExcursionPct": 0.011970463914835923,
+          "downsideExcursionAtrRatio": 0.5023727528165022,
+          "realizedMovement60Pct": 0.0024869505896965146,
+          "realizedMovement60AtrRatio": 0.10437157847458298,
+          "sessionDrawdownPct": 0.00028656280935761383,
+          "sessionDrawdownAtrRatio": 0.0120263799645553,
+          "pathLength60": 0.004495248576109612,
+          "openToCurrentPct": 0.013094326671770684,
+          "peakFromOpenPct": 0.01338472504553967,
+          "acuteCloseDownsidePct": 0,
+          "acuteCloseDownsideAtrRatio": 0
+        },
+        "rsp": {
+          "symbol": "RSP",
+          "date": "2022-10-25",
+          "index": 9,
+          "targetAt": "2022-10-25T15:45:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.02374721792271328,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 136.19,
+          "trueRange15": 0.31329999999999814,
+          "return15": 0.0019825244144211496,
+          "sessionOpen": 134.36,
+          "sessionPeak": 136.4733,
+          "currentClose": 136.46,
+          "rollingStatus": "VALID",
+          "shockPct": 0.002300462589030018,
+          "shockAtrRatio": 0.09687293040039507,
+          "downsideExcursionPct": 0.00022028049049123384,
+          "downsideExcursionAtrRatio": 0.009276054618614681,
+          "realizedMovement60Pct": 0.0032260014967806306,
+          "realizedMovement60AtrRatio": 0.13584755516540264,
+          "sessionDrawdownPct": 0.00009745496005436057,
+          "sessionDrawdownAtrRatio": 0.004103847464218061,
+          "pathLength60": 0.005744926246288751,
+          "openToCurrentPct": 0.015629651682048218,
+          "peakFromOpenPct": 0.015728639476034312,
+          "acuteCloseDownsidePct": 0,
+          "acuteCloseDownsideAtrRatio": 0
+        }
+      },
+      {
+        "date": "2022-10-25",
+        "index": 16,
+        "targetAt": "2022-10-25T17:30:00.000Z",
+        "raw": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "effective": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "spy": {
+          "symbol": "SPY",
+          "date": "2022-10-25",
+          "index": 16,
+          "targetAt": "2022-10-25T17:30:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.023827852620837267,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 382.69,
+          "trueRange15": 4.4290000000000305,
+          "return15": 0.0007577935143328052,
+          "sessionOpen": 378.79,
+          "sessionPeak": 384.21,
+          "currentClose": 382.98,
+          "rollingStatus": "VALID",
+          "shockPct": 0.011573336120619903,
+          "shockAtrRatio": 0.4857062155277523,
+          "downsideExcursionPct": 0.010501972876218364,
+          "downsideExcursionAtrRatio": 0.440743571958913,
+          "realizedMovement60Pct": 0.0019567741255522423,
+          "realizedMovement60AtrRatio": 0.08212129547255378,
+          "sessionDrawdownPct": 0.003201374248457774,
+          "sessionDrawdownAtrRatio": 0.13435429114825892,
+          "pathLength60": 0.003365837634001001,
+          "openToCurrentPct": 0.0110615380553869,
+          "peakFromOpenPct": 0.014308719871168663,
+          "acuteCloseDownsidePct": 0,
+          "acuteCloseDownsideAtrRatio": 0
+        },
+        "rsp": {
+          "symbol": "RSP",
+          "date": "2022-10-25",
+          "index": 16,
+          "targetAt": "2022-10-25T17:30:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.02374721792271328,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 136.18,
+          "trueRange15": 0.21999999999999886,
+          "return15": 0.0003671611102951111,
+          "sessionOpen": 134.36,
+          "sessionPeak": 136.685,
+          "currentClose": 136.23,
+          "rollingStatus": "VALID",
+          "shockPct": 0.0016155088852988608,
+          "shockAtrRatio": 0.06802939571939036,
+          "downsideExcursionPct": 0.0008811866647085075,
+          "downsideExcursionAtrRatio": 0.03710694311966907,
+          "realizedMovement60Pct": 0.0017336536757560652,
+          "realizedMovement60AtrRatio": 0.07300449599605072,
+          "sessionDrawdownPct": 0.003328821743424754,
+          "sessionDrawdownAtrRatio": 0.14017733589924516,
+          "pathLength60": 0.002566268039336239,
+          "openToCurrentPct": 0.013917832688299825,
+          "peakFromOpenPct": 0.017304257219410424,
+          "acuteCloseDownsidePct": 0,
+          "acuteCloseDownsideAtrRatio": 0
+        }
+      },
+      {
+        "date": "2022-10-25",
+        "index": 23,
+        "targetAt": "2022-10-25T19:15:00.000Z",
+        "raw": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "effective": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "spy": {
+          "symbol": "SPY",
+          "date": "2022-10-25",
+          "index": 23,
+          "targetAt": "2022-10-25T19:15:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.023827852620837267,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 383.55,
+          "trueRange15": 5.73780000000005,
+          "return15": 0.0022161387042105574,
+          "sessionOpen": 378.79,
+          "sessionPeak": 384.46,
+          "currentClose": 384.4,
+          "rollingStatus": "VALID",
+          "shockPct": 0.014959718420023594,
+          "shockAtrRatio": 0.6278248677323713,
+          "downsideExcursionPct": 0.012717507495763359,
+          "downsideExcursionAtrRatio": 0.5337244483643482,
+          "realizedMovement60Pct": 0.0027838667506827814,
+          "realizedMovement60AtrRatio": 0.1168324647202288,
+          "sessionDrawdownPct": 0.0001560630494719926,
+          "sessionDrawdownAtrRatio": 0.006549606125040269,
+          "pathLength60": 0.004900665722147091,
+          "openToCurrentPct": 0.014810317062224243,
+          "peakFromOpenPct": 0.014968716175189245,
+          "acuteCloseDownsidePct": 0,
+          "acuteCloseDownsideAtrRatio": 0
+        },
+        "rsp": {
+          "symbol": "RSP",
+          "date": "2022-10-25",
+          "index": 23,
+          "targetAt": "2022-10-25T19:15:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.02374721792271328,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 136.4,
+          "trueRange15": 0.32749999999998636,
+          "return15": 0.0023460410557183398,
+          "sessionOpen": 134.36,
+          "sessionPeak": 136.7275,
+          "currentClose": 136.72,
+          "rollingStatus": "VALID",
+          "shockPct": 0.0024010263929617765,
+          "shockAtrRatio": 0.10110769188946926,
+          "downsideExcursionPct": 0,
+          "downsideExcursionAtrRatio": 0,
+          "realizedMovement60Pct": 0.002681664859518457,
+          "realizedMovement60AtrRatio": 0.1129254327073636,
+          "sessionDrawdownPct": 0.00005485363222463059,
+          "sessionDrawdownAtrRatio": 0.002309897201565041,
+          "pathLength60": 0.004398295421249254,
+          "openToCurrentPct": 0.01756475141411129,
+          "peakFromOpenPct": 0.017620571598689905,
+          "acuteCloseDownsidePct": 0,
+          "acuteCloseDownsideAtrRatio": 0
+        }
+      },
+      {
+        "date": "2025-04-08",
+        "index": 1,
+        "targetAt": "2025-04-08T13:45:00.000Z",
+        "raw": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "effective": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "spy": {
+          "symbol": "SPY",
+          "date": "2025-04-08",
+          "index": 1,
+          "targetAt": "2025-04-08T13:45:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.02883409803101439,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 521.86,
+          "trueRange15": 4.3799999999999955,
+          "return15": -0.004177173954700408,
+          "sessionOpen": 521.86,
+          "sessionPeak": 522.17,
+          "currentClose": 519.6801,
+          "rollingStatus": "NOT_APPLICABLE_SESSION_WARMUP",
+          "shockPct": 0.008393055608783955,
+          "shockAtrRatio": 0.29108091398441727,
+          "downsideExcursionPct": 0.007799026558847296,
+          "downsideExcursionAtrRatio": 0.2704792967846105,
+          "realizedMovement60Pct": null,
+          "realizedMovement60AtrRatio": null,
+          "sessionDrawdownPct": 0.004768370454066531,
+          "sessionDrawdownAtrRatio": 0.16537262406951658,
+          "pathLength60": null,
+          "openToCurrentPct": -0.004177173954700408,
+          "peakFromOpenPct": 0.0005940290499366618,
+          "acuteCloseDownsidePct": 0.0041771739547004465,
+          "acuteCloseDownsideAtrRatio": 0.1448692430124714
+        },
+        "rsp": {
+          "symbol": "RSP",
+          "date": "2025-04-08",
+          "index": 1,
+          "targetAt": "2025-04-08T13:45:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.025728351965745452,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 160.33,
+          "trueRange15": 2,
+          "return15": -0.005363936880184661,
+          "sessionOpen": 160.33,
+          "sessionPeak": 160.62,
+          "currentClose": 159.47,
+          "rollingStatus": "NOT_APPLICABLE_SESSION_WARMUP",
+          "shockPct": 0.012474271814382834,
+          "shockAtrRatio": 0.48484535002440077,
+          "downsideExcursionPct": 0.010665502401297372,
+          "downsideExcursionAtrRatio": 0.4145427742708646,
+          "realizedMovement60Pct": null,
+          "realizedMovement60AtrRatio": null,
+          "sessionDrawdownPct": 0.007159755945710408,
+          "sessionDrawdownAtrRatio": 0.2782827269792817,
+          "pathLength60": null,
+          "openToCurrentPct": -0.005363936880184661,
+          "peakFromOpenPct": 0.001808769413085498,
+          "acuteCloseDownsidePct": 0.0053639368801847035,
+          "acuteCloseDownsideAtrRatio": 0.20848350051049563
+        }
+      },
+      {
+        "date": "2025-04-09",
+        "index": 21,
+        "targetAt": "2025-04-09T18:45:00.000Z",
+        "raw": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "effective": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "spy": {
+          "symbol": "SPY",
+          "date": "2025-04-09",
+          "index": 21,
+          "targetAt": "2025-04-09T18:45:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.032353979263080576,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 538.15,
+          "trueRange15": 7.259999999999991,
+          "return15": -0.008882281891665844,
+          "sessionOpen": 493.44,
+          "sessionPeak": 539.87,
+          "currentClose": 533.37,
+          "rollingStatus": "VALID",
+          "shockPct": 0.013490662454705921,
+          "shockAtrRatio": 0.41697073318274147,
+          "downsideExcursionPct": 0.010294527548081323,
+          "downsideExcursionAtrRatio": 0.3181842784893079,
+          "realizedMovement60Pct": 0.020303759624463215,
+          "realizedMovement60AtrRatio": 0.6275506162431161,
+          "sessionDrawdownPct": 0.012039935540037416,
+          "sessionDrawdownAtrRatio": 0.3721315218179761,
+          "pathLength60": 0.0333793260775882,
+          "openToCurrentPct": 0.08092169260700399,
+          "peakFromOpenPct": 0.09409452010376129,
+          "acuteCloseDownsidePct": 0.008882281891665842,
+          "acuteCloseDownsideAtrRatio": 0.2745344496712803
+        },
+        "rsp": {
+          "symbol": "RSP",
+          "date": "2025-04-09",
+          "index": 21,
+          "targetAt": "2025-04-09T18:45:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.028978532135014924,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 164.42,
+          "trueRange15": 2.219999999999999,
+          "return15": -0.009731176255929896,
+          "sessionOpen": 151.24,
+          "sessionPeak": 164.9,
+          "currentClose": 162.82,
+          "rollingStatus": "VALID",
+          "shockPct": 0.01350200705510278,
+          "shockAtrRatio": 0.46593136575017297,
+          "downsideExcursionPct": 0.010582654178323688,
+          "downsideExcursionAtrRatio": 0.3651894488312128,
+          "realizedMovement60Pct": 0.01993857326575649,
+          "realizedMovement60AtrRatio": 0.6880463500656266,
+          "sessionDrawdownPct": 0.012613705275924878,
+          "sessionDrawdownAtrRatio": 0.4352775777998661,
+          "pathLength60": 0.033288550506141656,
+          "openToCurrentPct": 0.0765670457550911,
+          "peakFromOpenPct": 0.09032002115842364,
+          "acuteCloseDownsidePct": 0.009731176255929902,
+          "acuteCloseDownsideAtrRatio": 0.3358063897298534
+        }
+      },
+      {
+        "date": "2025-04-10",
+        "index": 1,
+        "targetAt": "2025-04-10T13:45:00.000Z",
+        "raw": {
+          "originalB": 0,
+          "currentClose": 0,
+          "absoluteHigh": 0
+        },
+        "effective": {
+          "originalB": 0,
+          "currentClose": 0,
+          "absoluteHigh": 0
+        },
+        "spy": {
+          "symbol": "SPY",
+          "date": "2025-04-10",
+          "index": 1,
+          "targetAt": "2025-04-10T13:45:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.034422778597591,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 532.17,
+          "trueRange15": 4.985000000000014,
+          "return15": -0.003870943495499435,
+          "sessionOpen": 532.17,
+          "sessionPeak": 533.495,
+          "currentClose": 530.11,
+          "rollingStatus": "NOT_APPLICABLE_SESSION_WARMUP",
+          "shockPct": 0.009367307439352114,
+          "shockAtrRatio": 0.2721252560363522,
+          "downsideExcursionPct": 0.006877501550256438,
+          "downsideExcursionAtrRatio": 0.19979507263651705,
+          "realizedMovement60Pct": null,
+          "realizedMovement60AtrRatio": null,
+          "sessionDrawdownPct": 0.006344951686520006,
+          "sessionDrawdownAtrRatio": 0.18432421626080014,
+          "pathLength60": null,
+          "openToCurrentPct": -0.003870943495499435,
+          "peakFromOpenPct": 0.002489805889095642,
+          "acuteCloseDownsidePct": 0.003870943495499456,
+          "acuteCloseDownsideAtrRatio": 0.11245296438011415
+        },
+        "rsp": {
+          "symbol": "RSP",
+          "date": "2025-04-10",
+          "index": 1,
+          "targetAt": "2025-04-10T13:45:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.031435720319820525,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 162.15,
+          "trueRange15": 1.8408000000000015,
+          "return15": -0.007153869873573804,
+          "sessionOpen": 162.15,
+          "sessionPeak": 162.3008,
+          "currentClose": 160.99,
+          "rollingStatus": "NOT_APPLICABLE_SESSION_WARMUP",
+          "shockPct": 0.011352451433857548,
+          "shockAtrRatio": 0.36113221896492437,
+          "downsideExcursionPct": 0.010422448350292924,
+          "downsideExcursionAtrRatio": 0.33154794114011343,
+          "realizedMovement60Pct": null,
+          "realizedMovement60AtrRatio": null,
+          "sessionDrawdownPct": 0.008076361915652914,
+          "sessionDrawdownAtrRatio": 0.256916712373239,
+          "pathLength60": null,
+          "openToCurrentPct": -0.007153869873573804,
+          "peakFromOpenPct": 0.0009300030835646123,
+          "acuteCloseDownsidePct": 0.00715386987357383,
+          "acuteCloseDownsideAtrRatio": 0.22757136788315444
+        }
+      },
+      {
+        "date": "2025-04-10",
+        "index": 22,
+        "targetAt": "2025-04-10T19:00:00.000Z",
+        "raw": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "effective": {
+          "originalB": 1,
+          "currentClose": 1,
+          "absoluteHigh": 1
+        },
+        "spy": {
+          "symbol": "SPY",
+          "date": "2025-04-10",
+          "index": 22,
+          "targetAt": "2025-04-10T19:00:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.034422778597591,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 529.48,
+          "trueRange15": 5.959999999999923,
+          "return15": -0.0064402810304449165,
+          "sessionOpen": 532.17,
+          "sessionPeak": 533.495,
+          "currentClose": 526.07,
+          "rollingStatus": "VALID",
+          "shockPct": 0.01125632696230249,
+          "shockAtrRatio": 0.3270022764254783,
+          "downsideExcursionPct": 0.011161894689128897,
+          "downsideExcursionAtrRatio": 0.32425896873734755,
+          "realizedMovement60Pct": 0.01707744251106497,
+          "realizedMovement60AtrRatio": 0.4961087746780586,
+          "sessionDrawdownPct": 0.013917656210461118,
+          "sessionDrawdownAtrRatio": 0.4043153045011629,
+          "pathLength60": 0.02921340878550127,
+          "openToCurrentPct": -0.011462502583760692,
+          "peakFromOpenPct": 0.002489805889095642,
+          "acuteCloseDownsidePct": 0.006440281030444904,
+          "acuteCloseDownsideAtrRatio": 0.1870935843306854
+        },
+        "rsp": {
+          "symbol": "RSP",
+          "date": "2025-04-10",
+          "index": 22,
+          "targetAt": "2025-04-10T19:00:00.000Z",
+          "closing": false,
+          "priorAtr14Pct": 0.031435720319820525,
+          "status": "VALID",
+          "issues": [],
+          "referencePrice": 161.23,
+          "trueRange15": 1.8149999999999977,
+          "return15": -0.0068845748309867005,
+          "sessionOpen": 162.15,
+          "sessionPeak": 162.3008,
+          "currentClose": 160.12,
+          "rollingStatus": "VALID",
+          "shockPct": 0.01125721019661352,
+          "shockAtrRatio": 0.3581025051147227,
+          "downsideExcursionPct": 0.011040129008249093,
+          "downsideExcursionAtrRatio": 0.35119694716485267,
+          "realizedMovement60Pct": 0.016437128914555434,
+          "realizedMovement60AtrRatio": 0.5228806194776986,
+          "sessionDrawdownPct": 0.013436779116307527,
+          "sessionDrawdownAtrRatio": 0.4274366542138851,
+          "pathLength60": 0.028680873892013237,
+          "openToCurrentPct": -0.012519272278754268,
+          "peakFromOpenPct": 0.0009300030835646123,
+          "acuteCloseDownsidePct": 0.006884574830986698,
+          "acuteCloseDownsideAtrRatio": 0.21900483783875335
+        }
+      }
+    ]
+  }
+}

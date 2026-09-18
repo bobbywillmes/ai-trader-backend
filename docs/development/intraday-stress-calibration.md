@@ -2,7 +2,9 @@
 
 Research recorded **2026-09-18**, on `research/intraday-stress-v1`. This is descriptive market-data research, not a production definition or trading backtest. No publisher, assessment writes, schema changes, migrations, UI, or trading integrations were added.
 
-**Recommendation:** retain all three measurements, SPY + RSP, one all-session threshold ladder, and two-assessment recovery. **Candidate B is the preferred provisional V1 candidate. Do not freeze its SEVERE interpretation yet.** The experiment exposed two material limitations: isolated intrabar extremes can label an already-recovered market SEVERE, and a high prior ATR can leave objectively large, sub-emergency drawdowns ELEVATED. These are findings of the bounded hypothesis test, not reasons to silently introduce an untested fourth candidate.
+**Final bounded recommendation:** Candidate B can now be frozen with **current-close acute SEVERE** and the fixed **1% acute closing downside / 2.5% session drawdown HIGH safeguards**. All previously fixed instruments, general thresholds, session rules, ATR semantics, aggregation, and two-confirmation recovery remain unchanged. See [the final semantic clarification](#final-semantic-clarification-and-freeze-recommendation). This is a research recommendation, not productionization or trading authority.
+
+**Original recommendation at `8a5514b` (preserved history):** retain all three measurements, SPY + RSP, one all-session threshold ladder, and two-assessment recovery. Candidate B was the preferred provisional V1 candidate, with its SEVERE interpretation not ready to freeze. The original experiment exposed two material limitations: isolated intrabar extremes could label an already-recovered market SEVERE, and a high prior ATR could leave objectively large, sub-emergency drawdowns ELEVATED. The original findings and artifacts below are retained; the final section resolves those two semantic questions through the single authorized comparison, without another candidate ladder.
 
 The full quantitative appendix is [tables.md](intraday-stress/tables.md). [coverage.json](intraday-stress/coverage.json), [distributions.csv](intraday-stress/distributions.csv), [representative-targets.csv](intraday-stress/representative-targets.csv), and [diagnostics.json](intraday-stress/diagnostics.json) provide inspectable evidence. The appendix is part of this report: it contains every requested quantile, the 24-session table, all candidate frequencies, boundary examples, and persistence results.
 
@@ -230,7 +232,7 @@ For an isolated SEVERE followed only by NORMAL, two confirmations require six su
 12. **Two versus three recovery?** Prefer two. Three increases HIGH+ median duration by 15 minutes and prolongs false/transient events without established benefit.
 13. **Provider/coverage concerns?** Yes: rolling entitlement truncation, unavailable early-2021 history, final historical bars versus real-time availability, extreme transient prints, and daily volume revisions. Interior expected regular-session continuity is complete in the usable sample.
 
-## Recommended provisional algorithm and freeze conditions
+## Original provisional algorithm and freeze conditions (8a5514b)
 
 The proposed V1 shape is **SPY/RSP, MINUTE_15, prior-session split-normalized Wilder ATR14, the exact three formulas above, Candidate B's independent ladders, max aggregation, downside-only dual collapse channels, and two-assessment per-step recovery with a daily reset**. Keep one ladder across the session. Exclude the closing bar from authoritative targets. Warm-up is structurally inapplicable; other missing evidence fails closed. Keep path length, open return, QQQ/IWM, and one-minute audits diagnostic only.
 
@@ -263,3 +265,143 @@ Validation: targeted formula/provider tests; `npm.cmd run check`; `npm.cmd test 
 ### Calendar sources
 
 The existing verified closure list is reused, including the separately sourced January 9, 2025 closure. Early-close times were checked against NYSE's published releases: [2021–2023](https://ir.theice.com/press/news-details/2020/NYSE-Group-Announces-2021-2022-and-2023-Holiday-and-Early-Closings-Calendar/default.aspx) and [2024–2026](https://ir.theice.com/press/news-details/2023/NYSE-Group-Announces-2024-2025-and-2026-Holiday-and-Early-Closings-Calendar/default.aspx). They supply the 13:00 ET early-close overlay; no calendar records were inserted or updated.
+
+## Final semantic clarification and freeze recommendation
+
+This final, narrow comparison uses the **same cached dataset** and the same 30,905 valid actionable market targets across 1,241 sessions. There were **zero provider requests and zero database operations**. The original Candidate B raw and two-confirmation effective counts, dataset identifier, and 164-target / 41-session concern set reproduce exactly. Original A/B/C artifacts are unchanged. Only the three requested interpretations are compared:
+
+1. **Original Candidate B:** intrabar-low acute collapse, as recorded at `8a5514b`.
+2. **Revised semantic test:** the same thresholds, with acute SEVERE evaluated on current-close downside.
+3. **Final recommendation:** interpretation 2 plus the two fixed absolute HIGH safeguards. This is not Candidate D.
+
+### Current-close evidence and SEVERE result
+
+The additional measurement is:
+
+```text
+acuteCloseDownsidePct = max(0, referencePrice - currentClose) / referencePrice
+acuteCloseDownsideAtrRatio = acuteCloseDownsidePct / priorAtr14Pct
+```
+
+`referencePrice` remains the regular-session open for the first interval and the previous contiguous 15-minute close thereafter. The session-frozen ATR fraction and missing-evidence rules are unchanged. The original intrabar downside excursion remains intact as explanatory evidence; the low still contributes to true-range shock. No one-minute data, persistence-within-bar test, or trade-condition filter enters classification.
+
+| Interpretation | Raw SEVERE targets / sessions | Effective SEVERE targets / sessions |
+| --- | ---: | ---: |
+| Original B | 34 / 10 | 42 / 10 |
+| Current-close acute SEVERE | 33 / 9 | 40 / 9 |
+| Current-close SEVERE plus absolute HIGH | 33 / 9 | 40 / 9 |
+
+**Only 2021-12-07 index 23 (15:15 ET) disappears from raw SEVERE. No new SEVERE target appears.** Its precise previous-close reference is **468.18**, rather than the approximately 468.17 bar open. The 467.925 assessment close gives **0.054466% / 0.039378 ATR** of acute closing downside, versus the preserved low excursion of **2.034559% / 1.470939 ATR**. It remains HIGH through its 1.524987-ATR true-range shock. The unchanged recovery rule consequently removes two effective SEVERE targets on that date.
+
+**2021-12-02 remains HIGH, with zero raw/effective SEVERE targets in all three interpretations.** Its low excursion triggered original Candidate A, not Candidate B; the comparison does not incorrectly claim to remove a B SEVERE that never existed.
+
+All other original B SEVERE targets and their per-session counts remain:
+
+| Session | Raw SEVERE targets, original → final | Effective SEVERE targets, original → final |
+| --- | ---: | ---: |
+| 2022-05-20 | 1 → 1 | 2 → 2 |
+| 2022-11-02 | 2 → 2 | 2 → 2 |
+| 2024-12-18 | 1 → 1 | 1 → 1 |
+| 2025-04-07 | 13 → 13 | 16 → 16 |
+| 2025-04-08 | 8 → 8 | 9 → 9 |
+| 2025-04-10 | 1 → 1 | 2 → 2 |
+| 2025-10-10 | 3 → 3 | 3 → 3 |
+| 2025-11-20 | 1 → 1 | 1 → 1 |
+| 2026-06-09 | 3 → 3 | 4 → 4 |
+
+The current-close acute condition can only shrink the original acute event set, because a valid bar's close cannot lie below its low. The replay explicitly checks that no new SEVERE targets appear and that the absolute HIGH safeguards leave the revised SEVERE set identical.
+
+### Fixed absolute HIGH safeguards
+
+The only tested safeguard is `acuteCloseDownsidePct >= 0.01 OR sessionDrawdownPct >= 0.025`, evaluated independently for each instrument. It raises general severity to at least HIGH; it never independently creates SEVERE.
+
+It upgrades **153 raw market targets across 35 sessions** relative to interpretation 2: **11 NORMAL → HIGH** and **142 ELEVATED → HIGH**. Six targets qualify through acute closing downside alone, 146 through session drawdown alone, and one through both channels. Seventeen upgraded raw targets were already effective HIGH/SEVERE due to the frozen recovery rule; raw upgrades are not presented as 153 entirely new effective alerts.
+
+| Interpretation / state basis | NORMAL | ELEVATED | HIGH | SEVERE |
+| --- | ---: | ---: | ---: | ---: |
+| Original B, raw | 88.9662% | 9.9045% | 1.0193% | 0.1100% |
+| Current-close test, raw | 88.9662% | 9.9045% | 1.0225% | 0.1068% |
+| **Final recommendation, raw** | **88.9306%** | **9.4451%** | **1.5176%** | **0.1068%** |
+| Original B, effective | 85.1707% | 13.2212% | 1.4723% | 0.1359% |
+| Current-close test, effective | 85.1707% | 13.2244% | 1.4755% | 0.1294% |
+| **Final recommendation, effective** | **85.1092%** | **12.7617%** | **1.9997%** | **0.1294%** |
+
+The safeguards repair **153 of the original 164 concern targets (93.29%)**, in **35 of the original 41 sessions**. All original concern targets are resolved in 33 sessions; two sessions are partly resolved; six receive no upgrade. The remaining **11 targets across eight sessions** are recovered-low-only concerns: every current closing downside is below 1%, and every current session drawdown is below 2.5%. They should not be forced to HIGH under the clarified meaning. “Unresolved” in the artifact means below the new thresholds, not an unexplained classification defect.
+
+| Remaining original concern | Index / target ET | Maximum closing downside | Maximum session drawdown |
+| --- | --- | ---: | ---: |
+| 2022-06-02 | 13 / 12:45 | 0.072% | 0.195% |
+| 2022-06-15 | 19 / 14:15 | 0.715% | 1.261% |
+| 2022-06-29 | 1 / 09:45 | 0.934% | 0.956% |
+| 2022-09-08 | 11 / 12:15 | 0.876% | 1.215% |
+| 2022-10-25 | 9 / 11:45; 16 / 13:30; 23 / 15:15 | 0% at each | 0.333% maximum |
+| 2025-04-08 | 1 / 09:45 | 0.536% | 0.716% |
+| 2025-04-09 | 21 / 14:45 | 0.973% | 1.261% |
+| 2025-04-10 | 1 / 09:45; 22 / 15:00 | 0.715% maximum | 1.392% maximum |
+
+The **2022-05-20 13:15 ET** example is repaired: current SPY/RSP peak drawdowns of **3.851% / 2.855%** now make raw market state HIGH despite the 1.434-ATR SPY drawdown. No higher normalized threshold, background-volatility assessment row, or alternative instrument was needed.
+
+### Inspection of all upgrades and population effects
+
+All **153** upgraded targets were inspected, including both instruments' closing downside, intrabar excursion, peak drawdown, ATR, and open-to-current return. The complete deterministic [upgrade CSV](intraday-stress/semantic-high-upgrades.csv) retains that evidence and every before/after raw/effective state. No upgraded target qualifies solely because of an intrabar low. No obviously inappropriate new HIGH was identified under the specified current-downside definition.
+
+Representative and boundary examples are:
+
+| Target ET | Current evidence behind upgrade | Original raw → final raw | Interpretation |
+| --- | --- | --- | --- |
+| 2022-05-06 09:45 | RSP closing downside 1.021858%; prior ATR 2.246% | ELEVATED → HIGH | Near the fixed 1% acute boundary; first-bar reference is session open, not overnight close. |
+| 2022-12-22 13:00 | SPY drawdown 2.502088%; RSP 1.621890% | ELEVATED → HIGH | Closest upgraded drawdown-only target to the 2.5% boundary; one instrument is sufficient. |
+| 2022-05-20 13:15 | SPY/RSP drawdown 3.851094% / 2.854738% | ELEVATED → HIGH | Documented high-ATR blind spot repaired. |
+| 2025-04-10 12:15 | SPY/RSP drawdown 3.227772% / 3.142806% | NORMAL → HIGH | An objectively large current drawdown was normalized away in the turbulent background. |
+| 2025-04-11 10:30 | SPY closing downside 1.068752%; prior ATR 3.878% | NORMAL → HIGH | Acute close-based safeguard contributes independently of session drawdown. |
+| 2025-04-07 15:00 | SPY/RSP drawdown 3.815203% / 3.741728%; open returns still +2.866% / +1.302% | ELEVATED → HIGH | Large current peak loss after a major rally; positive open return does not invalidate it. |
+
+There are **six** upgraded targets whose triggering instrument remains above its session open, all on **2025-04-07**. Their several-percent peak losses fit the explicit reversal semantics. No ordinary small rally giveback is promoted merely because its normalized ratio looks large; the new safeguard requires the stated absolute loss. Some upgrades occur on flat or recovering individual bars while the current peak drawdown remains at least 2.5%, for example 2022-01-26 15:30. That is intended session-drawdown state, not proof of ongoing acceleration, and is the principal interpretation caveat to retain.
+
+Upgrades by year are **0 / 120 / 1 / 0 / 32 / 0** for 2021–2026, affecting **0 / 28 / 1 / 0 / 6 / 0** sessions. There are **5** opening upgrades in five sessions and **148** later upgrades in 31 sessions (one session appears in both groups). Quiet-ATR periods receive **zero** upgrades; high-ATR periods receive **133** in 24 sessions; middle-ATR periods receive **20** in 11 sessions. These use the existing strata: opening indices 1–4, quiet when both prior ATRs are below 1%, high when either is at least 2%. The safeguards predominantly act where ATR normalization was intended to be complemented, rather than flooding quiet sessions with HIGH.
+
+The [updated appendix](intraday-stress/tables.md#final-bounded-semantic-clarification) supplies denominators and full raw/effective state distributions for every year and each time-of-day/ATR group. The two-confirmation recovery rule was applied exactly as frozen; no three-confirmation alternative or new recovery behavior was evaluated here.
+
+### Exact proposed final V1 semantics
+
+**Recommend freezing this revised Candidate B definition.** The two identified defects have bounded, explainable resolutions without recalibrating the fixed general ladder:
+
+```text
+For each of SPY and RSP at each eligible regular-session MINUTE_15 target:
+  Compute the original three measurements with the prior-session frozen ATR.
+  General severity is the maximum of:
+    shock:      NORMAL < 0.40 ATR; ELEVATED >= 0.40; HIGH >= 0.70
+    rolling60:  NORMAL < 0.45 ATR; ELEVATED >= 0.45; HIGH >= 0.80
+    drawdown:   NORMAL < 1.00 ATR; ELEVATED >= 1.00; HIGH >= 1.75
+    HIGH if acuteCloseDownsidePct >= 0.01 OR sessionDrawdownPct >= 0.025
+
+  acuteCollapse = (acuteCloseDownsideAtrRatio >= 1.20
+                   AND acuteCloseDownsidePct >= 0.02)
+                  OR acuteCloseDownsidePct >= 0.03
+  sessionCollapse = (sessionDrawdownAtrRatio >= 2.50
+                     AND sessionDrawdownPct >= 0.025)
+                    OR sessionDrawdownPct >= 0.04
+  Instrument raw state = SEVERE if either collapse predicate; otherwise general.
+
+Market raw state = worse(SPY raw, RSP raw).
+Market effective state:
+  Start each session from its raw state.
+  Worsen immediately, including multi-state jumps.
+  Recover one level after two consecutive lower raw assessments.
+  Reset confirmation after each recovery step, equality, or worsening.
+  Never carry effective state or confirmation across sessions.
+```
+
+The first three rolling windows remain structurally inapplicable, rather than missing. Other required-evidence failures remain unavailable; the research convention resets recovery confirmation across gaps. The final closing bar stays outside actionable targets, calendar exceptions remain authoritative, and the five-minute grace/validity concept is unchanged. Intrabar lows and their excursion ratios remain explanatory evidence and still affect true-range shock. QQQ/IWM remain diagnostic-only. There are no new inputs or absolute thresholds beyond the two pre-specified HIGH safeguards.
+
+“Current” here means the latest completed 15-minute close, not a real-time price during the subsequent five-minute evidence grace. Effective state can remain above raw because recovery is deliberately delayed. These are existing sampling/recovery semantics, not defects introduced by this clarification. The historical sample still cannot prove universal event detection or historical availability at the live grace boundary; provider corrections and finite crisis coverage remain limitations. No new unresolved semantic defect was found that warrants blocking this bounded freeze recommendation or inventing another rule.
+
+Reproduce this clarification, including the generated appendix section, with:
+
+```powershell
+npm.cmd run analyze:intraday-stress -- --semantic-clarification
+```
+
+This mode reads only cached measurements and recorded report artifacts. It validates the original dataset/counts before writing `semantic-clarification.json`, `semantic-high-upgrades.csv`, and the appended table section. It preserves original candidate outputs. Focused tests cover current-close arithmetic, original evidence preservation, strict references/gaps, inclusive fixed thresholds, recovered lows, session collapse above open, max aggregation, and per-session two-confirmation recovery.
+
+Clarification validation passed: **24 focused research tests**, `npm.cmd run check`, `npm.cmd run build`, and `npm.cmd test -- --maxWorkers=2` (**190 files / 2,065 tests passed; 8 files / 134 tests skipped** by existing guards). The comparison replay verifies original B raw/effective counts and the original concern set before emitting artifacts. No schema, migration, publisher, worker, route, UI, production regime consumer, or trading behavior was added or changed.

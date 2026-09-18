@@ -216,8 +216,9 @@ Massive bars locally and reads the database under a read-only transaction; it mu
 never publish assessments or enter trading pipelines. Research reuses pure daily
 Wilder ATR and split normalization, freezes the prior-session baseline, enforces
 regular-session continuity, and excludes the closing bar from actionable targets.
-Candidate B is provisional: recovered extreme prints and high-ATR absolute-move
-understatement remain explicit freeze questions. See
+The final research clarification recommends freezing Candidate B with current-close
+acute collapse and fixed absolute HIGH safeguards (1% closing downside / 2.5% session
+drawdown). The original low-excursion evidence and comparison remain preserved. See
 `docs/development/intraday-stress-calibration.md`. No production authority is granted.
 
 Market data, Trend calibration, and authoritative TREND_V1 publication are account-independent.

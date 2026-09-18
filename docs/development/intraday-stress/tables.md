@@ -212,3 +212,59 @@ Nearest observed values on each side; no rounding is used for classification. A 
 | A | 1241 | 78.646 | 16.197 | 4.110 | 1.048 |
 | B | 1241 | 84.367 | 12.329 | 2.740 | 0.564 |
 | C | 1241 | 88.074 | 10.073 | 1.531 | 0.322 |
+
+<!-- INTRADAY_SEMANTIC_CLARIFICATION_START -->
+## Final bounded semantic clarification
+
+Original Candidate B is preserved above. This comparison changes only acute SEVERE to current-close downside, then adds the fixed 1% acute-close / 2.5% session-drawdown HIGH safeguards. No other ladder or recovery rule is recalibrated. All counts below are market targets (SPY/RSP max), not instrument-targets. All effective states use two confirmations and reset at each session.
+
+| Version | States | NORMAL n / % | ELEVATED n / % | HIGH n / % | SEVERE n / % | SEVERE sessions |
+| --- | --- | --- | --- | --- | --- | --- |
+| originalB | raw | 27495 / 88.9662 | 3061 / 9.9045 | 315 / 1.0193 | 34 / 0.1100 | 10 |
+| originalB | effective | 26322 / 85.1707 | 4086 / 13.2212 | 455 / 1.4723 | 42 / 0.1359 | 10 |
+| currentClose | raw | 27495 / 88.9662 | 3061 / 9.9045 | 316 / 1.0225 | 33 / 0.1068 | 9 |
+| currentClose | effective | 26322 / 85.1707 | 4087 / 13.2244 | 456 / 1.4755 | 40 / 0.1294 | 9 |
+| absoluteHigh | raw | 27484 / 88.9306 | 2919 / 9.4451 | 469 / 1.5176 | 33 / 0.1068 | 9 |
+| absoluteHigh | effective | 26303 / 85.1092 | 3944 / 12.7617 | 618 / 1.9997 | 40 / 0.1294 | 9 |
+
+### Final behavior by period
+
+Percentages use each row’s valid-target denominator. Year 2021 and 2026 are partial. ATR categories are mutually exclusive: quiet means both below 1%; high means either at least 2%; middle is the remainder. Opening is indices 1–4.
+
+| Period | n | Upgraded targets | Affected sessions | Raw N/E/H/S % | Effective N/E/H/S % |
+| --- | --- | --- | --- | --- | --- |
+| year_2021 | 1488 | 0 | 0 | 89.7849 / 9.3414 / 0.8737 / 0.0000 | 86.8952 / 11.6935 / 1.4113 / 0.0000 |
+| year_2022 | 6263 | 120 | 28 | 90.5796 / 6.6262 / 2.7463 / 0.0479 | 87.6577 / 8.8137 / 3.4648 / 0.0639 |
+| year_2023 | 6226 | 1 | 1 | 91.4231 / 8.0148 / 0.5622 / 0.0000 | 88.1625 / 10.8416 / 0.9958 / 0.0000 |
+| year_2024 | 6264 | 0 | 0 | 87.9789 / 10.8397 / 1.1654 / 0.0160 | 83.8442 / 14.5434 / 1.5964 / 0.0160 |
+| year_2025 | 6214 | 32 | 6 | 86.8201 / 10.8626 / 1.8989 / 0.4184 | 82.5555 / 14.7087 / 2.2369 / 0.4989 |
+| year_2026 | 4450 | 0 | 0 | 87.1236 / 11.5056 / 1.3034 / 0.0674 | 82.0000 / 16.1348 / 1.7753 / 0.0899 |
+| opening_1_4 | 4964 | 5 | 5 | 82.2522 / 16.6398 / 1.0878 / 0.0201 | 73.4085 / 24.7583 / 1.8131 / 0.0201 |
+| nonopening_5_plus | 25941 | 148 | 31 | 90.2086 / 8.0683 / 1.5998 / 0.1234 | 87.3482 / 10.4661 / 2.0354 / 0.1503 |
+| quiet_both_ATR_lt_1pct | 7039 | 0 | 0 | 86.0776 / 12.3313 / 1.5343 / 0.0568 | 81.3468 / 16.5506 / 2.0457 / 0.0568 |
+| high_either_ATR_ge_2pct | 3925 | 133 | 24 | 90.0637 / 4.9936 / 4.3057 / 0.6369 | 87.4904 / 6.5987 / 5.1210 / 0.7898 |
+| middle_ATR | 19941 | 20 | 11 | 89.7147 / 9.3024 / 0.9628 / 0.0201 | 85.9686 / 12.6373 / 1.3690 / 0.0251 |
+
+### SEVERE sessions and requested checks
+
+| Date | Original raw / effective SEVERE | Current-close raw / effective SEVERE | Final raw / effective SEVERE | Original / revised / final maximum raw |
+| --- | --- | --- | --- | --- |
+| 2021-12-02 | 0 / 0 | 0 / 0 | 0 / 0 | HIGH / HIGH / HIGH |
+| 2021-12-07 | 1 / 2 | 0 / 0 | 0 / 0 | SEVERE / HIGH / HIGH |
+| 2022-05-20 | 1 / 2 | 1 / 2 | 1 / 2 | SEVERE / SEVERE / SEVERE |
+| 2022-11-02 | 2 / 2 | 2 / 2 | 2 / 2 | SEVERE / SEVERE / SEVERE |
+| 2024-12-18 | 1 / 1 | 1 / 1 | 1 / 1 | SEVERE / SEVERE / SEVERE |
+| 2025-04-07 | 13 / 16 | 13 / 16 | 13 / 16 | SEVERE / SEVERE / SEVERE |
+| 2025-04-08 | 8 / 9 | 8 / 9 | 8 / 9 | SEVERE / SEVERE / SEVERE |
+| 2025-04-10 | 1 / 2 | 1 / 2 | 1 / 2 | SEVERE / SEVERE / SEVERE |
+| 2025-10-10 | 3 / 3 | 3 / 3 | 3 / 3 | SEVERE / SEVERE / SEVERE |
+| 2025-11-20 | 1 / 1 | 1 / 1 | 1 / 1 | SEVERE / SEVERE / SEVERE |
+| 2026-06-09 | 3 / 4 | 3 / 4 | 3 / 4 | SEVERE / SEVERE / SEVERE |
+
+### Fixed safeguards and original concern set
+
+Safeguards upgrade **153 raw market targets across 35 sessions** compared with current-close SEVERE alone. Acute-only: 6; drawdown-only: 146; both: 1. “Both” can involve different authoritative instruments.
+
+Of the original **164 targets / 41 sessions**, 153 targets reach HIGH, covering 35 sessions; 33 sessions have every original concern resolved. 11 targets in 8 sessions remain below HIGH. The report explains why recovered-low-only observations should not all be upgraded.
+
+Every upgraded target is retained in [semantic-high-upgrades.csv](semantic-high-upgrades.csv), with both instruments’ current and intrabar evidence and all raw/effective comparisons. [semantic-clarification.json](semantic-clarification.json) retains the removed SEVERE target, every unresolved concern, and above-open safeguard examples. Percentage fields in these artifacts are decimal fractions.

@@ -75,13 +75,33 @@ export const STATES = ['NORMAL', 'ELEVATED', 'HIGH', 'SEVERE'] as const;
 export type Candidate = { name: string; shock: [number, number]; rolling: [number, number]; drawdown: [number, number];
   acute: { ratio: number; floor: number; emergency: number }; session: { ratio: number; floor: number; emergency: number } };
 export function classify(t: Target, c: Candidate): number | null {
+  return classifyWithAcute(t, c, t.downsideExcursionAtrRatio, t.downsideExcursionPct);
+}
+function classifyWithAcute(t: Target, c: Candidate, acuteRatio: number | null, acutePct: number | null): number | null {
   if (t.status !== 'VALID') return null;
   const collapse = (ratio: number | null, absolute: number | null, rule: Candidate['acute']) => ratio !== null && absolute !== null
     && ((ratio >= rule.ratio && absolute >= rule.floor) || absolute >= rule.emergency);
-  if (collapse(t.downsideExcursionAtrRatio, t.downsideExcursionPct, c.acute)
+  if (collapse(acuteRatio, acutePct, c.acute)
     || collapse(t.sessionDrawdownAtrRatio, t.sessionDrawdownPct, c.session)) return 3;
   const ladder = (v: number | null, bounds: number[]) => v === null ? 0 : bounds.filter(b => v >= b).length;
   return Math.max(ladder(t.shockAtrRatio, c.shock), ladder(t.realizedMovement60AtrRatio, c.rolling), ladder(t.sessionDrawdownAtrRatio, c.drawdown));
+}
+/** Derive additional evidence without changing cached bars or their intrabar excursion. */
+export function acuteClosingDownside(t: Pick<Target, 'referencePrice' | 'currentClose' | 'priorAtr14Pct'>) {
+  const positive = (x: number | null): x is number => x !== null && Number.isFinite(x) && x > 0;
+  const acuteCloseDownsidePct = positive(t.referencePrice) && positive(t.currentClose)
+    ? Math.max(0, t.referencePrice - t.currentClose) / t.referencePrice : null;
+  return { acuteCloseDownsidePct, acuteCloseDownsideAtrRatio: acuteCloseDownsidePct !== null && positive(t.priorAtr14Pct)
+    ? acuteCloseDownsidePct / t.priorAtr14Pct : null };
+}
+/** Bounded research clarification, not a production algorithm or a new threshold ladder. */
+export function classifyCurrentCollapse(t: Target, b: Candidate, absoluteHigh = false): number | null {
+  const acute = acuteClosingDownside(t);
+  if (acute.acuteCloseDownsidePct === null || acute.acuteCloseDownsideAtrRatio === null) return null;
+  const state = classifyWithAcute(t, b, acute.acuteCloseDownsideAtrRatio, acute.acuteCloseDownsidePct);
+  if (state === null) return null;
+  const safeguard = absoluteHigh && (acute.acuteCloseDownsidePct >= 0.01 || (t.sessionDrawdownPct !== null && t.sessionDrawdownPct >= 0.025));
+  return Math.max(state, safeguard ? 2 : 0);
 }
 /** Missing assessments break consecutive confirmations; emitted state remains unavailable. */
 export function recover(raw: readonly (number | null)[], confirmations: 2 | 3): (number | null)[] {

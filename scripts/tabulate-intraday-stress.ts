@@ -35,7 +35,12 @@ sections.push('\n## Closing-bar state sensitivity (diagnostic only)\n', table(['
   });
   return [a.candidate.name, closing.length, ...STATES.map((_, i) => f(closing.filter(x => x === i).length / closing.length * 100))];
 })));
-await writeFile(`${out}/tables.md`, sections.join('\n') + '\n');
+// Preserve the separately generated, bounded clarification when rebuilding historical tables.
+const clarificationMarker = '<!-- INTRADAY_SEMANTIC_CLARIFICATION_START -->';
+const previousTables = await readFile(`${out}/tables.md`, 'utf8').catch(() => '');
+const clarificationAt = previousTables.indexOf(clarificationMarker);
+const clarification = clarificationAt < 0 ? '' : '\n' + previousTables.slice(clarificationAt).trimEnd() + '\n';
+await writeFile(`${out}/tables.md`, sections.join('\n') + '\n' + clarification);
 const b = candidates[1]!;
 const representativeRows = b.records.filter(r => reps.some(d => d.date === r.date));
 const columns = ['date', 'index', 'targetAt', 'rawB', 'recovery2B', 'recovery3B', ...['spy', 'rsp'].flatMap(s => ['priorAtr14Pct', 'referencePrice', 'trueRange15', 'shockAtrRatio', 'downsideExcursionPct', 'realizedMovement60AtrRatio', 'rollingStatus', 'sessionDrawdownPct', 'sessionDrawdownAtrRatio', 'openToCurrentPct'].map(k => `${s}_${k}`))];
