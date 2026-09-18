@@ -1,0 +1,472 @@
+[
+  {
+    "date": "2021-12-01",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 0.6175500951542352,
+    "downside": 0.6175500951542352,
+    "downsidePct": 0.006751276824269491,
+    "rolling": 0.6116023493424462,
+    "drawdown": 2.1691169111222504,
+    "drawdownPct": 0.02594216069532578,
+    "range": 2.8639474200565442,
+    "path": 0.06359221383447711,
+    "absoluteCloseReturn": 0.027193432529502237,
+    "whipsaw": 2.255568340886935,
+    "reasons": [
+      "range_rank_6"
+    ]
+  },
+  {
+    "date": "2021-12-02",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 1.319747097394181,
+    "downside": 1.2884330696159836,
+    "downsidePct": 0.01616403675331197,
+    "rolling": 0.7305417096082154,
+    "drawdown": 0.7283666191480063,
+    "drawdownPct": 0.009137723238742228,
+    "range": 1.8424732409471036,
+    "path": 0.05944590988620224,
+    "absoluteCloseReturn": 0.020492610837438363,
+    "whipsaw": 2.7658766231719203,
+    "reasons": [
+      "downside"
+    ]
+  },
+  {
+    "date": "2021-12-07",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 1.5249866792967692,
+    "downside": 1.4709387077964937,
+    "downsidePct": 0.020345593575120658,
+    "rolling": 0.38790403920016325,
+    "drawdown": 0.4066625120043685,
+    "drawdownPct": 0.006179775280898756,
+    "range": 1.591852980793188,
+    "path": 0.026787562138454346,
+    "absoluteCloseReturn": 0.008247023104584361,
+    "whipsaw": 2.8968849580546605,
+    "reasons": [
+      "downside"
+    ]
+  },
+  {
+    "date": "2022-04-27",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 0.5859911359035974,
+    "downside": 0.46300534194852255,
+    "downsidePct": 0.00912655971479495,
+    "rolling": 0.6175470548104425,
+    "drawdown": 0.7308856718623112,
+    "drawdownPct": 0.014406900146912432,
+    "range": 0.9617660637790563,
+    "path": 0.06403356321839804,
+    "absoluteCloseReturn": 0.0010031431819702563,
+    "whipsaw": 31.966543277957673,
+    "reasons": [
+      "whipsaw"
+    ]
+  },
+  {
+    "date": "2022-05-16",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 0.3017371224414672,
+    "downside": 0.2316847635573087,
+    "downsidePct": 0.005771905424200365,
+    "rolling": 0.2931676207752857,
+    "drawdown": 0.3769093647759201,
+    "drawdownPct": 0.009962373443572656,
+    "range": 0.6025252714268933,
+    "path": 0.05120051874773579,
+    "absoluteCloseReturn": 0.0006250312515625467,
+    "whipsaw": 31.50740559512563,
+    "reasons": [
+      "whipsaw"
+    ]
+  },
+  {
+    "date": "2022-06-17",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 0.33046073985763247,
+    "downside": 0.2959679302646435,
+    "downsidePct": 0.008150517976843337,
+    "rolling": 0.3896590103197193,
+    "drawdown": 0.595786504144054,
+    "drawdownPct": 0.01640707696960523,
+    "range": 0.7475752504971102,
+    "path": 0.07228653630049342,
+    "absoluteCloseReturn": 0.0009912314144109313,
+    "whipsaw": 36.302428626497964,
+    "reasons": [
+      "whipsaw"
+    ]
+  },
+  {
+    "date": "2022-09-21",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 1.0229549443500523,
+    "downside": 0.914193300955494,
+    "downsidePct": 0.01769568586928448,
+    "rolling": 1.203498264519673,
+    "drawdown": 1.370804105726511,
+    "drawdownPct": 0.026534124476638114,
+    "range": 1.5962467583639164,
+    "path": 0.07952128285360038,
+    "absoluteCloseReturn": 0.02258423765248252,
+    "whipsaw": 3.3717978942274534,
+    "reasons": [
+      "rolling_rank_6"
+    ]
+  },
+  {
+    "date": "2022-11-04",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 0.905589189361771,
+    "downside": 0.764629709964484,
+    "downsidePct": 0.017237010415709485,
+    "rolling": 0.5998179371865349,
+    "drawdown": 0.971800457163591,
+    "drawdownPct": 0.021907250508089875,
+    "range": 1.0436899324896618,
+    "path": 0.07583918418621338,
+    "absoluteCloseReturn": 0.0017516492518452331,
+    "whipsaw": 27.561355843356946,
+    "reasons": [
+      "whipsaw_rank_5"
+    ]
+  },
+  {
+    "date": "2022-11-28",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 0.28340671934394834,
+    "downside": 0.19680048025891142,
+    "downsidePct": 0.003235875167973724,
+    "rolling": 0.22500128459781082,
+    "drawdown": 0.8751265659536382,
+    "drawdownPct": 0.01444732179364866,
+    "range": 0.8944422822544985,
+    "path": 0.027453509175990543,
+    "absoluteCloseReturn": 0.009570686354935742,
+    "whipsaw": 2.597135914752758,
+    "reasons": [
+      "median_range"
+    ]
+  },
+  {
+    "date": "2023-01-12",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 0.5468450432042611,
+    "downside": 0.5022817040481182,
+    "downsidePct": 0.008382282501827687,
+    "rolling": 0.634453703937746,
+    "drawdown": 0.5456839120316576,
+    "drawdownPct": 0.009106596299421744,
+    "range": 0.9161920406170967,
+    "path": 0.04448047617729001,
+    "absoluteCloseReturn": 0.0007401924500369805,
+    "whipsaw": 25.560664957686008,
+    "reasons": [
+      "whipsaw_rank_6"
+    ]
+  },
+  {
+    "date": "2023-03-17",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 0.3752614851045115,
+    "downside": 0.3015651997344187,
+    "downsidePct": 0.005327573794096537,
+    "rolling": 0.3087224517485598,
+    "drawdown": 0.8547665088651845,
+    "drawdownPct": 0.016218919691340455,
+    "range": 0.8961869123784696,
+    "path": 0.04108943581019142,
+    "absoluteCloseReturn": 0.013789654186910583,
+    "whipsaw": 2.7782553459943076,
+    "reasons": [
+      "median_range"
+    ]
+  },
+  {
+    "date": "2023-07-14",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 0.4532476201869317,
+    "downside": 0.4532476201869317,
+    "downsidePct": 0.0047028086218157995,
+    "rolling": 0.4847264908444297,
+    "drawdown": 0.8435441820145709,
+    "drawdownPct": 0.008752449379490553,
+    "range": 0.8939050287019977,
+    "path": 0.016999786125616034,
+    "absoluteCloseReturn": 0.006923579359895515,
+    "whipsaw": 2.1454680206345786,
+    "reasons": [
+      "median_range"
+    ]
+  },
+  {
+    "date": "2024-04-04",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 0.5058106758462727,
+    "downside": 0.5046092253098218,
+    "downsidePct": 0.004024067757636191,
+    "rolling": 0.8120532173019369,
+    "drawdown": 2.517973993557143,
+    "drawdownPct": 0.02011033991813482,
+    "range": 2.6617330025559323,
+    "path": 0.02480122927838957,
+    "absoluteCloseReturn": 0.020037438875305624,
+    "whipsaw": 1.1789091545502715,
+    "reasons": [
+      "drawdown_rank_5"
+    ]
+  },
+  {
+    "date": "2024-06-10",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 0.27416854641719696,
+    "downside": 0.15525206845312353,
+    "downsidePct": 0.0014330142081835089,
+    "rolling": 0.22414746968733631,
+    "drawdown": 0.24948091166365885,
+    "drawdownPct": 0.002277309042036936,
+    "range": 0.8951768202296724,
+    "path": 0.0145074444866381,
+    "absoluteCloseReturn": 0.006158912128788385,
+    "whipsaw": 2.026487296624134,
+    "reasons": [
+      "median_range"
+    ]
+  },
+  {
+    "date": "2024-12-18",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 1.7177604244671538,
+    "downside": 1.5384337867480566,
+    "downsidePct": 0.010992345820548238,
+    "rolling": 1.751697727497573,
+    "drawdown": 4.513188502408043,
+    "drawdownPct": 0.032247425400516075,
+    "range": 4.7537615089880365,
+    "path": 0.040559663108628796,
+    "absoluteCloseReturn": 0.031215347083610734,
+    "whipsaw": 1.2590167972848927,
+    "reasons": [
+      "range",
+      "drawdown",
+      "downside",
+      "rolling",
+      "shock"
+    ]
+  },
+  {
+    "date": "2024-12-20",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 1.7002216160660548,
+    "downside": 1.2006645300504326,
+    "downsidePct": 0.011460408662836223,
+    "rolling": 0.7316938793279407,
+    "drawdown": 0.7473885767101396,
+    "drawdownPct": 0.007133864876206463,
+    "range": 2.672416566277552,
+    "path": 0.0412615203068365,
+    "absoluteCloseReturn": 0.01564192034652878,
+    "whipsaw": 2.479372539205966,
+    "reasons": [
+      "shock",
+      "downside_rank_6"
+    ]
+  },
+  {
+    "date": "2025-04-07",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 2.025265834624488,
+    "downside": 1.3422877909107656,
+    "downsidePct": 0.03174510490871569,
+    "rolling": 2.3889636946709216,
+    "drawdown": 2.3749463071827894,
+    "drawdownPct": 0.05623411128313925,
+    "range": 3.42400237896936,
+    "path": 0.24366514053600097,
+    "absoluteCloseReturn": 0.03139884298534312,
+    "whipsaw": 7.520797599044891,
+    "reasons": [
+      "range",
+      "downside",
+      "rolling",
+      "shock"
+    ]
+  },
+  {
+    "date": "2025-04-09",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 2.3958783418329226,
+    "downside": 0.3651894488312128,
+    "downsidePct": 0.010582654178323688,
+    "rolling": 1.6461439788690344,
+    "drawdown": 0.7146292531648868,
+    "drawdownPct": 0.02077074274822807,
+    "range": 3.4807941625145595,
+    "path": 0.17401886368910957,
+    "absoluteCloseReturn": 0.10118758106355386,
+    "whipsaw": 1.7029355414615543,
+    "reasons": [
+      "range",
+      "rolling",
+      "shock"
+    ]
+  },
+  {
+    "date": "2025-08-22",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 1.247408879371672,
+    "downside": 0.3191828804634546,
+    "downsidePct": 0.0026212523071674257,
+    "rolling": 1.2658305767230502,
+    "drawdown": 0.349158009547514,
+    "drawdownPct": 0.003257034098852107,
+    "range": 1.8384072878843554,
+    "path": 0.029411622171241047,
+    "absoluteCloseReturn": 0.014291831709667191,
+    "whipsaw": 1.9233550780347397,
+    "reasons": [
+      "rolling_rank_5"
+    ]
+  },
+  {
+    "date": "2025-10-10",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 1.2962650317303643,
+    "downside": 1.2145940523483256,
+    "downsidePct": 0.008686145597771656,
+    "rolling": 1.3529231978739409,
+    "drawdown": 3.7263419016755903,
+    "drawdownPct": 0.0266488611914831,
+    "range": 4.391764040820435,
+    "path": 0.04034913691884756,
+    "absoluteCloseReturn": 0.02829809709431208,
+    "whipsaw": 1.3771930917206539,
+    "reasons": [
+      "range",
+      "drawdown",
+      "rolling",
+      "downside_rank_5"
+    ]
+  },
+  {
+    "date": "2025-11-20",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 0.7695785254163735,
+    "downside": 0.6072455552113676,
+    "downsidePct": 0.0076003852868582085,
+    "rolling": 0.776275283526893,
+    "drawdown": 2.62553482723915,
+    "drawdownPct": 0.032861625910355755,
+    "range": 2.8104121327918627,
+    "path": 0.07004342432142152,
+    "absoluteCloseReturn": 0.030286368162161348,
+    "whipsaw": 2.238784123436037,
+    "reasons": [
+      "drawdown"
+    ]
+  },
+  {
+    "date": "2026-01-30",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 0.522149779653196,
+    "downside": 0.46377630397370767,
+    "downsidePct": 0.004259773013871429,
+    "rolling": 0.5819066878143667,
+    "drawdown": 1.172390897965024,
+    "drawdownPct": 0.010768379207970545,
+    "range": 1.3663481293878401,
+    "path": 0.038916953116626796,
+    "absoluteCloseReturn": 0.00015150749962122845,
+    "whipsaw": 33.7965259708929,
+    "reasons": [
+      "whipsaw"
+    ]
+  },
+  {
+    "date": "2026-06-05",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 0.4622635947671392,
+    "downside": 0.39626317511909087,
+    "downsidePct": 0.0034243356117474246,
+    "rolling": 0.4750900805769374,
+    "drawdown": 2.396416821989837,
+    "drawdownPct": 0.020708801572753156,
+    "range": 2.6603031236667825,
+    "path": 0.036179324957902104,
+    "absoluteCloseReturn": 0.019792372825032212,
+    "whipsaw": 1.740028676012645,
+    "reasons": [
+      "drawdown_rank_6"
+    ]
+  },
+  {
+    "date": "2026-06-09",
+    "valid": 50,
+    "expected": 50,
+    "complete": true,
+    "shock": 0.9125536399000665,
+    "downside": 0.8882451556118642,
+    "downsidePct": 0.009165728851707714,
+    "rolling": 0.9438237949048252,
+    "drawdown": 2.8817210656165875,
+    "drawdownPct": 0.02973624313830489,
+    "range": 3.1680636534154214,
+    "path": 0.061641613763236625,
+    "absoluteCloseReturn": 0.00884848647849068,
+    "whipsaw": 6.2589935923518105,
+    "reasons": [
+      "drawdown",
+      "range_rank_5"
+    ]
+  }
+]

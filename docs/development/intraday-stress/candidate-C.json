@@ -1,0 +1,454 @@
+{
+  "candidate": {
+    "name": "C",
+    "shock": [
+      0.45,
+      0.8
+    ],
+    "rolling": [
+      0.5,
+      0.9
+    ],
+    "drawdown": [
+      1.1,
+      2
+    ],
+    "acute": {
+      "ratio": 1.3,
+      "floor": 0.02,
+      "emergency": 0.03
+    },
+    "session": {
+      "ratio": 3,
+      "floor": 0.03,
+      "emergency": 0.05
+    }
+  },
+  "frequency": {
+    "raw": {
+      "n": 30905,
+      "counts": [
+        28552,
+        2140,
+        204,
+        9
+      ],
+      "percentages": [
+        92.38634525157742,
+        6.924445882543277,
+        0.6600873645041255,
+        0.02912150137518201
+      ]
+    },
+    "two": {
+      "n": 30905,
+      "counts": [
+        27717,
+        2880,
+        295,
+        13
+      ],
+      "percentages": [
+        89.68451706843553,
+        9.318880440058242,
+        0.9545381006309658,
+        0.042064390875262904
+      ]
+    },
+    "three": {
+      "n": 30905,
+      "counts": [
+        27100,
+        3424,
+        364,
+        17
+      ],
+      "percentages": [
+        87.68807636304805,
+        11.079113412069244,
+        1.1778029445073612,
+        0.05500728037534379
+      ]
+    }
+  },
+  "byPeriod": {
+    "2021": {
+      "n": 1488,
+      "counts": [
+        1372,
+        108,
+        7,
+        1
+      ],
+      "percentages": [
+        92.20430107526882,
+        7.258064516129033,
+        0.47043010752688175,
+        0.06720430107526883
+      ]
+    },
+    "2022": {
+      "n": 6263,
+      "counts": [
+        5872,
+        359,
+        32,
+        0
+      ],
+      "percentages": [
+        93.75698547022195,
+        5.732077279259141,
+        0.5109372505189207,
+        0
+      ]
+    },
+    "2023": {
+      "n": 6226,
+      "counts": [
+        5862,
+        345,
+        19,
+        0
+      ],
+      "percentages": [
+        94.15354963058144,
+        5.541278509476389,
+        0.305171859942178,
+        0
+      ]
+    },
+    "2024": {
+      "n": 6264,
+      "counts": [
+        5745,
+        474,
+        44,
+        1
+      ],
+      "percentages": [
+        91.71455938697318,
+        7.567049808429119,
+        0.70242656449553,
+        0.015964240102171137
+      ]
+    },
+    "2025": {
+      "n": 6214,
+      "counts": [
+        5630,
+        505,
+        72,
+        7
+      ],
+      "percentages": [
+        90.60186675249436,
+        8.126810428065658,
+        1.1586739620212423,
+        0.11264885741873189
+      ]
+    },
+    "2026": {
+      "n": 4450,
+      "counts": [
+        4071,
+        349,
+        30,
+        0
+      ],
+      "percentages": [
+        91.48314606741573,
+        7.842696629213483,
+        0.6741573033707865,
+        0
+      ]
+    },
+    "opening_1_4": {
+      "n": 4964,
+      "counts": [
+        4389,
+        547,
+        27,
+        1
+      ],
+      "percentages": [
+        88.41659951651893,
+        11.019339242546334,
+        0.5439161966156325,
+        0.020145044319097503
+      ]
+    },
+    "nonopening": {
+      "n": 25941,
+      "counts": [
+        24163,
+        1593,
+        177,
+        8
+      ],
+      "percentages": [
+        93.14598512008018,
+        6.140858101075517,
+        0.6823175667861686,
+        0.030839212058131914
+      ]
+    },
+    "quiet_ATR_both_lt_1pct": {
+      "n": 7039,
+      "counts": [
+        6340,
+        625,
+        73,
+        1
+      ],
+      "percentages": [
+        90.06961216081831,
+        8.879102145191078,
+        1.037079130558318,
+        0.014206563432305724
+      ]
+    },
+    "high_ATR_either_ge_2pct": {
+      "n": 3925,
+      "counts": [
+        3652,
+        236,
+        30,
+        7
+      ],
+      "percentages": [
+        93.04458598726114,
+        6.012738853503185,
+        0.7643312101910829,
+        0.17834394904458598
+      ]
+    }
+  },
+  "duration": {
+    "raw": {
+      "highOrSevere": {
+        "episodes": 107,
+        "sessions": 86,
+        "medianMinutes": 15,
+        "p95Minutes": 87.99999999999955,
+        "maxMinutes": 295,
+        "closingCensored": 15
+      },
+      "severe": {
+        "episodes": 6,
+        "sessions": 4,
+        "medianMinutes": 15,
+        "p95Minutes": 37.5,
+        "maxMinutes": 40,
+        "closingCensored": 2
+      }
+    },
+    "two": {
+      "highOrSevere": {
+        "episodes": 96,
+        "sessions": 86,
+        "medianMinutes": 30,
+        "p95Minutes": 111.25,
+        "maxMinutes": 295,
+        "closingCensored": 23
+      },
+      "severe": {
+        "episodes": 6,
+        "sessions": 4,
+        "medianMinutes": 30,
+        "p95Minutes": 43.75,
+        "maxMinutes": 45,
+        "closingCensored": 2
+      }
+    },
+    "three": {
+      "highOrSevere": {
+        "episodes": 92,
+        "sessions": 86,
+        "medianMinutes": 45,
+        "p95Minutes": 124.50000000000003,
+        "maxMinutes": 300,
+        "closingCensored": 25
+      },
+      "severe": {
+        "episodes": 5,
+        "sessions": 4,
+        "medianMinutes": 40,
+        "p95Minutes": 92.99999999999999,
+        "maxMinutes": 105,
+        "closingCensored": 3
+      }
+    }
+  },
+  "uniqueHigh": [
+    {
+      "channel": "shockAtrRatio",
+      "targets": 84
+    },
+    {
+      "channel": "realizedMovement60AtrRatio",
+      "targets": 29
+    },
+    {
+      "channel": "sessionDrawdownAtrRatio",
+      "targets": 73
+    }
+  ],
+  "rallyHigh": {
+    "targets": 5,
+    "sessions": [
+      "2025-04-07"
+    ]
+  },
+  "severeSessions": [
+    "2021-12-07",
+    "2024-12-18",
+    "2025-04-07",
+    "2025-04-08"
+  ],
+  "boundaries": [
+    {
+      "channel": "shockAtrRatio",
+      "threshold": 0.45,
+      "level": "ELEVATED",
+      "side": "below",
+      "target": {
+        "date": "2025-10-10",
+        "symbol": "SPY",
+        "index": 12,
+        "value": 0.449943997333834
+      }
+    },
+    {
+      "channel": "shockAtrRatio",
+      "threshold": 0.45,
+      "level": "ELEVATED",
+      "side": "above",
+      "target": {
+        "date": "2021-11-26",
+        "symbol": "SPY",
+        "index": 11,
+        "value": 0.4500105439305207
+      }
+    },
+    {
+      "channel": "shockAtrRatio",
+      "threshold": 0.8,
+      "level": "HIGH",
+      "side": "below",
+      "target": {
+        "date": "2025-04-09",
+        "symbol": "SPY",
+        "index": 17,
+        "value": 0.7993067102792462
+      }
+    },
+    {
+      "channel": "shockAtrRatio",
+      "threshold": 0.8,
+      "level": "HIGH",
+      "side": "above",
+      "target": {
+        "date": "2021-11-30",
+        "symbol": "RSP",
+        "index": 6,
+        "value": 0.8001609687235633
+      }
+    },
+    {
+      "channel": "realizedMovement60AtrRatio",
+      "threshold": 0.5,
+      "level": "ELEVATED",
+      "side": "below",
+      "target": {
+        "date": "2026-01-29",
+        "symbol": "SPY",
+        "index": 8,
+        "value": 0.4999877180695693
+      }
+    },
+    {
+      "channel": "realizedMovement60AtrRatio",
+      "threshold": 0.5,
+      "level": "ELEVATED",
+      "side": "above",
+      "target": {
+        "date": "2025-04-10",
+        "symbol": "SPY",
+        "index": 20,
+        "value": 0.5002255740752959
+      }
+    },
+    {
+      "channel": "realizedMovement60AtrRatio",
+      "threshold": 0.9,
+      "level": "HIGH",
+      "side": "below",
+      "target": {
+        "date": "2026-09-16",
+        "symbol": "RSP",
+        "index": 23,
+        "value": 0.8978475881507612
+      }
+    },
+    {
+      "channel": "realizedMovement60AtrRatio",
+      "threshold": 0.9,
+      "level": "HIGH",
+      "side": "above",
+      "target": {
+        "date": "2025-04-07",
+        "symbol": "SPY",
+        "index": 11,
+        "value": 0.9004819457683936
+      }
+    },
+    {
+      "channel": "sessionDrawdownAtrRatio",
+      "threshold": 1.1,
+      "level": "ELEVATED",
+      "side": "below",
+      "target": {
+        "date": "2022-09-02",
+        "symbol": "RSP",
+        "index": 17,
+        "value": 1.0999707032688615
+      }
+    },
+    {
+      "channel": "sessionDrawdownAtrRatio",
+      "threshold": 1.1,
+      "level": "ELEVATED",
+      "side": "above",
+      "target": {
+        "date": "2024-09-18",
+        "symbol": "RSP",
+        "index": 25,
+        "value": 1.1000806468059765
+      }
+    },
+    {
+      "channel": "sessionDrawdownAtrRatio",
+      "threshold": 2,
+      "level": "HIGH",
+      "side": "below",
+      "target": {
+        "date": "2024-05-23",
+        "symbol": "RSP",
+        "index": 21,
+        "value": 1.9896265251404188
+      }
+    },
+    {
+      "channel": "sessionDrawdownAtrRatio",
+      "threshold": 2,
+      "level": "HIGH",
+      "side": "above",
+      "target": {
+        "date": "2024-08-01",
+        "symbol": "RSP",
+        "index": 20,
+        "value": 2.0003457478616093
+      }
+    }
+  ]
+}
