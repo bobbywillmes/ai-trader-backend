@@ -41,7 +41,13 @@ function actionableTargets(date: string, exceptions: CalendarException[]) {
   if (!Number.isInteger(total)) throw new Error('Session must align to 15-minute intervals.');
   return { session, count: total - 1 };
 }
-/** Most recent actionable 15-minute target (walking recent sessions backward) whose evidence grace has elapsed. */
+/** Most recent actionable 15-minute target (walking recent sessions backward) that is currently
+ * publishable: its evidence grace has elapsed AND it has not yet expired (`now < validUntil`).
+ * Historical replay establishes calculation state; it never creates retroactive authoritative
+ * history, so an expired target — one whose own currentness window has already closed, e.g. a
+ * prior session's final target once session close has passed — is never returned here, even if
+ * it was itself never published.
+ */
 function latestActionableTarget(now: Date, exceptions: CalendarException[]) {
   const today = etDate(now);
   for (let back = 0; back <= 10; back++) {
@@ -51,7 +57,9 @@ function latestActionableTarget(now: Date, exceptions: CalendarException[]) {
     for (let index = targets.count; index >= 1; index--) {
       const targetAt = new Date(targets.session.openAt.getTime() + index * INTERVAL_MS);
       const barStart = new Date(targetAt.getTime() - INTERVAL_MS);
-      if (barEligibility('MINUTE_15', barStart, now, exceptions).status === 'ELIGIBLE') return { date, index, targetAt };
+      if (barEligibility('MINUTE_15', barStart, now, exceptions).status !== 'ELIGIBLE') continue;
+      if (now.getTime() >= validUntilFor(date, index, exceptions).getTime()) continue;
+      return { date, index, targetAt };
     }
   }
   return null;
@@ -154,7 +162,13 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
       const windowFrom = addDays(latest.date, -40);
       const missingClosures = VERIFIED_NYSE_CLOSURES.closedDates.filter(date => date >= windowFrom && date <= latest.date
         && !exceptions.some(row => row.sessionDate === date && row.type === 'CLOSED' && row.closeTimeMinutesEt === null));
-      let reasonCode: Reason | null = missingClosures.length ? 'CALENDAR_EVIDENCE_UNAVAILABLE' : null;
+      // A missing or conflicting verified early close is just as much a calendar-evidence failure
+      // as a missing full-day closure: an unconfigured/misconfigured EARLY_CLOSE date would make
+      // marketSession/barEligibility treat it as a full 16:00 session, corrupting this session-
+      // boundary-sensitive dimension's actionable-target count and validity window.
+      const missingEarlyCloses = VERIFIED_NYSE_CLOSURES.earlyCloseDates.filter(date => date >= windowFrom && date <= latest.date
+        && !exceptions.some(row => row.sessionDate === date && row.type === 'EARLY_CLOSE' && row.closeTimeMinutesEt === VERIFIED_NYSE_CLOSURES.earlyCloseTimeMinutesEt));
+      let reasonCode: Reason | null = (missingClosures.length || missingEarlyCloses.length) ? 'CALENDAR_EVIDENCE_UNAVAILABLE' : null;
       let status: 'VALID' | 'UNAVAILABLE' | 'FAILED' = reasonCode ? 'FAILED' : 'VALID';
 
       const predecessorSessionDate = predecessor?.sessionDate ? predecessor.sessionDate.toISOString().slice(0, 10) : null;
@@ -188,6 +202,7 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
       let finalSpy: IntradayStressTarget | null = null; let finalRsp: IntradayStressTarget | null = null;
       let finalRaw: IntradayStressState | null = null; let finalTransition: IntradayStressTransition | null = null;
       let replayedCount = 0;
+      const replayTrail: { index: number; targetAt: string; rawState: IntradayStressState | null; effectiveState: IntradayStressState | null; confirmationAfter: number; transitioned: boolean; reason: string }[] = [];
       if (!reasonCode) {
         try {
           const [spyBars, rspBars] = await Promise.all([fetchIntradayBars(tx, 'SPY', latest.date, now, exceptions), fetchIntradayBars(tx, 'RSP', latest.date, now, exceptions)]);
@@ -199,6 +214,11 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
               ? marketRawState(spyTarget.instrumentRawState, rspTarget.instrumentRawState) : null;
             const transition = advanceIntradayStress(history, raw);
             history = { effectiveState: transition.effectiveState, confirmation: transition.confirmationAfter };
+            // Compact per-replayed-target trail (bounded: at most one session's worth of targets,
+            // <=25) so a reconstructed effective state after downtime is auditable without
+            // duplicating full OHLC evidence for every skipped target — MarketBar remains the raw source.
+            replayTrail.push({ index, targetAt: spyTarget.targetAt, rawState: raw, effectiveState: transition.effectiveState,
+              confirmationAfter: transition.confirmationAfter, transitioned: transition.transitioned, reason: transition.reason });
             finalSpy = spyTarget; finalRsp = rspTarget; finalRaw = raw; finalTransition = transition;
             replayedCount++;
           }
@@ -226,10 +246,10 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
         calendar: { graceMinutes: COMPLETION_GRACE_MINUTES.MINUTE_15, exception: exceptions.find(row => row.sessionDate === latest.date) ?? null },
         validUntil: status === 'VALID' ? validUntil : null,
         nextExpectedTargetAt: nextActionableTargetAt(latest.date, latest.index, exceptions),
-        missingClosures, reasonCode, attemptFingerprint: fingerprint,
+        missingClosures, missingEarlyCloses, reasonCode, attemptFingerprint: fingerprint,
         session: { sameSession, previousSessionDate: predecessorSessionDate, bootstrap: !predecessor },
         baseline: { spy: baseline.SPY, rsp: baseline.RSP, frozenForSession: true, provenance: baselineProvenance },
-        replay: { fromIndex: replayFromIndex, throughIndex: latest.index, replayedCount, note: 'Only the current due target is persisted as an authoritative row; any earlier skipped targets are replayed in-memory only, to reconstruct hysteresis without fabricating retroactive history.' },
+        replay: { fromIndex: replayFromIndex, throughIndex: latest.index, replayedCount, trail: replayTrail, note: 'Only the current due target is persisted as an authoritative row; any earlier skipped targets are replayed in-memory only (trail), to reconstruct hysteresis without fabricating retroactive history or duplicating full OHLC evidence.' },
         spy: finalSpy, rsp: finalRsp,
         market: { rawState: finalRaw, explanation: 'Market raw state is worse(SPY instrument raw state, RSP instrument raw state); either instrument SEVERE is sufficient for market SEVERE. No averaging or voting.' },
         transition: { predecessorAssessmentId: predecessor?.id ?? null, previousEffectiveState: sameSession ? (continuation?.transition.effectiveState ?? null) : null,

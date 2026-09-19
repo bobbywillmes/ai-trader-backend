@@ -15,4 +15,13 @@ describe('market minute worker', () => {
     mocks.sync.mockRejectedValueOnce(new Error('missing')).mockResolvedValue({ inserted: 0, missing: 0, notDue: true });
     await expect(runMarketMinuteDataWorker()).rejects.toThrow('missing'); expect(await runMarketMinuteDataWorker()).toEqual({ outcome: 'skipped', skipReason: 'not_due' });
   });
+  it('reports idle when nothing eligible is missing and nothing was inserted', async () => {
+    mocks.sync.mockResolvedValue({ inserted: 0, missing: 0, notDue: false });
+    expect(await runMarketMinuteDataWorker()).toEqual({ outcome: 'idle', workSucceeded: false });
+  });
+  it('surfaces continued absence of an eligible expected bar as a failure, not idle', async () => {
+    mocks.sync.mockResolvedValueOnce({ inserted: 0, missing: 1, notDue: false }).mockResolvedValue({ inserted: 1, missing: 0, notDue: false });
+    await expect(runMarketMinuteDataWorker()).rejects.toThrow('1 eligible MINUTE_15 bar');
+    expect(await runMarketMinuteDataWorker()).toEqual({ outcome: 'success', workSucceeded: true }); // Recovers once evidence arrives.
+  });
 });

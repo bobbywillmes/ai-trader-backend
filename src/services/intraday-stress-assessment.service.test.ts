@@ -76,7 +76,7 @@ function run(now: Date) {
 type Evidence = {
   baseline: { spy: number | null; rsp: number | null; frozenForSession: boolean; provenance: { reused: boolean; fromAssessmentId?: number } | null };
   session: { sameSession: boolean; bootstrap: boolean; previousSessionDate: string | null };
-  replay: { fromIndex: number; throughIndex: number; replayedCount: number };
+  replay: { fromIndex: number; throughIndex: number; replayedCount: number; trail: unknown[] };
   spy: { rollingStatus: string; instrumentRawState: string | null } | null;
   rsp: { rollingStatus: string; instrumentRawState: string | null } | null;
   market: { rawState: string | null };
@@ -94,6 +94,24 @@ describe('authoritative INTRADAY_STRESS_V1 publication', () => {
     exceptions = [];
     expect(await run(dueAt(1))).toMatchObject({ blocked: { reasonCode: 'CALENDAR_EVIDENCE_UNAVAILABLE' } });
     expect(assessments[0]).toMatchObject({ status: 'FAILED', reasonCode: 'CALENDAR_EVIDENCE_UNAVAILABLE', rawState: null, effectiveState: null });
+  });
+
+  it('requires verified early-close coverage in the recent window, not just full-day closures', async () => {
+    // 2026-11-27 is a verified NYSE early close within 40 days of 2026-12-28; omitting it from
+    // configured exceptions must fail closed even though all full-day closures are present.
+    exceptions = verifiedClosureRows.filter(row => row.sessionDate !== '2026-11-27');
+    const targetAt = new Date(etInstant('2026-12-28', 570).getTime() + 900_000);
+    const dueDate = new Date(targetAt.getTime() + 5 * 60_000 + 61_000);
+    expect(await run(dueDate)).toMatchObject({ blocked: { reasonCode: 'CALENDAR_EVIDENCE_UNAVAILABLE' } });
+    expect((assessments[0]!.evidenceJson as { missingEarlyCloses: string[] }).missingEarlyCloses).toContain('2026-11-27');
+  });
+
+  it('fails closed when a configured early close conflicts with verified NYSE evidence', async () => {
+    // Same date, but misconfigured as a full closure instead of the verified 1:00 PM early close.
+    exceptions = verifiedClosureRows.map(row => row.sessionDate === '2026-11-27' ? { ...row, type: 'CLOSED' as const, closeTimeMinutesEt: null } : row);
+    const targetAt = new Date(etInstant('2026-12-28', 570).getTime() + 900_000);
+    const dueDate = new Date(targetAt.getTime() + 5 * 60_000 + 61_000);
+    expect(await run(dueDate)).toMatchObject({ blocked: { reasonCode: 'CALENDAR_EVIDENCE_UNAVAILABLE' } });
   });
 
   it('bootstraps the first target of a session with a freshly computed frozen baseline', async () => {
@@ -225,6 +243,61 @@ describe('authoritative INTRADAY_STRESS_V1 publication', () => {
     const result = await run(new Date(targetAtFor(25).getTime() + 6 * 60_000));
     expect(result).toMatchObject({ published: 1 });
     expect(assessments[0]!.validUntil).toEqual(etInstant(SESSION_DATE, 960));
+  });
+
+  it('can still publish the final actionable target at 15:59 ET when evidence is available', async () => {
+    dailyHistory();
+    for (let index = 1; index <= 25; index++) { rows.push(minuteBar(index, 1, 100, 100.1, 99.9, 100)); rows.push(minuteBar(index, 2, 100, 100.1, 99.9, 100)); }
+    const result = await run(new Date(etInstant(SESSION_DATE, 960).getTime() - 60_000)); // 15:59 ET
+    expect(result).toMatchObject({ published: 1 });
+    expect(assessments[0]).toMatchObject({ targetAt: targetAtFor(25), status: 'VALID' });
+  });
+
+  it('never newly publishes the final target at or after 16:00 ET, even with evidence available', async () => {
+    dailyHistory();
+    for (let index = 1; index <= 25; index++) { rows.push(minuteBar(index, 1, 100, 100.1, 99.9, 100)); rows.push(minuteBar(index, 2, 100, 100.1, 99.9, 100)); }
+    const result = await run(etInstant(SESSION_DATE, 960)); // 16:00 ET exactly
+    expect(result).toMatchObject({ notDue: true, published: 0 });
+    expect(assessments).toHaveLength(0);
+  });
+
+  it('cannot publish the prior session final target on the next trading day before its own first target is due', async () => {
+    dailyHistory();
+    rows.push(minuteBar(1, 1, 100, 100.1, 99.9, 100), minuteBar(1, 2, 100, 100.1, 99.9, 100));
+    await run(dueAt(1)); // Only today's target 1 was ever published; target 25 was never published.
+    expect(assessments).toHaveLength(1);
+    const tomorrow = new Date(etInstant('2026-09-15', 570).getTime() + 900_000 + 5 * 60_000 - 60_000); // 09:49 ET, 1 minute before target 1's own grace elapses
+    const result = await run(tomorrow);
+    expect(result).toMatchObject({ notDue: true, published: 0 });
+    expect(assessments).toHaveLength(1); // No fallback publication of yesterday's expired, never-published final target.
+  });
+
+  it('a startup gap during the same active session still publishes only the current target and replays skipped targets in memory', async () => {
+    dailyHistory();
+    rows.push(minuteBar(1, 1, 100, 100.1, 99.9, 100), minuteBar(1, 2, 100, 100.1, 99.9, 100));
+    await run(dueAt(1));
+    for (const index of [2, 3, 4, 5]) { rows.push(minuteBar(index, 1, 100, 100.1, 99.9, 100)); rows.push(minuteBar(index, 2, 100, 100.1, 99.9, 100)); }
+    const result = await run(dueAt(5)); // Simulated downtime through target 5.
+    expect(result).toMatchObject({ published: 1 });
+    expect(assessments).toHaveLength(2); // Targets 2-4 are never persisted, only replayed in memory.
+    expect(assessments[1]!.targetAt).toEqual(targetAtFor(5));
+    const ev = evidence();
+    expect(ev.replay).toMatchObject({ fromIndex: 2, throughIndex: 5, replayedCount: 4 });
+    const trail = ev.replay.trail as { index: number; targetAt: string }[];
+    expect(trail.map(step => step.index)).toEqual([2, 3, 4, 5]);
+    expect(trail[3]!.targetAt).toBe(targetAtFor(5).toISOString());
+  });
+
+  it('never inserts a VALID assessment with completedAt at or after its own validUntil', async () => {
+    dailyHistory();
+    for (let index = 1; index <= 25; index++) { rows.push(minuteBar(index, 1, 100, 100.1, 99.9, 100)); rows.push(minuteBar(index, 2, 100, 100.1, 99.9, 100)); }
+    await run(dueAt(1));
+    await run(dueAt(2));
+    await run(new Date(etInstant(SESSION_DATE, 960).getTime() - 60_000)); // Final target at 15:59 ET.
+    await run(etInstant(SESSION_DATE, 960)); // Expired: notDue, no new row.
+    const valid = assessments.filter(a => a.status === 'VALID');
+    expect(valid.length).toBeGreaterThan(0);
+    for (const row of valid) expect(row.completedAt.getTime()).toBeLessThan(row.validUntil!.getTime());
   });
 
   it('rejects lock contention before reading any state', async () => {

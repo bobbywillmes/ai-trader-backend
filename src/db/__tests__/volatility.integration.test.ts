@@ -74,8 +74,8 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(await db.marketCalendarException.count()).toBe(1);
     // Only the isolated fixture's deliberately conflicting mutable operator row is removed.
     await db.marketCalendarException.deleteMany();
-    expect(await bootstrapMarketCalendar(true, db)).toMatchObject({ inserted: 59, skipped: 0, conflicts: [] });
-    expect(await bootstrapMarketCalendar(true, db)).toMatchObject({ inserted: 0, skipped: 59, conflicts: [] });
+    expect(await bootstrapMarketCalendar(true, db)).toMatchObject({ inserted: 71, skipped: 0, conflicts: [] });
+    expect(await bootstrapMarketCalendar(true, db)).toMatchObject({ inserted: 0, skipped: 71, conflicts: [] });
     expect(await db.marketCalendarException.findUnique({ where: { sessionDate: new Date('2025-01-09') } })).toMatchObject({ type: 'CLOSED', closeTimeMinutesEt: null });
   });
   async function untouchedEvidence() {

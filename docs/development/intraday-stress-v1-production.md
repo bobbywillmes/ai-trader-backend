@@ -50,10 +50,15 @@ Production did **not** previously ingest MINUTE_15 SPY/RSP evidence continuously
 synced (`market-bar-ingestion.service.ts` → `syncDailyBars`). The minimum required extension:
 
 - `fetchMinuteEvidence` added to `src/integrations/massive/evidence.client.ts`, mirroring
-  `fetchDailyEvidence` but against `/v2/aggs/ticker/{symbol}/range/15/minute/{from}/{to}`, with
-  every bar validated to align to the fixed 09:30-16:00 ET regular-session 15-minute grid (a new
-  `etMinutesOfDay` helper was added to `market-calendar.ts` to support this check; no parallel
-  calendar logic was introduced). `adjusted=false` is required exactly like the daily client.
+  `fetchDailyEvidence` but against `/v2/aggs/ticker/{symbol}/range/15/minute/{from}/{to}` (a new
+  `etMinutesOfDay` helper was added to `market-calendar.ts` to support alignment checks; no
+  parallel calendar logic was introduced). `adjusted=false` is required exactly like the daily
+  client. **Extended-hours filtering**: Massive's aggregate endpoint returns pre-market and
+  after-hours 15-minute aggregates alongside the regular session (observed in research: 47,545
+  extended-hours SPY bars, 11,772 RSP) — that is normal provider evidence, not corruption, so
+  bars outside the fixed 09:30-16:00 ET window are silently ignored rather than failing the whole
+  response. Only bars *inside* that window are required to align exactly to the 09:30 ET
+  15-minute grid; a malformed/misaligned regular-session bar still fails closed.
 - `syncMinuteBars` added to `market-bar-ingestion.service.ts`: bounded, session-local — it only
   ever requests **today's** regular session (at most 26 bars/symbol), under an independent
   advisory lock (`market-minute-data-lock.service.ts`, key `ai-trader:market-minute-evidence`,
@@ -62,6 +67,9 @@ synced (`market-bar-ingestion.service.ts` → `syncDailyBars`). The minimum requ
   scope by design: replay only ever needs to reconstruct the *current* session.
 - Worker `market_minute_evidence_sync` polls every 30 seconds (`market-minute-data.worker.ts`),
   comfortably inside the 5-minute MINUTE_15 grace window without high-frequency provider use.
+  Continued absence of an eligible, expected regular-session bar (`missing > 0`) is surfaced as a
+  worker-health **failure**, not idle work — existing worker-health failure-threshold/transition
+  dedup conventions (no per-tick `SystemEvent` spam) apply unchanged.
 - Massive only. No Alpaca fallback exists anywhere in the bar-ingestion pipeline (confirmed by
   the existing `uses no Alpaca provider dependency` test, extended to cover the new files).
 - Existing DAY_1 SPY/RSP evidence is reused unchanged for the ATR14 baseline; no parallel
@@ -149,9 +157,15 @@ loop:
   polling every 2 minutes until the *next* target's own grace elapses); identical repeated
   failures at the same stuck target are suppressed (`suppressed: true`) without any extra
   network/DB work, mirroring VOLATILITY_V1's fingerprint suppression.
-- **Validity**: `validUntil` = next expected target's due time + 5-minute grace, *except* the
-  final actionable target of a session, whose `validUntil` is capped at session close — it never
-  remains "current" into the next session's pre-open hours.
+- **Validity / never-expired publication**: `validUntil` = next expected target's due time +
+  5-minute grace, *except* the final actionable target of a session, whose `validUntil` is capped
+  at session close — it never remains "current" into the next session's pre-open hours.
+  `latestActionableTarget` requires a target to be **both** evidence-grace-elapsed **and**
+  `now < validUntil` before it is even considered publishable; an expired target (evidence grace
+  elapsed but its own currentness window has already closed — e.g. a prior session's final target
+  once session close has passed, whether or not it was ever published) is never selected, and the
+  service returns `notDue` instead. No newly inserted VALID row can ever have
+  `completedAt >= validUntil` (test-verified).
 - Locking (`pg_try_advisory_xact_lock`, key `ai-trader:intraday-stress-v1-publication`),
   `SystemEvent` emission (`intraday_stress_assessment_blocked/bootstrap/session_start/recovered/
   transition`), and the P2002 idempotency fallback all mirror VOLATILITY_V1 exactly.
@@ -161,7 +175,36 @@ shock/rolling/drawdown/acute values and ratios, component states, absolute-HIGH 
 acute/session collapse triggered+reason, instrument raw state; market raw state; session/replay/
 baseline provenance; full hysteresis transition (`previousEffectiveState`, `confirmationAfter`,
 `transitioned`, `reason`, `predecessorAssessmentId`); calendar/grace/`validUntil`/
-`nextExpectedTargetAt`; `attemptFingerprint`; `reasonCode`. Never full Massive raw responses.
+`nextExpectedTargetAt`; `missingClosures`/`missingEarlyCloses`; `attemptFingerprint`;
+`reasonCode`. Never full Massive raw responses.
+
+**Compact replay trail**: when a gap is replayed in-memory (see above), `evidenceJson.replay.trail`
+records one compact entry per replayed target (`index`, `targetAt`, `rawState`, `effectiveState`,
+`confirmationAfter`, `transitioned`, `reason`) — bounded to at most one session's worth (≤25) —
+so a reconstructed effective state after downtime is auditable without duplicating full OHLC
+evidence for every skipped target; immutable `MarketBar` remains the raw source of truth.
+
+## Verified calendar authority (CLOSED and EARLY_CLOSE)
+
+`src/services/market-calendar-bootstrap.definition.ts` (`VERIFIED_NYSE_CLOSURES`) now carries
+both verified full-day closures (`closedDates`) and verified 1:00 PM early closes
+(`earlyCloseDates`, `closeTimeMinutesEt = 780`) for 2021-2026, sourced from the same NYSE Holiday
+and Early Closings Calendar press releases already cited for the closures. This was previously
+duplicated only in the research-only `src/dev/intraday-stress-calendar.ts`, which now imports and
+reuses the production list instead of maintaining a silently divergent copy.
+`market-calendar-bootstrap.service.ts`'s `verifiedClosureRows`/`bootstrapMarketCalendar` treat
+both kinds generically: preview/apply, idempotent skip of already-equivalent rows, and **zero
+writes** if any existing row conflicts on type or close time (an operator's mutable configuration
+is never silently overwritten) — unchanged behavior, now covering 71 verified rows (59 closures +
+12 early closes) instead of 59. Bootstrap remains explicit/operator-invoked; no migration was
+needed (this is application data, not schema).
+
+INTRADAY_STRESS_V1's own calendar-coverage check (`CALENDAR_EVIDENCE_UNAVAILABLE`) was extended
+to require verified **early-close** coverage in the recent window, not just full-day closures: a
+missing or conflicting `EARLY_CLOSE`/780 row for a verified date fails closed exactly like a
+missing verified closure, because an unconfigured/misconfigured early close would otherwise make
+`marketSession`/`barEligibility` treat that date as a full 16:00 session — corrupting this
+session-boundary-sensitive dimension's actionable-target count and validity window.
 
 ## Worker
 
@@ -171,16 +214,31 @@ deliberately not copied from the daily dimensions' 15-minute cadence. No trading
 
 ## Startup / replay behavior
 
-- **Before 09:45** (no target due yet): `latestActionableTarget` finds nothing yet due today;
-  falls back to the most recent target of a prior session (or `notDue` if already current).
-- **During an active session**: resumes from the current due target; any gap since the last
-  published target is replayed in-memory only (see above), never retroactively persisted.
-- **After regular-session close**: the final actionable target (or an earlier one if evidence
-  was never available) remains the latest publishable target until the next session's first
-  target becomes due.
-- **CLOSED session**: `latestActionableTarget` skips it entirely (no session, no targets).
-- **EARLY_CLOSE session**: actionable target count and the final target's `validUntil` both
-  respect the shortened session automatically via the shared calendar.
+Replay establishes **calculation state only** — it never creates retroactive authoritative
+history, and an already-expired target is never newly published, regardless of whether it was
+ever published at all:
+
+- **Before 09:45** (no target due yet, e.g. process starts early or overnight): no target of
+  today's session has had its evidence grace elapse yet, and every target from a prior session is
+  already expired (its `validUntil` closed with that session). Result: `notDue`. It does **not**
+  fall back to publishing yesterday's leftover final target.
+- **During an active session**: resumes from the current due target (the latest one that is both
+  grace-elapsed and not yet expired); any gap since the last published target is replayed
+  in-memory only (see above) to reconstruct calculation state, never retroactively persisted.
+- **After regular-session close** (including the moment of close itself, `now >= 16:00 ET`): the
+  final actionable target's `validUntil` equals session close, so once `now` reaches it the target
+  is expired and no longer publishable — even if it was never successfully published during the
+  session. Result: `notDue` until the next session's first target becomes due; **no new expired
+  VALID row is ever created**.
+- **Next trading day before its own first target is due** (e.g. before ~09:50 ET): the prior
+  session's targets are all expired; today's first target's grace has not elapsed yet either.
+  Result: `notDue`.
+- **CLOSED session**: `latestActionableTarget` skips it entirely (no session, no targets); it
+  cannot yield a currently-valid target, since crossing a session boundary always expires the
+  prior session's remaining targets.
+- **EARLY_CLOSE session**: actionable target count and the final target's `validUntil` (the
+  actual early close time, e.g. 13:00 ET) both respect the shortened session automatically via the
+  shared calendar and the verified early-close bootstrap (see below).
 
 ## Schema / migration
 
@@ -204,42 +262,90 @@ POST /api/market-data/intraday-stress-assessments/run   (SYSTEM_OWNER; respects 
 Auth/pagination/error style matches the existing Trend/Volatility/Breadth routes exactly
 (`PlatformPermission.MARKET_DATA_READ` for reads, `requireSystemOwnerAccess` for `run`).
 
+## Provider freshness acceptance requirement
+
+The frozen 5-minute MINUTE_15 evidence grace is **not** altered or relaxed by this
+implementation, and the algorithm is not adjusted to accommodate delayed market data. This
+implies an explicit, unrelaxable production acceptance prerequisite:
+
+> **Massive SPY/RSP MINUTE_15 evidence must become available within `targetAt + 5 minutes`.**
+
+If the configured Massive subscription is entitled only to delayed data (e.g. a 15-minute-delayed
+plan), this prerequisite is **not** satisfied, and INTRADAY_STRESS_V1 must **not** be considered
+operationally accepted for any future safety/eligibility use — even though it has no trading
+authority today, its assessments would otherwise silently describe stale conditions as "right
+now." This is a subscription/observation fact to be verified against the live account, not
+something to infer from historical entitlement in code.
+
+**How to observe actual end-to-end latency during a live regular session:**
+
+1. Note a target's `targetAt` (from `GET /api/market-data/intraday-stress-assessments/latest`, or
+   compute it as the next `openAt + n*15min`).
+2. Poll Massive directly (or watch `market_minute_evidence_sync`'s effect) for the first response
+   that actually contains the bar covering `[targetAt - 15min, targetAt)` — record that wall-clock
+   time as first-provider-availability.
+3. Compare against the resulting `MarketBar.receivedAt` (when the backend actually stored it) —
+   this is the ingestion-side latency.
+4. Compare the published assessment's `completedAt` against `targetAt` — this is total
+   grace-consumed latency; it must stay under 5 minutes for the target to have been "on time"
+   (`status=VALID` rather than a grace-driven gap or an evidence-failure `blocked` result).
+5. Compare `completedAt` against `validUntil` — confirms the row was inserted well inside its own
+   currentness window (this is also test-verified for every VALID row, see below).
+
+If step 2 consistently lands 15+ minutes after `targetAt`, the subscription is delayed and this
+dimension is not meeting its own freshness contract regardless of what gets published.
+
 ## Manual acceptance plan
 
 1. `npx prisma migrate deploy && npx prisma generate`.
 2. Confirm SPY/RSP `Security` rows and recent DAY_1 history already exist (reused from
    Trend/Volatility acceptance).
-3. Start the backend; confirm `market_minute_evidence_sync` begins filling today's MINUTE_15
+3. `npm run calendar:bootstrap` (preview), confirm `conflicts.length === 0` and `wouldInsert`
+   includes the 12 verified early closes, then `npm run calendar:bootstrap -- --apply`. This is
+   application data, not schema — no migration is involved.
+4. Verify the provider-freshness prerequisite above against the live Massive subscription before
+   proceeding — do not accept this dimension on a delayed-data plan.
+5. Start the backend; confirm `market_minute_evidence_sync` begins filling today's MINUTE_15
    bars (`GET /api/market-data/status` or `SystemEvent`/worker-health inspection).
-4. Wait for at least one 15-minute target's evidence grace to elapse, or
+6. Wait for at least one 15-minute target's evidence grace to elapse, or
    `POST /api/market-data/intraday-stress-assessments/run` once bars exist.
-5. `GET /api/market-data/intraday-stress-assessments/latest` — verify `dimension=INTRADAY_STRESS`,
+7. `GET /api/market-data/intraday-stress-assessments/latest` — verify `dimension=INTRADAY_STRESS`,
    `algorithmVersion=INTRADAY_STRESS_V1`, `evidenceSchemaVersion=1`, `status=VALID`,
    `rawState`/`effectiveState` in `{NORMAL,ELEVATED,HIGH,SEVERE}`, full per-instrument evidence,
-   `session.bootstrap=true`, `baseline.frozenForSession=true`.
-6. Immediately re-run — expect a clean `notDue` result, no duplicate row.
-7. Fifteen minutes later (next target), re-run — confirm a new row with
+   `session.bootstrap=true`, `baseline.frozenForSession=true`, `completedAt < validUntil`.
+8. Immediately re-run — expect a clean `notDue` result, no duplicate row.
+9. Fifteen minutes later (next target), re-run — confirm a new row with
    `previousAssessmentId` pointing to the first, `session.sameSession=true`,
    `baseline.provenance.reused=true`.
-8. `GET /api/market-data/trend-assessments/latest`, `/volatility-assessments/latest`, and
-   `/breadth-assessments/latest` — confirm all three unchanged.
-9. Inspect System Events / worker health for `intraday_stress_assessment_publication` and
-   `market_minute_evidence_sync`.
+10. `GET /api/market-data/trend-assessments/latest`, `/volatility-assessments/latest`, and
+    `/breadth-assessments/latest` — confirm all three unchanged.
+11. Inspect System Events / worker health for `intraday_stress_assessment_publication` and
+    `market_minute_evidence_sync`.
+12. After regular-session close, confirm a run returns `notDue` and does **not** publish a new
+    row for the (now expired) final target.
 
 ## Validation recorded for this change
 
 - Focused tests: `intraday-stress-calculation.test.ts` (28), `intraday-stress-v1.definition.test.ts` (1),
-  `intraday-stress-assessment.service.test.ts` (16), `intraday-stress-assessment.worker.test.ts` (4),
-  `market-minute-data.worker.test.ts` (3), plus `evidence.client.test.ts` MINUTE_15 additions (3).
+  `intraday-stress-assessment.service.test.ts` (23, including the never-expired-publication,
+  same-session-gap-replay, and early-close-calendar-coverage corrections),
+  `intraday-stress-assessment.worker.test.ts` (4), `market-minute-data.worker.test.ts` (5,
+  including the missing-eligible-bar-is-a-failure correction), `evidence.client.test.ts` (17,
+  including the extended-hours-filtering correction), and
+  `market-calendar-bootstrap.service.test.ts` (3, covering the verified early-close additions) —
+  81 tests total across these 7 files.
 - `src/db/__tests__/intraday-stress.integration.test.ts` (16 tests) against a real ephemeral
   Postgres database: migration replay with **no Prisma schema drift**, state-vocabulary
   acceptance/rejection, sessionDate requirement, immutability/uniqueness/predecessor-FK
   enforcement, real concurrent-publisher lock contention (`409`), and confirmation that a
   multi-target gap advances without retroactively persisting the skipped targets — all while
-  leaving Trend/trading tables byte-identical.
+  leaving Trend/trading tables byte-identical. The full `RUN_DATABASE_INTEGRITY_TESTS=1` suite
+  (10 files, 155 tests, including Trend/Volatility/Breadth) also passes unchanged, confirming the
+  verified-calendar and INTRADAY_STRESS corrections introduced no schema drift and no migration
+  was needed for the calendar bootstrap changes (application data, not schema).
 - `npm run check` (TypeScript), `npm run build`, `npx prisma validate`, `npx prisma generate`:
   all clean.
-- Full backend suite (`npm test`): 195 test files passed, 2120 tests passed, 150 skipped
+- Full backend suite (`npm test`): 195 test files passed, 2130 tests passed, 150 skipped
   (pre-existing DB-integrity suites gated behind `RUN_DATABASE_INTEGRITY_TESTS=1`, which were
   also run separately and pass), 0 failed.
 
@@ -248,4 +354,5 @@ Auth/pagination/error style matches the existing Trend/Volatility/Breadth routes
 No trading effect: no `StrategyMarketRegimePolicy`, no overall Market Regime composition, no
 `SignalEvaluation`/`EntryDecision`/`OrderIntent` change. TREND_V1, VOLATILITY_V1, and BREADTH_V1
 are untouched. No Alpaca market-data fallback anywhere in ingestion. No historical authoritative
-INTRADAY_STRESS row is ever backfilled — only the current due target is ever published.
+INTRADAY_STRESS row is ever backfilled — only the current due target is ever published, and only
+when it is not already expired.

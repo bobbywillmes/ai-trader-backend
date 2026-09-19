@@ -31,10 +31,23 @@ describe('strict Massive evidence', () => {
     const bars = await fetchMinuteEvidence('SPY', '2026-09-14', '2026-09-14', async () => ({ status: 'OK', adjusted: false, ticker: 'SPY', results: [minuteRow] }));
     expect(bars).toHaveLength(1); expect(bars[0]?.volume).toBe('500');
   });
-  it('rejects a bar not aligned to the 09:30 ET 15-minute grid', async () => {
+  it('fails closed on a malformed/misaligned timestamp inside the regular-session window', async () => {
     await expect(fetchMinuteEvidence('SPY', '2026-09-14', '2026-09-14', async () => ({ status: 'OK', adjusted: false, ticker: 'SPY', results: [{ ...minuteRow, t: Date.parse('2026-09-14T13:35Z') }] }))).rejects.toThrow('not aligned');
   });
-  it('rejects a bar outside the 09:30-16:00 ET regular session window', async () => {
-    await expect(fetchMinuteEvidence('SPY', '2026-09-14', '2026-09-14', async () => ({ status: 'OK', adjusted: false, ticker: 'SPY', results: [{ ...minuteRow, t: Date.parse('2026-09-14T13:00Z') }] }))).rejects.toThrow('not aligned');
+  it('ignores expected pre-market and after-hours aggregates instead of failing the response', async () => {
+    const premarket = { ...minuteRow, t: Date.parse('2026-09-14T12:45Z') }; // 08:45 ET
+    const afterHours = { ...minuteRow, t: Date.parse('2026-09-14T20:15Z') }; // 16:15 ET
+    const bars = await fetchMinuteEvidence('SPY', '2026-09-14', '2026-09-14', async () => ({ status: 'OK', adjusted: false, ticker: 'SPY', results: [premarket, afterHours] }));
+    expect(bars).toEqual([]);
+  });
+  it('retains only regular-session evidence from a realistic mixed provider response', async () => {
+    const premarket = { ...minuteRow, t: Date.parse('2026-09-14T12:45Z'), c: 99 }; // 08:45 ET
+    const open = { ...minuteRow, t: Date.parse('2026-09-14T13:30Z'), c: 100 }; // 09:30 ET
+    const second = { ...minuteRow, t: Date.parse('2026-09-14T13:45Z'), c: 101 }; // 09:45 ET
+    const afterHours = { ...minuteRow, t: Date.parse('2026-09-14T20:15Z'), c: 102 }; // 16:15 ET
+    const bars = await fetchMinuteEvidence('SPY', '2026-09-14', '2026-09-14', async () => ({ status: 'OK', adjusted: false, ticker: 'SPY', results: [premarket, open, second, afterHours] }));
+    expect(bars).toHaveLength(2);
+    expect(bars.map(bar => bar.close)).toEqual(['100', '101']);
+    expect(bars.map(bar => bar.barStartAt.toISOString())).toEqual(['2026-09-14T13:30:00.000Z', '2026-09-14T13:45:00.000Z']);
   });
 });

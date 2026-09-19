@@ -3,10 +3,16 @@ import { prisma } from '../db/prisma.js';
 import { VERIFIED_NYSE_CLOSURES } from './market-calendar-bootstrap.definition.js';
 import type { CalendarException } from './market-calendar.js';
 
-export const verifiedClosureRows: readonly (CalendarException & { name: string })[] = VERIFIED_NYSE_CLOSURES.closedDates.map(sessionDate => ({
-  sessionDate, name: sessionDate === '2025-01-09' ? 'NYSE National Day of Mourning - Jimmy Carter' : 'NYSE verified full-day closure',
-  type: 'CLOSED', closeTimeMinutesEt: null,
-}));
+export const verifiedClosureRows: readonly (CalendarException & { name: string })[] = [
+  ...VERIFIED_NYSE_CLOSURES.closedDates.map(sessionDate => ({
+    sessionDate, name: sessionDate === '2025-01-09' ? 'NYSE National Day of Mourning - Jimmy Carter' : 'NYSE verified full-day closure',
+    type: 'CLOSED' as const, closeTimeMinutesEt: null,
+  })),
+  ...VERIFIED_NYSE_CLOSURES.earlyCloseDates.map(sessionDate => ({
+    sessionDate, name: 'NYSE verified 1:00 PM early close',
+    type: 'EARLY_CLOSE' as const, closeTimeMinutesEt: VERIFIED_NYSE_CLOSURES.earlyCloseTimeMinutesEt as number,
+  })),
+];
 const canonicalName = (name: string) => name.trim().replace(/\s+/g, ' ').toLowerCase();
 export function planCalendarBootstrap(existing: readonly CalendarException[]) {
   const missing: typeof verifiedClosureRows[number][] = [];
@@ -15,7 +21,7 @@ export function planCalendarBootstrap(existing: readonly CalendarException[]) {
   for (const expected of verifiedClosureRows) {
     const row = existing.find(row => row.sessionDate === expected.sessionDate);
     if (!row) missing.push(expected);
-    else if (row.type === expected.type && row.closeTimeMinutesEt === null && canonicalName(row.name ?? '') === canonicalName(expected.name)) skipped.push(row.sessionDate);
+    else if (row.type === expected.type && row.closeTimeMinutesEt === expected.closeTimeMinutesEt && canonicalName(row.name ?? '') === canonicalName(expected.name)) skipped.push(row.sessionDate);
     else conflicts.push({ sessionDate: expected.sessionDate, expected, existing: row });
   }
   return { missing, skipped, conflicts };

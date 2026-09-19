@@ -1,15 +1,17 @@
 import type { CalendarException } from '../services/market-calendar.js';
+import { VERIFIED_NYSE_CLOSURES } from '../services/market-calendar-bootstrap.definition.js';
 import { volatilityResearchExceptions } from './volatility-research-calendar.js';
 
-/** Research-only additions from the NYSE releases cited in the report; never persisted. */
-export const EARLY_CLOSE_DATES = ['2021-11-26', '2022-11-25', '2023-07-03', '2023-11-24',
-  '2024-07-03', '2024-11-29', '2024-12-24', '2025-07-03', '2025-11-28', '2025-12-24', '2026-11-27', '2026-12-24'];
+/** Adopted from production calendar bootstrap authority (market-calendar-bootstrap.definition.ts),
+ * not a research-only duplicate: these NYSE early closes were verified here during
+ * INTRADAY_STRESS_V1 research and have since been promoted into production. */
+export const EARLY_CLOSE_DATES: readonly string[] = VERIFIED_NYSE_CLOSURES.earlyCloseDates;
 export function researchCalendar(stored: readonly CalendarException[]): CalendarException[] {
   const map = new Map(volatilityResearchExceptions(stored).map(x => [x.sessionDate, x]));
   for (const sessionDate of EARLY_CLOSE_DATES) {
     const row = map.get(sessionDate);
-    if (row && (row.type !== 'EARLY_CLOSE' || row.closeTimeMinutesEt !== 780)) throw new Error(`Research/operator early-close conflict: ${sessionDate}`);
-    map.set(sessionDate, row ?? { sessionDate, type: 'EARLY_CLOSE', closeTimeMinutesEt: 780, name: 'NYSE published early close (research only)' });
+    if (row && (row.type !== 'EARLY_CLOSE' || row.closeTimeMinutesEt !== VERIFIED_NYSE_CLOSURES.earlyCloseTimeMinutesEt)) throw new Error(`Research/operator early-close conflict: ${sessionDate}`);
+    map.set(sessionDate, row ?? { sessionDate, type: 'EARLY_CLOSE', closeTimeMinutesEt: VERIFIED_NYSE_CLOSURES.earlyCloseTimeMinutesEt, name: 'NYSE verified 1:00 PM early close (adopted from production)' });
   }
   return [...map.values()].sort((a, b) => a.sessionDate.localeCompare(b.sessionDate));
 }
