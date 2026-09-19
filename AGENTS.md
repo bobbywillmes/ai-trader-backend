@@ -211,6 +211,16 @@ Be especially careful when editing:
 
 ## Trade Lifecycle Notes
 
+INTRADAY_STRESS_V1 remains research-only. `research:intraday-stress` caches unadjusted
+Massive bars locally and reads the database under a read-only transaction; it must
+never publish assessments or enter trading pipelines. Research reuses pure daily
+Wilder ATR and split normalization, freezes the prior-session baseline, enforces
+regular-session continuity, and excludes the closing bar from actionable targets.
+The final research clarification recommends freezing Candidate B with current-close
+acute collapse and fixed absolute HIGH safeguards (1% closing downside / 2.5% session
+drawdown). The original low-excursion evidence and comparison remain preserved. See
+`docs/development/intraday-stress-calibration.md`. No production authority is granted.
+
 Market data, Trend calibration, and authoritative TREND_V1 publication are account-independent.
 MarketBar is immutable, unadjusted Massive evidence; never use Alpaca fallback or
 rewrite stored OHLCV. Calendar exceptions are mutable operator configuration.

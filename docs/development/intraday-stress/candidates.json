@@ -1,0 +1,20 @@
+[
+  {
+    "name": "A",
+    "shock": [0.35, 0.60], "rolling": [0.40, 0.70], "drawdown": [0.90, 1.50],
+    "acute": { "ratio": 1.0, "floor": 0.015, "emergency": 0.025 },
+    "session": { "ratio": 2.0, "floor": 0.02, "emergency": 0.04 }
+  },
+  {
+    "name": "B",
+    "shock": [0.40, 0.70], "rolling": [0.45, 0.80], "drawdown": [1.00, 1.75],
+    "acute": { "ratio": 1.2, "floor": 0.02, "emergency": 0.03 },
+    "session": { "ratio": 2.5, "floor": 0.025, "emergency": 0.04 }
+  },
+  {
+    "name": "C",
+    "shock": [0.45, 0.80], "rolling": [0.50, 0.90], "drawdown": [1.10, 2.00],
+    "acute": { "ratio": 1.3, "floor": 0.02, "emergency": 0.03 },
+    "session": { "ratio": 3.0, "floor": 0.03, "emergency": 0.05 }
+  }
+]

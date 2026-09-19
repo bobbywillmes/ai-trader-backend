@@ -13,6 +13,8 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc --noEmit",
     "research:volatility": "tsx scripts/volatility-report.ts",
+    "research:intraday-stress": "tsx scripts/research-intraday-stress.ts",
+    "analyze:intraday-stress": "tsx scripts/analyze-intraday-stress.ts",
     "research:breadth": "tsx scripts/research-breadth.ts",
     "generate:breadth-v1-bootstrap-artifact": "tsx scripts/generate-breadth-v1-bootstrap-artifact.ts",
     "breadth:bootstrap": "tsx scripts/breadth-bootstrap.ts",
