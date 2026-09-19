@@ -44,6 +44,10 @@ import { closeMarketDataLockPool } from '../services/market-data-lock.service.js
 import { runBreadthAssessmentWorker } from '../workers/breadth-assessment.worker.js';
 import { BREADTH_ASSESSMENT_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { closeBreadthObservationLockPool } from '../services/breadth-observation-lock.service.js';
+import { runMarketMinuteDataWorker } from '../workers/market-minute-data.worker.js';
+import { runIntradayStressAssessmentWorker } from '../workers/intraday-stress-assessment.worker.js';
+import { MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS, INTRADAY_STRESS_ASSESSMENT_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
+import { closeMarketMinuteDataLockPool } from '../services/market-minute-data-lock.service.js';
 
 const app = createApp();
 
@@ -159,6 +163,10 @@ function startWorkers() {
   setInterval(() => { void runWorker('market_daily_evidence_sync', runMarketDataWorker); }, 60_000);
   void runWorker('breadth_assessment_publication', runBreadthAssessmentWorker);
   setInterval(() => { void runWorker('breadth_assessment_publication', runBreadthAssessmentWorker); }, BREADTH_ASSESSMENT_WORKER_INTERVAL_MS);
+  void runWorker('market_minute_evidence_sync', runMarketMinuteDataWorker);
+  setInterval(() => { void runWorker('market_minute_evidence_sync', runMarketMinuteDataWorker); }, MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS);
+  void runWorker('intraday_stress_assessment_publication', runIntradayStressAssessmentWorker);
+  setInterval(() => { void runWorker('intraday_stress_assessment_publication', runIntradayStressAssessmentWorker); }, INTRADAY_STRESS_ASSESSMENT_WORKER_INTERVAL_MS);
 
   // This validity monitor is local-only. Final broker authorization remains
   // authoritative, while this loop promptly closes stale permissive latches.
@@ -356,6 +364,7 @@ async function shutdown(signal: NodeJS.Signals) {
     Promise.all([
       workerHealthRegistry.shutdown(),
       closeMarketDataLockPool(),
+      closeMarketMinuteDataLockPool(),
       closeBreadthObservationLockPool(),
       closeTradingAccountWorkflowLockPool(),
     ]),
