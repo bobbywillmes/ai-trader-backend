@@ -87,7 +87,8 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const before = await untouchedEvidence();
     let entered!: () => void, release!: () => void;
     const inside = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { release = resolve; });
-    const options = { db, now: new Date(openMs + 900_000 + 5 * 60_000 + 1000), fetchSplits: async () => { entered(); await gate; return []; } };
+    const simulatedNow = new Date(openMs + 900_000 + 5 * 60_000 + 1000);
+    const options = { db, now: simulatedNow, clock: () => simulatedNow, fetchSplits: async () => { entered(); await gate; return []; } };
     const first = publishIntradayStressAssessments(options); await inside;
     try { await expect(publishIntradayStressAssessments(options)).rejects.toMatchObject({ statusCode: 409 }); } finally { release(); }
     expect(await first).toMatchObject({ published: 1 });
@@ -101,7 +102,8 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   it('advances past a stuck target and only ever persists the current due target, never retroactive history', async () => {
     const before = await untouchedEvidence();
     for (const index of [2, 3, 4, 5]) await addMinuteBar(index);
-    const options = { db, now: new Date(openMs + 5 * 900_000 + 5 * 60_000 + 1000), fetchSplits: async () => [] };
+    const simulatedNow2 = new Date(openMs + 5 * 900_000 + 5 * 60_000 + 1000);
+    const options = { db, now: simulatedNow2, clock: () => simulatedNow2, fetchSplits: async () => [] };
     expect(await publishIntradayStressAssessments(options)).toMatchObject({ published: 1 });
     const rows = await db.marketRegimeDimensionAssessment.findMany({ where: { algorithmVersion: 'INTRADAY_STRESS_V1' }, orderBy: { id: 'asc' } });
     expect(rows).toHaveLength(2); // Target 1 (previous test) and target 5 only; 2-4 are never persisted.

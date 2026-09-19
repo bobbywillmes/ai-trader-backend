@@ -146,8 +146,10 @@ loop:
   history bootstraps fresh from `{null, 0}` and replay starts at index 1 of the new session,
   exactly matching "the first valid assessment of a new session establishes that session's
   effective state from its raw state."
-- **Fail-closed reason codes**: `CALENDAR_EVIDENCE_UNAVAILABLE` (verified NYSE closures missing
-  from the DB in the recent window), `PRIOR_ATR_UNAVAILABLE` (no prior-session ATR14 baseline),
+- **Fail-closed reason codes**: `CALENDAR_EVIDENCE_UNAVAILABLE` (verified NYSE closures or early
+  closes missing/conflicting in the DB in the recent window, **or** the due target's session
+  falls outside `VERIFIED_NYSE_CLOSURES`'s verified `from`/`to` horizon — see below),
+  `PRIOR_ATR_UNAVAILABLE` (no prior-session ATR14 baseline),
   `SPLIT_EVIDENCE_UNAVAILABLE` (Massive split fetch/validation failure while computing a fresh
   baseline), `MISSING_INTRADAY_EVIDENCE` (missing/invalid/duplicate bar, missing reference, or
   incomplete session prefix), `ROLLING_CONTINUITY_FAILURE` (rolling window broken after
@@ -157,15 +159,25 @@ loop:
   polling every 2 minutes until the *next* target's own grace elapses); identical repeated
   failures at the same stuck target are suppressed (`suppressed: true`) without any extra
   network/DB work, mirroring VOLATILITY_V1's fingerprint suppression.
-- **Validity / never-expired publication**: `validUntil` = next expected target's due time +
-  5-minute grace, *except* the final actionable target of a session, whose `validUntil` is capped
-  at session close — it never remains "current" into the next session's pre-open hours.
-  `latestActionableTarget` requires a target to be **both** evidence-grace-elapsed **and**
-  `now < validUntil` before it is even considered publishable; an expired target (evidence grace
-  elapsed but its own currentness window has already closed — e.g. a prior session's final target
-  once session close has passed, whether or not it was ever published) is never selected, and the
-  service returns `notDue` instead. No newly inserted VALID row can ever have
-  `completedAt >= validUntil` (test-verified).
+- **Validity / never-expired publication — two distinct currentness checks**: `validUntil` = next
+  expected target's due time + 5-minute grace, *except* the final actionable target of a session,
+  whose `validUntil` is capped at session close — it never remains "current" into the next
+  session's pre-open hours.
+  1. **Selection-time check** (`latestActionableTarget`): a target must be **both**
+     evidence-grace-elapsed **and** `now < validUntil` before it is even considered publishable.
+     An expired target (evidence grace elapsed but its own currentness window has already
+     closed — e.g. a prior session's final target once session close has passed, whether or not
+     it was ever published) is never selected; the service returns `notDue` instead.
+  2. **Final write-boundary revalidation** (immediately before the authoritative insert, after
+     `completedAt = clock()`): selection happens near the start of the invocation, but baseline
+     computation, split/bar fetching, and in-memory replay all take real time. If that work is
+     slow enough that the *selected* target's `validUntil` closes before the row would actually be
+     written (e.g. publication starts at 15:59:55 for a target whose `validUntil` is 16:00:00 and
+     finishes at 16:00:03), the completed computation is discarded entirely — **no row is
+     inserted at all**, VALID or otherwise, and the service returns `notDue`. This is independent
+     of and does not weaken check 1.
+  Together these guarantee no newly inserted VALID row can ever have `completedAt >= validUntil`
+  (test-verified, including deliberately-differing `now`/`clock()` race scenarios).
 - Locking (`pg_try_advisory_xact_lock`, key `ai-trader:intraday-stress-v1-publication`),
   `SystemEvent` emission (`intraday_stress_assessment_blocked/bootstrap/session_start/recovered/
   transition`), and the P2002 idempotency fallback all mirror VOLATILITY_V1 exactly.
@@ -205,6 +217,34 @@ missing or conflicting `EARLY_CLOSE`/780 row for a verified date fails closed ex
 missing verified closure, because an unconfigured/misconfigured early close would otherwise make
 `marketSession`/`barEligibility` treat that date as a full 16:00 session — corrupting this
 session-boundary-sensitive dimension's actionable-target count and validity window.
+
+### Verified calendar authority horizon
+
+`VERIFIED_NYSE_CLOSURES` declares an explicit `from`/`to` range (currently `2021-01-01` to
+`2026-12-31`) — the span it actually verifies, not an unbounded assumption. A due target whose
+`sessionDate` falls **outside** that range fails closed with `CALENDAR_EVIDENCE_UNAVAILABLE`
+(`status` cannot become `VALID`) rather than silently treating an unverified future (or
+pre-2021) date as an ordinary session — this is exactly the "silent ordinary-weekday drift" risk
+an unbounded assumption would otherwise create. `evidenceJson.calendarAuthority` records
+`{from, to, withinAuthority}` for every attempt, including this one, for audit.
+
+This was implemented as an additional condition alongside the existing missing-closure/
+missing-early-close checks (same reasonCode, same fail-closed attempt-row shape) rather than by
+making `latestActionableTarget` skip out-of-horizon dates outright: the latter would have made
+the horizon boundary silently invisible (a permanent, unexplained `notDue`), whereas an explicit
+`FAILED` attempt with `reasonCode=CALENDAR_EVIDENCE_UNAVAILABLE` and
+`calendarAuthority.withinAuthority=false` is directly observable via the API and worker health,
+and reuses the same immutable-attempt/fingerprint-suppression machinery as every other
+calendar-evidence failure.
+
+The static verified list is **not** extended automatically — no inferred federal holidays, no
+dynamic runtime calendar fetch. It is extended only through the existing explicit
+bootstrap/review process, by adding officially published NYSE dates to
+`VERIFIED_NYSE_CLOSURES` and re-running `npm run calendar:bootstrap -- --apply`. **Operational
+note**: extending `from`/`to` through the officially published 2027/2028 NYSE holiday and
+early-closing calendar before this dimension's horizon is reached is a low-risk, mechanical
+follow-up recommended for a future change — it was intentionally *not* done as part of this
+correction, which is scoped to the fail-closed horizon invariant itself.
 
 ## Worker
 
@@ -327,25 +367,28 @@ dimension is not meeting its own freshness contract regardless of what gets publ
 ## Validation recorded for this change
 
 - Focused tests: `intraday-stress-calculation.test.ts` (28), `intraday-stress-v1.definition.test.ts` (1),
-  `intraday-stress-assessment.service.test.ts` (23, including the never-expired-publication,
-  same-session-gap-replay, and early-close-calendar-coverage corrections),
-  `intraday-stress-assessment.worker.test.ts` (4), `market-minute-data.worker.test.ts` (5,
-  including the missing-eligible-bar-is-a-failure correction), `evidence.client.test.ts` (17,
-  including the extended-hours-filtering correction), and
-  `market-calendar-bootstrap.service.test.ts` (3, covering the verified early-close additions) —
-  81 tests total across these 7 files.
+  `intraday-stress-assessment.service.test.ts` (30, including the never-expired-publication,
+  same-session-gap-replay, early-close-calendar-coverage, final-write-boundary-revalidation, and
+  calendar-authority-horizon corrections), `intraday-stress-assessment.worker.test.ts` (4),
+  `market-minute-data.worker.test.ts` (5, including the missing-eligible-bar-is-a-failure
+  correction), `evidence.client.test.ts` (17, including the extended-hours-filtering correction),
+  and `market-calendar-bootstrap.service.test.ts` (3, covering the verified early-close
+  additions) — 88 tests total across these 7 files.
 - `src/db/__tests__/intraday-stress.integration.test.ts` (16 tests) against a real ephemeral
   Postgres database: migration replay with **no Prisma schema drift**, state-vocabulary
   acceptance/rejection, sessionDate requirement, immutability/uniqueness/predecessor-FK
   enforcement, real concurrent-publisher lock contention (`409`), and confirmation that a
   multi-target gap advances without retroactively persisting the skipped targets — all while
-  leaving Trend/trading tables byte-identical. The full `RUN_DATABASE_INTEGRITY_TESTS=1` suite
+  leaving Trend/trading tables byte-identical. (Its two `now`-in-the-past scenarios now
+  explicitly pin `clock()` to the simulated `now`, exactly like the unit tests — otherwise the
+  final write-boundary revalidation would correctly, but unhelpfully for the test, discard the
+  computation against the real wall clock.) The full `RUN_DATABASE_INTEGRITY_TESTS=1` suite
   (10 files, 155 tests, including Trend/Volatility/Breadth) also passes unchanged, confirming the
   verified-calendar and INTRADAY_STRESS corrections introduced no schema drift and no migration
   was needed for the calendar bootstrap changes (application data, not schema).
 - `npm run check` (TypeScript), `npm run build`, `npx prisma validate`, `npx prisma generate`:
   all clean.
-- Full backend suite (`npm test`): 195 test files passed, 2130 tests passed, 150 skipped
+- Full backend suite (`npm test`): 195 test files passed, 2137 tests passed, 150 skipped
   (pre-existing DB-integrity suites gated behind `RUN_DATABASE_INTEGRITY_TESTS=1`, which were
   also run separately and pass), 0 failed.
 
@@ -355,4 +398,6 @@ No trading effect: no `StrategyMarketRegimePolicy`, no overall Market Regime com
 `SignalEvaluation`/`EntryDecision`/`OrderIntent` change. TREND_V1, VOLATILITY_V1, and BREADTH_V1
 are untouched. No Alpaca market-data fallback anywhere in ingestion. No historical authoritative
 INTRADAY_STRESS row is ever backfilled — only the current due target is ever published, and only
-when it is not already expired.
+when it is not already expired at selection time **or** at the final write boundary. No VALID
+INTRADAY_STRESS_V1 assessment is ever published for a session outside `VERIFIED_NYSE_CLOSURES`'s
+verified calendar-authority horizon.

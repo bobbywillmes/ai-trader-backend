@@ -66,12 +66,15 @@ function makeTx() {
     systemEvent: { create: vi.fn(async () => ({})) },
   };
 }
-function run(now: Date) {
+function run(now: Date, completedAt: Date = now) {
   const db = {
     $transaction: async (execute: (client: typeof tx) => unknown) => execute(tx),
     marketRegimeDimensionAssessment: { findFirst: async ({ where }: { where: { targetAt: Date } }) => assessments.find(a => a.status === 'VALID' && +a.targetAt === +where.targetAt) ?? null },
   } as unknown as PrismaClient;
-  return publishIntradayStressAssessments({ db, now, clock: () => now, fetchSplits });
+  // now: used for target selection/eligibility. completedAt: what clock() returns when the
+  // authoritative row would be written — intentionally different in tests that simulate
+  // publication taking real time and racing past the target's own validity window.
+  return publishIntradayStressAssessments({ db, now, clock: () => completedAt, fetchSplits });
 }
 type Evidence = {
   baseline: { spy: number | null; rsp: number | null; frozenForSession: boolean; provenance: { reused: boolean; fromAssessmentId?: number } | null };
@@ -112,6 +115,37 @@ describe('authoritative INTRADAY_STRESS_V1 publication', () => {
     const targetAt = new Date(etInstant('2026-12-28', 570).getTime() + 900_000);
     const dueDate = new Date(targetAt.getTime() + 5 * 60_000 + 61_000);
     expect(await run(dueDate)).toMatchObject({ blocked: { reasonCode: 'CALENDAR_EVIDENCE_UNAVAILABLE' } });
+  });
+
+  describe('verified calendar authority horizon', () => {
+    it('publishes normally on the final date within verified calendar authority', async () => {
+      exceptions = [...verifiedClosureRows];
+      const date = '2026-12-31'; // VERIFIED_NYSE_CLOSURES.to; an ordinary Thursday session.
+      const priorDate = '2026-12-30';
+      for (const d of datesBetween('2026-10-01', priorDate).filter(x => marketSession(x, exceptions))) {
+        rows.push({ id: rows.length + 1, securityId: 1, timeframe: 'DAY_1', barStartAt: etInstant(d, 0), open: 100, high: 101, low: 99, close: 100, volume: 1000 });
+        rows.push({ id: rows.length + 1, securityId: 2, timeframe: 'DAY_1', barStartAt: etInstant(d, 0), open: 100, high: 101, low: 99, close: 100, volume: 1000 });
+      }
+      const dateOpenMs = etInstant(date, 570).getTime();
+      rows.push({ id: rows.length + 1, securityId: 1, timeframe: 'MINUTE_15', barStartAt: new Date(dateOpenMs), open: 100, high: 100.1, low: 99.9, close: 100, volume: 1000 });
+      rows.push({ id: rows.length + 1, securityId: 2, timeframe: 'MINUTE_15', barStartAt: new Date(dateOpenMs), open: 100, high: 100.1, low: 99.9, close: 100, volume: 1000 });
+      const due = new Date(dateOpenMs + 900_000 + 5 * 60_000 + 1_000);
+      const result = await run(due);
+      expect(result).toMatchObject({ published: 1 });
+      expect(assessments[0]).toMatchObject({ status: 'VALID', sessionDate: new Date(date) });
+      expect((assessments[0]!.evidenceJson as { calendarAuthority: { withinAuthority: boolean } }).calendarAuthority).toMatchObject({ withinAuthority: true, from: '2021-01-01', to: '2026-12-31' });
+    });
+
+    it('fails closed with CALENDAR_EVIDENCE_UNAVAILABLE for the first session beyond the verified horizon, without assuming an ordinary session', async () => {
+      exceptions = [...verifiedClosureRows];
+      const date = '2027-01-04'; // First plausible trading Monday beyond VERIFIED_NYSE_CLOSURES.to.
+      const dateOpenMs = etInstant(date, 570).getTime();
+      const due = new Date(dateOpenMs + 900_000 + 5 * 60_000 + 1_000);
+      const result = await run(due);
+      expect(result).toMatchObject({ blocked: { reasonCode: 'CALENDAR_EVIDENCE_UNAVAILABLE', status: 'FAILED' } });
+      expect(assessments[0]).toMatchObject({ status: 'FAILED', reasonCode: 'CALENDAR_EVIDENCE_UNAVAILABLE', rawState: null, effectiveState: null });
+      expect((assessments[0]!.evidenceJson as { calendarAuthority: { withinAuthority: boolean } }).calendarAuthority).toMatchObject({ withinAuthority: false });
+    });
   });
 
   it('bootstraps the first target of a session with a freshly computed frozen baseline', async () => {
@@ -298,6 +332,64 @@ describe('authoritative INTRADAY_STRESS_V1 publication', () => {
     const valid = assessments.filter(a => a.status === 'VALID');
     expect(valid.length).toBeGreaterThan(0);
     for (const row of valid) expect(row.completedAt.getTime()).toBeLessThan(row.validUntil!.getTime());
+  });
+
+  describe('final write-boundary expiry revalidation (now vs. clock() can differ)', () => {
+    it('publishes VALID when selected while valid and completed comfortably before validUntil', async () => {
+      dailyHistory();
+      rows.push(minuteBar(1, 1, 100, 100.1, 99.9, 100), minuteBar(1, 2, 100, 100.1, 99.9, 100));
+      const selectionNow = dueAt(1);
+      expect(await run(selectionNow, new Date(selectionNow.getTime() + 50))).toMatchObject({ published: 1 });
+      expect(assessments).toHaveLength(1);
+    });
+
+    it('publishes nothing when publication completes exactly at validUntil for an ordinary target', async () => {
+      dailyHistory();
+      rows.push(minuteBar(1, 1, 100, 100.1, 99.9, 100), minuteBar(1, 2, 100, 100.1, 99.9, 100));
+      await run(dueAt(1));
+      rows.push(minuteBar(2, 1, 100, 100.1, 99.9, 100), minuteBar(2, 2, 100, 100.1, 99.9, 100));
+      const selectionNow = dueAt(3, -1); // Target 2 is the latest selectable target; target 3 is not yet due.
+      expect(await run(selectionNow, dueAt(3, 0))).toMatchObject({ notDue: true, published: 0 }); // completedAt === validUntil(2)
+      expect(assessments).toHaveLength(1); // No new row for target 2.
+    });
+
+    it('publishes nothing when publication completes after validUntil for an ordinary target', async () => {
+      dailyHistory();
+      rows.push(minuteBar(1, 1, 100, 100.1, 99.9, 100), minuteBar(1, 2, 100, 100.1, 99.9, 100));
+      await run(dueAt(1));
+      rows.push(minuteBar(2, 1, 100, 100.1, 99.9, 100), minuteBar(2, 2, 100, 100.1, 99.9, 100));
+      const selectionNow = dueAt(3, -1);
+      expect(await run(selectionNow, dueAt(3, 1_000))).toMatchObject({ notDue: true, published: 0 });
+      expect(assessments).toHaveLength(1);
+      // The target remains genuinely unpublished; a later invocation with a fresh selection/clock still works normally
+      // once a still-current target exists (the next one, once it in turn becomes due and is itself still valid).
+    });
+
+    it('cannot race the final actionable target into an expired VALID row near session close', async () => {
+      dailyHistory();
+      for (let index = 1; index <= 25; index++) { rows.push(minuteBar(index, 1, 100, 100.1, 99.9, 100)); rows.push(minuteBar(index, 2, 100, 100.1, 99.9, 100)); }
+      const sessionClose = etInstant(SESSION_DATE, 960);
+      const selectionNow = new Date(sessionClose.getTime() - 5_000); // 15:59:55 ET: target 25 is still selectable.
+      expect(await run(selectionNow, sessionClose)).toMatchObject({ notDue: true, published: 0 }); // completedAt === session close
+      expect(assessments).toHaveLength(0);
+      expect(await run(selectionNow, new Date(sessionClose.getTime() + 3_000))).toMatchObject({ notDue: true, published: 0 });
+      expect(assessments).toHaveLength(0);
+      expect(await run(selectionNow, new Date(sessionClose.getTime() - 1))).toMatchObject({ published: 1 }); // completed just before close
+      expect(assessments).toHaveLength(1);
+      expect(assessments[0]).toMatchObject({ status: 'VALID', targetAt: targetAtFor(25) });
+    });
+
+    it('never inserts an ordinary intraday target if its validity window closes before publication completes', async () => {
+      dailyHistory();
+      rows.push(minuteBar(1, 1, 100, 100.1, 99.9, 100), minuteBar(1, 2, 100, 100.1, 99.9, 100));
+      await run(dueAt(1));
+      rows.push(minuteBar(2, 1, 100, 100.1, 99.9, 100), minuteBar(2, 2, 100, 100.1, 99.9, 100));
+      const selectionNow = dueAt(3, -1);
+      await run(selectionNow, dueAt(3, 0));
+      await run(selectionNow, dueAt(3, 1_000));
+      expect(assessments).toHaveLength(1); // Only target 1; target 2 was discarded both times, never inserted as VALID or FAILED.
+      expect(assessments.every(a => a.status !== 'FAILED' && a.status !== 'UNAVAILABLE')).toBe(true);
+    });
   });
 
   it('rejects lock contention before reading any state', async () => {

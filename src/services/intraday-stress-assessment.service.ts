@@ -159,6 +159,12 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
       // satisfied the notDue check above) and represents a prior failed attempt at the same target.
       const priorAttempt = await tx.marketRegimeDimensionAssessment.findFirst({ where: { ...identity, targetAt: latest.targetAt }, orderBy: { attempt: 'desc' } });
 
+      // Calendar-authority horizon: outside the range VERIFIED_NYSE_CLOSURES actually covers, no
+      // session can be treated as authoritatively known — an ordinary-weekday assumption past the
+      // verified horizon is exactly the silent-drift risk this guards against. Fail closed rather
+      // than extend verified knowledge implicitly; the static list is extended only through the
+      // explicit bootstrap/review process, never inferred or fetched at runtime.
+      const withinCalendarAuthority = latest.date >= VERIFIED_NYSE_CLOSURES.from && latest.date <= VERIFIED_NYSE_CLOSURES.to;
       const windowFrom = addDays(latest.date, -40);
       const missingClosures = VERIFIED_NYSE_CLOSURES.closedDates.filter(date => date >= windowFrom && date <= latest.date
         && !exceptions.some(row => row.sessionDate === date && row.type === 'CLOSED' && row.closeTimeMinutesEt === null));
@@ -168,7 +174,7 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
       // boundary-sensitive dimension's actionable-target count and validity window.
       const missingEarlyCloses = VERIFIED_NYSE_CLOSURES.earlyCloseDates.filter(date => date >= windowFrom && date <= latest.date
         && !exceptions.some(row => row.sessionDate === date && row.type === 'EARLY_CLOSE' && row.closeTimeMinutesEt === VERIFIED_NYSE_CLOSURES.earlyCloseTimeMinutesEt));
-      let reasonCode: Reason | null = (missingClosures.length || missingEarlyCloses.length) ? 'CALENDAR_EVIDENCE_UNAVAILABLE' : null;
+      let reasonCode: Reason | null = !withinCalendarAuthority || missingClosures.length || missingEarlyCloses.length ? 'CALENDAR_EVIDENCE_UNAVAILABLE' : null;
       let status: 'VALID' | 'UNAVAILABLE' | 'FAILED' = reasonCode ? 'FAILED' : 'VALID';
 
       const predecessorSessionDate = predecessor?.sessionDate ? predecessor.sessionDate.toISOString().slice(0, 10) : null;
@@ -235,6 +241,16 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
       const targetAt = latest.targetAt;
       const validUntil = validUntilFor(latest.date, latest.index, exceptions);
       const completedAt = clock();
+      // Final currentness boundary revalidation: `latest` was selected while still publishable,
+      // but the baseline/evidence/replay work above takes real time, and this target's own
+      // validity window may have closed before reaching this point (e.g. publication starts at
+      // 15:59:55 for a target whose validUntil is 16:00:00, and completes at 16:00:03). This is
+      // a second, independent check from the initial latestActionableTarget selection check
+      // above — it does not weaken it. Once the window has closed, the completed computation is
+      // no longer authoritative publication material regardless of what status it reached:
+      // discard it entirely (no VALID row, and no FAILED/UNAVAILABLE row merely because time
+      // ran out) and report a clean no-publication result.
+      if (completedAt.getTime() >= validUntil.getTime()) return { ...result, notDue: true };
       const rawState = status === 'VALID' ? finalRaw : null;
       const effectiveState = status === 'VALID' ? finalTransition!.effectiveState : null;
       const fingerprint = hash({ algorithmVersion: INTRADAY_STRESS_ALGORITHM_VERSION, evidenceSchemaVersion: INTRADAY_STRESS_PUBLICATION_EVIDENCE_VERSION, status, reasonCode, targetAt, sessionDate: latest.date, index: latest.index });
@@ -246,6 +262,7 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
         calendar: { graceMinutes: COMPLETION_GRACE_MINUTES.MINUTE_15, exception: exceptions.find(row => row.sessionDate === latest.date) ?? null },
         validUntil: status === 'VALID' ? validUntil : null,
         nextExpectedTargetAt: nextActionableTargetAt(latest.date, latest.index, exceptions),
+        calendarAuthority: { from: VERIFIED_NYSE_CLOSURES.from, to: VERIFIED_NYSE_CLOSURES.to, withinAuthority: withinCalendarAuthority },
         missingClosures, missingEarlyCloses, reasonCode, attemptFingerprint: fingerprint,
         session: { sameSession, previousSessionDate: predecessorSessionDate, bootstrap: !predecessor },
         baseline: { spy: baseline.SPY, rsp: baseline.RSP, frozenForSession: true, provenance: baselineProvenance },
