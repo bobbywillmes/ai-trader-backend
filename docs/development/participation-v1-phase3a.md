@@ -58,7 +58,9 @@ Do not run these from Codex/CI. Use a `SYSTEM_OWNER` session for writes.
 1. **Safety.** Confirm branch `feat/market-regime-expansion` and a clean tree; confirm a
    fresh dev-DB backup; `npx prisma migrate status` must report up to date (71 migrations).
 2. **Calendar preview.** `npm run calendar:bootstrap`. Record `wouldInsert`, `skipped`,
-   `conflicts`. Any conflict: **STOP** and resolve deliberately.
+   `conflicts`. Any conflict: **STOP** and resolve deliberately. Equality is semantic
+   (`sessionDate` + `type` + `closeTimeMinutesEt`); a differing descriptive `name` is not a
+   conflict and is never overwritten (Phase 3B).
 3. **Calendar apply.** Only after review: `npm run calendar:bootstrap -- --apply`. Re-run the
    preview: expect zero conflicts, `wouldInsert: 0`, `skipped: 71` (59 + 12).
 4. **Securities.** Verify SPY, QQQ, DIA, IWM, RSP exist (status shows non-null

@@ -10,7 +10,7 @@ export const verifiedClosureRows: readonly (CalendarException & { name: string }
 export const verifiedCalendarRows: readonly (CalendarException & { name: string })[] = [...verifiedClosureRows,
   ...VERIFIED_NYSE_CALENDAR.earlyCloseDates.map(sessionDate => ({ sessionDate, name: 'NYSE verified early close', type: 'EARLY_CLOSE' as const, closeTimeMinutesEt: 780 })),
 ].sort((a, b) => a.sessionDate.localeCompare(b.sessionDate));
-const canonicalName = (name: string) => name.trim().replace(/\s+/g, ' ').toLowerCase();
+/** Runtime calendar authority is sessionDate + type + closeTimeMinutesEt; the descriptive name is informational and never a conflict. */
 export function planCalendarBootstrap(existing: readonly CalendarException[]) {
   const missing: typeof verifiedCalendarRows[number][] = [];
   const skipped: string[] = [];
@@ -18,7 +18,7 @@ export function planCalendarBootstrap(existing: readonly CalendarException[]) {
   for (const expected of verifiedCalendarRows) {
     const row = existing.find(row => row.sessionDate === expected.sessionDate);
     if (!row) missing.push(expected);
-    else if (row.type === expected.type && row.closeTimeMinutesEt === expected.closeTimeMinutesEt && canonicalName(row.name ?? '') === canonicalName(expected.name)) skipped.push(row.sessionDate);
+    else if (row.type === expected.type && row.closeTimeMinutesEt === expected.closeTimeMinutesEt) skipped.push(row.sessionDate);
     else conflicts.push({ sessionDate: expected.sessionDate, expected, existing: row });
   }
   return { missing, skipped, conflicts };
