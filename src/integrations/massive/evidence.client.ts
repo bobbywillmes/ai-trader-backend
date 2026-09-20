@@ -2,11 +2,11 @@ import { Prisma } from '@prisma/client';
 import { env } from '../../config/env.js';
 import { HttpError } from '../../errors/http-error.js';
 import { etDate, etInstant, validDate } from '../../services/market-calendar.js';
-import type { TrendSymbol } from '../../services/trend-lab.config.js';
+import { MARKET_DAILY_EVIDENCE_SYMBOLS, type DailyEvidenceSymbol } from '../../services/market-daily-evidence.definition.js';
 
 type Page = { status?: unknown; adjusted?: unknown; ticker?: unknown; results?: unknown; resultsCount?: unknown; next_url?: unknown };
 export type DailyEvidenceBar = { barStartAt: Date; open: string; high: string; low: string; close: string; volume: string; receivedAt: Date };
-export type SplitEvent = { id: string; symbol: TrendSymbol; executionDate: string; splitFrom: number; splitTo: number; priceFactor: number };
+export type SplitEvent = { id: string; symbol: DailyEvidenceSymbol; executionDate: string; splitFrom: number; splitTo: number; priceFactor: number };
 export type MassiveEvidenceTransport = (path: string) => Promise<Page>;
 const fail = (message: string): never => { throw new HttpError(502, `Massive evidence: ${message}`); };
 
@@ -53,7 +53,8 @@ function nextPage(page: Page, endpoint: string, adjusted: boolean): string | nul
   if (page.next_url === undefined || page.next_url === null) return null;
   if (typeof page.next_url !== 'string' || !page.next_url) return fail('invalid pagination link');
   const base = new URL(env.MASSIVE_BASE_URL);
-  const url = new URL(page.next_url, base);
+  let url: URL;
+  try { url = new URL(page.next_url, base); } catch { return fail('invalid pagination link'); }
   const aggregatePrefix = endpoint.split('/').slice(0, 8).join('/') + '/';
   const matchingEndpoint = adjusted ? url.pathname.startsWith(aggregatePrefix) && url.pathname.split('/').length === 10 : url.pathname === endpoint;
   if (url.origin !== base.origin || !matchingEndpoint || url.username || url.password) return fail('unexpected pagination destination');
@@ -61,7 +62,7 @@ function nextPage(page: Page, endpoint: string, adjusted: boolean): string | nul
   if (adjusted) url.searchParams.set('adjusted', 'false');
   return url.pathname + url.search;
 }
-export async function fetchDailyEvidence(symbol: TrendSymbol, from: string, to: string, get: MassiveEvidenceTransport = massiveEvidenceGet): Promise<DailyEvidenceBar[]> {
+export async function fetchDailyEvidence(symbol: DailyEvidenceSymbol, from: string, to: string, get: MassiveEvidenceTransport = massiveEvidenceGet): Promise<DailyEvidenceBar[]> {
   const endpoint = `/v2/aggs/ticker/${symbol}/range/1/day/${from}/${to}`;
   let path: string | null = `${endpoint}?adjusted=false&sort=asc&limit=50000`;
   const seen = new Set<string>(); const bars = new Map<number, DailyEvidenceBar>();
@@ -87,13 +88,24 @@ export async function fetchDailyEvidence(symbol: TrendSymbol, from: string, to: 
   }
   return [...bars.values()].sort((a, b) => a.barStartAt.getTime() - b.barStartAt.getTime());
 }
-export async function fetchSplitEvidence(symbol: TrendSymbol, from: string, to: string, get: MassiveEvidenceTransport = massiveEvidenceGet): Promise<SplitEvent[]> {
+/** Legacy consumers retain identical-ID deduplication. Strict consumers reject all ambiguity. */
+export async function fetchSplitEvidence(symbol: DailyEvidenceSymbol, from: string, to: string, get: MassiveEvidenceTransport = massiveEvidenceGet): Promise<SplitEvent[]> {
+  return fetchSplits(symbol, from, to, get, false);
+}
+export async function fetchStrictSplitEvidence(symbol: DailyEvidenceSymbol, from: string, to: string, get: MassiveEvidenceTransport = massiveEvidenceGet): Promise<SplitEvent[]> {
+  return fetchSplits(symbol, from, to, get, true);
+}
+async function fetchSplits(symbol: DailyEvidenceSymbol, from: string, to: string, get: MassiveEvidenceTransport, strict: boolean): Promise<SplitEvent[]> {
+  if (!MARKET_DAILY_EVIDENCE_SYMBOLS.includes(symbol) || !validDate(from) || !validDate(to) || from > to) fail('invalid split request identity/range');
+  const executionDates = new Set<string>();
   const endpoint = '/stocks/v1/splits';
   let path: string | null = `${endpoint}?ticker=${symbol}&execution_date.gte=${from}&execution_date.lte=${to}&sort=execution_date.asc&limit=1000`;
   const seen = new Set<string>(); const events = new Map<string, SplitEvent>();
   while (path) {
     if (seen.has(path) || seen.size >= 20) fail('split pagination loop or limit');
-    seen.add(path); const page = await get(path);
+    seen.add(path);
+    let page: Page;
+    try { page = await get(path); } catch (error) { if (strict) return fail('split request failed'); throw error; }
     for (const raw of results(page)) {
       const row = record(raw);
       const date = row.execution_date;
@@ -101,6 +113,8 @@ export async function fetchSplitEvidence(symbol: TrendSymbol, from: string, to: 
       const splitFrom = Number(decimal(row.split_from, 'split ratio', true));
       const splitTo = Number(decimal(row.split_to, 'split ratio', true));
       const event: SplitEvent = { id: row.id as string, symbol, executionDate: date as string, splitFrom, splitTo, priceFactor: splitFrom / splitTo };
+      if (strict && (!event.id.trim() || !Number.isFinite(event.priceFactor) || event.priceFactor <= 0 || events.has(event.id) || executionDates.has(event.executionDate))) fail('malformed or duplicate split evidence');
+      executionDates.add(event.executionDate);
       const previous = events.get(event.id);
       if (previous && JSON.stringify(previous) !== JSON.stringify(event)) fail('conflicting split events');
       events.set(event.id, event);

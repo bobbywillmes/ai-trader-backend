@@ -292,7 +292,7 @@ ACCOUNT_USER has neither permission.
 | PUT `/api/market-data/calendar/:id` | Replace mutable exception fields |
 | DELETE `/api/market-data/calendar/:id` | Remove exception |
 | GET `/api/market-data/status` | Stored coverage, current gaps, retry status and recent backfill events |
-| POST `/api/market-data/backfill` | `{from,to}`, up to 370 calendar days, both SPY/RSP |
+| POST `/api/market-data/backfill` | `{from,to}`, up to 370 calendar days, all SPY/QQQ/DIA/IWM/RSP |
 | GET `/api/market-data/trend-lab?from=...&to=...` | Candidate summaries, chart series, timeline and dataset identity |
 | GET `/api/market-data/trend-lab/day?datasetId=...&profile=MIDDLE&date=...&from=...&to=...` | Exact per-date explanation from that research snapshot |
 
@@ -350,3 +350,27 @@ concurrent real ingestion and immutability. Run it using:
 $env:RUN_DATABASE_INTEGRITY_TESTS='1'
 npx.cmd vitest run src/db/__tests__/market-data.integration.test.ts
 ```
+
+### Participation Phase 1 daily acquisition expansion
+
+The account-independent acquisition panel is `MARKET_DAILY_EVIDENCE_SYMBOLS`
+(SPY, QQQ, DIA, IWM, RSP); `TREND_SYMBOLS` remains exactly SPY/RSP.
+Daily backfill, sync and status cover all five. Existing catalog rows are required;
+the canonical `src/db/securities.json` already defines them. No subscriptions are
+created by acquisition. Stored bars remain insert-only Massive DAY_1 UNADJUSTED.
+
+Status retains operational gaps from the persisted checkpoint and additionally
+returns each symbol's `coverageFrom` and `historicalMissing` over the last 370
+calendar days. Counts/earliest/latest describe actual matching stored evidence.
+A successful sync says nothing about pre-checkpoint warmup; explicitly backfill
+missing history. Historical gaps use persisted calendar configuration, not a
+reviewed calendar overlay, and are not Participation window certification.
+
+Sync retains its hourly retry gate and maximum 20 missing-date requests per symbol
+per tick (up to 100 for five symbols). Transport timeouts remain 30 seconds per
+request, pagination remains bounded, and the existing running/advisory guards
+prevent overlapping ticks. The three-minute worker-health threshold remains an
+operational warning, not a total invocation deadline; slow provider/backlog work
+can exceed it. Acceptance must observe five-symbol provider latency/entitlement.
+The strict split path is `fetchStrictSplitEvidence`; legacy split callers retain
+identical-ID deduplication. No Participation publisher is present.
