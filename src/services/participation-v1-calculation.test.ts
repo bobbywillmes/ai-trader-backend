@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { calculateParticipationV1, normalizeParticipationVolumes, participationMedian, participationPanel, type ParticipationCalculationInput } from './participation-v1-calculation.js';
 import { classifyParticipation, PARTICIPATION_SYMBOLS } from './participation-v1.definition.js';
 import { barEligibility, etInstant, isFullMarketSession, type CalendarException } from './market-calendar.js';
@@ -71,7 +71,7 @@ describe('Participation V1 pure foundation', () => {
       expect(classifyParticipation(target[1]!.volume / target[0]!.volume)).toBe(classifyParticipation(report[1]!.volume / report[0]!.volume));
     }
   });
-  it('keeps the production dependency closure pure and contains no publisher', () => {
+  it('keeps the calculation dependency closure pure and independent of publication', () => {
     const visited = new Set<string>();
     function inspect(path: string) {
       if (visited.has(path)) return; visited.add(path);
@@ -80,7 +80,7 @@ describe('Participation V1 pure foundation', () => {
       for (const match of source.matchAll(/from ['"]\.\/([^'"]+)\.js['"]/g)) inspect(`src/services/${match[1]}.ts`);
     }
     inspect('src/services/participation-v1-calculation.ts');
-    expect(existsSync('src/services/participation-assessment.service.ts')).toBe(false);
+    expect(visited.has('src/services/participation-assessment.service.ts')).toBe(false);
     expect(readFileSync('src/services/participation-v1-calculation.ts', 'utf8')).not.toMatch(/40|predecessor/);
   });
 });

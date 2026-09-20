@@ -211,7 +211,13 @@ Be especially careful when editing:
 
 ## Trade Lifecycle Notes
 
-PARTICIPATION_V1 has a production foundation only; no publisher or trading authority.
+PARTICIPATION_V1 has a service-only immutable publisher; no worker, HTTP exposure or trading authority.
+`publishParticipationAssessments` bootstraps exactly the latest due full session,
+pins failed targets, and catches up at most 20 chronological targets under its own
+transaction advisory lock. It requires persisted reviewed calendar evidence, exact
+20-session five-symbol windows, and deadline-bounded strict splits. Predecessors
+are lineage only; raw/effective states are equal. See
+`docs/development/participation-v1-phase2.md`.
 `research:participation` compares prior 20/40
 full-session median volume across SPY/QQQ/DIA/IWM/RSP using a local Massive evidence
 cache and the reviewed research calendar, with no DB access. Early closes are

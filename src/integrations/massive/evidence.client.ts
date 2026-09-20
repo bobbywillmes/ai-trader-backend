@@ -11,14 +11,14 @@ export type MassiveEvidenceTransport = (path: string) => Promise<Page>;
 const fail = (message: string): never => { throw new HttpError(502, `Massive evidence: ${message}`); };
 
 /** Separate strict boundary: chart/live normalizers remain unchanged. Credentials use the existing Massive configuration. */
-export async function massiveEvidenceGet(path: string): Promise<Page> {
+export async function massiveEvidenceGet(path: string, signal?: AbortSignal): Promise<Page> {
   const base = new URL(env.MASSIVE_BASE_URL);
   const url = new URL(path, base);
   if (url.origin !== base.origin || url.username || url.password) fail('unsafe pagination destination');
   url.searchParams.delete('apiKey');
   let response: Response;
   try {
-    response = await fetch(url, { headers: { Accept: 'application/json', Authorization: `Bearer ${env.MASSIVE_API_KEY}` }, signal: AbortSignal.timeout(30_000), redirect: 'error' });
+    response = await fetch(url, { headers: { Accept: 'application/json', Authorization: `Bearer ${env.MASSIVE_API_KEY}` }, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000), redirect: 'error' });
   } catch { return fail('request failed or timed out'); }
   if (!response.ok) {
     const body: unknown = await response.json().catch(() => null);

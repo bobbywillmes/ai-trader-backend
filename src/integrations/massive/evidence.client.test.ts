@@ -1,8 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fetchDailyEvidence, fetchSplitEvidence } from './evidence.client.js';
+import { fetchDailyEvidence, fetchSplitEvidence, massiveEvidenceGet } from './evidence.client.js';
 const row = { t: Date.parse('2026-09-14T04:00Z'), o: 100, h: 102, l: 99, c: 101, v: 1000.25 };
 const response = (results: unknown[] = [row]) => ({ status: 'OK', adjusted: false, ticker: 'SPY', results });
 describe('strict Massive evidence', () => {
+  it('propagates publication cancellation to the real HTTP transport without exposing errors', async () => {
+    const controller = new AbortController();
+    const request = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, options) => {
+      const signal = options!.signal!;
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('unsafe provider detail')), { once: true });
+      });
+    });
+    try {
+      const result = massiveEvidenceGet('/stocks/v1/splits', controller.signal);
+      controller.abort(); await expect(result).rejects.toThrow('Massive evidence: request failed or timed out');
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(request.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+    } finally { request.mockRestore(); }
+  });
   it('explicitly requests unadjusted data and follows safe pages', async () => {
     const get = vi.fn().mockResolvedValueOnce({ ...response(), next_url: 'https://api.massive.com/v2/aggs/ticker/SPY/range/1/day/2026-09-14/2026-09-15?cursor=next' }).mockResolvedValueOnce(response([{ ...row, t: Date.parse('2026-09-15T04:00Z') }]));
     const bars = await fetchDailyEvidence('SPY', '2026-09-14', '2026-09-15', get);
