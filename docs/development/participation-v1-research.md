@@ -2,7 +2,7 @@
 
 Question: **How broadly elevated or subdued is trading activity across a deliberately diverse panel of major U.S. equity index ETFs?**
 
-This is research only. **No thresholds or states are frozen by this tool. No trading authority exists.** QUIET / NORMAL / ACTIVE / INTENSE are conceptual future vocabulary only. There is no classifier, hysteresis, publisher, worker, endpoint, database write, migration, or connection to SignalEvaluation, EntryDecision, OrderIntent, strategy decisions, or trading.
+This is research only. **The PARTICIPATION_V1 research algorithm is now frozen. No trading authority exists.** The pure research classifier uses QUIET / NORMAL / ACTIVE / INTENSE. There is no publisher, worker, endpoint, database write, migration, or connection to SignalEvaluation, EntryDecision, OrderIntent, strategy decisions, or trading. See [real-data calibration results](participation-v1-calibration-results.md).
 
 ## Panel and measurements
 
@@ -14,9 +14,18 @@ This is research only. **No thresholds or states are frozen by this tool. No tra
 | IWM | Cap-weighted small caps |
 | RSP | Equal-weighted S&P 500 |
 
-Each ETF is an equal sensor after normalization against its own history. For each target, medianVolume20/40 is the median of exactly the preceding 20/40 eligible full sessions. The target never enters its own baseline. RVOL is normalized target volume / median baseline volume. The **20-session median is the leading candidate**; 40 sessions is the research control, not a selected production setting.
+Each ETF is an equal sensor after normalization against its own history. For each target, medianVolume20 is the median of exactly the preceding 20 eligible completed full sessions. The target never enters its own baseline. RVOL is normalized target volume / median baseline volume. The **20-session median is frozen for V1**. The 40-session variant was rejected as the V1 baseline and remains a research control only, preserved as calibration history. It is not part of future V1 production semantics.
 
-The primary panel measure is the median of all five continuous RVOL values, independently for each horizon. Minimum, maximum and range describe dispersion. Inclusive counts <= 0.70, <= 0.80, >= 1.00, >= 1.25, >= 1.50 and >= 2.00 are **diagnostic cut points, not state thresholds**. Agreement confirms/describes participation and does not replace the continuous median. Per-ETF baselineRatio = medianVolume20 / medianVolume40 describes changing norms; it is not a Participation input.
+The primary panel measure is the median of all five continuous RVOL20 values. Minimum, maximum and range describe dispersion. Inclusive counts <= 0.70, <= 0.80, >= 1.00, >= 1.25, >= 1.50 and >= 2.00 are **diagnostic cut points, not classification gates**. With five values, a median >= X already guarantees at least three values >= X; a basic 3/5 agreement rule is redundant. Agreement and range remain evidence only. Per-ETF baselineRatio = medianVolume20 / medianVolume40 describes changing norms; it is not a Participation input.
+
+| Frozen state | panelMedianRvol |
+| --- | --- |
+| QUIET | < 0.75 |
+| NORMAL | >= 0.75 and < 1.25 |
+| ACTIVE | >= 1.25 and < 1.50 |
+| INTENSE | >= 1.50 |
+
+**No cross-session hysteresis.** Participation describes the latest completed full session, and volume is often episodic and catalyst-driven. NORMAL -> INTENSE -> NORMAL and NORMAL -> QUIET -> NORMAL can be meaningful sessions rather than chatter. Historical memory only defines the previous-20-session volume baseline; the current completed session defines today's state. The previous Participation state has no influence. Conceptually `rawState == effectiveState` for every valid future authoritative assessment. No confirmation counters, recovery rules, persistence gates, asymmetric transitions or jump restrictions exist. The classifier permits direct QUIET -> INTENSE and INTENSE -> QUIET moves.
 
 Measurements are direction-neutral: actual OHLC, returns, green/red sessions, advancing/declining volume, trend, breadth direction, volatility, sectors, leadership, options, news, VIX and dollar-volume weights never enter the math. OHLC is retained and validated only as raw provider evidence.
 
@@ -55,21 +64,33 @@ Without `--to`, the last completed full session is selected, capped at the revie
 
 Fetching requires `--fetch`. `--refresh` requires `--fetch` and replaces all requested cache units, including successes. Each ETF has one daily and one split request per calendar-year segment. The reference window has **60 cache units / approximately 60 cold requests without pagination** (five ETFs × six years × two evidence types). Pagination counts against the default **100 actual HTTP attempts**; each cache unit has a five-page maximum. `--max-requests` accepts 1–300. Requests are sequential with no automatic retries. Cache hits consume no requests; provider errors including HTTP entitlement failures are cached. Local budget exhaustion is not cached, allowing resume. Corrupt caches fail closed with a refresh instruction.
 
-Partial-year keys include their end date: advancing that date fetches a new partial-year unit; complete-year units remain reusable. Each cache write is atomic via a temporary file and rename. Cache envelopes contain fetch time and SHA-256 integrity digests. Reports contain a stable dataset digest over the calculation definition/version, ranges, calendar and evidence manifest, excluding runtime timestamps/request counts. Provider failures and missing dates are visible rather than manufactured as empty valid evidence. The first real fetch must establish actual history entitlement and provider coverage.
+Partial-year keys include their end date: advancing that date fetches a new partial-year unit; complete-year units remain reusable. Each cache write is atomic via a temporary file and rename. Cache envelopes contain fetch time and SHA-256 integrity digests. Reports contain a stable dataset digest over the calculation definition/version, ranges, calendar and evidence manifest, excluding runtime timestamps/request counts. The original reference artifact remains unchanged. New research reports include frozen-research metadata and coverage diagnostics, so their identity can differ despite identical measurements.
 
 Fetch mode uses the existing application environment configuration, including `MASSIVE_API_KEY` / `MASSIVE_BASE_URL` and its existing required environment variables. Cache-only mode does not load provider/environment modules or connect to Postgres.
 
 ## Reports and validation
 
+Analyze the existing reference artifact without provider or database calls:
+
+```bash
+npm run analyze:participation -- --input node_modules/.cache/participation-v1/reference-report.json --output node_modules/.cache/participation-v1/calibration-report.json
+```
+
+These paths are also the analyzer defaults. The analyzer accepts only the recognized daily-volume report definition, exact five-symbol panel and 20/40 horizon metadata. It checks per-ETF RVOL arithmetic, all-five medians, and baseline windows wherever preceding target volumes are in the report. Initial warmup outside the artifact relies on recorded baselines and the recognized definition. Incompatible definitions fail clearly; unavailable or invalid panel rows are excluded and summarized in compact ranges. Diagnostics never reclassify a valid median. The analyzer reads only its input file, writes only its output, rejects overwriting the input, and has no provider/cache/DB modules. No current clock enters its output. SHA-256 identifies the source file bytes and resulting deterministic analysis.
+
+Transitions compare adjacent eligible full sessions; invalid/unavailable/absent report rows break comparisons and runs. Early closes, holidays and weekends are intentionally excluded, so they do not break eligibility continuity. Boundary/gap-censored runs are included and labeled in the conventions. Threshold proximity bands are inclusive diagnostics only. The calibration artifact retains selected high/low examples with agreement/range, state matrices, run statistics, one-day RVOLs, threshold proximity, and paired continuous/classification comparisons.
+
+`providerGaps` remains actual request/cache/provider failure evidence. The separate `evidenceCoverage` records per-ETF observed and missing expected dates, contiguous full-session missing ranges, unknown evidence status when legacy normalized data cannot establish raw availability, first valid RVOL20/40, panel availability, excluded early closes and calendar-boundary warmup. These categories may overlap; they are not additive. A successful request with absent bars is **not** labeled an entitlement failure. Legacy analyzer coverage is limited to target dates recorded in the artifact; new runner coverage uses validated raw observations in the requested analysis range, before split normalization. Neither extends the calendar or changes raw evidence semantics.
+
 JSON retains every full-session target, per-ETF normalized volume, both baselines/RVOL values, baseline ratios, both panels and exact unavailable reasons. Summary includes per-ETF and panel percentiles (p1/p5/p10/p25/p50/p75/p90/p95/p99), availability, agreement-count frequencies, baseline-ratio distributions, high/low dates, largest paired divergence dates, paired mean/median absolute difference and Pearson correlation. Percentiles linearly interpolate at `(N-1)*p`; correlation uses centered cross-products and is null for constant/empty data. Paired comparisons use only dates with both complete panels. Console output is compact; full diagnostics stay in JSON.
 
 ```bash
-npx vitest run src/dev/participation-calculation.test.ts src/dev/participation-research.test.ts
+npx vitest run src/dev/participation-calculation.test.ts src/dev/participation-research.test.ts src/dev/participation-analysis.test.ts
 npm run check
 npm run build
 npm test
 ```
 
-Deterministic tests cover baseline exclusion, split adjustment, calendar exclusions, independent horizon gaps, all-five evidence, robustness to isolated volume extremes, agreement counts, direction neutrality, statistics, explicit/bounded fetch, cache resume/refresh/corruption, dataset identity and absence of database/trading dependencies. Synthetic fixtures do not justify final state thresholds.
+Deterministic tests cover baseline exclusion, split adjustment, calendar exclusions, independent horizon gaps, all-five evidence, robustness to isolated volume extremes, agreement counts, direction neutrality, statistics, explicit/bounded fetch, cache resume/refresh/corruption, dataset identity and absence of database/trading dependencies. Additional tests cover exact frozen thresholds, stateless direct jumps, matrices/runs, proximity, coverage compaction, invalid report evidence and deterministic offline analysis. Real historical observations, not synthetic fixtures, support the documented freeze.
 
-Follow-up only: a generic strict daily/split observation primitive and cache envelope could eventually support Participation and Leadership. It should preserve production contracts with regression tests and be driven by concrete consumers. This task does not refactor production evidence or Breadth. Strict regular-hours volume, provider history coverage and any later thresholds remain separate research decisions.
+Follow-up only: a generic strict daily/split observation primitive and cache envelope could eventually support Participation and Leadership. It should preserve production contracts with regression tests and be driven by concrete consumers. This task does not refactor production evidence or Breadth. A future production design must explicitly preserve daily-aggregate volume semantics, full-session exclusions, all-five evidence and no hysteresis. Production publishing has not been implemented.

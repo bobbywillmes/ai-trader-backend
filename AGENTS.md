@@ -215,8 +215,12 @@ PARTICIPATION_V1 is research-only. `research:participation` compares prior 20/40
 full-session median volume across SPY/QQQ/DIA/IWM/RSP using a local Massive evidence
 cache and the reviewed research calendar, with no DB access. Early closes are
 excluded; missing expected full sessions must not be skipped. All five RVOL values
-are required for each panel. No thresholds, states, publisher or trading authority
-exist. Keep the five-symbol research adapter separate from production TrendSymbol.
+are required for each panel. Research is frozen at prior-20-session median volume,
+panel median, QUIET <0.75 / NORMAL <1.25 / ACTIVE <1.50 / INTENSE >=1.50,
+with no hysteresis or agreement gate. The 40-session baseline is a research control.
+`analyze:participation` reads an existing report only; coverage gaps are distinct
+from provider request failures. No publisher or trading authority exists.
+Keep the five-symbol research adapter separate from production TrendSymbol.
 See `docs/development/participation-v1-research.md`.
 
 INTRADAY_STRESS_V1 remains research-only. `research:intraday-stress` caches unadjusted

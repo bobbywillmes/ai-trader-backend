@@ -2,6 +2,8 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { addDays, datesBetween, etDate, marketSession, validDate } from '../services/market-calendar.js';
 import { researchCalendar } from './intraday-stress-calendar.js';
+import { participationCoverage } from './participation-coverage.js';
+import { FROZEN_PARTICIPATION } from './participation-classification.js';
 import { calculateParticipation, DIAGNOSTIC_CUT_POINTS, fullSessionDates, PARTICIPATION_SYMBOLS, summarizeParticipation,
   type ParticipationInput } from './participation-calculation.js';
 import { digest, PARTICIPATION_CACHE, ParticipationCache, parseDaily, parseSplits, type Transport } from './participation-research-data.js';
@@ -77,7 +79,7 @@ export async function runParticipationResearch(options: ParticipationOptions, no
   const days = calculateParticipation(input, evidenceFrom, options.from, options.to, calendar);
   const definition = { version: 'participation-research-v1', symbols: PARTICIPATION_SYMBOLS, horizons: [20, 40],
     primary: 'Median of all five continuous RVOL values; equal sensors; direction-neutral.',
-    diagnosticCutPoints: DIAGNOSTIC_CUT_POINTS, statesFrozen: false, tradingAuthority: false,
+    diagnosticCutPoints: DIAGNOSTIC_CUT_POINTS, statesFrozen: true, frozenResearchAlgorithm: FROZEN_PARTICIPATION, tradingAuthority: false,
     normalizationThrough: options.to, calendarSource: 'Reviewed researchCalendar([]); no DB/operator calendar lookup.',
     volumeBasis: 'Massive unadjusted daily aggregate volume; full-length session dates only.' };
   const identity = { definition, from: options.from, to: options.to, evidenceFrom, calendar, evidenceManifest };
@@ -85,7 +87,7 @@ export async function runParticipationResearch(options: ParticipationOptions, no
     actualProviderRequests: cache.requests, cacheHits: cache.hits, requestBudget: options.maxRequests,
     plannedCacheUnits: ranges.length * 10, expectedColdRequestsWithoutPagination: ranges.length * 10,
     excludedEarlyCloseDates: datesBetween(options.from, options.to).filter(d => marketSession(d, calendar)?.closeMinutes === 780),
-    providerGaps, days, summary: summarizeParticipation(days),
+    providerGaps, evidenceCoverage: participationCoverage(days, options.from, options.to, calendar, input), days, summary: summarizeParticipation(days),
     limitations: ['Daily aggregates are provider-defined daily evidence, not reconstructed 09:30–16:00-only intraday volume.',
       'ETF volume includes ETF-specific hedging/arbitrage; it is not total underlying-stock participation.',
       'History starts at reviewed 2021 calendar boundary; early targets can lack warmup. No history is invented.',
