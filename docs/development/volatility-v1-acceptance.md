@@ -22,25 +22,22 @@ triggers, attempt identity, partial VALID uniqueness and restrictive predecessor
 FK untouched. Prisma schema comments document the SQL invariants; client/DBML
 generation is unchanged structurally.
 
-Calendar bootstrap previews by default. `--apply` explicitly inserts all 59 verified
-2021–2026 full-day NYSE closures from the previously reviewed research list, including
-2025-01-09. Sources are checked in with the dates; there is no network access or
-runtime scraping. A table lock excludes concurrent UI writes during preflight and
-insert. Any conflict returns `applied:false`, `inserted:0`, conflict details and a
-nonzero CLI exit code. Every date is checked before any insert. Equivalent means
-the same CLOSED/null-close semantics and canonical name (ignoring capitalization
-and whitespace). Different names are conservatively reported for operator review.
-No existing row is updated or deleted. Resolve disagreements explicitly through
-the owner/operator calendar workflow; do not blindly rename or replace rows.
+Calendar bootstrap previews by default. `--apply` explicitly inserts the 59 reviewed
+2021-2026 full-day NYSE closures (including 2025-01-09) and 12 reviewed 13:00 ET
+early closes. Sources are checked in with the dates; there is no network access.
+A table lock excludes concurrent UI writes during preflight and insert. Any
+conflict returns `applied:false`, `inserted:0`, conflict details and a nonzero CLI
+exit code. Every date is checked before any insert. Equivalent rows have the same
+type, close time and canonical name (ignoring capitalization and whitespace).
+Different names are conservatively reported for operator review. No existing row
+is updated or deleted. Resolve disagreements explicitly through the calendar UI.
 
-Early-close entries are not seeded. They remain operator-maintained and are valid
-sessions; their configured ET close time is respected. Without an early-close
-entry, daily completion conservatively uses the regular 16:00 close. Maintain
-future CLOSED/EARLY_CLOSE dates in the existing Market Calendar UI, especially
-before 2027. The publisher requires known verified closures covering its history
-and next-session horizon to exist in the DB; otherwise it records a terminal
-`CALENDAR_EVIDENCE_UNAVAILABLE` attempt and avoids split requests. It never seeds
-calendar configuration itself. There is no generic calendar platform.
+Early closes remain valid daily sessions for Volatility and Trend. Participation's
+full-session predicate excludes them. Maintain future CLOSED/EARLY_CLOSE dates in
+the Market Calendar UI, especially before 2027. The Volatility publisher still
+requires known verified closures covering its history and next-session horizon;
+it records `CALENDAR_EVIDENCE_UNAVAILABLE` when these are absent. Workers never
+seed calendar configuration. The Phase 1 expansion adds no Participation publisher.
 
 ## Definition and publication
 
