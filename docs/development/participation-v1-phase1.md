@@ -80,7 +80,7 @@ Migration `20260920120000_participation_v1_assessment_constraints` changes only 
 CHECK constraints. Every Participation status requires sessionDate. Non-null states
 are accepted only for PARTICIPATION_V1, in QUIET/NORMAL/ACTIVE/INTENSE, with raw equal
 to effective. The existing terminal constraint still requires null states and a
-reason for non-VALID rows. Existing Trend/Volatility/Breadth arms are preserved.
+reason for non-VALID rows. Existing Trend/Volatility/Breadth/Intraday Stress arms are preserved.
 All other attempt, evidence-version, time, uniqueness, predecessor and immutability
 invariants remain intact. Incompatible old evidence fails closed; there is no data
 repair. No Prisma schema, generated client, DBML, table or column change is needed.
@@ -133,3 +133,27 @@ unrelated application changes. Logs are local under `node_modules/.cache/`.
 
 Stop at Phase 1. Publisher implementation and its activation acceptance remain
 separate work; no code in this phase can publish a Participation assessment.
+
+## Migration-history correction
+
+The parallel Intraday Stress branch had already supplied the persistent local
+DB with `20260919120000_intraday_stress_v1_assessment_constraints`. Its exact tracked
+migration is now restored here, without implementation code. The still-pending
+Participation migration preserves its session-date requirement and independent
+NORMAL/ELEVATED/HIGH/SEVERE raw/effective state vocabulary, including the existing
+absence of an algorithm-version restriction for Intraday Stress.
+
+Replay tests assert Intraday Stress immediately precedes Participation and validate
+both dimensions after the complete chain. This correction does not apply either
+migration to the persistent database or modify its migration ledger. Before the
+owner applies Participation, migrate status should recognize Intraday Stress as
+applied and report only Participation as pending (assuming no other local changes).
+
+Correction validation: restored working file and staged blob match the source
+branch byte-for-byte (SHA-256
+`e755ecfbd6e04ceb970396ba8068817723bca13de9f841ca9ff14061460d450f`).
+Check/build passed; 32 focused foundation tests and 110 actual disposable PostgreSQL
+integrity tests passed. Complete serial backend run passed 2,161 tests (171 opt-in
+tests skipped); an initial unexpected Vitest fork exit required one full rerun.
+Read-only `prisma migrate status` confirmed 71 migrations with only Participation
+pending. No persistent migration application, reset or resolve was performed.

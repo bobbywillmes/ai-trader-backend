@@ -18,7 +18,11 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const url = new URL(process.env.DATABASE_URL!); url.pathname = `/${database}`; url.searchParams.delete('schema'); databaseUrl = url.toString();
     sql = new Client({ connectionString: databaseUrl }); await sql.connect();
     db = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
-    for (const name of (await readdir('prisma/migrations', { withFileTypes: true })).filter(e => e.isDirectory()).map(e => e.name).sort()) {
+    const migrations = (await readdir('prisma/migrations', { withFileTypes: true })).filter(e => e.isDirectory()).map(e => e.name).sort();
+    const intradayIndex = migrations.indexOf('20260919120000_intraday_stress_v1_assessment_constraints');
+    expect(intradayIndex).toBeGreaterThan(-1);
+    expect(migrations[intradayIndex + 1]).toBe('20260920120000_participation_v1_assessment_constraints');
+    for (const name of migrations) {
       await sql.query(await readFile(`prisma/migrations/${name}/migration.sql`, 'utf8'));
     }
   }, 120_000);
@@ -40,6 +44,17 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   }, 70_000);
   it.each(['QUIET', 'NORMAL', 'ACTIVE', 'INTENSE'])('accepts V1 %s', async state => {
     expect(await db.marketRegimeDimensionAssessment.create({ data: valid({ rawState: state, effectiveState: state }) })).toMatchObject({ rawState: state, effectiveState: state });
+  });
+  it.each(['NORMAL', 'ELEVATED', 'HIGH', 'SEVERE'])('retains Intraday Stress %s', async state => {
+    expect(await db.marketRegimeDimensionAssessment.create({ data: valid({ dimension: 'INTRADAY_STRESS', algorithmVersion: 'INTRADAY_STRESS_V1', rawState: state, effectiveState: state }) })).toMatchObject({ rawState: state, effectiveState: state });
+  });
+  it.each(['VALID', 'UNAVAILABLE', 'FAILED'] as const)('requires Intraday Stress sessionDate for %s', async status => {
+    await expect(db.marketRegimeDimensionAssessment.create({ data: valid({ dimension: 'INTRADAY_STRESS', algorithmVersion: 'INTRADAY_STRESS_V1', sessionDate: null, status,
+      rawState: status === 'VALID' ? 'NORMAL' : null, effectiveState: status === 'VALID' ? 'NORMAL' : null, reasonCode: status === 'VALID' ? null : 'TEST' }) })).rejects.toThrow();
+  });
+  it('preserves Intraday Stress independent raw/effective states and unversioned vocabulary', async () => {
+    expect(await db.marketRegimeDimensionAssessment.create({ data: valid({ dimension: 'INTRADAY_STRESS', algorithmVersion: 'REGRESSION', rawState: 'NORMAL', effectiveState: 'SEVERE' }) })).toMatchObject({ rawState: 'NORMAL', effectiveState: 'SEVERE' });
+    await expect(db.marketRegimeDimensionAssessment.create({ data: valid({ dimension: 'INTRADAY_STRESS', rawState: 'QUIET', effectiveState: 'QUIET' }) })).rejects.toThrow();
   });
   it.each([
     { rawState: 'QUIET', effectiveState: 'NORMAL' }, { rawState: 'UNKNOWN' },
