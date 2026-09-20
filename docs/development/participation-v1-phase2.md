@@ -38,8 +38,9 @@ assessment replay exists.
 
 An existing earliest unresolved target after the latest VALID predecessor wins.
 Otherwise select the next full session. Recovery can publish up to 20 chronological
-targets in one invocation, stopping at the first non-VALID result. A failed fresh
-bootstrap can recover first and then catch up in a later invocation. Original
+targets in one invocation, stopping at the first non-VALID result. Once a failed fresh
+bootstrap attempt exists, a later invocation is no longer a fresh bootstrap: it recovers the
+pinned target first and then continues bounded chronological catch-up in that same invocation. Original
 targetAt is reused on retry; retrospective CLOSED/EARLY_CLOSE identity conflicts
 throw for operator review before idle/notDue handling.
 
@@ -102,7 +103,9 @@ Evidence JSON contains version/definition, target/due/cutoff, exact baseline dat
 reviewed calendar bounds and semantic exception snapshot, five instrument records
 with all 105 raw decimal strings/MarketBar IDs/normalized volumes/factors, per-symbol
 split coverage/events and median/RVOL, panel diagnostics, and non-authoritative
-lineage. First successful publication includes baseline-only initialization:
+lineage. A top-level `bootstrap` boolean is true only for the first successful
+authoritative row (no VALID predecessor) and false otherwise. That row also includes
+baseline-only initialization:
 20 baseline sessions, 105 inputs, zero replayed/published historical assessments.
 Missing evidence uses null, never NaN/Infinity. Receipt/audit times are retained
 where useful but excluded from hashes.

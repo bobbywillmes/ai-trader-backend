@@ -181,7 +181,7 @@ export async function publishParticipationAssessments(options: Options = {}): Pr
           dataThroughAt: panel ? targetAt : null, validUntil: panel ? window.proposedValidUntil : null, proposedValidUntil: window.proposedValidUntil,
           expectedBaselineDates: window.baselineDates, calendar: window.calendar, normalizationThrough: targetDate, provider: 'MASSIVE', timeframe: 'DAY_1', adjustmentMode: 'UNADJUSTED',
           dailyVolumeSemantics: 'Provider daily aggregate; not reconstructed strictly from regular-hours trades.', instruments, panel,
-          lineage: { previousAssessmentId: predecessor?.id ?? null, calculationAuthority: false },
+          lineage: { previousAssessmentId: predecessor?.id ?? null, calculationAuthority: false }, bootstrap: !predecessor && panel !== null,
           ...(!predecessor && panel ? { initialization: { mode: 'baseline-only', baselineFrom: window.baselineDates[0], baselineThrough: window.baselineDates.at(-1), eligibleBaselineSessionCount: 20, inputBarCount: 105, replayedAssessmentCount: 0, publishedHistoricalAssessmentCount: 0 } } : {}),
           reasonCode, missing, failures, splitFailures, canonicalInputHash, attemptFingerprint, startedAt, completedAt };
         insertionTarget = targetAt;

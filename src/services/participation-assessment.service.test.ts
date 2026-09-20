@@ -48,7 +48,7 @@ function add(date: string, volume = '1000', ids = [1, 2, 3, 4, 5]) {
 }
 function history(from: string, through: string) { for (const d of datesBetween(from, through).filter(d => isFullMarketSession(d, exceptions))) add(d); }
 const run = (at = '2026-09-14T20:30Z') => publishParticipationAssessments({ db: client(), now: new Date(at), clock: () => new Date(at), fetchSplits });
-type Evidence = { canonicalInputHash: string; attemptFingerprint: string; expectedBaselineDates: string[]; normalizationThrough: string; initialization?: { inputBarCount: number };
+type Evidence = { canonicalInputHash: string; attemptFingerprint: string; expectedBaselineDates: string[]; normalizationThrough: string; bootstrap: boolean; initialization?: { inputBarCount: number };
   missing: unknown[]; panel: { panelMedianRvol: number; diagnostics: { affectsClassification: boolean } } | null;
   instruments: { symbol: string; rvol20: number; target: { rawVolume: string }; baseline: { rawVolume: string; normalizedVolume: number; priceFactorProduct: number }[]; splitEvidence: { events: unknown[] } }[] };
 const evidence = (index = assessments.length - 1) => assessments[index]!.evidenceJson as unknown as Evidence;
@@ -70,7 +70,7 @@ describe('PARTICIPATION_V1 immutable publisher', () => {
     expect(await run()).toEqual({ published: 1, attempts: 1, suppressed: false, notDue: false, blocked: null });
     expect(assessments).toHaveLength(1);
     expect(assessments[0]).toMatchObject({ sessionDate: new Date('2026-09-14'), targetAt: new Date('2026-09-14T20:00Z'), dataThroughAt: new Date('2026-09-14T20:00Z'), validUntil: new Date('2026-09-15T20:30Z'), rawState: 'NORMAL', effectiveState: 'NORMAL', previousAssessmentId: null });
-    expect(evidence().initialization?.inputBarCount).toBe(105);
+    expect(evidence().initialization?.inputBarCount).toBe(105); expect(evidence().bootstrap).toBe(true);
     expect(evidence().instruments.map(i => i.symbol)).toEqual(PARTICIPATION_SYMBOLS);
     expect(evidence().instruments.every(i => i.baseline.length === 20 && i.rvol20 === 1)).toBe(true);
     expect(evidence().expectedBaselineDates).toEqual(planParticipationWindow('2026-09-14', exceptions).baselineDates);
@@ -249,6 +249,8 @@ describe('PARTICIPATION_V1 immutable publisher', () => {
   it('events obey blocked/bootstrap/recovered/transition precedence and suppress idle/unchanged work', async () => {
     rows = rows.filter(r => +r.barStartAt !== +etInstant('2026-09-14', 0)); await run(); await run(); add('2026-09-14'); await run(); await run();
     add('2026-09-15'); await run('2026-09-15T20:30Z'); await run('2026-09-16T20:30Z'); add('2026-09-16', '2000'); await run('2026-09-16T20:30Z'); add('2026-09-17', '100'); await run('2026-09-17T20:30Z');
+    expect(assessments.map(a => [a.status, (a.evidenceJson as unknown as Evidence).bootstrap])).toEqual(assessments.map(a => [a.status, a.previousAssessmentId === null && a.status === 'VALID' ? true : false]));
+    expect(assessments.filter(a => (a.evidenceJson as unknown as Evidence).bootstrap)).toHaveLength(1);
     expect(tx.systemEvent.create.mock.calls.map(([args]) => (args as { data: { type: string } }).data.type)).toEqual(['participation_assessment_blocked', 'participation_assessment_bootstrap', 'participation_assessment_blocked', 'participation_assessment_recovered', 'participation_assessment_transition']);
   });
   it('lock contention precedes all state/calendar/bar reads', async () => {

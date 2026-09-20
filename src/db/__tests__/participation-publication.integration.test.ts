@@ -60,7 +60,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const row = await db.marketRegimeDimensionAssessment.findFirstOrThrow();
     expect(row).toMatchObject({ dimension: 'PARTICIPATION', algorithmVersion: 'PARTICIPATION_V1', rawState: state, effectiveState: state, attempt: 1, previousAssessmentId: null,
       targetAt: new Date('2026-09-14T20:00Z'), dataThroughAt: new Date('2026-09-14T20:00Z'), validUntil: new Date('2026-09-15T20:30Z') });
-    expect(row.evidenceJson).toMatchObject({ initialization: { inputBarCount: 105, replayedAssessmentCount: 0, publishedHistoricalAssessmentCount: 0 } });
+    expect(row.evidenceJson).toMatchObject({ bootstrap: true, initialization: { inputBarCount: 105, replayedAssessmentCount: 0, publishedHistoricalAssessmentCount: 0 } });
     const event = await db.systemEvent.findFirstOrThrow(); expect(event).toMatchObject({ type: 'participation_assessment_bootstrap', entityId: String(row.id) });
     expect(await authoritySnapshot()).toEqual(before);
     const { id: _id, createdAt: _createdAt, ...data } = row;
