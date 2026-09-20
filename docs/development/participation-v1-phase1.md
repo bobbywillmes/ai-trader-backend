@@ -1,5 +1,9 @@
 # PARTICIPATION_V1 Phase 1 foundation
 
+Phase 1 history below is preserved. The subsequent service-only publisher and its
+validation are documented in [Phase 2](participation-v1-phase2.md); worker/API
+activation remains Phase 3 work.
+
 Implemented on `feat/market-regime-expansion`. No Participation publisher, assessment
 creation service, worker, endpoint, UI, policy or trading consumer exists. Zero
 trading authority is retained. The production design remains the Phase 2 handoff;
