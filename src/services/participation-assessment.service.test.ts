@@ -62,9 +62,7 @@ describe('PARTICIPATION_V1 immutable publisher', () => {
     const source = readFileSync('src/services/participation-assessment.service.ts', 'utf8');
     expect(source).not.toMatch(/StrategyMarketRegimePolicy|SignalEvaluation|EntryDecision|OrderIntent|TradingAccount|OperationalAttention|alpaca|\.marketBar\.(?:create|update|delete)|fetchDailyEvidence/);
     expect(existsSync('src/workers/participation-assessment.worker.ts')).toBe(false);
-    expect(existsSync('src/controllers/participation-assessment.controller.ts')).toBe(false);
     expect(readFileSync('src/app/server.ts', 'utf8')).not.toContain('publishParticipation');
-    expect(readFileSync('src/routes/market-data.routes.ts', 'utf8')).not.toContain('participation');
   });
   it('publishes only latest-due bootstrap with 105 reconstructable inputs and exact aligned dates', async () => {
     expect(await run()).toEqual({ published: 1, attempts: 1, suppressed: false, notDue: false, blocked: null });

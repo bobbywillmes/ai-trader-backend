@@ -186,3 +186,5 @@ service cancellation bounds and do not start automatic publication until persist
 calendar coverage, five catalog identities, exact baseline acquisition and Massive
 entitlement are reviewed. Owner manual persistent-local acceptance remains separate.
 UI, policy/composition, trading authority and account scope remain outside this phase.
+
+Update: Phase 3A later added only the owner-run/read HTTP surface; see [Phase 3A](participation-v1-phase3a.md).

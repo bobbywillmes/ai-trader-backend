@@ -218,6 +218,8 @@ transaction advisory lock. It requires persisted reviewed calendar evidence, exa
 20-session five-symbol windows, and deadline-bounded strict splits. Predecessors
 are lineage only; raw/effective states are equal. See
 `docs/development/participation-v1-phase2.md`.
+Owner-run/read HTTP routes exist under `/api/market-data/participation-assessments`; there is
+still no worker or automatic publication (`docs/development/participation-v1-phase3a.md`).
 `research:participation` compares prior 20/40
 full-session median volume across SPY/QQQ/DIA/IWM/RSP using a local Massive evidence
 cache and the reviewed research calendar, with no DB access. Early closes are
