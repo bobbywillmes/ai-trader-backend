@@ -2,12 +2,12 @@
 import { datesBetween, marketSession, validDate, type CalendarException } from '../services/market-calendar.js';
 import { normalizeSplits, type ResearchSplit } from '../services/trend-calculation.js';
 
-export const PARTICIPATION_SYMBOLS = ['SPY', 'QQQ', 'DIA', 'IWM', 'RSP'] as const;
-export type ParticipationSymbol = typeof PARTICIPATION_SYMBOLS[number];
+import { PARTICIPATION_SYMBOLS, type ParticipationSymbol, PARTICIPATION_DIAGNOSTIC_CUT_POINTS } from '../services/participation-v1.definition.js';
+export { PARTICIPATION_SYMBOLS, type ParticipationSymbol };
 export type VolumeObservation = { date: string; volume: number };
 export type InstrumentInput = { bars: readonly VolumeObservation[]; splits: readonly ResearchSplit[]; splitError?: string };
 export type ParticipationInput = Record<ParticipationSymbol, InstrumentInput>;
-export const DIAGNOSTIC_CUT_POINTS = { le070: 0.70, le080: 0.80, ge100: 1, ge125: 1.25, ge150: 1.5, ge200: 2 } as const;
+export const DIAGNOSTIC_CUT_POINTS = PARTICIPATION_DIAGNOSTIC_CUT_POINTS;
 
 export function median(values: readonly number[]): number | null {
   if (!values.length) return null;
