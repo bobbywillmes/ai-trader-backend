@@ -211,6 +211,14 @@ Be especially careful when editing:
 
 ## Trade Lifecycle Notes
 
+PARTICIPATION_V1 is research-only. `research:participation` compares prior 20/40
+full-session median volume across SPY/QQQ/DIA/IWM/RSP using a local Massive evidence
+cache and the reviewed research calendar, with no DB access. Early closes are
+excluded; missing expected full sessions must not be skipped. All five RVOL values
+are required for each panel. No thresholds, states, publisher or trading authority
+exist. Keep the five-symbol research adapter separate from production TrendSymbol.
+See `docs/development/participation-v1-research.md`.
+
 INTRADAY_STRESS_V1 remains research-only. `research:intraday-stress` caches unadjusted
 Massive bars locally and reads the database under a read-only transaction; it must
 never publish assessments or enter trading pipelines. Research reuses pure daily
