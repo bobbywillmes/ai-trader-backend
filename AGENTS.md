@@ -211,7 +211,8 @@ Be especially careful when editing:
 
 ## Trade Lifecycle Notes
 
-PARTICIPATION_V1 is research-only. `research:participation` compares prior 20/40
+PARTICIPATION_V1 has a production foundation only; no publisher or trading authority.
+`research:participation` compares prior 20/40
 full-session median volume across SPY/QQQ/DIA/IWM/RSP using a local Massive evidence
 cache and the reviewed research calendar, with no DB access. Early closes are
 excluded; missing expected full sessions must not be skipped. All five RVOL values
@@ -220,7 +221,10 @@ panel median, QUIET <0.75 / NORMAL <1.25 / ACTIVE <1.50 / INTENSE >=1.50,
 with no hysteresis or agreement gate. The 40-session baseline is a research control.
 `analyze:participation` reads an existing report only; coverage gaps are distinct
 from provider request failures. No publisher or trading authority exists.
-Keep the five-symbol research adapter separate from production TrendSymbol.
+The shared production daily acquisition panel is SPY/QQQ/DIA/IWM/RSP; TrendSymbol
+remains SPY/RSP. Strict split evidence rejects duplicate IDs/dates before deduplication.
+Production calculation requires exactly 20 named full-session baseline dates.
+See `docs/development/participation-v1-phase1.md`.
 See `docs/development/participation-v1-research.md`.
 
 INTRADAY_STRESS_V1 remains research-only. `research:intraday-stress` caches unadjusted
@@ -249,7 +253,7 @@ threshold tuning. Its account-independent publisher follows Trend's transaction
 advisory lock, immutable attempts, one replay-initialized bootstrap and chronological
 continuation; it has no trading consumer. Historical replay requires every expected
 session using persisted calendar exceptions. `npm run calendar:bootstrap -- --apply`
-explicitly inserts the verified 2021–2026 closures, skips equivalent rows, and refuses
+explicitly inserts the verified 2021–2026 closures and early closes, skips equivalent rows, and refuses
 all writes on conflicts. Workers never seed calendars. The research CLI remains
 read-only. See `docs/development/volatility-v1-acceptance.md`.
 
