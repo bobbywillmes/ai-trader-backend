@@ -22,7 +22,8 @@ export type ParticipationPublicationResult = { published: number; attempts: numb
   blocked: null | { sessionDate: string; status: 'UNAVAILABLE' | 'FAILED'; reasonCode: Reason } };
 /** Injected dependencies must honor cancellation and settle before returning. */
 export type ParticipationSplitFetcher = (symbol: ParticipationSymbol, from: string, through: string, signal: AbortSignal) => Promise<SplitEvent[]>;
-type Options = { db?: PrismaClient; now?: Date; clock?: () => Date; fetchSplits?: ParticipationSplitFetcher };
+/** `signal` is an external shutdown/cancellation signal: it aborts and rolls back the run and never records a FAILED assessment. */
+type Options = { db?: PrismaClient; now?: Date; clock?: () => Date; fetchSplits?: ParticipationSplitFetcher; signal?: AbortSignal };
 const fetchSplits: ParticipationSplitFetcher = (symbol, from, through, signal) => fetchStrictSplitEvidence(symbol, from, through, path => {
   signal.throwIfAborted(); return massiveEvidenceGet(path, signal);
 });
@@ -47,12 +48,16 @@ export async function publishParticipationAssessments(options: Options = {}): Pr
   const clock = options.clock ?? (() => new Date());
   const startedAt = clock();
   let insertionTarget: Date | null = null;
+  options.signal?.throwIfAborted();
   try {
     return await db.$transaction(async tx => {
       const lock = await tx.$queryRaw<{ acquired: boolean }[]>`SELECT pg_try_advisory_xact_lock(${PARTICIPATION_PUBLICATION_LOCK_KEY}::bigint) AS acquired`;
       if (!lock[0]?.acquired) throw new HttpError(409, 'PARTICIPATION_V1 publication is already running.');
+      options.signal?.throwIfAborted();
       // One deadline for all symbols/pages; leaves half the transaction ceiling for DB work.
-      const signal = AbortSignal.timeout(120_000);
+      // The optional external signal is combined but remains distinguishable: it is infrastructure, not evidence.
+      const deadline = AbortSignal.timeout(120_000);
+      const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
       const result = emptyResult();
       let predecessor = await tx.marketRegimeDimensionAssessment.findFirst({ where: { ...identity, status: 'VALID' }, orderBy: { targetAt: 'desc' } });
       const pending = await tx.marketRegimeDimensionAssessment.findFirst({ where: { ...identity, ...(predecessor ? { targetAt: { gt: predecessor.targetAt } } : {}) }, orderBy: [{ targetAt: 'asc' }, { attempt: 'desc' }] });
@@ -83,6 +88,7 @@ export async function publishParticipationAssessments(options: Options = {}): Pr
       let splitFailures: { symbol: ParticipationSymbol; code: string }[] = [];
       const splitFrom = plans[0]!.window.baselineDates[0] ?? first, splitThrough = plans.at(-1)!.date;
       for (const { date: targetDate, targetAt, window } of plans) {
+        options.signal?.throwIfAborted();
         if (predecessor && (predecessor.dimension !== identity.dimension || predecessor.algorithmVersion !== identity.algorithmVersion || predecessor.status !== 'VALID' || predecessor.targetAt >= targetAt))
           throw new Error('Invalid PARTICIPATION_V1 predecessor lineage.');
         const priorAttempt = await tx.marketRegimeDimensionAssessment.findFirst({ where: { ...identity, targetAt }, orderBy: { attempt: 'desc' } });
@@ -135,6 +141,8 @@ export async function publishParticipationAssessments(options: Options = {}): Pr
             return events.map(e => ({ id: e.id, symbol: e.symbol, executionDate: e.executionDate, splitFrom: e.splitFrom, splitTo: e.splitTo, priceFactor: e.priceFactor }))
               .sort((a, b) => a.executionDate.localeCompare(b.executionDate) || a.id.localeCompare(b.id));
           }));
+          // Shutdown cancellation propagates (rollback) instead of becoming SPLIT_EVIDENCE_UNAVAILABLE.
+          options.signal?.throwIfAborted();
           splitFailures = responses.flatMap((r, i) => r.status === 'rejected' ? [{ symbol: PARTICIPATION_SYMBOLS[i]!, code: splitFailureCode(r.reason, signal.aborted) }] : []);
           if (!splitFailures.length) splitCache = responses.map(r => (r as PromiseFulfilledResult<SplitEvent[]>).value);
         }
@@ -176,6 +184,7 @@ export async function publishParticipationAssessments(options: Options = {}): Pr
           previousAssessmentId: predecessor?.id ?? null, status, reasonCode, canonicalInputHash, missing, failures, splitFailures });
         if (reasonCode && (priorAttempt?.evidenceJson as { attemptFingerprint?: string } | undefined)?.attemptFingerprint === attemptFingerprint)
           return { ...result, suppressed: true, blocked: { sessionDate: targetDate, status: status as 'UNAVAILABLE' | 'FAILED', reasonCode } };
+        options.signal?.throwIfAborted();
         const completedAt = clock();
         const evidence = { ...identity, evidenceSchemaVersion: PARTICIPATION_PUBLICATION_EVIDENCE_VERSION, definition, sessionDate: targetDate, targetAt, dueAt: participationDueAt(targetAt),
           dataThroughAt: panel ? targetAt : null, validUntil: panel ? window.proposedValidUntil : null, proposedValidUntil: window.proposedValidUntil,

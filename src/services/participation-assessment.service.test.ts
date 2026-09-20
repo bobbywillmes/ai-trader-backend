@@ -58,10 +58,9 @@ beforeEach(() => {
 });
 
 describe('PARTICIPATION_V1 immutable publisher', () => {
-  it('has no worker/HTTP exposure or trading dependencies and does not mutate MarketBar', () => {
+  it('has no trading dependencies, never imports the publisher into server.ts and does not mutate MarketBar', () => {
     const source = readFileSync('src/services/participation-assessment.service.ts', 'utf8');
     expect(source).not.toMatch(/StrategyMarketRegimePolicy|SignalEvaluation|EntryDecision|OrderIntent|TradingAccount|OperationalAttention|alpaca|\.marketBar\.(?:create|update|delete)|fetchDailyEvidence/);
-    expect(existsSync('src/workers/participation-assessment.worker.ts')).toBe(false);
     expect(readFileSync('src/app/server.ts', 'utf8')).not.toContain('publishParticipation');
   });
   it('publishes only latest-due bootstrap with 105 reconstructable inputs and exact aligned dates', async () => {
@@ -276,5 +275,38 @@ describe('PARTICIPATION_V1 immutable publisher', () => {
     expect(await latestParticipationV1Assessment(db)).toEqual({ latestAttempt: assessments[1], latestValid: assessments[0] });
     expect(await listParticipationV1Assessments(10, 2, db)).toEqual([assessments[0]]);
     expect(await getParticipationV1Assessment(1, db)).toEqual(assessments[0]); await expect(getParticipationV1Assessment(999, db)).rejects.toMatchObject({ statusCode: 404 }); expect(JSON.stringify(assessments)).toBe(original);
+  });
+});
+
+describe('PARTICIPATION_V1 external cancellation', () => {
+  const runWith = (signal?: AbortSignal, at = '2026-09-14T20:30Z') => publishParticipationAssessments({ db: client(), now: new Date(at), clock: () => new Date(at), fetchSplits, ...(signal ? { signal } : {}) });
+  it('does nothing when already aborted and never opens a transaction', async () => {
+    const controller = new AbortController(); controller.abort();
+    const db = client(); const transaction = vi.spyOn(db as unknown as { $transaction: () => unknown }, '$transaction');
+    await expect(publishParticipationAssessments({ db, now: new Date('2026-09-14T20:30Z'), fetchSplits, signal: controller.signal })).rejects.toThrow();
+    expect(transaction).not.toHaveBeenCalled(); expect(fetchSplits).not.toHaveBeenCalled(); expect(assessments).toHaveLength(0);
+  });
+  it('shutdown abort stops in-flight split work, settles all five dependencies and stores NO FAILED assessment or event', async () => {
+    const controller = new AbortController(); let settled = 0;
+    fetchSplits.mockImplementation(async (_symbol: string, _from: string, _through: string, signal: AbortSignal) => {
+      await new Promise<void>((_resolve, reject) => signal.addEventListener('abort', () => { settled++; reject(new Error('cancelled')); }, { once: true }));
+      return [];
+    });
+    const promise = runWith(controller.signal); const rejection = expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.waitFor(() => expect(fetchSplits).toHaveBeenCalledTimes(5)); controller.abort(); await rejection;
+    expect(settled).toBe(5); expect(assessments).toHaveLength(0);
+    expect(tx.marketRegimeDimensionAssessment.create).not.toHaveBeenCalled(); expect(tx.systemEvent.create).not.toHaveBeenCalled();
+  });
+  it('ordinary provider failure or the internal deadline still records SPLIT_EVIDENCE_UNAVAILABLE when an unaborted external signal is supplied', async () => {
+    fetchSplits.mockRejectedValue(new Error('provider down'));
+    expect(await runWith(new AbortController().signal)).toMatchObject({ attempts: 1, blocked: { reasonCode: 'SPLIT_EVIDENCE_UNAVAILABLE' } });
+    const deadline = new AbortController(); vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+    fetchSplits.mockImplementation(async (_s: string, _f: string, _t: string, signal: AbortSignal) => { await new Promise<void>((_r, reject) => signal.addEventListener('abort', () => reject(new Error('x')), { once: true })); return []; });
+    assessments = []; rows = []; tx = makeTx(); history('2026-07-01', '2026-09-14'); fetchSplits.mockClear();
+    const promise = runWith(new AbortController().signal); await vi.waitFor(() => expect(fetchSplits).toHaveBeenCalledTimes(5)); deadline.abort();
+    expect(await promise).toMatchObject({ blocked: { reasonCode: 'SPLIT_EVIDENCE_UNAVAILABLE' } }); expect(JSON.stringify(evidence())).toContain('PUBLICATION_DEADLINE');
+  });
+  it('an unaborted external signal leaves normal publication unchanged', async () => {
+    expect(await runWith(new AbortController().signal)).toEqual({ published: 1, attempts: 1, suppressed: false, notDue: false, blocked: null });
   });
 });

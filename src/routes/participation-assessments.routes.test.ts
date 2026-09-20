@@ -74,19 +74,22 @@ describe('PARTICIPATION_V1 operator/read API', () => {
   });
 });
 
-describe('PARTICIPATION_V1 manual-only publication boundary', () => {
+describe('PARTICIPATION_V1 publication boundary (owner-run and monitored worker only)', () => {
   const walk = (dir: string): string[] => readdirSync(dir).flatMap(name => { const path = join(dir, name); return statSync(path).isDirectory() ? walk(path) : path.endsWith('.ts') ? [path.replaceAll('\\', '/')] : []; });
   const production = walk('src').filter(path => !/\.test\.ts$|\/__tests__\//.test(path));
-  it('has exactly one production caller of the publisher: the owner-run controller', () => {
+  it('has exactly two production callers of the publisher: the owner-run controller and the monitored worker', () => {
     const callers = production.filter(path => /publishParticipationAssessments/.test(readFileSync(path, 'utf8')) && path !== 'src/services/participation-assessment.service.ts');
-    expect(callers).toEqual(['src/controllers/participation-assessment.controller.ts']);
+    expect(callers).toEqual(['src/controllers/participation-assessment.controller.ts', 'src/workers/participation-assessment.worker.ts']);
   });
-  it('adds no worker, scheduler, startup, WorkerHealth or shutdown wiring', () => {
-    for (const path of ['src/app/server.ts', 'src/app/app.ts']) expect(readFileSync(path, 'utf8'), path).not.toMatch(/participation/i);
-    for (const path of production.filter(p => p.startsWith('src/workers/') || /worker-health|market-data-sync|market-calendar|market-bar-ingestion/.test(p))) expect(readFileSync(path, 'utf8'), path).not.toMatch(/participation/i);
+  it('keeps the publisher out of app/server, market-data sync and calendar code', () => {
+    for (const path of ['src/app/server.ts', 'src/app/app.ts']) expect(readFileSync(path, 'utf8'), path).not.toMatch(/publishParticipation|participation-assessment\.service/);
+    expect(readFileSync('src/app/app.ts', 'utf8')).not.toMatch(/participation/i);
+    const allowed = ['src/workers/participation-assessment.worker.ts', 'src/workers/participation-assessment.scheduler.ts', 'src/workers/worker-health.definitions.ts'];
+    for (const path of production.filter(p => (p.startsWith('src/workers/') || /worker-health|market-data-sync|market-calendar|market-bar-ingestion/.test(p)) && !allowed.includes(p))) expect(readFileSync(path, 'utf8'), path).not.toMatch(/participation/i);
   });
   it('introduces no Participation reference into trading, signal, policy, order, broker or position code', () => {
-    const trading = production.filter(path => /(?:order|signal|strategy|entry-decision|broker|alpaca|position|exit|subscription|trading-account|regime-policy|regime-composition)/i.test(path));
+    // The account workflow runner only lists the global worker key in its backoff-cap table (no account coordination).
+    const trading = production.filter(path => /(?:order|signal|strategy|entry-decision|broker|alpaca|position|exit|subscription|trading-account|regime-policy|regime-composition)/i.test(path) && path !== 'src/services/trading-account-workflow-runner.service.ts');
     expect(trading.length).toBeGreaterThan(10);
     for (const path of trading) expect(readFileSync(path, 'utf8'), path).not.toMatch(/participation/i);
   });

@@ -38,6 +38,7 @@ import { monitorLiveEntryArmings } from '../services/live-entry-arming.service.j
 import { runMarketDataWorker } from '../workers/market-data.worker.js';
 import { runTrendAssessmentWorker } from '../workers/trend-assessment.worker.js';
 import { runVolatilityAssessmentWorker } from '../workers/volatility-assessment.worker.js';
+import { createMonitoredParticipationScheduler, type ParticipationScheduler } from '../workers/participation-assessment.scheduler.js';
 import { VOLATILITY_ASSESSMENT_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { TREND_ASSESSMENT_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { closeMarketDataLockPool } from '../services/market-data-lock.service.js';
@@ -149,13 +150,19 @@ async function runTradingWorkers() {
   }
 }
 
+let participationScheduler: ParticipationScheduler | null = null;
+
 function startWorkers() {
   workerHealthRegistry.startPersistence();
   void runWorker('trend_assessment_publication', runTrendAssessmentWorker);
   void runWorker('volatility_assessment_publication', runVolatilityAssessmentWorker);
   setInterval(() => { void runWorker('volatility_assessment_publication', runVolatilityAssessmentWorker); }, VOLATILITY_ASSESSMENT_WORKER_INTERVAL_MS);
   setInterval(() => { void runWorker('trend_assessment_publication', runTrendAssessmentWorker); }, TREND_ASSESSMENT_WORKER_INTERVAL_MS);
-  void runWorker('market_daily_evidence_sync', runMarketDataWorker);
+  // Startup order: the daily MarketBar sync tick is given a bounded head start so the first Participation tick
+  // can see fresh stored evidence. Participation still consumes stored bars only and never calls the sync.
+  const marketDataStartup = runWorker('market_daily_evidence_sync', runMarketDataWorker);
+  participationScheduler = createMonitoredParticipationScheduler(workerHealthRegistry, { startupGate: marketDataStartup });
+  participationScheduler.start();
   setInterval(() => { void runWorker('market_daily_evidence_sync', runMarketDataWorker); }, 60_000);
   void runWorker('breadth_assessment_publication', runBreadthAssessmentWorker);
   setInterval(() => { void runWorker('breadth_assessment_publication', runBreadthAssessmentWorker); }, BREADTH_ASSESSMENT_WORKER_INTERVAL_MS);
@@ -349,6 +356,12 @@ async function startServer() {
 
 async function shutdown(signal: NodeJS.Signals) {
   logger.info({ signal }, 'AI Trader Backend shutdown requested.');
+
+  // Stop new Participation ticks, abort the in-flight publication and wait (bounded) for its rollback before teardown.
+  if (participationScheduler) {
+    const drained = await participationScheduler.stop();
+    if (!drained) logger.warn('Timed out draining PARTICIPATION_V1 publication during shutdown.');
+  }
 
   workerHealthRegistry.stopPersistence();
 

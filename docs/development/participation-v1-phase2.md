@@ -187,4 +187,4 @@ calendar coverage, five catalog identities, exact baseline acquisition and Massi
 entitlement are reviewed. Owner manual persistent-local acceptance remains separate.
 UI, policy/composition, trading authority and account scope remain outside this phase.
 
-Update: Phase 3A later added only the owner-run/read HTTP surface; see [Phase 3A](participation-v1-phase3a.md).
+Update: Phase 3A later added the owner-run/read HTTP surface ([Phase 3A](participation-v1-phase3a.md)) and Phase 3B the monitored worker ([Phase 3B](participation-v1-phase3b.md)).

@@ -133,4 +133,23 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(await db.marketRegimeDimensionAssessment.count()).toBe(0); expect(await db.systemEvent.count()).toBe(0);
     expect(await publishParticipationAssessments({ db: second, now: etInstant('2026-09-14', 990), fetchSplits: async () => [] })).toMatchObject({ published: 1 });
   }, 30_000);
+  it('graceful shutdown abort during in-flight splits rolls back, stores no FAILED row or event, releases the lock and allows a later publish', async () => {
+    await addHistory('2026-09-14', '2026-09-14'); const before = await authoritySnapshot();
+    const controller = new AbortController(); let enter!: () => void, cancelled = 0;
+    const entered = new Promise<void>(r => { enter = r; });
+    const first = publishParticipationAssessments({ db, now: etInstant('2026-09-14', 990), signal: controller.signal,
+      fetchSplits: async (_symbol, _from, _through, signal) => { enter(); await new Promise<void>((_resolve, reject) => signal.addEventListener('abort', () => { cancelled++; reject(new Error('cancelled')); }, { once: true })); return []; } });
+    const outcome = first.then(() => 'resolved', (error: unknown) => (error as Error).name);
+    await entered;
+    const holders = await sql.query("SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())");
+    expect(holders.rows).toHaveLength(1);
+    controller.abort();
+    expect(await outcome).toBe('AbortError'); expect(cancelled).toBe(5);
+    expect(await db.marketRegimeDimensionAssessment.count()).toBe(0); expect(await db.systemEvent.count()).toBe(0);
+    expect((await sql.query("SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())")).rows).toHaveLength(0);
+    expect(await authoritySnapshot()).toEqual(before);
+    expect(await publishParticipationAssessments({ db: second, now: etInstant('2026-09-14', 990), fetchSplits: async () => [] })).toMatchObject({ published: 1, attempts: 1, blocked: null });
+    expect(await db.marketRegimeDimensionAssessment.count()).toBe(1);
+    expect(await db.systemEvent.count({ where: { type: 'participation_assessment_bootstrap' } })).toBe(1);
+  }, 30_000);
 });
