@@ -11,7 +11,7 @@ Recommend a separate global market-data credential boundary, a standalone captur
 
 If accepted, recommend `INTRADAY_STRESS_V2`, even with unchanged formulas and thresholds, because the evidence population and temporal acceptance contract change. Preserve V1 and its historical observations. Production integration requires a separate design and implementation task.
 
-No prototype is included. Connection, revision and deadline semantics deserve review before code makes them implicit. This document is the only changed file; no runtime, environment, dependency, schema or startup behavior changes.
+The original investigation included no prototype. Phase A is now implemented as a manually launched, isolated research harness; see [the Phase A operator guide](intraday-stress-alpaca-iex-phase-a.md) for exact files, commands and limitations. No live capture was run during implementation, no dependency was added, and no schema, startup or production authority changed.
 
 ## 2. Repository findings
 
@@ -293,7 +293,16 @@ The initial harness needs **zero Alpaca REST requests**: authentication and subs
 | C: production evidence design, only if accepted | Provider/feed observation/snapshot model, reviewed migrations, authority/version contract, deadline/outcome ledger, worker ownership/fencing, rotation/retention/runbook and consumer audit | Preserve legacy Massive evidence and daily dimensions; explicitly review every provider-omitting query. Separate approval/task before implementation. |
 | D: explicit authoritative integration and acceptance | Version-specific publisher, currentness/lineage selection, no-fallback behavior, health/shutdown and market-hours acceptance | Backend and relevant integration checks, future migration verification and live data-only acceptance. Trading authority remains zero; deployment is a separately authorized operation. |
 
-Phase A fixture matrix must include b/u batching, u-before-b, repeated updates, ambiguous duplicates, cross-epoch updates, connection loss after all initial minutes but before corrections, final-minute correction, missing first minute cascading through session classification, and replay of candidate cutoffs without future-data leakage. Test baseline-unit parity and frozen definition reuse; do not retest formulas by duplicating them in the harness.
+Phase A fixture matrix includes b/u batching, u-before-b, repeated updates, ambiguous duplicates, cross-epoch updates, final-minute correction, missing first minutes, and replay of candidate cutoffs without future-data leakage. Session classification, baseline-unit parity and frozen definition reuse belong to Phase B comparison; Phase A invokes no classifier or baseline logic.
+
+### Phase A concrete choices (2026-09-22)
+
+- Native Node 24 WebSocket through an injected transport; independent three-variable config, fixed IEX endpoint and SPY/RSP b/u subscription. No SDK/ws dependency or application environment import.
+- One exclusive repository-local capture lock; stale locks fail closed for operator PID/host inspection. Restarts create a new UUID run, optionally linked by parentRunId; old segments are never resumed.
+- One append-only observation segment plus event journal, 8 MiB bounded queue and fsync per record. Receipt timestamps precede parsing. Durable completion timestamps are not implemented; durable-cutoff replay remains an explicitly documented measurement limitation rather than conflating receipt with durability.
+- Inclusive receipt-cutoff replay, sticky ambiguity for conflicting initials and differing cross-epoch replacements, u-before-b retention, strict 15-slot windows and constituent provenance. The verified pure 2021–2026 calendar is frozen by hash; unsupported coverage fails closed.
+- Eight run-total exponential/jittered retries, 30-second delay cap and a 10-second handshake watchdog. Terminal auth/entitlement/config errors stop. Native close is awaited before another socket; shutdown drains with bounded close/signal watchdogs.
+- JSON analysis exposes scheduled-window denominators, censored candidate cutoffs, aggregate versions, gaps and clock uncertainty. No Massive retrieval/comparison, classifier execution or acceptance decision is included.
 
 ## 14. Risks and unresolved questions
 

@@ -211,6 +211,13 @@ Be especially careful when editing:
 
 ## Trade Lifecycle Notes
 
+The manually launched Alpaca IEX Phase A harness under `src/dev/alpaca-iex/` is
+research-only. It uses dedicated `ALPACA_MARKET_DATA_*` config, native Node 24
+WebSocket, append-only ignored journals and offline replay. Never import application
+env, Prisma, account/broker services or publishers into it, or wire it into startup.
+SPY/RSP IEX capture does not accept IEX or change Intraday Stress authority. See
+`docs/development/intraday-stress-alpaca-iex-phase-a.md` for operator-only capture.
+
 INTRADAY_STRESS_V1 remains research-only. `research:intraday-stress` caches unadjusted
 Massive bars locally and reads the database under a read-only transaction; it must
 never publish assessments or enter trading pipelines. Research reuses pure daily
