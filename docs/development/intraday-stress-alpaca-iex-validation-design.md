@@ -1,5 +1,9 @@
 # Alpaca IEX validation design for Intraday Stress
 
+September 22 extension: [three-provider capture/comparison](intraday-stress-provider-comparison.md)
+adds independently supervised Tiingo derived reference prices and Twelve Data REST
+bars alongside the unchanged IEX capture. This remains research, not acceptance.
+
 Date: 2026-09-21. Investigation only, on `feat/intraday-stress-v1`.
 Repository inspected at `fb4202ac5afd7bb6a0b4d3b303e8f3d9573b6a18`.
 

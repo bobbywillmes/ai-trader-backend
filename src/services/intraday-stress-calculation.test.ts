@@ -20,6 +20,13 @@ function flatBars(count: number, price = 100, overrides: Record<number, Intraday
 const ATR_PCT = 0.01; // 1% prior ATR baseline.
 
 describe('measureIntradaySession', () => {
+  it('keeps all V1 measurements and classification independent of valid volume', () => {
+    const bars = flatBars(25, 100, { 3: bar(3, 100, 102, 97, 98), 9: bar(9, 100, 101, 95, 96) });
+    const withoutVolume = (volume: number) => measureIntradaySession(DATE, bars.map(b => ({ ...b, volume })), ATR_PCT, [])
+      .map(({ interval: { volume: _volume, ...interval }, ...target }) => ({ ...target, interval }));
+    expect(withoutVolume(0)).toEqual(withoutVolume(1));
+    expect(withoutVolume(0)).toEqual(withoutVolume(9_000_000_000));
+  });
   it('uses sessionOpen as the first-bar reference', () => {
     const bars = flatBars(1, 100);
     const [t1] = measureIntradaySession(DATE, bars, ATR_PCT, []);

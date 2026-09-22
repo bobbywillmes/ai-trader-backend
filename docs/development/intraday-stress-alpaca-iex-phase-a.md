@@ -1,5 +1,9 @@
 # Alpaca IEX intraday research: Phase A
 
+For independent same-session Alpaca, Tiingo and Twelve Data capture, see the
+[three-provider research guide](intraday-stress-provider-comparison.md). It reuses
+this capture format without relabeling other providers as IEX.
+
 Phase A implements an isolated, manually launched capture/replay experiment. **IEX is not accepted as Intraday Stress evidence.** No assessment, classifier comparison, production cutoff or trading authority is produced. The first live connection is an operator action after review; implementation and tests used no Alpaca connection.
 
 ## Files and isolation

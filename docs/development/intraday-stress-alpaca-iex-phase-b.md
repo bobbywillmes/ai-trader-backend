@@ -1,5 +1,9 @@
 # Intraday Stress Alpaca IEX Phase B
 
+The [three-provider experiment](intraday-stress-provider-comparison.md) adds a
+separate strict live comparison and reuses this frozen baseline/reference tooling.
+The hindsight sparse-validation semantics described below remain unchanged.
+
 Research only. IEX is **not accepted**. No production classifier, publisher,
 threshold, recovery rule, cutoff, schema, worker, account integration or trading
 behavior changes. Implementation makes no live provider calls. All tests are offline.

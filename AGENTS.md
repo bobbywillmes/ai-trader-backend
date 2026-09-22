@@ -225,6 +225,14 @@ captured prices. Preserve strict 15/15 diagnostics and original capture journals
 No provider calls run automatically or in tests. See
 `docs/development/intraday-stress-alpaca-iex-phase-b.md`; no IEX authority is granted.
 
+The manual three-provider experiment under `src/dev/intraday-providers/` launches
+independent Alpaca/IEX, Tiingo consolidated reference-price and Twelve Data REST
+captures. Preserve derived-price provenance, null Tiingo stream volume, append-only
+versions, shared frozen ATR/calendar evidence, strict 15/15 and failure isolation.
+Only explicit Node env-file research commands load `.env.iex`; no startup wiring.
+See `docs/development/intraday-stress-provider-comparison.md`. No provider acceptance
+or production authority is granted; automated tests must never call providers.
+
 INTRADAY_STRESS_V1 remains research-only. `research:intraday-stress` caches unadjusted
 Massive bars locally and reads the database under a read-only transaction; it must
 never publish assessments or enter trading pipelines. Research reuses pure daily

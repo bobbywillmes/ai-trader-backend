@@ -45,13 +45,16 @@ describe('journal evidence and dependency boundaries', () => {
   it('transitively allows only research modules, explicit pure calendar modules and Node builtins', async () => {
     const root = resolve('.');
     const research = resolve('src/dev/alpaca-iex');
+    const providers = resolve('src/dev/intraday-providers');
     const pure = new Set(['src/services/market-calendar.ts', 'src/services/market-calendar-bootstrap.definition.ts',
       'src/dev/intraday-stress-calendar.ts', 'src/dev/volatility-research-calendar.ts',
       'src/services/intraday-stress-calculation.ts', 'src/services/volatility-calculation.ts', 'src/services/trend-calculation.ts']);
     const allowedNode = new Set(['node:crypto', 'node:fs/promises', 'node:path', 'node:os', 'node:child_process', 'node:util']);
     const files = (await readdir(research)).filter(n => n.endsWith('.ts') && !n.endsWith('.test.ts')).map(n => join(research, n));
+    files.push(...(await readdir(providers)).filter(n => n.endsWith('.ts') && !n.endsWith('.test.ts')).map(n => join(providers, n)));
     files.push(resolve('scripts/capture-alpaca-iex-intraday.ts'), resolve('scripts/analyze-alpaca-iex-intraday.ts'));
     files.push(resolve('scripts/compare-alpaca-iex-intraday.ts'));
+    files.push(...['capture-intraday-providers', 'capture-intraday-provider', 'compare-intraday-providers', 'baseline-intraday-providers'].map(n => resolve(`scripts/${n}.ts`)));
     const seen = new Set<string>();
     const visit = async (file: string): Promise<void> => {
       if (seen.has(file)) return; seen.add(file);
@@ -74,7 +77,7 @@ describe('journal evidence and dependency boundaries', () => {
         expect(specifier.startsWith('.')).toBe(true);
         const target = resolve(dirname(file), specifier.replace(/\.js$/, '.ts'));
         const path = relative(root, target).replaceAll('\\', '/');
-        expect(path.startsWith('src/dev/alpaca-iex/') || pure.has(path)).toBe(true);
+        expect(path.startsWith('src/dev/alpaca-iex/') || path.startsWith('src/dev/intraday-providers/') || pure.has(path)).toBe(true);
         await visit(target);
       }
     };
@@ -83,9 +86,12 @@ describe('journal evidence and dependency boundaries', () => {
     const production = async (directory: string): Promise<void> => {
       for (const entry of await readdir(directory, { withFileTypes: true })) {
         const path = join(directory, entry.name);
-        if (path === research) continue;
+        if (path === research || path === providers) continue;
         if (entry.isDirectory()) await production(path);
-        else if (path.endsWith('.ts') && !path.endsWith('.test.ts')) expect(await readFile(path, 'utf8')).not.toContain('alpaca-iex/');
+        else if (path.endsWith('.ts') && !path.endsWith('.test.ts')) {
+          const content = await readFile(path, 'utf8');
+          expect(content).not.toContain('alpaca-iex/'); expect(content).not.toContain('intraday-providers/');
+        }
       }
     };
     await production(resolve('src'));
