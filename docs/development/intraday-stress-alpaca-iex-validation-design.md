@@ -5,6 +5,15 @@ Repository inspected at `fb4202ac5afd7bb6a0b4d3b303e8f3d9573b6a18`.
 
 ## 1. Decision and scope
 
+Phase B update (2026-09-22): the first operator capture had excellent transport
+latency and no reconnects, but RSP supplied only 67 of roughly 80 elapsed minutes
+while SPY supplied 80. Strict 15/15 produced only one paired complete window even
+at +300 seconds. Missing minutes must now be tested against historical ALPACA/IEX
+before distinguishing PROVIDER_NO_BAR from CAPTURE_GAP; continuity alone is not
+proof. See [Phase B tooling and exact first-run results](intraday-stress-alpaca-iex-phase-b.md).
+The strict diagnostic remains preserved. No IEX acceptance or production authority
+follows from this evidence.
+
 Alpaca IEX is a plausible **research candidate**, not yet an accepted Intraday Stress authority. A manually launched, account-independent capture experiment can safely evaluate it without touching production evidence or trading. Timeliness alone is insufficient: IEX must also preserve the price-based classification, particularly adverse events and RSP coverage.
 
 Recommend a separate global market-data credential boundary, a standalone capture/replay harness, and an explicit accept/reject/inconclusive decision after multiple sessions. Keep Massive authoritative for daily evidence, Trend, Volatility and Breadth, and use separately captured delayed Massive intraday observations as the comparison reference. Never select a provider implicitly from availability.

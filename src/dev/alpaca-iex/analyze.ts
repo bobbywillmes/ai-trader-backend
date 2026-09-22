@@ -53,6 +53,7 @@ export function analyze(identity: Manifest, observations: Observation[], events:
       firstCompleteLatencyMs: firstComplete ? Date.parse(firstComplete.at) - target : null,
       correctionsRepresentedAt: correctionRepresentedAt, lastUpdateAt: lastUpdate,
       latestCorrectionLatencyMs: lastCorrection ? Date.parse(lastCorrection) - target : null,
+      latestCorrectionOffsetFromTargetMs: lastCorrection ? Date.parse(lastCorrection) - target : null,
       lastValueChangingCorrectionAt: lastCorrection,
       correctedConstituentMinutes: constituents.filter(s => s.correctionCount > 0).length,
       initialAggregate, initialToLatestDelta: initialAggregate && w.aggregate ? delta(initialAggregate, w.aggregate) : null,
@@ -72,6 +73,9 @@ export function analyze(identity: Manifest, observations: Observation[], events:
     const perSymbol = Object.fromEntries(SYMBOLS.map(symbol => {
       const rows = snapshots.filter(w => w.symbol === symbol);
       return [symbol, { scheduled: rows.length, complete: rows.filter(w => w.complete).length, censored: rows.filter(w => w.censored).length,
+        uncensoredScheduledWindows: rows.filter(w => !w.censored).length,
+        uncensoredCompleteWindows: rows.filter(w => w.complete).length,
+        uncensoredCompletePct: rows.some(w => !w.censored) ? 100 * rows.filter(w => w.complete).length / rows.filter(w => !w.censored).length : null,
         changedLater: rows.filter(w => w.changedLater).length }];
     }));
     const targets = [...new Set(snapshots.map(w => w.targetAt))];
@@ -81,6 +85,10 @@ export function analyze(identity: Manifest, observations: Observation[], events:
   const eventCounts = Object.fromEntries([...new Set(knownEvents.map(e => e.type))].map(type => [type, knownEvents.filter(e => e.type === type).length]));
   const inSession = (o: { minuteStartAt: string }) => o.minuteStartAt >= identity.session.openAt && o.minuteStartAt < identity.session.closeAt;
   const expectedMinutes = (Date.parse(identity.session.closeAt) - Date.parse(identity.session.openAt)) / 60_000;
+  const horizonStart = Math.max(Date.parse(identity.session.openAt), Math.ceil(Date.parse(identity.startedAt) / 60_000) * 60_000);
+  const horizonEnd = Math.min(Date.parse(identity.session.closeAt), Math.floor(limit / 60_000) * 60_000);
+  const elapsedExpectedMinutes = Math.max(0, (horizonEnd - horizonStart) / 60_000);
+  const uncensored = windowReports.filter(w => Date.parse(w.startAt) >= horizonStart && Date.parse(w.targetAt) <= horizonEnd);
   const clockUncertain = knownEvents.some(e => e.type === 'clock_jump');
   const reconnectGaps: { from: string; to: string | null; durationMs: number | null }[] = [];
   let gapStart: string | undefined;
@@ -106,8 +114,15 @@ export function analyze(identity: Manifest, observations: Observation[], events:
       corrections: minutes.reduce((n, m) => n + m.correctionCount, 0) },
     minuteCompleteness: Object.fromEntries(SYMBOLS.map(symbol => { const selected = minutes.filter(m => m.symbol === symbol && inSession(m));
       return [symbol, { expected: expectedMinutes, observed: selected.length, missing: expectedMinutes - selected.length,
+        elapsedExpectedMinutes,
+        elapsedObservedMinutes: selected.filter(m => Date.parse(m.minuteStartAt) >= horizonStart && Date.parse(m.minuteStartAt) < horizonEnd).length,
+        elapsedMissingMinutes: elapsedExpectedMinutes - selected.filter(m => Date.parse(m.minuteStartAt) >= horizonStart && Date.parse(m.minuteStartAt) < horizonEnd).length,
+        elapsedCoveragePct: elapsedExpectedMinutes ? 100 * selected.filter(m => Date.parse(m.minuteStartAt) >= horizonStart && Date.parse(m.minuteStartAt) < horizonEnd).length / elapsedExpectedMinutes : null,
         initialMissing: selected.filter(m => m.initialMissing).length, ambiguous: selected.filter(m => m.ambiguous).length }]; })),
     windowCompleteness: { scheduled: windowReports.length, complete: windowReports.filter(w => w.aggregate && !w.ambiguous).length,
+      uncensoredScheduledWindows: uncensored.length,
+      uncensoredCompleteWindows: uncensored.filter(w => w.aggregate && !w.ambiguous).length,
+      uncensoredCompletePct: uncensored.length ? 100 * uncensored.filter(w => w.aggregate && !w.ambiguous).length / uncensored.length : null,
       incomplete: windowReports.filter(w => !w.aggregate).length, ambiguous: windowReports.filter(w => w.ambiguous).length },
     eventCounts, reconnectGaps, connectionEvents: knownEvents.filter(e => !['malformed_frame', 'unexpected_symbol', 'unexpected_channel'].includes(e.type)),
     latencyMs: { initial: distribution(minutes.flatMap(m => m.initialLatencyMs === null ? [] : [m.initialLatencyMs])),

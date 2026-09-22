@@ -73,6 +73,14 @@ export async function analyzeMain(args = process.argv.slice(2)): Promise<void> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { cutoff: { type: 'string' } } });
   if (positionals.length !== 1) throw new Error('Usage: analyze <run-directory> [--cutoff RFC3339]');
   const directory = resolve(positionals[0]!);
+  const { identity, observations, events, end, crashArtifacts } = await loadRun(directory);
+  const cutoff = values.cutoff ? timestamp(values.cutoff) : end;
+  if (Date.parse(cutoff) > Date.parse(end)) throw new Error('Cutoff exceeds recorded observation horizon');
+  const report = analyze(identity, observations, events, cutoff);
+  process.stdout.write(JSON.stringify({ ...report, eventHash: hash(events), crashArtifacts,
+    cleanShutdown: events.at(-1)?.type === 'shutdown_complete' }, null, 2) + '\n');
+}
+export async function loadRun(directory: string) {
   const raw: unknown = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'));
   if (!record(raw) || raw.formatVersion !== FORMAT_VERSION || raw.parserVersion !== PARSER_VERSION || raw.aggregatorVersion !== AGGREGATOR_VERSION
     || raw.provider !== 'ALPACA' || raw.feed !== 'IEX' || raw.endpoint !== ENDPOINT || typeof raw.runId !== 'string'
@@ -104,9 +112,5 @@ export async function analyzeMain(args = process.argv.slice(2)): Promise<void> {
     return value as ResearchEvent;
   });
   const end = [identity.startedAt, ...observations.map(o => o.receivedAt), ...events.map(e => e.at)].sort().at(-1)!;
-  const cutoff = values.cutoff ? timestamp(values.cutoff) : end;
-  if (Date.parse(cutoff) > Date.parse(end)) throw new Error('Cutoff exceeds recorded observation horizon');
-  const report = analyze(identity, observations, events, cutoff);
-  process.stdout.write(JSON.stringify({ ...report, eventHash: hash(events), crashArtifacts,
-    cleanShutdown: events.at(-1)?.type === 'shutdown_complete', artifactBoundary: { reference: 'reference/massive/<fetch-id>/ (Phase B; absent)', derived: 'Regenerable JSON report; source journals remain immutable' } }, null, 2) + '\n');
+  return { identity, observations, events, end, crashArtifacts };
 }

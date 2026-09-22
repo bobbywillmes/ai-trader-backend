@@ -46,10 +46,12 @@ describe('journal evidence and dependency boundaries', () => {
     const root = resolve('.');
     const research = resolve('src/dev/alpaca-iex');
     const pure = new Set(['src/services/market-calendar.ts', 'src/services/market-calendar-bootstrap.definition.ts',
-      'src/dev/intraday-stress-calendar.ts', 'src/dev/volatility-research-calendar.ts']);
+      'src/dev/intraday-stress-calendar.ts', 'src/dev/volatility-research-calendar.ts',
+      'src/services/intraday-stress-calculation.ts', 'src/services/volatility-calculation.ts', 'src/services/trend-calculation.ts']);
     const allowedNode = new Set(['node:crypto', 'node:fs/promises', 'node:path', 'node:os', 'node:child_process', 'node:util']);
     const files = (await readdir(research)).filter(n => n.endsWith('.ts') && !n.endsWith('.test.ts')).map(n => join(research, n));
     files.push(resolve('scripts/capture-alpaca-iex-intraday.ts'), resolve('scripts/analyze-alpaca-iex-intraday.ts'));
+    files.push(resolve('scripts/compare-alpaca-iex-intraday.ts'));
     const seen = new Set<string>();
     const visit = async (file: string): Promise<void> => {
       if (seen.has(file)) return; seen.add(file);

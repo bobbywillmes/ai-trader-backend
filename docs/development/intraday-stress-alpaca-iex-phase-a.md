@@ -139,6 +139,13 @@ Latency summaries include count, negative count, median, p90/p95/p99 and maximum
 
 ## Validation and Phase B boundary
 
+Phase B is now available through [the Phase B operator guide](intraday-stress-alpaca-iex-phase-b.md).
+It adds manual reference fetches, a frozen shared baseline and offline classification
+comparison. The Phase A capture format and strict aggregation remain unchanged.
+The dependency allowlist now additionally includes the pure Intraday Stress,
+Volatility and split-normalization calculation modules. The historical description
+below records the original Phase A implementation boundary.
+
 Focused tests use fake transports, clocks, schedulers and sinks; no test opens a live Alpaca socket. Tests cover batching, auth/entitlement failure, exact subscription validation, retry budget/cancellation, epoch changes, malformed evidence, disk failure, append/crash behavior, offline CLI without credentials, revisions/cutoffs, missing first/interior minutes, final-minute updates, extended hours, DST/early close and transitive zero-authority isolation.
 
 Checks: `npm.cmd run check`, `npm.cmd run build`, `npm.cmd exec vitest run src/dev/alpaca-iex`, `npm.cmd test` with `RUN_DATABASE_INTEGRITY_TESTS=0`, and `git diff --check`. No UI changes/build, database tests, migration or Prisma generation are required.

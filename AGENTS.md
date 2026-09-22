@@ -218,6 +218,13 @@ env, Prisma, account/broker services or publishers into it, or wire it into star
 SPY/RSP IEX capture does not accept IEX or change Intraday Stress authority. See
 `docs/development/intraday-stress-alpaca-iex-phase-a.md` for operator-only capture.
 
+Phase B adds explicit manual historical ALPACA/IEX and MASSIVE reference fetches,
+immutable disk snapshots, a shared Massive daily ATR baseline and offline source
+comparison. Historical references may label sparse minutes but never replace live
+captured prices. Preserve strict 15/15 diagnostics and original capture journals.
+No provider calls run automatically or in tests. See
+`docs/development/intraday-stress-alpaca-iex-phase-b.md`; no IEX authority is granted.
+
 INTRADAY_STRESS_V1 remains research-only. `research:intraday-stress` caches unadjusted
 Massive bars locally and reads the database under a read-only transaction; it must
 never publish assessments or enter trading pipelines. Research reuses pure daily
