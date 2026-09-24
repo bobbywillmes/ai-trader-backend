@@ -422,6 +422,7 @@ Automated trading should only be enabled deliberately after production health, b
 - [Daily Volatility Candidate Calibration](docs/development/volatility-calibration.md)
 - [Intraday Stress Research and Calibration](docs/development/intraday-stress-calibration.md) — research-only candidate comparison; no production or trading authority.
 - [Intraday Stress Three-Provider Experiment](docs/development/intraday-stress-provider-comparison.md) — independent Alpaca/IEX, Tiingo reference-price and Twelve Data captures, smoke procedure and offline comparison.
+- [Intraday Stress Provider Evaluation](docs/development/intraday-stress-provider-evaluation.md) — September 23–24 evidence and the next-phase provider candidate, without production authority.
 - [VOLATILITY_V1 Publication and Local Acceptance](docs/development/volatility-v1-acceptance.md)
 - [Daily Breadth Candidate Calibration](docs/development/breadth-calibration.md)
 - [Breadth Calibration Results](docs/development/breadth-calibration-results.md)

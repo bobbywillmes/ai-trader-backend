@@ -4,6 +4,11 @@ Research only. No provider acceptance, production authority, database access,
 trading dependency, startup integration, or production fallback. The existing
 Alpaca Phase A/B tools and their evidence contracts remain intact.
 
+The dated September 22 smoke and September 23 operator instructions below are
+preserved as an experiment record. For the completed September 23–24 evidence
+and current candidate conclusion, see the
+[provider evaluation](intraday-stress-provider-evaluation.md).
+
 ## Architecture and design conflicts
 
 The old journal is explicitly ALPACA/IEX and requires numeric trade volume.
@@ -251,9 +256,10 @@ npm.cmd run research:intraday-stress:tiingo-revisions -- `
 ```
 
 `DUPLICATE` means the captured normalized OHLCV exactly matches the immediately
-previous observation. `PRE_CLOSE_EVOLUTION` means a changed version was requested
-before minute end; the initial partial observation is also recorded in this
-bucket. `FIRST_COMPLETED_VERSION` is the first usable request at or after minute
+previous observation. `INITIAL_PARTIAL_VERSION` records the first observation
+when it was requested before minute end; it is not a value change.
+`PRE_CLOSE_EVOLUTION` means a subsequent changed version was requested before
+minute end. `FIRST_COMPLETED_VERSION` is the first usable request at or after minute
 end, a milestone even if it matches the partial value. `POST_CLOSE_REVISION`
 means a later completed observation changed from the preceding completed value.
 `UNAVAILABLE_VERSION` retains a captured null-OHLC observation without claiming

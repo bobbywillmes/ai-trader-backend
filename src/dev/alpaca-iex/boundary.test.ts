@@ -54,7 +54,7 @@ describe('journal evidence and dependency boundaries', () => {
     files.push(...(await readdir(providers)).filter(n => n.endsWith('.ts') && !n.endsWith('.test.ts')).map(n => join(providers, n)));
     files.push(resolve('scripts/capture-alpaca-iex-intraday.ts'), resolve('scripts/analyze-alpaca-iex-intraday.ts'));
     files.push(resolve('scripts/compare-alpaca-iex-intraday.ts'));
-    files.push(...['capture-intraday-providers', 'capture-intraday-provider', 'compare-intraday-providers', 'baseline-intraday-providers'].map(n => resolve(`scripts/${n}.ts`)));
+    files.push(...['capture-intraday-providers', 'capture-intraday-provider', 'compare-intraday-providers', 'baseline-intraday-providers', 'tiingo-revision-forensics'].map(n => resolve(`scripts/${n}.ts`)));
     const seen = new Set<string>();
     const visit = async (file: string): Promise<void> => {
       if (seen.has(file)) return; seen.add(file);

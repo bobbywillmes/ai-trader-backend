@@ -13,7 +13,7 @@ import type { Observation, Prices } from './model.js';
 const fields = ['open', 'high', 'low', 'close', 'volume'] as const;
 const components = ['shockAtrRatio', 'realizedMovement60AtrRatio', 'sessionDrawdownAtrRatio', 'acuteCloseDownsideAtrRatio'] as const;
 type Field = typeof fields[number];
-type Kind = 'DUPLICATE' | 'PRE_CLOSE_EVOLUTION' | 'FIRST_COMPLETED_VERSION' | 'POST_CLOSE_REVISION' | 'UNAVAILABLE_VERSION';
+type Kind = 'DUPLICATE' | 'INITIAL_PARTIAL_VERSION' | 'PRE_CLOSE_EVOLUTION' | 'FIRST_COMPLETED_VERSION' | 'POST_CLOSE_REVISION' | 'UNAVAILABLE_VERSION';
 type Delta = { signed: number; absolute: number; bps?: number | null; percent?: number | null };
 function diff(a: Prices, b: Prices) {
   return Object.fromEntries(fields.map(k => {
@@ -39,6 +39,7 @@ export function chain(rows: Observation[]) {
     let kind: Kind;
     if (observation.values === null) kind = 'UNAVAILABLE_VERSION';
     else if (observation === firstCompleted) kind = 'FIRST_COMPLETED_VERSION';
+    else if (previous === null && !isCompleted) kind = 'INITIAL_PARTIAL_VERSION';
     else if (previous?.valueHash === observation.valueHash) kind = 'DUPLICATE';
     else if (!isCompleted) kind = 'PRE_CLOSE_EVOLUTION';
     else kind = 'POST_CLOSE_REVISION';
@@ -82,7 +83,7 @@ function totals(chains: ReturnType<typeof chain>[]) {
       const d = t.changes?.[field]; return d && 'absolute' in d ? [field === 'volume' ? d.percent : d.bps].filter((x): x is number => x !== null && x !== undefined).map(Math.abs) : [];
     }))]))]));
   return { minutes: chains.length, broadRevisionCount: chains.reduce((n, c) => n + c.broadRevisionCount, 0),
-    counts: Object.fromEntries((['DUPLICATE', 'PRE_CLOSE_EVOLUTION', 'FIRST_COMPLETED_VERSION', 'POST_CLOSE_REVISION', 'UNAVAILABLE_VERSION'] as Kind[]).map(k => [k, transitions.filter(t => t.kind === k).length])),
+    counts: Object.fromEntries((['DUPLICATE', 'INITIAL_PARTIAL_VERSION', 'PRE_CLOSE_EVOLUTION', 'FIRST_COMPLETED_VERSION', 'POST_CLOSE_REVISION', 'UNAVAILABLE_VERSION'] as Kind[]).map(k => [k, transitions.filter(t => t.kind === k).length])),
     changedFields: Object.fromEntries(fields.map(k => [k, post.filter(t => t.changedFields.includes(k)).length])),
     fieldCombinations: Object.fromEntries([...new Set(post.map(t => t.changedFields.join('+')))].map(k => [k, post.filter(t => t.changedFields.join('+') === k).length])),
     volumeOnly: post.filter(t => t.changedFields.length === 1 && t.changedFields[0] === 'volume').length,
@@ -121,8 +122,13 @@ export async function analyzeSession(directory: string) {
   });
   const targetImpact = first.targets.map(a => {
     const b = final.targets.find(t => t.targetAt === a.targetAt)!;
+    const thresholdCrossings = Object.fromEntries((['spy', 'rsp'] as const).map(s => [s, a[s].componentStates && b[s].componentStates
+      ? Object.fromEntries(Object.keys(a[s].componentStates).filter(k => JSON.stringify(a[s].componentStates![k as keyof typeof a.spy.componentStates])
+        !== JSON.stringify(b[s].componentStates![k as keyof typeof b.spy.componentStates])).map(k =>
+        [k, { first: a[s].componentStates![k as keyof typeof a.spy.componentStates], final: b[s].componentStates![k as keyof typeof b.spy.componentStates] }])) : null]));
     return { targetAt: a.targetAt, first: a, final: b, rawAgreement: agreement(a.raw, b.raw),
       effectiveAgreement: agreement(a.effective, b.effective),
+      thresholdCrossings,
       componentDeltas: Object.fromEntries((['spy', 'rsp'] as const).map(s => [s, Object.fromEntries(components.map(k => [k,
         a[s][k] === null || b[s][k] === null ? null : b[s][k]! - a[s][k]!]))])) };
   });
@@ -137,11 +143,21 @@ export async function analyzeSession(directory: string) {
     const transition = advanceIntradayStress(readyHistory, raw);
     readyHistory.effectiveState = transition.effectiveState; readyHistory.confirmation = transition.confirmationAfter;
     const affected = chains.filter(c => c.startAt < target.targetAt && c.transitions.some(t => t.kind === 'POST_CLOSE_REVISION' && t.receivedAt > (at ?? run.end)));
+    const priceAffected = affected.filter(c => c.transitions.some(t => t.kind === 'POST_CLOSE_REVISION' && t.receivedAt > (at ?? run.end)
+      && t.changedFields.some(field => field !== 'volume')));
+    const finalTarget = final.targets[i]!;
+    const componentDeltasReadyToFinal = spy && rsp ? Object.fromEntries((['spy', 'rsp'] as const).map(symbol => [symbol,
+      Object.fromEntries(components.map(k => { const before = symbol === 'spy' ? spy[k] : rsp[k], after = finalTarget[symbol][k];
+        return [k, before === null || after === null ? null : after - before]; }))])) : null;
     return { targetAt: target.targetAt, classifierReadyAt: raw ? at : null, rawAtReady: raw, effectiveAtReady: transition.effectiveState,
       transitionAtReady: transition, spyAtReady: spy ?? null, rspAtReady: rsp ?? null,
-      laterRevisedMinutes: affected.map(c => ({ symbol: c.symbol, startAt: c.startAt })), finalRaw: final.targets[i]!.raw,
-      finalEffective: final.targets[i]!.effective, rawChangedAfterReady: raw !== null && raw !== final.targets[i]!.raw,
-      effectiveChangedAfterReady: raw !== null && transition.effectiveState !== final.targets[i]!.effective };
+      laterRevisedMinutes: affected.map(c => ({ symbol: c.symbol, startAt: c.startAt })),
+      laterPriceRevisedMinutes: priceAffected.map(c => ({ symbol: c.symbol, startAt: c.startAt })), componentDeltasReadyToFinal,
+      componentChangedAfterReady: componentDeltasReadyToFinal !== null && Object.values(componentDeltasReadyToFinal).some(v =>
+        Object.values(v as Record<string, number | null>).some(delta => delta !== null && delta !== 0)),
+      finalRaw: finalTarget.raw, finalEffective: finalTarget.effective,
+      rawChangedAfterReady: raw !== null && raw !== finalTarget.raw,
+      effectiveChangedAfterReady: raw !== null && transition.effectiveState !== finalTarget.effective };
   });
   const wsMinutes = new Map(minutesAt(ws, run.end).map(m => [`${m.symbol}/${m.startAt}`, m]));
   const wsWindows = new Map(windowsAt(ws, experiment.session, run.end).map(w => [`${w.symbol}/${w.targetAt}`, w]));
@@ -192,7 +208,7 @@ export async function revisionsMain(args = process.argv.slice(2)) {
     const max = Math.max(0, ...(['open', 'high', 'low', 'close'] as const).map(k => t.magnitudes[k]?.POST_CLOSE_REVISION?.max ?? 0));
     lines.push(`| ${s.experiment.session.date} | ${symbol} | ${t.broadRevisionCount} | ${t.counts.PRE_CLOSE_EVOLUTION} | ${t.counts.POST_CLOSE_REVISION} | ${t.volumeOnly} | ${t.priceAffecting} | ${max.toFixed(3)} | ${s.targets.filter(x => x.rawAgreement.category !== 'EXACT_STATE_AGREEMENT').length} | ${s.targets.filter(x => x.effectiveAgreement.category !== 'EXACT_STATE_AGREEMENT').length} |`);
   }
-  lines.push('', `Combined: ${report.aggregate.broadRevisionCount} broad changes, ${report.aggregate.counts.PRE_CLOSE_EVOLUTION} pre-close evolutions, ${report.aggregate.counts.POST_CLOSE_REVISION} post-close revisions.`,
+  lines.push('', `Combined: ${report.aggregate.broadRevisionCount} broad changes, ${report.aggregate.counts.INITIAL_PARTIAL_VERSION} initial partial versions, ${report.aggregate.counts.PRE_CLOSE_EVOLUTION} pre-close evolutions, ${report.aggregate.counts.POST_CLOSE_REVISION} post-close revisions.`,
     '', `Post-close timing (ms): ${JSON.stringify(report.aggregate.timing)}`, `Changed fields: ${JSON.stringify(report.aggregate.changedFields)}`,
     `Field combinations: ${JSON.stringify(report.aggregate.fieldCombinations)}`, `Magnitude distributions (absolute bps for prices, absolute percent for volume when prior volume is nonzero): ${JSON.stringify(report.aggregate.magnitudes)}`,
     `Absolute volume change distribution: ${JSON.stringify(report.aggregate.volumeAbsoluteChange)}.`,
@@ -204,7 +220,7 @@ export async function revisionsMain(args = process.argv.slice(2)) {
     const effective = s.targets.filter(x => x.effectiveAgreement.category !== 'EXACT_STATE_AGREEMENT');
     lines.push(`${s.experiment.session.date}: ${raw.length} raw and ${effective.length} effective state changes; ${s.chronological.filter(x => x.rawChangedAfterReady).length} raw changes after classifier readiness.`);
     const maximumComponent = Math.max(0, ...s.targets.flatMap(t => Object.values(t.componentDeltas).flatMap(symbol => Object.values(symbol as Record<string, number | null>).map(v => Math.abs(v ?? 0)))));
-    lines.push(`Largest absolute V1 component movement: ${maximumComponent}. Chronological targets with later revised minutes: ${s.chronological.filter(x => x.laterRevisedMinutes.length).length}.`);
+    lines.push(`Largest absolute V1 first/final component movement: ${maximumComponent}. Chronological targets with later price-revised minutes: ${s.chronological.filter(x => x.laterPriceRevisedMinutes.length).length}; with component changes: ${s.chronological.filter(x => x.componentChangedAfterReady).length}.`);
     for (const x of raw) lines.push(`- ${x.targetAt}: ${x.first.raw} -> ${x.final.raw}; components ${JSON.stringify(x.componentDeltas)}`);
     const affected = s.windows.filter(w => w.changes && ['open', 'high', 'low', 'close'].some(k => w.changes![k as Field]));
     lines.push(`Affected 15-minute OHLC windows: ${affected.length}.`);
