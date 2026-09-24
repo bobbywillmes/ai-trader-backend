@@ -236,6 +236,45 @@ experiment directories to an operator archive before cleaning node_modules.
 
 ## Validation and limits
 
+### Offline Tiingo REST revision forensics
+
+Run the analyzer against one or more completed experiment directories. It reads only
+the frozen experiment, baseline, and Tiingo journal; it makes no provider requests.
+The first input experiment owns the new exclusive
+`derived/tiingo-revision-forensics-<uuid>/report.json` and `summary.md` directory.
+All input artifacts and prior comparisons remain untouched.
+
+```powershell
+npm.cmd run research:intraday-stress:tiingo-revisions -- `
+  node_modules/.cache/intraday-stress-providers/2026-09-23/51cf7399-467d-42bb-88a1-9d5400137d01 `
+  node_modules/.cache/intraday-stress-providers/2026-09-24/2bd1d89c-ff4a-47ef-8288-ec2612ccf9a2
+```
+
+`DUPLICATE` means the captured normalized OHLCV exactly matches the immediately
+previous observation. `PRE_CLOSE_EVOLUTION` means a changed version was requested
+before minute end; the initial partial observation is also recorded in this
+bucket. `FIRST_COMPLETED_VERSION` is the first usable request at or after minute
+end, a milestone even if it matches the partial value. `POST_CLOSE_REVISION`
+means a later completed observation changed from the preceding completed value.
+`UNAVAILABLE_VERSION` retains a captured null-OHLC observation without claiming
+an OHLCV change. A → B → A remains two changes.
+
+The broad comparison `revisionCount` remains unchanged and includes nonduplicate
+partial versions. The forensic report separates that count from post-close
+changes, includes all observed versions, field deltas, distributions, timing,
+first and final completed bars, strict 15-minute windows, V1 measurements,
+chronological classifier readiness, and WS price-distance diagnostics. Each
+session retains its own frozen baseline and calendar. The combined section
+aggregates statistics only after per-session analysis.
+
+`FIRST_COMPLETED` is the first completed version observed. `FINAL_OBSERVED` is
+the last completed version inside the experiment horizon, not provider finality.
+Their comparison measures revision sensitivity with hindsight. Chronological
+records instead replay the captured REST stream at the earliest complete strict
+prefix to describe what was known then. Receipt time is not fsync time. Neither
+Tiingo WS nor REST is ground truth, and WS volume is unavailable. No provider
+acceptance or trading authority follows from this analysis.
+
 Final implementation checks: 135 focused research/calculation tests passed;
 TypeScript check and backend build passed. The full suite passed 2,219 tests with
 150 database-gated tests skipped (`RUN_DATABASE_INTEGRITY_TESTS=0`, two workers).

@@ -17,6 +17,7 @@
     "research:intraday-stress:alpaca-iex:capture": "tsx scripts/capture-alpaca-iex-intraday.ts",
     "research:intraday-stress:providers:capture": "node --env-file=.env.iex --import tsx scripts/capture-intraday-providers.ts",
     "research:intraday-stress:providers:compare": "node --import tsx scripts/compare-intraday-providers.ts",
+    "research:intraday-stress:tiingo-revisions": "node --import tsx scripts/tiingo-revision-forensics.ts",
     "research:intraday-stress:providers:baseline": "node --env-file=.env.iex --import tsx scripts/baseline-intraday-providers.ts",
     "research:intraday-stress:alpaca-iex:analyze": "tsx scripts/analyze-alpaca-iex-intraday.ts",
     "research:intraday-stress:alpaca-iex:fetch-reference": "tsx scripts/compare-alpaca-iex-intraday.ts alpaca",
