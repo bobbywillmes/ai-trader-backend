@@ -22,6 +22,7 @@ export const MASSIVE_NEWS_WORKER_INTERVAL_MS = 60_000;
 export const TREND_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 export const VOLATILITY_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 export const BREADTH_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
+export const PARTICIPATION_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 
 function thresholds(
   expectedIntervalMs: number,
@@ -67,9 +68,18 @@ export const workerDefinitions = [
     ...thresholds(BREADTH_ASSESSMENT_WORKER_INTERVAL_MS, 240_000),
   },
   {
+    key: 'participation_assessment_publication',
+    displayName: 'Daily Participation assessment',
+    description: 'Publishes immutable PARTICIPATION_V1 evidence chronologically, without trading consumers.',
+    criticality: 'informational',
+    expectedIntervalMs: PARTICIPATION_ASSESSMENT_WORKER_INTERVAL_MS,
+    enabledByDefault: true,
+    ...thresholds(PARTICIPATION_ASSESSMENT_WORKER_INTERVAL_MS, 240_000),
+  },
+  {
     key: 'market_daily_evidence_sync',
     displayName: 'Daily market data',
-    description: 'Fills eligible missing SPY/RSP daily bars from Massive without rewriting evidence.',
+    description: 'Fills eligible missing SPY/QQQ/DIA/IWM/RSP daily bars from Massive without rewriting evidence.',
     criticality: 'informational',
     expectedIntervalMs: 60_000,
     enabledByDefault: true,

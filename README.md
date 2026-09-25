@@ -423,6 +423,8 @@ Automated trading should only be enabled deliberately after production health, b
 - [Intraday Stress Research and Calibration](docs/development/intraday-stress-calibration.md) — research-only candidate comparison; no production or trading authority.
 - [VOLATILITY_V1 Publication and Local Acceptance](docs/development/volatility-v1-acceptance.md)
 - [Daily Breadth Candidate Calibration](docs/development/breadth-calibration.md)
+- [Participation V1 Research](docs/development/participation-v1-research.md) — frozen five-ETF volume research algorithm; no trading authority.
+- [Participation V1 Calibration Results](docs/development/participation-v1-calibration-results.md) — historical state behavior, no-hysteresis decision, and evidence coverage.
 - [Breadth Calibration Results](docs/development/breadth-calibration-results.md)
 - [Breadth Threshold Comparison (BASELINE vs CANDIDATE_HORIZON_V2)](docs/development/breadth-threshold-comparison.md)
 - [Breadth Distribution Diagnostic](docs/development/breadth-distribution-diagnostic.md)

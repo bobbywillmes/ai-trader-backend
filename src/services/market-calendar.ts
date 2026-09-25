@@ -35,6 +35,12 @@ export function marketSession(date: string, exceptions: readonly CalendarExcepti
   if (closeMinutes === null || closeMinutes <= SESSION_OPEN_MINUTES || closeMinutes > SESSION_CLOSE_MINUTES) throw new Error('Invalid session close.');
   return { date, openAt: etInstant(date, SESSION_OPEN_MINUTES), closeAt: etInstant(date, closeMinutes), closeMinutes };
 }
+/** Full regular session only; DAY_1 eligibility intentionally also permits early closes. */
+export function isFullMarketSession(date: string, exceptions: readonly CalendarException[] = []): boolean {
+  const session = marketSession(date, exceptions);
+  return session !== null && session.closeMinutes === SESSION_CLOSE_MINUTES &&
+    !exceptions.some(row => row.sessionDate === date && row.type === 'EARLY_CLOSE');
+}
 export function barEligibility(timeframe: 'DAY_1' | 'MINUTE_15', start: Date, now: Date, exceptions: readonly CalendarException[] = []) {
   const session = marketSession(etDate(start), exceptions);
   if (!session) return { status: 'CLOSED' as const, eligibleAt: null };

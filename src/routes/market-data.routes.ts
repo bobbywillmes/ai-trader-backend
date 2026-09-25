@@ -5,6 +5,7 @@ import { PlatformPermission } from '../types/platform-rbac.js';
 import { trendAssessmentLatestController, trendAssessmentListController, trendAssessmentDetailController, trendAssessmentRunController } from '../controllers/trend-assessment.controller.js';
 import { calendarCreateController, calendarDeleteController, calendarListController, calendarUpdateController, marketBackfillController, marketDataStatusController, trendDayController, trendLabController } from '../controllers/market-data.controller.js';
 import { breadthAssessmentLatestController, breadthAssessmentListController, breadthAssessmentDetailController, breadthAssessmentRunController } from '../controllers/breadth-assessment.controller.js';
+import { participationAssessmentLatestController, participationAssessmentListController, participationAssessmentDetailController, participationAssessmentRunController } from '../controllers/participation-assessment.controller.js';
 import { breadthObservationLatestController, breadthObservationListController, breadthObservationDetailController, breadthObservationRunController } from '../controllers/breadth-observation.controller.js';
 const router = Router();
 router.get('/volatility-assessments/latest', requirePermission(PlatformPermission.MARKET_DATA_READ), volatilityAssessmentLatestController);
@@ -19,6 +20,10 @@ router.get('/breadth-assessments/latest', requirePermission(PlatformPermission.M
 router.get('/breadth-assessments', requirePermission(PlatformPermission.MARKET_DATA_READ), breadthAssessmentListController);
 router.get('/breadth-assessments/:id', requirePermission(PlatformPermission.MARKET_DATA_READ), breadthAssessmentDetailController);
 router.post('/breadth-assessments/run', requireSystemOwnerAccess, breadthAssessmentRunController);
+router.get('/participation-assessments/latest', requirePermission(PlatformPermission.MARKET_DATA_READ), participationAssessmentLatestController);
+router.get('/participation-assessments', requirePermission(PlatformPermission.MARKET_DATA_READ), participationAssessmentListController);
+router.get('/participation-assessments/:id', requirePermission(PlatformPermission.MARKET_DATA_READ), participationAssessmentDetailController);
+router.post('/participation-assessments/run', requireSystemOwnerAccess, participationAssessmentRunController);
 router.get('/breadth-observations/latest', requirePermission(PlatformPermission.MARKET_DATA_READ), breadthObservationLatestController);
 router.get('/breadth-observations', requirePermission(PlatformPermission.MARKET_DATA_READ), breadthObservationListController);
 router.get('/breadth-observations/:id', requirePermission(PlatformPermission.MARKET_DATA_READ), breadthObservationDetailController);

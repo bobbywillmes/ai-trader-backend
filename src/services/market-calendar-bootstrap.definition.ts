@@ -17,3 +17,9 @@ export const VERIFIED_NYSE_CLOSURES = {
   ],
 } as const;
 
+
+/** Reviewed 13:00 ET closes from the same NYSE releases above; horizon unchanged. */
+export const VERIFIED_NYSE_EARLY_CLOSE_DATES = ['2021-11-26', '2022-11-25', '2023-07-03', '2023-11-24',
+  '2024-07-03', '2024-11-29', '2024-12-24', '2025-07-03', '2025-11-28', '2025-12-24', '2026-11-27', '2026-12-24'];
+
+export const VERIFIED_NYSE_CALENDAR = { ...VERIFIED_NYSE_CLOSURES, earlyCloseDates: VERIFIED_NYSE_EARLY_CLOSE_DATES } as const;

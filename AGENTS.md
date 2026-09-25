@@ -211,6 +211,32 @@ Be especially careful when editing:
 
 ## Trade Lifecycle Notes
 
+PARTICIPATION_V1 has an immutable publisher with zero trading authority.
+`publishParticipationAssessments` bootstraps exactly the latest due full session,
+pins failed targets, and catches up at most 20 chronological targets under its own
+transaction advisory lock. It requires persisted reviewed calendar evidence, exact
+20-session five-symbol windows, and deadline-bounded strict splits. Predecessors
+are lineage only; raw/effective states are equal. See
+`docs/development/participation-v1-phase2.md`.
+Owner-run/read HTTP routes exist under `/api/market-data/participation-assessments`, plus
+a monitored 15-minute worker (`participation_assessment_publication`, informational) with an
+abortable, drainable scheduler (`docs/development/participation-v1-phase3a.md`,
+`participation-v1-phase3b.md`). It has no trading authority.
+`research:participation` compares prior 20/40
+full-session median volume across SPY/QQQ/DIA/IWM/RSP using a local Massive evidence
+cache and the reviewed research calendar, with no DB access. Early closes are
+excluded; missing expected full sessions must not be skipped. All five RVOL values
+are required for each panel. Research is frozen at prior-20-session median volume,
+panel median, QUIET <0.75 / NORMAL <1.25 / ACTIVE <1.50 / INTENSE >=1.50,
+with no hysteresis or agreement gate. The 40-session baseline is a research control.
+`analyze:participation` reads an existing report only; coverage gaps are distinct
+from provider request failures. No publisher or trading authority exists.
+The shared production daily acquisition panel is SPY/QQQ/DIA/IWM/RSP; TrendSymbol
+remains SPY/RSP. Strict split evidence rejects duplicate IDs/dates before deduplication.
+Production calculation requires exactly 20 named full-session baseline dates.
+See `docs/development/participation-v1-phase1.md`.
+See `docs/development/participation-v1-research.md`.
+
 INTRADAY_STRESS_V1 remains research-only. `research:intraday-stress` caches unadjusted
 Massive bars locally and reads the database under a read-only transaction; it must
 never publish assessments or enter trading pipelines. Research reuses pure daily
@@ -237,7 +263,7 @@ threshold tuning. Its account-independent publisher follows Trend's transaction
 advisory lock, immutable attempts, one replay-initialized bootstrap and chronological
 continuation; it has no trading consumer. Historical replay requires every expected
 session using persisted calendar exceptions. `npm run calendar:bootstrap -- --apply`
-explicitly inserts the verified 2021–2026 closures, skips equivalent rows, and refuses
+explicitly inserts the verified 2021–2026 closures and early closes, skips equivalent rows, and refuses
 all writes on conflicts. Workers never seed calendars. The research CLI remains
 read-only. See `docs/development/volatility-v1-acceptance.md`.
 
