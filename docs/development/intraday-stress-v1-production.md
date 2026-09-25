@@ -59,6 +59,9 @@ synced (`market-bar-ingestion.service.ts` → `syncDailyBars`). The minimum requ
   bars outside the fixed 09:30-16:00 ET window are silently ignored rather than failing the whole
   response. Only bars *inside* that window are required to align exactly to the 09:30 ET
   15-minute grid; a malformed/misaligned regular-session bar still fails closed.
+  MarketBar volume is stored at six decimal places. Finite, nonnegative provider volume
+  with more fractional digits is truncated toward zero before insertion; negative,
+  nonfinite, or out-of-range volume still fails closed.
 - `syncMinuteBars` added to `market-bar-ingestion.service.ts`: bounded, session-local — it only
   ever requests **today's** regular session (at most 26 bars/symbol), under an independent
   advisory lock (`market-minute-data-lock.service.ts`, key `ai-trader:market-minute-evidence`,

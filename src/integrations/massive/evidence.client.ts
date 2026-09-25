@@ -37,8 +37,12 @@ function decimal(value: unknown, name: string, positive: boolean): string {
   try { parsed = new Prisma.Decimal(value); } catch { return fail(`invalid ${name}`); }
   const scale = name === 'volume' ? 6 : 10;
   const integerDigits = name === 'volume' ? 24 : 14;
-  if (!parsed.isFinite() || (positive ? parsed.lte(0) : parsed.lt(0)) || parsed.decimalPlaces() > scale || parsed.gte(new Prisma.Decimal(10).pow(integerDigits))) return fail(`invalid or unrepresentable ${name}`);
-  return parsed.toFixed();
+  if (!parsed.isFinite() || (positive ? parsed.lte(0) : parsed.lt(0)) || (name !== 'volume' && parsed.decimalPlaces() > scale) || parsed.gte(new Prisma.Decimal(10).pow(integerDigits))) return fail(`invalid or unrepresentable ${name}`);
+  // Provider aggregate volume can carry floating-point residue. The canonical
+  // MarketBar scale is six decimals; discard excess digits before persistence.
+  return name === 'volume' && parsed.decimalPlaces() > scale
+    ? parsed.toDecimalPlaces(scale, Prisma.Decimal.ROUND_DOWN).toFixed(scale)
+    : parsed.toFixed();
 }
 function results(page: Page): unknown[] {
   if (page.status !== 'OK' && page.status !== 'DELAYED') fail('non-success response status');
