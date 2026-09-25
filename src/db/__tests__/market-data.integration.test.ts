@@ -68,6 +68,29 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await expect(db.query(`DELETE FROM "MarketBar"`)).rejects.toThrow('immutable');
     await expect(db.query(`DELETE FROM "Security" WHERE id=$1`, [securityId])).rejects.toThrow();
   });
+  it('accepts legacy null split factors and rejects invalid present factors', async () => {
+    const legacy = await bar('2020-01-06T04:00:00Z');
+    expect(legacy.rows[0].id).toBeGreaterThan(0);
+    for (const factor of ['0', '-1', 'NaN']) {
+      await expect(db.query(`INSERT INTO "MarketBar" ("securityId", timeframe, "barStartAt", open, high, low, close, volume, provider, "adjustmentMode", "receivedAt", "splitFactor") VALUES ($1,'DAY_1','2020-01-07T04:00:00Z',100,102,99,101,1000,'TIINGO','UNADJUSTED',now(),$2)`, [securityId, factor])).rejects.toThrow();
+    }
+    await db.query(`INSERT INTO "MarketBar" ("securityId", timeframe, "barStartAt", open, high, low, close, volume, provider, "adjustmentMode", "receivedAt", "splitFactor") VALUES ($1,'DAY_1','2020-01-07T04:00:00Z',100,102,99,101,1000,'TIINGO','UNADJUSTED',now(),2)`, [securityId]);
+    expect((await db.query(`SELECT "splitFactor"::text AS factor FROM "MarketBar" WHERE "barStartAt"='2020-01-07T04:00:00Z'`)).rows[0].factor).toBe('2.0000000000');
+  });
+  it('enforces nonoverlapping membership, frozen revisions, and canonical split uniqueness', async () => {
+    const universe = (await db.query(`INSERT INTO "SecurityUniverse" (code,name) VALUES ('SP500','S&P 500') RETURNING id`)).rows[0].id;
+    await db.query(`INSERT INTO "SecurityUniverseMembership" ("universeId","securityId","effectiveFrom") VALUES ($1,$2,'2026-01-01')`, [universe, securityId]);
+    await expect(db.query(`INSERT INTO "SecurityUniverseMembership" ("universeId","securityId","effectiveFrom") VALUES ($1,$2,'2026-06-01')`, [universe, securityId])).rejects.toThrow();
+    const revision = (await db.query(`INSERT INTO "BreadthUniverseRevision" ("effectiveFrom","memberCount") VALUES ('2026-09-01',1) RETURNING id`)).rows[0].id;
+    await db.query(`INSERT INTO "BreadthUniverseRevisionMember" ("revisionId","securityId") VALUES ($1,$2)`, [revision, securityId]);
+    await expect(db.query(`UPDATE "BreadthUniverseRevision" SET "memberCount"=2 WHERE id=$1`, [revision])).rejects.toThrow('immutable');
+    await expect(db.query(`DELETE FROM "BreadthUniverseRevisionMember" WHERE "revisionId"=$1`, [revision])).rejects.toThrow('immutable');
+    const split = `INSERT INTO "MarketSplitEvent" ("securityId","executionDate","splitFactor",provider,provenance,"receivedAt") VALUES ($1,'2026-09-12',$2,'TIINGO','Tiingo EOD',now())`;
+    await expect(db.query(split, [securityId, '0'])).rejects.toThrow();
+    await db.query(split, [securityId, '2']);
+    await expect(db.query(split, [securityId, '3'])).rejects.toThrow();
+    await expect(db.query(`UPDATE "MarketSplitEvent" SET "splitFactor"=3 WHERE "securityId"=$1`, [securityId])).rejects.toThrow('immutable');
+  });
   it.each([{ low: '103' }, { high: '100' }, { open: '0' }, { volume: '-1' }, { open: 'NaN' }, { volume: 'NaN' }])('rejects invalid OHLCV %j', async values => {
     await expect(bar('2026-09-15T04:00:00Z', values)).rejects.toThrow();
   });
@@ -95,7 +118,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(results.reduce((sum,result)=>sum+result.inserted,0)).toBe(1);
     const retry=await ingestDailyRange('SPY','2026-09-14','2026-09-15',{...options,fetchBars:async()=>[makeBar('2026-09-14','100'),makeBar('2026-09-15','100')]});
     expect(retry.inserted).toBe(0);
-    expect((await prisma.marketBar.findMany({where:{securityId},orderBy:{barStartAt:'asc'}})).map(row=>row.close.toNumber())).toEqual([101,101]);
+    expect((await prisma.marketBar.findMany({where:{securityId,barStartAt:{gte:etInstant('2026-09-14',0)}},orderBy:{barStartAt:'asc'}})).map(row=>row.close.toNumber())).toEqual([101,101]);
   });
   async function tradingCounts() {
     const tables = ['OrderIntent', 'BrokerOrder', 'BrokerActivity', 'TrackedPosition', 'Subscription', 'Signal', 'SignalDelivery', 'SignalEvaluation', 'CurrentMarketState'];

@@ -211,6 +211,12 @@ Be especially careful when editing:
 
 ## Trade Lifecycle Notes
 
+The Tiingo Phase 0/1 foundation adds additive market evidence and universe schema plus
+a disconnected REST client. Massive retains all runtime market-data authority until an
+explicit out-of-hours session cutover in a later phase. `Security.enabled` is trading
+eligibility, never an observation-universe filter; create observation-only Securities
+with `enabled=false` explicitly. See `docs/architecture/tiingo-market-data-migration.md`.
+
 PARTICIPATION_V1 has an immutable publisher with zero trading authority.
 `publishParticipationAssessments` bootstraps exactly the latest due full session,
 pins failed targets, and catches up at most 20 chronological targets under its own

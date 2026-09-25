@@ -1195,10 +1195,14 @@ enum AssetType {
 
 model Security {
   marketBars MarketBar[]
+  universeMemberships SecurityUniverseMembership[]
+  breadthRevisionMembers BreadthUniverseRevisionMember[]
+  marketSplitEvents MarketSplitEvent[]
   signals   Signal[]
   id        Int       @id @default(autoincrement())
   symbol    String    @unique
   name      String
+  // Trading eligibility. Observation universe membership never implies enabled=true.
   enabled   Boolean   @default(true)
   assetType AssetType
   sector    String?
@@ -1585,6 +1589,7 @@ enum MarketBarTimeframe {
 
 enum MarketDataProvider {
   MASSIVE
+  TIINGO
 }
 
 enum MarketBarAdjustmentMode {
@@ -1602,6 +1607,7 @@ model MarketBar {
   low            Decimal                 @db.Decimal(24, 10)
   close          Decimal                 @db.Decimal(24, 10)
   volume         Decimal                 @db.Decimal(30, 6)
+  splitFactor    Decimal?                @db.Decimal(24, 10)
   provider       MarketDataProvider
   adjustmentMode MarketBarAdjustmentMode
   receivedAt     DateTime                @db.Timestamptz(3)
@@ -1609,6 +1615,63 @@ model MarketBar {
   security       Security               @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([securityId, timeframe, barStartAt])
+}
+
+// Manually curated observation sources; independent of Security.enabled.
+model SecurityUniverse {
+  id Int @id @default(autoincrement())
+  code String @unique
+  name String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  memberships SecurityUniverseMembership[]
+}
+
+model SecurityUniverseMembership {
+  id Int @id @default(autoincrement())
+  universeId Int
+  securityId Int
+  effectiveFrom DateTime @db.Date
+  effectiveTo DateTime? @db.Date
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  universe SecurityUniverse @relation(fields: [universeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  security Security @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([universeId, securityId, effectiveFrom], map: "SecurityUniverseMembership_identity_key")
+  @@index([securityId, effectiveFrom])
+}
+
+// Frozen, deduplicated Breadth population. Members and revisions are SQL immutable.
+model BreadthUniverseRevision {
+  id Int @id @default(autoincrement())
+  effectiveFrom DateTime @unique @db.Date
+  memberCount Int
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  members BreadthUniverseRevisionMember[]
+  observations MarketBreadthObservation[]
+}
+
+model BreadthUniverseRevisionMember {
+  revisionId Int
+  securityId Int
+  revision BreadthUniverseRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  security Security @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([revisionId, securityId])
+}
+
+// Canonical split evidence by security and execution date; SQL immutable.
+model MarketSplitEvent {
+  id Int @id @default(autoincrement())
+  securityId Int
+  executionDate DateTime @db.Date
+  splitFactor Decimal @db.Decimal(24, 10)
+  provider MarketDataProvider
+  provenance String
+  receivedAt DateTime @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  security Security @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([securityId, executionDate])
 }
 
 enum MarketRegimeDimension {
@@ -1662,6 +1725,8 @@ model MarketRegimeDimensionAssessment {
 // session date is itself the unavailable signal for the BREADTH_V1 publisher.
 model MarketBreadthObservation {
   id                        Int                 @id @default(autoincrement())
+  breadthUniverseRevisionId Int?
+  breadthUniverseRevision BreadthUniverseRevision? @relation(fields: [breadthUniverseRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   sessionDate               DateTime            @db.Date
   previousSessionDate       DateTime            @db.Date
   provider                  MarketDataProvider

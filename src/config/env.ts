@@ -53,6 +53,11 @@ const envSchema = z.object({
 
   MASSIVE_API_KEY: z.string().min(1, 'MASSIVE_API_KEY is required'),
   MASSIVE_BASE_URL: z.url().default('https://api.massive.com'),
+  // Optional until the explicit provider cutover; no runtime worker uses Tiingo yet.
+  TIINGO_API_TOKEN: z.string().min(1).optional(),
+  TIINGO_BASE_URL: z.url().default('https://api.tiingo.com'),
+  TIINGO_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
+  TIINGO_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(8),
   MASSIVE_NEWS_WORKER_ENABLED: envBoolean.default(false),
   MASSIVE_NEWS_WORKER_INTERVAL_MS: z.coerce
     .number()
