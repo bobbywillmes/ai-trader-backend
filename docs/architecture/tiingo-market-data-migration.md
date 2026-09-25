@@ -12,6 +12,8 @@ An operator must choose and record an explicit market session boundary outside r
 
 `MarketSplitEvent` freezes a non-unit split factor with security, execution date, provider, provenance, receipt and creation times. One row per security/date prevents contradictory canonical factors. A disputed provider correction requires operator review rather than rewriting evidence. Phase 2 must migrate publishers to persisted split evidence, with explicit historical coverage and cutover rules; Phase 1 does not change their provider calls.
 
+Phase 2 now uses immutable `MarketSplitCoverage` to prove checked no-split intervals and a manual strict Massive bootstrap before publishers switch to persisted reads. See `docs/production/market-split-bootstrap.md` for the rollout procedure and the bounded historical range.
+
 ## Owned observation universe
 
 AI Trader will curate about 3,000–3,500 U.S. equities manually, roughly quarterly. Initial source universes represent S&P 500, Nasdaq-100, DJIA, Russell 2000, S&P MidCap 400, and S&P SmallCap 600. `SecurityUniverseMembership` is effective dated and rejects overlapping intervals for the same security and universe. The frozen `BreadthUniverseRevision` and member table represent the deduplicated union selected for BREADTH_V2. One Security/issue gets one equal vote even if it belongs to several source universes. `memberCount` is a declared count; the future revision creation service must insert and verify all members in one transaction before use. The revision and members cannot be updated or deleted.

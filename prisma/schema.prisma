@@ -1198,6 +1198,7 @@ model Security {
   universeMemberships SecurityUniverseMembership[]
   breadthRevisionMembers BreadthUniverseRevisionMember[]
   marketSplitEvents MarketSplitEvent[]
+  marketSplitCoverages MarketSplitCoverage[]
   signals   Signal[]
   id        Int       @id @default(autoincrement())
   symbol    String    @unique
@@ -1672,6 +1673,22 @@ model MarketSplitEvent {
   security Security @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([securityId, executionDate])
+}
+
+// Immutable proof that a strict provider split query completed for every date in this interval,
+// including dates with no split event. Later intervals must cover new sessions before publication.
+model MarketSplitCoverage {
+  id Int @id @default(autoincrement())
+  securityId Int
+  fromDate DateTime @db.Date
+  throughDate DateTime @db.Date
+  provider MarketDataProvider
+  receivedAt DateTime @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  security Security @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([securityId, fromDate, throughDate], map: "MarketSplitCoverage_identity_key")
+  @@index([securityId, fromDate])
 }
 
 enum MarketRegimeDimension {

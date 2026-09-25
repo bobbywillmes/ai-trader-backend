@@ -771,6 +771,7 @@ Table Security {
   universeMemberships SecurityUniverseMembership [not null]
   breadthRevisionMembers BreadthUniverseRevisionMember [not null]
   marketSplitEvents MarketSplitEvent [not null]
+  marketSplitCoverages MarketSplitCoverage [not null]
   signals Signal [not null]
   id Int [pk, increment]
   symbol String [unique, not null]
@@ -1115,6 +1116,21 @@ Table MarketSplitEvent {
 
   indexes {
     (securityId, executionDate) [unique]
+  }
+}
+
+Table MarketSplitCoverage {
+  id Int [pk, increment]
+  securityId Int [not null]
+  fromDate DateTime [not null]
+  throughDate DateTime [not null]
+  provider MarketDataProvider [not null]
+  receivedAt DateTime [not null]
+  createdAt DateTime [default: `now()`, not null]
+  security Security [not null]
+
+  indexes {
+    (securityId, fromDate, throughDate) [unique]
   }
 }
 
@@ -2294,6 +2310,8 @@ Ref: BreadthUniverseRevisionMember.revisionId > BreadthUniverseRevision.id [dele
 Ref: BreadthUniverseRevisionMember.securityId > Security.id [delete: Restrict]
 
 Ref: MarketSplitEvent.securityId > Security.id [delete: Restrict]
+
+Ref: MarketSplitCoverage.securityId > Security.id [delete: Restrict]
 
 Ref: MarketRegimeDimensionAssessment.(previousAssessmentId, dimension, algorithmVersion) - MarketRegimeDimensionAssessment.(id, dimension, algorithmVersion) [delete: Restrict]
 

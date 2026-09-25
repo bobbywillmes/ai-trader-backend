@@ -3,7 +3,8 @@ import { Prisma, type PrismaClient, type MarketRegimeDimensionAssessment } from 
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
-import { fetchSplitEvidence, type SplitEvent } from '../integrations/massive/evidence.client.js';
+import type { SplitEvent } from '../integrations/massive/evidence.client.js';
+import { readPersistedSplits } from './persisted-split-evidence.service.js';
 import { addDays, barEligibility, COMPLETION_GRACE_MINUTES, datesBetween, etDate, etInstant, marketSession, type CalendarException } from './market-calendar.js';
 import { normalizeSplits, type ResearchBar } from './trend-calculation.js';
 import { instrumentMeasurements } from './volatility-calculation.js';
@@ -31,7 +32,8 @@ const continuationSchema = z.object({
 type Assessment = MarketRegimeDimensionAssessment;
 type Reason = 'CALENDAR_EVIDENCE_UNAVAILABLE' | 'PRIOR_ATR_UNAVAILABLE' | 'SPLIT_EVIDENCE_UNAVAILABLE' | 'MISSING_INTRADAY_EVIDENCE' | 'ROLLING_CONTINUITY_FAILURE' | 'CALCULATION_FAILED';
 export type IntradayStressPublicationResult = { published: number; suppressed: boolean; notDue: boolean; blocked: { sessionDate: string; index: number; status: 'UNAVAILABLE' | 'FAILED'; reasonCode: Reason } | null };
-type Options = { db?: PrismaClient; now?: Date; clock?: () => Date; fetchSplits?: typeof fetchSplitEvidence };
+type SplitReader = (symbol: IntradaySymbol, from: string, through: string) => Promise<SplitEvent[]>;
+type Options = { db?: PrismaClient; now?: Date; clock?: () => Date; fetchSplits?: SplitReader };
 type Tx = Prisma.TransactionClient;
 
 function actionableTargets(date: string, exceptions: CalendarException[]) {
@@ -104,7 +106,7 @@ type BaselineResult = { perSymbol: Record<IntradaySymbol, number | null>; reason
  * frozen for the whole current session once computed. Reused directly from the last VALID
  * same-session assessment rather than recomputed on every target within that session.
  */
-async function computeBaseline(tx: Tx, priorDate: string | null, latestDate: string, exceptions: CalendarException[], fetchSplits: typeof fetchSplitEvidence): Promise<BaselineResult> {
+async function computeBaseline(tx: Tx, priorDate: string | null, latestDate: string, exceptions: CalendarException[], fetchSplits: SplitReader): Promise<BaselineResult> {
   if (!priorDate) return { perSymbol: { SPY: null, RSP: null }, reasonCode: 'PRIOR_ATR_UNAVAILABLE', provenance: null };
   const dailyFrom = addDays(priorDate, -400);
   const securities = await tx.security.findMany({ where: { symbol: { in: [...SYMBOLS] } }, select: { id: true, symbol: true } });
@@ -196,9 +198,9 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
       } else if (!reasonCode) {
         try {
           const priorDate = previousSessionDate(latest.date, exceptions);
-          const computed = await computeBaseline(tx, priorDate, latest.date, exceptions, options.fetchSplits ?? fetchSplitEvidence);
+          const computed = await computeBaseline(tx, priorDate, latest.date, exceptions, options.fetchSplits ?? ((symbol, from, through) => readPersistedSplits(tx, symbol, from, through)));
           baseline = computed.perSymbol;
-          baselineProvenance = { reused: false, ...(computed.provenance ?? {}) };
+          baselineProvenance = { reused: false, splitEvidenceSource: options.fetchSplits ? 'INJECTED' : 'MARKET_SPLIT_EVENT', ...(computed.provenance ?? {}) };
           if (computed.reasonCode) { status = computed.reasonCode === 'SPLIT_EVIDENCE_UNAVAILABLE' ? 'FAILED' : 'UNAVAILABLE'; reasonCode = computed.reasonCode; }
         } catch { status = 'FAILED'; reasonCode = 'CALCULATION_FAILED'; }
       }

@@ -3,7 +3,8 @@ import { Prisma, type PrismaClient, type MarketRegimeDimensionAssessment } from 
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
-import { fetchSplitEvidence, type SplitEvent } from '../integrations/massive/evidence.client.js';
+import type { SplitEvent } from '../integrations/massive/evidence.client.js';
+import { readPersistedSplits } from './persisted-split-evidence.service.js';
 import { addDays, barEligibility, COMPLETION_GRACE_MINUTES, datesBetween, etDate, etInstant, marketSession, type CalendarException } from './market-calendar.js';
 import { advanceVolatility, calculateVolatility, type VolatilityDay } from './volatility-calculation.js';
 import { normalizeSplits, type ResearchBar } from './trend-calculation.js';
@@ -27,7 +28,8 @@ const continuationSchema = z.object({
 type Assessment = MarketRegimeDimensionAssessment;
 type Reason = 'MISSING_MARKET_DATA' | 'INSUFFICIENT_HISTORY' | 'SPLIT_EVIDENCE_UNAVAILABLE' | 'CALCULATION_FAILED' | 'CALENDAR_EVIDENCE_UNAVAILABLE';
 export type VolatilityPublicationResult = { published: number; attempts: number; suppressed: boolean; notDue: boolean; blocked: { sessionDate: string; status: 'UNAVAILABLE' | 'FAILED'; reasonCode: Reason } | null };
-type Options = { db?: PrismaClient; now?: Date; clock?: () => Date; fetchSplits?: typeof fetchSplitEvidence };
+type SplitReader = (symbol: typeof symbols[number], from: string, through: string) => Promise<SplitEvent[]>;
+type Options = { db?: PrismaClient; now?: Date; clock?: () => Date; fetchSplits?: SplitReader };
 
 function nextSession(date: string, exceptions: CalendarException[]) {
   for (let i = 1; i <= 370; i++) {
@@ -79,7 +81,7 @@ export async function publishVolatilityAssessments(options: Options = {}): Promi
         // bootstrap because a more recent partial history needs to warm up again.
         const from = inputs.flatMap(input => input.bars.map(bar => bar.date)).sort()[0]!;
         try {
-          splitCache = await Promise.all(symbols.map(symbol => (options.fetchSplits ?? fetchSplitEvidence)(symbol, from, latest)));
+          splitCache = await Promise.all(symbols.map(symbol => options.fetchSplits ? options.fetchSplits(symbol, from, latest) : readPersistedSplits(tx, symbol, from, latest)));
           splitCache.forEach((splits, i) => {
             if (splits.some(s => s.symbol !== symbols[i] || s.executionDate < from || s.executionDate > latest)) throw new Error('Invalid split identity.');
             normalizeSplits([], splits, latest);
@@ -127,7 +129,7 @@ export async function publishVolatilityAssessments(options: Options = {}): Promi
         if (!reasonCode && missingSymbols.length) { status = 'UNAVAILABLE'; reasonCode = 'MISSING_MARKET_DATA'; }
         if (!reasonCode && !splitCache && !splitFailed) {
           try {
-            splitCache = await Promise.all(symbols.map(symbol => (options.fetchSplits ?? fetchSplitEvidence)(symbol, inputFrom, latest)));
+            splitCache = await Promise.all(symbols.map(symbol => options.fetchSplits ? options.fetchSplits(symbol, inputFrom, latest) : readPersistedSplits(tx, symbol, inputFrom, latest)));
             // Validate before treating splits as usable; no raw provider payload is persisted.
             splitCache.forEach((splits, i) => {
               if (splits.some(s => s.symbol !== symbols[i] || s.executionDate < inputFrom || s.executionDate > latest)) throw new Error('Invalid split identity.');
@@ -163,7 +165,7 @@ export async function publishVolatilityAssessments(options: Options = {}): Promi
           } catch { status = 'FAILED'; reasonCode = 'CALCULATION_FAILED'; }
         }
         const provenance = {
-          provider: 'MASSIVE', timeframe: 'DAY_1', adjustmentSemantics: 'Stored UNADJUSTED; split-normalized only in calculation; no dividend adjustment.',
+          provider: 'MASSIVE', splitEvidenceSource: options.fetchSplits ? 'INJECTED' : 'MARKET_SPLIT_EVENT', timeframe: 'DAY_1', adjustmentSemantics: 'Stored UNADJUSTED; split-normalized only in calculation; no dividend adjustment.',
           inputFrom, operationalFrom, normalizedThrough: date,
           canonicalInputHash: hash({ source, splits, dates: ordered, calendar: exceptions.filter(e => e.sessionDate >= inputFrom && e.sessionDate <= next.date) }),
           instruments: source.map((input, i) => ({ symbol: input.symbol, securityId: input.securityId, count: input.bars.length, from: input.bars[0]?.date ?? null, through: input.bars.at(-1)?.date ?? null, marketBarIds: input.bars.map(bar => bar.id), firstMarketBarId: input.bars[0]?.id ?? null, lastMarketBarId: input.bars.at(-1)?.id ?? null, splits: splits[i], normalizationFactors: normalizationFactors[i], normalization: 'For each bar multiply prices by the product of splitFrom/splitTo for events after its session and through normalizedThrough; divide volume by that product.' })),

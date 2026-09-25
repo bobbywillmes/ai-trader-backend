@@ -216,6 +216,10 @@ a disconnected REST client. Massive retains all runtime market-data authority un
 explicit out-of-hours session cutover in a later phase. `Security.enabled` is trading
 eligibility, never an observation-universe filter; create observation-only Securities
 with `enabled=false` explicitly. See `docs/architecture/tiingo-market-data-migration.md`.
+Phase 2 makes Trend, Volatility, Participation and Intraday Stress's daily ATR baseline
+read persisted splits. Run the manual strict Massive split bootstrap through the current
+session before deploying these publisher changes and extend coverage each new session;
+uncovered dates fail closed. See `docs/production/market-split-bootstrap.md`.
 
 PARTICIPATION_V1 has an immutable publisher with zero trading authority.
 `publishParticipationAssessments` bootstraps exactly the latest due full session,

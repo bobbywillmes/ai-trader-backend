@@ -35,6 +35,7 @@
     "compare:breadth-structural-v3": "tsx scripts/compare-breadth-structural-v3.ts",
     "compare:breadth-mild-deterioration": "tsx scripts/compare-breadth-mild-deterioration.ts",
     "calendar:bootstrap": "tsx scripts/bootstrap-market-calendar.ts",
+    "splits:bootstrap": "tsx scripts/bootstrap-market-splits.ts",
     "prisma:generate": "prisma generate",
     "momentum:reconcile-eligibility": "tsx scripts/reconcile-momentum-eligibility.ts",
     "diagnose:account-worker-health": "tsx scripts/diagnose-account-worker-health.ts",

@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { Prisma, type PrismaClient, type MarketRegimeDimensionAssessment } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
-import { fetchStrictSplitEvidence, massiveEvidenceGet, type SplitEvent } from '../integrations/massive/evidence.client.js';
+import type { SplitEvent } from '../integrations/massive/evidence.client.js';
+import { readPersistedSplits } from './persisted-split-evidence.service.js';
 import { addDays, etDate, etInstant, isFullMarketSession, marketSession, type CalendarException } from './market-calendar.js';
 import { calculateParticipationV1, normalizeParticipationVolumes, participationMedian, validateParticipationSplits } from './participation-v1-calculation.js';
 import { PARTICIPATION_ALGORITHM_VERSION, PARTICIPATION_PUBLICATION_EVIDENCE_VERSION, PARTICIPATION_SYMBOLS, PARTICIPATION_BASELINE_SESSIONS, PARTICIPATION_THRESHOLDS, type ParticipationSymbol } from './participation-v1.definition.js';
@@ -24,9 +25,6 @@ export type ParticipationPublicationResult = { published: number; attempts: numb
 export type ParticipationSplitFetcher = (symbol: ParticipationSymbol, from: string, through: string, signal: AbortSignal) => Promise<SplitEvent[]>;
 /** `signal` is an external shutdown/cancellation signal: it aborts and rolls back the run and never records a FAILED assessment. */
 type Options = { db?: PrismaClient; now?: Date; clock?: () => Date; fetchSplits?: ParticipationSplitFetcher; signal?: AbortSignal };
-const fetchSplits: ParticipationSplitFetcher = (symbol, from, through, signal) => fetchStrictSplitEvidence(symbol, from, through, path => {
-  signal.throwIfAborted(); return massiveEvidenceGet(path, signal);
-});
 const emptyResult = (): ParticipationPublicationResult => ({ published: 0, attempts: 0, suppressed: false, notDue: false, blocked: null });
 function splitFailureCode(error: unknown, aborted: boolean): string {
   if (aborted) return 'PUBLICATION_DEADLINE';
@@ -134,7 +132,7 @@ export async function publishParticipationAssessments(options: Options = {}): Pr
         if (!reasonCode && !splitCache) {
           const responses = await Promise.allSettled(PARTICIPATION_SYMBOLS.map(async symbol => {
             signal.throwIfAborted();
-            const events = await (options.fetchSplits ?? fetchSplits)(symbol, splitFrom, splitThrough, signal);
+            const events = await (options.fetchSplits ?? ((s, from, through) => readPersistedSplits(tx, s, from, through)))(symbol, splitFrom, splitThrough, signal);
             signal.throwIfAborted();
             validateParticipationSplits(events);
             if (events.some(e => e.symbol !== symbol || e.executionDate < splitFrom || e.executionDate > splitThrough)) throw new Error('Invalid split identity/range');
@@ -143,7 +141,7 @@ export async function publishParticipationAssessments(options: Options = {}): Pr
           }));
           // Shutdown cancellation propagates (rollback) instead of becoming SPLIT_EVIDENCE_UNAVAILABLE.
           options.signal?.throwIfAborted();
-          splitFailures = responses.flatMap((r, i) => r.status === 'rejected' ? [{ symbol: PARTICIPATION_SYMBOLS[i]!, code: splitFailureCode(r.reason, signal.aborted) }] : []);
+          splitFailures = responses.flatMap((r, i) => r.status === 'rejected' ? [{ symbol: PARTICIPATION_SYMBOLS[i]!, code: options.fetchSplits ? splitFailureCode(r.reason, signal.aborted) : signal.aborted ? 'PUBLICATION_DEADLINE' : 'PERSISTED_SPLIT_EVIDENCE_FAILED' }] : []);
           if (!splitFailures.length) splitCache = responses.map(r => (r as PromiseFulfilledResult<SplitEvent[]>).value);
         }
         if (!reasonCode && splitFailures.length) block('SPLIT_EVIDENCE_UNAVAILABLE');
@@ -177,7 +175,8 @@ export async function publishParticipationAssessments(options: Options = {}): Pr
         const panel = !reasonCode && calculation?.available ? { rvol20BySymbol: Object.fromEntries(calculation.instruments.map(i => [i.symbol, i.rvol20])),
           panelMedianRvol: calculation.panel.panelMedianRvol, rawState: calculation.panel.rawState, effectiveState: calculation.panel.effectiveState,
           diagnostics: { agreement: calculation.panel.agreement, minimumRvol: calculation.panel.minimumRvol, maximumRvol: calculation.panel.maximumRvol, range: calculation.panel.range, affectsClassification: false } } : null;
-        const canonicalInputHash = hash({ ...identity, evidenceSchemaVersion: PARTICIPATION_PUBLICATION_EVIDENCE_VERSION, definition, targetDate, targetAt,
+        const splitEvidenceSource = options.fetchSplits ? 'INJECTED' : 'MARKET_SPLIT_EVENT';
+        const canonicalInputHash = hash({ ...identity, evidenceSchemaVersion: PARTICIPATION_PUBLICATION_EVIDENCE_VERSION, definition, targetDate, targetAt, splitEvidenceSource,
           baselineDates: window.baselineDates, calendar: window.calendar,
           instruments: instruments.map(i => ({ symbol: i.symbol, securityId: i.securityId, observations: [...i.baseline, i.target].map(b => b ? { sessionDate: b.sessionDate, marketBarId: b.marketBarId, rawVolume: b.rawVolume } : null), splitEvidence: i.splitEvidence })) });
         const attemptFingerprint = hash({ ...identity, evidenceSchemaVersion: PARTICIPATION_PUBLICATION_EVIDENCE_VERSION, targetDate, targetAt, proposedValidUntil: window.proposedValidUntil,
@@ -188,7 +187,7 @@ export async function publishParticipationAssessments(options: Options = {}): Pr
         const completedAt = clock();
         const evidence = { ...identity, evidenceSchemaVersion: PARTICIPATION_PUBLICATION_EVIDENCE_VERSION, definition, sessionDate: targetDate, targetAt, dueAt: participationDueAt(targetAt),
           dataThroughAt: panel ? targetAt : null, validUntil: panel ? window.proposedValidUntil : null, proposedValidUntil: window.proposedValidUntil,
-          expectedBaselineDates: window.baselineDates, calendar: window.calendar, normalizationThrough: targetDate, provider: 'MASSIVE', timeframe: 'DAY_1', adjustmentMode: 'UNADJUSTED',
+          expectedBaselineDates: window.baselineDates, calendar: window.calendar, normalizationThrough: targetDate, provider: 'MASSIVE', splitEvidenceSource, timeframe: 'DAY_1', adjustmentMode: 'UNADJUSTED',
           dailyVolumeSemantics: 'Provider daily aggregate; not reconstructed strictly from regular-hours trades.', instruments, panel,
           lineage: { previousAssessmentId: predecessor?.id ?? null, calculationAuthority: false }, bootstrap: !predecessor && panel !== null,
           ...(!predecessor && panel ? { initialization: { mode: 'baseline-only', baselineFrom: window.baselineDates[0], baselineThrough: window.baselineDates.at(-1), eligibleBaselineSessionCount: 20, inputBarCount: 105, replayedAssessmentCount: 0, publishedHistoricalAssessmentCount: 0 } } : {}),
