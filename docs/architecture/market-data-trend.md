@@ -373,4 +373,5 @@ prevent overlapping ticks. The three-minute worker-health threshold remains an
 operational warning, not a total invocation deadline; slow provider/backlog work
 can exceed it. Acceptance must observe five-symbol provider latency/entitlement.
 The strict split path is `fetchStrictSplitEvidence`; legacy split callers retain
-identical-ID deduplication. No Participation publisher is present.
+identical-ID deduplication. The account-independent Participation publisher is
+documented in `docs/development/participation-v1-phase2.md` and has no trading consumer.

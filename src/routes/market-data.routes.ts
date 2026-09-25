@@ -7,6 +7,7 @@ import { calendarCreateController, calendarDeleteController, calendarListControl
 import { breadthAssessmentLatestController, breadthAssessmentListController, breadthAssessmentDetailController, breadthAssessmentRunController } from '../controllers/breadth-assessment.controller.js';
 import { participationAssessmentLatestController, participationAssessmentListController, participationAssessmentDetailController, participationAssessmentRunController } from '../controllers/participation-assessment.controller.js';
 import { breadthObservationLatestController, breadthObservationListController, breadthObservationDetailController, breadthObservationRunController } from '../controllers/breadth-observation.controller.js';
+import { intradayStressAssessmentLatestController, intradayStressAssessmentListController, intradayStressAssessmentDetailController, intradayStressAssessmentRunController } from '../controllers/intraday-stress-assessment.controller.js';
 const router = Router();
 router.get('/volatility-assessments/latest', requirePermission(PlatformPermission.MARKET_DATA_READ), volatilityAssessmentLatestController);
 router.get('/volatility-assessments', requirePermission(PlatformPermission.MARKET_DATA_READ), volatilityAssessmentListController);
@@ -28,6 +29,10 @@ router.get('/breadth-observations/latest', requirePermission(PlatformPermission.
 router.get('/breadth-observations', requirePermission(PlatformPermission.MARKET_DATA_READ), breadthObservationListController);
 router.get('/breadth-observations/:id', requirePermission(PlatformPermission.MARKET_DATA_READ), breadthObservationDetailController);
 router.post('/breadth-observations/run', requireSystemOwnerAccess, breadthObservationRunController);
+router.get('/intraday-stress-assessments/latest', requirePermission(PlatformPermission.MARKET_DATA_READ), intradayStressAssessmentLatestController);
+router.get('/intraday-stress-assessments', requirePermission(PlatformPermission.MARKET_DATA_READ), intradayStressAssessmentListController);
+router.get('/intraday-stress-assessments/:id', requirePermission(PlatformPermission.MARKET_DATA_READ), intradayStressAssessmentDetailController);
+router.post('/intraday-stress-assessments/run', requireSystemOwnerAccess, intradayStressAssessmentRunController);
 router.get('/calendar', requirePermission(PlatformPermission.MARKET_DATA_READ), calendarListController);
 router.post('/calendar', requirePermission(PlatformPermission.MARKET_CALENDAR_WRITE), calendarCreateController);
 router.put('/calendar/:id', requirePermission(PlatformPermission.MARKET_CALENDAR_WRITE), calendarUpdateController);

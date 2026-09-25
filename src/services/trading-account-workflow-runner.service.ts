@@ -17,6 +17,8 @@ const BACKOFF_CAP_MS: Record<WorkerKey, number> = {
   breadth_assessment_publication: 900_000, // Global worker; does not use account coordination.
   participation_assessment_publication: 900_000, // Global worker; does not use account coordination.
   market_daily_evidence_sync: 3_600_000, // Global worker; does not use account coordination.
+  market_minute_evidence_sync: 3_600_000, // Global worker; does not use account coordination.
+  intraday_stress_assessment_publication: 900_000, // Global worker; does not use account coordination.
   pending_order_processing: 30_000,
   submitted_order_sync: 60_000,
   tracked_position_sync: 30_000,

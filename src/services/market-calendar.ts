@@ -7,6 +7,10 @@ export type CalendarException = { sessionDate: string; name?: string; type: 'CLO
 const dateFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: MARKET_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' });
 const timeFormatter = new Intl.DateTimeFormat('en-GB', { timeZone: MARKET_TIME_ZONE, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 export function etDate(date: Date): string { return dateFormatter.format(date); }
+export function etMinutesOfDay(date: Date): number {
+  const [h, m] = timeFormatter.format(date).split(':').map(Number);
+  return h! * 60 + m!;
+}
 export function validDate(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 }

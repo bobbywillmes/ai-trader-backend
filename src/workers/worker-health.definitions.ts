@@ -23,6 +23,8 @@ export const TREND_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 export const VOLATILITY_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 export const BREADTH_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 export const PARTICIPATION_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
+export const INTRADAY_STRESS_ASSESSMENT_WORKER_INTERVAL_MS = 2 * 60_000;
+export const MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS = 30_000;
 
 function thresholds(
   expectedIntervalMs: number,
@@ -84,6 +86,24 @@ export const workerDefinitions = [
     expectedIntervalMs: 60_000,
     enabledByDefault: true,
     ...thresholds(60_000, 180_000),
+  },
+  {
+    key: 'market_minute_evidence_sync',
+    displayName: 'Intraday market data',
+    description: "Fills eligible missing SPY/RSP MINUTE_15 bars for today's regular session from Massive, without rewriting evidence.",
+    criticality: 'informational',
+    expectedIntervalMs: MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS,
+    enabledByDefault: true,
+    ...thresholds(MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS, 60_000),
+  },
+  {
+    key: 'intraday_stress_assessment_publication',
+    displayName: 'Intraday Stress assessment',
+    description: 'Publishes immutable INTRADAY_STRESS_V1 evidence per 15-minute target, without trading consumers.',
+    criticality: 'informational',
+    expectedIntervalMs: INTRADAY_STRESS_ASSESSMENT_WORKER_INTERVAL_MS,
+    enabledByDefault: true,
+    ...thresholds(INTRADAY_STRESS_ASSESSMENT_WORKER_INTERVAL_MS, 240_000),
   },
   {
     key: 'pending_order_processing',

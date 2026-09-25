@@ -3,13 +3,15 @@ import { prisma } from '../db/prisma.js';
 import { VERIFIED_NYSE_CALENDAR } from './market-calendar-bootstrap.definition.js';
 import type { CalendarException } from './market-calendar.js';
 
-export const verifiedClosureRows: readonly (CalendarException & { name: string })[] = VERIFIED_NYSE_CALENDAR.closedDates.map(sessionDate => ({
+const verifiedFullClosureRows: readonly (CalendarException & { name: string })[] = VERIFIED_NYSE_CALENDAR.closedDates.map(sessionDate => ({
   sessionDate, name: sessionDate === '2025-01-09' ? 'NYSE National Day of Mourning - Jimmy Carter' : 'NYSE verified full-day closure',
   type: 'CLOSED', closeTimeMinutesEt: null,
 }));
-export const verifiedCalendarRows: readonly (CalendarException & { name: string })[] = [...verifiedClosureRows,
+export const verifiedCalendarRows: readonly (CalendarException & { name: string })[] = [...verifiedFullClosureRows,
   ...VERIFIED_NYSE_CALENDAR.earlyCloseDates.map(sessionDate => ({ sessionDate, name: 'NYSE verified early close', type: 'EARLY_CLOSE' as const, closeTimeMinutesEt: 780 })),
 ].sort((a, b) => a.sessionDate.localeCompare(b.sessionDate));
+/** Kept for existing callers that use this historical export as the verified calendar fixture. */
+export const verifiedClosureRows = verifiedCalendarRows;
 /** Runtime calendar authority is sessionDate + type + closeTimeMinutesEt; the descriptive name is informational and never a conflict. */
 export function planCalendarBootstrap(existing: readonly CalendarException[]) {
   const missing: typeof verifiedCalendarRows[number][] = [];

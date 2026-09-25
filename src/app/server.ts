@@ -45,6 +45,10 @@ import { closeMarketDataLockPool } from '../services/market-data-lock.service.js
 import { runBreadthAssessmentWorker } from '../workers/breadth-assessment.worker.js';
 import { BREADTH_ASSESSMENT_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { closeBreadthObservationLockPool } from '../services/breadth-observation-lock.service.js';
+import { runMarketMinuteDataWorker } from '../workers/market-minute-data.worker.js';
+import { runIntradayStressAssessmentWorker } from '../workers/intraday-stress-assessment.worker.js';
+import { MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS, INTRADAY_STRESS_ASSESSMENT_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
+import { closeMarketMinuteDataLockPool } from '../services/market-minute-data-lock.service.js';
 
 const app = createApp();
 
@@ -151,6 +155,14 @@ async function runTradingWorkers() {
 }
 
 let participationScheduler: ParticipationScheduler | null = null;
+const intradayWorkerTicks = new Set<Promise<void>>();
+const intradayWorkerIntervals: NodeJS.Timeout[] = [];
+
+function runIntradayWorker(key: WorkerKey, execute: () => Promise<WorkerTickResult | void>) {
+  const tick = runWorker(key, execute);
+  intradayWorkerTicks.add(tick);
+  void tick.finally(() => intradayWorkerTicks.delete(tick));
+}
 
 function startWorkers() {
   workerHealthRegistry.startPersistence();
@@ -166,6 +178,10 @@ function startWorkers() {
   setInterval(() => { void runWorker('market_daily_evidence_sync', runMarketDataWorker); }, 60_000);
   void runWorker('breadth_assessment_publication', runBreadthAssessmentWorker);
   setInterval(() => { void runWorker('breadth_assessment_publication', runBreadthAssessmentWorker); }, BREADTH_ASSESSMENT_WORKER_INTERVAL_MS);
+  runIntradayWorker('market_minute_evidence_sync', runMarketMinuteDataWorker);
+  intradayWorkerIntervals.push(setInterval(() => { runIntradayWorker('market_minute_evidence_sync', runMarketMinuteDataWorker); }, MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS));
+  runIntradayWorker('intraday_stress_assessment_publication', runIntradayStressAssessmentWorker);
+  intradayWorkerIntervals.push(setInterval(() => { runIntradayWorker('intraday_stress_assessment_publication', runIntradayStressAssessmentWorker); }, INTRADAY_STRESS_ASSESSMENT_WORKER_INTERVAL_MS));
 
   // This validity monitor is local-only. Final broker authorization remains
   // authoritative, while this loop promptly closes stale permissive latches.
@@ -356,12 +372,19 @@ async function startServer() {
 
 async function shutdown(signal: NodeJS.Signals) {
   logger.info({ signal }, 'AI Trader Backend shutdown requested.');
+  for (const interval of intradayWorkerIntervals) clearInterval(interval);
+  intradayWorkerIntervals.length = 0;
 
   // Stop new Participation ticks, abort the in-flight publication and wait (bounded) for its rollback before teardown.
   if (participationScheduler) {
     const drained = await participationScheduler.stop();
     if (!drained) logger.warn('Timed out draining PARTICIPATION_V1 publication during shutdown.');
   }
+  const intradayDrained = await Promise.race([
+    Promise.allSettled([...intradayWorkerTicks]).then(() => true),
+    new Promise<false>(resolve => setTimeout(() => resolve(false), 5_000)),
+  ]);
+  if (!intradayDrained) logger.warn('Timed out draining intraday market evidence and assessment workers during shutdown.');
 
   workerHealthRegistry.stopPersistence();
 
@@ -369,6 +392,7 @@ async function shutdown(signal: NodeJS.Signals) {
     Promise.all([
       workerHealthRegistry.shutdown(),
       closeMarketDataLockPool(),
+      closeMarketMinuteDataLockPool(),
       closeBreadthObservationLockPool(),
       closeTradingAccountWorkflowLockPool(),
     ]),

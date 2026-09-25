@@ -1,8 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { env } from '../../config/env.js';
 import { HttpError } from '../../errors/http-error.js';
-import { etDate, etInstant, validDate } from '../../services/market-calendar.js';
+import { etDate, etInstant, etMinutesOfDay, SESSION_OPEN_MINUTES, SESSION_CLOSE_MINUTES, validDate } from '../../services/market-calendar.js';
 import { MARKET_DAILY_EVIDENCE_SYMBOLS, type DailyEvidenceSymbol } from '../../services/market-daily-evidence.definition.js';
+import type { TrendSymbol } from '../../services/trend-lab.config.js';
 
 type Page = { status?: unknown; adjusted?: unknown; ticker?: unknown; results?: unknown; resultsCount?: unknown; next_url?: unknown };
 export type DailyEvidenceBar = { barStartAt: Date; open: string; high: string; low: string; close: string; volume: string; receivedAt: Date };
@@ -78,6 +79,42 @@ export async function fetchDailyEvidence(symbol: DailyEvidenceSymbol, from: stri
       if (!Number.isFinite(barStartAt.getTime())) fail('invalid aggregate timestamp');
       const date = etDate(barStartAt);
       if (date < from || date > to || etInstant(date, 0).getTime() !== barStartAt.getTime()) fail('daily timestamp outside requested range or not Eastern midnight');
+      const bar: DailyEvidenceBar = { barStartAt, open: decimal(row.o, 'open', true), high: decimal(row.h, 'high', true), low: decimal(row.l, 'low', true), close: decimal(row.c, 'close', true), volume: decimal(row.v, 'volume', false), receivedAt };
+      if (new Prisma.Decimal(bar.low).gt(bar.open) || new Prisma.Decimal(bar.low).gt(bar.close) || new Prisma.Decimal(bar.high).lt(bar.open) || new Prisma.Decimal(bar.high).lt(bar.close) || new Prisma.Decimal(bar.low).gt(bar.high)) fail(`invalid OHLC relationships on ${date}`);
+      const prior = bars.get(barStartAt.getTime());
+      if (prior && ['open', 'high', 'low', 'close', 'volume'].some(k => prior[k as keyof DailyEvidenceBar] !== bar[k as keyof DailyEvidenceBar])) fail(`conflicting observations within response on ${date}`);
+      bars.set(barStartAt.getTime(), bar);
+    }
+    path = nextPage(page, endpoint, true);
+  }
+  return [...bars.values()].sort((a, b) => a.barStartAt.getTime() - b.barStartAt.getTime());
+}
+/** Regular-session 15-minute bars only. Massive's aggregate endpoint returns pre-market and
+ * after-hours aggregates alongside the regular session — that is normal provider evidence, not
+ * response corruption, so extended-hours bars are silently ignored/filtered rather than failing
+ * the whole response. Only bars inside the fixed 09:30-16:00 ET window are validated for exact
+ * 15-minute grid alignment and stored; early-close narrowing is a downstream eligibility
+ * concern, not a raw-evidence storage concern (MarketBar never encodes calendar exceptions).
+ */
+export async function fetchMinuteEvidence(symbol: TrendSymbol, from: string, to: string, get: MassiveEvidenceTransport = massiveEvidenceGet): Promise<DailyEvidenceBar[]> {
+  const endpoint = `/v2/aggs/ticker/${symbol}/range/15/minute/${from}/${to}`;
+  let path: string | null = `${endpoint}?adjusted=false&sort=asc&limit=50000`;
+  const seen = new Set<string>(); const bars = new Map<number, DailyEvidenceBar>();
+  while (path) {
+    if (seen.has(path) || seen.size >= 100) fail('pagination loop or limit');
+    seen.add(path);
+    const page = await get(path); const receivedAt = new Date();
+    if (page.adjusted !== false || page.ticker !== symbol) fail('adjustment mode or ticker mismatch');
+    for (const raw of results(page)) {
+      const row = record(raw);
+      if (typeof row.t !== 'number' || !Number.isSafeInteger(row.t)) fail('invalid aggregate timestamp');
+      const barStartAt = new Date(row.t as number);
+      if (!Number.isFinite(barStartAt.getTime())) fail('invalid aggregate timestamp');
+      const date = etDate(barStartAt);
+      if (date < from || date > to) fail('minute timestamp outside requested range');
+      const minutesEt = etMinutesOfDay(barStartAt);
+      if (minutesEt < SESSION_OPEN_MINUTES || minutesEt >= SESSION_CLOSE_MINUTES) continue; // Expected pre-market/after-hours evidence; not stored.
+      if ((minutesEt - SESSION_OPEN_MINUTES) % 15 !== 0) fail(`regular-session minute timestamp on ${date} is not aligned to the 09:30 ET 15-minute grid`);
       const bar: DailyEvidenceBar = { barStartAt, open: decimal(row.o, 'open', true), high: decimal(row.h, 'high', true), low: decimal(row.l, 'low', true), close: decimal(row.c, 'close', true), volume: decimal(row.v, 'volume', false), receivedAt };
       if (new Prisma.Decimal(bar.low).gt(bar.open) || new Prisma.Decimal(bar.low).gt(bar.close) || new Prisma.Decimal(bar.high).lt(bar.open) || new Prisma.Decimal(bar.high).lt(bar.close) || new Prisma.Decimal(bar.low).gt(bar.high)) fail(`invalid OHLC relationships on ${date}`);
       const prior = bars.get(barStartAt.getTime());

@@ -91,6 +91,8 @@ describe('WorkerHealthRegistry', () => {
       'breadth_assessment_publication',
       'participation_assessment_publication',
       'market_daily_evidence_sync',
+      'market_minute_evidence_sync',
+      'intraday_stress_assessment_publication',
       'pending_order_processing',
       'submitted_order_sync',
       'tracked_position_sync',

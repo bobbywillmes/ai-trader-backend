@@ -230,22 +230,49 @@ are required for each panel. Research is frozen at prior-20-session median volum
 panel median, QUIET <0.75 / NORMAL <1.25 / ACTIVE <1.50 / INTENSE >=1.50,
 with no hysteresis or agreement gate. The 40-session baseline is a research control.
 `analyze:participation` reads an existing report only; coverage gaps are distinct
-from provider request failures. No publisher or trading authority exists.
+from provider request failures. Research has no publication or trading authority.
 The shared production daily acquisition panel is SPY/QQQ/DIA/IWM/RSP; TrendSymbol
 remains SPY/RSP. Strict split evidence rejects duplicate IDs/dates before deduplication.
 Production calculation requires exactly 20 named full-session baseline dates.
 See `docs/development/participation-v1-phase1.md`.
 See `docs/development/participation-v1-research.md`.
+The manually launched Alpaca IEX Phase A harness under `src/dev/alpaca-iex/` is
+research-only. It uses dedicated `ALPACA_MARKET_DATA_*` config, native Node 24
+WebSocket, append-only ignored journals and offline replay. Never import application
+env, Prisma, account/broker services or publishers into it, or wire it into startup.
+SPY/RSP IEX capture does not accept IEX or change Intraday Stress authority. See
+`docs/development/intraday-stress-alpaca-iex-phase-a.md` for operator-only capture.
 
-INTRADAY_STRESS_V1 remains research-only. `research:intraday-stress` caches unadjusted
-Massive bars locally and reads the database under a read-only transaction; it must
-never publish assessments or enter trading pipelines. Research reuses pure daily
+Phase B adds explicit manual historical ALPACA/IEX and MASSIVE reference fetches,
+immutable disk snapshots, a shared Massive daily ATR baseline and offline source
+comparison. Historical references may label sparse minutes but never replace live
+captured prices. Preserve strict 15/15 diagnostics and original capture journals.
+No provider calls run automatically or in tests. See
+`docs/development/intraday-stress-alpaca-iex-phase-b.md`; no IEX authority is granted.
+
+The manual three-provider experiment under `src/dev/intraday-providers/` launches
+independent Alpaca/IEX, Tiingo consolidated reference-price and Twelve Data REST
+captures. Preserve derived-price provenance, null Tiingo stream volume, append-only
+versions, shared frozen ATR/calendar evidence, strict 15/15 and failure isolation.
+Only explicit Node env-file research commands load `.env.iex`; no startup wiring.
+See `docs/development/intraday-stress-provider-comparison.md`. Automated tests must never call providers.
+Tiingo consolidated is the candidate for the next market-state-observation design
+phase following provider evaluation and REST revision forensics. No Tiingo or Twelve
+Data provider production authority is granted.
+
+INTRADAY_STRESS_V1 publishes immutable production assessments from stored Massive
+daily and 15-minute SPY/RSP evidence with zero trading authority. Its monitored
+market-minute-data and assessment workers remain account-independent. See
+`docs/development/intraday-stress-v1-production.md`.
+`research:intraday-stress` caches unadjusted Massive bars locally and reads the
+database under a read-only transaction; it must never publish assessments or enter
+trading pipelines. Research reuses pure daily
 Wilder ATR and split normalization, freezes the prior-session baseline, enforces
 regular-session continuity, and excludes the closing bar from actionable targets.
 The final research clarification recommends freezing Candidate B with current-close
 acute collapse and fixed absolute HIGH safeguards (1% closing downside / 2.5% session
 drawdown). The original low-excursion evidence and comparison remain preserved. See
-`docs/development/intraday-stress-calibration.md`. No production authority is granted.
+`docs/development/intraday-stress-calibration.md`. Research tooling has no production authority.
 
 Market data, Trend calibration, and authoritative TREND_V1 publication are account-independent.
 MarketBar is immutable, unadjusted Massive evidence; never use Alpaca fallback or

@@ -7,7 +7,8 @@ import { marketSession } from './market-calendar.js';
 describe('verified calendar bootstrap', () => {
   it('contains the unscheduled closure and never marks early closes CLOSED', () => {
     expect(verifiedCalendarRows.find(row => row.sessionDate === '2025-01-09')).toMatchObject({ type: 'CLOSED', closeTimeMinutesEt: null });
-    expect(marketSession('2024-11-29', verifiedCalendarRows)).not.toBeNull();
+    expect(verifiedCalendarRows.find(row => row.sessionDate === '2024-11-29')).toMatchObject({ type: 'EARLY_CLOSE', closeTimeMinutesEt: 780 });
+    expect(marketSession('2024-11-29', verifiedCalendarRows)!.closeMinutes).toBe(780);
     expect(marketSession('2024-11-29', [{ sessionDate: '2024-11-29', type: 'EARLY_CLOSE', closeTimeMinutesEt: 780 }])!.closeMinutes).toBe(780);
   });
   it('skips equivalent rows, reports type/close conflicts, and leaves unrelated operator rows alone', () => {
@@ -19,6 +20,9 @@ describe('verified calendar bootstrap', () => {
     }
     const renamed = planCalendarBootstrap([{ ...verifiedCalendarRows[0]!, name: 'Different canonical purpose' }]);
     expect(renamed.conflicts).toEqual([]); expect(renamed.skipped).toEqual([verifiedCalendarRows[0]!.sessionDate]);
+    const earlyClose = verifiedCalendarRows.find(row => row.type === 'EARLY_CLOSE')!;
+    const conflictingEarlyClose = planCalendarBootstrap([{ sessionDate: earlyClose.sessionDate, name: 'Operator override', type: 'CLOSED', closeTimeMinutesEt: null }]);
+    expect(conflictingEarlyClose.conflicts).toHaveLength(1);
     const plan = planCalendarBootstrap([{ sessionDate: '2027-01-01', name: 'Owner future date', type: 'CLOSED', closeTimeMinutesEt: null }]);
     expect(plan.missing).toHaveLength(71);
     expect(plan.conflicts).toEqual([]);

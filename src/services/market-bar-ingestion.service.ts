@@ -1,12 +1,14 @@
 import type { PrismaClient } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
-import { fetchDailyEvidence, type DailyEvidenceBar } from '../integrations/massive/evidence.client.js';
-import { addDays, barEligibility, datesBetween, etDate, etInstant, validDate, type CalendarException } from './market-calendar.js';
+import { fetchDailyEvidence, fetchMinuteEvidence, type DailyEvidenceBar } from '../integrations/massive/evidence.client.js';
+import { addDays, barEligibility, datesBetween, etDate, etInstant, marketSession, validDate, type CalendarException } from './market-calendar.js';
 import { calendarExceptions } from './market-calendar.service.js';
 import { withMarketDataLock } from './market-data-lock.service.js';
 import { TREND_PRE_ROLL_CALENDAR_DAYS, TREND_RESEARCH_START } from './trend-lab.config.js';
 import { DAILY_SYNC_RETRY_MS, MAX_BACKFILL_DAYS, MARKET_DAILY_EVIDENCE_SYMBOLS, type DailyEvidenceSymbol } from './market-daily-evidence.definition.js';
+import { withMarketMinuteDataLock } from './market-minute-data-lock.service.js';
+import { TREND_SYMBOLS } from './trend-lab.config.js';
 
 export const TREND_DATA_START = addDays(TREND_RESEARCH_START, -TREND_PRE_ROLL_CALENDAR_DAYS);
 const SYNC_KEY = 'marketDailyEvidenceSync';
@@ -95,6 +97,38 @@ export async function syncDailyBars(now = new Date()) {
       await prisma.setting.update({ where: { key: SYNC_KEY }, data: { value: JSON.stringify(state) } });
       throw error;
     }
+  });
+}
+/** Bounded, session-local MINUTE_15 SPY/RSP sync for INTRADAY_STRESS_V1. Only today's regular
+ * session is ever requested (at most 26 bars/symbol): historical intraday backfill is out of
+ * scope, since replay only ever needs to reconstruct the current session. Massive only; no
+ * Alpaca fallback. A network call is skipped entirely whenever nothing eligible is missing.
+ */
+export async function syncMinuteBars(now = new Date()) {
+  return withMarketMinuteDataLock(async () => {
+    const today = etDate(now);
+    const exceptions = await calendarExceptions(today, today);
+    const session = marketSession(today, exceptions);
+    if (!session) return { inserted: 0, missing: 0, notDue: false };
+    let inserted = 0; let missing = 0;
+    for (const symbol of TREND_SYMBOLS) {
+      const security = await prisma.security.findUnique({ where: { symbol }, select: { id: true } });
+      if (!security) throw new Error(`Existing Security ${symbol} is required for minute sync.`);
+      const rows = await prisma.marketBar.findMany({ where: { securityId: security.id, timeframe: 'MINUTE_15', barStartAt: { gte: session.openAt, lt: session.closeAt } }, select: { barStartAt: true } });
+      const present = new Set(rows.map(row => row.barStartAt.getTime()));
+      const expected: number[] = [];
+      for (let t = session.openAt.getTime(); t < session.closeAt.getTime(); t += 900_000) {
+        if (!present.has(t) && barEligibility('MINUTE_15', new Date(t), now, exceptions).status === 'ELIGIBLE') expected.push(t);
+      }
+      if (!expected.length) continue;
+      const bars = await fetchMinuteEvidence(symbol, today, today);
+      const eligibleTimes = new Set(expected);
+      const eligible = bars.filter(bar => eligibleTimes.has(bar.barStartAt.getTime()));
+      const result = await prisma.marketBar.createMany({ data: eligible.map(bar => ({ ...bar, securityId: security.id, timeframe: 'MINUTE_15', provider: 'MASSIVE', adjustmentMode: 'UNADJUSTED' })), skipDuplicates: true });
+      inserted += result.count;
+      missing += expected.length - eligible.length;
+    }
+    return { inserted, missing, notDue: false };
   });
 }
 export async function marketDataStatus(now = new Date()) {
