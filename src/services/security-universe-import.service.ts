@@ -15,12 +15,17 @@ export type UniverseCode = typeof SOURCE_UNIVERSES[number]['code'];
 export const CSV_COLUMNS = ['symbol', 'name', 'sector', 'industry', ...SOURCE_UNIVERSES.map(u => u.code)] as const;
 const LOCK_KEY = createHash('sha256').update('ai-trader:owned-security-universe').digest().readBigInt64BE(0);
 type Db = PrismaClient | Prisma.TransactionClient;
-type Row = { symbol: string; name: string; sector: string | null; industry: string | null; codes: UniverseCode[] };
-type Plan = { effectiveDate: string; newSecurities: Row[]; existingSecurities: string[];
+export type ImportMode = 'partial' | 'snapshot';
+type Row = { symbol: string; name?: string; sector?: string; industry?: string; flags: Partial<Record<UniverseCode, '0' | '1'>> };
+type ParsedCsv = { columns: string[]; rows: Row[] };
+type Plan = { mode: ImportMode; effectiveDate: string; inputSecurityCount: number; suppliedColumns: string[]; omittedColumns: string[]; newSecurities: Row[]; existingSecurities: string[];
   metadataChanges: { symbol: string; before: { name: string; sector: string | null; industry: string | null }; after: { name: string; sector: string | null; industry: string | null } }[];
   membershipAdditions: { symbol: string; code: UniverseCode }[];
   membershipRemovals: { symbol: string; code: UniverseCode; membershipId: number }[];
-  unchangedMemberships: number; broadMemberCount: number; conflicts: string[]; missingUniverses: UniverseCode[] };
+  unchangedMemberships: number; unchangedMembershipValues: { symbol: string; code: UniverseCode; value: '0' | '1' }[];
+  currentBroadMemberCount: number; resultingBroadMemberCount: number; broadMemberCount: number;
+  universeCounts: { code: UniverseCode; before: number; after: number }[]; breadthMembershipChanged: boolean;
+  conflicts: string[]; missingUniverses: UniverseCode[] };
 
 function parseCsvRecords(csv: string): string[][] {
   const result: string[][] = []; let row: string[] = []; let field = ''; let quoted = false; let closed = false;
@@ -50,37 +55,40 @@ function parseCsvRecords(csv: string): string[][] {
   return result.filter(fields => fields.length !== 1 || fields[0]!.trim() !== '');
 }
 
-export function parseUniverseCsv(csv: string): Row[] {
+export function parseUniverseCsv(csv: string, mode: ImportMode = 'partial'): ParsedCsv {
   const records = parseCsvRecords(csv);
-  if (!records.length || records[0]!.length !== CSV_COLUMNS.length || records[0]!.some((value, i) => value !== CSV_COLUMNS[i]))
-    throw new Error(`CSV header must be exactly: ${CSV_COLUMNS.join(',')}`);
+  if (mode !== 'partial' && mode !== 'snapshot') throw new Error('Mode must be partial or snapshot.');
+  const columns = records[0];
+  if (!columns?.includes('symbol')) throw new Error('CSV header must include symbol.');
+  if (new Set(columns).size !== columns.length) throw new Error('Duplicate CSV header.');
+  if (columns.some(column => !CSV_COLUMNS.includes(column as typeof CSV_COLUMNS[number]))) throw new Error('Unknown CSV column.');
   const seen = new Set<string>(); const rows: Row[] = [];
   for (const [index, fields] of records.slice(1).entries()) {
     const line = index + 2;
-    if (fields.length !== CSV_COLUMNS.length) throw new Error(`CSV row ${line} has ${fields.length} fields; expected ${CSV_COLUMNS.length}.`);
-    const symbol = fields[0]!.trim().toUpperCase(), name = fields[1]!.trim();
-    if (!symbol || symbol.length > 32 || /[\s,]/.test(symbol) || !name || name.length > 240) throw new Error(`Invalid symbol/name on CSV row ${line}.`);
+    if (fields.length !== columns.length) throw new Error(`CSV row ${line} has ${fields.length} fields; expected ${columns.length}.`);
+    const values = Object.fromEntries(columns.map((column, i) => [column, fields[i]!.trim()]));
+    const symbol = values.symbol!.toUpperCase();
+    if (!symbol || symbol.length > 32 || /[\s,]/.test(symbol)) throw new Error(`Invalid symbol on CSV row ${line}.`);
     if (seen.has(symbol)) throw new Error(`Duplicate CSV symbol ${symbol} on row ${line}.`);
     seen.add(symbol);
-    const sector = fields[2]!.trim() || null, industry = fields[3]!.trim() || null;
-    if ((sector?.length ?? 0) > 160 || (industry?.length ?? 0) > 160) throw new Error(`Invalid metadata length on CSV row ${line}.`);
-    const codes: UniverseCode[] = [];
-    SOURCE_UNIVERSES.forEach((universe, i) => {
-      const flag = fields[4 + i]!.trim();
-      if (flag !== '0' && flag !== '1') throw new Error(`Invalid ${universe.code} flag on CSV row ${line}; use 0 or 1.`);
-      if (flag === '1') codes.push(universe.code);
-    });
-    if (!codes.length) throw new Error(`CSV row ${line} belongs to no source universe; omit removals from a complete snapshot.`);
-    rows.push({ symbol, name, sector, industry, codes });
+    if ((values.name?.length ?? 0) > 240 || (values.sector?.length ?? 0) > 160 || (values.industry?.length ?? 0) > 160) throw new Error(`Invalid metadata length on CSV row ${line}.`);
+    const flags: Row['flags'] = {};
+    for (const universe of SOURCE_UNIVERSES) if (columns.includes(universe.code)) {
+      const flag = values[universe.code]!;
+      if (flag !== '' && flag !== '0' && flag !== '1' || mode === 'snapshot' && flag === '') throw new Error(`Invalid ${universe.code} flag on CSV row ${line}; use 0 or 1${mode === 'partial' ? ' or blank' : ''}.`);
+      if (flag) flags[universe.code] = flag as '0' | '1';
+    }
+    rows.push({ symbol, ...(values.name ? { name: values.name } : {}), ...(values.sector ? { sector: values.sector } : {}), ...(values.industry ? { industry: values.industry } : {}), flags });
   }
   if (!rows.length) throw new Error('CSV contains no constituent rows.');
-  return rows.sort((a, b) => a.symbol.localeCompare(b.symbol));
+  return { columns, rows: rows.sort((a, b) => a.symbol.localeCompare(b.symbol)) };
 }
 
 const dateOf = (date: Date) => date.toISOString().slice(0, 10);
 const key = (symbol: string, code: string) => `${symbol}\u0000${code}`;
 
-async function planImport(db: Db, rows: Row[], effectiveDate: string): Promise<Plan> {
+async function planImport(db: Db, parsed: ParsedCsv, effectiveDate: string, mode: ImportMode): Promise<Plan> {
+  const { rows, columns } = parsed;
   if (!validDate(effectiveDate)) throw new Error('An explicit valid --effective=YYYY-MM-DD date is required.');
   const at = new Date(effectiveDate);
   const [securities, universes, memberships, laterRevisions] = await Promise.all([
@@ -91,6 +99,7 @@ async function planImport(db: Db, rows: Row[], effectiveDate: string): Promise<P
   ]);
   const conflicts: string[] = [];
   const requestedSymbols = new Set(rows.map(row => row.symbol));
+  const rowBySymbol = new Map(rows.map(row => [row.symbol, row]));
   const bySymbol = new Map<string, typeof securities[number]>();
   for (const security of securities) {
     const normalized = security.symbol.trim().toUpperCase();
@@ -107,12 +116,15 @@ async function planImport(db: Db, rows: Row[], effectiveDate: string): Promise<P
   const newSecurities: Row[] = [], existingSecurities: string[] = [], metadataChanges: Plan['metadataChanges'] = [];
   for (const row of rows) {
     const existing = bySymbol.get(row.symbol);
-    if (!existing) newSecurities.push(row);
+    if (!existing) {
+      if (!row.name || !Object.values(row.flags).includes('1')) conflicts.push(`New Security ${row.symbol} requires a nonblank name and at least one explicit membership 1.`);
+      else newSecurities.push(row);
+    }
     else {
       existingSecurities.push(row.symbol);
       if (existing.assetType !== 'STOCK') conflicts.push(`${row.symbol} exists as ${existing.assetType}, not STOCK.`);
       const before = { name: existing.name, sector: existing.sector, industry: existing.industry };
-      const after = { name: row.name, sector: row.sector, industry: row.industry };
+      const after = { name: row.name ?? existing.name, sector: row.sector ?? existing.sector, industry: row.industry ?? existing.industry };
       if (JSON.stringify(before) !== JSON.stringify(after)) metadataChanges.push({ symbol: row.symbol, before, after });
     }
   }
@@ -120,34 +132,61 @@ async function planImport(db: Db, rows: Row[], effectiveDate: string): Promise<P
   for (const membership of memberships) {
     if (membership.security.symbol !== membership.security.symbol.trim().toUpperCase()) conflicts.push(`Ambiguous membership Security identity ${membership.security.symbol}.`);
     const from = dateOf(membership.effectiveFrom), to = membership.effectiveTo ? dateOf(membership.effectiveTo) : null;
-    if (from > effectiveDate) { conflicts.push(`Future membership exists for ${membership.security.symbol}/${membership.universe.code}.`); continue; }
+    if (from > effectiveDate) {
+      const row = rowBySymbol.get(membership.security.symbol);
+      if (columns.includes(membership.universe.code) && (row ? row.flags[membership.universe.code as UniverseCode] !== undefined : mode === 'snapshot'))
+        conflicts.push(`Future membership exists for ${membership.security.symbol}/${membership.universe.code}.`);
+      continue;
+    }
     if (from <= effectiveDate && (!to || effectiveDate < to)) active.set(key(membership.security.symbol, membership.universe.code), membership);
   }
-  const desired = new Set(rows.flatMap(row => row.codes.map(code => key(row.symbol, code))));
   const membershipAdditions: Plan['membershipAdditions'] = [], membershipRemovals: Plan['membershipRemovals'] = [];
-  for (const row of rows) for (const code of row.codes) if (!active.has(key(row.symbol, code))) membershipAdditions.push({ symbol: row.symbol, code });
-  for (const [identity, membership] of active) if (!desired.has(identity)) {
+  const unchangedMembershipValues: Plan['unchangedMembershipValues'] = [];
+  for (const row of rows) for (const universe of SOURCE_UNIVERSES) {
+    const code = universe.code, value = row.flags[code];
+    if (!value) continue;
+    const present = active.has(key(row.symbol, code));
+    if (value === '1' && !present) membershipAdditions.push({ symbol: row.symbol, code });
+    else if (value === '0' && present) continue;
+    else unchangedMembershipValues.push({ symbol: row.symbol, code, value });
+  }
+  for (const membership of active.values()) {
+    const code = membership.universe.code as UniverseCode;
+    if (!columns.includes(code)) continue;
+    const row = rowBySymbol.get(membership.security.symbol);
+    if (row ? row.flags[code] !== '0' : mode !== 'snapshot') continue;
     if (dateOf(membership.effectiveFrom) === effectiveDate) conflicts.push(`Cannot end same-day membership ${membership.security.symbol}/${membership.universe.code}.`);
     else if (membership.effectiveTo) conflicts.push(`Cannot override scheduled membership end for ${membership.security.symbol}/${membership.universe.code}.`);
     else membershipRemovals.push({ symbol: membership.security.symbol, code: membership.universe.code as UniverseCode, membershipId: membership.id });
   }
+  const currentSymbols = new Set([...active.values()].map(m => m.security.symbol));
+  const resulting = new Set([...active.keys()]);
+  for (const addition of membershipAdditions) resulting.add(key(addition.symbol, addition.code));
+  for (const removal of membershipRemovals) resulting.delete(key(removal.symbol, removal.code));
+  const resultingSymbols = new Set([...resulting].map(identity => identity.split('\u0000')[0]!));
+  const universeCounts = SOURCE_UNIVERSES.map(({ code }) => ({ code, before: [...active.keys()].filter(identity => identity.endsWith(`\u0000${code}`)).length, after: [...resulting].filter(identity => identity.endsWith(`\u0000${code}`)).length }));
+  const breadthMembershipChanged = currentSymbols.size !== resultingSymbols.size || [...currentSymbols].some(symbol => !resultingSymbols.has(symbol));
   if (laterRevisions && (membershipAdditions.length || membershipRemovals.length)) conflicts.push(`Membership change at ${effectiveDate} would alter an immutable Breadth revision dated ${dateOf(laterRevisions.effectiveFrom)} or later.`);
-  return { effectiveDate, newSecurities, existingSecurities, metadataChanges, membershipAdditions, membershipRemovals,
-    unchangedMemberships: [...desired].filter(identity => active.has(identity)).length, broadMemberCount: rows.length, conflicts, missingUniverses };
+  return { mode, effectiveDate, inputSecurityCount: rows.length, suppliedColumns: columns, omittedColumns: CSV_COLUMNS.filter(column => !columns.includes(column)),
+    newSecurities, existingSecurities, metadataChanges, membershipAdditions, membershipRemovals,
+    unchangedMemberships: unchangedMembershipValues.filter(value => value.value === '1').length, unchangedMembershipValues,
+    currentBroadMemberCount: currentSymbols.size, resultingBroadMemberCount: resultingSymbols.size, broadMemberCount: resultingSymbols.size,
+    universeCounts, breadthMembershipChanged, conflicts, missingUniverses };
 }
 
-export async function importSecurityUniverses(csv: string, options: { effectiveDate: string; apply?: boolean; db?: PrismaClient }) {
-  const rows = parseUniverseCsv(csv), db = options.db ?? prisma;
+export async function importSecurityUniverses(csv: string, options: { effectiveDate: string; mode?: ImportMode; apply?: boolean; db?: PrismaClient }) {
+  const mode = options.mode ?? 'partial', parsed = parseUniverseCsv(csv, mode), rows = parsed.rows, db = options.db ?? prisma;
   return db.$transaction(async tx => {
     const lock = await tx.$queryRaw<{ acquired: boolean }[]>`SELECT pg_try_advisory_xact_lock(${LOCK_KEY}::bigint) AS acquired`;
     if (!lock[0]?.acquired) throw new Error('Owned universe operation already running.');
-    const plan = await planImport(tx, rows, options.effectiveDate);
+    const plan = await planImport(tx, parsed, options.effectiveDate, mode);
     if (options.apply && plan.conflicts.length) throw new Error(`Universe import refused: ${plan.conflicts.join(' ')}`);
     if (!options.apply) return { applied: false, ...plan };
-    for (const identity of SOURCE_UNIVERSES) await tx.securityUniverse.upsert({ where: { code: identity.code }, update: {}, create: identity });
+    if (plan.membershipAdditions.length || plan.membershipRemovals.length)
+      for (const identity of SOURCE_UNIVERSES) await tx.securityUniverse.upsert({ where: { code: identity.code }, update: {}, create: identity });
     for (let i = 0; i < plan.newSecurities.length; i += 500) {
       const batch = plan.newSecurities.slice(i, i + 500);
-      const result = await tx.security.createMany({ data: batch.map(row => ({ symbol: row.symbol, name: row.name, sector: row.sector, industry: row.industry, assetType: 'STOCK', enabled: false })) });
+      const result = await tx.security.createMany({ data: batch.map(row => ({ symbol: row.symbol, name: row.name!, sector: row.sector ?? null, industry: row.industry ?? null, assetType: 'STOCK', enabled: false })) });
       if (result.count !== batch.length) throw new Error('New Security count mismatch.');
     }
     for (const change of plan.metadataChanges) await tx.security.update({ where: { symbol: change.symbol }, data: change.after });
@@ -172,6 +211,28 @@ export async function importSecurityUniverses(csv: string, options: { effectiveD
     }
     return { applied: true, ...plan };
   }, { timeout: 300_000 });
+}
+
+function csvField(value: string | number | boolean | null | undefined): string {
+  const text = value == null ? '' : String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+function csvDocument(header: readonly string[], rows: (string | number | boolean | null | undefined)[][]) {
+  return [header.join(','), ...rows.map(row => row.map(csvField).join(','))].join('\r\n') + '\r\n';
+}
+export async function exportUniverseSnapshot(db: Db = prisma): Promise<string> {
+  const today = new Date(new Date().toISOString().slice(0, 10));
+  const [securities, memberships] = await Promise.all([
+    db.security.findMany({ select: { id: true, symbol: true, name: true, sector: true, industry: true }, orderBy: { symbol: 'asc' } }),
+    db.securityUniverseMembership.findMany({ where: { effectiveFrom: { lte: today }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: today } }], universe: { code: { in: SOURCE_UNIVERSES.map(u => u.code) } } }, select: { securityId: true, universe: { select: { code: true } } } }),
+  ]);
+  const flags = new Set(memberships.map(m => `${m.securityId}\u0000${m.universe.code}`));
+  return csvDocument(CSV_COLUMNS, securities.map(s => [s.symbol, s.name, s.sector, s.industry, ...SOURCE_UNIVERSES.map(u => flags.has(`${s.id}\u0000${u.code}`) ? '1' : '0')]));
+}
+export async function exportSecurityCatalog(db: Db = prisma): Promise<string> {
+  const header = ['id', 'symbol', 'name', 'enabled', 'assetType', 'sector', 'industry', 'createdAt', 'updatedAt'];
+  const securities = await db.security.findMany({ select: { id: true, symbol: true, name: true, enabled: true, assetType: true, sector: true, industry: true, createdAt: true, updatedAt: true }, orderBy: { symbol: 'asc' } });
+  return csvDocument(header, securities.map(s => [s.id, s.symbol, s.name, s.enabled, s.assetType, s.sector, s.industry, s.createdAt.toISOString(), s.updatedAt.toISOString()]));
 }
 
 export function constituentHash(symbols: readonly string[]) {

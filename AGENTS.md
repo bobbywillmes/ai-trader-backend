@@ -220,10 +220,13 @@ Phase 2 makes Trend, Volatility, Participation and Intraday Stress's daily ATR b
 read persisted splits. Run the manual strict Massive split bootstrap through the current
 session before deploying these publisher changes and extend coverage each new session;
 uncovered dates fail closed. See `docs/production/market-split-bootstrap.md`.
-Phase 3's six owned observation universes use a reviewed complete CSV snapshot and an
-explicit immutable Breadth revision freeze. New observation-only Securities are created
-with `enabled=false`; existing trading gates are untouched. No real constituents or
-Tiingo OHLCV are imported by this tooling. See `docs/production/owned-security-universes.md`.
+Phase 3's six owned observation universes use a sparse, header-driven CSV importer.
+PARTIAL is the default and touches only supplied rows; SNAPSHOT explicitly reconciles
+only membership columns present in the file. The owner-only Securities console previews
+imports, exports current database state, and freezes Breadth revisions only by explicit
+action. New observation-only Securities are created with `enabled=false`; existing
+trading gates are untouched. No real constituents or Tiingo OHLCV are imported by this
+tooling. See `docs/production/owned-security-universes.md`.
 
 PARTICIPATION_V1 has an immutable publisher with zero trading authority.
 `publishParticipationAssessments` bootstraps exactly the latest due full session,

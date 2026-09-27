@@ -22,10 +22,10 @@ AI Trader will curate about 3,000–3,500 U.S. equities manually, roughly quarte
 
 `MarketBreadthObservation.breadthUniverseRevisionId` is nullable so all BREADTH_V1 evidence stays unchanged. BREADTH_V2 must require a revision at its ingestion boundary and read Tiingo canonical `DAY_1` bars. Sector breadth, rotation, dispersion, leadership, and momentum Market Intelligence are outside this branch.
 
-Phase 3 provides a manual, preview-first reviewed CSV import and an explicit Breadth revision freeze. It uses these six source universes only and deduplicates one Security/issue per vote. See `docs/production/owned-security-universes.md`. No constituent list or Tiingo OHLCV is imported by the implementation phase.
+Phase 3 provides a sparse, header-driven CSV import with safe partial updates by default and explicit per-column snapshot reconciliation. The owner-only Securities page supports preview, apply, current-state exports, and a separate explicit Breadth revision freeze. It uses these six source universes only and deduplicates one Security/issue per vote. See `docs/production/owned-security-universes.md`. No constituent list or Tiingo OHLCV is imported by the implementation phase.
 
 ## Transport and rollout
 
 The Tiingo REST client validates shape, price ranges, duplicate timestamps, dates, and split factors. It bounds request time and per-process concurrency, and keeps credentials and upstream bodies out of errors. Later ingestion must add a cross-process provider rate budget, retry policy, completion window, audit events, and advisory locking; the present client does not submit database writes. Existing Massive configuration stays required. `TIINGO_API_TOKEN` is optional until the authority change.
 
-Before persistent Tiingo ingestion, the owner must confirm a Tiingo plan that permits storage of raw market observations. Tiingo's [current terms](https://api.tiingo.com/tos/) restrict persistent retention on starter and trial plans. The intended data volume and EOD/intraday entitlements also need confirmation before Phase 2.
+Before Phase 4 persistent Tiingo ingestion, the owner must confirm a Tiingo plan that permits storage of raw market observations. Tiingo's [current terms](https://api.tiingo.com/tos/) restrict persistent retention on starter and trial plans. The intended data volume and EOD/intraday entitlements also need confirmation before Phase 4.
