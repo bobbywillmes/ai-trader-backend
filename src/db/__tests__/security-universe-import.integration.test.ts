@@ -72,10 +72,12 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const snapshot = await exportUniverseSnapshot(db);
     const parsed = parseUniverseCsv(snapshot, 'snapshot');
     expect(parsed.columns).toEqual([...CSV_COLUMNS]);
-    expect(parsed.rows.map(row => row.symbol)).toEqual(['AAPL', 'IBM', 'MSFT', 'SNOW', 'SOFI']);
+    expect(parsed.rows.map(row => row.symbol)).toEqual(['AAPL', 'IBM', 'MSFT']);
     expect(parsed.rows[0]?.flags.SP500).toBe('1');
     const catalog = await exportSecurityCatalog(db);
     expect(catalog.split('\r\n')[0]).toBe('id,symbol,name,enabled,assetType,sector,industry,createdAt,updatedAt');
+    expect(catalog).toContain(',SNOW,');
+    expect(catalog).toContain(',SOFI,');
     expect(catalog).not.toContain('subscription');
   });
   it('applies sparse partial rows and leaves omitted rows, metadata and columns untouched', async () => {

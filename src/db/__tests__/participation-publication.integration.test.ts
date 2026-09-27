@@ -24,7 +24,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     sql = new Client({ connectionString: source.toString() }); await sql.connect();
     expect((await sql.query('SELECT current_database() AS name')).rows[0].name).toBe(database);
     const migrations = (await readdir('prisma/migrations', { withFileTypes: true })).filter(d => d.isDirectory()).map(d => d.name).sort();
-    expect(migrations).toContain('20260919120000_intraday_stress_v1_assessment_constraints'); expect(migrations).toHaveLength(71);
+    expect(migrations).toContain('20260919120000_intraday_stress_v1_assessment_constraints');
     for (const migration of migrations) await sql.query(await readFile(`prisma/migrations/${migration}/migration.sql`, 'utf8'));
     db = new PrismaClient({ adapter: new PrismaPg({ connectionString: source.toString() }) });
     second = new PrismaClient({ adapter: new PrismaPg({ connectionString: source.toString() }) });

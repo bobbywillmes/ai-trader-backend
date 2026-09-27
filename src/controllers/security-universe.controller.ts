@@ -5,6 +5,13 @@ import { exportSecurityCatalog, exportUniverseSnapshot, freezeBreadthUniverse, i
 
 const importBody = z.strictObject({ csv: z.string().min(1).max(2_000_000), effectiveDate: z.iso.date(), mode: z.enum(['partial', 'snapshot']).default('partial') });
 const freezeBody = z.strictObject({ effectiveDate: z.iso.date() });
+let lastExportTimestamp = 0;
+
+export function exportFilename(kind: 'universe-snapshot' | 'security-catalog') {
+  // Keep filenames distinct when two requests arrive during the same millisecond.
+  lastExportTimestamp = Math.max(Date.now(), lastExportTimestamp + 1);
+  return `${kind}-${new Date(lastExportTimestamp).toISOString().replace(/[:.]/g, '-')}.csv`;
+}
 
 export function importController(apply: boolean) {
   return async (req: Request, res: Response, next: NextFunction) => {
@@ -31,7 +38,7 @@ export function exportController(kind: 'universe-snapshot' | 'security-catalog')
     try {
       const csv = kind === 'universe-snapshot' ? await exportUniverseSnapshot() : await exportSecurityCatalog();
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Content-Disposition', `attachment; filename="${kind}-${new Date().toISOString().slice(0, 10)}.csv"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${exportFilename(kind)}"`);
       res.send(csv);
     } catch (error) { next(error); }
   };

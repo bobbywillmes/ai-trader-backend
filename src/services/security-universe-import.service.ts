@@ -227,7 +227,8 @@ export async function exportUniverseSnapshot(db: Db = prisma): Promise<string> {
     db.securityUniverseMembership.findMany({ where: { effectiveFrom: { lte: today }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: today } }], universe: { code: { in: SOURCE_UNIVERSES.map(u => u.code) } } }, select: { securityId: true, universe: { select: { code: true } } } }),
   ]);
   const flags = new Set(memberships.map(m => `${m.securityId}\u0000${m.universe.code}`));
-  return csvDocument(CSV_COLUMNS, securities.map(s => [s.symbol, s.name, s.sector, s.industry, ...SOURCE_UNIVERSES.map(u => flags.has(`${s.id}\u0000${u.code}`) ? '1' : '0')]));
+  const memberIds = new Set(memberships.map(m => m.securityId));
+  return csvDocument(CSV_COLUMNS, securities.filter(s => memberIds.has(s.id)).map(s => [s.symbol, s.name, s.sector, s.industry, ...SOURCE_UNIVERSES.map(u => flags.has(`${s.id}\u0000${u.code}`) ? '1' : '0')]));
 }
 export async function exportSecurityCatalog(db: Db = prisma): Promise<string> {
   const header = ['id', 'symbol', 'name', 'enabled', 'assetType', 'sector', 'industry', 'createdAt', 'updatedAt'];
