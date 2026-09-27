@@ -5,12 +5,16 @@ import { Client } from 'pg';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CSV_COLUMNS, SOURCE_UNIVERSES, constituentHash, exportSecurityCatalog, exportUniverseSnapshot, freezeBreadthUniverse, importSecurityUniverses, parseUniverseCsv } from '../../services/security-universe-import.service.js';
+import { CSV_COLUMNS, SOURCE_UNIVERSES, constituentHash, exportSecurityCatalog, exportUniverseSnapshot, freezeBreadthUniverse, importSecurityUniverses as runImport, parseUniverseCsv } from '../../services/security-universe-import.service.js';
 
 const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.DATABASE_URL;
 (enabled ? describe : describe.skip)('owned Security universe PostgreSQL workflow', () => {
   const name = `owned_universe_${randomUUID().replaceAll('-', '')}`;
   let admin: Client, sql: Client, db: PrismaClient;
+  const importSecurityUniverses = (file: string, options: { db: PrismaClient; effectiveDate: string; mode?: 'partial' | 'snapshot'; apply?: boolean }) => {
+    const { effectiveDate, ...rest } = options;
+    return runImport(file, { ...rest, now: new Date(`${effectiveDate}T16:00:00Z`) });
+  };
   const csv = (rows: string[]) => `${CSV_COLUMNS.join(',')}\n${rows.join('\n')}\n`;
   const initial = csv([
     'AAPL,Apple Inc,Technology,Hardware,1,1,0,0,0,0',

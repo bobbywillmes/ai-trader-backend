@@ -224,7 +224,10 @@ Phase 3's six owned observation universes use a sparse, header-driven CSV import
 PARTIAL is the default and touches only supplied rows; SNAPSHOT explicitly reconciles
 only membership columns present in the file. The owner-only Securities console previews
 imports, exports current database state, and freezes Breadth revisions only by explicit
-action. New observation-only Securities are created with `enabled=false`; existing
+action. Imports are immediate on the current New York date unless a future membership
+date is explicitly scheduled; metadata and new Security creation still apply now.
+Same-day membership corrections converge before an immutable Breadth revision.
+New observation-only Securities are created with `enabled=false`; existing
 trading gates are untouched. No real constituents or Tiingo OHLCV are imported by this
 tooling. See `docs/production/owned-security-universes.md`.
 

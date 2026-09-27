@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Request, Response, NextFunction } from 'express';
 import { corsOptions } from '../config/cors.js';
-import { exportFilename } from './security-universe.controller.js';
+import { exportFilename, importController } from './security-universe.controller.js';
 
 afterEach(() => vi.useRealTimers());
 
@@ -13,5 +14,17 @@ describe('Security CSV export response contract', () => {
   });
   it('exposes Content-Disposition to an allowed cross-origin frontend', () => {
     expect(corsOptions.exposedHeaders).toContain('Content-Disposition');
+  });
+});
+
+describe('Security universe HTTP timing contract', () => {
+  it('rejects arbitrary historical effectiveDate instead of treating it as immediate', async () => {
+    const req = { body: { csv: 'symbol\nAAPL\n', effectiveDate: '2026-01-01', mode: 'partial' } } as Request;
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() } as unknown as Response;
+    const next = vi.fn() as NextFunction;
+    await importController(false)(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ message: 'Invalid import request.' }));
+    expect(next).not.toHaveBeenCalled();
   });
 });

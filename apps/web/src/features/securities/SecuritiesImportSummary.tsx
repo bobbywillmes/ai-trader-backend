@@ -31,16 +31,17 @@ function ScopeBadges({ label, fields, subdued = false }: { label: string; fields
 export function SecuritiesImportSummary({ filename, plan }: { filename: string; plan: ImportPlan }) {
   const conflict = plan.conflicts.length > 0;
   const identityConflict = plan.conflicts.some(item => /universe.*conflict|source universe/i.test(item));
+  const scheduled = plan.timing.kind === 'scheduled';
 
   return <Card withBorder radius="md" p="lg" data-testid="import-plan-summary">
     <Stack gap="lg">
       <Group justify="space-between" align="flex-start">
         <div>
           <Title order={4}>{plan.applied ? 'Import Result' : 'Import Preview'}</Title>
-          {plan.applied && <Text size="sm" c="teal" fw={600}>Applied import</Text>}
+          {plan.applied && <Text size="sm" c="teal" fw={600}>{scheduled ? 'Applied import · memberships scheduled' : 'Applied import'}</Text>}
         </div>
-        <Badge size="lg" variant="light" color={plan.applied ? 'teal' : conflict ? 'red' : 'blue'}>
-          {plan.applied ? 'APPLIED' : conflict ? 'CONFLICTS' : 'READY TO APPLY'}
+        <Badge size="lg" variant="light" color={conflict ? 'red' : scheduled ? 'blue' : plan.applied ? 'teal' : 'blue'}>
+          {conflict ? 'CONFLICTS' : scheduled ? 'SCHEDULED' : plan.applied ? 'APPLIED' : 'READY TO APPLY'}
         </Badge>
       </Group>
 
@@ -50,19 +51,30 @@ export function SecuritiesImportSummary({ filename, plan }: { filename: string; 
           <Text fw={700} style={{ overflowWrap: 'anywhere' }}>{filename}</Text>
         </Stack>
         <Stack gap={2}>
-          <Text size="xs" c="dimmed" tt="uppercase">Effective date</Text>
+          <Text size="xs" c="dimmed" tt="uppercase">Membership effective date</Text>
           <Text fw={700}>{plan.effectiveDate}</Text>
         </Stack>
       </SimpleGrid>
       <Badge color="gray" variant="light" size="sm" style={{ alignSelf: 'flex-start' }}>{plan.mode === 'snapshot' ? 'Snapshot reconciliation' : 'Partial update'}</Badge>
 
+      <Card withBorder radius="md" p="md">
+        <Stack gap="xs">
+          <Title order={5}>Timing</Title>
+          {scheduled ? <>
+            <Text size="sm"><b>Security/catalog changes:</b> Applied immediately</Text>
+            <Text size="sm"><b>Universe memberships:</b> Effective {plan.effectiveDate}</Text>
+            {plan.applied && <Text size="sm" c="blue">The database operation succeeded. Membership changes are scheduled and are not currently active.</Text>}
+          </> : <Text size="sm" fw={600}>Immediate · takes effect today</Text>}
+        </Stack>
+      </Card>
+
       <SimpleGrid cols={{ base: 1, xs: 2, md: 3, xl: 6 }}>
         <SummaryTile label="Securities supplied" value={plan.inputSecurityCount} color="blue" testId="summary-securities" />
-        <SummaryTile label="Broad universe" value={`${plan.currentBroadMemberCount} → ${plan.resultingBroadMemberCount}`} color="blue" testId="summary-broad" />
+        <SummaryTile label={scheduled ? 'Broad universe on effective date' : 'Broad universe'} value={`${plan.currentBroadMemberCount} → ${plan.resultingBroadMemberCount}`} color="blue" testId="summary-broad" />
         <SummaryTile label="New Securities" value={plan.newSecurities.length} color={plan.newSecurities.length ? 'teal' : 'gray'} testId="summary-new" />
         <SummaryTile label="Metadata changes" value={plan.metadataChanges.length} color={plan.metadataChanges.length ? 'blue' : 'gray'} testId="summary-metadata" />
-        <SummaryTile label="Membership additions" value={plan.membershipAdditions.length} color={plan.membershipAdditions.length ? 'teal' : 'gray'} testId="summary-additions" />
-        <SummaryTile label="Membership removals" value={plan.membershipRemovals.length} color={plan.membershipRemovals.length ? 'orange' : 'gray'} testId="summary-removals" />
+        <SummaryTile label="Membership additions" value={plan.membershipAdditions.length + plan.membershipReopens.length} color={plan.membershipAdditions.length + plan.membershipReopens.length ? 'teal' : 'gray'} testId="summary-additions" />
+        <SummaryTile label="Membership removals" value={plan.membershipRemovals.length + plan.membershipDeletions.length} color={plan.membershipRemovals.length + plan.membershipDeletions.length ? 'orange' : 'gray'} testId="summary-removals" />
       </SimpleGrid>
 
       <Card withBorder radius="md" p="md">

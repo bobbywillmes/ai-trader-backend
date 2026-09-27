@@ -1,18 +1,21 @@
 import { apiRequest, getAdminToken, getApiUrl } from '../../lib/api';
 
 export type ImportMode = 'partial' | 'snapshot';
+export type ImportTiming = { kind: 'immediate' } | { kind: 'scheduled'; membershipEffectiveDate: string };
 export type ImportPlan = {
-  applied: boolean; mode: ImportMode; effectiveDate: string; inputSecurityCount: number;
+  applied: boolean; mode: ImportMode; timing: ImportTiming; effectiveDate: string; inputSecurityCount: number;
   suppliedColumns: string[]; omittedColumns: string[]; newSecurities: { symbol: string; name?: string }[];
   metadataChanges: { symbol: string; before: Record<string, string | null>; after: Record<string, string | null> }[];
   membershipAdditions: { symbol: string; code: string }[];
   membershipRemovals: { symbol: string; code: string }[];
+  membershipDeletions: { symbol: string; code: string }[];
+  membershipReopens: { symbol: string; code: string }[];
   unchangedMembershipValues: { symbol: string; code: string; value: string }[];
   conflicts: string[]; missingUniverses: string[]; currentBroadMemberCount: number; resultingBroadMemberCount: number;
   universeCounts: { code: string; before: number; after: number }[]; breadthMembershipChanged: boolean;
 };
 export type FreezePlan = { applied: boolean; alreadyExists: boolean; revisionId: number | null; effectiveDate: string; memberCount: number; constituentHash: string };
-export type ImportInput = { csv: string; effectiveDate: string; mode: ImportMode };
+export type ImportInput = { csv: string; timing: ImportTiming; mode: ImportMode };
 
 export function requestImport(input: ImportInput, apply: boolean) {
   return apiRequest<ImportPlan>(`/api/securities/universe-import/${apply ? 'apply' : 'preview'}`, { method: 'POST', token: getAdminToken(), body: input });

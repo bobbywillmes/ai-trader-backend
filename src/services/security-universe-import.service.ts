@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
-import { validDate } from './market-calendar.js';
+import { etDate, validDate } from './market-calendar.js';
 
 export const SOURCE_UNIVERSES = [
   { code: 'SP500', name: 'S&P 500' },
@@ -16,12 +16,15 @@ export const CSV_COLUMNS = ['symbol', 'name', 'sector', 'industry', ...SOURCE_UN
 const LOCK_KEY = createHash('sha256').update('ai-trader:owned-security-universe').digest().readBigInt64BE(0);
 type Db = PrismaClient | Prisma.TransactionClient;
 export type ImportMode = 'partial' | 'snapshot';
+export type ImportTiming = { kind: 'immediate' } | { kind: 'scheduled'; membershipEffectiveDate: string };
 type Row = { symbol: string; name?: string; sector?: string; industry?: string; flags: Partial<Record<UniverseCode, '0' | '1'>> };
 type ParsedCsv = { columns: string[]; rows: Row[] };
-type Plan = { mode: ImportMode; effectiveDate: string; inputSecurityCount: number; suppliedColumns: string[]; omittedColumns: string[]; newSecurities: Row[]; existingSecurities: string[];
+type Plan = { mode: ImportMode; timing: ImportTiming; effectiveDate: string; inputSecurityCount: number; suppliedColumns: string[]; omittedColumns: string[]; newSecurities: Row[]; existingSecurities: string[];
   metadataChanges: { symbol: string; before: { name: string; sector: string | null; industry: string | null }; after: { name: string; sector: string | null; industry: string | null } }[];
   membershipAdditions: { symbol: string; code: UniverseCode }[];
   membershipRemovals: { symbol: string; code: UniverseCode; membershipId: number }[];
+  membershipDeletions: { symbol: string; code: UniverseCode; membershipId: number }[];
+  membershipReopens: { symbol: string; code: UniverseCode; membershipId: number }[];
   unchangedMemberships: number; unchangedMembershipValues: { symbol: string; code: UniverseCode; value: '0' | '1' }[];
   currentBroadMemberCount: number; resultingBroadMemberCount: number; broadMemberCount: number;
   universeCounts: { code: UniverseCode; before: number; after: number }[]; breadthMembershipChanged: boolean;
@@ -87,9 +90,9 @@ export function parseUniverseCsv(csv: string, mode: ImportMode = 'partial'): Par
 const dateOf = (date: Date) => date.toISOString().slice(0, 10);
 const key = (symbol: string, code: string) => `${symbol}\u0000${code}`;
 
-async function planImport(db: Db, parsed: ParsedCsv, effectiveDate: string, mode: ImportMode): Promise<Plan> {
+async function planImport(db: Db, parsed: ParsedCsv, effectiveDate: string, mode: ImportMode, timing: ImportTiming): Promise<Plan> {
   const { rows, columns } = parsed;
-  if (!validDate(effectiveDate)) throw new Error('An explicit valid --effective=YYYY-MM-DD date is required.');
+  if (!validDate(effectiveDate)) throw new Error('Invalid resolved membership effective date.');
   const at = new Date(effectiveDate);
   const [securities, universes, memberships, laterRevisions] = await Promise.all([
     db.security.findMany({ select: { id: true, symbol: true, name: true, sector: true, industry: true, assetType: true, enabled: true } }),
@@ -129,6 +132,7 @@ async function planImport(db: Db, parsed: ParsedCsv, effectiveDate: string, mode
     }
   }
   const active = new Map<string, typeof memberships[number]>();
+  const endedAtTarget = new Map<string, typeof memberships[number]>();
   for (const membership of memberships) {
     if (membership.security.symbol !== membership.security.symbol.trim().toUpperCase()) conflicts.push(`Ambiguous membership Security identity ${membership.security.symbol}.`);
     const from = dateOf(membership.effectiveFrom), to = membership.effectiveTo ? dateOf(membership.effectiveTo) : null;
@@ -139,14 +143,20 @@ async function planImport(db: Db, parsed: ParsedCsv, effectiveDate: string, mode
       continue;
     }
     if (from <= effectiveDate && (!to || effectiveDate < to)) active.set(key(membership.security.symbol, membership.universe.code), membership);
+    else if (to === effectiveDate && from < effectiveDate) endedAtTarget.set(key(membership.security.symbol, membership.universe.code), membership);
   }
   const membershipAdditions: Plan['membershipAdditions'] = [], membershipRemovals: Plan['membershipRemovals'] = [];
+  const membershipDeletions: Plan['membershipDeletions'] = [], membershipReopens: Plan['membershipReopens'] = [];
   const unchangedMembershipValues: Plan['unchangedMembershipValues'] = [];
   for (const row of rows) for (const universe of SOURCE_UNIVERSES) {
     const code = universe.code, value = row.flags[code];
     if (!value) continue;
     const present = active.has(key(row.symbol, code));
-    if (value === '1' && !present) membershipAdditions.push({ symbol: row.symbol, code });
+    if (value === '1' && !present) {
+      const ended = endedAtTarget.get(key(row.symbol, code));
+      if (ended) membershipReopens.push({ symbol: row.symbol, code, membershipId: ended.id });
+      else membershipAdditions.push({ symbol: row.symbol, code });
+    }
     else if (value === '0' && present) continue;
     else unchangedMembershipValues.push({ symbol: row.symbol, code, value });
   }
@@ -155,34 +165,41 @@ async function planImport(db: Db, parsed: ParsedCsv, effectiveDate: string, mode
     if (!columns.includes(code)) continue;
     const row = rowBySymbol.get(membership.security.symbol);
     if (row ? row.flags[code] !== '0' : mode !== 'snapshot') continue;
-    if (dateOf(membership.effectiveFrom) === effectiveDate) conflicts.push(`Cannot end same-day membership ${membership.security.symbol}/${membership.universe.code}.`);
+    if (dateOf(membership.effectiveFrom) === effectiveDate) membershipDeletions.push({ symbol: membership.security.symbol, code, membershipId: membership.id });
     else if (membership.effectiveTo) conflicts.push(`Cannot override scheduled membership end for ${membership.security.symbol}/${membership.universe.code}.`);
     else membershipRemovals.push({ symbol: membership.security.symbol, code: membership.universe.code as UniverseCode, membershipId: membership.id });
   }
   const currentSymbols = new Set([...active.values()].map(m => m.security.symbol));
   const resulting = new Set([...active.keys()]);
   for (const addition of membershipAdditions) resulting.add(key(addition.symbol, addition.code));
+  for (const reopen of membershipReopens) resulting.add(key(reopen.symbol, reopen.code));
   for (const removal of membershipRemovals) resulting.delete(key(removal.symbol, removal.code));
+  for (const deletion of membershipDeletions) resulting.delete(key(deletion.symbol, deletion.code));
   const resultingSymbols = new Set([...resulting].map(identity => identity.split('\u0000')[0]!));
   const universeCounts = SOURCE_UNIVERSES.map(({ code }) => ({ code, before: [...active.keys()].filter(identity => identity.endsWith(`\u0000${code}`)).length, after: [...resulting].filter(identity => identity.endsWith(`\u0000${code}`)).length }));
   const breadthMembershipChanged = currentSymbols.size !== resultingSymbols.size || [...currentSymbols].some(symbol => !resultingSymbols.has(symbol));
-  if (laterRevisions && (membershipAdditions.length || membershipRemovals.length)) conflicts.push(`Membership change at ${effectiveDate} would alter an immutable Breadth revision dated ${dateOf(laterRevisions.effectiveFrom)} or later.`);
-  return { mode, effectiveDate, inputSecurityCount: rows.length, suppliedColumns: columns, omittedColumns: CSV_COLUMNS.filter(column => !columns.includes(column)),
-    newSecurities, existingSecurities, metadataChanges, membershipAdditions, membershipRemovals,
+  if (laterRevisions && (membershipAdditions.length || membershipRemovals.length || membershipDeletions.length || membershipReopens.length)) conflicts.push(`Membership change at ${effectiveDate} would alter an immutable Breadth revision dated ${dateOf(laterRevisions.effectiveFrom)} or later.`);
+  return { mode, timing, effectiveDate, inputSecurityCount: rows.length, suppliedColumns: columns, omittedColumns: CSV_COLUMNS.filter(column => !columns.includes(column)),
+    newSecurities, existingSecurities, metadataChanges, membershipAdditions, membershipRemovals, membershipDeletions, membershipReopens,
     unchangedMemberships: unchangedMembershipValues.filter(value => value.value === '1').length, unchangedMembershipValues,
     currentBroadMemberCount: currentSymbols.size, resultingBroadMemberCount: resultingSymbols.size, broadMemberCount: resultingSymbols.size,
     universeCounts, breadthMembershipChanged, conflicts, missingUniverses };
 }
 
-export async function importSecurityUniverses(csv: string, options: { effectiveDate: string; mode?: ImportMode; apply?: boolean; db?: PrismaClient }) {
+export async function importSecurityUniverses(csv: string, options: { timing?: ImportTiming; mode?: ImportMode; apply?: boolean; db?: PrismaClient; now?: Date }) {
   const mode = options.mode ?? 'partial', parsed = parseUniverseCsv(csv, mode), rows = parsed.rows, db = options.db ?? prisma;
   return db.$transaction(async tx => {
     const lock = await tx.$queryRaw<{ acquired: boolean }[]>`SELECT pg_try_advisory_xact_lock(${LOCK_KEY}::bigint) AS acquired`;
     if (!lock[0]?.acquired) throw new Error('Owned universe operation already running.');
-    const plan = await planImport(tx, parsed, options.effectiveDate, mode);
+    const timing = options.timing ?? { kind: 'immediate' };
+    const today = etDate(options.now ?? new Date());
+    if (timing.kind === 'scheduled' && (!validDate(timing.membershipEffectiveDate) || timing.membershipEffectiveDate <= today))
+      throw new Error(`Scheduled membership date must be after the current America/New_York date (${today}).`);
+    const effectiveDate = timing.kind === 'scheduled' ? timing.membershipEffectiveDate : today;
+    const plan = await planImport(tx, parsed, effectiveDate, mode, timing);
     if (options.apply && plan.conflicts.length) throw new Error(`Universe import refused: ${plan.conflicts.join(' ')}`);
     if (!options.apply) return { applied: false, ...plan };
-    if (plan.membershipAdditions.length || plan.membershipRemovals.length)
+    if (plan.membershipAdditions.length || plan.membershipRemovals.length || plan.membershipDeletions.length || plan.membershipReopens.length)
       for (const identity of SOURCE_UNIVERSES) await tx.securityUniverse.upsert({ where: { code: identity.code }, update: {}, create: identity });
     for (let i = 0; i < plan.newSecurities.length; i += 500) {
       const batch = plan.newSecurities.slice(i, i + 500);
@@ -197,7 +214,7 @@ export async function importSecurityUniverses(csv: string, options: { effectiveD
     const additions = plan.membershipAdditions.map(addition => {
       const securityId = securityIds.get(addition.symbol), universeId = universeIds.get(addition.code);
       if (!securityId || !universeId) throw new Error('Import identity disappeared during transaction.');
-      return { securityId, universeId, effectiveFrom: new Date(options.effectiveDate) };
+      return { securityId, universeId, effectiveFrom: new Date(effectiveDate) };
     });
     for (let i = 0; i < additions.length; i += 500) {
       const batch = additions.slice(i, i + 500);
@@ -206,8 +223,16 @@ export async function importSecurityUniverses(csv: string, options: { effectiveD
     }
     for (let i = 0; i < plan.membershipRemovals.length; i += 500) {
       const batch = plan.membershipRemovals.slice(i, i + 500);
-      const result = await tx.securityUniverseMembership.updateMany({ where: { id: { in: batch.map(removal => removal.membershipId) } }, data: { effectiveTo: new Date(options.effectiveDate) } });
+      const result = await tx.securityUniverseMembership.updateMany({ where: { id: { in: batch.map(removal => removal.membershipId) } }, data: { effectiveTo: new Date(effectiveDate) } });
       if (result.count !== batch.length) throw new Error('Membership removal count mismatch.');
+    }
+    for (const reopen of plan.membershipReopens) {
+      const result = await tx.securityUniverseMembership.updateMany({ where: { id: reopen.membershipId, effectiveTo: new Date(effectiveDate) }, data: { effectiveTo: null } });
+      if (result.count !== 1) throw new Error('Membership reopening count mismatch.');
+    }
+    for (const deletion of plan.membershipDeletions) {
+      const result = await tx.securityUniverseMembership.deleteMany({ where: { id: deletion.membershipId, effectiveFrom: new Date(effectiveDate) } });
+      if (result.count !== 1) throw new Error('Same-day membership deletion count mismatch.');
     }
     return { applied: true, ...plan };
   }, { timeout: 300_000 });
@@ -220,8 +245,8 @@ function csvField(value: string | number | boolean | null | undefined): string {
 function csvDocument(header: readonly string[], rows: (string | number | boolean | null | undefined)[][]) {
   return [header.join(','), ...rows.map(row => row.map(csvField).join(','))].join('\r\n') + '\r\n';
 }
-export async function exportUniverseSnapshot(db: Db = prisma): Promise<string> {
-  const today = new Date(new Date().toISOString().slice(0, 10));
+export async function exportUniverseSnapshot(db: Db = prisma, now = new Date()): Promise<string> {
+  const today = new Date(etDate(now));
   const [securities, memberships] = await Promise.all([
     db.security.findMany({ select: { id: true, symbol: true, name: true, sector: true, industry: true }, orderBy: { symbol: 'asc' } }),
     db.securityUniverseMembership.findMany({ where: { effectiveFrom: { lte: today }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: today } }], universe: { code: { in: SOURCE_UNIVERSES.map(u => u.code) } } }, select: { securityId: true, universe: { select: { code: true } } } }),

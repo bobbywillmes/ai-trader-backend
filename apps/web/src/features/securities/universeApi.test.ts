@@ -9,7 +9,7 @@ describe('Securities import/export client', () => {
   it('uses separate preview and apply endpoints with the reviewed input', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: async () => '{}', status: 200 });
     vi.stubGlobal('fetch', fetchMock);
-    const input = { csv: 'symbol\nAAPL\n', effectiveDate: '2026-10-01', mode: 'partial' as const };
+    const input = { csv: 'symbol\nAAPL\n', timing: { kind: 'immediate' as const }, mode: 'partial' as const };
     await requestImport(input, false);
     expect(fetchMock.mock.calls[0][0]).toContain('/api/securities/universe-import/preview');
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(input);
