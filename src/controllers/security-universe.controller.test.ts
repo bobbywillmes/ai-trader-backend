@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Request, Response, NextFunction } from 'express';
 import { corsOptions } from '../config/cors.js';
-import { exportFilename, importController } from './security-universe.controller.js';
+import { exportFilename, freezeController, importController } from './security-universe.controller.js';
 
 afterEach(() => vi.useRealTimers());
 
@@ -33,6 +33,18 @@ describe('Security universe HTTP timing contract', () => {
     const next = vi.fn() as NextFunction;
     await importController(false)(req, res, next);
     expect(res.status).toHaveBeenCalledWith(400);
+    expect(next).not.toHaveBeenCalled();
+  });
+});
+
+describe('current Breadth preview guard', () => {
+  it('rejects a stale reviewed date before accessing the database', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-02T16:00:00Z'));
+    const req = { body: { expectedAsOfDate: '2026-10-01' } } as Request;
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() } as unknown as Response;
+    const next = vi.fn() as NextFunction;
+    await freezeController(true)(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(409);
     expect(next).not.toHaveBeenCalled();
   });
 });

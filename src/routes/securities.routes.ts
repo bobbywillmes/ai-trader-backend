@@ -7,7 +7,7 @@ import {
   updateSecurityController,
 } from '../controllers/securities.controller.js';
 import { requireSystemOwnerAccess } from '../middleware/rbac.js';
-import { importController, freezeController, exportController } from '../controllers/security-universe.controller.js';
+import { importController, freezeController, exportController, breadthStatusController } from '../controllers/security-universe.controller.js';
 
 const router = Router();
 
@@ -17,6 +17,7 @@ router.get('/exports/universe-snapshot', requireSystemOwnerAccess, exportControl
 router.get('/exports/security-catalog', requireSystemOwnerAccess, exportController('security-catalog'));
 router.post('/breadth-revision/preview', requireSystemOwnerAccess, freezeController(false));
 router.post('/breadth-revision/freeze', requireSystemOwnerAccess, freezeController(true));
+router.get('/breadth-revision/status', requireSystemOwnerAccess, breadthStatusController);
 
 router.get('/summary', requireSystemOwnerAccess, getSecuritiesSummaryController);
 router.get('/', requireSystemOwnerAccess, getAllSecuritiesController);

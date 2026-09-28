@@ -31,4 +31,12 @@ The page downloads a Universe Snapshot with exact re-importable columns `symbol,
 
 Membership intervals use `[effectiveFrom,effectiveTo)`. Same-day corrections converge to the final date-level truth: a just-added membership can be removed without leaving a zero-length interval, and a same-day end of an older membership can be reopened. Future conflicts and any change constrained by an immutable Breadth revision remain fail-closed. Reapplication of the same CSV is idempotent on the same resolved date. Freeze deduplicates one vote per Security and verifies its immutable member rows. `Security.enabled` is trading eligibility only and never filters observation membership. Import/freeze never creates Subscriptions, Strategies, allocations, orders, or other trading relationships.
 
+## Persistent Breadth revision status
+
+The **Breadth Universe Revision** card on `/securities/import-export` reads the production database on every page load. Its `GET /api/securities/breadth-revision/status` endpoint uses today's `America/New_York` date and the six owned universes, counts each active Security once, and compares that broad member set with the latest applicable frozen revision. Current owned-universe membership is mutable configuration; `BreadthUniverseRevision` and its member rows are immutable historical evidence.
+
+`EMPTY` means there is no current broad population to freeze. `REVISION_REQUIRED` means a nonempty current population differs from the latest applicable frozen revision, or no revision exists. `CURRENT` means the exact deduplicated member set matches. A new calendar day alone does not require a revision. Additional source membership for an already broad Security does not require one either. Future-scheduled memberships do not change today's status before their effective date.
+
+When a revision is required, the owner previews the current New York date's member count and constituent hash, then explicitly freezes it. The panel refetches status after freeze and after immediate imports. It never freezes automatically. Immutable conflicts, including a future frozen revision that prevents a safe correction, are reported as errors rather than inferred away.
+
 No real constituent file is included or imported in Phase 3. The owner must prepare and review the actual source spreadsheet before first production import. Persistent Tiingo OHLCV remains separately gated on retention rights before Phase 4.

@@ -14,13 +14,23 @@ export type ImportPlan = {
   universeCounts: { code: string; before: number; after: number }[]; breadthMembershipChanged: boolean;
 };
 export type FreezePlan = { applied: boolean; alreadyExists: boolean; revisionId: number | null; effectiveDate: string; memberCount: number; constituentHash: string };
+export type BreadthStatus = {
+  asOfDate: string; state: 'EMPTY' | 'REVISION_REQUIRED' | 'CURRENT';
+  current: { memberCount: number; constituentHash: string | null };
+  latestRevision: null | { id: number; effectiveDate: string; memberCount: number; constituentHash: string };
+  difference: { addedCount: number; removedCount: number };
+};
 export type ImportInput = { csv: string; timing: ImportTiming };
+export const breadthStatusQueryKey = ['breadthRevisionStatus'] as const;
 
 export function requestImport(input: ImportInput, apply: boolean) {
   return apiRequest<ImportPlan>(`/api/securities/universe-import/${apply ? 'apply' : 'preview'}`, { method: 'POST', token: getAdminToken(), body: input });
 }
-export function requestFreeze(effectiveDate: string, apply: boolean) {
-  return apiRequest<FreezePlan>(`/api/securities/breadth-revision/${apply ? 'freeze' : 'preview'}`, { method: 'POST', token: getAdminToken(), body: { effectiveDate } });
+export function requestFreeze(effectiveDate: string, apply: boolean, expectedAsOfDate?: string, expectedConstituentHash?: string) {
+  return apiRequest<FreezePlan>(`/api/securities/breadth-revision/${apply ? 'freeze' : 'preview'}`, { method: 'POST', token: getAdminToken(), body: { effectiveDate, ...(expectedAsOfDate ? { expectedAsOfDate } : {}), ...(expectedConstituentHash ? { expectedConstituentHash } : {}) } });
+}
+export function requestBreadthStatus() {
+  return apiRequest<BreadthStatus>('/api/securities/breadth-revision/status', { token: getAdminToken() });
 }
 export async function downloadSecurityCsv(kind: 'universe-snapshot' | 'security-catalog') {
   const response = await fetch(getApiUrl(`/api/securities/exports/${kind}`), { headers: { Authorization: `Bearer ${getAdminToken() ?? ''}` } });

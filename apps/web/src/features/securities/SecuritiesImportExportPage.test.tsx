@@ -4,11 +4,15 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SecuritiesImportExportPage } from './SecuritiesImportExportPage';
 
-const mocks = vi.hoisted(() => ({ requestImport: vi.fn(), requestFreeze: vi.fn(), downloadSecurityCsv: vi.fn() }));
+const mocks = vi.hoisted(() => ({ requestImport: vi.fn(), requestFreeze: vi.fn(), requestBreadthStatus: vi.fn(), downloadSecurityCsv: vi.fn(), breadthStatusQueryKey: ['breadthRevisionStatus'] }));
 vi.mock('./universeApi', () => ({ ...mocks }));
+const emptyStatus = { asOfDate: '2026-10-01', state: 'EMPTY', current: { memberCount: 0, constituentHash: null }, latestRevision: null, difference: { addedCount: 0, removedCount: 0 } };
+const requiredStatus = { asOfDate: '2026-10-01', state: 'REVISION_REQUIRED', current: { memberCount: 1, constituentHash: 'new-hash' }, latestRevision: null, difference: { addedCount: 1, removedCount: 0 } };
+const currentStatus = { ...requiredStatus, state: 'CURRENT', latestRevision: { id: 13, effectiveDate: '2026-10-01', memberCount: 1, constituentHash: 'new-hash' }, difference: { addedCount: 0, removedCount: 0 } };
+beforeEach(() => { mocks.requestBreadthStatus.mockResolvedValue(emptyStatus); });
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 function renderPage() {
@@ -40,6 +44,7 @@ describe('Securities import/export review', () => {
     expect(screen.getByText('Review conflict')).toBeTruthy();
   });
   it('does not offer a Breadth freeze when source membership changes leave the broad set unchanged', async () => {
+    mocks.requestBreadthStatus.mockResolvedValue(currentStatus);
     const plan = { applied: false, timing: { kind: 'immediate' }, effectiveDate: '2026-10-01', inputSecurityCount: 1, suppliedColumns: ['symbol', 'SP600'], omittedColumns: ['name', 'sector'], newSecurities: [], metadataChanges: [], membershipAdditions: [{ symbol: 'AAPL', code: 'SP600' }], membershipRemovals: [], membershipDeletions: [], membershipReopens: [], unchangedMembershipValues: [], conflicts: [], missingUniverses: ['SP600'], currentBroadMemberCount: 1, resultingBroadMemberCount: 1, universeCounts: [{ code: 'SP500', before: 1, after: 1 }, { code: 'NASDAQ100', before: 0, after: 0 }, { code: 'DJIA', before: 0, after: 0 }, { code: 'RUSSELL2000', before: 0, after: 0 }, { code: 'SP400', before: 0, after: 0 }, { code: 'SP600', before: 0, after: 1 }], breadthMembershipChanged: false };
     mocks.requestImport.mockResolvedValueOnce(plan).mockResolvedValueOnce({ ...plan, applied: true });
     renderPage();
@@ -70,7 +75,8 @@ describe('Securities import/export review', () => {
     expect(screen.getByText('Applied import')).toBeTruthy();
     expect(screen.getByText('APPLIED')).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Import Preview' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Preview Breadth Revision' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Preview Revision' })).toBeNull();
+    expect(screen.getByText('CURRENT')).toBeTruthy();
     expect(mocks.requestFreeze).not.toHaveBeenCalled();
   });
   it('reveals future scheduling only in Advanced options and never offers early Breadth freeze', async () => {
@@ -100,9 +106,11 @@ describe('Securities import/export review', () => {
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Import Result' })).toBeTruthy());
     expect(screen.getByText('Applied import · memberships scheduled')).toBeTruthy();
     expect(screen.getByText(/Membership changes are scheduled and are not currently active/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Preview Breadth Revision' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Preview Revision' })).toBeNull();
+    expect(mocks.requestBreadthStatus).toHaveBeenCalledOnce();
   });
-  it('offers Breadth revision controls after an immediate broad-membership change', async () => {
+  it('refetches persistent Breadth status after an immediate import', async () => {
+    mocks.requestBreadthStatus.mockReset().mockResolvedValueOnce(emptyStatus).mockResolvedValue(requiredStatus);
     const plan = { applied: false, timing: { kind: 'immediate' }, effectiveDate: '2026-10-01', inputSecurityCount: 1, suppliedColumns: ['symbol', 'SP500'], omittedColumns: [], newSecurities: [], metadataChanges: [], membershipAdditions: [{ symbol: 'AAPL', code: 'SP500' }], membershipRemovals: [], membershipDeletions: [], membershipReopens: [], unchangedMembershipValues: [], conflicts: [], missingUniverses: [], currentBroadMemberCount: 0, resultingBroadMemberCount: 1, universeCounts: [{ code: 'SP500', before: 0, after: 1 }], breadthMembershipChanged: true };
     mocks.requestImport.mockResolvedValueOnce(plan).mockResolvedValueOnce({ ...plan, applied: true });
     renderPage();
@@ -113,7 +121,41 @@ describe('Securities import/export review', () => {
     await user.click(screen.getByRole('button', { name: 'Preview' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Apply reviewed import' }).hasAttribute('disabled')).toBe(false));
     await user.click(screen.getByRole('button', { name: 'Apply reviewed import' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Preview Breadth Revision' })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Preview Revision' })).toBeTruthy());
+    expect(mocks.requestBreadthStatus.mock.calls.length).toBeGreaterThan(1);
     expect(screen.getByText('Immediate · takes effect today')).toBeTruthy();
+  });
+  it('shows revision-required status on direct load and gates freeze behind preview', async () => {
+    mocks.requestBreadthStatus.mockResolvedValue(requiredStatus);
+    mocks.requestFreeze.mockResolvedValue({ applied: false, alreadyExists: false, revisionId: null, effectiveDate: '2026-10-01', memberCount: 1, constituentHash: 'new-hash' });
+    renderPage();
+    await waitFor(() => expect(screen.getByText('REVISION REQUIRED')).toBeTruthy());
+    expect(screen.getByText('1 member')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Freeze Revision' })).toBeNull();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Preview Revision' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Freeze Revision' })).toBeTruthy());
+    expect(mocks.requestFreeze).toHaveBeenCalledWith('2026-10-01', false, '2026-10-01');
+  });
+  it('shows persisted revision details on direct load', async () => {
+    mocks.requestBreadthStatus.mockResolvedValue({ ...requiredStatus, state: 'CURRENT', latestRevision: { id: 13, effectiveDate: '2026-09-28', memberCount: 1, constituentHash: 'frozen-hash' }, difference: { addedCount: 0, removedCount: 0 } });
+    renderPage();
+    await waitFor(() => expect(screen.getByText('CURRENT')).toBeTruthy());
+    expect(screen.getByText('#13')).toBeTruthy();
+    expect(screen.getByText('2026-09-28')).toBeTruthy();
+    expect(screen.getByText('frozen-hash')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Preview Revision' })).toBeNull();
+  });
+  it('refetches persisted CURRENT status after explicit freeze', async () => {
+    mocks.requestBreadthStatus.mockReset().mockResolvedValueOnce(requiredStatus).mockResolvedValue(currentStatus);
+    mocks.requestFreeze.mockResolvedValueOnce({ applied: false, alreadyExists: false, revisionId: null, effectiveDate: '2026-10-01', memberCount: 1, constituentHash: 'new-hash' })
+      .mockResolvedValueOnce({ applied: true, alreadyExists: false, revisionId: 13, effectiveDate: '2026-10-01', memberCount: 1, constituentHash: 'new-hash' });
+    renderPage();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Preview Revision' })).toBeTruthy());
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Preview Revision' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Freeze Revision' })).toBeTruthy());
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Freeze Revision' }));
+    await waitFor(() => expect(screen.getByText('CURRENT')).toBeTruthy());
+    expect(screen.getByText('#13')).toBeTruthy();
+    expect(mocks.requestFreeze).toHaveBeenCalledWith('2026-10-01', true, '2026-10-01', 'new-hash');
   });
 });

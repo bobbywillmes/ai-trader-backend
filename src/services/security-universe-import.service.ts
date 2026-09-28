@@ -262,21 +262,62 @@ export function constituentHash(symbols: readonly string[]) {
   return createHash('sha256').update([...symbols].sort().join('\n') + '\n').digest('hex');
 }
 
-export async function freezeBreadthUniverse(options: { effectiveDate: string; apply?: boolean; db?: PrismaClient }) {
+async function readBroadPopulation(db: Db, effectiveDate: string) {
+  const at = new Date(effectiveDate);
+  const universes = await db.securityUniverse.findMany({ where: { code: { in: SOURCE_UNIVERSES.map(u => u.code) } } });
+  for (const expected of SOURCE_UNIVERSES) {
+    const found = universes.find(u => u.code === expected.code);
+    if (found && found.name !== expected.name) throw new Error(`Missing or conflicting source universe ${expected.code}.`);
+  }
+  const memberships = await db.securityUniverseMembership.findMany({ where: { universeId: { in: universes.map(u => u.id) }, effectiveFrom: { lte: at }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: at } }] }, select: { securityId: true } });
+  const ids = [...new Set(memberships.map(m => m.securityId))].sort((a, b) => a - b);
+  if (ids.length && universes.length !== SOURCE_UNIVERSES.length) throw new Error('Missing owned source universe identities; Breadth status cannot be verified.');
+  const securities = ids.length ? await db.security.findMany({ where: { id: { in: ids } }, select: { id: true, symbol: true }, orderBy: [{ symbol: 'asc' }, { id: 'asc' }] }) : [];
+  if (securities.length !== ids.length || new Set(securities.map(s => s.symbol)).size !== ids.length) throw new Error('Breadth revision members are missing or ambiguous.');
+  const symbols = securities.map(s => s.symbol);
+  return { ids, symbols, memberCount: ids.length, constituentHash: ids.length ? constituentHash(symbols) : null, missingUniverses: SOURCE_UNIVERSES.filter(u => !universes.some(found => found.code === u.code)).map(u => u.code) };
+}
+
+export async function getBreadthUniverseStatus(options: { db?: PrismaClient; now?: Date } = {}) {
+  const db = options.db ?? prisma;
+  const asOfDate = etDate(options.now ?? new Date());
+  const at = new Date(asOfDate);
+  return db.$transaction(async tx => {
+    const current = await readBroadPopulation(tx, asOfDate);
+    const latest = await tx.breadthUniverseRevision.findFirst({ where: { effectiveFrom: { lte: at } }, orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }], include: { members: true } });
+    const revisionIds = latest?.members.map(member => member.securityId) ?? [];
+    if (latest && (latest.memberCount !== revisionIds.length || new Set(revisionIds).size !== revisionIds.length)) throw new Error(`Invalid immutable Breadth revision #${latest.id} member count.`);
+    const revisionSecurities = revisionIds.length ? await tx.security.findMany({ where: { id: { in: revisionIds } }, select: { symbol: true } }) : [];
+    if (revisionSecurities.length !== revisionIds.length || new Set(revisionSecurities.map(s => s.symbol)).size !== revisionIds.length) throw new Error(`Invalid immutable Breadth revision #${latest!.id} member identities.`);
+    const currentIds = new Set(current.ids), frozenIds = new Set(revisionIds);
+    const addedCount = current.ids.filter(id => !frozenIds.has(id)).length;
+    const removedCount = revisionIds.filter(id => !currentIds.has(id)).length;
+    const state = current.memberCount === 0 ? 'EMPTY' : latest && !addedCount && !removedCount ? 'CURRENT' : 'REVISION_REQUIRED';
+    if (state === 'REVISION_REQUIRED') {
+      const future = await tx.breadthUniverseRevision.findFirst({ where: { effectiveFrom: { gt: at } }, orderBy: { effectiveFrom: 'asc' }, select: { effectiveFrom: true } });
+      if (future) throw new Error(`Current Breadth population differs from its latest revision, but immutable future revision ${dateOf(future.effectiveFrom)} prevents a safe correction.`);
+    }
+    return {
+      asOfDate, state,
+      current: { memberCount: current.memberCount, constituentHash: current.constituentHash },
+      latestRevision: latest ? { id: latest.id, effectiveDate: dateOf(latest.effectiveFrom), memberCount: latest.memberCount, constituentHash: constituentHash(revisionSecurities.map(s => s.symbol)) } : null,
+      difference: { addedCount, removedCount },
+    };
+  }, { isolationLevel: 'RepeatableRead' });
+}
+
+export async function freezeBreadthUniverse(options: { effectiveDate: string; expectedConstituentHash?: string; apply?: boolean; db?: PrismaClient }) {
   if (!validDate(options.effectiveDate)) throw new Error('An explicit valid --effective=YYYY-MM-DD date is required.');
   const db = options.db ?? prisma, at = new Date(options.effectiveDate);
   return db.$transaction(async tx => {
     const lock = await tx.$queryRaw<{ acquired: boolean }[]>`SELECT pg_try_advisory_xact_lock(${LOCK_KEY}::bigint) AS acquired`;
     if (!lock[0]?.acquired) throw new Error('Owned universe operation already running.');
-    const universes = await tx.securityUniverse.findMany({ where: { code: { in: SOURCE_UNIVERSES.map(u => u.code) } } });
-    for (const expected of SOURCE_UNIVERSES) if (universes.find(u => u.code === expected.code)?.name !== expected.name) throw new Error(`Missing or conflicting source universe ${expected.code}.`);
-    const memberships = await tx.securityUniverseMembership.findMany({ where: { universeId: { in: universes.map(u => u.id) }, effectiveFrom: { lte: at }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: at } }] }, select: { securityId: true } });
-    const ids = [...new Set(memberships.map(m => m.securityId))].sort((a, b) => a - b);
+    const population = await readBroadPopulation(tx, options.effectiveDate);
+    if (population.missingUniverses.length) throw new Error(`Missing or conflicting source universe ${population.missingUniverses[0]}.`);
+    const { ids } = population;
     if (!ids.length) throw new Error('Cannot freeze an empty Breadth universe.');
-    const securities = await tx.security.findMany({ where: { id: { in: ids } }, select: { id: true, symbol: true } });
-    if (securities.length !== ids.length || new Set(securities.map(s => s.symbol)).size !== ids.length) throw new Error('Breadth revision members are missing or ambiguous.');
-    const symbols = securities.map(s => s.symbol).sort();
-    const hash = constituentHash(symbols);
+    const hash = population.constituentHash!;
+    if (options.expectedConstituentHash && options.expectedConstituentHash !== hash) throw new Error('Breadth population changed since preview; preview again before freezing.');
     const existing = await tx.breadthUniverseRevision.findUnique({ where: { effectiveFrom: at }, include: { members: true } });
     if (existing) {
       const same = existing.memberCount === ids.length && existing.members.length === ids.length && existing.members.every(member => ids.includes(member.securityId));

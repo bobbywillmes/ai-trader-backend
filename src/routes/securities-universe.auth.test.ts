@@ -17,6 +17,7 @@ describe('owned Security universe HTTP authentication', () => {
   it.each([
     ['universe-import/preview', 'POST'], ['universe-import/apply', 'POST'],
     ['breadth-revision/preview', 'POST'], ['breadth-revision/freeze', 'POST'],
+    ['breadth-revision/status', 'GET'],
     ['exports/universe-snapshot', 'GET'], ['exports/security-catalog', 'GET'],
   ] as const)('rejects unauthenticated %s', async (path, method) => {
     expect((await request(path, method)).status).toBe(401);
