@@ -16,10 +16,10 @@ describe('reviewed Security universe CSV', () => {
     `symbol,enabled\nAAPL,true`,
     `symbol,symbol\nAAPL,AAPL`,
   ])('rejects duplicate or malformed reviewed rows', csv => expect(() => parseUniverseCsv(csv)).toThrow());
-  it('supports sparse arbitrary ordering, blank partial values and explicit snapshot cells', () => {
+  it('supports sparse arbitrary ordering and blank cells as no-ops', () => {
     expect(parseUniverseCsv('SP600,symbol,name\n1,brk.b,\n').rows).toEqual([{ symbol: 'BRK.B', flags: { SP600: '1' } }]);
     expect(parseUniverseCsv('symbol\nAAPL\n').rows).toEqual([{ symbol: 'AAPL', flags: {} }]);
-    expect(() => parseUniverseCsv('symbol,SP600\nAAPL,\n', 'snapshot')).toThrow();
+    expect(parseUniverseCsv('symbol,SP600\nAAPL,\n').rows).toEqual([{ symbol: 'AAPL', flags: {} }]);
   });
   it('hashes the sorted deduplicated constituent identity deterministically', () => {
     expect(constituentHash(['MSFT', 'AAPL'])).toBe(constituentHash(['AAPL', 'MSFT']));

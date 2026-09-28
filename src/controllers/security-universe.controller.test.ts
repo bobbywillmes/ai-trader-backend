@@ -19,12 +19,20 @@ describe('Security CSV export response contract', () => {
 
 describe('Security universe HTTP timing contract', () => {
   it('rejects arbitrary historical effectiveDate instead of treating it as immediate', async () => {
-    const req = { body: { csv: 'symbol\nAAPL\n', effectiveDate: '2026-01-01', mode: 'partial' } } as Request;
+    const req = { body: { csv: 'symbol\nAAPL\n', effectiveDate: '2026-01-01' } } as Request;
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() } as unknown as Response;
     const next = vi.fn() as NextFunction;
     await importController(false)(req, res, next);
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ message: 'Invalid import request.' }));
+    expect(next).not.toHaveBeenCalled();
+  });
+  it('rejects the retired mode field instead of silently changing import behavior', async () => {
+    const req = { body: { csv: 'symbol\nAAPL\n', mode: 'snapshot' } } as Request;
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() } as unknown as Response;
+    const next = vi.fn() as NextFunction;
+    await importController(false)(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(400);
     expect(next).not.toHaveBeenCalled();
   });
 });

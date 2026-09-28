@@ -221,8 +221,8 @@ read persisted splits. Run the manual strict Massive split bootstrap through the
 session before deploying these publisher changes and extend coverage each new session;
 uncovered dates fail closed. See `docs/production/market-split-bootstrap.md`.
 Phase 3's six owned observation universes use a sparse, header-driven CSV importer.
-PARTIAL is the default and touches only supplied rows; SNAPSHOT explicitly reconciles
-only membership columns present in the file. The owner-only Securities console previews
+Only explicit nonblank cells on supplied rows mutate state; membership removal requires
+an explicit `0`. The owner-only Securities console previews
 imports, exports current database state, and freezes Breadth revisions only by explicit
 action. Imports are immediate on the current New York date unless a future membership
 date is explicitly scheduled; metadata and new Security creation still apply now.

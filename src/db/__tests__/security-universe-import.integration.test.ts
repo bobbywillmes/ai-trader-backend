@@ -11,7 +11,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
 (enabled ? describe : describe.skip)('owned Security universe PostgreSQL workflow', () => {
   const name = `owned_universe_${randomUUID().replaceAll('-', '')}`;
   let admin: Client, sql: Client, db: PrismaClient;
-  const importSecurityUniverses = (file: string, options: { db: PrismaClient; effectiveDate: string; mode?: 'partial' | 'snapshot'; apply?: boolean }) => {
+  const importSecurityUniverses = (file: string, options: { db: PrismaClient; effectiveDate: string; apply?: boolean }) => {
     const { effectiveDate, ...rest } = options;
     return runImport(file, { ...rest, now: new Date(`${effectiveDate}T16:00:00Z`) });
   };
@@ -23,6 +23,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   ]);
   const quarterly = csv([
     'AAPL,Apple Inc,Technology,Hardware,1,0,0,0,0,0',
+    'MSFT,Microsoft Corp,Technology,Software,0,0,0,0,0,0',
     'IBM,IBM,Technology,Services,0,0,1,0,0,0',
     'GOOG,Alphabet Inc,Communication,Internet,0,1,0,0,0,0',
   ]);
@@ -43,7 +44,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     for (const table of tables) counts.push((await sql.query(`SELECT count(*)::int n FROM "${table}"`)).rows[0].n as number);
     return counts;
   }
-  it('previews full snapshot and applies with disabled new Securities, preserving trading controls', async () => {
+  it('previews and applies supplied rows with disabled new Securities, preserving trading controls', async () => {
     const before = await tradingCounts();
     const preview = await importSecurityUniverses(initial, { db, effectiveDate: '2026-01-01' });
     expect(preview).toMatchObject({ applied: false, broadMemberCount: 3, unchangedMemberships: 0, conflicts: [] });
@@ -74,7 +75,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   });
   it('exports sorted round-trip universe CSV and scalar-only catalog CSV', async () => {
     const snapshot = await exportUniverseSnapshot(db);
-    const parsed = parseUniverseCsv(snapshot, 'snapshot');
+    const parsed = parseUniverseCsv(snapshot);
     expect(parsed.columns).toEqual([...CSV_COLUMNS]);
     expect(parsed.rows.map(row => row.symbol)).toEqual(['AAPL', 'IBM', 'MSFT']);
     expect(parsed.rows[0]?.flags.SP500).toBe('1');
@@ -84,10 +85,10 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(catalog).toContain(',SOFI,');
     expect(catalog).not.toContain('subscription');
   });
-  it('applies sparse partial rows and leaves omitted rows, metadata and columns untouched', async () => {
+  it('applies sparse rows and leaves omitted rows, metadata and columns untouched', async () => {
     const partial = 'SP600,symbol,industry\n1,AAPL,Consumer Hardware\n,IBM,\n';
     const preview = await importSecurityUniverses(partial, { db, effectiveDate: '2026-03-01' });
-    expect(preview).toMatchObject({ mode: 'partial', inputSecurityCount: 2, membershipAdditions: [{ symbol: 'AAPL', code: 'SP600' }], membershipRemovals: [], resultingBroadMemberCount: 3 });
+    expect(preview).toMatchObject({ inputSecurityCount: 2, membershipAdditions: [{ symbol: 'AAPL', code: 'SP600' }], membershipRemovals: [], resultingBroadMemberCount: 3 });
     await importSecurityUniverses(partial, { db, effectiveDate: '2026-03-01', apply: true });
     expect((await db.security.findUniqueOrThrow({ where: { symbol: 'AAPL' } })).industry).toBe('Consumer Hardware');
     expect((await db.security.findUniqueOrThrow({ where: { symbol: 'IBM' } })).industry).toBe('Services');
@@ -102,35 +103,43 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(symbolOnly).toMatchObject({ metadataChanges: [], membershipAdditions: [], membershipRemovals: [] });
     expect((await importSecurityUniverses('symbol,name,SP600\nNEW,,1\n', { db, effectiveDate: '2026-03-02' })).conflicts).toHaveLength(1);
   });
-  it('reconciles only SP600 in a sparse snapshot and preserves other five universes', async () => {
-    const before = await db.securityUniverseMembership.count({ where: { security: { symbol: 'AAPL' }, universe: { code: 'SP500' }, effectiveTo: null } });
-    const plan = await importSecurityUniverses('symbol,SP600\nAAPL,0\n', { db, effectiveDate: '2026-03-15', mode: 'snapshot' });
-    expect(plan.membershipRemovals).toEqual([{ symbol: 'AAPL', code: 'SP600', membershipId: expect.any(Number) }]);
-    await importSecurityUniverses('symbol,SP600\nAAPL,0\n', { db, effectiveDate: '2026-03-15', mode: 'snapshot', apply: true });
-    expect(await db.securityUniverseMembership.count({ where: { security: { symbol: 'AAPL' }, universe: { code: 'SP500' }, effectiveTo: null } })).toBe(before);
-    expect(await db.securityUniverseMembership.count({ where: { security: { symbol: 'AAPL' }, universe: { code: 'SP600' }, effectiveTo: null } })).toBe(0);
+  it('never removes an omitted SP600 Security; explicit 0 removes only that Security', async () => {
+    await importSecurityUniverses('symbol,name,SP600\nAAP,AAP,1\nAAT,AAT,1\n', { db, effectiveDate: '2026-03-10', apply: true });
+    const oneRow = 'symbol,SP600\nAAP,1\n';
+    const plan = await importSecurityUniverses(oneRow, { db, effectiveDate: '2026-03-15' });
+    expect(plan.membershipRemovals).toEqual([]);
+    expect(plan.unchangedMembershipValues).toContainEqual({ symbol: 'AAP', code: 'SP600', value: '1' });
+    await importSecurityUniverses(oneRow, { db, effectiveDate: '2026-03-15', apply: true });
+    expect(await db.securityUniverseMembership.count({ where: { security: { symbol: 'AAT' }, universe: { code: 'SP600' }, effectiveTo: null } })).toBe(1);
+    expect((await importSecurityUniverses('symbol,SP600\nAAP,\n', { db, effectiveDate: '2026-03-15' })).membershipRemovals).toEqual([]);
+    const removal = await importSecurityUniverses('symbol,SP600\nAAT,0\n', { db, effectiveDate: '2026-03-15' });
+    expect(removal.membershipRemovals).toEqual([{ symbol: 'AAT', code: 'SP600', membershipId: expect.any(Number) }]);
+    await importSecurityUniverses('symbol,SP600\nAAT,0\n', { db, effectiveDate: '2026-03-15', apply: true });
+    expect(await db.securityUniverseMembership.count({ where: { security: { symbol: 'AAT' }, universe: { code: 'SP600' }, effectiveTo: null } })).toBe(0);
+    expect(await db.securityUniverseMembership.count({ where: { security: { symbol: 'AAP' }, universe: { code: 'SP600' }, effectiveTo: null } })).toBe(1);
+    expect((await importSecurityUniverses('symbol,SP600\nAAT,0\n', { db, effectiveDate: '2026-03-15', apply: true })).membershipRemovals).toEqual([]);
   });
   it('end-dates removals without altering historical membership or the frozen revision', async () => {
     const before = await tradingCounts();
-    const preview = await importSecurityUniverses(quarterly, { db, effectiveDate: '2026-04-01', mode: 'snapshot' });
-    expect(preview).toMatchObject({ broadMemberCount: 3, unchangedMemberships: 2, conflicts: [] });
+    const preview = await importSecurityUniverses(quarterly, { db, effectiveDate: '2026-04-01' });
+    expect(preview).toMatchObject({ broadMemberCount: 4, unchangedMemberships: 2, conflicts: [] });
     expect(preview.membershipAdditions).toEqual([{ symbol: 'GOOG', code: 'NASDAQ100' }]);
-    expect(preview.membershipRemovals).toHaveLength(3);
-    await importSecurityUniverses(quarterly, { db, effectiveDate: '2026-04-01', mode: 'snapshot', apply: true });
+    expect(preview.membershipRemovals).toHaveLength(4);
+    await importSecurityUniverses(quarterly, { db, effectiveDate: '2026-04-01', apply: true });
     const old = await db.securityUniverseMembership.findMany({ where: { security: { symbol: 'MSFT' } } });
     expect(old).toHaveLength(2);
     expect(old.every(row => row.effectiveFrom.toISOString().slice(0, 10) === '2026-01-01' && row.effectiveTo?.toISOString().slice(0, 10) === '2026-04-01')).toBe(true);
     expect((await db.security.findUniqueOrThrow({ where: { symbol: 'GOOG' } })).enabled).toBe(false);
     expect(await freezeBreadthUniverse({ db, effectiveDate: '2026-01-01' })).toMatchObject({ alreadyExists: true, memberCount: 3 });
-    expect(await freezeBreadthUniverse({ db, effectiveDate: '2026-04-01', apply: true })).toMatchObject({ memberCount: 3, constituentHash: constituentHash(['AAPL', 'GOOG', 'IBM']) });
+    expect(await freezeBreadthUniverse({ db, effectiveDate: '2026-04-01', apply: true })).toMatchObject({ memberCount: 4, constituentHash: constituentHash(['AAP', 'AAPL', 'GOOG', 'IBM']) });
     expect(await tradingCounts()).toEqual(before);
-    expect(await importSecurityUniverses(quarterly, { db, effectiveDate: '2026-04-01', mode: 'snapshot', apply: true })).toMatchObject({ membershipAdditions: [], membershipRemovals: [] });
+    expect(await importSecurityUniverses(quarterly, { db, effectiveDate: '2026-04-01', apply: true })).toMatchObject({ membershipAdditions: [], membershipRemovals: [] });
   });
   it('refuses retroactive membership changes and conflicting revisions', async () => {
-    const oldSnapshot = csv(['AAPL,Apple Inc,Technology,Hardware,1,0,0,0,0,0']);
-    const preview = await importSecurityUniverses(oldSnapshot, { db, effectiveDate: '2026-01-01', mode: 'snapshot' });
+    const retroactiveChange = csv(['AAPL,Apple Inc,Technology,Hardware,1,0,0,0,0,0']);
+    const preview = await importSecurityUniverses(retroactiveChange, { db, effectiveDate: '2026-01-01' });
     expect(preview.conflicts.length).toBeGreaterThan(0);
-    await expect(importSecurityUniverses(oldSnapshot, { db, effectiveDate: '2026-01-01', mode: 'snapshot', apply: true })).rejects.toThrow('refused');
+    await expect(importSecurityUniverses(retroactiveChange, { db, effectiveDate: '2026-01-01', apply: true })).rejects.toThrow('refused');
     await sql.query(`INSERT INTO "BreadthUniverseRevision" ("effectiveFrom","memberCount") VALUES ('2026-07-01',1)`);
     await expect(freezeBreadthUniverse({ db, effectiveDate: '2026-07-01' })).rejects.toThrow('Conflicting immutable');
   });

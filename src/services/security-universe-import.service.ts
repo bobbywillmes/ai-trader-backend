@@ -15,11 +15,10 @@ export type UniverseCode = typeof SOURCE_UNIVERSES[number]['code'];
 export const CSV_COLUMNS = ['symbol', 'name', 'sector', 'industry', ...SOURCE_UNIVERSES.map(u => u.code)] as const;
 const LOCK_KEY = createHash('sha256').update('ai-trader:owned-security-universe').digest().readBigInt64BE(0);
 type Db = PrismaClient | Prisma.TransactionClient;
-export type ImportMode = 'partial' | 'snapshot';
 export type ImportTiming = { kind: 'immediate' } | { kind: 'scheduled'; membershipEffectiveDate: string };
 type Row = { symbol: string; name?: string; sector?: string; industry?: string; flags: Partial<Record<UniverseCode, '0' | '1'>> };
 type ParsedCsv = { columns: string[]; rows: Row[] };
-type Plan = { mode: ImportMode; timing: ImportTiming; effectiveDate: string; inputSecurityCount: number; suppliedColumns: string[]; omittedColumns: string[]; newSecurities: Row[]; existingSecurities: string[];
+type Plan = { timing: ImportTiming; effectiveDate: string; inputSecurityCount: number; suppliedColumns: string[]; omittedColumns: string[]; newSecurities: Row[]; existingSecurities: string[];
   metadataChanges: { symbol: string; before: { name: string; sector: string | null; industry: string | null }; after: { name: string; sector: string | null; industry: string | null } }[];
   membershipAdditions: { symbol: string; code: UniverseCode }[];
   membershipRemovals: { symbol: string; code: UniverseCode; membershipId: number }[];
@@ -58,9 +57,8 @@ function parseCsvRecords(csv: string): string[][] {
   return result.filter(fields => fields.length !== 1 || fields[0]!.trim() !== '');
 }
 
-export function parseUniverseCsv(csv: string, mode: ImportMode = 'partial'): ParsedCsv {
+export function parseUniverseCsv(csv: string): ParsedCsv {
   const records = parseCsvRecords(csv);
-  if (mode !== 'partial' && mode !== 'snapshot') throw new Error('Mode must be partial or snapshot.');
   const columns = records[0];
   if (!columns?.includes('symbol')) throw new Error('CSV header must include symbol.');
   if (new Set(columns).size !== columns.length) throw new Error('Duplicate CSV header.');
@@ -78,7 +76,7 @@ export function parseUniverseCsv(csv: string, mode: ImportMode = 'partial'): Par
     const flags: Row['flags'] = {};
     for (const universe of SOURCE_UNIVERSES) if (columns.includes(universe.code)) {
       const flag = values[universe.code]!;
-      if (flag !== '' && flag !== '0' && flag !== '1' || mode === 'snapshot' && flag === '') throw new Error(`Invalid ${universe.code} flag on CSV row ${line}; use 0 or 1${mode === 'partial' ? ' or blank' : ''}.`);
+      if (flag !== '' && flag !== '0' && flag !== '1') throw new Error(`Invalid ${universe.code} flag on CSV row ${line}; use 0, 1, or blank.`);
       if (flag) flags[universe.code] = flag as '0' | '1';
     }
     rows.push({ symbol, ...(values.name ? { name: values.name } : {}), ...(values.sector ? { sector: values.sector } : {}), ...(values.industry ? { industry: values.industry } : {}), flags });
@@ -90,7 +88,7 @@ export function parseUniverseCsv(csv: string, mode: ImportMode = 'partial'): Par
 const dateOf = (date: Date) => date.toISOString().slice(0, 10);
 const key = (symbol: string, code: string) => `${symbol}\u0000${code}`;
 
-async function planImport(db: Db, parsed: ParsedCsv, effectiveDate: string, mode: ImportMode, timing: ImportTiming): Promise<Plan> {
+async function planImport(db: Db, parsed: ParsedCsv, effectiveDate: string, timing: ImportTiming): Promise<Plan> {
   const { rows, columns } = parsed;
   if (!validDate(effectiveDate)) throw new Error('Invalid resolved membership effective date.');
   const at = new Date(effectiveDate);
@@ -138,7 +136,7 @@ async function planImport(db: Db, parsed: ParsedCsv, effectiveDate: string, mode
     const from = dateOf(membership.effectiveFrom), to = membership.effectiveTo ? dateOf(membership.effectiveTo) : null;
     if (from > effectiveDate) {
       const row = rowBySymbol.get(membership.security.symbol);
-      if (columns.includes(membership.universe.code) && (row ? row.flags[membership.universe.code as UniverseCode] !== undefined : mode === 'snapshot'))
+      if (row?.flags[membership.universe.code as UniverseCode] !== undefined)
         conflicts.push(`Future membership exists for ${membership.security.symbol}/${membership.universe.code}.`);
       continue;
     }
@@ -162,9 +160,8 @@ async function planImport(db: Db, parsed: ParsedCsv, effectiveDate: string, mode
   }
   for (const membership of active.values()) {
     const code = membership.universe.code as UniverseCode;
-    if (!columns.includes(code)) continue;
     const row = rowBySymbol.get(membership.security.symbol);
-    if (row ? row.flags[code] !== '0' : mode !== 'snapshot') continue;
+    if (row?.flags[code] !== '0') continue;
     if (dateOf(membership.effectiveFrom) === effectiveDate) membershipDeletions.push({ symbol: membership.security.symbol, code, membershipId: membership.id });
     else if (membership.effectiveTo) conflicts.push(`Cannot override scheduled membership end for ${membership.security.symbol}/${membership.universe.code}.`);
     else membershipRemovals.push({ symbol: membership.security.symbol, code: membership.universe.code as UniverseCode, membershipId: membership.id });
@@ -179,15 +176,15 @@ async function planImport(db: Db, parsed: ParsedCsv, effectiveDate: string, mode
   const universeCounts = SOURCE_UNIVERSES.map(({ code }) => ({ code, before: [...active.keys()].filter(identity => identity.endsWith(`\u0000${code}`)).length, after: [...resulting].filter(identity => identity.endsWith(`\u0000${code}`)).length }));
   const breadthMembershipChanged = currentSymbols.size !== resultingSymbols.size || [...currentSymbols].some(symbol => !resultingSymbols.has(symbol));
   if (laterRevisions && (membershipAdditions.length || membershipRemovals.length || membershipDeletions.length || membershipReopens.length)) conflicts.push(`Membership change at ${effectiveDate} would alter an immutable Breadth revision dated ${dateOf(laterRevisions.effectiveFrom)} or later.`);
-  return { mode, timing, effectiveDate, inputSecurityCount: rows.length, suppliedColumns: columns, omittedColumns: CSV_COLUMNS.filter(column => !columns.includes(column)),
+  return { timing, effectiveDate, inputSecurityCount: rows.length, suppliedColumns: columns, omittedColumns: CSV_COLUMNS.filter(column => !columns.includes(column)),
     newSecurities, existingSecurities, metadataChanges, membershipAdditions, membershipRemovals, membershipDeletions, membershipReopens,
     unchangedMemberships: unchangedMembershipValues.filter(value => value.value === '1').length, unchangedMembershipValues,
     currentBroadMemberCount: currentSymbols.size, resultingBroadMemberCount: resultingSymbols.size, broadMemberCount: resultingSymbols.size,
     universeCounts, breadthMembershipChanged, conflicts, missingUniverses };
 }
 
-export async function importSecurityUniverses(csv: string, options: { timing?: ImportTiming; mode?: ImportMode; apply?: boolean; db?: PrismaClient; now?: Date }) {
-  const mode = options.mode ?? 'partial', parsed = parseUniverseCsv(csv, mode), rows = parsed.rows, db = options.db ?? prisma;
+export async function importSecurityUniverses(csv: string, options: { timing?: ImportTiming; apply?: boolean; db?: PrismaClient; now?: Date }) {
+  const parsed = parseUniverseCsv(csv), rows = parsed.rows, db = options.db ?? prisma;
   return db.$transaction(async tx => {
     const lock = await tx.$queryRaw<{ acquired: boolean }[]>`SELECT pg_try_advisory_xact_lock(${LOCK_KEY}::bigint) AS acquired`;
     if (!lock[0]?.acquired) throw new Error('Owned universe operation already running.');
@@ -196,7 +193,7 @@ export async function importSecurityUniverses(csv: string, options: { timing?: I
     if (timing.kind === 'scheduled' && (!validDate(timing.membershipEffectiveDate) || timing.membershipEffectiveDate <= today))
       throw new Error(`Scheduled membership date must be after the current America/New_York date (${today}).`);
     const effectiveDate = timing.kind === 'scheduled' ? timing.membershipEffectiveDate : today;
-    const plan = await planImport(tx, parsed, effectiveDate, mode, timing);
+    const plan = await planImport(tx, parsed, effectiveDate, timing);
     if (options.apply && plan.conflicts.length) throw new Error(`Universe import refused: ${plan.conflicts.join(' ')}`);
     if (!options.apply) return { applied: false, ...plan };
     if (plan.membershipAdditions.length || plan.membershipRemovals.length || plan.membershipDeletions.length || plan.membershipReopens.length)

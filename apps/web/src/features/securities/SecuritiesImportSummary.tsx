@@ -55,7 +55,6 @@ export function SecuritiesImportSummary({ filename, plan }: { filename: string; 
           <Text fw={700}>{plan.effectiveDate}</Text>
         </Stack>
       </SimpleGrid>
-      <Badge color="gray" variant="light" size="sm" style={{ alignSelf: 'flex-start' }}>{plan.mode === 'snapshot' ? 'Snapshot reconciliation' : 'Partial update'}</Badge>
 
       <Card withBorder radius="md" p="md">
         <Stack gap="xs">

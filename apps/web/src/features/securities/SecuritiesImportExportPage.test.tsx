@@ -16,8 +16,11 @@ function renderPage() {
 }
 describe('Securities import/export review', () => {
   it('requires preview before apply and blocks conflicts', async () => {
-    mocks.requestImport.mockResolvedValue({ applied: false, mode: 'partial', timing: { kind: 'immediate' }, effectiveDate: '2026-10-01', inputSecurityCount: 1, suppliedColumns: ['symbol'], omittedColumns: ['name'], newSecurities: [], metadataChanges: [], membershipAdditions: [], membershipRemovals: [], membershipDeletions: [], membershipReopens: [], unchangedMembershipValues: [], conflicts: ['Review conflict'], missingUniverses: [], currentBroadMemberCount: 0, resultingBroadMemberCount: 0, universeCounts: [] });
+    mocks.requestImport.mockResolvedValue({ applied: false, timing: { kind: 'immediate' }, effectiveDate: '2026-10-01', inputSecurityCount: 1, suppliedColumns: ['symbol'], omittedColumns: ['name'], newSecurities: [], metadataChanges: [], membershipAdditions: [], membershipRemovals: [], membershipDeletions: [], membershipReopens: [], unchangedMembershipValues: [], conflicts: ['Review conflict'], missingUniverses: [], currentBroadMemberCount: 0, resultingBroadMemberCount: 0, universeCounts: [] });
     renderPage();
+    expect(screen.queryByLabelText('Mode')).toBeNull();
+    expect(screen.queryByText(/Snapshot reconciliation|Partial update/i)).toBeNull();
+    expect(screen.getByText(/Omitted rows, omitted columns, and blank cells leave existing values unchanged/)).toBeTruthy();
     const apply = screen.getByRole('button', { name: 'Apply reviewed import' }) as HTMLButtonElement;
     expect(apply.disabled).toBe(true);
     const user = userEvent.setup();
@@ -29,6 +32,7 @@ describe('Securities import/export review', () => {
     await waitFor(() => expect(mocks.requestImport).toHaveBeenCalledOnce());
     expect(mocks.requestImport.mock.calls[0][1]).toBe(false);
     expect(mocks.requestImport.mock.calls[0][0].timing).toEqual({ kind: 'immediate' });
+    expect(mocks.requestImport.mock.calls[0][0]).not.toHaveProperty('mode');
     expect(apply.disabled).toBe(true);
     expect(screen.getByRole('heading', { name: 'Import Preview' })).toBeTruthy();
     expect(screen.getByText('CONFLICTS')).toBeTruthy();
@@ -36,7 +40,7 @@ describe('Securities import/export review', () => {
     expect(screen.getByText('Review conflict')).toBeTruthy();
   });
   it('does not offer a Breadth freeze when source membership changes leave the broad set unchanged', async () => {
-    const plan = { applied: false, mode: 'partial', timing: { kind: 'immediate' }, effectiveDate: '2026-10-01', inputSecurityCount: 1, suppliedColumns: ['symbol', 'SP600'], omittedColumns: ['name', 'sector'], newSecurities: [], metadataChanges: [], membershipAdditions: [{ symbol: 'AAPL', code: 'SP600' }], membershipRemovals: [], membershipDeletions: [], membershipReopens: [], unchangedMembershipValues: [], conflicts: [], missingUniverses: ['SP600'], currentBroadMemberCount: 1, resultingBroadMemberCount: 1, universeCounts: [{ code: 'SP500', before: 1, after: 1 }, { code: 'NASDAQ100', before: 0, after: 0 }, { code: 'DJIA', before: 0, after: 0 }, { code: 'RUSSELL2000', before: 0, after: 0 }, { code: 'SP400', before: 0, after: 0 }, { code: 'SP600', before: 0, after: 1 }], breadthMembershipChanged: false };
+    const plan = { applied: false, timing: { kind: 'immediate' }, effectiveDate: '2026-10-01', inputSecurityCount: 1, suppliedColumns: ['symbol', 'SP600'], omittedColumns: ['name', 'sector'], newSecurities: [], metadataChanges: [], membershipAdditions: [{ symbol: 'AAPL', code: 'SP600' }], membershipRemovals: [], membershipDeletions: [], membershipReopens: [], unchangedMembershipValues: [], conflicts: [], missingUniverses: ['SP600'], currentBroadMemberCount: 1, resultingBroadMemberCount: 1, universeCounts: [{ code: 'SP500', before: 1, after: 1 }, { code: 'NASDAQ100', before: 0, after: 0 }, { code: 'DJIA', before: 0, after: 0 }, { code: 'RUSSELL2000', before: 0, after: 0 }, { code: 'SP400', before: 0, after: 0 }, { code: 'SP600', before: 0, after: 1 }], breadthMembershipChanged: false };
     mocks.requestImport.mockResolvedValueOnce(plan).mockResolvedValueOnce({ ...plan, applied: true });
     renderPage();
     const user = userEvent.setup();
@@ -70,7 +74,7 @@ describe('Securities import/export review', () => {
     expect(mocks.requestFreeze).not.toHaveBeenCalled();
   });
   it('reveals future scheduling only in Advanced options and never offers early Breadth freeze', async () => {
-    const plan = { applied: false, mode: 'partial', timing: { kind: 'scheduled', membershipEffectiveDate: '2099-01-01' }, effectiveDate: '2099-01-01', inputSecurityCount: 1, suppliedColumns: ['symbol', 'SP500'], omittedColumns: [], newSecurities: [], metadataChanges: [], membershipAdditions: [{ symbol: 'AAPL', code: 'SP500' }], membershipRemovals: [], membershipDeletions: [], membershipReopens: [], unchangedMembershipValues: [], conflicts: [], missingUniverses: [], currentBroadMemberCount: 0, resultingBroadMemberCount: 1, universeCounts: [{ code: 'SP500', before: 0, after: 1 }], breadthMembershipChanged: true };
+    const plan = { applied: false, timing: { kind: 'scheduled', membershipEffectiveDate: '2099-01-01' }, effectiveDate: '2099-01-01', inputSecurityCount: 1, suppliedColumns: ['symbol', 'SP500'], omittedColumns: [], newSecurities: [], metadataChanges: [], membershipAdditions: [{ symbol: 'AAPL', code: 'SP500' }], membershipRemovals: [], membershipDeletions: [], membershipReopens: [], unchangedMembershipValues: [], conflicts: [], missingUniverses: [], currentBroadMemberCount: 0, resultingBroadMemberCount: 1, universeCounts: [{ code: 'SP500', before: 0, after: 1 }], breadthMembershipChanged: true };
     mocks.requestImport.mockResolvedValueOnce(plan).mockResolvedValueOnce({ ...plan, applied: true });
     renderPage();
     const user = userEvent.setup();
@@ -99,7 +103,7 @@ describe('Securities import/export review', () => {
     expect(screen.queryByRole('button', { name: 'Preview Breadth Revision' })).toBeNull();
   });
   it('offers Breadth revision controls after an immediate broad-membership change', async () => {
-    const plan = { applied: false, mode: 'partial', timing: { kind: 'immediate' }, effectiveDate: '2026-10-01', inputSecurityCount: 1, suppliedColumns: ['symbol', 'SP500'], omittedColumns: [], newSecurities: [], metadataChanges: [], membershipAdditions: [{ symbol: 'AAPL', code: 'SP500' }], membershipRemovals: [], membershipDeletions: [], membershipReopens: [], unchangedMembershipValues: [], conflicts: [], missingUniverses: [], currentBroadMemberCount: 0, resultingBroadMemberCount: 1, universeCounts: [{ code: 'SP500', before: 0, after: 1 }], breadthMembershipChanged: true };
+    const plan = { applied: false, timing: { kind: 'immediate' }, effectiveDate: '2026-10-01', inputSecurityCount: 1, suppliedColumns: ['symbol', 'SP500'], omittedColumns: [], newSecurities: [], metadataChanges: [], membershipAdditions: [{ symbol: 'AAPL', code: 'SP500' }], membershipRemovals: [], membershipDeletions: [], membershipReopens: [], unchangedMembershipValues: [], conflicts: [], missingUniverses: [], currentBroadMemberCount: 0, resultingBroadMemberCount: 1, universeCounts: [{ code: 'SP500', before: 0, after: 1 }], breadthMembershipChanged: true };
     mocks.requestImport.mockResolvedValueOnce(plan).mockResolvedValueOnce({ ...plan, applied: true });
     renderPage();
     const user = userEvent.setup();
