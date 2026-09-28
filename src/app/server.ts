@@ -49,6 +49,8 @@ import { runMarketMinuteDataWorker } from '../workers/market-minute-data.worker.
 import { runIntradayStressAssessmentWorker } from '../workers/intraday-stress-assessment.worker.js';
 import { MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS, INTRADAY_STRESS_ASSESSMENT_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { closeMarketMinuteDataLockPool } from '../services/market-minute-data-lock.service.js';
+import { runTiingoDailyWorker } from '../workers/tiingo-daily.worker.js';
+import { closeTiingoDailyLockPool } from '../services/tiingo-daily.service.js';
 
 const app = createApp();
 
@@ -176,6 +178,8 @@ function startWorkers() {
   participationScheduler = createMonitoredParticipationScheduler(workerHealthRegistry, { startupGate: marketDataStartup });
   participationScheduler.start();
   setInterval(() => { void runWorker('market_daily_evidence_sync', runMarketDataWorker); }, 60_000);
+  void runWorker('tiingo_daily_market_data_sync', runTiingoDailyWorker);
+  setInterval(() => { void runWorker('tiingo_daily_market_data_sync', runTiingoDailyWorker); }, 15 * 60_000);
   void runWorker('breadth_assessment_publication', runBreadthAssessmentWorker);
   setInterval(() => { void runWorker('breadth_assessment_publication', runBreadthAssessmentWorker); }, BREADTH_ASSESSMENT_WORKER_INTERVAL_MS);
   runIntradayWorker('market_minute_evidence_sync', runMarketMinuteDataWorker);
@@ -392,6 +396,7 @@ async function shutdown(signal: NodeJS.Signals) {
     Promise.all([
       workerHealthRegistry.shutdown(),
       closeMarketDataLockPool(),
+      closeTiingoDailyLockPool(),
       closeMarketMinuteDataLockPool(),
       closeBreadthObservationLockPool(),
       closeTradingAccountWorkflowLockPool(),

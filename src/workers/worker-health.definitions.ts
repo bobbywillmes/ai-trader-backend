@@ -88,6 +88,15 @@ export const workerDefinitions = [
     ...thresholds(60_000, 180_000),
   },
   {
+    key: 'tiingo_daily_market_data_sync',
+    displayName: 'Tiingo daily Breadth observations',
+    description: 'Fills frozen Breadth revision DAY_1 observations after 20:15 Eastern without trading authority.',
+    criticality: 'informational',
+    expectedIntervalMs: 15 * 60_000,
+    enabledByDefault: true,
+    ...thresholds(15 * 60_000, 45 * 60_000),
+  },
+  {
     key: 'market_minute_evidence_sync',
     displayName: 'Intraday market data',
     description: "Fills eligible missing SPY/RSP MINUTE_15 bars for today's regular session from Massive, without rewriting evidence.",

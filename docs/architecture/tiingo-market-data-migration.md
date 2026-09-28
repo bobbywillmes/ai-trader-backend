@@ -2,7 +2,7 @@
 
 ## Authority and branch boundary
 
-Tiingo is the intended market observation provider. Alpaca remains broker and execution truth. There is no runtime market data provider fallback. This branch's Phase 0/1 adds only schema and a disconnected REST foundation. Massive retains all current production workers, assessments, dashboard, Momentum, sizing, and trading consumers. No WebSocket is required. Later phases will use Tiingo REST for daily EOD, consolidated intraday, and operational/latest price observations. Massive News was never an active production capability and will be retired, not migrated.
+Tiingo is the intended market observation provider. Alpaca remains broker and execution truth. There is no runtime market data provider fallback. Phase 4 adds only frozen Breadth-population Tiingo EOD persistence; Massive retains all existing production consumers, assessments, dashboard, Momentum, sizing, and trading paths. No WebSocket is required. Later phases may use Tiingo REST for consolidated intraday and operational/latest price observations. Massive News was never an active production capability and will be retired, not migrated.
 
 An operator must choose and record an explicit market session boundary outside regular trading hours for provider authority. Deployment time cannot infer the cutover. No code in this phase performs that cutover.
 
@@ -26,6 +26,12 @@ Phase 3 provides a sparse, header-driven CSV import where only explicit nonblank
 
 ## Transport and rollout
 
-The Tiingo REST client validates shape, price ranges, duplicate timestamps, dates, and split factors. It bounds request time and per-process concurrency, and keeps credentials and upstream bodies out of errors. Later ingestion must add a cross-process provider rate budget, retry policy, completion window, audit events, and advisory locking; the present client does not submit database writes. Existing Massive configuration stays required. `TIINGO_API_TOKEN` is optional until the authority change.
+The Tiingo REST client validates shape, price ranges, duplicate timestamps, dates, and split factors. It bounds request time and per-process concurrency, and keeps credentials and upstream bodies out of errors. Phase 4 daily ingestion adds a separate cross-process advisory lock, configurable conservative pacing, bounded transient retries, the 20:15 Eastern completion boundary, immutable writes, and bounded run events. The REST client itself remains disconnected from existing Massive consumers. Existing Massive configuration stays required. `TIINGO_API_TOKEN` is required only when Tiingo acquisition is applied.
 
-Before Phase 4 persistent Tiingo ingestion, the owner must confirm a Tiingo plan that permits storage of raw market observations. Tiingo's [current terms](https://api.tiingo.com/tos/) restrict persistent retention on starter and trial plans. The intended data volume and EOD/intraday entitlements also need confirmation before Phase 4.
+## Phase 4: paid-plan DAY_1 storage
+
+The owner confirmed an active Personal Power subscription, satisfying the Phase 4 storage gate while that eligible paid subscription remains active. If it expires, is cancelled or downgraded, Tiingo data must be deleted unless separate written retention rights exist. The explicit retention purge removes database Tiingo evidence and pauses subsequent ingestion; operators must also remove local artifacts, archives and backups under their control. See `docs/production/tiingo-daily-market-data.md`.
+
+Phase 4 accepts only raw Tiingo EOD `DAY_1` OHLCV and required positive `splitFactor`, at 20:15 America/New_York for today's session. Historical dates are immediately eligible. `TIINGO_DAY_1_2015_ET_V1` identifies this timing contract. The one-way symbol adapter maps canonical share classes such as `BRK.B` to Tiingo `BRK-B` and rejects unsupported forms. `Security.symbol` stays unchanged.
+
+Historical backfill uses the exact immutable `BreadthUniverseRevision` population as a current-universe historical backcast, with survivorship bias acknowledged for later calibration. Daily sync uses the latest applicable revision and stored canonical bars to request only unresolved work. Existing Massive rows remain canonical and count as Tiingo coverage gaps. Tiingo bars, split events, and provider provenance are immutable. No Tiingo `MarketSplitCoverage` is manufactured from EOD bars. No Massive consumer, publisher, latest-price use, News path, or trading authority is switched to Tiingo.

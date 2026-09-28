@@ -91,6 +91,7 @@ describe('WorkerHealthRegistry', () => {
       'breadth_assessment_publication',
       'participation_assessment_publication',
       'market_daily_evidence_sync',
+      'tiingo_daily_market_data_sync',
       'market_minute_evidence_sync',
       'intraday_stress_assessment_publication',
       'pending_order_processing',

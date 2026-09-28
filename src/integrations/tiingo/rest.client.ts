@@ -11,6 +11,18 @@ const dailyRow = z.object({ date: timestamp, open: positive, high: positive, low
   splitFactor: positive }).passthrough();
 const intradayRow = z.object({ date: timestamp, open: positive, high: positive, low: positive, close: positive, volume }).passthrough();
 
+/** Security.symbol stays canonical; Tiingo uses a hyphen for a single share-class suffix. */
+export function tiingoSymbol(symbol: string): string {
+  if (!/^[A-Z][A-Z0-9]{0,9}(?:\.[A-Z])?$/.test(symbol)) throw new Error('Unsupported Tiingo symbol form');
+  return symbol.replace('.', '-');
+}
+
+export class TiingoRequestError extends Error {
+  constructor(readonly status: number | null, readonly retryAfterMs: number | null = null) {
+    super(status === null ? 'Tiingo transport failure' : `Tiingo HTTP ${status}`);
+  }
+}
+
 export type TiingoBar = { barStartAt: Date; open: number; high: number; low: number; close: number; volume: number; splitFactor?: number };
 
 function bars(input: unknown, kind: 'daily' | 'intraday'): TiingoBar[] {
@@ -55,11 +67,16 @@ export class TiingoRestClient {
         headers: { Accept: 'application/json', Authorization: `Token ${this.config.token}` },
         signal: AbortSignal.timeout(this.config.timeoutMs ?? 10000),
       });
-      if (!response.ok) throw new Error(`Tiingo HTTP ${response.status}`);
+      if (!response.ok) {
+        const retryAfter = response.headers.get('retry-after');
+        const seconds = retryAfter !== null ? Number(retryAfter) : NaN;
+        const parsed = retryAfter && !Number.isFinite(seconds) ? Date.parse(retryAfter) - Date.now() : seconds * 1000;
+        throw new TiingoRequestError(response.status, Number.isFinite(parsed) ? Math.max(0, parsed) : null);
+      }
       return await response.json().catch(() => { throw new Error('Tiingo returned invalid JSON'); });
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith('Tiingo ')) throw error;
-      throw new Error('Tiingo request failed or timed out');
+      if (error instanceof TiingoRequestError || (error instanceof Error && error.message.startsWith('Tiingo '))) throw error;
+      throw new TiingoRequestError(null);
     } finally {
       this.active--;
       this.waiting.shift()?.();

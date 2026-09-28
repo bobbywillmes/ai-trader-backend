@@ -38,6 +38,8 @@
     "splits:bootstrap": "tsx scripts/bootstrap-market-splits.ts",
     "universe:import": "tsx scripts/import-security-universes.ts",
     "universe:freeze": "tsx scripts/freeze-breadth-universe.ts",
+    "market-data:tiingo:daily:backfill": "tsx scripts/tiingo-daily-backfill.ts",
+    "market-data:tiingo:purge": "tsx scripts/tiingo-retention-purge.ts",
     "prisma:generate": "prisma generate",
     "momentum:reconcile-eligibility": "tsx scripts/reconcile-momentum-eligibility.ts",
     "diagnose:account-worker-health": "tsx scripts/diagnose-account-worker-health.ts",

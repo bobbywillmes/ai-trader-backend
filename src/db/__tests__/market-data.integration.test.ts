@@ -77,6 +77,28 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await db.query(`INSERT INTO "MarketBar" ("securityId", timeframe, "barStartAt", open, high, low, close, volume, provider, "adjustmentMode", "receivedAt", "splitFactor") VALUES ($1,'DAY_1','2020-01-07T04:00:00Z',100,102,99,101,1000,'TIINGO','UNADJUSTED',now(),2)`, [securityId]);
     expect((await db.query(`SELECT "splitFactor"::text AS factor FROM "MarketBar" WHERE "barStartAt"='2020-01-07T04:00:00Z'`)).rows[0].factor).toBe('2.0000000000');
   });
+  it('permits transaction-local Tiingo DELETE only and preserves Massive evidence', async () => {
+    const tiingoDate = '2020-01-07T04:00:00Z';
+    const massiveDate = '2026-09-14T04:00:00Z';
+    await expect(db.query(`DELETE FROM "MarketBar" WHERE provider='TIINGO' AND "barStartAt"=$1`, [tiingoDate])).rejects.toThrow('immutable');
+    await db.query('BEGIN');
+    try {
+      await db.query(`SELECT set_config('ai_trader.tiingo_retention_purge', 'on', true)`);
+      await expect(db.query(`UPDATE "MarketBar" SET close=close WHERE provider='TIINGO' AND "barStartAt"=$1`, [tiingoDate])).rejects.toThrow('immutable');
+    } finally { await db.query('ROLLBACK'); }
+    await db.query('BEGIN');
+    try {
+      await db.query(`SELECT set_config('ai_trader.tiingo_retention_purge', 'on', true)`);
+      await expect(db.query(`DELETE FROM "MarketBar" WHERE provider='MASSIVE' AND "barStartAt"=$1`, [massiveDate])).rejects.toThrow('immutable');
+    } finally { await db.query('ROLLBACK'); }
+    await db.query('BEGIN');
+    try {
+      await db.query(`SELECT set_config('ai_trader.tiingo_retention_purge', 'on', true)`);
+      expect((await db.query(`DELETE FROM "MarketBar" WHERE provider='TIINGO' AND "barStartAt"=$1`, [tiingoDate])).rowCount).toBe(1);
+      expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE provider='MASSIVE' AND "barStartAt"=$1`, [massiveDate])).rows[0].n).toBe(1);
+      await db.query('COMMIT');
+    } catch (error) { await db.query('ROLLBACK'); throw error; }
+  });
   it('enforces nonoverlapping membership, frozen revisions, and canonical split uniqueness', async () => {
     const universe = (await db.query(`INSERT INTO "SecurityUniverse" (code,name) VALUES ('SP500','S&P 500') RETURNING id`)).rows[0].id;
     await db.query(`INSERT INTO "SecurityUniverseMembership" ("universeId","securityId","effectiveFrom") VALUES ($1,$2,'2026-01-01')`, [universe, securityId]);

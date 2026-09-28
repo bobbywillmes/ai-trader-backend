@@ -8,7 +8,9 @@ import { breadthAssessmentLatestController, breadthAssessmentListController, bre
 import { participationAssessmentLatestController, participationAssessmentListController, participationAssessmentDetailController, participationAssessmentRunController } from '../controllers/participation-assessment.controller.js';
 import { breadthObservationLatestController, breadthObservationListController, breadthObservationDetailController, breadthObservationRunController } from '../controllers/breadth-observation.controller.js';
 import { intradayStressAssessmentLatestController, intradayStressAssessmentListController, intradayStressAssessmentDetailController, intradayStressAssessmentRunController } from '../controllers/intraday-stress-assessment.controller.js';
+import { tiingoDailyStatusController } from '../controllers/tiingo-daily.controller.js';
 const router = Router();
+router.get('/tiingo-daily/status', requirePermission(PlatformPermission.MARKET_DATA_READ), tiingoDailyStatusController);
 router.get('/volatility-assessments/latest', requirePermission(PlatformPermission.MARKET_DATA_READ), volatilityAssessmentLatestController);
 router.get('/volatility-assessments', requirePermission(PlatformPermission.MARKET_DATA_READ), volatilityAssessmentListController);
 router.get('/volatility-assessments/:id', requirePermission(PlatformPermission.MARKET_DATA_READ), volatilityAssessmentDetailController);
