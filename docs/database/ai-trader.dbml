@@ -1111,6 +1111,7 @@ Table BreadthUniverseRevision {
   createdAt DateTime [default: `now()`, not null]
   members BreadthUniverseRevisionMember [not null]
   observations MarketBreadthObservation [not null]
+  breadthV2ObservationSets MarketBreadthObservationSet [not null]
 }
 
 Table BreadthUniverseRevisionMember {
@@ -1211,6 +1212,55 @@ Table MarketBreadthObservation {
 
   indexes {
     (provider, universeDefinitionVersion, sessionDate) [unique]
+  }
+}
+
+Table MarketBreadthObservationSet {
+  id Int [pk, increment]
+  breadthUniverseRevisionId Int [not null]
+  sessionDate DateTime [not null]
+  provider MarketDataProvider [not null]
+  measurementVersion String [not null]
+  evidenceSchemaVersion Int [not null]
+  universeCount Int [not null]
+  targetBarCount Int [not null]
+  targetCoverageRatio Decimal [not null]
+  dataThroughAt DateTime [not null]
+  canonicalInputHash String [not null]
+  evidenceJson Json [not null]
+  startedAt DateTime [not null]
+  completedAt DateTime [not null]
+  createdAt DateTime [default: `now()`, not null]
+  breadthUniverseRevision BreadthUniverseRevision [not null]
+  horizons MarketBreadthHorizonObservation [not null]
+
+  indexes {
+    (measurementVersion, breadthUniverseRevisionId, sessionDate) [unique]
+  }
+}
+
+Table MarketBreadthHorizonObservation {
+  id Int [pk, increment]
+  observationSetId Int [not null]
+  horizonSessions Int [not null]
+  anchorSessionDate DateTime [not null]
+  universeCount Int [not null]
+  anchorBarCount Int [not null]
+  eligibleCount Int [not null]
+  excludedCount Int [not null]
+  advancingCount Int [not null]
+  decliningCount Int [not null]
+  unchangedCount Int [not null]
+  directionalCount Int [not null]
+  coverageRatio Decimal [not null]
+  advanceShare Decimal [not null]
+  netBreadth Decimal [not null]
+  canonicalInputHash String [not null]
+  evidenceJson Json [not null]
+  observationSet MarketBreadthObservationSet [not null]
+
+  indexes {
+    (observationSetId, horizonSessions) [unique]
   }
 }
 
@@ -2345,6 +2395,10 @@ Ref: MarketSplitCoverage.securityId > Security.id [delete: Restrict]
 Ref: MarketRegimeDimensionAssessment.(previousAssessmentId, dimension, algorithmVersion) - MarketRegimeDimensionAssessment.(id, dimension, algorithmVersion) [delete: Restrict]
 
 Ref: MarketBreadthObservation.breadthUniverseRevisionId > BreadthUniverseRevision.id [delete: Restrict]
+
+Ref: MarketBreadthObservationSet.breadthUniverseRevisionId > BreadthUniverseRevision.id [delete: Restrict]
+
+Ref: MarketBreadthHorizonObservation.observationSetId > MarketBreadthObservationSet.id [delete: Restrict]
 
 Ref: CatalystTickerImpact.catalystEventId > CatalystEvent.id [delete: Cascade]
 

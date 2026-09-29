@@ -9,7 +9,13 @@ import { participationAssessmentLatestController, participationAssessmentListCon
 import { breadthObservationLatestController, breadthObservationListController, breadthObservationDetailController, breadthObservationRunController } from '../controllers/breadth-observation.controller.js';
 import { intradayStressAssessmentLatestController, intradayStressAssessmentListController, intradayStressAssessmentDetailController, intradayStressAssessmentRunController } from '../controllers/intraday-stress-assessment.controller.js';
 import { tiingoDailyStatusController } from '../controllers/tiingo-daily.controller.js';
+import { breadthV2ObservationStatusController, breadthV2ObservationLatestController, breadthV2ObservationListController, breadthV2ObservationDetailController, breadthV2ObservationRunController } from '../controllers/breadth-v2-observation.controller.js';
 const router = Router();
+router.get('/breadth-v2-observations/status', requirePermission(PlatformPermission.MARKET_DATA_READ), breadthV2ObservationStatusController);
+router.get('/breadth-v2-observations/latest', requirePermission(PlatformPermission.MARKET_DATA_READ), breadthV2ObservationLatestController);
+router.get('/breadth-v2-observations', requirePermission(PlatformPermission.MARKET_DATA_READ), breadthV2ObservationListController);
+router.get('/breadth-v2-observations/:id', requirePermission(PlatformPermission.MARKET_DATA_READ), breadthV2ObservationDetailController);
+router.post('/breadth-v2-observations/run', requireSystemOwnerAccess, breadthV2ObservationRunController);
 router.get('/tiingo-daily/status', requirePermission(PlatformPermission.MARKET_DATA_READ), tiingoDailyStatusController);
 router.get('/volatility-assessments/latest', requirePermission(PlatformPermission.MARKET_DATA_READ), volatilityAssessmentLatestController);
 router.get('/volatility-assessments', requirePermission(PlatformPermission.MARKET_DATA_READ), volatilityAssessmentListController);

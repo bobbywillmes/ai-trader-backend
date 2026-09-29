@@ -1676,6 +1676,7 @@ model BreadthUniverseRevision {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   members BreadthUniverseRevisionMember[]
   observations MarketBreadthObservation[]
+  breadthV2ObservationSets MarketBreadthObservationSet[]
 }
 
 model BreadthUniverseRevisionMember {
@@ -1795,6 +1796,53 @@ model MarketBreadthObservation {
 
   @@unique([provider, universeDefinitionVersion, sessionDate], map: "MarketBreadthObservation_identity_key")
   @@index([sessionDate], map: "MarketBreadthObservation_sessionDate_idx")
+}
+
+// Immutable Tiingo DAY_1, frozen-revision, multi-horizon production measurement evidence.
+model MarketBreadthObservationSet {
+  id                        Int                               @id @default(autoincrement())
+  breadthUniverseRevisionId Int
+  sessionDate               DateTime                          @db.Date
+  provider                  MarketDataProvider
+  measurementVersion        String
+  evidenceSchemaVersion     Int
+  universeCount             Int
+  targetBarCount            Int
+  targetCoverageRatio       Decimal                           @db.Decimal(12, 10)
+  dataThroughAt             DateTime                          @db.Timestamptz(3)
+  canonicalInputHash        String
+  evidenceJson              Json
+  startedAt                 DateTime                          @db.Timestamptz(3)
+  completedAt               DateTime                          @db.Timestamptz(3)
+  createdAt                 DateTime                          @default(now()) @db.Timestamptz(3)
+  breadthUniverseRevision   BreadthUniverseRevision           @relation(fields: [breadthUniverseRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  horizons                  MarketBreadthHorizonObservation[]
+
+  @@unique([measurementVersion, breadthUniverseRevisionId, sessionDate], map: "MarketBreadthObservationSet_identity_key")
+  @@index([sessionDate], map: "MarketBreadthObservationSet_sessionDate_idx")
+}
+
+model MarketBreadthHorizonObservation {
+  id                 Int                         @id @default(autoincrement())
+  observationSetId   Int
+  horizonSessions    Int
+  anchorSessionDate  DateTime                    @db.Date
+  universeCount      Int
+  anchorBarCount     Int
+  eligibleCount      Int
+  excludedCount      Int
+  advancingCount     Int
+  decliningCount     Int
+  unchangedCount     Int
+  directionalCount   Int
+  coverageRatio      Decimal                     @db.Decimal(12, 10)
+  advanceShare       Decimal                     @db.Decimal(12, 10)
+  netBreadth         Decimal                     @db.Decimal(12, 10)
+  canonicalInputHash String
+  evidenceJson       Json
+  observationSet     MarketBreadthObservationSet @relation(fields: [observationSetId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([observationSetId, horizonSessions], map: "MarketBreadthHorizonObservation_identity_key")
 }
 
 model CurrentMarketState {
