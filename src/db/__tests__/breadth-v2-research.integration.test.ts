@@ -12,7 +12,9 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   const root = resolve(join('node_modules', '.cache', `breadth-v2-test-${randomUUID()}`));
   let admin: Client; let db: Client; let prismaModule: typeof import('../prisma.js');
   let research: typeof import('../../dev/breadth-v2-research.js');
+  let calibration: typeof import('../../dev/breadth-v2-calibration-runner.js');
   let revisionId: number;
+  let initialBarCount: number;
   beforeAll(async () => {
     admin = new Client({ connectionString: originalUrl }); await admin.connect();
     await admin.query(`CREATE DATABASE "${database}"`);
@@ -25,18 +27,23 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     revisionId = (await db.query(`INSERT INTO "BreadthUniverseRevision" ("effectiveFrom","memberCount") VALUES ('2026-09-01',3) RETURNING id`)).rows[0].id;
     for (const id of ids) await db.query(`INSERT INTO "BreadthUniverseRevisionMember" ("revisionId","securityId") VALUES ($1,$2)`, [revisionId, id]);
     const add = (id: number, date: string, close: number, factor: number | null, provider: string) => db.query(`INSERT INTO "MarketBar" ("securityId",timeframe,"barStartAt",open,high,low,close,volume,"splitFactor",provider,"adjustmentMode","receivedAt") VALUES ($1,'DAY_1',$2,$3,$3,$3,$3,1000,$4,$5,'UNADJUSTED',now())`, [id, date, close, factor, provider]);
+    for (let date = new Date('2026-08-20T00:00:00Z'); date < new Date('2026-09-22T00:00:00Z'); date.setUTCDate(date.getUTCDate() + 1)) {
+      if (date.getUTCDay() !== 0 && date.getUTCDay() !== 6) await add(ids[0]!, date.toISOString().slice(0, 10), 100, 1, 'TIINGO');
+    }
     await add(ids[0]!, '2026-09-22', 100, 1, 'TIINGO');
     await add(ids[0]!, '2026-09-23', 101, 1, 'TIINGO');
-    await add(ids[0]!, '2026-09-24', 50, 2, 'TIINGO');
+    await add(ids[0]!, '2026-09-24', 49, 2, 'TIINGO');
     await add(ids[0]!, '2026-09-25', 51, 1, 'TIINGO');
     await add(ids[1]!, '2026-09-22', 100, 1, 'TIINGO');
     await add(ids[1]!, '2026-09-23', 100, null, 'MASSIVE');
     await add(ids[1]!, '2026-09-24', 99, 1, 'TIINGO');
     await add(ids[1]!, '2026-09-25', 99, 1, 'TIINGO');
+    initialBarCount = (await db.query(`SELECT count(*)::int n FROM "MarketBar"`)).rows[0].n;
     await db.query(`INSERT INTO "TiingoDailyObservationState" ("securityId","sessionDate",status,"attemptCount","firstAttemptAt","lastAttemptAt","reasonCode","updatedAt") VALUES ($1,'2026-09-24','NO_EOD_COVERAGE',4,now(),now(),'PROVIDER_NO_EOD_BAR',now())`, [ids[2]]);
     await mkdir(root, { recursive: true });
     process.env.DATABASE_URL = url.toString();
     research = await import('../../dev/breadth-v2-research.js');
+    calibration = await import('../../dev/breadth-v2-calibration-runner.js');
     prismaModule = await import('../prisma.js');
   }, 120_000);
   afterAll(async () => {
@@ -70,11 +77,25 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect((await db.query(`SELECT count(*)::int n FROM "Signal"`)).rows[0].n).toBe(0);
     expect((await db.query(`SELECT count(*)::int n FROM "SignalEvaluation"`)).rows[0].n).toBe(0);
     expect((await db.query(`SELECT count(*)::int n FROM "SignalRoutingRun"`)).rows[0].n).toBe(0);
-    expect((await db.query(`SELECT count(*)::int n FROM "MarketBar"`)).rows[0].n).toBe(8);
+    expect((await db.query(`SELECT count(*)::int n FROM "MarketBar"`)).rows[0].n).toBe(initialBarCount);
   });
   it('fails closed when frozen revision integrity is broken', async () => {
     const broken = (await db.query(`INSERT INTO "BreadthUniverseRevision" ("effectiveFrom","memberCount") VALUES ('2026-09-02',4) RETURNING id`)).rows[0].id;
     await expect(research.runBreadthV2Research({ revisionId: broken, from: '2026-09-23', through: '2026-09-25', outputDirectory: join(root, 'broken'), now: new Date('2026-09-29T03:00:00Z') })).rejects.toThrow('memberCount integrity');
+  });
+  it('calibrates frozen strict Tiingo evidence and stable core without production writes', async () => {
+    const input = { revisionId, from: '2026-09-23', through: '2026-09-25', calibrationThrough: '2026-09-24', now: new Date('2026-09-29T03:00:00Z') };
+    const one = await calibration.runBreadthV2Calibration({ ...input, outputDirectory: join(root, 'calibration-one') });
+    const two = await calibration.runBreadthV2Calibration({ ...input, outputDirectory: join(root, 'calibration-two'), expectedInputHash: one.summary.canonicalInputHash });
+    expect(one.summary).toEqual(two.summary);
+    expect(one.summary).toMatchObject({ researchVersion: 'BREADTH_V2_CALIBRATION_5B_V1', phase5aResearchVersion: 'BREADTH_V2_RESEARCH_5A_V2', gapPolicy: 'STRICT', stableCoreSensitivity: { stableCoreMemberCount: 1, fullRevisionMemberCount: 3 } });
+    for (const file of ['calibration-summary.json', 'thresholds.csv', 'candidate-states.csv', 'candidate-distributions.csv', 'candidate-transitions.csv', 'candidate-runs.csv', 'structural-agreement.csv', 'validation-stability.csv', 'coverage-sensitivity.csv']) expect(await readFile(join(root, 'calibration-one', file), 'utf8')).toBe(await readFile(join(root, 'calibration-two', file), 'utf8'));
+    expect((await readFile(join(root, 'calibration-one', 'candidate-states.csv'), 'utf8')).split('\n')).toHaveLength(29);
+    expect((await db.query(`SELECT count(*)::int n FROM "MarketBreadthObservation"`)).rows[0].n).toBe(0);
+    expect((await db.query(`SELECT count(*)::int n FROM "MarketRegimeDimensionAssessment"`)).rows[0].n).toBe(0);
+    expect((await db.query(`SELECT count(*)::int n FROM "SignalEvaluation"`)).rows[0].n).toBe(0);
+    expect((await db.query(`SELECT count(*)::int n FROM "MarketBar"`)).rows[0].n).toBe(initialBarCount);
+    await expect(calibration.runBreadthV2Calibration({ ...input, outputDirectory: join(root, 'calibration-wrong-hash'), expectedInputHash: '0'.repeat(64) })).rejects.toThrow('canonical input hash differs');
   });
   it('rejects a resolved acquisition state without its immutable bar', async () => {
     const securityId = (await db.query(`SELECT id FROM "Security" WHERE symbol='CCC'`)).rows[0].id;

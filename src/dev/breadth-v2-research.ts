@@ -13,7 +13,7 @@ const isoDate = (date: Date) => date.toISOString().slice(0, 10);
 const sortSymbol = (a: { symbol: string }, b: { symbol: string }) => a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0;
 const BATCH_SIZE = 100;
 
-export type BreadthV2ResearchInput = { revisionId: number; from: string; through: string; outputDirectory?: string; now?: Date };
+export type BreadthV2ResearchInput = { revisionId: number; from: string; through: string; outputDirectory?: string; now?: Date; includeCalibrationEvidence?: boolean };
 export async function runBreadthV2Research(input: BreadthV2ResearchInput) {
   const now = input.now ?? new Date();
   if (!Number.isSafeInteger(input.revisionId) || input.revisionId < 1 || !validDate(input.from) || !validDate(input.through) || input.from > input.through || input.through > etDate(now)) throw new Error('Valid --revision, --from, and --through are required.');
@@ -56,6 +56,8 @@ export async function runBreadthV2Research(input: BreadthV2ResearchInput) {
     inputHash.update(`revision:${input.revisionId}\ncalendar:${JSON.stringify(exceptions)}\n`);
     const aggregate = new Map<string, { advancing: number; declining: number; unchanged: number }>();
     for (const date of targetSessions) for (const horizon of HORIZONS) aggregate.set(`${date}:${horizon}`, { advancing: 0, declining: 0, unchanged: 0 });
+    const stableAggregate = input.includeCalibrationEvidence ? new Map([...aggregate].map(([key]) => [key, { advancing: 0, declining: 0, unchanged: 0 }])) : null;
+    let stableCoreMemberCount = 0;
     const sessionCoverage = new Map(targetSessions.map(date => [date, { present: 0, otherProvider: 0, terminal: 0, retrying: 0 }]));
     const bridgeRecovered = { DAY_1: { max1: 0, max2: 0 }, DAY_5: { max1: 0, max2: 0 }, DAY_20: { max1: 0, max2: 0 } };
     const gapCounts = { ONE: 0, TWO: 0, THREE_TO_FIVE: 0, OVER_FIVE: 0, longest: 0 };
@@ -110,6 +112,8 @@ export async function runBreadthV2Research(input: BreadthV2ResearchInput) {
         }
         tiingoPresent += present; otherProviderCollisions += collisionCount; terminalNoEodCoverage += terminalCount; retrying += retryingCount;
         const missing = targetSessions.length - present;
+        const stableCoreMember = stableAggregate !== null && missing === 0;
+        if (stableCoreMember) stableCoreMemberCount++;
         missingBySecurity.push({ symbol: member.symbol, missing });
         securityCoverageRatios.push(present / targetSessions.length);
         securityLines.push(csv([member.symbol, member.securityId, targetSessions.length, present, missing, ratio(present / targetSessions.length), terminalCount, retryingCount, collisionCount]));
@@ -125,6 +129,12 @@ export async function runBreadthV2Research(input: BreadthV2ResearchInput) {
               if (strict.direction === 'ADVANCING') counts.advancing++;
               else if (strict.direction === 'DECLINING') counts.declining++;
               else counts.unchanged++;
+              if (stableCoreMember) {
+                const stable = stableAggregate.get(key)!;
+                if (strict.direction === 'ADVANCING') stable.advancing++;
+                else if (strict.direction === 'DECLINING') stable.declining++;
+                else stable.unchanged++;
+              }
               continue;
             }
             if (expectedAnchorIndex < 0) continue;
@@ -144,6 +154,10 @@ export async function runBreadthV2Research(input: BreadthV2ResearchInput) {
       const counts = aggregate.get(`${date}:${horizon}`)!;
       return { sessionDate: date, horizon: `DAY_${horizon}` as `DAY_${Horizon}`, ...finalizeBreadth(members.length, counts.advancing, counts.declining, counts.unchanged) };
     }));
+    const stableCoreMetrics = stableAggregate === null ? null : targetSessions.flatMap(date => HORIZONS.map(horizon => {
+      const counts = stableAggregate.get(`${date}:${horizon}`)!;
+      return { sessionDate: date, horizon: `DAY_${horizon}` as `DAY_${Horizon}`, ...finalizeBreadth(stableCoreMemberCount, counts.advancing, counts.declining, counts.unchanged) };
+    }));
     const coverage = targetSessions.map(date => {
       const counts = sessionCoverage.get(date)!;
       return { sessionDate: date, universeCount: members.length, tiingoPresent: counts.present, missing: members.length - counts.present, coverageRatio: members.length ? counts.present / members.length : null, terminalNoEodCoverage: counts.terminal, retrying: counts.retrying, otherProviderCollisions: counts.otherProvider };
@@ -162,7 +176,7 @@ export async function runBreadthV2Research(input: BreadthV2ResearchInput) {
       const sortedByValue = [...values].sort((a, b) => a.value - b.value || a.date.localeCompare(b.date));
       return [metric, { count: values.length, min: sorted[0] ?? null, p01: percentile(sorted, 0.01), p05: percentile(sorted, 0.05), p10: percentile(sorted, 0.10), p25: percentile(sorted, 0.25), median: percentile(sorted, 0.50), p75: percentile(sorted, 0.75), p90: percentile(sorted, 0.90), p95: percentile(sorted, 0.95), p99: percentile(sorted, 0.99), max: sorted.at(-1) ?? null, mean: mean(sorted), standardDeviation: stddev(sorted), lowestDates: sortedByValue.slice(0, 10), highestDates: sortedByValue.slice(-10).reverse() }];
     }))]));
-    return { members, targetSessions, metrics, coverage, coverageDistribution, securityCoverageDistribution, statistics, bridgeRecovered, gapCounts, gapShapeSummary: gapShapeAccumulator.summary(),
+    return { members, targetSessions, metrics, stableCoreMetrics, stableCoreMemberCount, coverage, coverageDistribution, securityCoverageDistribution, statistics, bridgeRecovered, gapCounts, gapShapeSummary: gapShapeAccumulator.summary(),
       totals: { expectedObservations: members.length * targetSessions.length, tiingoBarsPresent: tiingoPresent, missingObservations: members.length * targetSessions.length - tiingoPresent, untrackedMissing, terminalNoEodCoverage, retrying, otherProviderCollisions, disabledMembers },
       mostFrequentlyMissing: missingBySecurity.sort((a, b) => b.missing - a.missing || (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0)).slice(0, 50),
       constituentHash: constituentHash(members.map(member => member.symbol)), canonicalInputHash: inputHash.digest('hex'), memberCount: revision.memberCount };
@@ -177,5 +191,5 @@ export async function runBreadthV2Research(input: BreadthV2ResearchInput) {
     dataQuality: { ...result.totals, sessionCoverageDistribution: result.coverageDistribution, securityCoverageDistribution: result.securityCoverageDistribution, gapRuns: result.gapCounts, ...result.gapShapeSummary, mostFrequentlyMissing: result.mostFrequentlyMissing }, distributionStatistics: result.statistics,
     runtime: { generatedAt: now.toISOString() } };
   await writeFile(join(outputDirectory, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
-  return { outputDirectory, summary };
+  return { outputDirectory, summary, ...(input.includeCalibrationEvidence ? { calibrationEvidence: { fullMetrics: result.metrics, stableCoreMetrics: result.stableCoreMetrics!, stableCoreMemberCount: result.stableCoreMemberCount } } : {}) };
 }

@@ -49,3 +49,19 @@ Missing runs are classified against the **requested target-session range**, excl
 ## Existing evidence model mismatch
 
 `MarketBreadthObservation` has one `previousSessionDate`, one set of counts and ratios, and non-null directional ratios; it is shaped for BREADTH_V1 one-session observations. Phase 5A has three horizons and keeps unavailable ratios as null when no directional names exist. A future publisher must decide how to represent the additional horizons and unavailable values. This research pass does not change that immutable production model.
+
+## Phase 5B: classification calibration
+
+Run the research-only comparison after the Phase 5A strict history is present:
+
+```powershell
+npm.cmd run research:breadth-v2:calibrate -- --revision=2 --from=2021-01-04 --through=2026-09-28 --calibration-through=2024-12-31
+```
+
+`--output=DIR` chooses a new artifact directory. `--expected-input-hash=SHA256` optionally requires the Phase 5A canonical input hash to match an existing run. The command invokes the same read-only Phase 5A calculation and stores its artifacts in `phase5a-strict/` beside the calibration files. It makes no provider calls or production writes. Version `BREADTH_V2_CALIBRATION_5B_V1` uses the Phase 5A V2 strict Tiingo, raw, split-normalized 1/5/20-session measurements. The current-universe backcast remains survivorship-biased.
+
+The calibration boundary splits market sessions into calibration (through the supplied date) and validation (later sessions). Advance-share thresholds are derived only from calibration samples, separately for each horizon. QUARTILE uses p25/p75, TERTILE p33⅓/p66⅔, and NARROW p40/p60. Percentiles use linear interpolation; full-precision numeric thresholds are frozen for validation. Exact lower/upper boundaries classify NEGATIVE/POSITIVE, respectively; values between them are MIXED. Equivalent net-breadth values are reported via `2 × advanceShare − 1`, without independent calibration. Validation-stability output shows the percentile rank of each frozen threshold in validation using midranks at ties.
+
+Five-day and 20-day states are structural. Agreement yields that state; opposite directional states yield MIXED. When one is directional and the other MIXED, 1-day must confirm the direction or raw remains MIXED. One-day cannot create direction by itself. Each threshold family is replayed with RAW effective state, one-level immediate deterioration plus two-valid-session recovery, and a mild variant that also holds POSITIVE on the first consecutive raw MIXED. Raw NEGATIVE still causes immediate one-level deterioration. Unavailable raw sessions pause smoothed continuation and appear unavailable in the artifact. These are candidate research replays, not BREADTH_V1 changes.
+
+The report includes full, calibration, validation, and calendar-year distributions, structural agreement, transitions, run durations, and coverage diagnostics below 75/80/85/90 percent. `candidate-states.csv` has one session/family/hysteresis row. `thresholds.csv`, `candidate-distributions.csv`, `candidate-transitions.csv`, `candidate-runs.csv`, `structural-agreement.csv`, and `validation-stability.csv` give side-by-side detail. `calibration-summary.json` includes the same summaries and research identity. `coverage-sensitivity.csv` compares the full frozen revision with a **STABLE_CORE** cohort: members with real Tiingo bars on every requested target session. The stable core is a secondary diagnostic; its strict breadth uses the same real-bar comparisons and the full-revision calibration thresholds. The full revision remains the primary research series. Bridge candidates are not used in classification. Phase 5B neither scores candidates nor chooses an authoritative classification or minimum coverage threshold.
