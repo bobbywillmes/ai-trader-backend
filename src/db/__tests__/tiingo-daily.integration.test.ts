@@ -78,6 +78,28 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(result.counts.conflict).toBe(1);
     expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE "securityId"=$1 AND "barStartAt"='2026-09-23'`, [aapl])).rows[0].n).toBe(0);
   });
+  it('bounds concurrent symbol fetches and counts out-of-order missing results', async () => {
+    const symbols = Array.from({ length: 20 }, (_, i) => `TEST${String(i).padStart(2, '0')}`);
+    const ids: number[] = [];
+    for (const symbol of symbols) {
+      ids.push((await db.query(`INSERT INTO "Security" (symbol,name,"assetType",enabled,"updatedAt") VALUES ($1,$1,'STOCK',false,now()) RETURNING id`, [symbol])).rows[0].id);
+    }
+    const largeRevision = (await db.query(`INSERT INTO "BreadthUniverseRevision" ("effectiveFrom","memberCount") VALUES ('2026-09-03',20) RETURNING id`)).rows[0].id;
+    for (const id of ids) await db.query(`INSERT INTO "BreadthUniverseRevisionMember" ("revisionId","securityId") VALUES ($1,$2)`, [largeRevision, id]);
+    let active = 0; let maximum = 0; const called: string[] = [];
+    const fetchDaily = async (symbol: string) => {
+      called.push(symbol); active++; maximum = Math.max(maximum, active);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      active--;
+      return symbol === symbols[0] ? [] : [row('2026-09-22')];
+    };
+    const result = await service.tiingoDailyBackfill({ revisionId: largeRevision, from: '2026-09-22', through: '2026-09-22', apply: true, now, fetchDaily });
+    expect(maximum).toBe(8);
+    expect(called.sort()).toEqual(symbols);
+    expect(result.counts).toMatchObject({ requested: 20, succeeded: 19, missing: 1, failed: 0, conflict: 0 });
+    const narrowed = await service.tiingoDailyBackfill({ revisionId: largeRevision, from: '2026-09-21', through: '2026-09-21', symbols: symbols.slice(0, 3), apply: true, now, fetchDaily: async () => [row('2026-09-21')] });
+    expect(narrowed.counts).toMatchObject({ requested: 3, succeeded: 3, missing: 0 });
+  });
   it('serializes jobs and purges Tiingo evidence only', async () => {
     let release!: () => void; const hold = new Promise<void>(resolve => { release = resolve; });
     let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
@@ -87,7 +109,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     finally { release(); }
     await first;
     const preview = await service.tiingoRetentionPurge();
-    expect(preview).toMatchObject({ preview: true, counts: { marketBars: 3, marketSplitEvents: 1 } });
+    expect(preview).toMatchObject({ preview: true, counts: { marketBars: 25, marketSplitEvents: 1 } });
     const applied = await service.tiingoRetentionPurge(true, 'DELETE-TIINGO-DATA');
     expect(applied.preview).toBe(false);
     expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE provider='TIINGO'`)).rows[0].n).toBe(0);

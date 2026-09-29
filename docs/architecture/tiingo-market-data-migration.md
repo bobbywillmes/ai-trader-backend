@@ -26,7 +26,7 @@ Phase 3 provides a sparse, header-driven CSV import where only explicit nonblank
 
 ## Transport and rollout
 
-The Tiingo REST client validates shape, price ranges, duplicate timestamps, dates, and split factors. It bounds request time and per-process concurrency, and keeps credentials and upstream bodies out of errors. Phase 4 daily ingestion adds a separate cross-process advisory lock, configurable conservative pacing, bounded transient retries, the 20:15 Eastern completion boundary, immutable writes, and bounded run events. The REST client itself remains disconnected from existing Massive consumers. Existing Massive configuration stays required. `TIINGO_API_TOKEN` is required only when Tiingo acquisition is applied.
+The Tiingo REST client validates shape, price ranges, duplicate timestamps, dates, and split factors. It bounds request time and per-process concurrency, and keeps credentials and upstream bodies out of errors. Phase 4 daily ingestion uses bounded symbol-level concurrency, defaulting to eight active jobs through `TIINGO_MAX_CONCURRENCY`. The same setting bounds REST requests. A separate cross-process advisory lock permits only one ingestion or purge run globally. Ingestion retains bounded transient retries, the 20:15 Eastern completion boundary, immutable writes, and bounded run events. The scheduled worker gates incomplete-coverage retries to once per hour across restarts. The REST client itself remains disconnected from existing Massive consumers. Existing Massive configuration stays required. `TIINGO_API_TOKEN` is required only when Tiingo acquisition is applied.
 
 ## Phase 4: paid-plan DAY_1 storage
 

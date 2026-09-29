@@ -7,6 +7,7 @@ import { HttpError } from '../errors/http-error.js';
 import { configuredTiingoRestClient, TiingoRequestError, tiingoSymbol, type TiingoBar } from '../integrations/tiingo/rest.client.js';
 import { addDays, datesBetween, etDate, etInstant, marketSession, validDate } from './market-calendar.js';
 import { calendarExceptions } from './market-calendar.service.js';
+import { runTiingoDailyPool } from './tiingo-daily-pool.js';
 
 export const TIINGO_DAY_1_TIMING_VERSION = 'TIINGO_DAY_1_2015_ET_V1';
 const lockKey = createHash('sha256').update('ai-trader:tiingo-daily-ingestion-and-purge').digest().readBigInt64BE(0).toString();
@@ -14,11 +15,6 @@ const pool = new Pool({ connectionString: env.DATABASE_URL, max: 2 });
 const summaryKey = 'tiingoDailyLastRun';
 const pausedKey = 'tiingoDailyIngestionPaused';
 const workerNextAttemptKey = 'tiingoDailyWorkerNextAttemptAt';
-export const tiingoDailyRequestIntervalMs = () => {
-  const rate = Number(process.env.TIINGO_DAILY_REQUESTS_PER_SECOND ?? '2');
-  if (!Number.isFinite(rate) || rate <= 0 || rate > 2) throw new Error('Invalid TIINGO_DAILY_REQUESTS_PER_SECOND (must be > 0 and <= 2).');
-  return Math.ceil(1000 / rate);
-};
 export async function withTiingoDailyLock<T>(work: () => Promise<T>): Promise<T> {
   const client = await pool.connect(); let held = false; let damaged = false;
   try {
@@ -116,16 +112,12 @@ export async function tiingoDailyBackfill(input: { revisionId: number; from: str
   if (!input.apply) return { preview, counts };
   return withTiingoDailyLock(async () => {
     if ((await prisma.setting.findUnique({ where: { key: pausedKey } }))?.value === 'true') throw new HttpError(409, 'Tiingo ingestion is paused after retention purge.');
-    const interval = tiingoDailyRequestIntervalMs(); let nextAt = 0;
     const client = input.fetchDaily ? null : configuredTiingoRestClient();
     await prisma.systemEvent.create({ data: { type: 'tiingo_daily_run_started', entityType: 'market_data', entityId: String(revision.id), severity: 'INFO', message: 'Tiingo daily ingestion started.', payloadJson: preview } });
-    for (const { member, missingDates } of work) {
-      if (!missingDates.length) continue;
+    await runTiingoDailyPool(work.filter(row => row.missingDates.length), env.TIINGO_MAX_CONCURRENCY, async ({ member, missingDates }) => {
       counts.requested++;
       let bars: TiingoBar[] | null = null;
       for (let attempt = 0; attempt < 4; attempt++) {
-        const wait = Math.max(0, nextAt - Date.now()); if (wait) await sleep(wait);
-        nextAt = Date.now() + interval;
         try { bars = await (input.fetchDaily ?? ((symbol, from, through) => client!.daily(symbol, from, through)))(tiingoSymbol(member.symbol), input.from, input.through); break; }
         catch (error) {
           const delay = retryDelay(error, attempt);
@@ -134,7 +126,7 @@ export async function tiingoDailyBackfill(input: { revisionId: number; from: str
           await sleep(delay);
         }
       }
-      if (!bars) continue;
+      if (!bars) return;
       const receivedAt = new Date();
       const returned = new Set<string>();
       for (const bar of bars) {
@@ -152,7 +144,7 @@ export async function tiingoDailyBackfill(input: { revisionId: number; from: str
         } catch { counts.conflict++; detail(counts, `${member.symbol} ${date}: canonical evidence conflict`); }
       }
       counts.missing += missingDates.filter(date => !returned.has(date)).length;
-    }
+    });
     const summary = { ...preview, counts, completedAt: new Date().toISOString() };
     await prisma.setting.upsert({ where: { key: summaryKey }, create: { key: summaryKey, value: JSON.stringify(summary) }, update: { value: JSON.stringify(summary) } });
     await prisma.systemEvent.create({ data: { type: 'tiingo_daily_run_completed', entityType: 'market_data', entityId: String(revision.id), severity: counts.conflict || counts.failed || counts.missing || counts.otherProvider ? 'ERROR' : 'INFO', message: 'Tiingo daily ingestion completed.', payloadJson: summary } });
