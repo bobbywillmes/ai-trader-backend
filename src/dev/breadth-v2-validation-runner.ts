@@ -5,7 +5,7 @@ import { prisma } from '../db/prisma.js';
 import { addDays, datesBetween, marketSession } from '../services/market-calendar.js';
 import { BREADTH_V2_CALIBRATION_VERSION, type CandidateDay, type Family } from './breadth-v2-calibration.js';
 import { runBreadthV2Calibration, type CalibrationInput } from './breadth-v2-calibration-runner.js';
-import { BREADTH_V2_VALIDATION_VERSION, FORWARD_HORIZONS, VALIDATION_FAMILIES, benchmarkOutcomes, candidateDisagreements, outcomeStatistics, regimeEntries, transitionEvents, type Benchmark, type BenchmarkBar, type BenchmarkCoverage, type BenchmarkSplit, type Outcome } from './breadth-v2-validation.js';
+import { BREADTH_V2_VALIDATION_VERSION, FORWARD_HORIZONS, VALIDATION_FAMILIES, benchmarkOutcomes, benchmarkSessionDate, candidateDisagreements, outcomeStatistics, regimeEntries, transitionEvents, type Benchmark, type BenchmarkBar, type BenchmarkCoverage, type BenchmarkSplit, type Outcome } from './breadth-v2-validation.js';
 
 type ValidationInput = CalibrationInput;
 const benchmarks = ['SPY', 'RSP'] as const;
@@ -42,8 +42,9 @@ export async function runBreadthV2Validation(input: ValidationInput) {
     const bySymbol = Object.fromEntries(benchmarks.map(symbol => {
       const id = securities.find(row => row.symbol === symbol)!.id;
       const selectedBars: BenchmarkBar[] = bars.filter(row => row.securityId === id).map(row => {
-        if (row.barStartAt.toISOString().slice(11) !== '00:00:00.000Z' || row.adjustmentMode !== 'UNADJUSTED') throw new Error(`Invalid canonical ${symbol} DAY_1 benchmark evidence.`);
-        return { date: iso(row.barStartAt), close: row.close.toString(), splitFactor: row.splitFactor?.toString() ?? null, provider: row.provider };
+        if (row.adjustmentMode !== 'UNADJUSTED') throw new Error(`Invalid canonical ${symbol} DAY_1 benchmark adjustment mode.`);
+        const date = benchmarkSessionDate(row.barStartAt, row.provider);
+        return { date, close: row.close.toString(), splitFactor: row.splitFactor?.toString() ?? null, provider: row.provider };
       });
       const selectedEvents: BenchmarkSplit[] = events.filter(row => row.securityId === id).map(row => ({ date: iso(row.executionDate), factor: row.splitFactor.toString(), provider: row.provider }));
       const selectedCoverages: BenchmarkCoverage[] = coverages.filter(row => row.securityId === id).map(row => ({ from: iso(row.fromDate), through: iso(row.throughDate), provider: row.provider }));

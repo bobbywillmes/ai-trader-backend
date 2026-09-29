@@ -4,6 +4,7 @@ import { mkdir, readFile, readdir, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { Client } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { etInstant } from '../../services/market-calendar.js';
 
 const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.DATABASE_URL;
 (enabled ? describe : describe.skip)('BREADTH_V2 read-only PostgreSQL research', () => {
@@ -27,7 +28,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     for (const [symbol, enabled] of [['AAPL', false], ['BBB', true], ['CCC', false]] as const) ids.push((await db.query(`INSERT INTO "Security" (symbol,name,"assetType",enabled,"updatedAt") VALUES ($1,$1,'STOCK',$2,now()) RETURNING id`, [symbol, enabled])).rows[0].id);
     revisionId = (await db.query(`INSERT INTO "BreadthUniverseRevision" ("effectiveFrom","memberCount") VALUES ('2026-09-01',3) RETURNING id`)).rows[0].id;
     for (const id of ids) await db.query(`INSERT INTO "BreadthUniverseRevisionMember" ("revisionId","securityId") VALUES ($1,$2)`, [revisionId, id]);
-    const add = (id: number, date: string, close: number, factor: number | null, provider: string) => db.query(`INSERT INTO "MarketBar" ("securityId",timeframe,"barStartAt",open,high,low,close,volume,"splitFactor",provider,"adjustmentMode","receivedAt") VALUES ($1,'DAY_1',$2,$3,$3,$3,$3,1000,$4,$5,'UNADJUSTED',now())`, [id, date, close, factor, provider]);
+    const add = (id: number, date: string, close: number, factor: number | null, provider: string, canonicalMassiveTimestamp = false) => db.query(`INSERT INTO "MarketBar" ("securityId",timeframe,"barStartAt",open,high,low,close,volume,"splitFactor",provider,"adjustmentMode","receivedAt") VALUES ($1,'DAY_1',$2,$3,$3,$3,$3,1000,$4,$5,'UNADJUSTED',now())`, [id, canonicalMassiveTimestamp ? etInstant(date, 0).toISOString() : date, close, factor, provider]);
     for (let date = new Date('2026-08-20T00:00:00Z'); date < new Date('2026-09-22T00:00:00Z'); date.setUTCDate(date.getUTCDate() + 1)) {
       if (date.getUTCDay() !== 0 && date.getUTCDay() !== 6) await add(ids[0]!, date.toISOString().slice(0, 10), 100, 1, 'TIINGO');
     }
@@ -41,7 +42,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await add(ids[1]!, '2026-09-25', 99, 1, 'TIINGO');
     for (const [symbol, closes] of [['SPY', [500, 505, 510]], ['RSP', [200, 201, 202]]] as const) {
       const id = (await db.query(`INSERT INTO "Security" (symbol,name,"assetType",enabled,"updatedAt") VALUES ($1,$1,'ETF',false,now()) RETURNING id`, [symbol])).rows[0].id;
-      for (const [i, date] of ['2026-09-23', '2026-09-24', '2026-09-25'].entries()) await add(id, date, closes[i]!, null, 'MASSIVE');
+      for (const [i, date] of ['2026-09-23', '2026-09-24', '2026-09-25'].entries()) await add(id, date, closes[i]!, null, 'MASSIVE', true);
       await db.query(`INSERT INTO "MarketSplitCoverage" ("securityId","fromDate","throughDate",provider,"receivedAt") VALUES ($1,'2026-09-23','2026-09-25','MASSIVE',now())`, [id]);
     }
     initialBarCount = (await db.query(`SELECT count(*)::int n FROM "MarketBar"`)).rows[0].n;
@@ -115,6 +116,8 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(one.summary.benchmarkSplitEvidence).toEqual({ TIINGO: 'MarketBar.splitFactor', MASSIVE: 'MarketSplitEvent plus MarketSplitCoverage' });
     expect(one.summary.canonicalInputHash).toBe(frozen.canonicalInputHash);
     expect(one.summary.validationFrom).toBe('2026-09-25');
+    const spyStored = await db.query(`SELECT "barStartAt" FROM "MarketBar" WHERE "securityId"=(SELECT id FROM "Security" WHERE symbol='SPY') ORDER BY "barStartAt" LIMIT 1`);
+    expect(spyStored.rows[0].barStartAt.toISOString()).toBe('2026-09-23T04:00:00.000Z');
     for (const file of ['validation-summary.json', 'benchmark-outcomes.csv', 'state-outcomes.csv', 'regime-entry-outcomes.csv', 'transition-outcomes.csv', 'candidate-disagreements.csv', 'disagreement-outcomes.csv', 'pairwise-state-separation.csv', 'trend-context.csv', 'volatility-context.csv']) expect(await readFile(join(root, 'validation-one', file), 'utf8')).toBe(await readFile(join(root, 'validation-two', file), 'utf8'));
     expect(await readFile(join(root, 'validation-one', 'benchmark-outcomes.csv'), 'utf8')).toContain('2026-09-23,SPY,MASSIVE,1,0.01');
     expect((await db.query(`SELECT count(*)::int n FROM "MarketBar"`)).rows[0].n).toBe(initialBarCount);

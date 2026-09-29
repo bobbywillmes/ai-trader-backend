@@ -1,13 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import { datesBetween, marketSession } from '../services/market-calendar.js';
 import { buildCandidateDays, deriveBands, type CandidateDay, type Metric } from './breadth-v2-calibration.js';
-import { benchmarkOutcomes, candidateDisagreements, outcomeStatistics, regimeEntries, transitionEvents, type BenchmarkBar } from './breadth-v2-validation.js';
+import { benchmarkOutcomes, benchmarkSessionDate, candidateDisagreements, outcomeStatistics, regimeEntries, transitionEvents, type BenchmarkBar } from './breadth-v2-validation.js';
 
 const sessions = Array.from({ length: 22 }, (_, i) => `s${String(i).padStart(2, '0')}`);
 const bars = (closes: readonly number[], splitAt: Record<number, string> = {}): BenchmarkBar[] => closes.map((close, i) => ({ date: sessions[i]!, close: String(close), splitFactor: splitAt[i] ?? '1', provider: 'TIINGO' }));
 const day = (sessionDate: string, family: CandidateDay['family'], state: CandidateDay['effectiveState'], transition: string | null = null): CandidateDay => ({ sessionDate, family, variant: 'MILD_POSITIVE_MIXED_CONFIRMATION', values: { DAY_1: null, DAY_5: null, DAY_20: null }, horizonStates: { DAY_1: null, DAY_5: null, DAY_20: null }, rawState: state, effectiveState: state, transition });
 
 describe('BREADTH_V2 Phase 5C validation arithmetic', () => {
+  it('accepts Massive New York midnight in EST and EDT and retains Tiingo UTC midnight', () => {
+    expect(benchmarkSessionDate(new Date('2026-01-15T05:00:00.000Z'), 'MASSIVE')).toBe('2026-01-15');
+    expect(benchmarkSessionDate(new Date('2026-07-15T04:00:00.000Z'), 'MASSIVE')).toBe('2026-07-15');
+    expect(benchmarkSessionDate(new Date('2026-01-15T00:00:00.000Z'), 'TIINGO')).toBe('2026-01-15');
+    expect(() => benchmarkSessionDate(new Date('2026-01-15T04:00:00.000Z'), 'MASSIVE')).toThrow('New York-midnight');
+    expect(() => benchmarkSessionDate(new Date('2026-07-15T05:00:00.000Z'), 'MASSIVE')).toThrow('New York-midnight');
+    expect(() => benchmarkSessionDate(new Date('2026-07-15T04:30:00.000Z'), 'MASSIVE')).toThrow('New York-midnight');
+    expect(() => benchmarkSessionDate(new Date('2026-07-15T04:00:00.000Z'), 'TIINGO')).toThrow('UTC-midnight');
+  });
+  it('rejects duplicate logical benchmark sessions across providers', () => {
+    const massive = { date: benchmarkSessionDate(new Date('2026-07-15T04:00:00.000Z'), 'MASSIVE'), close: '100', splitFactor: null, provider: 'MASSIVE' as const };
+    const tiingo = { date: benchmarkSessionDate(new Date('2026-07-15T00:00:00.000Z'), 'TIINGO'), close: '100', splitFactor: '1', provider: 'TIINGO' as const };
+    expect(() => benchmarkOutcomes(['2026-07-15'], 'SPY', [massive, tiingo], [], [])).toThrow('Duplicate canonical benchmark bar');
+  });
   it('uses exact forward market-session offsets, split normalization, and complete windows', () => {
     const prices = Array.from({ length: 22 }, (_, i) => i < 5 ? 100 : i < 10 ? 50 : 25);
     const outcomes = benchmarkOutcomes(sessions, 'SPY', bars(prices, { 5: '2', 10: '2' }), [], []);

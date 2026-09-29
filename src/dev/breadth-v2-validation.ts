@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { etDate, etInstant } from '../services/market-calendar.js';
 import { mean, median, percentile } from './breadth-statistics.js';
 import type { CandidateDay, Family } from './breadth-v2-calibration.js';
 
@@ -13,6 +14,17 @@ export type BenchmarkCoverage = { from: string; through: string; provider: 'MASS
 export type Outcome = { sessionDate: string; benchmark: Benchmark; horizon: ForwardHorizon; provider: BenchmarkBar['provider'] | null; forwardReturn: number | null; forwardMaxDrawdown: number | null; forwardMaxGain: number | null; unavailableReason: string | null };
 const Decimal = Prisma.Decimal.clone({ precision: 80 });
 const ordered = (values: readonly number[]) => [...values].sort((a, b) => a - b);
+
+/** Canonical DAY_1 session identity depends on the provider's stored timestamp convention. */
+export function benchmarkSessionDate(barStartAt: Date, provider: BenchmarkBar['provider']): string {
+  if (provider === 'TIINGO') {
+    if (barStartAt.toISOString().slice(11) !== '00:00:00.000Z') throw new Error('Invalid Tiingo DAY_1 UTC-midnight timestamp.');
+    return barStartAt.toISOString().slice(0, 10);
+  }
+  const sessionDate = etDate(barStartAt);
+  if (barStartAt.getTime() !== etInstant(sessionDate, 0).getTime()) throw new Error('Invalid Massive DAY_1 New York-midnight timestamp.');
+  return sessionDate;
+}
 
 /** Returns use exact expected market-session offsets. A provider seam or unproven split interval invalidates the entire window. */
 export function benchmarkOutcomes(sessions: readonly string[], benchmark: Benchmark, bars: readonly BenchmarkBar[], events: readonly BenchmarkSplit[], coverages: readonly BenchmarkCoverage[]): Outcome[] {
