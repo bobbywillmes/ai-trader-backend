@@ -10,6 +10,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   const originalUrl = process.env.DATABASE_URL;
   let admin: Client; let db: Client;
   let service: typeof import('../../services/tiingo-daily.service.js');
+  let TiingoRequestError: typeof import('../../integrations/tiingo/rest.client.js').TiingoRequestError;
   let prismaModule: typeof import('../prisma.js');
   let revisionId: number;
   beforeAll(async () => {
@@ -24,6 +25,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     revisionId = (await db.query(`INSERT INTO "BreadthUniverseRevision" ("effectiveFrom","memberCount") VALUES ('2026-09-01',2) RETURNING id`)).rows[0].id;
     await db.query(`INSERT INTO "BreadthUniverseRevisionMember" ("revisionId","securityId") VALUES ($1,$2),($1,$3)`, [revisionId, aapl, brk]);
     process.env.DATABASE_URL = url.toString();
+    TiingoRequestError = (await import('../../integrations/tiingo/rest.client.js')).TiingoRequestError;
     service = await import('../../services/tiingo-daily.service.js');
     prismaModule = await import('../prisma.js');
   }, 120_000);
@@ -100,19 +102,88 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const narrowed = await service.tiingoDailyBackfill({ revisionId: largeRevision, from: '2026-09-21', through: '2026-09-21', symbols: symbols.slice(0, 3), apply: true, now, fetchDaily: async () => [row('2026-09-21')] });
     expect(narrowed.counts).toMatchObject({ requested: 3, succeeded: 3, missing: 0 });
   });
+  it('persists empty-session retries, processes older due work, and resolves a terminal manual recheck', async () => {
+    const securityId = (await db.query(`INSERT INTO "Security" (symbol,name,"assetType",enabled,"updatedAt") VALUES ('NHP','NHP','STOCK',false,now()) RETURNING id`)).rows[0].id;
+    const revision = (await db.query(`INSERT INTO "BreadthUniverseRevision" ("effectiveFrom","memberCount") VALUES ('2026-09-05',1) RETURNING id`)).rows[0].id;
+    await db.query(`INSERT INTO "BreadthUniverseRevisionMember" ("revisionId","securityId") VALUES ($1,$2)`, [revision, securityId]);
+    const session = '2026-09-24';
+    const firstAt = new Date('2026-09-28T21:00:00Z');
+    const empty = async () => [];
+    const first = await service.tiingoDailyBackfill({ revisionId: revision, from: session, through: session, apply: true, now: firstAt, fetchDaily: empty });
+    expect(first.counts).toMatchObject({ requested: 1, missing: 1, retryScheduled: 1, failed: 0 });
+    const state = async () => (await db.query(`SELECT status,"attemptCount","nextAttemptAt","resolvedAt" FROM "TiingoDailyObservationState" WHERE "securityId"=$1 AND "sessionDate"=$2`, [securityId, session])).rows[0];
+    expect(await state()).toMatchObject({ status: 'RETRYING', attemptCount: 1, nextAttemptAt: new Date('2026-09-28T22:00:00Z') });
+    let calls = 0;
+    const early = await service.tiingoDailyBackfill({ revisionId: revision, from: session, through: session, apply: true, now: new Date('2026-09-28T21:59:59Z'), fetchDaily: async () => { calls++; return []; } });
+    expect(early.preview).toMatchObject({ expectedRequests: 0, deferredRetries: 1 });
+    expect(calls).toBe(0);
+    await service.tiingoDailyBackfill({ revisionId: revision, from: session, through: session, apply: true, now: new Date('2026-09-28T22:00:00Z'), fetchDaily: empty });
+    expect(await state()).toMatchObject({ status: 'RETRYING', attemptCount: 2, nextAttemptAt: new Date('2026-09-29T02:00:00Z') });
+    const workerCalls: string[] = [];
+    const third = await service.syncTiingoDaily(new Date('2026-09-29T02:00:00Z'), async (_symbol, from) => { workerCalls.push(from); return from === session ? [] : [row(from)]; });
+    expect(third.notDue).toBe(false);
+    expect(workerCalls).toContain(session);
+    expect(workerCalls).toContain('2026-09-28');
+    expect(await state()).toMatchObject({ status: 'RETRYING', attemptCount: 3, nextAttemptAt: new Date('2026-09-30T02:00:00Z') });
+    await service.syncTiingoDaily(new Date('2026-09-30T02:00:00Z'), async (_symbol, from) => from === session ? [] : [row(from)]);
+    expect(await state()).toMatchObject({ status: 'NO_EOD_COVERAGE', attemptCount: 4, nextAttemptAt: null });
+    const terminal = await service.tiingoDailyBackfill({ revisionId: revision, from: session, through: session, now: new Date('2026-10-01T02:00:00Z'), fetchDaily: async () => { throw new Error('preview called provider'); } });
+    expect(terminal.preview).toMatchObject({ expectedRequests: 0, noEodCoverage: 1 });
+    const terminalWorkerCalls: string[] = [];
+    await service.syncTiingoDaily(new Date('2026-10-01T02:00:00Z'), async (_symbol, from) => { terminalWorkerCalls.push(from); return [row(from)]; });
+    expect(terminalWorkerCalls).not.toContain(session);
+    const recheckPreview = await service.tiingoDailyBackfill({ revisionId: revision, from: session, through: session, retryTerminal: true, now: new Date('2026-10-01T02:00:00Z') });
+    expect(recheckPreview.preview.expectedRequests).toBe(1);
+    await service.tiingoDailyBackfill({ revisionId: revision, from: session, through: session, retryTerminal: true, apply: true, now: new Date('2026-10-01T02:00:00Z'), fetchDaily: empty });
+    expect(await state()).toMatchObject({ status: 'NO_EOD_COVERAGE', attemptCount: 4, nextAttemptAt: null });
+    const resolved = await service.tiingoDailyBackfill({ revisionId: revision, from: session, through: session, retryTerminal: true, apply: true, now: new Date('2026-10-01T03:00:00Z'), fetchDaily: async () => [row(session)] });
+    expect(resolved.counts.resolvedPreviouslyMissing).toBe(1);
+    expect(await state()).toMatchObject({ status: 'RESOLVED', attemptCount: 4, nextAttemptAt: null, resolvedAt: expect.any(Date) });
+    const failed = await service.tiingoDailyBackfill({ revisionId: revision, from: '2026-09-25', through: '2026-09-25', apply: true, now: new Date('2026-10-01T03:00:00Z'), fetchDaily: async () => { throw new TiingoRequestError(429, 0); } });
+    expect(failed.counts).toMatchObject({ failed: 1, retries: 3, throttled: 4, missing: 0 });
+    expect((await db.query(`SELECT count(*)::int n FROM "TiingoDailyObservationState" WHERE "securityId"=$1 AND "sessionDate"='2026-09-25'`, [securityId])).rows[0].n).toBe(0);
+    await service.tiingoDailyBackfill({ revisionId: revision, from: '2026-09-23', through: '2026-09-23', apply: true, now: new Date('2026-10-01T03:00:00Z'), fetchDaily: empty });
+    const retryResolved = await service.tiingoDailyBackfill({ revisionId: revision, from: '2026-09-23', through: '2026-09-23', apply: true, now: new Date('2026-10-01T04:00:00Z'), fetchDaily: async () => [row('2026-09-23')] });
+    expect(retryResolved.counts.resolvedPreviouslyMissing).toBe(1);
+    expect((await db.query(`SELECT status FROM "TiingoDailyObservationState" WHERE "securityId"=$1 AND "sessionDate"='2026-09-23'`, [securityId])).rows[0].status).toBe('RESOLVED');
+  });
+  it('reports latest-session untracked, retrying, due, and terminal coverage separately', async () => {
+    const at = new Date('2026-09-28T12:00:00Z');
+    const securityId = (await db.query(`SELECT id FROM "Security" WHERE symbol='NHP'`)).rows[0].id;
+    expect(await service.tiingoDailyStatus(at)).toMatchObject({ memberCount: 1, latestEligibleSessionDate: '2026-09-25', missing: 1, untrackedMissing: 1, retrying: 0, dueRetries: 0, noEodCoverage: 0 });
+    await db.query(`INSERT INTO "TiingoDailyObservationState" ("securityId","sessionDate",status,"attemptCount","firstAttemptAt","lastAttemptAt","nextAttemptAt","reasonCode","updatedAt") VALUES ($1,'2026-09-25','RETRYING',1,$2,$2,'2026-09-28T13:00:00Z','PROVIDER_NO_EOD_BAR',now())`, [securityId, at]);
+    expect(await service.tiingoDailyStatus(at)).toMatchObject({ missing: 1, untrackedMissing: 0, retrying: 1, dueRetries: 0, noEodCoverage: 0 });
+    await db.query(`UPDATE "TiingoDailyObservationState" SET "nextAttemptAt"='2026-09-28T11:00:00Z' WHERE "securityId"=$1 AND "sessionDate"='2026-09-25'`, [securityId]);
+    expect(await service.tiingoDailyStatus(at)).toMatchObject({ retrying: 1, dueRetries: 1 });
+    await db.query(`UPDATE "TiingoDailyObservationState" SET status='NO_EOD_COVERAGE',"nextAttemptAt"=NULL WHERE "securityId"=$1 AND "sessionDate"='2026-09-25'`, [securityId]);
+    expect(await service.tiingoDailyStatus(at)).toMatchObject({ missing: 1, untrackedMissing: 0, retrying: 0, dueRetries: 0, noEodCoverage: 1 });
+  });
+  it('enforces observation-state attempt and status invariants in PostgreSQL', async () => {
+    const securityId = (await db.query(`SELECT id FROM "Security" WHERE symbol='NHP'`)).rows[0].id;
+    const insert = (status: string, attempts: number, next: string | null, resolved: string | null) => db.query(`INSERT INTO "TiingoDailyObservationState" ("securityId","sessionDate",status,"attemptCount","firstAttemptAt","lastAttemptAt","nextAttemptAt","resolvedAt","reasonCode","updatedAt") VALUES ($1,'2026-09-21',$2,$3,now(),now(),$4,$5,'TEST',now())`, [securityId, status, attempts, next, resolved]);
+    await expect(insert('RETRYING', 0, '2026-09-28T12:00:00Z', null)).rejects.toThrow();
+    await expect(insert('RETRYING', 1, null, null)).rejects.toThrow();
+    await expect(insert('NO_EOD_COVERAGE', 4, '2026-09-28T12:00:00Z', null)).rejects.toThrow();
+    await expect(insert('RESOLVED', 1, null, null)).rejects.toThrow();
+  });
   it('serializes jobs and purges Tiingo evidence only', async () => {
     let release!: () => void; const hold = new Promise<void>(resolve => { release = resolve; });
     let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
     const first = service.withTiingoDailyLock(async () => { entered(); await hold; });
     await started;
-    try { await expect(service.withTiingoDailyLock(async () => {})).rejects.toMatchObject({ statusCode: 409 }); }
+    try {
+      await expect(service.withTiingoDailyLock(async () => {})).rejects.toMatchObject({ statusCode: 409 });
+      const revision = (await db.query(`SELECT id FROM "BreadthUniverseRevision" WHERE "effectiveFrom"='2026-09-05'`)).rows[0].id;
+      await expect(service.tiingoDailyBackfill({ revisionId: revision, from: '2026-09-24', through: '2026-09-24', apply: true, now, fetchDaily: async () => { throw new Error('lock must prevent request'); } })).rejects.toMatchObject({ statusCode: 409 });
+    }
     finally { release(); }
     await first;
     const preview = await service.tiingoRetentionPurge();
-    expect(preview).toMatchObject({ preview: true, counts: { marketBars: 25, marketSplitEvents: 1 } });
+    expect(preview).toMatchObject({ preview: true, counts: { marketBars: 30, marketSplitEvents: 1, observationStates: 5 } });
     const applied = await service.tiingoRetentionPurge(true, 'DELETE-TIINGO-DATA');
     expect(applied.preview).toBe(false);
     expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE provider='TIINGO'`)).rows[0].n).toBe(0);
+    expect((await db.query(`SELECT count(*)::int n FROM "TiingoDailyObservationState"`)).rows[0].n).toBe(0);
     expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE provider='MASSIVE'`)).rows[0].n).toBe(1);
     expect((await db.query(`SELECT count(*)::int n FROM "MarketSplitEvent" WHERE provider='MASSIVE'`)).rows[0].n).toBe(1);
     expect((await db.query(`SELECT value FROM "Setting" WHERE key='tiingoDailyIngestionPaused'`)).rows[0].value).toBe('true');

@@ -768,6 +768,7 @@ Table TradingLifecycleExerciseTarget {
 
 Table Security {
   marketBars MarketBar [not null]
+  tiingoDailyObservationStates TiingoDailyObservationState [not null]
   universeMemberships SecurityUniverseMembership [not null]
   breadthRevisionMembers BreadthUniverseRevisionMember [not null]
   marketSplitEvents MarketSplitEvent [not null]
@@ -1036,6 +1037,26 @@ Table MarketCalendarException {
   closeTimeMinutesEt Int
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
+}
+
+Table TiingoDailyObservationState {
+  id Int [pk, increment]
+  securityId Int [not null]
+  sessionDate DateTime [not null]
+  status TiingoDailyObservationStatus [not null]
+  attemptCount Int [not null]
+  firstAttemptAt DateTime [not null]
+  lastAttemptAt DateTime [not null]
+  nextAttemptAt DateTime
+  resolvedAt DateTime
+  reasonCode String [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  security Security [not null]
+
+  indexes {
+    (securityId, sessionDate) [unique]
+  }
 }
 
 Table MarketBar {
@@ -1996,6 +2017,12 @@ Enum MarketBarAdjustmentMode {
   UNADJUSTED
 }
 
+Enum TiingoDailyObservationStatus {
+  RETRYING
+  NO_EOD_COVERAGE
+  RESOLVED
+}
+
 Enum MarketRegimeDimension {
   TREND
   VOLATILITY
@@ -2298,6 +2325,8 @@ Ref: OperationalAttentionSystemEvent.systemEventId > SystemEvent.id [delete: Res
 Ref: TradingAccountWorkerHealthState.tradingAccountId > TradingAccount.id [delete: Cascade]
 
 Ref: AlpacaApiUsageBucket.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: TiingoDailyObservationState.securityId > Security.id [delete: Restrict]
 
 Ref: MarketBar.securityId > Security.id [delete: Restrict]
 

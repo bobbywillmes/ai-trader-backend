@@ -8,11 +8,12 @@ export async function runTiingoDailyWorker(): Promise<WorkerTickResult> {
   running = true;
   try {
     const result = await syncTiingoDaily();
-    if (result.notDue) return { outcome: 'skipped', skipReason: 'not_due' };
-    if (result.status.missing || result.status.existingOtherProvider || result.result?.counts.conflict || result.result?.counts.failed) {
-      throw new Error(`Tiingo daily incomplete: missing=${result.status.missing} otherProvider=${result.status.existingOtherProvider} conflicts=${result.result?.counts.conflict ?? 0} providerFailures=${result.result?.counts.failed ?? 0}`);
+    if (result.status.existingOtherProvider || result.result?.counts.otherProvider || result.result?.counts.conflict || result.result?.counts.failed) {
+      throw new Error(`Tiingo daily operational failure: otherProvider=${result.status.existingOtherProvider} conflicts=${result.result?.counts.conflict ?? 0} providerFailures=${result.result?.counts.failed ?? 0}`);
     }
-    return { outcome: result.result?.counts.succeeded ? 'success' : 'idle', workSucceeded: !!result.result?.counts.succeeded };
+    if (result.notDue) return { outcome: 'skipped', skipReason: 'not_due' };
+    const workSucceeded = !!(result.result?.counts.succeeded || result.result?.counts.retryScheduled || result.result?.counts.terminalizedNoEodCoverage);
+    return { outcome: workSucceeded ? 'success' : 'idle', workSucceeded };
   } catch (error) {
     if (error instanceof HttpError && error.statusCode === 409) return { outcome: 'skipped', skipReason: 'already_running' };
     throw error;

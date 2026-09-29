@@ -1195,6 +1195,7 @@ enum AssetType {
 
 model Security {
   marketBars MarketBar[]
+  tiingoDailyObservationStates TiingoDailyObservationState[]
   universeMemberships SecurityUniverseMembership[]
   breadthRevisionMembers BreadthUniverseRevisionMember[]
   marketSplitEvents MarketSplitEvent[]
@@ -1595,6 +1596,32 @@ enum MarketDataProvider {
 
 enum MarketBarAdjustmentMode {
   UNADJUSTED
+}
+
+enum TiingoDailyObservationStatus {
+  RETRYING
+  NO_EOD_COVERAGE
+  RESOLVED
+}
+
+// Mutable acquisition state for expected Tiingo EOD bars that were once absent.
+model TiingoDailyObservationState {
+  id             Int                          @id @default(autoincrement())
+  securityId     Int
+  sessionDate    DateTime                     @db.Date
+  status         TiingoDailyObservationStatus
+  attemptCount   Int
+  firstAttemptAt DateTime                     @db.Timestamptz(3)
+  lastAttemptAt  DateTime                     @db.Timestamptz(3)
+  nextAttemptAt  DateTime?                    @db.Timestamptz(3)
+  resolvedAt     DateTime?                    @db.Timestamptz(3)
+  reasonCode     String
+  createdAt      DateTime                     @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime                     @updatedAt @db.Timestamptz(3)
+  security       Security                     @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([securityId, sessionDate])
+  @@index([status, nextAttemptAt])
 }
 
 // Accepted provider observations; PostgreSQL rejects updates and deletes.
