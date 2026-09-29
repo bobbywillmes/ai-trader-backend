@@ -1,4 +1,5 @@
-import { BREADTH_STATES, advanceBreadth, aggregateStructuralV3, applyMildDeteriorationConfirmation, type BreadthState } from '../services/breadth-calculation.js';
+import { BREADTH_STATES, advanceBreadth, type BreadthState } from '../services/breadth-calculation.js';
+import { aggregateBreadthV2Structural, classifyBreadthV2Share, replayBreadthV2MildConfirmation } from '../services/breadth-v2.definition.js';
 import { mean, median, pearsonCorrelation, percentile } from './breadth-statistics.js';
 import { HORIZONS, type BreadthCounts } from './breadth-v2-calculation.js';
 
@@ -28,10 +29,7 @@ export function deriveBands(metrics: readonly Metric[], calibrationThrough: stri
 }
 
 export function classifyShare(value: number | null, band: Band): BreadthState | null {
-  if (value === null) return null;
-  if (value <= band.lower) return 'NEGATIVE';
-  if (value >= band.upper) return 'POSITIVE';
-  return 'MIXED';
+  return classifyBreadthV2Share(value, band);
 }
 
 export function validationPercentile(sortedValues: readonly number[], threshold: number): number | null {
@@ -56,12 +54,12 @@ export function buildCandidateDays(metrics: readonly Metric[], bands: Bands): Ca
       const metricsForDate = byDate.get(sessionDate)!;
       const values = Object.fromEntries(horizonNames.map(h => [h, metricsForDate.get(h)!.advanceShare])) as Record<HorizonName, number | null>;
       const horizonStates = Object.fromEntries(horizonNames.map(h => [h, classifyShare(values[h], bands[family][h])])) as Record<HorizonName, BreadthState | null>;
-      const rawState = horizonNames.some(h => horizonStates[h] === null) ? null : aggregateStructuralV3(horizonStates.DAY_1!, horizonStates.DAY_5!, horizonStates.DAY_20!);
+      const rawState = aggregateBreadthV2Structural(horizonStates.DAY_1, horizonStates.DAY_5, horizonStates.DAY_20);
       return { sessionDate, values, horizonStates, rawState };
     });
     for (const variant of HYSTERESIS_VARIANTS) {
       let history: { effectiveState: BreadthState | null; confirmation: number } = { effectiveState: null, confirmation: 0 };
-      const mild = variant === 'MILD_POSITIVE_MIXED_CONFIRMATION' ? applyMildDeteriorationConfirmation(base.map(row => row.rawState)) : null;
+      const mild = variant === 'MILD_POSITIVE_MIXED_CONFIRMATION' ? replayBreadthV2MildConfirmation(base.map(row => row.rawState)) : null;
       for (let i = 0; i < base.length; i++) {
         const row = base[i]!;
         const previous: BreadthState | null = history.effectiveState;
