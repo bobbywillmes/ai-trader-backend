@@ -1,0 +1,47 @@
+# BREADTH_V2 Phase 5A research
+
+This command reads persisted Tiingo `DAY_1` evidence for one explicitly selected frozen `BreadthUniverseRevision`. It writes local research artifacts only. It does not call Tiingo, publish `MarketBreadthObservation`, update Market Regime, or affect trading and Signals. `Security.enabled` does not filter the revision. This is a **current-universe historical backcast** and therefore survivorship-biased; it is not point-in-time constituent reconstruction.
+
+## Acquire history separately
+
+Use the existing Phase 4 backfill preview before every apply. The recommended research window begins around `2021-01-04` and runs through the latest completed session. Keep every request range at or below the existing 370-day limit. Calendar-year chunks work, including leap-year 2024 (366 days):
+
+First apply and verify the reviewed 2021–2026 market-calendar exceptions with `npm.cmd run calendar:bootstrap -- --apply` (see `docs/development/volatility-v1-acceptance.md`). Extend reviewed calendar evidence for any later research years. Missing closure rows would otherwise make holidays look like expected sessions and shift the exact 1/5/20-session anchors.
+
+```powershell
+npm.cmd run market-data:tiingo:daily:backfill -- --revision=2 --from=2021-01-04 --through=2021-12-31
+npm.cmd run market-data:tiingo:daily:backfill -- --revision=2 --from=2021-01-04 --through=2021-12-31 --apply
+# Continue with 2022-01-01..2022-12-31, 2023, 2024, 2025, then 2026-01-01..latest completed session.
+```
+
+Revision 2 and its current 2,877 members are an expected operator choice, not a code default. Inspect the selected frozen revision and each preview. Do not launch all chunks automatically. [Tiingo's current Power pricing](https://www.tiingo.com/account/billing/pricing) lists 10,000 requests per hour, 100,000 per day, and 40 GB monthly bandwidth; [Tiingo's API documentation](https://www.tiingo.com/documentation/general) says hourly and daily limits reset on their respective schedules. Check the account's actual entitlement and avoid enough chunks in one hourly window to exceed it. Retrying missing observations and ordinary daily sync also consume requests.
+
+## Run the read-only analysis
+
+```powershell
+npm.cmd run research:breadth-v2 -- --revision=2 --from=2021-01-04 --through=2026-09-25
+```
+
+Optional `--output=DIR` selects a new, nonexistent directory. By default, artifacts go under ignored `node_modules/.cache/breadth-v2/revision-ID/` in a timestamped run directory. A run is complete only when `summary.json` exists. The files are:
+
+- `summary.json`: revision, evidence hashes, count/distribution summaries, and run metadata.
+- `session-breadth.csv`: strict 1/5/20-session breadth metrics.
+- `coverage-by-session.csv` and `coverage-by-security.csv`: Tiingo presence and missing-state breakdowns.
+- `gap-analysis.csv`: actual runs of missing expected sessions by Security.
+- `bridge-candidates.csv`: exploratory exclusions potentially recovered with at most one or two missing sessions.
+
+The command uses a repeatable-read, read-only database transaction and batches canonical bars by 100 Securities. It reads no provider response bodies. A frozen population hash and ordered canonical-input hash identify the evidence used. Analytical CSV content is deterministic for the same snapshot and parameters; `runtime.generatedAt` and the default directory name identify the run time.
+
+## Measurement contract
+
+The canonical market calendar defines sessions, including reviewed closures and early closes. For target session T, `DAY_1`, `DAY_5`, and `DAY_20` anchors are exactly 1, 5, and 20 market sessions earlier. Strict eligibility requires real Tiingo raw/unadjusted bars at target and exact anchor **and** every intervening session, because an absent intervening bar leaves its split factor unknown. This is a conservative split-evidence interpretation. An existing Massive canonical bar is a collision/missing Tiingo observation, never a fallback.
+
+The comparison multiplies Tiingo split factors after the anchor through T; `targetRawClose × cumulativeSplitFactor` is compared to `anchorRawClose` with high-precision Decimal arithmetic. This is equivalent to comparing target close with `anchorRawClose ÷ cumulativeSplitFactor` and avoids rounding the anchor before equality checks. Exact equality is `UNCHANGED` with no percentage tolerance. `advanceShare = advancing / (advancing + declining)` and `netBreadth = (advancing - declining) / (advancing + declining)`; both are unavailable when the directional denominator is zero. `coverageRatio = eligibleCount / universeCount`. Unchanged names are eligible but outside directional ratios.
+
+Bridge candidates compare two **real** Tiingo bars. A candidate may reach an earlier actual anchor or cross an intervening missing session, up to one or two missing sessions. The CSV records target, expected anchor, actual anchor, gap length, and observed-factor direction. Missing sessions have **unknown split factors**, so these are potential recoveries only, not strictly verified comparable closes or production eligibility. No bar is synthesized or carried forward. Phase 5B can evaluate split-coverage evidence and a gap policy before any production use.
+
+`summary.json` describes advanceShare and netBreadth distributions separately for each horizon, including tails and their dates. Percentiles use linear interpolation at rank `p × (n - 1)`; standard deviation uses the sample (`n - 1`) convention. Session and Security coverage bands are cumulative except the `<99%` band. The report chooses no thresholds, labels no market state, and changes no BREADTH_V1/V2 publisher behavior.
+
+## Existing evidence model mismatch
+
+`MarketBreadthObservation` has one `previousSessionDate`, one set of counts and ratios, and non-null directional ratios; it is shaped for BREADTH_V1 one-session observations. Phase 5A has three horizons and keeps unavailable ratios as null when no directional names exist. A future publisher must decide how to represent the additional horizons and unavailable values. This research pass does not change that immutable production model.

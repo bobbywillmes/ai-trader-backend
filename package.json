@@ -26,6 +26,7 @@
     "research:intraday-stress:compare": "tsx scripts/compare-alpaca-iex-intraday.ts compare",
     "analyze:intraday-stress": "tsx scripts/analyze-intraday-stress.ts",
     "research:breadth": "tsx scripts/research-breadth.ts",
+    "research:breadth-v2": "tsx scripts/research-breadth-v2.ts",
     "research:participation": "tsx scripts/research-participation.ts",
     "analyze:participation": "tsx scripts/analyze-participation.ts",
     "generate:breadth-v1-bootstrap-artifact": "tsx scripts/generate-breadth-v1-bootstrap-artifact.ts",
