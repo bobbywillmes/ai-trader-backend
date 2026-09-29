@@ -5,7 +5,7 @@ import { runBreadthV2Research } from './breadth-v2-research.js';
 import { BREADTH_V2_CALIBRATION_VERSION, HYSTERESIS_VARIANTS, THRESHOLD_FAMILIES, buildCandidateDays, coverageDiagnostics, deriveBands, periodSummary, sensitivity, validationStability, type Family } from './breadth-v2-calibration.js';
 
 const csv = (values: readonly (string | number | null)[]) => values.map(value => value === null ? '' : String(value)).join(',') + '\n';
-export type CalibrationInput = { revisionId: number; from: string; through: string; calibrationThrough: string; outputDirectory?: string; expectedInputHash?: string; now?: Date };
+export type CalibrationInput = { revisionId: number; from: string; through: string; calibrationThrough: string; outputDirectory?: string; expectedInputHash?: string; now?: Date; includeValidationEvidence?: boolean };
 
 export async function runBreadthV2Calibration(input: CalibrationInput) {
   if (input.calibrationThrough < input.from || input.calibrationThrough >= input.through || !/^\d{4}-\d{2}-\d{2}$/.test(input.calibrationThrough)) throw new Error('Calibration boundary must be inside the requested range, before --through.');
@@ -58,5 +58,5 @@ export async function runBreadthV2Calibration(input: CalibrationInput) {
     writeFile(join(outputDirectory, 'coverage-sensitivity.csv'), 'type,key,horizon,pairedSessions,meanFullEligibleCount,meanStableCoreEligibleCount,pearsonCorrelation,meanAbsoluteDifference,medianAbsoluteDifference,maximumAbsoluteDifference,maximumDate,disagreementRate\n' + Object.entries(coreSensitivity.byHorizon).map(([horizon, value]) => csv(['METRIC', '', horizon, value.pairedSessions, value.meanFullEligibleCount, value.meanStableCoreEligibleCount, value.pearsonCorrelation, value.meanAbsoluteDifference, value.medianAbsoluteDifference, value.maximumAbsoluteDifference?.absoluteDifference ?? null, value.maximumAbsoluteDifference?.sessionDate ?? null, null])).join('') + Object.entries(coreSensitivity.disagreements).flatMap(([family, value]) => [...Object.entries(value.horizonStateDisagreementRate).map(([horizon, rate]) => csv(['HORIZON_STATE', family, horizon, null, null, null, null, null, null, null, null, rate])), csv(['RAW_STATE', family, '', null, null, null, null, null, null, null, null, null, value.rawStructuralStateDisagreementRate])]).join('')),
   ]);
   await writeFile(join(outputDirectory, 'calibration-summary.json'), JSON.stringify(summary, null, 2) + '\n');
-  return { outputDirectory, summary };
+  return { outputDirectory, summary, ...(input.includeValidationEvidence ? { validationEvidence: { mildDays: fullDays.filter(day => day.variant === 'MILD_POSITIVE_MIXED_CONFIRMATION'), bands, fullMetrics: evidence.fullMetrics } } : {}) };
 }

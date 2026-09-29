@@ -13,6 +13,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   let admin: Client; let db: Client; let prismaModule: typeof import('../prisma.js');
   let research: typeof import('../../dev/breadth-v2-research.js');
   let calibration: typeof import('../../dev/breadth-v2-calibration-runner.js');
+  let validation: typeof import('../../dev/breadth-v2-validation-runner.js');
   let revisionId: number;
   let initialBarCount: number;
   beforeAll(async () => {
@@ -38,12 +39,18 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await add(ids[1]!, '2026-09-23', 100, null, 'MASSIVE');
     await add(ids[1]!, '2026-09-24', 99, 1, 'TIINGO');
     await add(ids[1]!, '2026-09-25', 99, 1, 'TIINGO');
+    for (const [symbol, closes] of [['SPY', [500, 505, 510]], ['RSP', [200, 201, 202]]] as const) {
+      const id = (await db.query(`INSERT INTO "Security" (symbol,name,"assetType",enabled,"updatedAt") VALUES ($1,$1,'ETF',false,now()) RETURNING id`, [symbol])).rows[0].id;
+      for (const [i, date] of ['2026-09-23', '2026-09-24', '2026-09-25'].entries()) await add(id, date, closes[i]!, null, 'MASSIVE');
+      await db.query(`INSERT INTO "MarketSplitCoverage" ("securityId","fromDate","throughDate",provider,"receivedAt") VALUES ($1,'2026-09-23','2026-09-25','MASSIVE',now())`, [id]);
+    }
     initialBarCount = (await db.query(`SELECT count(*)::int n FROM "MarketBar"`)).rows[0].n;
     await db.query(`INSERT INTO "TiingoDailyObservationState" ("securityId","sessionDate",status,"attemptCount","firstAttemptAt","lastAttemptAt","reasonCode","updatedAt") VALUES ($1,'2026-09-24','NO_EOD_COVERAGE',4,now(),now(),'PROVIDER_NO_EOD_BAR',now())`, [ids[2]]);
     await mkdir(root, { recursive: true });
     process.env.DATABASE_URL = url.toString();
     research = await import('../../dev/breadth-v2-research.js');
     calibration = await import('../../dev/breadth-v2-calibration-runner.js');
+    validation = await import('../../dev/breadth-v2-validation-runner.js');
     prismaModule = await import('../prisma.js');
   }, 120_000);
   afterAll(async () => {
@@ -96,6 +103,24 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect((await db.query(`SELECT count(*)::int n FROM "SignalEvaluation"`)).rows[0].n).toBe(0);
     expect((await db.query(`SELECT count(*)::int n FROM "MarketBar"`)).rows[0].n).toBe(initialBarCount);
     await expect(calibration.runBreadthV2Calibration({ ...input, outputDirectory: join(root, 'calibration-wrong-hash'), expectedInputHash: '0'.repeat(64) })).rejects.toThrow('canonical input hash differs');
+  });
+  it('validates frozen mild candidates against read-only canonical benchmarks deterministically', async () => {
+    const input = { revisionId, from: '2026-09-23', through: '2026-09-25', calibrationThrough: '2026-09-24', now: new Date('2026-09-29T03:00:00Z') };
+    const one = await validation.runBreadthV2Validation({ ...input, outputDirectory: join(root, 'validation-one') });
+    const two = await validation.runBreadthV2Validation({ ...input, outputDirectory: join(root, 'validation-two'), expectedInputHash: one.summary.canonicalInputHash });
+    expect(one.summary).toEqual(two.summary);
+    expect(one.summary).toMatchObject({ researchVersion: 'BREADTH_V2_VALIDATION_5C_V1', phase5bResearchVersion: 'BREADTH_V2_CALIBRATION_5B_V1', gapPolicy: 'STRICT', candidateFamilies: ['QUARTILE', 'TERTILE', 'NARROW'], hysteresisCandidate: 'MILD_POSITIVE_MIXED_CONFIRMATION', benchmarkProvenance: { SPY: { providerBarCounts: { MASSIVE: 3, TIINGO: 0 } }, RSP: { providerBarCounts: { MASSIVE: 3, TIINGO: 0 } } }, trendContext: { status: 'UNAVAILABLE_EXACT_REPLAY_NOT_INTEGRATED' }, volatilityContext: { status: 'UNAVAILABLE_EXACT_REPLAY_NOT_INTEGRATED' } });
+    const frozen = JSON.parse(await readFile(join(root, 'validation-one', 'phase5b-frozen', 'calibration-summary.json'), 'utf8'));
+    expect(one.summary.frozenThresholds).toEqual(frozen.thresholds);
+    expect(one.summary.benchmarkSplitEvidence).toEqual({ TIINGO: 'MarketBar.splitFactor', MASSIVE: 'MarketSplitEvent plus MarketSplitCoverage' });
+    expect(one.summary.canonicalInputHash).toBe(frozen.canonicalInputHash);
+    expect(one.summary.validationFrom).toBe('2026-09-25');
+    for (const file of ['validation-summary.json', 'benchmark-outcomes.csv', 'state-outcomes.csv', 'regime-entry-outcomes.csv', 'transition-outcomes.csv', 'candidate-disagreements.csv', 'disagreement-outcomes.csv', 'pairwise-state-separation.csv', 'trend-context.csv', 'volatility-context.csv']) expect(await readFile(join(root, 'validation-one', file), 'utf8')).toBe(await readFile(join(root, 'validation-two', file), 'utf8'));
+    expect(await readFile(join(root, 'validation-one', 'benchmark-outcomes.csv'), 'utf8')).toContain('2026-09-23,SPY,MASSIVE,1,0.01');
+    expect((await db.query(`SELECT count(*)::int n FROM "MarketBar"`)).rows[0].n).toBe(initialBarCount);
+    expect((await db.query(`SELECT count(*)::int n FROM "MarketBreadthObservation"`)).rows[0].n).toBe(0);
+    expect((await db.query(`SELECT count(*)::int n FROM "MarketRegimeDimensionAssessment"`)).rows[0].n).toBe(0);
+    expect((await db.query(`SELECT count(*)::int n FROM "SignalEvaluation"`)).rows[0].n).toBe(0);
   });
   it('rejects a resolved acquisition state without its immutable bar', async () => {
     const securityId = (await db.query(`SELECT id FROM "Security" WHERE symbol='CCC'`)).rows[0].id;
