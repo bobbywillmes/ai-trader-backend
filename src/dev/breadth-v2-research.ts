@@ -5,7 +5,7 @@ import { prisma } from '../db/prisma.js';
 import { addDays, datesBetween, etDate, etInstant, marketSession, validDate } from '../services/market-calendar.js';
 import { constituentHash } from '../services/security-universe-import.service.js';
 import { mean, percentile, stddev } from './breadth-statistics.js';
-import { BREADTH_V2_RESEARCH_VERSION, SPLIT_NORMALIZATION_VERSION, HORIZONS, bridgeCandidate, compareRawCloses, finalizeBreadth, missingRuns, type Horizon, type ResearchBar } from './breadth-v2-calculation.js';
+import { BREADTH_V2_RESEARCH_VERSION, SPLIT_NORMALIZATION_VERSION, HORIZONS, GapShapeAccumulator, bridgeCandidate, compareRawCloses, finalizeBreadth, missingRuns, type Horizon, type ResearchBar } from './breadth-v2-calculation.js';
 
 const csv = (values: readonly (string | number | boolean | null)[]) => values.map(value => value === null ? '' : String(value)).join(',') + '\n';
 const ratio = (value: number | null) => value === null ? null : value.toFixed(8);
@@ -29,7 +29,7 @@ export async function runBreadthV2Research(input: BreadthV2ResearchInput) {
   await Promise.all([
     writeFile(candidatePath, 'symbol,targetSession,horizon,expectedAnchorSession,actualAnchorSession,bridgedGapSessions,direction,eligibleBridgeMax1,eligibleBridgeMax2,splitEvidenceComplete\n'),
     writeFile(securityPath, 'symbol,securityId,expectedSessions,tiingoPresent,missing,coverageRatio,terminalNoEodCoverage,retrying,otherProviderCollisions\n'),
-    writeFile(gapPath, 'symbol,fromSession,throughSession,lengthSessions,bucket\n'),
+    writeFile(gapPath, 'symbol,fromSession,throughSession,lengthSessions,shape,lengthBucket\n'),
   ]);
   const result = await prisma.$transaction(async tx => {
     await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');
@@ -59,6 +59,7 @@ export async function runBreadthV2Research(input: BreadthV2ResearchInput) {
     const sessionCoverage = new Map(targetSessions.map(date => [date, { present: 0, otherProvider: 0, terminal: 0, retrying: 0 }]));
     const bridgeRecovered = { DAY_1: { max1: 0, max2: 0 }, DAY_5: { max1: 0, max2: 0 }, DAY_20: { max1: 0, max2: 0 } };
     const gapCounts = { ONE: 0, TWO: 0, THREE_TO_FIVE: 0, OVER_FIVE: 0, longest: 0 };
+    const gapShapeAccumulator = new GapShapeAccumulator();
     const missingBySecurity: { symbol: string; missing: number }[] = [];
     const securityCoverageRatios: number[] = [];
     let tiingoPresent = 0, otherProviderCollisions = 0, terminalNoEodCoverage = 0, retrying = 0, untrackedMissing = 0, disabledMembers = 0;
@@ -112,7 +113,7 @@ export async function runBreadthV2Research(input: BreadthV2ResearchInput) {
         missingBySecurity.push({ symbol: member.symbol, missing });
         securityCoverageRatios.push(present / targetSessions.length);
         securityLines.push(csv([member.symbol, member.securityId, targetSessions.length, present, missing, ratio(present / targetSessions.length), terminalCount, retryingCount, collisionCount]));
-        for (const run of missingRuns(targetSessions, bars)) { gapCounts[run.bucket]++; gapCounts.longest = Math.max(gapCounts.longest, run.length); gapLines.push(csv([member.symbol, run.from, run.through, run.length, run.bucket])); }
+        for (const run of missingRuns(targetSessions, bars)) { gapCounts[run.lengthBucket]++; gapCounts.longest = Math.max(gapCounts.longest, run.length); gapShapeAccumulator.add(member.symbol, run); gapLines.push(csv([member.symbol, run.from, run.through, run.length, run.shape, run.lengthBucket])); }
         for (const targetDate of targetSessions) {
           const targetIndex = sessionIndex.get(targetDate)!;
           for (const horizon of HORIZONS) {
@@ -161,7 +162,7 @@ export async function runBreadthV2Research(input: BreadthV2ResearchInput) {
       const sortedByValue = [...values].sort((a, b) => a.value - b.value || a.date.localeCompare(b.date));
       return [metric, { count: values.length, min: sorted[0] ?? null, p01: percentile(sorted, 0.01), p05: percentile(sorted, 0.05), p10: percentile(sorted, 0.10), p25: percentile(sorted, 0.25), median: percentile(sorted, 0.50), p75: percentile(sorted, 0.75), p90: percentile(sorted, 0.90), p95: percentile(sorted, 0.95), p99: percentile(sorted, 0.99), max: sorted.at(-1) ?? null, mean: mean(sorted), standardDeviation: stddev(sorted), lowestDates: sortedByValue.slice(0, 10), highestDates: sortedByValue.slice(-10).reverse() }];
     }))]));
-    return { members, targetSessions, metrics, coverage, coverageDistribution, securityCoverageDistribution, statistics, bridgeRecovered, gapCounts,
+    return { members, targetSessions, metrics, coverage, coverageDistribution, securityCoverageDistribution, statistics, bridgeRecovered, gapCounts, gapShapeSummary: gapShapeAccumulator.summary(),
       totals: { expectedObservations: members.length * targetSessions.length, tiingoBarsPresent: tiingoPresent, missingObservations: members.length * targetSessions.length - tiingoPresent, untrackedMissing, terminalNoEodCoverage, retrying, otherProviderCollisions, disabledMembers },
       mostFrequentlyMissing: missingBySecurity.sort((a, b) => b.missing - a.missing || (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0)).slice(0, 50),
       constituentHash: constituentHash(members.map(member => member.symbol)), canonicalInputHash: inputHash.digest('hex'), memberCount: revision.memberCount };
@@ -173,7 +174,7 @@ export async function runBreadthV2Research(input: BreadthV2ResearchInput) {
     requestedFrom: input.from, requestedThrough: input.through, actualSessionRange: { from: result.targetSessions[0], through: result.targetSessions.at(-1), count: result.targetSessions.length }, provider: 'TIINGO', timeframe: 'DAY_1', adjustmentMode: 'UNADJUSTED',
     horizonDefinitions: { DAY_1: 'exactly one previous market session', DAY_5: 'exactly five previous market sessions', DAY_20: 'exactly twenty previous market sessions' }, splitNormalizationVersion: SPLIT_NORMALIZATION_VERSION,
     gapPolicy: 'STRICT', bridgeCandidates: { ...result.bridgeRecovered, note: 'Exploratory only. Missing sessions have unknown split factors; candidate directions use observed factors only and are not production-eligible.' }, survivorshipBias: true,
-    dataQuality: { ...result.totals, sessionCoverageDistribution: result.coverageDistribution, securityCoverageDistribution: result.securityCoverageDistribution, gapRuns: result.gapCounts, mostFrequentlyMissing: result.mostFrequentlyMissing }, distributionStatistics: result.statistics,
+    dataQuality: { ...result.totals, sessionCoverageDistribution: result.coverageDistribution, securityCoverageDistribution: result.securityCoverageDistribution, gapRuns: result.gapCounts, ...result.gapShapeSummary, mostFrequentlyMissing: result.mostFrequentlyMissing }, distributionStatistics: result.statistics,
     runtime: { generatedAt: now.toISOString() } };
   await writeFile(join(outputDirectory, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
   return { outputDirectory, summary };

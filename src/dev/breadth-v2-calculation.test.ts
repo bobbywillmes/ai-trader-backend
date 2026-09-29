@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { datesBetween, marketSession } from '../services/market-calendar.js';
-import { bridgeCandidate, compareRawCloses, finalizeBreadth, missingRuns, type ResearchBar } from './breadth-v2-calculation.js';
+import { GapShapeAccumulator, bridgeCandidate, compareRawCloses, finalizeBreadth, missingRuns, type ResearchBar } from './breadth-v2-calculation.js';
 
 const bars = (...rows: [string, string, string][]) => new Map<string, ResearchBar>(rows.map(([date, close, splitFactor]) => [date, { close, splitFactor }]));
 
@@ -56,9 +56,43 @@ describe('BREADTH_V2 strict research arithmetic', () => {
   it('groups missing expected sessions without inventing prices', () => {
     const sessions = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'];
     expect(missingRuns(sessions, bars(['a', '1', '1'], ['c', '1', '1'], ['g', '1', '1'], ['j', '1', '1']))).toEqual([
-      { from: 'b', through: 'b', length: 1, bucket: 'ONE' },
-      { from: 'd', through: 'f', length: 3, bucket: 'THREE_TO_FIVE' },
-      { from: 'h', through: 'i', length: 2, bucket: 'TWO' },
+      { from: 'b', through: 'b', length: 1, shape: 'INTERIOR_GAP', lengthBucket: 'ONE' },
+      { from: 'd', through: 'f', length: 3, shape: 'INTERIOR_GAP', lengthBucket: 'THREE_TO_FIVE' },
+      { from: 'h', through: 'i', length: 2, shape: 'INTERIOR_GAP', lengthBucket: 'TWO' },
     ]);
+  });
+  it('classifies full-range, leading, multiple interior, and trailing missing runs independently of length', () => {
+    const sessions = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l'];
+    expect(missingRuns(sessions, bars())).toEqual([{ from: 'a', through: 'l', length: 12, shape: 'FULL_RANGE_MISSING', lengthBucket: 'OVER_FIVE' }]);
+    expect(missingRuns(sessions, bars(['c', '1', '1'], ['e', '1', '1'], ['h', '1', '1'], ['i', '1', '1']))).toEqual([
+      { from: 'a', through: 'b', length: 2, shape: 'LEADING_MISSING', lengthBucket: 'TWO' },
+      { from: 'd', through: 'd', length: 1, shape: 'INTERIOR_GAP', lengthBucket: 'ONE' },
+      { from: 'f', through: 'g', length: 2, shape: 'INTERIOR_GAP', lengthBucket: 'TWO' },
+      { from: 'j', through: 'l', length: 3, shape: 'TRAILING_MISSING', lengthBucket: 'THREE_TO_FIVE' },
+    ]);
+    expect(missingRuns(['a', 'b'], bars(['warmup', '1', '1'], ['b', '1', '1']))[0]?.shape).toBe('LEADING_MISSING');
+  });
+  it('aggregates gap shapes and ranks a bounded deterministic interior sample', () => {
+    const accumulator = new GapShapeAccumulator();
+    const add = (symbol: string, from: string, length: number, shape: 'FULL_RANGE_MISSING' | 'LEADING_MISSING' | 'INTERIOR_GAP' | 'TRAILING_MISSING') => accumulator.add(symbol, { from, through: from, length, shape, lengthBucket: 'ONE' });
+    add('ZZZ', 'b', 2, 'INTERIOR_GAP');
+    add('AAA', 'c', 2, 'INTERIOR_GAP');
+    add('AAA', 'a', 2, 'INTERIOR_GAP');
+    add('AAA', 'd', 4, 'LEADING_MISSING');
+    add('BBB', 'e', 7, 'FULL_RANGE_MISSING');
+    add('CCC', 'f', 3, 'TRAILING_MISSING');
+    for (let i = 0; i < 30; i++) add(`S${String(i).padStart(2, '0')}`, 'x', 1, 'INTERIOR_GAP');
+    const summary = accumulator.summary();
+    expect(summary.gapShapes).toEqual({
+      FULL_RANGE_MISSING: { runCount: 1, missingSessions: 7, affectedSecurities: 1, longestRun: 7 },
+      LEADING_MISSING: { runCount: 1, missingSessions: 4, affectedSecurities: 1, longestRun: 4 },
+      INTERIOR_GAP: { runCount: 33, missingSessions: 36, affectedSecurities: 32, longestRun: 2 },
+      TRAILING_MISSING: { runCount: 1, missingSessions: 3, affectedSecurities: 1, longestRun: 3 },
+    });
+    expect(summary.interiorMissingSessions).toBe(36);
+    expect(summary.nonInteriorMissingSessions).toBe(14);
+    expect(summary.longestInteriorGaps).toHaveLength(25);
+    expect(summary.longestInteriorGaps.slice(0, 3).map(row => [row.symbol, row.fromSession])).toEqual([['AAA', 'a'], ['AAA', 'c'], ['ZZZ', 'b']]);
+    expect(summary.longestInteriorGaps.at(-1)?.symbol).toBe('S21');
   });
 });

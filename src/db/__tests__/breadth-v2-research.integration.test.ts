@@ -51,7 +51,10 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const one = await research.runBreadthV2Research({ ...input, outputDirectory: join(root, 'one') });
     const two = await research.runBreadthV2Research({ ...input, outputDirectory: join(root, 'two') });
     expect(one.summary).toEqual(two.summary);
-    expect(one.summary).toMatchObject({ revisionMemberCount: 3, provider: 'TIINGO', adjustmentMode: 'UNADJUSTED', survivorshipBias: true, dataQuality: { expectedObservations: 9, tiingoBarsPresent: 5, missingObservations: 4, untrackedMissing: 2, terminalNoEodCoverage: 1, otherProviderCollisions: 1, disabledMembers: 2 } });
+    expect(one.summary).toMatchObject({ researchVersion: 'BREADTH_V2_RESEARCH_5A_V2', revisionMemberCount: 3, provider: 'TIINGO', adjustmentMode: 'UNADJUSTED', survivorshipBias: true, dataQuality: { expectedObservations: 9, tiingoBarsPresent: 5, missingObservations: 4, untrackedMissing: 2, terminalNoEodCoverage: 1, otherProviderCollisions: 1, disabledMembers: 2,
+      gapRuns: { ONE: 1, TWO: 0, THREE_TO_FIVE: 1, OVER_FIVE: 0, longest: 3 },
+      gapShapes: { FULL_RANGE_MISSING: { runCount: 1, missingSessions: 3, affectedSecurities: 1, longestRun: 3 }, LEADING_MISSING: { runCount: 1, missingSessions: 1, affectedSecurities: 1, longestRun: 1 }, INTERIOR_GAP: { runCount: 0, missingSessions: 0, affectedSecurities: 0, longestRun: 0 }, TRAILING_MISSING: { runCount: 0, missingSessions: 0, affectedSecurities: 0, longestRun: 0 } },
+      interiorMissingSessions: 0, nonInteriorMissingSessions: 4, longestInteriorGaps: [] } });
     for (const file of ['summary.json', 'session-breadth.csv', 'coverage-by-session.csv', 'coverage-by-security.csv', 'gap-analysis.csv', 'bridge-candidates.csv']) {
       expect(await readFile(join(root, 'one', file), 'utf8')).toBe(await readFile(join(root, 'two', file), 'utf8'));
     }
@@ -60,6 +63,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(breadth).toContain('2026-09-24,DAY_1,3,1,2,0.33333333,0,1,0,1,0.00000000,-1.00000000');
     const candidates = await readFile(join(root, 'one', 'bridge-candidates.csv'), 'utf8');
     expect(candidates).toContain('BBB,2026-09-24,DAY_1,2026-09-23,2026-09-22,1,DECLINING,true,true,false');
+    expect(await readFile(join(root, 'one', 'gap-analysis.csv'), 'utf8')).toBe('symbol,fromSession,throughSession,lengthSessions,shape,lengthBucket\nBBB,2026-09-23,2026-09-23,1,LEADING_MISSING,ONE\nCCC,2026-09-23,2026-09-25,3,FULL_RANGE_MISSING,THREE_TO_FIVE\n');
     expect(await readFile(join(root, 'one', 'coverage-by-security.csv'), 'utf8')).toContain('CCC,');
     expect((await db.query(`SELECT count(*)::int n FROM "MarketBreadthObservation"`)).rows[0].n).toBe(0);
     expect((await db.query(`SELECT count(*)::int n FROM "MarketRegimeDimensionAssessment"`)).rows[0].n).toBe(0);
