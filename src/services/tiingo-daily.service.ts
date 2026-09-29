@@ -60,8 +60,8 @@ export function canonicalTiingoBar(bar: TiingoBar) {
   if (bar.splitFactor === undefined || !Number.isFinite(bar.splitFactor) || bar.splitFactor <= 0) throw new Error('Tiingo splitFactor is required and positive.');
   return { open: decimal(bar.open, 10, 24), high: decimal(bar.high, 10, 24), low: decimal(bar.low, 10, 24), close: decimal(bar.close, 10, 24), volume: decimal(bar.volume, 6, 30), splitFactor: decimal(bar.splitFactor, 10, 24) };
 }
-type Counts = { requested: number; succeeded: number; alreadyPresent: number; missing: number; failed: number; conflict: number; otherProvider: number; splitEvents: number; retries: number; throttled: number; retryScheduled: number; terminalizedNoEodCoverage: number; resolvedPreviouslyMissing: number; details: string[] };
-const emptyCounts = (): Counts => ({ requested: 0, succeeded: 0, alreadyPresent: 0, missing: 0, failed: 0, conflict: 0, otherProvider: 0, splitEvents: 0, retries: 0, throttled: 0, retryScheduled: 0, terminalizedNoEodCoverage: 0, resolvedPreviouslyMissing: 0, details: [] });
+type Counts = { requested: number; succeeded: number; alreadyPresent: number; missing: number; historicalMissing: number; failed: number; conflict: number; otherProvider: number; splitEvents: number; retries: number; throttled: number; retryScheduled: number; terminalizedNoEodCoverage: number; resolvedPreviouslyMissing: number; details: string[] };
+const emptyCounts = (): Counts => ({ requested: 0, succeeded: 0, alreadyPresent: 0, missing: 0, historicalMissing: 0, failed: 0, conflict: 0, otherProvider: 0, splitEvents: 0, retries: 0, throttled: 0, retryScheduled: 0, terminalizedNoEodCoverage: 0, resolvedPreviouslyMissing: 0, details: [] });
 function detail(counts: Counts, value: string) { if (counts.details.length < 20) counts.details.push(value); }
 export function retryDelay(error: unknown, attempt: number): number | null {
   if (!(error instanceof TiingoRequestError) || (error.status !== null && error.status !== 429 && error.status < 500)) return null;
@@ -104,8 +104,9 @@ async function coverage(members: Member[], from: string, through: string) {
   for (const row of rows) { const found = bySymbol.get(row.securityId) ?? new Map(); found.set(row.barStartAt.toISOString().slice(0, 10), row.provider); bySymbol.set(row.securityId, found); }
   return bySymbol;
 }
-export async function tiingoDailyBackfill(input: { revisionId: number; from: string; through: string; symbols?: string[]; apply?: boolean; retryTerminal?: boolean; now?: Date; fetchDaily?: (symbol: string, from: string, through: string) => Promise<TiingoBar[]> }) {
+export async function tiingoDailyBackfill(input: { revisionId: number; from: string; through: string; symbols?: string[]; apply?: boolean; retryTerminal?: boolean; researchHistory?: boolean; now?: Date; fetchDaily?: (symbol: string, from: string, through: string) => Promise<TiingoBar[]> }) {
   const now = input.now ?? new Date();
+  if (input.researchHistory && input.retryTerminal) throw new HttpError(400, '--research-history cannot be combined with --retry-terminal.');
   if (!validDate(input.from) || !validDate(input.through) || input.from > input.through || input.through > etDate(now) || datesBetween(input.from, input.through).length > 370) throw new HttpError(400, 'Tiingo backfill requires a valid, bounded range of at most 370 days.');
   const { revision, members: all } = await loadTiingoRevision(input.revisionId, now); const members = selectMembers(all, input.symbols);
   const dates = datesBetween(input.from, input.through).filter(date => tiingoDayEligible(date, now));
@@ -130,7 +131,7 @@ export async function tiingoDailyBackfill(input: { revisionId: number; from: str
       }
       return { member, missingDates };
     });
-    const preview = { revisionId: revision.id, effectiveFrom: revision.effectiveFrom.toISOString().slice(0, 10), memberCount: revision.memberCount, selectedSecurities: members.length, from: input.from, through: input.through, timingVersion: TIINGO_DAY_1_TIMING_VERSION, existingTiingo: [...existing.values()].reduce((n, dates) => n + [...dates.values()].filter(v => v === 'TIINGO').length, 0), existingOtherProvider: [...existing.values()].reduce((n, dates) => n + [...dates.values()].filter(v => v !== 'TIINGO').length, 0), expectedRequests: work.filter(row => row.missingDates.length).length, deferredRetries, noEodCoverage };
+    const preview = { revisionId: revision.id, effectiveFrom: revision.effectiveFrom.toISOString().slice(0, 10), memberCount: revision.memberCount, selectedSecurities: members.length, from: input.from, through: input.through, acquisitionMode: input.researchHistory ? 'RESEARCH_HISTORY' as const : 'OPERATIONAL' as const, timingVersion: TIINGO_DAY_1_TIMING_VERSION, existingTiingo: [...existing.values()].reduce((n, dates) => n + [...dates.values()].filter(v => v === 'TIINGO').length, 0), existingOtherProvider: [...existing.values()].reduce((n, dates) => n + [...dates.values()].filter(v => v !== 'TIINGO').length, 0), expectedRequests: work.filter(row => row.missingDates.length).length, deferredRetries, noEodCoverage };
     return { counts, stateFor, work, preview };
   }
   if (!input.apply) { const { preview, counts } = await plan(); return { preview, counts }; }
@@ -174,6 +175,7 @@ export async function tiingoDailyBackfill(input: { revisionId: number; from: str
       if (invalidResponse) return;
       for (const date of missingDates.filter(date => !returned.has(date))) {
         counts.missing++;
+        if (input.researchHistory) { counts.historicalMissing++; continue; }
         const previous = stateFor(member, date) ?? null;
         const next = nextTiingoEmptyObservation(previous, now);
         const identity = { securityId_sessionDate: { securityId: member.securityId, sessionDate: new Date(date) } };

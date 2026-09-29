@@ -4,10 +4,11 @@ import { tiingoDailyBackfill } from '../src/services/tiingo-daily.service.js';
 const args = Object.fromEntries(process.argv.slice(2).filter(arg => arg.startsWith('--') && arg.includes('=')).map(arg => { const i = arg.indexOf('='); return [arg.slice(2, i), arg.slice(i + 1)]; }));
 const apply = process.argv.includes('--apply');
 const retryTerminal = process.argv.includes('--retry-terminal');
+const researchHistory = process.argv.includes('--research-history');
 try {
   const revisionId = Number(args.revision);
-  if (!Number.isSafeInteger(revisionId) || revisionId < 1 || !args.from || !args.through) throw new Error('Usage: --revision=ID --from=YYYY-MM-DD --through=YYYY-MM-DD [--symbols=AAPL,MSFT] [--retry-terminal] [--apply]');
-  const result = await tiingoDailyBackfill({ revisionId, from: args.from, through: args.through, symbols: args.symbols?.split(','), retryTerminal, apply });
+  if (!Number.isSafeInteger(revisionId) || revisionId < 1 || !args.from || !args.through) throw new Error('Usage: --revision=ID --from=YYYY-MM-DD --through=YYYY-MM-DD [--symbols=AAPL,MSFT] [--research-history | --retry-terminal] [--apply]');
+  const result = await tiingoDailyBackfill({ revisionId, from: args.from, through: args.through, symbols: args.symbols?.split(','), retryTerminal, researchHistory, apply });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (apply && (result.counts.conflict || result.counts.failed || result.counts.otherProvider)) process.exitCode = 1;
 } catch (error) { process.stderr.write(`${error instanceof Error ? error.message : 'Tiingo backfill failed'}\n`); process.exitCode = 1; }

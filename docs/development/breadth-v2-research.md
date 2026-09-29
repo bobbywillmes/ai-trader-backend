@@ -9,12 +9,14 @@ Use the existing Phase 4 backfill preview before every apply. The recommended re
 First apply and verify the reviewed 2021–2026 market-calendar exceptions with `npm.cmd run calendar:bootstrap -- --apply` (see `docs/development/volatility-v1-acceptance.md`). Extend reviewed calendar evidence for any later research years. Missing closure rows would otherwise make holidays look like expected sessions and shift the exact 1/5/20-session anchors.
 
 ```powershell
-npm.cmd run market-data:tiingo:daily:backfill -- --revision=2 --from=2021-01-04 --through=2021-12-31
-npm.cmd run market-data:tiingo:daily:backfill -- --revision=2 --from=2021-01-04 --through=2021-12-31 --apply
+npm.cmd run market-data:tiingo:daily:backfill -- --revision=2 --from=2021-01-04 --through=2021-12-31 --research-history
+npm.cmd run market-data:tiingo:daily:backfill -- --revision=2 --from=2021-01-04 --through=2021-12-31 --research-history --apply
 # Continue with 2022-01-01..2022-12-31, 2023, 2024, 2025, then 2026-01-01..latest completed session.
 ```
 
 Revision 2 and its current 2,877 members are an expected operator choice, not a code default. Inspect the selected frozen revision and each preview. Do not launch all chunks automatically. [Tiingo's current Power pricing](https://www.tiingo.com/account/billing/pricing) lists 10,000 requests per hour, 100,000 per day, and 40 GB monthly bandwidth; [Tiingo's API documentation](https://www.tiingo.com/documentation/general) says hourly and daily limits reset on their respective schedules. Check the account's actual entitlement and avoid enough chunks in one hourly window to exceed it. Retrying missing observations and ordinary daily sync also consume requests.
+
+`--research-history` records valid returned bars and split evidence normally, but counts successful-response omissions as `historicalMissing` without creating or advancing the Phase 4 per-session retry state. The preview and run summary identify `acquisitionMode: RESEARCH_HISTORY`. This avoids scheduling retries for pre-listing years in a current-universe backcast. Normal backfill and scheduled daily sync remain `OPERATIONAL` and retain the 1h/4h/24h missing-observation lifecycle. Existing missing states can still resolve if a real bar arrives in a research-history response. `--research-history` cannot be combined with `--retry-terminal`; use a separate focused terminal recheck when that is the operator's intent.
 
 ## Run the read-only analysis
 
