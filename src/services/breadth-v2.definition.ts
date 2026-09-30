@@ -1,4 +1,4 @@
-import { aggregateStructuralV3, applyMildDeteriorationConfirmation, type BreadthState } from './breadth-calculation.js';
+import { aggregateStructuralV3, applyMildDeteriorationConfirmation, advanceBreadthMildDeteriorationConfirmation, type BreadthState, type MildDeteriorationHistory } from './breadth-calculation.js';
 
 /** Phase 5D research decision. Proposed production contract; grants no publishing or trading authority. */
 export const BREADTH_V2_TERTILE_V1 = Object.freeze({
@@ -61,3 +61,8 @@ export function classifyFrozenBreadthV2Shares(shares: Record<BreadthV2Horizon, n
 
 /** Reuses the exact Phase 5B/5C mild replay, including pause on unavailable raw evidence. */
 export const replayBreadthV2MildConfirmation = applyMildDeteriorationConfirmation;
+
+/** One production assessment, with the exact same transition used by Phase 5 replay. */
+export function advanceFrozenBreadthV2(previous: MildDeteriorationHistory, raw: BreadthState | null) {
+  return advanceBreadthMildDeteriorationConfirmation(previous, raw);
+}

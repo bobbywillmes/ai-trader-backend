@@ -28,9 +28,13 @@ export async function withTiingoDailyLock<T>(work: () => Promise<T>): Promise<T>
   }
 }
 export async function closeTiingoDailyLockPool() { await pool.end(); }
-export function tiingoDayEligible(date: string, now = new Date()): boolean {
+export function tiingoDayEligibleAt(date: string): Date {
   if (!validDate(date)) throw new Error('Invalid Tiingo session date.');
-  return date < etDate(now) || (date === etDate(now) && now >= etInstant(date, 20 * 60 + 15));
+  return etInstant(date, 20 * 60 + 15);
+}
+export function tiingoDayEligible(date: string, now = new Date()): boolean {
+  const eligibleAt = tiingoDayEligibleAt(date);
+  return date < etDate(now) || (date === etDate(now) && now >= eligibleAt);
 }
 type Member = { securityId: number; symbol: string };
 export async function loadTiingoRevision(revisionId?: number, now = new Date()) {
