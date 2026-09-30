@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import { Client } from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { datesBetween, marketSession } from '../../services/market-calendar.js';
 
 const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.DATABASE_URL;
@@ -11,6 +11,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   const originalUrl = process.env.DATABASE_URL;
   const target = '2026-09-28';
   const now = new Date('2026-09-29T03:00:00Z');
+  const morningNow = new Date('2026-09-29T15:00:00Z');
   let admin: Client; let db: Client; let prismaModule: typeof import('../prisma.js');
   let measurement: typeof import('../../services/breadth-v2-measurement.service.js');
   let revisionId: number; let sessions: string[];
@@ -43,7 +44,12 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     if (admin) { await admin.query(`DROP DATABASE IF EXISTS "${database}"`); await admin.end(); }
   });
   it('previews without writes, includes disabled members, exact anchors, and deterministic evidence', async () => {
-    expect((await measurement.breadthV2ObservationStatus({ now: new Date('2026-09-29T00:14:00Z') })).readiness).toBe('NOT_DUE');
+    const barsBefore = (await db.query(`SELECT count(*)::int n FROM "MarketBar"`)).rows[0].n;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Status must not fetch provider data.'));
+    let status;
+    try { status = await measurement.breadthV2ObservationStatus({ now: morningNow }); }
+    finally { expect(fetchSpy).not.toHaveBeenCalled(); fetchSpy.mockRestore(); }
+    expect(status).toMatchObject({ sessionDate: target, readiness: 'READY', revisionId, memberCount: 3, targetBarCount: 3 });
     const first = await measurement.computeBreadthV2Measurement(target, { now });
     const second = await measurement.computeBreadthV2Measurement(target, { now });
     expect(first).toEqual(second);
@@ -54,10 +60,14 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(first.horizons.map(row => row.advanceShare)).toEqual([0.5, 0.5, 0.5]);
     expect((await db.query(`SELECT count(*)::int n FROM "MarketBreadthObservationSet"`)).rows[0].n).toBe(0);
     expect((await db.query(`SELECT count(*)::int n FROM "MarketRegimeDimensionAssessment"`)).rows[0].n).toBe(0);
+    expect((await db.query(`SELECT count(*)::int n FROM "SystemEvent"`)).rows[0].n).toBe(0);
+    expect((await db.query(`SELECT count(*)::int n FROM "MarketBar"`)).rows[0].n).toBe(barsBefore);
   });
   it('publishes only latest target atomically, then is idempotent and SQL immutable', async () => {
-    const result = await measurement.runBreadthV2Observations({ now });
+    const result = await measurement.runBreadthV2Observations({ now: morningNow });
     expect(result).toMatchObject({ inserted: 1, attempted: 1, blocked: null });
+    expect(result.results[0]?.sessionDate).toBe(target);
+    expect(await measurement.breadthV2ObservationStatus({ now: morningNow })).toMatchObject({ sessionDate: target, readiness: 'ALREADY_PUBLISHED', existingId: result.results[0]?.id });
     const set = await measurement.latestBreadthV2Observation();
     expect(set?.sessionDate.toISOString().slice(0, 10)).toBe(target);
     expect(set?.horizons.map(row => row.horizonSessions)).toEqual([1, 5, 20]);
@@ -91,9 +101,11 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const later = ['2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02', '2026-10-05', '2026-10-06'];
     for (const [i, date] of later.entries()) for (const row of ids) await add(row.id, date, row.symbol === 'BBB' ? 99 - i : row.symbol === 'CCC' ? 100 : 121 + i);
     const catchUpNow = new Date('2026-10-07T03:00:00Z');
+    expect(await measurement.breadthV2ObservationStatus({ now: catchUpNow })).toMatchObject({ sessionDate: later[0], readiness: 'READY' });
     const first = await measurement.runBreadthV2Observations({ now: catchUpNow });
     expect(first).toMatchObject({ inserted: 5, attempted: 5, blocked: null });
     expect(first.results.map(row => row.sessionDate)).toEqual(later.slice(0, 5));
+    expect(await measurement.breadthV2ObservationStatus({ now: catchUpNow })).toMatchObject({ sessionDate: later[5], readiness: 'READY' });
     const second = await measurement.runBreadthV2Observations({ now: catchUpNow });
     expect(second).toMatchObject({ inserted: 1, attempted: 1, blocked: null });
     expect(second.results.map(row => row.sessionDate)).toEqual(later.slice(5));

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
-import { addDays, datesBetween, etDate, etInstant, marketSession, type CalendarException } from './market-calendar.js';
+import { addDays, datesBetween, etDate, marketSession, type CalendarException } from './market-calendar.js';
 import { constituentHash } from './security-universe-import.service.js';
 import { TIINGO_DAY_1_TIMING_VERSION, tiingoDayEligible } from './tiingo-daily.service.js';
 import { HORIZONS, SPLIT_NORMALIZATION_VERSION, compareRawCloses, finalizeBreadth, type ResearchBar } from './breadth-v2-measurement-calculation.js';
@@ -119,16 +119,33 @@ export async function computeBreadthV2Measurement(date: string, options: Options
   return { ...common, targetBarCount, targetCoverageRatio, horizons, canonicalInputHash, dataThroughAt: latestReceiptAt, readiness: blocker ? 'BLOCKED' as const : 'READY' as const, blocker };
 }
 
+/** Both preview and publication begin with the same reviewed, Tiingo-eligible session. */
+export function latestEligibleTiingoSession(now: Date, exceptions: readonly CalendarException[], lookbackDays = 45): string | null {
+  const today = etDate(now);
+  return datesBetween(addDays(today, -lookbackDays), today).reverse().find(date => marketSession(date, exceptions) && tiingoDayEligible(date, now)) ?? null;
+}
+
 async function latestTarget(db: PrismaClient, now: Date) {
   const today = etDate(now);
   const rows = await db.marketCalendarException.findMany({ where: { sessionDate: { gte: new Date(addDays(today, -45)), lte: new Date(today) } }, orderBy: { sessionDate: 'asc' } });
-  const exceptions = calendar(rows);
-  return datesBetween(addDays(today, -45), today).reverse().find(date => marketSession(date, exceptions))!;
+  return latestEligibleTiingoSession(now, calendar(rows));
+}
+
+async function observationTargets(db: PrismaClient, now: Date) {
+  const latest = await latestTarget(db, now);
+  if (!latest) return { latest: null, dates: [] as string[] };
+  const previous = await db.marketBreadthObservationSet.findFirst({ where: { measurementVersion: BREADTH_V2_MEASUREMENT_VERSION }, orderBy: { sessionDate: 'desc' } });
+  if (previous && iso(previous.sessionDate) >= latest) return { latest, dates: [] as string[] };
+  if (!previous) return { latest, dates: [latest] };
+  const exceptions = calendar(await db.marketCalendarException.findMany({ where: { sessionDate: { gte: previous.sessionDate, lte: new Date(latest) } }, orderBy: { sessionDate: 'asc' } }));
+  return { latest, dates: datesBetween(addDays(iso(previous.sessionDate), 1), latest).filter(date => marketSession(date, exceptions)).slice(0, MAX_CATCH_UP) };
 }
 
 export async function breadthV2ObservationStatus(options: Options = {}) {
   const db = options.db ?? prisma; const now = options.now ?? new Date();
-  const date = await latestTarget(db, now);
+  const plan = await observationTargets(db, now);
+  const date = plan.dates[0] ?? plan.latest;
+  if (!date) return { measurementVersion: BREADTH_V2_MEASUREMENT_VERSION, sessionDate: null, readiness: 'NOT_DUE' as const, blocker: null };
   try { return await computeBreadthV2Measurement(date, { db, now }); }
   catch (error) {
     return { measurementVersion: BREADTH_V2_MEASUREMENT_VERSION, sessionDate: date, readiness: 'BLOCKED' as const, blocker: { code: 'CALCULATION_FAILED' as const, message: error instanceof Error ? error.message : 'Unknown calculation failure.' } };
@@ -137,15 +154,14 @@ export async function breadthV2ObservationStatus(options: Options = {}) {
 
 export async function runBreadthV2Observations(options: Options = {}) {
   const db = options.db ?? prisma; const now = options.now ?? new Date();
-  const latestCandidate = await latestTarget(db, now);
-  const latest = tiingoDayEligible(latestCandidate, now) ? latestCandidate : await latestTarget(db, etInstant(addDays(latestCandidate, -1), 12 * 60));
-  const previous = await db.marketBreadthObservationSet.findFirst({ where: { measurementVersion: BREADTH_V2_MEASUREMENT_VERSION }, orderBy: { sessionDate: 'desc' } });
-  if (previous && iso(previous.sessionDate) >= latest) {
+  const plan = await observationTargets(db, now);
+  const latest = plan.latest;
+  if (!latest) return { inserted: 0, attempted: 0, notDue: true, blocked: null, results: [] };
+  if (plan.dates.length === 0) {
     const current = await computeBreadthV2Measurement(latest, { db, now });
     return { inserted: 0, attempted: 1, notDue: false, blocked: null, results: current.readiness === 'ALREADY_PUBLISHED' && 'existingId' in current ? [{ sessionDate: latest, id: current.existingId, alreadyPublished: true }] : [] };
   }
-  const exceptions = calendar(await db.marketCalendarException.findMany({ where: { sessionDate: { gte: new Date(previous ? iso(previous.sessionDate) : latest), lte: new Date(latest) } }, orderBy: { sessionDate: 'asc' } }));
-  const dates = previous ? datesBetween(addDays(iso(previous.sessionDate), 1), latest).filter(date => marketSession(date, exceptions)).slice(0, MAX_CATCH_UP) : [latest];
+  const dates = plan.dates;
   const results = []; let inserted = 0;
   for (const date of dates) {
     let preview;

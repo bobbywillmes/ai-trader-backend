@@ -19,7 +19,7 @@ Publication cannot be due before the Tiingo DAY_1 20:15 ET boundary. The first r
 
 ## Manual acceptance
 
-1. Confirm Tiingo daily acquisition and inspect `GET /api/market-data/breadth-v2-observations/status`. This is read-only and shows the target, revision, three anchors, coverage, counts, hashes, readiness, and blocker.
+1. Confirm Tiingo daily acquisition and inspect `GET /api/market-data/breadth-v2-observations/status`. This is read-only and shows the exact first target the manual run would consider, its revision, three anchors, coverage, counts, hashes, readiness, and blocker. Before today's 20:15 ET Tiingo boundary, the target is the latest eligible prior reviewed session. If catch-up is pending, status previews the oldest pending session.
 2. If READY, an owner may call `POST /api/market-data/breadth-v2-observations/run` with `{}`. This is a normal timing and readiness-gated write, not a force action.
 3. Inspect `GET /api/market-data/breadth-v2-observations/latest`, the paginated collection, or `/:id`. Repeating a run for identical immutable evidence is idempotent; an identity/hash conflict fails closed.
 
