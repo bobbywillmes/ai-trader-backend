@@ -11,7 +11,9 @@ import { intradayStressAssessmentLatestController, intradayStressAssessmentListC
 import { tiingoDailyStatusController } from '../controllers/tiingo-daily.controller.js';
 import { breadthV2ObservationStatusController, breadthV2ObservationLatestController, breadthV2ObservationListController, breadthV2ObservationDetailController, breadthV2ObservationRunController } from '../controllers/breadth-v2-observation.controller.js';
 import { breadthV2AssessmentStatusController, breadthV2AssessmentLatestController, breadthV2AssessmentListController, breadthV2AssessmentDetailController, breadthV2AssessmentRunController } from '../controllers/breadth-v2-assessment.controller.js';
+import { breadthV2ShadowSnapshot } from '../workers/breadth-v2-shadow.worker.js';
 const router = Router();
+router.get('/breadth-v2-shadow/status', requirePermission(PlatformPermission.MARKET_DATA_READ), (_req, res) => { res.json(breadthV2ShadowSnapshot()); });
 router.get('/breadth-v2-assessments/status', requirePermission(PlatformPermission.MARKET_DATA_READ), breadthV2AssessmentStatusController);
 router.get('/breadth-v2-assessments/latest', requirePermission(PlatformPermission.MARKET_DATA_READ), breadthV2AssessmentLatestController);
 router.get('/breadth-v2-assessments', requirePermission(PlatformPermission.MARKET_DATA_READ), breadthV2AssessmentListController);

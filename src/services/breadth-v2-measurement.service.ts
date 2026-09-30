@@ -156,18 +156,18 @@ export async function runBreadthV2Observations(options: Options = {}) {
   const db = options.db ?? prisma; const now = options.now ?? new Date();
   const plan = await observationTargets(db, now);
   const latest = plan.latest;
-  if (!latest) return { inserted: 0, attempted: 0, notDue: true, blocked: null, results: [] };
+  if (!latest) return { latestEligibleSession: null, inserted: 0, attempted: 0, notDue: true, blocked: null, results: [] };
   if (plan.dates.length === 0) {
     const current = await computeBreadthV2Measurement(latest, { db, now });
-    return { inserted: 0, attempted: 1, notDue: false, blocked: null, results: current.readiness === 'ALREADY_PUBLISHED' && 'existingId' in current ? [{ sessionDate: latest, id: current.existingId, alreadyPublished: true }] : [] };
+    return { latestEligibleSession: latest, inserted: 0, attempted: 1, notDue: false, blocked: null, results: current.readiness === 'ALREADY_PUBLISHED' && 'existingId' in current ? [{ sessionDate: latest, id: current.existingId, alreadyPublished: true }] : [] };
   }
   const dates = plan.dates;
   const results = []; let inserted = 0;
   for (const date of dates) {
     let preview;
     try { preview = await computeBreadthV2Measurement(date, { db, now }); }
-    catch (error) { return { inserted, attempted: results.length + 1, notDue: false, blocked: { sessionDate: date, code: 'CALCULATION_FAILED', message: error instanceof Error ? error.message : 'Unknown calculation failure.' }, results }; }
-    if (preview.readiness !== 'READY') return { inserted, attempted: results.length + 1, notDue: preview.readiness === 'NOT_DUE', blocked: preview.blocker && { sessionDate: date, ...preview.blocker }, results };
+    catch (error) { return { latestEligibleSession: latest, inserted, attempted: results.length + 1, notDue: false, blocked: { sessionDate: date, code: 'CALCULATION_FAILED', message: error instanceof Error ? error.message : 'Unknown calculation failure.' }, results }; }
+    if (preview.readiness !== 'READY') return { latestEligibleSession: latest, inserted, attempted: results.length + 1, notDue: preview.readiness === 'NOT_DUE', blocked: preview.blocker && { sessionDate: date, ...preview.blocker }, results };
     const completedAt = now;
     try {
       const created = await db.$transaction(async tx => {
@@ -186,10 +186,10 @@ export async function runBreadthV2Observations(options: Options = {}) {
       }, { timeout: 120_000 });
       results.push({ sessionDate: date, id: created.id }); inserted++;
     } catch (error) {
-      return { inserted, attempted: results.length + 1, notDue: false, blocked: { sessionDate: date, code: 'CALCULATION_FAILED', message: error instanceof Error ? error.message : 'Unknown publication failure.' }, results };
+      return { latestEligibleSession: latest, inserted, attempted: results.length + 1, notDue: false, blocked: { sessionDate: date, code: 'CALCULATION_FAILED', message: error instanceof Error ? error.message : 'Unknown publication failure.' }, results };
     }
   }
-  return { inserted, attempted: dates.length, notDue: dates.length === 0, blocked: null, results };
+  return { latestEligibleSession: latest, inserted, attempted: dates.length, notDue: dates.length === 0, blocked: null, results };
 }
 
 export async function latestBreadthV2Observation(db: PrismaClient = prisma) { return db.marketBreadthObservationSet.findFirst({ orderBy: [{ sessionDate: 'desc' }, { id: 'desc' }], include: { horizons: { orderBy: { horizonSessions: 'asc' } } } }); }

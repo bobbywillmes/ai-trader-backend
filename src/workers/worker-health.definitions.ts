@@ -22,6 +22,7 @@ export const MASSIVE_NEWS_WORKER_INTERVAL_MS = 60_000;
 export const TREND_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 export const VOLATILITY_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 export const BREADTH_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
+export const BREADTH_V2_SHADOW_WORKER_INTERVAL_MS = 60 * 60_000;
 export const PARTICIPATION_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 export const INTRADAY_STRESS_ASSESSMENT_WORKER_INTERVAL_MS = 2 * 60_000;
 export const MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS = 30_000;
@@ -42,6 +43,15 @@ function thresholds(
 }
 
 export const workerDefinitions = [
+  {
+    key: 'breadth_v2_shadow_publication',
+    displayName: 'BREADTH_V2 shadow publication',
+    description: 'Advances stored Tiingo breadth measurements and shadow assessments without trading authority.',
+    criticality: 'informational',
+    expectedIntervalMs: BREADTH_V2_SHADOW_WORKER_INTERVAL_MS,
+    enabledByDefault: false,
+    ...thresholds(BREADTH_V2_SHADOW_WORKER_INTERVAL_MS, 45 * 60_000),
+  },
   {
     key: 'trend_assessment_publication',
     displayName: 'Daily Trend assessment',

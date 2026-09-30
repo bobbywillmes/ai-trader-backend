@@ -1,6 +1,12 @@
 # BREADTH_V2 shadow assessment publication: Phase 6B
 
-`BREADTH_V2_TERTILE_V1` assessments use the existing immutable `MarketRegimeDimensionAssessment` model with `dimension=BREADTH`. Their algorithm version, valid-attempt identity, and predecessor chain are separate from BREADTH_V1. They are authoritative evidence for V2 only; Market Regime composition and all trading consumers continue to use their existing authority. There is no V2 scheduled worker in this phase.
+`BREADTH_V2_TERTILE_V1` assessments use the existing immutable `MarketRegimeDimensionAssessment` model with `dimension=BREADTH`. Their algorithm version, valid-attempt identity, and predecessor chain are separate from BREADTH_V1. They are authoritative evidence for V2 only; Market Regime composition and all trading consumers continue to use their existing authority.
+
+## Phase 6C shadow automation
+
+`BREADTH_V2_SHADOW_WORKER_ENABLED=false` is the default. Bobby should enable it only after the first real continuation assessment is accepted. The `breadth_v2_shadow_publication` worker runs once on startup and then hourly when enabled. Tiingo's existing worker remains the sole provider acquisition owner. The V2 worker reads stored evidence and calls the Phase 6A observation publisher first, followed by the Phase 6B assessment publisher. Each service retains its own timing, chronological catch-up bound, advisory lock, and immutable publication contract. An existing observation can still be followed by a new assessment; a blocked observation stops the assessment stage for that tick.
+
+The existing worker-health status reports enabled state, liveness, and material failures. `GET /api/market-data/breadth-v2-shadow/status` adds the latest bounded stage counts, blocker codes, and `NOT_DUE`, `ALREADY_CURRENT`, `PROGRESSED`, `WAITING_FOR_EVIDENCE`, or `MATERIAL_FAILURE`. Temporary coverage gaps are waiting for evidence and do not fail worker health. Material calculation, identity, or chronology failures do. Repeated temporary gaps produce no orchestrator event; the publishing services retain their own bounded lifecycle events. Offline catch-up proceeds through their existing limits over successive hourly invocations. To roll back automation, set the switch to false and restart; manual observation and assessment endpoints remain available. This automation does not change Market Regime composition or trading authority.
 
 ## Input and timing
 

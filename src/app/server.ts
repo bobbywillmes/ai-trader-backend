@@ -50,6 +50,8 @@ import { runIntradayStressAssessmentWorker } from '../workers/intraday-stress-as
 import { MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS, INTRADAY_STRESS_ASSESSMENT_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { closeMarketMinuteDataLockPool } from '../services/market-minute-data-lock.service.js';
 import { runTiingoDailyWorker } from '../workers/tiingo-daily.worker.js';
+import { runBreadthV2ShadowWorker } from '../workers/breadth-v2-shadow.worker.js';
+import { BREADTH_V2_SHADOW_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { closeTiingoDailyLockPool } from '../services/tiingo-daily.service.js';
 
 const app = createApp();
@@ -180,6 +182,11 @@ function startWorkers() {
   setInterval(() => { void runWorker('market_daily_evidence_sync', runMarketDataWorker); }, 60_000);
   void runWorker('tiingo_daily_market_data_sync', runTiingoDailyWorker);
   setInterval(() => { void runWorker('tiingo_daily_market_data_sync', runTiingoDailyWorker); }, 15 * 60_000);
+  if (env.BREADTH_V2_SHADOW_WORKER_ENABLED) {
+    workerHealthRegistry.setWorkerEnabled('breadth_v2_shadow_publication', true);
+    void runWorker('breadth_v2_shadow_publication', runBreadthV2ShadowWorker);
+    setInterval(() => { void runWorker('breadth_v2_shadow_publication', runBreadthV2ShadowWorker); }, BREADTH_V2_SHADOW_WORKER_INTERVAL_MS);
+  }
   void runWorker('breadth_assessment_publication', runBreadthAssessmentWorker);
   setInterval(() => { void runWorker('breadth_assessment_publication', runBreadthAssessmentWorker); }, BREADTH_ASSESSMENT_WORKER_INTERVAL_MS);
   runIntradayWorker('market_minute_evidence_sync', runMarketMinuteDataWorker);

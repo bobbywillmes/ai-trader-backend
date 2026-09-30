@@ -58,6 +58,7 @@ const envSchema = z.object({
   TIINGO_BASE_URL: z.url().default('https://api.tiingo.com'),
   TIINGO_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
   TIINGO_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(8),
+  BREADTH_V2_SHADOW_WORKER_ENABLED: envBoolean.default(false),
   MASSIVE_NEWS_WORKER_ENABLED: envBoolean.default(false),
   MASSIVE_NEWS_WORKER_INTERVAL_MS: z.coerce
     .number()
