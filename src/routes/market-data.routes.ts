@@ -3,7 +3,7 @@ import { volatilityAssessmentLatestController, volatilityAssessmentListControlle
 import { requirePermission, requireSystemOwnerAccess } from '../middleware/rbac.js';
 import { PlatformPermission } from '../types/platform-rbac.js';
 import { trendAssessmentLatestController, trendAssessmentListController, trendAssessmentDetailController, trendAssessmentRunController } from '../controllers/trend-assessment.controller.js';
-import { calendarCreateController, calendarDeleteController, calendarListController, calendarUpdateController, marketBackfillController, marketDataStatusController, trendDayController, trendLabController } from '../controllers/market-data.controller.js';
+import { calendarCreateController, calendarDeleteController, calendarListController, calendarUpdateController, intradayMinuteAuthorityStatusController, marketBackfillController, marketDataStatusController, trendDayController, trendLabController } from '../controllers/market-data.controller.js';
 import { breadthAssessmentLatestController, breadthAssessmentListController, breadthAssessmentDetailController, breadthAssessmentRunController } from '../controllers/breadth-assessment.controller.js';
 import { participationAssessmentLatestController, participationAssessmentListController, participationAssessmentDetailController, participationAssessmentRunController } from '../controllers/participation-assessment.controller.js';
 import { breadthObservationLatestController, breadthObservationListController, breadthObservationDetailController, breadthObservationRunController } from '../controllers/breadth-observation.controller.js';
@@ -25,6 +25,7 @@ router.get('/breadth-v2-observations', requirePermission(PlatformPermission.MARK
 router.get('/breadth-v2-observations/:id', requirePermission(PlatformPermission.MARKET_DATA_READ), breadthV2ObservationDetailController);
 router.post('/breadth-v2-observations/run', requireSystemOwnerAccess, breadthV2ObservationRunController);
 router.get('/tiingo-daily/status', requirePermission(PlatformPermission.MARKET_DATA_READ), tiingoDailyStatusController);
+router.get('/intraday-stress-provider/status', requirePermission(PlatformPermission.MARKET_DATA_READ), intradayMinuteAuthorityStatusController);
 router.get('/volatility-assessments/latest', requirePermission(PlatformPermission.MARKET_DATA_READ), volatilityAssessmentLatestController);
 router.get('/volatility-assessments', requirePermission(PlatformPermission.MARKET_DATA_READ), volatilityAssessmentListController);
 router.get('/volatility-assessments/:id', requirePermission(PlatformPermission.MARKET_DATA_READ), volatilityAssessmentDetailController);

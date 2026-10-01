@@ -14,6 +14,7 @@ import {
 } from './intraday-stress-calculation.js';
 import { INTRADAY_STRESS_ALGORITHM_VERSION, INTRADAY_STRESS_PUBLICATION_EVIDENCE_VERSION, INTRADAY_STRESS_V1_DEFINITION } from './intraday-stress-v1.definition.js';
 import { VERIFIED_NYSE_CLOSURES } from './market-calendar-bootstrap.definition.js';
+import { intradayAuthority } from './intraday-stress-provider-authority.js';
 
 const identity = { dimension: 'INTRADAY_STRESS' as const, algorithmVersion: INTRADAY_STRESS_ALGORITHM_VERSION };
 export const INTRADAY_STRESS_PUBLICATION_LOCK_KEY = createHash('sha256').update('ai-trader:intraday-stress-v1-publication').digest().readBigInt64BE(0);
@@ -30,7 +31,7 @@ const continuationSchema = z.object({
   baseline: z.object({ spy: z.number().positive().nullable(), rsp: z.number().positive().nullable() }),
 });
 type Assessment = MarketRegimeDimensionAssessment;
-type Reason = 'CALENDAR_EVIDENCE_UNAVAILABLE' | 'PRIOR_ATR_UNAVAILABLE' | 'SPLIT_EVIDENCE_UNAVAILABLE' | 'MISSING_INTRADAY_EVIDENCE' | 'ROLLING_CONTINUITY_FAILURE' | 'CALCULATION_FAILED';
+type Reason = 'CALENDAR_EVIDENCE_UNAVAILABLE' | 'PRIOR_ATR_UNAVAILABLE' | 'SPLIT_EVIDENCE_UNAVAILABLE' | 'MISSING_INTRADAY_EVIDENCE' | 'CANONICAL_PROVIDER_CONFLICT' | 'TIINGO_RETENTION_PAUSED' | 'ROLLING_CONTINUITY_FAILURE' | 'CALCULATION_FAILED';
 export type IntradayStressPublicationResult = { published: number; suppressed: boolean; notDue: boolean; blocked: { sessionDate: string; index: number; status: 'UNAVAILABLE' | 'FAILED'; reasonCode: Reason } | null };
 type SplitReader = (symbol: IntradaySymbol, from: string, through: string) => Promise<SplitEvent[]>;
 type Options = { db?: PrismaClient; now?: Date; clock?: () => Date; fetchSplits?: SplitReader };
@@ -96,7 +97,9 @@ async function fetchIntradayBars(tx: Tx, symbol: IntradaySymbol, date: string, n
   const security = await tx.security.findUnique({ where: { symbol }, select: { id: true } });
   if (!security) return [];
   const session = marketSession(date, exceptions)!;
-  const rows = await tx.marketBar.findMany({ where: { securityId: security.id, timeframe: 'MINUTE_15', provider: 'MASSIVE', adjustmentMode: 'UNADJUSTED', barStartAt: { gte: session.openAt, lt: session.closeAt } }, orderBy: [{ barStartAt: 'asc' }, { id: 'asc' }] });
+  const rows = await tx.marketBar.findMany({ where: { securityId: security.id, timeframe: 'MINUTE_15', barStartAt: { gte: session.openAt, lt: session.closeAt } }, orderBy: [{ barStartAt: 'asc' }, { id: 'asc' }] });
+  const expected = intradayAuthority(date).provider;
+  if (rows.some(row => row.provider !== expected || row.adjustmentMode !== 'UNADJUSTED')) throw new Error('CANONICAL_PROVIDER_CONFLICT');
   return rows.filter(row => barEligibility('MINUTE_15', row.barStartAt, now, exceptions).status === 'ELIGIBLE')
     .map(row => ({ barStartAtMs: row.barStartAt.getTime(), open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close), volume: Number(row.volume) }));
 }
@@ -132,7 +135,7 @@ async function computeBaseline(tx: Tx, priorDate: string | null, latestDate: str
     instruments[symbol] = { securityId: security?.id ?? null, atr14: last?.atr14 ?? null, atr14Pct: last?.ATR14Pct?.value ?? null, consecutiveSessions: last?.consecutiveSessions ?? 0, dailyBarCount: bars.length, splits: splits[i] };
   });
   const reasonCode: Reason | null = SYMBOLS.some(symbol => perSymbol[symbol] === null) ? 'PRIOR_ATR_UNAVAILABLE' : null;
-  return { perSymbol, reasonCode, provenance: { dailyFrom, through: priorDate, dates, instruments } };
+  return { perSymbol, reasonCode, provenance: { provider: 'MASSIVE', migrationPhase: 'LEGACY_DAILY_BASELINE_PENDING', dailyFrom, through: priorDate, dates, instruments } };
 }
 
 /** Publishes at most one authoritative assessment per invocation: the current due 15-minute
@@ -177,6 +180,8 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
       const missingEarlyCloses = VERIFIED_NYSE_CLOSURES.earlyCloseDates.filter(date => date >= windowFrom && date <= latest.date
         && !exceptions.some(row => row.sessionDate === date && row.type === 'EARLY_CLOSE' && row.closeTimeMinutesEt === VERIFIED_NYSE_CLOSURES.earlyCloseTimeMinutesEt));
       let reasonCode: Reason | null = !withinCalendarAuthority || missingClosures.length || missingEarlyCloses.length ? 'CALENDAR_EVIDENCE_UNAVAILABLE' : null;
+      if (!reasonCode && intradayAuthority(latest.date).provider === 'TIINGO' && (await tx.setting.findUnique({ where: { key: 'tiingoDailyIngestionPaused' } }))?.value === 'true')
+        reasonCode = 'TIINGO_RETENTION_PAUSED';
       let status: 'VALID' | 'UNAVAILABLE' | 'FAILED' = reasonCode ? 'FAILED' : 'VALID';
 
       const predecessorSessionDate = predecessor?.sessionDate ? predecessor.sessionDate.toISOString().slice(0, 10) : null;
@@ -194,7 +199,7 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
       let baselineProvenance: Record<string, unknown> | null = null;
       if (!reasonCode && sameSession && continuation) {
         baseline = { SPY: continuation.baseline.spy, RSP: continuation.baseline.rsp };
-        baselineProvenance = { reused: true, fromAssessmentId: predecessor!.id };
+        baselineProvenance = { provider: 'MASSIVE', migrationPhase: 'LEGACY_DAILY_BASELINE_PENDING', reused: true, fromAssessmentId: predecessor!.id };
       } else if (!reasonCode) {
         try {
           const priorDate = previousSessionDate(latest.date, exceptions);
@@ -237,7 +242,7 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
               : (issues.has('MISSING_INVALID_OR_DUPLICATE_BAR') || issues.has('MISSING_REFERENCE') || issues.has('INCOMPLETE_SESSION_PREFIX')) ? 'MISSING_INTRADAY_EVIDENCE'
               : issues.has('ROLLING_CONTINUITY_FAILURE') ? 'ROLLING_CONTINUITY_FAILURE' : 'MISSING_INTRADAY_EVIDENCE';
           }
-        } catch { status = 'FAILED'; reasonCode = 'CALCULATION_FAILED'; }
+        } catch (error) { status = 'FAILED'; reasonCode = error instanceof Error && error.message === 'CANONICAL_PROVIDER_CONFLICT' ? 'CANONICAL_PROVIDER_CONFLICT' : 'CALCULATION_FAILED'; }
       }
 
       const targetAt = latest.targetAt;
@@ -267,7 +272,8 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
         calendarAuthority: { from: VERIFIED_NYSE_CLOSURES.from, to: VERIFIED_NYSE_CLOSURES.to, withinAuthority: withinCalendarAuthority },
         missingClosures, missingEarlyCloses, reasonCode, attemptFingerprint: fingerprint,
         session: { sameSession, previousSessionDate: predecessorSessionDate, bootstrap: !predecessor },
-        baseline: { spy: baseline.SPY, rsp: baseline.RSP, frozenForSession: true, provenance: baselineProvenance },
+        intradayMarketData: intradayAuthority(latest.date),
+        baseline: { spy: baseline.SPY, rsp: baseline.RSP, frozenForSession: true, provider: 'MASSIVE', migrationPhase: 'LEGACY_DAILY_BASELINE_PENDING', provenance: baselineProvenance },
         replay: { fromIndex: replayFromIndex, throughIndex: latest.index, replayedCount, trail: replayTrail, note: 'Only the current due target is persisted as an authoritative row; any earlier skipped targets are replayed in-memory only (trail), to reconstruct hysteresis without fabricating retroactive history or duplicating full OHLC evidence.' },
         spy: finalSpy, rsp: finalRsp,
         market: { rawState: finalRaw, explanation: 'Market raw state is worse(SPY instrument raw state, RSP instrument raw state); either instrument SEVERE is sufficient for market SEVERE. No averaging or voting.' },

@@ -30,7 +30,9 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     prismaModule = await import('../prisma.js');
   }, 120_000);
   afterAll(async () => {
-    await service?.closeTiingoDailyLockPool(); await prismaModule?.prisma.$disconnect();
+    await service?.closeTiingoDailyLockPool();
+    if (service) await (await import('../../services/market-minute-data-lock.service.js')).closeMarketMinuteDataLockPool();
+    await prismaModule?.prisma.$disconnect();
     process.env.DATABASE_URL = originalUrl;
     if (db) await db.end();
     if (admin) { await admin.query(`DROP DATABASE IF EXISTS "${database}"`); await admin.end(); }
@@ -183,13 +185,16 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
       { provider: 'MASSIVE', session_date: '2026-09-24', n: 1 },
       ...Object.entries({ '2026-09-21': 3, '2026-09-22': 20, '2026-09-23': 2, '2026-09-24': 2, '2026-09-25': 2, '2026-09-28': 1, '2026-09-29': 1, '2026-09-30': 1 }).map(([session_date, n]) => ({ provider: 'TIINGO', session_date, n })),
     ]);
-    const tiingoBarCount = barsByProviderAndSession.filter(row => row.provider === 'TIINGO').reduce((total, row) => total + row.n, 0);
+    const securityId = (await db.query(`SELECT id FROM "Security" WHERE symbol='AAPL'`)).rows[0].id;
+    await db.query(`INSERT INTO "MarketBar" ("securityId",timeframe,"barStartAt",open,high,low,close,volume,provider,"adjustmentMode","receivedAt") VALUES ($1,'MINUTE_15','2026-09-24T13:30:00Z',100,101,99,100,15,'TIINGO','UNADJUSTED',now())`, [securityId]);
+    const tiingoBarCount = 1 + barsByProviderAndSession.filter(row => row.provider === 'TIINGO').reduce((total, row) => total + row.n, 0);
     const preview = await service.tiingoRetentionPurge();
     expect(preview).toMatchObject({ preview: true, counts: { marketBars: tiingoBarCount, marketSplitEvents: 1, observationStates: 5 } });
     const applied = await service.tiingoRetentionPurge(true, 'DELETE-TIINGO-DATA');
     expect(applied.preview).toBe(false);
     expect(applied.counts).toEqual(preview.counts);
     expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE provider='TIINGO'`)).rows[0].n).toBe(0);
+    expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE provider='TIINGO' AND timeframe='MINUTE_15'`)).rows[0].n).toBe(0);
     expect((await db.query(`SELECT count(*)::int n FROM "TiingoDailyObservationState"`)).rows[0].n).toBe(0);
     expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE provider='MASSIVE'`)).rows[0].n).toBe(1);
     expect((await db.query(`SELECT count(*)::int n FROM "MarketSplitEvent" WHERE provider='MASSIVE'`)).rows[0].n).toBe(1);

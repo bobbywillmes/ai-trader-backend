@@ -9,6 +9,7 @@ import { addDays, datesBetween, etDate, etInstant, marketSession, validDate } fr
 import { calendarExceptions } from './market-calendar.service.js';
 import { runTiingoDailyPool } from './tiingo-daily-pool.js';
 import { nextTiingoEmptyObservation } from './tiingo-daily-observation.js';
+import { withMarketMinuteDataLock } from './market-minute-data-lock.service.js';
 
 export const TIINGO_DAY_1_TIMING_VERSION = 'TIINGO_DAY_1_2015_ET_V1';
 const lockKey = createHash('sha256').update('ai-trader:tiingo-daily-ingestion-and-purge').digest().readBigInt64BE(0).toString();
@@ -251,14 +252,14 @@ export async function tiingoRetentionPurge(apply = false, confirm?: string) {
   return withTiingoDailyLock(async () => {
     const counts = { marketBars: await prisma.marketBar.count({ where: { provider: 'TIINGO' } }), marketSplitEvents: await prisma.marketSplitEvent.count({ where: { provider: 'TIINGO' } }), marketSplitCoverage: await prisma.marketSplitCoverage.count({ where: { provider: 'TIINGO' } }), observationStates: await prisma.tiingoDailyObservationState.count() };
     if (!apply) return { preview: true, counts };
-    await prisma.$transaction(async tx => {
+    await withMarketMinuteDataLock(() => prisma.$transaction(async tx => {
       await tx.$executeRaw`SELECT set_config('ai_trader.tiingo_retention_purge', 'on', true)`;
       await tx.setting.upsert({ where: { key: pausedKey }, create: { key: pausedKey, value: 'true' }, update: { value: 'true' } });
       await tx.marketSplitCoverage.deleteMany({ where: { provider: 'TIINGO' } });
       await tx.marketSplitEvent.deleteMany({ where: { provider: 'TIINGO' } });
       await tx.marketBar.deleteMany({ where: { provider: 'TIINGO' } });
       await tx.tiingoDailyObservationState.deleteMany();
-    });
+    }));
     return { preview: false, counts };
   });
 }

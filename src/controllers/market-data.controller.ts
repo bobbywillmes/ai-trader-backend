@@ -4,7 +4,7 @@ import { ZodError } from 'zod';
 import { HttpError } from '../errors/http-error.js';
 import { calendarInputSchema, calendarYearSchema, marketIdSchema, marketRangeSchema } from '../validators/market-data.schema.js';
 import { deleteCalendar, listCalendar, saveCalendar } from '../services/market-calendar.service.js';
-import { backfillDailyBars, marketDataStatus } from '../services/market-bar-ingestion.service.js';
+import { backfillDailyBars, intradayMinuteAuthorityStatus, marketDataStatus } from '../services/market-bar-ingestion.service.js';
 import { getTrendDay, getTrendLab } from '../services/trend-lab.service.js';
 import { z } from 'zod';
 import { marketDateSchema } from '../validators/market-data.schema.js';
@@ -24,6 +24,7 @@ export const calendarCreateController = marketController(async (req, res) => { r
 export const calendarUpdateController = marketController(async (req, res) => { res.json(await saveCalendar(calendarInputSchema.parse(req.body), marketIdSchema.parse(req.params.id))); });
 export const calendarDeleteController = marketController(async (req, res) => { await deleteCalendar(marketIdSchema.parse(req.params.id)); res.status(204).send(); });
 export const marketDataStatusController = marketController(async (_req, res) => { res.json(await marketDataStatus()); });
+export const intradayMinuteAuthorityStatusController = marketController(async (_req, res) => { res.json(await intradayMinuteAuthorityStatus()); });
 export const marketBackfillController = marketController(async (req, res) => { const range = marketRangeSchema.parse(req.body); res.json(await backfillDailyBars(range.from, range.to, res.locals.user?.id)); });
 export const trendLabController = marketController(async (req, res) => {
   const input = z.object({from:marketDateSchema,to:marketDateSchema,refresh:z.enum(['true','false']).optional()}).strict().parse(req.query);

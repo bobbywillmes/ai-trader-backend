@@ -91,6 +91,11 @@ export class TiingoRestClient {
     return normalizeTiingoIntraday(await this.get(`/tiingo/equity/intraday/${encodeURIComponent(symbol)}/prices`,
       { startDate, endDate, resampleFreq: '15min', afterHours: 'false', forceFill: 'false' }));
   }
+  async intradayMinutes(symbol: string, sessionDate: string) {
+    date.parse(sessionDate);
+    return normalizeTiingoIntraday(await this.get(`/tiingo/equity/intraday/${encodeURIComponent(symbol)}/prices`,
+      { startDate: sessionDate, endDate: sessionDate, resampleFreq: '1min', afterHours: 'false', forceFill: 'false' }));
+  }
   async latest(symbol: string, startDate: string, endDate: string) {
     date.parse(startDate); date.parse(endDate);
     return normalizeTiingoLatest(await this.get(`/tiingo/equity/intraday/${encodeURIComponent(symbol)}/prices`,

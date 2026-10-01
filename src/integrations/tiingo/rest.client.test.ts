@@ -5,6 +5,15 @@ const daily = { date: '2026-09-24T00:00:00.000Z', open: 100, high: 102, low: 99,
 const minute = { date: '2026-09-24T14:30:00.000Z', open: 100, high: 102, low: 99, close: 101, volume: 1000 };
 
 describe('Tiingo REST normalization', () => {
+  it('requests exact one-minute regular-session REST evidence for production aggregation', async () => {
+    const requested: URL[] = [];
+    const fetcher = vi.fn(async (url: URL) => { requested.push(url); return { ok: true, json: async () => [] } as Response; }) as unknown as typeof fetch;
+    const client = new TiingoRestClient({ token: 'test-token', fetcher });
+    expect(await client.intradayMinutes('SPY', '2026-09-24')).toEqual([]);
+    expect(requested[0]!.pathname).toBe('/tiingo/equity/intraday/SPY/prices');
+    expect(Object.fromEntries(requested[0]!.searchParams)).toEqual({ startDate: '2026-09-24', endDate: '2026-09-24',
+      resampleFreq: '1min', afterHours: 'false', forceFill: 'false' });
+  });
   it('preserves raw daily OHLCV and provider split factor', () => {
     expect(normalizeTiingoDaily([daily])).toEqual([{ barStartAt: new Date(daily.date), open: 100, high: 102, low: 99, close: 101, volume: 1000, splitFactor: 1 }]);
   });

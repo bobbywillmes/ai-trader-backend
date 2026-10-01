@@ -4,7 +4,7 @@
 
 Tiingo is the intended market observation provider. Alpaca remains broker and execution truth. There is no runtime market data provider fallback. Phase 4 adds only frozen Breadth-population Tiingo EOD persistence; Massive retains all existing production consumers, assessments, dashboard, Momentum, sizing, and trading paths. No WebSocket is required. Later phases may use Tiingo REST for consolidated intraday and operational/latest price observations. Massive News was never an active production capability and will be retired, not migrated.
 
-An operator must choose and record an explicit market session boundary outside regular trading hours for provider authority. Deployment time cannot infer the cutover. No code in this phase performs that cutover.
+An operator must choose and record an explicit market session boundary outside regular trading hours for provider authority. Deployment time cannot infer the cutover. Phase 7A implements this boundary for Intraday Stress minute evidence only.
 
 ## Canonical evidence
 
@@ -52,3 +52,6 @@ Phase 6A adds manual `BREADTH_V2_MEASUREMENT_V1` immutable production measuremen
 
 Phase 6B publishes manual, immutable `BREADTH_V2_TERTILE_V1` BREADTH assessments from Phase 6A observation sets. The first assessment uses `BREADTH_V2_BOOTSTRAP_V1`: the current set's frozen revision is projected backward through persisted Tiingo history from 2021-01-04, without historical production writes or the live Phase 6A readiness gates. Later assessments continue only from the persisted V2 predecessor. V1 and V2 assessment identities and predecessor chains remain separate. The V2 `targetAt`/`validUntil` boundary is Tiingo 20:15 ET; a narrow SQL timing exception retains actual delayed Tiingo receipt provenance. See [the shadow assessment guide](../production/breadth-v2-assessment-phase6b.md). No scheduled V2 worker, Market Regime composition, Signal, or trading consumer changes in Phase 6B.
 Phase 6C adds a disabled-by-default hourly BREADTH_V2 shadow orchestrator. It consumes persisted Tiingo evidence through the Phase 6A/6B publishers, never calls a provider, and grants no Market Regime or trading authority. Enable it only after real continuation acceptance; the manual APIs remain available.
+## Phase 7A / Phase 8 boundary
+
+Phase 7A permits an explicit New York session-date cutover of only the SPY/RSP `MINUTE_15` evidence for `INTRADAY_STRESS_V1` from Massive to strict local aggregation of Tiingo REST one-minute bars. The default remains Massive, and no WebSocket, fallback, BREADTH_V2, regime, strategy, signal, or trading authority changes. The assessment's prior-session ATR14 baseline still reads Massive `DAY_1` and persisted split evidence. This mixed-provider dependency is explicit in newly published evidence. Phase 8 is the remaining Massive daily/baseline consumer migration, not part of Phase 7A. See [the Phase 7A cutover guide](../production/tiingo-intraday-stress-phase7a.md).
