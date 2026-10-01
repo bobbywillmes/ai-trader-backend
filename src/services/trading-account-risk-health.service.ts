@@ -8,7 +8,7 @@ import {
 
 import { prisma } from '../db/prisma.js';
 import { getRuntimeTradingConfig } from './config.service.js';
-import { getTickerLatestPrice } from './massive-market-data.service.js';
+import { getTickerLatestPrice } from './live-market-data.service.js';
 import { validateAccountRiskConfiguration } from './trading-account-risk-configuration.service.js';
 import { resolveEffectiveAccountEntryLimits } from './trading-account-entry-risk-limits.service.js';
 import { getTradingAccountEntryRiskUsage } from './trading-account-entry-risk-usage.service.js';

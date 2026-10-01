@@ -13,7 +13,7 @@ import { momentumSubscriptionEligibilitySelect } from './momentum-subscription-e
 import {
   getTickerPriceConfirmationMarketData,
   type TickerPriceConfirmationMarketData,
-} from './massive-market-data.service.js';
+} from './live-market-data.service.js';
 import { getNewYorkMarketTiming, scoreMomentumPriceAction } from './momentum-price-score.js';
 import { scoreMomentumVolume } from './momentum-volume-score.js';
 import { scoreMomentumSetupQuality } from './momentum-setup-quality-score.js';

@@ -5,7 +5,7 @@ import { HttpError } from '../errors/http-error.js';
 import {
   getTickerLatestPrice,
   type TickerLatestPrice,
-} from './massive-market-data.service.js';
+} from './live-market-data.service.js';
 
 const RUNTIME_ACCOUNT_SUBSCRIPTION_SELECT = {
   id: true,

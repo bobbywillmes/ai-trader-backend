@@ -1,0 +1,13 @@
+# Phase 9A realtime provider shadow comparison
+
+Phase 9A gives live/direct market data a provider-neutral contract and a Massive-backed production entrypoint. It does not activate Tiingo for Momentum, charts, dashboard, admin estimates, runtime sizing, risk health, or trading. See [the frozen callsite audit](../architecture/massive-runtime-dependency-audit.md).
+
+Tiingo's consolidated realtime endpoint is a beta reference-price feed from multiple venues. Tiingo recommends its IEX endpoint for production realtime use, but IEX last-sale and quote fields may be null without exchange entitlement. The IEX comparison uses the documented `tngoLast` reference price and preserves nulls. Neither endpoint is selected as authority. There is no WebSocket in this phase.
+
+The manual command is `npm.cmd run market-data:realtime:compare -- --symbols=SPY,RSP,AAPL,MSFT`. It makes bounded, concurrent REST requests for each explicit symbol: Massive snapshot plus adjusted extended-hours one-minute aggregates, Tiingo consolidated snapshot, Tiingo consolidated historical 1-minute bars with `afterHours=true`, `forceFill=false`, and explicit OHLCV columns, and Tiingo IEX snapshot. It writes a token-free JSON artifact under ignored `.cache/realtime-market-data/`. It does not read or write the database, select a provider, or scan the full security universe. Run it during representative regular and extended market conditions and retain the artifact for review.
+
+The artifact reports independent provider errors, reference price and age, day context, aligned minute differences, provider-only timestamps, and regular/extended coverage. Massive's session VWAP is reported. Tiingo consolidated REST has no documented equivalent session VWAP. The optional `EXPLORATORY_MINUTE_TYPICAL_PRICE_VWAP` is `(high+low+close)/3` weighted by minute volume. It is a diagnostic only and must never be used by Momentum scoring. Momentum's scoring version, freshness rule, VWAP gate, candidate transitions and handoff remain unchanged.
+
+Massive daily chart/admin candles request `adjusted=true`; the Phase 8 raw canonical daily panel is not an arbitrary-symbol chart substitute. Trading-critical latest-price consumers still fail closed on missing positive Massive prices. No provider fallback exists.
+
+Phase 9B requires Bobby's real-market comparison across representative symbols and times, including price freshness, extended-hours coverage, minute alignment, provider errors, IEX entitlement behavior, and a documented solution for Momentum's VWAP semantic gap. Any trading-critical authority change needs a separate acceptance and rollout contract.

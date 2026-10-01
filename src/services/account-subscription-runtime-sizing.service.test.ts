@@ -14,7 +14,7 @@ vi.mock('../db/prisma.js', () => ({
   },
 }));
 
-vi.mock('./massive-market-data.service.js', () => ({
+vi.mock('./live-market-data.service.js', () => ({
   getTickerLatestPrice: mocks.getTickerLatestPrice,
 }));
 

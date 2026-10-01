@@ -32,7 +32,7 @@ vi.mock('./config.service.js', () => ({
   getRuntimeTradingConfig: mocks.getRuntimeTradingConfig,
 }));
 
-vi.mock('./massive-market-data.service.js', () => ({
+vi.mock('./live-market-data.service.js', () => ({
   getTickerLatestPrice: mocks.getTickerLatestPrice,
 }));
 

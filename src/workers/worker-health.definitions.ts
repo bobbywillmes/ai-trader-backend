@@ -109,7 +109,7 @@ export const workerDefinitions = [
   {
     key: 'market_minute_evidence_sync',
     displayName: 'Intraday market data',
-    description: "Fills eligible missing SPY/RSP MINUTE_15 bars for today's regular session from Massive, without rewriting evidence.",
+    description: "Fills eligible missing SPY/RSP MINUTE_15 bars for today's regular session from the configured session provider, without rewriting evidence.",
     criticality: 'informational',
     expectedIntervalMs: MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS,
     enabledByDefault: true,

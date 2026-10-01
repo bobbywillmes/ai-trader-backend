@@ -3,7 +3,7 @@ import {
   getIndexIntraday,
   getIndexPerformance,
   parseIndexChartRange,
-} from '../services/massive-market-data.service.js';
+} from '../services/live-market-data.service.js';
 import { getDashboardAccountsOverview, getTradingAccountDashboard } from '../services/dashboard.service.js';
 
 export async function getTradingAccountDashboardController(req: Request, res: Response, next: NextFunction) {

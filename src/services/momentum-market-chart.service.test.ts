@@ -21,7 +21,7 @@ vi.mock('../db/prisma.js', () => ({
   },
 }));
 
-vi.mock('./massive-market-data.service.js', () => ({
+vi.mock('./live-market-data.service.js', () => ({
   getTickerAggregateBars: mocks.getTickerAggregateBars,
   getTickerDailyCandles: mocks.getTickerDailyCandles,
 }));

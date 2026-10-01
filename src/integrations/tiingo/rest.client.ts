@@ -43,6 +43,46 @@ function bars(input: unknown, kind: 'daily' | 'intraday'): TiingoBar[] {
 
 export const normalizeTiingoDaily = (input: unknown) => bars(input, 'daily');
 export const normalizeTiingoIntraday = (input: unknown) => bars(input, 'intraday');
+const nullablePrice = positive.nullable().optional();
+const snapshotRow = z.object({
+  ticker: z.string().min(1).nullable().optional(), timestamp: timestamp.nullable().optional(),
+  tngoLast: nullablePrice, lqRefPrice: nullablePrice, prevClose: nullablePrice,
+  open: nullablePrice, high: nullablePrice, low: nullablePrice,
+  volume: volume.nullable().optional(),
+}).passthrough();
+
+export type TiingoRealtimeSnapshot = {
+  provider: 'TIINGO_CONSOLIDATED' | 'TIINGO_IEX'; symbol: string;
+  observedAt: Date | null; fetchedAt: Date;
+  referencePrice: number | null; referencePriceSource: 'TNGO_LAST' | 'LQ_REF_PRICE' | null;
+  previousClose: number | null; open: number | null; high: number | null;
+  low: number | null; volume: number | null; extendedHours: true;
+};
+
+function snapshotRecord(input: unknown) {
+  return snapshotRow.parse(z.array(z.unknown()).parse(input)[0]);
+}
+
+export function normalizeTiingoConsolidatedSnapshot(input: unknown, symbol: string, fetchedAt = new Date()): TiingoRealtimeSnapshot {
+  const row = snapshotRecord(input);
+  if (row.ticker && row.ticker.toUpperCase().replace('-', '.') !== symbol.toUpperCase()) throw new Error('Tiingo snapshot ticker mismatch');
+  return { provider: 'TIINGO_CONSOLIDATED', symbol: symbol.toUpperCase(),
+    observedAt: row.timestamp ? new Date(row.timestamp) : null, fetchedAt,
+    referencePrice: row.tngoLast ?? row.lqRefPrice ?? null,
+    referencePriceSource: row.tngoLast != null ? 'TNGO_LAST' : row.lqRefPrice != null ? 'LQ_REF_PRICE' : null,
+    previousClose: row.prevClose ?? null, open: row.open ?? null, high: row.high ?? null,
+    low: row.low ?? null, volume: row.volume ?? null, extendedHours: true };
+}
+
+export function normalizeTiingoIexSnapshot(input: unknown, symbol: string, fetchedAt = new Date()): TiingoRealtimeSnapshot {
+  const row = snapshotRecord(input);
+  if (row.ticker && row.ticker.toUpperCase().replace('-', '.') !== symbol.toUpperCase()) throw new Error('Tiingo IEX snapshot ticker mismatch');
+  return { provider: 'TIINGO_IEX', symbol: symbol.toUpperCase(),
+    observedAt: row.timestamp ? new Date(row.timestamp) : null, fetchedAt,
+    referencePrice: row.tngoLast ?? null, referencePriceSource: row.tngoLast != null ? 'TNGO_LAST' : null,
+    previousClose: row.prevClose ?? null, open: row.open ?? null, high: row.high ?? null,
+    low: row.low ?? null, volume: row.volume ?? null, extendedHours: true };
+}
 export function normalizeTiingoLatest(input: unknown, symbol: string) {
   const rows = normalizeTiingoIntraday(input).sort((a, b) => a.barStartAt.getTime() - b.barStartAt.getTime());
   const row = rows.at(-1);
@@ -95,6 +135,19 @@ export class TiingoRestClient {
     date.parse(sessionDate);
     return normalizeTiingoIntraday(await this.get(`/tiingo/equity/intraday/${encodeURIComponent(symbol)}/prices`,
       { startDate: sessionDate, endDate: sessionDate, resampleFreq: '1min', afterHours: 'false', forceFill: 'false' }));
+  }
+  async intradayHistory(symbol: string, startDate: string, endDate: string,
+    options: { resampleFreq: '1min' | '5min' | '15min'; afterHours: boolean }) {
+    date.parse(startDate); date.parse(endDate);
+    return normalizeTiingoIntraday(await this.get(`/tiingo/equity/intraday/${encodeURIComponent(tiingoSymbol(symbol))}/prices`,
+      { startDate, endDate, resampleFreq: options.resampleFreq, afterHours: String(options.afterHours),
+        forceFill: 'false', columns: 'open,high,low,close,volume' }));
+  }
+  async consolidatedSnapshot(symbol: string) {
+    return normalizeTiingoConsolidatedSnapshot(await this.get(`/tiingo/equity/intraday/${encodeURIComponent(tiingoSymbol(symbol))}`, {}), symbol);
+  }
+  async iexSnapshot(symbol: string) {
+    return normalizeTiingoIexSnapshot(await this.get(`/iex/${encodeURIComponent(tiingoSymbol(symbol))}`, {}), symbol);
   }
   async latest(symbol: string, startDate: string, endDate: string) {
     date.parse(startDate); date.parse(endDate);
