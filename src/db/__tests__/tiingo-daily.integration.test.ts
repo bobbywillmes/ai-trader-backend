@@ -178,10 +178,17 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     }
     finally { release(); }
     await first;
+    const barsByProviderAndSession = (await db.query(`SELECT provider,"barStartAt"::date::text AS session_date,count(*)::int n FROM "MarketBar" GROUP BY provider,"barStartAt"::date ORDER BY provider,session_date`)).rows;
+    expect(barsByProviderAndSession).toEqual([
+      { provider: 'MASSIVE', session_date: '2026-09-24', n: 1 },
+      ...Object.entries({ '2026-09-21': 3, '2026-09-22': 20, '2026-09-23': 2, '2026-09-24': 2, '2026-09-25': 2, '2026-09-28': 1, '2026-09-29': 1, '2026-09-30': 1 }).map(([session_date, n]) => ({ provider: 'TIINGO', session_date, n })),
+    ]);
+    const tiingoBarCount = barsByProviderAndSession.filter(row => row.provider === 'TIINGO').reduce((total, row) => total + row.n, 0);
     const preview = await service.tiingoRetentionPurge();
-    expect(preview).toMatchObject({ preview: true, counts: { marketBars: 30, marketSplitEvents: 1, observationStates: 5 } });
+    expect(preview).toMatchObject({ preview: true, counts: { marketBars: tiingoBarCount, marketSplitEvents: 1, observationStates: 5 } });
     const applied = await service.tiingoRetentionPurge(true, 'DELETE-TIINGO-DATA');
     expect(applied.preview).toBe(false);
+    expect(applied.counts).toEqual(preview.counts);
     expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE provider='TIINGO'`)).rows[0].n).toBe(0);
     expect((await db.query(`SELECT count(*)::int n FROM "TiingoDailyObservationState"`)).rows[0].n).toBe(0);
     expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE provider='MASSIVE'`)).rows[0].n).toBe(1);
