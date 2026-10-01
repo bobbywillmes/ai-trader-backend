@@ -20,6 +20,23 @@ type Blocker = { code: BlockerCode; message: string; horizonSessions?: number };
 type Readiness = 'READY' | 'NOT_DUE' | 'BLOCKED' | 'ALREADY_PUBLISHED';
 type Options = { db?: PrismaClient; now?: Date };
 
+async function publishedMeasurement(db: PrismaClient, revisionId: number, date: string) {
+  const row = await db.marketBreadthObservationSet.findUnique({ where: { measurementVersion_breadthUniverseRevisionId_sessionDate: { measurementVersion: BREADTH_V2_MEASUREMENT_VERSION, breadthUniverseRevisionId: revisionId, sessionDate: new Date(date) } }, include: { horizons: { orderBy: { horizonSessions: 'asc' } } } });
+  if (!row) return null;
+  const fail = () => { throw new Error('Conflicting immutable BREADTH_V2 observation identity or input.'); };
+  const evidence = row.evidenceJson as Record<string, unknown>;
+  const validHash = (value: string) => /^[a-f0-9]{64}$/.test(value);
+  if (row.measurementVersion !== BREADTH_V2_MEASUREMENT_VERSION || row.provider !== 'TIINGO' || row.breadthUniverseRevisionId !== revisionId || iso(row.sessionDate) !== date || row.evidenceSchemaVersion !== BREADTH_V2_EVIDENCE_SCHEMA_VERSION || !validHash(row.canonicalInputHash) || row.universeCount <= 0 || row.targetBarCount < 0 || row.targetBarCount > row.universeCount || Math.abs(row.targetCoverageRatio.toNumber() - row.targetBarCount / row.universeCount) > 1e-9 || row.horizons.length !== 3 || !evidence || evidence.measurementVersion !== BREADTH_V2_MEASUREMENT_VERSION || evidence.revisionId !== revisionId || evidence.sessionDate !== date || evidence.memberCount !== row.universeCount || typeof evidence.targetCoverageRatio !== 'number' || Math.abs(evidence.targetCoverageRatio - row.targetCoverageRatio.toNumber()) > 1e-9 || (evidence.evidenceReadiness as Record<string, unknown> | undefined)?.version !== BREADTH_V2_EVIDENCE_READINESS.version || (evidence.source as Record<string, unknown> | undefined)?.provider !== 'TIINGO') fail();
+  const horizonHashes = evidence.horizonHashes;
+  if (!Array.isArray(horizonHashes) || horizonHashes.length !== 3) fail();
+  if (hash({ measurementVersion: BREADTH_V2_MEASUREMENT_VERSION, revisionId, constituentHash: evidence.constituentHash, date, horizonHashes }) !== row.canonicalInputHash) fail();
+  for (const [index, horizon] of row.horizons.entries()) {
+    const detail = horizon.evidenceJson as Record<string, unknown>;
+    if (horizon.horizonSessions !== HORIZONS[index] || !validHash(horizon.canonicalInputHash) || (horizonHashes as unknown[])[index] !== horizon.canonicalInputHash || horizon.universeCount !== row.universeCount || horizon.anchorBarCount < 0 || horizon.anchorBarCount > row.universeCount || horizon.eligibleCount < 0 || horizon.excludedCount < 0 || horizon.eligibleCount + horizon.excludedCount !== row.universeCount || horizon.advancingCount < 0 || horizon.decliningCount < 0 || horizon.unchangedCount < 0 || horizon.advancingCount + horizon.decliningCount + horizon.unchangedCount !== horizon.eligibleCount || horizon.directionalCount !== horizon.advancingCount + horizon.decliningCount || Math.abs(horizon.coverageRatio.toNumber() - horizon.eligibleCount / row.universeCount) > 1e-9 || !detail || detail.anchorSessionDate !== iso(horizon.anchorSessionDate) || detail.splitNormalizationVersion !== SPLIT_NORMALIZATION_VERSION) fail();
+  }
+  return row;
+}
+
 /** Integer comparisons keep the evidence gates exact at their frozen decimal boundaries. */
 export function breadthV2EvidenceBlocker(universeCount: number, targetBarCount: number, horizons: readonly { horizonSessions: number; eligibleCount: number; directionalCount: number }[]): Blocker | null {
   if (targetBarCount * 1000 < universeCount * 995) return { code: 'INSUFFICIENT_TARGET_COVERAGE', message: 'Target-session Tiingo coverage is below 99.5%.' };
@@ -51,6 +68,8 @@ export async function computeBreadthV2Measurement(date: string, options: Options
   if (!tiingoDayEligible(date, now)) return { ...base, readiness: 'NOT_DUE' as const };
   const revision = await db.breadthUniverseRevision.findFirst({ where: { effectiveFrom: { lte: new Date(date) } }, orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }] });
   if (!revision) return { ...base, blocker: { code: 'MISSING_UNIVERSE_REVISION', message: `No frozen Breadth revision applies to ${date}.` } as Blocker };
+  const existing = await publishedMeasurement(db, revision.id, date);
+  if (existing) return { ...base, revisionId: revision.id, memberCount: existing.universeCount, constituentHash: (existing.evidenceJson as Record<string, unknown>).constituentHash as string, targetBarCount: existing.targetBarCount, targetCoverageRatio: existing.targetCoverageRatio.toNumber(), horizons: existing.horizons.map(row => ({ horizonSessions: row.horizonSessions, anchorSessionDate: iso(row.anchorSessionDate), anchorBarCount: row.anchorBarCount, universeCount: row.universeCount, eligibleCount: row.eligibleCount, excludedCount: row.excludedCount, advancingCount: row.advancingCount, decliningCount: row.decliningCount, unchangedCount: row.unchangedCount, directionalCount: row.directionalCount, coverageRatio: row.coverageRatio.toNumber(), advanceShare: row.advanceShare.toNumber(), netBreadth: row.netBreadth.toNumber(), canonicalInputHash: row.canonicalInputHash, exclusions: (row.evidenceJson as Record<string, unknown>).exclusions })), canonicalInputHash: existing.canonicalInputHash, dataThroughAt: existing.dataThroughAt, readiness: 'ALREADY_PUBLISHED' as const, blocker: null, existingId: existing.id };
   const membership = await db.breadthUniverseRevisionMember.findMany({ where: { revisionId: revision.id }, include: { security: { select: { symbol: true } } } });
   if (!membership.length || membership.length !== revision.memberCount || new Set(membership.map(row => row.securityId)).size !== revision.memberCount) throw new Error('Frozen Breadth revision memberCount integrity failure.');
   const members = membership.map(row => ({ securityId: row.securityId, symbol: row.security.symbol })).sort(sortSymbol);
@@ -111,11 +130,6 @@ export async function computeBreadthV2Measurement(date: string, options: Options
   });
   const canonicalInputHash = hash({ measurementVersion: BREADTH_V2_MEASUREMENT_VERSION, revisionId: revision.id, constituentHash: populationHash, date, horizonHashes: horizons.map(row => row.canonicalInputHash) });
   const blocker = breadthV2EvidenceBlocker(members.length, targetBarCount, horizons);
-  const existing = await db.marketBreadthObservationSet.findUnique({ where: { measurementVersion_breadthUniverseRevisionId_sessionDate: { measurementVersion: BREADTH_V2_MEASUREMENT_VERSION, breadthUniverseRevisionId: revision.id, sessionDate: new Date(date) } }, include: { horizons: true } });
-  if (existing) {
-    if (existing.canonicalInputHash !== canonicalInputHash || existing.horizons.length !== 3 || HORIZONS.some(h => !existing.horizons.some(row => row.horizonSessions === h && row.canonicalInputHash === horizons.find(x => x.horizonSessions === h)!.canonicalInputHash))) throw new Error('Conflicting immutable BREADTH_V2 observation identity or input.');
-    return { ...common, targetBarCount, targetCoverageRatio, horizons, canonicalInputHash, dataThroughAt: latestReceiptAt, readiness: 'ALREADY_PUBLISHED' as const, blocker: null, existingId: existing.id };
-  }
   return { ...common, targetBarCount, targetCoverageRatio, horizons, canonicalInputHash, dataThroughAt: latestReceiptAt, readiness: blocker ? 'BLOCKED' as const : 'READY' as const, blocker };
 }
 

@@ -38,6 +38,12 @@ describe('BREADTH_V2 shadow orchestration', () => {
     mocks.assessment.mockResolvedValueOnce(assessment({ published: 1, attempts: 1 }));
     expect(await run()).toMatchObject({ outcome: 'success' });
   });
+  it('stays healthy when late evidence follows an already published observation and assessment', async () => {
+    mocks.observation.mockResolvedValueOnce(observation({ latestEligibleSession: '2026-09-30', attempted: 1, results: [{ sessionDate: '2026-09-30', id: 2, alreadyPublished: true }] }));
+    mocks.assessment.mockResolvedValueOnce(assessment({ attempts: 0, notDue: true }));
+    expect(await run()).toMatchObject({ outcome: 'idle' });
+    expect(breadthV2ShadowSnapshot()).toMatchObject({ outcome: 'ALREADY_CURRENT', observation: { inserted: 0, attempted: 1, blocked: null }, assessment: { published: 0, attempts: 0, blocked: null } });
+  });
   it('stops on temporary coverage and does not invoke assessment or throw repeatedly', async () => {
     mocks.observation.mockResolvedValue(observation({ blocked: { code: 'INSUFFICIENT_TARGET_COVERAGE', sessionDate: '2026-09-29' } }));
     expect(await run()).toMatchObject({ outcome: 'idle' }); expect(await run()).toMatchObject({ outcome: 'idle' });

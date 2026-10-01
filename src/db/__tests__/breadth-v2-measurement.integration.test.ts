@@ -116,4 +116,25 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await expect(measurement.computeBreadthV2Measurement('2026-10-07', { now: new Date('2026-10-08T03:00:00Z') })).rejects.toThrow('Conflicting immutable BREADTH_V2 observation');
     expect((await db.query(`SELECT count(*)::int n FROM "MarketRegimeDimensionAssessment"`)).rows[0].n).toBe(0);
   });
+  it('keeps a published snapshot authoritative when a missing member bar arrives later', async () => {
+    const date = '2026-10-08';
+    const due = new Date('2026-10-09T03:00:00Z');
+    const dates = datesBetween('2026-09-09', date).filter(day => marketSession(day, [])).slice(-21);
+    const revision = (await db.query(`INSERT INTO "BreadthUniverseRevision" ("effectiveFrom","memberCount") VALUES ($1,201) RETURNING id`, [date])).rows[0].id;
+    const symbols = Array.from({ length: 201 }, (_, i) => `LATE${String(i).padStart(3, '0')}`);
+    const securities = (await db.query(`INSERT INTO "Security" (symbol,name,"assetType",enabled,"updatedAt") SELECT symbol,symbol,'STOCK',false,now() FROM unnest($1::text[]) symbol RETURNING id`, [symbols])).rows.map(row => row.id);
+    await db.query(`INSERT INTO "BreadthUniverseRevisionMember" ("revisionId","securityId") SELECT $1,id FROM "Security" WHERE id = ANY($2::int[])`, [revision, securities]);
+    await db.query(`INSERT INTO "MarketBar" ("securityId",timeframe,"barStartAt",open,high,low,close,volume,"splitFactor",provider,"adjustmentMode","receivedAt") SELECT id,'DAY_1',day::date,100,101,100,CASE WHEN day=$4 THEN 101 ELSE 100 END,1000,1,'TIINGO','UNADJUSTED',now() FROM unnest($1::int[]) id CROSS JOIN unnest($2::text[]) day WHERE NOT (id=$3 AND day=$4)`, [securities, dates, securities[0], date]);
+    const first = await measurement.runBreadthV2Observations({ now: due });
+    expect(first).toMatchObject({ inserted: 1, blocked: null });
+    const original = await measurement.latestBreadthV2Observation();
+    expect(original).toMatchObject({ id: first.results[0]?.id, targetBarCount: 200 });
+    const originalHashes = [original!.canonicalInputHash, ...original!.horizons.map(row => row.canonicalInputHash)];
+    await db.query(`INSERT INTO "MarketBar" ("securityId",timeframe,"barStartAt",open,high,low,close,volume,"splitFactor",provider,"adjustmentMode","receivedAt") VALUES ($1,'DAY_1',$2,100,100,100,100,1000,1,'TIINGO','UNADJUSTED',now())`, [securities[0], date]);
+    expect(await measurement.breadthV2ObservationStatus({ now: due })).toMatchObject({ readiness: 'ALREADY_PUBLISHED', existingId: original!.id, targetBarCount: 200, canonicalInputHash: originalHashes[0] });
+    expect(await measurement.runBreadthV2Observations({ now: due })).toMatchObject({ inserted: 0, blocked: null, results: [{ id: original!.id, alreadyPublished: true }] });
+    const persisted = await measurement.latestBreadthV2Observation();
+    expect([persisted!.canonicalInputHash, ...persisted!.horizons.map(row => row.canonicalInputHash)]).toEqual(originalHashes);
+    expect((await db.query(`SELECT count(*)::int n FROM "MarketBreadthObservationSet" WHERE "breadthUniverseRevisionId"=$1 AND "sessionDate"=$2`, [revision, date])).rows[0].n).toBe(1);
+  });
 });
