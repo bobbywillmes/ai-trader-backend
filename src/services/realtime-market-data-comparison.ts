@@ -1,8 +1,10 @@
 import type { TickerPriceConfirmationMarketData } from './massive-market-data.service.js';
 import type { TiingoBar, TiingoRealtimeSnapshot } from '../integrations/tiingo/rest.client.js';
+import { compareVolumeIntensity } from './realtime-volume-intensity-comparison.js';
 
 export type ProviderResult<T> = { ok: true; value: T; fetchedAt: Date } | { ok: false; error: string; fetchedAt: Date };
 export type ComparisonInputs = { symbol: string; startedAt: Date; completedAt: Date;
+  minimumDollarVolume: number; configuredRecentWindowMinutes: number;
   massive: ProviderResult<TickerPriceConfirmationMarketData>; consolidated: ProviderResult<TiingoRealtimeSnapshot>;
   history: ProviderResult<TiingoBar[]>; iex: ProviderResult<TiingoRealtimeSnapshot> };
 type Segment = 'OVERNIGHT' | 'PREMARKET' | 'REGULAR' | 'POSTMARKET';
@@ -84,7 +86,8 @@ export function compareRealtimeEvidence(input: ComparisonInputs) {
   const minute = massiveObservedAt && Number.isFinite(Date.parse(massiveObservedAt))
     ? new Date(Math.floor(Date.parse(massiveObservedAt) / 60_000) * 60_000).toISOString() : null;
   const alignedBar = minute ? tm.get(minute) : null;
-  const cutoff = mt.at(-1) ?? null;
+  // Require an actual minute from both providers at the comparison cutoff.
+  const cutoff = aligned.at(-1) ?? null;
   const tiingoThroughCutoff = cutoff ? tb.filter(b => b.barStartAt.toISOString() <= cutoff) : [];
   const massiveThroughCutoff = cutoff ? mb.filter(b => b.time <= cutoff) : [];
   const volumeRows = alignedDifferences.filter(r => r.massiveVolume !== null);
@@ -142,6 +145,9 @@ export function compareRealtimeEvidence(input: ComparisonInputs) {
       massiveMinuteVsSnapshot: difference(massiveCutoffSum, massive.ok ? massive.value.snapshot.dayVolume : null),
       sharedTimestampCountWithVolume: volumeRows.length, sharedTiingoMinuteSum: tiingoSharedSum,
       sharedMassiveMinuteSum: massiveSharedSum, sharedTiingoVsMassive: difference(tiingoSharedSum, massiveSharedSum) },
+    momentumVolumeParity: compareVolumeIntensity({ massive: mb.map(b => ({ time: b.time, volume: b.volume, close: b.close })),
+      tiingo: tb.map(b => ({ time: b.barStartAt.toISOString(), volume: b.volume, close: b.close })),
+      cutoff, minimumDollarVolume: input.minimumDollarVolume, configuredRecentWindowMinutes: input.configuredRecentWindowMinutes }),
     vwap: { massiveSessionVwap: mv, tiingoDocumentedVwap: 'UNAVAILABLE', exploratoryMetric: 'EXPLORATORY_MINUTE_TYPICAL_PRICE_VWAP',
       interval: overlapWindow, extendedInclusive: extendedVwap, regularOnly: regularVwap,
       extendedMinusMassive: difference(extendedVwap, mv), regularMinusMassive: difference(regularVwap, mv) },
@@ -150,12 +156,27 @@ export function compareRealtimeEvidence(input: ComparisonInputs) {
 export type ComparisonResult = ReturnType<typeof compareRealtimeEvidence>;
 export function summarizeComparisons(results: ComparisonResult[]) {
   const values = (select: (r: ComparisonResult) => number | null) => results.flatMap(r => { const n = select(r); return n === null ? [] : [n]; });
-  return { schemaVersion: 2, productionAuthority: 'MASSIVE', symbolCount: results.length,
+  return { schemaVersion: 3, productionAuthority: 'MASSIVE', symbolCount: results.length,
     symbols: results.map(r => ({ symbol: r.symbol, providers: r.providers, prices: r.prices, snapshotSemantics: r.snapshotSemantics,
-      minutes: { ...r.minutes, alignedDifferences: undefined }, volumeDiagnostics: r.volumeDiagnostics, vwap: r.vwap })),
+      minutes: { ...r.minutes, alignedDifferences: undefined }, volumeDiagnostics: r.volumeDiagnostics,
+      momentumVolumeParity: r.momentumVolumeParity, vwap: r.vwap })),
     distributions: { consolidatedVsIexAbsolute: distribution(values(r => r.prices.contemporaneousConsolidatedVsIex.absolute)),
       alignedMassiveVsTiingoAbsolute: distribution(values(r => r.prices.massiveVsTiingoAlignedMinute.absolute)),
       minuteCloseAbsoluteMedian: distribution(values(r => r.minutes.closeAbsolute.median)),
       minuteCloseBasisPointsMedian: distribution(values(r => r.minutes.closeBasisPoints.median)),
-      sharedMinuteVolumeRatio: distribution(values(r => ratio(r.volumeDiagnostics.sharedTiingoMinuteSum, r.volumeDiagnostics.sharedMassiveMinuteSum))) } };
+      sharedMinuteVolumeRatio: distribution(values(r => ratio(r.volumeDiagnostics.sharedTiingoMinuteSum, r.volumeDiagnostics.sharedMassiveMinuteSum))),
+      thirtyMinuteAbsoluteIntensityDifference: distribution(values(r => r.momentumVolumeParity.v6ThirtyMinuteParity.absoluteIntensityDifference)),
+      thirtyMinuteMassiveIntensity: distribution(values(r => r.momentumVolumeParity.windows['30'].massive.volumeIntensity)),
+      thirtyMinuteTiingoIntensity: distribution(values(r => r.momentumVolumeParity.windows['30'].tiingo.volumeIntensity)),
+      thirtyMinuteBucketAgreement: agreement(results.map(r => r.momentumVolumeParity.v6ThirtyMinuteParity.sameBucket)),
+      thirtyMinutePointAgreement: agreement(results.map(r => r.momentumVolumeParity.v6ThirtyMinuteParity.sameIntensityPoints)),
+      liquidityDecisionAgreement: agreement(results.map(r => r.momentumVolumeParity.liquidity.sameLiquidityDecision)),
+      cumulativeTiingoMassiveRatioByCheckpoint: Object.fromEntries(['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', 'COMMON_CUTOFF'].map(label =>
+        [label, distribution(values(r => r.momentumVolumeParity.cumulativeCheckpoints.find(point => point.checkpoint === label)?.tiingoToMassiveRatio ?? null))])) } };
+}
+function agreement(values: Array<boolean | null>) {
+  const eligible = values.filter((value): value is boolean => value !== null);
+  const agreed = eligible.filter(Boolean).length;
+  return { eligible: eligible.length, agreed, disagreed: eligible.length - agreed,
+    rate: eligible.length ? round(agreed / eligible.length) : null };
 }

@@ -1,6 +1,7 @@
 /** Manual, read-only live comparison. Never imported by production startup. */
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { env } from '../src/config/env.js';
 import { configuredTiingoRestClient, tiingoSymbol } from '../src/integrations/tiingo/rest.client.js';
 import { getTickerPriceConfirmationMarketData } from '../src/services/massive-market-data.service.js';
 import { compareRealtimeEvidence, summarizeComparisons } from '../src/services/realtime-market-data-comparison.js';
@@ -40,10 +41,12 @@ for (let i = 0; i < symbols.length; i += 4) {
   })));
 }
 const completedAt = new Date();
-const compared = results.map(result => compareRealtimeEvidence({ ...result, startedAt, completedAt }));
+const compared = results.map(result => compareRealtimeEvidence({ ...result, startedAt, completedAt,
+  minimumDollarVolume: env.MOMENTUM_CONFIRMATION_MIN_DOLLAR_VOLUME,
+  configuredRecentWindowMinutes: env.MOMENTUM_CONFIRMATION_RECENT_WINDOW_MINUTES }));
 const outputDirectory = join('.cache', 'realtime-market-data', startedAt.toISOString().replace(/[:.]/g, '-'));
 await mkdir(outputDirectory, { recursive: true });
-await writeFile(join(outputDirectory, 'detail.json'), JSON.stringify({ schemaVersion: 2, productionAuthority: 'MASSIVE',
+await writeFile(join(outputDirectory, 'detail.json'), JSON.stringify({ schemaVersion: 3, productionAuthority: 'MASSIVE',
   sessionDate, startedAt, completedAt, symbols, results: compared }, null, 2) + '\n', { flag: 'wx' });
 const summaryPath = join(outputDirectory, 'summary.json');
 await writeFile(summaryPath, JSON.stringify({ sessionDate, startedAt, completedAt, ...summarizeComparisons(compared) }, null, 2) + '\n', { flag: 'wx' });

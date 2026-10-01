@@ -7,7 +7,8 @@ const completedAt = new Date('2026-09-24T14:46:02Z');
 const t = (minute: number) => `2026-09-24T14:${String(minute).padStart(2, '0')}:00.000Z`;
 const minute = (n: number, close: number, volume: number) => ({ time: t(n), open: close, high: close + 1, low: close - 1, close, volume, vwap: close });
 const bar = (n: number, close: number, volume: number) => ({ barStartAt: new Date(t(n)), open: close, high: close + 1, low: close - 1, close, volume });
-const input: ComparisonInputs = { symbol: 'SPY', startedAt, completedAt,
+const input: ComparisonInputs = { symbol: 'SPY', startedAt, completedAt, minimumDollarVolume: 5_000_000,
+  configuredRecentWindowMinutes: 30,
   massive: { ok: true, fetchedAt: new Date('2026-09-24T14:46:01Z'), value: { symbol: 'SPY', from: null, to: null, extendedHoursRequested: true,
     snapshot: { symbol: 'SPY', lastPrice: 100, previousClose: 99, intradayHigh: 102, intradayLow: 98,
       dayVolume: 1000, sessionVwap: 100.5, updatedTime: '2026-09-24T14:31:34Z', observationSource: 'LAST_TRADE' },
@@ -89,5 +90,36 @@ describe('read-only realtime comparison', () => {
       expect(readFileSync(`src/services/${file}`, 'utf8')).toContain("from './live-market-data.service.js'");
     }
     expect(readFileSync('scripts/compare-realtime-market-data.ts', 'utf8')).not.toMatch(/db\/prisma|\.create\(|\.update\(|\.upsert\(/);
+    expect(readFileSync('src/services/realtime-volume-intensity-comparison.ts', 'utf8')).not.toContain('momentum-volume-score');
+  });
+  it('summarizes unavailable parity without treating it as agreement', () => {
+    const r = compareRealtimeEvidence(input); // Two minutes cannot form the 30-minute V6 window.
+    const a = summarizeComparisons([r, r]);
+    const b = summarizeComparisons([r, r]);
+    expect(a).toEqual(b);
+    expect(a.symbols[0]!.momentumVolumeParity.windows['30']).toMatchObject({ expectedMinuteCount: 30,
+      massiveObservedMinuteCount: 2, tiingoObservedMinuteCount: 2, sharedMinuteCount: 2 });
+    expect(a.distributions.thirtyMinuteBucketAgreement).toEqual({ eligible: 0, agreed: 0, disagreed: 0, rate: null });
+    expect(a.distributions.thirtyMinutePointAgreement).toEqual({ eligible: 0, agreed: 0, disagreed: 0, rate: null });
+    expect(a.distributions.cumulativeTiingoMassiveRatioByCheckpoint.COMMON_CUTOFF).toMatchObject({ count: 2, median: 1.1 });
+  });
+  it('aggregates available 30-minute V6 bucket, point and liquidity decisions', () => {
+    if (!input.massive.ok || !input.history.ok) throw new Error('Invalid fixture');
+    const start = Date.parse('2026-09-24T13:00:00Z');
+    const massiveBars = Array.from({ length: 100 }, (_, i) => ({ ...minute(30, 100, i < 70 ? 27 : 7),
+      time: new Date(start + i * 60_000).toISOString() }));
+    const tiingoBars = Array.from({ length: 100 }, (_, i) => ({ ...bar(30, 100, i < 70 ? 97 : 7),
+      barStartAt: new Date(start + i * 60_000) }));
+    const r = compareRealtimeEvidence({ ...input, massive: { ...input.massive,
+      value: { ...input.massive.value, minuteBars: massiveBars } },
+      history: { ...input.history, value: tiingoBars } });
+    expect(r.momentumVolumeParity.v6ThirtyMinuteParity).toMatchObject({ massiveBucket: 'STRONG', tiingoBucket: 'MODERATE',
+      sameBucket: false, sameIntensityPoints: false });
+    const summary = summarizeComparisons([r]);
+    expect(summary.distributions.thirtyMinuteMassiveIntensity).toMatchObject({ count: 1, median: .1 });
+    expect(summary.distributions.thirtyMinuteTiingoIntensity).toMatchObject({ count: 1, median: .03 });
+    expect(summary.distributions.thirtyMinuteBucketAgreement).toEqual({ eligible: 1, agreed: 0, disagreed: 1, rate: 0 });
+    expect(summary.distributions.thirtyMinutePointAgreement).toEqual({ eligible: 1, agreed: 0, disagreed: 1, rate: 0 });
+    expect(summary.distributions.liquidityDecisionAgreement).toEqual({ eligible: 1, agreed: 1, disagreed: 0, rate: 1 });
   });
 });
