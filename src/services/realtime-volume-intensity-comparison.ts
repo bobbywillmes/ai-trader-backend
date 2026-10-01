@@ -26,7 +26,12 @@ function regularMinutesThrough(cutoff: string): string[] | null {
 }
 function regularSessionVolumeParity(maps: Record<Provider, Map<string, VolumeMinute>>, cutoff: string | null) {
   const providers: Provider[] = ['massive', 'tiingo'];
-  const expected = cutoff ? regularMinutesThrough(cutoff) : null;
+  const sourceCommonCutoff = cutoff;
+  const sourceClock = cutoff ? clockMinutes(etClock(cutoff)) : null;
+  const cutoffAdjustment = sourceClock !== null && sourceClock >= 960 ? 'CLAMPED_TO_REGULAR_SESSION_END' : 'NONE';
+  const effectiveRegularCutoff = cutoff === null || sourceClock === null || sourceClock < 570 ? null
+    : sourceClock < 960 ? cutoff : new Date(Date.parse(cutoff) - (sourceClock - 959) * 60_000).toISOString();
+  const expected = effectiveRegularCutoff ? regularMinutesThrough(effectiveRegularCutoff) : null;
   const cumulative = Object.fromEntries(providers.map(provider => {
     const observed = expected?.filter(time => validVolume(maps[provider].get(time))).length ?? 0;
     const complete = expected !== null && observed === expected.length;
@@ -44,7 +49,7 @@ function regularSessionVolumeParity(maps: Record<Provider, Map<string, VolumeMin
       const intensity = complete && denominator !== null && denominator > 0 ? recentVolume! / denominator : null;
       return [provider, { observedMinuteCount: observed, recentVolume, cumulativeVolumeThroughCutoff: denominator,
         volumeIntensity: intensity, ...v6IntensityBucket(intensity),
-        availability: expected === null ? cutoff ? 'CUTOFF_OUTSIDE_REGULAR_SESSION' : 'NO_COMMON_CUTOFF'
+        availability: expected === null ? cutoff ? 'CUTOFF_BEFORE_REGULAR_OPEN' : 'NO_COMMON_CUTOFF'
           : !cumulative[provider].complete ? 'INCOMPLETE_REGULAR_CUMULATIVE' : !windowFits ? 'WINDOW_CROSSES_OPEN'
           : !complete ? 'INCOMPLETE_RECENT_WINDOW' : denominator === 0 ? 'ZERO_CUMULATIVE_VOLUME' : 'COMPLETE' }];
     })) as Record<Provider, { observedMinuteCount: number; recentVolume: number | null; cumulativeVolumeThroughCutoff: number | null;
@@ -58,23 +63,25 @@ function regularSessionVolumeParity(maps: Record<Provider, Map<string, VolumeMin
       volumeIntensity: number | null; bucket: string; points: number | null; availability: string } }>;
   const primary = recentWindows['30'];
   const comparable = primary.massive.volumeIntensity !== null && primary.tiingo.volumeIntensity !== null;
-  const reached = cutoff ? etClock(cutoff) : null;
-  const checkpointLabels = [...checkpoints.filter(label => reached !== null && reached >= label), ...(cutoff ? ['COMMON_CUTOFF'] : [])];
+  const reached = effectiveRegularCutoff ? etClock(effectiveRegularCutoff) : null;
+  const checkpointLabels = [...checkpoints.filter(label => reached !== null && reached >= label),
+    ...(effectiveRegularCutoff ? ['EFFECTIVE_REGULAR_CUTOFF'] : [])];
   const cumulativeCheckpoints = checkpointLabels.map(label => {
-    const point = !cutoff ? null : label === 'COMMON_CUTOFF' ? cutoff
-      : new Date(Date.parse(cutoff) - (clockMinutes(reached!) - clockMinutes(label)) * 60_000).toISOString();
+    const point = !effectiveRegularCutoff ? null : label === 'EFFECTIVE_REGULAR_CUTOFF' ? effectiveRegularCutoff
+      : new Date(Date.parse(effectiveRegularCutoff) - (clockMinutes(reached!) - clockMinutes(label)) * 60_000).toISOString();
     const slots = point ? regularMinutesThrough(point) : null;
     const observed = Object.fromEntries(providers.map(provider => [provider, slots?.filter(time => validVolume(maps[provider].get(time))).length ?? 0])) as Record<Provider, number>;
     const complete = slots !== null && providers.every(provider => observed[provider] === slots.length);
     const m = complete ? sum(slots!.map(time => maps.massive.get(time)!)) : null;
     const t = complete ? sum(slots!.map(time => maps.tiingo.get(time)!)) : null;
-    return { checkpoint: label, expectedMinuteCount: slots?.length ?? 0,
+    return { checkpoint: label, checkpointAt: point, expectedMinuteCount: slots?.length ?? 0,
       massiveObservedMinuteCount: observed.massive, tiingoObservedMinuteCount: observed.tiingo,
       massiveCumulativeVolume: m, tiingoCumulativeVolume: t, tiingoToMassiveRatio: ratio(t, m),
       availability: complete ? 'COMPLETE' : 'INCOMPLETE_REGULAR_EVIDENCE' };
   });
   return { researchOnly: true, session: 'NEW_YORK_REGULAR_09_30_TO_16_00', cutoff,
-    availability: expected === null ? cutoff ? 'CUTOFF_OUTSIDE_REGULAR_SESSION' : 'NO_COMMON_CUTOFF' : 'EVALUATED',
+    sourceCommonCutoff, effectiveRegularCutoff, cutoffAdjustment,
+    availability: expected === null ? cutoff ? 'CUTOFF_BEFORE_REGULAR_OPEN' : 'NO_COMMON_CUTOFF' : 'EVALUATED',
     cumulative, windows: recentWindows,
     thirtyMinuteParity: { massiveBucket: primary.massive.bucket, tiingoBucket: primary.tiingo.bucket,
       sameBucket: comparable ? primary.massive.bucket === primary.tiingo.bucket : null,

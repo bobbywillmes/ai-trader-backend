@@ -84,7 +84,7 @@ describe('shadow Momentum V6 relative-volume diagnostics', () => {
     expect(r.regularSessionVolumeParity.windows['30'].tiingo.volumeIntensity).toBe(.5);
     expect(r.regularSessionVolumeParity.cumulativeCheckpoints).toMatchObject([
       { checkpoint: '10:00', tiingoToMassiveRatio: 2, availability: 'COMPLETE' },
-      { checkpoint: 'COMMON_CUTOFF', tiingoToMassiveRatio: 2, availability: 'COMPLETE' },
+      { checkpoint: 'EFFECTIVE_REGULAR_CUTOFF', tiingoToMassiveRatio: 2, availability: 'COMPLETE' },
     ]);
     expect(r.OBSERVED_EXTENDED_DIAGNOSTIC).toMatchObject({ researchOnly: true, authoritativeParity: false,
       massive: { observedCumulativeVolume: 600 }, tiingo: { observedCumulativeVolume: 1205 } });
@@ -101,7 +101,7 @@ describe('shadow Momentum V6 relative-volume diagnostics', () => {
     expect(r.regularSessionVolumeParity.cumulativeCheckpoints[0]).toMatchObject({ checkpoint: '10:00',
       tiingoToMassiveRatio: null, availability: 'INCOMPLETE_REGULAR_EVIDENCE' });
   });
-  it('does not borrow premarket minutes for a regular window or issue parity after close', () => {
+  it('does not borrow premarket minutes and clamps an after-close source cutoff to 15:59', () => {
     const m = rows(13, 30, 5, () => 10);
     const t = rows(13, 30, 5, () => 20);
     const early = compare(m, t, at(13, 34));
@@ -109,9 +109,39 @@ describe('shadow Momentum V6 relative-volume diagnostics', () => {
     expect(early.regularSessionVolumeParity.windows['15'].massive).toMatchObject({ volumeIntensity: null, availability: 'WINDOW_CROSSES_OPEN' });
     expect(early.regularSessionVolumeParity.thirtyMinuteParity.sameBucket).toBeNull();
     const after = compare(rows(13, 30, 391, () => 10), rows(13, 30, 391, () => 20), at(20, 0));
-    expect(after.regularSessionVolumeParity.availability).toBe('CUTOFF_OUTSIDE_REGULAR_SESSION');
-    expect(after.regularSessionVolumeParity.thirtyMinuteParity.sameBucket).toBeNull();
+    expect(after.regularSessionVolumeParity).toMatchObject({ availability: 'EVALUATED',
+      sourceCommonCutoff: at(20, 0), effectiveRegularCutoff: at(19, 59), cutoffAdjustment: 'CLAMPED_TO_REGULAR_SESSION_END',
+      cumulative: { massive: { expectedMinuteCount: 390, observedMinuteCount: 390, cumulativeVolumeThroughCutoff: 3900 },
+        tiingo: { expectedMinuteCount: 390, observedMinuteCount: 390, cumulativeVolumeThroughCutoff: 7800 } },
+      thirtyMinuteParity: { sameBucket: true, sameIntensityPoints: true } });
+    expect(after.regularSessionVolumeParity.windows['30'].massive.recentVolume).toBe(300);
     expect(after.regularSessionVolumeParity.cumulativeCheckpoints.find(point => point.checkpoint === '15:00')).toMatchObject({
       tiingoToMassiveRatio: 2, availability: 'COMPLETE' });
+    expect(after.regularSessionVolumeParity.cumulativeCheckpoints.at(-1)).toMatchObject({
+      checkpoint: 'EFFECTIVE_REGULAR_CUTOFF', checkpointAt: at(19, 59), expectedMinuteCount: 390, tiingoToMassiveRatio: 2 });
+    expect(after.cumulativeVolumeThroughCutoff).toEqual({ massive: 3910, tiingo: 7820 }); // Strict extended view still includes 16:00.
+    const before = compare(rows(13, 0, 30, () => 10), rows(13, 0, 30, () => 20), at(13, 29));
+    expect(before.regularSessionVolumeParity).toMatchObject({ sourceCommonCutoff: at(13, 29),
+      effectiveRegularCutoff: null, cutoffAdjustment: 'NONE', availability: 'CUTOFF_BEFORE_REGULAR_OPEN' });
+  });
+  it('evaluates the exact 15:59 cutoff without adjustment and ignores all postmarket volume', () => {
+    const m = [...rows(13, 30, 390, () => 10), ...rows(20, 0, 10, () => 50_000)];
+    const t = [...rows(13, 30, 390, () => 20), ...rows(20, 0, 10, () => 90_000)];
+    const atClose = compare(m, t, at(19, 59));
+    const afterClose = compare(m, t, at(20, 9));
+    expect(atClose.regularSessionVolumeParity).toMatchObject({ sourceCommonCutoff: at(19, 59),
+      effectiveRegularCutoff: at(19, 59), cutoffAdjustment: 'NONE', availability: 'EVALUATED' });
+    expect(afterClose.regularSessionVolumeParity.cumulative).toEqual(atClose.regularSessionVolumeParity.cumulative);
+    expect(afterClose.regularSessionVolumeParity.windows).toEqual(atClose.regularSessionVolumeParity.windows);
+    expect(afterClose.regularSessionVolumeParity.cumulative.massive.cumulativeVolumeThroughCutoff).toBe(3900);
+    expect(afterClose.OBSERVED_EXTENDED_DIAGNOSTIC.authoritativeParity).toBe(false);
+  });
+  it('still fails closed for a missing regular minute after the source cutoff is clamped', () => {
+    const m = rows(13, 30, 391, () => 10);
+    const t = rows(13, 30, 391, () => 20).filter((_, index) => index !== 100);
+    const r = compare(m, t, at(20, 0));
+    expect(r.regularSessionVolumeParity).toMatchObject({ effectiveRegularCutoff: at(19, 59),
+      cumulative: { tiingo: { expectedMinuteCount: 390, observedMinuteCount: 389, complete: false,
+        cumulativeVolumeThroughCutoff: null } }, thirtyMinuteParity: { sameBucket: null, sameIntensityPoints: null } });
   });
 });

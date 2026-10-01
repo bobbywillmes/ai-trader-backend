@@ -175,7 +175,7 @@ export function summarizeComparisons(results: ComparisonResult[]) {
       regularThirtyMinutePointAgreement: agreement(results.map(r => r.momentumVolumeParity.regularSessionVolumeParity.thirtyMinuteParity.sameIntensityPoints)),
       cumulativeTiingoMassiveRatioByCheckpoint: Object.fromEntries(['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', 'COMMON_CUTOFF'].map(label =>
         [label, distribution(values(r => r.momentumVolumeParity.cumulativeCheckpoints.find(point => point.checkpoint === label)?.tiingoToMassiveRatio ?? null))])),
-      regularCumulativeTiingoMassiveRatioByCheckpoint: Object.fromEntries(['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', 'COMMON_CUTOFF'].map(label =>
+      regularCumulativeTiingoMassiveRatioByCheckpoint: Object.fromEntries(['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', 'EFFECTIVE_REGULAR_CUTOFF'].map(label =>
         [label, distribution(values(r => r.momentumVolumeParity.regularSessionVolumeParity.cumulativeCheckpoints.find(point => point.checkpoint === label)?.tiingoToMassiveRatio ?? null))])) } };
 }
 function agreement(values: Array<boolean | null>) {

@@ -134,7 +134,7 @@ describe('read-only realtime comparison', () => {
     expect(summary.distributions.thirtyMinuteBucketAgreement.eligible).toBe(0);
     expect(summary.distributions.regularThirtyMinuteBucketAgreement).toEqual({ eligible: 1, agreed: 1, disagreed: 0, rate: 1 });
     expect(summary.distributions.regularThirtyMinutePointAgreement).toEqual({ eligible: 1, agreed: 1, disagreed: 0, rate: 1 });
-    expect(summary.distributions.regularCumulativeTiingoMassiveRatioByCheckpoint.COMMON_CUTOFF).toMatchObject({ count: 1, median: 2 });
+    expect(summary.distributions.regularCumulativeTiingoMassiveRatioByCheckpoint.EFFECTIVE_REGULAR_CUTOFF).toMatchObject({ count: 1, median: 2 });
     expect(summary.symbols[0]!.momentumVolumeParity.OBSERVED_EXTENDED_DIAGNOSTIC.authoritativeParity).toBe(false);
   });
 });
