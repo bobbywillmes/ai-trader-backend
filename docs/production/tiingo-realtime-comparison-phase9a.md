@@ -26,4 +26,12 @@ For an available 30-minute intensity, the shadow bucket mirrors V6's fixed thres
 
 Cumulative checkpoints are reported at reached 10:00–15:00 ET hours and the common cutoff, with Tiingo/Massive ratios only when both providers cover the observed-minute union through the checkpoint. `summary.json` adds per-symbol windows and decisions, cross-symbol intensity distributions, bucket/point/liquidity agreement counts and rates, and checkpoint-ratio distributions. It does not rank or select a provider.
 
+### Separate regular-session research view
+
+`regularSessionVolumeParity` is a second, research-only measure. It applies only when the shared cutoff is inside the New York 09:30–16:00 regular session. Each provider must have a finite, nonnegative volume row for **every minute from 09:30 through the cutoff** before its regular cumulative denominator is available. The 5-, 15-, and 30-minute recent windows must also fit entirely within regular hours and be complete. Each provider uses its own regular cumulative denominator. The 30-minute shadow buckets and 0/10/20 points mirror the same V6 3%/10% thresholds, with bucket and point agreement reported only when both intensities exist. A missing regular minute, including one outside the recent window, makes that provider's intensity unavailable. A premarket row cannot fill a regular gap.
+
+Reached 10:00–15:00 ET checkpoints also report regular-session cumulative Tiingo/Massive volume ratios when both providers have every regular minute through the checkpoint. A postmarket cutoff makes regular intensity unavailable, while already-reached regular checkpoints can still be reported. `summary.json` keeps regular bucket/point agreement and checkpoint-ratio distributions separate from the existing strict extended-inclusive comparison.
+
+`OBSERVED_EXTENDED_DIAGNOSTIC` uses the separately labeled observed partial sums to show an exploratory 30-minute ratio and bucket when extended-hours coverage is incomplete. It carries `authoritativeParity=false`; neither its bucket nor its ratio is a V6 parity conclusion. The strict extended-inclusive completeness rule and production Momentum scoring remain unchanged.
+
 Phase 9B requires Bobby's real-market comparison across representative symbols and times, including price freshness, extended-hours coverage, minute alignment, provider errors, IEX entitlement behavior, and a documented solution for Momentum's VWAP semantic gap. Any trading-critical authority change needs a separate acceptance and rollout contract.

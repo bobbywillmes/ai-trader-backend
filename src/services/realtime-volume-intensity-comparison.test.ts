@@ -68,4 +68,50 @@ describe('shadow Momentum V6 relative-volume diagnostics', () => {
     expect(boundary.windows['30'].sharedMinuteCount).toBe(30);
     expect(boundary.cumulativeCheckpoints.map(point => point.checkpoint)).toEqual(['COMMON_CUTOFF']);
   });
+  it('keeps strict extended parity unavailable while complete regular-session parity is available', () => {
+    const m = rows(13, 30, 60, () => 10); // 09:30–10:29 ET
+    const t = [{ time: at(13, 29), volume: 5, close: 100 }, ...rows(13, 30, 60, () => 20)];
+    const r = compare(m, t, m.at(-1)!.time);
+    expect(r.v6ThirtyMinuteParity.sameBucket).toBeNull();
+    expect(r.regularSessionVolumeParity).toMatchObject({ availability: 'EVALUATED',
+      cumulative: { massive: { expectedMinuteCount: 60, observedMinuteCount: 60, cumulativeVolumeThroughCutoff: 600 },
+        tiingo: { expectedMinuteCount: 60, observedMinuteCount: 60, cumulativeVolumeThroughCutoff: 1200 } },
+      thirtyMinuteParity: { massiveBucket: 'STRONG', tiingoBucket: 'STRONG', sameBucket: true,
+        massiveIntensityPoints: 20, tiingoIntensityPoints: 20, sameIntensityPoints: true } });
+    expect(r.regularSessionVolumeParity.windows['5']).toMatchObject({ expectedMinuteCount: 5, sharedMinuteCount: 5,
+      massive: { recentVolume: 50 }, tiingo: { recentVolume: 100 } });
+    expect(r.regularSessionVolumeParity.windows['15'].massive.volumeIntensity).toBe(.25);
+    expect(r.regularSessionVolumeParity.windows['30'].tiingo.volumeIntensity).toBe(.5);
+    expect(r.regularSessionVolumeParity.cumulativeCheckpoints).toMatchObject([
+      { checkpoint: '10:00', tiingoToMassiveRatio: 2, availability: 'COMPLETE' },
+      { checkpoint: 'COMMON_CUTOFF', tiingoToMassiveRatio: 2, availability: 'COMPLETE' },
+    ]);
+    expect(r.OBSERVED_EXTENDED_DIAGNOSTIC).toMatchObject({ researchOnly: true, authoritativeParity: false,
+      massive: { observedCumulativeVolume: 600 }, tiingo: { observedCumulativeVolume: 1205 } });
+  });
+  it('fails regular parity on any missing minute from 09:30, including outside recent windows', () => {
+    const m = rows(13, 30, 60, () => 10);
+    const t = rows(13, 30, 60, () => 20).filter((_, i) => i !== 1);
+    const r = compare(m, t, m.at(-1)!.time);
+    expect(r.regularSessionVolumeParity.cumulative.tiingo).toMatchObject({ expectedMinuteCount: 60,
+      observedMinuteCount: 59, complete: false, cumulativeVolumeThroughCutoff: null });
+    expect(r.regularSessionVolumeParity.windows['5'].tiingo).toMatchObject({ recentVolume: 100,
+      volumeIntensity: null, availability: 'INCOMPLETE_REGULAR_CUMULATIVE' });
+    expect(r.regularSessionVolumeParity.thirtyMinuteParity.sameBucket).toBeNull();
+    expect(r.regularSessionVolumeParity.cumulativeCheckpoints[0]).toMatchObject({ checkpoint: '10:00',
+      tiingoToMassiveRatio: null, availability: 'INCOMPLETE_REGULAR_EVIDENCE' });
+  });
+  it('does not borrow premarket minutes for a regular window or issue parity after close', () => {
+    const m = rows(13, 30, 5, () => 10);
+    const t = rows(13, 30, 5, () => 20);
+    const early = compare(m, t, at(13, 34));
+    expect(early.regularSessionVolumeParity.windows['5'].massive.volumeIntensity).toBe(1);
+    expect(early.regularSessionVolumeParity.windows['15'].massive).toMatchObject({ volumeIntensity: null, availability: 'WINDOW_CROSSES_OPEN' });
+    expect(early.regularSessionVolumeParity.thirtyMinuteParity.sameBucket).toBeNull();
+    const after = compare(rows(13, 30, 391, () => 10), rows(13, 30, 391, () => 20), at(20, 0));
+    expect(after.regularSessionVolumeParity.availability).toBe('CUTOFF_OUTSIDE_REGULAR_SESSION');
+    expect(after.regularSessionVolumeParity.thirtyMinuteParity.sameBucket).toBeNull();
+    expect(after.regularSessionVolumeParity.cumulativeCheckpoints.find(point => point.checkpoint === '15:00')).toMatchObject({
+      tiingoToMassiveRatio: 2, availability: 'COMPLETE' });
+  });
 });

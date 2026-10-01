@@ -171,8 +171,12 @@ export function summarizeComparisons(results: ComparisonResult[]) {
       thirtyMinuteBucketAgreement: agreement(results.map(r => r.momentumVolumeParity.v6ThirtyMinuteParity.sameBucket)),
       thirtyMinutePointAgreement: agreement(results.map(r => r.momentumVolumeParity.v6ThirtyMinuteParity.sameIntensityPoints)),
       liquidityDecisionAgreement: agreement(results.map(r => r.momentumVolumeParity.liquidity.sameLiquidityDecision)),
+      regularThirtyMinuteBucketAgreement: agreement(results.map(r => r.momentumVolumeParity.regularSessionVolumeParity.thirtyMinuteParity.sameBucket)),
+      regularThirtyMinutePointAgreement: agreement(results.map(r => r.momentumVolumeParity.regularSessionVolumeParity.thirtyMinuteParity.sameIntensityPoints)),
       cumulativeTiingoMassiveRatioByCheckpoint: Object.fromEntries(['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', 'COMMON_CUTOFF'].map(label =>
-        [label, distribution(values(r => r.momentumVolumeParity.cumulativeCheckpoints.find(point => point.checkpoint === label)?.tiingoToMassiveRatio ?? null))])) } };
+        [label, distribution(values(r => r.momentumVolumeParity.cumulativeCheckpoints.find(point => point.checkpoint === label)?.tiingoToMassiveRatio ?? null))])),
+      regularCumulativeTiingoMassiveRatioByCheckpoint: Object.fromEntries(['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', 'COMMON_CUTOFF'].map(label =>
+        [label, distribution(values(r => r.momentumVolumeParity.regularSessionVolumeParity.cumulativeCheckpoints.find(point => point.checkpoint === label)?.tiingoToMassiveRatio ?? null))])) } };
 }
 function agreement(values: Array<boolean | null>) {
   const eligible = values.filter((value): value is boolean => value !== null);

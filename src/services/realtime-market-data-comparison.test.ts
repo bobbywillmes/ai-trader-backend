@@ -122,4 +122,19 @@ describe('read-only realtime comparison', () => {
     expect(summary.distributions.thirtyMinutePointAgreement).toEqual({ eligible: 1, agreed: 0, disagreed: 1, rate: 0 });
     expect(summary.distributions.liquidityDecisionAgreement).toEqual({ eligible: 1, agreed: 1, disagreed: 0, rate: 1 });
   });
+  it('keeps regular-session agreement separate from unavailable strict extended parity in summary', () => {
+    if (!input.massive.ok || !input.history.ok) throw new Error('Invalid fixture');
+    const start = Date.parse('2026-09-24T13:30:00Z');
+    const massiveBars = Array.from({ length: 60 }, (_, i) => ({ ...minute(30, 100, 10), time: new Date(start + i * 60_000).toISOString() }));
+    const tiingoBars = [{ ...bar(29, 100, 5), barStartAt: new Date(start - 60_000) },
+      ...Array.from({ length: 60 }, (_, i) => ({ ...bar(30, 100, 20), barStartAt: new Date(start + i * 60_000) }))];
+    const r = compareRealtimeEvidence({ ...input, massive: { ...input.massive,
+      value: { ...input.massive.value, minuteBars: massiveBars } }, history: { ...input.history, value: tiingoBars } });
+    const summary = summarizeComparisons([r]);
+    expect(summary.distributions.thirtyMinuteBucketAgreement.eligible).toBe(0);
+    expect(summary.distributions.regularThirtyMinuteBucketAgreement).toEqual({ eligible: 1, agreed: 1, disagreed: 0, rate: 1 });
+    expect(summary.distributions.regularThirtyMinutePointAgreement).toEqual({ eligible: 1, agreed: 1, disagreed: 0, rate: 1 });
+    expect(summary.distributions.regularCumulativeTiingoMassiveRatioByCheckpoint.COMMON_CUTOFF).toMatchObject({ count: 1, median: 2 });
+    expect(summary.symbols[0]!.momentumVolumeParity.OBSERVED_EXTENDED_DIAGNOSTIC.authoritativeParity).toBe(false);
+  });
 });

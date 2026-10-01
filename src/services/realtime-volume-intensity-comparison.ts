@@ -13,10 +13,74 @@ function etClock(time: string) {
   const parts = clock.formatToParts(new Date(time));
   return `${parts.find(p => p.type === 'hour')?.value}:${parts.find(p => p.type === 'minute')?.value}`;
 }
+function clockMinutes(value: string) { const [hour, minute] = value.split(':').map(Number); return hour! * 60 + minute!; }
 function series(rows: VolumeMinute[]) { return new Map(rows.map(row => [row.time, row])); }
 function expectedMinutes(cutoff: string, count: number) {
   const end = Date.parse(cutoff);
   return Array.from({ length: count }, (_, index) => new Date(end - (count - 1 - index) * 60_000).toISOString());
+}
+function regularMinutesThrough(cutoff: string): string[] | null {
+  const offset = clockMinutes(etClock(cutoff)) - 570;
+  if (offset < 0 || offset >= 390) return null;
+  return expectedMinutes(cutoff, offset + 1);
+}
+function regularSessionVolumeParity(maps: Record<Provider, Map<string, VolumeMinute>>, cutoff: string | null) {
+  const providers: Provider[] = ['massive', 'tiingo'];
+  const expected = cutoff ? regularMinutesThrough(cutoff) : null;
+  const cumulative = Object.fromEntries(providers.map(provider => {
+    const observed = expected?.filter(time => validVolume(maps[provider].get(time))).length ?? 0;
+    const complete = expected !== null && observed === expected.length;
+    return [provider, { expectedMinuteCount: expected?.length ?? 0, observedMinuteCount: observed,
+      complete, cumulativeVolumeThroughCutoff: complete ? sum(expected!.map(time => maps[provider].get(time)!)) : null }];
+  })) as Record<Provider, { expectedMinuteCount: number; observedMinuteCount: number; complete: boolean; cumulativeVolumeThroughCutoff: number | null }>;
+  const recentWindows = Object.fromEntries(windows.map(count => {
+    const slots = expected?.slice(-count) ?? [];
+    const windowFits = slots.length === count;
+    const values = Object.fromEntries(providers.map(provider => {
+      const observed = slots.filter(time => validVolume(maps[provider].get(time))).length;
+      const complete = windowFits && observed === count;
+      const recentVolume = complete ? sum(slots.map(time => maps[provider].get(time)!)) : null;
+      const denominator = cumulative[provider].cumulativeVolumeThroughCutoff;
+      const intensity = complete && denominator !== null && denominator > 0 ? recentVolume! / denominator : null;
+      return [provider, { observedMinuteCount: observed, recentVolume, cumulativeVolumeThroughCutoff: denominator,
+        volumeIntensity: intensity, ...v6IntensityBucket(intensity),
+        availability: expected === null ? cutoff ? 'CUTOFF_OUTSIDE_REGULAR_SESSION' : 'NO_COMMON_CUTOFF'
+          : !cumulative[provider].complete ? 'INCOMPLETE_REGULAR_CUMULATIVE' : !windowFits ? 'WINDOW_CROSSES_OPEN'
+          : !complete ? 'INCOMPLETE_RECENT_WINDOW' : denominator === 0 ? 'ZERO_CUMULATIVE_VOLUME' : 'COMPLETE' }];
+    })) as Record<Provider, { observedMinuteCount: number; recentVolume: number | null; cumulativeVolumeThroughCutoff: number | null;
+      volumeIntensity: number | null; bucket: string; points: number | null; availability: string }>;
+    return [String(count), { expectedMinuteCount: count, massive: values.massive, tiingo: values.tiingo,
+      sharedMinuteCount: slots.filter(time => providers.every(provider => validVolume(maps[provider].get(time)))).length }];
+  })) as Record<'5' | '15' | '30', { expectedMinuteCount: number; sharedMinuteCount: number;
+    massive: { observedMinuteCount: number; recentVolume: number | null; cumulativeVolumeThroughCutoff: number | null;
+      volumeIntensity: number | null; bucket: string; points: number | null; availability: string };
+    tiingo: { observedMinuteCount: number; recentVolume: number | null; cumulativeVolumeThroughCutoff: number | null;
+      volumeIntensity: number | null; bucket: string; points: number | null; availability: string } }>;
+  const primary = recentWindows['30'];
+  const comparable = primary.massive.volumeIntensity !== null && primary.tiingo.volumeIntensity !== null;
+  const reached = cutoff ? etClock(cutoff) : null;
+  const checkpointLabels = [...checkpoints.filter(label => reached !== null && reached >= label), ...(cutoff ? ['COMMON_CUTOFF'] : [])];
+  const cumulativeCheckpoints = checkpointLabels.map(label => {
+    const point = !cutoff ? null : label === 'COMMON_CUTOFF' ? cutoff
+      : new Date(Date.parse(cutoff) - (clockMinutes(reached!) - clockMinutes(label)) * 60_000).toISOString();
+    const slots = point ? regularMinutesThrough(point) : null;
+    const observed = Object.fromEntries(providers.map(provider => [provider, slots?.filter(time => validVolume(maps[provider].get(time))).length ?? 0])) as Record<Provider, number>;
+    const complete = slots !== null && providers.every(provider => observed[provider] === slots.length);
+    const m = complete ? sum(slots!.map(time => maps.massive.get(time)!)) : null;
+    const t = complete ? sum(slots!.map(time => maps.tiingo.get(time)!)) : null;
+    return { checkpoint: label, expectedMinuteCount: slots?.length ?? 0,
+      massiveObservedMinuteCount: observed.massive, tiingoObservedMinuteCount: observed.tiingo,
+      massiveCumulativeVolume: m, tiingoCumulativeVolume: t, tiingoToMassiveRatio: ratio(t, m),
+      availability: complete ? 'COMPLETE' : 'INCOMPLETE_REGULAR_EVIDENCE' };
+  });
+  return { researchOnly: true, session: 'NEW_YORK_REGULAR_09_30_TO_16_00', cutoff,
+    availability: expected === null ? cutoff ? 'CUTOFF_OUTSIDE_REGULAR_SESSION' : 'NO_COMMON_CUTOFF' : 'EVALUATED',
+    cumulative, windows: recentWindows,
+    thirtyMinuteParity: { massiveBucket: primary.massive.bucket, tiingoBucket: primary.tiingo.bucket,
+      sameBucket: comparable ? primary.massive.bucket === primary.tiingo.bucket : null,
+      massiveIntensityPoints: primary.massive.points, tiingoIntensityPoints: primary.tiingo.points,
+      sameIntensityPoints: comparable ? primary.massive.points === primary.tiingo.points : null },
+    cumulativeCheckpoints };
 }
 export function v6IntensityBucket(value: number | null) {
   if (value === null) return { bucket: 'UNAVAILABLE', points: null } as const;
@@ -98,6 +162,15 @@ export function compareVolumeIntensity(args: { massive: VolumeMinute[]; tiingo: 
       tiingoToMassiveRatio: null, coverage: 'NO_MINUTE_EVIDENCE' };
   });
   if (cutoff) checkpointsReached.push(atCheckpoint('COMMON_CUTOFF', cutoff));
+  const observedExtended = Object.fromEntries(providers.map(provider => {
+    const recent = primary[provider].observedRecentVolume;
+    const denominator = observedCumulative[provider];
+    const intensity = recent !== null && denominator !== null && denominator > 0 ? recent / denominator : null;
+    return [provider, { observedRecentVolume: recent, observedCumulativeVolume: denominator,
+      observedVolumeIntensity: intensity, ...v6IntensityBucket(intensity),
+      observedMinuteCount: provider === 'massive' ? primary.massiveObservedMinuteCount : primary.tiingoObservedMinuteCount }];
+  })) as Record<Provider, { observedRecentVolume: number | null; observedCumulativeVolume: number | null;
+    observedVolumeIntensity: number | null; bucket: string; points: number | null; observedMinuteCount: number }>;
   return { cutoff, cumulativeStart: union[0] ?? null, cumulativeCoverage: !cutoff ? 'NO_COMMON_CUTOFF'
     : cumulativeComplete ? 'COMPLETE_ON_OBSERVED_UNION' : 'PROVIDER_MINUTE_MISMATCH',
     massiveDayVolumeThroughCutoff: cumulative.massive, tiingoDayVolumeThroughCutoff: cumulative.tiingo,
@@ -110,5 +183,10 @@ export function compareVolumeIntensity(args: { massive: VolumeMinute[]; tiingo: 
       sameIntensityPoints: intensityAvailable ? massiveBucket.points === tiingoBucket.points : null,
       absoluteIntensityDifference: round(intensityDifference), relativeIntensityDifference: intensityAvailable
         ? ratio(intensityDifference, primary.massive.volumeIntensity) : null },
-    liquidity, cumulativeCheckpoints: checkpointsReached };
+    liquidity, cumulativeCheckpoints: checkpointsReached,
+    regularSessionVolumeParity: regularSessionVolumeParity(maps, cutoff),
+    OBSERVED_EXTENDED_DIAGNOSTIC: { researchOnly: true, authoritativeParity: false, windowMinutes: 30,
+      massive: observedExtended.massive, tiingo: observedExtended.tiingo,
+      sameBucket: observedExtended.massive.bucket !== 'UNAVAILABLE' && observedExtended.tiingo.bucket !== 'UNAVAILABLE'
+        ? observedExtended.massive.bucket === observedExtended.tiingo.bucket : null } };
 }
