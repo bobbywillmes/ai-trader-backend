@@ -3,7 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { configuredTiingoRestClient, tiingoSymbol } from '../src/integrations/tiingo/rest.client.js';
 import { getTickerPriceConfirmationMarketData } from '../src/services/massive-market-data.service.js';
-import { compareRealtimeEvidence } from '../src/services/realtime-market-data-comparison.js';
+import { compareRealtimeEvidence, summarizeComparisons } from '../src/services/realtime-market-data-comparison.js';
 
 const arg = process.argv.slice(2).find(value => value.startsWith('--symbols='));
 if (!arg) throw new Error('Pass --symbols=SPY,RSP,AAPL,MSFT (maximum 20 symbols)');
@@ -13,15 +13,16 @@ if (!symbols.length || symbols.length > 20 || symbols.some(symbol => !symbol)) {
 }
 for (const symbol of symbols) tiingoSymbol(symbol);
 const client = configuredTiingoRestClient();
-const capturedAt = new Date();
-const sessionParts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(capturedAt);
+const startedAt = new Date();
+const sessionParts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(startedAt);
 const sessionPart = (type: string) => sessionParts.find(part => part.type === type)?.value ?? '';
 const sessionDate = `${sessionPart('year')}-${sessionPart('month')}-${sessionPart('day')}`;
 // Upstream error text can contain arbitrary response data. Persist only a bounded status class.
-const settled = async <T>(promise: Promise<T>) => promise.then(value => ({ ok: true as const, value }), error => ({
+const settled = async <T>(promise: Promise<T>) => promise.then(value => ({ ok: true as const, value, fetchedAt: new Date() }), error => ({
   ok: false as const,
   error: error && typeof error === 'object' && 'status' in error && typeof error.status === 'number'
     ? `HTTP_${error.status}` : 'REQUEST_FAILED',
+  fetchedAt: new Date(),
 }));
 
 const results = [];
@@ -30,17 +31,20 @@ for (let i = 0; i < symbols.length; i += 4) {
   const batch = symbols.slice(i, i + 4);
   results.push(...await Promise.all(batch.map(async symbol => {
     const [massive, consolidated, history, iex] = await Promise.all([
-      settled(getTickerPriceConfirmationMarketData(symbol, { now: capturedAt })),
+      settled(getTickerPriceConfirmationMarketData(symbol, { now: startedAt })),
       settled(client.consolidatedSnapshot(symbol)),
       settled(client.intradayHistory(symbol, sessionDate, sessionDate, { resampleFreq: '1min', afterHours: true })),
       settled(client.iexSnapshot(symbol)),
     ]);
-    return compareRealtimeEvidence({ symbol, capturedAt, massive, consolidated, history, iex });
+    return { symbol, massive, consolidated, history, iex };
   })));
 }
-const outputDirectory = join('.cache', 'realtime-market-data');
+const completedAt = new Date();
+const compared = results.map(result => compareRealtimeEvidence({ ...result, startedAt, completedAt }));
+const outputDirectory = join('.cache', 'realtime-market-data', startedAt.toISOString().replace(/[:.]/g, '-'));
 await mkdir(outputDirectory, { recursive: true });
-const outputPath = join(outputDirectory, `${capturedAt.toISOString().replace(/[:.]/g, '-')}.json`);
-await writeFile(outputPath, JSON.stringify({ schemaVersion: 1, productionAuthority: 'MASSIVE',
-  sessionDate, symbols, results }, null, 2) + '\n', { flag: 'wx' });
-console.log(outputPath);
+await writeFile(join(outputDirectory, 'detail.json'), JSON.stringify({ schemaVersion: 2, productionAuthority: 'MASSIVE',
+  sessionDate, startedAt, completedAt, symbols, results: compared }, null, 2) + '\n', { flag: 'wx' });
+const summaryPath = join(outputDirectory, 'summary.json');
+await writeFile(summaryPath, JSON.stringify({ sessionDate, startedAt, completedAt, ...summarizeComparisons(compared) }, null, 2) + '\n', { flag: 'wx' });
+console.log(summaryPath);
