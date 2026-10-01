@@ -60,6 +60,8 @@ const envSchema = z.object({
   TIINGO_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(8),
   INTRADAY_STRESS_TIINGO_CUTOVER_SESSION: z.preprocess(value => value === '' ? undefined : value,
     z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => !Number.isNaN(Date.parse(value)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value).optional()),
+  MARKET_DAILY_TIINGO_CUTOVER_SESSION: z.preprocess(value => value === '' ? undefined : value,
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => !Number.isNaN(Date.parse(value)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value).optional()),
   BREADTH_V2_SHADOW_WORKER_ENABLED: envBoolean.default(false),
   MASSIVE_NEWS_WORKER_ENABLED: envBoolean.default(false),
   MASSIVE_NEWS_WORKER_INTERVAL_MS: z.coerce

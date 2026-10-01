@@ -24,7 +24,7 @@ function makeTx() {
   return {
     $queryRaw: vi.fn(async () => [{ acquired: !locked }]),
     security: { findMany: vi.fn(async () => securities) },
-    marketBar: { findMany: vi.fn(async ({ where }: { where: { OR: { barStartAt: { gte: Date; lt: Date } }[] } }) => rows.filter(r => where.OR.some(q => r.barStartAt >= q.barStartAt.gte && r.barStartAt < q.barStartAt.lt))) },
+    marketBar: { findMany: vi.fn(async ({ where }: { where: { barStartAt: { gte: Date; lt: Date } } }) => rows.filter(r => r.barStartAt >= where.barStartAt.gte && r.barStartAt < where.barStartAt.lt)) },
     marketCalendarException: { findMany: vi.fn(async () => exceptions.map(e => ({ ...e, sessionDate: new Date(e.sessionDate) }))) },
     marketRegimeDimensionAssessment: {
       findFirst: vi.fn(async (q: Query) => matches(q)[0] ?? null), findMany: vi.fn(async (q: Query) => matches(q)),

@@ -10,6 +10,7 @@ import { calendarExceptions } from './market-calendar.service.js';
 import { runTiingoDailyPool } from './tiingo-daily-pool.js';
 import { nextTiingoEmptyObservation } from './tiingo-daily-observation.js';
 import { withMarketMinuteDataLock } from './market-minute-data-lock.service.js';
+import { TIINGO_DAY_1_ELIGIBLE_MINUTES_ET } from './market-daily-authority.js';
 
 export const TIINGO_DAY_1_TIMING_VERSION = 'TIINGO_DAY_1_2015_ET_V1';
 const lockKey = createHash('sha256').update('ai-trader:tiingo-daily-ingestion-and-purge').digest().readBigInt64BE(0).toString();
@@ -31,7 +32,7 @@ export async function withTiingoDailyLock<T>(work: () => Promise<T>): Promise<T>
 export async function closeTiingoDailyLockPool() { await pool.end(); }
 export function tiingoDayEligibleAt(date: string): Date {
   if (!validDate(date)) throw new Error('Invalid Tiingo session date.');
-  return etInstant(date, 20 * 60 + 15);
+  return etInstant(date, TIINGO_DAY_1_ELIGIBLE_MINUTES_ET);
 }
 export function tiingoDayEligible(date: string, now = new Date()): boolean {
   const eligibleAt = tiingoDayEligibleAt(date);
@@ -65,6 +66,15 @@ export function canonicalTiingoBar(bar: TiingoBar) {
   if (bar.splitFactor === undefined || !Number.isFinite(bar.splitFactor) || bar.splitFactor <= 0) throw new Error('Tiingo splitFactor is required and positive.');
   return { open: decimal(bar.open, 10, 24), high: decimal(bar.high, 10, 24), low: decimal(bar.low, 10, 24), close: decimal(bar.close, 10, 24), volume: decimal(bar.volume, 6, 30), splitFactor: decimal(bar.splitFactor, 10, 24) };
 }
+export async function ensureTiingoSplitEvent(tx: Prisma.TransactionClient, securityId: number, symbol: string, date: string, splitFactor: Prisma.Decimal, receivedAt: Date) {
+  if (splitFactor.equals(1)) return false;
+  const executionDate = new Date(date);
+  const split = await tx.marketSplitEvent.findUnique({ where: { securityId_executionDate: { securityId, executionDate } } });
+  if (split && (!split.splitFactor.equals(splitFactor) || split.provider !== 'TIINGO')) throw new Error('Canonical split evidence conflict.');
+  if (split) return false;
+  await tx.marketSplitEvent.create({ data: { securityId, executionDate, splitFactor, provider: 'TIINGO', provenance: `TIINGO:EOD:${symbol}:${date}`, receivedAt } });
+  return true;
+}
 type Counts = { requested: number; succeeded: number; alreadyPresent: number; missing: number; historicalMissing: number; failed: number; conflict: number; otherProvider: number; splitEvents: number; retries: number; throttled: number; retryScheduled: number; terminalizedNoEodCoverage: number; resolvedPreviouslyMissing: number; details: string[] };
 const emptyCounts = (): Counts => ({ requested: 0, succeeded: 0, alreadyPresent: 0, missing: 0, historicalMissing: 0, failed: 0, conflict: 0, otherProvider: 0, splitEvents: 0, retries: 0, throttled: 0, retryScheduled: 0, terminalizedNoEodCoverage: 0, resolvedPreviouslyMissing: 0, details: [] });
 function detail(counts: Counts, value: string) { if (counts.details.length < 20) counts.details.push(value); }
@@ -86,14 +96,7 @@ async function persist(member: Member, bar: TiingoBar, receivedAt: Date): Promis
       await tx.marketBar.create({ data: { securityId: member.securityId, timeframe: 'DAY_1', barStartAt: bar.barStartAt, ...values, provider: 'TIINGO', adjustmentMode: 'UNADJUSTED', receivedAt } });
     }
     let result: 'inserted' | 'already' | 'split' = existing ? 'already' : 'inserted';
-    if (!values.splitFactor.equals(1)) {
-      const executionDate = new Date(date); const split = await tx.marketSplitEvent.findUnique({ where: { securityId_executionDate: { securityId: member.securityId, executionDate } } });
-      if (split && (!split.splitFactor.equals(values.splitFactor) || split.provider !== 'TIINGO')) throw new Error('Canonical split evidence conflict.');
-      if (!split) {
-        await tx.marketSplitEvent.create({ data: { securityId: member.securityId, executionDate, splitFactor: values.splitFactor, provider: 'TIINGO', provenance: `TIINGO:EOD:${member.symbol}:${date}`, receivedAt } });
-        result = 'split';
-      }
-    }
+    if (await ensureTiingoSplitEvent(tx, member.securityId, member.symbol, date, values.splitFactor, receivedAt)) result = 'split';
     const resolved = await tx.tiingoDailyObservationState.updateMany({ where: { securityId: member.securityId, sessionDate: new Date(date), status: { in: ['RETRYING', 'NO_EOD_COVERAGE'] } }, data: { status: 'RESOLVED', nextAttemptAt: null, resolvedAt: receivedAt, reasonCode: 'BAR_RECEIVED' } });
     return { result, resolved: resolved.count > 0 };
   });

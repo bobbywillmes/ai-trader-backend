@@ -22,7 +22,7 @@ function makeTx() {
   return {
     $queryRaw: vi.fn(async () => [{ acquired: !locked }]),
     security: { findMany: vi.fn(async () => [{ id: 1, symbol: 'SPY' }, { id: 2, symbol: 'RSP' }]) },
-    marketBar: { findMany: vi.fn(async (args: { where: { barStartAt: { lt: Date } } }) => rows.filter(row => row.barStartAt < args.where.barStartAt.lt).sort((a, b) => +a.barStartAt - +b.barStartAt || a.id - b.id)) },
+    marketBar: { findMany: vi.fn(async (args: { where: { barStartAt: { gte: Date; lt: Date } } }) => rows.filter(row => row.barStartAt >= args.where.barStartAt.gte && row.barStartAt < args.where.barStartAt.lt).sort((a, b) => +a.barStartAt - +b.barStartAt || a.id - b.id).map(row => ({ ...row, timeframe: 'DAY_1', provider: 'MASSIVE', adjustmentMode: 'UNADJUSTED' }))) },
     marketCalendarException: { findMany: vi.fn(async () => exceptions.map(row => ({ ...row, sessionDate: new Date(row.sessionDate) }))) },
     marketRegimeDimensionAssessment: {
       findFirst: vi.fn(async ({ where, orderBy }: { where: { dimension?: string; algorithmVersion?: string; status?: string; targetAt?: { gt: Date }; sessionDate?: Date }; orderBy: unknown }) => {

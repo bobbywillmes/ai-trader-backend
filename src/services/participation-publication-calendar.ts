@@ -1,8 +1,11 @@
-import { addDays, COMPLETION_GRACE_MINUTES, etDate, isFullMarketSession, marketSession, type CalendarException } from './market-calendar.js';
+import { addDays, COMPLETION_GRACE_MINUTES, etDate, etInstant, isFullMarketSession, marketSession, type CalendarException } from './market-calendar.js';
+import { marketDailyAuthority, TIINGO_DAY_1_ELIGIBLE_MINUTES_ET } from './market-daily-authority.js';
 import { VERIFIED_NYSE_CALENDAR } from './market-calendar-bootstrap.definition.js';
 import { PARTICIPATION_BASELINE_SESSIONS } from './participation-v1.definition.js';
 
 export const participationDueAt = (close: Date) => new Date(+close + COMPLETION_GRACE_MINUTES.DAY_1 * 60_000);
+export const participationEvidenceDueAt = (close: Date) => marketDailyAuthority(etDate(close)).provider === 'TIINGO'
+  ? etInstant(etDate(close), TIINGO_DAY_1_ELIGIBLE_MINUTES_ET) : participationDueAt(close);
 export function calendarIssue(date: string, exceptions: readonly CalendarException[]): string | null {
   if (date < VERIFIED_NYSE_CALENDAR.from || date > VERIFIED_NYSE_CALENDAR.to) return 'OUTSIDE_REVIEWED_HORIZON';
   const rows = exceptions.filter(e => e.sessionDate === date);
@@ -19,7 +22,7 @@ export function selectParticipationSession(date: string, direction: 1 | -1, exce
     if (calendarIssue(date, exceptions)) throw new Error('PARTICIPATION_V1 target calendar authority unavailable; operator review required.');
     if (isFullMarketSession(date, exceptions)) {
       const session = marketSession(date, exceptions)!;
-      if (!now || participationDueAt(session.closeAt) <= now) return session;
+      if (!now || participationEvidenceDueAt(session.closeAt) <= now) return session;
     }
   }
   throw new Error('PARTICIPATION_V1 target calendar horizon exhausted.');

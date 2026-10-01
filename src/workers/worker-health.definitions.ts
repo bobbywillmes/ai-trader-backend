@@ -91,7 +91,7 @@ export const workerDefinitions = [
   {
     key: 'market_daily_evidence_sync',
     displayName: 'Daily market data',
-    description: 'Fills eligible missing SPY/QQQ/DIA/IWM/RSP daily bars from Massive without rewriting evidence.',
+    description: 'Fills eligible missing SPY/QQQ/DIA/IWM/RSP daily bars from the session-authoritative provider without rewriting evidence.',
     criticality: 'informational',
     expectedIntervalMs: 60_000,
     enabledByDefault: true,

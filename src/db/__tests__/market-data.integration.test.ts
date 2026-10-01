@@ -69,16 +69,16 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await expect(db.query(`DELETE FROM "Security" WHERE id=$1`, [securityId])).rejects.toThrow();
   });
   it('accepts legacy null split factors and rejects invalid present factors', async () => {
-    const legacy = await bar('2020-01-06T04:00:00Z');
+    const legacy = await bar('2020-01-06T05:00:00Z');
     expect(legacy.rows[0].id).toBeGreaterThan(0);
     for (const factor of ['0', '-1', 'NaN']) {
-      await expect(db.query(`INSERT INTO "MarketBar" ("securityId", timeframe, "barStartAt", open, high, low, close, volume, provider, "adjustmentMode", "receivedAt", "splitFactor") VALUES ($1,'DAY_1','2020-01-07T04:00:00Z',100,102,99,101,1000,'TIINGO','UNADJUSTED',now(),$2)`, [securityId, factor])).rejects.toThrow();
+      await expect(db.query(`INSERT INTO "MarketBar" ("securityId", timeframe, "barStartAt", open, high, low, close, volume, provider, "adjustmentMode", "receivedAt", "splitFactor") VALUES ($1,'DAY_1','2020-01-07T00:00:00Z',100,102,99,101,1000,'TIINGO','UNADJUSTED',now(),$2)`, [securityId, factor])).rejects.toThrow();
     }
-    await db.query(`INSERT INTO "MarketBar" ("securityId", timeframe, "barStartAt", open, high, low, close, volume, provider, "adjustmentMode", "receivedAt", "splitFactor") VALUES ($1,'DAY_1','2020-01-07T04:00:00Z',100,102,99,101,1000,'TIINGO','UNADJUSTED',now(),2)`, [securityId]);
-    expect((await db.query(`SELECT "splitFactor"::text AS factor FROM "MarketBar" WHERE "barStartAt"='2020-01-07T04:00:00Z'`)).rows[0].factor).toBe('2.0000000000');
+    await db.query(`INSERT INTO "MarketBar" ("securityId", timeframe, "barStartAt", open, high, low, close, volume, provider, "adjustmentMode", "receivedAt", "splitFactor") VALUES ($1,'DAY_1','2020-01-07T00:00:00Z',100,102,99,101,1000,'TIINGO','UNADJUSTED',now(),2)`, [securityId]);
+    expect((await db.query(`SELECT "splitFactor"::text AS factor FROM "MarketBar" WHERE "barStartAt"='2020-01-07T00:00:00Z'`)).rows[0].factor).toBe('2.0000000000');
   });
   it('permits transaction-local Tiingo DELETE only and preserves Massive evidence', async () => {
-    const tiingoDate = '2020-01-07T04:00:00Z';
+    const tiingoDate = '2020-01-07T00:00:00Z';
     const massiveDate = '2026-09-14T04:00:00Z';
     await expect(db.query(`DELETE FROM "MarketBar" WHERE provider='TIINGO' AND "barStartAt"=$1`, [tiingoDate])).rejects.toThrow('immutable');
     await db.query('BEGIN');
@@ -138,8 +138,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const options = {db:prisma,now:new Date('2026-09-16T00:00Z'),fetchBars:async()=>[makeBar('2026-09-15')]};
     const results=await Promise.all([ingestDailyRange('SPY','2026-09-15','2026-09-15',options),ingestDailyRange('SPY','2026-09-15','2026-09-15',options)]);
     expect(results.reduce((sum,result)=>sum+result.inserted,0)).toBe(1);
-    const retry=await ingestDailyRange('SPY','2026-09-14','2026-09-15',{...options,fetchBars:async()=>[makeBar('2026-09-14','100'),makeBar('2026-09-15','100')]});
-    expect(retry.inserted).toBe(0);
+    await expect(ingestDailyRange('SPY','2026-09-14','2026-09-15',{...options,fetchBars:async()=>[makeBar('2026-09-14','100'),makeBar('2026-09-15','100')]})).rejects.toThrow('Immutable canonical DAY_1 evidence conflict');
     expect((await prisma.marketBar.findMany({where:{securityId,barStartAt:{gte:etInstant('2026-09-14',0)}},orderBy:{barStartAt:'asc'}})).map(row=>row.close.toNumber())).toEqual([101,101]);
   });
   async function tradingCounts() {
@@ -166,7 +165,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const published = await prisma.marketRegimeDimensionAssessment.findMany({ where: { algorithmVersion: 'TREND_V1' } });
     expect(published).toHaveLength(1);
     expect(published[0]).toMatchObject({ status: 'VALID', previousAssessmentId: null, targetAt: new Date('2026-09-14T20:00Z'), dataThroughAt: new Date('2026-09-14T20:00Z') });
-    expect(published[0]!.evidenceJson).toMatchObject({ bootstrap: true, historicalReplay: { sessionCount: dates.length } });
+    expect(published[0]!.evidenceJson).toMatchObject({ bootstrap: true, historicalReplay: { sessionCount: dates.length + 1 } });
     expect(await tradingCounts()).toEqual(before);
   });
   it('recovers a real missing Tuesday before Wednesday with immutable attempts and correct links', async () => {

@@ -15,6 +15,7 @@ import {
 import { INTRADAY_STRESS_ALGORITHM_VERSION, INTRADAY_STRESS_PUBLICATION_EVIDENCE_VERSION, INTRADAY_STRESS_V1_DEFINITION } from './intraday-stress-v1.definition.js';
 import { VERIFIED_NYSE_CLOSURES } from './market-calendar-bootstrap.definition.js';
 import { intradayAuthority } from './intraday-stress-provider-authority.js';
+import { dailyProviderProvenance, readCanonicalDailyBars } from './market-daily-authority.js';
 
 const identity = { dimension: 'INTRADAY_STRESS' as const, algorithmVersion: INTRADAY_STRESS_ALGORITHM_VERSION };
 export const INTRADAY_STRESS_PUBLICATION_LOCK_KEY = createHash('sha256').update('ai-trader:intraday-stress-v1-publication').digest().readBigInt64BE(0);
@@ -113,7 +114,7 @@ async function computeBaseline(tx: Tx, priorDate: string | null, latestDate: str
   if (!priorDate) return { perSymbol: { SPY: null, RSP: null }, reasonCode: 'PRIOR_ATR_UNAVAILABLE', provenance: null };
   const dailyFrom = addDays(priorDate, -400);
   const securities = await tx.security.findMany({ where: { symbol: { in: [...SYMBOLS] } }, select: { id: true, symbol: true } });
-  const rows = await tx.marketBar.findMany({ where: { securityId: { in: securities.map(s => s.id) }, timeframe: 'DAY_1', provider: 'MASSIVE', adjustmentMode: 'UNADJUSTED', barStartAt: { gte: etInstant(dailyFrom, 0), lte: etInstant(priorDate, 0) } }, orderBy: [{ barStartAt: 'asc' }, { id: 'asc' }] });
+  const rows = await readCanonicalDailyBars(tx, securities.map(s => s.id), dailyFrom, priorDate);
   let splits: SplitEvent[][];
   try {
     splits = await Promise.all(SYMBOLS.map(symbol => fetchSplits(symbol, dailyFrom, latestDate)));
@@ -127,7 +128,7 @@ async function computeBaseline(tx: Tx, priorDate: string | null, latestDate: str
   const instruments: Record<string, unknown> = {};
   SYMBOLS.forEach((symbol, i) => {
     const security = securities.find(s => s.symbol === symbol);
-    const bars: ResearchBar[] = rows.filter(row => row.securityId === security?.id).map(row => ({ id: row.id, date: etDate(row.barStartAt), open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close), volume: Number(row.volume) }));
+    const bars: ResearchBar[] = rows.filter(row => row.securityId === security?.id).map(row => ({ id: row.id, date: row.sessionDate, open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close), volume: Number(row.volume) }));
     const normalized = new Map(normalizeSplits(bars, splits[i]!, latestDate).map(bar => [bar.date, bar]));
     const measurements = instrumentMeasurements(dates.map(date => normalized.get(date) ?? null));
     const last = measurements.at(-1);
@@ -135,7 +136,7 @@ async function computeBaseline(tx: Tx, priorDate: string | null, latestDate: str
     instruments[symbol] = { securityId: security?.id ?? null, atr14: last?.atr14 ?? null, atr14Pct: last?.ATR14Pct?.value ?? null, consecutiveSessions: last?.consecutiveSessions ?? 0, dailyBarCount: bars.length, splits: splits[i] };
   });
   const reasonCode: Reason | null = SYMBOLS.some(symbol => perSymbol[symbol] === null) ? 'PRIOR_ATR_UNAVAILABLE' : null;
-  return { perSymbol, reasonCode, provenance: { provider: 'MASSIVE', migrationPhase: 'LEGACY_DAILY_BASELINE_PENDING', dailyFrom, through: priorDate, dates, instruments } };
+  return { perSymbol, reasonCode, provenance: { dailyMarketData: dailyProviderProvenance(rows, dailyFrom, priorDate), dailyFrom, through: priorDate, dates, instruments } };
 }
 
 /** Publishes at most one authoritative assessment per invocation: the current due 15-minute
@@ -199,7 +200,10 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
       let baselineProvenance: Record<string, unknown> | null = null;
       if (!reasonCode && sameSession && continuation) {
         baseline = { SPY: continuation.baseline.spy, RSP: continuation.baseline.rsp };
-        baselineProvenance = { provider: 'MASSIVE', migrationPhase: 'LEGACY_DAILY_BASELINE_PENDING', reused: true, fromAssessmentId: predecessor!.id };
+        const prior = (predecessor!.evidenceJson as { baseline?: { provenance?: { dailyMarketData?: unknown; dailyFrom?: string; through?: string } } }).baseline?.provenance;
+        baselineProvenance = { reused: true, fromAssessmentId: predecessor!.id, dailyMarketData: prior?.dailyMarketData ?? {
+          authorityVersion: 'PRE_PHASE8_MASSIVE_V1', cutoverSession: null, providersPresent: ['MASSIVE'],
+          providerSegments: prior?.dailyFrom && prior.through ? [{ provider: 'MASSIVE', from: prior.dailyFrom, through: prior.through, count: null }] : [] } };
       } else if (!reasonCode) {
         try {
           const priorDate = previousSessionDate(latest.date, exceptions);
@@ -273,7 +277,7 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
         missingClosures, missingEarlyCloses, reasonCode, attemptFingerprint: fingerprint,
         session: { sameSession, previousSessionDate: predecessorSessionDate, bootstrap: !predecessor },
         intradayMarketData: intradayAuthority(latest.date),
-        baseline: { spy: baseline.SPY, rsp: baseline.RSP, frozenForSession: true, provider: 'MASSIVE', migrationPhase: 'LEGACY_DAILY_BASELINE_PENDING', provenance: baselineProvenance },
+        baseline: { spy: baseline.SPY, rsp: baseline.RSP, frozenForSession: true, provenance: baselineProvenance },
         replay: { fromIndex: replayFromIndex, throughIndex: latest.index, replayedCount, trail: replayTrail, note: 'Only the current due target is persisted as an authoritative row; any earlier skipped targets are replayed in-memory only (trail), to reconstruct hysteresis without fabricating retroactive history or duplicating full OHLC evidence.' },
         spy: finalSpy, rsp: finalRsp,
         market: { rawState: finalRaw, explanation: 'Market raw state is worse(SPY instrument raw state, RSP instrument raw state); either instrument SEVERE is sufficient for market SEVERE. No averaging or voting.' },

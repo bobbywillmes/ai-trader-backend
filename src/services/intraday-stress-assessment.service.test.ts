@@ -199,7 +199,6 @@ describe('authoritative INTRADAY_STRESS_V1 publication', () => {
     await run(dueAt(1));
     expect(assessments[0]!.effectiveState).toBe('HIGH');
     // Session 2 (next trading day): daily history extended through the new prior session; calm open.
-    dailyHistory();
     rows.push({ id: rows.length + 1, securityId: 1, timeframe: 'DAY_1', barStartAt: etInstant(SESSION_DATE, 0), open: 100, high: 101, low: 99, close: 100, volume: 1000 });
     rows.push({ id: rows.length + 1, securityId: 2, timeframe: 'DAY_1', barStartAt: etInstant(SESSION_DATE, 0), open: 100, high: 101, low: 99, close: 100, volume: 1000 });
     const nextOpenMs = etInstant('2026-09-15', 570).getTime();
