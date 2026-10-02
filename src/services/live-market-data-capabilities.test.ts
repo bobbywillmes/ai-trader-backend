@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { normalizeReferencePrice, normalizeRegularMinutes, verifyReferencePrice, verifyRegularSessionMinutes } from './live-market-data-capabilities.js';
-import type { TiingoRealtimeSnapshot } from '../integrations/tiingo/rest.client.js';
+import { TiingoRequestError, type TiingoRealtimeSnapshot } from '../integrations/tiingo/rest.client.js';
 
 const now = new Date('2026-10-01T20:00:00Z');
 const tiingo: TiingoRealtimeSnapshot = { provider: 'TIINGO_CONSOLIDATED', symbol: 'SPY', observedAt: new Date('2026-10-01T19:59:00Z'),
@@ -28,6 +28,8 @@ describe('read-only reference price capability', () => {
     expect(await verifyReferencePrice('SPY', 'MASSIVE', now, { massive: async () => { throw new Error('offline'); }, tiingo: other })).toMatchObject({ provider: 'MASSIVE', available: false, unavailableReason: 'PROVIDER_ERROR' });
     expect(other).not.toHaveBeenCalled();
     expect(await verifyReferencePrice('SPY', 'TIINGO_CONSOLIDATED', now, { tiingo: async () => ({ ...tiingo, symbol: 'QQQ' }) })).toMatchObject({ available: false, unavailableReason: 'MALFORMED_RESPONSE' });
+    expect(await verifyReferencePrice('SPY', 'TIINGO_CONSOLIDATED', now, { tiingo: async () => { throw new TiingoRequestError(429); } }))
+      .toMatchObject({ available: false, unavailableReason: 'PROVIDER_ERROR', providerError: 'HTTP_429' });
   });
 });
 

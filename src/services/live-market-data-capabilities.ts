@@ -2,6 +2,7 @@ import { getTickerLatestPrice, type TickerLatestPrice } from './massive-market-d
 import { massiveEvidenceGet } from '../integrations/massive/evidence.client.js';
 import { env } from '../config/env.js';
 import { configuredTiingoRestClient, type TiingoBar, type TiingoRealtimeSnapshot } from '../integrations/tiingo/rest.client.js';
+import { TiingoRequestError } from '../integrations/tiingo/rest.client.js';
 import type { CapabilityProvider, CapabilityUnavailableReason, ReferencePriceEvidence, RegularMinute, RegularSessionMinuteEvidence } from './live-market-data.contracts.js';
 
 const MAX_PRICE_AGE_MS = 5 * 60_000;
@@ -38,20 +39,24 @@ export function normalizeReferencePrice(symbol: string, provider: CapabilityProv
         : freshness === 'STALE' ? 'STALE_OBSERVATION' : null;
   return { symbol, provider, price: validPrice(price) ? price : null, basis: basis ?? null,
     observedAt: Number.isFinite(observedMs) ? iso(new Date(observedMs)) : null, fetchedAt: iso(fetchedAt),
-    freshness, available: unavailableReason === null, unavailableReason };
+    freshness, available: unavailableReason === null, unavailableReason, providerError: null };
 }
 
-export async function verifyReferencePrice(symbol: string, provider: CapabilityProvider, now = new Date(),
+export async function verifyReferencePrice(symbol: string, provider: CapabilityProvider, now?: Date,
   fetchers: { massive?: typeof getTickerLatestPrice; tiingo?: (symbol: string) => Promise<TiingoRealtimeSnapshot> } = {}): Promise<ReferencePriceEvidence> {
   const normalized = symbol.trim().toUpperCase();
   try {
     const source = provider === 'MASSIVE' ? await (fetchers.massive ?? getTickerLatestPrice)(normalized)
       : await (fetchers.tiingo ?? (s => configuredTiingoRestClient().consolidatedSnapshot(s)))(normalized);
     if (source.symbol !== normalized || (provider === 'TIINGO_CONSOLIDATED' && (source as TiingoRealtimeSnapshot).provider !== provider)) throw new Error('Provider identity mismatch');
-    return normalizeReferencePrice(normalized, provider, source, now);
+    return normalizeReferencePrice(normalized, provider, source, now ?? new Date());
   } catch (error) {
-    return { symbol: normalized, provider, price: null, basis: null, observedAt: null, fetchedAt: iso(now),
-      freshness: 'UNKNOWN', available: false, unavailableReason: error instanceof Error && /invalid|malform|mismatch|Zod/i.test(error.message) ? 'MALFORMED_RESPONSE' : 'PROVIDER_ERROR' };
+    const malformed = error instanceof Error && /invalid|malform|mismatch|Zod/i.test(error.message);
+    const status = error instanceof TiingoRequestError ? error.status
+      : error && typeof error === 'object' && 'statusCode' in error && typeof error.statusCode === 'number' ? error.statusCode : null;
+    return { symbol: normalized, provider, price: null, basis: null, observedAt: null, fetchedAt: iso(now ?? new Date()),
+      freshness: 'UNKNOWN', available: false, unavailableReason: malformed ? 'MALFORMED_RESPONSE' : 'PROVIDER_ERROR',
+      providerError: malformed ? null : status !== null && Number.isInteger(status) && status >= 100 && status <= 599 ? `HTTP_${status}` : 'REQUEST_FAILED' };
   }
 }
 

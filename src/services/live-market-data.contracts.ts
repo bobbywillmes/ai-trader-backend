@@ -29,6 +29,8 @@ export type ReferencePriceEvidence = {
   observedAt: string | null; fetchedAt: string;
   freshness: 'FRESH' | 'STALE' | 'UNKNOWN' | 'FUTURE';
   available: boolean; unavailableReason: CapabilityUnavailableReason | null;
+  /** Bounded status class only; never raw upstream error text or credentials. */
+  providerError: string | null;
 };
 export type RegularMinute = { time: string; open: number; high: number; low: number; close: number; volume: number };
 export type RegularSessionMinuteEvidence = {
