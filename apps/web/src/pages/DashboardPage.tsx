@@ -82,10 +82,11 @@ function MarketChart({ symbols }: { symbols: IndexIntradaySymbol[] }) {
 }
 
 function EtfTile({ quote, history, reference }: { quote: IndexPerformanceSymbol; history?: IndexIntradaySymbol; reference?: DashboardReferencePrice }) {
-  const { price: current, reason } = displayReferencePrice(reference);
+  const observation = displayReferencePrice(reference);
+  const current = observation.price;
   const currentPos = rangePosition(quote.lastPrice, quote.dayLow, quote.dayHigh); const previousPos = rangePosition(quote.previousClose, quote.dayLow, quote.dayHigh);
-  const basis = reference?.basis === "TIINGO_TNGO_LAST" ? "tngoLast" : reference?.basis === "TIINGO_LQ_REF_PRICE" ? "lqRefPrice" : null;
-  const metadata = current != null ? `Tiingo · ${basis} · ${formatMarketDateTime(reference!.observedAt)} · fresh` : `Tiingo · ${reason}`;
+  const basis = observation.basis === "TIINGO_TNGO_LAST" ? "tngoLast" : observation.basis === "TIINGO_LQ_REF_PRICE" ? "lqRefPrice" : null;
+  const metadata = current != null ? `Tiingo · ${basis} · ${observation.status === "lastKnown" ? "last observed" : "observed"} ${formatMarketDateTime(observation.observedAt)}` : `Tiingo · ${observation.reason}`;
   return <Card withBorder p="md"><Group justify="space-between"><Text fw={800}>{quote.symbol}</Text><Badge color={tone(quote.todayChangePercent)} variant="light">{signedPercent(quote.todayChangePercent)}</Badge></Group><Text size="xl" fw={700} mt="xs">{current == null ? "—" : money(current)}</Text><Text size="xs" c="dimmed">{metadata}</Text><Text size="sm" c={tone(quote.todayChange)}>{signedMoney(quote.todayChange)} today · Massive</Text>
     <div className={classes.range} aria-hidden="true">{previousPos != null && <span className={classes.previousMarker} style={{ left: `${previousPos}%` }} />}{currentPos != null && <span className={classes.rangeMarker} style={{ left: `${currentPos}%` }} />}</div>
     <Group justify="space-between"><Text size="xs" c="dimmed">Low {money(quote.dayLow)}</Text><Text size="xs" c="dimmed">High {money(quote.dayHigh)}</Text></Group><Text size="xs" c="dimmed" mt={4}>Massive previous close {money(quote.previousClose)}. {currentPos == null ? "Range position unavailable." : `Massive price is ${currentPos.toFixed(0)}% through today’s low-to-high range.`}</Text>
