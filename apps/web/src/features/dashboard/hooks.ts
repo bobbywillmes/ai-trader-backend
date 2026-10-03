@@ -3,6 +3,7 @@ import {
   getIndexIntraday,
   getIndexPerformance,
   getDashboardReferencePrices,
+  getDashboardMarketState,
   getSystemEvents,
   getTradingAccountDashboard,
   getDashboardAccountsOverview,
@@ -87,6 +88,16 @@ export function useDashboardReferencePrices(token: string | null) {
     queryFn: () => getDashboardReferencePrices(token as string),
     enabled: Boolean(token),
     refetchInterval: 10000,
+    staleTime: 0,
+  });
+}
+
+export function useDashboardMarketState(token: string | null) {
+  return useQuery({
+    queryKey: ["dashboard", "market-state"],
+    queryFn: () => getDashboardMarketState(token as string),
+    enabled: Boolean(token),
+    refetchInterval: 30000,
     staleTime: 0,
   });
 }

@@ -4,6 +4,7 @@ import type {
   IndexIntradayResponse,
   IndexPerformanceResponse,
   DashboardReferencePricesResponse,
+  DashboardMarketStateResponse,
   SystemEventsResponse,
   TradingAccountDashboardResponse,
   DashboardAccountsOverviewResponse,
@@ -58,6 +59,10 @@ export function getIndexPerformance(token: string) {
 
 export function getDashboardReferencePrices(token: string) {
   return apiRequest<DashboardReferencePricesResponse>("/api/dashboard/reference-prices", { token });
+}
+
+export function getDashboardMarketState(token: string) {
+  return apiRequest<DashboardMarketStateResponse>("/api/dashboard/market-state", { token });
 }
 
 export function getIndexIntraday(token: string, range: IndexChartRange) {

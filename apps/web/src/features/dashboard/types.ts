@@ -249,6 +249,22 @@ export type DashboardReferencePrice = {
 };
 export type DashboardReferencePricesResponse = { symbols: DashboardReferencePrice[] };
 
+export type DashboardMarketSymbol = {
+  symbol: IndexPerformanceSymbol["symbol"];
+  referencePrice: DashboardReferencePrice;
+  observationPhase: "PREMARKET" | "REGULAR" | "POSTMARKET" | "CLOSED" | "UNKNOWN";
+  previousClose: { sessionDate: string | null; close: number | null; source: "TIINGO_REGULAR_MINUTE"; reason: string | null };
+  regularSession: { sessionDate: string; state: "PARTIAL" | "COMPLETE" | "UNAVAILABLE";
+    high: number | null; low: number | null; close: number | null; observedThrough: string | null;
+    reason: string | null; source: "TIINGO_REGULAR_MINUTE" } | null;
+  change: number | null;
+  changePercent: number | null;
+  changeReason: string | null;
+  rangePosition: number | null;
+  rangeReason: string | null;
+};
+export type DashboardMarketStateResponse = { updatedAt: string; symbols: DashboardMarketSymbol[] };
+
 export type IndexChartRange = "1d" | "7d" | "14d" | "30d" | "6m" | "1y";
 
 export type IndexIntradayPoint = {

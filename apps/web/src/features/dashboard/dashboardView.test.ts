@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { describeRegularSession, formatMarketDateTime, getTradingTransition, normalizeSeries, rangePosition } from "./dashboardView";
-import type { RiskStatus } from "./types";
+import { describeRegularSession, formatMarketDateTime, getTradingTransition, marketContext, normalizeSeries, rangePosition } from "./dashboardView";
+import type { DashboardMarketSymbol, RiskStatus } from "./types";
 
 function session(overrides: Partial<RiskStatus["entrySession"]> = {}): RiskStatus["entrySession"] {
   return { enabled: true, status: "allowed", canEnterNow: true, marketOpen: true, evaluatedAt: "2026-08-03T15:00:00Z", sessionOpenAt: "2026-08-03T13:30:00Z", entryAllowedAt: "2026-08-03T13:45:00Z", entryCutoffAt: "2026-08-03T19:45:00Z", sessionCloseAt: "2026-08-03T20:00:00Z", nextOpenAt: "2026-08-04T13:30:00Z", nextCloseAt: null, openingBufferMinutes: 15, closingBufferMinutes: 15, failClosed: true, degraded: false, rule: null, error: null, ...overrides };
@@ -28,4 +28,11 @@ describe("dashboard market pulse calculations", () => {
     expect(data[1]?.QQQ).toBeCloseTo(-10);
   });
   it("positions values and safely rejects zero-width ranges", () => { expect(rangePosition(15, 10, 20)).toBe(50); expect(rangePosition(10, 10, 10)).toBeNull(); expect(rangePosition(null, 10, 20)).toBeNull(); });
+  it("ranks only Tiingo-derived change percentages and excludes missing values", () => {
+    const symbols = [
+      { symbol: "SPY", changePercent: 2 }, { symbol: "QQQ", changePercent: null },
+      { symbol: "DIA", changePercent: -1 }, { symbol: "IWM", changePercent: 3 },
+    ] as DashboardMarketSymbol[];
+    expect(marketContext(symbols)).toMatchObject({ positive: 2, available: 3, leader: { symbol: "IWM" }, laggard: { symbol: "DIA" } });
+  });
 });

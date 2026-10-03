@@ -1,4 +1,4 @@
-import type { IndexIntradaySymbol, IndexPerformanceSymbol, RiskStatus } from "./types";
+import type { DashboardMarketSymbol, IndexIntradaySymbol, RiskStatus } from "./types";
 
 const MARKET_TIME_ZONE = "America/New_York";
 
@@ -55,11 +55,11 @@ export function rangePosition(value: number | null, low: number | null, high: nu
   return Math.max(0, Math.min(100, ((value - low) / (high - low)) * 100));
 }
 
-export function marketContext(symbols: IndexPerformanceSymbol[]) {
-  const available = symbols.filter((symbol) => symbol.todayChangePercent != null);
-  const ranked = [...available].sort((a, b) => (b.todayChangePercent ?? 0) - (a.todayChangePercent ?? 0));
+export function marketContext(symbols: DashboardMarketSymbol[]) {
+  const available = symbols.filter((symbol) => symbol.changePercent != null && Number.isFinite(symbol.changePercent));
+  const ranked = [...available].sort((a, b) => (b.changePercent ?? 0) - (a.changePercent ?? 0));
   return {
-    positive: available.filter((symbol) => (symbol.todayChangePercent ?? 0) > 0).length,
+    positive: available.filter((symbol) => (symbol.changePercent ?? 0) > 0).length,
     available: available.length,
     leader: ranked[0] ?? null,
     laggard: ranked.at(-1) ?? null,
