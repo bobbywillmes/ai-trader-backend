@@ -4,14 +4,21 @@ import { calendarExceptions } from './market-calendar.service.js';
 import { verifyReferencePrice } from './live-market-data.service.js';
 import type { ReferencePriceEvidence } from './live-market-data.contracts.js';
 import { DASHBOARD_PRICE_SYMBOLS } from './dashboard-reference-prices.service.js';
+import { prisma } from '../db/prisma.js';
+import { readPersistedSplits } from './persisted-split-evidence.service.js';
+import type { SplitEvent } from '../integrations/massive/evidence.client.js';
 
-type Reason = 'NO_REFERENCE_PRICE' | 'NO_COMPLETED_SESSION' | 'NO_MINUTES' | 'INCOMPLETE_MINUTES' | 'INVALID_MINUTE' | 'PROVIDER_ERROR' | 'MISSING_BASELINE' | 'MISSING_REGULAR_RANGE' | null;
+type Reason = 'NO_REFERENCE_PRICE' | 'NO_COMPLETED_SESSION' | 'NO_MINUTES' | 'INCOMPLETE_MINUTES' | 'INVALID_MINUTE' | 'PROVIDER_ERROR' | 'MISSING_BASELINE' | 'MISSING_REGULAR_RANGE' | 'SPLIT_BOUNDARY' | 'SPLIT_EVIDENCE_UNRESOLVED' | null;
+export type DashboardSplitCompatibility = { status: 'SAME_SESSION' | 'COMPARABLE' | 'SPLIT_BOUNDARY' | 'UNRESOLVED' | 'NOT_EVALUATED';
+  fromSession: string | null; throughSession: string | null; eventIds: string[]; executionDates: string[];
+  reason: 'MISSING_BASELINE' | 'SPLIT_BOUNDARY' | 'SPLIT_EVIDENCE_UNRESOLVED' | null };
 type SessionBars = { sessionDate: string; state: 'PARTIAL' | 'COMPLETE' | 'UNAVAILABLE'; high: number | null; low: number | null;
   close: number | null; observedThrough: string | null; reason: Reason; source: 'TIINGO_REGULAR_MINUTE' };
 type Baseline = { sessionDate: string | null; close: number | null; source: 'TIINGO_REGULAR_MINUTE'; reason: Reason };
 export type DashboardMarketSymbol = { symbol: typeof DASHBOARD_PRICE_SYMBOLS[number]; referencePrice: ReferencePriceEvidence;
   observationPhase: 'PREMARKET' | 'REGULAR' | 'POSTMARKET' | 'CLOSED' | 'UNKNOWN';
   previousClose: Baseline; regularSession: SessionBars | null;
+  splitCompatibility: DashboardSplitCompatibility;
   change: number | null; changePercent: number | null; changeReason: Reason;
   rangePosition: number | null; rangeReason: Reason };
 export type DashboardMarketState = { updatedAt: string; symbols: DashboardMarketSymbol[] };
@@ -66,7 +73,27 @@ export function summarizeRegularMinutes(date: string, rows: readonly TiingoBar[]
 }
 
 type Dependencies = { verify?: typeof verifyReferencePrice; calendar?: typeof calendarExceptions;
-  minutes?: (symbol: string, date: string) => Promise<TiingoBar[]> };
+  minutes?: (symbol: string, date: string) => Promise<TiingoBar[]>;
+  splits?: (symbol: typeof DASHBOARD_PRICE_SYMBOLS[number], from: string, through: string) => Promise<SplitEvent[]> };
+
+export async function dashboardSplitCompatibility(symbol: typeof DASHBOARD_PRICE_SYMBOLS[number], baselineSession: string | null,
+  observationSession: string, read: NonNullable<Dependencies['splits']>): Promise<DashboardSplitCompatibility> {
+  if (!baselineSession) return { status: 'NOT_EVALUATED', fromSession: null, throughSession: observationSession,
+    eventIds: [], executionDates: [], reason: 'MISSING_BASELINE' };
+  if (baselineSession === observationSession) return { status: 'SAME_SESSION', fromSession: baselineSession,
+    throughSession: observationSession, eventIds: [], executionDates: [], reason: null };
+  try {
+    const events = await read(symbol, addDays(baselineSession, 1), observationSession);
+    if (events.some(event => event.symbol !== symbol || event.executionDate <= baselineSession || event.executionDate > observationSession))
+      throw new Error('Split identity or range mismatch.');
+    return { status: events.length ? 'SPLIT_BOUNDARY' : 'COMPARABLE', fromSession: baselineSession,
+      throughSession: observationSession, eventIds: events.map(event => event.id),
+      executionDates: events.map(event => event.executionDate), reason: events.length ? 'SPLIT_BOUNDARY' : null };
+  } catch {
+    return { status: 'UNRESOLVED', fromSession: baselineSession, throughSession: observationSession,
+      eventIds: [], executionDates: [], reason: 'SPLIT_EVIDENCE_UNRESOLVED' };
+  }
+}
 
 export async function getDashboardMarketState(now = new Date(), dependencies: Dependencies = {}): Promise<DashboardMarketState> {
   const verify = dependencies.verify ?? verifyReferencePrice;
@@ -76,6 +103,7 @@ export async function getDashboardMarketState(now = new Date(), dependencies: De
     return client.intradayHistory(symbol, date, date, { resampleFreq: '1min', afterHours: false });
   });
   const calendar = dependencies.calendar ?? calendarExceptions;
+  const splits = dependencies.splits ?? ((symbol, from, through) => readPersistedSplits(prisma, symbol, from, through));
   const symbols = await Promise.all(DASHBOARD_PRICE_SYMBOLS.map(async symbol => {
     const referencePrice = await verify(symbol, 'TIINGO_CONSOLIDATED').catch((): ReferencePriceEvidence => ({
       symbol, provider: 'TIINGO_CONSOLIDATED', price: null, basis: null, observedAt: null,
@@ -85,6 +113,8 @@ export async function getDashboardMarketState(now = new Date(), dependencies: De
     const price = dashboardReferenceValue(referencePrice);
     const unavailable = (reason: Reason): DashboardMarketSymbol => ({ symbol, referencePrice, observationPhase: 'UNKNOWN',
       previousClose: { sessionDate: null, close: null, source: minuteSource, reason }, regularSession: null,
+      splitCompatibility: { status: 'NOT_EVALUATED', fromSession: null, throughSession: null,
+        eventIds: [], executionDates: [], reason: 'MISSING_BASELINE' },
       change: null, changePercent: null, changeReason: reason, rangePosition: null, rangeReason: reason });
     if (price === null || !referencePrice.observedAt) return unavailable('NO_REFERENCE_PRICE');
     try {
@@ -109,14 +139,16 @@ export async function getDashboardMarketState(now = new Date(), dependencies: De
       const baseline = baselineBars?.state === 'COMPLETE' && validPrice(baselineBars.close) ? baselineBars.close : null;
       const previousClose: Baseline = { sessionDate: baselineDate, close: baseline, source: minuteSource,
         reason: baseline !== null ? null : baselineBars?.reason ?? 'NO_COMPLETED_SESSION' };
-      const change = baseline === null ? null : price - baseline;
-      const changePercent = baseline === null ? null : (price / baseline - 1) * 100;
+      const splitCompatibility = await dashboardSplitCompatibility(symbol, baseline === null ? null : baselineDate, date, splits);
+      const comparable = splitCompatibility.status === 'SAME_SESSION' || splitCompatibility.status === 'COMPARABLE';
+      const change = baseline === null || !comparable ? null : price - baseline;
+      const changePercent = baseline === null || !comparable ? null : (price / baseline - 1) * 100;
       const rangePrice = regularSession?.close ?? null;
       const high = regularSession?.high ?? null; const low = regularSession?.low ?? null;
       const rangePosition = validPrice(rangePrice) && validPrice(high) && validPrice(low) && high > low
         ? Math.max(0, Math.min(100, (rangePrice - low) / (high - low) * 100)) : null;
-      return { symbol, referencePrice, observationPhase: phase, previousClose, regularSession,
-        change, changePercent, changeReason: baseline === null ? 'MISSING_BASELINE' : null,
+      return { symbol, referencePrice, observationPhase: phase, previousClose, regularSession, splitCompatibility,
+        change, changePercent, changeReason: baseline === null ? 'MISSING_BASELINE' : splitCompatibility.reason,
         rangePosition, rangeReason: rangePosition === null ? 'MISSING_REGULAR_RANGE' : null } satisfies DashboardMarketSymbol;
     } catch { return unavailable('PROVIDER_ERROR'); }
   }));

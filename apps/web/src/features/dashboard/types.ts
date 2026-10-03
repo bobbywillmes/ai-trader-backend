@@ -254,6 +254,8 @@ export type DashboardMarketSymbol = {
   referencePrice: DashboardReferencePrice;
   observationPhase: "PREMARKET" | "REGULAR" | "POSTMARKET" | "CLOSED" | "UNKNOWN";
   previousClose: { sessionDate: string | null; close: number | null; source: "TIINGO_REGULAR_MINUTE"; reason: string | null };
+  splitCompatibility: { status: "SAME_SESSION" | "COMPARABLE" | "SPLIT_BOUNDARY" | "UNRESOLVED" | "NOT_EVALUATED";
+    fromSession: string | null; throughSession: string | null; eventIds: string[]; executionDates: string[]; reason: string | null };
   regularSession: { sessionDate: string; state: "PARTIAL" | "COMPLETE" | "UNAVAILABLE";
     high: number | null; low: number | null; close: number | null; observedThrough: string | null;
     reason: string | null; source: "TIINGO_REGULAR_MINUTE" } | null;

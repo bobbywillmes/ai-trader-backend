@@ -45,6 +45,7 @@
     "market-data:tiingo:purge": "tsx scripts/tiingo-retention-purge.ts",
     "market-data:realtime:compare": "tsx scripts/compare-realtime-market-data.ts",
     "research:dashboard-price:accept": "tsx scripts/capture-dashboard-price-acceptance.ts",
+    "research:dashboard-market-state:accept": "tsx scripts/capture-dashboard-market-state-acceptance.ts",
     "prisma:generate": "prisma generate",
     "momentum:reconcile-eligibility": "tsx scripts/reconcile-momentum-eligibility.ts",
     "diagnose:account-worker-health": "tsx scripts/diagnose-account-worker-health.ts",

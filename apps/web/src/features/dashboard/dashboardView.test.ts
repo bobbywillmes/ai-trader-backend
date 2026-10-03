@@ -35,4 +35,12 @@ describe("dashboard market pulse calculations", () => {
     ] as DashboardMarketSymbol[];
     expect(marketContext(symbols)).toMatchObject({ positive: 2, available: 3, leader: { symbol: "IWM" }, laggard: { symbol: "DIA" } });
   });
+  it("excludes a split-incompatible symbol from leader and laggard", () => {
+    const symbols = [
+      { symbol: "SPY", changePercent: 1 },
+      { symbol: "QQQ", changePercent: null, changeReason: "SPLIT_BOUNDARY" },
+      { symbol: "DIA", changePercent: -2 },
+    ] as DashboardMarketSymbol[];
+    expect(marketContext(symbols)).toMatchObject({ available: 2, leader: { symbol: "SPY" }, laggard: { symbol: "DIA" } });
+  });
 });

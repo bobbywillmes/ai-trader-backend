@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { TiingoBar } from '../integrations/tiingo/rest.client.js';
 import { etInstant, marketSession, type CalendarException } from './market-calendar.js';
-import { dashboardReferenceValue, getDashboardMarketState, summarizeRegularMinutes } from './dashboard-market-state.service.js';
+import { dashboardReferenceValue, dashboardSplitCompatibility, getDashboardMarketState, summarizeRegularMinutes } from './dashboard-market-state.service.js';
 import type { CapabilityProvider, ReferencePriceEvidence } from './live-market-data.contracts.js';
 
 const friday = '2026-10-02'; const monday = '2026-10-05';
@@ -31,7 +31,7 @@ function scenario(at: string, options: { exceptions?: CalendarException[]; missi
     if (date === friday && options.previous === false || date === monday && options.current === false) return [];
     return bars(date, date === friday ? 100 : options.close ?? 102, exceptions);
   });
-  return { requested, verify, minutes, calendar: async () => exceptions };
+  return { requested, verify, minutes, calendar: async () => exceptions, splits: async () => [] };
 }
 
 describe('Tiingo dashboard market state', () => {
@@ -134,5 +134,40 @@ describe('Tiingo dashboard market state', () => {
   it('does not accept a future or malformed reference observation', () => {
     expect(dashboardReferenceValue({ ...observation('2026-10-02T19:00:00Z'), freshness: 'FUTURE', available: false, unavailableReason: 'FUTURE_TIMESTAMP' })).toBeNull();
     expect(dashboardReferenceValue({ ...observation('2026-10-02T19:00:00Z'), price: 0 })).toBeNull();
+  });
+
+  it('allows cross-session change when strict split evidence finds no boundary', async () => {
+    const read = vi.fn(async () => []);
+    expect(await dashboardSplitCompatibility('SPY', friday, monday, read)).toMatchObject({
+      status: 'COMPARABLE', fromSession: friday, throughSession: monday, eventIds: [], reason: null,
+    });
+    expect(read).toHaveBeenCalledWith('SPY', '2026-10-03', monday);
+  });
+
+  it('retains price and same-session range but suppresses change on a split boundary', async () => {
+    const deps = scenario('2026-10-05T14:00:00Z');
+    const splits = async () => [{ id: 'market-split-event:7', symbol: 'SPY' as const, executionDate: monday,
+      splitFrom: 1, splitTo: 2, priceFactor: 0.5 }];
+    const spy = (await getDashboardMarketState(new Date('2026-10-05T14:01:00Z'), { ...deps, splits })).symbols[0]!;
+    expect(spy.referencePrice.price).toBe(105);
+    expect(spy.previousClose.close).toBe(100);
+    expect(spy.splitCompatibility).toMatchObject({ status: 'SPLIT_BOUNDARY', executionDates: [monday] });
+    expect(spy).toMatchObject({ change: null, changePercent: null, changeReason: 'SPLIT_BOUNDARY', rangePosition: 50 });
+    expect(spy.regularSession).toMatchObject({ sessionDate: monday, state: 'PARTIAL' });
+  });
+
+  it('fails closed on unresolved coverage without hiding price or same-session range', async () => {
+    const deps = scenario('2026-10-05T14:00:00Z');
+    const splits = async (): Promise<never> => { throw new Error('Incomplete persisted split coverage'); };
+    const spy = (await getDashboardMarketState(new Date('2026-10-05T14:01:00Z'), { ...deps, splits })).symbols[0]!;
+    expect(spy).toMatchObject({ change: null, changePercent: null, changeReason: 'SPLIT_EVIDENCE_UNRESOLVED', rangePosition: 50 });
+    expect(spy.splitCompatibility.status).toBe('UNRESOLVED');
+    expect(dashboardReferenceValue(spy.referencePrice)).toBe(105);
+  });
+
+  it('does not require cross-session coverage when baseline and observation share a session', async () => {
+    const read = vi.fn(async () => { throw new Error('must not read'); });
+    expect(await dashboardSplitCompatibility('SPY', friday, friday, read)).toMatchObject({ status: 'SAME_SESSION', reason: null });
+    expect(read).not.toHaveBeenCalled();
   });
 });
