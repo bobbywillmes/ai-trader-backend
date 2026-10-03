@@ -1,4 +1,4 @@
-import type { DashboardMarketSymbol, IndexIntradaySymbol, RiskStatus } from "./types";
+import type { DashboardMarketSymbol, RiskStatus } from "./types";
 
 const MARKET_TIME_ZONE = "America/New_York";
 
@@ -33,21 +33,6 @@ export function describeRegularSession(session: RiskStatus["entrySession"]) {
   if (session.status === "market_closed") return "Regular session is closed";
   if (session.status === "disabled") return "Entry-session guard is disabled";
   return "Current session details unavailable";
-}
-
-export function normalizeSeries(symbols: IndexIntradaySymbol[]) {
-  const times = Array.from(new Set(symbols.flatMap((symbol) => symbol.points.map((point) => point.time)))).sort();
-  const baselines = new Map(symbols.map((symbol) => [symbol.symbol, symbol.points[0]?.close]));
-  const pointMaps = new Map(symbols.map((symbol) => [symbol.symbol, new Map(symbol.points.map((point) => [point.time, point.close]))]));
-  return times.map((time) => {
-    const row: Record<string, string | number | null> = { time };
-    for (const symbol of symbols) {
-      const baseline = baselines.get(symbol.symbol);
-      const close = pointMaps.get(symbol.symbol)?.get(time);
-      row[symbol.symbol] = baseline && close != null ? ((close / baseline) - 1) * 100 : null;
-    }
-    return row;
-  });
 }
 
 export function rangePosition(value: number | null, low: number | null, high: number | null) {

@@ -2,47 +2,7 @@ import { env } from '../config/env.js';
 import { HttpError } from '../errors/http-error.js';
 
 const INDEX_SYMBOLS = ['SPY', 'QQQ', 'DIA', 'IWM'] as const;
-const INDEX_CHART_RANGE_CONFIG = {
-  '1d': {
-    label: '1D',
-    multiplier: 5,
-    timespan: 'minute',
-    subtract: { days: 0 },
-  },
-  '7d': {
-    label: '7D',
-    multiplier: 30,
-    timespan: 'minute',
-    subtract: { days: 6 },
-  },
-  '14d': {
-    label: '14D',
-    multiplier: 1,
-    timespan: 'hour',
-    subtract: { days: 13 },
-  },
-  '30d': {
-    label: '30D',
-    multiplier: 4,
-    timespan: 'hour',
-    subtract: { days: 29 },
-  },
-  '6m': {
-    label: '6M',
-    multiplier: 1,
-    timespan: 'day',
-    subtract: { months: 6 },
-  },
-  '1y': {
-    label: '1Y',
-    multiplier: 1,
-    timespan: 'day',
-    subtract: { years: 1 },
-  },
-} as const;
-
 export type IndexSymbol = (typeof INDEX_SYMBOLS)[number];
-export type IndexChartRange = keyof typeof INDEX_CHART_RANGE_CONFIG;
 
 export type IndexPerformanceSymbol = {
   symbol: IndexSymbol;
@@ -61,39 +21,6 @@ export type IndexPerformanceResponse = {
   serverTime: string | null;
   updatedAt: string;
   symbols: IndexPerformanceSymbol[];
-};
-
-export type IndexIntradayPoint = {
-  time: string;
-  close: number;
-};
-
-export type IndexChartSummary = {
-  open: number | null;
-  close: number | null;
-  change: number | null;
-  changePercent: number | null;
-  high: number | null;
-  low: number | null;
-};
-
-export type IndexIntradaySymbol = {
-  symbol: IndexSymbol;
-  from: string | null;
-  to: string | null;
-  summary: IndexChartSummary;
-  points: IndexIntradayPoint[];
-};
-
-export type IndexIntradayResponse = {
-  updatedAt: string;
-  range: IndexChartRange;
-  rangeLabel: string;
-  interval: {
-    multiplier: number;
-    timespan: string;
-  };
-  symbols: IndexIntradaySymbol[];
 };
 
 export type TickerLatestPriceSource =
@@ -222,8 +149,6 @@ type AggregateRequestConfig = {
 };
 
 const MIN_VALID_MARKET_YEAR = 2000;
-const ONE_DAY_LOOKBACK_DAYS = 10;
-
 function toFiniteNumber(value: unknown): number | null {
   if (typeof value === 'number') {
     return Number.isFinite(value) ? value : null;
@@ -296,42 +221,6 @@ function getEtDateString(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-function getIndexChartRangeConfig(range: IndexChartRange) {
-  return INDEX_CHART_RANGE_CONFIG[range];
-}
-
-export function parseIndexChartRange(value: unknown): IndexChartRange {
-  return typeof value === 'string' && value in INDEX_CHART_RANGE_CONFIG
-    ? (value as IndexChartRange)
-    : '1d';
-}
-
-function subtractChartRange(date: Date, range: IndexChartRange) {
-  const config = getIndexChartRangeConfig(range);
-  const result = new Date(date);
-
-  if ('days' in config.subtract) {
-    result.setUTCDate(result.getUTCDate() - config.subtract.days);
-  }
-
-  if ('months' in config.subtract) {
-    result.setUTCMonth(result.getUTCMonth() - config.subtract.months);
-  }
-
-  if ('years' in config.subtract) {
-    result.setUTCFullYear(result.getUTCFullYear() - config.subtract.years);
-  }
-
-  return result;
-}
-
-function subtractUtcDays(date: Date, days: number) {
-  const result = new Date(date);
-  result.setUTCDate(result.getUTCDate() - days);
-
-  return result;
-}
-
 function subtractUtcMinutes(date: Date, minutes: number) {
   return new Date(date.getTime() - minutes * 60 * 1000);
 }
@@ -344,53 +233,6 @@ function isSafeEtDateString(value: string | null): value is string {
   const year = Number(value.slice(0, 4));
 
   return Number.isInteger(year) && year >= MIN_VALID_MARKET_YEAR;
-}
-
-function emptyIntradaySymbol(
-  symbol: IndexSymbol,
-  from: string | null,
-  to: string | null
-): IndexIntradaySymbol {
-  return {
-    symbol,
-    from,
-    to,
-    summary: {
-      open: null,
-      close: null,
-      change: null,
-      changePercent: null,
-      high: null,
-      low: null,
-    },
-    points: [],
-  };
-}
-
-function hasValidAggregateBar(bar: MassiveAggregateBar) {
-  return (
-    toPositiveFiniteNumber(bar.c) !== null &&
-    toPositiveFiniteNumber(bar.h) !== null &&
-    toPositiveFiniteNumber(bar.l) !== null &&
-    toPositiveFiniteNumber(bar.o) !== null &&
-    toMillisFromMassiveTimestamp(bar.t) !== null
-  );
-}
-
-function getLatestAggregateSessionDate(
-  bars: MassiveAggregateBar[] | undefined
-) {
-  const latest = (bars ?? [])
-    .flatMap((bar) => {
-      const milliseconds = hasValidAggregateBar(bar)
-        ? toMillisFromMassiveTimestamp(bar.t)
-        : null;
-
-      return milliseconds === null ? [] : [milliseconds];
-    })
-    .sort((a, b) => b - a)[0];
-
-  return latest === undefined ? null : getEtDateString(new Date(latest));
 }
 
 function buildMassiveUrl(path: string) {
@@ -715,72 +557,6 @@ export async function getTickerPriceConfirmationMarketData(
   };
 }
 
-function normalizeAggregatePoints(
-  bars: MassiveAggregateBar[] | undefined
-): IndexIntradayPoint[] {
-  return (bars ?? []).flatMap((bar) => {
-    const close = toPositiveFiniteNumber(bar.c);
-    const time = toIsoFromMassiveTimestamp(bar.t);
-
-    if (close === null || time === null) {
-      return [];
-    }
-
-    return [{ close, time }];
-  });
-}
-
-function summarizeAggregateBars(
-  bars: MassiveAggregateBar[] | undefined
-): IndexChartSummary {
-  const validBars = (bars ?? []).flatMap((bar) => {
-    const close = toPositiveFiniteNumber(bar.c);
-    const high = toPositiveFiniteNumber(bar.h);
-    const low = toPositiveFiniteNumber(bar.l);
-    const open = toPositiveFiniteNumber(bar.o);
-    const time = toMillisFromMassiveTimestamp(bar.t);
-
-    if (
-      close === null ||
-      high === null ||
-      low === null ||
-      open === null ||
-      time === null
-    ) {
-      return [];
-    }
-
-    return [{ close, high, low, open, time }];
-  });
-
-  validBars.sort((a, b) => a.time - b.time);
-
-  const first = validBars[0];
-  const last = validBars.at(-1);
-
-  if (!first || !last) {
-    return {
-      open: null,
-      close: null,
-      change: null,
-      changePercent: null,
-      high: null,
-      low: null,
-    };
-  }
-
-  const change = last.close - first.open;
-
-  return {
-    open: first.open,
-    close: last.close,
-    change,
-    changePercent: first.open === 0 ? null : (change / first.open) * 100,
-    high: Math.max(...validBars.map((bar) => bar.high)),
-    low: Math.min(...validBars.map((bar) => bar.low)),
-  };
-}
-
 async function getAggregateBars(
   symbol: string,
   config: AggregateRequestConfig,
@@ -863,99 +639,6 @@ export async function getTickerDailyCandles(
   return normalizeDailyCandles(response.results);
 }
 
-async function resolveOneDayAggregateBars(
-  symbol: IndexSymbol,
-  config: AggregateRequestConfig,
-  toDate: Date,
-  target: string
-) {
-  const initialResponse = await getAggregateBars(symbol, config, target, target);
-
-  if (normalizeAggregatePoints(initialResponse.results).length > 0) {
-    return {
-      from: target,
-      to: target,
-      response: initialResponse,
-    };
-  }
-
-  const lookbackFrom = getEtDateString(
-    subtractUtcDays(toDate, ONE_DAY_LOOKBACK_DAYS)
-  );
-
-  if (!isSafeEtDateString(lookbackFrom)) {
-    return {
-      from: target,
-      to: target,
-      response: initialResponse,
-    };
-  }
-
-  const dailyResponse = await getAggregateBars(
-    symbol,
-    { multiplier: 1, timespan: 'day' },
-    lookbackFrom,
-    target
-  );
-  const latestSession = getLatestAggregateSessionDate(dailyResponse.results);
-
-  if (!isSafeEtDateString(latestSession) || latestSession === target) {
-    return {
-      from: target,
-      to: target,
-      response: initialResponse,
-    };
-  }
-
-  const fallbackResponse = await getAggregateBars(
-    symbol,
-    config,
-    latestSession,
-    latestSession
-  );
-
-  return {
-    from: latestSession,
-    to: latestSession,
-    response: fallbackResponse,
-  };
-}
-
-async function getTickerIntraday(
-  symbol: IndexSymbol,
-  snapshot: IndexPerformanceSymbol,
-  range: IndexChartRange
-): Promise<IndexIntradaySymbol> {
-  const config = getIndexChartRangeConfig(range);
-  const sourceDate = snapshot.updatedTime
-    ? new Date(snapshot.updatedTime)
-    : new Date();
-  const toDate = Number.isNaN(sourceDate.getTime()) ? new Date() : sourceDate;
-  const fromDate = subtractChartRange(toDate, range);
-  const from = getEtDateString(fromDate);
-  const to = getEtDateString(toDate);
-
-  if (!isSafeEtDateString(from) || !isSafeEtDateString(to)) {
-    return emptyIntradaySymbol(symbol, null, null);
-  }
-
-  const resolved = range === '1d'
-    ? await resolveOneDayAggregateBars(symbol, config, toDate, to)
-    : {
-        from,
-        to,
-        response: await getAggregateBars(symbol, config, from, to),
-      };
-
-  return {
-    symbol,
-    from: resolved.from,
-    to: resolved.to,
-    summary: summarizeAggregateBars(resolved.response.results),
-    points: normalizeAggregatePoints(resolved.response.results),
-  };
-}
-
 export async function getIndexPerformance(): Promise<IndexPerformanceResponse> {
   const status = await getMarketStatus();
   const symbols = await Promise.all(
@@ -968,29 +651,6 @@ export async function getIndexPerformance(): Promise<IndexPerformanceResponse> {
     marketStatus: status.marketStatus,
     serverTime: status.serverTime,
     updatedAt: new Date().toISOString(),
-    symbols,
-  };
-}
-
-export async function getIndexIntraday(
-  range: IndexChartRange = '1d'
-): Promise<IndexIntradayResponse> {
-  const config = getIndexChartRangeConfig(range);
-  const performance = await getIndexPerformance();
-  const symbols = await Promise.all(
-    performance.symbols.map((symbol) =>
-      getTickerIntraday(symbol.symbol, symbol, range)
-    )
-  );
-
-  return {
-    updatedAt: new Date().toISOString(),
-    range,
-    rangeLabel: config.label,
-    interval: {
-      multiplier: config.multiplier,
-      timespan: config.timespan,
-    },
     symbols,
   };
 }

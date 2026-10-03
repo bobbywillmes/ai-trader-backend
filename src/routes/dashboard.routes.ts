@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import {
-  getIndexIntradayController,
   getIndexPerformanceController,
   getDashboardAccountsOverviewController,
   getDashboardReferencePricesController,
@@ -15,6 +14,5 @@ router.get('/accounts-overview', requirePermission(PlatformPermission.REPORTS_RE
 router.get('/index-performance', requirePermission(PlatformPermission.REPORTS_READ), getIndexPerformanceController);
 router.get('/reference-prices', requirePermission(PlatformPermission.REPORTS_READ), getDashboardReferencePricesController);
 router.get('/market-state', requirePermission(PlatformPermission.REPORTS_READ), getDashboardMarketStateController);
-router.get('/index-intraday', requirePermission(PlatformPermission.REPORTS_READ), getIndexIntradayController);
 
 export default router;

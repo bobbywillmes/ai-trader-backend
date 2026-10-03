@@ -5,10 +5,9 @@ export { verifyReferencePrice, verifyRegularSessionMinutes } from './live-market
 export type { ReferencePriceEvidence, RegularSessionMinuteEvidence, CapabilityProvider } from './live-market-data.contracts.js';
 export {
   getTickerLatestPrice, getTickerPriceConfirmationMarketData, getTickerAggregateBars,
-  getTickerDailyCandles, getIndexPerformance, getIndexIntraday,
-  parseIndexChartRange,
+  getTickerDailyCandles, getIndexPerformance,
 } from './massive-market-data.service.js';
 export type {
   TickerLatestPrice, TickerPriceConfirmationMarketData, TickerAggregateBar,
-  DailyMarketCandle, IndexPerformanceResponse, IndexIntradayResponse,
+  DailyMarketCandle, IndexPerformanceResponse,
 } from './massive-market-data.service.js';

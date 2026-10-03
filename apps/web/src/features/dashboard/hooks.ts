@@ -1,19 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import {
-  getIndexIntraday,
-  getIndexPerformance,
   getDashboardReferencePrices,
   getDashboardMarketState,
   getSystemEvents,
   getTradingAccountDashboard,
   getDashboardAccountsOverview,
 } from "./api";
-import type { IndexChartRange } from "./types";
 
 export const dashboardKeys = {
-  indexIntraday: (range: IndexChartRange) =>
-    ["dashboard", "index-intraday", range] as const,
-  indexPerformance: ["dashboard", "index-performance"] as const,
   systemEvents: (
     account: "all" | number,
     page: number,
@@ -72,16 +66,6 @@ export function useSystemEvents(
   });
 }
 
-export function useIndexPerformance(token: string | null) {
-  return useQuery({
-    queryKey: dashboardKeys.indexPerformance,
-    queryFn: () => getIndexPerformance(token as string),
-    enabled: Boolean(token),
-    refetchInterval: 10000,
-    staleTime: 0,
-  });
-}
-
 export function useDashboardReferencePrices(token: string | null) {
   return useQuery({
     queryKey: ["dashboard", "reference-prices"],
@@ -99,15 +83,5 @@ export function useDashboardMarketState(token: string | null) {
     enabled: Boolean(token),
     refetchInterval: 30000,
     staleTime: 0,
-  });
-}
-
-export function useIndexIntraday(token: string | null, range: IndexChartRange) {
-  return useQuery({
-    queryKey: dashboardKeys.indexIntraday(range),
-    queryFn: () => getIndexIntraday(token as string, range),
-    enabled: Boolean(token),
-    refetchInterval: 60000,
-    staleTime: 30000,
   });
 }

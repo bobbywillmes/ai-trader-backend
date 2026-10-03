@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeRegularSession, formatMarketDateTime, getTradingTransition, marketContext, normalizeSeries, rangePosition } from "./dashboardView";
+import { describeRegularSession, formatMarketDateTime, getTradingTransition, marketContext, rangePosition } from "./dashboardView";
 import type { DashboardMarketSymbol, RiskStatus } from "./types";
 
 function session(overrides: Partial<RiskStatus["entrySession"]> = {}): RiskStatus["entrySession"] {
@@ -21,12 +21,6 @@ describe("dashboard trading readiness", () => {
 });
 
 describe("dashboard market pulse calculations", () => {
-  it("normalizes all supplied series to zero at their first point", () => {
-    const data = normalizeSeries([{ symbol: "SPY", from: null, to: null, summary: { open: null, close: null, change: null, changePercent: null, high: null, low: null }, points: [{ time: "a", close: 100 }, { time: "b", close: 110 }] }, { symbol: "QQQ", from: null, to: null, summary: { open: null, close: null, change: null, changePercent: null, high: null, low: null }, points: [{ time: "a", close: 200 }, { time: "b", close: 180 }] }]);
-    expect(data[0]).toMatchObject({ SPY: 0, QQQ: 0 });
-    expect(data[1]?.SPY).toBeCloseTo(10);
-    expect(data[1]?.QQQ).toBeCloseTo(-10);
-  });
   it("positions values and safely rejects zero-width ranges", () => { expect(rangePosition(15, 10, 20)).toBe(50); expect(rangePosition(10, 10, 10)).toBeNull(); expect(rangePosition(null, 10, 20)).toBeNull(); });
   it("ranks only Tiingo-derived change percentages and excludes missing values", () => {
     const symbols = [

@@ -1,13 +1,12 @@
-import { useMemo, useState } from "react";
-import { Alert, Anchor, Badge, Box, Card, Group, Loader, SegmentedControl, SimpleGrid, Skeleton, Stack, Text, Title } from "@mantine/core";
+import { useState } from "react";
+import { Alert, Anchor, Badge, Card, Group, Loader, SimpleGrid, Skeleton, Stack, Text, Title } from "@mantine/core";
 import { IconAlertTriangle, IconCircleCheck } from "@tabler/icons-react";
-import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Link, useLocation } from "react-router-dom";
 import { DataState } from "../components/data-display";
 import { getAdminToken } from "../lib/api";
-import { useDashboardAccountsOverview, useDashboardMarketState, useIndexIntraday, useTradingAccountDashboard } from "../features/dashboard/hooks";
-import type { BrokerOpenOrder, BrokerPosition, DashboardOverviewRow, DashboardMarketSymbol, EntryReadiness, IndexChartRange, IndexIntradaySymbol, RiskStatus } from "../features/dashboard/types";
-import { describeRegularSession, formatMarketDateTime, getTradingTransition, marketContext, normalizeSeries } from "../features/dashboard/dashboardView";
+import { useDashboardAccountsOverview, useDashboardMarketState, useTradingAccountDashboard } from "../features/dashboard/hooks";
+import type { BrokerOpenOrder, BrokerPosition, DashboardOverviewRow, DashboardMarketSymbol, EntryReadiness, RiskStatus } from "../features/dashboard/types";
+import { describeRegularSession, formatMarketDateTime, getTradingTransition, marketContext } from "../features/dashboard/dashboardView";
 import { useTradingAccountScope } from "../features/tradingAccountScope/useTradingAccountScope";
 import { TradingAccountScopeSelector } from "../features/tradingAccountScope/TradingAccountScopeSelector";
 import { createScopedNavigationTarget } from "../app/navigationUtils";
@@ -17,15 +16,6 @@ import { getDashboardDescription } from "./dashboardPresentation";
 import { displayReferencePrice } from "../features/dashboard/referencePriceView";
 import { DashboardOperationalAttentionBanner, DashboardOperationalAttentionSection } from "../features/operationalAttention/DashboardOperationalAttention";
 import { useDashboardOperationalAttention } from "../features/operationalAttention/useDashboardOperationalAttention";
-
-const ranges: Array<{ label: string; value: IndexChartRange }> = [
-  { label: "1D", value: "1d" }, { label: "7D", value: "7d" }, { label: "14D", value: "14d" },
-  { label: "30D", value: "30d" }, { label: "6M", value: "6m" }, { label: "1Y", value: "1y" },
-];
-const series = [
-  { key: "SPY", color: "#22d3ee", dash: undefined }, { key: "QQQ", color: "#a78bfa", dash: "8 3" },
-  { key: "DIA", color: "#fbbf24", dash: "3 3" }, { key: "IWM", color: "#fb7185", dash: "10 3 2 3" },
-] as const;
 
 function money(value: number | null | undefined) {
   return value == null || !Number.isFinite(value) ? "Unavailable" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
@@ -64,24 +54,7 @@ function TradingReadiness({ risk }: { risk: EntryReadiness | undefined }) {
 }
 function Datum({ label, value }: { label: string; value: string }) { return <div className={classes.datum}><div className={classes.datumLabel}>{label}</div><Text className={classes.datumValue} size="sm" fw={600}>{value}</Text></div>; }
 
-function MarketTooltip({ active, label, payload }: { active?: boolean; label?: string; payload?: Array<{ name?: string; value?: number; color?: string }> }) {
-  if (!active || !payload?.length) return null;
-  return <Card p="xs" withBorder><Text size="xs" c="dimmed">{formatMarketDateTime(label)}</Text>{payload.map((item) => <Text key={item.name} size="xs" style={{ color: item.color }}>{item.name}: {signedPercent(item.value)}</Text>)}</Card>;
-}
-
-function MarketChart({ symbols }: { symbols: IndexIntradaySymbol[] }) {
-  const data = useMemo(() => normalizeSeries(symbols), [symbols]);
-  const summary = series.map(({ key }) => { const values = data.map((point) => point[key]).filter((value): value is number => typeof value === "number"); return `${key} ${signedPercent(values.at(-1))}`; }).join(", ");
-  if (!data.length) return <DataState state="empty" title="Performance history unavailable" message="No bars were returned for this range." />;
-  return <Box pos="relative"><Text className={classes.chartSummary}>Relative performance, normalized to zero percent at the beginning of the range. {summary}.</Text><div className={classes.chart} role="img" aria-label={`ETF relative-performance chart. ${summary}`}>
-    <ResponsiveContainer width="100%" height="100%"><LineChart data={data} margin={{ top: 8, right: 8, bottom: 4, left: -12 }} accessibilityLayer>
-      <CartesianGrid stroke="rgba(148,163,184,.14)" vertical={false} /><XAxis dataKey="time" minTickGap={45} tickFormatter={(v) => new Date(v).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })} tick={{ fontSize: 11 }} /><YAxis tickFormatter={(v) => `${Number(v).toFixed(1)}%`} tick={{ fontSize: 11 }} width={54} /><ReferenceLine y={0} stroke="rgba(226,232,240,.65)" strokeWidth={1.5} /><Tooltip content={<MarketTooltip />} /><Legend wrapperStyle={{ fontSize: 12 }} />
-      {series.map((item) => <Line key={item.key} type="monotone" dataKey={item.key} name={item.key} connectNulls={false} stroke={item.color} strokeDasharray={item.dash} strokeWidth={2.25} dot={false} isAnimationActive={false} />)}
-    </LineChart></ResponsiveContainer>
-  </div></Box>;
-}
-
-function EtfTile({ state, history }: { state: DashboardMarketSymbol; history?: IndexIntradaySymbol }) {
+function EtfTile({ state }: { state: DashboardMarketSymbol }) {
   const observation = displayReferencePrice(state.referencePrice);
   const current = observation.price;
   const regular = state.regularSession;
@@ -94,14 +67,13 @@ function EtfTile({ state, history }: { state: DashboardMarketSymbol; history?: I
   return <Card withBorder p="md"><Group justify="space-between"><Text fw={800}>{state.symbol}</Text><Badge color={tone(state.changePercent)} variant="light">{signedPercent(state.changePercent)}</Badge></Group><Text size="xl" fw={700} mt="xs">{current == null ? "—" : money(current)}</Text><Text size="xs" c="dimmed">{metadata}</Text><Text size="sm" c={tone(state.change)}>{changeDetail}</Text>
     <div className={classes.range} aria-hidden="true">{currentPos != null && <span className={classes.rangeMarker} style={{ left: `${currentPos}%` }} />}</div>
     <Group justify="space-between"><Text size="xs" c="dimmed">Low {money(regular?.low)}</Text><Text size="xs" c="dimmed">High {money(regular?.high)}</Text></Group><Text size="xs" c="dimmed" mt={4}>Tiingo regular {regular?.sessionDate ?? "session unavailable"} · {regular?.state.toLowerCase() ?? "unavailable"}{regular?.observedThrough ? ` · through ${formatMarketDateTime(regular.observedThrough)}` : ""}. Previous regular close {money(state.previousClose.close)} ({state.previousClose.sessionDate ?? "session unavailable"}). {currentPos == null ? "Range position unavailable." : `Regular price is ${currentPos.toFixed(0)}% through the session range.`}</Text>
-    {history && history.points.length > 1 && <Box h={42} mt="xs" aria-label="Massive historical sparkline"><ResponsiveContainer width="100%" height="100%"><LineChart data={history.points}><Line type="monotone" dataKey="close" stroke={history.summary.change && history.summary.change < 0 ? "#fb7185" : "#2dd4bf"} dot={false} strokeWidth={1.5} isAnimationActive={false} /><YAxis hide domain={["dataMin", "dataMax"]} /></LineChart></ResponsiveContainer></Box>}
   </Card>;
 }
 
-function MarketPulse({ range, setRange, symbols, history, loading, error, chartError }: { range: IndexChartRange; setRange: (v: IndexChartRange) => void; symbols: DashboardMarketSymbol[]; history: IndexIntradaySymbol[]; loading: boolean; error: Error | null; chartError: Error | null }) {
-  const context = marketContext(symbols); const historyMap = new Map(history.map((item) => [item.symbol, item]));
-  return <Card withBorder p="md" aria-labelledby="market-pulse-title"><Group justify="space-between" align="flex-start" mb="md"><div><Text id="market-pulse-title" fw={700}>ETF Market Pulse</Text><Text size="xs" c="dimmed">Relative performance; each series begins at 0%</Text></div><SegmentedControl aria-label="Market Pulse range" data={ranges} value={range} onChange={(v) => setRange(v as IndexChartRange)} size="xs" /></Group>
-    {error ? <DataState state="error" message={error.message} /> : loading && !symbols.length ? <Skeleton height={280} /> : <Stack gap="md"><Group gap="lg"><Text size="sm"><b>{context.positive}/{context.available}</b> positive</Text><Text size="sm">Leader <b>{context.leader?.symbol ?? "Unavailable"}</b></Text><Text size="sm">Laggard <b>{context.laggard?.symbol ?? "Unavailable"}</b></Text>{loading && <Loader size="xs" />}</Group><Text size="xs" c="dimmed">Tiingo tile state · Massive historical chart and sparklines</Text>{chartError ? <DataState state="error" message={chartError.message} /> : <MarketChart symbols={history} />}<SimpleGrid cols={{ base: 1, xs: 2, lg: 4 }}>{symbols.map((state) => <EtfTile key={state.symbol} state={state} history={historyMap.get(state.symbol)} />)}</SimpleGrid></Stack>}
+export function MarketPulse({ symbols, loading, error }: { symbols: DashboardMarketSymbol[]; loading: boolean; error: Error | null }) {
+  const context = marketContext(symbols);
+  return <Card withBorder p="md" aria-labelledby="market-pulse-title"><Text id="market-pulse-title" fw={700}>ETF Market Pulse</Text><Text size="xs" c="dimmed" mb="md">Tiingo latest observations and regular-session market state</Text>
+    {error ? <DataState state="error" message={error.message} /> : loading && !symbols.length ? <Skeleton height={220} /> : <Stack gap="md"><Group gap="lg"><Text size="sm"><b>{context.positive}/{context.available}</b> positive</Text><Text size="sm"><b>{context.available - context.positive}</b> non-positive</Text><Text size="sm">Leader <b>{context.leader?.symbol ?? "Unavailable"}</b></Text><Text size="sm">Laggard <b>{context.laggard?.symbol ?? "Unavailable"}</b></Text>{loading && <Loader size="xs" />}</Group><SimpleGrid cols={{ base: 1, xs: 2, lg: 4 }}>{symbols.map((state) => <EtfTile key={state.symbol} state={state} />)}</SimpleGrid></Stack>}
   </Card>;
 }
 
@@ -123,13 +95,13 @@ function OverviewAccount({ row, onSelect }: { row: DashboardOverviewRow; onSelec
 }
 
 export function DashboardPage() {
-  const [token] = useState(() => getAdminToken()); const [range, setRange] = useState<IndexChartRange>("1d");
+  const [token] = useState(() => getAdminToken());
   const { access } = useAuth();
   const scope = useTradingAccountScope();
   const location = useLocation();
   const selectedId = scope.scope.type === "ACCOUNT" ? scope.scope.tradingAccountId : null;
   const selected = useTradingAccountDashboard(token, selectedId); const overview = useDashboardAccountsOverview(token, scope.isAll);
-  const intraday = useIndexIntraday(token, range); const marketState = useDashboardMarketState(token);
+  const marketState = useDashboardMarketState(token);
   const account = selected.data?.broker.account; const risk = selected.data?.readiness; const positions = selected.data?.exposure.positions ?? []; const orders = selected.data?.exposure.openOrders ?? [];
   const exposure = risk?.usage?.totalOpenNotional;
   const attention = useDashboardOperationalAttention(selectedId ? String(selectedId) : "all");
@@ -137,7 +109,7 @@ export function DashboardPage() {
     <Group className={classes.header} justify="space-between" align="flex-start"><div><Title order={2}>Dashboard</Title><Text size="sm" c="dimmed">{getDashboardDescription(access?.platformRole, scope.isAll, scope.selectedAccount)}</Text></div><TradingAccountScopeSelector mode="ACCOUNT_FILTERABLE" expanded variant="dashboard" /></Group>
     <DashboardOperationalAttentionBanner state={attention} />
     {scope.isAll ? <><div className={classes.metricGrid}><Metric label="Trading Accounts" value={String(overview.data?.summary.tradingAccountCount ?? "—")} detail={overview.data ? `${overview.data.summary.paperCount} PAPER · ${overview.data.summary.liveCount} LIVE` : undefined} /><Metric label="Readiness" value={overview.data ? `${overview.data.summary.readyCount} ready` : "—"} detail={overview.data ? `${overview.data.summary.blockedCount} blocked · ${overview.data.summary.unavailableCount} unavailable` : undefined} /><Metric label="Open Positions" value={String(overview.data?.summary.openPositionCount ?? "—")} /><Metric label="Accounts Requiring Attention" value={String(overview.data?.summary.attentionCount ?? "—")} detail={overview.data ? `${overview.data.summary.openOrderCount} open orders` : undefined} /></div>{overview.error && <Alert color="red" title="Accounts overview unavailable">{overview.error.message}</Alert>}<Stack gap="md">{overview.data?.accounts.map((row) => <OverviewAccount key={row.account.id} row={row} onSelect={() => scope.setScope({ type: "ACCOUNT", tradingAccountId: row.account.id })} />)}</Stack></> : <>{selected.error && <Alert color="red" title="Account overview unavailable">{selected.error.message}</Alert>}<Group gap="xs"><Badge color={selected.data?.account.environment === "LIVE" ? "red" : "blue"}>{selected.data?.account.environment ?? scope.selectedAccount?.environment}</Badge>{risk && <Badge color={risk.canEnter ? "teal" : "orange"}>{risk.status}</Badge>}{selected.isFetching && <Loader size="xs" />}</Group><div className={classes.metricGrid}><Metric label="Portfolio value" value={money(account?.portfolioValue)} /><Metric label="Day P/L" value={signedMoney(account?.dayPnL)} detail={signedPercent(account == null ? null : account.dayPnLPct * 100)} pnl={account?.dayPnL} /><Metric label="Open exposure" value={money(exposure)} detail={selected.data?.exposure.openPositionCount == null ? "Unavailable" : `${selected.data.exposure.openPositionCount} open positions`} /><Metric label="Buying power" value={money(account?.buyingPower)} /></div><TradingReadiness risk={risk} /></>}
-    <MarketPulse range={range} setRange={setRange} symbols={marketState.data?.symbols ?? []} history={intraday.data?.symbols ?? []} loading={marketState.isLoading} error={marketState.error} chartError={intraday.error} />
+    <MarketPulse symbols={marketState.data?.symbols ?? []} loading={marketState.isLoading} error={marketState.error} />
     {!scope.isAll && selectedId && <><SimpleGrid cols={{ base: 1, lg: 2 }}>{selected.data && selected.data.exposure.positions === null ? <Card withBorder><DataState state="empty" title="Open positions unavailable" message="Broker position state could not be observed." /></Card> : <SummaryCard title="Open Positions" count={positions.length} to={createScopedNavigationTarget("/positions/open", location.search)} loading={selected.isLoading} empty="No open positions"><PositionRows records={positions} /></SummaryCard>}{selected.data && selected.data.exposure.openOrders === null ? <Card withBorder><DataState state="empty" title="Open orders unavailable" message="Broker order state could not be observed." /></Card> : <SummaryCard title="Open Orders" count={orders.length} to={createScopedNavigationTarget("/orders/open", location.search)} loading={selected.isLoading} empty="No open orders"><OrderRows records={orders} /></SummaryCard>}</SimpleGrid><Attention dataAvailable={Boolean(selected.data)} accountBlocked={account?.tradingBlocked ?? false} risk={risk} eventsTo={createScopedNavigationTarget("/system/events", location.search)} reconciliationTo={createScopedNavigationTarget(`/trading-accounts/${selectedId}/reconciliation`, location.search)} /></>}
     <DashboardOperationalAttentionSection state={attention} />
   </Stack>;
