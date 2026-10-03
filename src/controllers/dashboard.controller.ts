@@ -5,6 +5,11 @@ import {
   parseIndexChartRange,
 } from '../services/live-market-data.service.js';
 import { getDashboardAccountsOverview, getTradingAccountDashboard } from '../services/dashboard.service.js';
+import { getDashboardReferencePrices } from '../services/dashboard-reference-prices.service.js';
+
+export async function getDashboardReferencePricesController(_req: Request, res: Response, next: NextFunction) {
+  try { res.status(200).json(await getDashboardReferencePrices()); } catch (error) { next(error); }
+}
 
 export async function getTradingAccountDashboardController(req: Request, res: Response, next: NextFunction) {
   try { res.status(200).json(await getTradingAccountDashboard(Number(req.params.id))); } catch (error) { next(error); }

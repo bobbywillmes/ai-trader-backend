@@ -5,8 +5,8 @@ import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContai
 import { Link, useLocation } from "react-router-dom";
 import { DataState } from "../components/data-display";
 import { getAdminToken } from "../lib/api";
-import { useDashboardAccountsOverview, useIndexIntraday, useIndexPerformance, useTradingAccountDashboard } from "../features/dashboard/hooks";
-import type { BrokerOpenOrder, BrokerPosition, DashboardOverviewRow, EntryReadiness, IndexChartRange, IndexIntradaySymbol, IndexPerformanceSymbol, RiskStatus } from "../features/dashboard/types";
+import { useDashboardAccountsOverview, useDashboardReferencePrices, useIndexIntraday, useIndexPerformance, useTradingAccountDashboard } from "../features/dashboard/hooks";
+import type { BrokerOpenOrder, BrokerPosition, DashboardOverviewRow, DashboardReferencePrice, EntryReadiness, IndexChartRange, IndexIntradaySymbol, IndexPerformanceSymbol, RiskStatus } from "../features/dashboard/types";
 import { describeRegularSession, formatMarketDateTime, getTradingTransition, marketContext, normalizeSeries, rangePosition } from "../features/dashboard/dashboardView";
 import { useTradingAccountScope } from "../features/tradingAccountScope/useTradingAccountScope";
 import { TradingAccountScopeSelector } from "../features/tradingAccountScope/TradingAccountScopeSelector";
@@ -14,6 +14,7 @@ import { createScopedNavigationTarget } from "../app/navigationUtils";
 import classes from "./DashboardPage.module.css";
 import { useAuth } from "../features/auth/useAuth";
 import { getDashboardDescription } from "./dashboardPresentation";
+import { displayReferencePrice } from "../features/dashboard/referencePriceView";
 import { DashboardOperationalAttentionBanner, DashboardOperationalAttentionSection } from "../features/operationalAttention/DashboardOperationalAttention";
 import { useDashboardOperationalAttention } from "../features/operationalAttention/useDashboardOperationalAttention";
 
@@ -80,19 +81,22 @@ function MarketChart({ symbols }: { symbols: IndexIntradaySymbol[] }) {
   </div></Box>;
 }
 
-function EtfTile({ quote, history }: { quote: IndexPerformanceSymbol; history?: IndexIntradaySymbol }) {
-  const current = quote.lastPrice; const currentPos = rangePosition(current, quote.dayLow, quote.dayHigh); const previousPos = rangePosition(quote.previousClose, quote.dayLow, quote.dayHigh);
-  return <Card withBorder p="md"><Group justify="space-between"><Text fw={800}>{quote.symbol}</Text><Badge color={tone(quote.todayChangePercent)} variant="light">{signedPercent(quote.todayChangePercent)}</Badge></Group><Text size="xl" fw={700} mt="xs">{money(current)}</Text><Text size="sm" c={tone(quote.todayChange)}>{signedMoney(quote.todayChange)} today</Text>
+function EtfTile({ quote, history, reference }: { quote: IndexPerformanceSymbol; history?: IndexIntradaySymbol; reference?: DashboardReferencePrice }) {
+  const { price: current, reason } = displayReferencePrice(reference);
+  const currentPos = rangePosition(quote.lastPrice, quote.dayLow, quote.dayHigh); const previousPos = rangePosition(quote.previousClose, quote.dayLow, quote.dayHigh);
+  const basis = reference?.basis === "TIINGO_TNGO_LAST" ? "tngoLast" : reference?.basis === "TIINGO_LQ_REF_PRICE" ? "lqRefPrice" : null;
+  const metadata = current != null ? `Tiingo · ${basis} · ${formatMarketDateTime(reference!.observedAt)} · fresh` : `Tiingo · ${reason}`;
+  return <Card withBorder p="md"><Group justify="space-between"><Text fw={800}>{quote.symbol}</Text><Badge color={tone(quote.todayChangePercent)} variant="light">{signedPercent(quote.todayChangePercent)}</Badge></Group><Text size="xl" fw={700} mt="xs">{current == null ? "—" : money(current)}</Text><Text size="xs" c="dimmed">{metadata}</Text><Text size="sm" c={tone(quote.todayChange)}>{signedMoney(quote.todayChange)} today · Massive</Text>
     <div className={classes.range} aria-hidden="true">{previousPos != null && <span className={classes.previousMarker} style={{ left: `${previousPos}%` }} />}{currentPos != null && <span className={classes.rangeMarker} style={{ left: `${currentPos}%` }} />}</div>
-    <Group justify="space-between"><Text size="xs" c="dimmed">Low {money(quote.dayLow)}</Text><Text size="xs" c="dimmed">High {money(quote.dayHigh)}</Text></Group><Text size="xs" c="dimmed" mt={4}>Previous close {money(quote.previousClose)}. {currentPos == null ? "Range position unavailable." : `Current price is ${currentPos.toFixed(0)}% through today’s low-to-high range.`}</Text>
+    <Group justify="space-between"><Text size="xs" c="dimmed">Low {money(quote.dayLow)}</Text><Text size="xs" c="dimmed">High {money(quote.dayHigh)}</Text></Group><Text size="xs" c="dimmed" mt={4}>Massive previous close {money(quote.previousClose)}. {currentPos == null ? "Range position unavailable." : `Massive price is ${currentPos.toFixed(0)}% through today’s low-to-high range.`}</Text>
     {history && history.points.length > 1 && <Box h={42} mt="xs" aria-hidden="true"><ResponsiveContainer width="100%" height="100%"><LineChart data={history.points}><Line type="monotone" dataKey="close" stroke={quote.todayChange && quote.todayChange < 0 ? "#fb7185" : "#2dd4bf"} dot={false} strokeWidth={1.5} isAnimationActive={false} /><YAxis hide domain={["dataMin", "dataMax"]} /></LineChart></ResponsiveContainer></Box>}
   </Card>;
 }
 
-function MarketPulse({ range, setRange, quotes, history, loading, error }: { range: IndexChartRange; setRange: (v: IndexChartRange) => void; quotes: IndexPerformanceSymbol[]; history: IndexIntradaySymbol[]; loading: boolean; error: Error | null }) {
-  const context = marketContext(quotes); const historyMap = new Map(history.map((item) => [item.symbol, item]));
+function MarketPulse({ range, setRange, quotes, history, prices, loading, error }: { range: IndexChartRange; setRange: (v: IndexChartRange) => void; quotes: IndexPerformanceSymbol[]; history: IndexIntradaySymbol[]; prices: DashboardReferencePrice[]; loading: boolean; error: Error | null }) {
+  const context = marketContext(quotes); const historyMap = new Map(history.map((item) => [item.symbol, item])); const priceMap = new Map(prices.map((item) => [item.symbol, item]));
   return <Card withBorder p="md" aria-labelledby="market-pulse-title"><Group justify="space-between" align="flex-start" mb="md"><div><Text id="market-pulse-title" fw={700}>ETF Market Pulse</Text><Text size="xs" c="dimmed">Relative performance; each series begins at 0%</Text></div><SegmentedControl aria-label="Market Pulse range" data={ranges} value={range} onChange={(v) => setRange(v as IndexChartRange)} size="xs" /></Group>
-    {error ? <DataState state="error" message={error.message} /> : loading && !quotes.length ? <Skeleton height={280} /> : <Stack gap="md"><Group gap="lg"><Text size="sm"><b>{context.positive}/{context.available}</b> positive</Text><Text size="sm">Leader <b>{context.leader?.symbol ?? "Unavailable"}</b></Text><Text size="sm">Laggard <b>{context.laggard?.symbol ?? "Unavailable"}</b></Text>{loading && <Loader size="xs" />}</Group><MarketChart symbols={history} /><SimpleGrid cols={{ base: 1, xs: 2, lg: 4 }}>{quotes.map((quote) => <EtfTile key={quote.symbol} quote={quote} history={historyMap.get(quote.symbol)} />)}</SimpleGrid></Stack>}
+    {error ? <DataState state="error" message={error.message} /> : loading && !quotes.length ? <Skeleton height={280} /> : <Stack gap="md"><Group gap="lg"><Text size="sm"><b>{context.positive}/{context.available}</b> positive</Text><Text size="sm">Leader <b>{context.leader?.symbol ?? "Unavailable"}</b></Text><Text size="sm">Laggard <b>{context.laggard?.symbol ?? "Unavailable"}</b></Text>{loading && <Loader size="xs" />}</Group><MarketChart symbols={history} /><SimpleGrid cols={{ base: 1, xs: 2, lg: 4 }}>{quotes.map((quote) => <EtfTile key={quote.symbol} quote={quote} history={historyMap.get(quote.symbol)} reference={priceMap.get(quote.symbol)} />)}</SimpleGrid></Stack>}
   </Card>;
 }
 
@@ -120,7 +124,7 @@ export function DashboardPage() {
   const location = useLocation();
   const selectedId = scope.scope.type === "ACCOUNT" ? scope.scope.tradingAccountId : null;
   const selected = useTradingAccountDashboard(token, selectedId); const overview = useDashboardAccountsOverview(token, scope.isAll);
-  const performance = useIndexPerformance(token); const intraday = useIndexIntraday(token, range);
+  const performance = useIndexPerformance(token); const intraday = useIndexIntraday(token, range); const prices = useDashboardReferencePrices(token);
   const account = selected.data?.broker.account; const risk = selected.data?.readiness; const positions = selected.data?.exposure.positions ?? []; const orders = selected.data?.exposure.openOrders ?? [];
   const exposure = risk?.usage?.totalOpenNotional;
   const attention = useDashboardOperationalAttention(selectedId ? String(selectedId) : "all");
@@ -128,7 +132,7 @@ export function DashboardPage() {
     <Group className={classes.header} justify="space-between" align="flex-start"><div><Title order={2}>Dashboard</Title><Text size="sm" c="dimmed">{getDashboardDescription(access?.platformRole, scope.isAll, scope.selectedAccount)}</Text></div><TradingAccountScopeSelector mode="ACCOUNT_FILTERABLE" expanded variant="dashboard" /></Group>
     <DashboardOperationalAttentionBanner state={attention} />
     {scope.isAll ? <><div className={classes.metricGrid}><Metric label="Trading Accounts" value={String(overview.data?.summary.tradingAccountCount ?? "—")} detail={overview.data ? `${overview.data.summary.paperCount} PAPER · ${overview.data.summary.liveCount} LIVE` : undefined} /><Metric label="Readiness" value={overview.data ? `${overview.data.summary.readyCount} ready` : "—"} detail={overview.data ? `${overview.data.summary.blockedCount} blocked · ${overview.data.summary.unavailableCount} unavailable` : undefined} /><Metric label="Open Positions" value={String(overview.data?.summary.openPositionCount ?? "—")} /><Metric label="Accounts Requiring Attention" value={String(overview.data?.summary.attentionCount ?? "—")} detail={overview.data ? `${overview.data.summary.openOrderCount} open orders` : undefined} /></div>{overview.error && <Alert color="red" title="Accounts overview unavailable">{overview.error.message}</Alert>}<Stack gap="md">{overview.data?.accounts.map((row) => <OverviewAccount key={row.account.id} row={row} onSelect={() => scope.setScope({ type: "ACCOUNT", tradingAccountId: row.account.id })} />)}</Stack></> : <>{selected.error && <Alert color="red" title="Account overview unavailable">{selected.error.message}</Alert>}<Group gap="xs"><Badge color={selected.data?.account.environment === "LIVE" ? "red" : "blue"}>{selected.data?.account.environment ?? scope.selectedAccount?.environment}</Badge>{risk && <Badge color={risk.canEnter ? "teal" : "orange"}>{risk.status}</Badge>}{selected.isFetching && <Loader size="xs" />}</Group><div className={classes.metricGrid}><Metric label="Portfolio value" value={money(account?.portfolioValue)} /><Metric label="Day P/L" value={signedMoney(account?.dayPnL)} detail={signedPercent(account == null ? null : account.dayPnLPct * 100)} pnl={account?.dayPnL} /><Metric label="Open exposure" value={money(exposure)} detail={selected.data?.exposure.openPositionCount == null ? "Unavailable" : `${selected.data.exposure.openPositionCount} open positions`} /><Metric label="Buying power" value={money(account?.buyingPower)} /></div><TradingReadiness risk={risk} /></>}
-    <MarketPulse range={range} setRange={setRange} quotes={performance.data?.symbols ?? []} history={intraday.data?.symbols ?? []} loading={performance.isLoading || intraday.isLoading} error={performance.error ?? intraday.error} />
+    <MarketPulse range={range} setRange={setRange} quotes={performance.data?.symbols ?? []} history={intraday.data?.symbols ?? []} prices={prices.data?.symbols ?? []} loading={performance.isLoading || intraday.isLoading} error={performance.error ?? intraday.error} />
     {!scope.isAll && selectedId && <><SimpleGrid cols={{ base: 1, lg: 2 }}>{selected.data && selected.data.exposure.positions === null ? <Card withBorder><DataState state="empty" title="Open positions unavailable" message="Broker position state could not be observed." /></Card> : <SummaryCard title="Open Positions" count={positions.length} to={createScopedNavigationTarget("/positions/open", location.search)} loading={selected.isLoading} empty="No open positions"><PositionRows records={positions} /></SummaryCard>}{selected.data && selected.data.exposure.openOrders === null ? <Card withBorder><DataState state="empty" title="Open orders unavailable" message="Broker order state could not be observed." /></Card> : <SummaryCard title="Open Orders" count={orders.length} to={createScopedNavigationTarget("/orders/open", location.search)} loading={selected.isLoading} empty="No open orders"><OrderRows records={orders} /></SummaryCard>}</SimpleGrid><Attention dataAvailable={Boolean(selected.data)} accountBlocked={account?.tradingBlocked ?? false} risk={risk} eventsTo={createScopedNavigationTarget("/system/events", location.search)} reconciliationTo={createScopedNavigationTarget(`/trading-accounts/${selectedId}/reconciliation`, location.search)} /></>}
     <DashboardOperationalAttentionSection state={attention} />
   </Stack>;

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   getIndexIntraday,
   getIndexPerformance,
+  getDashboardReferencePrices,
   getSystemEvents,
   getTradingAccountDashboard,
   getDashboardAccountsOverview,
@@ -74,6 +75,16 @@ export function useIndexPerformance(token: string | null) {
   return useQuery({
     queryKey: dashboardKeys.indexPerformance,
     queryFn: () => getIndexPerformance(token as string),
+    enabled: Boolean(token),
+    refetchInterval: 10000,
+    staleTime: 0,
+  });
+}
+
+export function useDashboardReferencePrices(token: string | null) {
+  return useQuery({
+    queryKey: ["dashboard", "reference-prices"],
+    queryFn: () => getDashboardReferencePrices(token as string),
     enabled: Boolean(token),
     refetchInterval: 10000,
     staleTime: 0,

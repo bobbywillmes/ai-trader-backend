@@ -3,6 +3,7 @@ import type {
   IndexChartRange,
   IndexIntradayResponse,
   IndexPerformanceResponse,
+  DashboardReferencePricesResponse,
   SystemEventsResponse,
   TradingAccountDashboardResponse,
   DashboardAccountsOverviewResponse,
@@ -53,6 +54,10 @@ export function getIndexPerformance(token: string) {
     "/api/dashboard/index-performance",
     { token },
   );
+}
+
+export function getDashboardReferencePrices(token: string) {
+  return apiRequest<DashboardReferencePricesResponse>("/api/dashboard/reference-prices", { token });
 }
 
 export function getIndexIntraday(token: string, range: IndexChartRange) {

@@ -235,6 +235,20 @@ export type IndexPerformanceResponse = {
   symbols: IndexPerformanceSymbol[];
 };
 
+export type DashboardReferencePrice = {
+  symbol: IndexPerformanceSymbol["symbol"];
+  provider: "TIINGO_CONSOLIDATED";
+  price: number | null;
+  basis: "TIINGO_TNGO_LAST" | "TIINGO_LQ_REF_PRICE" | null;
+  observedAt: string | null;
+  fetchedAt: string;
+  freshness: "FRESH" | "STALE" | "UNKNOWN" | "FUTURE";
+  available: boolean;
+  unavailableReason: string | null;
+  providerError: string | null;
+};
+export type DashboardReferencePricesResponse = { symbols: DashboardReferencePrice[] };
+
 export type IndexChartRange = "1d" | "7d" | "14d" | "30d" | "6m" | "1y";
 
 export type IndexIntradayPoint = {
