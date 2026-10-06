@@ -24,7 +24,7 @@ function makeTx() {
   return {
     $queryRaw: vi.fn(async () => [{ acquired: !locked }]),
     security: { findMany: vi.fn(async () => securities) },
-    marketBar: { findMany: vi.fn(async ({ where }: { where: { OR: { barStartAt: { gte: Date; lt: Date } }[] } }) => rows.filter(r => where.OR.some(q => r.barStartAt >= q.barStartAt.gte && r.barStartAt < q.barStartAt.lt))) },
+    marketBar: { findMany: vi.fn(async ({ where }: { where: { barStartAt: { gte: Date; lt: Date } } }) => rows.filter(r => r.barStartAt >= where.barStartAt.gte && r.barStartAt < where.barStartAt.lt)) },
     marketCalendarException: { findMany: vi.fn(async () => exceptions.map(e => ({ ...e, sessionDate: new Date(e.sessionDate) }))) },
     marketRegimeDimensionAssessment: {
       findFirst: vi.fn(async (q: Query) => matches(q)[0] ?? null), findMany: vi.fn(async (q: Query) => matches(q)),
@@ -44,7 +44,7 @@ function client() {
 }
 function add(date: string, volume = '1000', ids = [1, 2, 3, 4, 5]) {
   for (const securityId of ids) rows.push({ id: Math.max(0, ...rows.map(r => r.id)) + 1, securityId, barStartAt: etInstant(date, 0), timeframe: 'DAY_1', provider: 'MASSIVE', adjustmentMode: 'UNADJUSTED',
-    open: new Prisma.Decimal(100), high: new Prisma.Decimal(101), low: new Prisma.Decimal(99), close: new Prisma.Decimal(100), volume: new Prisma.Decimal(volume), receivedAt: new Date('2026-09-14T20:20Z'), createdAt: new Date('2026-09-14T20:20Z') });
+    open: new Prisma.Decimal(100), high: new Prisma.Decimal(101), low: new Prisma.Decimal(99), close: new Prisma.Decimal(100), volume: new Prisma.Decimal(volume), splitFactor: null, receivedAt: new Date('2026-09-14T20:20Z'), createdAt: new Date('2026-09-14T20:20Z') });
 }
 function history(from: string, through: string) { for (const d of datesBetween(from, through).filter(d => isFullMarketSession(d, exceptions))) add(d); }
 const run = (at = '2026-09-14T20:30Z') => publishParticipationAssessments({ db: client(), now: new Date(at), clock: () => new Date(at), fetchSplits });

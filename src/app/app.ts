@@ -75,6 +75,7 @@ export function createApp() {
 
   // Authenticate and hash exact bytes before the ordinary JSON parser runs.
   app.use('/api/external-signals', externalSignalIngressRoutes);
+  app.use('/api/securities/universe-import', express.json({ limit: '3mb' }));
   app.use(express.json());
 
   app.get('/', (_req, res) => {

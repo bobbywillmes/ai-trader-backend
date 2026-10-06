@@ -768,6 +768,11 @@ Table TradingLifecycleExerciseTarget {
 
 Table Security {
   marketBars MarketBar [not null]
+  tiingoDailyObservationStates TiingoDailyObservationState [not null]
+  universeMemberships SecurityUniverseMembership [not null]
+  breadthRevisionMembers BreadthUniverseRevisionMember [not null]
+  marketSplitEvents MarketSplitEvent [not null]
+  marketSplitCoverages MarketSplitCoverage [not null]
   signals Signal [not null]
   id Int [pk, increment]
   symbol String [unique, not null]
@@ -1034,6 +1039,26 @@ Table MarketCalendarException {
   updatedAt DateTime [not null]
 }
 
+Table TiingoDailyObservationState {
+  id Int [pk, increment]
+  securityId Int [not null]
+  sessionDate DateTime [not null]
+  status TiingoDailyObservationStatus [not null]
+  attemptCount Int [not null]
+  firstAttemptAt DateTime [not null]
+  lastAttemptAt DateTime [not null]
+  nextAttemptAt DateTime
+  resolvedAt DateTime
+  reasonCode String [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  security Security [not null]
+
+  indexes {
+    (securityId, sessionDate) [unique]
+  }
+}
+
 Table MarketBar {
   id Int [pk, increment]
   securityId Int [not null]
@@ -1044,6 +1069,7 @@ Table MarketBar {
   low Decimal [not null]
   close Decimal [not null]
   volume Decimal [not null]
+  splitFactor Decimal
   provider MarketDataProvider [not null]
   adjustmentMode MarketBarAdjustmentMode [not null]
   receivedAt DateTime [not null]
@@ -1052,6 +1078,81 @@ Table MarketBar {
 
   indexes {
     (securityId, timeframe, barStartAt) [unique]
+  }
+}
+
+Table SecurityUniverse {
+  id Int [pk, increment]
+  code String [unique, not null]
+  name String [not null]
+  createdAt DateTime [default: `now()`, not null]
+  memberships SecurityUniverseMembership [not null]
+}
+
+Table SecurityUniverseMembership {
+  id Int [pk, increment]
+  universeId Int [not null]
+  securityId Int [not null]
+  effectiveFrom DateTime [not null]
+  effectiveTo DateTime
+  createdAt DateTime [default: `now()`, not null]
+  universe SecurityUniverse [not null]
+  security Security [not null]
+
+  indexes {
+    (universeId, securityId, effectiveFrom) [unique]
+  }
+}
+
+Table BreadthUniverseRevision {
+  id Int [pk, increment]
+  effectiveFrom DateTime [unique, not null]
+  memberCount Int [not null]
+  createdAt DateTime [default: `now()`, not null]
+  members BreadthUniverseRevisionMember [not null]
+  observations MarketBreadthObservation [not null]
+  breadthV2ObservationSets MarketBreadthObservationSet [not null]
+}
+
+Table BreadthUniverseRevisionMember {
+  revisionId Int [not null]
+  securityId Int [not null]
+  revision BreadthUniverseRevision [not null]
+  security Security [not null]
+
+  indexes {
+    (revisionId, securityId) [pk]
+  }
+}
+
+Table MarketSplitEvent {
+  id Int [pk, increment]
+  securityId Int [not null]
+  executionDate DateTime [not null]
+  splitFactor Decimal [not null]
+  provider MarketDataProvider [not null]
+  provenance String [not null]
+  receivedAt DateTime [not null]
+  createdAt DateTime [default: `now()`, not null]
+  security Security [not null]
+
+  indexes {
+    (securityId, executionDate) [unique]
+  }
+}
+
+Table MarketSplitCoverage {
+  id Int [pk, increment]
+  securityId Int [not null]
+  fromDate DateTime [not null]
+  throughDate DateTime [not null]
+  provider MarketDataProvider [not null]
+  receivedAt DateTime [not null]
+  createdAt DateTime [default: `now()`, not null]
+  security Security [not null]
+
+  indexes {
+    (securityId, fromDate, throughDate) [unique]
   }
 }
 
@@ -1085,6 +1186,8 @@ Table MarketRegimeDimensionAssessment {
 
 Table MarketBreadthObservation {
   id Int [pk, increment]
+  breadthUniverseRevisionId Int
+  breadthUniverseRevision BreadthUniverseRevision
   sessionDate DateTime [not null]
   previousSessionDate DateTime [not null]
   provider MarketDataProvider [not null]
@@ -1109,6 +1212,55 @@ Table MarketBreadthObservation {
 
   indexes {
     (provider, universeDefinitionVersion, sessionDate) [unique]
+  }
+}
+
+Table MarketBreadthObservationSet {
+  id Int [pk, increment]
+  breadthUniverseRevisionId Int [not null]
+  sessionDate DateTime [not null]
+  provider MarketDataProvider [not null]
+  measurementVersion String [not null]
+  evidenceSchemaVersion Int [not null]
+  universeCount Int [not null]
+  targetBarCount Int [not null]
+  targetCoverageRatio Decimal [not null]
+  dataThroughAt DateTime [not null]
+  canonicalInputHash String [not null]
+  evidenceJson Json [not null]
+  startedAt DateTime [not null]
+  completedAt DateTime [not null]
+  createdAt DateTime [default: `now()`, not null]
+  breadthUniverseRevision BreadthUniverseRevision [not null]
+  horizons MarketBreadthHorizonObservation [not null]
+
+  indexes {
+    (measurementVersion, breadthUniverseRevisionId, sessionDate) [unique]
+  }
+}
+
+Table MarketBreadthHorizonObservation {
+  id Int [pk, increment]
+  observationSetId Int [not null]
+  horizonSessions Int [not null]
+  anchorSessionDate DateTime [not null]
+  universeCount Int [not null]
+  anchorBarCount Int [not null]
+  eligibleCount Int [not null]
+  excludedCount Int [not null]
+  advancingCount Int [not null]
+  decliningCount Int [not null]
+  unchangedCount Int [not null]
+  directionalCount Int [not null]
+  coverageRatio Decimal [not null]
+  advanceShare Decimal [not null]
+  netBreadth Decimal [not null]
+  canonicalInputHash String [not null]
+  evidenceJson Json [not null]
+  observationSet MarketBreadthObservationSet [not null]
+
+  indexes {
+    (observationSetId, horizonSessions) [unique]
   }
 }
 
@@ -1908,10 +2060,17 @@ Enum MarketBarTimeframe {
 
 Enum MarketDataProvider {
   MASSIVE
+  TIINGO
 }
 
 Enum MarketBarAdjustmentMode {
   UNADJUSTED
+}
+
+Enum TiingoDailyObservationStatus {
+  RETRYING
+  NO_EOD_COVERAGE
+  RESOLVED
 }
 
 Enum MarketRegimeDimension {
@@ -2217,9 +2376,29 @@ Ref: TradingAccountWorkerHealthState.tradingAccountId > TradingAccount.id [delet
 
 Ref: AlpacaApiUsageBucket.tradingAccountId > TradingAccount.id [delete: Set Null]
 
+Ref: TiingoDailyObservationState.securityId > Security.id [delete: Restrict]
+
 Ref: MarketBar.securityId > Security.id [delete: Restrict]
 
+Ref: SecurityUniverseMembership.universeId > SecurityUniverse.id [delete: Restrict]
+
+Ref: SecurityUniverseMembership.securityId > Security.id [delete: Restrict]
+
+Ref: BreadthUniverseRevisionMember.revisionId > BreadthUniverseRevision.id [delete: Restrict]
+
+Ref: BreadthUniverseRevisionMember.securityId > Security.id [delete: Restrict]
+
+Ref: MarketSplitEvent.securityId > Security.id [delete: Restrict]
+
+Ref: MarketSplitCoverage.securityId > Security.id [delete: Restrict]
+
 Ref: MarketRegimeDimensionAssessment.(previousAssessmentId, dimension, algorithmVersion) - MarketRegimeDimensionAssessment.(id, dimension, algorithmVersion) [delete: Restrict]
+
+Ref: MarketBreadthObservation.breadthUniverseRevisionId > BreadthUniverseRevision.id [delete: Restrict]
+
+Ref: MarketBreadthObservationSet.breadthUniverseRevisionId > BreadthUniverseRevision.id [delete: Restrict]
+
+Ref: MarketBreadthHorizonObservation.observationSetId > MarketBreadthObservationSet.id [delete: Restrict]
 
 Ref: CatalystTickerImpact.catalystEventId > CatalystEvent.id [delete: Cascade]
 

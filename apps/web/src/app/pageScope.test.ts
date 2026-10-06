@@ -12,7 +12,7 @@ describe("page scope classification", () => {
     expect(getPageScope("/trading-accounts/2/reconciliation")).toEqual({ mode: "ACCOUNT_SPECIFIC", routeTradingAccountId: 2 });
     expect(getPageScope("/system/reconciliation")).toEqual({ mode: "SYSTEM", routeTradingAccountId: null });
   });
-  it.each(["/trading-accounts", "/users", "/strategies/2", "/exit-profiles", "/securities/AAPL", "/subscriptions", "/momentum-scanner", "/market-diary", "/settings", "/lifecycle-exercises/4"])("classifies %s as system scope", (path) => {
+  it.each(["/trading-accounts", "/users", "/strategies/2", "/exit-profiles", "/securities/AAPL", "/securities/import-export", "/subscriptions", "/momentum-scanner", "/market-diary", "/settings", "/lifecycle-exercises/4"])("classifies %s as system scope", (path) => {
     expect(getPageScope(path).mode).toBe("SYSTEM");
   });
 });

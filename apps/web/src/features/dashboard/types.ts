@@ -216,59 +216,39 @@ export type DashboardAccountsOverviewResponse = {
   accounts: DashboardOverviewRow[];
 };
 
-export type IndexPerformanceSymbol = {
-  symbol: "SPY" | "QQQ" | "DIA" | "IWM";
-  lastPrice: number | null;
-  todayChange: number | null;
-  todayChangePercent: number | null;
-  dayHigh: number | null;
-  dayLow: number | null;
-  previousClose: number | null;
-  marketStatus: string | null;
-  updatedTime: string | null;
+export type DashboardEtfSymbol = "SPY" | "QQQ" | "DIA" | "IWM";
+
+export type DashboardReferencePrice = {
+  symbol: DashboardEtfSymbol;
+  provider: "TIINGO_CONSOLIDATED";
+  price: number | null;
+  basis: "TIINGO_TNGO_LAST" | "TIINGO_LQ_REF_PRICE" | null;
+  observedAt: string | null;
+  fetchedAt: string;
+  freshness: "FRESH" | "STALE" | "UNKNOWN" | "FUTURE";
+  available: boolean;
+  unavailableReason: string | null;
+  providerError: string | null;
 };
+export type DashboardReferencePricesResponse = { symbols: DashboardReferencePrice[] };
 
-export type IndexPerformanceResponse = {
-  marketStatus: string | null;
-  serverTime: string | null;
-  updatedAt: string;
-  symbols: IndexPerformanceSymbol[];
-};
-
-export type IndexChartRange = "1d" | "7d" | "14d" | "30d" | "6m" | "1y";
-
-export type IndexIntradayPoint = {
-  time: string;
-  close: number;
-};
-
-export type IndexChartSummary = {
-  open: number | null;
-  close: number | null;
+export type DashboardMarketSymbol = {
+  symbol: DashboardEtfSymbol;
+  referencePrice: DashboardReferencePrice;
+  observationPhase: "PREMARKET" | "REGULAR" | "POSTMARKET" | "CLOSED" | "UNKNOWN";
+  previousClose: { sessionDate: string | null; close: number | null; source: "TIINGO_REGULAR_MINUTE"; reason: string | null };
+  splitCompatibility: { status: "SAME_SESSION" | "COMPARABLE" | "SPLIT_BOUNDARY" | "UNRESOLVED" | "NOT_EVALUATED";
+    fromSession: string | null; throughSession: string | null; eventIds: string[]; executionDates: string[]; reason: string | null };
+  regularSession: { sessionDate: string; state: "PARTIAL" | "COMPLETE" | "UNAVAILABLE";
+    high: number | null; low: number | null; close: number | null; observedThrough: string | null;
+    reason: string | null; source: "TIINGO_REGULAR_MINUTE" } | null;
   change: number | null;
   changePercent: number | null;
-  high: number | null;
-  low: number | null;
+  changeReason: string | null;
+  rangePosition: number | null;
+  rangeReason: string | null;
 };
-
-export type IndexIntradaySymbol = {
-  symbol: "SPY" | "QQQ" | "DIA" | "IWM";
-  from: string | null;
-  to: string | null;
-  summary: IndexChartSummary;
-  points: IndexIntradayPoint[];
-};
-
-export type IndexIntradayResponse = {
-  updatedAt: string;
-  range: IndexChartRange;
-  rangeLabel: string;
-  interval: {
-    multiplier: number;
-    timespan: string;
-  };
-  symbols: IndexIntradaySymbol[];
-};
+export type DashboardMarketStateResponse = { updatedAt: string; symbols: DashboardMarketSymbol[] };
 
 export type SystemEvent = {
   id: number;

@@ -10,7 +10,7 @@ export async function runMarketMinuteDataWorker(): Promise<WorkerTickResult> {
     if (result.notDue) return { outcome: 'skipped', skipReason: 'not_due' };
     // Continued absence of an eligible, expected regular-session bar is an evidence failure,
     // not healthy idle work: surface it through worker health rather than reporting idle.
-    if (result.missing > 0) throw new Error(`${result.missing} eligible MINUTE_15 bar(s) remain missing from Massive after sync.`);
+    if (result.missing > 0) throw new Error(`${result.missing} eligible MINUTE_15 bar(s) remain missing after sync.`);
     return { outcome: result.inserted ? 'success' : 'idle', workSucceeded: result.inserted > 0 };
   } catch (error) {
     if (error instanceof HttpError && error.statusCode === 409) return { outcome: 'skipped', skipReason: 'already_running' };

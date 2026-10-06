@@ -7,7 +7,7 @@ import {
   getTickerAggregateBars,
   getTickerDailyCandles,
   type TickerAggregateBar,
-} from './massive-market-data.service.js';
+} from './live-market-data.service.js';
 import type { MomentumMarketChartQuery } from '../validators/momentum-market-chart.schema.js';
 
 const MARKET_TIME_ZONE = 'America/New_York';

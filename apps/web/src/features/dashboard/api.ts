@@ -1,8 +1,7 @@
 import { apiRequest } from "../../lib/api";
 import type {
-  IndexChartRange,
-  IndexIntradayResponse,
-  IndexPerformanceResponse,
+  DashboardReferencePricesResponse,
+  DashboardMarketStateResponse,
   SystemEventsResponse,
   TradingAccountDashboardResponse,
   DashboardAccountsOverviewResponse,
@@ -48,18 +47,10 @@ export function getSystemEvents(
   );
 }
 
-export function getIndexPerformance(token: string) {
-  return apiRequest<IndexPerformanceResponse>(
-    "/api/dashboard/index-performance",
-    { token },
-  );
+export function getDashboardReferencePrices(token: string) {
+  return apiRequest<DashboardReferencePricesResponse>("/api/dashboard/reference-prices", { token });
 }
 
-export function getIndexIntraday(token: string, range: IndexChartRange) {
-  const query = new URLSearchParams({ range });
-
-  return apiRequest<IndexIntradayResponse>(
-    `/api/dashboard/index-intraday?${query.toString()}`,
-    { token },
-  );
+export function getDashboardMarketState(token: string) {
+  return apiRequest<DashboardMarketStateResponse>("/api/dashboard/market-state", { token });
 }

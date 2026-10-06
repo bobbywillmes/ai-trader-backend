@@ -21,7 +21,7 @@ vi.mock('../db/prisma.js', () => ({
   },
 }));
 
-vi.mock('./massive-market-data.service.js', () => ({
+vi.mock('./live-market-data.service.js', () => ({
   getTickerLatestPrice: mocks.getTickerLatestPrice,
   getTickerDailyCandles: mocks.getTickerDailyCandles,
 }));
@@ -32,7 +32,7 @@ import {
   parseAccountSubscriptionMarketContextStatus,
   parseAccountSubscriptionPriceHistoryRange,
 } from './account-subscription-market-context.service.js';
-import type { DailyMarketCandle } from './massive-market-data.service.js';
+import type { DailyMarketCandle } from './live-market-data.service.js';
 
 const NOW = new Date('2026-06-30T16:00:00.000Z');
 

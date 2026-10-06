@@ -211,6 +211,35 @@ Be especially careful when editing:
 
 ## Trade Lifecycle Notes
 
+The Tiingo Phase 0/1 foundation adds additive market evidence and universe schema plus
+a disconnected REST client. Massive retains all runtime market-data authority until an
+explicit out-of-hours session cutover in a later phase. `Security.enabled` is trading
+eligibility, never an observation-universe filter; create observation-only Securities
+with `enabled=false` explicitly. See `docs/architecture/tiingo-market-data-migration.md`.
+Phase 2 makes Trend, Volatility, Participation and Intraday Stress's daily ATR baseline
+read persisted splits. A monitored worker extends strict Massive split coverage after
+the current logical New York date within each `SESSION_BOUNDARIES_V2` Massive-authority
+segment, including current-session and closed boundary dates; it does not derive coverage
+from DAY_1 bars. The manual bootstrap remains for operator/backfill use. Uncovered dates fail
+closed. See `docs/production/market-split-bootstrap.md`.
+Phase 8 adds an independent, default-unset Tiingo `DAY_1` session cutover for the
+SPY/QQQ/DIA/IWM/RSP market-sensor panel. An optional, strictly later Massive resume
+session permits only an operator-approved future-boundary rollback; provider failures
+still fail closed without fallback. The four daily consumers read canonical provider
+segments and persisted splits; Tiingo `splitFactor` verifies coverage rather than
+normalizing twice. See `docs/production/tiingo-market-daily-phase8.md`.
+Phase 3's six owned observation universes use a sparse, header-driven CSV importer.
+Only explicit nonblank cells on supplied rows mutate state; membership removal requires
+an explicit `0`. The owner-only Securities console previews
+imports, exports current database state, and freezes Breadth revisions only by explicit
+action. Imports are immediate on the current New York date unless a future membership
+date is explicitly scheduled; metadata and new Security creation still apply now.
+Same-day membership corrections converge before an immutable Breadth revision.
+New observation-only Securities are created with `enabled=false`; existing
+trading gates are untouched. Frozen observation revisions require `assetType=STOCK`.
+No real constituents or Tiingo OHLCV are imported by this
+tooling. See `docs/production/owned-security-universes.md`.
+
 PARTICIPATION_V1 has an immutable publisher with zero trading authority.
 `publishParticipationAssessments` bootstraps exactly the latest due full session,
 pins failed targets, and catches up at most 20 chronological targets under its own

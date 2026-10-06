@@ -6,7 +6,7 @@ import {
   getTickerLatestPrice,
   type DailyMarketCandle,
   type TickerLatestPrice,
-} from './massive-market-data.service.js';
+} from './live-market-data.service.js';
 
 const ACCOUNT_SUBSCRIPTION_MARKET_CONTEXT_SELECT = {
   id: true,

@@ -3,10 +3,12 @@ import { Prisma, type PrismaClient, type MarketRegimeDimensionAssessment } from 
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
-import { fetchSplitEvidence, type SplitEvent } from '../integrations/massive/evidence.client.js';
+import type { SplitEvent } from '../integrations/massive/evidence.client.js';
+import { readPersistedSplits } from './persisted-split-evidence.service.js';
 import { addDays, barEligibility, COMPLETION_GRACE_MINUTES, datesBetween, etDate, etInstant, marketSession, type CalendarException } from './market-calendar.js';
 import { advanceTrend, calculateTrendWithThresholds, normalizeSplits, type TrendDay, type ResearchBar } from './trend-calculation.js';
 import { TREND_ALGORITHM_VERSION, TREND_PUBLICATION_EVIDENCE_VERSION, TREND_V1_THRESHOLDS, TREND_V1_THRESHOLD_EVIDENCE } from './trend-v1.definition.js';
+import { dailyProviderProvenance, dailySessionEligible, readCanonicalDailyBars } from './market-daily-authority.js';
 
 const identity = { dimension: 'TREND' as const, algorithmVersion: TREND_ALGORITHM_VERSION };
 export const TREND_PUBLICATION_LOCK_KEY = createHash('sha256').update('ai-trader:trend-v1-publication').digest().readBigInt64BE(0);
@@ -22,7 +24,8 @@ const continuationSchema = z.object({
 type Assessment = MarketRegimeDimensionAssessment;
 type Reason = 'MISSING_MARKET_DATA' | 'INSUFFICIENT_HISTORY' | 'SPLIT_EVIDENCE_UNAVAILABLE' | 'CALCULATION_FAILED';
 export type TrendPublicationResult = { published: number; attempts: number; suppressed: boolean; notDue: boolean; blocked: { sessionDate: string; status: 'UNAVAILABLE' | 'FAILED'; reasonCode: Reason } | null };
-type Options = { db?: PrismaClient; now?: Date; clock?: () => Date; fetchSplits?: typeof fetchSplitEvidence };
+type SplitReader = (symbol: typeof symbols[number], from: string, through: string) => Promise<SplitEvent[]>;
+type Options = { db?: PrismaClient; now?: Date; clock?: () => Date; fetchSplits?: SplitReader };
 
 function nextSession(date: string, exceptions: CalendarException[]) {
   for (let i = 1; i <= 370; i++) {
@@ -52,13 +55,13 @@ export async function publishTrendAssessments(options: Options = {}): Promise<Tr
       const exceptions: CalendarException[] = calendarRows.map(row => ({ ...row, sessionDate: row.sessionDate.toISOString().slice(0, 10) }));
       const today = etDate(now);
       // One year covers even extended closures, without inventing an eligible date.
-      const latest = datesBetween(addDays(today, -370), today).reverse().find(date => barEligibility('DAY_1', etInstant(date, 0), now, exceptions).status === 'ELIGIBLE');
+      const latest = datesBetween(addDays(today, -370), today).reverse().find(date => dailySessionEligible(date, now, exceptions));
       if (!latest || (predecessor?.sessionDate && predecessor.sessionDate.toISOString().slice(0, 10) >= latest)) return { ...result, notDue: true };
       const securities = await tx.security.findMany({ where: { symbol: { in: [...symbols] } }, select: { id: true, symbol: true } });
-      const rows = await tx.marketBar.findMany({ where: { securityId: { in: securities.map(s => s.id) }, timeframe: 'DAY_1', provider: 'MASSIVE', adjustmentMode: 'UNADJUSTED', barStartAt: { lt: etInstant(addDays(latest, 1), 0) } }, orderBy: [{ barStartAt: 'asc' }, { id: 'asc' }] });
+      const rows = await readCanonicalDailyBars(tx, securities.map(s => s.id), '1900-01-01', latest);
       const inputs = symbols.map(symbol => {
         const security = securities.find(s => s.symbol === symbol);
-        const bars: ResearchBar[] = rows.filter(row => row.securityId === security?.id && barEligibility('DAY_1', row.barStartAt, now, exceptions).status === 'ELIGIBLE').map(row => ({ id: row.id, date: etDate(row.barStartAt), open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close), volume: Number(row.volume) }));
+        const bars: ResearchBar[] = rows.filter(row => row.securityId === security?.id && dailySessionEligible(row.sessionDate, now, exceptions)).map(row => ({ id: row.id, date: row.sessionDate, open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close), volume: Number(row.volume) }));
         return { symbol, securityId: security?.id ?? null, bars };
       });
       const common = inputs[0]!.bars.filter(bar => inputs[1]!.bars.some(other => other.date === bar.date));
@@ -71,7 +74,7 @@ export async function publishTrendAssessments(options: Options = {}): Promise<Tr
         // bootstrap because a more recent partial history needs to warm up again.
         const from = inputs.flatMap(input => input.bars.map(bar => bar.date)).sort()[0]!;
         try {
-          splitCache = await Promise.all(symbols.map(symbol => (options.fetchSplits ?? fetchSplitEvidence)(symbol, from, latest)));
+          splitCache = await Promise.all(symbols.map(symbol => options.fetchSplits ? options.fetchSplits(symbol, from, latest) : readPersistedSplits(tx, symbol, from, latest)));
           splitCache.forEach((splits, i) => {
             if (splits.some(s => s.symbol !== symbols[i] || s.executionDate < from || s.executionDate > latest)) throw new Error('Invalid split identity.');
             normalizeSplits([], splits, latest);
@@ -116,7 +119,7 @@ export async function publishTrendAssessments(options: Options = {}): Promise<Tr
         if (!reasonCode && missingSymbols.length) { status = 'UNAVAILABLE'; reasonCode = 'MISSING_MARKET_DATA'; }
         if (!reasonCode && !splitCache && !splitFailed) {
           try {
-            splitCache = await Promise.all(symbols.map(symbol => (options.fetchSplits ?? fetchSplitEvidence)(symbol, inputFrom, latest)));
+            splitCache = await Promise.all(symbols.map(symbol => options.fetchSplits ? options.fetchSplits(symbol, inputFrom, latest) : readPersistedSplits(tx, symbol, inputFrom, latest)));
             // Validate before treating splits as usable; no raw provider payload is persisted.
             splitCache.forEach((splits, i) => {
               if (splits.some(s => s.symbol !== symbols[i] || s.executionDate < inputFrom || s.executionDate > latest)) throw new Error('Invalid split identity.');
@@ -153,7 +156,7 @@ export async function publishTrendAssessments(options: Options = {}): Promise<Tr
           } catch { status = 'FAILED'; reasonCode = 'CALCULATION_FAILED'; }
         }
         const provenance = {
-          provider: 'MASSIVE', timeframe: 'DAY_1', adjustmentSemantics: 'Stored UNADJUSTED; split-normalized only in calculation; no dividend adjustment.',
+          dailyMarketData: dailyProviderProvenance(rows.filter(row => source.some(input => input.securityId === row.securityId)), inputFrom, date), splitEvidenceSource: options.fetchSplits ? 'INJECTED' : 'MARKET_SPLIT_EVENT', timeframe: 'DAY_1', adjustmentSemantics: 'Stored UNADJUSTED; split-normalized only in calculation; no dividend adjustment.',
           inputFrom, operationalFrom, normalizedThrough: date,
           canonicalInputHash: hash({ source, splits, dates: ordered }),
           instruments: source.map((input, i) => ({ symbol: input.symbol, securityId: input.securityId, count: input.bars.length, from: input.bars[0]?.date ?? null, through: input.bars.at(-1)?.date ?? null, firstMarketBarId: input.bars[0]?.id ?? null, lastMarketBarId: input.bars.at(-1)?.id ?? null, splits: splits[i], normalizationFactors: normalizationFactors[i], normalization: 'For each bar multiply prices by the product of splitFrom/splitTo for events after its session and through normalizedThrough; divide volume by that product.' })),

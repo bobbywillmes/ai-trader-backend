@@ -1,0 +1,60 @@
+import { describe, expect, it, vi } from 'vitest';
+import { normalizeTiingoDaily, normalizeTiingoIntraday, normalizeTiingoLatest, normalizeTiingoConsolidatedSnapshot, normalizeTiingoIexSnapshot, TiingoRestClient } from './rest.client.js';
+
+const daily = { date: '2026-09-24T00:00:00.000Z', open: 100, high: 102, low: 99, close: 101, volume: 1000, splitFactor: 1 };
+const minute = { date: '2026-09-24T14:30:00.000Z', open: 100, high: 102, low: 99, close: 101, volume: 1000 };
+
+describe('Tiingo REST normalization', () => {
+  it('preserves nullable consolidated and IEX snapshot evidence without inventing quote or VWAP fields', () => {
+    const row = { ticker: 'BRK-B', timestamp: '2026-09-24T14:30:00Z', tngoLast: 101, lqRefPrice: null,
+      prevClose: 99, open: null, high: 102, low: 98, volume: null, bidPrice: null };
+    const consolidated = normalizeTiingoConsolidatedSnapshot([row], 'BRK.B');
+    expect(consolidated).toMatchObject({ symbol: 'BRK.B', referencePrice: 101, referencePriceSource: 'TNGO_LAST', volume: null });
+    expect(consolidated).not.toHaveProperty('sessionVwap');
+    expect(normalizeTiingoIexSnapshot([{ ...row, tngoLast: null }], 'BRK.B')).toMatchObject({ referencePrice: null, previousClose: 99 });
+    expect(normalizeTiingoConsolidatedSnapshot([{ ticker: null, timestamp: null }], 'SPY').observedAt).toBeNull();
+  });
+  it.each([{ timestamp: 'bad' }, { tngoLast: 0 }, { lqRefPrice: -1 }, { volume: -1 }])('rejects malformed snapshot values', patch => {
+    expect(() => normalizeTiingoConsolidatedSnapshot([{ ticker: 'SPY', timestamp: '2026-09-24T14:30:00Z', ...patch }], 'SPY')).toThrow();
+  });
+  it('queries share-class snapshots and explicit extended-hours history without force filling', async () => {
+    const requested: URL[] = [];
+    const fetcher = vi.fn(async (url: URL) => { requested.push(url); return { ok: true, json: async () => url.pathname.endsWith('/prices') ? [] : [{ ticker: 'BRK-B', timestamp: null }] } as Response; }) as unknown as typeof fetch;
+    const client = new TiingoRestClient({ token: 'test-token', fetcher });
+    await client.consolidatedSnapshot('BRK.B'); await client.iexSnapshot('BRK.B');
+    await client.intradayHistory('BRK.B', '2026-09-24', '2026-09-24', { resampleFreq: '1min', afterHours: true });
+    expect(requested.map(url => url.pathname)).toEqual(['/tiingo/equity/intraday/BRK-B', '/iex/BRK-B', '/tiingo/equity/intraday/BRK-B/prices']);
+    expect(Object.fromEntries(requested[2]!.searchParams)).toEqual({ startDate: '2026-09-24', endDate: '2026-09-24',
+      resampleFreq: '1min', afterHours: 'true', forceFill: 'false', columns: 'open,high,low,close,volume' });
+  });
+  it('requests exact one-minute regular-session REST evidence for production aggregation', async () => {
+    const requested: URL[] = [];
+    const fetcher = vi.fn(async (url: URL) => { requested.push(url); return { ok: true, json: async () => [] } as Response; }) as unknown as typeof fetch;
+    const client = new TiingoRestClient({ token: 'test-token', fetcher });
+    expect(await client.intradayMinutes('SPY', '2026-09-24')).toEqual([]);
+    expect(requested[0]!.pathname).toBe('/tiingo/equity/intraday/SPY/prices');
+    expect(Object.fromEntries(requested[0]!.searchParams)).toEqual({ startDate: '2026-09-24', endDate: '2026-09-24',
+      resampleFreq: '1min', afterHours: 'false', forceFill: 'false' });
+  });
+  it('preserves raw daily OHLCV and provider split factor', () => {
+    expect(normalizeTiingoDaily([daily])).toEqual([{ barStartAt: new Date(daily.date), open: 100, high: 102, low: 99, close: 101, volume: 1000, splitFactor: 1 }]);
+  });
+  it.each([{ ...daily, splitFactor: 0 }, { ...daily, splitFactor: '1' }, { ...daily, high: 98 }, { ...daily, volume: -1 }])('rejects invalid daily evidence', row => {
+    expect(() => normalizeTiingoDaily([row])).toThrow();
+  });
+  it('rejects duplicates and does not fabricate intraday split factors', () => {
+    expect(() => normalizeTiingoIntraday([minute, minute])).toThrow('duplicate');
+    expect(normalizeTiingoIntraday([minute])[0]).not.toHaveProperty('splitFactor');
+    expect(normalizeTiingoLatest([minute], 'spy')).toEqual({ symbol: 'SPY', price: 101, observedAt: new Date(minute.date) });
+  });
+  it('bounds requests and excludes token and upstream body from errors', async () => {
+    const fetcher = vi.fn(async () => new Response('secret-token upstream details', { status: 429 }));
+    const client = new TiingoRestClient({ token: 'secret-token', fetcher, maxConcurrency: 1 });
+    await expect(client.daily('SPY', '2026-09-24', '2026-09-24')).rejects.toThrow('Tiingo HTTP 429');
+    expect(fetcher.mock.calls).toHaveLength(1);
+    const [url, options] = fetcher.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(url.toString()).not.toContain('secret-token');
+    expect(options.headers).toMatchObject({ Authorization: 'Token secret-token' });
+    expect(options.signal).toBeDefined();
+  });
+});

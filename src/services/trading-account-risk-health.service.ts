@@ -8,7 +8,7 @@ import {
 
 import { prisma } from '../db/prisma.js';
 import { getRuntimeTradingConfig } from './config.service.js';
-import { getTickerLatestPrice } from './massive-market-data.service.js';
+import { getTradingReferencePrice } from './trading-reference-price.service.js';
 import { validateAccountRiskConfiguration } from './trading-account-risk-configuration.service.js';
 import { resolveEffectiveAccountEntryLimits } from './trading-account-entry-risk-limits.service.js';
 import { getTradingAccountEntryRiskUsage } from './trading-account-entry-risk-usage.service.js';
@@ -219,8 +219,8 @@ function failingStatus(
   return severity === 'blocker' ? 'fail' : 'warn';
 }
 
-function surplus(capital: number | null, budget: number) {
-  return capital === null ? null : capital - budget;
+function surplus(capital: number | null, budget: number | null) {
+  return capital === null || budget === null ? null : capital - budget;
 }
 
 function createCheck(args: TradingAccountRiskHealthCheck) {
@@ -256,6 +256,7 @@ async function getFixedQtyPlannedNotional(args: {
   accountSubscription: RiskHealthAccountSubscription;
   checks: TradingAccountRiskHealthCheck[];
   profile: TradingAccountEnvironment;
+  now: Date;
 }) {
   const fixedQty = args.accountSubscription.fixedQty;
   const symbol = args.accountSubscription.subscription.symbol;
@@ -281,10 +282,29 @@ async function getFixedQtyPlannedNotional(args: {
   }
 
   try {
-    const latest = await getTickerLatestPrice(symbol);
-    const latestPrice = latest.latestPrice;
+    const latest = await getTradingReferencePrice(symbol, args.now);
+    const latestPrice = latest.price;
 
-    if (!isPositiveFiniteNumber(latestPrice)) {
+    if (!latest.usable || !isPositiveFiniteNumber(latestPrice)) {
+      if (latest.rejectionReason === 'OUTSIDE_TRADING_PRICE_SESSION') {
+        args.checks.push(
+          createCheck({
+            id: `account_subscription_${args.accountSubscription.id}_latest_price`,
+            label: 'FIXED_QTY price valuation is currently evaluable',
+            severity: 'info',
+            status: 'info',
+            message: `FIXED_QTY valuation for active subscription ${args.accountSubscription.subscription.key} is temporarily unavailable outside the regular trading-price session.`,
+            details: {
+              evaluationState: 'TEMPORARILY_NOT_EVALUABLE',
+              tradingAccountSubscriptionId: args.accountSubscription.id,
+              symbol,
+              priceEvidence: latest,
+            },
+          })
+        );
+
+        return null;
+      }
       const severity = liveSeverity(args.profile);
 
       args.checks.push(
@@ -298,8 +318,8 @@ async function getFixedQtyPlannedNotional(args: {
             tradingAccountSubscriptionId: args.accountSubscription.id,
             symbol,
             latestPrice,
-            latestPriceAt: latest.latestPriceAt,
-            latestPriceSource: latest.latestPriceSource,
+            evaluationState: 'DATA_QUALITY_FAILURE',
+            priceEvidence: latest,
           },
         })
       );
@@ -319,6 +339,7 @@ async function getFixedQtyPlannedNotional(args: {
         status: failingStatus(severity),
         message: `Latest price lookup failed for active FIXED_QTY subscription ${args.accountSubscription.subscription.key}.`,
         details: {
+          evaluationState: 'DATA_QUALITY_FAILURE',
           tradingAccountSubscriptionId: args.accountSubscription.id,
           symbol,
           error:
@@ -337,6 +358,7 @@ async function getPlannedExposures(args: {
   accountSubscriptions: RiskHealthAccountSubscription[];
   checks: TradingAccountRiskHealthCheck[];
   profile: TradingAccountEnvironment;
+  now: Date;
 }) {
   const exposures: PlannedExposure[] = [];
 
@@ -377,6 +399,7 @@ async function getPlannedExposures(args: {
         accountSubscription,
         checks: args.checks,
         profile: args.profile,
+        now: args.now,
       }),
     });
   }
@@ -385,16 +408,15 @@ async function getPlannedExposures(args: {
 }
 
 function sumPlannedExposure(exposures: PlannedExposure[]) {
-  return exposures.reduce(
-    (total, exposure) => total + (exposure.plannedNotional ?? 0),
-    0
-  );
+  if (exposures.some((exposure) => exposure.plannedNotional === null)) return null;
+  return exposures.reduce((total, exposure) => total + exposure.plannedNotional!, 0);
 }
 
 function getMaxSimultaneousAllocationExposure(args: {
   allocations: RiskHealthAllocation[];
   exposures: PlannedExposure[];
 }) {
+  if (args.exposures.some((exposure) => exposure.plannedNotional === null)) return null;
   let total = 0;
 
   for (const allocation of args.allocations) {
@@ -773,10 +795,10 @@ function addSharedChecks(args: {
 function addCapitalChecks(args: {
   account: RiskHealthAccount;
   allocationBudgetTotal: number;
-  activeSubscriptionBudgetTotal: number;
+  activeSubscriptionBudgetTotal: number | null;
   brokerPortfolioValue: number | null;
   checks: TradingAccountRiskHealthCheck[];
-  maxSimultaneousAllocationExposure: number;
+  maxSimultaneousAllocationExposure: number | null;
   now: Date;
 }) {
   const profile = args.account.environment;
@@ -850,6 +872,24 @@ function addCapitalChecks(args: {
   ];
 
   for (const check of budgetChecks) {
+    if (check.budget === null) {
+      args.checks.push(
+        createCheck({
+          id: check.id,
+          label: check.label,
+          severity: 'info',
+          status: 'info',
+          message: `${check.label} is not currently evaluable because one or more required FIXED_QTY valuations are unknown.`,
+          details: {
+            evaluationState: 'NOT_EVALUABLE_INCOMPLETE_EXPOSURE',
+            brokerPortfolioValue: args.brokerPortfolioValue,
+            brokerPortfolioValueField,
+            budget: null,
+          },
+        })
+      );
+      continue;
+    }
     if (check.budget <= args.brokerPortfolioValue) {
       args.checks.push(
         createCheck({
@@ -1138,6 +1178,7 @@ export async function getTradingAccountRiskHealth(
     accountSubscriptions: activeSubscriptions,
     checks,
     profile: account.environment,
+    now,
   });
   const activeSubscriptionBudgetTotal = sumPlannedExposure(plannedExposures);
   const maxSimultaneousAllocationExposure =

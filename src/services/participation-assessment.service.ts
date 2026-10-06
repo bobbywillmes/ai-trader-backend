@@ -2,11 +2,13 @@ import { createHash } from 'node:crypto';
 import { Prisma, type PrismaClient, type MarketRegimeDimensionAssessment } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
-import { fetchStrictSplitEvidence, massiveEvidenceGet, type SplitEvent } from '../integrations/massive/evidence.client.js';
+import type { SplitEvent } from '../integrations/massive/evidence.client.js';
+import { readPersistedSplits } from './persisted-split-evidence.service.js';
+import { dailyProviderProvenance, readCanonicalDailyBars, type CanonicalDailyRow } from './market-daily-authority.js';
 import { addDays, etDate, etInstant, isFullMarketSession, marketSession, type CalendarException } from './market-calendar.js';
 import { calculateParticipationV1, normalizeParticipationVolumes, participationMedian, validateParticipationSplits } from './participation-v1-calculation.js';
 import { PARTICIPATION_ALGORITHM_VERSION, PARTICIPATION_PUBLICATION_EVIDENCE_VERSION, PARTICIPATION_SYMBOLS, PARTICIPATION_BASELINE_SESSIONS, PARTICIPATION_THRESHOLDS, type ParticipationSymbol } from './participation-v1.definition.js';
-import { latestParticipationSession, participationDueAt, planParticipationWindow, selectParticipationSession } from './participation-publication-calendar.js';
+import { latestParticipationSession, participationDueAt, participationEvidenceDueAt, planParticipationWindow, selectParticipationSession } from './participation-publication-calendar.js';
 
 const identity = { dimension: 'PARTICIPATION' as const, algorithmVersion: PARTICIPATION_ALGORITHM_VERSION };
 export const PARTICIPATION_PUBLICATION_LOCK_KEY = createHash('sha256').update('ai-trader:participation-v1-publication').digest().readBigInt64BE(0);
@@ -24,9 +26,6 @@ export type ParticipationPublicationResult = { published: number; attempts: numb
 export type ParticipationSplitFetcher = (symbol: ParticipationSymbol, from: string, through: string, signal: AbortSignal) => Promise<SplitEvent[]>;
 /** `signal` is an external shutdown/cancellation signal: it aborts and rolls back the run and never records a FAILED assessment. */
 type Options = { db?: PrismaClient; now?: Date; clock?: () => Date; fetchSplits?: ParticipationSplitFetcher; signal?: AbortSignal };
-const fetchSplits: ParticipationSplitFetcher = (symbol, from, through, signal) => fetchStrictSplitEvidence(symbol, from, through, path => {
-  signal.throwIfAborted(); return massiveEvidenceGet(path, signal);
-});
 const emptyResult = (): ParticipationPublicationResult => ({ published: 0, attempts: 0, suppressed: false, notDue: false, blocked: null });
 function splitFailureCode(error: unknown, aborted: boolean): string {
   if (aborted) return 'PUBLICATION_DEADLINE';
@@ -77,7 +76,7 @@ export async function publishParticipationAssessments(options: Options = {}): Pr
       let date = first;
       for (let i = 0; i < (fresh ? 1 : 20); i++) {
         const targetAt = i === 0 && pending ? pending.targetAt : marketSession(date, exceptions)!.closeAt;
-        if (participationDueAt(targetAt) > now) break;
+        if (participationEvidenceDueAt(targetAt) > now) break;
         const window = planParticipationWindow(date, exceptions);
         plans.push({ date, targetAt, window });
         if (window.calendar.failures.length || !window.next) break;
@@ -98,22 +97,25 @@ export async function publishParticipationAssessments(options: Options = {}): Pr
         let reasonCode: Reason | null = window.calendar.failures.length ? 'CALENDAR_EVIDENCE_UNAVAILABLE' : null;
         let status: 'VALID' | 'UNAVAILABLE' | 'FAILED' = reasonCode ? 'FAILED' : 'VALID';
         const block = (reason: Reason, unavailable = false) => { if (!reasonCode) { reasonCode = reason; status = unavailable ? 'UNAVAILABLE' : 'FAILED'; } };
+        let dailyRows: CanonicalDailyRow[] = [];
         const instruments: { symbol: ParticipationSymbol; securityId: number | null; target: Observation | null; baseline: (Observation | null)[];
           medianVolume20: number | null; rvol20: number | null; splitEvidence: { requestedFrom: string; requestedThrough: string; complete: boolean; events: SplitEvent[] } }[] = [];
         if (!reasonCode) {
           const securities = await tx.security.findMany({ where: { symbol: { in: [...PARTICIPATION_SYMBOLS] } }, select: { id: true, symbol: true } });
-          const rows = await tx.marketBar.findMany({ where: { securityId: { in: securities.map(s => s.id) }, timeframe: 'DAY_1', provider: 'MASSIVE', adjustmentMode: 'UNADJUSTED',
-            OR: expectedDates.map(d => ({ barStartAt: { gte: etInstant(d, 0), lt: etInstant(addDays(d, 1), 0) } })) }, orderBy: [{ barStartAt: 'asc' }, { id: 'asc' }] });
+          let rows: CanonicalDailyRow[] = [];
+          try { rows = dailyRows = (await readCanonicalDailyBars(tx, securities.map(s => s.id), expectedDates[0]!, targetDate))
+            .filter(row => expectedDates.includes(row.sessionDate)); }
+          catch { failures.push({ code: 'INVALID_STORED_OBSERVATION' }); block('CALCULATION_FAILED'); }
           for (const symbol of PARTICIPATION_SYMBOLS) {
             const matches = securities.filter(s => s.symbol === symbol), security = matches[0];
             if (matches.length > 1) failures.push({ code: 'DUPLICATE_SECURITY', symbol });
             if (!security) missing.push({ symbol, role: 'SECURITY' });
             const mapped = new Map<string, Observation>();
             for (const row of rows.filter(r => r.securityId === security?.id)) {
-              const d = etDate(row.barStartAt);
+              const d = row.sessionDate;
               try {
                 const decimal = new Prisma.Decimal(row.volume.toString()), volume = decimal.toNumber();
-                if (!expectedDates.includes(d) || +row.barStartAt !== +etInstant(d, 0) || mapped.has(d) || !decimal.isFinite() || decimal.lt(0) || decimal.decimalPlaces() > 6 || decimal.gte(new Prisma.Decimal(10).pow(24)) || !Number.isFinite(volume) || (decimal.gt(0) && volume === 0)) throw new Error('Invalid stored input');
+                if (!expectedDates.includes(d) || mapped.has(d) || !decimal.isFinite() || decimal.lt(0) || decimal.decimalPlaces() > 6 || decimal.gte(new Prisma.Decimal(10).pow(24)) || !Number.isFinite(volume) || (decimal.gt(0) && volume === 0)) throw new Error('Invalid stored input');
                 mapped.set(d, { sessionDate: d, marketBarId: row.id, rawVolume: decimal.toFixed(), normalizedVolume: null, priceFactorProduct: null, receivedAt: row.receivedAt });
               } catch { failures.push({ code: 'INVALID_STORED_OBSERVATION', symbol, sessionDate: d }); }
             }
@@ -134,7 +136,7 @@ export async function publishParticipationAssessments(options: Options = {}): Pr
         if (!reasonCode && !splitCache) {
           const responses = await Promise.allSettled(PARTICIPATION_SYMBOLS.map(async symbol => {
             signal.throwIfAborted();
-            const events = await (options.fetchSplits ?? fetchSplits)(symbol, splitFrom, splitThrough, signal);
+            const events = await (options.fetchSplits ?? ((s, from, through) => readPersistedSplits(tx, s, from, through)))(symbol, splitFrom, splitThrough, signal);
             signal.throwIfAborted();
             validateParticipationSplits(events);
             if (events.some(e => e.symbol !== symbol || e.executionDate < splitFrom || e.executionDate > splitThrough)) throw new Error('Invalid split identity/range');
@@ -143,7 +145,7 @@ export async function publishParticipationAssessments(options: Options = {}): Pr
           }));
           // Shutdown cancellation propagates (rollback) instead of becoming SPLIT_EVIDENCE_UNAVAILABLE.
           options.signal?.throwIfAborted();
-          splitFailures = responses.flatMap((r, i) => r.status === 'rejected' ? [{ symbol: PARTICIPATION_SYMBOLS[i]!, code: splitFailureCode(r.reason, signal.aborted) }] : []);
+          splitFailures = responses.flatMap((r, i) => r.status === 'rejected' ? [{ symbol: PARTICIPATION_SYMBOLS[i]!, code: options.fetchSplits ? splitFailureCode(r.reason, signal.aborted) : signal.aborted ? 'PUBLICATION_DEADLINE' : 'PERSISTED_SPLIT_EVIDENCE_FAILED' }] : []);
           if (!splitFailures.length) splitCache = responses.map(r => (r as PromiseFulfilledResult<SplitEvent[]>).value);
         }
         if (!reasonCode && splitFailures.length) block('SPLIT_EVIDENCE_UNAVAILABLE');
@@ -177,7 +179,8 @@ export async function publishParticipationAssessments(options: Options = {}): Pr
         const panel = !reasonCode && calculation?.available ? { rvol20BySymbol: Object.fromEntries(calculation.instruments.map(i => [i.symbol, i.rvol20])),
           panelMedianRvol: calculation.panel.panelMedianRvol, rawState: calculation.panel.rawState, effectiveState: calculation.panel.effectiveState,
           diagnostics: { agreement: calculation.panel.agreement, minimumRvol: calculation.panel.minimumRvol, maximumRvol: calculation.panel.maximumRvol, range: calculation.panel.range, affectsClassification: false } } : null;
-        const canonicalInputHash = hash({ ...identity, evidenceSchemaVersion: PARTICIPATION_PUBLICATION_EVIDENCE_VERSION, definition, targetDate, targetAt,
+        const splitEvidenceSource = options.fetchSplits ? 'INJECTED' : 'MARKET_SPLIT_EVENT';
+        const canonicalInputHash = hash({ ...identity, evidenceSchemaVersion: PARTICIPATION_PUBLICATION_EVIDENCE_VERSION, definition, targetDate, targetAt, splitEvidenceSource,
           baselineDates: window.baselineDates, calendar: window.calendar,
           instruments: instruments.map(i => ({ symbol: i.symbol, securityId: i.securityId, observations: [...i.baseline, i.target].map(b => b ? { sessionDate: b.sessionDate, marketBarId: b.marketBarId, rawVolume: b.rawVolume } : null), splitEvidence: i.splitEvidence })) });
         const attemptFingerprint = hash({ ...identity, evidenceSchemaVersion: PARTICIPATION_PUBLICATION_EVIDENCE_VERSION, targetDate, targetAt, proposedValidUntil: window.proposedValidUntil,
@@ -186,9 +189,9 @@ export async function publishParticipationAssessments(options: Options = {}): Pr
           return { ...result, suppressed: true, blocked: { sessionDate: targetDate, status: status as 'UNAVAILABLE' | 'FAILED', reasonCode } };
         options.signal?.throwIfAborted();
         const completedAt = clock();
-        const evidence = { ...identity, evidenceSchemaVersion: PARTICIPATION_PUBLICATION_EVIDENCE_VERSION, definition, sessionDate: targetDate, targetAt, dueAt: participationDueAt(targetAt),
+        const evidence = { ...identity, evidenceSchemaVersion: PARTICIPATION_PUBLICATION_EVIDENCE_VERSION, definition, sessionDate: targetDate, targetAt, dueAt: participationEvidenceDueAt(targetAt),
           dataThroughAt: panel ? targetAt : null, validUntil: panel ? window.proposedValidUntil : null, proposedValidUntil: window.proposedValidUntil,
-          expectedBaselineDates: window.baselineDates, calendar: window.calendar, normalizationThrough: targetDate, provider: 'MASSIVE', timeframe: 'DAY_1', adjustmentMode: 'UNADJUSTED',
+          expectedBaselineDates: window.baselineDates, calendar: window.calendar, normalizationThrough: targetDate, dailyMarketData: dailyProviderProvenance(dailyRows, expectedDates[0]!, targetDate), splitEvidenceSource, timeframe: 'DAY_1', adjustmentMode: 'UNADJUSTED',
           dailyVolumeSemantics: 'Provider daily aggregate; not reconstructed strictly from regular-hours trades.', instruments, panel,
           lineage: { previousAssessmentId: predecessor?.id ?? null, calculationAuthority: false }, bootstrap: !predecessor && panel !== null,
           ...(!predecessor && panel ? { initialization: { mode: 'baseline-only', baselineFrom: window.baselineDates[0], baselineThrough: window.baselineDates.at(-1), eligibleBaselineSessionCount: 20, inputBarCount: 105, replayedAssessmentCount: 0, publishedHistoricalAssessmentCount: 0 } } : {}),

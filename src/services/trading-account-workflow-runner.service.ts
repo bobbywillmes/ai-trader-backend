@@ -12,11 +12,14 @@ import { withTradingAccountWorkflowLock } from './trading-account-workflow-lock.
 export const accountWorkflowProcessInstanceId = randomUUID();
 
 const BACKOFF_CAP_MS: Record<WorkerKey, number> = {
+  breadth_v2_shadow_publication: 3_600_000, // Global shadow worker; does not use account coordination.
   volatility_assessment_publication: 900_000, // Global worker; does not use account coordination.
   trend_assessment_publication: 900_000, // Global worker; does not use account coordination.
   breadth_assessment_publication: 900_000, // Global worker; does not use account coordination.
   participation_assessment_publication: 900_000, // Global worker; does not use account coordination.
   market_daily_evidence_sync: 3_600_000, // Global worker; does not use account coordination.
+  market_split_coverage_extension: 3_600_000, // Global worker; does not use account coordination.
+  tiingo_daily_market_data_sync: 3_600_000, // Global, account-independent observation worker.
   market_minute_evidence_sync: 3_600_000, // Global worker; does not use account coordination.
   intraday_stress_assessment_publication: 900_000, // Global worker; does not use account coordination.
   pending_order_processing: 30_000,

@@ -49,6 +49,12 @@ import { runMarketMinuteDataWorker } from '../workers/market-minute-data.worker.
 import { runIntradayStressAssessmentWorker } from '../workers/intraday-stress-assessment.worker.js';
 import { MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS, INTRADAY_STRESS_ASSESSMENT_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { closeMarketMinuteDataLockPool } from '../services/market-minute-data-lock.service.js';
+import { runTiingoDailyWorker } from '../workers/tiingo-daily.worker.js';
+import { runBreadthV2ShadowWorker } from '../workers/breadth-v2-shadow.worker.js';
+import { BREADTH_V2_SHADOW_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
+import { closeTiingoDailyLockPool } from '../services/tiingo-daily.service.js';
+import { runMarketSplitCoverageWorker } from '../workers/market-split-coverage.worker.js';
+import { MARKET_SPLIT_COVERAGE_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 
 const app = createApp();
 
@@ -173,9 +179,18 @@ function startWorkers() {
   // Startup order: the daily MarketBar sync tick is given a bounded head start so the first Participation tick
   // can see fresh stored evidence. Participation still consumes stored bars only and never calls the sync.
   const marketDataStartup = runWorker('market_daily_evidence_sync', runMarketDataWorker);
+  void marketDataStartup.then(() => runWorker('market_split_coverage_extension', runMarketSplitCoverageWorker));
   participationScheduler = createMonitoredParticipationScheduler(workerHealthRegistry, { startupGate: marketDataStartup });
   participationScheduler.start();
   setInterval(() => { void runWorker('market_daily_evidence_sync', runMarketDataWorker); }, 60_000);
+  setInterval(() => { void runWorker('market_split_coverage_extension', runMarketSplitCoverageWorker); }, MARKET_SPLIT_COVERAGE_WORKER_INTERVAL_MS);
+  void runWorker('tiingo_daily_market_data_sync', runTiingoDailyWorker);
+  setInterval(() => { void runWorker('tiingo_daily_market_data_sync', runTiingoDailyWorker); }, 15 * 60_000);
+  if (env.BREADTH_V2_SHADOW_WORKER_ENABLED) {
+    workerHealthRegistry.setWorkerEnabled('breadth_v2_shadow_publication', true);
+    void runWorker('breadth_v2_shadow_publication', runBreadthV2ShadowWorker);
+    setInterval(() => { void runWorker('breadth_v2_shadow_publication', runBreadthV2ShadowWorker); }, BREADTH_V2_SHADOW_WORKER_INTERVAL_MS);
+  }
   void runWorker('breadth_assessment_publication', runBreadthAssessmentWorker);
   setInterval(() => { void runWorker('breadth_assessment_publication', runBreadthAssessmentWorker); }, BREADTH_ASSESSMENT_WORKER_INTERVAL_MS);
   runIntradayWorker('market_minute_evidence_sync', runMarketMinuteDataWorker);
@@ -392,6 +407,7 @@ async function shutdown(signal: NodeJS.Signals) {
     Promise.all([
       workerHealthRegistry.shutdown(),
       closeMarketDataLockPool(),
+      closeTiingoDailyLockPool(),
       closeMarketMinuteDataLockPool(),
       closeBreadthObservationLockPool(),
       closeTradingAccountWorkflowLockPool(),

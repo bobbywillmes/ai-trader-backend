@@ -1195,10 +1195,16 @@ enum AssetType {
 
 model Security {
   marketBars MarketBar[]
+  tiingoDailyObservationStates TiingoDailyObservationState[]
+  universeMemberships SecurityUniverseMembership[]
+  breadthRevisionMembers BreadthUniverseRevisionMember[]
+  marketSplitEvents MarketSplitEvent[]
+  marketSplitCoverages MarketSplitCoverage[]
   signals   Signal[]
   id        Int       @id @default(autoincrement())
   symbol    String    @unique
   name      String
+  // Trading eligibility. Observation universe membership never implies enabled=true.
   enabled   Boolean   @default(true)
   assetType AssetType
   sector    String?
@@ -1585,10 +1591,37 @@ enum MarketBarTimeframe {
 
 enum MarketDataProvider {
   MASSIVE
+  TIINGO
 }
 
 enum MarketBarAdjustmentMode {
   UNADJUSTED
+}
+
+enum TiingoDailyObservationStatus {
+  RETRYING
+  NO_EOD_COVERAGE
+  RESOLVED
+}
+
+// Mutable acquisition state for expected Tiingo EOD bars that were once absent.
+model TiingoDailyObservationState {
+  id             Int                          @id @default(autoincrement())
+  securityId     Int
+  sessionDate    DateTime                     @db.Date
+  status         TiingoDailyObservationStatus
+  attemptCount   Int
+  firstAttemptAt DateTime                     @db.Timestamptz(3)
+  lastAttemptAt  DateTime                     @db.Timestamptz(3)
+  nextAttemptAt  DateTime?                    @db.Timestamptz(3)
+  resolvedAt     DateTime?                    @db.Timestamptz(3)
+  reasonCode     String
+  createdAt      DateTime                     @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime                     @updatedAt @db.Timestamptz(3)
+  security       Security                     @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([securityId, sessionDate])
+  @@index([status, nextAttemptAt])
 }
 
 // Accepted provider observations; PostgreSQL rejects updates and deletes.
@@ -1602,6 +1635,7 @@ model MarketBar {
   low            Decimal                 @db.Decimal(24, 10)
   close          Decimal                 @db.Decimal(24, 10)
   volume         Decimal                 @db.Decimal(30, 6)
+  splitFactor    Decimal?                @db.Decimal(24, 10)
   provider       MarketDataProvider
   adjustmentMode MarketBarAdjustmentMode
   receivedAt     DateTime                @db.Timestamptz(3)
@@ -1609,6 +1643,80 @@ model MarketBar {
   security       Security               @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([securityId, timeframe, barStartAt])
+}
+
+// Manually curated observation sources; independent of Security.enabled.
+model SecurityUniverse {
+  id Int @id @default(autoincrement())
+  code String @unique
+  name String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  memberships SecurityUniverseMembership[]
+}
+
+model SecurityUniverseMembership {
+  id Int @id @default(autoincrement())
+  universeId Int
+  securityId Int
+  effectiveFrom DateTime @db.Date
+  effectiveTo DateTime? @db.Date
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  universe SecurityUniverse @relation(fields: [universeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  security Security @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([universeId, securityId, effectiveFrom], map: "SecurityUniverseMembership_identity_key")
+  @@index([securityId, effectiveFrom])
+}
+
+// Frozen, deduplicated Breadth population. Members and revisions are SQL immutable.
+model BreadthUniverseRevision {
+  id Int @id @default(autoincrement())
+  effectiveFrom DateTime @unique @db.Date
+  memberCount Int
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  members BreadthUniverseRevisionMember[]
+  observations MarketBreadthObservation[]
+  breadthV2ObservationSets MarketBreadthObservationSet[]
+}
+
+model BreadthUniverseRevisionMember {
+  revisionId Int
+  securityId Int
+  revision BreadthUniverseRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  security Security @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([revisionId, securityId])
+}
+
+// Canonical split evidence by security and execution date; SQL immutable.
+model MarketSplitEvent {
+  id Int @id @default(autoincrement())
+  securityId Int
+  executionDate DateTime @db.Date
+  splitFactor Decimal @db.Decimal(24, 10)
+  provider MarketDataProvider
+  provenance String
+  receivedAt DateTime @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  security Security @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([securityId, executionDate])
+}
+
+// Immutable proof that a strict provider split query completed for every date in this interval,
+// including dates with no split event. Later intervals must cover new sessions before publication.
+model MarketSplitCoverage {
+  id Int @id @default(autoincrement())
+  securityId Int
+  fromDate DateTime @db.Date
+  throughDate DateTime @db.Date
+  provider MarketDataProvider
+  receivedAt DateTime @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  security Security @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([securityId, fromDate, throughDate], map: "MarketSplitCoverage_identity_key")
+  @@index([securityId, fromDate])
 }
 
 enum MarketRegimeDimension {
@@ -1662,6 +1770,8 @@ model MarketRegimeDimensionAssessment {
 // session date is itself the unavailable signal for the BREADTH_V1 publisher.
 model MarketBreadthObservation {
   id                        Int                 @id @default(autoincrement())
+  breadthUniverseRevisionId Int?
+  breadthUniverseRevision BreadthUniverseRevision? @relation(fields: [breadthUniverseRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   sessionDate               DateTime            @db.Date
   previousSessionDate       DateTime            @db.Date
   provider                  MarketDataProvider
@@ -1686,6 +1796,53 @@ model MarketBreadthObservation {
 
   @@unique([provider, universeDefinitionVersion, sessionDate], map: "MarketBreadthObservation_identity_key")
   @@index([sessionDate], map: "MarketBreadthObservation_sessionDate_idx")
+}
+
+// Immutable Tiingo DAY_1, frozen-revision, multi-horizon production measurement evidence.
+model MarketBreadthObservationSet {
+  id                        Int                               @id @default(autoincrement())
+  breadthUniverseRevisionId Int
+  sessionDate               DateTime                          @db.Date
+  provider                  MarketDataProvider
+  measurementVersion        String
+  evidenceSchemaVersion     Int
+  universeCount             Int
+  targetBarCount            Int
+  targetCoverageRatio       Decimal                           @db.Decimal(12, 10)
+  dataThroughAt             DateTime                          @db.Timestamptz(3)
+  canonicalInputHash        String
+  evidenceJson              Json
+  startedAt                 DateTime                          @db.Timestamptz(3)
+  completedAt               DateTime                          @db.Timestamptz(3)
+  createdAt                 DateTime                          @default(now()) @db.Timestamptz(3)
+  breadthUniverseRevision   BreadthUniverseRevision           @relation(fields: [breadthUniverseRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  horizons                  MarketBreadthHorizonObservation[]
+
+  @@unique([measurementVersion, breadthUniverseRevisionId, sessionDate], map: "MarketBreadthObservationSet_identity_key")
+  @@index([sessionDate], map: "MarketBreadthObservationSet_sessionDate_idx")
+}
+
+model MarketBreadthHorizonObservation {
+  id                 Int                         @id @default(autoincrement())
+  observationSetId   Int
+  horizonSessions    Int
+  anchorSessionDate  DateTime                    @db.Date
+  universeCount      Int
+  anchorBarCount     Int
+  eligibleCount      Int
+  excludedCount      Int
+  advancingCount     Int
+  decliningCount     Int
+  unchangedCount     Int
+  directionalCount   Int
+  coverageRatio      Decimal                     @db.Decimal(12, 10)
+  advanceShare       Decimal                     @db.Decimal(12, 10)
+  netBreadth         Decimal                     @db.Decimal(12, 10)
+  canonicalInputHash String
+  evidenceJson       Json
+  observationSet     MarketBreadthObservationSet @relation(fields: [observationSetId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([observationSetId, horizonSessions], map: "MarketBreadthHorizonObservation_identity_key")
 }
 
 model CurrentMarketState {

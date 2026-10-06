@@ -464,8 +464,8 @@ export type TradingAccountRiskHealth = {
     currentAccountExposure: number;
     remainingDeployableNotional: number | null;
     allocationBudgetTotal: number;
-    activeSubscriptionBudgetTotal: number;
-    maxSimultaneousAllocationExposure: number;
+    activeSubscriptionBudgetTotal: number | null;
+    maxSimultaneousAllocationExposure: number | null;
     allocationBudgetSurplus: number | null;
     activeSubscriptionBudgetSurplus: number | null;
     maxSimultaneousExposureSurplus: number | null;

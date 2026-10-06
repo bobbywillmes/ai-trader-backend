@@ -31,9 +31,14 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   });
 
   it('replays all migrations from zero and has no Prisma schema drift', () => {
-    const output = execFileSync(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'diff', '--from-config-datasource', '--to-schema', 'prisma/schema.prisma', '--exit-code'], {
-      env: { ...process.env, DATABASE_URL: databaseUrl }, encoding: 'utf8', timeout: 60_000, stdio: 'pipe',
-    });
+    let output: string;
+    try {
+      output = execFileSync(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'diff', '--from-config-datasource', '--to-schema', 'prisma/schema.prisma', '--exit-code'], {
+        env: { ...process.env, DATABASE_URL: databaseUrl }, encoding: 'utf8', timeout: 60_000, stdio: 'pipe',
+      });
+    } catch (error) {
+      throw new Error(`Prisma migration drift: ${String((error as { stdout?: string }).stdout ?? error)}`);
+    }
     expect(output).toContain('No difference detected');
   }, 70_000);
 

@@ -46,6 +46,24 @@ describe('strict Massive evidence', () => {
     const bars = await fetchMinuteEvidence('SPY', '2026-09-14', '2026-09-14', async () => ({ status: 'OK', adjusted: false, ticker: 'SPY', results: [minuteRow] }));
     expect(bars).toHaveLength(1); expect(bars[0]?.volume).toBe('500');
   });
+  it.each([
+    [8186.408355999998, '8186.408355'],
+    [36087.637060999994, '36087.637060'],
+    [58363.178856000006, '58363.178856'],
+    ['1.1234567', '1.123456'],
+    ['1.123456789012345', '1.123456'],
+    [0, '0'],
+    [500, '500'],
+  ])('canonicalizes provider volume %s to %s in both timeframes', async (volume, expected) => {
+    const daily = await fetchDailyEvidence('SPY', '2026-09-14', '2026-09-14', async () => response([{ ...row, v: volume }]));
+    const minute = await fetchMinuteEvidence('SPY', '2026-09-14', '2026-09-14', async () => response([{ ...minuteRow, v: volume }]));
+    expect(daily[0]?.volume).toBe(expected);
+    expect(minute[0]?.volume).toBe(expected);
+  });
+  it.each([-1, '-0.0000001', 'NaN', 'Infinity', Number.POSITIVE_INFINITY, '1000000000000000000000000'])('rejects invalid provider volume %s in both timeframes', async volume => {
+    await expect(fetchDailyEvidence('SPY', '2026-09-14', '2026-09-14', async () => response([{ ...row, v: volume }]))).rejects.toThrow('volume');
+    await expect(fetchMinuteEvidence('SPY', '2026-09-14', '2026-09-14', async () => response([{ ...minuteRow, v: volume }]))).rejects.toThrow('volume');
+  });
   it('fails closed on a malformed/misaligned timestamp inside the regular-session window', async () => {
     await expect(fetchMinuteEvidence('SPY', '2026-09-14', '2026-09-14', async () => ({ status: 'OK', adjusted: false, ticker: 'SPY', results: [{ ...minuteRow, t: Date.parse('2026-09-14T13:35Z') }] }))).rejects.toThrow('not aligned');
   });

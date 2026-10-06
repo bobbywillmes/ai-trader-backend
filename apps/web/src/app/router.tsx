@@ -22,6 +22,7 @@ import { ExitProfilesPage } from "../features/exitProfiles/ExitProfilesPage";
 import { PositionsPage } from "../features/positions/PositionsPage";
 import { OrdersPage } from "../features/orders/OrdersPage";
 import { SecuritiesPage } from "../features/securities/SecuritiesPage";
+import { SecuritiesImportExportPage } from "../features/securities/SecuritiesImportExportPage";
 import { SystemEventsPage } from "../features/systemEvents/SystemEventsPage";
 import { ExternalSignalsPage } from "../features/externalSignals/ExternalSignalsPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
@@ -173,6 +174,7 @@ export const router = createBrowserRouter([
                 path: "securities",
                 element: authorize("securities", <SecuritiesPage />),
               },
+              { path: "securities/import-export", element: authorize("securities", <SecuritiesImportExportPage />) },
               {
                 path: "securities/:symbol",
                 element: authorize("securities", <SecurityDetailPage />),

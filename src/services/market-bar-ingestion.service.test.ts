@@ -12,12 +12,14 @@ describe('daily evidence ingestion', () => {
   it('keeps interior operational gaps, not only a maximum timestamp', () => {
     expect(planDailyGaps('2026-09-08', '2026-09-10', new Set(['2026-09-08', '2026-09-10']), [], etInstant('2026-09-11', 600)).missing).toEqual(['2026-09-09']);
   });
-  it('inserts only eligible observations using skipDuplicates and no update', async () => {
-    const createMany = vi.fn().mockResolvedValue({ count: 1 });
-    const db = { security: { findUnique: vi.fn().mockResolvedValue({ id: 1 }) }, marketCalendarException: { findMany: vi.fn().mockResolvedValue([]) }, marketBar: { createMany } } as unknown as PrismaClient;
+  it('inserts only eligible observations using immutable canonical upsert checks', async () => {
+    const upsert = vi.fn(async ({ create }: { create: unknown }) => create);
+    const tx = { marketBar: { findMany: vi.fn().mockResolvedValue([]), upsert }, setting: { findUnique: vi.fn() }, $queryRaw: vi.fn().mockResolvedValue([{ acquired: true }]) };
+    const db = { security: { findUnique: vi.fn().mockResolvedValue({ id: 1 }) }, marketCalendarException: { findMany: vi.fn().mockResolvedValue([]) },
+      $transaction: async (work: (client: typeof tx) => Promise<unknown>) => work(tx) } as unknown as PrismaClient;
     const fetchBars = vi.fn().mockResolvedValue(['2026-09-14', '2026-09-15'].map(date => ({ barStartAt: etInstant(date, 0), open: '100', high: '102', low: '99', close: '101', volume: '1000', receivedAt: new Date() })));
     expect(await ingestDailyRange('SPY', '2026-09-14', '2026-09-15', { db, fetchBars, now: etInstant('2026-09-15', 980) })).toMatchObject({ eligible: 1, ineligible: 1, inserted: 1 });
-    expect(createMany.mock.calls[0]?.[0]).toMatchObject({ skipDuplicates: true, data: [{ timeframe: 'DAY_1', provider: 'MASSIVE', adjustmentMode: 'UNADJUSTED' }] });
+    expect(upsert.mock.calls[0]?.[0]).toMatchObject({ create: { timeframe: 'DAY_1', provider: 'MASSIVE', adjustmentMode: 'UNADJUSTED' }, update: {} });
   });
   it('uses no Alpaca provider dependency', async () => {
     for (const path of ['src/integrations/massive/evidence.client.ts', 'src/services/market-bar-ingestion.service.ts', 'src/services/market-calendar.ts']) {

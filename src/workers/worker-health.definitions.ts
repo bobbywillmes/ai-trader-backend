@@ -22,9 +22,11 @@ export const MASSIVE_NEWS_WORKER_INTERVAL_MS = 60_000;
 export const TREND_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 export const VOLATILITY_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 export const BREADTH_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
+export const BREADTH_V2_SHADOW_WORKER_INTERVAL_MS = 60 * 60_000;
 export const PARTICIPATION_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 export const INTRADAY_STRESS_ASSESSMENT_WORKER_INTERVAL_MS = 2 * 60_000;
 export const MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS = 30_000;
+export const MARKET_SPLIT_COVERAGE_WORKER_INTERVAL_MS = 15 * 60_000;
 
 function thresholds(
   expectedIntervalMs: number,
@@ -42,6 +44,15 @@ function thresholds(
 }
 
 export const workerDefinitions = [
+  {
+    key: 'breadth_v2_shadow_publication',
+    displayName: 'BREADTH_V2 shadow publication',
+    description: 'Advances stored Tiingo breadth measurements and shadow assessments without trading authority.',
+    criticality: 'informational',
+    expectedIntervalMs: BREADTH_V2_SHADOW_WORKER_INTERVAL_MS,
+    enabledByDefault: false,
+    ...thresholds(BREADTH_V2_SHADOW_WORKER_INTERVAL_MS, 45 * 60_000),
+  },
   {
     key: 'trend_assessment_publication',
     displayName: 'Daily Trend assessment',
@@ -81,16 +92,34 @@ export const workerDefinitions = [
   {
     key: 'market_daily_evidence_sync',
     displayName: 'Daily market data',
-    description: 'Fills eligible missing SPY/QQQ/DIA/IWM/RSP daily bars from Massive without rewriting evidence.',
+    description: 'Fills eligible missing SPY/QQQ/DIA/IWM/RSP daily bars from the session-authoritative provider without rewriting evidence.',
     criticality: 'informational',
     expectedIntervalMs: 60_000,
     enabledByDefault: true,
     ...thresholds(60_000, 180_000),
   },
   {
+    key: 'market_split_coverage_extension',
+    displayName: 'Massive split coverage',
+    description: 'Extends immutable strict Massive split coverage for the currently active Massive daily-authority segment.',
+    criticality: 'informational',
+    expectedIntervalMs: MARKET_SPLIT_COVERAGE_WORKER_INTERVAL_MS,
+    enabledByDefault: true,
+    ...thresholds(MARKET_SPLIT_COVERAGE_WORKER_INTERVAL_MS, 240_000),
+  },
+  {
+    key: 'tiingo_daily_market_data_sync',
+    displayName: 'Tiingo daily Breadth observations',
+    description: 'Fills frozen Breadth revision DAY_1 observations after 20:15 Eastern without trading authority.',
+    criticality: 'informational',
+    expectedIntervalMs: 15 * 60_000,
+    enabledByDefault: true,
+    ...thresholds(15 * 60_000, 45 * 60_000),
+  },
+  {
     key: 'market_minute_evidence_sync',
     displayName: 'Intraday market data',
-    description: "Fills eligible missing SPY/RSP MINUTE_15 bars for today's regular session from Massive, without rewriting evidence.",
+    description: "Fills eligible missing SPY/RSP MINUTE_15 bars for today's regular session from the configured session provider, without rewriting evidence.",
     criticality: 'informational',
     expectedIntervalMs: MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS,
     enabledByDefault: true,

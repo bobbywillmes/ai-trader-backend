@@ -3,7 +3,8 @@ import { Prisma, type PrismaClient, type MarketRegimeDimensionAssessment } from 
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
-import { fetchSplitEvidence, type SplitEvent } from '../integrations/massive/evidence.client.js';
+import type { SplitEvent } from '../integrations/massive/evidence.client.js';
+import { readPersistedSplits } from './persisted-split-evidence.service.js';
 import { addDays, barEligibility, COMPLETION_GRACE_MINUTES, datesBetween, etDate, etInstant, marketSession, type CalendarException } from './market-calendar.js';
 import { normalizeSplits, type ResearchBar } from './trend-calculation.js';
 import { instrumentMeasurements } from './volatility-calculation.js';
@@ -13,6 +14,8 @@ import {
 } from './intraday-stress-calculation.js';
 import { INTRADAY_STRESS_ALGORITHM_VERSION, INTRADAY_STRESS_PUBLICATION_EVIDENCE_VERSION, INTRADAY_STRESS_V1_DEFINITION } from './intraday-stress-v1.definition.js';
 import { VERIFIED_NYSE_CLOSURES } from './market-calendar-bootstrap.definition.js';
+import { intradayAuthority } from './intraday-stress-provider-authority.js';
+import { dailyProviderProvenance, readCanonicalDailyBars } from './market-daily-authority.js';
 
 const identity = { dimension: 'INTRADAY_STRESS' as const, algorithmVersion: INTRADAY_STRESS_ALGORITHM_VERSION };
 export const INTRADAY_STRESS_PUBLICATION_LOCK_KEY = createHash('sha256').update('ai-trader:intraday-stress-v1-publication').digest().readBigInt64BE(0);
@@ -29,9 +32,10 @@ const continuationSchema = z.object({
   baseline: z.object({ spy: z.number().positive().nullable(), rsp: z.number().positive().nullable() }),
 });
 type Assessment = MarketRegimeDimensionAssessment;
-type Reason = 'CALENDAR_EVIDENCE_UNAVAILABLE' | 'PRIOR_ATR_UNAVAILABLE' | 'SPLIT_EVIDENCE_UNAVAILABLE' | 'MISSING_INTRADAY_EVIDENCE' | 'ROLLING_CONTINUITY_FAILURE' | 'CALCULATION_FAILED';
+type Reason = 'CALENDAR_EVIDENCE_UNAVAILABLE' | 'PRIOR_ATR_UNAVAILABLE' | 'SPLIT_EVIDENCE_UNAVAILABLE' | 'MISSING_INTRADAY_EVIDENCE' | 'CANONICAL_PROVIDER_CONFLICT' | 'TIINGO_RETENTION_PAUSED' | 'ROLLING_CONTINUITY_FAILURE' | 'CALCULATION_FAILED';
 export type IntradayStressPublicationResult = { published: number; suppressed: boolean; notDue: boolean; blocked: { sessionDate: string; index: number; status: 'UNAVAILABLE' | 'FAILED'; reasonCode: Reason } | null };
-type Options = { db?: PrismaClient; now?: Date; clock?: () => Date; fetchSplits?: typeof fetchSplitEvidence };
+type SplitReader = (symbol: IntradaySymbol, from: string, through: string) => Promise<SplitEvent[]>;
+type Options = { db?: PrismaClient; now?: Date; clock?: () => Date; fetchSplits?: SplitReader };
 type Tx = Prisma.TransactionClient;
 
 function actionableTargets(date: string, exceptions: CalendarException[]) {
@@ -94,7 +98,9 @@ async function fetchIntradayBars(tx: Tx, symbol: IntradaySymbol, date: string, n
   const security = await tx.security.findUnique({ where: { symbol }, select: { id: true } });
   if (!security) return [];
   const session = marketSession(date, exceptions)!;
-  const rows = await tx.marketBar.findMany({ where: { securityId: security.id, timeframe: 'MINUTE_15', provider: 'MASSIVE', adjustmentMode: 'UNADJUSTED', barStartAt: { gte: session.openAt, lt: session.closeAt } }, orderBy: [{ barStartAt: 'asc' }, { id: 'asc' }] });
+  const rows = await tx.marketBar.findMany({ where: { securityId: security.id, timeframe: 'MINUTE_15', barStartAt: { gte: session.openAt, lt: session.closeAt } }, orderBy: [{ barStartAt: 'asc' }, { id: 'asc' }] });
+  const expected = intradayAuthority(date).provider;
+  if (rows.some(row => row.provider !== expected || row.adjustmentMode !== 'UNADJUSTED')) throw new Error('CANONICAL_PROVIDER_CONFLICT');
   return rows.filter(row => barEligibility('MINUTE_15', row.barStartAt, now, exceptions).status === 'ELIGIBLE')
     .map(row => ({ barStartAtMs: row.barStartAt.getTime(), open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close), volume: Number(row.volume) }));
 }
@@ -104,11 +110,11 @@ type BaselineResult = { perSymbol: Record<IntradaySymbol, number | null>; reason
  * frozen for the whole current session once computed. Reused directly from the last VALID
  * same-session assessment rather than recomputed on every target within that session.
  */
-async function computeBaseline(tx: Tx, priorDate: string | null, latestDate: string, exceptions: CalendarException[], fetchSplits: typeof fetchSplitEvidence): Promise<BaselineResult> {
+async function computeBaseline(tx: Tx, priorDate: string | null, latestDate: string, exceptions: CalendarException[], fetchSplits: SplitReader): Promise<BaselineResult> {
   if (!priorDate) return { perSymbol: { SPY: null, RSP: null }, reasonCode: 'PRIOR_ATR_UNAVAILABLE', provenance: null };
   const dailyFrom = addDays(priorDate, -400);
   const securities = await tx.security.findMany({ where: { symbol: { in: [...SYMBOLS] } }, select: { id: true, symbol: true } });
-  const rows = await tx.marketBar.findMany({ where: { securityId: { in: securities.map(s => s.id) }, timeframe: 'DAY_1', provider: 'MASSIVE', adjustmentMode: 'UNADJUSTED', barStartAt: { gte: etInstant(dailyFrom, 0), lte: etInstant(priorDate, 0) } }, orderBy: [{ barStartAt: 'asc' }, { id: 'asc' }] });
+  const rows = await readCanonicalDailyBars(tx, securities.map(s => s.id), dailyFrom, priorDate);
   let splits: SplitEvent[][];
   try {
     splits = await Promise.all(SYMBOLS.map(symbol => fetchSplits(symbol, dailyFrom, latestDate)));
@@ -122,7 +128,7 @@ async function computeBaseline(tx: Tx, priorDate: string | null, latestDate: str
   const instruments: Record<string, unknown> = {};
   SYMBOLS.forEach((symbol, i) => {
     const security = securities.find(s => s.symbol === symbol);
-    const bars: ResearchBar[] = rows.filter(row => row.securityId === security?.id).map(row => ({ id: row.id, date: etDate(row.barStartAt), open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close), volume: Number(row.volume) }));
+    const bars: ResearchBar[] = rows.filter(row => row.securityId === security?.id).map(row => ({ id: row.id, date: row.sessionDate, open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close), volume: Number(row.volume) }));
     const normalized = new Map(normalizeSplits(bars, splits[i]!, latestDate).map(bar => [bar.date, bar]));
     const measurements = instrumentMeasurements(dates.map(date => normalized.get(date) ?? null));
     const last = measurements.at(-1);
@@ -130,7 +136,7 @@ async function computeBaseline(tx: Tx, priorDate: string | null, latestDate: str
     instruments[symbol] = { securityId: security?.id ?? null, atr14: last?.atr14 ?? null, atr14Pct: last?.ATR14Pct?.value ?? null, consecutiveSessions: last?.consecutiveSessions ?? 0, dailyBarCount: bars.length, splits: splits[i] };
   });
   const reasonCode: Reason | null = SYMBOLS.some(symbol => perSymbol[symbol] === null) ? 'PRIOR_ATR_UNAVAILABLE' : null;
-  return { perSymbol, reasonCode, provenance: { dailyFrom, through: priorDate, dates, instruments } };
+  return { perSymbol, reasonCode, provenance: { dailyMarketData: dailyProviderProvenance(rows, dailyFrom, priorDate), dailyFrom, through: priorDate, dates, instruments } };
 }
 
 /** Publishes at most one authoritative assessment per invocation: the current due 15-minute
@@ -175,6 +181,8 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
       const missingEarlyCloses = VERIFIED_NYSE_CLOSURES.earlyCloseDates.filter(date => date >= windowFrom && date <= latest.date
         && !exceptions.some(row => row.sessionDate === date && row.type === 'EARLY_CLOSE' && row.closeTimeMinutesEt === VERIFIED_NYSE_CLOSURES.earlyCloseTimeMinutesEt));
       let reasonCode: Reason | null = !withinCalendarAuthority || missingClosures.length || missingEarlyCloses.length ? 'CALENDAR_EVIDENCE_UNAVAILABLE' : null;
+      if (!reasonCode && intradayAuthority(latest.date).provider === 'TIINGO' && (await tx.setting.findUnique({ where: { key: 'tiingoDailyIngestionPaused' } }))?.value === 'true')
+        reasonCode = 'TIINGO_RETENTION_PAUSED';
       let status: 'VALID' | 'UNAVAILABLE' | 'FAILED' = reasonCode ? 'FAILED' : 'VALID';
 
       const predecessorSessionDate = predecessor?.sessionDate ? predecessor.sessionDate.toISOString().slice(0, 10) : null;
@@ -192,13 +200,16 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
       let baselineProvenance: Record<string, unknown> | null = null;
       if (!reasonCode && sameSession && continuation) {
         baseline = { SPY: continuation.baseline.spy, RSP: continuation.baseline.rsp };
-        baselineProvenance = { reused: true, fromAssessmentId: predecessor!.id };
+        const prior = (predecessor!.evidenceJson as { baseline?: { provenance?: { dailyMarketData?: unknown; dailyFrom?: string; through?: string } } }).baseline?.provenance;
+        baselineProvenance = { reused: true, fromAssessmentId: predecessor!.id, dailyMarketData: prior?.dailyMarketData ?? {
+          authorityVersion: 'PRE_PHASE8_MASSIVE_V1', cutoverSession: null, providersPresent: ['MASSIVE'],
+          providerSegments: prior?.dailyFrom && prior.through ? [{ provider: 'MASSIVE', from: prior.dailyFrom, through: prior.through, count: null }] : [] } };
       } else if (!reasonCode) {
         try {
           const priorDate = previousSessionDate(latest.date, exceptions);
-          const computed = await computeBaseline(tx, priorDate, latest.date, exceptions, options.fetchSplits ?? fetchSplitEvidence);
+          const computed = await computeBaseline(tx, priorDate, latest.date, exceptions, options.fetchSplits ?? ((symbol, from, through) => readPersistedSplits(tx, symbol, from, through)));
           baseline = computed.perSymbol;
-          baselineProvenance = { reused: false, ...(computed.provenance ?? {}) };
+          baselineProvenance = { reused: false, splitEvidenceSource: options.fetchSplits ? 'INJECTED' : 'MARKET_SPLIT_EVENT', ...(computed.provenance ?? {}) };
           if (computed.reasonCode) { status = computed.reasonCode === 'SPLIT_EVIDENCE_UNAVAILABLE' ? 'FAILED' : 'UNAVAILABLE'; reasonCode = computed.reasonCode; }
         } catch { status = 'FAILED'; reasonCode = 'CALCULATION_FAILED'; }
       }
@@ -235,7 +246,7 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
               : (issues.has('MISSING_INVALID_OR_DUPLICATE_BAR') || issues.has('MISSING_REFERENCE') || issues.has('INCOMPLETE_SESSION_PREFIX')) ? 'MISSING_INTRADAY_EVIDENCE'
               : issues.has('ROLLING_CONTINUITY_FAILURE') ? 'ROLLING_CONTINUITY_FAILURE' : 'MISSING_INTRADAY_EVIDENCE';
           }
-        } catch { status = 'FAILED'; reasonCode = 'CALCULATION_FAILED'; }
+        } catch (error) { status = 'FAILED'; reasonCode = error instanceof Error && error.message === 'CANONICAL_PROVIDER_CONFLICT' ? 'CANONICAL_PROVIDER_CONFLICT' : 'CALCULATION_FAILED'; }
       }
 
       const targetAt = latest.targetAt;
@@ -265,6 +276,7 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
         calendarAuthority: { from: VERIFIED_NYSE_CLOSURES.from, to: VERIFIED_NYSE_CLOSURES.to, withinAuthority: withinCalendarAuthority },
         missingClosures, missingEarlyCloses, reasonCode, attemptFingerprint: fingerprint,
         session: { sameSession, previousSessionDate: predecessorSessionDate, bootstrap: !predecessor },
+        intradayMarketData: intradayAuthority(latest.date),
         baseline: { spy: baseline.SPY, rsp: baseline.RSP, frozenForSession: true, provenance: baselineProvenance },
         replay: { fromIndex: replayFromIndex, throughIndex: latest.index, replayedCount, trail: replayTrail, note: 'Only the current due target is persisted as an authoritative row; any earlier skipped targets are replayed in-memory only (trail), to reconstruct hysteresis without fabricating retroactive history or duplicating full OHLC evidence.' },
         spy: finalSpy, rsp: finalRsp,

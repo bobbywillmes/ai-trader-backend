@@ -207,9 +207,12 @@ The code never substitutes synthetic historical data when Massive denies access.
 Daily bars use Massive custom aggregates with `adjusted=false`, including on
 pagination requests. Each page's ticker, adjustment flag, timestamp and OHLCV are
 validated. Any malformed observation rejects that fetched range before insertion.
-OHLC uses Decimal(24,10), volume Decimal(30,6); unrepresentable values are rejected
-rather than silently rounded. Duplicate rows within a response must agree; overlap
-with previously stored data is simply conflict-do-nothing, without comparison.
+OHLC uses Decimal(24,10); values beyond that precision are rejected. Canonical
+MarketBar volume uses Decimal(30,6): provider volume must be finite, nonnegative,
+and below 10^24, then any digits beyond six fractional places are truncated toward
+zero at ingestion. Duplicate rows within a response must agree after
+canonicalization; overlap with previously stored data is simply
+conflict-do-nothing, without comparison.
 
 Split events are read from `/stocks/v1/splits`, bounded by the loaded history and
 research end date. Earlier OHLC is multiplied by the product of `split_from /

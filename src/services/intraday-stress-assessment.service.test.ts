@@ -6,7 +6,7 @@ import { getIntradayStressAssessment, latestIntradayStressAssessment, listIntrad
 import { datesBetween, etInstant, marketSession, type CalendarException } from './market-calendar.js';
 import { verifiedClosureRows } from './market-calendar-bootstrap.service.js';
 
-type Row = { id: number; securityId: number; timeframe: 'DAY_1' | 'MINUTE_15'; barStartAt: Date; open: number; high: number; low: number; close: number; volume: number };
+type Row = { id: number; securityId: number; timeframe: 'DAY_1' | 'MINUTE_15'; barStartAt: Date; open: number; high: number; low: number; close: number; volume: number; provider?: 'MASSIVE' | 'TIINGO'; adjustmentMode?: 'UNADJUSTED' };
 type WhereClause = { dimension?: string; algorithmVersion?: string; status?: string; targetAt?: Date; securityId?: number | { in: number[] }; timeframe?: string; barStartAt?: { gte?: Date; lt?: Date; lte?: Date } };
 const SESSION_DATE = '2026-09-14'; // Monday
 const PRIOR_DATE = '2026-09-11'; // Prior Friday session
@@ -48,7 +48,7 @@ function makeTx() {
         if (where.barStartAt?.lt && row.barStartAt >= where.barStartAt.lt) return false;
         if (where.barStartAt?.lte && row.barStartAt > where.barStartAt.lte) return false;
         return true;
-      }).sort((a, b) => +a.barStartAt - +b.barStartAt || a.id - b.id)),
+      }).sort((a, b) => +a.barStartAt - +b.barStartAt || a.id - b.id).map(row => ({ ...row, provider: row.provider ?? 'MASSIVE', adjustmentMode: row.adjustmentMode ?? 'UNADJUSTED' }))),
     },
     marketCalendarException: { findMany: vi.fn(async () => exceptions.map(row => ({ ...row, sessionDate: new Date(row.sessionDate) }))) },
     marketRegimeDimensionAssessment: {
@@ -93,6 +93,11 @@ beforeEach(() => {
 });
 
 describe('authoritative INTRADAY_STRESS_V1 publication', () => {
+  it('fails closed on a wrong-provider canonical minute row', async () => {
+    dailyHistory();
+    rows.push({ ...minuteBar(1, 1, 100, 101, 99, 100), provider: 'TIINGO' });
+    expect(await run(dueAt(1))).toMatchObject({ blocked: { reasonCode: 'CANONICAL_PROVIDER_CONFLICT' } });
+  });
   it('requires verified calendar coverage before computing anything', async () => {
     exceptions = [];
     expect(await run(dueAt(1))).toMatchObject({ blocked: { reasonCode: 'CALENDAR_EVIDENCE_UNAVAILABLE' } });
@@ -194,7 +199,6 @@ describe('authoritative INTRADAY_STRESS_V1 publication', () => {
     await run(dueAt(1));
     expect(assessments[0]!.effectiveState).toBe('HIGH');
     // Session 2 (next trading day): daily history extended through the new prior session; calm open.
-    dailyHistory();
     rows.push({ id: rows.length + 1, securityId: 1, timeframe: 'DAY_1', barStartAt: etInstant(SESSION_DATE, 0), open: 100, high: 101, low: 99, close: 100, volume: 1000 });
     rows.push({ id: rows.length + 1, securityId: 2, timeframe: 'DAY_1', barStartAt: etInstant(SESSION_DATE, 0), open: 100, high: 101, low: 99, close: 100, volume: 1000 });
     const nextOpenMs = etInstant('2026-09-15', 570).getTime();
