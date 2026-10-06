@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   accountSubscriptionFindMany: vi.fn(),
   trackedPositionFindMany: vi.fn(),
   getRuntimeTradingConfig: vi.fn(),
-  getTickerLatestPrice: vi.fn(),
+  getTradingReferencePrice: vi.fn(),
   validateAccountRiskConfiguration: vi.fn(),
   getTradingAccountEntryRiskUsage: vi.fn(),
 }));
@@ -32,8 +32,8 @@ vi.mock('./config.service.js', () => ({
   getRuntimeTradingConfig: mocks.getRuntimeTradingConfig,
 }));
 
-vi.mock('./live-market-data.service.js', () => ({
-  getTickerLatestPrice: mocks.getTickerLatestPrice,
+vi.mock('./trading-reference-price.service.js', () => ({
+  getTradingReferencePrice: mocks.getTradingReferencePrice,
 }));
 
 vi.mock('./trading-account-risk-configuration.service.js', () => ({
@@ -196,11 +196,12 @@ describe('trading account risk health service', () => {
       pendingEntryNotional: 0,
       currentAccountExposure: 0,
     });
-    mocks.getTickerLatestPrice.mockResolvedValue({
+    mocks.getTradingReferencePrice.mockResolvedValue({
       symbol: 'SPY',
-      latestPrice: 100,
-      latestPriceAt: '2026-07-04T15:59:00.000Z',
-      latestPriceSource: 'lastTrade',
+      provider: 'TIINGO_CONSOLIDATED', basis: 'TIINGO_TNGO_LAST', price: 100,
+      observedAt: '2026-07-04T15:59:00.000Z', fetchedAt: NOW.toISOString(),
+      ageMs: 60_000, clockSkewMs: null, sessionPhase: 'REGULAR', usable: true,
+      rejectionReason: null,
     });
   });
 
@@ -414,24 +415,25 @@ describe('trading account risk health service', () => {
     const result = await getTradingAccountRiskHealth(1, { now: NOW });
 
     expect(result?.capital.activeSubscriptionBudgetTotal).toBe(2_500);
-    expect(mocks.getTickerLatestPrice).not.toHaveBeenCalled();
+    expect(mocks.getTradingReferencePrice).not.toHaveBeenCalled();
   });
 
   it('estimates FIXED_QTY subscription budgets with latest price', async () => {
     mocks.accountSubscriptionFindMany.mockResolvedValue([
       fixedQtySubscriptionRecord({ fixedQty: 4 }),
     ]);
-    mocks.getTickerLatestPrice.mockResolvedValue({
+    mocks.getTradingReferencePrice.mockResolvedValue({
       symbol: 'SPY',
-      latestPrice: 125,
-      latestPriceAt: '2026-07-04T15:59:00.000Z',
-      latestPriceSource: 'lastTrade',
+      provider: 'TIINGO_CONSOLIDATED', basis: 'TIINGO_TNGO_LAST', price: 125,
+      observedAt: '2026-07-04T15:59:00.000Z', fetchedAt: NOW.toISOString(),
+      ageMs: 60_000, clockSkewMs: null, sessionPhase: 'REGULAR', usable: true,
+      rejectionReason: null,
     });
 
     const result = await getTradingAccountRiskHealth(1, { now: NOW });
 
     expect(result?.capital.activeSubscriptionBudgetTotal).toBe(500);
-    expect(mocks.getTickerLatestPrice).toHaveBeenCalledWith('SPY');
+    expect(mocks.getTradingReferencePrice).toHaveBeenCalledWith('SPY', NOW);
   });
 
   it('blocks live FIXED_QTY subscriptions when latest price is unavailable', async () => {
@@ -444,11 +446,12 @@ describe('trading account risk health service', () => {
     mocks.accountSubscriptionFindMany.mockResolvedValue([
       fixedQtySubscriptionRecord({ fixedQty: 4 }),
     ]);
-    mocks.getTickerLatestPrice.mockResolvedValue({
+    mocks.getTradingReferencePrice.mockResolvedValue({
       symbol: 'SPY',
-      latestPrice: null,
-      latestPriceAt: null,
-      latestPriceSource: null,
+      provider: 'TIINGO_CONSOLIDATED', basis: null, price: null,
+      observedAt: null, fetchedAt: NOW.toISOString(), ageMs: null,
+      clockSkewMs: null, sessionPhase: 'REGULAR', usable: false,
+      rejectionReason: 'PROVIDER_ERROR',
     });
 
     const result = await getTradingAccountRiskHealth(1, { now: NOW });
@@ -456,6 +459,42 @@ describe('trading account risk health service', () => {
     expect(result?.blockers.map((check) => check.id)).toContain(
       'account_subscription_21_latest_price'
     );
+  });
+
+  it('keeps outside-session FIXED_QTY valuation temporarily non-evaluable without degrading readiness', async () => {
+    mocks.accountSubscriptionFindMany.mockResolvedValue([fixedQtySubscriptionRecord()]);
+    mocks.getTradingReferencePrice.mockResolvedValue({
+      symbol: 'SPY', provider: 'TIINGO_CONSOLIDATED', basis: 'TIINGO_TNGO_LAST', price: 100,
+      observedAt: NOW.toISOString(), fetchedAt: NOW.toISOString(), ageMs: 0, clockSkewMs: null,
+      sessionPhase: 'CLOSED', usable: false, rejectionReason: 'OUTSIDE_TRADING_PRICE_SESSION',
+    });
+
+    const result = await getTradingAccountRiskHealth(1, { now: NOW });
+
+    expect(result?.blockers.map(check => check.id)).not.toContain('account_subscription_21_latest_price');
+    expect(result?.warnings.map(check => check.id)).not.toContain('account_subscription_21_latest_price');
+    expect(result?.info).toEqual(expect.arrayContaining([expect.objectContaining({
+      id: 'account_subscription_21_latest_price',
+      status: 'info',
+      details: expect.objectContaining({ evaluationState: 'TEMPORARILY_NOT_EVALUABLE' }),
+    })]));
+  });
+
+  it('warns paper FIXED_QTY subscriptions for genuine in-session price failure', async () => {
+    mocks.accountSubscriptionFindMany.mockResolvedValue([fixedQtySubscriptionRecord()]);
+    mocks.getTradingReferencePrice.mockResolvedValue({
+      symbol: 'SPY', provider: 'TIINGO_CONSOLIDATED', basis: null, price: null,
+      observedAt: null, fetchedAt: NOW.toISOString(), ageMs: null, clockSkewMs: null,
+      sessionPhase: 'REGULAR', usable: false, rejectionReason: 'PROVIDER_ERROR',
+    });
+
+    const result = await getTradingAccountRiskHealth(1, { now: NOW });
+
+    expect(result?.warnings).toEqual(expect.arrayContaining([expect.objectContaining({
+      id: 'account_subscription_21_latest_price',
+      severity: 'warning', status: 'warn',
+      details: expect.objectContaining({ evaluationState: 'DATA_QUALITY_FAILURE' }),
+    })]));
   });
 
   it('excludes disabled subscriptions from active subscription budget total', async () => {

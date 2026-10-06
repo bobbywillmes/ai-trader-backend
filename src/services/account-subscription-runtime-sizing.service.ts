@@ -3,9 +3,9 @@ import { PositionSizingType, Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import {
-  getTickerLatestPrice,
-  type TickerLatestPrice,
-} from './live-market-data.service.js';
+  getTradingReferencePrice,
+} from './trading-reference-price.service.js';
+import type { TradingReferencePrice } from './trading-reference-price.policy.js';
 
 const RUNTIME_ACCOUNT_SUBSCRIPTION_SELECT = {
   id: true,
@@ -42,6 +42,12 @@ export type AccountSubscriptionSizingSnapshot = {
   latestPrice: number | null;
   latestPriceAt: string | null;
   latestPriceSource: string | null;
+  latestPriceProvider: string | null;
+  latestPriceBasis: string | null;
+  latestPriceFetchedAt: string | null;
+  latestPriceAgeMs: number | null;
+  latestPriceSessionPhase: string | null;
+  latestPriceRejectionReason: string | null;
   calculatedQty: number;
   estimatedNotional: number | null;
 };
@@ -79,7 +85,7 @@ function runtimeSizingError(
 
 function buildSnapshot(args: {
   accountSubscription: RuntimeAccountSubscriptionRecord;
-  latest: TickerLatestPrice | null;
+  latest: TradingReferencePrice | null;
   calculatedQty: number;
   estimatedNotional: number | null;
 }): AccountSubscriptionSizingSnapshot {
@@ -90,9 +96,15 @@ function buildSnapshot(args: {
     maxPositionNotional: args.accountSubscription.maxPositionNotional,
     minPositionNotional: args.accountSubscription.minPositionNotional,
     maxQty: args.accountSubscription.maxQty,
-    latestPrice: args.latest?.latestPrice ?? null,
-    latestPriceAt: args.latest?.latestPriceAt ?? null,
-    latestPriceSource: args.latest?.latestPriceSource ?? null,
+    latestPrice: args.latest?.price ?? null,
+    latestPriceAt: args.latest?.observedAt ?? null,
+    latestPriceSource: args.latest?.basis ?? null,
+    latestPriceProvider: args.latest?.provider ?? null,
+    latestPriceBasis: args.latest?.basis ?? null,
+    latestPriceFetchedAt: args.latest?.fetchedAt ?? null,
+    latestPriceAgeMs: args.latest?.ageMs ?? null,
+    latestPriceSessionPhase: args.latest?.sessionPhase ?? null,
+    latestPriceRejectionReason: args.latest?.rejectionReason ?? null,
     calculatedQty: args.calculatedQty,
     estimatedNotional: args.estimatedNotional,
   };
@@ -118,17 +130,22 @@ async function getRequiredLatestPrice(args: {
   tradingAccountSubscriptionId: number;
 }) {
   try {
-    const latest = await getTickerLatestPrice(args.symbol);
+    const latest = await getTradingReferencePrice(args.symbol);
 
-    if (!isPositiveFiniteNumber(latest.latestPrice)) {
+    if (!latest.usable || !isPositiveFiniteNumber(latest.price)) {
       throw runtimeSizingError(409, 'latest_price_unavailable', {
         tradingAccountId: args.tradingAccountId,
         subscriptionId: args.subscriptionId,
         tradingAccountSubscriptionId: args.tradingAccountSubscriptionId,
         symbol: args.symbol,
-        latestPrice: latest.latestPrice,
-        latestPriceAt: latest.latestPriceAt,
-        latestPriceSource: latest.latestPriceSource,
+        latestPrice: latest.price,
+        latestPriceProvider: latest.provider,
+        latestPriceBasis: latest.basis,
+        latestPriceObservedAt: latest.observedAt,
+        latestPriceFetchedAt: latest.fetchedAt,
+        latestPriceAgeMs: latest.ageMs,
+        latestPriceSessionPhase: latest.sessionPhase,
+        latestPriceRejectionReason: latest.rejectionReason,
       });
     }
 
@@ -149,7 +166,7 @@ async function getRequiredLatestPrice(args: {
 
 function enforceMinPositionNotional(args: {
   accountSubscription: RuntimeAccountSubscriptionRecord;
-  latest: TickerLatestPrice | null;
+  latest: TradingReferencePrice | null;
   qty: number;
   estimatedNotional: number | null;
 }) {
@@ -159,7 +176,7 @@ function enforceMinPositionNotional(args: {
     return;
   }
 
-  if (!isPositiveFiniteNumber(args.latest?.latestPrice ?? null)) {
+  if (!isPositiveFiniteNumber(args.latest?.price ?? null)) {
     throw runtimeSizingError(409, 'latest_price_unavailable', {
       tradingAccountId: args.accountSubscription.tradingAccountId,
       subscriptionId: args.accountSubscription.subscriptionId,
@@ -178,7 +195,7 @@ function enforceMinPositionNotional(args: {
       tradingAccountSubscriptionId: args.accountSubscription.id,
       symbol: args.accountSubscription.subscription.symbol,
       qty: args.qty,
-      latestPrice: args.latest?.latestPrice ?? null,
+      latestPrice: args.latest?.price ?? null,
       estimatedNotional: args.estimatedNotional,
       minPositionNotional,
     });
@@ -243,7 +260,7 @@ export async function resolveRuntimeAccountSubscriptionSizing(
     accountSubscription,
     symbol: args.symbol,
   });
-  const latestPrice = latest?.latestPrice ?? null;
+  const latestPrice = latest?.price ?? null;
   let qty: number;
 
   if (accountSubscription.sizingType === PositionSizingType.FIXED_QTY) {

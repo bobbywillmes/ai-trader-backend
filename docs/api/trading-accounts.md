@@ -386,8 +386,13 @@ MAX_NOTIONAL uses maxPositionNotional
 FIXED_QTY uses fixedQty * latestPrice
 ```
 
-If latest price is unavailable for a `FIXED_QTY` estimate, the check is a
-warning for `PAPER` and a blocker for `LIVE`.
+Active `FIXED_QTY` estimates use the shared Tiingo consolidated trading-price
+policy. Outside the regular session, the check is informational with
+`evaluationState=TEMPORARILY_NOT_EVALUABLE` and does not by itself downgrade
+readiness. During the regular session, rejected provider or data evidence uses
+`evaluationState=DATA_QUALITY_FAILURE`; the check is a warning for `PAPER` and
+a blocker for `LIVE`. `MAX_NOTIONAL` continues to use its configured budget
+directly. There is no Massive or previous-close fallback.
 
 Paper profile is advisory and warning-oriented. Live profile is stricter and
 blocks for missing broker portfolio value, stale broker portfolio value,

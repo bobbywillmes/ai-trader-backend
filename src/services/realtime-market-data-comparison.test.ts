@@ -82,13 +82,21 @@ describe('read-only realtime comparison', () => {
     expect(r.prices.contemporaneousConsolidatedVsIex.absolute).toBeNull();
     expect(r.providers.tiingoIex).toEqual({ ok: false, error: 'HTTP_429', fetchedAt: completedAt.toISOString() });
   });
-  it('keeps production consumers Massive-backed and the command DB-free', () => {
+  it('keeps uncut consumers Massive-backed, routes trading consumers through one policy, and keeps the command DB-free', () => {
     const facade = readFileSync('src/services/live-market-data.service.ts', 'utf8');
     expect(facade).toContain("PRODUCTION_REALTIME_AUTHORITY = 'MASSIVE'"); expect(facade).not.toMatch(/tiingo|TIINGO/);
     for (const file of ['momentum-price-confirmation.service.ts', 'momentum-market-chart.service.ts',
-      'account-subscription-market-context.service.ts', 'account-subscription-runtime-sizing.service.ts', 'trading-account-risk-health.service.ts']) {
+      'account-subscription-market-context.service.ts']) {
       expect(readFileSync(`src/services/${file}`, 'utf8')).toContain("from './live-market-data.service.js'");
     }
+    for (const file of ['account-subscription-runtime-sizing.service.ts', 'trading-account-risk-health.service.ts']) {
+      const source = readFileSync(`src/services/${file}`, 'utf8');
+      expect(source).toContain("from './trading-reference-price.service.js'");
+      expect(source).not.toContain('getTickerLatestPrice');
+    }
+    const tradingPrice = readFileSync('src/services/trading-reference-price.service.ts', 'utf8');
+    expect(tradingPrice).toContain("verify(normalized, 'TIINGO_CONSOLIDATED', now)");
+    expect(tradingPrice).not.toMatch(/'MASSIVE'|getTickerLatestPrice/);
     expect(readFileSync('scripts/compare-realtime-market-data.ts', 'utf8')).not.toMatch(/db\/prisma|\.create\(|\.update\(|\.upsert\(/);
     expect(readFileSync('src/services/realtime-volume-intensity-comparison.ts', 'utf8')).not.toContain('momentum-volume-score');
   });

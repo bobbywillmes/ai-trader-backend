@@ -3,7 +3,7 @@ import { PositionSizingType } from '@prisma/client';
 
 const mocks = vi.hoisted(() => ({
   accountSubscriptionFindFirst: vi.fn(),
-  getTickerLatestPrice: vi.fn(),
+  getTradingReferencePrice: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -14,8 +14,8 @@ vi.mock('../db/prisma.js', () => ({
   },
 }));
 
-vi.mock('./live-market-data.service.js', () => ({
-  getTickerLatestPrice: mocks.getTickerLatestPrice,
+vi.mock('./trading-reference-price.service.js', () => ({
+  getTradingReferencePrice: mocks.getTradingReferencePrice,
 }));
 
 import {
@@ -55,9 +55,16 @@ function accountSubscriptionRecord(overrides: Record<string, unknown> = {}) {
 function latestPrice(overrides: Record<string, unknown> = {}) {
   return {
     symbol: 'DIA',
-    latestPrice: 522.67,
-    latestPriceAt: '2026-06-30T15:59:00.000Z',
-    latestPriceSource: 'lastTrade',
+    provider: 'TIINGO_CONSOLIDATED',
+    price: 522.67,
+    basis: 'TIINGO_TNGO_LAST',
+    observedAt: '2026-06-30T15:59:00.000Z',
+    fetchedAt: '2026-06-30T16:00:00.000Z',
+    ageMs: 60_000,
+    clockSkewMs: null,
+    sessionPhase: 'REGULAR',
+    usable: true,
+    rejectionReason: null,
     ...overrides,
   };
 }
@@ -82,7 +89,7 @@ describe('account subscription runtime sizing service', () => {
     mocks.accountSubscriptionFindFirst.mockResolvedValue(
       accountSubscriptionRecord()
     );
-    mocks.getTickerLatestPrice.mockResolvedValue(latestPrice());
+    mocks.getTradingReferencePrice.mockResolvedValue(latestPrice());
   });
 
   it('prices FIXED_QTY sizing so projected exposure can be enforced', async () => {
@@ -100,7 +107,7 @@ describe('account subscription runtime sizing service', () => {
       },
       select: expect.any(Object),
     });
-    expect(mocks.getTickerLatestPrice).toHaveBeenCalledWith('DIA');
+    expect(mocks.getTradingReferencePrice).toHaveBeenCalledWith('DIA');
     expect(result).toEqual(
       expect.objectContaining({
         tradingAccountSubscriptionId: 20,
@@ -111,6 +118,11 @@ describe('account subscription runtime sizing service', () => {
           sizingType: PositionSizingType.FIXED_QTY,
           fixedQty: 1,
           latestPrice: 522.67,
+          latestPriceProvider: 'TIINGO_CONSOLIDATED',
+          latestPriceBasis: 'TIINGO_TNGO_LAST',
+          latestPriceAgeMs: 60_000,
+          latestPriceSessionPhase: 'REGULAR',
+          latestPriceRejectionReason: null,
           calculatedQty: 1,
           estimatedNotional: 522.67,
         }),
@@ -133,7 +145,7 @@ describe('account subscription runtime sizing service', () => {
       symbol: 'DIA',
     });
 
-    expect(mocks.getTickerLatestPrice).toHaveBeenCalledWith('DIA');
+    expect(mocks.getTradingReferencePrice).toHaveBeenCalledWith('DIA');
     expect(result.tradingAccountSubscriptionId).toBe(20);
     expect(result.qty).toBe(3);
     expect(result.estimatedNotional).toBeCloseTo(1568.01);
@@ -143,7 +155,7 @@ describe('account subscription runtime sizing service', () => {
         maxPositionNotional: 1_600,
         latestPrice: 522.67,
         latestPriceAt: '2026-06-30T15:59:00.000Z',
-        latestPriceSource: 'lastTrade',
+        latestPriceSource: 'TIINGO_TNGO_LAST',
         calculatedQty: 3,
       })
     );
@@ -216,11 +228,13 @@ describe('account subscription runtime sizing service', () => {
         maxPositionNotional: 1_000,
       })
     );
-    mocks.getTickerLatestPrice.mockResolvedValue(
+    mocks.getTradingReferencePrice.mockResolvedValue(
       latestPrice({
-        latestPrice: null,
-        latestPriceAt: null,
-        latestPriceSource: null,
+        price: null,
+        basis: null,
+        observedAt: null,
+        usable: false,
+        rejectionReason: 'PROVIDER_ERROR',
       })
     );
 
@@ -232,6 +246,29 @@ describe('account subscription runtime sizing service', () => {
       }),
       'latest_price_unavailable'
     );
+  });
+
+  it('fails closed with policy provenance when outside the trading-price session', async () => {
+    mocks.getTradingReferencePrice.mockResolvedValue(latestPrice({
+      price: null,
+      observedAt: null,
+      sessionPhase: 'PREMARKET',
+      usable: false,
+      rejectionReason: 'OUTSIDE_TRADING_PRICE_SESSION',
+    }));
+
+    await expect(resolveRuntimeAccountSubscriptionSizing({
+      tradingAccountId: 1, subscriptionId: 30, symbol: 'DIA',
+    })).rejects.toMatchObject({
+      statusCode: 409,
+      message: 'latest_price_unavailable',
+      details: expect.objectContaining({
+        latestPriceProvider: 'TIINGO_CONSOLIDATED',
+        latestPriceBasis: 'TIINGO_TNGO_LAST',
+        latestPriceSessionPhase: 'PREMARKET',
+        latestPriceRejectionReason: 'OUTSIDE_TRADING_PRICE_SESSION',
+      }),
+    });
   });
 
   it('rejects MAX_NOTIONAL sizing when budget is below one share', async () => {
@@ -298,5 +335,19 @@ describe('account subscription runtime sizing service', () => {
       }),
       'min_position_notional_not_met'
     );
+  });
+
+  it('accepts the minimum-notional boundary exactly', async () => {
+    mocks.accountSubscriptionFindFirst.mockResolvedValue(accountSubscriptionRecord({
+      sizingType: PositionSizingType.MAX_NOTIONAL,
+      fixedQty: null,
+      maxPositionNotional: 1045.34,
+      minPositionNotional: 1045.34,
+    }));
+
+    const result = await resolveRuntimeAccountSubscriptionSizing({
+      tradingAccountId: 1, subscriptionId: 30, symbol: 'DIA',
+    });
+    expect(result).toMatchObject({ qty: 2, estimatedNotional: 1045.34 });
   });
 });

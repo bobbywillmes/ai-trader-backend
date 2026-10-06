@@ -8,7 +8,7 @@ import {
 
 import { prisma } from '../db/prisma.js';
 import { getRuntimeTradingConfig } from './config.service.js';
-import { getTickerLatestPrice } from './live-market-data.service.js';
+import { getTradingReferencePrice } from './trading-reference-price.service.js';
 import { validateAccountRiskConfiguration } from './trading-account-risk-configuration.service.js';
 import { resolveEffectiveAccountEntryLimits } from './trading-account-entry-risk-limits.service.js';
 import { getTradingAccountEntryRiskUsage } from './trading-account-entry-risk-usage.service.js';
@@ -256,6 +256,7 @@ async function getFixedQtyPlannedNotional(args: {
   accountSubscription: RiskHealthAccountSubscription;
   checks: TradingAccountRiskHealthCheck[];
   profile: TradingAccountEnvironment;
+  now: Date;
 }) {
   const fixedQty = args.accountSubscription.fixedQty;
   const symbol = args.accountSubscription.subscription.symbol;
@@ -281,10 +282,29 @@ async function getFixedQtyPlannedNotional(args: {
   }
 
   try {
-    const latest = await getTickerLatestPrice(symbol);
-    const latestPrice = latest.latestPrice;
+    const latest = await getTradingReferencePrice(symbol, args.now);
+    const latestPrice = latest.price;
 
-    if (!isPositiveFiniteNumber(latestPrice)) {
+    if (!latest.usable || !isPositiveFiniteNumber(latestPrice)) {
+      if (latest.rejectionReason === 'OUTSIDE_TRADING_PRICE_SESSION') {
+        args.checks.push(
+          createCheck({
+            id: `account_subscription_${args.accountSubscription.id}_latest_price`,
+            label: 'FIXED_QTY price valuation is currently evaluable',
+            severity: 'info',
+            status: 'info',
+            message: `FIXED_QTY valuation for active subscription ${args.accountSubscription.subscription.key} is temporarily unavailable outside the regular trading-price session.`,
+            details: {
+              evaluationState: 'TEMPORARILY_NOT_EVALUABLE',
+              tradingAccountSubscriptionId: args.accountSubscription.id,
+              symbol,
+              priceEvidence: latest,
+            },
+          })
+        );
+
+        return null;
+      }
       const severity = liveSeverity(args.profile);
 
       args.checks.push(
@@ -298,8 +318,8 @@ async function getFixedQtyPlannedNotional(args: {
             tradingAccountSubscriptionId: args.accountSubscription.id,
             symbol,
             latestPrice,
-            latestPriceAt: latest.latestPriceAt,
-            latestPriceSource: latest.latestPriceSource,
+            evaluationState: 'DATA_QUALITY_FAILURE',
+            priceEvidence: latest,
           },
         })
       );
@@ -319,6 +339,7 @@ async function getFixedQtyPlannedNotional(args: {
         status: failingStatus(severity),
         message: `Latest price lookup failed for active FIXED_QTY subscription ${args.accountSubscription.subscription.key}.`,
         details: {
+          evaluationState: 'DATA_QUALITY_FAILURE',
           tradingAccountSubscriptionId: args.accountSubscription.id,
           symbol,
           error:
@@ -337,6 +358,7 @@ async function getPlannedExposures(args: {
   accountSubscriptions: RiskHealthAccountSubscription[];
   checks: TradingAccountRiskHealthCheck[];
   profile: TradingAccountEnvironment;
+  now: Date;
 }) {
   const exposures: PlannedExposure[] = [];
 
@@ -377,6 +399,7 @@ async function getPlannedExposures(args: {
         accountSubscription,
         checks: args.checks,
         profile: args.profile,
+        now: args.now,
       }),
     });
   }
@@ -1138,6 +1161,7 @@ export async function getTradingAccountRiskHealth(
     accountSubscriptions: activeSubscriptions,
     checks,
     profile: account.environment,
+    now,
   });
   const activeSubscriptionBudgetTotal = sumPlannedExposure(plannedExposures);
   const maxSimultaneousAllocationExposure =

@@ -122,7 +122,10 @@ global system controls
 
 Runtime account-subscription sizing occurs before risk evaluation. FIXED_QTY
 and MAX_NOTIONAL entries both carry an estimated proposed notional. The backend
-does not silently clamp quantity or notional.
+does not silently clamp quantity or notional. Both use the shared Tiingo
+consolidated trading reference-price policy; rejected or outside-session
+evidence fails sizing with HTTP 409 `latest_price_unavailable` and has no
+Massive fallback. The later Alpaca entry-session guard remains separate.
 
 The order worker repeats the complete entry-risk evaluation immediately before
 broker submission. Sell-side exits, close-position operations, protective
