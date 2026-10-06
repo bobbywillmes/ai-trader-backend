@@ -143,6 +143,13 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await sql.query(`INSERT INTO "BreadthUniverseRevision" ("effectiveFrom","memberCount") VALUES ('2026-07-01',1)`);
     await expect(freezeBreadthUniverse({ db, effectiveDate: '2026-07-01' })).rejects.toThrow('Conflicting immutable');
   });
+  it('refuses non-STOCK members when freezing an observation revision', async () => {
+    const etf = await db.security.create({ data: { symbol: 'TESTETF', name: 'Test ETF', assetType: 'ETF', enabled: false } });
+    const universe = await db.securityUniverse.findUniqueOrThrow({ where: { code: 'SP500' } });
+    const membership = await db.securityUniverseMembership.create({ data: { securityId: etf.id, universeId: universe.id, effectiveFrom: new Date('2026-06-01') } });
+    await expect(freezeBreadthUniverse({ db, effectiveDate: '2026-06-01' })).rejects.toThrow('requires STOCK securities');
+    await db.securityUniverseMembership.delete({ where: { id: membership.id } });
+  });
   it('refuses a source code with a changed display name', async () => {
     await db.securityUniverse.update({ where: { code: 'SP500' }, data: { name: 'Renamed index' } });
     const preview = await importSecurityUniverses(quarterly, { db, effectiveDate: '2026-10-01' });

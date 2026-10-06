@@ -17,4 +17,8 @@ describe('Tiingo daily worker health', () => {
     sync.mockResolvedValueOnce({ notDue: true, status: { missing: 1, existingOtherProvider: 1 } });
     await expect(runTiingoDailyWorker()).rejects.toThrow('operational failure');
   });
+  it('treats the absence of an applicable frozen revision as dormant', async () => {
+    sync.mockResolvedValueOnce({ notDue: true, dormant: true, dormantReason: 'no_applicable_frozen_revision' });
+    await expect(runTiingoDailyWorker()).resolves.toEqual({ outcome: 'skipped', skipReason: 'not_due' });
+  });
 });

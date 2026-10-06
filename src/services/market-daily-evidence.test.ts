@@ -3,13 +3,13 @@ import { Prisma } from '@prisma/client';
 import { MARKET_DAILY_EVIDENCE_SYMBOLS } from './market-daily-evidence.definition.js';
 import { TREND_SYMBOLS } from './trend-lab.config.js';
 import { etInstant } from './market-calendar.js';
-const mocks = vi.hoisted(() => ({ db: { security: { findUnique: vi.fn() }, marketCalendarException: { findMany: vi.fn() }, marketBar: { findMany: vi.fn(), upsert: vi.fn() }, setting: { upsert: vi.fn(), update: vi.fn(), findUnique: vi.fn() }, systemEvent: { create: vi.fn(), findMany: vi.fn() }, $queryRaw: vi.fn(), $transaction: vi.fn() }, fetch: vi.fn() }));
+const mocks = vi.hoisted(() => ({ db: { security: { findUnique: vi.fn() }, marketCalendarException: { findMany: vi.fn() }, marketBar: { findMany: vi.fn(), upsert: vi.fn() }, setting: { upsert: vi.fn(), update: vi.fn(), findUnique: vi.fn() }, systemEvent: { create: vi.fn(), findMany: vi.fn() }, $queryRaw: vi.fn(), $transaction: vi.fn() }, fetch: vi.fn(), canonicalLock: vi.fn(async (run: () => unknown) => run()) }));
 vi.mock('../db/prisma.js', () => ({ prisma: mocks.db }));
 vi.mock('../config/env.js', () => ({ env: { MARKET_DAILY_TIINGO_CUTOVER_SESSION: '2026-10-07', MARKET_DAILY_MASSIVE_RESUME_SESSION: '2026-10-12' } }));
 vi.mock('./market-data-lock.service.js', () => ({ withMarketDataLock: async (run: () => unknown) => run() }));
 vi.mock('../integrations/massive/evidence.client.js', () => ({ fetchDailyEvidence: mocks.fetch }));
 vi.mock('./tiingo-daily.service.js', () => ({
-  withTiingoDailyLock: async (run: () => unknown) => run(),
+  withTiingoCanonicalDailyLock: mocks.canonicalLock,
   ensureTiingoSplitEvent: vi.fn(async () => false),
   canonicalTiingoBar: (bar: { open: number; high: number; low: number; close: number; volume: number; splitFactor: number }) => ({
     open: new Prisma.Decimal(bar.open), high: new Prisma.Decimal(bar.high), low: new Prisma.Decimal(bar.low), close: new Prisma.Decimal(bar.close),
@@ -20,6 +20,7 @@ import { backfillDailyBars, ingestDailyRange, marketDataStatus, syncDailyBars } 
 const now = etInstant('2026-09-14', 1000);
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.canonicalLock.mockImplementation(async (run: () => unknown) => run());
   mocks.db.security.findUnique.mockImplementation(async ({ where }) => ({ id: MARKET_DAILY_EVIDENCE_SYMBOLS.indexOf(where.symbol) + 1 }));
   mocks.db.marketCalendarException.findMany.mockResolvedValue([]);
   mocks.db.$queryRaw.mockResolvedValue([{ acquired: true }]);
@@ -88,6 +89,16 @@ describe('five-symbol daily acquisition', () => {
     expect(tiingo).toHaveBeenCalledTimes(15);
     expect(mocks.db.marketBar.upsert.mock.calls.filter(([arg]) => arg.create.provider === 'MASSIVE')).toHaveLength(10);
     expect(mocks.db.marketBar.upsert.mock.calls.filter(([arg]) => arg.create.provider === 'TIINGO')).toHaveLength(15);
+  });
+  it('does not defer the canonical checkpoint after transient Tiingo lock contention', async () => {
+    const { HttpError } = await import('../errors/http-error.js');
+    const runAt = etInstant('2026-10-07', 21 * 60);
+    mocks.db.setting.upsert.mockResolvedValue({ value: JSON.stringify({ fromDate: '2026-10-07', nextAttemptAt: runAt.toISOString(), lastAttemptAt: null, lastResult: 'INITIALIZED' }) });
+    mocks.db.setting.findUnique.mockResolvedValue(null);
+    mocks.canonicalLock.mockRejectedValueOnce(new HttpError(409, 'retention contention'));
+    await expect(syncDailyBars(runAt)).rejects.toMatchObject({ statusCode: 409 });
+    const stored = JSON.parse(mocks.db.setting.update.mock.calls.at(-1)![0].data.value);
+    expect(stored.nextAttemptAt).toBe(runAt.toISOString());
   });
   it('allows Massive owner backfill wholly before cutover and wholly after resume', async () => {
     const before = etInstant('2026-10-12', 1300);

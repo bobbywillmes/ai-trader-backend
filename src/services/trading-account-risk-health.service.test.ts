@@ -473,10 +473,20 @@ describe('trading account risk health service', () => {
 
     expect(result?.blockers.map(check => check.id)).not.toContain('account_subscription_21_latest_price');
     expect(result?.warnings.map(check => check.id)).not.toContain('account_subscription_21_latest_price');
+    expect(result?.capital.activeSubscriptionBudgetTotal).toBeNull();
+    expect(result?.capital.maxSimultaneousAllocationExposure).toBeNull();
     expect(result?.info).toEqual(expect.arrayContaining([expect.objectContaining({
       id: 'account_subscription_21_latest_price',
       status: 'info',
       details: expect.objectContaining({ evaluationState: 'TEMPORARILY_NOT_EVALUABLE' }),
+    }), expect.objectContaining({
+      id: 'active_subscription_budget_within_broker_portfolio_value',
+      status: 'info',
+      details: expect.objectContaining({ evaluationState: 'NOT_EVALUABLE_INCOMPLETE_EXPOSURE' }),
+    }), expect.objectContaining({
+      id: 'max_simultaneous_exposure_within_broker_portfolio_value',
+      status: 'info',
+      details: expect.objectContaining({ evaluationState: 'NOT_EVALUABLE_INCOMPLETE_EXPOSURE' }),
     })]));
   });
 

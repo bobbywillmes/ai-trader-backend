@@ -217,9 +217,10 @@ explicit out-of-hours session cutover in a later phase. `Security.enabled` is tr
 eligibility, never an observation-universe filter; create observation-only Securities
 with `enabled=false` explicitly. See `docs/architecture/tiingo-market-data-migration.md`.
 Phase 2 makes Trend, Volatility, Participation and Intraday Stress's daily ATR baseline
-read persisted splits. Run the manual strict Massive split bootstrap through the current
-session before deploying these publisher changes and extend coverage each new session;
-uncovered dates fail closed. See `docs/production/market-split-bootstrap.md`.
+read persisted splits. A monitored worker extends strict Massive split coverage after
+eligible canonical daily evidence within each `SESSION_BOUNDARIES_V2` Massive-authority
+segment; the manual bootstrap remains for operator/backfill use. Uncovered dates fail
+closed. See `docs/production/market-split-bootstrap.md`.
 Phase 8 adds an independent, default-unset Tiingo `DAY_1` session cutover for the
 SPY/QQQ/DIA/IWM/RSP market-sensor panel. An optional, strictly later Massive resume
 session permits only an operator-approved future-boundary rollback; provider failures
@@ -234,7 +235,8 @@ action. Imports are immediate on the current New York date unless a future membe
 date is explicitly scheduled; metadata and new Security creation still apply now.
 Same-day membership corrections converge before an immutable Breadth revision.
 New observation-only Securities are created with `enabled=false`; existing
-trading gates are untouched. No real constituents or Tiingo OHLCV are imported by this
+trading gates are untouched. Frozen observation revisions require `assetType=STOCK`.
+No real constituents or Tiingo OHLCV are imported by this
 tooling. See `docs/production/owned-security-universes.md`.
 
 PARTICIPATION_V1 has an immutable publisher with zero trading authority.

@@ -21,6 +21,10 @@ Rare historical gaps remain visible to operators. Phase 5 will decide how BREADT
 
 Tiingo uses hyphens for one-letter share classes; canonical Security symbols retain dots. Each accepted row is raw `UNADJUSTED`, with its positive split factor and actual receipt time. Non-unit factors also create immutable `MarketSplitEvent` evidence. EOD rows do not create strict no-split coverage intervals. Existing Massive bars cannot be replaced. Identical Tiingo evidence is idempotent; differing evidence is a conflict for operator review.
 
+The observation worker is dormant when no applicable frozen Breadth revision exists; this is an expected skip, not a Worker Health failure. Once a valid revision becomes applicable, scheduled acquisition starts automatically and Tiingo credentials are required only when provider work is actually due. Frozen observation revisions accept `STOCK` Securities only.
+
+Canonical five-symbol acquisition and frozen-revision universe acquisition use independent advisory locks. Both hold shared retention coordination while provider work runs; purge and resume operations take the exclusive retention lock. The per-security/logical-session transaction lock remains the final DAY_1 evidence guard.
+
 ## Daily sync and status
 
 The separately monitored `tiingo_daily_market_data_sync` worker starts unconditionally and reads the latest applicable frozen Breadth revision. This is an explicitly accepted deployment behavior: when a revision exists, the worker may call Tiingo and persist observation-universe evidence even while the five-symbol canonical daily and Intraday Stress Tiingo cutovers remain unset. It does not activate either canonical cutover, enable the separately default-disabled BREADTH_V2 publisher, or grant trading authority. Production deployments therefore require valid `TIINGO_API_TOKEN` credentials before application workers start.

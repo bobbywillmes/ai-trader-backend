@@ -235,6 +235,14 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await expect(insert('NO_EOD_COVERAGE', 4, '2026-09-28T12:00:00Z', null)).rejects.toThrow();
     await expect(insert('RESOLVED', 1, null, null)).rejects.toThrow();
   });
+  it('treats no applicable frozen revision as dormant without provider work', async () => {
+    const fetchDaily = async () => { throw new Error('provider must not be called'); };
+    await expect(service.syncTiingoDaily(new Date('2026-08-31T23:00:00Z'), fetchDaily)).resolves.toMatchObject({
+      notDue: true,
+      dormant: true,
+      dormantReason: 'no_applicable_frozen_revision',
+    });
+  });
   it('serializes jobs and purges Tiingo evidence only', async () => {
     let release!: () => void; const hold = new Promise<void>(resolve => { release = resolve; });
     let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
@@ -242,6 +250,8 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await started;
     try {
       await expect(service.withTiingoDailyLock(async () => {})).rejects.toMatchObject({ statusCode: 409 });
+      await expect(service.withTiingoCanonicalDailyLock(async () => 'canonical')).resolves.toBe('canonical');
+      await expect(service.tiingoRetentionPurge()).rejects.toMatchObject({ statusCode: 409 });
       const revision = (await db.query(`SELECT id FROM "BreadthUniverseRevision" WHERE "effectiveFrom"='2026-09-05'`)).rows[0].id;
       await expect(service.tiingoDailyBackfill({ revisionId: revision, from: '2026-09-24', through: '2026-09-24', apply: true, now, fetchDaily: async () => { throw new Error('lock must prevent request'); } })).rejects.toMatchObject({ statusCode: 409 });
     }

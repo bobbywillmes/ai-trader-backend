@@ -272,8 +272,10 @@ async function readBroadPopulation(db: Db, effectiveDate: string) {
   const memberships = await db.securityUniverseMembership.findMany({ where: { universeId: { in: universes.map(u => u.id) }, effectiveFrom: { lte: at }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: at } }] }, select: { securityId: true } });
   const ids = [...new Set(memberships.map(m => m.securityId))].sort((a, b) => a - b);
   if (ids.length && universes.length !== SOURCE_UNIVERSES.length) throw new Error('Missing owned source universe identities; Breadth status cannot be verified.');
-  const securities = ids.length ? await db.security.findMany({ where: { id: { in: ids } }, select: { id: true, symbol: true }, orderBy: [{ symbol: 'asc' }, { id: 'asc' }] }) : [];
+  const securities = ids.length ? await db.security.findMany({ where: { id: { in: ids } }, select: { id: true, symbol: true, assetType: true }, orderBy: [{ symbol: 'asc' }, { id: 'asc' }] }) : [];
   if (securities.length !== ids.length || new Set(securities.map(s => s.symbol)).size !== ids.length) throw new Error('Breadth revision members are missing or ambiguous.');
+  const invalid = securities.find(security => security.assetType !== 'STOCK');
+  if (invalid) throw new Error(`Breadth observation universe requires STOCK securities; ${invalid.symbol} is ${invalid.assetType}.`);
   const symbols = securities.map(s => s.symbol);
   return { ids, symbols, memberCount: ids.length, constituentHash: ids.length ? constituentHash(symbols) : null, missingUniverses: SOURCE_UNIVERSES.filter(u => !universes.some(found => found.code === u.code)).map(u => u.code) };
 }

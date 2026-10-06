@@ -26,6 +26,7 @@ export const BREADTH_V2_SHADOW_WORKER_INTERVAL_MS = 60 * 60_000;
 export const PARTICIPATION_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 export const INTRADAY_STRESS_ASSESSMENT_WORKER_INTERVAL_MS = 2 * 60_000;
 export const MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS = 30_000;
+export const MARKET_SPLIT_COVERAGE_WORKER_INTERVAL_MS = 15 * 60_000;
 
 function thresholds(
   expectedIntervalMs: number,
@@ -96,6 +97,15 @@ export const workerDefinitions = [
     expectedIntervalMs: 60_000,
     enabledByDefault: true,
     ...thresholds(60_000, 180_000),
+  },
+  {
+    key: 'market_split_coverage_extension',
+    displayName: 'Massive split coverage',
+    description: 'Extends immutable strict Massive split coverage for the currently active Massive daily-authority segment.',
+    criticality: 'informational',
+    expectedIntervalMs: MARKET_SPLIT_COVERAGE_WORKER_INTERVAL_MS,
+    enabledByDefault: true,
+    ...thresholds(MARKET_SPLIT_COVERAGE_WORKER_INTERVAL_MS, 240_000),
   },
   {
     key: 'tiingo_daily_market_data_sync',

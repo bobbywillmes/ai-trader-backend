@@ -13,7 +13,7 @@ import { configuredTiingoRestClient, type TiingoBar } from '../integrations/tiin
 import { intradayAuthority } from './intraday-stress-provider-authority.js';
 import { aggregateTiingoMinuteWindow } from './tiingo-minute-aggregation.js';
 import { dailyAuthoritySegments, dailySessionEligible, marketDailyAuthority, readCanonicalDailyBars, validateCanonicalDailyRows, canonicalDailySessionDate, TIINGO_DAY_1_ELIGIBLE_MINUTES_ET } from './market-daily-authority.js';
-import { canonicalTiingoBar, ensureTiingoSplitEvent, withTiingoDailyLock } from './tiingo-daily.service.js';
+import { canonicalTiingoBar, ensureTiingoSplitEvent, withTiingoCanonicalDailyLock } from './tiingo-daily.service.js';
 import { lockMarketDailySession } from './market-daily-session-lock.service.js';
 
 export const TREND_DATA_START = addDays(TREND_RESEARCH_START, -TREND_PRE_ROLL_CALENDAR_DAYS);
@@ -56,7 +56,7 @@ export async function persistDailyBar(symbol: DailyEvidenceSymbol, securityId: n
 async function ingestTiingoPanelDay(symbol: DailyEvidenceSymbol, securityId: number, date: string, now: Date,
   fetchDaily?: (symbol: DailyEvidenceSymbol, date: string) => Promise<import('../integrations/tiingo/rest.client.js').TiingoBar[]>) {
   if (!dailySessionEligible(date, now, [])) return { inserted: 0, eligible: 0 };
-  return withTiingoDailyLock(async () => {
+  return withTiingoCanonicalDailyLock(async () => {
     if ((await prisma.setting.findUnique({ where: { key: 'tiingoDailyIngestionPaused' } }))?.value === 'true') throw new Error('Tiingo DAY_1 acquisition is paused after retention purge.');
     const bars = await (fetchDaily ?? ((s, d) => configuredTiingoRestClient().daily(s, d, d)))(symbol, date);
     if (bars.some(bar => bar.barStartAt.toISOString() !== `${date}T00:00:00.000Z`) || bars.length > 1) throw new Error(`Invalid Tiingo DAY_1 session response for ${symbol} ${date}.`);
@@ -139,6 +139,7 @@ export async function syncDailyBars(now = new Date(), fetchTiingoDaily?: (symbol
       return { inserted, missing, notDue: false };
     } catch (error) {
       state.lastResult = error instanceof Error ? error.message : 'FAILED';
+      if (error instanceof HttpError && error.statusCode === 409) state.nextAttemptAt = now.toISOString();
       await prisma.setting.update({ where: { key: SYNC_KEY }, data: { value: JSON.stringify(state) } });
       throw error;
     }

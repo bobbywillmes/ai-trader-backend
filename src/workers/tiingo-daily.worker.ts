@@ -8,6 +8,8 @@ export async function runTiingoDailyWorker(): Promise<WorkerTickResult> {
   running = true;
   try {
     const result = await syncTiingoDaily();
+    if (result.dormant) return { outcome: 'skipped', skipReason: 'not_due' };
+    if (!result.status) throw new Error('Tiingo daily status unavailable.');
     if (result.status.existingOtherProvider || result.result?.counts.otherProvider || result.result?.counts.conflict || result.result?.counts.failed) {
       throw new Error(`Tiingo daily operational failure: otherProvider=${result.status.existingOtherProvider} conflicts=${result.result?.counts.conflict ?? 0} providerFailures=${result.result?.counts.failed ?? 0}`);
     }

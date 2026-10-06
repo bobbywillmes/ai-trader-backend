@@ -1,6 +1,6 @@
 # Historical split bootstrap for authoritative assessments
 
-Phase 2 moves TREND_V1, VOLATILITY_V1, PARTICIPATION_V1, and the INTRADAY_STRESS_V1 daily ATR baseline to persisted `MarketSplitEvent` evidence. No market bar ingestion or provider authority changes here. The bootstrap uses the strict Massive split endpoint only when an operator invokes the command. Publishers make no split provider requests.
+Phase 2 moves TREND_V1, VOLATILITY_V1, PARTICIPATION_V1, and the INTRADAY_STRESS_V1 daily ATR baseline to persisted `MarketSplitEvent` evidence. No market bar ingestion or provider authority changes here. A monitored worker extends coverage after eligible authoritative Massive daily evidence is stored; publishers make no split provider requests. The manual bootstrap remains available for operator backfill.
 
 ## Required range and representation
 
@@ -9,6 +9,8 @@ The command takes each of the five production daily evidence symbols (`SPY`, `QQ
 The strict Massive response provides `splitFrom`, `splitTo`, and `priceFactor = splitFrom / splitTo`. The canonical `MarketSplitEvent.splitFactor` stores the inverse, `splitTo / splitFrom` (new shares per old share), to match the Tiingo daily factor convention. A 1-for-2 provider ratio yields canonical 2 and calculation price factor 0.5; a 10-for-1 reverse ratio yields canonical 0.1 and calculation price factor 10. The persisted decimal has ten fractional digits, so the bootstrap rejects a ratio that cannot be represented within its stated tolerance. Publisher evidence uses the persisted event ID and canonical factor, then reconstructs the calculation ratio as its inverse.
 
 `MarketSplitCoverage` is immutable proof that a strict provider request completed over a date interval, even if it found zero events. The shared reader requires complete daily coverage and rejects corrupt or mixed-provider rows. This is necessary because absence of a split event alone cannot distinguish no split from an unqueried range.
+
+Automatic and manual planning follow `SESSION_BOUNDARIES_V2`. Massive requests and coverage rows are bounded to each Massive-authority segment, so neither path fetches across a Tiingo interval. On a future Massive resume, the worker begins at the resume boundary after the complete five-symbol strict request succeeds. Existing Tiingo bars and split events remain immutable and are validated by the shared reader inside the intervening Tiingo segment. Worker failures are recorded by Worker Health and as `market_split_coverage_extension_failed` SystemEvents.
 
 ## Operator procedure
 

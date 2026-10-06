@@ -14,19 +14,43 @@ import { canonicalDailySessionDate, TIINGO_DAY_1_ELIGIBLE_MINUTES_ET } from './m
 import { lockMarketDailySession } from './market-daily-session-lock.service.js';
 
 export const TIINGO_DAY_1_TIMING_VERSION = 'TIINGO_DAY_1_2015_ET_V1';
-const lockKey = createHash('sha256').update('ai-trader:tiingo-daily-ingestion-and-purge').digest().readBigInt64BE(0).toString();
-const pool = new Pool({ connectionString: env.DATABASE_URL, max: 2 });
+const lockKey = (name: string) => createHash('sha256').update(name).digest().readBigInt64BE(0).toString();
+const retentionLockKey = lockKey('ai-trader:tiingo-retention');
+const universeAcquisitionLockKey = lockKey('ai-trader:tiingo-universe-daily-acquisition');
+const canonicalAcquisitionLockKey = lockKey('ai-trader:tiingo-canonical-daily-acquisition');
+const pool = new Pool({ connectionString: env.DATABASE_URL, max: 4 });
 const summaryKey = 'tiingoDailyLastRun';
 const pausedKey = 'tiingoDailyIngestionPaused';
 const providerFailureNextAttemptKey = 'tiingoDailyProviderFailureNextAttemptAt';
-export async function withTiingoDailyLock<T>(work: () => Promise<T>): Promise<T> {
+async function withTiingoAcquisitionLock<T>(acquisitionKey: string, label: string, work: () => Promise<T>): Promise<T> {
   const client = await pool.connect(); let held = false; let damaged = false;
+  let retentionHeld = false;
   try {
-    held = (await client.query<{ acquired: boolean }>('SELECT pg_try_advisory_lock($1::bigint) acquired', [lockKey])).rows[0]?.acquired === true;
-    if (!held) throw new HttpError(409, 'Tiingo daily ingestion or retention purge is already running.');
+    retentionHeld = (await client.query<{ acquired: boolean }>('SELECT pg_try_advisory_lock_shared($1::bigint) acquired', [retentionLockKey])).rows[0]?.acquired === true;
+    if (!retentionHeld) throw new HttpError(409, 'Tiingo retention purge is already running.');
+    held = (await client.query<{ acquired: boolean }>('SELECT pg_try_advisory_lock($1::bigint) acquired', [acquisitionKey])).rows[0]?.acquired === true;
+    if (!held) throw new HttpError(409, `${label} is already running.`);
     return await work();
   } finally {
-    if (held) try { await client.query('SELECT pg_advisory_unlock($1::bigint)', [lockKey]); } catch { damaged = true; }
+    if (held) try { await client.query('SELECT pg_advisory_unlock($1::bigint)', [acquisitionKey]); } catch { damaged = true; }
+    if (retentionHeld) try { await client.query('SELECT pg_advisory_unlock_shared($1::bigint)', [retentionLockKey]); } catch { damaged = true; }
+    client.release(damaged);
+  }
+}
+export function withTiingoDailyLock<T>(work: () => Promise<T>): Promise<T> {
+  return withTiingoAcquisitionLock(universeAcquisitionLockKey, 'Tiingo universe daily acquisition', work);
+}
+export function withTiingoCanonicalDailyLock<T>(work: () => Promise<T>): Promise<T> {
+  return withTiingoAcquisitionLock(canonicalAcquisitionLockKey, 'Tiingo canonical daily acquisition', work);
+}
+async function withTiingoRetentionLock<T>(work: () => Promise<T>): Promise<T> {
+  const client = await pool.connect(); let held = false; let damaged = false;
+  try {
+    held = (await client.query<{ acquired: boolean }>('SELECT pg_try_advisory_lock($1::bigint) acquired', [retentionLockKey])).rows[0]?.acquired === true;
+    if (!held) throw new HttpError(409, 'Tiingo acquisition or retention operation is already running.');
+    return await work();
+  } finally {
+    if (held) try { await client.query('SELECT pg_advisory_unlock($1::bigint)', [retentionLockKey]); } catch { damaged = true; }
     client.release(damaged);
   }
 }
@@ -45,8 +69,10 @@ export async function loadTiingoRevision(revisionId?: number, now = new Date()) 
     ? await prisma.breadthUniverseRevision.findFirst({ where: { effectiveFrom: { lte: new Date(etDate(now)) } }, orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }] })
     : await prisma.breadthUniverseRevision.findUnique({ where: { id: revisionId } });
   if (!revision) throw new HttpError(404, 'Frozen Breadth revision unavailable.');
-  const rows = await prisma.breadthUniverseRevisionMember.findMany({ where: { revisionId: revision.id }, include: { security: { select: { symbol: true } } } });
+  const rows = await prisma.breadthUniverseRevisionMember.findMany({ where: { revisionId: revision.id }, include: { security: { select: { symbol: true, assetType: true } } } });
   if (rows.length !== revision.memberCount || new Set(rows.map(row => row.securityId)).size !== revision.memberCount) throw new Error('Frozen Breadth revision memberCount integrity failure.');
+  const invalid = rows.find(row => row.security.assetType !== 'STOCK');
+  if (invalid) throw new Error(`Frozen Breadth revision requires STOCK securities; ${invalid.security.symbol} is ${invalid.security.assetType}.`);
   const members: Member[] = rows.map(row => ({ securityId: row.securityId, symbol: row.security.symbol })).sort((a, b) => a.symbol.localeCompare(b.symbol));
   for (const member of members) tiingoSymbol(member.symbol);
   return { revision, members };
@@ -231,6 +257,8 @@ export async function tiingoDailyStatus(now = new Date()) {
   return { revisionId: revision.id, memberCount: revision.memberCount, latestEligibleSessionDate: session, tiingoPresent: providers.filter(v => v === 'TIINGO').length, missing: absent.length, untrackedMissing: absent.filter(member => !state(member) && !rows.get(member.securityId)?.get(session)).length, retrying: absent.filter(member => state(member)?.status === 'RETRYING').length, dueRetries: absent.filter(member => state(member)?.status === 'RETRYING' && state(member)!.nextAttemptAt! <= now).length, noEodCoverage: absent.filter(member => state(member)?.status === 'NO_EOD_COVERAGE').length, existingOtherProvider: providers.filter(v => v && v !== 'TIINGO').length, paused: paused?.value === 'true', timingVersion: TIINGO_DAY_1_TIMING_VERSION, latestRun: latest ? JSON.parse(latest.value) : null };
 }
 export async function syncTiingoDaily(now = new Date(), fetchDaily?: (symbol: string, from: string, through: string) => Promise<TiingoBar[]>) {
+  const applicableRevision = await prisma.breadthUniverseRevision.findFirst({ where: { effectiveFrom: { lte: new Date(etDate(now)) } }, select: { id: true } });
+  if (!applicableRevision) return { notDue: true, dormant: true, dormantReason: 'no_applicable_frozen_revision' as const };
   if ((await prisma.setting.findUnique({ where: { key: pausedKey } }))?.value === 'true') return { notDue: true, status: await tiingoDailyStatus(now) };
   const status = await tiingoDailyStatus(now);
   if (!tiingoDayEligible(status.latestEligibleSessionDate, now)) return { notDue: true, status };
@@ -266,7 +294,7 @@ export async function syncTiingoDaily(now = new Date(), fetchDaily?: (symbol: st
 }
 export async function tiingoRetentionPurge(apply = false, confirm?: string) {
   if (apply && confirm !== 'DELETE-TIINGO-DATA') throw new HttpError(400, 'Purge apply requires --confirm=DELETE-TIINGO-DATA.');
-  return withTiingoDailyLock(async () => {
+  return withTiingoRetentionLock(async () => {
     const counts = { marketBars: await prisma.marketBar.count({ where: { provider: 'TIINGO' } }), marketSplitEvents: await prisma.marketSplitEvent.count({ where: { provider: 'TIINGO' } }), marketSplitCoverage: await prisma.marketSplitCoverage.count({ where: { provider: 'TIINGO' } }), observationStates: await prisma.tiingoDailyObservationState.count() };
     if (!apply) return { preview: true, counts };
     await withMarketMinuteDataLock(() => prisma.$transaction(async tx => {
@@ -282,7 +310,7 @@ export async function tiingoRetentionPurge(apply = false, confirm?: string) {
 }
 export async function resumeTiingoDailyIngestion(confirm: string) {
   if (confirm !== 'PAID-TIINGO-PLAN-ACTIVE') throw new HttpError(400, 'Explicit paid-plan confirmation is required.');
-  return withTiingoDailyLock(async () => {
+  return withTiingoRetentionLock(async () => {
     await prisma.setting.upsert({ where: { key: pausedKey }, create: { key: pausedKey, value: 'false' }, update: { value: 'false' } });
     return { paused: false };
   });

@@ -53,6 +53,8 @@ import { runTiingoDailyWorker } from '../workers/tiingo-daily.worker.js';
 import { runBreadthV2ShadowWorker } from '../workers/breadth-v2-shadow.worker.js';
 import { BREADTH_V2_SHADOW_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { closeTiingoDailyLockPool } from '../services/tiingo-daily.service.js';
+import { runMarketSplitCoverageWorker } from '../workers/market-split-coverage.worker.js';
+import { MARKET_SPLIT_COVERAGE_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 
 const app = createApp();
 
@@ -177,9 +179,11 @@ function startWorkers() {
   // Startup order: the daily MarketBar sync tick is given a bounded head start so the first Participation tick
   // can see fresh stored evidence. Participation still consumes stored bars only and never calls the sync.
   const marketDataStartup = runWorker('market_daily_evidence_sync', runMarketDataWorker);
+  void marketDataStartup.then(() => runWorker('market_split_coverage_extension', runMarketSplitCoverageWorker));
   participationScheduler = createMonitoredParticipationScheduler(workerHealthRegistry, { startupGate: marketDataStartup });
   participationScheduler.start();
   setInterval(() => { void runWorker('market_daily_evidence_sync', runMarketDataWorker); }, 60_000);
+  setInterval(() => { void runWorker('market_split_coverage_extension', runMarketSplitCoverageWorker); }, MARKET_SPLIT_COVERAGE_WORKER_INTERVAL_MS);
   void runWorker('tiingo_daily_market_data_sync', runTiingoDailyWorker);
   setInterval(() => { void runWorker('tiingo_daily_market_data_sync', runTiingoDailyWorker); }, 15 * 60_000);
   if (env.BREADTH_V2_SHADOW_WORKER_ENABLED) {
