@@ -14,6 +14,7 @@ import { intradayAuthority } from './intraday-stress-provider-authority.js';
 import { aggregateTiingoMinuteWindow } from './tiingo-minute-aggregation.js';
 import { dailyAuthoritySegments, dailySessionEligible, marketDailyAuthority, readCanonicalDailyBars, validateCanonicalDailyRows, canonicalDailySessionDate, TIINGO_DAY_1_ELIGIBLE_MINUTES_ET } from './market-daily-authority.js';
 import { canonicalTiingoBar, ensureTiingoSplitEvent, withTiingoDailyLock } from './tiingo-daily.service.js';
+import { lockMarketDailySession } from './market-daily-session-lock.service.js';
 
 export const TREND_DATA_START = addDays(TREND_RESEARCH_START, -TREND_PRE_ROLL_CALENDAR_DAYS);
 const SYNC_KEY = 'marketDailyEvidenceSync';
@@ -33,11 +34,12 @@ export function planDailyGaps(from: string, to: string, present: ReadonlySet<str
   }
   return { missing, notYetEligible };
 }
-async function persistDailyBar(symbol: DailyEvidenceSymbol, securityId: number, date: string, bar: DailyEvidenceBar | import('../integrations/tiingo/rest.client.js').TiingoBar, provider: 'MASSIVE' | 'TIINGO', receivedAt: Date, db: PrismaClient = prisma) {
+export async function persistDailyBar(symbol: DailyEvidenceSymbol, securityId: number, date: string, bar: DailyEvidenceBar | import('../integrations/tiingo/rest.client.js').TiingoBar, provider: 'MASSIVE' | 'TIINGO', receivedAt: Date, db: PrismaClient = prisma) {
   const canonical = provider === 'TIINGO' ? canonicalTiingoBar(bar as import('../integrations/tiingo/rest.client.js').TiingoBar) : {
     open: new Prisma.Decimal(bar.open), high: new Prisma.Decimal(bar.high), low: new Prisma.Decimal(bar.low), close: new Prisma.Decimal(bar.close), volume: new Prisma.Decimal(bar.volume), splitFactor: null };
   const barStartAt = provider === 'TIINGO' ? new Date(`${date}T00:00:00Z`) : etInstant(date, 0);
   return db.$transaction(async tx => {
+    await lockMarketDailySession(tx, securityId, date);
     const logical = await readCanonicalDailyBars(tx, [securityId], date, date);
     if (logical.length > 1) throw new Error(`Duplicate canonical DAY_1 logical session ${symbol} ${date}.`);
     const existing = logical[0];

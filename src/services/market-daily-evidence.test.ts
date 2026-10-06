@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { MARKET_DAILY_EVIDENCE_SYMBOLS } from './market-daily-evidence.definition.js';
 import { TREND_SYMBOLS } from './trend-lab.config.js';
 import { etInstant } from './market-calendar.js';
-const mocks = vi.hoisted(() => ({ db: { security: { findUnique: vi.fn() }, marketCalendarException: { findMany: vi.fn() }, marketBar: { findMany: vi.fn(), upsert: vi.fn() }, setting: { upsert: vi.fn(), update: vi.fn(), findUnique: vi.fn() }, systemEvent: { create: vi.fn(), findMany: vi.fn() }, $transaction: vi.fn() }, fetch: vi.fn() }));
+const mocks = vi.hoisted(() => ({ db: { security: { findUnique: vi.fn() }, marketCalendarException: { findMany: vi.fn() }, marketBar: { findMany: vi.fn(), upsert: vi.fn() }, setting: { upsert: vi.fn(), update: vi.fn(), findUnique: vi.fn() }, systemEvent: { create: vi.fn(), findMany: vi.fn() }, $queryRaw: vi.fn(), $transaction: vi.fn() }, fetch: vi.fn() }));
 vi.mock('../db/prisma.js', () => ({ prisma: mocks.db }));
 vi.mock('../config/env.js', () => ({ env: { MARKET_DAILY_TIINGO_CUTOVER_SESSION: '2026-10-07', MARKET_DAILY_MASSIVE_RESUME_SESSION: '2026-10-12' } }));
 vi.mock('./market-data-lock.service.js', () => ({ withMarketDataLock: async (run: () => unknown) => run() }));
@@ -22,6 +22,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.db.security.findUnique.mockImplementation(async ({ where }) => ({ id: MARKET_DAILY_EVIDENCE_SYMBOLS.indexOf(where.symbol) + 1 }));
   mocks.db.marketCalendarException.findMany.mockResolvedValue([]);
+  mocks.db.$queryRaw.mockResolvedValue([{ acquired: true }]);
   mocks.db.marketBar.findMany.mockResolvedValue([]);
   mocks.db.marketBar.upsert.mockImplementation(async ({ create }) => create);
   mocks.db.$transaction.mockImplementation(async work => work(mocks.db));

@@ -14,7 +14,7 @@ describe('daily evidence ingestion', () => {
   });
   it('inserts only eligible observations using immutable canonical upsert checks', async () => {
     const upsert = vi.fn(async ({ create }: { create: unknown }) => create);
-    const tx = { marketBar: { findMany: vi.fn().mockResolvedValue([]), upsert }, setting: { findUnique: vi.fn() } };
+    const tx = { marketBar: { findMany: vi.fn().mockResolvedValue([]), upsert }, setting: { findUnique: vi.fn() }, $queryRaw: vi.fn().mockResolvedValue([{ acquired: true }]) };
     const db = { security: { findUnique: vi.fn().mockResolvedValue({ id: 1 }) }, marketCalendarException: { findMany: vi.fn().mockResolvedValue([]) },
       $transaction: async (work: (client: typeof tx) => Promise<unknown>) => work(tx) } as unknown as PrismaClient;
     const fetchBars = vi.fn().mockResolvedValue(['2026-09-14', '2026-09-15'].map(date => ({ barStartAt: etInstant(date, 0), open: '100', high: '102', low: '99', close: '101', volume: '1000', receivedAt: new Date() })));

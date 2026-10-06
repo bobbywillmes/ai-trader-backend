@@ -11,6 +11,7 @@ import { runTiingoDailyPool } from './tiingo-daily-pool.js';
 import { nextTiingoEmptyObservation } from './tiingo-daily-observation.js';
 import { withMarketMinuteDataLock } from './market-minute-data-lock.service.js';
 import { canonicalDailySessionDate, TIINGO_DAY_1_ELIGIBLE_MINUTES_ET } from './market-daily-authority.js';
+import { lockMarketDailySession } from './market-daily-session-lock.service.js';
 
 export const TIINGO_DAY_1_TIMING_VERSION = 'TIINGO_DAY_1_2015_ET_V1';
 const lockKey = createHash('sha256').update('ai-trader:tiingo-daily-ingestion-and-purge').digest().readBigInt64BE(0).toString();
@@ -83,10 +84,11 @@ export function retryDelay(error: unknown, attempt: number): number | null {
   return Math.min(30_000, error.retryAfterMs ?? 500 * 2 ** attempt);
 }
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-async function persist(member: Member, bar: TiingoBar, receivedAt: Date): Promise<{ result: 'inserted' | 'already' | 'other' | 'conflict' | 'split'; resolved: boolean }> {
+export async function persistTiingoDailyBar(member: Member, bar: TiingoBar, receivedAt: Date): Promise<{ result: 'inserted' | 'already' | 'other' | 'conflict' | 'split'; resolved: boolean }> {
   const values = canonicalTiingoBar(bar); const date = bar.barStartAt.toISOString().slice(0, 10);
   if (!tiingoDayEligible(date, receivedAt)) throw new Error('Tiingo day is not yet eligible.');
   return prisma.$transaction(async tx => {
+    await lockMarketDailySession(tx, member.securityId, date);
     const candidates = await tx.marketBar.findMany({ where: { securityId: member.securityId, timeframe: 'DAY_1',
       barStartAt: { gte: new Date(`${date}T00:00:00Z`), lt: new Date(`${addDays(date, 1)}T00:00:00Z`) } } });
     const logical = candidates.filter(row => canonicalDailySessionDate(row.barStartAt, row.provider) === date);
@@ -183,7 +185,7 @@ export async function tiingoDailyBackfill(input: { revisionId: number; from: str
         if (!sessionSet.has(date)) { counts.failed++; invalidResponse = true; detail(counts, `${member.symbol} ${date}: observation outside configured market session`); continue; }
         returned.add(date);
         try {
-          const { result, resolved } = await persist(member, bar, receivedAt);
+          const { result, resolved } = await persistTiingoDailyBar(member, bar, receivedAt);
           if (resolved) counts.resolvedPreviouslyMissing++;
           if (result === 'inserted' || result === 'split') counts.succeeded++;
           if (result === 'split') counts.splitEvents++;

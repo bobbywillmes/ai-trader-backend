@@ -11,6 +11,9 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   const originalUrl = process.env.DATABASE_URL;
   let admin: Client; let db: Client;
   let service: typeof import('../../services/tiingo-daily.service.js');
+  let marketIngestion: typeof import('../../services/market-bar-ingestion.service.js');
+  let dailyAuthority: typeof import('../../services/market-daily-authority.js');
+  let dailyLock: typeof import('../../services/market-daily-session-lock.service.js');
   let TiingoRequestError: typeof import('../../integrations/tiingo/rest.client.js').TiingoRequestError;
   let prismaModule: typeof import('../prisma.js');
   let revisionId: number;
@@ -28,6 +31,9 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     process.env.DATABASE_URL = url.toString();
     TiingoRequestError = (await import('../../integrations/tiingo/rest.client.js')).TiingoRequestError;
     service = await import('../../services/tiingo-daily.service.js');
+    marketIngestion = await import('../../services/market-bar-ingestion.service.js');
+    dailyAuthority = await import('../../services/market-daily-authority.js');
+    dailyLock = await import('../../services/market-daily-session-lock.service.js');
     prismaModule = await import('../prisma.js');
   }, 120_000);
   afterAll(async () => {
@@ -86,6 +92,55 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const conflict = await service.tiingoDailyBackfill({ revisionId, from: '2026-09-23', through: '2026-09-24', symbols: ['BRK.B'], apply: true, now, fetchDaily: async () => [row('2026-09-24', 1, 100)] });
     expect(conflict.counts.conflict).toBe(1);
     expect((await db.query(`SELECT close::text close FROM "MarketBar" WHERE "securityId"=$1 AND "barStartAt"='2026-09-24'`, [brk])).rows[0].close).toBe('101.0000000000');
+  });
+  it('serializes concurrent DAY_1 writers by Security and logical session', async () => {
+    const inserted = await db.query(`INSERT INTO "Security" (symbol,name,"assetType",enabled,"updatedAt") VALUES
+      ('LOCKA','Lock A','STOCK',false,now()),('LOCKB','Lock B','STOCK',false,now()) RETURNING id,symbol`);
+    const ids = new Map(inserted.rows.map(record => [record.symbol as string, record.id as number]));
+    const lockA = ids.get('LOCKA')!; const lockB = ids.get('LOCKB')!;
+    const collisionDate = '2026-08-03';
+    const massive = { barStartAt: etInstant(collisionDate, 0), open: '100', high: '102', low: '99', close: '101', volume: '1234', receivedAt: now };
+    const blocker = new Client({ connectionString: process.env.DATABASE_URL }); await blocker.connect();
+    await blocker.query('BEGIN');
+    await blocker.query('SELECT pg_advisory_xact_lock($1::bigint)', [dailyLock.marketDailySessionLockKey(lockA, collisionDate).toString()]);
+
+    let massiveSettled = false; let tiingoSettled = false;
+    const massiveAttempt = marketIngestion.persistDailyBar('SPY', lockA, collisionDate, massive, 'MASSIVE', now).finally(() => { massiveSettled = true; });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const tiingoAttempt = service.persistTiingoDailyBar({ securityId: lockA, symbol: 'LOCKA' }, row(collisionDate), now).finally(() => { tiingoSettled = true; });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect({ massiveSettled, tiingoSettled }).toEqual({ massiveSettled: false, tiingoSettled: false });
+
+    // Unrelated keys remain live while the collision key is held.
+    await expect(Promise.race([
+      marketIngestion.persistDailyBar('QQQ', lockB, collisionDate, massive, 'MASSIVE', now),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('different Security blocked')), 2_000)),
+    ])).resolves.toBe(1);
+    await expect(Promise.race([
+      marketIngestion.persistDailyBar('SPY', lockA, '2026-08-04', { ...massive, barStartAt: etInstant('2026-08-04', 0) }, 'MASSIVE', now),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('different session blocked')), 2_000)),
+    ])).resolves.toBe(1);
+
+    await blocker.query('COMMIT'); await blocker.end();
+    const [massiveResult, tiingoResult] = await Promise.all([massiveAttempt, tiingoAttempt]);
+    expect(massiveResult).toBe(1);
+    expect(tiingoResult).toMatchObject({ result: 'other', resolved: false });
+    const collisionRows = await prismaModule.prisma.marketBar.findMany({ where: { securityId: lockA, timeframe: 'DAY_1',
+      barStartAt: { gte: new Date(`${collisionDate}T00:00:00Z`), lt: new Date('2026-08-04T00:00:00Z') } } });
+    expect(collisionRows).toHaveLength(1);
+    expect(collisionRows[0]).toMatchObject({ provider: 'MASSIVE', barStartAt: etInstant(collisionDate, 0) });
+    await expect(dailyAuthority.readCanonicalDailyBars(prismaModule.prisma, [lockA], collisionDate, collisionDate))
+      .resolves.toMatchObject([{ provider: 'MASSIVE', sessionDate: collisionDate }]);
+
+    const identicalDate = '2026-08-05';
+    const identical = { ...massive, barStartAt: etInstant(identicalDate, 0) };
+    const identicalResults = await Promise.all([
+      marketIngestion.persistDailyBar('SPY', lockA, identicalDate, identical, 'MASSIVE', now),
+      marketIngestion.persistDailyBar('SPY', lockA, identicalDate, identical, 'MASSIVE', now),
+    ]);
+    expect(identicalResults.sort()).toEqual([0, 1]);
+    expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE "securityId"=$1 AND timeframe='DAY_1' AND "barStartAt"=$2`,
+      [lockA, etInstant(identicalDate, 0)])).rows[0].n).toBe(1);
   });
   it('rolls back a new bar when canonical split evidence conflicts', async () => {
     const aapl = (await db.query(`SELECT id FROM "Security" WHERE symbol='AAPL'`)).rows[0].id;
@@ -195,6 +250,9 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const barsByProviderAndSession = (await db.query(`SELECT provider,"barStartAt"::date::text AS session_date,count(*)::int n FROM "MarketBar" GROUP BY provider,"barStartAt"::date ORDER BY provider,session_date`)).rows;
     expect(barsByProviderAndSession).toEqual([
       { provider: 'MASSIVE', session_date: '2026-01-15', n: 1 },
+      { provider: 'MASSIVE', session_date: '2026-08-03', n: 2 },
+      { provider: 'MASSIVE', session_date: '2026-08-04', n: 1 },
+      { provider: 'MASSIVE', session_date: '2026-08-05', n: 1 },
       { provider: 'MASSIVE', session_date: '2026-09-24', n: 1 },
       ...Object.entries({ '2026-01-16': 1, '2026-09-21': 3, '2026-09-22': 20, '2026-09-23': 2, '2026-09-24': 2, '2026-09-25': 2, '2026-09-28': 1, '2026-09-29': 1, '2026-09-30': 1 }).map(([session_date, n]) => ({ provider: 'TIINGO', session_date, n })),
     ]);
@@ -209,7 +267,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE provider='TIINGO'`)).rows[0].n).toBe(0);
     expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE provider='TIINGO' AND timeframe='MINUTE_15'`)).rows[0].n).toBe(0);
     expect((await db.query(`SELECT count(*)::int n FROM "TiingoDailyObservationState"`)).rows[0].n).toBe(0);
-    expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE provider='MASSIVE'`)).rows[0].n).toBe(2);
+    expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE provider='MASSIVE'`)).rows[0].n).toBe(6);
     expect((await db.query(`SELECT count(*)::int n FROM "MarketSplitEvent" WHERE provider='MASSIVE'`)).rows[0].n).toBe(1);
     expect((await db.query(`SELECT value FROM "Setting" WHERE key='tiingoDailyIngestionPaused'`)).rows[0].value).toBe('true');
   });
