@@ -10,6 +10,7 @@ describe('automatic Massive split coverage worker', () => {
   it('reports Tiingo authority as an expected dormant tick', async () => {
     mocks.extend.mockResolvedValue({ dormant: true, reason: 'tiingo_authority', extended: 0 });
     await expect(runMarketSplitCoverageWorker()).resolves.toEqual({ outcome: 'skipped', skipReason: 'not_due' });
+    expect(mocks.event).not.toHaveBeenCalled();
   });
   it('reports immutable coverage extension as successful work', async () => {
     mocks.extend.mockResolvedValue({ dormant: false, extended: 5 });

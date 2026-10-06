@@ -2,11 +2,9 @@ import { createHash } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { fetchStrictSplitEvidence, type SplitEvent } from '../integrations/massive/evidence.client.js';
-import { etDate, validDate } from './market-calendar.js';
+import { addDays, etDate, validDate } from './market-calendar.js';
 import { MARKET_DAILY_EVIDENCE_SYMBOLS, type DailyEvidenceSymbol } from './market-daily-evidence.definition.js';
-import { dailyAuthoritySegments, dailySessionEligible, marketDailyAuthority } from './market-daily-authority.js';
-import { calendarExceptions } from './market-calendar.service.js';
-import { addDays, datesBetween, marketSession } from './market-calendar.js';
+import { dailyAuthoritySegments, marketDailyAuthority } from './market-daily-authority.js';
 
 const LOCK_KEY = createHash('sha256').update('ai-trader:market-split-bootstrap').digest().readBigInt64BE(0);
 type Db = PrismaClient;
@@ -53,11 +51,8 @@ export async function planMarketSplitBootstrap(db: Db, through: string, fetchSpl
 }
 
 export async function planAutomaticMarketSplitExtension(db: Db, now: Date, fetchSplits: FetchSplits = fetchStrictSplitEvidence): Promise<Candidate[] | null> {
-  const today = etDate(now);
-  const exceptions = await calendarExceptions(addDays(today, -14), today, db);
-  const target = datesBetween(addDays(today, -14), today).reverse()
-    .find(date => marketSession(date, exceptions) && marketDailyAuthority(date).provider === 'MASSIVE' && dailySessionEligible(date, now, exceptions));
-  if (!target || marketDailyAuthority(today).provider !== 'MASSIVE') return null;
+  const target = etDate(now);
+  if (marketDailyAuthority(target).provider !== 'MASSIVE') return null;
   const candidates: Candidate[] = [];
   const targetAuthority = marketDailyAuthority(target);
   const activeStart = targetAuthority.massiveResumeSession && target >= targetAuthority.massiveResumeSession
@@ -65,11 +60,11 @@ export async function planAutomaticMarketSplitExtension(db: Db, now: Date, fetch
   for (const symbol of MARKET_DAILY_EVIDENCE_SYMBOLS) {
     const security = await db.security.findUnique({ where: { symbol }, select: { id: true } });
     if (!security) throw new Error(`Missing daily evidence Security ${symbol}.`);
-    const targetBar = await db.marketBar.findFirst({ where: { securityId: security.id, timeframe: 'DAY_1', provider: 'MASSIVE', adjustmentMode: 'UNADJUSTED', barStartAt: { gte: new Date(`${target}T00:00:00Z`), lt: new Date(`${addDays(target, 1)}T00:00:00Z`) } } });
-    if (!targetBar) throw new Error(`Massive DAY_1 evidence is not yet available for ${symbol} ${target}.`);
-    const first = await db.marketBar.findFirst({ where: { securityId: security.id, timeframe: 'DAY_1', provider: 'MASSIVE', adjustmentMode: 'UNADJUSTED', ...(activeStart === '1900-01-01' ? {} : { barStartAt: { gte: new Date(`${activeStart}T00:00:00Z`) } }) }, orderBy: { barStartAt: 'asc' }, select: { barStartAt: true } });
-    if (!first) throw new Error(`Missing Massive segment evidence for ${symbol}.`);
-    const segmentFrom = activeStart === '1900-01-01' ? etDate(first.barStartAt) : activeStart;
+    const first = activeStart === '1900-01-01'
+      ? await db.marketBar.findFirst({ where: { securityId: security.id, timeframe: 'DAY_1', provider: 'MASSIVE', adjustmentMode: 'UNADJUSTED' }, orderBy: { barStartAt: 'asc' }, select: { barStartAt: true } })
+      : null;
+    if (activeStart === '1900-01-01' && !first) throw new Error(`Missing Massive history boundary for ${symbol}.`);
+    const segmentFrom = first ? etDate(first.barStartAt) : activeStart;
     const coverage = await db.marketSplitCoverage.findMany({ where: { securityId: security.id, provider: 'MASSIVE', fromDate: { lte: new Date(target) }, throughDate: { gte: new Date(segmentFrom) } }, orderBy: [{ fromDate: 'asc' }, { throughDate: 'asc' }] });
     let from = segmentFrom;
     for (const row of coverage) {

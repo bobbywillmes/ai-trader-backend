@@ -218,8 +218,9 @@ eligibility, never an observation-universe filter; create observation-only Secur
 with `enabled=false` explicitly. See `docs/architecture/tiingo-market-data-migration.md`.
 Phase 2 makes Trend, Volatility, Participation and Intraday Stress's daily ATR baseline
 read persisted splits. A monitored worker extends strict Massive split coverage after
-eligible canonical daily evidence within each `SESSION_BOUNDARIES_V2` Massive-authority
-segment; the manual bootstrap remains for operator/backfill use. Uncovered dates fail
+the current logical New York date within each `SESSION_BOUNDARIES_V2` Massive-authority
+segment, including current-session and closed boundary dates; it does not derive coverage
+from DAY_1 bars. The manual bootstrap remains for operator/backfill use. Uncovered dates fail
 closed. See `docs/production/market-split-bootstrap.md`.
 Phase 8 adds an independent, default-unset Tiingo `DAY_1` session cutover for the
 SPY/QQQ/DIA/IWM/RSP market-sensor panel. An optional, strictly later Massive resume

@@ -49,7 +49,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     if (admin) { await admin.query(`DROP DATABASE IF EXISTS "${name}"`); await admin.end(); }
   });
 
-  it('keeps failed automatic requests atomic, then extends only the resumed Massive segment', async () => {
+  it('keeps failed automatic requests atomic, then extends the resumed Massive segment through the current session without its DAY_1 bar', async () => {
     await bootstrapMarketSplits({ db, through: '2026-01-31', apply: true, now: new Date('2026-03-03T12:00:00Z'), fetchSplits: async () => [] });
     expect(await db.marketSplitCoverage.count()).toBe(5);
     await expect(extendMarketSplitCoverage({ db, now: new Date('2026-03-03T12:00:00Z'), fetchSplits: async symbol => {
@@ -62,7 +62,8 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
       calls.push([symbol, from, through]); return [];
     } });
     expect(result).toMatchObject({ dormant: false, extended: 5 });
-    expect(calls.every(([, from, through]) => from === '2026-03-01' && through === '2026-03-02')).toBe(true);
+    expect(calls.every(([, from, through]) => from === '2026-03-01' && through === '2026-03-03')).toBe(true);
+    await expect(readPersistedSplits(db, 'SPY', '2026-03-01', '2026-03-03')).resolves.toEqual([]);
   });
 
   it('preserves and validates Tiingo split provenance between Massive coverage segments', async () => {
@@ -73,7 +74,8 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(await db.marketSplitEvent.findUniqueOrThrow({ where: { id: before.id } })).toEqual(before);
     expect(await db.marketSplitCoverage.findMany({ where: { security: { symbol: 'SPY' } }, orderBy: { fromDate: 'asc' }, select: { fromDate: true, throughDate: true, provider: true } })).toEqual([
       { fromDate: new Date('2026-01-30'), throughDate: new Date('2026-01-31'), provider: 'MASSIVE' },
-      { fromDate: new Date('2026-03-01'), throughDate: new Date('2026-03-02'), provider: 'MASSIVE' },
+      { fromDate: new Date('2026-03-01'), throughDate: new Date('2026-03-03'), provider: 'MASSIVE' },
     ]);
   });
+
 });
