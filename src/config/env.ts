@@ -19,7 +19,11 @@ const envBoolean = z.preprocess((value) => {
   return value;
 }, z.boolean());
 
-const envSchema = z.object({
+const optionalSessionDate = z.preprocess(value => value === '' ? undefined : value,
+  z.string().refine(value => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value))
+    && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value, 'Expected a valid YYYY-MM-DD session date.').optional());
+
+export const envSchema = z.object({
   NODE_ENV: z
     .enum(['development', 'test', 'production'])
     .default('development'),
@@ -53,15 +57,14 @@ const envSchema = z.object({
 
   MASSIVE_API_KEY: z.string().min(1, 'MASSIVE_API_KEY is required'),
   MASSIVE_BASE_URL: z.url().default('https://api.massive.com'),
-  // Optional until the explicit provider cutover; no runtime worker uses Tiingo yet.
+  // Optional until an explicit Tiingo-backed production path is configured.
   TIINGO_API_TOKEN: z.string().min(1).optional(),
   TIINGO_BASE_URL: z.url().default('https://api.tiingo.com'),
   TIINGO_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
   TIINGO_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(8),
-  INTRADAY_STRESS_TIINGO_CUTOVER_SESSION: z.preprocess(value => value === '' ? undefined : value,
-    z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => !Number.isNaN(Date.parse(value)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value).optional()),
-  MARKET_DAILY_TIINGO_CUTOVER_SESSION: z.preprocess(value => value === '' ? undefined : value,
-    z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => !Number.isNaN(Date.parse(value)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value).optional()),
+  INTRADAY_STRESS_TIINGO_CUTOVER_SESSION: optionalSessionDate,
+  MARKET_DAILY_TIINGO_CUTOVER_SESSION: optionalSessionDate,
+  MARKET_DAILY_MASSIVE_RESUME_SESSION: optionalSessionDate,
   BREADTH_V2_SHADOW_WORKER_ENABLED: envBoolean.default(false),
   MASSIVE_NEWS_WORKER_ENABLED: envBoolean.default(false),
   MASSIVE_NEWS_WORKER_INTERVAL_MS: z.coerce
@@ -160,6 +163,14 @@ const envSchema = z.object({
     .default('OBSERVATION_ONLY'),
   ALLOW_TRADING_ENABLED_ON_START: envBoolean.default(false),
 }).superRefine((value, context) => {
+  if (value.MARKET_DAILY_MASSIVE_RESUME_SESSION !== undefined && value.MARKET_DAILY_TIINGO_CUTOVER_SESSION === undefined) {
+    context.addIssue({ code: 'custom', path: ['MARKET_DAILY_MASSIVE_RESUME_SESSION'],
+      message: 'MARKET_DAILY_MASSIVE_RESUME_SESSION requires MARKET_DAILY_TIINGO_CUTOVER_SESSION.' });
+  } else if (value.MARKET_DAILY_MASSIVE_RESUME_SESSION !== undefined && value.MARKET_DAILY_TIINGO_CUTOVER_SESSION !== undefined
+    && value.MARKET_DAILY_MASSIVE_RESUME_SESSION <= value.MARKET_DAILY_TIINGO_CUTOVER_SESSION) {
+    context.addIssue({ code: 'custom', path: ['MARKET_DAILY_MASSIVE_RESUME_SESSION'],
+      message: 'MARKET_DAILY_MASSIVE_RESUME_SESSION must be later than MARKET_DAILY_TIINGO_CUTOVER_SESSION.' });
+  }
   if (value.LIVE_WRITE_DEPLOYMENT_ROLE === 'PRODUCTION_EXECUTOR' && value.NODE_ENV !== 'production') {
     context.addIssue({
       code: 'custom',

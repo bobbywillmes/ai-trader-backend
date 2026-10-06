@@ -221,8 +221,10 @@ read persisted splits. Run the manual strict Massive split bootstrap through the
 session before deploying these publisher changes and extend coverage each new session;
 uncovered dates fail closed. See `docs/production/market-split-bootstrap.md`.
 Phase 8 adds an independent, default-unset Tiingo `DAY_1` session cutover for the
-SPY/QQQ/DIA/IWM/RSP market-sensor panel. The four daily consumers read a canonical
-provider seam and persisted splits; Tiingo `splitFactor` verifies coverage rather than
+SPY/QQQ/DIA/IWM/RSP market-sensor panel. An optional, strictly later Massive resume
+session permits only an operator-approved future-boundary rollback; provider failures
+still fail closed without fallback. The four daily consumers read canonical provider
+segments and persisted splits; Tiingo `splitFactor` verifies coverage rather than
 normalizing twice. See `docs/production/tiingo-market-daily-phase8.md`.
 Phase 3's six owned observation universes use a sparse, header-driven CSV importer.
 Only explicit nonblank cells on supplied rows mutate state; membership removal requires

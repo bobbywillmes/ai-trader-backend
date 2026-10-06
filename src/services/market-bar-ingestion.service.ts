@@ -12,7 +12,7 @@ import { TREND_SYMBOLS } from './trend-lab.config.js';
 import { configuredTiingoRestClient, type TiingoBar } from '../integrations/tiingo/rest.client.js';
 import { intradayAuthority } from './intraday-stress-provider-authority.js';
 import { aggregateTiingoMinuteWindow } from './tiingo-minute-aggregation.js';
-import { dailySessionEligible, marketDailyAuthority, readCanonicalDailyBars, validateCanonicalDailyRows, canonicalDailySessionDate, TIINGO_DAY_1_ELIGIBLE_MINUTES_ET } from './market-daily-authority.js';
+import { dailyAuthoritySegments, dailySessionEligible, marketDailyAuthority, readCanonicalDailyBars, validateCanonicalDailyRows, canonicalDailySessionDate, TIINGO_DAY_1_ELIGIBLE_MINUTES_ET } from './market-daily-authority.js';
 import { canonicalTiingoBar, ensureTiingoSplitEvent, withTiingoDailyLock } from './tiingo-daily.service.js';
 
 export const TREND_DATA_START = addDays(TREND_RESEARCH_START, -TREND_PRE_ROLL_CALENDAR_DAYS);
@@ -65,10 +65,11 @@ async function ingestTiingoPanelDay(symbol: DailyEvidenceSymbol, securityId: num
 export async function ingestDailyRange(symbol: DailyEvidenceSymbol, from: string, to: string, options: { now?: Date; db?: PrismaClient; fetchBars?: FetchBars } = {}) {
   const now = options.now ?? new Date(); const db = options.db ?? prisma;
   validateBackfillRange(from, to, now);
-  if (datesBetween(from, to).some(date => marketDailyAuthority(date).provider !== 'MASSIVE')) throw new HttpError(409, 'Massive DAY_1 backfill cannot cross the Tiingo authority session.');
   const security = await db.security.findUnique({ where: { symbol }, select: { id: true } });
   if (!security) throw new HttpError(409, `Existing Security ${symbol} is required; create it in Securities before backfill.`);
   const exceptions = await calendarExceptions(from, to, db);
+  if (datesBetween(from, to).some(date => marketSession(date, exceptions) && marketDailyAuthority(date).provider !== 'MASSIVE'))
+    throw new HttpError(409, 'Massive DAY_1 backfill range intersects a Tiingo-authority market session.');
   if (!datesBetween(from, to).some(date => barEligibility('DAY_1', etInstant(date, 0), now, exceptions).status === 'ELIGIBLE')) {
     return { symbol, from, to, returned: 0, eligible: 0, inserted: 0, alreadyStored: 0, ineligible: 0 };
   }
@@ -230,18 +231,21 @@ export async function marketDataStatus(now = new Date()) {
   const coverageFrom = addDays(today, -MAX_BACKFILL_DAYS + 1);
   const exceptions = await calendarExceptions(coverageFrom < operationalFrom ? coverageFrom : operationalFrom, today);
   const authority = marketDailyAuthority(today);
+  const configuredBoundaries = [authority.cutoverSession, authority.massiveResumeSession].filter((date): date is string => date !== null);
+  const validationThrough = [today, ...configuredBoundaries].sort().at(-1)!;
+  const segmentFrom = [today, ...configuredBoundaries.map(date => addDays(date, -7))].sort()[0]!;
+  const segmentThrough = [today, ...configuredBoundaries.map(date => addDays(date, 7))].sort().at(-1)!;
   const symbols = await Promise.all(MARKET_DAILY_EVIDENCE_SYMBOLS.map(async symbol => {
     const security = await prisma.security.findUnique({ where: { symbol }, select: { id: true } });
     const rows = security ? await prisma.marketBar.findMany({ where: { securityId: security.id, timeframe: 'DAY_1' }, orderBy: { barStartAt: 'asc' } }) : [];
     let canonical: ReturnType<typeof validateCanonicalDailyRows> = []; let canonicalProviderConflict: string | null = null;
-    try { canonical = validateCanonicalDailyRows(rows, '1900-01-01', authority.cutoverSession && authority.cutoverSession > today ? authority.cutoverSession : today); }
+    try { canonical = validateCanonicalDailyRows(rows, '1900-01-01', validationThrough); }
     catch (error) { canonicalProviderConflict = error instanceof Error ? error.message : 'Invalid canonical DAY_1 evidence.'; }
     const present = new Set(canonical.map(row => row.sessionDate));
     const latest = canonical.at(-1);
-    const boundary = authority.cutoverSession;
-    const around = boundary ? rows.flatMap(row => {
+    const around = configuredBoundaries.length ? rows.flatMap(row => {
       try { const sessionDate = canonicalDailySessionDate(row.barStartAt, row.provider as 'MASSIVE' | 'TIINGO');
-        return sessionDate >= addDays(boundary, -7) && sessionDate <= addDays(boundary, 7) ? [{ sessionDate, provider: row.provider }] : []; }
+        return configuredBoundaries.some(boundary => sessionDate >= addDays(boundary, -7) && sessionDate <= addDays(boundary, 7)) ? [{ sessionDate, provider: row.provider }] : []; }
       catch { return []; }
     }).slice(0, 75) : [];
     return {
@@ -255,6 +259,8 @@ export async function marketDataStatus(now = new Date()) {
   }));
   const events = await prisma.systemEvent.findMany({ where: { type: { in: ['market_data_backfill_started', 'market_data_backfill_completed', 'market_data_backfill_failed'] } }, orderBy: { createdAt: 'desc' }, take: 5, select: { id: true, type: true, message: true, payloadJson: true, createdAt: true } });
   return { researchStart: TREND_RESEARCH_START, dataStart: TREND_DATA_START, maxBackfillDays: MAX_BACKFILL_DAYS, operationalFrom, symbols, sync, events,
-    dailyAuthority: { currentNySession: today, configuredCutoverSession: authority.cutoverSession, expectedProvider: authority.provider,
+    dailyAuthority: { currentNySession: today, configuredCutoverSession: authority.cutoverSession,
+      configuredMassiveResumeSession: authority.massiveResumeSession, expectedProvider: authority.provider,
+      authoritySegments: dailyAuthoritySegments(segmentFrom, segmentThrough),
       authorityVersion: authority.authorityVersion, tiingoRetentionPaused: (await prisma.setting.findUnique({ where: { key: 'tiingoDailyIngestionPaused' } }))?.value === 'true' } };
 }

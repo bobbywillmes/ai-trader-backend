@@ -2,7 +2,7 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import type { SplitEvent } from '../integrations/massive/evidence.client.js';
 import type { DailyEvidenceSymbol } from './market-daily-evidence.definition.js';
 import { addDays, datesBetween, marketSession, validDate } from './market-calendar.js';
-import { marketDailyAuthority, readCanonicalDailyBars } from './market-daily-authority.js';
+import { dailyAuthoritySegments, marketDailyAuthority, readCanonicalDailyBars } from './market-daily-authority.js';
 
 type Db = Prisma.TransactionClient | PrismaClient;
 const day = (value: Date) => value.toISOString().slice(0, 10);
@@ -20,28 +20,29 @@ export async function readPersistedSplits(db: Db, symbol: DailyEvidenceSymbol, f
   if (!validDate(from) || !validDate(through) || from > through) throw new Error('Invalid persisted split range.');
   const security = await db.security.findUnique({ where: { symbol }, select: { id: true } });
   if (!security) throw new Error('Missing split Security.');
-  const cutover = marketDailyAuthority(through).cutoverSession;
-  const massiveThrough = cutover && cutover <= through ? addDays(cutover, -1) : through;
-  const coverage = from <= massiveThrough ? await db.marketSplitCoverage.findMany({
-    where: { securityId: security.id, fromDate: { lte: new Date(massiveThrough) }, throughDate: { gte: new Date(from) } },
+  const authoritySegments = dailyAuthoritySegments(from, through);
+  const massiveSegments = authoritySegments.filter(segment => segment.provider === 'MASSIVE');
+  const coverage = massiveSegments.length ? await db.marketSplitCoverage.findMany({
+    where: { securityId: security.id, fromDate: { lte: new Date(through) }, throughDate: { gte: new Date(from) } },
     orderBy: [{ fromDate: 'asc' }, { throughDate: 'asc' }],
   }) : [];
-  let next = from;
-  if (from <= massiveThrough) {
+  for (const segment of massiveSegments) {
+    let next = segment.from;
     for (const row of coverage) {
       const start = day(row.fromDate), end = day(row.throughDate);
+      if (end < segment.from || start > segment.through) continue;
       if (row.provider !== 'MASSIVE' || start > next) throw new Error('Incomplete or mixed-provider split coverage.');
       if (end >= next) next = addDays(end, 1);
-      if (next > massiveThrough) break;
+      if (next > segment.through) break;
     }
-    if (next <= massiveThrough) throw new Error('Incomplete persisted split coverage.');
+    if (next <= segment.through) throw new Error('Incomplete persisted split coverage.');
   }
-  const tiingoFrom = cutover && cutover <= through ? (cutover > from ? cutover : from) : null;
-  const tiingoBars = tiingoFrom ? await readCanonicalDailyBars(db, [security.id], tiingoFrom, through) : [];
-  if (tiingoFrom) {
-    const calendarRows = await db.marketCalendarException.findMany({ where: { sessionDate: { gte: new Date(tiingoFrom), lte: new Date(through) } } });
+  const tiingoSegment = authoritySegments.find(segment => segment.provider === 'TIINGO');
+  const tiingoBars = tiingoSegment ? await readCanonicalDailyBars(db, [security.id], tiingoSegment.from, tiingoSegment.through) : [];
+  if (tiingoSegment) {
+    const calendarRows = await db.marketCalendarException.findMany({ where: { sessionDate: { gte: new Date(tiingoSegment.from), lte: new Date(tiingoSegment.through) } } });
     const exceptions = calendarRows.map(row => ({ sessionDate: day(row.sessionDate), type: row.type, closeTimeMinutesEt: row.closeTimeMinutesEt }));
-    const expected = datesBetween(tiingoFrom, through).filter(date => marketSession(date, exceptions));
+    const expected = datesBetween(tiingoSegment.from, tiingoSegment.through).filter(date => marketSession(date, exceptions));
     if (tiingoBars.length !== expected.length || expected.some(date => !tiingoBars.some(bar => bar.sessionDate === date && bar.splitFactor?.gt(0))))
       throw new Error('Incomplete Tiingo DAY_1 split-factor coverage.');
   }

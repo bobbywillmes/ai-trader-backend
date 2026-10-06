@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
-vi.mock('../config/env.js', () => ({ env: { MARKET_DAILY_TIINGO_CUTOVER_SESSION: '2026-09-24' } }));
+vi.mock('../config/env.js', () => ({ env: { MARKET_DAILY_TIINGO_CUTOVER_SESSION: '2026-09-24', MARKET_DAILY_MASSIVE_RESUME_SESSION: '2026-09-28' } }));
 import { readPersistedSplits } from './persisted-split-evidence.service.js';
 import { normalizeSplits } from './trend-calculation.js';
 
@@ -32,5 +32,15 @@ describe('persisted split evidence across the daily provider seam', () => {
     await expect(readPersistedSplits(conflict.db as never, 'SPY', '2026-09-23', '2026-09-25')).rejects.toThrow('conflicts');
     const noBar = fixture(); noBar.db.marketBar.findMany.mockResolvedValue([noBar.bars[0]]);
     await expect(readPersistedSplits(noBar.db as never, 'SPY', '2026-09-23', '2026-09-25')).rejects.toThrow('Incomplete Tiingo');
+  });
+  it('requires Massive split coverage again after the configured resume boundary', async () => {
+    const { db } = fixture(1);
+    db.marketSplitCoverage.findMany.mockResolvedValue([
+      { fromDate: new Date('2026-09-23'), throughDate: new Date('2026-09-23'), provider: 'MASSIVE' },
+      { fromDate: new Date('2026-09-28'), throughDate: new Date('2026-09-29'), provider: 'MASSIVE' },
+    ]);
+    await expect(readPersistedSplits(db as never, 'SPY', '2026-09-23', '2026-09-29')).resolves.toEqual([]);
+    db.marketSplitCoverage.findMany.mockResolvedValue([{ fromDate: new Date('2026-09-23'), throughDate: new Date('2026-09-23'), provider: 'MASSIVE' }]);
+    await expect(readPersistedSplits(db as never, 'SPY', '2026-09-23', '2026-09-29')).rejects.toThrow('Incomplete persisted');
   });
 });

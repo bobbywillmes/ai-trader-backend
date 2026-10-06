@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ observation: vi.fn(), assessment: vi.fn() }));
+vi.mock('../config/env.js', () => ({ env: { BREADTH_V2_SHADOW_WORKER_ENABLED: true } }));
 vi.mock('../services/breadth-v2-measurement.service.js', () => ({ runBreadthV2Observations: mocks.observation }));
 vi.mock('../services/breadth-v2-assessment.service.js', () => ({ publishBreadthV2Assessments: mocks.assessment }));
 import { breadthV2ShadowSnapshot, runBreadthV2ShadowWorker } from './breadth-v2-shadow.worker.js';

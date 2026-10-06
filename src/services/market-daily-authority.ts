@@ -2,7 +2,7 @@ import type { MarketBar, Prisma } from '@prisma/client';
 import { env } from '../config/env.js';
 import { barEligibility, etDate, etInstant, marketSession, validDate, type CalendarException } from './market-calendar.js';
 
-export const MARKET_DAILY_AUTHORITY_VERSION = 'SESSION_CUTOVER_V1';
+export const MARKET_DAILY_AUTHORITY_VERSION = 'SESSION_BOUNDARIES_V2';
 export const TIINGO_DAY_1_ELIGIBLE_MINUTES_ET = 20 * 60 + 15;
 export type DailyProvider = 'MASSIVE' | 'TIINGO';
 export function dailySessionEligible(date: string, now: Date, exceptions: readonly CalendarException[]): boolean {
@@ -10,11 +10,26 @@ export function dailySessionEligible(date: string, now: Date, exceptions: readon
   return marketDailyAuthority(date).provider === 'TIINGO' ? now >= etInstant(date, TIINGO_DAY_1_ELIGIBLE_MINUTES_ET)
     : barEligibility('DAY_1', etInstant(date, 0), now, exceptions).status === 'ELIGIBLE';
 }
-export function marketDailyAuthority(sessionDate: string, cutoverSession: string | null | undefined = env.MARKET_DAILY_TIINGO_CUTOVER_SESSION) {
+export function marketDailyAuthority(sessionDate: string, cutoverSession: string | null | undefined = env.MARKET_DAILY_TIINGO_CUTOVER_SESSION,
+  massiveResumeSession: string | null | undefined = env.MARKET_DAILY_MASSIVE_RESUME_SESSION) {
   if (!validDate(sessionDate)) throw new Error('Invalid daily market session date.');
   if (cutoverSession != null && !validDate(cutoverSession)) throw new Error('Invalid MARKET_DAILY_TIINGO_CUTOVER_SESSION; expected YYYY-MM-DD.');
-  return { provider: cutoverSession != null && sessionDate >= cutoverSession ? 'TIINGO' as const : 'MASSIVE' as const,
-    authorityVersion: MARKET_DAILY_AUTHORITY_VERSION, cutoverSession: cutoverSession ?? null };
+  if (massiveResumeSession != null && !validDate(massiveResumeSession)) throw new Error('Invalid MARKET_DAILY_MASSIVE_RESUME_SESSION; expected YYYY-MM-DD.');
+  if (massiveResumeSession != null && cutoverSession == null) throw new Error('MARKET_DAILY_MASSIVE_RESUME_SESSION requires MARKET_DAILY_TIINGO_CUTOVER_SESSION.');
+  if (massiveResumeSession != null && cutoverSession != null && massiveResumeSession <= cutoverSession)
+    throw new Error('MARKET_DAILY_MASSIVE_RESUME_SESSION must be later than MARKET_DAILY_TIINGO_CUTOVER_SESSION.');
+  const tiingo = cutoverSession != null && sessionDate >= cutoverSession && (massiveResumeSession == null || sessionDate < massiveResumeSession);
+  return { provider: tiingo ? 'TIINGO' as const : 'MASSIVE' as const,
+    authorityVersion: MARKET_DAILY_AUTHORITY_VERSION, cutoverSession: cutoverSession ?? null, massiveResumeSession: massiveResumeSession ?? null };
+}
+export function dailyAuthoritySegments(from: string, through: string) {
+  if (!validDate(from) || !validDate(through) || from > through) throw new Error('Invalid daily authority segment range.');
+  const authority = marketDailyAuthority(through);
+  const starts = [from, authority.cutoverSession, authority.massiveResumeSession]
+    .filter((date): date is string => date !== null && date >= from && date <= through).sort();
+  const uniqueStarts = [...new Set(starts)];
+  return uniqueStarts.map((start, index) => ({ provider: marketDailyAuthority(start).provider, from: start,
+    through: index + 1 < uniqueStarts.length ? addDate(uniqueStarts[index + 1]!, -1) : through }));
 }
 /** Provider-specific storage timestamps represent the same logical NY market session. */
 export function canonicalDailySessionDate(barStartAt: Date, provider: DailyProvider): string {
@@ -46,14 +61,15 @@ export function validateCanonicalDailyRows(rows: readonly MarketBar[], from: str
 }
 type DailyReaderTx = Pick<Prisma.TransactionClient, 'marketBar' | 'setting'>;
 export async function readCanonicalDailyBars(tx: DailyReaderTx, securityIds: readonly number[], from: string, through: string): Promise<CanonicalDailyRow[]> {
-  const cutover = marketDailyAuthority(through).cutoverSession;
-  if (cutover && through >= cutover && (await tx.setting.findUnique({ where: { key: 'tiingoDailyIngestionPaused' } }))?.value === 'true')
+  if (dailyAuthoritySegments(from, through).some(segment => segment.provider === 'TIINGO')
+    && (await tx.setting.findUnique({ where: { key: 'tiingoDailyIngestionPaused' } }))?.value === 'true')
     throw new Error('Tiingo DAY_1 consumption is paused after retention purge.');
   const rows = await tx.marketBar.findMany({ where: { securityId: { in: [...securityIds] }, timeframe: 'DAY_1',
     barStartAt: { gte: new Date(`${from}T00:00:00Z`), lt: new Date(`${nextDate(through)}T00:00:00Z`) } }, orderBy: [{ barStartAt: 'asc' }, { id: 'asc' }] });
   return validateCanonicalDailyRows(rows, from, through);
 }
-function nextDate(date: string) { return new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10); }
+function addDate(date: string, days: number) { return new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10); }
+function nextDate(date: string) { return addDate(date, 1); }
 export function dailyProviderProvenance(rows: readonly CanonicalDailyRow[], from: string, through: string) {
   const relevant = rows.filter(row => row.sessionDate >= from && row.sessionDate <= through).sort((a, b) => a.sessionDate.localeCompare(b.sessionDate));
   const segments: { provider: DailyProvider; from: string; through: string; count: number }[] = [];
@@ -62,6 +78,7 @@ export function dailyProviderProvenance(rows: readonly CanonicalDailyRow[], from
     if (last?.provider === row.provider) { last.through = row.sessionDate; last.count++; }
     else segments.push({ provider: row.provider as DailyProvider, from: row.sessionDate, through: row.sessionDate, count: 1 });
   }
-  return { authorityVersion: MARKET_DAILY_AUTHORITY_VERSION, cutoverSession: marketDailyAuthority(through).cutoverSession,
+  const authority = marketDailyAuthority(through);
+  return { authorityVersion: MARKET_DAILY_AUTHORITY_VERSION, cutoverSession: authority.cutoverSession, massiveResumeSession: authority.massiveResumeSession,
     providersPresent: [...new Set(relevant.map(row => row.provider))], providerSegments: segments };
 }
