@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import { Client } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { etInstant } from '../../services/market-calendar.js';
 
 const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.DATABASE_URL;
 (enabled ? describe : describe.skip)('Tiingo daily PostgreSQL ingestion', () => {
@@ -63,12 +64,23 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const retry = await service.tiingoDailyBackfill({ revisionId, from: '2026-09-24', through: '2026-09-25', symbols: ['BRK.B'], apply: true, now, fetchDaily: async () => { throw new Error('must not refetch complete range'); } });
     expect(retry.preview.expectedRequests).toBe(0);
   });
-  it('preserves Massive collision and reports a differing Tiingo observation', async () => {
+  it('detects Massive logical-session collisions across DST offsets without blocking different sessions', async () => {
     const aapl = (await db.query(`SELECT id FROM "Security" WHERE symbol='AAPL'`)).rows[0].id;
-    await db.query(`INSERT INTO "MarketBar" ("securityId",timeframe,"barStartAt",open,high,low,close,volume,provider,"adjustmentMode","receivedAt") VALUES ($1,'DAY_1','2026-09-24',100,102,99,101,1234,'MASSIVE','UNADJUSTED',now())`, [aapl]);
-    const result = await service.tiingoDailyBackfill({ revisionId, from: '2026-09-24', through: '2026-09-25', symbols: ['AAPL'], apply: true, now, fetchDaily: async () => [row('2026-09-24'), row('2026-09-25')] });
-    expect(result.counts.otherProvider).toBe(1);
-    expect((await db.query(`SELECT provider FROM "MarketBar" WHERE "securityId"=$1 AND "barStartAt"='2026-09-24'`, [aapl])).rows[0].provider).toBe('MASSIVE');
+    const collisionSessions = ['2026-01-15', '2026-09-24'];
+    const massiveStarts = collisionSessions.map(date => etInstant(date, 0));
+    expect(massiveStarts.map(date => date.toISOString())).toEqual(['2026-01-15T05:00:00.000Z', '2026-09-24T04:00:00.000Z']);
+    for (const startedAt of massiveStarts)
+      await db.query(`INSERT INTO "MarketBar" ("securityId",timeframe,"barStartAt",open,high,low,close,volume,provider,"adjustmentMode","receivedAt") VALUES ($1,'DAY_1',$2,100,102,99,101,1234,'MASSIVE','UNADJUSTED',now())`, [aapl, startedAt]);
+
+    const winter = await service.tiingoDailyBackfill({ revisionId, from: '2026-01-15', through: '2026-01-16', symbols: ['AAPL'], apply: true, now,
+      fetchDaily: async () => [row('2026-01-15'), row('2026-01-16')] });
+    const summer = await service.tiingoDailyBackfill({ revisionId, from: '2026-09-24', through: '2026-09-25', symbols: ['AAPL'], apply: true, now,
+      fetchDaily: async () => [row('2026-09-24'), row('2026-09-25')] });
+    expect(winter.counts).toMatchObject({ otherProvider: 1, succeeded: 1 });
+    expect(summer.counts).toMatchObject({ otherProvider: 1, succeeded: 1 });
+    expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE "securityId"=$1 AND provider='TIINGO' AND "barStartAt" IN ('2026-01-15','2026-09-24')`, [aapl])).rows[0].n).toBe(0);
+    expect((await db.query(`SELECT "barStartAt" FROM "MarketBar" WHERE "securityId"=$1 AND provider='MASSIVE' ORDER BY "barStartAt"`, [aapl])).rows.map(row => row.barStartAt.toISOString())).toEqual(massiveStarts.map(date => date.toISOString()));
+    expect((await db.query(`SELECT "barStartAt"::date::text date FROM "MarketBar" WHERE "securityId"=$1 AND provider='TIINGO' AND "barStartAt" IN ('2026-01-16','2026-09-25') ORDER BY "barStartAt"`, [aapl])).rows).toEqual([{ date: '2026-01-16' }, { date: '2026-09-25' }]);
     const brk = (await db.query(`SELECT id FROM "Security" WHERE symbol='BRK.B'`)).rows[0].id;
     // A missing earlier date forces a range fetch containing the immutable later Tiingo row.
     const conflict = await service.tiingoDailyBackfill({ revisionId, from: '2026-09-23', through: '2026-09-24', symbols: ['BRK.B'], apply: true, now, fetchDaily: async () => [row('2026-09-24', 1, 100)] });
@@ -182,8 +194,9 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await first;
     const barsByProviderAndSession = (await db.query(`SELECT provider,"barStartAt"::date::text AS session_date,count(*)::int n FROM "MarketBar" GROUP BY provider,"barStartAt"::date ORDER BY provider,session_date`)).rows;
     expect(barsByProviderAndSession).toEqual([
+      { provider: 'MASSIVE', session_date: '2026-01-15', n: 1 },
       { provider: 'MASSIVE', session_date: '2026-09-24', n: 1 },
-      ...Object.entries({ '2026-09-21': 3, '2026-09-22': 20, '2026-09-23': 2, '2026-09-24': 2, '2026-09-25': 2, '2026-09-28': 1, '2026-09-29': 1, '2026-09-30': 1 }).map(([session_date, n]) => ({ provider: 'TIINGO', session_date, n })),
+      ...Object.entries({ '2026-01-16': 1, '2026-09-21': 3, '2026-09-22': 20, '2026-09-23': 2, '2026-09-24': 2, '2026-09-25': 2, '2026-09-28': 1, '2026-09-29': 1, '2026-09-30': 1 }).map(([session_date, n]) => ({ provider: 'TIINGO', session_date, n })),
     ]);
     const securityId = (await db.query(`SELECT id FROM "Security" WHERE symbol='AAPL'`)).rows[0].id;
     await db.query(`INSERT INTO "MarketBar" ("securityId",timeframe,"barStartAt",open,high,low,close,volume,provider,"adjustmentMode","receivedAt") VALUES ($1,'MINUTE_15','2026-09-24T13:30:00Z',100,101,99,100,15,'TIINGO','UNADJUSTED',now())`, [securityId]);
@@ -196,7 +209,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE provider='TIINGO'`)).rows[0].n).toBe(0);
     expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE provider='TIINGO' AND timeframe='MINUTE_15'`)).rows[0].n).toBe(0);
     expect((await db.query(`SELECT count(*)::int n FROM "TiingoDailyObservationState"`)).rows[0].n).toBe(0);
-    expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE provider='MASSIVE'`)).rows[0].n).toBe(1);
+    expect((await db.query(`SELECT count(*)::int n FROM "MarketBar" WHERE provider='MASSIVE'`)).rows[0].n).toBe(2);
     expect((await db.query(`SELECT count(*)::int n FROM "MarketSplitEvent" WHERE provider='MASSIVE'`)).rows[0].n).toBe(1);
     expect((await db.query(`SELECT value FROM "Setting" WHERE key='tiingoDailyIngestionPaused'`)).rows[0].value).toBe('true');
   });

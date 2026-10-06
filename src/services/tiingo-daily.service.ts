@@ -10,7 +10,7 @@ import { calendarExceptions } from './market-calendar.service.js';
 import { runTiingoDailyPool } from './tiingo-daily-pool.js';
 import { nextTiingoEmptyObservation } from './tiingo-daily-observation.js';
 import { withMarketMinuteDataLock } from './market-minute-data-lock.service.js';
-import { TIINGO_DAY_1_ELIGIBLE_MINUTES_ET } from './market-daily-authority.js';
+import { canonicalDailySessionDate, TIINGO_DAY_1_ELIGIBLE_MINUTES_ET } from './market-daily-authority.js';
 
 export const TIINGO_DAY_1_TIMING_VERSION = 'TIINGO_DAY_1_2015_ET_V1';
 const lockKey = createHash('sha256').update('ai-trader:tiingo-daily-ingestion-and-purge').digest().readBigInt64BE(0).toString();
@@ -87,10 +87,14 @@ async function persist(member: Member, bar: TiingoBar, receivedAt: Date): Promis
   const values = canonicalTiingoBar(bar); const date = bar.barStartAt.toISOString().slice(0, 10);
   if (!tiingoDayEligible(date, receivedAt)) throw new Error('Tiingo day is not yet eligible.');
   return prisma.$transaction(async tx => {
-    const identity = { securityId_timeframe_barStartAt: { securityId: member.securityId, timeframe: 'DAY_1' as const, barStartAt: bar.barStartAt } };
-    const existing = await tx.marketBar.findUnique({ where: identity });
+    const candidates = await tx.marketBar.findMany({ where: { securityId: member.securityId, timeframe: 'DAY_1',
+      barStartAt: { gte: new Date(`${date}T00:00:00Z`), lt: new Date(`${addDays(date, 1)}T00:00:00Z`) } } });
+    const logical = candidates.filter(row => canonicalDailySessionDate(row.barStartAt, row.provider) === date);
+    if (logical.length > 1) return { result: 'conflict' as const, resolved: false };
+    const existing = logical[0];
     if (existing) {
       if (existing.provider !== 'TIINGO') return { result: 'other' as const, resolved: false };
+      if (existing.barStartAt.getTime() !== bar.barStartAt.getTime()) return { result: 'conflict' as const, resolved: false };
       if (existing.adjustmentMode !== 'UNADJUSTED' || (Object.keys(values) as (keyof typeof values)[]).some(key => !existing[key]?.equals(values[key]))) return { result: 'conflict' as const, resolved: false };
     } else {
       await tx.marketBar.create({ data: { securityId: member.securityId, timeframe: 'DAY_1', barStartAt: bar.barStartAt, ...values, provider: 'TIINGO', adjustmentMode: 'UNADJUSTED', receivedAt } });
@@ -107,9 +111,17 @@ async function observationStates(members: Member[], from: string, through: strin
 }
 async function coverage(members: Member[], from: string, through: string) {
   const ids = members.map(row => row.securityId);
-  const rows = await prisma.marketBar.findMany({ where: { securityId: { in: ids }, timeframe: 'DAY_1', barStartAt: { gte: new Date(from), lte: new Date(through) } }, select: { securityId: true, barStartAt: true, provider: true } });
+  const rows = await prisma.marketBar.findMany({ where: { securityId: { in: ids }, timeframe: 'DAY_1',
+    barStartAt: { gte: new Date(`${from}T00:00:00Z`), lt: new Date(`${addDays(through, 1)}T00:00:00Z`) } }, select: { securityId: true, barStartAt: true, provider: true } });
   const bySymbol = new Map<number, Map<string, 'TIINGO' | 'MASSIVE'>>();
-  for (const row of rows) { const found = bySymbol.get(row.securityId) ?? new Map(); found.set(row.barStartAt.toISOString().slice(0, 10), row.provider); bySymbol.set(row.securityId, found); }
+  for (const row of rows) {
+    const sessionDate = canonicalDailySessionDate(row.barStartAt, row.provider);
+    if (sessionDate < from || sessionDate > through) continue;
+    const found = bySymbol.get(row.securityId) ?? new Map();
+    const existing = found.get(sessionDate);
+    if (existing && existing !== row.provider) throw new Error(`Duplicate DAY_1 logical session ${row.securityId}:${sessionDate}.`);
+    found.set(sessionDate, row.provider); bySymbol.set(row.securityId, found);
+  }
   return bySymbol;
 }
 export async function tiingoDailyBackfill(input: { revisionId: number; from: string; through: string; symbols?: string[]; apply?: boolean; retryTerminal?: boolean; researchHistory?: boolean; now?: Date; fetchDaily?: (symbol: string, from: string, through: string) => Promise<TiingoBar[]> }) {

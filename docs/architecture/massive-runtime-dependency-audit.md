@@ -15,4 +15,3 @@
 | Phase 7A/8 pre-cutover acquisition | SPY/RSP minute, five-symbol daily | LEGACY/RESEARCH | Explicit session-date Massive authority before each independent cutover |
 
 This table originated as the Phase 9A freeze and records later accepted cutovers in place. Runtime sizing and Risk Health now share the Tiingo-only trading-price service selected in Phase 9B.4B; the remaining listed Massive consumers keep their prior authority. The Massive adapter and its adjusted daily candle semantics remain intact. Phase 8 raw `MarketBar` DAY_1 evidence cannot replace arbitrary-symbol adjusted chart history. There is no realtime provider fallback or general-purpose provider selector.
-

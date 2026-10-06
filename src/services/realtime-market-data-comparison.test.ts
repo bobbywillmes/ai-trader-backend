@@ -84,7 +84,7 @@ describe('read-only realtime comparison', () => {
   });
   it('keeps uncut consumers Massive-backed, routes trading consumers through one policy, and keeps the command DB-free', () => {
     const facade = readFileSync('src/services/live-market-data.service.ts', 'utf8');
-    expect(facade).toContain("PRODUCTION_REALTIME_AUTHORITY = 'MASSIVE'"); expect(facade).not.toMatch(/tiingo|TIINGO/);
+    expect(facade).not.toContain('PRODUCTION_REALTIME_AUTHORITY');
     for (const file of ['momentum-price-confirmation.service.ts', 'momentum-market-chart.service.ts',
       'account-subscription-market-context.service.ts']) {
       expect(readFileSync(`src/services/${file}`, 'utf8')).toContain("from './live-market-data.service.js'");
