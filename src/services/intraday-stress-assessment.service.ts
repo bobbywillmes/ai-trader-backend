@@ -52,7 +52,7 @@ function actionableTargets(date: string, exceptions: CalendarException[]) {
  * prior session's final target once session close has passed — is never returned here, even if
  * it was itself never published.
  */
-function latestActionableTarget(now: Date, exceptions: CalendarException[]) {
+export function latestIntradayStressAssessmentTarget(now: Date, exceptions: CalendarException[], requireFresh = true) {
   const today = etDate(now);
   for (let back = 0; back <= 10; back++) {
     const date = addDays(today, -back);
@@ -62,8 +62,9 @@ function latestActionableTarget(now: Date, exceptions: CalendarException[]) {
       const targetAt = new Date(targets.session.openAt.getTime() + index * INTERVAL_MS);
       const barStart = new Date(targetAt.getTime() - INTERVAL_MS);
       if (barEligibility('MINUTE_15', barStart, now, exceptions).status !== 'ELIGIBLE') continue;
-      if (now.getTime() >= validUntilFor(date, index, exceptions).getTime()) continue;
-      return { date, index, targetAt };
+      const validUntil = validUntilFor(date, index, exceptions);
+      if (requireFresh && now.getTime() >= validUntil.getTime()) continue;
+      return { date, index, targetAt, validUntil };
     }
   }
   return null;
@@ -159,7 +160,7 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
       const predecessor = await tx.marketRegimeDimensionAssessment.findFirst({ where: { ...identity, status: 'VALID' }, orderBy: { targetAt: 'desc' } });
       const calendarRows = await tx.marketCalendarException.findMany({ orderBy: { sessionDate: 'asc' } });
       const exceptions: CalendarException[] = calendarRows.map(row => ({ ...row, sessionDate: row.sessionDate.toISOString().slice(0, 10) }));
-      const latest = latestActionableTarget(now, exceptions);
+      const latest = latestIntradayStressAssessmentTarget(now, exceptions);
       if (!latest || (predecessor && predecessor.targetAt.getTime() >= latest.targetAt.getTime())) return { ...result, notDue: true };
       // Any existing row at this exact targetAt is guaranteed non-VALID (a VALID one would have
       // satisfied the notDue check above) and represents a prior failed attempt at the same target.

@@ -9,6 +9,7 @@ import { addDays, barEligibility, COMPLETION_GRACE_MINUTES, datesBetween, etDate
 import { advanceTrend, calculateTrendWithThresholds, normalizeSplits, type TrendDay, type ResearchBar } from './trend-calculation.js';
 import { TREND_ALGORITHM_VERSION, TREND_PUBLICATION_EVIDENCE_VERSION, TREND_V1_THRESHOLDS, TREND_V1_THRESHOLD_EVIDENCE } from './trend-v1.definition.js';
 import { dailyProviderProvenance, dailySessionEligible, readCanonicalDailyBars } from './market-daily-authority.js';
+import { latestCanonicalDailyAssessmentTarget } from './market-assessment-targets.js';
 
 const identity = { dimension: 'TREND' as const, algorithmVersion: TREND_ALGORITHM_VERSION };
 export const TREND_PUBLICATION_LOCK_KEY = createHash('sha256').update('ai-trader:trend-v1-publication').digest().readBigInt64BE(0);
@@ -55,7 +56,7 @@ export async function publishTrendAssessments(options: Options = {}): Promise<Tr
       const exceptions: CalendarException[] = calendarRows.map(row => ({ ...row, sessionDate: row.sessionDate.toISOString().slice(0, 10) }));
       const today = etDate(now);
       // One year covers even extended closures, without inventing an eligible date.
-      const latest = datesBetween(addDays(today, -370), today).reverse().find(date => dailySessionEligible(date, now, exceptions));
+      const latest = latestCanonicalDailyAssessmentTarget(now, exceptions)?.date ?? null;
       if (!latest || (predecessor?.sessionDate && predecessor.sessionDate.toISOString().slice(0, 10) >= latest)) return { ...result, notDue: true };
       const securities = await tx.security.findMany({ where: { symbol: { in: [...symbols] } }, select: { id: true, symbol: true } });
       const rows = await readCanonicalDailyBars(tx, securities.map(s => s.id), '1900-01-01', latest);
