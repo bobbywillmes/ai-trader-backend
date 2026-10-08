@@ -25,6 +25,7 @@ export const BREADTH_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 export const BREADTH_V2_SHADOW_WORKER_INTERVAL_MS = 60 * 60_000;
 export const PARTICIPATION_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 export const INTRADAY_STRESS_ASSESSMENT_WORKER_INTERVAL_MS = 2 * 60_000;
+export const MARKET_REGIME_COMPOSITION_WORKER_INTERVAL_MS = 60_000;
 export const MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS = 30_000;
 export const MARKET_SPLIT_COVERAGE_WORKER_INTERVAL_MS = 15 * 60_000;
 
@@ -44,6 +45,15 @@ function thresholds(
 }
 
 export const workerDefinitions = [
+  {
+    key: 'market_regime_composition_publication',
+    displayName: 'Market Regime composition',
+    description: 'Composes the five stored authoritative V1 assessments without provider calls or trading authority.',
+    criticality: 'informational',
+    expectedIntervalMs: MARKET_REGIME_COMPOSITION_WORKER_INTERVAL_MS,
+    enabledByDefault: true,
+    ...thresholds(MARKET_REGIME_COMPOSITION_WORKER_INTERVAL_MS, 30_000),
+  },
   {
     key: 'breadth_v2_shadow_publication',
     displayName: 'BREADTH_V2 shadow publication',

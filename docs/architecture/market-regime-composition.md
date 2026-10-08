@@ -2,9 +2,9 @@
 
 ## Status and authority
 
-Milestone 2A defines immutable storage and pure source selection for
-`MARKET_REGIME_COMPOSITION_V1`. It does not publish compositions automatically and has
-no strategy, signal, entry, order, broker, or trading authority.
+Milestones 2A–2B define immutable storage, deterministic target/source selection, and
+automatic publication for `MARKET_REGIME_COMPOSITION_V1`. The composer has no strategy,
+signal, entry, order, broker, or trading authority and makes no provider calls.
 
 The composition is an as-of source vector, not a bullish/bearish score. It records
 precisely these authoritative identities in this order:
@@ -52,9 +52,12 @@ resulting degraded/expired vector; reads must not wait for that row to fail clos
 
 ## Deterministic source selection
 
-Expected targets are resolved by the caller using each publisher's calendar/cadence
-contract. Milestone 2A deliberately does not introduce scheduling or independently
-reimplement those target calculations.
+Expected targets are resolved independently using shared publisher target primitives.
+Trend and Volatility share canonical daily session eligibility; Breadth V1 retains its
+daily-bar grace; Participation retains reviewed full-session and provider-aware timing;
+Intraday Stress retains its actionable 15-minute target calculation. The composition
+keeps the latest due intraday target after expiration so it can explicitly record
+`EXPIRED`; the publisher itself still seeks only a fresh target.
 
 For each authoritative identity, selection considers only assessments whose:
 
@@ -130,8 +133,27 @@ Application code is responsible for resolving expected publisher targets and for
 constructing the canonical fingerprint. Those concepts depend on publisher timing and
 canonical serialization and are not safely expressible as static row constraints.
 
+## Publication, scheduling, and reads
+
+The publisher runs at startup and every minute as an informational monitored worker.
+It observes new source attempts, expected-target changes, and expiration transitions.
+A transaction advisory lock and serializable atomic parent/five-source insert prevent
+overlap; the fingerprint uniqueness constraint resolves residual races. Identical ticks
+reuse the existing row. Failures remain isolated from source and account workers, and
+no historical backfill is scheduled.
+
+Read-only `marketData.read` routes provide current, status/readiness, paginated history,
+and detail resources below `/api/market-data/market-regime-compositions`. The empty-body
+manual run is owner-only. Current reads recompute each referenced source's expiration,
+return request-time health and whole-vector usability, and never mutate history.
+
+Market Intelligence presents this separately from the five source cards and Breadth V2
+shadow evidence. It shows publication state, completeness, request-time freshness,
+exact identities/targets/states/reasons, history, and raw evidence without a synthetic
+directional score.
+
 ## Future milestones
 
-Milestone 2B may add an advisory-locked publisher, triggers, APIs, and operational
-monitoring. Strategy policy and eligibility remain separate later milestones. No future
-consumer may infer trading authority from these rows.
+Strategy policy and eligibility remain separate later milestones. No future consumer
+may infer trading authority from these rows. Future policy evaluation must check only
+explicitly required dimensions and re-evaluate expiration at its decision boundary.

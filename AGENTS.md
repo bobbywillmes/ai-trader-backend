@@ -338,6 +338,13 @@ disabled-by-default shadow worker. Neither version has trading authority. See
 `docs/development/breadth-calibration.md`, `docs/development/breadth-v1-production.md`,
 and `docs/production/breadth-v2-assessment-phase6b.md`.
 
+`MARKET_REGIME_COMPOSITION_V1` is an immutable, account-independent composition of the
+exact Trend, Volatility, Breadth, Participation and Intraday Stress V1 identities. Its
+informational worker uses stored evidence only, publishes complete or degraded vectors,
+and has no strategy or trading authority. Runtime reads re-evaluate source expiration;
+publication success never implies current usability. Breadth V2 remains excluded. See
+`docs/architecture/market-regime-composition.md`.
+
 External signal ingestion and routing are a separate evidence-only subsystem:
 `/api/external-signals/:webhookKey` authenticates and records terminal `SignalDelivery`
 and immutable `Signal` rows. Revision-owned authority may permit immutable

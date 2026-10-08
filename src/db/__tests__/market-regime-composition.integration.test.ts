@@ -3,12 +3,14 @@ import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { readFile, readdir } from 'node:fs/promises';
 import { Client } from 'pg';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.DATABASE_URL;
 (enabled ? describe : describe.skip)('Market Regime composition PostgreSQL integrity', () => {
   const database = `market_regime_composition_${randomUUID().replaceAll('-', '')}`;
-  let admin: Client, db: Client, databaseUrl: string;
+  let admin: Client, db: Client, prisma: PrismaClient, databaseUrl: string;
   const sourceIds: number[] = [];
   const sourceDefinitions = [
     ['TREND', 'TREND_V1', 'UP', '2026-10-07T20:00:00Z'],
@@ -35,9 +37,11 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
       [dimension, algorithmVersion, targetAt, state]);
       sourceIds.push(result.rows[0].id);
     }
+    prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
   }, 120_000);
 
   afterAll(async () => {
+    if (prisma) await prisma.$disconnect();
     if (db) await db.end();
     if (admin) { await admin.query(`DROP DATABASE IF EXISTS "${database}"`); await admin.end(); }
   });
@@ -148,5 +152,67 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
         ("compositionVersion","evidenceSchemaVersion","targetAt","observedAt","publicationStatus","evidenceHealth","publicationReasonCode","evidenceReasonCode","sourceSetFingerprint","previousAssessmentId","startedAt","completedAt","evidenceJson")
         VALUES ('MARKET_REGIME_COMPOSITION_V2',1,'2026-10-08T17:45:00Z','2026-10-08T18:00:00Z','FAILED','DEGRADED','PUBLICATION_FAILED','SOURCE_VECTOR_DEGRADED',$1,$2,'2026-10-08T17:59:59Z','2026-10-08T18:00:01Z','{}')`, ['f'.repeat(64), first])).rejects.toThrow();
     } finally { await db.query('ROLLBACK'); }
+  });
+
+  it('previews read-only, publishes atomically, deduplicates ticks and expires at read time', async () => {
+    const { currentMarketRegimeComposition, previewMarketRegimeComposition, publishMarketRegimeComposition } =
+      await import('../../services/market-regime-composition-publication.service.js');
+    const before = await prisma.marketRegimeAssessment.count();
+    const preview = await previewMarketRegimeComposition(new Date('2026-10-08T18:00:00Z'), prisma);
+    expect(preview).toMatchObject({ publicationStatus: 'SUCCEEDED', evidenceHealth: 'COMPLETE' });
+    expect(preview.sources).toHaveLength(5);
+    expect(await prisma.marketRegimeAssessment.count()).toBe(before);
+
+    const first = await publishMarketRegimeComposition({
+      db: prisma, observedAt: new Date('2026-10-08T18:00:00Z'), clock: () => new Date('2026-10-08T18:00:01Z'),
+    });
+    expect(first).toMatchObject({ published: true, reused: false, assessment: { evidenceHealth: 'COMPLETE' } });
+    expect(first.assessment.sources).toHaveLength(5);
+    const repeated = await publishMarketRegimeComposition({
+      db: prisma, observedAt: new Date('2026-10-08T18:04:00Z'), clock: () => new Date('2026-10-08T18:04:01Z'),
+    });
+    expect(repeated).toMatchObject({ published: false, reused: true, assessment: { id: first.assessment.id } });
+    expect(await prisma.marketRegimeAssessment.count()).toBe(before + 1);
+    await expect(currentMarketRegimeComposition(new Date('2026-10-08T18:15:00Z'), prisma))
+      .resolves.toMatchObject({ freshness: 'EXPIRED', assessment: { id: first.assessment.id, publicationStatus: 'SUCCEEDED' } });
+  });
+
+  it('lets a failed current-target retry displace valid evidence but never lets a late backfill displace the target', async () => {
+    const { previewMarketRegimeComposition } = await import('../../services/market-regime-composition-publication.service.js');
+    await prisma.marketRegimeDimensionAssessment.create({ data: {
+      dimension: 'TREND', algorithmVersion: 'TREND_V1', evidenceSchemaVersion: 1,
+      targetAt: new Date('2026-10-07T20:00:00Z'), sessionDate: new Date('2026-10-07T00:00:00Z'), attempt: 2,
+      status: 'FAILED', reasonCode: 'CALCULATION_FAILED', rawState: null, effectiveState: null,
+      dataThroughAt: null, validUntil: null, startedAt: new Date('2026-10-08T18:01:00Z'),
+      completedAt: new Date('2026-10-08T18:02:00Z'), evidenceJson: {},
+    } });
+    await prisma.marketRegimeDimensionAssessment.create({ data: {
+      dimension: 'TREND', algorithmVersion: 'TREND_V1', evidenceSchemaVersion: 1,
+      targetAt: new Date('2026-10-06T20:00:00Z'), sessionDate: new Date('2026-10-06T00:00:00Z'), attempt: 50,
+      status: 'VALID', reasonCode: null, rawState: 'UP', effectiveState: 'UP',
+      dataThroughAt: new Date('2026-10-06T20:00:00Z'), validUntil: new Date('2026-10-09T00:00:00Z'),
+      startedAt: new Date('2026-10-08T18:03:00Z'), completedAt: new Date('2026-10-08T18:04:00Z'), evidenceJson: {},
+    } });
+    const preview = await previewMarketRegimeComposition(new Date('2026-10-08T18:05:00Z'), prisma);
+    expect(preview.sources[0]).toMatchObject({ source: { attempt: 2, targetAt: new Date('2026-10-07T20:00:00Z') }, health: 'FAILED' });
+    expect(preview.evidenceHealth).toBe('DEGRADED');
+  });
+
+  it('serializes concurrent triggers and persists only one row for a fingerprint', async () => {
+    const second = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
+    const { previewMarketRegimeComposition, publishMarketRegimeComposition } =
+      await import('../../services/market-regime-composition-publication.service.js');
+    try {
+      const observedAt = new Date('2026-10-08T18:06:00Z');
+      const preview = await previewMarketRegimeComposition(observedAt, prisma);
+      const results = await Promise.allSettled([
+        publishMarketRegimeComposition({ db: prisma, observedAt, clock: () => new Date('2026-10-08T18:06:01Z') }),
+        publishMarketRegimeComposition({ db: second, observedAt, clock: () => new Date('2026-10-08T18:06:01Z') }),
+      ]);
+      expect(results.some(result => result.status === 'fulfilled')).toBe(true);
+      expect(await prisma.marketRegimeAssessment.count({ where: {
+        compositionVersion: 'MARKET_REGIME_COMPOSITION_V1', sourceSetFingerprint: preview.sourceSetFingerprint,
+      } })).toBe(1);
+    } finally { await second.$disconnect(); }
   });
 });
