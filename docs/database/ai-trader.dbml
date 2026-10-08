@@ -1177,10 +1177,69 @@ Table MarketRegimeDimensionAssessment {
   evidenceJson Json [not null]
   previousAssessment MarketRegimeDimensionAssessment
   nextAssessments MarketRegimeDimensionAssessment [not null]
+  regimeCompositionSources MarketRegimeAssessmentSource [not null]
 
   indexes {
     (dimension, algorithmVersion, targetAt, attempt) [unique]
     (id, dimension, algorithmVersion) [unique]
+  }
+}
+
+Table MarketRegimeAssessment {
+  id Int [pk, increment]
+  compositionVersion String [not null]
+  evidenceSchemaVersion Int [not null]
+  targetAt DateTime [not null]
+  observedAt DateTime [not null]
+  dataThroughAt DateTime
+  validUntil DateTime
+  publicationStatus MarketRegimeCompositionPublicationStatus [not null]
+  evidenceHealth MarketRegimeCompositionEvidenceHealth [not null]
+  publicationReasonCode String
+  evidenceReasonCode String
+  sourceSetFingerprint String [not null]
+  previousAssessmentId Int
+  startedAt DateTime [not null]
+  completedAt DateTime [not null]
+  createdAt DateTime [default: `now()`, not null]
+  evidenceJson Json [not null]
+  previousAssessment MarketRegimeAssessment
+  nextAssessments MarketRegimeAssessment [not null]
+  sources MarketRegimeAssessmentSource [not null]
+
+  indexes {
+    (compositionVersion, sourceSetFingerprint) [unique]
+    (id, compositionVersion) [unique]
+  }
+}
+
+Table MarketRegimeAssessmentSource {
+  id Int [pk, increment]
+  marketRegimeAssessmentId Int [not null]
+  dimension MarketRegimeDimension [not null]
+  requiredAlgorithmVersion String [not null]
+  expectedTargetAt DateTime [not null]
+  sourceAssessmentId Int
+  sourceEvidenceSchemaVersion Int
+  sourceAttempt Int
+  sourceStatus MarketRegimeDimensionAssessmentStatus
+  sourceTargetAt DateTime
+  sourceCompletedAt DateTime
+  sourceDataThroughAt DateTime
+  sourceValidUntil DateTime
+  sourceRawState String
+  sourceEffectiveState String
+  health MarketRegimeCompositionSourceHealth [not null]
+  reasonCode String
+  ordinal Int [not null]
+  evidenceJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  marketRegimeAssessment MarketRegimeAssessment [not null]
+  sourceAssessment MarketRegimeDimensionAssessment
+
+  indexes {
+    (marketRegimeAssessmentId, dimension) [unique]
+    (marketRegimeAssessmentId, ordinal) [unique]
   }
 }
 
@@ -2088,6 +2147,26 @@ Enum MarketRegimeDimensionAssessmentStatus {
   FAILED
 }
 
+Enum MarketRegimeCompositionPublicationStatus {
+  SUCCEEDED
+  FAILED
+}
+
+Enum MarketRegimeCompositionEvidenceHealth {
+  COMPLETE
+  DEGRADED
+}
+
+Enum MarketRegimeCompositionSourceHealth {
+  AVAILABLE
+  MISSING
+  UNAVAILABLE
+  FAILED
+  STALE
+  EXPIRED
+  INVALID
+}
+
 Enum CatalystSource {
   MASSIVE_NEWS
   MASSIVE_BENZINGA
@@ -2393,6 +2472,12 @@ Ref: MarketSplitEvent.securityId > Security.id [delete: Restrict]
 Ref: MarketSplitCoverage.securityId > Security.id [delete: Restrict]
 
 Ref: MarketRegimeDimensionAssessment.(previousAssessmentId, dimension, algorithmVersion) - MarketRegimeDimensionAssessment.(id, dimension, algorithmVersion) [delete: Restrict]
+
+Ref: MarketRegimeAssessment.(previousAssessmentId, compositionVersion) - MarketRegimeAssessment.(id, compositionVersion) [delete: Restrict]
+
+Ref: MarketRegimeAssessmentSource.marketRegimeAssessmentId > MarketRegimeAssessment.id [delete: Restrict]
+
+Ref: MarketRegimeAssessmentSource.(sourceAssessmentId, dimension, requiredAlgorithmVersion) > MarketRegimeDimensionAssessment.(id, dimension, algorithmVersion) [delete: Restrict]
 
 Ref: MarketBreadthObservation.breadthUniverseRevisionId > BreadthUniverseRevision.id [delete: Restrict]
 

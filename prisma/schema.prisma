@@ -1757,11 +1757,95 @@ model MarketRegimeDimensionAssessment {
   evidenceJson         Json
   previousAssessment   MarketRegimeDimensionAssessment?      @relation("DimensionHistory", fields: [previousAssessmentId, dimension, algorithmVersion], references: [id, dimension, algorithmVersion], onDelete: Restrict, onUpdate: Restrict, map: "MarketRegimeDimensionAssessment_previousAssessmentId_dimensi_fk")
   nextAssessments      MarketRegimeDimensionAssessment[]     @relation("DimensionHistory")
+  regimeCompositionSources MarketRegimeAssessmentSource[]
 
   @@unique([dimension, algorithmVersion, targetAt, attempt], map: "RegimeDimension_attempt_key")
   @@unique([id, dimension, algorithmVersion], map: "RegimeDimension_identity_key")
   @@index([previousAssessmentId, dimension, algorithmVersion], map: "RegimeDimension_previous_idx")
   // At most one VALID result per dimension/version/target is enforced in SQL.
+}
+
+enum MarketRegimeCompositionPublicationStatus {
+  SUCCEEDED
+  FAILED
+}
+
+enum MarketRegimeCompositionEvidenceHealth {
+  COMPLETE
+  DEGRADED
+}
+
+enum MarketRegimeCompositionSourceHealth {
+  AVAILABLE
+  MISSING
+  UNAVAILABLE
+  FAILED
+  STALE
+  EXPIRED
+  INVALID
+}
+
+// Immutable as-of composition of exactly the five authoritative V1 dimension identities.
+// It interprets no market direction and grants no strategy or trading authority.
+model MarketRegimeAssessment {
+  id                    Int                                     @id @default(autoincrement())
+  compositionVersion    String
+  evidenceSchemaVersion Int
+  targetAt              DateTime                                @db.Timestamptz(3)
+  observedAt            DateTime                                @db.Timestamptz(3)
+  dataThroughAt         DateTime?                               @db.Timestamptz(3)
+  validUntil            DateTime?                               @db.Timestamptz(3)
+  publicationStatus     MarketRegimeCompositionPublicationStatus
+  evidenceHealth        MarketRegimeCompositionEvidenceHealth
+  publicationReasonCode String?
+  evidenceReasonCode    String?
+  sourceSetFingerprint  String
+  previousAssessmentId  Int?
+  startedAt             DateTime                                @db.Timestamptz(3)
+  completedAt           DateTime                                @db.Timestamptz(3)
+  createdAt             DateTime                                @default(now()) @db.Timestamptz(3)
+  evidenceJson          Json
+
+  previousAssessment MarketRegimeAssessment?  @relation("MarketRegimeCompositionHistory", fields: [previousAssessmentId, compositionVersion], references: [id, compositionVersion], onDelete: Restrict, onUpdate: Restrict, map: "MarketRegimeAssessment_previous_version_fk")
+  nextAssessments     MarketRegimeAssessment[] @relation("MarketRegimeCompositionHistory")
+  sources             MarketRegimeAssessmentSource[]
+
+  @@unique([compositionVersion, sourceSetFingerprint], map: "MarketRegimeAssessment_version_source_key")
+  @@unique([id, compositionVersion], map: "MarketRegimeAssessment_identity_key")
+  @@index([compositionVersion, targetAt], map: "MarketRegimeAssessment_version_target_idx")
+  @@index([previousAssessmentId, compositionVersion], map: "MarketRegimeAssessment_previous_idx")
+}
+
+// One immutable slot per authoritative V1 dimension. Missing/degraded slots intentionally
+// retain null sourceAssessmentId while preserving the expected identity and target.
+model MarketRegimeAssessmentSource {
+  id                           Int                                  @id @default(autoincrement())
+  marketRegimeAssessmentId     Int
+  dimension                    MarketRegimeDimension
+  requiredAlgorithmVersion     String
+  expectedTargetAt             DateTime                             @db.Timestamptz(3)
+  sourceAssessmentId           Int?
+  sourceEvidenceSchemaVersion  Int?
+  sourceAttempt                Int?
+  sourceStatus                 MarketRegimeDimensionAssessmentStatus?
+  sourceTargetAt               DateTime?                            @db.Timestamptz(3)
+  sourceCompletedAt            DateTime?                            @db.Timestamptz(3)
+  sourceDataThroughAt          DateTime?                            @db.Timestamptz(3)
+  sourceValidUntil             DateTime?                            @db.Timestamptz(3)
+  sourceRawState               String?
+  sourceEffectiveState         String?
+  health                       MarketRegimeCompositionSourceHealth
+  reasonCode                   String?
+  ordinal                      Int
+  evidenceJson                 Json
+  createdAt                    DateTime                             @default(now()) @db.Timestamptz(3)
+
+  marketRegimeAssessment MarketRegimeAssessment          @relation(fields: [marketRegimeAssessmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sourceAssessment       MarketRegimeDimensionAssessment? @relation(fields: [sourceAssessmentId, dimension, requiredAlgorithmVersion], references: [id, dimension, algorithmVersion], onDelete: Restrict, onUpdate: Restrict, map: "MarketRegimeAssessmentSource_source_identity_fk")
+
+  @@unique([marketRegimeAssessmentId, dimension], map: "MarketRegimeAssessmentSource_dimension_key")
+  @@unique([marketRegimeAssessmentId, ordinal], map: "MarketRegimeAssessmentSource_ordinal_key")
+  @@index([sourceAssessmentId, dimension, requiredAlgorithmVersion], map: "MarketRegimeAssessmentSource_source_idx")
 }
 
 // Immutable daily derived Breadth market-data fact (Massive point-in-time CS universe +
