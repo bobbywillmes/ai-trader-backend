@@ -1,6 +1,7 @@
 import type { PlatformPermission, PlatformRole } from "../features/auth/types";
 
 export type AppRouteId =
+  | "marketIntelligence"
   | "marketCalendar"
   | "trendLab"
   | "dashboard"
@@ -36,6 +37,7 @@ const OPERATIONAL_ROLES: PlatformRole[] = ["SYSTEM_OWNER", "OPERATOR"];
 const OWNER_ONLY: PlatformRole[] = ["SYSTEM_OWNER"];
 
 export const routeAccessPolicies: Record<AppRouteId, RouteAccessPolicy> = {
+  marketIntelligence: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "marketData.read" },
   marketCalendar: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "marketData.read" },
   trendLab: { allowedRoles: OPERATIONAL_ROLES, requiredPermission: "marketData.read" },
   dashboard: { allowedRoles: ALL_ROLES, requiredPermission: "reports.read" },

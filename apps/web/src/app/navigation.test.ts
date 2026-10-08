@@ -26,6 +26,7 @@ describe("role-aware navigation configuration", () => {
     expect(isNavigationItemActive(setup, "/subscriptions")).toBe(true);
     expect(isNavigationItemActive(setup.children![1], "/subscriptions")).toBe(true);
     expect(groups.find((group) => group.label === "Trading")?.items.map((item) => item.label)).toEqual(["Live Operations", "Open Positions", "Open Orders", "Entry Decisions"]);
+    expect(groups.find((group) => group.label === "Market Intelligence")?.items.map((item) => item.label)).toContain("Market Intelligence");
     expect(groups.find((group) => group.label === "System")?.items.map((item) => item.label)).toContain("Lifecycle Exercises");
     expect(groups.find((group) => group.label === "System")?.items.map((item) => item.label)).toContain("Lifecycle Repairs");
     expect(groups.find((group) => group.label === "System")?.items.map((item) => item.label)).toEqual(expect.arrayContaining(["Market Calendar", "Trend Lab"]));
@@ -35,6 +36,7 @@ describe("role-aware navigation configuration", () => {
   it("gives operators broad operations without owner-critical destinations", () => {
     const labels = visibleLabels("OPERATOR");
     expect(labels).toEqual(expect.arrayContaining(["Dashboard", "Live Operations", "Open Positions", "Open Orders", "Entry Decisions", "Trading Setup", "Momentum Scanner", "Reports", "Trading Accounts", "System Events", "Operational Attention"]));
+    expect(labels).toContain("Market Intelligence");
     expect(labels).not.toEqual(expect.arrayContaining(["Users & Access", "Settings", "Securities", "Reconciliation", "Lifecycle Exercises", "Lifecycle Repairs"]));
   });
 

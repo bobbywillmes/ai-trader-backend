@@ -51,6 +51,7 @@ import { LifecycleExerciseDetailPage } from "../features/lifecycleExercises/Life
 import { LifecycleRepairsPage } from "../features/lifecycleRepairs/LifecycleRepairsPage";
 import { LiveOperationsPage } from "../features/liveOperations/LiveOperationsPage";
 import { OperationalAttentionPage } from "../features/operationalAttention/OperationalAttentionPage";
+import { MarketIntelligencePage } from "../features/marketIntelligence/MarketIntelligencePage";
 
 const responsiveDataPreviewRoute = import.meta.env.DEV
   ? [{ path: "dev/responsive-data-primitives", lazy: async () => ({ Component: (await import("../features/dev/ResponsiveDataPrimitivesPreview")).ResponsiveDataPrimitivesPreview }) }]
@@ -82,6 +83,7 @@ export const router = createBrowserRouter([
               ...responsiveDataPreviewRoute,
               { path: "system/market-calendar", element: authorize("marketCalendar", <MarketCalendarPage />) },
               { path: "system/trend-lab", element: authorize("trendLab", <TrendLabPage />) },
+              { path: "market-intelligence", element: authorize("marketIntelligence", <MarketIntelligencePage />) },
               {
                 path: "dashboard",
                 element: authorize("dashboard", <DashboardPage />),

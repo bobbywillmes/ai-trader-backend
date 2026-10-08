@@ -8,6 +8,7 @@ import {
   IconHeartbeat,
   IconAlertTriangle,
   IconWebhook,
+  IconBrain,
 } from "@tabler/icons-react";
 import type { PlatformRole } from "../features/auth/types";
 import type { AppRouteId } from "./routeAccess";
@@ -57,6 +58,7 @@ export const adminNavGroups: AdminNavGroup[] = [
     { routeId: "entryDecisions", to: "/entry-decisions", label: "Entry Decisions", icon: IconTargetArrow },
   ] },
   { label: "Market Intelligence", items: [
+    { routeId: "marketIntelligence", to: "/market-intelligence", label: "Market Intelligence", icon: IconBrain },
     { routeId: "momentumScanner", to: "/momentum-scanner", label: "Momentum Scanner", icon: IconActivity },
     { routeId: "marketDiary", to: "/market-diary", label: "Market Diary", icon: IconChartBar },
   ] },
