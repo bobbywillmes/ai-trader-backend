@@ -314,6 +314,13 @@ immutable attempts under a transaction advisory lock. Unresolved sessions block
 later publication. Persisted predecessor evidence owns hysteresis continuation.
 No trading consumer exists. See `docs/architecture/market-data-trend.md`.
 
+`MARKET_REGIME_COMPOSITION_V1` is an immutable as-of vector of exactly the five
+authoritative V1 assessments. It has no directional aggregate, policy interpretation,
+or trading authority. Its fingerprint changes only when expected targets, selected
+source identities, or source health changes; every consumer must still recheck
+`validUntil`. Breadth V2 remains excluded. See
+`docs/architecture/market-regime-composition.md`.
+
 VOLATILITY_V1 adopts the frozen daily classifier and asymmetric hysteresis without
 threshold tuning. Its account-independent publisher follows Trend's transaction
 advisory lock, immutable attempts, one replay-initialized bootstrap and chronological

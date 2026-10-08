@@ -89,7 +89,13 @@ describe('PARTICIPATION_V1 publication boundary (owner-run and monitored worker 
   });
   it('introduces no Participation reference into trading, signal, policy, order, broker or position code', () => {
     // The account workflow runner only lists the global worker key in its backoff-cap table (no account coordination).
-    const trading = production.filter(path => /(?:order|signal|strategy|entry-decision|broker|alpaca|position|exit|subscription|trading-account|regime-policy|regime-composition)/i.test(path) && path !== 'src/services/trading-account-workflow-runner.service.ts');
+    // Market Regime composition is approved account-independent evidence composition, not policy or trading code.
+    const evidenceComposition = new Set([
+      'src/services/market-regime-composition.definition.ts',
+      'src/services/market-regime-composition.service.ts',
+    ]);
+    const trading = production.filter(path => /(?:order|signal|strategy|entry-decision|broker|alpaca|position|exit|subscription|trading-account|regime-policy|regime-composition)/i.test(path)
+      && path !== 'src/services/trading-account-workflow-runner.service.ts' && !evidenceComposition.has(path));
     expect(trading.length).toBeGreaterThan(10);
     for (const path of trading) expect(readFileSync(path, 'utf8'), path).not.toMatch(/participation/i);
   });
