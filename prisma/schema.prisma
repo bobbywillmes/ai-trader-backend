@@ -1734,8 +1734,8 @@ enum MarketRegimeDimensionAssessmentStatus {
   FAILED
 }
 
-// Authoritative TREND_V1, VOLATILITY_V1, BREADTH_V1 and INTRADAY_STRESS_V1 evidence; research never inserts here.
-// SQL requires sessionDate for TREND/VOLATILITY/BREADTH/INTRADAY_STRESS and enforces dimension-specific states.
+// Immutable production assessment evidence for the five V1 dimensions and version-isolated BREADTH_V2 shadow chain; research never inserts here.
+// SQL requires sessionDate for TREND/VOLATILITY/BREADTH/PARTICIPATION/INTRADAY_STRESS and enforces dimension-specific states.
 model MarketRegimeDimensionAssessment {
   id                   Int                                   @id @default(autoincrement())
   dimension            MarketRegimeDimension
