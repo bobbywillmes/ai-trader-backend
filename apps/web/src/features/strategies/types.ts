@@ -100,3 +100,20 @@ export type StrategyUpdateResult = {
   changed: boolean;
   impact: StrategyChangeImpact;
 };
+
+export type MarketPolicyDimension = "TREND" | "VOLATILITY" | "BREADTH" | "PARTICIPATION" | "INTRADAY_STRESS";
+export type MarketPolicyRule = {
+  id: number; dimension: MarketPolicyDimension; algorithmVersion: string;
+  requirement: "REQUIRED" | "IGNORED"; allowedStates: Array<{ id: number; state: string }>;
+};
+export type MarketPolicyRevision = {
+  id: number; revision: number; status: "PREPARED" | "ACTIVE" | "RETIRED";
+  changeNote: string | null; createdAt: string; activatedAt: string | null; retiredAt: string | null;
+  dimensionRules: MarketPolicyRule[];
+};
+export type StrategyMarketPolicyResponse = {
+  authority: "SHADOW_ONLY";
+  supportedDimensions: ReadonlyArray<{ dimension: MarketPolicyDimension; algorithmVersion: string; allowedStates: readonly string[] }>;
+  policy: null | { id: number; strategyId: number; authority: "SHADOW_ONLY"; revisions: MarketPolicyRevision[] };
+};
+export type MarketPolicyValidation = { revisionId: number; revision: number; status: string; valid: boolean; errors: Array<{ dimension?: string; code: string; message: string }> };
