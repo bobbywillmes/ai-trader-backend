@@ -36,7 +36,21 @@ export type Revision = { id: number; strategySignalBindingId: number; revision: 
 export type SignalRoute = { id: number; tradingAccountId: number; tradingAccountSubscriptionId: number; subscriptionId: number;
   evaluationVersion?: number | null;
   evaluation?: SignalEvaluation | null;
+  marketEligibilityAttempts?: SignalRouteMarketEligibilityAttempt[];
   targetSnapshot: { tradingAccountName: string; subscriptionKey: string; subscriptionName: string; strategy: { id: number; key: string; name: string }; security: { id: number; symbol: string } };
+};
+
+export type SignalRouteMarketEligibilityAttempt = {
+  id: number; signalRouteId: number; attempt: number; integrationVersion: string;
+  status: 'COMPLETED' | 'FAILED' | 'NOT_APPLICABLE'; strategyId: number;
+  eligibilityDecisionId: number | null; reasonCode: string; startedAt: string; completedAt: string;
+  evidenceJson: unknown; eligibilityDecision: null | {
+    id: number; outcome: 'ALLOWED' | 'BLOCKED' | 'INSUFFICIENT_EVIDENCE'; reasonCode: string;
+    evaluatedAt: string; validUntil: string | null; policyRevisionId: number | null; marketRegimeAssessmentId: number | null;
+    evaluationVersion: string; currentFreshness: 'CURRENT' | 'EXPIRED' | 'POLICY_SUPERSEDED' | 'COMPOSITION_SUPERSEDED'; policyRevision: { id: number; revision: number; activatedAt: string | null } | null;
+    marketRegimeAssessment: { id: number; compositionVersion: string; targetAt: string; observedAt: string } | null;
+    gates: Array<{ id: number; ordinal: number; dimension: string; algorithmVersion: string; requirement: string; outcome: string; observedState: string | null; sourceHealth: string | null; sourceAssessmentId: number | null; allowedStatesJson: string[]; reasonCode: string }>;
+  };
 };
 
 export type SignalEvaluation = {

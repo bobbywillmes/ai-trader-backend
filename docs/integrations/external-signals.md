@@ -533,13 +533,28 @@ System → External Signals shows each target's read-only evaluation, separate a
 classification, status/outcome/reason, ordered gates and bounded evidence, timestamps,
 prospective ownership or position snapshot. Existing URL navigation remains authoritative.
 
+Phase 2E adds a separate append-only `SignalRouteMarketEligibilityAttempt` chain after
+the existing route evaluation. ENTRY_LONG attempts invoke
+`STRATEGY_MARKET_ELIGIBILITY_V1` with deterministic `SIGNAL_ROUTE:<id>` context, so the
+decision pins the route, active policy revision, applicable composition, five source
+identities and evaluation-time health. It never adds or changes a SignalEvaluation gate:
+an ELIGIBLE route may therefore have a BLOCKED or INSUFFICIENT_EVIDENCE shadow result.
+Technical failures record a null-decision FAILED attempt and retry at most three times
+on duplicate delivery; recovery appends a COMPLETED attempt. One terminal COMPLETED or
+NOT_APPLICABLE attempt is permitted per route. EXIT_LONG records NOT_APPLICABLE because
+entry policy must not affect verified risk reduction or frozen exit ownership.
+
+The route detail UI presents applicability, shadow outcome, and trading effect as three
+separate concepts. All shadow evidence is labeled SHADOW ONLY / NO TRADING EFFECT.
+
 Migration `20260914120000_signal_evaluation_exit_ownership` defaults all existing
 Subscriptions and PositionExitStates to BACKEND_MANAGED and creates missing lifecycle
 rows for existing positions with that same safe ownership. It does not evaluate old
 routes or alter trading permissions. Deploy the migration before the backend/UI.
 
-No Market Regime, freshness thresholds, sizing, buying-power, exposure, daily-entry,
-broker-readiness or other pipeline risk gates are introduced. No OrderIntent, broker
+No Market Regime policy outcome, freshness result, sizing, buying-power, exposure,
+daily-entry, broker-readiness or other pipeline risk gate is granted trading authority.
+No OrderIntent, broker
 submission, sell activity or position/exit-state mutation may originate from evaluation.
 Future entry/exit handoffs must use the existing authoritative safety pipelines;
 those handoffs are intentionally absent here.

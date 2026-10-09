@@ -373,6 +373,12 @@ configuration; binding source/key/Strategy identity is fixed. Do not add normal
 application update/delete paths for Signal or SignalDelivery. Keep URL credentials
 out of logs and persisted evidence. See `docs/integrations/external-signals.md`.
 
+Phase 2E associates ENTRY_LONG routes with independently evaluated, immutable
+`SIGNAL_ROUTE_MARKET_ELIGIBILITY_V1` attempts. These append-only attempts link exact
+Phase 2D decisions without changing SignalEvaluation gates or outcomes. Failures are
+nonblocking and bounded; EXIT_LONG is explicitly not applicable. UI and API consumers
+must keep route applicability, shadow policy outcome, and trading authority distinct.
+
 The intended lifecycle is:
 
 ```text
