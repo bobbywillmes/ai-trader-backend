@@ -57,6 +57,8 @@ import { runMarketSplitCoverageWorker } from '../workers/market-split-coverage.w
 import { MARKET_SPLIT_COVERAGE_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { runMarketRegimeCompositionWorker } from '../workers/market-regime-composition.worker.js';
 import { MARKET_REGIME_COMPOSITION_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
+import { STRATEGY_MARKET_ELIGIBILITY_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
+import { runStrategyMarketEligibilityWorker } from '../workers/strategy-market-eligibility.worker.js';
 
 const app = createApp();
 
@@ -203,6 +205,8 @@ function startWorkers() {
   // and never affect source publishers or account/trading workers.
   void runWorker('market_regime_composition_publication', runMarketRegimeCompositionWorker);
   setInterval(() => { void runWorker('market_regime_composition_publication', runMarketRegimeCompositionWorker); }, MARKET_REGIME_COMPOSITION_WORKER_INTERVAL_MS);
+  void runWorker('strategy_market_eligibility_shadow', runStrategyMarketEligibilityWorker);
+  setInterval(() => { void runWorker('strategy_market_eligibility_shadow', runStrategyMarketEligibilityWorker); }, STRATEGY_MARKET_ELIGIBILITY_WORKER_INTERVAL_MS);
 
   // This validity monitor is local-only. Final broker authorization remains
   // authoritative, while this loop promptly closes stale permissive latches.

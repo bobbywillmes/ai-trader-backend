@@ -26,6 +26,7 @@ export const BREADTH_V2_SHADOW_WORKER_INTERVAL_MS = 60 * 60_000;
 export const PARTICIPATION_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 export const INTRADAY_STRESS_ASSESSMENT_WORKER_INTERVAL_MS = 2 * 60_000;
 export const MARKET_REGIME_COMPOSITION_WORKER_INTERVAL_MS = 60_000;
+export const STRATEGY_MARKET_ELIGIBILITY_WORKER_INTERVAL_MS = 5 * 60_000;
 export const MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS = 30_000;
 export const MARKET_SPLIT_COVERAGE_WORKER_INTERVAL_MS = 15 * 60_000;
 
@@ -45,6 +46,15 @@ function thresholds(
 }
 
 export const workerDefinitions = [
+  {
+    key: 'strategy_market_eligibility_shadow',
+    displayName: 'Strategy market eligibility shadow',
+    description: 'Records immutable Strategy policy decisions from stored market-regime compositions without trading authority.',
+    criticality: 'informational',
+    expectedIntervalMs: STRATEGY_MARKET_ELIGIBILITY_WORKER_INTERVAL_MS,
+    enabledByDefault: true,
+    ...thresholds(STRATEGY_MARKET_ELIGIBILITY_WORKER_INTERVAL_MS, 60_000),
+  },
   {
     key: 'market_regime_composition_publication',
     displayName: 'Market Regime composition',

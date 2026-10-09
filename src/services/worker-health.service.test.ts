@@ -86,6 +86,7 @@ describe('WorkerHealthRegistry', () => {
 
     expect(new Set(keys).size).toBe(keys.length);
     expect(keys).toEqual([
+      'strategy_market_eligibility_shadow',
       'market_regime_composition_publication',
       'breadth_v2_shadow_publication',
       'trend_assessment_publication',

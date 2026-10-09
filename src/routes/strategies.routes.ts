@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { currentStrategyEligibilityController, strategyEligibilityDetailController, strategyEligibilityHistoryController } from '../controllers/strategy-market-eligibility.controller.js';
 import {
   activateStrategyMarketPolicyRevisionController,
   createStrategyMarketPolicyController,
@@ -32,6 +33,9 @@ router.post('/:id/market-policy/revisions', requireSystemOwnerAccess, prepareStr
 router.put('/:id/market-policy/revisions/:revisionId', requireSystemOwnerAccess, saveStrategyMarketPolicyRevisionController);
 router.get('/:id/market-policy/revisions/:revisionId/validation', requirePermission(PlatformPermission.STRATEGY_READ), validateStrategyMarketPolicyRevisionController);
 router.post('/:id/market-policy/revisions/:revisionId/activate', requireSystemOwnerAccess, activateStrategyMarketPolicyRevisionController);
+router.get('/:id/market-eligibility/current', requirePermission(PlatformPermission.STRATEGY_READ), currentStrategyEligibilityController);
+router.get('/:id/market-eligibility/decisions', requirePermission(PlatformPermission.STRATEGY_READ), strategyEligibilityHistoryController);
+router.get('/:id/market-eligibility/decisions/:decisionId', requirePermission(PlatformPermission.STRATEGY_READ), strategyEligibilityDetailController);
 router.get(
   '/:id',
   requirePermission(PlatformPermission.STRATEGY_READ),

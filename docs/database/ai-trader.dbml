@@ -1178,6 +1178,7 @@ Table MarketRegimeDimensionAssessment {
   previousAssessment MarketRegimeDimensionAssessment
   nextAssessments MarketRegimeDimensionAssessment [not null]
   regimeCompositionSources MarketRegimeAssessmentSource [not null]
+  strategyEligibilityGates StrategyMarketEligibilityDecisionGate [not null]
 
   indexes {
     (dimension, algorithmVersion, targetAt, attempt) [unique]
@@ -1206,6 +1207,7 @@ Table MarketRegimeAssessment {
   previousAssessment MarketRegimeAssessment
   nextAssessments MarketRegimeAssessment [not null]
   sources MarketRegimeAssessmentSource [not null]
+  strategyEligibilityDecisions StrategyMarketEligibilityDecision [not null]
 
   indexes {
     (compositionVersion, sourceSetFingerprint) [unique]
@@ -1759,6 +1761,7 @@ Table Strategy {
   subscriptions Subscription [not null]
   entryDecisions EntryDecision [not null]
   marketPolicy StrategyMarketPolicy
+  marketEligibilityDecisions StrategyMarketEligibilityDecision [not null]
 }
 
 Table StrategyMarketPolicy {
@@ -1782,6 +1785,7 @@ Table StrategyMarketPolicyRevision {
   retiredAt DateTime
   policy StrategyMarketPolicy [not null]
   dimensionRules StrategyMarketPolicyDimensionRule [not null]
+  eligibilityDecisions StrategyMarketEligibilityDecision [not null]
 
   indexes {
     (policyId, revision) [unique]
@@ -1813,6 +1817,52 @@ Table StrategyMarketPolicyAllowedState {
 
   indexes {
     (ruleId, state) [unique]
+  }
+}
+
+Table StrategyMarketEligibilityDecision {
+  id Int [pk, increment]
+  strategyId Int [not null]
+  policyRevisionId Int
+  marketRegimeAssessmentId Int
+  contextType String [not null]
+  contextIdentity String [not null]
+  evaluationVersion String [not null]
+  outcome StrategyMarketEligibilityOutcome [not null]
+  reasonCode String [not null]
+  evaluatedAt DateTime [not null]
+  validUntil DateTime
+  decisionFingerprint String [unique, not null]
+  strategyEnabled Boolean [not null]
+  evidenceJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  strategy Strategy [not null]
+  policyRevision StrategyMarketPolicyRevision
+  marketRegimeAssessment MarketRegimeAssessment
+  gates StrategyMarketEligibilityDecisionGate [not null]
+}
+
+Table StrategyMarketEligibilityDecisionGate {
+  id Int [pk, increment]
+  decisionId Int [not null]
+  dimension MarketRegimeDimension [not null]
+  algorithmVersion String [not null]
+  requirement StrategyMarketPolicyDimensionRequirement [not null]
+  outcome StrategyMarketEligibilityGateOutcome [not null]
+  observedState String
+  sourceHealth MarketRegimeCompositionSourceHealth
+  sourceAssessmentId Int
+  allowedStatesJson Json [not null]
+  reasonCode String [not null]
+  evidenceJson Json [not null]
+  ordinal Int [not null]
+  createdAt DateTime [default: `now()`, not null]
+  decision StrategyMarketEligibilityDecision [not null]
+  sourceAssessment MarketRegimeDimensionAssessment
+
+  indexes {
+    (decisionId, dimension) [unique]
+    (decisionId, ordinal) [unique]
   }
 }
 
@@ -2336,6 +2386,19 @@ Enum StrategyMarketPolicyDimensionRequirement {
   IGNORED
 }
 
+Enum StrategyMarketEligibilityOutcome {
+  ALLOWED
+  BLOCKED
+  INSUFFICIENT_EVIDENCE
+}
+
+Enum StrategyMarketEligibilityGateOutcome {
+  PASS
+  BLOCKED
+  INSUFFICIENT_EVIDENCE
+  IGNORED
+}
+
 Ref: StrategySignalRevision.strategySignalBindingId > StrategySignalBinding.id [delete: Restrict]
 
 Ref: StrategySignalBinding.signalSourceId > ExternalSignalSource.id [delete: Restrict]
@@ -2615,6 +2678,16 @@ Ref: StrategyMarketPolicyRevision.policyId > StrategyMarketPolicy.id [delete: Re
 Ref: StrategyMarketPolicyDimensionRule.revisionId > StrategyMarketPolicyRevision.id [delete: Restrict]
 
 Ref: StrategyMarketPolicyAllowedState.ruleId > StrategyMarketPolicyDimensionRule.id [delete: Restrict]
+
+Ref: StrategyMarketEligibilityDecision.strategyId > Strategy.id [delete: Restrict]
+
+Ref: StrategyMarketEligibilityDecision.policyRevisionId > StrategyMarketPolicyRevision.id [delete: Restrict]
+
+Ref: StrategyMarketEligibilityDecision.marketRegimeAssessmentId > MarketRegimeAssessment.id [delete: Restrict]
+
+Ref: StrategyMarketEligibilityDecisionGate.decisionId > StrategyMarketEligibilityDecision.id [delete: Restrict]
+
+Ref: StrategyMarketEligibilityDecisionGate.(sourceAssessmentId, dimension, algorithmVersion) > MarketRegimeDimensionAssessment.(id, dimension, algorithmVersion) [delete: Restrict]
 
 Ref: Subscription.securityId > Security.id
 
