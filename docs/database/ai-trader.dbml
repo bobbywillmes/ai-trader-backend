@@ -1758,6 +1758,62 @@ Table Strategy {
   updatedAt DateTime [not null]
   subscriptions Subscription [not null]
   entryDecisions EntryDecision [not null]
+  marketPolicy StrategyMarketPolicy
+}
+
+Table StrategyMarketPolicy {
+  id Int [pk, increment]
+  strategyId Int [unique, not null]
+  authority StrategyMarketPolicyAuthority [not null, default: 'SHADOW_ONLY']
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  strategy Strategy [not null]
+  revisions StrategyMarketPolicyRevision [not null]
+}
+
+Table StrategyMarketPolicyRevision {
+  id Int [pk, increment]
+  policyId Int [not null]
+  revision Int [not null]
+  status StrategyMarketPolicyRevisionStatus [not null, default: 'PREPARED']
+  changeNote String
+  createdAt DateTime [default: `now()`, not null]
+  activatedAt DateTime
+  retiredAt DateTime
+  policy StrategyMarketPolicy [not null]
+  dimensionRules StrategyMarketPolicyDimensionRule [not null]
+
+  indexes {
+    (policyId, revision) [unique]
+  }
+}
+
+Table StrategyMarketPolicyDimensionRule {
+  id Int [pk, increment]
+  revisionId Int [not null]
+  dimension MarketRegimeDimension [not null]
+  algorithmVersion String [not null]
+  requirement StrategyMarketPolicyDimensionRequirement [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  revision StrategyMarketPolicyRevision [not null]
+  allowedStates StrategyMarketPolicyAllowedState [not null]
+
+  indexes {
+    (revisionId, dimension) [unique]
+  }
+}
+
+Table StrategyMarketPolicyAllowedState {
+  id Int [pk, increment]
+  ruleId Int [not null]
+  state String [not null]
+  createdAt DateTime [default: `now()`, not null]
+  rule StrategyMarketPolicyDimensionRule [not null]
+
+  indexes {
+    (ruleId, state) [unique]
+  }
 }
 
 Table ExitProfile {
@@ -2265,6 +2321,21 @@ Enum MomentumPipelineStage {
   HANDOFF_DELIVERY
 }
 
+Enum StrategyMarketPolicyAuthority {
+  SHADOW_ONLY
+}
+
+Enum StrategyMarketPolicyRevisionStatus {
+  PREPARED
+  ACTIVE
+  RETIRED
+}
+
+Enum StrategyMarketPolicyDimensionRequirement {
+  REQUIRED
+  IGNORED
+}
+
 Ref: StrategySignalRevision.strategySignalBindingId > StrategySignalBinding.id [delete: Restrict]
 
 Ref: StrategySignalBinding.signalSourceId > ExternalSignalSource.id [delete: Restrict]
@@ -2536,6 +2607,14 @@ Ref: BrokerActivity.brokerOrderRecordId > BrokerOrder.id
 Ref: BrokerActivity.trackedPositionId > TrackedPosition.id [delete: Set Null]
 
 Ref: BrokerActivity.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: StrategyMarketPolicy.strategyId - Strategy.id [delete: Restrict]
+
+Ref: StrategyMarketPolicyRevision.policyId > StrategyMarketPolicy.id [delete: Restrict]
+
+Ref: StrategyMarketPolicyDimensionRule.revisionId > StrategyMarketPolicyRevision.id [delete: Restrict]
+
+Ref: StrategyMarketPolicyAllowedState.ruleId > StrategyMarketPolicyDimensionRule.id [delete: Restrict]
 
 Ref: Subscription.securityId > Security.id
 

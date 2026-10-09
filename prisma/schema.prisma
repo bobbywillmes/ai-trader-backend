@@ -2670,6 +2670,77 @@ model Strategy {
 
   subscriptions  Subscription[]
   entryDecisions EntryDecision[]
+  marketPolicy   StrategyMarketPolicy?
+}
+
+enum StrategyMarketPolicyAuthority {
+  SHADOW_ONLY
+}
+
+enum StrategyMarketPolicyRevisionStatus {
+  PREPARED
+  ACTIVE
+  RETIRED
+}
+
+enum StrategyMarketPolicyDimensionRequirement {
+  REQUIRED
+  IGNORED
+}
+
+// Strategy-owned configuration only. Phase 2C grants no trading authority.
+model StrategyMarketPolicy {
+  id            Int                           @id @default(autoincrement())
+  strategyId    Int                           @unique
+  authority     StrategyMarketPolicyAuthority @default(SHADOW_ONLY)
+  createdAt     DateTime                      @default(now())
+  updatedAt     DateTime                      @updatedAt
+
+  strategy      Strategy                      @relation(fields: [strategyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  revisions     StrategyMarketPolicyRevision[]
+}
+
+model StrategyMarketPolicyRevision {
+  id             Int                                @id @default(autoincrement())
+  policyId       Int
+  revision       Int
+  status         StrategyMarketPolicyRevisionStatus @default(PREPARED)
+  changeNote     String?
+  createdAt      DateTime                           @default(now())
+  activatedAt    DateTime?
+  retiredAt      DateTime?
+
+  policy         StrategyMarketPolicy               @relation(fields: [policyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  dimensionRules StrategyMarketPolicyDimensionRule[]
+
+  @@unique([policyId, revision], map: "StrategyMarketPolicyRevision_policy_revision_key")
+  @@index([policyId, status], map: "StrategyMarketPolicyRevision_policy_status_idx")
+}
+
+model StrategyMarketPolicyDimensionRule {
+  id               Int                                      @id @default(autoincrement())
+  revisionId       Int
+  dimension        MarketRegimeDimension
+  algorithmVersion String
+  requirement      StrategyMarketPolicyDimensionRequirement
+  createdAt        DateTime                                 @default(now())
+  updatedAt        DateTime                                 @updatedAt
+
+  revision         StrategyMarketPolicyRevision             @relation(fields: [revisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  allowedStates    StrategyMarketPolicyAllowedState[]
+
+  @@unique([revisionId, dimension], map: "StrategyMarketPolicyDimensionRule_revision_dimension_key")
+}
+
+model StrategyMarketPolicyAllowedState {
+  id          Int                               @id @default(autoincrement())
+  ruleId      Int
+  state       String
+  createdAt   DateTime                          @default(now())
+
+  rule        StrategyMarketPolicyDimensionRule @relation(fields: [ruleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([ruleId, state], map: "StrategyMarketPolicyAllowedState_rule_state_key")
 }
 
 model ExitProfile {

@@ -9,8 +9,19 @@ import {
 import { HttpError } from '../errors/http-error.js';
 import {
   strategyDetailQuerySchema,
+  strategyMarketPolicyDimensionSchema,
+  strategyMarketPolicyNoteSchema,
+  strategyMarketPolicyRuleSchema,
   updateStrategyEnabledSchema,
 } from '../validators/strategy.validator.js';
+import {
+  activateStrategyMarketPolicyRevision,
+  createStrategyMarketPolicy,
+  getStrategyMarketPolicy,
+  prepareStrategyMarketPolicyRevision,
+  updateStrategyMarketPolicyRule,
+  validateStrategyMarketPolicyRevision,
+} from '../services/strategy-market-policy.service.js';
 
 function parseStrategyId(value: unknown) {
   const id = typeof value === 'string' ? Number(value) : Number.NaN;
@@ -20,6 +31,18 @@ function parseStrategyId(value: unknown) {
   }
 
   return id;
+}
+
+function parsePositiveId(value: unknown, label: string) {
+  const id = typeof value === 'string' ? Number(value) : Number.NaN;
+  if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, `${label} must be a positive integer.`);
+  return id;
+}
+
+function actorId(res: Response) {
+  const actor = res.locals.user;
+  if (!actor) throw new HttpError(401, 'Authentication required.');
+  return actor.id;
 }
 
 function parseStrategyDetailQuery(value: unknown) {
@@ -99,4 +122,42 @@ export async function updateStrategyController(
   } catch (error) {
     next(error);
   }
+}
+
+export async function strategyMarketPolicyController(req: Request, res: Response, next: NextFunction) {
+  try { res.status(200).json(await getStrategyMarketPolicy(parseStrategyId(req.params.id))); } catch (error) { next(error); }
+}
+
+export async function createStrategyMarketPolicyController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const body = strategyMarketPolicyNoteSchema.safeParse(req.body ?? {});
+    if (!body.success) throw new HttpError(400, 'Invalid policy request.', body.error.issues);
+    res.status(201).json(await createStrategyMarketPolicy(parseStrategyId(req.params.id), actorId(res), body.data.changeNote));
+  } catch (error) { next(error); }
+}
+
+export async function prepareStrategyMarketPolicyRevisionController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const body = strategyMarketPolicyNoteSchema.safeParse(req.body ?? {});
+    if (!body.success) throw new HttpError(400, 'Invalid revision request.', body.error.issues);
+    res.status(201).json(await prepareStrategyMarketPolicyRevision(parseStrategyId(req.params.id), actorId(res), body.data.changeNote));
+  } catch (error) { next(error); }
+}
+
+export async function updateStrategyMarketPolicyRuleController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const body = strategyMarketPolicyRuleSchema.safeParse(req.body);
+    const dimension = strategyMarketPolicyDimensionSchema.safeParse(req.params.dimension);
+    if (!body.success) throw new HttpError(400, 'Invalid dimension rule.', body.error.issues);
+    if (!dimension.success) throw new HttpError(400, 'Invalid dimension rule.', dimension.error.issues);
+    res.status(200).json(await updateStrategyMarketPolicyRule(parseStrategyId(req.params.id), parsePositiveId(req.params.revisionId, 'Revision id'), dimension.data, body.data, actorId(res)));
+  } catch (error) { next(error); }
+}
+
+export async function validateStrategyMarketPolicyRevisionController(req: Request, res: Response, next: NextFunction) {
+  try { res.status(200).json(await validateStrategyMarketPolicyRevision(parseStrategyId(req.params.id), parsePositiveId(req.params.revisionId, 'Revision id'))); } catch (error) { next(error); }
+}
+
+export async function activateStrategyMarketPolicyRevisionController(req: Request, res: Response, next: NextFunction) {
+  try { res.status(200).json(await activateStrategyMarketPolicyRevision(parseStrategyId(req.params.id), parsePositiveId(req.params.revisionId, 'Revision id'), actorId(res))); } catch (error) { next(error); }
 }

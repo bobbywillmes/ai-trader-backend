@@ -1,9 +1,15 @@
 import { Router } from 'express';
 import {
+  activateStrategyMarketPolicyRevisionController,
+  createStrategyMarketPolicyController,
+  prepareStrategyMarketPolicyRevisionController,
   strategiesController,
+  strategyMarketPolicyController,
   strategyChangeImpactController,
   strategyController,
+  updateStrategyMarketPolicyRuleController,
   updateStrategyController,
+  validateStrategyMarketPolicyRevisionController,
 } from '../controllers/strategy.controller.js';
 import {
   requirePermission,
@@ -20,6 +26,12 @@ router.get(
   strategyChangeImpactController,
 );
 router.patch('/:id', requireSystemOwnerAccess, updateStrategyController);
+router.get('/:id/market-policy', requirePermission(PlatformPermission.STRATEGY_READ), strategyMarketPolicyController);
+router.post('/:id/market-policy', requireSystemOwnerAccess, createStrategyMarketPolicyController);
+router.post('/:id/market-policy/revisions', requireSystemOwnerAccess, prepareStrategyMarketPolicyRevisionController);
+router.patch('/:id/market-policy/revisions/:revisionId/dimensions/:dimension', requireSystemOwnerAccess, updateStrategyMarketPolicyRuleController);
+router.get('/:id/market-policy/revisions/:revisionId/validation', requirePermission(PlatformPermission.STRATEGY_READ), validateStrategyMarketPolicyRevisionController);
+router.post('/:id/market-policy/revisions/:revisionId/activate', requireSystemOwnerAccess, activateStrategyMarketPolicyRevisionController);
 router.get(
   '/:id',
   requirePermission(PlatformPermission.STRATEGY_READ),

@@ -345,6 +345,13 @@ and has no strategy or trading authority. Runtime reads re-evaluate source expir
 publication success never implies current usability. Breadth V2 remains excluded. See
 `docs/architecture/market-regime-composition.md`.
 
+Strategy market policies are versioned, Strategy-owned, and strictly `SHADOW_ONLY` in
+Phase 2C. Every revision explicitly describes all five authoritative V1 dimensions as
+REQUIRED or IGNORED; required rules use version-specific effective-state vocabularies.
+Only PREPARED revisions are editable. Activation validates and atomically retires the
+prior ACTIVE revision. No evaluator, signal integration, or trading enforcement exists
+yet. See `docs/architecture/strategy-market-policies.md`.
+
 External signal ingestion and routing are a separate evidence-only subsystem:
 `/api/external-signals/:webhookKey` authenticates and records terminal `SignalDelivery`
 and immutable `Signal` rows. Revision-owned authority may permit immutable
