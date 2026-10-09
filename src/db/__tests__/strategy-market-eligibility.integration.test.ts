@@ -140,6 +140,49 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(Number((await db.query(`SELECT count(*) count FROM "StrategyMarketEligibilityDecision"`)).rows[0].count)).toBe(before);
   });
 
+  it('rejects missing, duplicate, misordered, mismatched and incomplete gate sets', async () => {
+    const template = (await db.query(`SELECT * FROM "StrategyMarketEligibilityDecision" WHERE "policyRevisionId" IS NOT NULL AND "marketRegimeAssessmentId" IS NOT NULL ORDER BY id LIMIT 1`)).rows[0];
+    const attempt = async (gateSql?: string) => {
+      await db.query('BEGIN');
+      let rejected = false;
+      try {
+        const decisionId = (await db.query(`INSERT INTO "StrategyMarketEligibilityDecision" ("strategyId","policyRevisionId","marketRegimeAssessmentId","contextType","contextIdentity","evaluationVersion",outcome,"reasonCode","evaluatedAt","validUntil","decisionFingerprint","strategyEnabled","evidenceJson") SELECT "strategyId","policyRevisionId","marketRegimeAssessmentId",'TEST',$2,"evaluationVersion",outcome,"reasonCode","evaluatedAt","validUntil",$3,"strategyEnabled","evidenceJson" FROM "StrategyMarketEligibilityDecision" WHERE id=$1 RETURNING id`, [template.id, randomUUID(), randomUUID().replaceAll('-', '').repeat(2)])).rows[0].id;
+        if (gateSql) await db.query(gateSql, [decisionId, template.id]);
+        await db.query('COMMIT');
+      } catch {
+        rejected = true;
+      } finally {
+        await db.query('ROLLBACK').catch(() => undefined);
+      }
+      expect(rejected).toBe(true);
+    };
+    await attempt();
+    await attempt(`INSERT INTO "StrategyMarketEligibilityDecisionGate" ("decisionId",dimension,"algorithmVersion",requirement,outcome,"observedState","sourceHealth","sourceAssessmentId","allowedStatesJson","reasonCode","evidenceJson",ordinal) SELECT $1,dimension,"algorithmVersion",requirement,outcome,"observedState","sourceHealth","sourceAssessmentId","allowedStatesJson","reasonCode","evidenceJson",ordinal FROM "StrategyMarketEligibilityDecisionGate" WHERE "decisionId"=$2 AND ordinal < 5`);
+    await attempt(`INSERT INTO "StrategyMarketEligibilityDecisionGate" ("decisionId",dimension,"algorithmVersion",requirement,outcome,"observedState","sourceHealth","sourceAssessmentId","allowedStatesJson","reasonCode","evidenceJson",ordinal) SELECT $1,dimension,"algorithmVersion",requirement,outcome,"observedState","sourceHealth","sourceAssessmentId","allowedStatesJson","reasonCode","evidenceJson",CASE WHEN ordinal=1 THEN 2 WHEN ordinal=2 THEN 1 ELSE ordinal END FROM "StrategyMarketEligibilityDecisionGate" WHERE "decisionId"=$2`);
+    await attempt(`INSERT INTO "StrategyMarketEligibilityDecisionGate" ("decisionId",dimension,"algorithmVersion",requirement,outcome,"observedState","sourceHealth","sourceAssessmentId","allowedStatesJson","reasonCode","evidenceJson",ordinal) SELECT $1,dimension,"algorithmVersion",CASE WHEN ordinal=1 THEN 'IGNORED'::"StrategyMarketPolicyDimensionRequirement" ELSE requirement END,CASE WHEN ordinal=1 THEN 'IGNORED'::"StrategyMarketEligibilityGateOutcome" ELSE outcome END,"observedState","sourceHealth","sourceAssessmentId",CASE WHEN ordinal=1 THEN '[]'::jsonb ELSE "allowedStatesJson" END,"reasonCode","evidenceJson",ordinal FROM "StrategyMarketEligibilityDecisionGate" WHERE "decisionId"=$2`);
+    await db.query('BEGIN');
+    try {
+      const decisionId = (await db.query(`INSERT INTO "StrategyMarketEligibilityDecision" ("strategyId","policyRevisionId","marketRegimeAssessmentId","contextType","contextIdentity","evaluationVersion",outcome,"reasonCode","evaluatedAt","validUntil","decisionFingerprint","strategyEnabled","evidenceJson") SELECT "strategyId","policyRevisionId","marketRegimeAssessmentId",'TEST',$2,"evaluationVersion",outcome,"reasonCode","evaluatedAt","validUntil",$3,"strategyEnabled","evidenceJson" FROM "StrategyMarketEligibilityDecision" WHERE id=$1 RETURNING id`, [template.id, randomUUID(), randomUUID().replaceAll('-', '').repeat(2)])).rows[0].id;
+      await db.query(`INSERT INTO "StrategyMarketEligibilityDecisionGate" ("decisionId",dimension,"algorithmVersion",requirement,outcome,"observedState","sourceHealth","sourceAssessmentId","allowedStatesJson","reasonCode","evidenceJson",ordinal) SELECT $1,dimension,"algorithmVersion",requirement,outcome,"observedState","sourceHealth","sourceAssessmentId","allowedStatesJson","reasonCode","evidenceJson",ordinal FROM "StrategyMarketEligibilityDecisionGate" WHERE "decisionId"=$2`, [decisionId, template.id]);
+      await expect(db.query(`INSERT INTO "StrategyMarketEligibilityDecisionGate" ("decisionId",dimension,"algorithmVersion",requirement,outcome,"allowedStatesJson","reasonCode","evidenceJson",ordinal) VALUES ($1,'TREND','TREND_V1','REQUIRED','PASS','[]','DUPLICATE','{}',1)`, [decisionId])).rejects.toThrow(/duplicate key/);
+    } finally {
+      await db.query('ROLLBACK');
+    }
+  });
+
+  it('rejects cross-strategy policy identities and scopes decision detail to its URL strategy', async () => {
+    const template = (await db.query(`SELECT * FROM "StrategyMarketEligibilityDecision" WHERE "policyRevisionId" IS NOT NULL ORDER BY id LIMIT 1`)).rows[0];
+    const otherStrategyId = (await db.query(`INSERT INTO "Strategy" (key,name,enabled,"createdAt","updatedAt") VALUES ($1,'Other Eligibility',true,now(),now()) RETURNING id`, [`eligibility-other-${randomUUID()}`])).rows[0].id;
+    await db.query('BEGIN');
+    try {
+      await db.query(`INSERT INTO "StrategyMarketEligibilityDecision" ("strategyId","policyRevisionId","marketRegimeAssessmentId","contextType","contextIdentity","evaluationVersion",outcome,"reasonCode","evaluatedAt","validUntil","decisionFingerprint","strategyEnabled","evidenceJson") SELECT $2,"policyRevisionId","marketRegimeAssessmentId",'TEST',$3,"evaluationVersion",outcome,"reasonCode","evaluatedAt","validUntil",$4,true,"evidenceJson" FROM "StrategyMarketEligibilityDecision" WHERE id=$1`, [template.id, otherStrategyId, randomUUID(), randomUUID().replaceAll('-', '').repeat(2)]);
+      await expect(db.query('COMMIT')).rejects.toThrow(/another strategy policy|exactly five/);
+    } finally { await db.query('ROLLBACK').catch(() => undefined); }
+    const service = await import('../../services/strategy-market-eligibility.service.js');
+    await expect(service.getStrategyEligibilityDecision(template.id, otherStrategyId)).rejects.toThrow(/not found/i);
+    await expect(service.getStrategyEligibilityDecision(template.id, strategyId)).resolves.toMatchObject({ id: template.id, strategyId });
+  });
+
   it('runs the real shadow worker without trading, signal, order, risk, sizing, broker, or position writes', async () => {
     const tables = ['Signal', 'EntryDecision', 'OrderIntent', 'BrokerOrder', 'BrokerActivity', 'TrackedPosition'] as const;
     const counts = async () => {
@@ -183,5 +226,25 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(recovered).toMatchObject({ status: 'COMPLETED', attempt: 2 });
     expect((await prisma.signalRouteMarketEligibilityAttempt.findMany({ where: { signalRouteId: route.id }, orderBy: { attempt: 'asc' } })).map(row => row.status)).toEqual(['FAILED', 'COMPLETED']);
     expect(await prisma.signalEvaluation.findUnique({ where: { signalRouteId: route.id } })).toMatchObject({ outcome: 'ELIGIBLE', evaluationVersion: 1 });
+  });
+
+  it('rejects route attempts linked to another route decision or strategy', async () => {
+    const { prisma } = await import('../prisma.js');
+    const firstRoute = await signalRoute('ENTRY_LONG');
+    const shadowService = await import('../../services/signal-route-market-eligibility.service.js');
+    const decision = await shadowService.processSignalRouteMarketEligibility(firstRoute.id, prisma, () => new Date('2026-10-09T19:01:00Z'));
+    const secondRoute = await signalRoute('ENTRY_LONG');
+    await db.query('BEGIN');
+    try {
+      await db.query(`INSERT INTO "SignalRouteMarketEligibilityAttempt" ("signalRouteId",attempt,"integrationVersion",status,"strategyId","eligibilityDecisionId","reasonCode","startedAt","completedAt","evidenceJson") VALUES ($1,1,'SIGNAL_ROUTE_MARKET_ELIGIBILITY_V1','COMPLETED',$2,$3,'MISMATCH',now(),now(),'{}')`, [secondRoute.id, strategyId, decision!.eligibilityDecisionId]);
+      await expect(db.query('COMMIT')).rejects.toThrow(/decision identity conflicts/);
+    } finally { await db.query('ROLLBACK').catch(() => undefined); }
+    const thirdRoute = await signalRoute('ENTRY_LONG');
+    const otherStrategyId = (await db.query(`INSERT INTO "Strategy" (key,name,enabled,"createdAt","updatedAt") VALUES ($1,'Route Other',true,now(),now()) RETURNING id`, [`route-other-${randomUUID()}`])).rows[0].id;
+    await db.query('BEGIN');
+    try {
+      await db.query(`INSERT INTO "SignalRouteMarketEligibilityAttempt" ("signalRouteId",attempt,"integrationVersion",status,"strategyId","reasonCode","startedAt","completedAt","evidenceJson") VALUES ($1,1,'SIGNAL_ROUTE_MARKET_ELIGIBILITY_V1','FAILED',$2,'MISMATCH',now(),now(),'{}')`, [thirdRoute.id, otherStrategyId]);
+      await expect(db.query('COMMIT')).rejects.toThrow(/strategy conflicts/);
+    } finally { await db.query('ROLLBACK').catch(() => undefined); }
   });
 });

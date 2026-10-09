@@ -2,6 +2,10 @@
 
 Phase 2C adds versioned, strategy-owned market eligibility policy configuration. Its only authority is `SHADOW_ONLY`. It does not evaluate policies, create eligibility decisions, affect signal evaluation, or change trading behavior.
 
+## Phase 2 integrity correction
+
+Migration `20261010180000_phase2_integrity_corrections` adds database enforcement for legal revision transitions and freezes policy/revision identity after activation. The migration is deliberately non-repairing: it aborts if existing ACTIVE or RETIRED timestamps are inconsistent, or if an existing decision references a policy owned by another Strategy. Operators must investigate and explicitly resolve any precondition failure before retrying; the migration never rewrites historical policy or decision evidence.
+
 ## Model
 
 Each `Strategy` may own one `StrategyMarketPolicy`. A policy may have no active revision. Each revision has a backend-assigned integer revision number and is `PREPARED`, `ACTIVE`, or `RETIRED`.

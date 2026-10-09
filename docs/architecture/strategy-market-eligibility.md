@@ -2,6 +2,8 @@
 
 `STRATEGY_MARKET_ELIGIBILITY_V1` records immutable, strategy-specific interpretations of the five-source `MARKET_REGIME_COMPOSITION_V1` evidence vector. It is strictly `SHADOW_ONLY`: an `ALLOWED` outcome is not permission to route a signal, pass risk, size a position, or submit an order.
 
+Database integrity is defense in depth. Evaluated decisions with a policy and composition must commit exactly five ordered authoritative gates whose requirements and allowed states match the referenced policy revision and whose source identity matches the referenced composition. `NO_ACTIVE_POLICY` and `NO_COMPOSITION` are the only zero-gate forms. Route attempts must match the route's Signal strategy and, when completed, a decision whose context identity names that exact route. Migration `20261010180000_phase2_integrity_corrections` validates existing rows before installing these deferred checks and performs no historical backfill or repair.
+
 ## Semantics
 
 Every evaluation pins the active `StrategyMarketPolicyRevision`, applicable `MarketRegimeAssessment`, deterministic context, evaluator version, strategy catalog enablement, and five snapshotted rule gates. `IGNORED` gates never affect the result. A required unavailable, failed, stale, invalid, missing, or expired source produces `INSUFFICIENT_EVIDENCE`; a healthy state outside the policy allow-list produces `BLOCKED`. Insufficient evidence takes precedence over blocked, then all remaining required gates must pass for `ALLOWED`.

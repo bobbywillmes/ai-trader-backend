@@ -89,6 +89,20 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await expect(db.query(`UPDATE "StrategyMarketPolicyRevision" SET "changeNote"='rewrite' WHERE id=$1`, [next.id])).rejects.toThrow(/immutable/);
   });
 
+  it('rejects direct-SQL lifecycle reversals and freezes activated policy identity', async () => {
+    const rows = (await db.query(`SELECT id,status FROM "StrategyMarketPolicyRevision" WHERE "policyId"=$1 ORDER BY revision`, [policyId])).rows;
+    const retired = rows.find(row => row.status === 'RETIRED')!;
+    const active = rows.find(row => row.status === 'ACTIVE')!;
+    await expect(db.query(`UPDATE "StrategyMarketPolicyRevision" SET status='PREPARED', "activatedAt"=NULL, "retiredAt"=NULL WHERE id=$1`, [active.id])).rejects.toThrow(/not allowed|immutable/);
+    await expect(db.query(`UPDATE "StrategyMarketPolicyRevision" SET status='PREPARED', "activatedAt"=NULL, "retiredAt"=NULL WHERE id=$1`, [retired.id])).rejects.toThrow(/immutable/);
+    await expect(db.query(`UPDATE "StrategyMarketPolicyRevision" SET revision=revision+10 WHERE id=$1`, [active.id])).rejects.toThrow(/immutable/);
+    await expect(db.query(`UPDATE "StrategyMarketPolicyRevision" SET "activatedAt"="activatedAt" + interval '1 second' WHERE id=$1`, [active.id])).rejects.toThrow(/not allowed|immutable/);
+    await expect(db.query(`DELETE FROM "StrategyMarketPolicyRevision" WHERE id=$1`, [active.id])).rejects.toThrow(/cannot be deleted/);
+    await expect(db.query(`INSERT INTO "StrategyMarketPolicyRevision" ("policyId",revision,status,"createdAt","activatedAt") VALUES ($1,99,'ACTIVE',now(),now())`, [policyId])).rejects.toThrow(/begin PREPARED/);
+    const otherStrategyId = (await db.query(`INSERT INTO "Strategy" (key,name,enabled,"createdAt","updatedAt") VALUES ('policy-other','Policy Other',true,now(),now()) RETURNING id`)).rows[0].id;
+    await expect(db.query(`UPDATE "StrategyMarketPolicy" SET "strategyId"=$1 WHERE id=$2`, [otherStrategyId, policyId])).rejects.toThrow(/identity and authority are immutable/);
+  });
+
   it('rejects incomplete activation without retiring the active revision', async () => {
     const service = await import('../../services/strategy-market-policy.service.js');
     const prepared = await service.prepareStrategyMarketPolicyRevision(strategyId, 0, 'Incomplete test');
