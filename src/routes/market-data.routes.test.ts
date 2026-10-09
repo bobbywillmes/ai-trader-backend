@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   breadthLatest: vi.fn(), breadthAssessments: vi.fn(), breadthAssessment: vi.fn(), breadthPublish: vi.fn(),
   observationLatest: vi.fn(), observationList: vi.fn(), observationGet: vi.fn(), observationRun: vi.fn(),
   compositionCurrent: vi.fn(), compositionStatus: vi.fn(), compositions: vi.fn(), composition: vi.fn(), compositionRun: vi.fn(),
+  eligibilityCurrent: vi.fn(), eligibilityHistory: vi.fn(), eligibilityDetail: vi.fn(),
 }));
 vi.mock('../services/trend-assessment.service.js', () => ({ latestTrendAssessment: mocks.latest, listTrendAssessments: mocks.assessments, getTrendAssessment: mocks.assessment, publishTrendAssessments: mocks.publish }));
 vi.mock('../services/market-calendar.service.js', () => ({ listCalendar: mocks.list, saveCalendar: mocks.save, deleteCalendar: mocks.remove }));
@@ -20,6 +21,11 @@ vi.mock('../services/market-regime-composition-publication.service.js', () => ({
   getMarketRegimeComposition: mocks.composition,
   publishMarketRegimeComposition: mocks.compositionRun,
 }));
+vi.mock('../services/strategy-market-eligibility.service.js', () => ({
+  listCurrentStrategyEligibility: mocks.eligibilityCurrent,
+  listStrategyEligibilityDecisions: mocks.eligibilityHistory,
+  getStrategyEligibilityDecision: mocks.eligibilityDetail,
+}));
 import router from './market-data.routes.js';
 import { HttpError } from '../errors/http-error.js';
 let server: Server; let base: string;
@@ -29,6 +35,7 @@ beforeEach(async () => {
   mocks.breadthLatest.mockResolvedValue({ latestAttempt: null, latestValid: null }); mocks.breadthAssessments.mockResolvedValue([]); mocks.breadthAssessment.mockResolvedValue({ id: 9, rawState: 'POSITIVE' }); mocks.breadthPublish.mockResolvedValue({ published: 1 });
   mocks.observationLatest.mockResolvedValue({ id: 1, advanceShare: '0.5' }); mocks.observationList.mockResolvedValue([]); mocks.observationGet.mockResolvedValue({ id: 1 }); mocks.observationRun.mockResolvedValue({ inserted: 0 });
   mocks.compositionCurrent.mockResolvedValue({ freshness: 'NOT_PUBLISHED', assessment: null }); mocks.compositionStatus.mockResolvedValue({ readiness: 'READY' }); mocks.compositions.mockResolvedValue([]); mocks.composition.mockResolvedValue({ id: 12 }); mocks.compositionRun.mockResolvedValue({ published: true });
+  mocks.eligibilityCurrent.mockResolvedValue([]); mocks.eligibilityHistory.mockResolvedValue([]); mocks.eligibilityDetail.mockResolvedValue({ id: 21 });
   const app = express(); app.use(express.json());
   app.use((req, res, next) => { if (req.headers.role) Object.assign(res.locals, { user: { id: 1, platformRole: String(req.headers.role) } }); next(); });
   app.use('/api/market-data', router);
@@ -134,6 +141,19 @@ describe('market-data permissions and API', () => {
       expect((await fetch(base + path, { headers })).status).toBe(role ? 403 : 401);
     }
     expect((await fetch(`${base}/market-regime-compositions/run`, { method: 'POST', headers })).status).toBe(role ? 403 : 401);
+  });
+  it.each(['SYSTEM_OWNER', 'OPERATOR'])('allows %s strategy eligibility evidence reads', async role => {
+    const headers = { role };
+    for (const path of ['/strategy-eligibility/current', '/strategy-eligibility/decisions', '/strategy-eligibility/decisions/21']) {
+      const response = await fetch(base + path, { headers });
+      expect(response.status, `${path}: ${await response.clone().text()}`).toBe(200);
+    }
+  });
+  it.each([undefined, 'ACCOUNT_USER'])('denies strategy eligibility evidence reads for %s', async role => {
+    const headers = role ? { role } : {};
+    for (const path of ['/strategy-eligibility/current', '/strategy-eligibility/decisions', '/strategy-eligibility/decisions/21']) {
+      expect((await fetch(base + path, { headers })).status).toBe(role ? 403 : 401);
+    }
   });
   it('selects date/profile on a specific immutable research snapshot', async () => {
     const datasetId='a'.repeat(64);

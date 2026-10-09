@@ -7,6 +7,12 @@ vi.mock('../services/strategy-market-policy.service.js', () => ({
   createStrategyMarketPolicy: vi.fn(), prepareStrategyMarketPolicyRevision: vi.fn(), saveStrategyMarketPolicyRevision: vi.fn(),
   validateStrategyMarketPolicyRevision: vi.fn(), activateStrategyMarketPolicyRevision: vi.fn(),
 }));
+vi.mock('../services/strategy-market-eligibility.service.js', () => ({
+  getCurrentStrategyEligibility: vi.fn().mockResolvedValue({ assessment: null }),
+  listStrategyEligibilityDecisions: vi.fn().mockResolvedValue([]),
+  getStrategyEligibilityDecision: vi.fn().mockResolvedValue({ id: 1 }),
+  listCurrentStrategyEligibility: vi.fn().mockResolvedValue([]),
+}));
 import { createApp } from '../app/app.js';
 
 let server: Server | undefined;
@@ -30,5 +36,18 @@ describe('strategy market policy HTTP authorization', () => {
       ['1/market-policy', 'POST'], ['1/market-policy/revisions', 'POST'],
       ['1/market-policy/revisions/1', 'PUT'], ['1/market-policy/revisions/1/activate', 'POST'],
     ] as const) expect((await request(path, method)).status).toBe(403);
+  });
+
+  it.each([
+    ['1/market-policy'],
+    ['1/market-policy/revisions/1/validation'],
+    ['1/market-eligibility/current'],
+    ['1/market-eligibility/decisions'],
+    ['1/market-eligibility/decisions/1'],
+  ] as const)('allows only operational roles to read %s', async path => {
+    for (const [platformRole, expected] of [['SYSTEM_OWNER', 200], ['OPERATOR', 200], ['ACCOUNT_USER', 403]] as const) {
+      mocks.session.mockResolvedValue({ user: { id: 8, platformRole } });
+      expect((await request(path, 'GET')).status).toBe(expected);
+    }
   });
 });
