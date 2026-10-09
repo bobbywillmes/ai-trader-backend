@@ -9,9 +9,11 @@ import { notifications } from "@mantine/notifications";
 import { IconArrowLeft, IconPower } from "@tabler/icons-react";
 
 import { getAdminToken } from "../../lib/api";
-import { useIsSystemOwner } from "../auth/useAuth";
+import { useHasPermission, useIsSystemOwner } from "../auth/useAuth";
 import { StrategyStateModal } from "./StrategyStateModal";
 import { useStrategy, useStrategyChangeImpact, useUpdateStrategyEnabled } from "./hooks";
+import { StrategyMarketPolicyPanel } from "./UnifiedStrategyMarketPolicyPanel";
+import { StrategyEligibilityCard } from "./StrategyEligibilityCard";
 
 function dateTime(value?: string) {
   return value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
@@ -28,6 +30,7 @@ export function StrategyDetailPage() {
   const id = Number.isInteger(parsedId) && parsedId > 0 ? parsedId : null;
   const token = getAdminToken();
   const isOwner = useIsSystemOwner();
+  const canReadMarketPolicy = useHasPermission("marketData.read");
   const [page, setPage] = useState(1);
   const [confirming, setConfirming] = useState(false);
   const detail = useStrategy(id, page, token);
@@ -56,6 +59,8 @@ export function StrategyDetailPage() {
     <SimpleGrid cols={{ base: 1, sm: 3 }}><Card withBorder><Text size="xs" c="dimmed">TOTAL SUBSCRIPTIONS</Text><Text size="xl" fw={700}>{data.usage.totalSubscriptions}</Text></Card><Card withBorder><Text size="xs" c="dimmed">ENABLED</Text><Text size="xl" fw={700}>{data.usage.enabledSubscriptions}</Text></Card><Card withBorder><Text size="xs" c="dimmed">DISABLED</Text><Text size="xl" fw={700}>{data.usage.disabledSubscriptions}</Text></Card></SimpleGrid>
     <Card withBorder><Stack><Title order={3} size="h4">Usage</Title><Text size="sm"><strong>Symbols:</strong> {data.usage.symbols.join(", ") || "None"}</Text><Text size="sm"><strong>Trading accounts:</strong> {data.usage.tradingAccounts.map((item) => item.displayName).join(", ") || "None"}</Text><Text size="sm"><strong>Exit profiles:</strong> {data.usage.exitProfiles.map((item) => `${item.name} (${item.subscriptionCount})`).join(", ") || "None"}</Text></Stack></Card>
     {data.implications.momentumStrategy && <Alert color={data.strategy.enabled ? "blue" : "yellow"} title="Momentum eligibility implications"><Text size="sm">{data.implications.eligibilityMessage}</Text><Text size="xs" mt="xs">{data.implications.enabledMomentumSubscriptions} enabled linked subscription(s); {data.implications.currentlyQualifyingMomentumSubscriptions} currently satisfy the complete hierarchy. Strategy state remains separate from subscription, account, allocation, and risk controls.</Text></Alert>}
+    {canReadMarketPolicy && <StrategyMarketPolicyPanel strategyId={id} token={token} isOwner={isOwner} />}
+    {canReadMarketPolicy && <StrategyEligibilityCard strategyId={id} token={token} />}
     <Card withBorder><Stack><Title order={3} size="h4">Linked subscriptions</Title><ScrollArea><Table striped highlightOnHover style={{ minWidth: 1000 }}><Table.Thead><Table.Tr><Table.Th>Symbol</Table.Th><Table.Th>Subscription</Table.Th><Table.Th>Status</Table.Th><Table.Th>Trading account</Table.Th><Table.Th>Allocation</Table.Th><Table.Th>Exit profile</Table.Th><Table.Th>Sizing</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{data.subscriptions.data.map((subscription) => {
       const assignments = subscription.accountSubscriptions;
       return <Table.Tr key={subscription.id}><Table.Td><Text fw={600}>{subscription.symbol}</Text><Text size="xs" c="dimmed">{subscription.security.name}</Text></Table.Td><Table.Td><Text>{subscription.name}</Text><Text ff="monospace" size="xs">{subscription.key}</Text></Table.Td><Table.Td><Badge color={subscription.enabled ? "teal" : "gray"}>{subscription.enabled ? "Enabled" : "Retired"}</Badge></Table.Td><Table.Td>{assignments.length ? assignments.map((item) => <Anchor component={Link} key={item.id} to={createScopedNavigationTarget(`/trading-accounts/${item.tradingAccount.id}?tab=subscriptions`, location.search)} display="block">{item.tradingAccount.displayName}</Anchor>) : <Text c="dimmed">Unassigned</Text>}</Table.Td><Table.Td>{assignments.length ? assignments.map((item) => <Text key={item.id} size="sm" c={item.allocation?.enabled === false ? "red" : undefined}>{item.allocation ? `${item.allocation.name} (${item.allocation.enabled ? "enabled" : "disabled"})` : "No allocation"}</Text>) : <Text c="dimmed">-</Text>}</Table.Td><Table.Td>{subscription.exitProfile.name}</Table.Td><Table.Td>{assignments.length ? assignments.map((item) => <Text key={item.id} size="sm">{item.sizingType === "FIXED_QTY" ? sizing(item.sizingType, item.fixedQty ?? 0) : sizing(item.sizingType, item.maxPositionNotional ?? 0)}</Text>) : <Text c="dimmed">-</Text>}</Table.Td></Table.Tr>;

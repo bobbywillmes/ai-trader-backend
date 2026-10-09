@@ -218,6 +218,7 @@ model SignalRoute {
   targetSnapshot              Json
   evaluationVersion           Int?
   evaluation                  SignalEvaluation?
+  marketEligibilityAttempts  SignalRouteMarketEligibilityAttempt[]
   createdAt                   DateTime @default(now())
   routingRun                  SignalRoutingRun @relation(fields: [signalRoutingRunId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   accountSubscription         TradingAccountSubscription @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
@@ -247,6 +248,12 @@ enum SignalEvaluationGateResult {
   BLOCKED
   NO_ACTION
   FAILED
+}
+
+enum SignalRouteMarketEligibilityStatus {
+  COMPLETED
+  FAILED
+  NOT_APPLICABLE
 }
 
 // Terminal-only atomic evidence. Identity and authority are inherited from route -> signal.
@@ -285,6 +292,29 @@ model SignalEvaluationGate {
 
   @@unique([signalEvaluationId, sequence])
   @@unique([signalEvaluationId, gateKey])
+}
+
+model SignalRouteMarketEligibilityAttempt {
+  id                    Int                                    @id @default(autoincrement())
+  signalRouteId         Int
+  attempt               Int
+  integrationVersion    String
+  status                SignalRouteMarketEligibilityStatus
+  strategyId            Int
+  eligibilityDecisionId Int?
+  reasonCode            String
+  startedAt             DateTime                               @db.Timestamptz(3)
+  completedAt           DateTime                               @db.Timestamptz(3)
+  evidenceJson          Json
+  createdAt             DateTime                               @default(now()) @db.Timestamptz(3)
+
+  signalRoute           SignalRoute                            @relation(fields: [signalRouteId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  strategy              Strategy                               @relation(fields: [strategyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  eligibilityDecision   StrategyMarketEligibilityDecision?     @relation(fields: [eligibilityDecisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([signalRouteId, attempt], map: "SignalRouteMarketEligibilityAttempt_route_attempt_key")
+  @@index([eligibilityDecisionId], map: "SignalRouteMarketEligibilityAttempt_decision_idx")
+  @@index([status, completedAt], map: "SignalRouteMarketEligibilityAttempt_status_time_idx")
 }
 
 model Setting {
@@ -1757,11 +1787,97 @@ model MarketRegimeDimensionAssessment {
   evidenceJson         Json
   previousAssessment   MarketRegimeDimensionAssessment?      @relation("DimensionHistory", fields: [previousAssessmentId, dimension, algorithmVersion], references: [id, dimension, algorithmVersion], onDelete: Restrict, onUpdate: Restrict, map: "MarketRegimeDimensionAssessment_previousAssessmentId_dimensi_fk")
   nextAssessments      MarketRegimeDimensionAssessment[]     @relation("DimensionHistory")
+  regimeCompositionSources MarketRegimeAssessmentSource[]
+  strategyEligibilityGates StrategyMarketEligibilityDecisionGate[]
 
   @@unique([dimension, algorithmVersion, targetAt, attempt], map: "RegimeDimension_attempt_key")
   @@unique([id, dimension, algorithmVersion], map: "RegimeDimension_identity_key")
   @@index([previousAssessmentId, dimension, algorithmVersion], map: "RegimeDimension_previous_idx")
   // At most one VALID result per dimension/version/target is enforced in SQL.
+}
+
+enum MarketRegimeCompositionPublicationStatus {
+  SUCCEEDED
+  FAILED
+}
+
+enum MarketRegimeCompositionEvidenceHealth {
+  COMPLETE
+  DEGRADED
+}
+
+enum MarketRegimeCompositionSourceHealth {
+  AVAILABLE
+  MISSING
+  UNAVAILABLE
+  FAILED
+  STALE
+  EXPIRED
+  INVALID
+}
+
+// Immutable as-of composition of exactly the five authoritative V1 dimension identities.
+// It interprets no market direction and grants no strategy or trading authority.
+model MarketRegimeAssessment {
+  id                    Int                                     @id @default(autoincrement())
+  compositionVersion    String
+  evidenceSchemaVersion Int
+  targetAt              DateTime                                @db.Timestamptz(3)
+  observedAt            DateTime                                @db.Timestamptz(3)
+  dataThroughAt         DateTime?                               @db.Timestamptz(3)
+  validUntil            DateTime?                               @db.Timestamptz(3)
+  publicationStatus     MarketRegimeCompositionPublicationStatus
+  evidenceHealth        MarketRegimeCompositionEvidenceHealth
+  publicationReasonCode String?
+  evidenceReasonCode    String?
+  sourceSetFingerprint  String
+  previousAssessmentId  Int?
+  startedAt             DateTime                                @db.Timestamptz(3)
+  completedAt           DateTime                                @db.Timestamptz(3)
+  createdAt             DateTime                                @default(now()) @db.Timestamptz(3)
+  evidenceJson          Json
+
+  previousAssessment MarketRegimeAssessment?  @relation("MarketRegimeCompositionHistory", fields: [previousAssessmentId, compositionVersion], references: [id, compositionVersion], onDelete: Restrict, onUpdate: Restrict, map: "MarketRegimeAssessment_previous_version_fk")
+  nextAssessments     MarketRegimeAssessment[] @relation("MarketRegimeCompositionHistory")
+  sources             MarketRegimeAssessmentSource[]
+  strategyEligibilityDecisions StrategyMarketEligibilityDecision[]
+
+  @@unique([compositionVersion, sourceSetFingerprint], map: "MarketRegimeAssessment_version_source_key")
+  @@unique([id, compositionVersion], map: "MarketRegimeAssessment_identity_key")
+  @@index([compositionVersion, targetAt], map: "MarketRegimeAssessment_version_target_idx")
+  @@index([previousAssessmentId, compositionVersion], map: "MarketRegimeAssessment_previous_idx")
+}
+
+// One immutable slot per authoritative V1 dimension. Missing/degraded slots intentionally
+// retain null sourceAssessmentId while preserving the expected identity and target.
+model MarketRegimeAssessmentSource {
+  id                           Int                                  @id @default(autoincrement())
+  marketRegimeAssessmentId     Int
+  dimension                    MarketRegimeDimension
+  requiredAlgorithmVersion     String
+  expectedTargetAt             DateTime                             @db.Timestamptz(3)
+  sourceAssessmentId           Int?
+  sourceEvidenceSchemaVersion  Int?
+  sourceAttempt                Int?
+  sourceStatus                 MarketRegimeDimensionAssessmentStatus?
+  sourceTargetAt               DateTime?                            @db.Timestamptz(3)
+  sourceCompletedAt            DateTime?                            @db.Timestamptz(3)
+  sourceDataThroughAt          DateTime?                            @db.Timestamptz(3)
+  sourceValidUntil             DateTime?                            @db.Timestamptz(3)
+  sourceRawState               String?
+  sourceEffectiveState         String?
+  health                       MarketRegimeCompositionSourceHealth
+  reasonCode                   String?
+  ordinal                      Int
+  evidenceJson                 Json
+  createdAt                    DateTime                             @default(now()) @db.Timestamptz(3)
+
+  marketRegimeAssessment MarketRegimeAssessment          @relation(fields: [marketRegimeAssessmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sourceAssessment       MarketRegimeDimensionAssessment? @relation(fields: [sourceAssessmentId, dimension, requiredAlgorithmVersion], references: [id, dimension, algorithmVersion], onDelete: Restrict, onUpdate: Restrict, map: "MarketRegimeAssessmentSource_source_identity_fk")
+
+  @@unique([marketRegimeAssessmentId, dimension], map: "MarketRegimeAssessmentSource_dimension_key")
+  @@unique([marketRegimeAssessmentId, ordinal], map: "MarketRegimeAssessmentSource_ordinal_key")
+  @@index([sourceAssessmentId, dimension, requiredAlgorithmVersion], map: "MarketRegimeAssessmentSource_source_idx")
 }
 
 // Immutable daily derived Breadth market-data fact (Massive point-in-time CS universe +
@@ -2586,6 +2702,147 @@ model Strategy {
 
   subscriptions  Subscription[]
   entryDecisions EntryDecision[]
+  marketPolicy   StrategyMarketPolicy?
+  marketEligibilityDecisions StrategyMarketEligibilityDecision[]
+  signalRouteMarketEligibilityAttempts SignalRouteMarketEligibilityAttempt[]
+}
+
+enum StrategyMarketPolicyAuthority {
+  SHADOW_ONLY
+}
+
+enum StrategyMarketPolicyRevisionStatus {
+  PREPARED
+  ACTIVE
+  RETIRED
+}
+
+enum StrategyMarketPolicyDimensionRequirement {
+  REQUIRED
+  IGNORED
+}
+
+// Strategy-owned configuration only. Phase 2C grants no trading authority.
+model StrategyMarketPolicy {
+  id            Int                           @id @default(autoincrement())
+  strategyId    Int                           @unique
+  authority     StrategyMarketPolicyAuthority @default(SHADOW_ONLY)
+  createdAt     DateTime                      @default(now())
+  updatedAt     DateTime                      @updatedAt
+
+  strategy      Strategy                      @relation(fields: [strategyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  revisions     StrategyMarketPolicyRevision[]
+}
+
+model StrategyMarketPolicyRevision {
+  id             Int                                @id @default(autoincrement())
+  policyId       Int
+  revision       Int
+  status         StrategyMarketPolicyRevisionStatus @default(PREPARED)
+  changeNote     String?
+  createdAt      DateTime                           @default(now())
+  activatedAt    DateTime?
+  retiredAt      DateTime?
+
+  policy         StrategyMarketPolicy               @relation(fields: [policyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  dimensionRules StrategyMarketPolicyDimensionRule[]
+  eligibilityDecisions StrategyMarketEligibilityDecision[]
+
+  @@unique([policyId, revision], map: "StrategyMarketPolicyRevision_policy_revision_key")
+  @@index([policyId, status], map: "StrategyMarketPolicyRevision_policy_status_idx")
+}
+
+model StrategyMarketPolicyDimensionRule {
+  id               Int                                      @id @default(autoincrement())
+  revisionId       Int
+  dimension        MarketRegimeDimension
+  algorithmVersion String
+  requirement      StrategyMarketPolicyDimensionRequirement
+  createdAt        DateTime                                 @default(now())
+  updatedAt        DateTime                                 @updatedAt
+
+  revision         StrategyMarketPolicyRevision             @relation(fields: [revisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  allowedStates    StrategyMarketPolicyAllowedState[]
+
+  @@unique([revisionId, dimension], map: "StrategyMarketPolicyDimensionRule_revision_dimension_key")
+}
+
+model StrategyMarketPolicyAllowedState {
+  id          Int                               @id @default(autoincrement())
+  ruleId      Int
+  state       String
+  createdAt   DateTime                          @default(now())
+
+  rule        StrategyMarketPolicyDimensionRule @relation(fields: [ruleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([ruleId, state], map: "StrategyMarketPolicyAllowedState_rule_state_key")
+}
+
+enum StrategyMarketEligibilityOutcome {
+  ALLOWED
+  BLOCKED
+  INSUFFICIENT_EVIDENCE
+}
+
+enum StrategyMarketEligibilityGateOutcome {
+  PASS
+  BLOCKED
+  INSUFFICIENT_EVIDENCE
+  IGNORED
+}
+
+// Immutable, informational evaluation of one Strategy-owned policy revision against
+// one persisted market-regime composition. It never grants execution authority.
+model StrategyMarketEligibilityDecision {
+  id                      Int                              @id @default(autoincrement())
+  strategyId              Int
+  policyRevisionId        Int?
+  marketRegimeAssessmentId Int?
+  contextType             String
+  contextIdentity         String
+  evaluationVersion       String
+  outcome                 StrategyMarketEligibilityOutcome
+  reasonCode              String
+  evaluatedAt             DateTime                         @db.Timestamptz(3)
+  validUntil              DateTime?                        @db.Timestamptz(3)
+  decisionFingerprint     String                           @unique
+  strategyEnabled         Boolean
+  evidenceJson            Json
+  createdAt               DateTime                         @default(now()) @db.Timestamptz(3)
+
+  strategy                Strategy                         @relation(fields: [strategyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  policyRevision          StrategyMarketPolicyRevision?    @relation(fields: [policyRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  marketRegimeAssessment  MarketRegimeAssessment?          @relation(fields: [marketRegimeAssessmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  gates                   StrategyMarketEligibilityDecisionGate[]
+  signalRouteAttempts     SignalRouteMarketEligibilityAttempt[]
+
+  @@index([strategyId, evaluatedAt], map: "StrategyMarketEligibilityDecision_strategy_time_idx")
+  @@index([policyRevisionId], map: "StrategyMarketEligibilityDecision_policy_idx")
+  @@index([marketRegimeAssessmentId], map: "StrategyMarketEligibilityDecision_composition_idx")
+}
+
+model StrategyMarketEligibilityDecisionGate {
+  id                   Int                                     @id @default(autoincrement())
+  decisionId           Int
+  dimension            MarketRegimeDimension
+  algorithmVersion     String
+  requirement          StrategyMarketPolicyDimensionRequirement
+  outcome              StrategyMarketEligibilityGateOutcome
+  observedState        String?
+  sourceHealth         MarketRegimeCompositionSourceHealth?
+  sourceAssessmentId   Int?
+  allowedStatesJson    Json
+  reasonCode           String
+  evidenceJson         Json
+  ordinal              Int
+  createdAt            DateTime                                @default(now()) @db.Timestamptz(3)
+
+  decision             StrategyMarketEligibilityDecision       @relation(fields: [decisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sourceAssessment     MarketRegimeDimensionAssessment?         @relation(fields: [sourceAssessmentId, dimension, algorithmVersion], references: [id, dimension, algorithmVersion], onDelete: Restrict, onUpdate: Restrict, map: "StrategyMarketEligibilityGate_source_identity_fk")
+
+  @@unique([decisionId, dimension], map: "StrategyMarketEligibilityGate_decision_dimension_key")
+  @@unique([decisionId, ordinal], map: "StrategyMarketEligibilityGate_decision_ordinal_key")
+  @@index([sourceAssessmentId, dimension, algorithmVersion], map: "StrategyMarketEligibilityGate_source_idx")
 }
 
 model ExitProfile {

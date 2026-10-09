@@ -87,9 +87,22 @@ describe('PARTICIPATION_V1 publication boundary (owner-run and monitored worker 
     const allowed = ['src/workers/participation-assessment.worker.ts', 'src/workers/participation-assessment.scheduler.ts', 'src/workers/worker-health.definitions.ts'];
     for (const path of production.filter(p => (p.startsWith('src/workers/') || /worker-health|market-data-sync|market-calendar|market-bar-ingestion/.test(p)) && !allowed.includes(p))) expect(readFileSync(path, 'utf8'), path).not.toMatch(/participation/i);
   });
-  it('introduces no Participation reference into trading, signal, policy, order, broker or position code', () => {
+  it('introduces no Participation reference into trading, signal evaluation, order, broker or position code', () => {
     // The account workflow runner only lists the global worker key in its backoff-cap table (no account coordination).
-    const trading = production.filter(path => /(?:order|signal|strategy|entry-decision|broker|alpaca|position|exit|subscription|trading-account|regime-policy|regime-composition)/i.test(path) && path !== 'src/services/trading-account-workflow-runner.service.ts');
+    // Market Regime composition is approved account-independent evidence composition, not policy or trading code.
+    const evidenceComposition = new Set([
+      'src/services/market-regime-composition.definition.ts',
+      'src/services/market-regime-composition.service.ts',
+      // Phase 2C policy configuration names the authoritative dimension/version and
+      // state vocabulary, but performs no evaluation and has no trading authority.
+      'src/services/strategy-market-policy.definition.ts',
+      'src/services/strategy-market-policy.service.ts',
+      'src/controllers/strategy.controller.ts',
+      'src/routes/strategies.routes.ts',
+      'src/validators/strategy.validator.ts',
+    ]);
+    const trading = production.filter(path => /(?:order|signal|strategy|entry-decision|broker|alpaca|position|exit|subscription|trading-account|regime-policy|regime-composition)/i.test(path)
+      && path !== 'src/services/trading-account-workflow-runner.service.ts' && !evidenceComposition.has(path));
     expect(trading.length).toBeGreaterThan(10);
     for (const path of trading) expect(readFileSync(path, 'utf8'), path).not.toMatch(/participation/i);
   });

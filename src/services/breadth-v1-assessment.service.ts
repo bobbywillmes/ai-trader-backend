@@ -8,6 +8,7 @@ import {
   advanceBreadthV1, BREADTH_V1_ALGORITHM_VERSION, BREADTH_V1_DEFINITION, BREADTH_V1_EVIDENCE_SCHEMA_VERSION,
   calculateBreadthV1Series, type BreadthState, type BreadthV1Day, type DailyBreadthV1Observation,
 } from './breadth-v1-calculation.js';
+import { latestBreadthV1AssessmentTarget } from './market-assessment-targets.js';
 
 /** Mirrors the TREND_V1/VOLATILITY_V1 publication orchestration: historical replay
  * establishes today's calculation state; it never creates retroactive authoritative
@@ -84,7 +85,7 @@ export async function publishBreadthV1Assessments(options: Options = {}): Promis
       const calendarRows = await tx.marketCalendarException.findMany({ orderBy: { sessionDate: 'asc' } });
       const exceptions: CalendarException[] = calendarRows.map(row => ({ ...row, sessionDate: row.sessionDate.toISOString().slice(0, 10) }));
       const today = etDate(now);
-      const latest = datesBetween(addDays(today, -370), today).reverse().find(date => barEligibility('DAY_1', etInstant(date, 0), now, exceptions).status === 'ELIGIBLE');
+      const latest = latestBreadthV1AssessmentTarget(now, exceptions)?.date ?? null;
       if (!latest || (predecessor?.sessionDate && predecessor.sessionDate.toISOString().slice(0, 10) >= latest)) return { ...result, notDue: true };
 
       const earliestObservation = await tx.marketBreadthObservation.findFirst({ orderBy: { sessionDate: 'asc' } });

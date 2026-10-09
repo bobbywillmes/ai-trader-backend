@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn(), save: vi.fn(), remove: vi.fn(), status: vi.fn(), backfill: vi.fn(), lab: vi.fn(), day: vi.fn(), latest: vi.fn(), assessments: vi.fn(), assessment: vi.fn(), publish: vi.fn(),
   breadthLatest: vi.fn(), breadthAssessments: vi.fn(), breadthAssessment: vi.fn(), breadthPublish: vi.fn(),
   observationLatest: vi.fn(), observationList: vi.fn(), observationGet: vi.fn(), observationRun: vi.fn(),
+  compositionCurrent: vi.fn(), compositionStatus: vi.fn(), compositions: vi.fn(), composition: vi.fn(), compositionRun: vi.fn(),
+  eligibilityCurrent: vi.fn(), eligibilityHistory: vi.fn(), eligibilityDetail: vi.fn(),
 }));
 vi.mock('../services/trend-assessment.service.js', () => ({ latestTrendAssessment: mocks.latest, listTrendAssessments: mocks.assessments, getTrendAssessment: mocks.assessment, publishTrendAssessments: mocks.publish }));
 vi.mock('../services/market-calendar.service.js', () => ({ listCalendar: mocks.list, saveCalendar: mocks.save, deleteCalendar: mocks.remove }));
@@ -12,6 +14,18 @@ vi.mock('../services/market-bar-ingestion.service.js', () => ({ marketDataStatus
 vi.mock('../services/trend-lab.service.js', () => ({ getTrendLab: mocks.lab, getTrendDay: mocks.day }));
 vi.mock('../services/breadth-v1-assessment.service.js', () => ({ latestBreadthV1Assessment: mocks.breadthLatest, listBreadthV1Assessments: mocks.breadthAssessments, getBreadthV1Assessment: mocks.breadthAssessment, publishBreadthV1Assessments: mocks.breadthPublish }));
 vi.mock('../services/breadth-observation-ingestion.service.js', () => ({ latestBreadthObservation: mocks.observationLatest, listBreadthObservations: mocks.observationList, getBreadthObservation: mocks.observationGet, ingestDueBreadthObservations: mocks.observationRun }));
+vi.mock('../services/market-regime-composition-publication.service.js', () => ({
+  currentMarketRegimeComposition: mocks.compositionCurrent,
+  marketRegimeCompositionStatus: mocks.compositionStatus,
+  listMarketRegimeCompositions: mocks.compositions,
+  getMarketRegimeComposition: mocks.composition,
+  publishMarketRegimeComposition: mocks.compositionRun,
+}));
+vi.mock('../services/strategy-market-eligibility.service.js', () => ({
+  listCurrentStrategyEligibility: mocks.eligibilityCurrent,
+  listStrategyEligibilityDecisions: mocks.eligibilityHistory,
+  getStrategyEligibilityDecision: mocks.eligibilityDetail,
+}));
 import router from './market-data.routes.js';
 import { HttpError } from '../errors/http-error.js';
 let server: Server; let base: string;
@@ -20,6 +34,8 @@ beforeEach(async () => {
   mocks.latest.mockResolvedValue({ latestAttempt: null, latestValid: null }); mocks.assessments.mockResolvedValue([]); mocks.assessment.mockResolvedValue({ id: 7, evidenceJson: { bootstrap: true, exact: [0.1, 0.02] } }); mocks.publish.mockResolvedValue({ published: 1 });
   mocks.breadthLatest.mockResolvedValue({ latestAttempt: null, latestValid: null }); mocks.breadthAssessments.mockResolvedValue([]); mocks.breadthAssessment.mockResolvedValue({ id: 9, rawState: 'POSITIVE' }); mocks.breadthPublish.mockResolvedValue({ published: 1 });
   mocks.observationLatest.mockResolvedValue({ id: 1, advanceShare: '0.5' }); mocks.observationList.mockResolvedValue([]); mocks.observationGet.mockResolvedValue({ id: 1 }); mocks.observationRun.mockResolvedValue({ inserted: 0 });
+  mocks.compositionCurrent.mockResolvedValue({ freshness: 'NOT_PUBLISHED', assessment: null }); mocks.compositionStatus.mockResolvedValue({ readiness: 'READY' }); mocks.compositions.mockResolvedValue([]); mocks.composition.mockResolvedValue({ id: 12 }); mocks.compositionRun.mockResolvedValue({ published: true });
+  mocks.eligibilityCurrent.mockResolvedValue([]); mocks.eligibilityHistory.mockResolvedValue([]); mocks.eligibilityDetail.mockResolvedValue({ id: 21 });
   const app = express(); app.use(express.json());
   app.use((req, res, next) => { if (req.headers.role) Object.assign(res.locals, { user: { id: 1, platformRole: String(req.headers.role) } }); next(); });
   app.use('/api/market-data', router);
@@ -103,6 +119,41 @@ describe('market-data permissions and API', () => {
     expect(mocks.observationRun).not.toHaveBeenCalled();
     expect(await (await fetch(`${base}/breadth-observations/run`, { method: 'POST', headers: { role: 'SYSTEM_OWNER' } })).json()).toEqual({ inserted: 0 });
     expect(mocks.observationRun).toHaveBeenCalledTimes(1);
+  });
+  it.each(['SYSTEM_OWNER', 'OPERATOR'])('allows %s read-only Market Regime composition inspection', async role => {
+    const headers = { role };
+    expect((await fetch(`${base}/market-regime-compositions/current`, { headers })).status).toBe(200);
+    expect((await fetch(`${base}/market-regime-compositions/status`, { headers })).status).toBe(200);
+    expect((await fetch(`${base}/market-regime-compositions?limit=5&beforeId=20`, { headers })).status).toBe(200);
+    expect(mocks.compositions).toHaveBeenCalledWith(5, 20);
+    expect(await (await fetch(`${base}/market-regime-compositions/12`, { headers })).json()).toEqual({ id: 12 });
+  });
+  it('keeps composition publication owner-only and accepts no overrides', async () => {
+    expect((await fetch(`${base}/market-regime-compositions/run`, { method: 'POST', headers: { role: 'OPERATOR' } })).status).toBe(403);
+    expect((await fetch(`${base}/market-regime-compositions/run`, { method: 'POST', headers: { role: 'SYSTEM_OWNER', 'content-type': 'application/json' }, body: JSON.stringify({ observedAt: '2026-10-08' }) })).status).toBe(400);
+    expect(mocks.compositionRun).not.toHaveBeenCalled();
+    expect((await fetch(`${base}/market-regime-compositions/run`, { method: 'POST', headers: { role: 'SYSTEM_OWNER' } })).status).toBe(200);
+    expect(mocks.compositionRun).toHaveBeenCalledTimes(1);
+  });
+  it.each([undefined, 'ACCOUNT_USER'])('denies Market Regime composition access for %s', async role => {
+    const headers = role ? { role } : {};
+    for (const path of ['/market-regime-compositions/current', '/market-regime-compositions/status', '/market-regime-compositions', '/market-regime-compositions/12']) {
+      expect((await fetch(base + path, { headers })).status).toBe(role ? 403 : 401);
+    }
+    expect((await fetch(`${base}/market-regime-compositions/run`, { method: 'POST', headers })).status).toBe(role ? 403 : 401);
+  });
+  it.each(['SYSTEM_OWNER', 'OPERATOR'])('allows %s strategy eligibility evidence reads', async role => {
+    const headers = { role };
+    for (const path of ['/strategy-eligibility/current', '/strategy-eligibility/decisions', '/strategy-eligibility/decisions/21']) {
+      const response = await fetch(base + path, { headers });
+      expect(response.status, `${path}: ${await response.clone().text()}`).toBe(200);
+    }
+  });
+  it.each([undefined, 'ACCOUNT_USER'])('denies strategy eligibility evidence reads for %s', async role => {
+    const headers = role ? { role } : {};
+    for (const path of ['/strategy-eligibility/current', '/strategy-eligibility/decisions', '/strategy-eligibility/decisions/21']) {
+      expect((await fetch(base + path, { headers })).status).toBe(role ? 403 : 401);
+    }
   });
   it('selects date/profile on a specific immutable research snapshot', async () => {
     const datasetId='a'.repeat(64);

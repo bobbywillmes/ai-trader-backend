@@ -314,6 +314,13 @@ immutable attempts under a transaction advisory lock. Unresolved sessions block
 later publication. Persisted predecessor evidence owns hysteresis continuation.
 No trading consumer exists. See `docs/architecture/market-data-trend.md`.
 
+`MARKET_REGIME_COMPOSITION_V1` is an immutable as-of vector of exactly the five
+authoritative V1 assessments. It has no directional aggregate, policy interpretation,
+or trading authority. Its fingerprint changes only when expected targets, selected
+source identities, or source health changes; every consumer must still recheck
+`validUntil`. Breadth V2 remains excluded. See
+`docs/architecture/market-regime-composition.md`.
+
 VOLATILITY_V1 adopts the frozen daily classifier and asymmetric hysteresis without
 threshold tuning. Its account-independent publisher follows Trend's transaction
 advisory lock, immutable attempts, one replay-initialized bootstrap and chronological
@@ -331,6 +338,24 @@ disabled-by-default shadow worker. Neither version has trading authority. See
 `docs/development/breadth-calibration.md`, `docs/development/breadth-v1-production.md`,
 and `docs/production/breadth-v2-assessment-phase6b.md`.
 
+`MARKET_REGIME_COMPOSITION_V1` is an immutable, account-independent composition of the
+exact Trend, Volatility, Breadth, Participation and Intraday Stress V1 identities. Its
+informational worker uses stored evidence only, publishes complete or degraded vectors,
+and has no strategy or trading authority. Runtime reads re-evaluate source expiration;
+publication success never implies current usability. Breadth V2 remains excluded. See
+`docs/architecture/market-regime-composition.md`.
+
+Strategy market policies are versioned, Strategy-owned, and strictly `SHADOW_ONLY` in
+Phase 2C. Every revision explicitly describes all five authoritative V1 dimensions as
+REQUIRED or IGNORED; required rules use version-specific effective-state vocabularies.
+Only PREPARED revisions are editable. Activation validates and atomically retires the
+prior ACTIVE revision. The Phase 2D evaluator records immutable, explainable
+`STRATEGY_MARKET_ELIGIBILITY_V1` shadow evidence against exact compositions, including
+disabled strategies. It recomputes required source health at evaluation time and does
+not treat whole-vector DEGRADED status as an automatic block. No signal integration or
+trading enforcement exists yet. See `docs/architecture/strategy-market-policies.md` and
+`docs/architecture/strategy-market-eligibility.md`.
+
 External signal ingestion and routing are a separate evidence-only subsystem:
 `/api/external-signals/:webhookKey` authenticates and records terminal `SignalDelivery`
 and immutable `Signal` rows. Revision-owned authority may permit immutable
@@ -347,6 +372,12 @@ pipeline or create trading side effects. Sources and strategy bindings are mutab
 configuration; binding source/key/Strategy identity is fixed. Do not add normal
 application update/delete paths for Signal or SignalDelivery. Keep URL credentials
 out of logs and persisted evidence. See `docs/integrations/external-signals.md`.
+
+Phase 2E associates ENTRY_LONG routes with independently evaluated, immutable
+`SIGNAL_ROUTE_MARKET_ELIGIBILITY_V1` attempts. These append-only attempts link exact
+Phase 2D decisions without changing SignalEvaluation gates or outcomes. Failures are
+nonblocking and bounded; EXIT_LONG is explicitly not applicable. UI and API consumers
+must keep route applicability, shadow policy outcome, and trading authority distinct.
 
 The intended lifecycle is:
 

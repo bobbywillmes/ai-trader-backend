@@ -135,6 +135,7 @@ Table SignalRoute {
   targetSnapshot Json [not null]
   evaluationVersion Int
   evaluation SignalEvaluation
+  marketEligibilityAttempts SignalRouteMarketEligibilityAttempt [not null]
   createdAt DateTime [default: `now()`, not null]
   routingRun SignalRoutingRun [not null]
   accountSubscription TradingAccountSubscription [not null]
@@ -180,6 +181,28 @@ Table SignalEvaluationGate {
   indexes {
     (signalEvaluationId, sequence) [unique]
     (signalEvaluationId, gateKey) [unique]
+  }
+}
+
+Table SignalRouteMarketEligibilityAttempt {
+  id Int [pk, increment]
+  signalRouteId Int [not null]
+  attempt Int [not null]
+  integrationVersion String [not null]
+  status SignalRouteMarketEligibilityStatus [not null]
+  strategyId Int [not null]
+  eligibilityDecisionId Int
+  reasonCode String [not null]
+  startedAt DateTime [not null]
+  completedAt DateTime [not null]
+  evidenceJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  signalRoute SignalRoute [not null]
+  strategy Strategy [not null]
+  eligibilityDecision StrategyMarketEligibilityDecision
+
+  indexes {
+    (signalRouteId, attempt) [unique]
   }
 }
 
@@ -1177,10 +1200,71 @@ Table MarketRegimeDimensionAssessment {
   evidenceJson Json [not null]
   previousAssessment MarketRegimeDimensionAssessment
   nextAssessments MarketRegimeDimensionAssessment [not null]
+  regimeCompositionSources MarketRegimeAssessmentSource [not null]
+  strategyEligibilityGates StrategyMarketEligibilityDecisionGate [not null]
 
   indexes {
     (dimension, algorithmVersion, targetAt, attempt) [unique]
     (id, dimension, algorithmVersion) [unique]
+  }
+}
+
+Table MarketRegimeAssessment {
+  id Int [pk, increment]
+  compositionVersion String [not null]
+  evidenceSchemaVersion Int [not null]
+  targetAt DateTime [not null]
+  observedAt DateTime [not null]
+  dataThroughAt DateTime
+  validUntil DateTime
+  publicationStatus MarketRegimeCompositionPublicationStatus [not null]
+  evidenceHealth MarketRegimeCompositionEvidenceHealth [not null]
+  publicationReasonCode String
+  evidenceReasonCode String
+  sourceSetFingerprint String [not null]
+  previousAssessmentId Int
+  startedAt DateTime [not null]
+  completedAt DateTime [not null]
+  createdAt DateTime [default: `now()`, not null]
+  evidenceJson Json [not null]
+  previousAssessment MarketRegimeAssessment
+  nextAssessments MarketRegimeAssessment [not null]
+  sources MarketRegimeAssessmentSource [not null]
+  strategyEligibilityDecisions StrategyMarketEligibilityDecision [not null]
+
+  indexes {
+    (compositionVersion, sourceSetFingerprint) [unique]
+    (id, compositionVersion) [unique]
+  }
+}
+
+Table MarketRegimeAssessmentSource {
+  id Int [pk, increment]
+  marketRegimeAssessmentId Int [not null]
+  dimension MarketRegimeDimension [not null]
+  requiredAlgorithmVersion String [not null]
+  expectedTargetAt DateTime [not null]
+  sourceAssessmentId Int
+  sourceEvidenceSchemaVersion Int
+  sourceAttempt Int
+  sourceStatus MarketRegimeDimensionAssessmentStatus
+  sourceTargetAt DateTime
+  sourceCompletedAt DateTime
+  sourceDataThroughAt DateTime
+  sourceValidUntil DateTime
+  sourceRawState String
+  sourceEffectiveState String
+  health MarketRegimeCompositionSourceHealth [not null]
+  reasonCode String
+  ordinal Int [not null]
+  evidenceJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  marketRegimeAssessment MarketRegimeAssessment [not null]
+  sourceAssessment MarketRegimeDimensionAssessment
+
+  indexes {
+    (marketRegimeAssessmentId, dimension) [unique]
+    (marketRegimeAssessmentId, ordinal) [unique]
   }
 }
 
@@ -1699,6 +1783,112 @@ Table Strategy {
   updatedAt DateTime [not null]
   subscriptions Subscription [not null]
   entryDecisions EntryDecision [not null]
+  marketPolicy StrategyMarketPolicy
+  marketEligibilityDecisions StrategyMarketEligibilityDecision [not null]
+  signalRouteMarketEligibilityAttempts SignalRouteMarketEligibilityAttempt [not null]
+}
+
+Table StrategyMarketPolicy {
+  id Int [pk, increment]
+  strategyId Int [unique, not null]
+  authority StrategyMarketPolicyAuthority [not null, default: 'SHADOW_ONLY']
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  strategy Strategy [not null]
+  revisions StrategyMarketPolicyRevision [not null]
+}
+
+Table StrategyMarketPolicyRevision {
+  id Int [pk, increment]
+  policyId Int [not null]
+  revision Int [not null]
+  status StrategyMarketPolicyRevisionStatus [not null, default: 'PREPARED']
+  changeNote String
+  createdAt DateTime [default: `now()`, not null]
+  activatedAt DateTime
+  retiredAt DateTime
+  policy StrategyMarketPolicy [not null]
+  dimensionRules StrategyMarketPolicyDimensionRule [not null]
+  eligibilityDecisions StrategyMarketEligibilityDecision [not null]
+
+  indexes {
+    (policyId, revision) [unique]
+  }
+}
+
+Table StrategyMarketPolicyDimensionRule {
+  id Int [pk, increment]
+  revisionId Int [not null]
+  dimension MarketRegimeDimension [not null]
+  algorithmVersion String [not null]
+  requirement StrategyMarketPolicyDimensionRequirement [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  revision StrategyMarketPolicyRevision [not null]
+  allowedStates StrategyMarketPolicyAllowedState [not null]
+
+  indexes {
+    (revisionId, dimension) [unique]
+  }
+}
+
+Table StrategyMarketPolicyAllowedState {
+  id Int [pk, increment]
+  ruleId Int [not null]
+  state String [not null]
+  createdAt DateTime [default: `now()`, not null]
+  rule StrategyMarketPolicyDimensionRule [not null]
+
+  indexes {
+    (ruleId, state) [unique]
+  }
+}
+
+Table StrategyMarketEligibilityDecision {
+  id Int [pk, increment]
+  strategyId Int [not null]
+  policyRevisionId Int
+  marketRegimeAssessmentId Int
+  contextType String [not null]
+  contextIdentity String [not null]
+  evaluationVersion String [not null]
+  outcome StrategyMarketEligibilityOutcome [not null]
+  reasonCode String [not null]
+  evaluatedAt DateTime [not null]
+  validUntil DateTime
+  decisionFingerprint String [unique, not null]
+  strategyEnabled Boolean [not null]
+  evidenceJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  strategy Strategy [not null]
+  policyRevision StrategyMarketPolicyRevision
+  marketRegimeAssessment MarketRegimeAssessment
+  gates StrategyMarketEligibilityDecisionGate [not null]
+  signalRouteAttempts SignalRouteMarketEligibilityAttempt [not null]
+}
+
+Table StrategyMarketEligibilityDecisionGate {
+  id Int [pk, increment]
+  decisionId Int [not null]
+  dimension MarketRegimeDimension [not null]
+  algorithmVersion String [not null]
+  requirement StrategyMarketPolicyDimensionRequirement [not null]
+  outcome StrategyMarketEligibilityGateOutcome [not null]
+  observedState String
+  sourceHealth MarketRegimeCompositionSourceHealth
+  sourceAssessmentId Int
+  allowedStatesJson Json [not null]
+  reasonCode String [not null]
+  evidenceJson Json [not null]
+  ordinal Int [not null]
+  createdAt DateTime [default: `now()`, not null]
+  decision StrategyMarketEligibilityDecision [not null]
+  sourceAssessment MarketRegimeDimensionAssessment
+
+  indexes {
+    (decisionId, dimension) [unique]
+    (decisionId, ordinal) [unique]
+  }
 }
 
 Table ExitProfile {
@@ -1825,6 +2015,12 @@ Enum SignalEvaluationGateResult {
   BLOCKED
   NO_ACTION
   FAILED
+}
+
+Enum SignalRouteMarketEligibilityStatus {
+  COMPLETED
+  FAILED
+  NOT_APPLICABLE
 }
 
 Enum PlatformRole {
@@ -2088,6 +2284,26 @@ Enum MarketRegimeDimensionAssessmentStatus {
   FAILED
 }
 
+Enum MarketRegimeCompositionPublicationStatus {
+  SUCCEEDED
+  FAILED
+}
+
+Enum MarketRegimeCompositionEvidenceHealth {
+  COMPLETE
+  DEGRADED
+}
+
+Enum MarketRegimeCompositionSourceHealth {
+  AVAILABLE
+  MISSING
+  UNAVAILABLE
+  FAILED
+  STALE
+  EXPIRED
+  INVALID
+}
+
 Enum CatalystSource {
   MASSIVE_NEWS
   MASSIVE_BENZINGA
@@ -2186,6 +2402,34 @@ Enum MomentumPipelineStage {
   HANDOFF_DELIVERY
 }
 
+Enum StrategyMarketPolicyAuthority {
+  SHADOW_ONLY
+}
+
+Enum StrategyMarketPolicyRevisionStatus {
+  PREPARED
+  ACTIVE
+  RETIRED
+}
+
+Enum StrategyMarketPolicyDimensionRequirement {
+  REQUIRED
+  IGNORED
+}
+
+Enum StrategyMarketEligibilityOutcome {
+  ALLOWED
+  BLOCKED
+  INSUFFICIENT_EVIDENCE
+}
+
+Enum StrategyMarketEligibilityGateOutcome {
+  PASS
+  BLOCKED
+  INSUFFICIENT_EVIDENCE
+  IGNORED
+}
+
 Ref: StrategySignalRevision.strategySignalBindingId > StrategySignalBinding.id [delete: Restrict]
 
 Ref: StrategySignalBinding.signalSourceId > ExternalSignalSource.id [delete: Restrict]
@@ -2215,6 +2459,12 @@ Ref: SignalRoute.tradingAccountSubscriptionId > TradingAccountSubscription.id [d
 Ref: SignalEvaluation.signalRouteId - SignalRoute.id [delete: Restrict]
 
 Ref: SignalEvaluationGate.signalEvaluationId > SignalEvaluation.id [delete: Restrict]
+
+Ref: SignalRouteMarketEligibilityAttempt.signalRouteId > SignalRoute.id [delete: Restrict]
+
+Ref: SignalRouteMarketEligibilityAttempt.strategyId > Strategy.id [delete: Restrict]
+
+Ref: SignalRouteMarketEligibilityAttempt.eligibilityDecisionId > StrategyMarketEligibilityDecision.id [delete: Restrict]
 
 Ref: User.invitedByUserId - User.id [delete: Set Null]
 
@@ -2394,6 +2644,12 @@ Ref: MarketSplitCoverage.securityId > Security.id [delete: Restrict]
 
 Ref: MarketRegimeDimensionAssessment.(previousAssessmentId, dimension, algorithmVersion) - MarketRegimeDimensionAssessment.(id, dimension, algorithmVersion) [delete: Restrict]
 
+Ref: MarketRegimeAssessment.(previousAssessmentId, compositionVersion) - MarketRegimeAssessment.(id, compositionVersion) [delete: Restrict]
+
+Ref: MarketRegimeAssessmentSource.marketRegimeAssessmentId > MarketRegimeAssessment.id [delete: Restrict]
+
+Ref: MarketRegimeAssessmentSource.(sourceAssessmentId, dimension, requiredAlgorithmVersion) > MarketRegimeDimensionAssessment.(id, dimension, algorithmVersion) [delete: Restrict]
+
 Ref: MarketBreadthObservation.breadthUniverseRevisionId > BreadthUniverseRevision.id [delete: Restrict]
 
 Ref: MarketBreadthObservationSet.breadthUniverseRevisionId > BreadthUniverseRevision.id [delete: Restrict]
@@ -2451,6 +2707,24 @@ Ref: BrokerActivity.brokerOrderRecordId > BrokerOrder.id
 Ref: BrokerActivity.trackedPositionId > TrackedPosition.id [delete: Set Null]
 
 Ref: BrokerActivity.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: StrategyMarketPolicy.strategyId - Strategy.id [delete: Restrict]
+
+Ref: StrategyMarketPolicyRevision.policyId > StrategyMarketPolicy.id [delete: Restrict]
+
+Ref: StrategyMarketPolicyDimensionRule.revisionId > StrategyMarketPolicyRevision.id [delete: Restrict]
+
+Ref: StrategyMarketPolicyAllowedState.ruleId > StrategyMarketPolicyDimensionRule.id [delete: Restrict]
+
+Ref: StrategyMarketEligibilityDecision.strategyId > Strategy.id [delete: Restrict]
+
+Ref: StrategyMarketEligibilityDecision.policyRevisionId > StrategyMarketPolicyRevision.id [delete: Restrict]
+
+Ref: StrategyMarketEligibilityDecision.marketRegimeAssessmentId > MarketRegimeAssessment.id [delete: Restrict]
+
+Ref: StrategyMarketEligibilityDecisionGate.decisionId > StrategyMarketEligibilityDecision.id [delete: Restrict]
+
+Ref: StrategyMarketEligibilityDecisionGate.(sourceAssessmentId, dimension, algorithmVersion) > MarketRegimeDimensionAssessment.(id, dimension, algorithmVersion) [delete: Restrict]
 
 Ref: Subscription.securityId > Security.id
 

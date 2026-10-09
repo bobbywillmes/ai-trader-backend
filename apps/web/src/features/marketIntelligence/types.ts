@@ -15,3 +15,25 @@ export type IntelligenceSummary = {
   breadthV2: { latestAttempt: Assessment | null; latestValid: Assessment | null; latestObservation: BreadthObservation | null; assessmentReadiness: Record<string, unknown>; observationReadiness: Record<string, unknown>; worker: Record<string, unknown> };
 };
 export type Freshness = "AVAILABLE" | "EXPIRED" | "UNAVAILABLE" | "FAILED" | "NOT_PUBLISHED";
+export type CompositionSource = {
+  id: number; ordinal: number; dimension: string; requiredAlgorithmVersion: string;
+  expectedTargetAt: string; sourceAssessmentId: number | null; sourceEvidenceSchemaVersion: number | null;
+  sourceAttempt: number | null; sourceStatus: AssessmentStatus | null; sourceTargetAt: string | null;
+  sourceCompletedAt: string | null; sourceDataThroughAt: string | null; sourceValidUntil: string | null;
+  sourceRawState: string | null; sourceEffectiveState: string | null; health: string; reasonCode: string | null;
+  currentHealth?: string; currentReasonCode?: string | null; evidenceJson: unknown;
+};
+export type MarketRegimeComposition = {
+  id: number; compositionVersion: string; evidenceSchemaVersion: number; targetAt: string; observedAt: string;
+  dataThroughAt: string | null; validUntil: string | null; publicationStatus: "SUCCEEDED" | "FAILED";
+  evidenceHealth: "COMPLETE" | "DEGRADED"; publicationReasonCode: string | null; evidenceReasonCode: string | null;
+  sourceSetFingerprint: string; previousAssessmentId: number | null; startedAt: string; completedAt: string;
+  createdAt: string; evidenceJson: unknown; sources: CompositionSource[];
+};
+export type CurrentMarketRegimeComposition = {
+  evaluatedAt: string; freshness: "FRESH" | "EXPIRED" | "PUBLICATION_FAILED" | "NOT_PUBLISHED";
+  wholeVectorUsable: boolean; assessment: MarketRegimeComposition | null;
+};
+export type StrategyEligibilityGate = { id: number; ordinal: number; dimension: string; algorithmVersion: string; requirement: "REQUIRED" | "IGNORED"; outcome: "PASS" | "BLOCKED" | "INSUFFICIENT_EVIDENCE" | "IGNORED"; observedState: string | null; sourceHealth: string | null; sourceAssessmentId: number | null; allowedStatesJson: string[]; reasonCode: string; evidenceJson: unknown };
+export type StrategyEligibilityDecision = { id: number; strategyId: number; policyRevisionId: number | null; marketRegimeAssessmentId: number | null; contextType: string; contextIdentity: string; evaluationVersion: string; outcome: "ALLOWED" | "BLOCKED" | "INSUFFICIENT_EVIDENCE"; reasonCode: string; evaluatedAt: string; validUntil: string | null; decisionFingerprint: string; strategyEnabled: boolean; evidenceJson: unknown; authority?: "SHADOW_ONLY"; strategy: { id: number; key: string; name: string; enabled: boolean }; policyRevision: { id: number; revision: number; activatedAt: string | null } | null; marketRegimeAssessment: { id: number; compositionVersion: string; targetAt: string; observedAt: string } | null; gates: StrategyEligibilityGate[]; currentFreshness?: string; currentlyApplicable?: boolean };
+export type CurrentStrategyEligibility = { evaluatedAt: string; authority: "SHADOW_ONLY"; freshness: string; assessment: StrategyEligibilityDecision | null };

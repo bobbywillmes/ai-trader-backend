@@ -11,6 +11,7 @@ import { normalizeSplits, type ResearchBar } from './trend-calculation.js';
 import { VOLATILITY_ALGORITHM_VERSION, VOLATILITY_PUBLICATION_EVIDENCE_VERSION, VOLATILITY_V1_DEFINITION } from './volatility-v1.definition.js';
 import { VERIFIED_NYSE_CLOSURES } from './market-calendar-bootstrap.definition.js';
 import { dailyProviderProvenance, dailySessionEligible, readCanonicalDailyBars } from './market-daily-authority.js';
+import { latestCanonicalDailyAssessmentTarget } from './market-assessment-targets.js';
 
 const identity = { dimension: 'VOLATILITY' as const, algorithmVersion: VOLATILITY_ALGORITHM_VERSION };
 export const VOLATILITY_PUBLICATION_LOCK_KEY = createHash('sha256').update('ai-trader:volatility-v1-publication').digest().readBigInt64BE(0);
@@ -60,7 +61,7 @@ export async function publishVolatilityAssessments(options: Options = {}): Promi
       const exceptions: CalendarException[] = calendarRows.map(row => ({ ...row, sessionDate: row.sessionDate.toISOString().slice(0, 10) }));
       const today = etDate(now);
       // One year covers even extended closures, without inventing an eligible date.
-      const latest = datesBetween(addDays(today, -370), today).reverse().find(date => dailySessionEligible(date, now, exceptions));
+      const latest = latestCanonicalDailyAssessmentTarget(now, exceptions)?.date ?? null;
       if (!latest || (predecessor?.sessionDate && predecessor.sessionDate.toISOString().slice(0, 10) >= latest)) return { ...result, notDue: true };
       const securities = await tx.security.findMany({ where: { symbol: { in: [...symbols] } }, select: { id: true, symbol: true } });
       const rows = await readCanonicalDailyBars(tx, securities.map(s => s.id), '1900-01-01', latest);
