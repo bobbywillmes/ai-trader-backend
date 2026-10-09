@@ -5,9 +5,9 @@ import {
   getStrategyChangeImpact,
   updateStrategyEnabled,
   activateStrategyMarketPolicyRevision, createStrategyMarketPolicy, getStrategyMarketPolicy,
-  prepareStrategyMarketPolicyRevision, updateStrategyMarketPolicyRule, validateStrategyMarketPolicyRevision,
+  prepareStrategyMarketPolicyRevision, saveStrategyMarketPolicyRevision, validateStrategyMarketPolicyRevision,
 } from "./api";
-import type { MarketPolicyDimension } from "./types";
+import type { MarketPolicyRuleDraft } from "./types";
 
 export function useStrategies(token: string | null) {
   return useQuery({
@@ -26,9 +26,9 @@ export function useMarketPolicyActions(token: string | null) {
   return {
     create: useMutation({ mutationFn: (id: number) => createStrategyMarketPolicy(id, requireToken()), onSuccess: (_r, id) => refresh(id) }),
     prepare: useMutation({ mutationFn: (id: number) => prepareStrategyMarketPolicyRevision(id, requireToken()), onSuccess: (_r, id) => refresh(id) }),
-    saveRule: useMutation({ mutationFn: (v: { id: number; revisionId: number; dimension: MarketPolicyDimension; requirement: "REQUIRED" | "IGNORED"; allowedStates: string[] }) => updateStrategyMarketPolicyRule(v.id, v.revisionId, v.dimension, v.requirement, v.allowedStates, requireToken()), onSuccess: (_r, v) => refresh(v.id) }),
+    saveRevision: useMutation({ mutationFn: (v: { id: number; revisionId: number; expectedConfigurationFingerprint: string; rules: MarketPolicyRuleDraft[] }) => saveStrategyMarketPolicyRevision(v.id, v.revisionId, v.expectedConfigurationFingerprint, v.rules, requireToken()), onSuccess: (_r, v) => refresh(v.id) }),
     validate: useMutation({ mutationFn: (v: { id: number; revisionId: number }) => validateStrategyMarketPolicyRevision(v.id, v.revisionId, requireToken()) }),
-    activate: useMutation({ mutationFn: (v: { id: number; revisionId: number }) => activateStrategyMarketPolicyRevision(v.id, v.revisionId, requireToken()), onSuccess: (_r, v) => refresh(v.id) }),
+    activate: useMutation({ mutationFn: (v: { id: number; revisionId: number; expectedConfigurationFingerprint: string }) => activateStrategyMarketPolicyRevision(v.id, v.revisionId, v.expectedConfigurationFingerprint, requireToken()), onSuccess: (_r, v) => refresh(v.id) }),
   };
 }
 

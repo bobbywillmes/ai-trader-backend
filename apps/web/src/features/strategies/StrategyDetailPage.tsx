@@ -12,7 +12,7 @@ import { getAdminToken } from "../../lib/api";
 import { useIsSystemOwner } from "../auth/useAuth";
 import { StrategyStateModal } from "./StrategyStateModal";
 import { useStrategy, useStrategyChangeImpact, useUpdateStrategyEnabled } from "./hooks";
-import { StrategyMarketPolicyPanel } from "./StrategyMarketPolicyPanel";
+import { StrategyMarketPolicyPanel } from "./UnifiedStrategyMarketPolicyPanel";
 
 function dateTime(value?: string) {
   return value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";

@@ -108,6 +108,7 @@ export type MarketPolicyRule = {
 };
 export type MarketPolicyRevision = {
   id: number; revision: number; status: "PREPARED" | "ACTIVE" | "RETIRED";
+  configurationFingerprint: string;
   changeNote: string | null; createdAt: string; activatedAt: string | null; retiredAt: string | null;
   dimensionRules: MarketPolicyRule[];
 };
@@ -116,4 +117,5 @@ export type StrategyMarketPolicyResponse = {
   supportedDimensions: ReadonlyArray<{ dimension: MarketPolicyDimension; algorithmVersion: string; allowedStates: readonly string[] }>;
   policy: null | { id: number; strategyId: number; authority: "SHADOW_ONLY"; revisions: MarketPolicyRevision[] };
 };
-export type MarketPolicyValidation = { revisionId: number; revision: number; status: string; valid: boolean; errors: Array<{ dimension?: string; code: string; message: string }> };
+export type MarketPolicyValidation = { revisionId: number; revision: number; status: string; configurationFingerprint: string; valid: boolean; errors: Array<{ dimension?: string; code: string; message: string }> };
+export type MarketPolicyRuleDraft = { dimension: MarketPolicyDimension; algorithmVersion: string; requirement: "REQUIRED" | "IGNORED"; allowedStates: string[] };
