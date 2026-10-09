@@ -9,9 +9,9 @@ import {
 import { HttpError } from '../errors/http-error.js';
 import {
   strategyDetailQuerySchema,
-  strategyMarketPolicyDimensionSchema,
+  activateStrategyMarketPolicyRevisionSchema,
+  saveStrategyMarketPolicyRevisionSchema,
   strategyMarketPolicyNoteSchema,
-  strategyMarketPolicyRuleSchema,
   updateStrategyEnabledSchema,
 } from '../validators/strategy.validator.js';
 import {
@@ -19,7 +19,7 @@ import {
   createStrategyMarketPolicy,
   getStrategyMarketPolicy,
   prepareStrategyMarketPolicyRevision,
-  updateStrategyMarketPolicyRule,
+  saveStrategyMarketPolicyRevision,
   validateStrategyMarketPolicyRevision,
 } from '../services/strategy-market-policy.service.js';
 
@@ -144,13 +144,11 @@ export async function prepareStrategyMarketPolicyRevisionController(req: Request
   } catch (error) { next(error); }
 }
 
-export async function updateStrategyMarketPolicyRuleController(req: Request, res: Response, next: NextFunction) {
+export async function saveStrategyMarketPolicyRevisionController(req: Request, res: Response, next: NextFunction) {
   try {
-    const body = strategyMarketPolicyRuleSchema.safeParse(req.body);
-    const dimension = strategyMarketPolicyDimensionSchema.safeParse(req.params.dimension);
-    if (!body.success) throw new HttpError(400, 'Invalid dimension rule.', body.error.issues);
-    if (!dimension.success) throw new HttpError(400, 'Invalid dimension rule.', dimension.error.issues);
-    res.status(200).json(await updateStrategyMarketPolicyRule(parseStrategyId(req.params.id), parsePositiveId(req.params.revisionId, 'Revision id'), dimension.data, body.data, actorId(res)));
+    const body = saveStrategyMarketPolicyRevisionSchema.safeParse(req.body);
+    if (!body.success) throw new HttpError(400, 'Invalid policy revision.', body.error.issues);
+    res.status(200).json(await saveStrategyMarketPolicyRevision(parseStrategyId(req.params.id), parsePositiveId(req.params.revisionId, 'Revision id'), body.data, actorId(res)));
   } catch (error) { next(error); }
 }
 
@@ -159,5 +157,9 @@ export async function validateStrategyMarketPolicyRevisionController(req: Reques
 }
 
 export async function activateStrategyMarketPolicyRevisionController(req: Request, res: Response, next: NextFunction) {
-  try { res.status(200).json(await activateStrategyMarketPolicyRevision(parseStrategyId(req.params.id), parsePositiveId(req.params.revisionId, 'Revision id'), actorId(res))); } catch (error) { next(error); }
+  try {
+    const body = activateStrategyMarketPolicyRevisionSchema.safeParse(req.body);
+    if (!body.success) throw new HttpError(400, 'Invalid activation request.', body.error.issues);
+    res.status(200).json(await activateStrategyMarketPolicyRevision(parseStrategyId(req.params.id), parsePositiveId(req.params.revisionId, 'Revision id'), body.data.expectedConfigurationFingerprint, actorId(res)));
+  } catch (error) { next(error); }
 }

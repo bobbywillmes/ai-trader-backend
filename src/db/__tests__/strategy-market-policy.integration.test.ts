@@ -38,9 +38,11 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const policy = await service.createStrategyMarketPolicy(strategyId, 0, 'Initial shadow policy');
     policyId = policy.id; expect(policy.authority).toBe('SHADOW_ONLY'); expect(policy.revisions[0]?.dimensionRules).toHaveLength(5);
     expect(policy.revisions[0]?.dimensionRules.every(rule => rule.requirement === 'IGNORED')).toBe(true);
-    const validation = await service.validateStrategyMarketPolicyRevision(strategyId, policy.revisions[0]!.id);
+    const initial = policy.revisions[0]!;
+    const saved = await service.saveStrategyMarketPolicyRevision(strategyId, initial.id, { expectedConfigurationFingerprint: initial.configurationFingerprint, rules: initial.dimensionRules.map(rule => ({ dimension: rule.dimension, algorithmVersion: rule.algorithmVersion, requirement: rule.dimension === 'TREND' ? 'REQUIRED' : 'IGNORED', allowedStates: rule.dimension === 'TREND' ? ['UP'] : [] })) }, 0);
+    const validation = await service.validateStrategyMarketPolicyRevision(strategyId, saved.id);
     expect(validation).toMatchObject({ valid: true, revision: 1 });
-    const active = await service.activateStrategyMarketPolicyRevision(strategyId, policy.revisions[0]!.id, 0);
+    const active = await service.activateStrategyMarketPolicyRevision(strategyId, saved.id, validation.configurationFingerprint, 0);
     activeRevisionId = active.id; expect(active.status).toBe('ACTIVE');
     expect((await db.query(`SELECT count(*)::int count FROM "SystemEvent" WHERE type LIKE 'strategy_market_policy_%'`)).rows[0].count).toBeGreaterThanOrEqual(3);
   });
@@ -59,10 +61,18 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   it('enforces vocabulary, explicit ignored semantics, and PREPARED-only edits', async () => {
     const service = await import('../../services/strategy-market-policy.service.js');
     const prepared = (await service.getStrategyMarketPolicy(strategyId)).policy!.revisions.find(row => row.status === 'PREPARED')!;
-    await expect(service.updateStrategyMarketPolicyRule(strategyId, prepared.id, 'TREND', { requirement: 'REQUIRED', allowedStates: ['BULLISH'] }, 0)).rejects.toThrow(/Invalid effective state/);
-    await expect(service.updateStrategyMarketPolicyRule(strategyId, prepared.id, 'TREND', { requirement: 'IGNORED', allowedStates: ['UP'] }, 0)).rejects.toThrow(/Ignored dimensions/);
-    await service.updateStrategyMarketPolicyRule(strategyId, prepared.id, 'TREND', { requirement: 'REQUIRED', allowedStates: ['NEUTRAL', 'UP'] }, 0);
-    await expect(service.updateStrategyMarketPolicyRule(strategyId, activeRevisionId, 'TREND', { requirement: 'IGNORED', allowedStates: [] }, 0)).rejects.toThrow(/PREPARED/);
+    const rules = prepared.dimensionRules.map(rule => ({ dimension: rule.dimension, algorithmVersion: rule.algorithmVersion, requirement: rule.requirement, allowedStates: rule.allowedStates.map(item => item.state) }));
+    const fingerprint = service.strategyMarketPolicyConfigurationFingerprint(prepared.dimensionRules);
+    await expect(service.saveStrategyMarketPolicyRevision(strategyId, prepared.id, { expectedConfigurationFingerprint: fingerprint, rules: rules.map(rule => rule.dimension === 'TREND' ? { ...rule, allowedStates: ['BULLISH'] } : rule) }, 0)).rejects.toThrow(/incomplete or invalid/);
+    await expect(service.saveStrategyMarketPolicyRevision(strategyId, prepared.id, { expectedConfigurationFingerprint: fingerprint, rules: rules.map(rule => rule.dimension === 'TREND' ? { ...rule, requirement: 'IGNORED', allowedStates: ['UP'] } : rule) }, 0)).rejects.toThrow(/incomplete or invalid/);
+    const unchanged = (await service.getStrategyMarketPolicy(strategyId)).policy!.revisions.find(row => row.id === prepared.id)!;
+    expect(service.strategyMarketPolicyConfigurationFingerprint(unchanged.dimensionRules)).toBe(fingerprint);
+    const saved = await service.saveStrategyMarketPolicyRevision(strategyId, prepared.id, { expectedConfigurationFingerprint: fingerprint, rules: rules.map(rule => rule.dimension === 'TREND' ? { ...rule, requirement: 'REQUIRED', allowedStates: ['NEUTRAL', 'UP'] } : rule) }, 0);
+    await expect(service.saveStrategyMarketPolicyRevision(strategyId, activeRevisionId, { expectedConfigurationFingerprint: '0'.repeat(64), rules }, 0)).rejects.toThrow(/PREPARED/);
+    await expect(service.saveStrategyMarketPolicyRevision(strategyId, prepared.id, { expectedConfigurationFingerprint: fingerprint, rules }, 0)).rejects.toThrow(/changed after it was loaded/);
+    expect(saved.configurationFingerprint).not.toBe(fingerprint);
+    expect((await db.query(`SELECT count(*)::int count FROM "SystemEvent" WHERE type='strategy_market_policy_revision_saved' AND "entityId"=$1`, [String(prepared.id)])).rows[0].count).toBe(1);
+    await expect(service.activateStrategyMarketPolicyRevision(strategyId, prepared.id, fingerprint, 0)).rejects.toThrow(/changed after validation/);
     const activeRule = (await db.query(`SELECT id FROM "StrategyMarketPolicyDimensionRule" WHERE "revisionId"=$1 AND dimension='TREND'`, [activeRevisionId])).rows[0].id;
     await expect(db.query(`INSERT INTO "StrategyMarketPolicyAllowedState" ("ruleId",state) VALUES ($1,'UP')`, [activeRule])).rejects.toThrow(/PREPARED/);
   });
@@ -70,7 +80,8 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   it('atomically retires the prior ACTIVE revision and leaves one active policy', async () => {
     const service = await import('../../services/strategy-market-policy.service.js');
     const prepared = (await service.getStrategyMarketPolicy(strategyId)).policy!.revisions.find(row => row.status === 'PREPARED')!;
-    const next = await service.activateStrategyMarketPolicyRevision(strategyId, prepared.id, 0);
+    const validation = await service.validateStrategyMarketPolicyRevision(strategyId, prepared.id);
+    const next = await service.activateStrategyMarketPolicyRevision(strategyId, prepared.id, validation.configurationFingerprint, 0);
     expect(next.status).toBe('ACTIVE');
     const rows = (await db.query(`SELECT revision,status,"retiredAt" FROM "StrategyMarketPolicyRevision" WHERE "policyId"=$1 ORDER BY revision`, [policyId])).rows;
     expect(rows[0]).toMatchObject({ revision: 1, status: 'RETIRED' }); expect(rows[0].retiredAt).toBeTruthy(); expect(rows[1]).toMatchObject({ revision: 2, status: 'ACTIVE' });
@@ -82,7 +93,9 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const service = await import('../../services/strategy-market-policy.service.js');
     const prepared = await service.prepareStrategyMarketPolicyRevision(strategyId, 0, 'Incomplete test');
     await db.query(`DELETE FROM "StrategyMarketPolicyDimensionRule" WHERE "revisionId"=$1 AND dimension='BREADTH'`, [prepared.id]);
-    await expect(service.activateStrategyMarketPolicyRevision(strategyId, prepared.id, 0)).rejects.toThrow(/incomplete or invalid/);
+    const validation = await service.validateStrategyMarketPolicyRevision(strategyId, prepared.id);
+    expect(validation.valid).toBe(false);
+    await expect(service.activateStrategyMarketPolicyRevision(strategyId, prepared.id, validation.configurationFingerprint, 0)).rejects.toThrow(/incomplete or invalid/);
     expect((await db.query(`SELECT revision FROM "StrategyMarketPolicyRevision" WHERE "policyId"=$1 AND status='ACTIVE'`, [policyId])).rows[0].revision).toBe(2);
   });
 });

@@ -7,7 +7,7 @@ import {
   strategyMarketPolicyController,
   strategyChangeImpactController,
   strategyController,
-  updateStrategyMarketPolicyRuleController,
+  saveStrategyMarketPolicyRevisionController,
   updateStrategyController,
   validateStrategyMarketPolicyRevisionController,
 } from '../controllers/strategy.controller.js';
@@ -29,7 +29,7 @@ router.patch('/:id', requireSystemOwnerAccess, updateStrategyController);
 router.get('/:id/market-policy', requirePermission(PlatformPermission.STRATEGY_READ), strategyMarketPolicyController);
 router.post('/:id/market-policy', requireSystemOwnerAccess, createStrategyMarketPolicyController);
 router.post('/:id/market-policy/revisions', requireSystemOwnerAccess, prepareStrategyMarketPolicyRevisionController);
-router.patch('/:id/market-policy/revisions/:revisionId/dimensions/:dimension', requireSystemOwnerAccess, updateStrategyMarketPolicyRuleController);
+router.put('/:id/market-policy/revisions/:revisionId', requireSystemOwnerAccess, saveStrategyMarketPolicyRevisionController);
 router.get('/:id/market-policy/revisions/:revisionId/validation', requirePermission(PlatformPermission.STRATEGY_READ), validateStrategyMarketPolicyRevisionController);
 router.post('/:id/market-policy/revisions/:revisionId/activate', requireSystemOwnerAccess, activateStrategyMarketPolicyRevisionController);
 router.get(

@@ -14,13 +14,13 @@ Every revision contains exactly one explicit rule for each authoritative V1 dime
 - `PARTICIPATION` / `PARTICIPATION_V1`: `QUIET`, `NORMAL`, `ACTIVE`, `INTENSE`
 - `INTRADAY_STRESS` / `INTRADAY_STRESS_V1`: `NORMAL`, `ELEVATED`, `HIGH`, `SEVERE`
 
-A rule is `REQUIRED` or `IGNORED`. Required rules have at least one allowed effective state. Ignored rules have no allowed states and therefore never grant eligibility. This representation is intentionally per-dimension: a future evaluator must inspect the health of required evidence and must not reject a composition merely because an ignored source made the composition `DEGRADED`.
+A rule is `REQUIRED` or `IGNORED`. Required rules have at least one allowed effective state. Ignored rules have no allowed states and therefore never grant eligibility. At least one dimension must be REQUIRED before validation and activation succeed. This representation is intentionally per-dimension: a future evaluator must inspect the health of required evidence and must not reject a composition merely because an ignored source made the composition `DEGRADED`.
 
 ## Lifecycle and integrity
 
 Policy creation produces PREPARED revision 1 with all five dimensions explicitly ignored. Preparing a later revision clones the latest revision. A policy has at most one PREPARED and one ACTIVE revision.
 
-Only PREPARED rules and allowed states are editable. Activation locks the policy, validates all five rules, retires the previous ACTIVE revision, and activates the selected revision in one serializable transaction. Database partial unique indexes prevent competing ACTIVE or PREPARED revisions. Triggers protect ACTIVE and RETIRED evidence from direct-SQL mutation and validate allowed-state vocabulary as defense in depth.
+Only PREPARED rules and allowed states are editable. The editor saves the complete five-dimension configuration atomically with the previously read configuration fingerprint as a concurrency precondition. Validation returns the persisted fingerprint, and activation requires that exact fingerprint so stale validation cannot activate changed configuration. Activation locks the policy, validates all five rules, retires the previous ACTIVE revision, and activates the selected revision in one serializable transaction. Database partial unique indexes prevent competing ACTIVE or PREPARED revisions. Triggers protect ACTIVE and RETIRED evidence from direct-SQL mutation and validate allowed-state vocabulary as defense in depth.
 
 Every creation, edit, activation, and automatic retirement writes a `SystemEvent` in the same transaction. Historical revisions remain readable.
 
@@ -31,7 +31,7 @@ Read access uses the existing `STRATEGY_READ` permission. All mutations require 
 - `GET /api/strategies/:id/market-policy`
 - `POST /api/strategies/:id/market-policy`
 - `POST /api/strategies/:id/market-policy/revisions`
-- `PATCH /api/strategies/:id/market-policy/revisions/:revisionId/dimensions/:dimension`
+- `PUT /api/strategies/:id/market-policy/revisions/:revisionId`
 - `GET /api/strategies/:id/market-policy/revisions/:revisionId/validation`
 - `POST /api/strategies/:id/market-policy/revisions/:revisionId/activate`
 

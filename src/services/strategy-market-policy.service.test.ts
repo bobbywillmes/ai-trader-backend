@@ -4,16 +4,21 @@ import { STRATEGY_MARKET_POLICY_DIMENSIONS } from './strategy-market-policy.defi
 
 const rules = () => STRATEGY_MARKET_POLICY_DIMENSIONS.map(item => ({
   dimension: item.dimension, algorithmVersion: item.algorithmVersion,
-  requirement: 'IGNORED', allowedStates: [] as Array<{ state: string }>,
+  requirement: item.dimension === 'TREND' ? 'REQUIRED' : 'IGNORED', allowedStates: (item.dimension === 'TREND' ? [{ state: 'UP' }] : []) as Array<{ state: string }>,
 }));
 
 describe('strategy market policy validation', () => {
-  it('accepts an explicit rule for all five dimensions including IGNORED dimensions', () => {
+  it('accepts an explicit rule for all five dimensions with at least one REQUIRED dimension', () => {
     expect(validateMarketPolicyRules(rules())).toEqual({ valid: true, errors: [] });
   });
 
+  it('rejects activation validation when all dimensions are IGNORED', () => {
+    const input = rules().map(rule => ({ ...rule, requirement: 'IGNORED', allowedStates: [] }));
+    expect(validateMarketPolicyRules(input).errors).toContainEqual(expect.objectContaining({ code: 'REQUIRED_DIMENSION_REQUIRED' }));
+  });
+
   it('requires nonempty, vocabulary-checked states for REQUIRED dimensions', () => {
-    const input = rules(); input[0] = { ...input[0]!, requirement: 'REQUIRED' };
+    const input = rules(); input[0] = { ...input[0]!, requirement: 'REQUIRED', allowedStates: [] };
     expect(validateMarketPolicyRules(input).errors).toContainEqual(expect.objectContaining({ dimension: 'TREND', code: 'ALLOWED_STATES_REQUIRED' }));
     input[0]!.allowedStates = [{ state: 'BULLISH' }];
     expect(validateMarketPolicyRules(input).errors).toContainEqual(expect.objectContaining({ dimension: 'TREND', code: 'STATE_INVALID' }));
