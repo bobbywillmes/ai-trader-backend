@@ -1,5 +1,5 @@
 import { apiRequest, getAdminToken } from "../../lib/api";
-import type { Assessment, CurrentMarketRegimeComposition, DimensionKey, IntelligenceSummary, MarketRegimeComposition } from "./types";
+import type { Assessment, CurrentMarketRegimeComposition, CurrentStrategyEligibility, DimensionKey, IntelligenceSummary, MarketRegimeComposition, StrategyEligibilityDecision } from "./types";
 const root = "/api/market-data";
 const options = () => ({ token: getAdminToken() ?? "" });
 const paths: Record<DimensionKey | "breadthV2", string> = { trend: "trend-assessments", volatility: "volatility-assessments", breadth: "breadth-assessments", participation: "participation-assessments", intradayStress: "intraday-stress-assessments", breadthV2: "breadth-v2-assessments" };
@@ -9,3 +9,6 @@ export const getAssessment = (dimension: DimensionKey | "breadthV2", id: number)
 export const getCurrentComposition = () => apiRequest<CurrentMarketRegimeComposition>(`${root}/market-regime-compositions/current`, options());
 export const getCompositions = (beforeId?: number, limit = 20) => apiRequest<MarketRegimeComposition[]>(`${root}/market-regime-compositions?${new URLSearchParams({ limit: String(limit), ...(beforeId ? { beforeId: String(beforeId) } : {}) })}`, options());
 export const getComposition = (id: number) => apiRequest<MarketRegimeComposition>(`${root}/market-regime-compositions/${id}`, options());
+export const getStrategyEligibilityDecisions = (beforeId?: number, limit = 20) => apiRequest<StrategyEligibilityDecision[]>(`${root}/strategy-eligibility/decisions?${new URLSearchParams({ limit: String(limit), ...(beforeId ? { beforeId: String(beforeId) } : {}) })}`, options());
+export const getStrategyEligibilityDecision = (id: number) => apiRequest<StrategyEligibilityDecision>(`${root}/strategy-eligibility/decisions/${id}`, options());
+export const getCurrentStrategyEligibilitySummary = () => apiRequest<CurrentStrategyEligibility[]>(`${root}/strategy-eligibility/current`, options());

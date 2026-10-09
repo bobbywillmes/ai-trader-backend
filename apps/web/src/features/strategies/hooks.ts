@@ -5,6 +5,7 @@ import {
   getStrategyChangeImpact,
   updateStrategyEnabled,
   activateStrategyMarketPolicyRevision, createStrategyMarketPolicy, getStrategyMarketPolicy,
+  getCurrentStrategyEligibility,
   prepareStrategyMarketPolicyRevision, saveStrategyMarketPolicyRevision, validateStrategyMarketPolicyRevision,
 } from "./api";
 import type { MarketPolicyRuleDraft } from "./types";
@@ -18,6 +19,7 @@ export function useStrategies(token: string | null) {
 }
 
 export function useStrategyMarketPolicy(id: number | null, token: string | null) { return useQuery({ queryKey: ["strategyMarketPolicy", id], queryFn: () => getStrategyMarketPolicy(id as number, token as string), enabled: Boolean(id && token) }); }
+export function useCurrentStrategyEligibility(id: number | null, token: string | null) { return useQuery({ queryKey: ["strategyMarketEligibility", id], queryFn: () => getCurrentStrategyEligibility(id as number, token as string), enabled: Boolean(id && token), refetchInterval: 60_000 }); }
 
 export function useMarketPolicyActions(token: string | null) {
   const queryClient = useQueryClient();

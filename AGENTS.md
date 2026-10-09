@@ -349,8 +349,12 @@ Strategy market policies are versioned, Strategy-owned, and strictly `SHADOW_ONL
 Phase 2C. Every revision explicitly describes all five authoritative V1 dimensions as
 REQUIRED or IGNORED; required rules use version-specific effective-state vocabularies.
 Only PREPARED revisions are editable. Activation validates and atomically retires the
-prior ACTIVE revision. No evaluator, signal integration, or trading enforcement exists
-yet. See `docs/architecture/strategy-market-policies.md`.
+prior ACTIVE revision. The Phase 2D evaluator records immutable, explainable
+`STRATEGY_MARKET_ELIGIBILITY_V1` shadow evidence against exact compositions, including
+disabled strategies. It recomputes required source health at evaluation time and does
+not treat whole-vector DEGRADED status as an automatic block. No signal integration or
+trading enforcement exists yet. See `docs/architecture/strategy-market-policies.md` and
+`docs/architecture/strategy-market-eligibility.md`.
 
 External signal ingestion and routing are a separate evidence-only subsystem:
 `/api/external-signals/:webhookKey` authenticates and records terminal `SignalDelivery`
