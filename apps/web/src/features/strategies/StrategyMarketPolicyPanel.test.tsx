@@ -47,21 +47,76 @@ describe('StrategyMarketPolicyPanel', () => {
     mocks.saveRevision.mockImplementation(async ({ rules }) => ({ ...mocks.data!.policy!.revisions[0], configurationFingerprint: 'b'.repeat(64), dimensionRules: rules.map((rule: { dimension: string; algorithmVersion: string; requirement: string; allowedStates: string[] }, i: number) => ({ ...rule, id: i + 1, allowedStates: rule.allowedStates.map((state, j) => ({ id: j + 1, state })) })) }));
     renderPanel(); const user = userEvent.setup();
     await user.click(screen.getAllByLabelText('Required')[1]!); await user.click(screen.getByLabelText('EXTREME')); await user.click(screen.getByLabelText('DOWN'));
-    expect(screen.getByText('Unsaved changes')).toBeTruthy(); await user.click(screen.getByRole('button', { name: 'Save revision' }));
+    expect(screen.getByText('2 dimensions changed')).toBeTruthy(); await user.click(screen.getByRole('button', { name: 'Save revision' }));
     expect(mocks.saveRevision).toHaveBeenCalledTimes(1); expect(mocks.saveRevision.mock.calls[0]![0].rules).toEqual(expect.arrayContaining([
       expect.objectContaining({ dimension: 'TREND', allowedStates: expect.arrayContaining(['DOWN', 'UP']) }), expect.objectContaining({ dimension: 'VOLATILITY', requirement: 'REQUIRED', allowedStates: ['EXTREME'] }),
     ]));
+    expect(screen.queryByText(/dimensions? changed/)).toBeNull(); expect((screen.getByRole('button', { name: 'Save revision' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('disables save and shows an inline error when one required dimension has no states', async () => {
+    renderPanel(); await userEvent.setup().click(screen.getByLabelText('UP'));
+    expect(screen.getByText('Select at least one allowed effective state.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Save revision' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('1 dimension changed')).toBeTruthy();
+  });
+
+  it('validates every required dimension independently before enabling save', async () => {
+    renderPanel(); const user = userEvent.setup();
+    await user.click(screen.getAllByLabelText('Required')[1]!);
+    expect(screen.getByText('Select at least one allowed effective state.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Save revision' }) as HTMLButtonElement).disabled).toBe(true);
+    await user.click(screen.getByLabelText('EXTREME'));
+    expect(screen.queryByText('Select at least one allowed effective state.')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Save revision' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('ignores retained temporary states when comparing an ignored dimension', async () => {
+    renderPanel(); const user = userEvent.setup();
+    await user.click(screen.getAllByLabelText('Required')[1]!); await user.click(screen.getByLabelText('HIGH')); await user.click(screen.getAllByLabelText('Ignored')[1]!);
+    expect(screen.queryByText(/dimension changed/)).toBeNull();
+    expect((screen.getByRole('button', { name: 'Save revision' }) as HTMLButtonElement).disabled).toBe(true);
+    await user.click(screen.getAllByLabelText('Required')[1]!);
+    expect((screen.getByLabelText('HIGH') as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('allows an all-ignored prepared draft to be saved while leaving activation validation to the backend', async () => {
+    renderPanel(); await userEvent.setup().click(screen.getAllByLabelText('Ignored')[0]!);
+    expect(screen.queryByText('Draft validation errors')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Save revision' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: 'Validate' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Activate' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('shows allowed-state additions and removals and clears changes after reversion', async () => {
+    mocks.data!.policy!.revisions[0]!.dimensionRules[0]!.allowedStates = [{ id: 21, state: 'UP' }, { id: 20, state: 'DOWN' }];
+    renderPanel(); const user = userEvent.setup();
+    expect((screen.getByRole('button', { name: 'Save revision' }) as HTMLButtonElement).disabled).toBe(true);
+    await user.click(screen.getByLabelText('DOWN'));
+    expect(screen.getByText('Before:').parentElement?.textContent).toContain('REQUIRED · Allowed: DOWN, UP');
+    expect(screen.getByText('After:').parentElement?.textContent).toContain('REQUIRED · Allowed: UP');
+    await user.click(screen.getByLabelText('DOWN'));
+    expect(screen.queryByText('Changed')).toBeNull();
+    expect(screen.queryByText(/dimension changed/)).toBeNull();
+  });
+
+  it('tracks requirement changes and removes the indicator when reverted', async () => {
+    renderPanel(); const user = userEvent.setup();
+    await user.click(screen.getAllByLabelText('Ignored')[0]!);
+    expect(screen.getByText('Changed')).toBeTruthy(); expect(screen.getByText('After:').parentElement?.textContent).toContain('IGNORED');
+    await user.click(screen.getAllByLabelText('Required')[0]!);
+    expect(screen.queryByText('Changed')).toBeNull(); expect(screen.queryByText(/dimension changed/)).toBeNull();
   });
 
   it('detects and discards dirty state without changing persisted configuration', async () => {
-    renderPanel(); const user = userEvent.setup(); await user.click(screen.getByLabelText('DOWN')); expect(screen.getByText('Unsaved changes')).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: 'Discard changes' })); expect(screen.queryByText('Unsaved changes')).toBeNull(); expect((screen.getByLabelText('DOWN') as HTMLInputElement).checked).toBe(false);
+    renderPanel(); const user = userEvent.setup(); await user.click(screen.getByLabelText('DOWN')); expect(screen.getByText('1 dimension changed')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Discard changes' })); expect(screen.queryByText(/dimension changed/)).toBeNull(); expect((screen.getByLabelText('DOWN') as HTMLInputElement).checked).toBe(false);
   });
 
   it('retains unsaved changes after an atomic save failure and blocks validation and activation', async () => {
     mocks.saveRevision.mockRejectedValue(new Error('Revision changed.')); renderPanel(); const user = userEvent.setup(); await user.click(screen.getByLabelText('DOWN'));
     expect((screen.getByRole('button', { name: 'Validate' }) as HTMLButtonElement).disabled).toBe(true); expect((screen.getByRole('button', { name: 'Activate' }) as HTMLButtonElement).disabled).toBe(true);
-    await user.click(screen.getByRole('button', { name: 'Save revision' })); expect(screen.getByText('Unsaved changes')).toBeTruthy(); expect((screen.getByLabelText('DOWN') as HTMLInputElement).checked).toBe(true);
+    await user.click(screen.getByRole('button', { name: 'Save revision' })); expect(screen.getByText('1 dimension changed')).toBeTruthy(); expect((screen.getByLabelText('DOWN') as HTMLInputElement).checked).toBe(true);
   });
 
   it('clears a stale successful validation when the persisted fingerprint changes', async () => {
