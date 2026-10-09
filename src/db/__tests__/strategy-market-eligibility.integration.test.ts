@@ -65,6 +65,22 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     return row.id as number;
   }
 
+  async function signalRoute(event: 'ENTRY_LONG' | 'EXIT_LONG') {
+    const { prisma } = await import('../prisma.js');
+    const user = await prisma.user.upsert({ where: { email: 'eligibility-route@example.test' }, update: {}, create: { email: 'eligibility-route@example.test', platformRole: 'SYSTEM_OWNER', enabled: true } });
+    const security = await prisma.security.upsert({ where: { symbol: 'ZZZE' }, update: {}, create: { symbol: 'ZZZE', name: 'Eligibility Route Fixture', enabled: true, assetType: 'STOCK' } });
+    const exitProfile = await prisma.exitProfile.upsert({ where: { key: 'eligibility-route' }, update: {}, create: { key: 'eligibility-route', name: 'Eligibility Route', exitMode: 'manual', takeProfitBehavior: 'manual' } });
+    const account = await prisma.tradingAccount.findFirst({ where: { displayName: 'Eligibility Route Account' } }) ?? await prisma.tradingAccount.create({ data: { accountHolderUserId: user.id, displayName: 'Eligibility Route Account' } });
+    const subscription = await prisma.subscription.upsert({ where: { key: 'eligibility-route' }, update: {}, create: { key: 'eligibility-route', name: 'Eligibility Route', symbol: security.symbol, strategyId, securityId: security.id, exitProfileId: exitProfile.id, enabled: true, exitManagementMode: 'BACKEND_MANAGED' } });
+    const assignment = await prisma.tradingAccountSubscription.upsert({ where: { tradingAccountId_subscriptionId: { tradingAccountId: account.id, subscriptionId: subscription.id } }, update: { enabled: true, entriesEnabled: true, exitsEnabled: true }, create: { tradingAccountId: account.id, subscriptionId: subscription.id, enabled: true, entriesEnabled: true, exitsEnabled: true, sizingType: 'FIXED_QTY', fixedQty: 1 } });
+    const source = await prisma.externalSignalSource.upsert({ where: { webhookKeyHash: 'e'.repeat(64) }, update: {}, create: { name: 'Eligibility Route Source', provider: 'GENERIC_WEBHOOK', webhookKeyHash: 'e'.repeat(64) } });
+    const binding = await prisma.strategySignalBinding.upsert({ where: { signalSourceId_externalStrategyKey: { signalSourceId: source.id, externalStrategyKey: 'eligibility-route' } }, update: {}, create: { signalSourceId: source.id, strategyId, externalStrategyKey: 'eligibility-route', enabled: true } });
+    const revision = await prisma.strategySignalRevision.findFirst({ where: { strategySignalBindingId: binding.id, status: 'ACTIVE' } }) ?? await prisma.strategySignalRevision.create({ data: { strategySignalBindingId: binding.id, revision: 1, status: 'ACTIVE', authorityMode: 'EVALUATION_ONLY', activatedAt: new Date('2026-10-09T18:00:00Z') } });
+    const signal = await prisma.signal.create({ data: { signalSourceId: source.id, strategySignalBindingId: binding.id, strategyId, securityId: security.id, schemaVersion: 1, eventFingerprint: randomUUID().replaceAll('-', '').repeat(2), strategyRevision: revision.revision, strategySignalRevisionId: revision.id, event, symbol: security.symbol, timeframe: '15m', signalTime: new Date('2026-10-09T18:51:00Z'), canonicalPayloadHash: randomUUID().replaceAll('-', '').repeat(2) } });
+    const run = await prisma.signalRoutingRun.create({ data: { signalId: signal.id, authorityMode: 'EVALUATION_ONLY', status: 'COMPLETED', startedAt: new Date('2026-10-09T18:51:00Z'), completedAt: new Date('2026-10-09T18:51:00Z'), routeCount: 1, routes: { create: { tradingAccountId: account.id, tradingAccountSubscriptionId: assignment.id, subscriptionId: subscription.id, targetSnapshot: { strategyId, securityId: security.id }, evaluationVersion: 1 } } }, include: { routes: true } });
+    return run.routes[0]!;
+  }
+
   it('replays the complete migration chain without Prisma schema drift', () => {
     const output = execFileSync(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'diff', '--from-config-datasource', '--to-schema', 'prisma/schema.prisma', '--exit-code'], { env: { ...process.env, DATABASE_URL: databaseUrl }, encoding: 'utf8', timeout: 60_000 });
     expect(output).toContain('No difference detected');
@@ -135,5 +151,37 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const { runStrategyMarketEligibilityWorker } = await import('../../workers/strategy-market-eligibility.worker.js');
     await expect(runStrategyMarketEligibilityWorker()).resolves.toMatchObject({ outcome: 'success' });
     expect(await counts()).toEqual(before);
+  });
+
+  it('keeps ENTRY applicability independent from route-specific BLOCKED shadow evidence and makes EXIT not applicable', async () => {
+    const { prisma } = await import('../prisma.js');
+    await composition('2026-10-09T18:50:00Z', 'DOWN');
+    const entryRoute = await signalRoute('ENTRY_LONG');
+    const { evaluateSignalRoute } = await import('../../services/signal-evaluation.service.js');
+    const existing = await evaluateSignalRoute(entryRoute.id, prisma);
+    expect(existing).toMatchObject({ status: 'COMPLETED', outcome: 'ELIGIBLE', evaluationVersion: 1 });
+    const shadowService = await import('../../services/signal-route-market-eligibility.service.js');
+    const shadow = await shadowService.processSignalRouteMarketEligibility(entryRoute.id, prisma, () => new Date('2026-10-09T18:51:00Z'));
+    expect(shadow).toMatchObject({ status: 'COMPLETED', attempt: 1, reasonCode: 'SHADOW_EVALUATION_COMPLETED', eligibilityDecision: { outcome: 'BLOCKED', contextType: 'SIGNAL_ROUTE', contextIdentity: `SIGNAL_ROUTE:${entryRoute.id}` } });
+    expect((await shadowService.processSignalRouteMarketEligibility(entryRoute.id, prisma, () => new Date('2026-10-09T18:52:00Z')))?.id).toBe(shadow?.id);
+    expect(await prisma.signalEvaluation.findUnique({ where: { signalRouteId: entryRoute.id } })).toMatchObject({ outcome: 'ELIGIBLE', evaluationVersion: 1 });
+    const exitRoute = await signalRoute('EXIT_LONG');
+    const exit = await evaluateSignalRoute(exitRoute.id, prisma);
+    expect(exit).toMatchObject({ outcome: 'NO_ACTION', reasonCode: 'NO_MATCHING_OPEN_POSITION' });
+    await expect(shadowService.processSignalRouteMarketEligibility(exitRoute.id, prisma, () => new Date('2026-10-09T18:51:00Z'))).resolves.toMatchObject({ status: 'NOT_APPLICABLE', reasonCode: 'ENTRY_POLICY_NOT_APPLICABLE_TO_EXIT', eligibilityDecisionId: null });
+  });
+
+  it('records a nonblocking technical failure and recovers idempotently without replacing SignalEvaluation', async () => {
+    const { prisma } = await import('../prisma.js');
+    const route = await signalRoute('ENTRY_LONG');
+    const { evaluateSignalRoute } = await import('../../services/signal-evaluation.service.js');
+    expect(await evaluateSignalRoute(route.id, prisma)).toMatchObject({ outcome: 'ELIGIBLE' });
+    const shadowService = await import('../../services/signal-route-market-eligibility.service.js');
+    const failed = await shadowService.processSignalRouteMarketEligibility(route.id, prisma, () => new Date('2026-10-09T18:51:00Z'), async () => { throw new Error('deliberate shadow failure'); });
+    expect(failed).toMatchObject({ status: 'FAILED', attempt: 1, eligibilityDecisionId: null, reasonCode: 'SHADOW_PROCESSING_FAILED' });
+    const recovered = await shadowService.processSignalRouteMarketEligibility(route.id, prisma, () => new Date('2026-10-09T18:52:00Z'));
+    expect(recovered).toMatchObject({ status: 'COMPLETED', attempt: 2 });
+    expect((await prisma.signalRouteMarketEligibilityAttempt.findMany({ where: { signalRouteId: route.id }, orderBy: { attempt: 'asc' } })).map(row => row.status)).toEqual(['FAILED', 'COMPLETED']);
+    expect(await prisma.signalEvaluation.findUnique({ where: { signalRouteId: route.id } })).toMatchObject({ outcome: 'ELIGIBLE', evaluationVersion: 1 });
   });
 });

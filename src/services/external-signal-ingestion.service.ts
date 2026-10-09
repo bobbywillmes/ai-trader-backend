@@ -4,6 +4,7 @@ import { hashWebhookKey } from './external-signal-config.service.js';
 import { createSystemEvent } from './system-event.service.js';
 import { routeSignalInTransaction } from './signal-routing.service.js';
 import { evaluateNewSignalRoute } from './signal-evaluation.service.js';
+import { processSignalMarketEligibilityRoutes } from './signal-route-market-eligibility.service.js';
 import { canonicalJson, canonicalSignalPayload, hashCanonicalPayload, inspectSignalEvidence, MAX_SIGNAL_BODY_BYTES, normalizeSignalEnvelope, SignalRejection } from './external-signal-normalization.js';
 
 export type SignalRequestEvidence = {
@@ -128,11 +129,17 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
   });
 
   try {
-    return await persist();
+    const delivery = await persist();
+    if (delivery?.signalId) await processSignalMarketEligibilityRoutes(delivery.signalId, db as typeof prisma).catch(() => undefined);
+    return delivery;
   } catch (error) {
     // A competing create can win after our lookup. The losing transaction rolls
     // back in full; a fresh transaction then compares the committed content.
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') return persist();
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      const delivery = await persist();
+      if (delivery?.signalId) await processSignalMarketEligibilityRoutes(delivery.signalId, db as typeof prisma).catch(() => undefined);
+      return delivery;
+    }
     throw error;
   }
 }

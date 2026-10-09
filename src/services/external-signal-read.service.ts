@@ -5,8 +5,27 @@ import { externalSignalSourceSelect, bindingRevisionInclude } from './external-s
 import type { ExternalSignalListFilters } from '../validators/external-signal.schema.js';
 import { routingRunInclude } from './signal-routing.service.js';
 import { evaluationInclude } from './signal-evaluation.service.js';
+import { routeMarketEligibilityAttemptInclude } from './signal-route-market-eligibility.service.js';
 
 export type ExternalSignalResource = 'sources' | 'bindings' | 'deliveries' | 'signals';
+
+async function presentSignalRouteShadowFreshness(signal: any) {
+  if (!signal?.routingRun) return signal;
+  const at = new Date();
+  const [active, composition] = await Promise.all([
+    prisma.strategyMarketPolicyRevision.findFirst({ where: { policy: { strategyId: signal.strategyId }, status: 'ACTIVE' }, select: { id: true } }),
+    prisma.marketRegimeAssessment.findFirst({ where: { observedAt: { lte: at } }, orderBy: [{ observedAt: 'desc' }, { id: 'desc' }], select: { id: true } }),
+  ]);
+  return { ...signal, routingRun: { ...signal.routingRun, routes: signal.routingRun.routes.map((route: any) => ({ ...route,
+    marketEligibilityAttempts: route.marketEligibilityAttempts.map((attempt: any) => attempt.eligibilityDecision ? { ...attempt,
+      eligibilityDecision: { ...attempt.eligibilityDecision,
+        currentFreshness: attempt.eligibilityDecision.policyRevisionId !== (active?.id ?? null) ? 'POLICY_SUPERSEDED'
+          : attempt.eligibilityDecision.marketRegimeAssessmentId !== (composition?.id ?? null) ? 'COMPOSITION_SUPERSEDED'
+          : attempt.eligibilityDecision.validUntil && attempt.eligibilityDecision.validUntil.getTime() <= at.getTime() ? 'EXPIRED' : 'CURRENT',
+      },
+    } : attempt),
+  })) } };
+}
 
 export async function getExternalSignalResource(resource: ExternalSignalResource, id: number) {
   const where = { id };
@@ -15,10 +34,10 @@ export async function getExternalSignalResource(resource: ExternalSignalResource
     : resource === 'bindings' ? await prisma.strategySignalBinding.findUnique({ where, include: bindingRevisionInclude })
     : resource === 'deliveries' ? await prisma.signalDelivery.findUnique({ where })
     : await prisma.signal.findUnique({ where, include: { strategySignalRevision: true, routingRun: { include: {
-      routes: { ...routingRunInclude.routes, include: { evaluation: { include: evaluationInclude } } },
+      routes: { ...routingRunInclude.routes, include: { evaluation: { include: evaluationInclude }, marketEligibilityAttempts: { include: routeMarketEligibilityAttemptInclude, orderBy: { attempt: 'asc' } } } },
     } } } });
   if (!result) throw new HttpError(404, 'Resource not found.');
-  return result;
+  return resource === 'signals' ? presentSignalRouteShadowFreshness(result) : result;
 }
 
 export async function listExternalSignalResources(resource: ExternalSignalResource, filters: ExternalSignalListFilters) {

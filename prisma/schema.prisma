@@ -218,6 +218,7 @@ model SignalRoute {
   targetSnapshot              Json
   evaluationVersion           Int?
   evaluation                  SignalEvaluation?
+  marketEligibilityAttempts  SignalRouteMarketEligibilityAttempt[]
   createdAt                   DateTime @default(now())
   routingRun                  SignalRoutingRun @relation(fields: [signalRoutingRunId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   accountSubscription         TradingAccountSubscription @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
@@ -247,6 +248,12 @@ enum SignalEvaluationGateResult {
   BLOCKED
   NO_ACTION
   FAILED
+}
+
+enum SignalRouteMarketEligibilityStatus {
+  COMPLETED
+  FAILED
+  NOT_APPLICABLE
 }
 
 // Terminal-only atomic evidence. Identity and authority are inherited from route -> signal.
@@ -285,6 +292,29 @@ model SignalEvaluationGate {
 
   @@unique([signalEvaluationId, sequence])
   @@unique([signalEvaluationId, gateKey])
+}
+
+model SignalRouteMarketEligibilityAttempt {
+  id                    Int                                    @id @default(autoincrement())
+  signalRouteId         Int
+  attempt               Int
+  integrationVersion    String
+  status                SignalRouteMarketEligibilityStatus
+  strategyId            Int
+  eligibilityDecisionId Int?
+  reasonCode            String
+  startedAt             DateTime                               @db.Timestamptz(3)
+  completedAt           DateTime                               @db.Timestamptz(3)
+  evidenceJson          Json
+  createdAt             DateTime                               @default(now()) @db.Timestamptz(3)
+
+  signalRoute           SignalRoute                            @relation(fields: [signalRouteId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  strategy              Strategy                               @relation(fields: [strategyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  eligibilityDecision   StrategyMarketEligibilityDecision?     @relation(fields: [eligibilityDecisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([signalRouteId, attempt], map: "SignalRouteMarketEligibilityAttempt_route_attempt_key")
+  @@index([eligibilityDecisionId], map: "SignalRouteMarketEligibilityAttempt_decision_idx")
+  @@index([status, completedAt], map: "SignalRouteMarketEligibilityAttempt_status_time_idx")
 }
 
 model Setting {
@@ -2674,6 +2704,7 @@ model Strategy {
   entryDecisions EntryDecision[]
   marketPolicy   StrategyMarketPolicy?
   marketEligibilityDecisions StrategyMarketEligibilityDecision[]
+  signalRouteMarketEligibilityAttempts SignalRouteMarketEligibilityAttempt[]
 }
 
 enum StrategyMarketPolicyAuthority {
@@ -2783,6 +2814,7 @@ model StrategyMarketEligibilityDecision {
   policyRevision          StrategyMarketPolicyRevision?    @relation(fields: [policyRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   marketRegimeAssessment  MarketRegimeAssessment?          @relation(fields: [marketRegimeAssessmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   gates                   StrategyMarketEligibilityDecisionGate[]
+  signalRouteAttempts     SignalRouteMarketEligibilityAttempt[]
 
   @@index([strategyId, evaluatedAt], map: "StrategyMarketEligibilityDecision_strategy_time_idx")
   @@index([policyRevisionId], map: "StrategyMarketEligibilityDecision_policy_idx")
