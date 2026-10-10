@@ -62,7 +62,16 @@ import {
   stageLiveEntryCanarySchema,
   armLiveEntriesSchema,
   disarmLiveEntriesSchema,
+  activateAssignmentMarketPolicyEnrollmentSchema,
+  disableAssignmentMarketPolicyEnrollmentSchema,
 } from '../validators/trading-account.schema.js';
+import {
+  activateAssignmentMarketPolicyEnrollment,
+  disableAssignmentMarketPolicyEnrollment,
+  getAssignmentMarketPolicyEnrollment,
+  prepareAssignmentMarketPolicyEnrollment,
+  previewAssignmentMarketPolicyEnrollment,
+} from '../services/assignment-market-policy-enrollment.service.js';
 import { verifyTradingAccountCredential } from '../services/trading-account-credential-verification.service.js';
 import {
   getTradingAccountRiskSettingsForAdmin,
@@ -200,6 +209,45 @@ function parseAccountSubscriptionId(value: unknown) {
   }
 
   return id;
+}
+
+export async function getAssignmentMarketPolicyEnrollmentController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const result = await getAssignmentMarketPolicyEnrollment(parseTradingAccountId(req.params.id), parseAccountSubscriptionId(req.params.accountSubscriptionId));
+    if (!result) throw new HttpError(404, 'Trading account subscription not found.');
+    res.status(200).json(result);
+  } catch (error) { next(error); }
+}
+
+export async function previewAssignmentMarketPolicyEnrollmentController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const preview = await previewAssignmentMarketPolicyEnrollment(parseTradingAccountId(req.params.id), parseAccountSubscriptionId(req.params.accountSubscriptionId));
+    if (!preview) throw new HttpError(404, 'Trading account subscription not found.');
+    res.status(200).json({ preview });
+  } catch (error) { next(error); }
+}
+
+export async function prepareAssignmentMarketPolicyEnrollmentController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const generation = await prepareAssignmentMarketPolicyEnrollment(parseTradingAccountId(req.params.id), parseAccountSubscriptionId(req.params.accountSubscriptionId), requireActorUserId(res));
+    res.status(201).json({ generation });
+  } catch (error) { next(error); }
+}
+
+export async function activateAssignmentMarketPolicyEnrollmentController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const input = activateAssignmentMarketPolicyEnrollmentSchema.parse(req.body);
+    const generation = await activateAssignmentMarketPolicyEnrollment(parseTradingAccountId(req.params.id), parseAccountSubscriptionId(req.params.accountSubscriptionId), input.generationId, requireActorUserId(res), input.expectedConfigurationFingerprint);
+    res.status(200).json({ generation });
+  } catch (error) { next(error); }
+}
+
+export async function disableAssignmentMarketPolicyEnrollmentController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const input = disableAssignmentMarketPolicyEnrollmentSchema.parse(req.body);
+    const generation = await disableAssignmentMarketPolicyEnrollment(parseTradingAccountId(req.params.id), parseAccountSubscriptionId(req.params.accountSubscriptionId), input.generationId, requireActorUserId(res), input.reason);
+    res.status(200).json({ generation });
+  } catch (error) { next(error); }
 }
 
 function parseSymbolsQuery(value: unknown) {

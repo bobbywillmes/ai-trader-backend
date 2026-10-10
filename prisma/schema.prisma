@@ -373,6 +373,12 @@ model User {
   lifecycleRepairCasesCreated LifecycleRepairCase[]       @relation("LifecycleRepairCaseCreator")
   lifecycleRepairExecutions   LifecycleRepairExecution[]  @relation("LifecycleRepairExecutionActor")
   lifecycleRepairActionDecisions LifecycleRepairAction[]  @relation("LifecycleRepairActionDecisionActor")
+  assignmentEnrollmentAccountHolder AssignmentMarketPolicyEnrollmentGeneration[] @relation("AssignmentEnrollmentAccountHolder")
+  assignmentEnrollmentsPrepared AssignmentMarketPolicyEnrollmentGeneration[] @relation("AssignmentEnrollmentPreparedBy")
+  assignmentEnrollmentsActivated AssignmentMarketPolicyEnrollmentGeneration[] @relation("AssignmentEnrollmentActivatedBy")
+  assignmentEnrollmentsDisabled AssignmentMarketPolicyEnrollmentGeneration[] @relation("AssignmentEnrollmentDisabledBy")
+  assignmentEnrollmentTransitions AssignmentMarketPolicyEnrollmentTransition[] @relation("AssignmentEnrollmentTransitionActor")
+  assignmentEnrollmentTransitionOwnership AssignmentMarketPolicyEnrollmentTransition[] @relation("AssignmentEnrollmentTransitionAccountHolder")
 }
 
 model UserSetupToken {
@@ -544,6 +550,7 @@ model TradingAccount {
   activeLiveEntryArming      LiveEntryArming? @relation("ActiveLiveEntryArming", fields: [activeLiveEntryArmingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   lifecycleExerciseTargets  TradingLifecycleExerciseTarget[]
   lifecycleRepairCases      LifecycleRepairCase[]
+  marketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration[]
 
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
@@ -1076,6 +1083,8 @@ model TradingAccountSubscription {
   lifecycleExerciseTargets TradingLifecycleExerciseTarget[]
   liveEntryArmings       LiveEntryArming[]
   liveEntryAcceptanceRuns LiveEntryAcceptanceRun[]
+  marketPolicyEnrollment AssignmentMarketPolicyEnrollment?
+  marketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration[]
 
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -2705,6 +2714,7 @@ model Strategy {
   marketPolicy   StrategyMarketPolicy?
   marketEligibilityDecisions StrategyMarketEligibilityDecision[]
   signalRouteMarketEligibilityAttempts SignalRouteMarketEligibilityAttempt[]
+  assignmentMarketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration[]
 }
 
 enum StrategyMarketPolicyAuthority {
@@ -2747,6 +2757,7 @@ model StrategyMarketPolicyRevision {
   policy         StrategyMarketPolicy               @relation(fields: [policyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   dimensionRules StrategyMarketPolicyDimensionRule[]
   eligibilityDecisions StrategyMarketEligibilityDecision[]
+  assignmentEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration[]
 
   @@unique([policyId, revision], map: "StrategyMarketPolicyRevision_policy_revision_key")
   @@index([policyId, status], map: "StrategyMarketPolicyRevision_policy_status_idx")
@@ -2789,6 +2800,90 @@ enum StrategyMarketEligibilityGateOutcome {
   BLOCKED
   INSUFFICIENT_EVIDENCE
   IGNORED
+}
+
+enum AssignmentMarketPolicyEnrollmentStatus {
+  PREPARED
+  ACTIVE
+  DISABLED
+}
+
+enum AssignmentMarketPolicyEnrollmentTransitionAction {
+  PREPARE
+  ACTIVATE
+  DISABLE
+}
+
+// Stable configuration aggregate for one exact TradingAccountSubscription.
+// ACTIVE remains configuration-only until a separate future enforcement authorization exists.
+model AssignmentMarketPolicyEnrollment {
+  id                    Int      @id @default(autoincrement())
+  accountSubscriptionId Int      @unique
+  createdAt             DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @db.Timestamptz(3)
+
+  accountSubscription TradingAccountSubscription                    @relation(fields: [accountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  generations         AssignmentMarketPolicyEnrollmentGeneration[]
+}
+
+model AssignmentMarketPolicyEnrollmentGeneration {
+  id                       Int                                      @id @default(autoincrement())
+  enrollmentId             Int
+  generation               Int
+  status                   AssignmentMarketPolicyEnrollmentStatus  @default(PREPARED)
+  tradingAccountId         Int
+  accountSubscriptionId    Int
+  strategyId               Int
+  policyRevisionId         Int
+  accountHolderUserId      Int
+  configurationFingerprint String
+  preparedByUserId         Int
+  preparedAt               DateTime                                 @default(now()) @db.Timestamptz(3)
+  activatedByUserId        Int?
+  activatedAt              DateTime?                                @db.Timestamptz(3)
+  disabledByUserId         Int?
+  disabledAt               DateTime?                                @db.Timestamptz(3)
+  disableReason            String?
+  // Intentionally unset in Phase 3A. Future enforcement requires a distinct explicit authorization.
+  enforcementAuthorityVersion String?
+  enforcementAuthorizedAt     DateTime?                             @db.Timestamptz(3)
+  createdAt                DateTime                                 @default(now()) @db.Timestamptz(3)
+
+  enrollment          AssignmentMarketPolicyEnrollment             @relation(fields: [enrollmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  accountSubscription TradingAccountSubscription                    @relation(fields: [accountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  tradingAccount      TradingAccount                                @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  strategy            Strategy                                     @relation(fields: [strategyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  policyRevision      StrategyMarketPolicyRevision                  @relation(fields: [policyRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  accountHolder       User                                         @relation("AssignmentEnrollmentAccountHolder", fields: [accountHolderUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  preparedBy          User                                         @relation("AssignmentEnrollmentPreparedBy", fields: [preparedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  activatedBy         User?                                        @relation("AssignmentEnrollmentActivatedBy", fields: [activatedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  disabledBy          User?                                        @relation("AssignmentEnrollmentDisabledBy", fields: [disabledByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  transitions        AssignmentMarketPolicyEnrollmentTransition[]
+
+  @@unique([enrollmentId, generation], map: "AssignmentEnrollmentGeneration_number_key")
+  @@index([accountSubscriptionId], map: "AssignmentMarketPolicyEnrollmentGeneration_assignment_idx")
+  @@index([policyRevisionId], map: "AssignmentMarketPolicyEnrollmentGeneration_policy_revision_idx")
+}
+
+model AssignmentMarketPolicyEnrollmentTransition {
+  id                       Int                                               @id @default(autoincrement())
+  generationId             Int
+  sequence                 Int
+  action                   AssignmentMarketPolicyEnrollmentTransitionAction
+  fromStatus               AssignmentMarketPolicyEnrollmentStatus?
+  toStatus                 AssignmentMarketPolicyEnrollmentStatus
+  actorUserId              Int
+  accountHolderUserId      Int
+  configurationFingerprint String
+  reason                   String?
+  occurredAt               DateTime                                          @default(now()) @db.Timestamptz(3)
+
+  generation AssignmentMarketPolicyEnrollmentGeneration @relation(fields: [generationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor      User                                       @relation("AssignmentEnrollmentTransitionActor", fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  accountHolder User                                    @relation("AssignmentEnrollmentTransitionAccountHolder", fields: [accountHolderUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([generationId, sequence], map: "AssignmentEnrollmentTransition_sequence_key")
+  @@index([occurredAt], map: "AssignmentMarketPolicyEnrollmentTransition_occurred_idx")
 }
 
 // Immutable, informational evaluation of one Strategy-owned policy revision against

@@ -379,6 +379,15 @@ Phase 2D decisions without changing SignalEvaluation gates or outcomes. Failures
 nonblocking and bounded; EXIT_LONG is explicitly not applicable. UI and API consumers
 must keep route applicability, shadow policy outcome, and trading authority distinct.
 
+Phase 3A adds PAPER-only assignment market-policy enrollment as configuration
+evidence. PREPARED/ACTIVE/DISABLED generations bind an exact
+TradingAccountSubscription and active Strategy-owned policy revision, but
+ACTIVE is explicitly `CONFIGURATION_ONLY` and never enforcement authority.
+Future enforcement requires a separate explicit authorization boundary and
+must not infer authority from existing ACTIVE rows. Preview GETs only read
+persisted shadow projections. See
+`docs/architecture/assignment-market-policy-enrollment.md`.
+
 The intended lifecycle is:
 
 ```text

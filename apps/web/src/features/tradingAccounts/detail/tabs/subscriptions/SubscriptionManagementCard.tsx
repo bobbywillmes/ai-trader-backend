@@ -78,6 +78,7 @@ import {
   validateAccountSubscriptionDraft,
 } from "./utils";
 import classes from "./SubscriptionManagementCard.module.css";
+import { MarketPolicyEnrollmentPanel } from "./MarketPolicyEnrollmentPanel";
 
 export function SubscriptionManagementCard({
   account,
@@ -422,6 +423,7 @@ export function SubscriptionManagementCard({
       { label: "Allocation ID", value: item.allocationId, technical: true }, { label: "Subscription key", value: item.subscription.key, technical: true },
       { label: "Strategy key", value: item.subscription.strategy?.key, technical: true }, { label: "Updated", value: formatDateTime(item.updatedAt) },
     ] }]} /></Accordion.Panel></Accordion.Item></Accordion>
+    <MarketPolicyEnrollmentPanel accountId={account.id} assignmentId={item.id} token={token} />
     <footer><Text fw={700} size="sm" mb="xs">Actions</Text>{actions(item)}</footer>
   </Stack>;
   const wide = (items: readonly TradingAccountSubscription[]) => <DataTable caption="Account subscriptions" captionHidden density="compact"><Table.Thead><Table.Tr><Table.Th>Subscription / strategy</Table.Th><Table.Th>Status / readiness</Table.Th><Table.Th>Allocation</Table.Th><Table.Th>Position sizing</Table.Th><Table.Th>Exit profile</Table.Th><Table.Th>Actions</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{items.map((item) => <Fragment key={item.id}><Table.Tr><Table.Td>{identity(item)}</Table.Td><Table.Td>{badges(item)}</Table.Td><Table.Td>{item.allocation?.name ?? "Unassigned"}</Table.Td><Table.Td>{formatSizing(item, account.baseCurrency)}</Table.Td><Table.Td>{item.subscription.exitProfile?.name ?? "Not assigned"}</Table.Td><Table.Td><Group gap="xs" wrap="nowrap"><Button size="compact-sm" variant="default" onClick={() => setExpandedId(expandedId === item.id ? null : item.id)} aria-expanded={expandedId === item.id}>Details</Button>{actions(item)}</Group></Table.Td></Table.Tr>{expandedId === item.id && <Table.Tr><Table.Td colSpan={6} className={classes.inlineDetails}>{details(item)}</Table.Td></Table.Tr>}</Fragment>)}</Table.Tbody></DataTable>;

@@ -828,3 +828,30 @@ export type CreateTradingAccountSubscriptionInput =
   TradingAccountSubscriptionInput & {
     subscriptionId: number;
   };
+
+export type AssignmentMarketPolicyEnrollmentStatus = 'PREPARED' | 'ACTIVE' | 'DISABLED';
+export type AssignmentMarketPolicyEnrollmentTransition = {
+  id: number; sequence: number; action: 'PREPARE' | 'ACTIVATE' | 'DISABLE';
+  fromStatus: AssignmentMarketPolicyEnrollmentStatus | null; toStatus: AssignmentMarketPolicyEnrollmentStatus;
+  occurredAt: string; reason: string | null; actor: { id: number; email: string; name: string | null };
+};
+export type AssignmentMarketPolicyEnrollmentGeneration = {
+  id: number; generation: number; status: AssignmentMarketPolicyEnrollmentStatus;
+  tradingAccountId: number; accountSubscriptionId: number; strategyId: number; policyRevisionId: number;
+  configurationFingerprint: string; preparedAt: string; activatedAt: string | null; disabledAt: string | null;
+  disableReason: string | null; authority: 'CONFIGURATION_ONLY'; enforcementEnabled: false;
+  policyRevision: { id: number; revision: number; status: string };
+  transitions: AssignmentMarketPolicyEnrollmentTransition[];
+};
+export type AssignmentMarketPolicyEnrollmentResponse = {
+  authority: 'CONFIGURATION_ONLY'; enforcementEnabled: false;
+  enrollment: null | { id: number; accountSubscriptionId: number; generations: AssignmentMarketPolicyEnrollmentGeneration[] };
+};
+export type AssignmentMarketPolicyEnrollmentPreview = {
+  authority: 'CONFIGURATION_ONLY'; enforcementEnabled: false;
+  assignmentIdentity: { accountId: number; assignmentId: number; strategyId: number; policyRevisionId: number | null };
+  paperEligible: boolean; ownershipValid: boolean; policyRevisionMatches: boolean; configurationValid: boolean;
+  readyToActivate: boolean; notReadyReasons: string[]; enrollmentGeneration: AssignmentMarketPolicyEnrollmentGeneration | null;
+  currentMarketEligibility: { outcome: 'ALLOWED' | 'BLOCKED' | 'INSUFFICIENT_EVIDENCE' | null; reasonCode: string; evaluatorTechnicalStatus: 'AVAILABLE' | 'NOT_EVALUATED'; requiredForActivation: false };
+  operationalPosture: { strategyEnabled: boolean; assignmentEnabled: boolean; entriesEnabled: boolean; accountStatus: string; accountTradingEnabled: boolean; killSwitchEnabled: boolean; affectsEnrollmentValidity: false };
+};

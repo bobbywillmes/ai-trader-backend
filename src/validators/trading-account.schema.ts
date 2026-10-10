@@ -277,3 +277,13 @@ export const updateTradingAccountSubscriptionSchema = z
 export type UpdateTradingAccountSubscriptionInput = z.infer<
   typeof updateTradingAccountSubscriptionSchema
 >;
+
+export const activateAssignmentMarketPolicyEnrollmentSchema = z.strictObject({
+  generationId: z.coerce.number().int().positive(),
+  expectedConfigurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
+export const disableAssignmentMarketPolicyEnrollmentSchema = z.strictObject({
+  generationId: z.coerce.number().int().positive(),
+  reason: z.string().trim().min(1).max(500),
+});

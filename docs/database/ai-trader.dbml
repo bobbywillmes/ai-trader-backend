@@ -251,6 +251,12 @@ Table User {
   lifecycleRepairCasesCreated LifecycleRepairCase [not null]
   lifecycleRepairExecutions LifecycleRepairExecution [not null]
   lifecycleRepairActionDecisions LifecycleRepairAction [not null]
+  assignmentEnrollmentAccountHolder AssignmentMarketPolicyEnrollmentGeneration [not null]
+  assignmentEnrollmentsPrepared AssignmentMarketPolicyEnrollmentGeneration [not null]
+  assignmentEnrollmentsActivated AssignmentMarketPolicyEnrollmentGeneration [not null]
+  assignmentEnrollmentsDisabled AssignmentMarketPolicyEnrollmentGeneration [not null]
+  assignmentEnrollmentTransitions AssignmentMarketPolicyEnrollmentTransition [not null]
+  assignmentEnrollmentTransitionOwnership AssignmentMarketPolicyEnrollmentTransition [not null]
 }
 
 Table UserSetupToken {
@@ -327,6 +333,7 @@ Table TradingAccount {
   activeLiveEntryArming LiveEntryArming
   lifecycleExerciseTargets TradingLifecycleExerciseTarget [not null]
   lifecycleRepairCases LifecycleRepairCase [not null]
+  marketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 
@@ -712,6 +719,8 @@ Table TradingAccountSubscription {
   lifecycleExerciseTargets TradingLifecycleExerciseTarget [not null]
   liveEntryArmings LiveEntryArming [not null]
   liveEntryAcceptanceRuns LiveEntryAcceptanceRun [not null]
+  marketPolicyEnrollment AssignmentMarketPolicyEnrollment
+  marketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 
@@ -1786,6 +1795,7 @@ Table Strategy {
   marketPolicy StrategyMarketPolicy
   marketEligibilityDecisions StrategyMarketEligibilityDecision [not null]
   signalRouteMarketEligibilityAttempts SignalRouteMarketEligibilityAttempt [not null]
+  assignmentMarketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration [not null]
 }
 
 Table StrategyMarketPolicy {
@@ -1810,6 +1820,7 @@ Table StrategyMarketPolicyRevision {
   policy StrategyMarketPolicy [not null]
   dimensionRules StrategyMarketPolicyDimensionRule [not null]
   eligibilityDecisions StrategyMarketEligibilityDecision [not null]
+  assignmentEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration [not null]
 
   indexes {
     (policyId, revision) [unique]
@@ -1841,6 +1852,73 @@ Table StrategyMarketPolicyAllowedState {
 
   indexes {
     (ruleId, state) [unique]
+  }
+}
+
+Table AssignmentMarketPolicyEnrollment {
+  id Int [pk, increment]
+  accountSubscriptionId Int [unique, not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  accountSubscription TradingAccountSubscription [not null]
+  generations AssignmentMarketPolicyEnrollmentGeneration [not null]
+}
+
+Table AssignmentMarketPolicyEnrollmentGeneration {
+  id Int [pk, increment]
+  enrollmentId Int [not null]
+  generation Int [not null]
+  status AssignmentMarketPolicyEnrollmentStatus [not null, default: 'PREPARED']
+  tradingAccountId Int [not null]
+  accountSubscriptionId Int [not null]
+  strategyId Int [not null]
+  policyRevisionId Int [not null]
+  accountHolderUserId Int [not null]
+  configurationFingerprint String [not null]
+  preparedByUserId Int [not null]
+  preparedAt DateTime [default: `now()`, not null]
+  activatedByUserId Int
+  activatedAt DateTime
+  disabledByUserId Int
+  disabledAt DateTime
+  disableReason String
+  enforcementAuthorityVersion String
+  enforcementAuthorizedAt DateTime
+  createdAt DateTime [default: `now()`, not null]
+  enrollment AssignmentMarketPolicyEnrollment [not null]
+  accountSubscription TradingAccountSubscription [not null]
+  tradingAccount TradingAccount [not null]
+  strategy Strategy [not null]
+  policyRevision StrategyMarketPolicyRevision [not null]
+  accountHolder User [not null]
+  preparedBy User [not null]
+  activatedBy User
+  disabledBy User
+  transitions AssignmentMarketPolicyEnrollmentTransition [not null]
+
+  indexes {
+    (enrollmentId, generation) [unique]
+  }
+}
+
+Table AssignmentMarketPolicyEnrollmentTransition {
+  id Int [pk, increment]
+  generationId Int [not null]
+  sequence Int [not null]
+  action AssignmentMarketPolicyEnrollmentTransitionAction [not null]
+  fromStatus AssignmentMarketPolicyEnrollmentStatus
+  toStatus AssignmentMarketPolicyEnrollmentStatus [not null]
+  actorUserId Int [not null]
+  accountHolderUserId Int [not null]
+  configurationFingerprint String [not null]
+  reason String
+  occurredAt DateTime [default: `now()`, not null]
+  generation AssignmentMarketPolicyEnrollmentGeneration [not null]
+  actor User [not null]
+  accountHolder User [not null]
+
+  indexes {
+    (generationId, sequence) [unique]
   }
 }
 
@@ -2430,6 +2508,18 @@ Enum StrategyMarketEligibilityGateOutcome {
   IGNORED
 }
 
+Enum AssignmentMarketPolicyEnrollmentStatus {
+  PREPARED
+  ACTIVE
+  DISABLED
+}
+
+Enum AssignmentMarketPolicyEnrollmentTransitionAction {
+  PREPARE
+  ACTIVATE
+  DISABLE
+}
+
 Ref: StrategySignalRevision.strategySignalBindingId > StrategySignalBinding.id [delete: Restrict]
 
 Ref: StrategySignalBinding.signalSourceId > ExternalSignalSource.id [delete: Restrict]
@@ -2715,6 +2805,32 @@ Ref: StrategyMarketPolicyRevision.policyId > StrategyMarketPolicy.id [delete: Re
 Ref: StrategyMarketPolicyDimensionRule.revisionId > StrategyMarketPolicyRevision.id [delete: Restrict]
 
 Ref: StrategyMarketPolicyAllowedState.ruleId > StrategyMarketPolicyDimensionRule.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnrollment.accountSubscriptionId - TradingAccountSubscription.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnrollmentGeneration.enrollmentId > AssignmentMarketPolicyEnrollment.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnrollmentGeneration.accountSubscriptionId > TradingAccountSubscription.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnrollmentGeneration.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnrollmentGeneration.strategyId > Strategy.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnrollmentGeneration.policyRevisionId > StrategyMarketPolicyRevision.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnrollmentGeneration.accountHolderUserId > User.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnrollmentGeneration.preparedByUserId > User.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnrollmentGeneration.activatedByUserId > User.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnrollmentGeneration.disabledByUserId > User.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnrollmentTransition.generationId > AssignmentMarketPolicyEnrollmentGeneration.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnrollmentTransition.actorUserId > User.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnrollmentTransition.accountHolderUserId > User.id [delete: Restrict]
 
 Ref: StrategyMarketEligibilityDecision.strategyId > Strategy.id [delete: Restrict]
 
