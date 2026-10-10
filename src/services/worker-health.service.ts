@@ -130,6 +130,7 @@ function toIso(value: Date | null): string | null {
 function sanitizeError(error: unknown): {
   message: string;
   code: string | null;
+  publisherStage: string | null;
 } {
   const rawMessage = error instanceof Error ? error.message : String(error);
   const normalized = rawMessage
@@ -143,11 +144,22 @@ function sanitizeError(error: unknown): {
     typeof error.code === 'string'
       ? error.code.slice(0, 100)
       : null;
+  const publisherStage = typeof error === 'object' && error !== null &&
+    'publisherStage' in error && typeof error.publisherStage === 'string'
+      ? error.publisherStage.replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 100)
+      : null;
 
   return {
     message: normalized,
     code,
+    publisherStage,
   };
+}
+
+function failureFingerprint(key: WorkerKey, error: ReturnType<typeof sanitizeError>) {
+  return crypto.createHash('sha256')
+    .update([key, error.code ?? 'UNKNOWN', error.publisherStage ?? 'unknown', error.message].join('|'))
+    .digest('hex');
 }
 
 function isSuccessfulSchedulerOutcome(
@@ -166,6 +178,12 @@ export class WorkerHealthRegistry {
   readonly processStartedAt: Date;
 
   private readonly states = new Map<WorkerKey, WorkerRuntimeState>();
+  private readonly lastFailureDiagnostics = new Map<WorkerKey, {
+    fingerprint: string;
+    errorCode: string;
+    publisherStage: string | null;
+    errorSummary: string;
+  }>();
   private readonly now: () => Date;
   private persistTimer: NodeJS.Timeout | null = null;
   private transitionEventsEnabled = true;
@@ -346,25 +364,21 @@ export class WorkerHealthRegistry {
     }
 
     try {
+      const stateBeforeRun = this.getState(key);
+      const previousFailures = stateBeforeRun.consecutiveFailures;
+      const previousFailedAt = stateBeforeRun.lastFailedAt;
       const result = await execute();
-      const previous = prisma.workerHealthState.findUnique
-        ? await prisma.workerHealthState.findUnique({
-            where: { key },
-            select: {
-              consecutiveFailures: true,
-              lastFailedAt: true,
-            },
-          })
-        : null;
       this.completeWorkerTick(key, result ?? {});
-      if (previous && previous.consecutiveFailures > 0) {
+      this.lastFailureDiagnostics.delete(key);
+      if (previousFailures > 0) {
         const state = this.getState(key);
         logger.info({
           workerKey: key,
+          processInstanceId: this.processInstanceId,
           previousStatus: 'failing',
           recoveredStatus: this.deriveStatus(state, this.now()).status,
-          failureDurationMs: previous.lastFailedAt
-            ? Math.max(0, this.now().getTime() - previous.lastFailedAt.getTime())
+          failureDurationMs: previousFailedAt
+            ? Math.max(0, this.now().getTime() - previousFailedAt.getTime())
             : null,
         }, 'Worker coordinator recovered.');
         await this.flushDirtyStates({ force: true });
@@ -376,22 +390,22 @@ export class WorkerHealthRegistry {
           ? error.code
           : error instanceof Error ? error.name : 'UNKNOWN'
       );
-      const fingerprint = `${key}|${sanitized.message}`;
-      const previous = prisma.workerHealthState.findUnique
-        ? await prisma.workerHealthState.findUnique({
-            where: { key },
-            select: { consecutiveFailures: true, lastError: true },
-          })
-        : null;
+      const fingerprint = failureFingerprint(key, sanitized);
+      const previousFingerprint = this.lastFailureDiagnostics.get(key)?.fingerprint ?? null;
+      this.lastFailureDiagnostics.set(key, {
+        fingerprint,
+        errorCode,
+        publisherStage: sanitized.publisherStage,
+        errorSummary: sanitized.message,
+      });
       this.failWorkerTick(key, error);
-      const previousFingerprint = previous?.consecutiveFailures
-        ? `${key}|${previous.lastError ?? ''}`
-        : null;
       if (previousFingerprint !== fingerprint) {
         logger.error({
           workerKey: key,
+          processInstanceId: this.processInstanceId,
           errorCode,
-          error: sanitized.message,
+          publisherStage: sanitized.publisherStage,
+          errorSummary: sanitized.message,
           failureFingerprint: fingerprint,
         }, 'Worker coordinator entered a failing state.');
       }
@@ -594,6 +608,7 @@ export class WorkerHealthRegistry {
     nextStatus: WorkerStatus,
     reason: WorkerStatusReason
   ) {
+    const failure = this.lastFailureDiagnostics.get(state.key as WorkerKey);
     await createSystemEvent({
       type:
         nextStatus === 'healthy'
@@ -618,6 +633,12 @@ export class WorkerHealthRegistry {
         lastSucceededAt: toIso(state.lastSucceededAt),
         lastFailedAt: toIso(state.lastFailedAt),
         processInstanceId: state.processInstanceId,
+        ...(failure ? {
+          errorCode: failure.errorCode,
+          publisherStage: failure.publisherStage,
+          errorSummary: failure.errorSummary,
+          failureFingerprint: failure.fingerprint,
+        } : {}),
       } as Prisma.InputJsonValue,
     });
   }

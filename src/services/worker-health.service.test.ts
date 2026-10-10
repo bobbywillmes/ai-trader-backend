@@ -379,6 +379,12 @@ describe('WorkerHealthRegistry', () => {
         severity: 'ERROR',
         entityType: 'worker',
         entityId: 'pending_order_processing',
+        payloadJson: expect.objectContaining({
+          processInstanceId: 'process-test',
+          errorCode: 'Error',
+          errorSummary: 'Broker unavailable',
+          failureFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }),
       })
     );
     expect(mocks.createSystemEvent).toHaveBeenNthCalledWith(
@@ -438,18 +444,7 @@ describe('WorkerHealthRegistry', () => {
     );
   });
 
-  it('logs coordinator failures and recovery once using persisted transition state', async () => {
-    let persisted: { consecutiveFailures: number; lastError: string | null;
-      lastFailedAt: Date | null } | null = null;
-    mocks.workerHealthFindUnique.mockImplementation(async () => persisted);
-    mocks.workerHealthUpsert.mockImplementation(async ({ update }) => {
-      persisted = {
-        consecutiveFailures: update.consecutiveFailures,
-        lastError: update.lastError,
-        lastFailedAt: update.lastFailedAt,
-      };
-      return {};
-    });
+  it('logs coordinator failures and recovery once using process-local transition state', async () => {
     const { registry } = createRegistry();
     const failure = Object.assign(new Error('Coordinator failure'), {
       code: 'ACCOUNT_COORDINATOR_PARTIAL_FAILURE',
@@ -478,5 +473,41 @@ describe('WorkerHealthRegistry', () => {
       async () => { throw failure; }
     ).catch(() => undefined);
     expect(mocks.loggerError).toHaveBeenCalledTimes(2);
+    expect(mocks.workerHealthFindUnique).not.toHaveBeenCalled();
+    expect(mocks.loggerError).toHaveBeenLastCalledWith(expect.objectContaining({
+      processInstanceId: 'process-test',
+      errorCode: 'ACCOUNT_COORDINATOR_PARTIAL_FAILURE',
+      errorSummary: 'Coordinator failure',
+      failureFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+    }), 'Worker coordinator entered a failing state.');
+  });
+
+  it('does not attribute another process persisted failure or recovery to this process', async () => {
+    mocks.workerHealthFindUnique.mockResolvedValue({
+      consecutiveFailures: 8,
+      lastError: 'Other process failure',
+      lastFailedAt: new Date('2026-06-19T11:00:00.000Z'),
+    });
+    const { registry } = createRegistry();
+
+    await registry.runMonitoredWorker('pending_order_processing', async () => ({ outcome: 'success' }));
+
+    expect(mocks.loggerInfo).not.toHaveBeenCalled();
+    expect(mocks.loggerError).not.toHaveBeenCalled();
+    expect(mocks.workerHealthFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('keeps three healthy not-due contentions out of failing state', async () => {
+    const { registry } = createRegistry();
+    for (let tick = 0; tick < 3; tick += 1) {
+      await registry.runMonitoredWorker('pending_order_processing', async () => ({
+        outcome: 'skipped', skipReason: 'not_due', workSucceeded: false,
+      }));
+    }
+    expect(firstItem(registry)).toMatchObject({
+      status: 'healthy', consecutiveFailures: 0, totalSkips: 3,
+      lastWorkSucceededAt: null,
+    });
+    expect(mocks.createSystemEvent).not.toHaveBeenCalled();
   });
 });

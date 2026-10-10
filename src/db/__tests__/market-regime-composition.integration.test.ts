@@ -167,6 +167,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
       db: prisma, observedAt: new Date('2026-10-08T18:00:00Z'), clock: () => new Date('2026-10-08T18:00:01Z'),
     });
     expect(first).toMatchObject({ published: true, reused: false, assessment: { evidenceHealth: 'COMPLETE' } });
+    if (first.outcome === 'ALREADY_RUNNING_ELSEWHERE') throw new Error('Unexpected publication contention.');
     expect(first.assessment.sources).toHaveLength(5);
     const repeated = await publishMarketRegimeComposition({
       db: prisma, observedAt: new Date('2026-10-08T18:04:00Z'), clock: () => new Date('2026-10-08T18:04:01Z'),
@@ -206,13 +207,33 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
       const observedAt = new Date('2026-10-08T18:06:00Z');
       const preview = await previewMarketRegimeComposition(observedAt, prisma);
       const results = await Promise.allSettled([
-        publishMarketRegimeComposition({ db: prisma, observedAt, clock: () => new Date('2026-10-08T18:06:01Z') }),
-        publishMarketRegimeComposition({ db: second, observedAt, clock: () => new Date('2026-10-08T18:06:01Z') }),
+        publishMarketRegimeComposition({ db: prisma, observedAt, clock: () => new Date('2026-10-08T18:06:01Z'), contention: 'return' }),
+        publishMarketRegimeComposition({ db: second, observedAt, clock: () => new Date('2026-10-08T18:06:01Z'), contention: 'return' }),
       ]);
-      expect(results.some(result => result.status === 'fulfilled')).toBe(true);
+      expect(results.every(result => result.status === 'fulfilled')).toBe(true);
       expect(await prisma.marketRegimeAssessment.count({ where: {
         compositionVersion: 'MARKET_REGIME_COMPOSITION_V1', sourceSetFingerprint: preview.sourceSetFingerprint,
       } })).toBe(1);
     } finally { await second.$disconnect(); }
+  });
+
+  it('returns explicit scheduler contention while preserving the manual 409 contract', async () => {
+    const { MARKET_REGIME_COMPOSITION_LOCK_KEY, publishMarketRegimeComposition } =
+      await import('../../services/market-regime-composition-publication.service.js');
+    const owner = new Client({ connectionString: databaseUrl });
+    await owner.connect();
+    try {
+      await owner.query('BEGIN');
+      await owner.query('SELECT pg_advisory_xact_lock($1::bigint)', [MARKET_REGIME_COMPOSITION_LOCK_KEY.toString()]);
+      await expect(publishMarketRegimeComposition({
+        db: prisma, observedAt: new Date('2026-10-08T18:07:00Z'), contention: 'return',
+      })).resolves.toMatchObject({ outcome: 'ALREADY_RUNNING_ELSEWHERE', published: false, assessment: null });
+      await expect(publishMarketRegimeComposition({
+        db: prisma, observedAt: new Date('2026-10-08T18:07:00Z'),
+      })).rejects.toMatchObject({ statusCode: 409 });
+    } finally {
+      await owner.query('ROLLBACK');
+      await owner.end();
+    }
   });
 });
