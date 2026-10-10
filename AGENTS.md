@@ -388,6 +388,14 @@ must not infer authority from existing ACTIVE rows. Preview GETs only read
 persisted shadow projections. See
 `docs/architecture/assignment-market-policy-enrollment.md`.
 
+Phase 3B.1 adds default-off, PostgreSQL-triggered exact OrderIntent market-policy
+coverage. All evidence is immutable `COMPARE_ONLY` with `tradingEffect=NONE`.
+Missing expected post-epoch capture is `CAPTURE_UNKNOWN` and must never be rebuilt
+from current enrollment. Superseded ACTIVE generations preserve their original
+revision identity as `SUPERSEDED_COMPARE_ONLY`. No evaluation, broker hook, OA
+producer, or trading authority exists. See
+`docs/architecture/order-intent-market-policy-coverage.md`.
+
 The intended lifecycle is:
 
 ```text

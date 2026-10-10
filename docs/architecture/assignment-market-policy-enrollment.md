@@ -47,11 +47,14 @@ absence of persisted evaluation as a technical `NOT_EVALUATED` state.
 `BLOCKED` and `INSUFFICIENT_EVIDENCE` are informational business outcomes and
 do not prevent configuration activation.
 
-## Deferred OrderIntent contract
+## OrderIntent coverage boundary
 
-Phase 3A does not add OrderIntent columns, obligation tables, broker-stage
-decisions, or any trading-path integration. A later milestone should preserve
-this contract:
+Phase 3B.1 adds only exception-contained, compare-only identity coverage beside an
+applicable OrderIntent. It does not add authorization obligations, synchronous
+eligibility evaluation, broker-stage decisions, or trading-path enforcement. See
+`docs/architecture/order-intent-market-policy-coverage.md`.
+
+A future enforcement milestone must preserve this contract:
 
 - Unenrolled requests retain existing behavior.
 - A policy-blocked pre-intent request records immutable authorization-attempt

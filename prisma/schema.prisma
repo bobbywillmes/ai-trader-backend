@@ -551,6 +551,7 @@ model TradingAccount {
   lifecycleExerciseTargets  TradingLifecycleExerciseTarget[]
   lifecycleRepairCases      LifecycleRepairCase[]
   marketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration[]
+  orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[]
 
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
@@ -1085,6 +1086,7 @@ model TradingAccountSubscription {
   liveEntryAcceptanceRuns LiveEntryAcceptanceRun[]
   marketPolicyEnrollment AssignmentMarketPolicyEnrollment?
   marketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration[]
+  orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[]
 
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -1338,6 +1340,7 @@ model OrderIntent {
   lifecycleExerciseTarget TradingLifecycleExerciseTarget?
   liveEntryAcceptanceRunId Int? @unique
   liveEntryAcceptanceRun   LiveEntryAcceptanceRun? @relation(fields: [liveEntryAcceptanceRunId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  marketPolicyCoverage     OrderIntentMarketPolicyCoverage?
 
   @@index([trackedPositionId])
   @@index([tradingAccountId])
@@ -2758,6 +2761,8 @@ model StrategyMarketPolicyRevision {
   dimensionRules StrategyMarketPolicyDimensionRule[]
   eligibilityDecisions StrategyMarketEligibilityDecision[]
   assignmentEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration[]
+  boundOrderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[] @relation("OrderIntentCoverageBoundPolicyRevision")
+  activeOrderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[] @relation("OrderIntentCoverageActivePolicyRevision")
 
   @@unique([policyId, revision], map: "StrategyMarketPolicyRevision_policy_revision_key")
   @@index([policyId, status], map: "StrategyMarketPolicyRevision_policy_status_idx")
@@ -2814,6 +2819,13 @@ enum AssignmentMarketPolicyEnrollmentTransitionAction {
   DISABLE
 }
 
+enum OrderIntentMarketPolicyCoverageProvenance {
+  ACTIVE_EXACT
+  SUPERSEDED_COMPARE_ONLY
+  UNENROLLED
+  CAPTURE_UNKNOWN
+}
+
 // Stable configuration aggregate for one exact TradingAccountSubscription.
 // ACTIVE remains configuration-only until a separate future enforcement authorization exists.
 model AssignmentMarketPolicyEnrollment {
@@ -2859,10 +2871,54 @@ model AssignmentMarketPolicyEnrollmentGeneration {
   activatedBy         User?                                        @relation("AssignmentEnrollmentActivatedBy", fields: [activatedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   disabledBy          User?                                        @relation("AssignmentEnrollmentDisabledBy", fields: [disabledByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   transitions        AssignmentMarketPolicyEnrollmentTransition[]
+  orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[]
 
   @@unique([enrollmentId, generation], map: "AssignmentEnrollmentGeneration_number_key")
   @@index([accountSubscriptionId], map: "AssignmentMarketPolicyEnrollmentGeneration_assignment_idx")
   @@index([policyRevisionId], map: "AssignmentMarketPolicyEnrollmentGeneration_policy_revision_idx")
+}
+
+// Immutable compare-only identity captured atomically with an applicable entry intent.
+// CAPTURE_UNKNOWN is scanner-created and deliberately never reconstructs configuration.
+model OrderIntentMarketPolicyCoverage {
+  id                       Int                                       @id @default(autoincrement())
+  orderIntentId            Int                                       @unique
+  tradingAccountId         Int
+  accountSubscriptionId    Int
+  enrollmentGenerationId   Int?
+  boundPolicyRevisionId    Int?
+  activePolicyRevisionId   Int?
+  provenance               OrderIntentMarketPolicyCoverageProvenance
+  comparisonMode           String                                    @default("COMPARE_ONLY")
+  tradingEffect            String                                    @default("NONE")
+  capturedAt               DateTime                                  @default(now()) @db.Timestamptz(3)
+
+  orderIntent          OrderIntent                                  @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  tradingAccount       TradingAccount                               @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  accountSubscription  TradingAccountSubscription                   @relation(fields: [accountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  enrollmentGeneration AssignmentMarketPolicyEnrollmentGeneration? @relation(fields: [enrollmentGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  boundPolicyRevision  StrategyMarketPolicyRevision?                @relation("OrderIntentCoverageBoundPolicyRevision", fields: [boundPolicyRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  activePolicyRevision StrategyMarketPolicyRevision?                @relation("OrderIntentCoverageActivePolicyRevision", fields: [activePolicyRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([accountSubscriptionId, capturedAt], map: "OrderIntentMarketPolicyCoverage_assignment_captured_idx")
+  @@index([enrollmentGenerationId], map: "OrderIntentMarketPolicyCoverage_generation_idx")
+}
+
+// Mutable rollout and scanner cursors are operational state, not historical evidence.
+model OrderIntentMarketPolicyCaptureRollout {
+  id             Int       @id
+  enabled        Boolean   @default(false)
+  deployedAt     DateTime  @default(now()) @db.Timestamptz(3)
+  effectiveEpoch DateTime? @db.Timestamptz(3)
+  disabledAt     DateTime? @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+}
+
+model OrderIntentMarketPolicyCoverageScannerState {
+  id                Int       @id
+  lastOrderIntentId Int       @default(0)
+  lastScannedAt     DateTime? @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(3)
 }
 
 model AssignmentMarketPolicyEnrollmentTransition {
