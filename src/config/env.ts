@@ -67,6 +67,7 @@ export const envSchema = z.object({
   MARKET_DAILY_MASSIVE_RESUME_SESSION: optionalSessionDate,
   BREADTH_V2_SHADOW_WORKER_ENABLED: envBoolean.default(false),
   ORDER_INTENT_MARKET_POLICY_COMPARISON_WORKER_ENABLED: envBoolean.default(false),
+  ORDER_INTENT_BROKER_COMPARISON_WORKER_ENABLED: envBoolean.default(false),
   MASSIVE_NEWS_WORKER_ENABLED: envBoolean.default(false),
   MASSIVE_NEWS_WORKER_INTERVAL_MS: z.coerce
     .number()

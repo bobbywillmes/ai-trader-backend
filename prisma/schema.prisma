@@ -552,6 +552,7 @@ model TradingAccount {
   lifecycleRepairCases      LifecycleRepairCase[]
   marketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration[]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[]
+  brokerPostOpportunities OrderIntentBrokerPostOpportunity[]
 
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
@@ -1087,6 +1088,7 @@ model TradingAccountSubscription {
   marketPolicyEnrollment AssignmentMarketPolicyEnrollment?
   marketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration[]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[]
+  brokerPostOpportunities OrderIntentBrokerPostOpportunity[]
 
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -1341,6 +1343,7 @@ model OrderIntent {
   liveEntryAcceptanceRunId Int? @unique
   liveEntryAcceptanceRun   LiveEntryAcceptanceRun? @relation(fields: [liveEntryAcceptanceRunId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   marketPolicyCoverage     OrderIntentMarketPolicyCoverage?
+  brokerPostOpportunities  OrderIntentBrokerPostOpportunity[]
 
   @@index([trackedPositionId])
   @@index([tradingAccountId])
@@ -1802,6 +1805,7 @@ model MarketRegimeDimensionAssessment {
   regimeCompositionSources MarketRegimeAssessmentSource[]
   strategyEligibilityGates StrategyMarketEligibilityDecisionGate[]
   orderIntentComparisonGates OrderIntentMarketPolicyComparisonGate[]
+  brokerComparisonGates OrderIntentBrokerComparisonGate[]
 
   @@unique([dimension, algorithmVersion, targetAt, attempt], map: "RegimeDimension_attempt_key")
   @@unique([id, dimension, algorithmVersion], map: "RegimeDimension_identity_key")
@@ -1856,6 +1860,7 @@ model MarketRegimeAssessment {
   strategyEligibilityDecisions StrategyMarketEligibilityDecision[]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[]
   orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt[]
+  brokerPostOpportunities OrderIntentBrokerPostOpportunity[]
 
   @@unique([compositionVersion, sourceSetFingerprint], map: "MarketRegimeAssessment_version_source_key")
   @@unique([id, compositionVersion], map: "MarketRegimeAssessment_identity_key")
@@ -2768,6 +2773,7 @@ model StrategyMarketPolicyRevision {
   boundOrderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[] @relation("OrderIntentCoverageBoundPolicyRevision")
   activeOrderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[] @relation("OrderIntentCoverageActivePolicyRevision")
   orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt[]
+  brokerPostOpportunities OrderIntentBrokerPostOpportunity[]
 
   @@unique([policyId, revision], map: "StrategyMarketPolicyRevision_policy_revision_key")
   @@index([policyId, status], map: "StrategyMarketPolicyRevision_policy_status_idx")
@@ -2884,6 +2890,7 @@ model AssignmentMarketPolicyEnrollmentGeneration {
   transitions        AssignmentMarketPolicyEnrollmentTransition[]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[]
   orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt[]
+  brokerPostOpportunities OrderIntentBrokerPostOpportunity[]
 
   @@unique([enrollmentId, generation], map: "AssignmentEnrollmentGeneration_number_key")
   @@index([accountSubscriptionId], map: "AssignmentMarketPolicyEnrollmentGeneration_assignment_idx")
@@ -2917,6 +2924,7 @@ model OrderIntentMarketPolicyCoverage {
   marketRegimeAssessment MarketRegimeAssessment?                    @relation(fields: [marketRegimeAssessmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   comparisonAttempts OrderIntentMarketPolicyComparisonAttempt[]
   comparisonDelivery OrderIntentMarketPolicyComparisonDelivery?
+  brokerPostOpportunities OrderIntentBrokerPostOpportunity[]
 
   @@index([accountSubscriptionId, capturedAt], map: "OrderIntentMarketPolicyCoverage_assignment_captured_idx")
   @@index([enrollmentGenerationId], map: "OrderIntentMarketPolicyCoverage_generation_idx")
@@ -3034,6 +3042,157 @@ model OrderIntentMarketPolicyComparisonGate {
 
   @@unique([comparisonAttemptId, dimension], map: "OrderIntentMarketPolicyComparisonGate_attempt_dimension_key")
   @@unique([comparisonAttemptId, ordinal], map: "OrderIntentMarketPolicyComparisonGate_attempt_ordinal_key")
+}
+
+enum OrderIntentBrokerOpportunityApplicability {
+  APPLICABLE_ACTIVE
+  APPLICABLE_SUPERSEDED
+  NOT_APPLICABLE_LIVE
+  NOT_APPLICABLE_UNENROLLED
+  NOT_APPLICABLE_UNKNOWN
+  NOT_APPLICABLE_LEGACY
+}
+
+enum OrderIntentBrokerOpportunityEventType {
+  OPPORTUNITY_CAPTURED
+  ADAPTER_DISPATCH_REACHED
+  BROKER_RESPONSE_CONFIRMED
+  BROKER_REJECTED
+  DELIVERY_UNCERTAIN
+  DEFINITELY_NOT_SENT
+  DEFERRED
+  RECOVERY_FOUND
+  RECOVERY_ABSENCE_CONFIRMED
+  RECOVERY_INCONCLUSIVE
+  MISSING_OBSERVATION
+}
+
+model OrderIntentBrokerPostOpportunity {
+  id                       Int      @id @default(autoincrement())
+  orderIntentId            Int
+  intentCoverageId         Int
+  tradingAccountId         Int
+  accountSubscriptionId    Int
+  enrollmentGenerationId   Int?
+  policyRevisionId         Int?
+  clientOrderId            String
+  opportunitySequence      Int
+  idempotencyKey           String   @unique
+  marketRegimeAssessmentId Int?
+  sourceSetFingerprint     String?
+  compositionCapture       OrderIntentMarketPolicyCompositionCapture
+  applicability            OrderIntentBrokerOpportunityApplicability
+  comparisonMode           String   @default("COMPARE_ONLY")
+  tradingEffect            String   @default("NONE")
+  opportunityAt            DateTime @default(now()) @db.Timestamptz(3)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+
+  orderIntent          OrderIntent                                  @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  intentCoverage       OrderIntentMarketPolicyCoverage              @relation(fields: [intentCoverageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  tradingAccount       TradingAccount                               @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  accountSubscription  TradingAccountSubscription                   @relation(fields: [accountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  enrollmentGeneration AssignmentMarketPolicyEnrollmentGeneration? @relation(fields: [enrollmentGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  policyRevision       StrategyMarketPolicyRevision?                @relation(fields: [policyRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  marketRegimeAssessment MarketRegimeAssessment?                    @relation(fields: [marketRegimeAssessmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  comparisonAttempts OrderIntentBrokerComparisonAttempt[]
+  comparisonDelivery OrderIntentBrokerComparisonDelivery?
+  events OrderIntentBrokerOpportunityEvent[]
+
+  @@unique([orderIntentId, opportunitySequence], map: "OrderIntentBrokerPostOpportunity_intent_sequence_key")
+  @@index([accountSubscriptionId, opportunityAt], map: "OrderIntentBrokerPostOpportunity_assignment_time_idx")
+}
+
+model OrderIntentBrokerOpportunityCaptureRollout {
+  id             Int       @id
+  enabled        Boolean   @default(false)
+  deployedAt     DateTime  @default(now()) @db.Timestamptz(3)
+  effectiveEpoch DateTime? @db.Timestamptz(3)
+  disabledAt     DateTime? @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+}
+
+model OrderIntentBrokerComparisonRollout {
+  id             Int       @id
+  enabled        Boolean   @default(false)
+  deployedAt     DateTime  @default(now()) @db.Timestamptz(3)
+  effectiveEpoch DateTime? @db.Timestamptz(3)
+  disabledAt     DateTime? @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+}
+
+model OrderIntentBrokerComparisonDelivery {
+  id              Int      @id @default(autoincrement())
+  opportunityId   Int      @unique
+  status          OrderIntentMarketPolicyComparisonDeliveryStatus @default(PENDING)
+  attemptCount    Int      @default(0)
+  nextAttemptAt   DateTime @default(now()) @db.Timestamptz(3)
+  leaseOwner      String?
+  leaseExpiresAt  DateTime? @db.Timestamptz(3)
+  lastErrorCode   String?
+  completedAt     DateTime? @db.Timestamptz(3)
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+
+  opportunity OrderIntentBrokerPostOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@index([status, nextAttemptAt], map: "OrderIntentBrokerComparisonDelivery_due_idx")
+  @@index([leaseExpiresAt], map: "OrderIntentBrokerComparisonDelivery_lease_idx")
+}
+
+model OrderIntentBrokerComparisonAttempt {
+  id                       Int      @id @default(autoincrement())
+  opportunityId            Int
+  attempt                  Int
+  enrollmentGenerationId   Int
+  policyRevisionId         Int
+  marketRegimeAssessmentId Int?
+  evidenceAsOf             DateTime @db.Timestamptz(3)
+  evaluationVersion        String
+  enrollmentDisposition    String
+  outcome                  OrderIntentMarketPolicyComparisonOutcome
+  reasonCode               String
+  authority                String   @default("COMPARE_ONLY")
+  tradingEffect            String   @default("NONE")
+  evidenceJson             Json
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+
+  opportunity OrderIntentBrokerPostOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  gates OrderIntentBrokerComparisonGate[]
+  @@unique([opportunityId, attempt], map: "OrderIntentBrokerComparisonAttempt_opportunity_attempt_key")
+}
+
+model OrderIntentBrokerComparisonGate {
+  id                  Int      @id @default(autoincrement())
+  comparisonAttemptId Int
+  dimension           MarketRegimeDimension
+  algorithmVersion    String
+  requirement         StrategyMarketPolicyDimensionRequirement
+  outcome             StrategyMarketEligibilityGateOutcome
+  observedState       String?
+  sourceHealth        MarketRegimeCompositionSourceHealth?
+  sourceAssessmentId  Int?
+  allowedStatesJson   Json
+  reasonCode          String
+  evidenceJson        Json
+  ordinal             Int
+  createdAt           DateTime @default(now()) @db.Timestamptz(3)
+
+  comparisonAttempt OrderIntentBrokerComparisonAttempt @relation(fields: [comparisonAttemptId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sourceAssessment MarketRegimeDimensionAssessment? @relation(fields: [sourceAssessmentId, dimension, algorithmVersion], references: [id, dimension, algorithmVersion], onDelete: Restrict, onUpdate: Restrict, map: "OrderIntentBrokerComparisonGate_source_identity_fk")
+  @@unique([comparisonAttemptId, dimension], map: "OrderIntentBrokerComparisonGate_attempt_dimension_key")
+  @@unique([comparisonAttemptId, ordinal], map: "OrderIntentBrokerComparisonGate_attempt_ordinal_key")
+}
+
+model OrderIntentBrokerOpportunityEvent {
+  id            Int      @id @default(autoincrement())
+  opportunityId Int
+  sequence      Int
+  eventType     OrderIntentBrokerOpportunityEventType
+  evidenceJson  Json
+  occurredAt    DateTime @default(now()) @db.Timestamptz(3)
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+
+  opportunity OrderIntentBrokerPostOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([opportunityId, sequence], map: "OrderIntentBrokerOpportunityEvent_opportunity_sequence_key")
 }
 
 model AssignmentMarketPolicyEnrollmentTransition {

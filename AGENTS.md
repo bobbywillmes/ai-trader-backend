@@ -395,6 +395,10 @@ from current enrollment. Superseded ACTIVE generations preserve their original
 revision identity as `SUPERSEDED_COMPARE_ONLY`. No evaluation, broker hook, OA
 producer, or trading authority exists. See
 `docs/architecture/order-intent-market-policy-coverage.md`.
+Phase 3B.3A adds separate immutable broker POST-opportunity and compare-only evidence,
+with disabled capture/comparison epochs and no broker-path integration. Applicability
+comes only from frozen intent coverage; LIVE, unenrolled, unknown and legacy contexts
+remain non-applicable. See `docs/architecture/broker-time-market-policy-evidence.md`.
 
 The intended lifecycle is:
 

@@ -61,6 +61,8 @@ import { STRATEGY_MARKET_ELIGIBILITY_WORKER_INTERVAL_MS } from '../workers/worke
 import { runStrategyMarketEligibilityWorker } from '../workers/strategy-market-eligibility.worker.js';
 import { runOrderIntentMarketPolicyComparisonWorker } from '../workers/order-intent-market-policy-comparison.worker.js';
 import { ORDER_INTENT_MARKET_POLICY_COMPARISON_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
+import { runOrderIntentBrokerComparisonWorker } from '../workers/order-intent-broker-comparison.worker.js';
+import { ORDER_INTENT_BROKER_COMPARISON_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 
 const app = createApp();
 
@@ -213,6 +215,11 @@ function startWorkers() {
     workerHealthRegistry.setWorkerEnabled('order_intent_market_policy_comparison', true);
     void runWorker('order_intent_market_policy_comparison', runOrderIntentMarketPolicyComparisonWorker);
     setInterval(() => { void runWorker('order_intent_market_policy_comparison', runOrderIntentMarketPolicyComparisonWorker); }, ORDER_INTENT_MARKET_POLICY_COMPARISON_WORKER_INTERVAL_MS);
+  }
+  if (env.ORDER_INTENT_BROKER_COMPARISON_WORKER_ENABLED) {
+    workerHealthRegistry.setWorkerEnabled('order_intent_broker_comparison', true);
+    void runWorker('order_intent_broker_comparison', runOrderIntentBrokerComparisonWorker);
+    setInterval(() => { void runWorker('order_intent_broker_comparison', runOrderIntentBrokerComparisonWorker); }, ORDER_INTENT_BROKER_COMPARISON_WORKER_INTERVAL_MS);
   }
 
   // This validity monitor is local-only. Final broker authorization remains

@@ -335,6 +335,7 @@ Table TradingAccount {
   lifecycleRepairCases LifecycleRepairCase [not null]
   marketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration [not null]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
+  brokerPostOpportunities OrderIntentBrokerPostOpportunity [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 
@@ -723,6 +724,7 @@ Table TradingAccountSubscription {
   marketPolicyEnrollment AssignmentMarketPolicyEnrollment
   marketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration [not null]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
+  brokerPostOpportunities OrderIntentBrokerPostOpportunity [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 
@@ -878,6 +880,7 @@ Table OrderIntent {
   liveEntryAcceptanceRunId Int [unique]
   liveEntryAcceptanceRun LiveEntryAcceptanceRun
   marketPolicyCoverage OrderIntentMarketPolicyCoverage
+  brokerPostOpportunities OrderIntentBrokerPostOpportunity [not null]
 }
 
 Table BrokerOrder {
@@ -1215,6 +1218,7 @@ Table MarketRegimeDimensionAssessment {
   regimeCompositionSources MarketRegimeAssessmentSource [not null]
   strategyEligibilityGates StrategyMarketEligibilityDecisionGate [not null]
   orderIntentComparisonGates OrderIntentMarketPolicyComparisonGate [not null]
+  brokerComparisonGates OrderIntentBrokerComparisonGate [not null]
 
   indexes {
     (dimension, algorithmVersion, targetAt, attempt) [unique]
@@ -1246,6 +1250,7 @@ Table MarketRegimeAssessment {
   strategyEligibilityDecisions StrategyMarketEligibilityDecision [not null]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
   orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt [not null]
+  brokerPostOpportunities OrderIntentBrokerPostOpportunity [not null]
 
   indexes {
     (compositionVersion, sourceSetFingerprint) [unique]
@@ -1831,6 +1836,7 @@ Table StrategyMarketPolicyRevision {
   boundOrderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
   activeOrderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
   orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt [not null]
+  brokerPostOpportunities OrderIntentBrokerPostOpportunity [not null]
 
   indexes {
     (policyId, revision) [unique]
@@ -1907,6 +1913,7 @@ Table AssignmentMarketPolicyEnrollmentGeneration {
   transitions AssignmentMarketPolicyEnrollmentTransition [not null]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
   orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt [not null]
+  brokerPostOpportunities OrderIntentBrokerPostOpportunity [not null]
 
   indexes {
     (enrollmentId, generation) [unique]
@@ -1937,6 +1944,7 @@ Table OrderIntentMarketPolicyCoverage {
   marketRegimeAssessment MarketRegimeAssessment
   comparisonAttempts OrderIntentMarketPolicyComparisonAttempt [not null]
   comparisonDelivery OrderIntentMarketPolicyComparisonDelivery
+  brokerPostOpportunities OrderIntentBrokerPostOpportunity [not null]
 }
 
 Table OrderIntentMarketPolicyCaptureRollout {
@@ -2027,6 +2035,137 @@ Table OrderIntentMarketPolicyComparisonGate {
   indexes {
     (comparisonAttemptId, dimension) [unique]
     (comparisonAttemptId, ordinal) [unique]
+  }
+}
+
+Table OrderIntentBrokerPostOpportunity {
+  id Int [pk, increment]
+  orderIntentId Int [not null]
+  intentCoverageId Int [not null]
+  tradingAccountId Int [not null]
+  accountSubscriptionId Int [not null]
+  enrollmentGenerationId Int
+  policyRevisionId Int
+  clientOrderId String [not null]
+  opportunitySequence Int [not null]
+  idempotencyKey String [unique, not null]
+  marketRegimeAssessmentId Int
+  sourceSetFingerprint String
+  compositionCapture OrderIntentMarketPolicyCompositionCapture [not null]
+  applicability OrderIntentBrokerOpportunityApplicability [not null]
+  comparisonMode String [not null, default: 'COMPARE_ONLY']
+  tradingEffect String [not null, default: 'NONE']
+  opportunityAt DateTime [default: `now()`, not null]
+  createdAt DateTime [default: `now()`, not null]
+  orderIntent OrderIntent [not null]
+  intentCoverage OrderIntentMarketPolicyCoverage [not null]
+  tradingAccount TradingAccount [not null]
+  accountSubscription TradingAccountSubscription [not null]
+  enrollmentGeneration AssignmentMarketPolicyEnrollmentGeneration
+  policyRevision StrategyMarketPolicyRevision
+  marketRegimeAssessment MarketRegimeAssessment
+  comparisonAttempts OrderIntentBrokerComparisonAttempt [not null]
+  comparisonDelivery OrderIntentBrokerComparisonDelivery
+  events OrderIntentBrokerOpportunityEvent [not null]
+
+  indexes {
+    (orderIntentId, opportunitySequence) [unique]
+  }
+}
+
+Table OrderIntentBrokerOpportunityCaptureRollout {
+  id Int [pk]
+  enabled Boolean [not null, default: false]
+  deployedAt DateTime [default: `now()`, not null]
+  effectiveEpoch DateTime
+  disabledAt DateTime
+  updatedAt DateTime [not null]
+}
+
+Table OrderIntentBrokerComparisonRollout {
+  id Int [pk]
+  enabled Boolean [not null, default: false]
+  deployedAt DateTime [default: `now()`, not null]
+  effectiveEpoch DateTime
+  disabledAt DateTime
+  updatedAt DateTime [not null]
+}
+
+Table OrderIntentBrokerComparisonDelivery {
+  id Int [pk, increment]
+  opportunityId Int [unique, not null]
+  status OrderIntentMarketPolicyComparisonDeliveryStatus [not null, default: 'PENDING']
+  attemptCount Int [not null, default: 0]
+  nextAttemptAt DateTime [default: `now()`, not null]
+  leaseOwner String
+  leaseExpiresAt DateTime
+  lastErrorCode String
+  completedAt DateTime
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  opportunity OrderIntentBrokerPostOpportunity [not null]
+}
+
+Table OrderIntentBrokerComparisonAttempt {
+  id Int [pk, increment]
+  opportunityId Int [not null]
+  attempt Int [not null]
+  enrollmentGenerationId Int [not null]
+  policyRevisionId Int [not null]
+  marketRegimeAssessmentId Int
+  evidenceAsOf DateTime [not null]
+  evaluationVersion String [not null]
+  enrollmentDisposition String [not null]
+  outcome OrderIntentMarketPolicyComparisonOutcome [not null]
+  reasonCode String [not null]
+  authority String [not null, default: 'COMPARE_ONLY']
+  tradingEffect String [not null, default: 'NONE']
+  evidenceJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  opportunity OrderIntentBrokerPostOpportunity [not null]
+  gates OrderIntentBrokerComparisonGate [not null]
+
+  indexes {
+    (opportunityId, attempt) [unique]
+  }
+}
+
+Table OrderIntentBrokerComparisonGate {
+  id Int [pk, increment]
+  comparisonAttemptId Int [not null]
+  dimension MarketRegimeDimension [not null]
+  algorithmVersion String [not null]
+  requirement StrategyMarketPolicyDimensionRequirement [not null]
+  outcome StrategyMarketEligibilityGateOutcome [not null]
+  observedState String
+  sourceHealth MarketRegimeCompositionSourceHealth
+  sourceAssessmentId Int
+  allowedStatesJson Json [not null]
+  reasonCode String [not null]
+  evidenceJson Json [not null]
+  ordinal Int [not null]
+  createdAt DateTime [default: `now()`, not null]
+  comparisonAttempt OrderIntentBrokerComparisonAttempt [not null]
+  sourceAssessment MarketRegimeDimensionAssessment
+
+  indexes {
+    (comparisonAttemptId, dimension) [unique]
+    (comparisonAttemptId, ordinal) [unique]
+  }
+}
+
+Table OrderIntentBrokerOpportunityEvent {
+  id Int [pk, increment]
+  opportunityId Int [not null]
+  sequence Int [not null]
+  eventType OrderIntentBrokerOpportunityEventType [not null]
+  evidenceJson Json [not null]
+  occurredAt DateTime [default: `now()`, not null]
+  createdAt DateTime [default: `now()`, not null]
+  opportunity OrderIntentBrokerPostOpportunity [not null]
+
+  indexes {
+    (opportunityId, sequence) [unique]
   }
 }
 
@@ -2677,6 +2816,29 @@ Enum OrderIntentMarketPolicyComparisonDeliveryStatus {
   TERMINAL_FAILURE
 }
 
+Enum OrderIntentBrokerOpportunityApplicability {
+  APPLICABLE_ACTIVE
+  APPLICABLE_SUPERSEDED
+  NOT_APPLICABLE_LIVE
+  NOT_APPLICABLE_UNENROLLED
+  NOT_APPLICABLE_UNKNOWN
+  NOT_APPLICABLE_LEGACY
+}
+
+Enum OrderIntentBrokerOpportunityEventType {
+  OPPORTUNITY_CAPTURED
+  ADAPTER_DISPATCH_REACHED
+  BROKER_RESPONSE_CONFIRMED
+  BROKER_REJECTED
+  DELIVERY_UNCERTAIN
+  DEFINITELY_NOT_SENT
+  DEFERRED
+  RECOVERY_FOUND
+  RECOVERY_ABSENCE_CONFIRMED
+  RECOVERY_INCONCLUSIVE
+  MISSING_OBSERVATION
+}
+
 Ref: StrategySignalRevision.strategySignalBindingId > StrategySignalBinding.id [delete: Restrict]
 
 Ref: StrategySignalBinding.signalSourceId > ExternalSignalSource.id [delete: Restrict]
@@ -3012,6 +3174,30 @@ Ref: OrderIntentMarketPolicyComparisonAttempt.marketRegimeAssessmentId > MarketR
 Ref: OrderIntentMarketPolicyComparisonGate.comparisonAttemptId > OrderIntentMarketPolicyComparisonAttempt.id [delete: Restrict]
 
 Ref: OrderIntentMarketPolicyComparisonGate.(sourceAssessmentId, dimension, algorithmVersion) > MarketRegimeDimensionAssessment.(id, dimension, algorithmVersion) [delete: Restrict]
+
+Ref: OrderIntentBrokerPostOpportunity.orderIntentId > OrderIntent.id [delete: Restrict]
+
+Ref: OrderIntentBrokerPostOpportunity.intentCoverageId > OrderIntentMarketPolicyCoverage.id [delete: Restrict]
+
+Ref: OrderIntentBrokerPostOpportunity.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: OrderIntentBrokerPostOpportunity.accountSubscriptionId > TradingAccountSubscription.id [delete: Restrict]
+
+Ref: OrderIntentBrokerPostOpportunity.enrollmentGenerationId > AssignmentMarketPolicyEnrollmentGeneration.id [delete: Restrict]
+
+Ref: OrderIntentBrokerPostOpportunity.policyRevisionId > StrategyMarketPolicyRevision.id [delete: Restrict]
+
+Ref: OrderIntentBrokerPostOpportunity.marketRegimeAssessmentId > MarketRegimeAssessment.id [delete: Restrict]
+
+Ref: OrderIntentBrokerComparisonDelivery.opportunityId - OrderIntentBrokerPostOpportunity.id [delete: Restrict]
+
+Ref: OrderIntentBrokerComparisonAttempt.opportunityId > OrderIntentBrokerPostOpportunity.id [delete: Restrict]
+
+Ref: OrderIntentBrokerComparisonGate.comparisonAttemptId > OrderIntentBrokerComparisonAttempt.id [delete: Restrict]
+
+Ref: OrderIntentBrokerComparisonGate.(sourceAssessmentId, dimension, algorithmVersion) > MarketRegimeDimensionAssessment.(id, dimension, algorithmVersion) [delete: Restrict]
+
+Ref: OrderIntentBrokerOpportunityEvent.opportunityId > OrderIntentBrokerPostOpportunity.id [delete: Restrict]
 
 Ref: AssignmentMarketPolicyEnrollmentTransition.generationId > AssignmentMarketPolicyEnrollmentGeneration.id [delete: Restrict]
 
