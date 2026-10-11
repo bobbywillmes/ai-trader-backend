@@ -1344,6 +1344,7 @@ model OrderIntent {
   liveEntryAcceptanceRun   LiveEntryAcceptanceRun? @relation(fields: [liveEntryAcceptanceRunId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   marketPolicyCoverage     OrderIntentMarketPolicyCoverage?
   brokerPostOpportunities  OrderIntentBrokerPostOpportunity[]
+  brokerOpportunityEvents  OrderIntentBrokerOpportunityEvent[]
 
   @@index([trackedPositionId])
   @@index([tradingAccountId])
@@ -3058,6 +3059,7 @@ enum OrderIntentBrokerOpportunityEventType {
   ADAPTER_DISPATCH_REACHED
   BROKER_RESPONSE_CONFIRMED
   BROKER_REJECTED
+  BROKER_ORDER_MATERIALIZED
   DELIVERY_UNCERTAIN
   DEFINITELY_NOT_SENT
   DEFERRED
@@ -3184,15 +3186,18 @@ model OrderIntentBrokerComparisonGate {
 
 model OrderIntentBrokerOpportunityEvent {
   id            Int      @id @default(autoincrement())
-  opportunityId Int
+  orderIntentId Int
+  opportunityId Int?
   sequence      Int
   eventType     OrderIntentBrokerOpportunityEventType
   evidenceJson  Json
   occurredAt    DateTime @default(now()) @db.Timestamptz(3)
   createdAt     DateTime @default(now()) @db.Timestamptz(3)
 
-  opportunity OrderIntentBrokerPostOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  orderIntent OrderIntent @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  opportunity OrderIntentBrokerPostOpportunity? @relation(fields: [opportunityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   @@unique([opportunityId, sequence], map: "OrderIntentBrokerOpportunityEvent_opportunity_sequence_key")
+  @@index([orderIntentId, createdAt], map: "OrderIntentBrokerOpportunityEvent_intent_created_idx")
 }
 
 model AssignmentMarketPolicyEnrollmentTransition {

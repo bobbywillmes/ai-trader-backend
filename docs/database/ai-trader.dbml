@@ -881,6 +881,7 @@ Table OrderIntent {
   liveEntryAcceptanceRun LiveEntryAcceptanceRun
   marketPolicyCoverage OrderIntentMarketPolicyCoverage
   brokerPostOpportunities OrderIntentBrokerPostOpportunity [not null]
+  brokerOpportunityEvents OrderIntentBrokerOpportunityEvent [not null]
 }
 
 Table BrokerOrder {
@@ -2156,13 +2157,15 @@ Table OrderIntentBrokerComparisonGate {
 
 Table OrderIntentBrokerOpportunityEvent {
   id Int [pk, increment]
-  opportunityId Int [not null]
+  orderIntentId Int [not null]
+  opportunityId Int
   sequence Int [not null]
   eventType OrderIntentBrokerOpportunityEventType [not null]
   evidenceJson Json [not null]
   occurredAt DateTime [default: `now()`, not null]
   createdAt DateTime [default: `now()`, not null]
-  opportunity OrderIntentBrokerPostOpportunity [not null]
+  orderIntent OrderIntent [not null]
+  opportunity OrderIntentBrokerPostOpportunity
 
   indexes {
     (opportunityId, sequence) [unique]
@@ -2830,6 +2833,7 @@ Enum OrderIntentBrokerOpportunityEventType {
   ADAPTER_DISPATCH_REACHED
   BROKER_RESPONSE_CONFIRMED
   BROKER_REJECTED
+  BROKER_ORDER_MATERIALIZED
   DELIVERY_UNCERTAIN
   DEFINITELY_NOT_SENT
   DEFERRED
@@ -3196,6 +3200,8 @@ Ref: OrderIntentBrokerComparisonAttempt.opportunityId > OrderIntentBrokerPostOpp
 Ref: OrderIntentBrokerComparisonGate.comparisonAttemptId > OrderIntentBrokerComparisonAttempt.id [delete: Restrict]
 
 Ref: OrderIntentBrokerComparisonGate.(sourceAssessmentId, dimension, algorithmVersion) > MarketRegimeDimensionAssessment.(id, dimension, algorithmVersion) [delete: Restrict]
+
+Ref: OrderIntentBrokerOpportunityEvent.orderIntentId > OrderIntent.id [delete: Restrict]
 
 Ref: OrderIntentBrokerOpportunityEvent.opportunityId > OrderIntentBrokerPostOpportunity.id [delete: Restrict]
 

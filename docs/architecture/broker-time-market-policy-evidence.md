@@ -18,4 +18,21 @@ The append-only event vocabulary separates capture, adapter dispatch, broker con
 
 `OrderIntentBrokerOpportunityCaptureRollout` and `OrderIntentBrokerComparisonRollout` are separate singleton controls, both inserted disabled. PostgreSQL owns their effective epochs and disable timestamps. The process-level `ORDER_INTENT_BROKER_COMPARISON_WORKER_ENABLED` flag is also false by default. Existing intent-time rollout rows are unchanged.
 
-There is deliberately no caller from `submitOrder`, `submitOrderToBroker`, pending-order processing, recovery, risk, sizing, exits, or Alpaca adapters. Phase 3B.3B must explicitly integrate the capture boundary and event writers after owner review; none of this evidence authorizes enforcement.
+The Phase 3B.3A foundation initially had no live-path caller. None of this evidence authorizes enforcement.
+
+## Phase 3B.3B boundary integration
+
+Phase 3B.3B calls the best-effort capture helper only inside `submitOrderToBroker`, after the stable-client-ID lookup has confirmed absence and immediately before a genuinely new BUY entry adapter dispatch. A successful or inconclusive lookup never captures. Exit and protective-order adapters remain outside this path. Every later POST attempt receives a new per-intent sequence; an abandoned pre-POST anchor is never reused.
+
+Capture transactions use Prisma's supported 250 ms connection-acquisition limit and 1.5 second interactive-transaction limit, plus PostgreSQL 250 ms lock and 1 second statement timeouts. Event writes use the same limits. Observation failures are logged and swallowed, while the original payload, broker error instance, delivery classification, OrderIntent transitions, and recovery decisions remain unchanged.
+
+The boundary records adapter dispatch (which does not claim broker receipt), confirmed responses, materialized orders, explicit rejection, local non-send/deferment, and uncertain delivery. Stale-submission recovery records found, confirmed absent, or inconclusive lookup results against the latest frozen opportunity. A confirmed absence preserves existing requeue behavior; the next POST gets a fresh opportunity. Comparison remains asynchronous and separately disabled.
+
+Both database rollout rows are disabled on migration. Activation is deliberate and ordered:
+
+```sql
+UPDATE "OrderIntentBrokerOpportunityCaptureRollout" SET enabled=true WHERE id=1;
+UPDATE "OrderIntentBrokerComparisonRollout" SET enabled=true WHERE id=1;
+```
+
+The comparison scheduler additionally requires `ORDER_INTENT_BROKER_COMPARISON_WORKER_ENABLED=true` and a process restart. Capture can be enabled independently for observation-first rollout. Disable either database row with `SET enabled=false`; PostgreSQL records the interval endpoint. No setting grants enforcement authority.

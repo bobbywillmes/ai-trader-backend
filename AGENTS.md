@@ -399,6 +399,10 @@ Phase 3B.3A adds separate immutable broker POST-opportunity and compare-only evi
 with disabled capture/comparison epochs and no broker-path integration. Applicability
 comes only from frozen intent coverage; LIVE, unenrolled, unknown and legacy contexts
 remain non-applicable. See `docs/architecture/broker-time-market-policy-evidence.md`.
+Phase 3B.3B anchors best-effort observation only after the shared entry idempotency
+lookup confirms absence and before a new Alpaca BUY POST. Lifecycle events mirror
+dispatch, response, delivery certainty and recovery without changing any decision;
+comparison remains asynchronous, default-off and non-authoritative.
 
 The intended lifecycle is:
 

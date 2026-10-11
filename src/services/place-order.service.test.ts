@@ -13,6 +13,10 @@ const mocks = vi.hoisted(() => ({
   updateOrderIntentStatus: vi.fn(),
   recordOrderIntentRiskEvaluation: vi.fn(),
   tradingAccountFindUniqueOrThrow: vi.fn(),
+  getAlpacaOrderByClientOrderId: vi.fn(),
+  submitAlpacaEntryOrder: vi.fn(),
+  captureBrokerOpportunity: vi.fn(),
+  appendBrokerEvent: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -24,9 +28,11 @@ vi.mock('../db/prisma.js', () => ({
 }));
 
 vi.mock('../integrations/alpaca/orders.adapter.js', () => ({
-  getAlpacaOrderByClientOrderId: vi.fn(),
-  placeAlpacaOrder: vi.fn(),
+  getAlpacaOrderByClientOrderId: mocks.getAlpacaOrderByClientOrderId,
+  submitAlpacaEntryOrder: mocks.submitAlpacaEntryOrder,
 }));
+
+vi.mock('./order-intent-broker-opportunity.service.js',()=>({bestEffortCaptureOrderIntentBrokerPostOpportunity:mocks.captureBrokerOpportunity,bestEffortAppendBrokerOpportunityEvent:mocks.appendBrokerEvent}));
 
 vi.mock('./adaptive-polling.service.js', () => ({
   adaptivePollingCoordinator: {
@@ -94,7 +100,8 @@ vi.mock('./trading-account.service.js', () => ({
   resolveDefaultTradingAccountId: mocks.resolveDefaultTradingAccountId,
 }));
 
-import { submitOrder } from './place-order.service.js';
+import { submitOrder, submitOrderToBroker } from './place-order.service.js';
+import { BrokerWriteDeliveryError } from '../errors/broker-write-delivery-error.js';
 
 class TestHttpError extends Error {
   statusCode: number;
@@ -445,4 +452,14 @@ describe('place order service entry decision attribution', () => {
       expect(mocks.buildClientOrderId).not.toHaveBeenCalled();
     }
   );
+});
+
+describe('broker opportunity boundary',()=>{
+  const input={...runtimeSizedInput,clientOrderId:'stable-client-101'};
+  const brokerOrder={id:'alpaca-101',client_order_id:'stable-client-101',symbol:'SPY',side:'buy',status:'accepted'};
+  beforeEach(()=>{vi.clearAllMocks();mocks.getAlpacaOrderByClientOrderId.mockResolvedValue(null);mocks.captureBrokerOpportunity.mockResolvedValue({id:91});mocks.appendBrokerEvent.mockResolvedValue(true);mocks.submitAlpacaEntryOrder.mockResolvedValue(brokerOrder);});
+  it('preserves the exact payload and stable ID with observation enabled or unavailable',async()=>{const expected={symbol:'SPY',side:'buy',type:'market',time_in_force:'day',qty:'3',client_order_id:'stable-client-101'};await submitOrderToBroker(input,{tradingAccountId:1,orderIntentId:55});expect(mocks.submitAlpacaEntryOrder).toHaveBeenLastCalledWith(1,expected,expect.objectContaining({orderIntentId:55,clientOrderId:'stable-client-101'}));mocks.captureBrokerOpportunity.mockResolvedValueOnce(null);await submitOrderToBroker(input,{tradingAccountId:1,orderIntentId:55});expect(mocks.submitAlpacaEntryOrder).toHaveBeenLastCalledWith(1,expected,expect.anything());expect(mocks.submitAlpacaEntryOrder.mock.calls[0]![1]).toEqual(mocks.submitAlpacaEntryOrder.mock.calls[1]![1]);});
+  it('does not capture after a successful or inconclusive lookup',async()=>{mocks.getAlpacaOrderByClientOrderId.mockResolvedValueOnce(brokerOrder);await expect(submitOrderToBroker(input,{tradingAccountId:1,orderIntentId:55})).resolves.toMatchObject({duplicate:true});expect(mocks.captureBrokerOpportunity).not.toHaveBeenCalled();const lookupError=new Error('lookup inconclusive');mocks.getAlpacaOrderByClientOrderId.mockRejectedValueOnce(lookupError);await expect(submitOrderToBroker(input,{tradingAccountId:1,orderIntentId:55})).rejects.toBe(lookupError);expect(mocks.captureBrokerOpportunity).not.toHaveBeenCalled();});
+  it.each([['BROKER_REJECTED','BROKER_REJECTED'],['DELIVERY_UNCERTAIN','DELIVERY_UNCERTAIN'],['NOT_SENT_BLOCKED','DEFINITELY_NOT_SENT'],['NOT_SENT_RETRYABLE','DEFERRED']] as const)('preserves %s errors while recording %s',async(classification,eventType)=>{const error=new BrokerWriteDeliveryError({classification,message:'injected'});mocks.submitAlpacaEntryOrder.mockRejectedValueOnce(error);await expect(submitOrderToBroker(input,{tradingAccountId:1,orderIntentId:55})).rejects.toBe(error);expect(mocks.appendBrokerEvent).toHaveBeenCalledWith(expect.objectContaining({opportunityId:91,eventType}));});
+  it('records dispatch before adapter invocation and response/materialization after success',async()=>{const order:string[]=[];mocks.appendBrokerEvent.mockImplementation(async({eventType}:{eventType:string})=>{order.push(eventType);return true;});mocks.submitAlpacaEntryOrder.mockImplementation(async()=>{order.push('POST');return brokerOrder;});await submitOrderToBroker(input,{tradingAccountId:1,orderIntentId:55});expect(order).toEqual(['ADAPTER_DISPATCH_REACHED','POST','BROKER_RESPONSE_CONFIRMED','BROKER_ORDER_MATERIALIZED']);});
 });
