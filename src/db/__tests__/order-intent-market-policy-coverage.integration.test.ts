@@ -48,7 +48,10 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const url = new URL(process.env.DATABASE_URL!); url.pathname = `/${database}`; url.searchParams.delete('schema'); databaseUrl = url.toString();
     db = await connection();
     const migrations = (await readdir('prisma/migrations', { withFileTypes: true })).filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
-    for (const migration of migrations) await db.query(await readFile(`prisma/migrations/${migration}/migration.sql`, 'utf8'));
+    for (const migration of migrations) {
+      try { await db.query(await readFile(`prisma/migrations/${migration}/migration.sql`, 'utf8')); }
+      catch (error) { throw new Error(`Migration replay failed at ${migration}`, { cause: error }); }
+    }
     ownerId = (await db.query(`INSERT INTO "User" (email,"platformRole",enabled,"createdAt","updatedAt") VALUES ('owner@phase3b1.test','SYSTEM_OWNER',true,now(),now()) RETURNING id`)).rows[0].id;
     paperAccountId = (await db.query(`INSERT INTO "TradingAccount" ("accountHolderUserId","displayName",environment,status,"tradingEnabled","killSwitchEnabled","createdAt","updatedAt") VALUES ($1,'Paper','PAPER','PAUSED',false,true,now(),now()) RETURNING id`, [ownerId])).rows[0].id;
     liveAccountId = (await db.query(`INSERT INTO "TradingAccount" ("accountHolderUserId","displayName",environment,status,"tradingEnabled","killSwitchEnabled","createdAt","updatedAt") VALUES ($1,'Live','LIVE','PAUSED',false,true,now(),now()) RETURNING id`, [ownerId])).rows[0].id;
@@ -78,7 +81,9 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   });
 
   it('replays migrations without schema drift', () => {
-    const output = execFileSync(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'diff', '--from-config-datasource', '--to-schema', 'prisma/schema.prisma', '--exit-code'], { env: { ...process.env, DATABASE_URL: databaseUrl }, encoding: 'utf8', timeout: 60_000 });
+    let output: string;
+    try { output = execFileSync(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'diff', '--from-config-datasource', '--to-schema', 'prisma/schema.prisma', '--exit-code'], { env: { ...process.env, DATABASE_URL: databaseUrl }, encoding: 'utf8', timeout: 60_000 }); }
+    catch (error) { throw new Error(`Schema drift detected: ${String((error as { stdout?: string }).stdout)}`, { cause: error }); }
     expect(output).toContain('No difference detected');
   }, 70_000);
 
@@ -110,6 +115,8 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await insertComposition(db, new Date(Date.now() - 120_000));
     await db.query('COMMIT');
     expect((await db.query(`SELECT "marketRegimeAssessmentId" FROM "OrderIntentMarketPolicyCoverage" WHERE "orderIntentId"=$1`, [intent.id])).rows[0].marketRegimeAssessmentId).toBe(compositionId);
+    const afterBackfill = await insertIntent({ clientOrderId: 'after-older-backfill' });
+    expect((await db.query(`SELECT "marketRegimeAssessmentId" FROM "OrderIntentMarketPolicyCoverage" WHERE "orderIntentId"=$1`, [afterBackfill.id])).rows[0].marketRegimeAssessmentId).toBe(compositionId);
   });
 
   it('does not select an uncommitted or rolled-back composition under READ COMMITTED', async () => {
@@ -200,6 +207,65 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(rows).toHaveLength(2);
     expect(rows.every(row => row.enrollmentGenerationId === null && row.boundPolicyRevisionId === null && row.activePolicyRevisionId === null && row.comparisonMode === 'COMPARE_ONLY' && row.tradingEffect === 'NONE')).toBe(true);
     expect((await service.detectOrderIntentMarketPolicyCoverageGaps(100)).captureUnknown).toBe(0);
+  });
+
+  it('processes only exact applicable coverage asynchronously and idempotently across worker instances', async () => {
+    await db.query(`UPDATE "OrderIntentMarketPolicyComparisonRollout" SET enabled=true WHERE id=1`);
+    const service = await import('../../services/order-intent-market-policy-comparison.service.js');
+    const before = (await db.query(`SELECT id,status,"clientOrderId" FROM "OrderIntent" ORDER BY id`)).rows;
+    const [first, second] = await Promise.all([
+      service.processOrderIntentMarketPolicyComparisons({ limit: 25, workerId: 'instance-a' }),
+      service.processOrderIntentMarketPolicyComparisons({ limit: 25, workerId: 'instance-b' }),
+    ]);
+    expect(first.completed + second.completed).toBeGreaterThan(0);
+    const attempts = (await db.query(`SELECT a.*,count(g.id)::int AS gates FROM "OrderIntentMarketPolicyComparisonAttempt" a LEFT JOIN "OrderIntentMarketPolicyComparisonGate" g ON g."comparisonAttemptId"=a.id WHERE a.outcome<>'TECHNICAL_FAILURE' GROUP BY a.id ORDER BY a.id`)).rows;
+    expect(attempts.length).toBeGreaterThan(0);
+    expect(attempts.every(row => row.gates === 5 && row.authority === 'COMPARE_ONLY' && row.tradingEffect === 'NONE' && row.evaluationVersion === 'ORDER_INTENT_MARKET_POLICY_COMPARISON_V1')).toBe(true);
+    expect(attempts.some(row => row.enrollmentDisposition === 'SUPERSEDED_DIAGNOSTIC')).toBe(true);
+    expect(attempts.every(row => row.outcome === 'INSUFFICIENT_EVIDENCE')).toBe(true);
+    expect((await db.query(`SELECT count(*)::int count FROM "OrderIntentMarketPolicyComparisonDelivery" d JOIN "OrderIntentMarketPolicyCoverage" c ON c.id=d."coverageId" WHERE c."captureSchemaVersion"<>2 OR c."compositionCapture"<>'EXACT' OR c.provenance NOT IN ('ACTIVE_EXACT','SUPERSEDED_COMPARE_ONLY')`)).rows[0].count).toBe(0);
+    expect((await db.query(`SELECT id,status,"clientOrderId" FROM "OrderIntent" ORDER BY id`)).rows).toEqual(before);
+
+    await service.processOrderIntentMarketPolicyComparisons({ limit: 25, workerId: 'instance-c' });
+    expect((await db.query(`SELECT "coverageId",count(*)::int count FROM "OrderIntentMarketPolicyComparisonAttempt" WHERE outcome<>'TECHNICAL_FAILURE' GROUP BY "coverageId" HAVING count(*)>1`)).rows).toHaveLength(0);
+  });
+
+  it('records bounded technical failures separately and recovers without changing the intent', async () => {
+    const service = await import('../../services/order-intent-market-policy-comparison.service.js');
+    const intent = await insertIntent({ clientOrderId: 'evaluation-recovery' });
+    const original = { status: intent.status, clientOrderId: intent.clientOrderId, rawRequestJson: intent.rawRequestJson };
+    const failing = () => { throw new Error('INJECTED_COMPARISON_FAILURE'); };
+    const failed = await service.processOrderIntentMarketPolicyComparisons({ limit: 1, workerId: 'failure-worker', evaluator: failing as any });
+    expect(failed.retrying).toBe(1);
+    const coverage = (await db.query(`SELECT id FROM "OrderIntentMarketPolicyCoverage" WHERE "orderIntentId"=$1`, [intent.id])).rows[0];
+    expect((await db.query(`SELECT outcome,"reasonCode",authority,"tradingEffect" FROM "OrderIntentMarketPolicyComparisonAttempt" WHERE "coverageId"=$1`, [coverage.id])).rows[0]).toEqual({ outcome: 'TECHNICAL_FAILURE', reasonCode: 'EVALUATION_TECHNICAL_FAILURE', authority: 'COMPARE_ONLY', tradingEffect: 'NONE' });
+    await db.query(`UPDATE "OrderIntentMarketPolicyComparisonDelivery" SET "nextAttemptAt"=statement_timestamp() WHERE "coverageId"=$1`, [coverage.id]);
+    const recovered = await service.processOrderIntentMarketPolicyComparisons({ limit: 1, workerId: 'recovery-worker' });
+    expect(recovered.completed).toBe(1);
+    expect((await db.query(`SELECT status,"clientOrderId","rawRequestJson" FROM "OrderIntent" WHERE id=$1`, [intent.id])).rows[0]).toEqual(original);
+    expect((await db.query(`SELECT count(*)::int count FROM "OrderIntentMarketPolicyComparisonAttempt" WHERE "coverageId"=$1`, [coverage.id])).rows[0].count).toBe(2);
+  });
+
+  it('recovers expired leases and makes the third technical failure terminal', async () => {
+    const service = await import('../../services/order-intent-market-policy-comparison.service.js');
+    const intent = await insertIntent({ clientOrderId: 'terminal-evaluation-failure' });
+    await service.seedOrderIntentMarketPolicyComparisonDeliveries(25);
+    const coverage = (await db.query(`SELECT id FROM "OrderIntentMarketPolicyCoverage" WHERE "orderIntentId"=$1`, [intent.id])).rows[0];
+    await db.query(`UPDATE "OrderIntentMarketPolicyComparisonDelivery" SET status='CLAIMED',"leaseOwner"='dead-instance',"leaseExpiresAt"=statement_timestamp()-interval '1 second' WHERE "coverageId"=$1`, [coverage.id]);
+    const failing = () => { throw new Error('PERSISTENT_INJECTED_FAILURE'); };
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const result = await service.processOrderIntentMarketPolicyComparisons({ limit: 1, workerId: `terminal-${attempt}`, evaluator: failing as any });
+      expect(attempt < 3 ? result.retrying : result.terminalFailures).toBe(1);
+      if (attempt < 3) await db.query(`UPDATE "OrderIntentMarketPolicyComparisonDelivery" SET "nextAttemptAt"=statement_timestamp() WHERE "coverageId"=$1`, [coverage.id]);
+    }
+    expect((await db.query(`SELECT status,"attemptCount","lastErrorCode" FROM "OrderIntentMarketPolicyComparisonDelivery" WHERE "coverageId"=$1`, [coverage.id])).rows[0]).toEqual({ status: 'TERMINAL_FAILURE', attemptCount: 3, lastErrorCode: 'PERSISTENT_INJECTED_FAILURE' });
+    expect((await db.query(`SELECT count(*)::int count FROM "OrderIntentMarketPolicyComparisonAttempt" WHERE "coverageId"=$1 AND outcome='TECHNICAL_FAILURE'`, [coverage.id])).rows[0].count).toBe(3);
+  });
+
+  it('rejects incomplete immutable decision evidence and authority escalation', async () => {
+    const template = (await db.query(`SELECT * FROM "OrderIntentMarketPolicyComparisonAttempt" WHERE outcome<>'TECHNICAL_FAILURE' LIMIT 1`)).rows[0];
+    await expect(db.query(`UPDATE "OrderIntentMarketPolicyComparisonAttempt" SET "tradingEffect"='BLOCK' WHERE id=$1`, [template.id])).rejects.toThrow(/immutable/);
+    await expect(db.query(`INSERT INTO "OrderIntentMarketPolicyComparisonAttempt" ("coverageId",attempt,"strategyId","enrollmentGenerationId","policyRevisionId","marketRegimeAssessmentId","evidenceAsOf","evaluationVersion","enrollmentDisposition",outcome,"reasonCode",authority,"tradingEffect","evidenceJson") VALUES ($1,3,$2,$3,$4,$5,$6,'TEST','ACTIVE','ALLOWED','TEST','COMPARE_ONLY','NONE','{}')`, [template.coverageId, template.strategyId, template.enrollmentGenerationId, template.policyRevisionId, template.marketRegimeAssessmentId, template.evidenceAsOf])).rejects.toThrow();
   });
 
   it('enforces immutability and permanent compare-only/no-effect constraints', async () => {

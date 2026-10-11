@@ -1801,6 +1801,7 @@ model MarketRegimeDimensionAssessment {
   nextAssessments      MarketRegimeDimensionAssessment[]     @relation("DimensionHistory")
   regimeCompositionSources MarketRegimeAssessmentSource[]
   strategyEligibilityGates StrategyMarketEligibilityDecisionGate[]
+  orderIntentComparisonGates OrderIntentMarketPolicyComparisonGate[]
 
   @@unique([dimension, algorithmVersion, targetAt, attempt], map: "RegimeDimension_attempt_key")
   @@unique([id, dimension, algorithmVersion], map: "RegimeDimension_identity_key")
@@ -1854,6 +1855,7 @@ model MarketRegimeAssessment {
   sources             MarketRegimeAssessmentSource[]
   strategyEligibilityDecisions StrategyMarketEligibilityDecision[]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[]
+  orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt[]
 
   @@unique([compositionVersion, sourceSetFingerprint], map: "MarketRegimeAssessment_version_source_key")
   @@unique([id, compositionVersion], map: "MarketRegimeAssessment_identity_key")
@@ -2719,6 +2721,7 @@ model Strategy {
   marketEligibilityDecisions StrategyMarketEligibilityDecision[]
   signalRouteMarketEligibilityAttempts SignalRouteMarketEligibilityAttempt[]
   assignmentMarketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration[]
+  orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt[]
 }
 
 enum StrategyMarketPolicyAuthority {
@@ -2764,6 +2767,7 @@ model StrategyMarketPolicyRevision {
   assignmentEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration[]
   boundOrderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[] @relation("OrderIntentCoverageBoundPolicyRevision")
   activeOrderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[] @relation("OrderIntentCoverageActivePolicyRevision")
+  orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt[]
 
   @@unique([policyId, revision], map: "StrategyMarketPolicyRevision_policy_revision_key")
   @@index([policyId, status], map: "StrategyMarketPolicyRevision_policy_status_idx")
@@ -2879,6 +2883,7 @@ model AssignmentMarketPolicyEnrollmentGeneration {
   disabledBy          User?                                        @relation("AssignmentEnrollmentDisabledBy", fields: [disabledByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   transitions        AssignmentMarketPolicyEnrollmentTransition[]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[]
+  orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt[]
 
   @@unique([enrollmentId, generation], map: "AssignmentEnrollmentGeneration_number_key")
   @@index([accountSubscriptionId], map: "AssignmentMarketPolicyEnrollmentGeneration_assignment_idx")
@@ -2910,6 +2915,8 @@ model OrderIntentMarketPolicyCoverage {
   boundPolicyRevision  StrategyMarketPolicyRevision?                @relation("OrderIntentCoverageBoundPolicyRevision", fields: [boundPolicyRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   activePolicyRevision StrategyMarketPolicyRevision?                @relation("OrderIntentCoverageActivePolicyRevision", fields: [activePolicyRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   marketRegimeAssessment MarketRegimeAssessment?                    @relation(fields: [marketRegimeAssessmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  comparisonAttempts OrderIntentMarketPolicyComparisonAttempt[]
+  comparisonDelivery OrderIntentMarketPolicyComparisonDelivery?
 
   @@index([accountSubscriptionId, capturedAt], map: "OrderIntentMarketPolicyCoverage_assignment_captured_idx")
   @@index([enrollmentGenerationId], map: "OrderIntentMarketPolicyCoverage_generation_idx")
@@ -2931,6 +2938,102 @@ model OrderIntentMarketPolicyCoverageScannerState {
   lastOrderIntentId Int       @default(0)
   lastScannedAt     DateTime? @db.Timestamptz(3)
   updatedAt         DateTime  @updatedAt @db.Timestamptz(3)
+}
+
+enum OrderIntentMarketPolicyComparisonOutcome {
+  ALLOWED
+  BLOCKED
+  INSUFFICIENT_EVIDENCE
+  TECHNICAL_FAILURE
+}
+
+enum OrderIntentMarketPolicyComparisonDeliveryStatus {
+  PENDING
+  CLAIMED
+  RETRY_WAIT
+  COMPLETED
+  TERMINAL_FAILURE
+}
+
+model OrderIntentMarketPolicyComparisonRollout {
+  id        Int      @id
+  enabled   Boolean  @default(false)
+  enabledAt DateTime? @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+}
+
+// Mutable lease/retry state kept separate from immutable comparison evidence.
+model OrderIntentMarketPolicyComparisonDelivery {
+  id              Int      @id @default(autoincrement())
+  coverageId      Int      @unique
+  status          OrderIntentMarketPolicyComparisonDeliveryStatus @default(PENDING)
+  attemptCount    Int      @default(0)
+  nextAttemptAt   DateTime @default(now()) @db.Timestamptz(3)
+  leaseOwner      String?
+  leaseExpiresAt  DateTime? @db.Timestamptz(3)
+  lastErrorCode   String?
+  completedAt     DateTime? @db.Timestamptz(3)
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+
+  coverage OrderIntentMarketPolicyCoverage @relation(fields: [coverageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([status, nextAttemptAt], map: "OrderIntentMarketPolicyComparisonDelivery_due_idx")
+  @@index([leaseExpiresAt], map: "OrderIntentMarketPolicyComparisonDelivery_lease_idx")
+}
+
+// One immutable processing attempt against the exact intent-time identity.
+model OrderIntentMarketPolicyComparisonAttempt {
+  id                       Int      @id @default(autoincrement())
+  coverageId               Int
+  attempt                  Int
+  strategyId               Int
+  enrollmentGenerationId   Int
+  policyRevisionId         Int
+  marketRegimeAssessmentId Int
+  evidenceAsOf             DateTime @db.Timestamptz(3)
+  evaluationVersion        String
+  enrollmentDisposition    String
+  outcome                  OrderIntentMarketPolicyComparisonOutcome
+  reasonCode               String
+  authority                String   @default("COMPARE_ONLY")
+  tradingEffect            String   @default("NONE")
+  evidenceJson             Json
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+
+  coverage             OrderIntentMarketPolicyCoverage              @relation(fields: [coverageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  strategy             Strategy                                     @relation(fields: [strategyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  enrollmentGeneration AssignmentMarketPolicyEnrollmentGeneration  @relation(fields: [enrollmentGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  policyRevision       StrategyMarketPolicyRevision                  @relation(fields: [policyRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  marketRegimeAssessment MarketRegimeAssessment                      @relation(fields: [marketRegimeAssessmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  gates                OrderIntentMarketPolicyComparisonGate[]
+
+  @@unique([coverageId, attempt], map: "OrderIntentMarketPolicyComparisonAttempt_coverage_attempt_key")
+  @@index([policyRevisionId], map: "OrderIntentMarketPolicyComparisonAttempt_policy_idx")
+  @@index([marketRegimeAssessmentId], map: "OrderIntentMarketPolicyComparisonAttempt_composition_idx")
+}
+
+model OrderIntentMarketPolicyComparisonGate {
+  id                 Int      @id @default(autoincrement())
+  comparisonAttemptId Int
+  dimension          MarketRegimeDimension
+  algorithmVersion   String
+  requirement        StrategyMarketPolicyDimensionRequirement
+  outcome            StrategyMarketEligibilityGateOutcome
+  observedState      String?
+  sourceHealth       MarketRegimeCompositionSourceHealth?
+  sourceAssessmentId Int?
+  allowedStatesJson  Json
+  reasonCode         String
+  evidenceJson       Json
+  ordinal            Int
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+
+  comparisonAttempt OrderIntentMarketPolicyComparisonAttempt @relation(fields: [comparisonAttemptId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sourceAssessment MarketRegimeDimensionAssessment? @relation(fields: [sourceAssessmentId, dimension, algorithmVersion], references: [id, dimension, algorithmVersion], onDelete: Restrict, onUpdate: Restrict, map: "OrderIntentMarketPolicyComparisonGate_source_identity_fk")
+
+  @@unique([comparisonAttemptId, dimension], map: "OrderIntentMarketPolicyComparisonGate_attempt_dimension_key")
+  @@unique([comparisonAttemptId, ordinal], map: "OrderIntentMarketPolicyComparisonGate_attempt_ordinal_key")
 }
 
 model AssignmentMarketPolicyEnrollmentTransition {

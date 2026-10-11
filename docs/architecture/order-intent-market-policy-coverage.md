@@ -40,8 +40,8 @@ new POST opportunity must create fresh evidence and must not reuse this comparis
 Migration `20261011100000_order_intent_composition_capture` upgrades prospective
 capture to schema version 2 without changing the existing rollout epoch. The same
 PostgreSQL trigger statement freezes one database-generated `capturedAt` and selects
-the latest visible successful `MARKET_REGIME_COMPOSITION_V1` whose `observedAt` is
-not after that instant. Selection occurs in the inserting transaction's visibility
+the latest-target visible successful `MARKET_REGIME_COMPOSITION_V1` whose `observedAt`
+is not after that instant, ordered by target, observation, then immutable ID. Selection occurs in the inserting transaction's visibility
 snapshot, so timestamps are never used as a substitute for commit visibility.
 
 `compositionCapture=EXACT` requires the immutable composition foreign key.
@@ -49,6 +49,46 @@ snapshot, so timestamps are never used as a substitute for commit visibility.
 compositions remain selectable because gate evaluation, not capture, interprets
 source health. Existing Phase 3B.1 and scanner-created rows remain schema version 1
 `LEGACY_UNKNOWN`; identities are never historically reconstructed or backfilled.
+
+## Asynchronous comparison
+
+Migration `20261011120000_order_intent_market_policy_comparison` adds separate
+mutable delivery/lease state and immutable comparison attempts with five ordered
+gate rows. Only schema-version-2 `EXACT` coverage with `ACTIVE_EXACT` or
+`SUPERSEDED_COMPARE_ONLY` provenance is eligible. Unenrolled, none-visible,
+capture-unknown, and legacy rows receive no policy outcome.
+
+The evaluator uses the frozen generation, its originally bound policy revision,
+the frozen composition ID, and `capturedAt` as `evidenceAsOf`. It reuses the Phase
+2D five-dimension REQUIRED/IGNORED, source-health, expiration, and reason precedence
+semantics but never creates `StrategyMarketEligibilityDecision` rows. Superseded
+enrollments are labeled `SUPERSEDED_DIAGNOSTIC` and remain compare-only.
+
+PostgreSQL fixes every attempt to `authority=COMPARE_ONLY` and
+`tradingEffect=NONE`, validates its identities against exact coverage, permits at
+most one completed policy outcome per coverage, and requires exactly five gates
+for ALLOWED, BLOCKED, or INSUFFICIENT_EVIDENCE. Technical failures are distinct
+immutable attempts with no gates. Delivery claims use `FOR UPDATE SKIP LOCKED`, a
+60-second recoverable lease, at most three attempts, and bounded retry delay. The
+third technical failure is terminal and appears in informational worker health;
+there is no per-success SystemEvent.
+
+Capture and evaluation have independent rollout controls. Deployment leaves both
+the database rollout and worker disabled. After owner review, enable evaluation
+explicitly with:
+
+```sql
+UPDATE "OrderIntentMarketPolicyComparisonRollout" SET enabled=true WHERE id=1;
+```
+
+and set `ORDER_INTENT_MARKET_POLICY_COMPARISON_WORKER_ENABLED=true` before restarting
+the service. The database switch is authoritative even if the process flag is set.
+This does not change the existing capture epoch or enrollment configuration.
+
+Future Operational Attention reconciliation should report persistent terminal
+delivery failures and superseded enrollment diagnostics with stable assignment-
+scoped incident keys. It must not automatically rebind policies, retry orders, or
+become a trading dependency. No new OA producer is implemented in Phase 3B.2.
 
 ## Rollout and epoch
 

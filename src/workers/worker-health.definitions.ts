@@ -27,6 +27,7 @@ export const PARTICIPATION_ASSESSMENT_WORKER_INTERVAL_MS = 15 * 60_000;
 export const INTRADAY_STRESS_ASSESSMENT_WORKER_INTERVAL_MS = 2 * 60_000;
 export const MARKET_REGIME_COMPOSITION_WORKER_INTERVAL_MS = 60_000;
 export const STRATEGY_MARKET_ELIGIBILITY_WORKER_INTERVAL_MS = 5 * 60_000;
+export const ORDER_INTENT_MARKET_POLICY_COMPARISON_WORKER_INTERVAL_MS = 30_000;
 export const MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS = 30_000;
 export const MARKET_SPLIT_COVERAGE_WORKER_INTERVAL_MS = 15 * 60_000;
 
@@ -46,6 +47,15 @@ function thresholds(
 }
 
 export const workerDefinitions = [
+  {
+    key: 'order_intent_market_policy_comparison',
+    displayName: 'Order intent market-policy comparison',
+    description: 'Asynchronously records compare-only intent-time policy evidence without changing trading behavior.',
+    criticality: 'informational',
+    expectedIntervalMs: ORDER_INTENT_MARKET_POLICY_COMPARISON_WORKER_INTERVAL_MS,
+    enabledByDefault: false,
+    ...thresholds(ORDER_INTENT_MARKET_POLICY_COMPARISON_WORKER_INTERVAL_MS, 60_000),
+  },
   {
     key: 'strategy_market_eligibility_shadow',
     displayName: 'Strategy market eligibility shadow',

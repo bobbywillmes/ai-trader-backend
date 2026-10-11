@@ -1214,6 +1214,7 @@ Table MarketRegimeDimensionAssessment {
   nextAssessments MarketRegimeDimensionAssessment [not null]
   regimeCompositionSources MarketRegimeAssessmentSource [not null]
   strategyEligibilityGates StrategyMarketEligibilityDecisionGate [not null]
+  orderIntentComparisonGates OrderIntentMarketPolicyComparisonGate [not null]
 
   indexes {
     (dimension, algorithmVersion, targetAt, attempt) [unique]
@@ -1244,6 +1245,7 @@ Table MarketRegimeAssessment {
   sources MarketRegimeAssessmentSource [not null]
   strategyEligibilityDecisions StrategyMarketEligibilityDecision [not null]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
+  orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt [not null]
 
   indexes {
     (compositionVersion, sourceSetFingerprint) [unique]
@@ -1800,6 +1802,7 @@ Table Strategy {
   marketEligibilityDecisions StrategyMarketEligibilityDecision [not null]
   signalRouteMarketEligibilityAttempts SignalRouteMarketEligibilityAttempt [not null]
   assignmentMarketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration [not null]
+  orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt [not null]
 }
 
 Table StrategyMarketPolicy {
@@ -1827,6 +1830,7 @@ Table StrategyMarketPolicyRevision {
   assignmentEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration [not null]
   boundOrderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
   activeOrderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
+  orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt [not null]
 
   indexes {
     (policyId, revision) [unique]
@@ -1902,6 +1906,7 @@ Table AssignmentMarketPolicyEnrollmentGeneration {
   disabledBy User
   transitions AssignmentMarketPolicyEnrollmentTransition [not null]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
+  orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt [not null]
 
   indexes {
     (enrollmentId, generation) [unique]
@@ -1930,6 +1935,8 @@ Table OrderIntentMarketPolicyCoverage {
   boundPolicyRevision StrategyMarketPolicyRevision
   activePolicyRevision StrategyMarketPolicyRevision
   marketRegimeAssessment MarketRegimeAssessment
+  comparisonAttempts OrderIntentMarketPolicyComparisonAttempt [not null]
+  comparisonDelivery OrderIntentMarketPolicyComparisonDelivery
 }
 
 Table OrderIntentMarketPolicyCaptureRollout {
@@ -1946,6 +1953,81 @@ Table OrderIntentMarketPolicyCoverageScannerState {
   lastOrderIntentId Int [not null, default: 0]
   lastScannedAt DateTime
   updatedAt DateTime [not null]
+}
+
+Table OrderIntentMarketPolicyComparisonRollout {
+  id Int [pk]
+  enabled Boolean [not null, default: false]
+  enabledAt DateTime
+  updatedAt DateTime [not null]
+}
+
+Table OrderIntentMarketPolicyComparisonDelivery {
+  id Int [pk, increment]
+  coverageId Int [unique, not null]
+  status OrderIntentMarketPolicyComparisonDeliveryStatus [not null, default: 'PENDING']
+  attemptCount Int [not null, default: 0]
+  nextAttemptAt DateTime [default: `now()`, not null]
+  leaseOwner String
+  leaseExpiresAt DateTime
+  lastErrorCode String
+  completedAt DateTime
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  coverage OrderIntentMarketPolicyCoverage [not null]
+}
+
+Table OrderIntentMarketPolicyComparisonAttempt {
+  id Int [pk, increment]
+  coverageId Int [not null]
+  attempt Int [not null]
+  strategyId Int [not null]
+  enrollmentGenerationId Int [not null]
+  policyRevisionId Int [not null]
+  marketRegimeAssessmentId Int [not null]
+  evidenceAsOf DateTime [not null]
+  evaluationVersion String [not null]
+  enrollmentDisposition String [not null]
+  outcome OrderIntentMarketPolicyComparisonOutcome [not null]
+  reasonCode String [not null]
+  authority String [not null, default: 'COMPARE_ONLY']
+  tradingEffect String [not null, default: 'NONE']
+  evidenceJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  coverage OrderIntentMarketPolicyCoverage [not null]
+  strategy Strategy [not null]
+  enrollmentGeneration AssignmentMarketPolicyEnrollmentGeneration [not null]
+  policyRevision StrategyMarketPolicyRevision [not null]
+  marketRegimeAssessment MarketRegimeAssessment [not null]
+  gates OrderIntentMarketPolicyComparisonGate [not null]
+
+  indexes {
+    (coverageId, attempt) [unique]
+  }
+}
+
+Table OrderIntentMarketPolicyComparisonGate {
+  id Int [pk, increment]
+  comparisonAttemptId Int [not null]
+  dimension MarketRegimeDimension [not null]
+  algorithmVersion String [not null]
+  requirement StrategyMarketPolicyDimensionRequirement [not null]
+  outcome StrategyMarketEligibilityGateOutcome [not null]
+  observedState String
+  sourceHealth MarketRegimeCompositionSourceHealth
+  sourceAssessmentId Int
+  allowedStatesJson Json [not null]
+  reasonCode String [not null]
+  evidenceJson Json [not null]
+  ordinal Int [not null]
+  createdAt DateTime [default: `now()`, not null]
+  comparisonAttempt OrderIntentMarketPolicyComparisonAttempt [not null]
+  sourceAssessment MarketRegimeDimensionAssessment
+
+  indexes {
+    (comparisonAttemptId, dimension) [unique]
+    (comparisonAttemptId, ordinal) [unique]
+  }
 }
 
 Table AssignmentMarketPolicyEnrollmentTransition {
@@ -2580,6 +2662,21 @@ Enum OrderIntentMarketPolicyCompositionCapture {
   LEGACY_UNKNOWN
 }
 
+Enum OrderIntentMarketPolicyComparisonOutcome {
+  ALLOWED
+  BLOCKED
+  INSUFFICIENT_EVIDENCE
+  TECHNICAL_FAILURE
+}
+
+Enum OrderIntentMarketPolicyComparisonDeliveryStatus {
+  PENDING
+  CLAIMED
+  RETRY_WAIT
+  COMPLETED
+  TERMINAL_FAILURE
+}
+
 Ref: StrategySignalRevision.strategySignalBindingId > StrategySignalBinding.id [delete: Restrict]
 
 Ref: StrategySignalBinding.signalSourceId > ExternalSignalSource.id [delete: Restrict]
@@ -2899,6 +2996,22 @@ Ref: OrderIntentMarketPolicyCoverage.boundPolicyRevisionId > StrategyMarketPolic
 Ref: OrderIntentMarketPolicyCoverage.activePolicyRevisionId > StrategyMarketPolicyRevision.id [delete: Restrict]
 
 Ref: OrderIntentMarketPolicyCoverage.marketRegimeAssessmentId > MarketRegimeAssessment.id [delete: Restrict]
+
+Ref: OrderIntentMarketPolicyComparisonDelivery.coverageId - OrderIntentMarketPolicyCoverage.id [delete: Restrict]
+
+Ref: OrderIntentMarketPolicyComparisonAttempt.coverageId > OrderIntentMarketPolicyCoverage.id [delete: Restrict]
+
+Ref: OrderIntentMarketPolicyComparisonAttempt.strategyId > Strategy.id [delete: Restrict]
+
+Ref: OrderIntentMarketPolicyComparisonAttempt.enrollmentGenerationId > AssignmentMarketPolicyEnrollmentGeneration.id [delete: Restrict]
+
+Ref: OrderIntentMarketPolicyComparisonAttempt.policyRevisionId > StrategyMarketPolicyRevision.id [delete: Restrict]
+
+Ref: OrderIntentMarketPolicyComparisonAttempt.marketRegimeAssessmentId > MarketRegimeAssessment.id [delete: Restrict]
+
+Ref: OrderIntentMarketPolicyComparisonGate.comparisonAttemptId > OrderIntentMarketPolicyComparisonAttempt.id [delete: Restrict]
+
+Ref: OrderIntentMarketPolicyComparisonGate.(sourceAssessmentId, dimension, algorithmVersion) > MarketRegimeDimensionAssessment.(id, dimension, algorithmVersion) [delete: Restrict]
 
 Ref: AssignmentMarketPolicyEnrollmentTransition.generationId > AssignmentMarketPolicyEnrollmentGeneration.id [delete: Restrict]
 
