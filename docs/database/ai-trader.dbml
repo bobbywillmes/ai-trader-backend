@@ -1243,6 +1243,7 @@ Table MarketRegimeAssessment {
   nextAssessments MarketRegimeAssessment [not null]
   sources MarketRegimeAssessmentSource [not null]
   strategyEligibilityDecisions StrategyMarketEligibilityDecision [not null]
+  orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
 
   indexes {
     (compositionVersion, sourceSetFingerprint) [unique]
@@ -1915,7 +1916,10 @@ Table OrderIntentMarketPolicyCoverage {
   enrollmentGenerationId Int
   boundPolicyRevisionId Int
   activePolicyRevisionId Int
+  marketRegimeAssessmentId Int
   provenance OrderIntentMarketPolicyCoverageProvenance [not null]
+  compositionCapture OrderIntentMarketPolicyCompositionCapture [not null, default: 'LEGACY_UNKNOWN']
+  captureSchemaVersion Int [not null, default: 1]
   comparisonMode String [not null, default: 'COMPARE_ONLY']
   tradingEffect String [not null, default: 'NONE']
   capturedAt DateTime [default: `now()`, not null]
@@ -1925,6 +1929,7 @@ Table OrderIntentMarketPolicyCoverage {
   enrollmentGeneration AssignmentMarketPolicyEnrollmentGeneration
   boundPolicyRevision StrategyMarketPolicyRevision
   activePolicyRevision StrategyMarketPolicyRevision
+  marketRegimeAssessment MarketRegimeAssessment
 }
 
 Table OrderIntentMarketPolicyCaptureRollout {
@@ -2569,6 +2574,12 @@ Enum OrderIntentMarketPolicyCoverageProvenance {
   CAPTURE_UNKNOWN
 }
 
+Enum OrderIntentMarketPolicyCompositionCapture {
+  EXACT
+  NONE_VISIBLE
+  LEGACY_UNKNOWN
+}
+
 Ref: StrategySignalRevision.strategySignalBindingId > StrategySignalBinding.id [delete: Restrict]
 
 Ref: StrategySignalBinding.signalSourceId > ExternalSignalSource.id [delete: Restrict]
@@ -2886,6 +2897,8 @@ Ref: OrderIntentMarketPolicyCoverage.enrollmentGenerationId > AssignmentMarketPo
 Ref: OrderIntentMarketPolicyCoverage.boundPolicyRevisionId > StrategyMarketPolicyRevision.id [delete: Restrict]
 
 Ref: OrderIntentMarketPolicyCoverage.activePolicyRevisionId > StrategyMarketPolicyRevision.id [delete: Restrict]
+
+Ref: OrderIntentMarketPolicyCoverage.marketRegimeAssessmentId > MarketRegimeAssessment.id [delete: Restrict]
 
 Ref: AssignmentMarketPolicyEnrollmentTransition.generationId > AssignmentMarketPolicyEnrollmentGeneration.id [delete: Restrict]
 

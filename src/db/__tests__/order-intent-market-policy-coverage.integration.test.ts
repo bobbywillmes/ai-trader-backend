@@ -27,6 +27,21 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     `, [args.clientOrderId, args.accountId ?? paperAccountId, args.assignmentId ?? paperAssignmentId, args.createdAt ?? null])).rows[0];
   }
 
+  async function insertComposition(client: Client, observedAt: Date, fingerprint = randomUUID().replaceAll('-', '').repeat(2), health: 'COMPLETE' | 'DEGRADED' = 'DEGRADED') {
+    const row = (await client.query(`INSERT INTO "MarketRegimeAssessment"
+      ("compositionVersion","evidenceSchemaVersion","targetAt","observedAt","publicationStatus","evidenceHealth","evidenceReasonCode","sourceSetFingerprint","startedAt","completedAt","evidenceJson")
+      VALUES ('MARKET_REGIME_COMPOSITION_V1',1,$1,$1,'SUCCEEDED',$2,$3,$4,$1,$1,'{}') RETURNING id`,
+      [observedAt, health, health === 'DEGRADED' ? 'SOURCE_VECTOR_DEGRADED' : null, fingerprint])).rows[0];
+    const definitions = [['TREND','TREND_V1'],['VOLATILITY','VOLATILITY_V1'],['BREADTH','BREADTH_V1'],['PARTICIPATION','PARTICIPATION_V1'],['INTRADAY_STRESS','INTRADAY_STRESS_V1']];
+    for (let index = 0; index < definitions.length; index += 1) {
+      const [dimension, version] = definitions[index]!;
+      await client.query(`INSERT INTO "MarketRegimeAssessmentSource"
+        ("marketRegimeAssessmentId",dimension,"requiredAlgorithmVersion","expectedTargetAt",health,"reasonCode",ordinal,"evidenceJson")
+        VALUES ($1,$2,$3,$4,'MISSING','SOURCE_NOT_PUBLISHED',$5,'{}')`, [row.id, dimension, version, observedAt, index + 1]);
+    }
+    return row.id as number;
+  }
+
   beforeAll(async () => {
     admin = new Client({ connectionString: process.env.DATABASE_URL }); await admin.connect();
     await admin.query(`CREATE DATABASE "${database}"`);
@@ -80,7 +95,56 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const intent = await insertIntent({ clientOrderId: 'exact-current' });
     expect(intent).toMatchObject({ status: 'received', clientOrderId: 'exact-current', rawRequestJson: {} });
     const coverage = (await db.query(`SELECT * FROM "OrderIntentMarketPolicyCoverage" WHERE "orderIntentId"=$1`, [intent.id])).rows[0];
-    expect(coverage).toMatchObject({ tradingAccountId: paperAccountId, accountSubscriptionId: paperAssignmentId, enrollmentGenerationId, boundPolicyRevisionId: boundRevisionId, activePolicyRevisionId: boundRevisionId, provenance: 'ACTIVE_EXACT', comparisonMode: 'COMPARE_ONLY', tradingEffect: 'NONE' });
+    expect(coverage).toMatchObject({ tradingAccountId: paperAccountId, accountSubscriptionId: paperAssignmentId, enrollmentGenerationId, boundPolicyRevisionId: boundRevisionId, activePolicyRevisionId: boundRevisionId, provenance: 'ACTIVE_EXACT', compositionCapture: 'NONE_VISIBLE', captureSchemaVersion: 2, marketRegimeAssessmentId: null, comparisonMode: 'COMPARE_ONLY', tradingEffect: 'NONE' });
+  });
+
+  it('captures committed degraded evidence and never retrospectively replaces its exact identity with a backfill', async () => {
+    await db.query('BEGIN');
+    const compositionId = await insertComposition(db, new Date(Date.now() - 60_000));
+    await db.query('COMMIT');
+    const intent = await insertIntent({ clientOrderId: 'committed-composition' });
+    const coverage = (await db.query(`SELECT "marketRegimeAssessmentId","compositionCapture","captureSchemaVersion" FROM "OrderIntentMarketPolicyCoverage" WHERE "orderIntentId"=$1`, [intent.id])).rows[0];
+    expect(coverage).toEqual({ marketRegimeAssessmentId: compositionId, compositionCapture: 'EXACT', captureSchemaVersion: 2 });
+
+    await db.query('BEGIN');
+    await insertComposition(db, new Date(Date.now() - 120_000));
+    await db.query('COMMIT');
+    expect((await db.query(`SELECT "marketRegimeAssessmentId" FROM "OrderIntentMarketPolicyCoverage" WHERE "orderIntentId"=$1`, [intent.id])).rows[0].marketRegimeAssessmentId).toBe(compositionId);
+  });
+
+  it('does not select an uncommitted or rolled-back composition under READ COMMITTED', async () => {
+    const writer = await connection(); const reader = await connection();
+    try {
+      await writer.query('BEGIN');
+      const uncommittedId = await insertComposition(writer, new Date(Date.now() + 60_000));
+      const beforeCommit = (await reader.query(`INSERT INTO "OrderIntent" (source,symbol,side,"orderType","timeInForce",qty,"clientOrderId",status,"rawRequestJson","tradingAccountId","tradingAccountSubscriptionId","createdAt","updatedAt") VALUES ('phase3b2-test','P3B','buy','market','day',1,'uncommitted-composition','received','{}',$1,$2,now(),now()) RETURNING id`, [paperAccountId, paperAssignmentId])).rows[0];
+      expect((await reader.query(`SELECT "marketRegimeAssessmentId" FROM "OrderIntentMarketPolicyCoverage" WHERE "orderIntentId"=$1`, [beforeCommit.id])).rows[0].marketRegimeAssessmentId).not.toBe(uncommittedId);
+      await writer.query('ROLLBACK');
+      expect((await db.query(`SELECT count(*)::int count FROM "MarketRegimeAssessment" WHERE id=$1`, [uncommittedId])).rows[0].count).toBe(0);
+    } finally { await writer.end(); await reader.end(); }
+  });
+
+  it('uses the established REPEATABLE READ snapshot even when a composition commits before the intent statement', async () => {
+    const writer = await connection(); const reader = await connection();
+    try {
+      await reader.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+      await reader.query('SELECT 1 FROM "MarketRegimeAssessment" LIMIT 1');
+      await writer.query('BEGIN');
+      const laterId = await insertComposition(writer, new Date(Date.now() + 120_000));
+      await writer.query('COMMIT');
+      const intent = (await reader.query(`INSERT INTO "OrderIntent" (source,symbol,side,"orderType","timeInForce",qty,"clientOrderId",status,"rawRequestJson","tradingAccountId","tradingAccountSubscriptionId","createdAt","updatedAt") VALUES ('phase3b2-test','P3B','buy','market','day',1,'repeatable-read-snapshot','received','{}',$1,$2,now(),now()) RETURNING id`, [paperAccountId, paperAssignmentId])).rows[0];
+      const frozen = (await reader.query(`SELECT "marketRegimeAssessmentId" FROM "OrderIntentMarketPolicyCoverage" WHERE "orderIntentId"=$1`, [intent.id])).rows[0].marketRegimeAssessmentId;
+      expect(frozen).not.toBe(laterId);
+      await reader.query('COMMIT');
+      expect((await db.query(`SELECT "marketRegimeAssessmentId" FROM "OrderIntentMarketPolicyCoverage" WHERE "orderIntentId"=$1`, [intent.id])).rows[0].marketRegimeAssessmentId).toBe(frozen);
+    } finally { await writer.end(); await reader.end(); }
+  });
+
+  it('keeps schema-v1 rows explicitly LEGACY_UNKNOWN and enforces capture shape', async () => {
+    const legacyIntent = await insertIntent({ clientOrderId: 'legacy-shape-source' });
+    const coverageId = (await db.query(`SELECT id FROM "OrderIntentMarketPolicyCoverage" WHERE "orderIntentId"=$1`, [legacyIntent.id])).rows[0].id;
+    await expect(db.query(`UPDATE "OrderIntentMarketPolicyCoverage" SET "compositionCapture"='LEGACY_UNKNOWN' WHERE id=$1`, [coverageId])).rejects.toThrow(/immutable/);
+    await expect(db.query(`INSERT INTO "OrderIntentMarketPolicyCoverage" ("orderIntentId","tradingAccountId","accountSubscriptionId",provenance,"compositionCapture","captureSchemaVersion") VALUES ($1,$2,$3,'CAPTURE_UNKNOWN','EXACT',2)`, [legacyIntent.id, paperAccountId, paperAssignmentId])).rejects.toThrow();
   });
 
   it('contains capture failures in standalone and interactive LIVE-style transactions', async () => {

@@ -55,10 +55,10 @@ export async function detectOrderIntentMarketPolicyCoverageGaps(limit = 100) {
       const inserted = await tx.$executeRaw`
         INSERT INTO "OrderIntentMarketPolicyCoverage" (
           "orderIntentId", "tradingAccountId", "accountSubscriptionId", "enrollmentGenerationId",
-          "boundPolicyRevisionId", "activePolicyRevisionId", provenance, "comparisonMode", "tradingEffect", "capturedAt"
+          "boundPolicyRevisionId", "activePolicyRevisionId", provenance, "compositionCapture", "captureSchemaVersion", "comparisonMode", "tradingEffect", "capturedAt"
         ) VALUES (
           ${row.id}, ${row.tradingAccountId}, ${row.accountSubscriptionId}, NULL,
-          NULL, NULL, 'CAPTURE_UNKNOWN'::"OrderIntentMarketPolicyCoverageProvenance", 'COMPARE_ONLY', 'NONE', statement_timestamp()
+          NULL, NULL, 'CAPTURE_UNKNOWN'::"OrderIntentMarketPolicyCoverageProvenance", 'LEGACY_UNKNOWN'::"OrderIntentMarketPolicyCompositionCapture", 1, 'COMPARE_ONLY', 'NONE', statement_timestamp()
         )
         ON CONFLICT ("orderIntentId") DO NOTHING
       `;

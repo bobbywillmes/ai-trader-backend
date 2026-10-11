@@ -1,4 +1,4 @@
-# OrderIntent Market-Policy Coverage (Phase 3B.1)
+# OrderIntent Market-Policy Coverage (Phases 3B.1–3B.2)
 
 Phase 3B.1 records exact, compare-only market-policy coverage identity alongside
 applicable BUY entry `OrderIntent` rows. It does not evaluate market eligibility,
@@ -34,6 +34,21 @@ Captured provenance is:
 No synchronous eligibility evaluation, broker-time hook, order authorization
 change, or POST_COMMIT_OBSERVED fallback exists in this phase. A later genuinely
 new POST opportunity must create fresh evidence and must not reuse this comparison.
+
+## Prospective composition capture
+
+Migration `20261011100000_order_intent_composition_capture` upgrades prospective
+capture to schema version 2 without changing the existing rollout epoch. The same
+PostgreSQL trigger statement freezes one database-generated `capturedAt` and selects
+the latest visible successful `MARKET_REGIME_COMPOSITION_V1` whose `observedAt` is
+not after that instant. Selection occurs in the inserting transaction's visibility
+snapshot, so timestamps are never used as a substitute for commit visibility.
+
+`compositionCapture=EXACT` requires the immutable composition foreign key.
+`NONE_VISIBLE` records that no eligible composition was visible. Degraded successful
+compositions remain selectable because gate evaluation, not capture, interprets
+source health. Existing Phase 3B.1 and scanner-created rows remain schema version 1
+`LEGACY_UNKNOWN`; identities are never historically reconstructed or backfilled.
 
 ## Rollout and epoch
 

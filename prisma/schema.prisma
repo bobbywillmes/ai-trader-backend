@@ -1853,6 +1853,7 @@ model MarketRegimeAssessment {
   nextAssessments     MarketRegimeAssessment[] @relation("MarketRegimeCompositionHistory")
   sources             MarketRegimeAssessmentSource[]
   strategyEligibilityDecisions StrategyMarketEligibilityDecision[]
+  orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[]
 
   @@unique([compositionVersion, sourceSetFingerprint], map: "MarketRegimeAssessment_version_source_key")
   @@unique([id, compositionVersion], map: "MarketRegimeAssessment_identity_key")
@@ -2826,6 +2827,12 @@ enum OrderIntentMarketPolicyCoverageProvenance {
   CAPTURE_UNKNOWN
 }
 
+enum OrderIntentMarketPolicyCompositionCapture {
+  EXACT
+  NONE_VISIBLE
+  LEGACY_UNKNOWN
+}
+
 // Stable configuration aggregate for one exact TradingAccountSubscription.
 // ACTIVE remains configuration-only until a separate future enforcement authorization exists.
 model AssignmentMarketPolicyEnrollment {
@@ -2888,7 +2895,10 @@ model OrderIntentMarketPolicyCoverage {
   enrollmentGenerationId   Int?
   boundPolicyRevisionId    Int?
   activePolicyRevisionId   Int?
+  marketRegimeAssessmentId Int?
   provenance               OrderIntentMarketPolicyCoverageProvenance
+  compositionCapture       OrderIntentMarketPolicyCompositionCapture @default(LEGACY_UNKNOWN)
+  captureSchemaVersion     Int                                        @default(1)
   comparisonMode           String                                    @default("COMPARE_ONLY")
   tradingEffect            String                                    @default("NONE")
   capturedAt               DateTime                                  @default(now()) @db.Timestamptz(3)
@@ -2899,9 +2909,11 @@ model OrderIntentMarketPolicyCoverage {
   enrollmentGeneration AssignmentMarketPolicyEnrollmentGeneration? @relation(fields: [enrollmentGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   boundPolicyRevision  StrategyMarketPolicyRevision?                @relation("OrderIntentCoverageBoundPolicyRevision", fields: [boundPolicyRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   activePolicyRevision StrategyMarketPolicyRevision?                @relation("OrderIntentCoverageActivePolicyRevision", fields: [activePolicyRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  marketRegimeAssessment MarketRegimeAssessment?                    @relation(fields: [marketRegimeAssessmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([accountSubscriptionId, capturedAt], map: "OrderIntentMarketPolicyCoverage_assignment_captured_idx")
   @@index([enrollmentGenerationId], map: "OrderIntentMarketPolicyCoverage_generation_idx")
+  @@index([marketRegimeAssessmentId], map: "OrderIntentMarketPolicyCoverage_composition_idx")
 }
 
 // Mutable rollout and scanner cursors are operational state, not historical evidence.
