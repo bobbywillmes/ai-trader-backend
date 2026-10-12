@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { Prisma } from '@prisma/client';
+import { PlatformRole, Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import { strategyMarketPolicyConfigurationFingerprint, validateMarketPolicyRules } from './strategy-market-policy.service.js';
@@ -33,22 +33,101 @@ async function findAssignment(accountId: number, assignmentId: number, db: typeo
   return db.tradingAccountSubscription.findFirst({ where: { id: assignmentId, tradingAccountId: accountId }, select: assignmentSelect });
 }
 
-function publicGeneration<T extends { enforcementAuthorityVersion: string | null; enforcementAuthorizedAt: Date | null }>(generation: T) {
-  return { ...generation, authority: ASSIGNMENT_MARKET_POLICY_ENROLLMENT_AUTHORITY, enforcementEnabled: generation.enforcementAuthorityVersion !== null && generation.enforcementAuthorizedAt !== null };
+export function serializeAssignmentMarketPolicyEnrollmentGeneration<T extends { enforcementAuthorityVersion: string | null; enforcementAuthorizedAt: Date | null }>(generation: T): T & { authority: typeof ASSIGNMENT_MARKET_POLICY_ENROLLMENT_AUTHORITY; enforcementEnabled: boolean };
+export function serializeAssignmentMarketPolicyEnrollmentGeneration<T extends { enforcementAuthorityVersion: string | null; enforcementAuthorizedAt: Date | null }>(generation: T, viewerRole: PlatformRole): any;
+export function serializeAssignmentMarketPolicyEnrollmentGeneration<T extends { enforcementAuthorityVersion: string | null; enforcementAuthorizedAt: Date | null }>(generation: T, viewerRole: PlatformRole = PlatformRole.SYSTEM_OWNER) {
+  const row = generation as T & Record<string, any>;
+  const base = { ...row, authority: ASSIGNMENT_MARKET_POLICY_ENROLLMENT_AUTHORITY, enforcementEnabled: generation.enforcementAuthorityVersion !== null && generation.enforcementAuthorizedAt !== null };
+  if (viewerRole === PlatformRole.SYSTEM_OWNER) return base;
+  const policyRevision = row.policyRevision ? {
+    id: row.policyRevision.id,
+    revision: row.policyRevision.revision,
+    status: row.policyRevision.status,
+    ...(viewerRole === PlatformRole.OPERATOR ? { dimensionRules: row.policyRevision.dimensionRules } : {}),
+  } : null;
+  return {
+    id: row.id,
+    enrollmentId: row.enrollmentId,
+    generation: row.generation,
+    status: row.status,
+    tradingAccountId: row.tradingAccountId,
+    accountSubscriptionId: row.accountSubscriptionId,
+    strategyId: row.strategyId,
+    policyRevisionId: row.policyRevisionId,
+    preparedAt: row.preparedAt,
+    activatedAt: row.activatedAt,
+    disabledAt: row.disabledAt,
+    createdAt: row.createdAt,
+    policyRevision,
+    transitions: [],
+    authority: ASSIGNMENT_MARKET_POLICY_ENROLLMENT_AUTHORITY,
+    enforcementEnabled: false,
+  };
 }
 
-export async function getAssignmentMarketPolicyEnrollment(accountId: number, assignmentId: number) {
+const publicGeneration = serializeAssignmentMarketPolicyEnrollmentGeneration;
+
+function publicAssignment(assignment: NonNullable<Awaited<ReturnType<typeof findAssignment>>>, viewerRole: PlatformRole) {
+  if (viewerRole === PlatformRole.SYSTEM_OWNER) return assignment;
+  const activeRevisions = assignment.subscription.strategy.marketPolicy?.revisions.map(revision => ({
+    id: revision.id,
+    revision: revision.revision,
+    status: revision.status,
+    ...(viewerRole === PlatformRole.OPERATOR ? { dimensionRules: revision.dimensionRules } : {}),
+  })) ?? [];
+  return {
+    id: assignment.id,
+    tradingAccountId: assignment.tradingAccountId,
+    routingStrategyId: assignment.routingStrategyId,
+    enabled: assignment.enabled,
+    entriesEnabled: assignment.entriesEnabled,
+    tradingAccount: {
+      id: assignment.tradingAccount.id,
+      displayName: assignment.tradingAccount.displayName,
+      environment: assignment.tradingAccount.environment,
+      status: assignment.tradingAccount.status,
+      tradingEnabled: assignment.tradingAccount.tradingEnabled,
+      killSwitchEnabled: assignment.tradingAccount.killSwitchEnabled,
+    },
+    subscription: {
+      id: assignment.subscription.id,
+      security: assignment.subscription.security,
+      strategy: {
+        id: assignment.subscription.strategy.id,
+        key: assignment.subscription.strategy.key,
+        name: assignment.subscription.strategy.name,
+        enabled: assignment.subscription.strategy.enabled,
+        marketPolicy: assignment.subscription.strategy.marketPolicy ? {
+          id: assignment.subscription.strategy.marketPolicy.id,
+          revisions: activeRevisions,
+        } : null,
+      },
+    },
+  };
+}
+
+async function getAssignmentMarketPolicyEnrollmentRaw(accountId: number, assignmentId: number) {
   const assignment = await findAssignment(accountId, assignmentId, prisma);
   if (!assignment) return null;
   const enrollment = await prisma.assignmentMarketPolicyEnrollment.findUnique({
     where: { accountSubscriptionId: assignmentId },
     include: { generations: { include: generationInclude, orderBy: { generation: 'desc' } } },
   });
-  return { authority: ASSIGNMENT_MARKET_POLICY_ENROLLMENT_AUTHORITY, enforcementEnabled: false, assignment, enrollment: enrollment ? { ...enrollment, generations: enrollment.generations.map(publicGeneration) } : null };
+  return { assignment, enrollment };
 }
 
-export async function previewAssignmentMarketPolicyEnrollment(accountId: number, assignmentId: number) {
-  const state = await getAssignmentMarketPolicyEnrollment(accountId, assignmentId);
+export function getAssignmentMarketPolicyEnrollment(accountId: number, assignmentId: number): Promise<any>;
+export function getAssignmentMarketPolicyEnrollment(accountId: number, assignmentId: number, viewerRole: PlatformRole): Promise<any>;
+export async function getAssignmentMarketPolicyEnrollment(accountId: number, assignmentId: number, viewerRole: PlatformRole = PlatformRole.SYSTEM_OWNER) {
+  const state = await getAssignmentMarketPolicyEnrollmentRaw(accountId, assignmentId);
+  if (!state) return null;
+  return { authority: ASSIGNMENT_MARKET_POLICY_ENROLLMENT_AUTHORITY, enforcementEnabled: false, assignment: publicAssignment(state.assignment, viewerRole), enrollment: state.enrollment ? { id: state.enrollment.id, accountSubscriptionId: state.enrollment.accountSubscriptionId, createdAt: state.enrollment.createdAt, updatedAt: state.enrollment.updatedAt, generations: state.enrollment.generations.map(generation => publicGeneration(generation, viewerRole)) } : null };
+}
+
+export function previewAssignmentMarketPolicyEnrollment(accountId: number, assignmentId: number): Promise<any>;
+export function previewAssignmentMarketPolicyEnrollment(accountId: number, assignmentId: number, viewerRole: PlatformRole): Promise<any>;
+export async function previewAssignmentMarketPolicyEnrollment(accountId: number, assignmentId: number, viewerRole: PlatformRole = PlatformRole.SYSTEM_OWNER) {
+  const state = await getAssignmentMarketPolicyEnrollmentRaw(accountId, assignmentId);
   if (!state) return null;
   const { assignment, enrollment } = state;
   const current = enrollment?.generations.find(item => item.status !== 'DISABLED') ?? enrollment?.generations[0] ?? null;
@@ -73,7 +152,7 @@ export async function previewAssignmentMarketPolicyEnrollment(accountId: number,
     authority: ASSIGNMENT_MARKET_POLICY_ENROLLMENT_AUTHORITY, enforcementEnabled: false,
     assignmentIdentity: { accountId, assignmentId, strategyId: assignment.routingStrategyId, policyRevisionId: activePolicy?.id ?? null },
     paperEligible, ownershipValid, policyRevisionMatches, configurationValid, configurationErrors: configurationValidation.errors,
-    enrollmentGeneration: current ? publicGeneration(current) : null,
+    enrollmentGeneration: current ? publicGeneration(current, viewerRole) : null,
     readyToActivate, notReadyReasons,
     currentMarketEligibility: { outcome: marketOutcome, reasonCode: latestDecision?.reasonCode ?? 'NO_PERSISTED_SHADOW_DECISION', evaluatorTechnicalStatus, decisionId: latestDecision?.id ?? null, evaluatedAt: latestDecision?.evaluatedAt ?? null, validUntil: latestDecision?.validUntil ?? null, requiredForActivation: false },
     operationalPosture: { strategyEnabled: assignment.subscription.strategy.enabled, assignmentEnabled: assignment.enabled, entriesEnabled: assignment.entriesEnabled, accountStatus: assignment.tradingAccount.status, accountTradingEnabled: assignment.tradingAccount.tradingEnabled, killSwitchEnabled: assignment.tradingAccount.killSwitchEnabled, affectsEnrollmentValidity: false },

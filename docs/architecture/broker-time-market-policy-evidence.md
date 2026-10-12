@@ -40,3 +40,20 @@ UPDATE "OrderIntentBrokerComparisonRollout" SET enabled=true WHERE id=1;
 ```
 
 The comparison scheduler additionally requires `ORDER_INTENT_BROKER_COMPARISON_WORKER_ENABLED=true` and a process restart. Capture can be enabled independently for observation-first rollout. Disable either database row with `SET enabled=false`; PostgreSQL records the interval endpoint. No setting grants enforcement authority.
+
+## Phase 3B.4A read boundary
+
+`GET /api/order-intents/history` provides SQL-paginated summaries under explicit
+trading-account membership scope. `GET
+/api/order-intents/:orderIntentId/operational-evidence` returns the frozen intent and
+broker comparison evidence for one authorized account. The legacy owner-only
+`/api/order-intents` routes retain their existing behavior.
+
+The detail read paginates broker opportunities and broker events, bounds comparison
+attempts, and never calls a provider or reconstructs evidence from current state.
+Account Users receive outcomes, observed states, health, reasons and historical
+identities but not allowed-state policy rules or source-set fingerprints. Operators
+receive those technical fields within membership scope. Raw evidence JSON requires
+SYSTEM_OWNER and is capped per value. Every response keeps `COMPARE_ONLY` and
+`tradingEffect=NONE` explicit; a broker order found without a new POST opportunity is
+labelled as a lifecycle-derived presentation state rather than an immutable event.

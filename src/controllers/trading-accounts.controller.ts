@@ -213,7 +213,8 @@ function parseAccountSubscriptionId(value: unknown) {
 
 export async function getAssignmentMarketPolicyEnrollmentController(req: Request, res: Response, next: NextFunction) {
   try {
-    const result = await getAssignmentMarketPolicyEnrollment(parseTradingAccountId(req.params.id), parseAccountSubscriptionId(req.params.accountSubscriptionId));
+    if (!res.locals.user) throw new HttpError(401, 'Authentication required.');
+    const result = await getAssignmentMarketPolicyEnrollment(parseTradingAccountId(req.params.id), parseAccountSubscriptionId(req.params.accountSubscriptionId), res.locals.user.platformRole);
     if (!result) throw new HttpError(404, 'Trading account subscription not found.');
     res.status(200).json(result);
   } catch (error) { next(error); }
@@ -221,7 +222,8 @@ export async function getAssignmentMarketPolicyEnrollmentController(req: Request
 
 export async function previewAssignmentMarketPolicyEnrollmentController(req: Request, res: Response, next: NextFunction) {
   try {
-    const preview = await previewAssignmentMarketPolicyEnrollment(parseTradingAccountId(req.params.id), parseAccountSubscriptionId(req.params.accountSubscriptionId));
+    if (!res.locals.user) throw new HttpError(401, 'Authentication required.');
+    const preview = await previewAssignmentMarketPolicyEnrollment(parseTradingAccountId(req.params.id), parseAccountSubscriptionId(req.params.accountSubscriptionId), res.locals.user.platformRole);
     if (!preview) throw new HttpError(404, 'Trading account subscription not found.');
     res.status(200).json({ preview });
   } catch (error) { next(error); }
