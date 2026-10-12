@@ -33,7 +33,7 @@ import {
 import { evaluateAssignmentEntry } from './assignment-entry-evaluation.service.js';
 import { validateActiveLiveEntryArming } from './live-entry-arming.service.js';
 import { getBrokerWriteDeliveryClassification } from '../errors/broker-write-delivery-error.js';
-import { bestEffortAppendBrokerOpportunityEvent, bestEffortCaptureOrderIntentBrokerPostOpportunity } from './order-intent-broker-opportunity.service.js';
+import { bestEffortAppendBrokerOpportunityEvent, bestEffortCaptureOrderIntentBrokerPostOpportunity, createBrokerObservationBudget } from './order-intent-broker-opportunity.service.js';
 
 type SubmitOrderOptions = {
   entryDecisionKey?: string;
@@ -333,7 +333,7 @@ export async function submitOrderToBroker(
   );
 
   if (existing) {
-    await bestEffortAppendBrokerOpportunityEvent({orderIntentId:options.orderIntentId,eventType:'BROKER_ORDER_MATERIALIZED',evidence:{source:'pre_post_idempotency_lookup',brokerOrderId:existing.id}});
+    await bestEffortAppendBrokerOpportunityEvent({orderIntentId:options.orderIntentId,eventType:'BROKER_ORDER_MATERIALIZED',evidence:{source:'pre_post_idempotency_lookup',brokerOrderId:existing.id}},undefined,createBrokerObservationBudget());
     return {
       duplicate: true,
       order: existing,
@@ -363,8 +363,9 @@ export async function submitOrderToBroker(
   if (input.limitPrice !== undefined) payload.limit_price = String(input.limitPrice);
   if (input.extendedHours) payload.extended_hours = true;
 
-  const opportunity=await bestEffortCaptureOrderIntentBrokerPostOpportunity(options.orderIntentId);
-  await bestEffortAppendBrokerOpportunityEvent({opportunityId:opportunity?.id??null,eventType:'ADAPTER_DISPATCH_REACHED',evidence:{adapter:'alpaca',operation:'pending_order_submission'}});
+  const prePostObservationBudget=createBrokerObservationBudget();
+  const opportunity=await bestEffortCaptureOrderIntentBrokerPostOpportunity(options.orderIntentId,undefined,prePostObservationBudget);
+  await bestEffortAppendBrokerOpportunityEvent({opportunityId:opportunity?.id??null,eventType:'ADAPTER_DISPATCH_REACHED',evidence:{adapter:'alpaca',operation:'pending_order_submission'}},undefined,prePostObservationBudget);
   let created;
   try {
     created = await submitAlpacaEntryOrder(
@@ -386,11 +387,12 @@ export async function submitOrderToBroker(
     const classification=getBrokerWriteDeliveryClassification(error);
     const eventType=classification==='BROKER_REJECTED'?'BROKER_REJECTED':classification==='NOT_SENT_BLOCKED'?'DEFINITELY_NOT_SENT':classification==='NOT_SENT_RETRYABLE'?'DEFERRED':'DELIVERY_UNCERTAIN';
     const statusCode=typeof error==='object'&&error!==null&&'statusCode' in error&&typeof (error as {statusCode:unknown}).statusCode==='number'?(error as {statusCode:number}).statusCode:null;
-    await bestEffortAppendBrokerOpportunityEvent({opportunityId:opportunity?.id??null,eventType,evidence:{classification:classification??'UNCLASSIFIED',statusCode}});
+    await bestEffortAppendBrokerOpportunityEvent({opportunityId:opportunity?.id??null,eventType,evidence:{classification:classification??'UNCLASSIFIED',statusCode}},undefined,createBrokerObservationBudget());
     throw error;
   }
-  await bestEffortAppendBrokerOpportunityEvent({opportunityId:opportunity?.id??null,eventType:'BROKER_RESPONSE_CONFIRMED',evidence:{brokerOrderId:created.id,status:created.status}});
-  await bestEffortAppendBrokerOpportunityEvent({opportunityId:opportunity?.id??null,eventType:'BROKER_ORDER_MATERIALIZED',evidence:{source:'post_response',brokerOrderId:created.id,status:created.status}});
+  const postResponseObservationBudget=createBrokerObservationBudget();
+  await bestEffortAppendBrokerOpportunityEvent({opportunityId:opportunity?.id??null,eventType:'BROKER_RESPONSE_CONFIRMED',evidence:{brokerOrderId:created.id,status:created.status}},undefined,postResponseObservationBudget);
+  await bestEffortAppendBrokerOpportunityEvent({opportunityId:opportunity?.id??null,eventType:'BROKER_ORDER_MATERIALIZED',evidence:{source:'post_response',brokerOrderId:created.id,status:created.status}},undefined,postResponseObservationBudget);
 
   adaptivePollingCoordinator.forceAfterBrokerOrderCreated(
     options.tradingAccountId,

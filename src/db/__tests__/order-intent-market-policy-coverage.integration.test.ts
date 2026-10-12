@@ -2,7 +2,10 @@ import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { readFile, readdir } from 'node:fs/promises';
-import { Client } from 'pg';
+import { Client, Pool } from 'pg';
+import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { createServer } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.DATABASE_URL;
@@ -10,8 +13,8 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
 (enabled ? describe : describe.skip)('OrderIntent market-policy coverage PostgreSQL integrity', () => {
   const database = `order_intent_policy_coverage_${randomUUID().replaceAll('-', '')}`;
   let admin: Client, db: Client, databaseUrl: string;
-  let ownerId: number, paperAccountId: number, liveAccountId: number, strategyId: number;
-  let paperAssignmentId: number, liveAssignmentId: number, subscriptionId: number;
+  let ownerId: number, paperAccountId: number, unenrolledPaperAccountId: number, liveAccountId: number, strategyId: number;
+  let paperAssignmentId: number, unenrolledPaperAssignmentId: number, liveAssignmentId: number, subscriptionId: number;
   let enrollmentGenerationId: number, boundRevisionId: number, replacementRevisionId: number;
 
   async function connection() {
@@ -23,7 +26,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   async function insertIntent(args: { assignmentId?: number; accountId?: number; clientOrderId: string; createdAt?: Date }) {
     return (await db.query(`
       INSERT INTO "OrderIntent" (source,symbol,side,"orderType","timeInForce",qty,"clientOrderId",status,"rawRequestJson","tradingAccountId","tradingAccountSubscriptionId","createdAt","updatedAt")
-      VALUES ('phase3b1-test','P3B','buy','market','day',1,$1,'received','{}',$2,$3,COALESCE($4,now()),now()) RETURNING *
+      VALUES ('phase3b3b-acceptance','AAPL','buy','market','day',1,$1,'received','{}',$2,$3,COALESCE($4,now()),now()) RETURNING *
     `, [args.clientOrderId, args.accountId ?? paperAccountId, args.assignmentId ?? paperAssignmentId, args.createdAt ?? null])).rows[0];
   }
 
@@ -55,17 +58,21 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     ownerId = (await db.query(`INSERT INTO "User" (email,"platformRole",enabled,"createdAt","updatedAt") VALUES ('owner@phase3b1.test','SYSTEM_OWNER',true,now(),now()) RETURNING id`)).rows[0].id;
     paperAccountId = (await db.query(`INSERT INTO "TradingAccount" ("accountHolderUserId","displayName",environment,status,"tradingEnabled","killSwitchEnabled","createdAt","updatedAt") VALUES ($1,'Paper','PAPER','PAUSED',false,true,now(),now()) RETURNING id`, [ownerId])).rows[0].id;
     liveAccountId = (await db.query(`INSERT INTO "TradingAccount" ("accountHolderUserId","displayName",environment,status,"tradingEnabled","killSwitchEnabled","createdAt","updatedAt") VALUES ($1,'Live','LIVE','PAUSED',false,true,now(),now()) RETURNING id`, [ownerId])).rows[0].id;
-    strategyId = (await db.query(`INSERT INTO "Strategy" (key,name,enabled,"createdAt","updatedAt") VALUES ('phase3b1','Phase 3B.1',true,now(),now()) RETURNING id`)).rows[0].id;
-    const securityId = (await db.query(`INSERT INTO "Security" (symbol,name,enabled,"assetType","createdAt","updatedAt") VALUES ('P3B','Phase 3B.1',true,'STOCK',now(),now()) RETURNING id`)).rows[0].id;
-    const exitId = (await db.query(`INSERT INTO "ExitProfile" (key,name,"exitMode","takeProfitBehavior",enabled,"createdAt","updatedAt") VALUES ('phase3b1','Phase 3B.1','fixed','limit',true,now(),now()) RETURNING id`)).rows[0].id;
-    subscriptionId = (await db.query(`INSERT INTO "Subscription" (key,name,symbol,enabled,"strategyId","exitProfileId","securityId","createdAt","updatedAt") VALUES ('phase3b1','Phase 3B.1','P3B',true,$1,$2,$3,now(),now()) RETURNING id`, [strategyId, exitId, securityId])).rows[0].id;
+    const unenrolledOwnerId = (await db.query(`INSERT INTO "User" (email,"platformRole",enabled,"createdAt","updatedAt") VALUES ('unenrolled@phase3b3b.test','SYSTEM_OWNER',true,now(),now()) RETURNING id`)).rows[0].id;
+    unenrolledPaperAccountId = (await db.query(`INSERT INTO "TradingAccount" ("accountHolderUserId","displayName",environment,status,"tradingEnabled","killSwitchEnabled","createdAt","updatedAt") VALUES ($1,'Unenrolled Paper','PAPER','PAUSED',false,true,now(),now()) RETURNING id`, [unenrolledOwnerId])).rows[0].id;
+    strategyId = (await db.query(`INSERT INTO "Strategy" (key,name,enabled,"createdAt","updatedAt") VALUES ('momentum_stock','Momentum Stock',true,now(),now()) RETURNING id`)).rows[0].id;
+    const securityId = (await db.query(`INSERT INTO "Security" (symbol,name,enabled,"assetType","createdAt","updatedAt") VALUES ('AAPL','Apple',true,'STOCK',now(),now()) RETURNING id`)).rows[0].id;
+    const exitId = (await db.query(`INSERT INTO "ExitProfile" (key,name,"exitMode","takeProfitBehavior",enabled,"createdAt","updatedAt") VALUES ('momentum-stock-test','Momentum Stock Test','fixed','limit',true,now(),now()) RETURNING id`)).rows[0].id;
+    subscriptionId = (await db.query(`INSERT INTO "Subscription" (key,name,symbol,enabled,"strategyId","exitProfileId","securityId","createdAt","updatedAt") VALUES ('momentum-stock-aapl','Momentum Stock AAPL','AAPL',true,$1,$2,$3,now(),now()) RETURNING id`, [strategyId, exitId, securityId])).rows[0].id;
     paperAssignmentId = (await db.query(`INSERT INTO "TradingAccountSubscription" ("tradingAccountId","subscriptionId",enabled,"entriesEnabled","exitsEnabled","sizingType","fixedQty","createdAt","updatedAt") VALUES ($1,$2,true,true,true,'FIXED_QTY',1,now(),now()) RETURNING id`, [paperAccountId, subscriptionId])).rows[0].id;
+    unenrolledPaperAssignmentId = (await db.query(`INSERT INTO "TradingAccountSubscription" ("tradingAccountId","subscriptionId",enabled,"entriesEnabled","exitsEnabled","sizingType","fixedQty","createdAt","updatedAt") VALUES ($1,$2,true,true,true,'FIXED_QTY',1,now(),now()) RETURNING id`, [unenrolledPaperAccountId, subscriptionId])).rows[0].id;
     liveAssignmentId = (await db.query(`INSERT INTO "TradingAccountSubscription" ("tradingAccountId","subscriptionId",enabled,"entriesEnabled","exitsEnabled","sizingType","fixedQty","createdAt","updatedAt") VALUES ($1,$2,true,true,true,'FIXED_QTY',1,now(),now()) RETURNING id`, [liveAccountId, subscriptionId])).rows[0].id;
     process.env.DATABASE_URL = databaseUrl;
     const policy = await import('../../services/strategy-market-policy.service.js');
     const created = await policy.createStrategyMarketPolicy(strategyId, ownerId, 'Phase 3B.1 fixture');
     const initial = created.revisions[0]!;
-    const saved = await policy.saveStrategyMarketPolicyRevision(strategyId, initial.id, { expectedConfigurationFingerprint: initial.configurationFingerprint, rules: initial.dimensionRules.map(rule => ({ dimension: rule.dimension, algorithmVersion: rule.algorithmVersion, requirement: rule.dimension === 'TREND' ? 'REQUIRED' as const : 'IGNORED' as const, allowedStates: rule.dimension === 'TREND' ? ['UP'] : [] })) }, ownerId);
+    expect(initial.revision).toBe(1);
+    const saved = await policy.saveStrategyMarketPolicyRevision(strategyId, initial.id, { expectedConfigurationFingerprint: initial.configurationFingerprint, rules: initial.dimensionRules.map(rule => ({ dimension: rule.dimension, algorithmVersion: rule.algorithmVersion, requirement: rule.dimension === 'TREND' || rule.dimension === 'BREADTH' ? 'REQUIRED' as const : 'IGNORED' as const, allowedStates: rule.dimension === 'TREND' ? ['UP'] : rule.dimension === 'BREADTH' ? ['POSITIVE'] : [] })) }, ownerId);
     boundRevisionId = saved.id;
     await policy.activateStrategyMarketPolicyRevision(strategyId, boundRevisionId, saved.configurationFingerprint, ownerId);
     const enrollment = await import('../../services/assignment-market-policy-enrollment.service.js');
@@ -75,6 +82,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   }, 120_000);
 
   afterAll(async () => {
+    const observation = await import('../../db/broker-observation-prisma.js'); await observation.closeBrokerObservationPrisma();
     const { prisma } = await import('../prisma.js'); await prisma.$disconnect();
     if (db) await db.end();
     if (admin) { await admin.query(`DROP DATABASE IF EXISTS "${database}"`); await admin.end(); }
@@ -223,6 +231,9 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(attempts.every(row => row.gates === 5 && row.authority === 'COMPARE_ONLY' && row.tradingEffect === 'NONE' && row.evaluationVersion === 'ORDER_INTENT_MARKET_POLICY_COMPARISON_V1')).toBe(true);
     expect(attempts.some(row => row.enrollmentDisposition === 'SUPERSEDED_DIAGNOSTIC')).toBe(true);
     expect(attempts.every(row => row.outcome === 'INSUFFICIENT_EVIDENCE')).toBe(true);
+    const intentGates=(await db.query(`SELECT dimension,requirement,"allowedStatesJson" FROM "OrderIntentMarketPolicyComparisonGate" WHERE "comparisonAttemptId"=$1 ORDER BY ordinal`,[attempts[0].id])).rows;
+    expect(intentGates.find(gate=>gate.dimension==='TREND')).toMatchObject({requirement:'REQUIRED',allowedStatesJson:['UP']});
+    expect(intentGates.find(gate=>gate.dimension==='BREADTH')).toMatchObject({requirement:'REQUIRED',allowedStatesJson:['POSITIVE']});
     expect((await db.query(`SELECT count(*)::int count FROM "OrderIntentMarketPolicyComparisonDelivery" d JOIN "OrderIntentMarketPolicyCoverage" c ON c.id=d."coverageId" WHERE c."captureSchemaVersion"<>2 OR c."compositionCapture"<>'EXACT' OR c.provenance NOT IN ('ACTIVE_EXACT','SUPERSEDED_COMPARE_ONLY')`)).rows[0].count).toBe(0);
     expect((await db.query(`SELECT id,status,"clientOrderId" FROM "OrderIntent" ORDER BY id`)).rows).toEqual(before);
 
@@ -311,13 +322,88 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await db.query(`CREATE FUNCTION fail_broker_anchor_coverage() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'coverage unavailable'; END $$`);await db.query(`CREATE TRIGGER broker_anchor_coverage_failure BEFORE INSERT ON "OrderIntentMarketPolicyCoverage" FOR EACH ROW EXECUTE FUNCTION fail_broker_anchor_coverage()`);const missingIntent=await insertIntent({clientOrderId:'broker-missing-observation'});await db.query(`DROP TRIGGER broker_anchor_coverage_failure ON "OrderIntentMarketPolicyCoverage"`);await db.query(`DROP FUNCTION fail_broker_anchor_coverage()`);expect(await service.bestEffortCaptureOrderIntentBrokerPostOpportunity(missingIntent.id)).toBeNull();expect((await db.query(`SELECT "opportunityId","eventType" FROM "OrderIntentBrokerOpportunityEvent" WHERE "orderIntentId"=$1`,[missingIntent.id])).rows).toEqual([{opportunityId:null,eventType:'MISSING_OBSERVATION'}]);
   });
 
+  it('bounds pool exhaustion, delayed establishment, statement waits, lock waits and cumulative pre-POST work', async () => {
+    const service = await import('../../services/order-intent-broker-opportunity.service.js');
+    const exhaustedIntent = await insertIntent({ clientOrderId: 'broker-pool-exhausted' });
+    const exhaustedPool = new Pool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 50 });
+    const held = await exhaustedPool.connect();
+    const exhaustedPrisma = new PrismaClient({ adapter: new PrismaPg(exhaustedPool, { disposeExternalPool: true }) });
+    let started = performance.now();
+    expect(await service.bestEffortCaptureOrderIntentBrokerPostOpportunity(exhaustedIntent.id, exhaustedPrisma, service.createBrokerObservationBudget())).toBeNull();
+    const poolExhaustedMs = performance.now() - started;
+    expect(poolExhaustedMs).toBeLessThan(250);
+    held.release();
+    await exhaustedPrisma.$disconnect();
+
+    const stalledSockets = new Set<import('node:net').Socket>();
+    const stalledServer = createServer(socket => { stalledSockets.add(socket); socket.once('close',()=>stalledSockets.delete(socket)); });
+    await new Promise<void>((resolve, reject) => { stalledServer.once('error', reject); stalledServer.listen(0, '127.0.0.1', resolve); });
+    const address = stalledServer.address();
+    if (!address || typeof address === 'string') throw new Error('Expected a TCP test port.');
+    const stalledUrl = new URL(databaseUrl); stalledUrl.hostname = '127.0.0.1'; stalledUrl.port = String(address.port);
+    const stalledPool = new Pool({ connectionString: stalledUrl.toString(), max: 1, connectionTimeoutMillis: 50 });
+    const stalledPrisma = new PrismaClient({ adapter: new PrismaPg(stalledPool, { disposeExternalPool: true }) });
+    started = performance.now();
+    expect(await service.bestEffortCaptureOrderIntentBrokerPostOpportunity(exhaustedIntent.id, stalledPrisma, service.createBrokerObservationBudget())).toBeNull();
+    const delayedConnectionMs = performance.now() - started;
+    expect(delayedConnectionMs).toBeLessThan(250);
+    expect(stalledPool.waitingCount).toBe(0);
+    expect(stalledPool.totalCount).toBe(0);
+    await stalledPrisma.$disconnect();
+    for (const socket of stalledSockets) socket.destroy();
+    await new Promise<void>((resolve, reject) => stalledServer.close(error => error ? reject(error) : resolve()));
+    const refusedPool = new Pool({ connectionString: stalledUrl.toString(), max: 1, connectionTimeoutMillis: 50 });
+    const refusedPrisma = new PrismaClient({ adapter: new PrismaPg(refusedPool, { disposeExternalPool: true }) });
+    started = performance.now();
+    expect(await service.bestEffortCaptureOrderIntentBrokerPostOpportunity(exhaustedIntent.id, refusedPrisma, service.createBrokerObservationBudget())).toBeNull();
+    const connectionRefusedMs = performance.now() - started;
+    expect(connectionRefusedMs).toBeLessThan(250);
+    await refusedPrisma.$disconnect();
+
+    const statementIntent = await insertIntent({ clientOrderId: 'broker-statement-timeout' });
+    await db.query(`CREATE FUNCTION delay_broker_opportunity() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.3); RETURN NEW; END $$`);
+    await db.query(`CREATE TRIGGER broker_opportunity_delay BEFORE INSERT ON "OrderIntentBrokerPostOpportunity" FOR EACH ROW EXECUTE FUNCTION delay_broker_opportunity()`);
+    started = performance.now();
+    expect(await service.bestEffortCaptureOrderIntentBrokerPostOpportunity(statementIntent.id, undefined, service.createBrokerObservationBudget())).toBeNull();
+    const statementTimeoutMs = performance.now() - started;
+    expect(statementTimeoutMs).toBeLessThan(250);
+    await db.query(`DROP TRIGGER broker_opportunity_delay ON "OrderIntentBrokerPostOpportunity"`);
+    await db.query(`DROP FUNCTION delay_broker_opportunity()`);
+
+    const lockIntent = await insertIntent({ clientOrderId: 'broker-lock-timeout' });
+    const locker = await connection();
+    await locker.query('BEGIN');
+    await locker.query(`SELECT id FROM "OrderIntent" WHERE id=$1 FOR UPDATE`, [lockIntent.id]);
+    started = performance.now();
+    expect(await service.bestEffortCaptureOrderIntentBrokerPostOpportunity(lockIntent.id, undefined, service.createBrokerObservationBudget())).toBeNull();
+    const lockTimeoutMs = performance.now() - started;
+    expect(lockTimeoutMs).toBeLessThan(250);
+    await locker.query('ROLLBACK');
+    await locker.end();
+
+    const cumulativeIntent = await insertIntent({ clientOrderId: 'broker-cumulative-budget' });
+    const budget = service.createBrokerObservationBudget();
+    const opportunity = await service.captureOrderIntentBrokerPostOpportunity({ orderIntentId: cumulativeIntent.id }, undefined, budget);
+    expect(opportunity).not.toBeNull();
+    const eventLocker = await connection();
+    await eventLocker.query('BEGIN');
+    await eventLocker.query(`SELECT id FROM "OrderIntentBrokerPostOpportunity" WHERE id=$1 FOR UPDATE`, [opportunity!.id]);
+    started = budget.startedAtMs;
+    expect(await service.bestEffortAppendBrokerOpportunityEvent({ opportunityId: opportunity!.id, eventType: 'ADAPTER_DISPATCH_REACHED' }, undefined, budget)).toBe(false);
+    const cumulativeMs = performance.now() - started;
+    expect(cumulativeMs).toBeLessThan(250);
+    await eventLocker.query('ROLLBACK');
+    await eventLocker.end();
+
+    console.info('BROKER_OBSERVATION_TIMEOUTS', JSON.stringify({ poolExhaustedMs, delayedConnectionMs, connectionRefusedMs, statementTimeoutMs, lockTimeoutMs, cumulativeMs }));
+  }, 10_000);
+
   it('classifies LIVE and unenrolled broker opportunities as non-applicable', async () => {
     const service = await import('../../services/order-intent-broker-opportunity.service.js');
     const live = await insertIntent({ assignmentId: liveAssignmentId, accountId: liveAccountId, clientOrderId: 'broker-live' });
     const liveOpportunity = await service.captureOrderIntentBrokerPostOpportunity({ orderIntentId: live.id, opportunitySequence: 1, idempotencyKey: 'broker-live:1' });
     expect(liveOpportunity).toMatchObject({ applicability: 'NOT_APPLICABLE_LIVE', enrollmentGenerationId: null, policyRevisionId: null });
-    await db.query(`UPDATE "AssignmentMarketPolicyEnrollmentGeneration" SET status='DISABLED',"disabledByUserId"=$1,"disabledAt"=now(),"disableReason"='test' WHERE id=$2`, [ownerId, enrollmentGenerationId]);
-    const unenrolled = await insertIntent({ clientOrderId: 'broker-unenrolled' });
+    const unenrolled = await insertIntent({ assignmentId: unenrolledPaperAssignmentId, accountId: unenrolledPaperAccountId, clientOrderId: 'broker-unenrolled' });
     const unenrolledOpportunity = await service.captureOrderIntentBrokerPostOpportunity({ orderIntentId: unenrolled.id, opportunitySequence: 1, idempotencyKey: 'broker-unenrolled:1' });
     expect(unenrolledOpportunity).toMatchObject({ applicability: 'NOT_APPLICABLE_UNENROLLED', enrollmentGenerationId: null, policyRevisionId: null });
   });
@@ -327,10 +413,15 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const exact = (await db.query(`SELECT * FROM "OrderIntentBrokerPostOpportunity" WHERE applicability='APPLICABLE_SUPERSEDED' ORDER BY id LIMIT 1`)).rows[0];
     const noneVisible = (await db.query(`INSERT INTO "OrderIntentBrokerPostOpportunity" ("orderIntentId","intentCoverageId","tradingAccountId","accountSubscriptionId","enrollmentGenerationId","policyRevisionId","clientOrderId","opportunitySequence","idempotencyKey","compositionCapture",applicability,"comparisonMode","tradingEffect") VALUES ($1,$2,$3,$4,$5,$6,$7,2,'broker-opportunity-frozen:2','NONE_VISIBLE','APPLICABLE_SUPERSEDED','COMPARE_ONLY','NONE') RETURNING *`, [exact.orderIntentId,exact.intentCoverageId,exact.tradingAccountId,exact.accountSubscriptionId,exact.enrollmentGenerationId,exact.policyRevisionId,exact.clientOrderId])).rows[0];
     const service = await import('../../services/order-intent-broker-comparison.service.js');
+    await db.query(`INSERT INTO "OrderIntentBrokerComparisonDelivery" ("opportunityId",status,"nextAttemptAt","createdAt","updatedAt") VALUES ($1,'PENDING','2000-01-01',now(),now()) ON CONFLICT ("opportunityId") DO UPDATE SET "nextAttemptAt"='2000-01-01'`,[noneVisible.id]);
     const [a,b] = await Promise.all([service.processOrderIntentBrokerComparisons({limit:25,workerId:'broker-a'}),service.processOrderIntentBrokerComparisons({limit:25,workerId:'broker-b'})]);
     expect(a.completed+b.completed).toBeGreaterThanOrEqual(3);
     const attempts=(await db.query(`SELECT a.*,count(g.id)::int gates FROM "OrderIntentBrokerComparisonAttempt" a LEFT JOIN "OrderIntentBrokerComparisonGate" g ON g."comparisonAttemptId"=a.id GROUP BY a.id ORDER BY a.id`)).rows;
     expect(attempts.find(row=>row.opportunityId===exact.id)).toMatchObject({gates:5,authority:'COMPARE_ONLY',tradingEffect:'NONE'});
+    const exactGates=(await db.query(`SELECT dimension,requirement,"allowedStatesJson" FROM "OrderIntentBrokerComparisonGate" WHERE "comparisonAttemptId"=$1 ORDER BY ordinal`,[attempts.find(row=>row.opportunityId===exact.id).id])).rows;
+    expect(exactGates.find(gate=>gate.dimension==='TREND')).toMatchObject({requirement:'REQUIRED',allowedStatesJson:['UP']});
+    expect(exactGates.find(gate=>gate.dimension==='BREADTH')).toMatchObject({requirement:'REQUIRED',allowedStatesJson:['POSITIVE']});
+    expect(exactGates.filter(gate=>!['TREND','BREADTH'].includes(gate.dimension)).every(gate=>gate.requirement==='IGNORED')).toBe(true);
     expect(attempts.find(row=>row.opportunityId===noneVisible.id)).toMatchObject({gates:0,outcome:'INSUFFICIENT_EVIDENCE',reasonCode:'NO_COMPOSITION_VISIBLE'});
     expect((await db.query(`SELECT "opportunityId",count(*)::int count FROM "OrderIntentBrokerComparisonAttempt" WHERE outcome<>'TECHNICAL_FAILURE' GROUP BY "opportunityId" HAVING count(*)>1`)).rows).toHaveLength(0);
     await expect(db.query(`UPDATE "OrderIntentBrokerComparisonAttempt" SET authority='ENFORCE' WHERE id=$1`, [attempts[0].id])).rejects.toThrow(/immutable/);
@@ -339,7 +430,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   it('bounds broker comparison retries and recovers an expired lease', async () => {
     const exact=(await db.query(`SELECT * FROM "OrderIntentBrokerPostOpportunity" WHERE applicability='APPLICABLE_SUPERSEDED' AND "compositionCapture"='EXACT' ORDER BY id LIMIT 1`)).rows[0];
     const retry=(await db.query(`INSERT INTO "OrderIntentBrokerPostOpportunity" ("orderIntentId","intentCoverageId","tradingAccountId","accountSubscriptionId","enrollmentGenerationId","policyRevisionId","clientOrderId","opportunitySequence","idempotencyKey","marketRegimeAssessmentId","sourceSetFingerprint","compositionCapture",applicability,"comparisonMode","tradingEffect") VALUES ($1,$2,$3,$4,$5,$6,$7,3,'broker-opportunity-frozen:3',$8,$9,'EXACT','APPLICABLE_SUPERSEDED','COMPARE_ONLY','NONE') RETURNING *`,[exact.orderIntentId,exact.intentCoverageId,exact.tradingAccountId,exact.accountSubscriptionId,exact.enrollmentGenerationId,exact.policyRevisionId,exact.clientOrderId,exact.marketRegimeAssessmentId,exact.sourceSetFingerprint])).rows[0];
-    const service=await import('../../services/order-intent-broker-comparison.service.js'); await service.seedOrderIntentBrokerComparisonDeliveries(25);
+    const service=await import('../../services/order-intent-broker-comparison.service.js'); await db.query(`INSERT INTO "OrderIntentBrokerComparisonDelivery" ("opportunityId",status,"nextAttemptAt","createdAt","updatedAt") VALUES ($1,'PENDING','2000-01-01',now(),now()) ON CONFLICT ("opportunityId") DO UPDATE SET status='PENDING',"nextAttemptAt"='2000-01-01',"leaseOwner"=NULL,"leaseExpiresAt"=NULL,"completedAt"=NULL`,[retry.id]);
     await db.query(`UPDATE "OrderIntentBrokerComparisonDelivery" SET status='CLAIMED',"leaseOwner"='dead-broker-worker',"leaseExpiresAt"=statement_timestamp()-interval '1 second' WHERE "opportunityId"=$1`,[retry.id]);
     const failed=await service.processOrderIntentBrokerComparisons({limit:1,workerId:'broker-retry',evaluator:(()=>{throw new Error('BROKER_COMPARE_FAILURE')}) as any});
     expect(failed.retrying).toBe(1); await db.query(`UPDATE "OrderIntentBrokerComparisonDelivery" SET "nextAttemptAt"=statement_timestamp() WHERE "opportunityId"=$1`,[retry.id]);
@@ -347,5 +438,5 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect((await db.query(`SELECT outcome FROM "OrderIntentBrokerComparisonAttempt" WHERE "opportunityId"=$1 ORDER BY attempt`,[retry.id])).rows.map(row=>row.outcome)).toEqual(['TECHNICAL_FAILURE','INSUFFICIENT_EVIDENCE']);
   });
 
-  it.each(['ALLOWED','BLOCKED'] as const)('records compare-only %s without changing broker authorization',async outcome=>{const exact=(await db.query(`SELECT * FROM "OrderIntentBrokerPostOpportunity" WHERE applicability='APPLICABLE_SUPERSEDED' AND "compositionCapture"='EXACT' ORDER BY id LIMIT 1`)).rows[0];const sequence=outcome==='ALLOWED'?4:5;const opportunity=(await db.query(`INSERT INTO "OrderIntentBrokerPostOpportunity" ("orderIntentId","intentCoverageId","tradingAccountId","accountSubscriptionId","enrollmentGenerationId","policyRevisionId","clientOrderId","opportunitySequence","idempotencyKey","marketRegimeAssessmentId","sourceSetFingerprint","compositionCapture",applicability,"comparisonMode","tradingEffect") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'EXACT','APPLICABLE_SUPERSEDED','COMPARE_ONLY','NONE') RETURNING *`,[exact.orderIntentId,exact.intentCoverageId,exact.tradingAccountId,exact.accountSubscriptionId,exact.enrollmentGenerationId,exact.policyRevisionId,exact.clientOrderId,sequence,`broker-outcome-${outcome}`,exact.marketRegimeAssessmentId,exact.sourceSetFingerprint])).rows[0];const dimensions=[['TREND','TREND_V1'],['VOLATILITY','VOLATILITY_V1'],['BREADTH','BREADTH_V1'],['PARTICIPATION','PARTICIPATION_V1'],['INTRADAY_STRESS','INTRADAY_STRESS_V1']] as const;const evaluator=(()=>({outcome,reasonCode:`TEST_${outcome}`,gates:dimensions.map(([dimension,algorithmVersion],index)=>({dimension,algorithmVersion,requirement:'IGNORED' as const,outcome:index===0&&outcome==='BLOCKED'?'BLOCKED' as const:'IGNORED' as const,observedState:null,sourceHealth:'MISSING' as const,sourceAssessmentId:null,allowedStates:[],reasonCode:`TEST_${outcome}`,ordinal:index+1}))})) as any;const service=await import('../../services/order-intent-broker-comparison.service.js');const result=await service.processOrderIntentBrokerComparisons({limit:1,workerId:`outcome-${outcome}`,evaluator});expect(result.completed).toBe(1);expect((await db.query(`SELECT outcome,authority,"tradingEffect" FROM "OrderIntentBrokerComparisonAttempt" WHERE "opportunityId"=$1`,[opportunity.id])).rows[0]).toEqual({outcome,authority:'COMPARE_ONLY',tradingEffect:'NONE'});});
+  it.each(['ALLOWED','BLOCKED'] as const)('records compare-only %s without changing broker authorization',async outcome=>{const exact=(await db.query(`SELECT * FROM "OrderIntentBrokerPostOpportunity" WHERE applicability='APPLICABLE_SUPERSEDED' AND "compositionCapture"='EXACT' ORDER BY id LIMIT 1`)).rows[0];const sequence=outcome==='ALLOWED'?4:5;const opportunity=(await db.query(`INSERT INTO "OrderIntentBrokerPostOpportunity" ("orderIntentId","intentCoverageId","tradingAccountId","accountSubscriptionId","enrollmentGenerationId","policyRevisionId","clientOrderId","opportunitySequence","idempotencyKey","marketRegimeAssessmentId","sourceSetFingerprint","compositionCapture",applicability,"comparisonMode","tradingEffect") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'EXACT','APPLICABLE_SUPERSEDED','COMPARE_ONLY','NONE') RETURNING *`,[exact.orderIntentId,exact.intentCoverageId,exact.tradingAccountId,exact.accountSubscriptionId,exact.enrollmentGenerationId,exact.policyRevisionId,exact.clientOrderId,sequence,`broker-outcome-${outcome}`,exact.marketRegimeAssessmentId,exact.sourceSetFingerprint])).rows[0];await db.query(`INSERT INTO "OrderIntentBrokerComparisonDelivery" ("opportunityId",status,"nextAttemptAt","createdAt","updatedAt") VALUES ($1,'PENDING','2000-01-01',now(),now())`,[opportunity.id]);const dimensions=[['TREND','TREND_V1'],['VOLATILITY','VOLATILITY_V1'],['BREADTH','BREADTH_V1'],['PARTICIPATION','PARTICIPATION_V1'],['INTRADAY_STRESS','INTRADAY_STRESS_V1']] as const;const evaluator=(()=>({outcome,reasonCode:`TEST_${outcome}`,gates:dimensions.map(([dimension,algorithmVersion],index)=>({dimension,algorithmVersion,requirement:'IGNORED' as const,outcome:index===0&&outcome==='BLOCKED'?'BLOCKED' as const:'IGNORED' as const,observedState:null,sourceHealth:'MISSING' as const,sourceAssessmentId:null,allowedStates:[],reasonCode:`TEST_${outcome}`,ordinal:index+1}))})) as any;const service=await import('../../services/order-intent-broker-comparison.service.js');const result=await service.processOrderIntentBrokerComparisons({limit:1,workerId:`outcome-${outcome}`,evaluator});expect(result.completed).toBe(1);expect((await db.query(`SELECT outcome,authority,"tradingEffect" FROM "OrderIntentBrokerComparisonAttempt" WHERE "opportunityId"=$1`,[opportunity.id])).rows[0]).toEqual({outcome,authority:'COMPARE_ONLY',tradingEffect:'NONE'});});
 });

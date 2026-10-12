@@ -63,6 +63,7 @@ import { runOrderIntentMarketPolicyComparisonWorker } from '../workers/order-int
 import { ORDER_INTENT_MARKET_POLICY_COMPARISON_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { runOrderIntentBrokerComparisonWorker } from '../workers/order-intent-broker-comparison.worker.js';
 import { ORDER_INTENT_BROKER_COMPARISON_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
+import { closeBrokerObservationPrisma } from '../db/broker-observation-prisma.js';
 
 const app = createApp();
 
@@ -435,6 +436,7 @@ async function shutdown(signal: NodeJS.Signals) {
       closeMarketMinuteDataLockPool(),
       closeBreadthObservationLockPool(),
       closeTradingAccountWorkflowLockPool(),
+      closeBrokerObservationPrisma(),
     ]),
     new Promise((resolve) => setTimeout(resolve, 5_000)),
   ]);

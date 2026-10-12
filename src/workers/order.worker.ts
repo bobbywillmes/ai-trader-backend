@@ -33,7 +33,7 @@ import { recordOrderIntentRiskEvaluation } from '../services/order-audit.service
 import { resolveSubscriptionOrderInput } from '../services/subscription.service.js';
 import { getAlpacaOrderByClientOrderId } from '../integrations/alpaca/orders.adapter.js';
 import { getBrokerWriteDeliveryClassification } from '../errors/broker-write-delivery-error.js';
-import { bestEffortAppendBrokerOpportunityEvent } from '../services/order-intent-broker-opportunity.service.js';
+import { bestEffortAppendBrokerOpportunityEvent, createBrokerObservationBudget } from '../services/order-intent-broker-opportunity.service.js';
 
 export type SubmittedOrderSyncResult = {
   found: number;
@@ -163,8 +163,9 @@ export async function recoverStaleSubmittingIntentsForAccount(
 
     const persisted = intent.brokerOrders[0];
     if (persisted) {
-      await bestEffortAppendBrokerOpportunityEvent({orderIntentId:intent.id,eventType:'RECOVERY_FOUND',evidence:{source:'local_broker_order',brokerOrderId:persisted.brokerOrderId}});
-      await bestEffortAppendBrokerOpportunityEvent({orderIntentId:intent.id,eventType:'BROKER_ORDER_MATERIALIZED',evidence:{source:'local_broker_order',brokerOrderId:persisted.brokerOrderId}});
+      const observationBudget=createBrokerObservationBudget();
+      await bestEffortAppendBrokerOpportunityEvent({orderIntentId:intent.id,eventType:'RECOVERY_FOUND',evidence:{source:'local_broker_order',brokerOrderId:persisted.brokerOrderId}},undefined,observationBudget);
+      await bestEffortAppendBrokerOpportunityEvent({orderIntentId:intent.id,eventType:'BROKER_ORDER_MATERIALIZED',evidence:{source:'local_broker_order',brokerOrderId:persisted.brokerOrderId}},undefined,observationBudget);
       await prisma.orderIntent.updateMany({
         where: { id: intent.id, status: 'submitting' },
         data: { status: 'submitted', blockReason: null },
@@ -181,13 +182,14 @@ export async function recoverStaleSubmittingIntentsForAccount(
         'pending_order_idempotency_check'
       );
     } catch(error) {
-      await bestEffortAppendBrokerOpportunityEvent({orderIntentId:intent.id,eventType:'RECOVERY_INCONCLUSIVE',evidence:{source:'stale_submitting_lookup'}});
+      await bestEffortAppendBrokerOpportunityEvent({orderIntentId:intent.id,eventType:'RECOVERY_INCONCLUSIVE',evidence:{source:'stale_submitting_lookup'}},undefined,createBrokerObservationBudget());
       throw error;
     }
 
     if (brokerOrder) {
-      await bestEffortAppendBrokerOpportunityEvent({orderIntentId:intent.id,eventType:'RECOVERY_FOUND',evidence:{source:'broker_lookup',brokerOrderId:brokerOrder.id}});
-      await bestEffortAppendBrokerOpportunityEvent({orderIntentId:intent.id,eventType:'BROKER_ORDER_MATERIALIZED',evidence:{source:'broker_lookup',brokerOrderId:brokerOrder.id,status:brokerOrder.status}});
+      const observationBudget=createBrokerObservationBudget();
+      await bestEffortAppendBrokerOpportunityEvent({orderIntentId:intent.id,eventType:'RECOVERY_FOUND',evidence:{source:'broker_lookup',brokerOrderId:brokerOrder.id}},undefined,observationBudget);
+      await bestEffortAppendBrokerOpportunityEvent({orderIntentId:intent.id,eventType:'BROKER_ORDER_MATERIALIZED',evidence:{source:'broker_lookup',brokerOrderId:brokerOrder.id,status:brokerOrder.status}},undefined,observationBudget);
       const security = await prisma.security.findUniqueOrThrow({
         where: { symbol: brokerOrder.symbol.toUpperCase() },
         select: { id: true },
@@ -242,7 +244,7 @@ export async function recoverStaleSubmittingIntentsForAccount(
       continue;
     }
 
-    await bestEffortAppendBrokerOpportunityEvent({orderIntentId:intent.id,eventType:'RECOVERY_ABSENCE_CONFIRMED',evidence:{source:'broker_lookup',clientOrderId:intent.clientOrderId}});
+    await bestEffortAppendBrokerOpportunityEvent({orderIntentId:intent.id,eventType:'RECOVERY_ABSENCE_CONFIRMED',evidence:{source:'broker_lookup',clientOrderId:intent.clientOrderId}},undefined,createBrokerObservationBudget());
 
     if (intent.liveEntryAcceptanceRunId != null) {
       const recorded = getRecordedDeliveryClassification(intent.blockReason);

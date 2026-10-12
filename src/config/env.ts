@@ -68,6 +68,7 @@ export const envSchema = z.object({
   BREADTH_V2_SHADOW_WORKER_ENABLED: envBoolean.default(false),
   ORDER_INTENT_MARKET_POLICY_COMPARISON_WORKER_ENABLED: envBoolean.default(false),
   ORDER_INTENT_BROKER_COMPARISON_WORKER_ENABLED: envBoolean.default(false),
+  BROKER_OBSERVATION_POOL_MAX: z.coerce.number().int().min(1).max(8).default(2),
   MASSIVE_NEWS_WORKER_ENABLED: envBoolean.default(false),
   MASSIVE_NEWS_WORKER_INTERVAL_MS: z.coerce
     .number()

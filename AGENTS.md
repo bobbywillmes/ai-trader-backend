@@ -403,6 +403,10 @@ Phase 3B.3B anchors best-effort observation only after the shared entry idempote
 lookup confirms absence and before a new Alpaca BUY POST. Lifecycle events mirror
 dispatch, response, delivery certainty and recovery without changing any decision;
 comparison remains asynchronous, default-off and non-authoritative.
+Broker-boundary evidence uses a dedicated, default-two-connection PrismaPg pool with
+a finite driver acquisition timeout. One monotonic 250 ms budget covers each grouped
+pre-POST, post-response, or recovery observation sequence; never race and abandon an
+evidence write to reach the broker boundary.
 
 The intended lifecycle is:
 

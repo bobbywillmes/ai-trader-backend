@@ -1,15 +1,52 @@
 import { randomUUID } from 'node:crypto';
 import { Prisma, type OrderIntentBrokerOpportunityApplicability, type OrderIntentBrokerOpportunityEventType, type PrismaClient } from '@prisma/client';
-import { prisma } from '../db/prisma.js';
+import { brokerObservationPrisma, BROKER_OBSERVATION_CONNECTION_TIMEOUT_MS } from '../db/broker-observation-prisma.js';
 import { logger } from '../config/logger.js';
 
+export const BROKER_OBSERVATION_BUDGET_MS = 250;
 const BROKER_EVIDENCE_MAX_WAIT_MS = 250;
 const BROKER_EVIDENCE_TRANSACTION_TIMEOUT_MS = 1_500;
+const BROKER_OBSERVATION_DEADLINE_MARGIN_MS = 10;
+const BROKER_OBSERVATION_ACQUISITION_CLEANUP_MARGIN_MS = 50;
 const latencySamples = { disabled: [] as number[], enabled: [] as number[], failed: [] as number[] };
 function observeLatency(bucket: keyof typeof latencySamples, started: number) { const values=latencySamples[bucket]; values.push(performance.now()-started); if(values.length>500)values.shift(); }
 export function getBrokerOpportunityLatencySnapshot() { return Object.fromEntries(Object.entries(latencySamples).map(([key,values])=>{const sorted=[...values].sort((a,b)=>a-b);return [key,{count:values.length,p50Ms:sorted[Math.floor((sorted.length-1)*.5)]??null,p95Ms:sorted[Math.floor((sorted.length-1)*.95)]??null,maxMs:sorted.at(-1)??null}];})); }
 
 type CoverageAnchor = { environment: string; provenance: string; captureSchemaVersion: number };
+export type BrokerObservationBudget = { startedAtMs: number; deadlineAtMs: number };
+type EvidenceTransactionLimits = { maxWait: number; timeout: number; statementTimeoutMs: number; lockTimeoutMs: number };
+
+export function createBrokerObservationBudget(nowMs = performance.now(), budgetMs = BROKER_OBSERVATION_BUDGET_MS): BrokerObservationBudget {
+  return { startedAtMs: nowMs, deadlineAtMs: nowMs + budgetMs };
+}
+
+export function getBrokerObservationRemainingMs(budget: BrokerObservationBudget, nowMs = performance.now()) {
+  return Math.max(0, Math.floor(budget.deadlineAtMs - nowMs));
+}
+
+export function getBrokerEvidenceTransactionLimits(budget?: BrokerObservationBudget): EvidenceTransactionLimits | null {
+  if (!budget) return { maxWait: BROKER_EVIDENCE_MAX_WAIT_MS, timeout: BROKER_EVIDENCE_TRANSACTION_TIMEOUT_MS, statementTimeoutMs: 1_000, lockTimeoutMs: 250 };
+  const remaining = getBrokerObservationRemainingMs(budget);
+  const reservedAcquisitionMs = BROKER_OBSERVATION_CONNECTION_TIMEOUT_MS + BROKER_OBSERVATION_ACQUISITION_CLEANUP_MARGIN_MS;
+  const timeout = remaining - reservedAcquisitionMs - BROKER_OBSERVATION_DEADLINE_MARGIN_MS;
+  if (timeout < 1) return null;
+  return {
+    maxWait: reservedAcquisitionMs,
+    timeout,
+    statementTimeoutMs: Math.max(1, timeout - 1),
+    lockTimeoutMs: Math.max(1, Math.min(250, timeout - 1)),
+  };
+}
+
+async function runEvidenceTransaction<T>(db: PrismaClient, budget: BrokerObservationBudget | undefined, execute: (tx: Prisma.TransactionClient, limits: EvidenceTransactionLimits) => Promise<T>) {
+  const limits = getBrokerEvidenceTransactionLimits(budget);
+  if (!limits) throw new Error('BROKER_OBSERVATION_BUDGET_EXHAUSTED');
+  return db.$transaction(async tx => {
+    await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${limits.lockTimeoutMs}ms'`);
+    await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${limits.statementTimeoutMs}ms'`);
+    return execute(tx, limits);
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, maxWait: limits.maxWait, timeout: limits.timeout });
+}
 
 export function resolveBrokerOpportunityApplicability(anchor: CoverageAnchor): OrderIntentBrokerOpportunityApplicability {
   if (anchor.environment === 'LIVE') return 'NOT_APPLICABLE_LIVE';
@@ -24,13 +61,11 @@ export async function captureOrderIntentBrokerPostOpportunity(input: {
   orderIntentId: number;
   opportunitySequence?: number;
   idempotencyKey?: string;
-}, db: PrismaClient = prisma) {
+}, db: PrismaClient = brokerObservationPrisma, budget?: BrokerObservationBudget) {
   if (input.opportunitySequence !== undefined && (!Number.isInteger(input.opportunitySequence) || input.opportunitySequence < 1)) throw new RangeError('Opportunity sequence must be positive.');
   const idempotencyKey=input.idempotencyKey?.trim()||`broker-post:${input.orderIntentId}:${randomUUID()}`;
 
-  return db.$transaction(async tx => {
-    await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '250ms'`);
-    await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '1000ms'`);
+  return runEvidenceTransaction(db, budget, async tx => {
     const rollout=await tx.orderIntentBrokerOpportunityCaptureRollout.findUnique({where:{id:1},select:{enabled:true,effectiveEpoch:true}});
     if(!rollout?.enabled||!rollout.effectiveEpoch)return null;
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${idempotencyKey},0))::text`;
@@ -80,15 +115,15 @@ export async function captureOrderIntentBrokerPostOpportunity(input: {
       events: { create: { orderIntentId:anchor.orderIntentId,sequence: 1, eventType: 'OPPORTUNITY_CAPTURED', evidenceJson: { captureVersion: 1 } } },
     } });
     return inserted;
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, maxWait: BROKER_EVIDENCE_MAX_WAIT_MS, timeout: BROKER_EVIDENCE_TRANSACTION_TIMEOUT_MS });
+  });
 }
 
-export async function bestEffortCaptureOrderIntentBrokerPostOpportunity(orderIntentId:number,db:PrismaClient=prisma){const started=performance.now();try{const row=await captureOrderIntentBrokerPostOpportunity({orderIntentId},db);observeLatency(row?'enabled':'disabled',started);return row;}catch(error){observeLatency('failed',started);if(error instanceof Error&&error.message==='BROKER_OPPORTUNITY_ANCHOR_UNAVAILABLE'){try{await appendMissingBrokerObservation(orderIntentId,{reasonCode:'BROKER_OPPORTUNITY_ANCHOR_UNAVAILABLE'},db);}catch(missingError){logger.warn({orderIntentId,error:missingError},'Missing broker observation event also failed without changing broker submission.');}}logger.warn({orderIntentId,error},'Broker opportunity observation failed without changing broker submission.');return null;}}
+export async function bestEffortCaptureOrderIntentBrokerPostOpportunity(orderIntentId:number,db:PrismaClient=brokerObservationPrisma,budget?:BrokerObservationBudget){const started=performance.now();try{const row=await captureOrderIntentBrokerPostOpportunity({orderIntentId},db,budget);observeLatency(row?'enabled':'disabled',started);return row;}catch(error){observeLatency('failed',started);if(error instanceof Error&&error.message==='BROKER_OPPORTUNITY_ANCHOR_UNAVAILABLE'&&getBrokerEvidenceTransactionLimits(budget)){try{await appendMissingBrokerObservation(orderIntentId,{reasonCode:'BROKER_OPPORTUNITY_ANCHOR_UNAVAILABLE'},db,budget);}catch(missingError){logger.warn({orderIntentId,error:missingError},'Missing broker observation event also failed without changing broker submission.');}}logger.warn({orderIntentId,error},'Broker opportunity observation failed without changing broker submission.');return null;}}
 
-export async function appendOrderIntentBrokerOpportunityEvent(opportunityId:number,eventType:OrderIntentBrokerOpportunityEventType,evidence:Prisma.InputJsonValue,db:PrismaClient=prisma){return db.$transaction(async tx=>{await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '250ms'`);await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '1000ms'`);const rows=await tx.$queryRaw<Array<{orderIntentId:number}>>`SELECT "orderIntentId" FROM "OrderIntentBrokerPostOpportunity" WHERE id=${opportunityId} FOR UPDATE`;const anchor=rows[0];if(!anchor)throw new Error('BROKER_OPPORTUNITY_NOT_FOUND');const last=await tx.orderIntentBrokerOpportunityEvent.aggregate({where:{opportunityId},_max:{sequence:true}});return tx.orderIntentBrokerOpportunityEvent.create({data:{orderIntentId:anchor.orderIntentId,opportunityId,sequence:(last._max.sequence??0)+1,eventType,evidenceJson:evidence}});},{maxWait:BROKER_EVIDENCE_MAX_WAIT_MS,timeout:BROKER_EVIDENCE_TRANSACTION_TIMEOUT_MS});}
+export async function appendOrderIntentBrokerOpportunityEvent(opportunityId:number,eventType:OrderIntentBrokerOpportunityEventType,evidence:Prisma.InputJsonValue,db:PrismaClient=brokerObservationPrisma,budget?:BrokerObservationBudget){return runEvidenceTransaction(db,budget,async tx=>{const rows=await tx.$queryRaw<Array<{orderIntentId:number}>>`SELECT "orderIntentId" FROM "OrderIntentBrokerPostOpportunity" WHERE id=${opportunityId} FOR UPDATE`;const anchor=rows[0];if(!anchor)throw new Error('BROKER_OPPORTUNITY_NOT_FOUND');const last=await tx.orderIntentBrokerOpportunityEvent.aggregate({where:{opportunityId},_max:{sequence:true}});return tx.orderIntentBrokerOpportunityEvent.create({data:{orderIntentId:anchor.orderIntentId,opportunityId,sequence:(last._max.sequence??0)+1,eventType,evidenceJson:evidence}});});}
 
-export async function appendMissingBrokerObservation(orderIntentId:number,evidence:Prisma.InputJsonValue,db:PrismaClient=prisma){return db.$transaction(async tx=>{await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '250ms'`);await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '1000ms'`);await tx.$queryRaw`SELECT id FROM "OrderIntent" WHERE id=${orderIntentId} FOR UPDATE`;const last=await tx.orderIntentBrokerOpportunityEvent.aggregate({where:{orderIntentId,opportunityId:null},_max:{sequence:true}});return tx.orderIntentBrokerOpportunityEvent.create({data:{orderIntentId,opportunityId:null,sequence:(last._max.sequence??0)+1,eventType:'MISSING_OBSERVATION',evidenceJson:evidence}});},{maxWait:BROKER_EVIDENCE_MAX_WAIT_MS,timeout:BROKER_EVIDENCE_TRANSACTION_TIMEOUT_MS});}
+export async function appendMissingBrokerObservation(orderIntentId:number,evidence:Prisma.InputJsonValue,db:PrismaClient=brokerObservationPrisma,budget?:BrokerObservationBudget){return runEvidenceTransaction(db,budget,async tx=>{await tx.$queryRaw`SELECT id FROM "OrderIntent" WHERE id=${orderIntentId} FOR UPDATE`;const last=await tx.orderIntentBrokerOpportunityEvent.aggregate({where:{orderIntentId,opportunityId:null},_max:{sequence:true}});return tx.orderIntentBrokerOpportunityEvent.create({data:{orderIntentId,opportunityId:null,sequence:(last._max.sequence??0)+1,eventType:'MISSING_OBSERVATION',evidenceJson:evidence}});});}
 
-async function appendLatestOrderIntentBrokerOpportunityEvent(orderIntentId:number,eventType:OrderIntentBrokerOpportunityEventType,evidence:Prisma.InputJsonValue,db:PrismaClient){return db.$transaction(async tx=>{await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '250ms'`);await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '1000ms'`);await tx.$queryRaw`SELECT id FROM "OrderIntent" WHERE id=${orderIntentId} FOR UPDATE`;const opportunity=await tx.orderIntentBrokerPostOpportunity.findFirst({where:{orderIntentId},orderBy:{opportunitySequence:'desc'},select:{id:true}});if(!opportunity)return null;await tx.$queryRaw`SELECT id FROM "OrderIntentBrokerPostOpportunity" WHERE id=${opportunity.id} FOR UPDATE`;const last=await tx.orderIntentBrokerOpportunityEvent.aggregate({where:{opportunityId:opportunity.id},_max:{sequence:true}});return tx.orderIntentBrokerOpportunityEvent.create({data:{orderIntentId,opportunityId:opportunity.id,sequence:(last._max.sequence??0)+1,eventType,evidenceJson:evidence}});},{maxWait:BROKER_EVIDENCE_MAX_WAIT_MS,timeout:BROKER_EVIDENCE_TRANSACTION_TIMEOUT_MS});}
+async function appendLatestOrderIntentBrokerOpportunityEvent(orderIntentId:number,eventType:OrderIntentBrokerOpportunityEventType,evidence:Prisma.InputJsonValue,db:PrismaClient,budget?:BrokerObservationBudget){return runEvidenceTransaction(db,budget,async tx=>{await tx.$queryRaw`SELECT id FROM "OrderIntent" WHERE id=${orderIntentId} FOR UPDATE`;const opportunity=await tx.orderIntentBrokerPostOpportunity.findFirst({where:{orderIntentId},orderBy:{opportunitySequence:'desc'},select:{id:true}});if(!opportunity)return null;await tx.$queryRaw`SELECT id FROM "OrderIntentBrokerPostOpportunity" WHERE id=${opportunity.id} FOR UPDATE`;const last=await tx.orderIntentBrokerOpportunityEvent.aggregate({where:{opportunityId:opportunity.id},_max:{sequence:true}});return tx.orderIntentBrokerOpportunityEvent.create({data:{orderIntentId,opportunityId:opportunity.id,sequence:(last._max.sequence??0)+1,eventType,evidenceJson:evidence}});});}
 
-export async function bestEffortAppendBrokerOpportunityEvent(args:{opportunityId?:number|null;orderIntentId?:number;eventType:OrderIntentBrokerOpportunityEventType;evidence?:Prisma.InputJsonValue},db:PrismaClient=prisma){try{const row=args.opportunityId?await appendOrderIntentBrokerOpportunityEvent(args.opportunityId,args.eventType,args.evidence??{},db):args.orderIntentId===undefined?null:await appendLatestOrderIntentBrokerOpportunityEvent(args.orderIntentId,args.eventType,args.evidence??{},db);return row!==null;}catch(error){logger.warn({opportunityId:args.opportunityId,orderIntentId:args.orderIntentId,eventType:args.eventType,error},'Broker opportunity event persistence failed without changing broker behavior.');return false;}}
+export async function bestEffortAppendBrokerOpportunityEvent(args:{opportunityId?:number|null;orderIntentId?:number;eventType:OrderIntentBrokerOpportunityEventType;evidence?:Prisma.InputJsonValue},db:PrismaClient=brokerObservationPrisma,budget?:BrokerObservationBudget){try{if(!getBrokerEvidenceTransactionLimits(budget))return false;const row=args.opportunityId?await appendOrderIntentBrokerOpportunityEvent(args.opportunityId,args.eventType,args.evidence??{},db,budget):args.orderIntentId===undefined?null:await appendLatestOrderIntentBrokerOpportunityEvent(args.orderIntentId,args.eventType,args.evidence??{},db,budget);return row!==null;}catch(error){logger.warn({opportunityId:args.opportunityId,orderIntentId:args.orderIntentId,eventType:args.eventType,error},'Broker opportunity event persistence failed without changing broker behavior.');return false;}}
