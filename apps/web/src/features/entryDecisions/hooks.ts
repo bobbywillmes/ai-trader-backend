@@ -29,18 +29,19 @@ export function useEntryDecision(token: string | null, id: number | null) {
   });
 }
 
-export function useEntryDecisionDrawer(token: string | null) {
+export function useEntryDecisionDrawer(token: string | null, controlledDecisionId?: number | null) {
   const [selectedDecisionId, setSelectedDecisionId] = useState<number | null>(
     null
   );
-  const detailQuery = useEntryDecision(token, selectedDecisionId);
+  const activeDecisionId = controlledDecisionId === undefined ? selectedDecisionId : controlledDecisionId;
+  const detailQuery = useEntryDecision(token, activeDecisionId);
 
   return {
-    selectedDecisionId,
+    selectedDecisionId: activeDecisionId,
     openDecision: setSelectedDecisionId,
     closeDecision: () => setSelectedDecisionId(null),
     drawerProps: {
-      opened: selectedDecisionId !== null,
+      opened: activeDecisionId !== null,
       decision: detailQuery.data?.decision ?? null,
       isLoading: detailQuery.isLoading,
       isError: detailQuery.isError,

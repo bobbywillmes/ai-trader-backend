@@ -3,7 +3,7 @@ import { MantineProvider } from "@mantine/core";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import type { EntryDecisionSummary } from "./types";
 
 const mocks = vi.hoisted(() => ({ query: { data: { decisions: [] as EntryDecisionSummary[], pagination: { page: 1, pageSize: 25, total: 0, totalPages: 1 } }, isLoading: false, isError: false, isFetching: false, error: null as Error | null, refetch: vi.fn() } }));
@@ -11,9 +11,9 @@ vi.mock("./hooks", async () => {
   const React = await import("react");
   return {
     useEntryDecisions: () => mocks.query,
-    useEntryDecisionDrawer: () => {
-      const [id, setId] = React.useState<number | null>(null);
-      return { openDecision: setId, closeDecision: () => setId(null), drawerProps: { opened: id !== null, decision: null, isLoading: false, isError: false, error: null } };
+    useEntryDecisionDrawer: (_token: string | null, controlledId?: number | null) => {
+      const [id, setId] = React.useState<number | null>(null); const active = controlledId === undefined ? id : controlledId;
+      return { openDecision: setId, closeDecision: () => setId(null), drawerProps: { opened: active !== null, decision: null, isLoading: false, isError: false, error: null } };
     },
   };
 });
@@ -27,7 +27,8 @@ class ResizeObserverMock { callback: ResizeObserverCallback; constructor(callbac
 const decisions: EntryDecisionSummary[] = [{
   id: 21, tradingAccountId: null, tradingAccount: null, decisionKey: "decision-long-key", evaluatedAt: "2026-08-03T19:20:00Z", source: "n8n_etf_lean_entry_engine", symbol: "RSP", decisionState: "dip_detected", decisionReason: "below_prev_close_but_dip_threshold_not_met", signalAction: null, signalEligible: false, signalCreated: false, signalBlocked: false, blockingReason: null, persistenceReason: "decision_state_changed", currentPrice: 215.31, dipPercent: .31, dipThresholdPercent: .3, allowOrderSignals: true, dryRun: false, eventRisk: null, marketSession: "regular", tradingEnabled: true, killSwitchEnabled: false, paperMode: true, subscriptionId: 4, subscriptionKey: "rsp-dip-subscription-with-long-routing-name", strategyId: 2, strategyKey: "dip_strategy", exitProfileId: 1, exitProfileKey: "trail", orderIntentId: null, brokerOrderRecordId: null, trackedPositionId: null, createdAt: "2026-08-03T19:20:00Z",
 }, { id: 22, tradingAccountId: 7, tradingAccount: { id: 7, displayName: "Bobby Paper", broker: "ALPACA", environment: "PAPER" }, decisionKey: "second", evaluatedAt: "2026-08-03T20:00:00Z", source: "runtime", symbol: "SPY", decisionState: "eligible", decisionReason: "no_dip_yet", signalAction: "buy", signalEligible: true, signalCreated: true, signalBlocked: false, blockingReason: null, persistenceReason: "periodic_evaluation", currentPrice: null, dipPercent: null, dipThresholdPercent: null, allowOrderSignals: true, dryRun: false, eventRisk: null, marketSession: null, tradingEnabled: true, killSwitchEnabled: false, paperMode: true, subscriptionId: null, subscriptionKey: null, strategyId: null, strategyKey: null, exitProfileId: null, exitProfileKey: null, orderIntentId: 91, brokerOrderRecordId: null, trackedPositionId: null, createdAt: "2026-08-03T20:00:00Z" }];
-function page() { return <MemoryRouter initialEntries={["/entry-decisions?account=all"]}><MantineProvider defaultColorScheme="dark"><EntryDecisionsPage /></MantineProvider></MemoryRouter>; }
+function Location() { const location = useLocation(); return <div data-testid="location">{location.search}</div>; }
+function page(entry = "/entry-decisions?account=all") { return <MemoryRouter initialEntries={[entry]}><MantineProvider defaultColorScheme="dark"><EntryDecisionsPage /><Location /></MantineProvider></MemoryRouter>; }
 function renderPage() { return render(page()); }
 beforeEach(() => { vi.clearAllMocks(); mocks.query.data = { decisions, pagination: { page: 1, pageSize: 25, total: decisions.length, totalPages: 1 } }; mocks.query.isLoading = false; mocks.query.isError = false; mocks.query.isFetching = false; mocks.query.error = null; vi.stubGlobal("ResizeObserver", ResizeObserverMock); window.matchMedia = vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -43,7 +44,13 @@ describe("Entry Decisions responsive page", () => {
   });
   it("uses mobile cards, opens the correct details drawer, closes on Escape, and restores focus", async () => {
     renderPage(); resize?.(390); await screen.findByText("RSP"); const openers = screen.getAllByRole("button", { name: "View details" }); await userEvent.setup().click(openers[1]);
-    expect(await screen.findByRole("dialog", { name: "Entry Decision" })).toBeTruthy(); fireEvent.keyDown(document.body, { key: "Escape" }); await waitFor(() => expect(screen.queryByRole("dialog", { name: "Entry Decision" })).toBeNull()); await waitFor(() => expect(document.activeElement).toBe(openers[1]));
+    expect(screen.getByTestId("location").textContent).toContain("decision=22"); expect(screen.getByTestId("location").textContent).toContain("intent=91");
+    expect(await screen.findByRole("dialog", { name: "Entry Decision" })).toBeTruthy(); fireEvent.keyDown(document.body, { key: "Escape" }); await waitFor(() => expect(screen.queryByRole("dialog", { name: "Entry Decision" })).toBeNull()); expect(screen.getByTestId("location").textContent).toBe("?account=all"); await waitFor(() => expect(document.activeElement).toBe(openers[1]));
+  });
+  it("restores URL-authoritative detail selection without removing filters", async () => {
+    render(page("/entry-decisions?account=all&symbol=SPY&page=2&decision=22&intent=91")); resize?.(390);
+    expect(await screen.findByRole("dialog", { name: "Entry Decision" })).toBeTruthy(); fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toContain("symbol=SPY")); expect(screen.getByTestId("location").textContent).toContain("page=2"); expect(screen.getByTestId("location").textContent).not.toContain("intent=");
   });
   it("preserves filters, mobile filter drawer, clear all, and refresh", async () => {
     renderPage(); resize?.(390); const user = userEvent.setup(); await user.type(screen.getByLabelText("Symbol"), "spy"); expect(screen.queryByText("Symbol: SPY")).toBeNull(); await user.click(screen.getByRole("button", { name: "Filter Results" })); expect(await screen.findByText("Symbol: SPY")).toBeTruthy();

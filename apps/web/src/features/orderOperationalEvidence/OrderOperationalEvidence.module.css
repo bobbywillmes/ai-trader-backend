@@ -1,0 +1,4 @@
+.section { border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-md); padding: var(--mantine-spacing-md); min-width: 0; }
+.technical { font-family: var(--mantine-font-family-monospace); overflow-wrap: anywhere; }
+.gateGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--mantine-spacing-sm); }
+@container responsive-data-view (max-width: 36rem) { .gateGrid { grid-template-columns: minmax(0, 1fr); } .section { padding: var(--mantine-spacing-sm); } }
