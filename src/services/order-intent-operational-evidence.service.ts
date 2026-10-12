@@ -84,6 +84,25 @@ function presentAttempt(attempt: any, user: EvidenceUser, includeRawEvidence: bo
   };
 }
 
+function presentEventDetails(value: Prisma.JsonValue) {
+  if (!value || Array.isArray(value) || typeof value !== 'object') return null;
+  const record = value as Record<string, Prisma.JsonValue>;
+  const text = (key: string) => typeof record[key] === 'string' ? record[key] as string : null;
+  const number = (key: string) => typeof record[key] === 'number' ? record[key] as number : null;
+  const details = {
+    source: text('source'),
+    brokerOrderId: text('brokerOrderId'),
+    brokerStatus: text('status'),
+    classification: text('classification'),
+    statusCode: number('statusCode'),
+    adapter: text('adapter'),
+    operation: text('operation'),
+    clientOrderId: text('clientOrderId'),
+    captureVersion: number('captureVersion'),
+  };
+  return Object.values(details).some((item) => item !== null) ? details : null;
+}
+
 function comparisonState(delivery: any, attempts: any[]) {
   if (!delivery) return 'NOT_SCHEDULED';
   if (delivery.status === 'TERMINAL_FAILURE') return 'TERMINAL_RETRY_EXHAUSTED';
@@ -283,6 +302,7 @@ export async function getAccessibleOrderIntentOperationalEvidence(
   const presentEvent = (event: any) => ({
     id: event.id, sequence: event.sequence, eventType: event.eventType,
     occurredAt: event.occurredAt, createdAt: event.createdAt,
+    details: presentEventDetails(event.evidenceJson),
     ...(includeRawEvent(user, options.includeRawEvidence, event.evidenceJson)),
   });
 
@@ -311,6 +331,10 @@ export async function getAccessibleOrderIntentOperationalEvidence(
       attemptBounds: { returned: opportunity.comparisonAttempts.length, limit: 20, total: opportunity._count.comparisonAttempts, hasMore: opportunity._count.comparisonAttempts > opportunity.comparisonAttempts.length },
     },
     events: opportunity.events.map(presentEvent),
+    relatedBrokerOrders: intent.brokerOrders.filter((order) => opportunity.events.some((event) => {
+      const details = presentEventDetails(event.evidenceJson);
+      return details?.brokerOrderId === order.brokerOrderId;
+    })),
     eventPagination: pagination(options.eventPage, options.eventPageSize, opportunity._count.events),
   }));
 

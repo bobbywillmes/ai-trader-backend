@@ -99,6 +99,19 @@ describe('order intent operational evidence scope and states', () => {
     expect(result.brokerStage.pagination).toMatchObject({ total: 22, pageSize: 2, hasMore: true });
     expect(result.brokerStage.opportunities[0]!.events[0]!.eventType).toBe('DELIVERY_UNCERTAIN');
   });
+
+  it.each([owner, operator, accountUser])('projects safe lifecycle details without raw event evidence for $platformRole', async (user) => {
+    db.orderIntent.findFirst.mockResolvedValue(intent({ brokerOrders: [{ id: 50, brokerOrderId: 'broker-50', clientOrderId: 'client-41' }] }));
+    db.orderIntentBrokerPostOpportunity.count.mockResolvedValue(1);
+    db.orderIntentBrokerPostOpportunity.findMany.mockResolvedValue([{
+      ...opportunity(1),
+      events: [{ id: 1, orderIntentId: 41, opportunityId: 1, sequence: 2, eventType: 'BROKER_ORDER_MATERIALIZED', evidenceJson: { source: 'post_response', brokerOrderId: 'broker-50', status: 'accepted', private: 'redacted' }, occurredAt: now, createdAt: now }],
+    }]);
+    const result = await getAccessibleOrderIntentOperationalEvidence(user, 41, options());
+    expect(result.brokerStage.opportunities[0]!.events[0]).toMatchObject({ details: { source: 'post_response', brokerOrderId: 'broker-50', brokerStatus: 'accepted' } });
+    expect(result.brokerStage.opportunities[0]!.events[0]).not.toHaveProperty('rawEvidence');
+    expect(result.brokerStage.opportunities[0]!.relatedBrokerOrders).toEqual([expect.objectContaining({ id: 50 })]);
+  });
 });
 
 describe('historical order intent list', () => {

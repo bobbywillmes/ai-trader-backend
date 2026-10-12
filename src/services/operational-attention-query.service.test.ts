@@ -78,4 +78,10 @@ describe('OperationalAttention query semantics', () => {
     expect(mocks.resolveScope).toHaveBeenCalledWith({ id: 9, platformRole: PlatformRole.OPERATOR }, 2);
     expect(detail.detailsJson).toEqual({ token: '[REDACTED]', safe: 'visible' });
   });
+
+  it('uses canonical order and system-event paths with an exact intent deep link', async () => {
+    mocks.findUnique.mockResolvedValue({ ...row(6, OperationalAttentionStatus.OPEN, SystemEventSeverity.WARNING, { orderIntentId: 41 }), evidenceEvents: [] });
+    const detail = await getOperationalAttentionDetail({ id: 9, platformRole: PlatformRole.OPERATOR }, 6);
+    expect(detail.links).toMatchObject({ order: '/orders/open?account=2&intent=41', systemEvents: '/system/events?account=2' });
+  });
 });
