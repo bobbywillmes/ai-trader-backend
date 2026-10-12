@@ -1,9 +1,9 @@
-import { Accordion, Alert, Badge, Group, Pagination, SegmentedControl, SimpleGrid, Stack, Text, Title } from "@mantine/core";
+import { Accordion, Alert, Badge, Group, Pagination, SimpleGrid, Stack, Text, Title } from "@mantine/core";
 import { useState, type ReactNode } from "react";
 import { ApiError } from "../../lib/api";
 import { DataState, StatusBadge, formatStatusLabel } from "../../components/data-display";
 import { useOrderOperationalEvidence } from "./hooks";
-import type { BrokerOpportunity, ComparisonState, EvidenceAttempt, EvidenceGate, EvidenceState } from "./types";
+import type { BrokerOpportunity, BrokerOpportunityEvent, ComparisonState, EvidenceAttempt, EvidenceGate, EvidenceState } from "./types";
 import classes from "./OrderOperationalEvidence.module.css";
 
 type Props = {
@@ -20,9 +20,9 @@ export function OrderOperationalEvidence({ orderIntentId, token, authorizationCo
   const identity = `${authorizationContext}:${orderIntentId ?? "none"}`;
   const [pageSelection, setPageSelection] = useState({ identity, page: 1 });
   const opportunityPage = pageSelection.identity === identity ? pageSelection.page : 1;
-  const query = useOrderOperationalEvidence(orderIntentId, opportunityPage, token, authorizationContext, enabled);
-  const [opportunitySelection, setOpportunitySelection] = useState<{ identity: string; id: number | null }>({ identity, id: null });
-  const selectedOpportunityId = opportunitySelection.identity === identity ? opportunitySelection.id : null;
+  const [eventPageSelection, setEventPageSelection] = useState({ identity, page: 1 });
+  const eventPage = eventPageSelection.identity === identity ? eventPageSelection.page : 1;
+  const query = useOrderOperationalEvidence(orderIntentId, opportunityPage, eventPage, token, authorizationContext, enabled);
 
   if (!orderIntentId) return <DataState state="empty" title="No OrderIntent" message="This Entry Decision did not create an OrderIntent, so no order-level Market Policy evidence exists." />;
   if (query.isLoading) return <DataState state="loading" message="Loading immutable order evidence…" />;
@@ -36,9 +36,7 @@ export function OrderOperationalEvidence({ orderIntentId, token, authorizationCo
   if (expectedTradingAccountId != null && data.orderIntent.tradingAccountId !== expectedTradingAccountId) {
     return <Alert color="red" title="Account context mismatch">The returned OrderIntent does not belong to the Entry Decision's Trading Account. Evidence has been hidden.</Alert>;
   }
-  const opportunity = data.brokerStage.opportunities.find(item => item.id === selectedOpportunityId) ?? data.brokerStage.opportunities[0] ?? null;
   const intentAttempt = data.intentStage.comparison.attempts.at(-1) ?? null;
-  const brokerAttempt = opportunity?.comparison.attempts.at(-1) ?? null;
   const assignment = data.orderIntent.assignment;
 
   return <Stack gap="md" data-testid="order-operational-evidence">
@@ -79,9 +77,8 @@ export function OrderOperationalEvidence({ orderIntentId, token, authorizationCo
 
     <section className={classes.section}>
       <Group justify="space-between" align="flex-start" mb="sm"><div><Title order={3} size="h5">Broker POST opportunity comparison</Title><Text size="sm" c="dimmed">An opportunity capture is not proof that an order was dispatched or accepted.</Text></div><Badge variant="light">{formatStatusLabel(data.brokerStage.state)}</Badge></Group>
-      {data.brokerStage.opportunities.length === 0 ? <BrokerAbsence state={data.brokerStage.state} /> : <Stack gap="sm">
-        {data.brokerStage.opportunities.length > 1 && <SegmentedControl fullWidth value={String(opportunity?.id ?? "")} onChange={value => setOpportunitySelection({ identity, id: Number(value) })} data={data.brokerStage.opportunities.map(item => ({ value: String(item.id), label: `Opportunity ${item.opportunitySequence}` }))} />}
-        {opportunity && <OpportunitySummary opportunity={opportunity} attempt={brokerAttempt} />}
+      {data.brokerStage.opportunities.length === 0 ? <><BrokerAbsence state={data.brokerStage.state} />{data.brokerStage.unboundMissingObservations.length > 0 && <LifecycleTimeline events={data.brokerStage.unboundMissingObservations} title="Unbound observation events" />}</> : <Stack gap="sm">
+        <Accordion variant="separated" defaultValue={String(data.brokerStage.opportunities[0]?.id)}>{data.brokerStage.opportunities.map(opportunity => <Accordion.Item value={String(opportunity.id)} key={opportunity.id}><Accordion.Control><Group justify="space-between" wrap="nowrap"><div><Text fw={700}>Opportunity {opportunity.opportunitySequence}</Text><Text size="xs" c="dimmed">{dateTime(opportunity.opportunityAt)} · capture is not submission</Text></div><StatusBadge status={opportunity.comparison.attempts.at(-1)?.outcome ?? opportunity.comparison.state} label={formatStatusLabel(opportunity.comparison.attempts.at(-1)?.outcome ?? opportunity.comparison.state)} size="compact" /></Group></Accordion.Control><Accordion.Panel><OpportunitySummary opportunity={opportunity} attempt={opportunity.comparison.attempts.at(-1) ?? null} eventPage={eventPage} onEventPageChange={page => setEventPageSelection({ identity, page })} /></Accordion.Panel></Accordion.Item>)}</Accordion>
         {data.brokerStage.pagination.totalPages > 1 && <><Text size="xs" c="dimmed">Showing opportunity page {data.brokerStage.pagination.page} of {data.brokerStage.pagination.totalPages} · {data.brokerStage.pagination.total} total. Additional pages are not implied to be loaded.</Text><Pagination value={opportunityPage} total={data.brokerStage.pagination.totalPages} onChange={page => setPageSelection({ identity, page })} size="sm" /></>}
       </Stack>}
     </section>
@@ -101,15 +98,29 @@ export function OrderOperationalEvidence({ orderIntentId, token, authorizationCo
   </Stack>;
 }
 
-function OpportunitySummary({ opportunity, attempt }: { opportunity: BrokerOpportunity; attempt: EvidenceAttempt | null }) {
+function OpportunitySummary({ opportunity, attempt, eventPage, onEventPageChange }: { opportunity: BrokerOpportunity; attempt: EvidenceAttempt | null; eventPage: number; onEventPageChange: (page: number) => void }) {
   return <Stack gap="sm"><SimpleGrid cols={{ base: 1, sm: 2 }}>
     <Fact label="Opportunity" value={`Sequence ${opportunity.opportunitySequence} · ${dateTime(opportunity.opportunityAt)}`} />
     <Fact label="Applicability" value={formatStatusLabel(opportunity.applicability)} />
     <Fact label="Composition" value={opportunity.marketRegimeAssessmentId ? `#${opportunity.marketRegimeAssessmentId} · ${formatStatusLabel(opportunity.compositionCapture)}` : formatStatusLabel(opportunity.compositionCapture)} />
+    <Fact label="Frozen policy revision" value={opportunity.policyRevisionId ? `#${opportunity.policyRevisionId}` : "Not applicable"} />
     <Fact label="Comparison" value={formatStatusLabel(opportunity.comparison.state)} />
   </SimpleGrid><ComparisonSummary title="Broker-time comparison" comparisonState={opportunity.comparison.state} attempt={attempt} /><GatePresentation attempt={attempt} comparisonState={opportunity.comparison.state} compositionCapture={opportunity.compositionCapture} />
+  <LifecycleTimeline events={opportunity.events} relatedBrokerOrders={opportunity.relatedBrokerOrders} />
+  {opportunity.eventPagination.totalPages > 1 && <Group justify="space-between"><Text size="xs" c="dimmed">Event page {opportunity.eventPagination.page} of {opportunity.eventPagination.totalPages}; later pages are not included here.</Text><Pagination value={eventPage} total={opportunity.eventPagination.totalPages} onChange={onEventPageChange} size="xs" /></Group>}
   {opportunity.sourceSetFingerprint !== undefined && <Text size="xs" c="dimmed" className={classes.technical}>Source fingerprint: {opportunity.sourceSetFingerprint ?? "none"}</Text>}</Stack>;
 }
+
+function LifecycleTimeline({ events, relatedBrokerOrders = [], title = "Broker delivery timeline" }: { events: BrokerOpportunityEvent[]; relatedBrokerOrders?: BrokerOpportunity["relatedBrokerOrders"]; title?: string }) {
+  const ordered = [...events].sort((a, b) => a.sequence - b.sequence || a.id - b.id);
+  if (ordered.length === 0) return <Alert color="gray" title="Captured opportunity without dispatch evidence">No immutable lifecycle event beyond the opportunity record is available. This does not prove broker submission.</Alert>;
+  return <section><Text fw={700} size="sm" mb="xs">{title}</Text><Alert mb="sm" color="gray" title="Derived lifecycle summary">{derivedLifecycleSummary(ordered)} This summary is derived only from the recorded events below.</Alert><Stack gap={0} className={classes.timeline}>{ordered.map(event => <div className={classes.timelineEvent} key={event.id}><div className={classes.timelineMarker} /><div><Group gap="xs"><Text fw={700} size="sm">{formatStatusLabel(event.eventType)}</Text><Badge size="xs" color={eventTone(event.eventType)} variant="light">{eventCertainty(event.eventType)}</Badge></Group><Text size="xs" c="dimmed">Sequence {event.sequence} · occurred {dateTime(event.occurredAt)} · recorded {dateTime(event.createdAt)}</Text><Text size="sm">{eventDescription(event)}</Text>{event.details?.brokerOrderId && <Text size="xs" className={classes.technical}>Broker order {event.details.brokerOrderId}{event.details.brokerStatus ? ` · ${formatStatusLabel(event.details.brokerStatus)}` : ""}</Text>}</div></div>)}</Stack>{relatedBrokerOrders.length > 0 && <Alert mt="sm" color="teal" title="Broker order materialized">{relatedBrokerOrders.map(order => <Text size="sm" key={order.id}>Local BrokerOrder #{order.id} · {order.brokerOrderId} · {formatStatusLabel(order.status)}</Text>)}</Alert>}</section>;
+}
+
+function eventCertainty(type: BrokerOpportunityEvent["eventType"]) { if (type === "OPPORTUNITY_CAPTURED") return "Opportunity only"; if (type === "ADAPTER_DISPATCH_REACHED") return "Dispatch reached"; if (type === "BROKER_RESPONSE_CONFIRMED" || type === "BROKER_REJECTED") return "Broker response"; if (type === "BROKER_ORDER_MATERIALIZED" || type === "RECOVERY_FOUND") return "Order established"; if (type === "DEFINITELY_NOT_SENT" || type === "DEFERRED" || type === "RECOVERY_ABSENCE_CONFIRMED") return "Not sent"; if (type === "DELIVERY_UNCERTAIN" || type === "RECOVERY_INCONCLUSIVE") return "Uncertain"; return "Observation gap"; }
+function eventTone(type: BrokerOpportunityEvent["eventType"]) { return type === "BROKER_ORDER_MATERIALIZED" || type === "RECOVERY_FOUND" || type === "BROKER_RESPONSE_CONFIRMED" ? "teal" : type === "DELIVERY_UNCERTAIN" || type === "RECOVERY_INCONCLUSIVE" || type === "MISSING_OBSERVATION" ? "orange" : type === "BROKER_REJECTED" ? "red" : "gray"; }
+function derivedLifecycleSummary(events: BrokerOpportunityEvent[]) { const types = new Set(events.map(event => event.eventType)); if (types.has("BROKER_ORDER_MATERIALIZED") || types.has("RECOVERY_FOUND")) return "A broker order was established."; if (types.has("BROKER_REJECTED")) return "The broker returned a rejection."; if (types.has("BROKER_RESPONSE_CONFIRMED")) return "A broker response was confirmed."; if (types.has("DELIVERY_UNCERTAIN")) return "Delivery remains uncertain."; if (types.has("RECOVERY_INCONCLUSIVE")) return "Recovery was inconclusive."; if (types.has("RECOVERY_ABSENCE_CONFIRMED")) return "Recovery confirmed absence; any later opportunity is a separate event sequence."; if (types.has("DEFINITELY_NOT_SENT")) return "The request was definitely not sent."; if (types.has("DEFERRED")) return "Submission was deferred."; if (types.has("ADAPTER_DISPATCH_REACHED")) return "Dispatch reached the adapter, but broker receipt is not confirmed."; if (types.has("OPPORTUNITY_CAPTURED")) return "An opportunity was captured without dispatch evidence."; return "Observation evidence is missing."; }
+function eventDescription(event: BrokerOpportunityEvent) { const detail = event.details; return ({ OPPORTUNITY_CAPTURED: "A genuine broker POST opportunity was captured. No dispatch is implied.", ADAPTER_DISPATCH_REACHED: "Execution reached the broker adapter boundary. Broker receipt is not confirmed.", BROKER_RESPONSE_CONFIRMED: "A broker response was confirmed independently of the comparison result.", BROKER_REJECTED: `The broker rejected the request${detail?.statusCode ? ` (HTTP ${detail.statusCode})` : ""}.`, BROKER_ORDER_MATERIALIZED: "A BrokerOrder identity was established from persisted lifecycle evidence.", DELIVERY_UNCERTAIN: `Delivery may have occurred, but broker receipt was not confirmed${detail?.classification ? ` (${formatStatusLabel(detail.classification)})` : ""}.`, DEFINITELY_NOT_SENT: "The request was classified as definitely not sent.", DEFERRED: "Submission was deferred before a confirmed broker response.", RECOVERY_FOUND: "Later recovery found the broker order.", RECOVERY_ABSENCE_CONFIRMED: "Recovery confirmed absence before any later fresh opportunity.", RECOVERY_INCONCLUSIVE: "Recovery could not determine whether the broker received the order.", MISSING_OBSERVATION: "Broker-boundary instrumentation failed to persist the expected observation." } satisfies Record<BrokerOpportunityEvent["eventType"], string>)[event.eventType]; }
 
 function ComparisonSummary({ title, comparisonState, attempt }: { title: string; comparisonState: ComparisonState; attempt: EvidenceAttempt | null }) {
   return <Group mt="md" gap="xs" align="center"><Text size="sm" fw={700}>{title}</Text><StatusBadge status={attempt?.outcome ?? comparisonState} label={formatStatusLabel(attempt?.outcome ?? comparisonState)} tone={attempt?.outcome === "ALLOWED" ? "positive" : attempt?.outcome === "BLOCKED" ? "warning" : comparisonState === "TECHNICAL_FAILURE" || comparisonState === "TERMINAL_RETRY_EXHAUSTED" ? "danger" : "neutral"} /><Text size="xs" c="dimmed">{attempt ? `${formatStatusLabel(attempt.reasonCode)} · evidence as of ${dateTime(attempt.evidenceAsOf)}` : comparisonMessage(comparisonState)}</Text></Group>;

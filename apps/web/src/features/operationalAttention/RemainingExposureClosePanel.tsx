@@ -73,7 +73,7 @@ export function RemainingExposureClosePanel({
         <Group>
           <Button
             component={Link}
-            to={`/orders?account=${account}`}
+            to={`/orders/open?account=${account}`}
             variant="default"
           >
             Open Orders

@@ -62,7 +62,18 @@ export type BrokerOpportunity = {
   opportunityAt: string;
   createdAt: string;
   comparison: EvidenceComparison;
+  events: BrokerOpportunityEvent[];
+  relatedBrokerOrders: Array<{ id: number; broker: string; brokerOrderId: string; clientOrderId: string; symbol: string; side: string; status: string; trackedPositionId: number | null; createdAt: string; updatedAt: string }>;
   eventPagination: EvidencePagination;
+};
+
+export type BrokerOpportunityEvent = {
+  id: number;
+  sequence: number;
+  eventType: "OPPORTUNITY_CAPTURED" | "ADAPTER_DISPATCH_REACHED" | "BROKER_RESPONSE_CONFIRMED" | "BROKER_REJECTED" | "BROKER_ORDER_MATERIALIZED" | "DELIVERY_UNCERTAIN" | "DEFINITELY_NOT_SENT" | "DEFERRED" | "RECOVERY_FOUND" | "RECOVERY_ABSENCE_CONFIRMED" | "RECOVERY_INCONCLUSIVE" | "MISSING_OBSERVATION";
+  occurredAt: string;
+  createdAt: string;
+  details: null | { source: string | null; brokerOrderId: string | null; brokerStatus: string | null; classification: string | null; statusCode: number | null; adapter: string | null; operation: string | null; clientOrderId: string | null; captureVersion: number | null };
 };
 
 export type EvidencePagination = {
@@ -132,7 +143,7 @@ export type OrderOperationalEvidenceResponse = {
     stateSource: "DERIVED_FROM_LIFECYCLE" | "RECORDED_EVIDENCE";
     opportunities: BrokerOpportunity[];
     pagination: EvidencePagination;
-    unboundMissingObservations: Array<{ id: number; sequence: number; eventType: string; occurredAt: string; createdAt: string }>;
+    unboundMissingObservations: BrokerOpportunityEvent[];
     unboundEventPagination: EvidencePagination;
   };
   relatedRecords: { entryDecisionId: number | null; brokerOrderRecordIds: number[]; trackedPositionId: number | null; tradingAccountId: number | null; accountSubscriptionId: number | null; subscriptionId: number | null; strategyId: number | null; marketRegimeAssessmentIds: number[] };

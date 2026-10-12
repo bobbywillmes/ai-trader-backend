@@ -24,6 +24,9 @@ export type OpenOrder = {
   submitted_at?: string | null;
   clientOrderId?: string | null;
   client_order_id?: string | null;
+  orderIntentId?: number | null;
+  localBrokerOrderId?: number | null;
+  identityMatch?: "BROKER_ORDER_ID" | "CLIENT_ORDER_ID" | "BOTH" | "AMBIGUOUS" | "NOT_FOUND";
 };
 
 export type OpenOrdersAccountResult = {

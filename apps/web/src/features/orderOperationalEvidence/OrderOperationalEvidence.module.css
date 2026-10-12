@@ -1,4 +1,7 @@
 .section { border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-md); padding: var(--mantine-spacing-md); min-width: 0; }
 .technical { font-family: var(--mantine-font-family-monospace); overflow-wrap: anywhere; }
+.timeline { border-left: 2px solid var(--mantine-color-default-border); margin-left: 0.45rem; }
+.timelineEvent { display: grid; grid-template-columns: 1rem minmax(0, 1fr); gap: var(--mantine-spacing-xs); padding: 0 0 var(--mantine-spacing-md) 0; }
+.timelineMarker { width: 0.65rem; height: 0.65rem; margin: 0.35rem 0 0 -0.4rem; border-radius: 50%; background: var(--mantine-primary-color-filled); box-shadow: 0 0 0 3px var(--mantine-color-body); }
 .gateGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--mantine-spacing-sm); }
 @container responsive-data-view (max-width: 36rem) { .gateGrid { grid-template-columns: minmax(0, 1fr); } .section { padding: var(--mantine-spacing-sm); } }
