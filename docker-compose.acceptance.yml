@@ -1,0 +1,85 @@
+name: ai-trader-ui-acceptance
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ai_trader_ui_acceptance
+      POSTGRES_USER: ai_trader_ui_acceptance
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    networks: [acceptance_internal]
+    labels:
+      ai-trader.acceptance: "phase-3b4"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_trader_ui_acceptance -d ai_trader_ui_acceptance"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build:
+      context: .
+      dockerfile: scripts/ui-acceptance/Dockerfile
+    environment:
+      UI_ACCEPTANCE_SENTINEL: I_UNDERSTAND_PHASE_3B4_IS_DISPOSABLE
+      DATABASE_URL_FILE: /run/secrets/database_url
+      NODE_ENV: test
+      PORT: "3304"
+      CORS_ALLOWED_ORIGINS: http://127.0.0.1:5174,http://localhost:5174
+      ALPACA_API_KEY: ACCEPTANCE_NO_CREDENTIAL
+      ALPACA_API_SECRET: ACCEPTANCE_NO_CREDENTIAL
+      MASSIVE_API_KEY: ACCEPTANCE_NO_CREDENTIAL
+      AI_TRADER_SIGNAL_API_KEY: acceptance-disabled-signal-key
+      AI_TRADER_ADMIN_API_KEY: acceptance-disabled-admin-key
+      ALLOW_LIVE_TRADING: "false"
+      ALLOW_TRADING_ENABLED_ON_START: "false"
+      LIVE_WRITE_DEPLOYMENT_ROLE: OBSERVATION_ONLY
+    secrets: [database_url]
+    volumes:
+      - ./.acceptance/ui:/app/.acceptance/ui
+    networks: [acceptance_internal]
+    labels:
+      ai-trader.acceptance: "phase-3b4"
+    depends_on:
+      db: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3304/').then(r=>{if(!r.ok)process.exit(1)})"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  proxy:
+    image: nginxinc/nginx-unprivileged:1.29-alpine
+    ports:
+      - "127.0.0.1:3304:8080"
+    networks: [acceptance_internal, acceptance_ingress]
+    volumes:
+      - ./scripts/ui-acceptance/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    labels:
+      ai-trader.acceptance: "phase-3b4"
+    depends_on:
+      api: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp, /var/cache/nginx]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+networks:
+  acceptance_internal:
+    internal: true
+    labels:
+      ai-trader.acceptance: "phase-3b4"
+  acceptance_ingress:
+    labels:
+      ai-trader.acceptance: "phase-3b4"
+
+secrets:
+  db_password:
+    file: .acceptance/ui/db-password.txt
+  database_url:
+    file: .acceptance/ui/database-url.txt

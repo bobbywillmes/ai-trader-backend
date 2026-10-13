@@ -408,6 +408,14 @@ a finite driver acquisition timeout. One monotonic 250 ms budget covers each gro
 pre-POST, post-response, or recovery observation sequence; never race and abandon an
 evidence write to reach the broker boundary.
 
+Phase 3B.4 has a disposable, read-only browser-acceptance harness documented in
+`scripts/ui-acceptance/README.md`. PostgreSQL and the acceptance API stay exclusively
+on an `internal: true` Docker network; a fixed-upstream proxy alone publishes
+`127.0.0.1:3304`, and the Vite acceptance mode uses `127.0.0.1:5174`. Preserve the
+exact environment and database identity guards, pre-route write denial, inert broker
+transport, and explicit Compose project teardown. The harness must never import
+`src/app/server.ts`, start workers, or gain trading authority.
+
 The intended lifecycle is:
 
 ```text

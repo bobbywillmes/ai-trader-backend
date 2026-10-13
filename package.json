@@ -67,6 +67,16 @@
     "acceptance:lifecycle-repair:verify-fixture": "tsx scripts/lifecycle-repair-acceptance/verify-fixture.ts",
     "acceptance:lifecycle-repair:staged-path": "tsx scripts/lifecycle-repair-acceptance/staged-path.ts",
     "acceptance:lifecycle-repair:server": "tsx scripts/lifecycle-repair-acceptance/server.ts",
+    "acceptance:ui:start": "tsx scripts/ui-acceptance/manage.ts start",
+    "acceptance:ui:test": "vitest run --config vitest.ui-acceptance.config.ts",
+    "acceptance:ui:migrate": "tsx scripts/ui-acceptance/manage.ts migrate",
+    "acceptance:ui:fixture": "tsx scripts/ui-acceptance/manage.ts fixture",
+    "acceptance:ui:api": "tsx scripts/ui-acceptance/manage.ts api",
+    "acceptance:ui:web": "npm --prefix apps/web run dev -- --mode acceptance --host 127.0.0.1 --strictPort",
+    "acceptance:ui:urls": "tsx scripts/ui-acceptance/manage.ts urls",
+    "acceptance:ui:verify": "tsx scripts/ui-acceptance/verify.ts",
+    "acceptance:ui:network-check": "tsx scripts/ui-acceptance/network-check.ts",
+    "acceptance:ui:stop": "tsx scripts/ui-acceptance/manage.ts stop",
     "acceptance:live-entry:test": "vitest run --config vitest.acceptance.config.ts"
   },
   "devDependencies": {

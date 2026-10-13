@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { type RequestHandler } from 'express';
 import cors from 'cors';
 import { corsOptions } from '../config/cors.js';
 import helmet from 'helmet';
@@ -50,7 +50,7 @@ import { notFoundHandler } from '../middleware/not-found.js';
 import { errorHandler } from '../middleware/error-handler.js';
 import { requireSignalApiKey, requireAdminAccess } from '../middleware/api-key-auth.js';
 
-export function createApp() {
+export function createApp(options: { beforeBusinessRoutes?: RequestHandler[] } = {}) {
   const app = express();
 
   app.use(helmet());
@@ -77,6 +77,10 @@ export function createApp() {
   app.use('/api/external-signals', externalSignalIngressRoutes);
   app.use('/api/securities/universe-import', express.json({ limit: '3mb' }));
   app.use(express.json());
+
+  for (const middleware of options.beforeBusinessRoutes ?? []) {
+    app.use(middleware);
+  }
 
   app.get('/', (_req, res) => {
     res.json({
