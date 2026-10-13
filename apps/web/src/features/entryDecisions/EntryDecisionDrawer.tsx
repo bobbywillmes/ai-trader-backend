@@ -14,7 +14,7 @@ import {
 import { IconFileAnalytics } from "@tabler/icons-react";
 import { EntryDecisionAccountBadge } from "./EntryDecisionAccountBadge";
 import type { EntryDecisionDetail, EntryDecisionRelatedRecord } from "./types";
-import { OrderOperationalEvidence } from "../orderOperationalEvidence/OrderOperationalEvidence";
+import { EntryDecisionOrderEvidence } from "./EntryDecisionOrderEvidence";
 import classes from "./EntryDecisionDrawer.module.css";
 
 type EntryDecisionDrawerProps = {
@@ -193,10 +193,7 @@ export function EntryDecisionDrawer({
             </SimpleGrid>
           </section>
 
-          <section className={classes.detailCard}>
-            <Title order={3} size="h4" className={classes.heading}>Market Policy order evidence</Title>
-            {decision.orderIntentId === null ? <Alert color="gray" title="No OrderIntent">This Entry Decision did not create an OrderIntent. No order-level Market Policy evidence is applicable.</Alert> : requestedOrderIntentId !== null && requestedOrderIntentId !== decision.orderIntentId ? <Alert color="red" title="OrderIntent link mismatch">The URL does not match this Entry Decision's exact OrderIntent. Evidence was not requested.</Alert> : <OrderOperationalEvidence orderIntentId={decision.orderIntentId} token={token} authorizationContext={authorizationContext} expectedTradingAccountId={decision.tradingAccountId} />}
-          </section>
+          <EntryDecisionOrderEvidence decision={decision} token={token} requestedOrderIntentId={requestedOrderIntentId} authorizationContext={authorizationContext} className={classes.detailCard} headingClassName={classes.heading} />
 
           <Accordion variant="contained" radius="md" className={classes.diagnostics}><Accordion.Item value="raw"><Accordion.Control><div><Text fw={700} size="sm">Raw diagnostics</Text><Text size="xs" c="dimmed" className={classes.technical}>{decision.decisionReason ?? decision.persistenceReason}</Text></div></Accordion.Control><Accordion.Panel><Stack gap="xs"><Info label="Raw decision reason" value={decision.decisionReason ?? "Not available"} /><Info label="Raw blocking reason" value={decision.blockingReason ?? "Not available"} /><Info label="Decision fingerprint" value={decision.decisionFingerprint} /><Payload label="Market" payload={decision.marketSnapshotJson} /><Payload label="Runtime" payload={decision.runtimeSnapshotJson} /><Payload label="Strategy" payload={decision.strategySnapshotJson} /><Payload label="Indicators" payload={decision.indicatorSnapshotJson} /><Payload label="Raw Decision" payload={decision.rawDecisionJson} /></Stack></Accordion.Panel></Accordion.Item></Accordion>
         </Stack>

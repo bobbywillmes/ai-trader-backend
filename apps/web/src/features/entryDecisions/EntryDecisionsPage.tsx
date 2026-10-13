@@ -35,6 +35,7 @@ import {
 } from "../../components/data-display";
 import { getAdminToken } from "../../lib/api";
 import { EntryDecisionDrawer } from "./EntryDecisionDrawer";
+import { EntryDecisionOrderEvidence } from "./EntryDecisionOrderEvidence";
 import { useEntryDecisionDrawer, useEntryDecisions } from "./hooks";
 import type { EntryDecisionQuery, EntryDecisionSummary } from "./types";
 import classes from "./EntryDecisionsPage.module.css";
@@ -216,6 +217,9 @@ export function EntryDecisionsPage() {
   const decisionsQuery = useEntryDecisions(token, query);
   const decisions = decisionsQuery.data?.decisions ?? [];
   const pagination = decisionsQuery.data?.pagination;
+  const authorizationContext = accountScope.isAll
+    ? "all"
+    : `account:${accountScope.selectedAccount?.id ?? "none"}`;
   function clearFilters() {
     setParams((current) => {
       const next = new URLSearchParams(current);
@@ -490,6 +494,15 @@ export function EntryDecisionsPage() {
           />
         </section>
       </div>
+      <EntryDecisionOrderEvidence
+        decision={decision}
+        token={token}
+        requestedOrderIntentId={requestedOrderIntentId}
+        authorizationContext={authorizationContext}
+        className={classes.detailCard}
+        headingClassName={classes.detailHeading}
+        headingSize="h5"
+      />
       <Accordion variant="contained" radius="md">
         <Accordion.Item value="raw">
           <Accordion.Control>
@@ -730,7 +743,7 @@ export function EntryDecisionsPage() {
           </Stack>
         </Card>
       </Stack>
-      <EntryDecisionDrawer {...drawer.drawerProps} token={token} requestedOrderIntentId={requestedOrderIntentId} authorizationContext={accountScope.isAll ? "all" : `account:${accountScope.selectedAccount?.id ?? "none"}`} onClose={closeDetails} />
+      <EntryDecisionDrawer {...drawer.drawerProps} token={token} requestedOrderIntentId={requestedOrderIntentId} authorizationContext={authorizationContext} onClose={closeDetails} />
     </main>
   );
 }
