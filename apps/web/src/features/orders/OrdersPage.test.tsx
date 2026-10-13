@@ -3,6 +3,7 @@ import { MantineProvider } from "@mantine/core";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import type { OpenOrder, OpenOrdersAccountResult } from "./types";
 
 const mocks = vi.hoisted(() => ({
@@ -13,6 +14,7 @@ vi.mock("./hooks", () => ({ useAllOpenOrders: () => mocks.query, useTradingAccou
 vi.mock("../tradingAccountScope/useTradingAccountScope", () => ({ useTradingAccountScope: () => ({ isAll: true, selectedAccount: null }) }));
 vi.mock("../tradingAccountScope/TradingAccountScopeSelector", () => ({ TradingAccountScopeSelector: () => <button>Trading Account scope</button> }));
 vi.mock("../../lib/api", () => ({ getAdminToken: () => "token" }));
+vi.mock("../orderOperationalEvidence/OrderOperationalEvidence", () => ({ OrderOperationalEvidence: ({ orderIntentId }: { orderIntentId: number }) => <div>Evidence for intent {orderIntentId}</div> }));
 vi.mock("@mantine/modals", () => ({ modals: { openConfirmModal: (options: unknown) => mocks.confirm(options) } }));
 vi.mock("@mantine/notifications", () => ({ notifications: { show: (options: unknown) => mocks.notify(options) } }));
 import { OrdersPage } from "./OrdersPage";
@@ -20,10 +22,11 @@ import { OrdersPage } from "./OrdersPage";
 let resize: ((width: number) => void) | null = null;
 class ResizeObserverMock { callback: ResizeObserverCallback; constructor(callback: ResizeObserverCallback) { this.callback = callback; } observe() { resize = (width) => this.callback([{ contentRect: { width } } as ResizeObserverEntry], this as unknown as ResizeObserver); } disconnect() { resize = null; } unobserve() {} }
 const orders: OpenOrder[] = [
-  { id: "broker-order-1", tradingAccountId: 7, tradingAccount: { id: 7, displayName: "Bobby Paper Account With A Very Long Name", broker: "ALPACA", environment: "PAPER" }, symbol: "SPY", side: "sell", orderType: "stop_limit", qty: "6", filledQty: "2", limitPrice: "744.55", stopPrice: "745.00", status: "partially_filled", submittedAt: "2026-08-03T12:00:00Z", clientOrderId: "client-order-with-a-deliberately-long-routing-identifier" },
+  { id: "broker-order-1", tradingAccountId: 7, tradingAccount: { id: 7, displayName: "Bobby Paper Account With A Very Long Name", broker: "ALPACA", environment: "PAPER" }, symbol: "SPY", side: "sell", orderType: "stop_limit", qty: "6", filledQty: "2", limitPrice: "744.55", stopPrice: "745.00", status: "partially_filled", submittedAt: "2026-08-03T12:00:00Z", clientOrderId: "client-order-with-a-deliberately-long-routing-identifier", orderIntentId: 41, localBrokerOrderId: 71, identityMatch: "BOTH" },
   { id: "broker-order-2", tradingAccountId: 8, tradingAccount: null, symbol: "TSLA", side: "buy", orderType: "market", qty: "1", filledQty: "0", status: "submitted", submittedAt: "2026-08-03T12:10:00Z" },
 ];
-function renderPage() { return render(<MantineProvider defaultColorScheme="dark"><OrdersPage /></MantineProvider>); }
+function Location() { return <div data-testid="location">{useLocation().search}</div>; }
+function renderPage(entry = "/orders/open?account=all") { return render(<MemoryRouter initialEntries={[entry]}><MantineProvider defaultColorScheme="dark"><OrdersPage /><Location /></MantineProvider></MemoryRouter>); }
 beforeEach(() => { vi.clearAllMocks(); mocks.query.data = { accounts: [{ account: orders[0]!.tradingAccount!, availability: "AVAILABLE", reason: null, message: null, orders }] }; mocks.query.isLoading = false; mocks.query.isError = false; mocks.query.error = null; mocks.pending = false; mocks.variables = undefined; vi.stubGlobal("ResizeObserver", ResizeObserverMock); window.matchMedia = vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -53,6 +56,14 @@ describe("Open Orders responsive page", () => {
     fireEvent.keyDown(document.body, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "TSLA order details" })).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(openers[1]));
+  });
+
+  it("restores an exact intent deep link and removes only intent when closed", async () => {
+    renderPage("/orders/open?account=7&intent=41&status=open"); resize?.(390);
+    expect(await screen.findByRole("dialog", { name: "SPY order details" })).toBeTruthy();
+    expect(screen.getByText("Evidence for intent 41")).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("?account=7&status=open"));
   });
 
   it("requires confirmation and prevents duplicate cancellation", async () => {

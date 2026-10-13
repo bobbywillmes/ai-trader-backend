@@ -5,12 +5,14 @@ const mocks = vi.hoisted(() => ({
   accountFindMany: vi.fn(),
   accountFindUnique: vi.fn(),
   positionFindMany: vi.fn(),
+  brokerOrderFindMany: vi.fn(),
   getOrders: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({ prisma: {
   tradingAccount: { findMany: mocks.accountFindMany, findUnique: mocks.accountFindUnique },
   trackedPosition: { findMany: mocks.positionFindMany },
+  brokerOrder: { findMany: mocks.brokerOrderFindMany },
 } }));
 vi.mock('./orders.service.js', () => ({ getNormalizedOpenOrders: mocks.getOrders }));
 vi.mock('./position-tracking.service.js', () => ({ getOpenTrackedPositionsForTradingAccount: vi.fn() }));
@@ -20,7 +22,7 @@ import { listScopedOpenOrders, listScopedOpenPositions } from './operational-sco
 const paper = { id: 1, displayName: 'Bobby Paper', broker: 'ALPACA', environment: 'PAPER', status: 'ACTIVE', accountHolder: { name: 'Bobby', email: 'bobby@example.com' }, credential: { status: 'ACTIVE' } };
 const live = { id: 2, displayName: 'Bobby Live', broker: 'ALPACA', environment: 'LIVE', status: 'ACTIVE', accountHolder: { name: 'Bobby', email: 'bobby@example.com' }, credential: null };
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => { vi.clearAllMocks(); mocks.brokerOrderFindMany.mockResolvedValue([]); });
 
 describe('operational TradingAccount scope', () => {
   it('limits operator positions to membership-filtered account ids and preserves identity', async () => {
@@ -47,6 +49,24 @@ describe('operational TradingAccount scope', () => {
     const result = await listScopedOpenOrders({ id: 1, platformRole: PlatformRole.SYSTEM_OWNER });
     expect(result[0]).toMatchObject({ availability: 'AVAILABLE', orders: [{ tradingAccountId: 1 }] });
     expect(result[1]).toMatchObject({ account: { id: 2 }, availability: 'UNAVAILABLE', reason: 'BROKER_REQUEST_FAILED', message: 'broker timeout', orders: null });
+  });
+
+  it('enriches exact account-scoped broker identity and refuses ambiguous matches', async () => {
+    mocks.accountFindMany.mockResolvedValue([paper]);
+    mocks.getOrders.mockResolvedValue([
+      { id: 'broker-1', clientOrderId: 'client-1', symbol: 'DIA' },
+      { id: 'broker-2', clientOrderId: 'shared', symbol: 'SPY' },
+    ]);
+    mocks.brokerOrderFindMany.mockResolvedValue([
+      { id: 10, orderIntentId: 20, tradingAccountId: 1, brokerOrderId: 'broker-1', clientOrderId: 'client-1' },
+      { id: 11, orderIntentId: 21, tradingAccountId: 1, brokerOrderId: 'other-1', clientOrderId: 'shared' },
+      { id: 12, orderIntentId: 22, tradingAccountId: 1, brokerOrderId: 'other-2', clientOrderId: 'shared' },
+      { id: 13, orderIntentId: 99, tradingAccountId: 2, brokerOrderId: 'broker-2', clientOrderId: 'shared' },
+    ]);
+    const result = await listScopedOpenOrders({ id: 1, platformRole: PlatformRole.SYSTEM_OWNER });
+    expect(result[0]!.orders![0]).toMatchObject({ orderIntentId: 20, localBrokerOrderId: 10, identityMatch: 'BOTH' });
+    expect(result[0]!.orders![1]).toMatchObject({ orderIntentId: null, localBrokerOrderId: null, identityMatch: 'AMBIGUOUS' });
+    expect(mocks.brokerOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { OR: expect.any(Array) } }));
   });
 
   it('limits account-user ALL scope to membership-authorized accounts', async () => {

@@ -37,6 +37,11 @@ import {
   stageLiveEntryCanaryController,
   armLiveEntriesController,
   disarmLiveEntriesController,
+  getAssignmentMarketPolicyEnrollmentController,
+  previewAssignmentMarketPolicyEnrollmentController,
+  prepareAssignmentMarketPolicyEnrollmentController,
+  activateAssignmentMarketPolicyEnrollmentController,
+  disableAssignmentMarketPolicyEnrollmentController,
 } from '../controllers/trading-accounts.controller.js';
 import {
   requirePermission,
@@ -240,6 +245,33 @@ router.get(
   requireTradingAccountAccess('id'),
   requirePermission(PlatformPermission.SUBSCRIPTION_READ),
   getTradingAccountSubscriptionPriceHistoryController,
+);
+router.get(
+  '/:id/account-subscriptions/:accountSubscriptionId/market-policy-enrollment',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.SUBSCRIPTION_READ),
+  getAssignmentMarketPolicyEnrollmentController,
+);
+router.get(
+  '/:id/account-subscriptions/:accountSubscriptionId/market-policy-enrollment/preview',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.SUBSCRIPTION_READ),
+  previewAssignmentMarketPolicyEnrollmentController,
+);
+router.post(
+  '/:id/account-subscriptions/:accountSubscriptionId/market-policy-enrollment/prepare',
+  requireSystemOwnerAccess,
+  prepareAssignmentMarketPolicyEnrollmentController,
+);
+router.post(
+  '/:id/account-subscriptions/:accountSubscriptionId/market-policy-enrollment/activate',
+  requireSystemOwnerAccess,
+  activateAssignmentMarketPolicyEnrollmentController,
+);
+router.post(
+  '/:id/account-subscriptions/:accountSubscriptionId/market-policy-enrollment/disable',
+  requireSystemOwnerAccess,
+  disableAssignmentMarketPolicyEnrollmentController,
 );
 router.post(
   '/:id/account-subscriptions',

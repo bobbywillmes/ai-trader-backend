@@ -20,6 +20,18 @@ export const MARKET_REGIME_COMPOSITION_LOCK_KEY = createHash('sha256')
 const includeSources = { sources: { orderBy: { ordinal: 'asc' as const } } };
 const json = (value: unknown): Prisma.InputJsonValue => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 
+export type MarketRegimeCompositionPublicationOutcome =
+  | 'PUBLISHED'
+  | 'REUSED'
+  | 'ALREADY_RUNNING_ELSEWHERE';
+
+function attachPublisherStage(error: unknown, stage: string) {
+  if (typeof error === 'object' && error !== null && !('publisherStage' in error)) {
+    Object.defineProperty(error, 'publisherStage', { value: stage, enumerable: false });
+  }
+  return error;
+}
+
 async function selectCandidates(db: CompositionDb, observedAt: Date, targets: Awaited<ReturnType<typeof readMarketRegimeExpectedTargets>>['targets']) {
   return Promise.all(AUTHORITATIVE_MARKET_REGIME_SOURCES.map(definition => db.marketRegimeDimensionAssessment.findFirst({
     where: {
@@ -47,22 +59,37 @@ export async function previewMarketRegimeComposition(observedAt = new Date(), cl
   }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 30_000, maxWait: 5_000 });
 }
 
-export async function publishMarketRegimeComposition(options: { observedAt?: Date; clock?: () => Date; db?: PrismaClient } = {}) {
+export async function publishMarketRegimeComposition(options: {
+  observedAt?: Date;
+  clock?: () => Date;
+  db?: PrismaClient;
+  contention?: 'throw' | 'return';
+} = {}) {
   const db = options.db ?? prisma;
   const observedAt = options.observedAt ?? new Date();
   const clock = options.clock ?? (() => new Date());
   let fingerprint: string | null = null;
+  let stage = 'acquire_lock';
   try {
     return await db.$transaction(async tx => {
       const locks = await tx.$queryRaw<{ acquired: boolean }[]>`SELECT pg_try_advisory_xact_lock(${MARKET_REGIME_COMPOSITION_LOCK_KEY}::bigint) AS acquired`;
-      if (!locks[0]?.acquired) throw new HttpError(409, 'Market Regime composition publication is already running.');
+      if (!locks[0]?.acquired) {
+        if (options.contention === 'return') {
+          return { outcome: 'ALREADY_RUNNING_ELSEWHERE' as const, published: false, reused: false,
+            assessment: null, preview: null };
+        }
+        throw new HttpError(409, 'Market Regime composition publication is already running.');
+      }
+      stage = 'resolve_evidence';
       const preview = await previewMarketRegimeCompositionInTransaction(tx, observedAt);
       fingerprint = preview.sourceSetFingerprint;
+      stage = 'check_idempotency';
       const existing = await tx.marketRegimeAssessment.findUnique({
         where: { compositionVersion_sourceSetFingerprint: { compositionVersion: MARKET_REGIME_COMPOSITION_VERSION, sourceSetFingerprint: fingerprint } },
         include: includeSources,
       });
-      if (existing) return { published: false, reused: true, assessment: existing, preview };
+      if (existing) return { outcome: 'REUSED' as const, published: false, reused: true, assessment: existing, preview };
+      stage = 'persist_composition';
       const previous = await tx.marketRegimeAssessment.findFirst({
         where: { compositionVersion: MARKET_REGIME_COMPOSITION_VERSION }, orderBy: { id: 'desc' },
       });
@@ -113,7 +140,7 @@ export async function publishMarketRegimeComposition(options: { observedAt?: Dat
           evidenceHealth: assessment.evidenceHealth, sourceSetFingerprint: assessment.sourceSetFingerprint,
           previousAssessmentId: assessment.previousAssessmentId },
       } });
-      return { published: true, reused: false, assessment, preview };
+      return { outcome: 'PUBLISHED' as const, published: true, reused: false, assessment, preview };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 30_000, maxWait: 5_000 });
   } catch (error) {
     if (fingerprint && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
@@ -121,9 +148,9 @@ export async function publishMarketRegimeComposition(options: { observedAt?: Dat
         where: { compositionVersion_sourceSetFingerprint: { compositionVersion: MARKET_REGIME_COMPOSITION_VERSION, sourceSetFingerprint: fingerprint } },
         include: includeSources,
       });
-      if (winner) return { published: false, reused: true, assessment: winner, preview: null };
+      if (winner) return { outcome: 'REUSED' as const, published: false, reused: true, assessment: winner, preview: null };
     }
-    throw error;
+    throw attachPublisherStage(error, stage);
   }
 }
 

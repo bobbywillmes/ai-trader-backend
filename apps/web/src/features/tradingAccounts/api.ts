@@ -32,6 +32,9 @@ import type {
   CurrentLiveEntryAcceptanceResponse,
   LiveEntryAcceptanceHistoryResponse,
   LiveEntryAcceptanceProjection,
+  AssignmentMarketPolicyEnrollmentResponse,
+  AssignmentMarketPolicyEnrollmentPreview,
+  AssignmentMarketPolicyEnrollmentGeneration,
 } from './types';
 
 type ListMarketContextOptions = {
@@ -421,6 +424,22 @@ export function deleteTradingAccountSubscription(
     `/api/trading-accounts/${id}/account-subscriptions/${accountSubscriptionId}`,
     { method: 'DELETE', token },
   );
+}
+
+export function getAssignmentMarketPolicyEnrollment(id: number, assignmentId: number, token: string) {
+  return apiRequest<AssignmentMarketPolicyEnrollmentResponse>(`/api/trading-accounts/${id}/account-subscriptions/${assignmentId}/market-policy-enrollment`, { token });
+}
+export function previewAssignmentMarketPolicyEnrollment(id: number, assignmentId: number, token: string) {
+  return apiRequest<{ preview: AssignmentMarketPolicyEnrollmentPreview }>(`/api/trading-accounts/${id}/account-subscriptions/${assignmentId}/market-policy-enrollment/preview`, { token });
+}
+export function prepareAssignmentMarketPolicyEnrollment(id: number, assignmentId: number, token: string) {
+  return apiRequest<{ generation: AssignmentMarketPolicyEnrollmentGeneration }>(`/api/trading-accounts/${id}/account-subscriptions/${assignmentId}/market-policy-enrollment/prepare`, { method: 'POST', token });
+}
+export function activateAssignmentMarketPolicyEnrollment(id: number, assignmentId: number, generationId: number, expectedConfigurationFingerprint: string, token: string) {
+  return apiRequest<{ generation: AssignmentMarketPolicyEnrollmentGeneration }>(`/api/trading-accounts/${id}/account-subscriptions/${assignmentId}/market-policy-enrollment/activate`, { method: 'POST', token, body: { generationId, expectedConfigurationFingerprint } });
+}
+export function disableAssignmentMarketPolicyEnrollment(id: number, assignmentId: number, generationId: number, reason: string, token: string) {
+  return apiRequest<{ generation: AssignmentMarketPolicyEnrollmentGeneration }>(`/api/trading-accounts/${id}/account-subscriptions/${assignmentId}/market-policy-enrollment/disable`, { method: 'POST', token, body: { generationId, reason } });
 }
 
 export function previewTradingAccountEntryRisk(

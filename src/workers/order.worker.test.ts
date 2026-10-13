@@ -56,6 +56,7 @@ const mocks = vi.hoisted(() => ({
   enumerateLifecycleAccounts: vi.fn(),
   trackedPositionUpdateMany: vi.fn(),
   acceptanceRunUpdateMany: vi.fn(),
+  appendBrokerOpportunityEvent: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -78,6 +79,8 @@ vi.mock('../db/prisma.js', () => ({
 vi.mock('../services/place-order.service.js', () => ({
   submitOrderToBroker: mocks.submitOrderToBroker,
 }));
+
+vi.mock('../services/order-intent-broker-opportunity.service.js',()=>({bestEffortAppendBrokerOpportunityEvent:mocks.appendBrokerOpportunityEvent,createBrokerObservationBudget:()=>({startedAtMs:0,deadlineAtMs:250})}));
 
 vi.mock('../services/config.service.js', () => ({
   getRuntimeTradingConfig: mocks.getRuntimeTradingConfig,
@@ -366,6 +369,22 @@ describe('order worker entry-session recheck', () => {
         status: 'submitted',
       },
     });
+  });
+
+  it('materializes an accepted order despite observation failure and recovers without another POST', async()=>{
+    const accepted={id:'broker-accepted',client_order_id:'client-101',symbol:'SPY',side:'buy',status:'accepted'};
+    mocks.orderIntentFindMany.mockResolvedValue([baseIntent]);
+    mocks.submitOrderToBroker.mockImplementation(async(input:{clientOrderId:string;notional:number})=>{expect(input).toMatchObject({clientOrderId:'client-101',notional:100});return {duplicate:false,order:accepted};});
+    mocks.appendBrokerOpportunityEvent.mockResolvedValue(false);
+    await processPendingOrdersForAccount(1);
+    expect(mocks.submitOrderToBroker).toHaveBeenCalledTimes(1);
+    expect(mocks.orderIntentUpdate).toHaveBeenCalledWith(expect.objectContaining({where:{id:101},data:expect.objectContaining({status:'submitted',brokerOrders:{create:expect.objectContaining({brokerOrderId:'broker-accepted',clientOrderId:'client-101'})}})}));
+
+    mocks.orderIntentFindMany.mockResolvedValue([{...baseIntent,status:'submitting',brokerOrders:[{brokerOrderId:'broker-accepted'}],updatedAt:new Date('2026-06-22T13:00:00.000Z')}]);
+    const recovered=await recoverStaleSubmittingIntentsForAccount(1,new Date('2026-06-22T14:00:00.000Z'));
+    expect(recovered).toMatchObject({linked:1,retryable:0});
+    expect(mocks.submitOrderToBroker).toHaveBeenCalledTimes(1);
+    expect(mocks.getAlpacaOrderByClientOrderId).not.toHaveBeenCalled();
   });
 });
 
@@ -935,6 +954,8 @@ describe('stale submitting intent recovery', () => {
     expect(mocks.createSystemEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'order.submission_recovered', severity: 'INFO' })
     );
+    expect(mocks.appendBrokerOpportunityEvent).toHaveBeenCalledWith(expect.objectContaining({orderIntentId:101,eventType:'RECOVERY_FOUND'}),undefined,expect.anything());
+    expect(mocks.appendBrokerOpportunityEvent).toHaveBeenCalledWith(expect.objectContaining({orderIntentId:101,eventType:'BROKER_ORDER_MATERIALIZED'}),undefined,expect.anything());
   });
 
   it('requeues an entry only after account-specific broker lookup confirms absence', async () => {
@@ -965,7 +986,10 @@ describe('stale submitting intent recovery', () => {
     expect(mocks.createSystemEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'order.submission_retry_scheduled', severity: 'WARNING' })
     );
+    expect(mocks.appendBrokerOpportunityEvent).toHaveBeenCalledWith(expect.objectContaining({orderIntentId:101,eventType:'RECOVERY_ABSENCE_CONFIRMED'}),undefined,expect.anything());
   });
+
+  it('records an inconclusive lookup without changing the recovery error',async()=>{const error=new Error('broker lookup unavailable');mocks.orderIntentFindMany.mockResolvedValue([{...baseIntent,status:'submitting',brokerOrders:[],updatedAt:new Date('2026-06-22T13:00:00.000Z')}]);mocks.getAlpacaOrderByClientOrderId.mockRejectedValue(error);await expect(recoverStaleSubmittingIntentsForAccount(1,new Date('2026-06-22T14:00:00.000Z'))).rejects.toBe(error);expect(mocks.appendBrokerOpportunityEvent).toHaveBeenCalledWith(expect.objectContaining({orderIntentId:101,eventType:'RECOVERY_INCONCLUSIVE'}),undefined,expect.anything());expect(mocks.orderIntentUpdateMany).not.toHaveBeenCalled();});
 
   it('never requeues an acceptance entry after broker submission may have begun', async () => {
     mocks.orderIntentFindMany.mockResolvedValue([{

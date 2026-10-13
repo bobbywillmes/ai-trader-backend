@@ -59,6 +59,11 @@ import { runMarketRegimeCompositionWorker } from '../workers/market-regime-compo
 import { MARKET_REGIME_COMPOSITION_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { STRATEGY_MARKET_ELIGIBILITY_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { runStrategyMarketEligibilityWorker } from '../workers/strategy-market-eligibility.worker.js';
+import { runOrderIntentMarketPolicyComparisonWorker } from '../workers/order-intent-market-policy-comparison.worker.js';
+import { ORDER_INTENT_MARKET_POLICY_COMPARISON_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
+import { runOrderIntentBrokerComparisonWorker } from '../workers/order-intent-broker-comparison.worker.js';
+import { ORDER_INTENT_BROKER_COMPARISON_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
+import { closeBrokerObservationPrisma } from '../db/broker-observation-prisma.js';
 
 const app = createApp();
 
@@ -207,6 +212,16 @@ function startWorkers() {
   setInterval(() => { void runWorker('market_regime_composition_publication', runMarketRegimeCompositionWorker); }, MARKET_REGIME_COMPOSITION_WORKER_INTERVAL_MS);
   void runWorker('strategy_market_eligibility_shadow', runStrategyMarketEligibilityWorker);
   setInterval(() => { void runWorker('strategy_market_eligibility_shadow', runStrategyMarketEligibilityWorker); }, STRATEGY_MARKET_ELIGIBILITY_WORKER_INTERVAL_MS);
+  if (env.ORDER_INTENT_MARKET_POLICY_COMPARISON_WORKER_ENABLED) {
+    workerHealthRegistry.setWorkerEnabled('order_intent_market_policy_comparison', true);
+    void runWorker('order_intent_market_policy_comparison', runOrderIntentMarketPolicyComparisonWorker);
+    setInterval(() => { void runWorker('order_intent_market_policy_comparison', runOrderIntentMarketPolicyComparisonWorker); }, ORDER_INTENT_MARKET_POLICY_COMPARISON_WORKER_INTERVAL_MS);
+  }
+  if (env.ORDER_INTENT_BROKER_COMPARISON_WORKER_ENABLED) {
+    workerHealthRegistry.setWorkerEnabled('order_intent_broker_comparison', true);
+    void runWorker('order_intent_broker_comparison', runOrderIntentBrokerComparisonWorker);
+    setInterval(() => { void runWorker('order_intent_broker_comparison', runOrderIntentBrokerComparisonWorker); }, ORDER_INTENT_BROKER_COMPARISON_WORKER_INTERVAL_MS);
+  }
 
   // This validity monitor is local-only. Final broker authorization remains
   // authoritative, while this loop promptly closes stale permissive latches.
@@ -421,6 +436,7 @@ async function shutdown(signal: NodeJS.Signals) {
       closeMarketMinuteDataLockPool(),
       closeBreadthObservationLockPool(),
       closeTradingAccountWorkflowLockPool(),
+      closeBrokerObservationPrisma(),
     ]),
     new Promise((resolve) => setTimeout(resolve, 5_000)),
   ]);

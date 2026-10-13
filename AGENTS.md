@@ -379,6 +379,43 @@ Phase 2D decisions without changing SignalEvaluation gates or outcomes. Failures
 nonblocking and bounded; EXIT_LONG is explicitly not applicable. UI and API consumers
 must keep route applicability, shadow policy outcome, and trading authority distinct.
 
+Phase 3A adds PAPER-only assignment market-policy enrollment as configuration
+evidence. PREPARED/ACTIVE/DISABLED generations bind an exact
+TradingAccountSubscription and active Strategy-owned policy revision, but
+ACTIVE is explicitly `CONFIGURATION_ONLY` and never enforcement authority.
+Future enforcement requires a separate explicit authorization boundary and
+must not infer authority from existing ACTIVE rows. Preview GETs only read
+persisted shadow projections. See
+`docs/architecture/assignment-market-policy-enrollment.md`.
+
+Phase 3B.1 adds default-off, PostgreSQL-triggered exact OrderIntent market-policy
+coverage. All evidence is immutable `COMPARE_ONLY` with `tradingEffect=NONE`.
+Missing expected post-epoch capture is `CAPTURE_UNKNOWN` and must never be rebuilt
+from current enrollment. Superseded ACTIVE generations preserve their original
+revision identity as `SUPERSEDED_COMPARE_ONLY`. No evaluation, broker hook, OA
+producer, or trading authority exists. See
+`docs/architecture/order-intent-market-policy-coverage.md`.
+Phase 3B.3A adds separate immutable broker POST-opportunity and compare-only evidence,
+with disabled capture/comparison epochs and no broker-path integration. Applicability
+comes only from frozen intent coverage; LIVE, unenrolled, unknown and legacy contexts
+remain non-applicable. See `docs/architecture/broker-time-market-policy-evidence.md`.
+Phase 3B.3B anchors best-effort observation only after the shared entry idempotency
+lookup confirms absence and before a new Alpaca BUY POST. Lifecycle events mirror
+dispatch, response, delivery certainty and recovery without changing any decision;
+comparison remains asynchronous, default-off and non-authoritative.
+Broker-boundary evidence uses a dedicated, default-two-connection PrismaPg pool with
+a finite driver acquisition timeout. One monotonic 250 ms budget covers each grouped
+pre-POST, post-response, or recovery observation sequence; never race and abandon an
+evidence write to reach the broker boundary.
+
+Phase 3B.4 has a disposable, read-only browser-acceptance harness documented in
+`scripts/ui-acceptance/README.md`. PostgreSQL and the acceptance API stay exclusively
+on an `internal: true` Docker network; a fixed-upstream proxy alone publishes
+`127.0.0.1:3304`, and the Vite acceptance mode uses `127.0.0.1:5174`. Preserve the
+exact environment and database identity guards, pre-route write denial, inert broker
+transport, and explicit Compose project teardown. The harness must never import
+`src/app/server.ts`, start workers, or gain trading authority.
+
 The intended lifecycle is:
 
 ```text

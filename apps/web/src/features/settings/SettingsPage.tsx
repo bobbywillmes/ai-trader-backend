@@ -1606,7 +1606,7 @@ export function SettingsPage() {
                   >
                     Refresh
                   </Button>
-                  <Button component={Link} to="/system-events" variant="subtle">System Events</Button>
+                  <Button component={Link} to="/system/events" variant="subtle">System Events</Button>
                 </Group>
               </Group>
 

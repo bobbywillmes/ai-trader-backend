@@ -32,8 +32,8 @@ function links(row: { tradingAccountId: number; trackedPositionId: number | null
     account: `/trading-accounts/${row.tradingAccountId}`,
     reconciliation: `/trading-accounts/${row.tradingAccountId}/reconciliation`,
     position: row.trackedPositionId ? `/positions/open?account=${row.tradingAccountId}&position=${row.trackedPositionId}` : null,
-    order: row.orderIntentId || row.brokerOrderId ? `/orders?account=${row.tradingAccountId}` : null,
-    systemEvents: `/system-events?account=${row.tradingAccountId}`,
+    order: row.orderIntentId || row.brokerOrderId ? `/orders/open?account=${row.tradingAccountId}${row.orderIntentId ? `&intent=${row.orderIntentId}` : ''}` : null,
+    systemEvents: `/system/events?account=${row.tradingAccountId}`,
   };
 }
 

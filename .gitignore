@@ -6,3 +6,5 @@ dist
 .env.*
 !.env.example
 !.env.production.example
+!apps/web/.env.acceptance
+.acceptance/

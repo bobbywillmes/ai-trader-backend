@@ -1,4 +1,16 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() || '';
+import { assertAcceptanceApiRouting, resolveApiBaseUrl } from "./api-routing";
+
+const API_BASE_URL = resolveApiBaseUrl(
+  import.meta.env.MODE,
+  import.meta.env.VITE_API_BASE_URL,
+);
+
+if (import.meta.env.MODE === "acceptance") {
+  if (typeof window === "undefined") {
+    throw new Error("Acceptance API routing requires a browser origin.");
+  }
+  assertAcceptanceApiRouting(import.meta.env.MODE, API_BASE_URL, window.location.origin);
+}
 
 export function getApiUrl(path: string) {
   return new URL(`${API_BASE_URL}${path}`, window.location.origin).href;

@@ -35,6 +35,7 @@ import {
 } from "../../components/data-display";
 import { getAdminToken } from "../../lib/api";
 import { EntryDecisionDrawer } from "./EntryDecisionDrawer";
+import { EntryDecisionOrderEvidence } from "./EntryDecisionOrderEvidence";
 import { useEntryDecisionDrawer, useEntryDecisions } from "./hooks";
 import type { EntryDecisionQuery, EntryDecisionSummary } from "./types";
 import classes from "./EntryDecisionsPage.module.css";
@@ -153,6 +154,8 @@ export function EntryDecisionsPage() {
   const [token] = useState(() => getAdminToken());
   const accountScope = useTradingAccountScope();
   const [params, setParams] = useSearchParams();
+  const selectedDecisionId = positiveParam(params.get("decision"));
+  const requestedOrderIntentId = positiveParam(params.get("intent"));
   const page = Number(params.get("page")) || 1;
   const pageSize = Number(params.get("pageSize")) || 25;
   const symbolFilter = params.get("symbol") ?? "";
@@ -184,7 +187,7 @@ export function EntryDecisionsPage() {
   });
   const [expandedId, setExpandedId] = useState<string | number | null>(null);
   const [detailOpener, setDetailOpener] = useState<HTMLElement | null>(null);
-  const drawer = useEntryDecisionDrawer(token);
+  const drawer = useEntryDecisionDrawer(token, selectedDecisionId);
   const hasActiveFilters =
     symbolFilter.trim() !== "" ||
     stateFilter.trim() !== "" ||
@@ -214,6 +217,9 @@ export function EntryDecisionsPage() {
   const decisionsQuery = useEntryDecisions(token, query);
   const decisions = decisionsQuery.data?.decisions ?? [];
   const pagination = decisionsQuery.data?.pagination;
+  const authorizationContext = accountScope.isAll
+    ? "all"
+    : `account:${accountScope.selectedAccount?.id ?? "none"}`;
   function clearFilters() {
     setParams((current) => {
       const next = new URLSearchParams(current);
@@ -225,11 +231,21 @@ export function EntryDecisionsPage() {
   }
   function openDetails(decision: EntryDecisionSummary, opener: HTMLElement) {
     setDetailOpener(opener);
-    drawer.openDecision(decision.id);
+    setParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set("decision", String(decision.id));
+      if (decision.orderIntentId !== null) next.set("intent", String(decision.orderIntentId)); else next.delete("intent");
+      return next;
+    });
   }
   function closeDetails() {
     const opener = detailOpener;
-    drawer.closeDecision();
+    setParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("decision");
+      next.delete("intent");
+      return next;
+    });
     window.setTimeout(() => opener?.focus(), 0);
   }
 
@@ -478,6 +494,15 @@ export function EntryDecisionsPage() {
           />
         </section>
       </div>
+      <EntryDecisionOrderEvidence
+        decision={decision}
+        token={token}
+        requestedOrderIntentId={requestedOrderIntentId}
+        authorizationContext={authorizationContext}
+        className={classes.detailCard}
+        headingClassName={classes.detailHeading}
+        headingSize="h5"
+      />
       <Accordion variant="contained" radius="md">
         <Accordion.Item value="raw">
           <Accordion.Control>
@@ -718,7 +743,13 @@ export function EntryDecisionsPage() {
           </Stack>
         </Card>
       </Stack>
-      <EntryDecisionDrawer {...drawer.drawerProps} onClose={closeDetails} />
+      <EntryDecisionDrawer {...drawer.drawerProps} token={token} requestedOrderIntentId={requestedOrderIntentId} authorizationContext={authorizationContext} onClose={closeDetails} />
     </main>
   );
+}
+
+function positiveParam(value: string | null) {
+  if (!value) return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }

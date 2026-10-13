@@ -14,6 +14,7 @@ import {
 import { IconFileAnalytics } from "@tabler/icons-react";
 import { EntryDecisionAccountBadge } from "./EntryDecisionAccountBadge";
 import type { EntryDecisionDetail, EntryDecisionRelatedRecord } from "./types";
+import { EntryDecisionOrderEvidence } from "./EntryDecisionOrderEvidence";
 import classes from "./EntryDecisionDrawer.module.css";
 
 type EntryDecisionDrawerProps = {
@@ -22,6 +23,9 @@ type EntryDecisionDrawerProps = {
   isLoading: boolean;
   isError: boolean;
   error: Error | null;
+  token?: string | null;
+  requestedOrderIntentId?: number | null;
+  authorizationContext?: string;
   onClose: () => void;
 };
 
@@ -31,6 +35,9 @@ export function EntryDecisionDrawer({
   isLoading,
   isError,
   error,
+  token = null,
+  requestedOrderIntentId = null,
+  authorizationContext = "all",
   onClose,
 }: EntryDecisionDrawerProps) {
   return (
@@ -185,6 +192,8 @@ export function EntryDecisionDrawer({
               />
             </SimpleGrid>
           </section>
+
+          <EntryDecisionOrderEvidence decision={decision} token={token} requestedOrderIntentId={requestedOrderIntentId} authorizationContext={authorizationContext} className={classes.detailCard} headingClassName={classes.heading} />
 
           <Accordion variant="contained" radius="md" className={classes.diagnostics}><Accordion.Item value="raw"><Accordion.Control><div><Text fw={700} size="sm">Raw diagnostics</Text><Text size="xs" c="dimmed" className={classes.technical}>{decision.decisionReason ?? decision.persistenceReason}</Text></div></Accordion.Control><Accordion.Panel><Stack gap="xs"><Info label="Raw decision reason" value={decision.decisionReason ?? "Not available"} /><Info label="Raw blocking reason" value={decision.blockingReason ?? "Not available"} /><Info label="Decision fingerprint" value={decision.decisionFingerprint} /><Payload label="Market" payload={decision.marketSnapshotJson} /><Payload label="Runtime" payload={decision.runtimeSnapshotJson} /><Payload label="Strategy" payload={decision.strategySnapshotJson} /><Payload label="Indicators" payload={decision.indicatorSnapshotJson} /><Payload label="Raw Decision" payload={decision.rawDecisionJson} /></Stack></Accordion.Panel></Accordion.Item></Accordion>
         </Stack>

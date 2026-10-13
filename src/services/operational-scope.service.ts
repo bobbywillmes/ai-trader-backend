@@ -19,6 +19,18 @@ type OperationalAccountRecord = Prisma.TradingAccountGetPayload<{
   select: typeof OPERATIONAL_ACCOUNT_SELECT;
 }>;
 
+type BrokerOpenOrder = Awaited<ReturnType<typeof getNormalizedOpenOrders>>[number];
+type ScopedOpenOrder = BrokerOpenOrder & {
+  tradingAccountId: number;
+  tradingAccount: ReturnType<typeof operationalAccountIdentity>;
+};
+
+type OpenOrderIdentity = {
+  orderIntentId: number | null;
+  localBrokerOrderId: number | null;
+  identityMatch: 'BROKER_ORDER_ID' | 'CLIENT_ORDER_ID' | 'BOTH' | 'AMBIGUOUS' | 'NOT_FOUND';
+};
+
 export function operationalAccountIdentity(account: OperationalAccountRecord) {
   return {
     id: account.id,
@@ -127,7 +139,7 @@ export async function listScopedOpenOrders(user: {
       });
     }
   }
-  return results;
+  return enrichOpenOrderIdentities(results);
 }
 
 export async function getScopedOpenPositionsForAccount(tradingAccountId: number) {
@@ -143,7 +155,7 @@ export async function getScopedOpenOrdersForAccount(tradingAccountId: number) {
   if (!account) throw new HttpError(404, 'Trading account not found.');
   const identity = operationalAccountIdentity(account);
   if (account.credential?.status !== 'ACTIVE') {
-    return {
+    const result = {
       account: identity,
       availability: 'UNAVAILABLE' as const,
       reason: account.credential ? 'CREDENTIALS_UNUSABLE' as const : 'CREDENTIALS_MISSING' as const,
@@ -152,16 +164,18 @@ export async function getScopedOpenOrdersForAccount(tradingAccountId: number) {
         : 'Broker credentials are missing.',
       orders: null,
     };
+    return result;
   }
   try {
     const orders = await getNormalizedOpenOrders(tradingAccountId, 'open_orders_sync');
-    return {
+    const result = {
       account: identity,
       availability: 'AVAILABLE' as const,
       reason: null,
       message: null,
       orders: orders.map((order) => ({ ...order, tradingAccountId, tradingAccount: identity })),
     };
+    return (await enrichOpenOrderIdentities([result]))[0]!;
   } catch (error) {
     return {
       account: identity,
@@ -171,4 +185,41 @@ export async function getScopedOpenOrdersForAccount(tradingAccountId: number) {
       orders: null,
     };
   }
+}
+
+async function enrichOpenOrderIdentities<T extends { orders: ScopedOpenOrder[] | null }>(results: T[]) {
+  const available = results.flatMap((result) => result.orders ?? []);
+  if (available.length === 0) return results;
+  const clauses = available.map((order) => ({
+    tradingAccountId: order.tradingAccountId,
+    OR: [
+      { brokerOrderId: order.id },
+      ...(order.clientOrderId ? [{ clientOrderId: String(order.clientOrderId) }] : []),
+    ],
+  }));
+  const candidates = await prisma.brokerOrder.findMany({
+    where: { OR: clauses },
+    select: { id: true, orderIntentId: true, tradingAccountId: true, brokerOrderId: true, clientOrderId: true },
+  });
+  return results.map((result) => ({
+    ...result,
+    orders: result.orders?.map((order) => ({ ...order, ...resolveOpenOrderIdentity(order, candidates) })) ?? null,
+  }));
+}
+
+function resolveOpenOrderIdentity(
+  order: ScopedOpenOrder,
+  candidates: Array<{ id: number; orderIntentId: number; tradingAccountId: number | null; brokerOrderId: string; clientOrderId: string }>,
+): OpenOrderIdentity {
+  const clientOrderId = order.clientOrderId ?? null;
+  const matches = candidates.filter((candidate) => candidate.tradingAccountId === order.tradingAccountId &&
+    (candidate.brokerOrderId === order.id || (clientOrderId !== null && candidate.clientOrderId === clientOrderId)));
+  const unique = [...new Map(matches.map((candidate) => [candidate.id, candidate])).values()];
+  if (unique.length === 0) return { orderIntentId: null, localBrokerOrderId: null, identityMatch: 'NOT_FOUND' };
+  const intentIds = new Set(unique.map((candidate) => candidate.orderIntentId));
+  if (unique.length !== 1 || intentIds.size !== 1) return { orderIntentId: null, localBrokerOrderId: null, identityMatch: 'AMBIGUOUS' };
+  const match = unique[0]!;
+  const broker = match.brokerOrderId === order.id;
+  const client = clientOrderId !== null && match.clientOrderId === clientOrderId;
+  return { orderIntentId: match.orderIntentId, localBrokerOrderId: match.id, identityMatch: broker && client ? 'BOTH' : broker ? 'BROKER_ORDER_ID' : 'CLIENT_ORDER_ID' };
 }

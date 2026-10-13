@@ -35,9 +35,17 @@ begin tick
 ```
 
 The in-memory registry is authoritative for coordinator health in the running
-process. The `WorkerHealthState` database table stores one latest global row per
-worker key for production diagnostics and external monitoring. It is not a tick
-history table.
+process. Failure and recovery transitions are derived only from that process's
+local history and carry its `processInstanceId`; a process never infers recovery
+from another process's persisted failure.
+
+The `WorkerHealthState` database table stores one latest-observed row per worker
+key for production diagnostics and API compatibility. In a multi-instance
+deployment it is deliberately last-writer-wins: `processInstanceId` identifies
+the instance that wrote the row, and a later write from another instance may
+replace it. It is neither a per-instance history nor authoritative aggregate
+cluster health. Cluster-wide conclusions require instance-aware telemetry; the
+row alone cannot prove every instance is healthy.
 
 Account-scoped workflows also persist `TradingAccountWorkerHealthState`, with
 one current row per `tradingAccountId` and `workerKey`. This account state is
@@ -58,6 +66,13 @@ Healthy outcomes include:
 `lastWorkSucceededAt` is updated only when the worker actually created, updated, imported, or found meaningful business work. A worker can be healthy even when `lastWorkSucceededAt` is null.
 
 `already_running` skips do not refresh `lastSucceededAt`; the original run age determines whether the worker becomes delayed or stale.
+
+Cross-process Market Regime composition publication contention is different:
+the transaction advisory lock returns an explicit `ALREADY_RUNNING_ELSEWHERE`
+publisher outcome, which the scheduler records as healthy `not_due` liveness
+without advancing `lastWorkSucceededAt`. The owner-only manual API retains its
+409 conflict response. Lock-query failures and all later publisher errors still
+fail the worker normally.
 
 ## Adaptive Broker Reads
 
@@ -266,8 +281,8 @@ Adaptive market-session degradation is visible here but does not directly change
 
 For delayed, stale, failing, or stuck workers:
 
-1. Check global `WorkerHealthState` to determine whether the coordinator itself
-   is unhealthy.
+1. Check `WorkerHealthState` as the latest observation and note its
+   `processInstanceId`; do not interpret it as aggregate cluster health.
 2. Inspect the affected account's `TradingAccountWorkerHealthState`, including
    applicability, last outcome, freshness, current-run owner, backoff, and lock
    contention.

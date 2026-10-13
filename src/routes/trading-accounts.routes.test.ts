@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   grantLiveWriteApprovalController: vi.fn((_req: Request, res: Response) =>
     res.status(200).json({ ok: true }),
   ),
+  prepareAssignmentMarketPolicyEnrollmentController: vi.fn((_req: Request, res: Response) => res.status(201).json({ ok: true })),
 }));
 
 vi.mock('../controllers/trading-accounts.controller.js', () => ({
@@ -61,6 +62,11 @@ vi.mock('../controllers/trading-accounts.controller.js', () => ({
   getLiveWriteApprovalsController: vi.fn(),
   grantLiveWriteApprovalController: mocks.grantLiveWriteApprovalController,
   revokeLiveWriteApprovalController: vi.fn(),
+  getAssignmentMarketPolicyEnrollmentController: vi.fn(),
+  previewAssignmentMarketPolicyEnrollmentController: vi.fn(),
+  prepareAssignmentMarketPolicyEnrollmentController: mocks.prepareAssignmentMarketPolicyEnrollmentController,
+  activateAssignmentMarketPolicyEnrollmentController: vi.fn(),
+  disableAssignmentMarketPolicyEnrollmentController: vi.fn(),
 }));
 
 vi.mock('../controllers/reconciliation.controller.js', () => ({
@@ -71,6 +77,24 @@ vi.mock('../controllers/reconciliation.controller.js', () => ({
 import tradingAccountsRouter from './trading-accounts.routes.js';
 
 let server: Server | undefined;
+
+describe('assignment market-policy enrollment mutation RBAC', () => {
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server?.close(() => resolve()));
+    server = undefined;
+    vi.clearAllMocks();
+  });
+
+  it('permits SYSTEM_OWNER and rejects membership roles', async () => {
+    const path = '/api/trading-accounts/1/account-subscriptions/2/market-policy-enrollment/prepare';
+    expect((await postAs(PlatformRole.SYSTEM_OWNER, path, {})).status).toBe(201);
+    expect(mocks.prepareAssignmentMarketPolicyEnrollmentController).toHaveBeenCalledOnce();
+    await new Promise<void>((resolve) => server?.close(() => resolve())); server = undefined;
+    expect((await postAs(PlatformRole.OPERATOR, path, {})).status).toBe(403);
+    await new Promise<void>((resolve) => server?.close(() => resolve())); server = undefined;
+    expect((await postAs(PlatformRole.ACCOUNT_USER, path, {})).status).toBe(403);
+  });
+});
 
 async function postAs(
   platformRole: PlatformRole,

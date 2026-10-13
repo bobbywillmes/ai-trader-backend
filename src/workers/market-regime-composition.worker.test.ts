@@ -14,7 +14,13 @@ describe('Market Regime composition worker', () => {
   });
 
   it('treats repeated scheduler ticks as idempotent no-work', async () => {
-    mocks.publish.mockResolvedValue({ published: false, reused: true });
+    mocks.publish.mockResolvedValue({ outcome: 'REUSED', published: false, reused: true });
+    await expect(runMarketRegimeCompositionWorker()).resolves.toEqual({ outcome: 'skipped', skipReason: 'not_due', workSucceeded: false });
+    expect(mocks.publish).toHaveBeenCalledWith({ contention: 'return' });
+  });
+
+  it('treats cross-process advisory-lock contention as healthy scheduler no-work', async () => {
+    mocks.publish.mockResolvedValue({ outcome: 'ALREADY_RUNNING_ELSEWHERE', published: false, reused: false });
     await expect(runMarketRegimeCompositionWorker()).resolves.toEqual({ outcome: 'skipped', skipReason: 'not_due', workSucceeded: false });
   });
 });
