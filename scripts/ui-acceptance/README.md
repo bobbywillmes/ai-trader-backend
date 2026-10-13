@@ -18,8 +18,8 @@ npm run acceptance:ui:migrate
 npm run acceptance:ui:fixture
 npm run acceptance:ui:api
 npm run acceptance:ui:network-check
-npm run acceptance:ui:verify
 npm run acceptance:ui:web
+npm run acceptance:ui:verify
 npm run acceptance:ui:urls
 ```
 
@@ -28,6 +28,14 @@ npm run acceptance:ui:urls
 one-run password, account IDs, intent IDs, and direct scenario URLs. Do not paste
 it into logs or commit it. Login normally in the browser, then open a URL allowed
 for that role.
+
+Acceptance mode loads `apps/web/.env.acceptance`, which deliberately clears the
+ordinary development `VITE_API_BASE_URL`. The browser therefore requests relative
+`/api` paths through Vite on port 5174. Both Vite startup and the browser bundle
+fail closed if acceptance mode resolves an absolute API base or an unexpected
+frontend origin. `acceptance:ui:verify` must run after the frontend starts because
+it verifies login, session refresh, evidence reads, logout, and denied writes
+through the real port 5174 proxy.
 
 The read-only guard permits only `POST /api/auth/login` and
 `POST /api/auth/logout`. Session validation is `GET /api/auth/me`. All other
