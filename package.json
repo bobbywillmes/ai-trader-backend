@@ -77,7 +77,9 @@
     "acceptance:ui:verify": "tsx scripts/ui-acceptance/verify.ts",
     "acceptance:ui:network-check": "tsx scripts/ui-acceptance/network-check.ts",
     "acceptance:ui:stop": "tsx scripts/ui-acceptance/manage.ts stop",
-    "acceptance:live-entry:test": "vitest run --config vitest.acceptance.config.ts"
+    "acceptance:live-entry:test": "vitest run --config vitest.acceptance.config.ts",
+    "graphify:build": "graphify extract . --code-only && graphify cluster-only . --no-label",
+    "graphify:update": "graphify extract . --code-only && graphify cluster-only . --no-label"
   },
   "devDependencies": {
     "@ngrok/ngrok": "^1.7.0",

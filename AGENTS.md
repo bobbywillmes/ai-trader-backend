@@ -560,3 +560,17 @@ When finishing a task, summarize:
 For commit-related tasks, include the final commit hash.
 
 For handoff back to ChatGPT, provide a higher-level summary with enough context for the main planning conversation to resume without rereading the whole implementation thread.
+
+## Graphify repository navigation
+
+When `graphify-out/graph.json` exists, use the local code graph for broad architecture, dependency, lifecycle, or cross-file codebase questions.
+
+1. Before broad grep/search exploration, run ONE focused Graphify query: `graphify query "<question>" --budget 2000`
+2. Form the query around concrete domain symbols, model names, service names, and relationships already present in the user's request. Prefer named concepts over a broad prose restatement of the entire question.
+3. Treat the result only as a navigation aid. Use it to identify likely symbols and files.
+4. Verify important claims by reading the relevant source files.
+5. Do not read the Graphify skill, Graphify reference documentation, GRAPH_REPORT.md, or graph.json directly.
+6. Do not run additional Graphify queries unless the first query fails to identify useful candidate files or symbols.
+7. Do not rebuild or update the graph unless explicitly asked.
+
+If the graph does not exist, use normal repository exploration. Do not install or configure Graphify unless explicitly asked.

@@ -252,6 +252,10 @@ Development docs cover local workflows, testing, and developer-environment setup
 
 Documents backend test commands and the current service-level coverage around lifecycle attribution, trade-cycle APIs, config snapshots, and reporting.
 
+### [Graphify](development/graphify.md)
+
+Graphify is used to reduce API token usage & time when using Codex & Claude. It provides a knowledge graph of the repo that Codex & Claude use as a starting point for all chats.
+
 ### [Local Network & Mobile Testing](development/local-network-mobile-testing.md)
 
 Documents how to expose the Vite development server to a trusted local network and test the web application from a phone, tablet, or another computer.
