@@ -111,17 +111,18 @@ type BaselineResult = { perSymbol: Record<IntradaySymbol, number | null>; reason
  * frozen for the whole current session once computed. Reused directly from the last VALID
  * same-session assessment rather than recomputed on every target within that session.
  */
-async function computeBaseline(tx: Tx, priorDate: string | null, latestDate: string, exceptions: CalendarException[], fetchSplits: SplitReader): Promise<BaselineResult> {
+async function computeBaseline(tx: Tx, priorDate: string | null, exceptions: CalendarException[], fetchSplits: SplitReader): Promise<BaselineResult> {
   if (!priorDate) return { perSymbol: { SPY: null, RSP: null }, reasonCode: 'PRIOR_ATR_UNAVAILABLE', provenance: null };
   const dailyFrom = addDays(priorDate, -400);
+  const normalizationThrough = priorDate;
   const securities = await tx.security.findMany({ where: { symbol: { in: [...SYMBOLS] } }, select: { id: true, symbol: true } });
   const rows = await readCanonicalDailyBars(tx, securities.map(s => s.id), dailyFrom, priorDate);
   let splits: SplitEvent[][];
   try {
-    splits = await Promise.all(SYMBOLS.map(symbol => fetchSplits(symbol, dailyFrom, latestDate)));
+    splits = await Promise.all(SYMBOLS.map(symbol => fetchSplits(symbol, dailyFrom, normalizationThrough)));
     splits.forEach((events, i) => {
-      if (events.some(event => event.symbol !== SYMBOLS[i] || event.executionDate < dailyFrom || event.executionDate > latestDate)) throw new Error('Invalid split identity.');
-      normalizeSplits([], events, latestDate);
+      if (events.some(event => event.symbol !== SYMBOLS[i] || event.executionDate < dailyFrom || event.executionDate > normalizationThrough)) throw new Error('Invalid split identity.');
+      normalizeSplits([], events, normalizationThrough);
     });
   } catch { return { perSymbol: { SPY: null, RSP: null }, reasonCode: 'SPLIT_EVIDENCE_UNAVAILABLE', provenance: null }; }
   const dates = datesBetween(dailyFrom, priorDate).filter(date => marketSession(date, exceptions));
@@ -130,7 +131,7 @@ async function computeBaseline(tx: Tx, priorDate: string | null, latestDate: str
   SYMBOLS.forEach((symbol, i) => {
     const security = securities.find(s => s.symbol === symbol);
     const bars: ResearchBar[] = rows.filter(row => row.securityId === security?.id).map(row => ({ id: row.id, date: row.sessionDate, open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close), volume: Number(row.volume) }));
-    const normalized = new Map(normalizeSplits(bars, splits[i]!, latestDate).map(bar => [bar.date, bar]));
+    const normalized = new Map(normalizeSplits(bars, splits[i]!, normalizationThrough).map(bar => [bar.date, bar]));
     const measurements = instrumentMeasurements(dates.map(date => normalized.get(date) ?? null));
     const last = measurements.at(-1);
     perSymbol[symbol] = last?.ATR14Pct ? last.ATR14Pct.value / 100 : null;
@@ -208,7 +209,7 @@ export async function publishIntradayStressAssessments(options: Options = {}): P
       } else if (!reasonCode) {
         try {
           const priorDate = previousSessionDate(latest.date, exceptions);
-          const computed = await computeBaseline(tx, priorDate, latest.date, exceptions, options.fetchSplits ?? ((symbol, from, through) => readPersistedSplits(tx, symbol, from, through)));
+          const computed = await computeBaseline(tx, priorDate, exceptions, options.fetchSplits ?? ((symbol, from, through) => readPersistedSplits(tx, symbol, from, through)));
           baseline = computed.perSymbol;
           baselineProvenance = { reused: false, splitEvidenceSource: options.fetchSplits ? 'INJECTED' : 'MARKET_SPLIT_EVENT', ...(computed.provenance ?? {}) };
           if (computed.reasonCode) { status = computed.reasonCode === 'SPLIT_EVIDENCE_UNAVAILABLE' ? 'FAILED' : 'UNAVAILABLE'; reasonCode = computed.reasonCode; }

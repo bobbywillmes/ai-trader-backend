@@ -75,6 +75,17 @@ describe('Volatility formulas', () => {
     expect(JSON.stringify(raw)).toBe(original);
     expect(calculate(raw)[25]!.spy.RV10!.value).toBeGreaterThan(30);
   });
+
+  it('keeps prior-session ATR14Pct invariant under a current-session split adjustment', () => {
+    const priorBars = bars(45);
+    const throughPrior = priorBars.at(-1)!.date;
+    const currentSession = '2026-03-09';
+    const currentSplit = [{ id: 'current', executionDate: currentSession, splitFrom: 1, splitTo: 3, priceFactor: 1 / 3 }];
+    const withoutCurrentSplit = instrumentMeasurements(normalizeSplits(priorBars, [], throughPrior)).at(-1)!.ATR14Pct!.value;
+    const withCurrentSplit = instrumentMeasurements(normalizeSplits(priorBars, currentSplit, currentSession)).at(-1)!.ATR14Pct!.value;
+
+    expect(withCurrentSplit).toBeCloseTo(withoutCurrentSplit, 12);
+  });
   it('rejects invalid primitive inputs', () => {
     expect(() => logReturn(0, 100)).toThrow();
     expect(() => sampleStandardDeviation([1])).toThrow();

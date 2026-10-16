@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Prisma, type PrismaClient, type MarketRegimeDimensionAssessment } from '@prisma/client';
 const reads = vi.hoisted(() => ({ findFirst: vi.fn(), findMany: vi.fn() }));
 vi.mock('../db/prisma.js', () => ({ prisma: { marketRegimeDimensionAssessment: reads } }));
 import { getIntradayStressAssessment, latestIntradayStressAssessment, listIntradayStressAssessments, publishIntradayStressAssessments } from './intraday-stress-assessment.service.js';
+import { env } from '../config/env.js';
 import { datesBetween, etInstant, marketSession, type CalendarException } from './market-calendar.js';
 import { verifiedClosureRows } from './market-calendar-bootstrap.service.js';
 
@@ -10,6 +11,7 @@ type Row = { id: number; securityId: number; timeframe: 'DAY_1' | 'MINUTE_15'; b
 type WhereClause = { dimension?: string; algorithmVersion?: string; status?: string; targetAt?: Date; securityId?: number | { in: number[] }; timeframe?: string; barStartAt?: { gte?: Date; lt?: Date; lte?: Date } };
 const SESSION_DATE = '2026-09-14'; // Monday
 const PRIOR_DATE = '2026-09-11'; // Prior Friday session
+const originalDailyCutover = env.MARKET_DAILY_TIINGO_CUTOVER_SESSION;
 const openMs = etInstant(SESSION_DATE, 570).getTime();
 function targetAtFor(index: number) { return new Date(openMs + index * 900_000); }
 function dueAt(index: number, offsetMs = 61_000) { return new Date(targetAtFor(index).getTime() + 5 * 60_000 + offsetMs); }
@@ -91,6 +93,10 @@ beforeEach(() => {
   vi.restoreAllMocks(); reads.findFirst.mockReset(); reads.findMany.mockReset(); fetchSplits.mockReset().mockResolvedValue([]);
   assessments = []; rows = []; exceptions = [...verifiedClosureRows]; locked = false; tx = makeTx();
 });
+afterEach(() => {
+  if (originalDailyCutover === undefined) delete (env as { MARKET_DAILY_TIINGO_CUTOVER_SESSION?: string }).MARKET_DAILY_TIINGO_CUTOVER_SESSION;
+  else (env as { MARKET_DAILY_TIINGO_CUTOVER_SESSION?: string }).MARKET_DAILY_TIINGO_CUTOVER_SESSION = originalDailyCutover;
+});
 
 describe('authoritative INTRADAY_STRESS_V1 publication', () => {
   it('fails closed on a wrong-provider canonical minute row', async () => {
@@ -166,6 +172,46 @@ describe('authoritative INTRADAY_STRESS_V1 publication', () => {
     expect(ev.session).toMatchObject({ sameSession: false, bootstrap: true });
     expect(ev.spy!.rollingStatus).toBe('NOT_APPLICABLE_SESSION_WARMUP');
     expect(tx.systemEvent.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('publishes during a Tiingo-authority session without requiring the current EOD split factor', async () => {
+    (env as { MARKET_DAILY_TIINGO_CUTOVER_SESSION?: string }).MARKET_DAILY_TIINGO_CUTOVER_SESSION = SESSION_DATE;
+    dailyHistory();
+    rows.push(minuteBar(1, 1, 100, 100.5, 99.7, 100.2), minuteBar(1, 2, 100, 100.3, 99.8, 100.1));
+    fetchSplits.mockImplementation(async (_symbol, _from, through) => {
+      if (through === SESSION_DATE) throw new Error('Current Tiingo EOD evidence is not yet eligible.');
+      return [];
+    });
+
+    await expect(run(dueAt(1))).resolves.toMatchObject({ published: 1, blocked: null });
+    expect(fetchSplits).toHaveBeenCalledTimes(2);
+    expect(fetchSplits.mock.calls.map(([, , through]) => through)).toEqual([PRIOR_DATE, PRIOR_DATE]);
+  });
+
+  it('requires only the preceding Massive session when the current session is the Tiingo cutover', async () => {
+    (env as { MARKET_DAILY_TIINGO_CUTOVER_SESSION?: string }).MARKET_DAILY_TIINGO_CUTOVER_SESSION = SESSION_DATE;
+    dailyHistory();
+    rows.push(minuteBar(1, 1, 100, 100.2, 99.8, 100), minuteBar(1, 2, 100, 100.2, 99.8, 100));
+
+    await expect(run(dueAt(1))).resolves.toMatchObject({ published: 1, blocked: null });
+    expect(fetchSplits.mock.calls).toHaveLength(2);
+    for (const [, , through] of fetchSplits.mock.calls) expect(through).toBe(PRIOR_DATE);
+  });
+
+  it('recovers from split-evidence failure with an immutable later valid attempt', async () => {
+    dailyHistory();
+    rows.push(minuteBar(1, 1, 100, 100.2, 99.8, 100), minuteBar(1, 2, 100, 100.2, 99.8, 100));
+    fetchSplits.mockRejectedValueOnce(new Error('Incomplete historical coverage.'));
+    const first = await run(dueAt(1));
+    expect(first).toMatchObject({ blocked: { reasonCode: 'SPLIT_EVIDENCE_UNAVAILABLE', status: 'FAILED' } });
+    const failed = structuredClone(assessments[0]);
+
+    fetchSplits.mockResolvedValue([]);
+    const recovered = await run(new Date(dueAt(1).getTime() + 60_000));
+    expect(recovered).toMatchObject({ published: 1, blocked: null });
+    expect(assessments).toHaveLength(2);
+    expect(assessments[0]).toEqual(failed);
+    expect(assessments.map(row => [row.status, row.attempt])).toEqual([['FAILED', 1], ['VALID', 2]]);
   });
 
   it('is not due until the next target has exhausted its evidence grace', async () => {

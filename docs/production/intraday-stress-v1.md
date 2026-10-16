@@ -38,11 +38,13 @@ carries no overnight/premarket evidence in V1.
   INTRADAY_STRESS never reads a VOLATILITY_V1 assessment row as input, only the same underlying
   DAY_1 `MarketBar` evidence.
 - **Split normalization**: reuses `normalizeSplits` from `src/services/trend-calculation.ts` for
-  the daily ATR history exactly like VOLATILITY_V1. Intraday MINUTE_15 bars within the session
-  being evaluated are never split-normalized, because a split's `executionDate` can only affect
-  bars strictly before it and no split can be dated inside the still-forming current session —
-  the factor is structurally always 1.0 for same-session bars (documented in
-  `intraday-stress-assessment.service.ts`).
+  the daily ATR history through the prior completed session. Unlike daily publishers assessing
+  a target-session DAY_1 bar, Intraday Stress does not require the current session's Tiingo EOD
+  split factor: a current-session split uniformly scales every prior baseline OHLC value, so the
+  factor cancels in `ATR14 / priorClose`. Historical splits through the prior session remain
+  mandatory and fail closed when their Massive coverage or Tiingo factors are incomplete.
+  Intraday MINUTE_15 bars within the session being evaluated are not split-normalized; their
+  shock, rolling-movement, and drawdown measurements compare prices within that same session.
 - **Assessment shape**: reuses the same `MarketRegimeDimensionAssessment` table, advisory-lock
   pattern (`pg_try_advisory_xact_lock`, SHA-256 namespaced key), immutable-attempt semantics,
   fail-closed `reasonCode` vocabulary, and `SystemEvent`/worker-health conventions as
@@ -150,7 +152,9 @@ loop:
 - **The prior-session ATR14 baseline is frozen per session**: computed fresh only when the
   predecessor is from a different (or no) session, then reused verbatim (read from the
   predecessor's own evidence, not recomputed) for every later target in that same session —
-  this also means no repeated Massive split-evidence network calls within a session.
+  this also means no repeated persisted split-evidence reads within a session. The baseline's
+  split range and normalization cutoff both end at the prior completed session; the current
+  session's Tiingo DAY_1 bar is neither an input nor a prerequisite.
   `evidenceJson.baseline.provenance.reused` records which happened.
 - **No cross-session hysteresis**: when the due target's session differs from the predecessor's,
   history bootstraps fresh from `{null, 0}` and replay starts at index 1 of the new session,
@@ -160,8 +164,9 @@ loop:
   closes missing/conflicting in the DB in the recent window, **or** the due target's session
   falls outside `VERIFIED_NYSE_CLOSURES`'s verified `from`/`to` horizon — see below),
   `PRIOR_ATR_UNAVAILABLE` (no prior-session ATR14 baseline),
-  `SPLIT_EVIDENCE_UNAVAILABLE` (Massive split fetch/validation failure while computing a fresh
-  baseline), `MISSING_INTRADAY_EVIDENCE` (missing/invalid/duplicate bar, missing reference, or
+  `SPLIT_EVIDENCE_UNAVAILABLE` (incomplete or conflicting persisted Massive/Tiingo split evidence
+  through the prior completed session while computing a fresh baseline),
+  `MISSING_INTRADAY_EVIDENCE` (missing/invalid/duplicate bar, missing reference, or
   incomplete session prefix), `ROLLING_CONTINUITY_FAILURE` (rolling window broken after
   warm-up), `CALCULATION_FAILED` (predecessor evidence decode failure or an unexpected
   calculation error).
