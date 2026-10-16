@@ -73,10 +73,13 @@ non-reentrant acquisition and cross-family ordering cycles. Repair additionally
 uses a serializable transaction and row locks to detect membership changes at
 the transaction boundary.
 
-The July `historical-order-lifecycle` script remains available for read-only
-diagnosis. Script Apply mode is deprecated; removal is deferred until the
-Workbench demonstrates parity and the real case completes production review.
-Apply requires a reason, the typed confirmation
+The `diagnose:historical-order-lifecycle` command remains available for
+read-only investigation. Its legacy script-based mutation path has been
+retired: `--apply`, `--confirmation`, and the former repair service entrypoint
+are not supported. All supported historical lifecycle repairs must use the
+authorized Lifecycle Repair Workbench.
+
+Workbench Apply requires a reason, the typed confirmation
 `APPLY POSITION ATTRIBUTION REPAIR`, and a unique attempt key. Executions are
 append-only and preserve before/after state, validation, failure evidence, and
 actor identity. A partial unique index permits only one successful execution per
