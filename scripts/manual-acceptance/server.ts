@@ -65,7 +65,7 @@ const control = http.createServer(async (req, res) => {
         tradingAccountSubscriptionId: assignment.id,
         source: 'manual_acceptance_harness',
         idempotencyKey: `manual-acceptance-${Date.now()}`,
-        signal: { source: 'manual_acceptance_harness', reason: 'One-shot Live entry acceptance proof', score: 100, confidence: 1 },
+        signal: { signalType: 'entry', source: 'manual_acceptance_harness', reason: 'One-shot Live entry acceptance proof', score: 100, confidence: 'high' },
       });
       const worker = await processPendingOrders();
       return response(res, 200, { entry, worker, mock: mockAlpacaState() });

@@ -5,6 +5,7 @@ import { candidateAnalysis, distributions, representatives, sessionSummaries } f
 import { INTRADAY_STRESS_ARTIFACTS } from '../src/dev/intraday-stress-artifacts.js';
 type Analysis = ReturnType<typeof candidateAnalysis>;
 type Reps = ReturnType<typeof representatives>;
+type PeriodFrequency = Analysis['frequency']['raw'];
 const read = async <T>(file: string): Promise<T> => JSON.parse(await readFile(file, 'utf8')) as T;
 const out = INTRADAY_STRESS_ARTIFACTS;
 const candidates = await Promise.all(['A', 'B', 'C'].map(name => read<Analysis>(`${CACHE}/candidate-${name}.json`)));
@@ -20,7 +21,7 @@ sections.push('\n## Opening and closing sensitivity\n', table(['Symbol', 'Group'
 sections.push('\n## Candidate state frequencies (%)\n', table(['Candidate', 'Recovery', 'NORMAL', 'ELEVATED', 'HIGH', 'SEVERE', 'Valid targets'], candidates.flatMap(a => (['raw', 'two', 'three'] as const).map(k => {
   const d = a.frequency[k]!; return [a.candidate.name, k, ...d.percentages.map(x => f(x)), d.n];
 }))));
-sections.push('\n## Raw state frequencies by period (%)\n', table(['Candidate', 'Period', 'NORMAL', 'ELEVATED', 'HIGH', 'SEVERE', 'n'], candidates.flatMap(a => Object.entries(a.byPeriod).map(([k, d]) => [a.candidate.name, k, ...d.percentages.map(x => f(x)), d.n]))));
+sections.push('\n## Raw state frequencies by period (%)\n', table(['Candidate', 'Period', 'NORMAL', 'ELEVATED', 'HIGH', 'SEVERE', 'n'], candidates.flatMap(a => Object.entries(a.byPeriod as Record<string, PeriodFrequency>).map(([k, d]) => [a.candidate.name, k, ...d.percentages.map(x => f(x)), d.n]))));
 sections.push('\n## Persistence\n', 'Minutes assume evidence becomes usable exactly target+5 minutes and expires at min(next target+5, session close). Last target therefore contributes 10 minutes; other targets contribute 15. Actual provider latency is not modeled. Episodes never cross sessions or unavailable evidence. Session-end censoring is reported, not treated as observed recovery.\n', table(['Candidate', 'Recovery', 'Episode state', 'Episodes', 'Sessions', 'Median min', 'p95 min', 'Max min', 'Close-censored'], candidates.flatMap(a => Object.entries(a.duration).flatMap(([k, types]) => Object.entries(types).map(([s, d]) => [a.candidate.name, k, s, d.episodes, d.sessions, f(d.medianMinutes, 1), f(d.p95Minutes, 1), d.maxMinutes, d.closingCensored])))));
 sections.push('\n## Representative sessions\n', 'Maxima below are across SPY/RSP actionable targets and need not come from the same instrument or instant. Daily range and whole-session path selection diagnostics include the close. Four controls are nearest the median normalized daily range; the other sessions are deterministic extremes.\n', table(['Date', 'Selection', 'Shock / ATR', '60m / ATR', 'Drawdown / ATR', 'Max downside %', 'Max drawdown %', 'Max raw A/B/C', 'B HIGH+ min (raw/2/3)'], reps.map(r => {
   const rows = candidates.map(a => a.records.filter(t => t.date === r.date));

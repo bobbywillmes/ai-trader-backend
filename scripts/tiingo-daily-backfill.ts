@@ -8,7 +8,8 @@ const researchHistory = process.argv.includes('--research-history');
 try {
   const revisionId = Number(args.revision);
   if (!Number.isSafeInteger(revisionId) || revisionId < 1 || !args.from || !args.through) throw new Error('Usage: --revision=ID --from=YYYY-MM-DD --through=YYYY-MM-DD [--symbols=AAPL,MSFT] [--research-history | --retry-terminal] [--apply]');
-  const result = await tiingoDailyBackfill({ revisionId, from: args.from, through: args.through, symbols: args.symbols?.split(','), retryTerminal, researchHistory, apply });
+  const symbols = args.symbols?.split(',');
+  const result = await tiingoDailyBackfill({ revisionId, from: args.from, through: args.through, ...(symbols === undefined ? {} : { symbols }), retryTerminal, researchHistory, apply });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (apply && (result.counts.conflict || result.counts.failed || result.counts.otherProvider)) process.exitCode = 1;
 } catch (error) { process.stderr.write(`${error instanceof Error ? error.message : 'Tiingo backfill failed'}\n`); process.exitCode = 1; }

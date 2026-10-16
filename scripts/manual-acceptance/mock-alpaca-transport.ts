@@ -18,7 +18,7 @@ const requests: MockRequest[] = [];
 let nextOrderId = 1;
 let submittedOrder: Record<string, unknown> | null = null;
 
-function filledOrder() {
+function filledOrder(): Record<string, unknown> | null {
   if (!submittedOrder) return null;
   return {
     ...submittedOrder,

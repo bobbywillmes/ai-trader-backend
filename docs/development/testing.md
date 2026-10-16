@@ -16,10 +16,24 @@ Run tests in watch mode while developing:
 npm run test:watch
 ```
 
-Run TypeScript checks:
+Run all backend TypeScript checks:
 ```bash
 npm run check
 ```
+
+The normal check validates both production and test code under `src/` and every
+maintained TypeScript developer script under `scripts/`, including nested acceptance
+harness utilities. To validate the scripts separately, run:
+
+```bash
+npm run check:scripts
+```
+
+Script validation is static: TypeScript resolves and checks the files without
+executing CLI entry points, loading their environments, or connecting to databases,
+brokers, or market-data providers. Production builds remain independent and continue
+to use `tsconfig.build.json`, so script files are not emitted into `dist/`.
+
 Run the production build:
 ```bash
 npm run build

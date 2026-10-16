@@ -6,5 +6,6 @@ if (args.some(arg => arg !== '--apply' && !arg.startsWith('--through=')) || args
   throw new Error('Usage: npm run splits:bootstrap -- [--through=YYYY-MM-DD] [--apply]');
 }
 try {
-  console.log(JSON.stringify(await bootstrapMarketSplits({ apply: args.includes('--apply'), through: args.find(arg => arg.startsWith('--through='))?.slice(10) }), null, 2));
+  const through = args.find(arg => arg.startsWith('--through='))?.slice(10);
+  console.log(JSON.stringify(await bootstrapMarketSplits({ apply: args.includes('--apply'), ...(through === undefined ? {} : { through }) }), null, 2));
 } finally { await prisma.$disconnect(); }

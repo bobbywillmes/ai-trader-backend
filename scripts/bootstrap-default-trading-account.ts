@@ -180,7 +180,6 @@ async function main() {
   console.log("Backfilling existing single-account trading records...");
 
   const [
-    subscriptions,
     orderIntents,
     brokerOrders,
     brokerActivities,
@@ -189,14 +188,6 @@ async function main() {
     entryDecisions,
     alpacaApiUsageBuckets,
   ] = await prisma.$transaction([
-    prisma.subscription.updateMany({
-      where: {
-        tradingAccountId: null,
-      },
-      data: {
-        tradingAccountId: tradingAccount.id,
-      },
-    }),
     prisma.orderIntent.updateMany({
       where: {
         tradingAccountId: null,
@@ -256,7 +247,6 @@ async function main() {
   ]);
 
   console.log("Backfill complete:");
-  console.log(`- Subscription: ${subscriptions.count}`);
   console.log(`- OrderIntent: ${orderIntents.count}`);
   console.log(`- BrokerOrder: ${brokerOrders.count}`);
   console.log(`- BrokerActivity: ${brokerActivities.count}`);

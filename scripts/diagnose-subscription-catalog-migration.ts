@@ -39,7 +39,7 @@ async function main() {
       AND constraint_name =
         'TradingAccountSubscription_allocationId_tradingAccountId_fkey'
   `;
-  const [{ invalidAllocationOwnershipCount }] = await prisma.$queryRaw<
+  const [invalidAllocationOwnership] = await prisma.$queryRaw<
     { invalidAllocationOwnershipCount: bigint }[]
   >`
     SELECT COUNT(*) AS "invalidAllocationOwnershipCount"
@@ -52,6 +52,10 @@ async function main() {
         OR allocation."tradingAccountId" <> assignment."tradingAccountId"
       )
   `;
+  if (!invalidAllocationOwnership) {
+    throw new Error("Allocation ownership integrity query returned no result.");
+  }
+  const { invalidAllocationOwnershipCount } = invalidAllocationOwnership;
   const allocationOwnershipIntegrity = {
     databaseConstraintPresent: allocationOwnershipConstraint !== undefined,
     constraintName: allocationOwnershipConstraint?.constraintName ?? null,

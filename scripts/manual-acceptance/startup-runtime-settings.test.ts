@@ -26,13 +26,18 @@ function harnessDb() {
     armings: [{ id: 2, oneShotStatus: 'AVAILABLE' }],
     orderIntents: [{ id: 1, status: 'blocked' }],
   };
-  const upsert = vi.fn(async ({ where: { key }, update: { value } }) => {
+  const upsert = vi.fn(async ({ where: { key }, update: { value } }: { where: { key: string }; update: { value: string } }) => {
     settings.set(key, value);
   });
-  const transaction = vi.fn(async (operation: (tx: { setting: { upsert: typeof upsert } }) => Promise<unknown>) =>
-    operation({ setting: { upsert } }));
+  const transaction = vi.fn();
+  const db = {
+    async $transaction<T>(operation: (tx: { setting: { upsert: typeof upsert } }) => Promise<T>): Promise<T> {
+      transaction();
+      return operation({ setting: { upsert } });
+    },
+  };
 
-  return { db: { $transaction: transaction }, settings, ceremonyRecords, upsert, transaction };
+  return { db, settings, ceremonyRecords, upsert, transaction };
 }
 
 describe('manual acceptance runtime settings bootstrap', () => {

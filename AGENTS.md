@@ -152,6 +152,10 @@ npm run test
 npm run build
 ```
 
+`npm run check` validates both `src/` and all maintained TypeScript files under
+`scripts/`. Use `npm run check:scripts` when iterating on developer scripts alone;
+it performs static validation only and does not execute script entry points.
+
 For web UI changes, run the relevant UI checks:
 
 ```bash

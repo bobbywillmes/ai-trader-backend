@@ -5,8 +5,10 @@ import { OPERATIONAL_ATTENTION_CODES, OPERATIONAL_ATTENTION_SOURCES, openOrObser
 import { assertDemoOperationalAttentionSafety } from '../src/services/demo-operational-attention-safety.service.js';
 
 async function main() {
-  const accountId = Number(process.argv[2]); const severity = String(process.argv[3] ?? 'WARNING').toUpperCase() as SystemEventSeverity;
-  if (![SystemEventSeverity.WARNING, SystemEventSeverity.ERROR, SystemEventSeverity.CRITICAL].includes(severity)) throw new Error('Severity must be WARNING, ERROR, or CRITICAL.');
+  const accountId = Number(process.argv[2]); const severityInput = String(process.argv[3] ?? 'WARNING').toUpperCase();
+  const allowedSeverities = [SystemEventSeverity.WARNING, SystemEventSeverity.ERROR, SystemEventSeverity.CRITICAL] as const;
+  const severity = allowedSeverities.find(candidate => candidate === severityInput);
+  if (severity === undefined) throw new Error('Severity must be WARNING, ERROR, or CRITICAL.');
   const account = await prisma.tradingAccount.findUnique({ where: { id: accountId }, select: { id: true, displayName: true, environment: true } });
   if (!account) throw new Error(`TradingAccount ${accountId} was not found.`);
   assertDemoOperationalAttentionSafety({ nodeEnv: env.NODE_ENV, deploymentRole: env.LIVE_WRITE_DEPLOYMENT_ROLE, accountEnvironment: account.environment, accountId });
