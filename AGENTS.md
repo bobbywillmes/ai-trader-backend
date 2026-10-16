@@ -338,13 +338,6 @@ disabled-by-default shadow worker. Neither version has trading authority. See
 `docs/development/research/breadth/breadth-v1-calibration.md`, `docs/production/breadth-v1.md`,
 and `docs/production/breadth-v2-assessment-phase6b.md`.
 
-`MARKET_REGIME_COMPOSITION_V1` is an immutable, account-independent composition of the
-exact Trend, Volatility, Breadth, Participation and Intraday Stress V1 identities. Its
-informational worker uses stored evidence only, publishes complete or degraded vectors,
-and has no strategy or trading authority. Runtime reads re-evaluate source expiration;
-publication success never implies current usability. Breadth V2 remains excluded. See
-`docs/architecture/market-regime-composition.md`.
-
 Strategy market policies are versioned, Strategy-owned, and strictly `SHADOW_ONLY` in
 Phase 2C. Every revision explicitly describes all five authoritative V1 dimensions as
 REQUIRED or IGNORED; required rules use version-specific effective-state vocabularies.

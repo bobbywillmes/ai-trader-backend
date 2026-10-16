@@ -170,7 +170,7 @@ AI Trader defines an npm convenience script for the full local graph build.
 From the repository root, run:
 
 ```powershell
-npm run graphify:build
+npm run graphify:update
 ```
 
 The script currently runs:
@@ -496,7 +496,7 @@ uv tool install graphifyy --with tree-sitter-sql --force
 Then rerun:
 
 ```powershell
-npm run graphify:build
+npm run graphify:update
 ```
 
 ---
@@ -562,7 +562,6 @@ CLAUDE.md
 and the npm scripts:
 
 ```text
-graphify:build
 graphify:update
 ```
 
@@ -593,7 +592,7 @@ graphify --version
 From the repository root:
 
 ```powershell
-npm run graphify:build
+npm run graphify:update
 ```
 
 ### Verify

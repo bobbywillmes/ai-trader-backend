@@ -174,8 +174,9 @@ apps/
   web/                    React web app
 
 src/
-  app.ts                  Express app setup
-  server.ts               HTTP server + worker startup
+  app/
+    app.ts                Express app setup
+    server.ts             HTTP server + worker startup
   config/                 Environment and runtime config
   controllers/            Request/response handlers
   integrations/           External service adapters
@@ -235,6 +236,7 @@ From the repo root:
 
 ```bash
 npm run check
+npm test
 npm run build
 ```
 Build the web app:
@@ -271,36 +273,12 @@ For the full safety model, see:
 
 ## 🏭 Production
 
-Production documentation lives under:
-```
-docs/production/
-```
-
-Most-used production docs:
+Production changes follow the conservative workflow and verification procedures in:
 
 - [Production Deployment](docs/production/deployment.md)
 - [Production Workflow](docs/production/production-workflow.md)
 - [Database Migrations](docs/production/database-migrations.md)
 - [Troubleshooting](docs/production/troubleshooting.md)
-
-
-The normal production update flow is:
-
-```
-Work locally
-→ validate locally
-→ commit
-→ push to GitHub
-→ SSH into VPS
-→ pull latest
-→ run migrations if needed
-→ rebuild/restart containers
-→ verify health
-→ verify web UI
-→ verify n8n behavior
-```
-For more about production workflow, see:
-[Production Workflow](docs/production/production-workflow.md)
 
 
 ## ⚙️ Background workers
@@ -327,44 +305,17 @@ Before committing backend/web app changes:
 
 ```bash
 npm run check
+npm test
 npm run build
 cd apps/web
 npm run lint
+npm test
 npm run build
 cd ../..
 ```
 
 If the update includes Prisma changes, generate and commit the migration locally, then deploy with `prisma migrate deploy` in production.
 
-
-## 🏁 Production deployment
-
-Production runs on a Hostinger VPS through Docker Compose:
-
-```text
-Caddy reverse proxy / HTTPS
-React web UI static build
-Node/Express backend
-PostgreSQL
-Prisma migrations
-Alpaca paper/live integration
-background workers
-```
-
-Routine deployment summary:
-
-```bash
-ssh root@srv1700402.hstgr.cloud
-cd /opt/ai-trader
-git pull origin main
-docker compose -f docker-compose.prod.yml build backend caddy
-docker compose -f docker-compose.prod.yml run --rm backend npx prisma migrate deploy
-docker compose -f docker-compose.prod.yml up -d
-```
-
-Use the detailed [Production Deployment Checklist](docs/production/deployment.md) for the full workflow and smoke tests.
-
----
 
 ## 🔑 Authentication summary
 
@@ -442,7 +393,7 @@ Automated trading should only be enabled deliberately after production health, b
 - [Database Migrations](docs/production/database-migrations.md)
 - [Troubleshooting](docs/production/troubleshooting.md)
 
-### Access Contol / RBAC
+### Access Control / RBAC
 - [Access Control & RBAC](docs/security/README.md)
 
 
@@ -469,55 +420,22 @@ Primary API areas include:
 
 Detailed API notes live in /docs/api as the project grows.
 
-## 🧪 Current Operating Posture
+## 🧪 Live-trading implementation status
 
-Production intentionally has different Paper and Live postures:
+The application implements explicit Live activation, revision-bound
+`RISK_REDUCING` and `ENTRY` approvals, one-shot entry arming, durable acceptance-run
+APIs, and the first-canary workflow. Implemented capability does not imply that any
+particular production account is currently provisioned, activated, armed, or permitted
+to trade.
 
-- Bobby Paper is active, credentialed, configured, and continues normal trading.
-- Bobby Live remains `NEEDS_CREDENTIALS`, trading-disabled, kill-switched, and
-  without allocations, account subscriptions, credentials, orders, or positions.
-- Credentialless dormant accounts make no Alpaca requests.
-- Global coordinator health and account-level worker health are tracked separately.
+Live entry remains fail-closed behind deployment permissions, current readiness
+evidence, account approvals, an exact armed assignment, runtime controls, and
+transactional one-shot consumption at the broker boundary. See:
 
-Live broker writes remain blocked at the deployment boundary:
-
-```text
-ALLOW_LIVE_TRADING=false
-ALLOW_LIVE_RISK_REDUCING_WRITES=false
-ALLOW_TRADING_ENABLED_ON_START=false
-```
-
-This allows Paper trading and account-scoped lifecycle processing to continue
-while Bobby Live remains safely dormant.
-
-## 🗺️ Roadmap
-
-Phase 5A Live readiness assessments are complete, and controlled Paper
-lifecycle exercises are implemented. The immediate objective remains controlled
-provisioning and eventual activation of Bobby Live.
-
-### 🔜 Phase 5 — Controlled Live Provisioning
-
-- Completed: immutable Phase 5A Live readiness assessments.
-- Completed: Paper lifecycle exercises with frozen targets, shared entry
-  orchestration, projection, cancellation, and final reconciliation.
-
-- Provision and verify Live credentials using read-only broker requests.
-- Configure conservative account risk, allocation, and subscription deployment.
-- Prove snapshots, activities, positions, reconciliation, and worker health with
-  Live writes still disabled.
-- Establish risk-reducing readiness before entry authorization.
-- Add an explicit, audited activation workflow; generic account updates must not
-  activate a Trading Account.
-
-Live provisioning, write authorization, activation, and the first Live canary
-remain future work.
-
-### 🧭 Longer-Term
-
-- Expand Live deployment only after complete canary entry and exit lifecycles.
-- Add historical audit dashboard.
-- Add AI-assisted profit-protection workflows.
+- [Risk and Safety](docs/architecture/risk-and-safety.md)
+- [Live Entry Arming](docs/architecture/live-entry-arming.md)
+- [Live Entry Acceptance](docs/architecture/live-entry-acceptance.md)
+- [Production Deployment](docs/production/deployment.md)
 
 ## 📝 Documentation Rule
 

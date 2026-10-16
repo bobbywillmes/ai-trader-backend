@@ -258,7 +258,7 @@ Documents backend test commands and the current service-level coverage around li
 
 ### [Graphify](development/graphify.md)
 
-Graphify is used to reduce API token usage & time when using Codex & Claude. It provides a knowledge graph of the repo that Codex & Claude use as a starting point for all chats.
+Local code-graph generation, update, and agent-navigation guidance.
 
 ### [Local Network & Mobile Testing](development/local-network-mobile-testing.md)
 
@@ -279,25 +279,14 @@ Use this guide when validating responsive web changes on a physical mobile devic
 
 Documents creation and verification of recoverable local development database backups.
 
-## 🟢 Current Production Posture
+## 🟢 Production Readiness
 
-The backend is designed to support conservative paper-production testing before live trading.
-
-Production should be verified in this order:
-
-```text
-backend health
-  -> database migration status
-  -> environment config
-  -> broker mode
-  -> runtime settings
-  -> risk gate behavior
-  -> web UI
-  -> n8n dry run
-  -> n8n signal handling
-```
-
-Automated trading should only be enabled deliberately after production health, settings, broker mode, and n8n behavior are confirmed.
+Use the [Production Deployment](production/deployment.md) checklist and
+[Production Workflow](production/production-workflow.md) for the authoritative
+deployment, safety, and verification sequence. Live-trading controls and readiness
+boundaries are documented in [Risk and Safety](architecture/risk-and-safety.md),
+[Live Entry Arming](architecture/live-entry-arming.md), and
+[Live Entry Acceptance](architecture/live-entry-acceptance.md).
 
 ## ✍️ Documentation Conventions
 
@@ -324,19 +313,3 @@ Guidelines:
 - Use icons on `##` headings where they improve scanability.
 - Keep production docs practical and command-focused.
 - Update docs in the same commit as behavior changes when possible.
-
-## 🧭 Future Docs to Add
-
-Likely future additions:
-
-```text
-docs/local-development.md
-docs/api/signals.md
-docs/api/settings.md
-docs/api/tracked-positions.md
-docs/api/market-diary.md
-docs/architecture/data-models.md
-docs/decisions/
-```
-
-Add these when the existing docs become too broad or when a topic starts needing its own focused reference.
