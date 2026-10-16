@@ -246,7 +246,11 @@ Documents how to generate DBML from Prisma and import the schema into dbdiagram.
 
 ## 🧪 Development Docs
 
-Development docs cover local workflows, testing, and developer-environment setup.
+Development docs cover local workflows, testing, developer-environment setup, historical
+research evidence, and archived provider experiments. Start with the
+[Development Documentation Index](development/README.md). Current runtime definitions belong
+under `architecture/`, while operator procedures belong under `production/`. Research and
+archive records never grant runtime or trading authority by themselves.
 
 ### [Testing](development/testing.md)
 
@@ -270,6 +274,10 @@ Includes:
 - notes about DHCP-assigned IP address changes
 
 Use this guide when validating responsive web changes on a physical mobile device before deploying to production.
+
+### [Local Development Database Backup](development/local-database-backup.md)
+
+Documents creation and verification of recoverable local development database backups.
 
 ## 🟢 Current Production Posture
 

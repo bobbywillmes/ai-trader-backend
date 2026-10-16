@@ -3,11 +3,12 @@ import { CACHE, digest } from '../src/dev/intraday-stress-data.js';
 import { candidateAnalysis, distributions, representatives, sessionSummaries } from '../src/dev/intraday-stress-analysis.js';
 import { acuteClosingDownside, STATES, type Bar, type Candidate, type Target } from '../src/dev/intraday-stress-calculation.js';
 import { compareIntradaySemantics, renderClarificationTables } from '../src/dev/intraday-stress-clarification.js';
+import { INTRADAY_STRESS_ARTIFACTS } from '../src/dev/intraday-stress-artifacts.js';
 type Data = { generatedAt: string; requestedTo: string; symbols: Record<string, { targets: Target[]; daily: Bar[]; rawDigest: string; failures: unknown[]; splits: unknown[]; rejected: unknown[]; invalidDaily: unknown[]; outsideRegularSession: number }> };
 const data: Data = JSON.parse(await readFile(`${CACHE}/measurements.json`, 'utf8'));
 const targets = Object.values(data.symbols).flatMap(s => s.targets);
 if (process.argv.includes('--semantic-clarification')) {
-  const out = 'docs/development/intraday-stress';
+  const out = INTRADAY_STRESS_ARTIFACTS;
   const recorded = JSON.parse(await readFile(`${out}/candidate-B.json`, 'utf8'));
   const coverage = JSON.parse(await readFile(`${out}/coverage.json`, 'utf8'));
   const datasetId = digest(Object.values(data.symbols).map(s => s.rawDigest));
@@ -36,7 +37,7 @@ if (process.argv.includes('--semantic-clarification')) {
 }
 const daily = Object.values(data.symbols).flatMap(s => s.daily);
 const sessions = sessionSummaries(targets, daily), reps = representatives(sessions), dist = distributions(targets);
-const output = 'docs/development/intraday-stress'; await mkdir(output, { recursive: true });
+const output = INTRADAY_STRESS_ARTIFACTS; await mkdir(output, { recursive: true });
 await writeFile(`${output}/distributions.csv`, 'symbol,group,metric,n,p50,p75,p90,p95,p97.5,p99,p99.5,p99.9,max\n' + dist.map(d => [d.symbol, d.group, d.metric, d.n, ...d.quantiles].join(',')).join('\n') + '\n');
 await writeFile(`${output}/representative-sessions.json`, JSON.stringify(reps, null, 2) + '\n');
 await writeFile(`${CACHE}/session-summaries.json`, JSON.stringify(sessions));

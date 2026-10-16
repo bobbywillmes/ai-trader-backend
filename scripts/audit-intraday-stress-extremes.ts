@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { massiveEvidenceGet } from '../src/integrations/massive/evidence.client.js';
 import { cached } from '../src/dev/intraday-stress-data.js';
 import { etInstant } from '../src/services/market-calendar.js';
+import { INTRADAY_STRESS_ARTIFACTS } from '../src/dev/intraday-stress-artifacts.js';
 /** Four bounded, post-distribution diagnostic queries. Never replace authoritative 15-minute evidence. */
 const cases = [
   { symbol: 'SPY', date: '2021-12-02', index: 13 }, { symbol: 'SPY', date: '2021-12-07', index: 23 },
@@ -18,4 +19,4 @@ for (const item of cases) {
   const start = etInstant(item.date, 570 + (item.index - 1) * 15).getTime();
   result.push({ ...item, ...(response.ok ? { minutes: response.value.filter(r => r.t >= start && r.t < start + 900000) } : { error: response.error }) });
 }
-await writeFile('docs/development/intraday-stress/extreme-minute-audit.json', JSON.stringify(result, null, 2) + '\n');
+await writeFile(`${INTRADAY_STRESS_ARTIFACTS}/extreme-minute-audit.json`, JSON.stringify(result, null, 2) + '\n');

@@ -93,7 +93,7 @@ export function medianBreadthState(states: readonly [BreadthState, BreadthState,
 /** CANDIDATE_STRUCTURAL_V3's raw-aggregation rule: 5d and 20d are structural breadth and
  * decide the raw state whenever they agree (directly, or one directional + the other MIXED
  * confirmed by 1d); 1d never breaks a 5d/20d tie and never creates a directional raw state
- * on its own. See docs/development/breadth-structural-v3-results.md for the rule table. */
+ * on its own. See docs/development/research/breadth/breadth-v1-structural-v3-results.md for the rule table. */
 export function aggregateStructuralV3(breadth1: BreadthState, breadth5: BreadthState, breadth20: BreadthState): BreadthState {
   if (breadth5 === breadth20) return breadth5;
   if (breadth5 !== 'MIXED' && breadth20 !== 'MIXED') return 'MIXED'; // opposite directional states
