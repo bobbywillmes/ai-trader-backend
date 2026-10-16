@@ -418,23 +418,16 @@ Automated trading should only be enabled deliberately after production health, b
 - [Trading Lifecycle Exercises](docs/architecture/trading-lifecycle-exercises.md)
 - [Worker Health](docs/architecture/workers.md)
 - [Market Data, Trend Calibration and TREND_V1 Publication](docs/architecture/market-data-trend.md)
-- [TREND_V1 Local Acceptance](docs/development/trend-v1-acceptance.md)
-- [Daily Volatility Candidate Calibration](docs/development/volatility-calibration.md)
-- [Intraday Stress Research and Calibration](docs/development/intraday-stress-calibration.md) — research-only candidate comparison; no production or trading authority.
-- [Intraday Stress Three-Provider Experiment](docs/development/intraday-stress-provider-comparison.md) — independent Alpaca/IEX, Tiingo reference-price and Twelve Data captures, smoke procedure and offline comparison.
-- [Intraday Stress Provider Evaluation](docs/development/intraday-stress-provider-evaluation.md) — September 23–24 evidence and the next-phase provider candidate, without production authority.
-- [VOLATILITY_V1 Publication and Local Acceptance](docs/development/volatility-v1-acceptance.md)
-- [Daily Breadth Candidate Calibration](docs/development/breadth-calibration.md)
-- [Participation V1 Research](docs/development/participation-v1-research.md) — frozen five-ETF volume research algorithm; no trading authority.
-- [Participation V1 Calibration Results](docs/development/participation-v1-calibration-results.md) — historical state behavior, no-hysteresis decision, and evidence coverage.
-- [Participation V1 Production Publication](docs/development/participation-v1-phase2.md) — immutable five-symbol full-session assessments with no trading authority.
-- [Intraday Stress V1 Production Publication](docs/development/intraday-stress-v1-production.md) — immutable SPY/RSP daily and 15-minute assessments with no trading authority.
-- [Breadth Calibration Results](docs/development/breadth-calibration-results.md)
-- [Breadth Threshold Comparison (BASELINE vs CANDIDATE_HORIZON_V2)](docs/development/breadth-threshold-comparison.md)
-- [Breadth Distribution Diagnostic](docs/development/breadth-distribution-diagnostic.md)
-- [Breadth Structural Candidate (CANDIDATE_STRUCTURAL_V3)](docs/development/breadth-structural-v3-results.md)
-- [Breadth Hysteresis Experiment (STRUCTURAL_V3_MILD_DETERIORATION_CONFIRMATION)](docs/development/breadth-hysteresis-confirmation-results.md)
-- [BREADTH_V1 Publication and Local Acceptance](docs/development/breadth-v1-production.md)
+- [Web Console Responsive Design](docs/architecture/web-console-responsive-design.md)
+- [Web Console TradingAccount Scope](docs/architecture/web-console-account-scope.md)
+- [Development Documentation Index](docs/development/README.md)
+- [Market-Regime Research](docs/development/README.md#research-evidence) — historical calibration evidence; no runtime or trading authority.
+- [TREND_V1 Production and Acceptance](docs/production/trend-v1.md)
+- [VOLATILITY_V1 Production and Acceptance](docs/production/volatility-v1.md)
+- [BREADTH_V1 Production and Acceptance](docs/production/breadth-v1.md)
+- [PARTICIPATION_V1 Production Publication](docs/production/participation-v1.md)
+- [INTRADAY_STRESS_V1 Production and Acceptance](docs/production/intraday-stress-v1.md)
+- [Trading Reference-Price Operations](docs/production/trading-reference-price.md)
 
 ### Integrations:
 

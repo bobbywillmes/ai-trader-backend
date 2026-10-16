@@ -246,11 +246,10 @@ pins failed targets, and catches up at most 20 chronological targets under its o
 transaction advisory lock. It requires persisted reviewed calendar evidence, exact
 20-session five-symbol windows, and deadline-bounded strict splits. Predecessors
 are lineage only; raw/effective states are equal. See
-`docs/development/participation-v1-phase2.md`.
+`docs/production/participation-v1.md`.
 Owner-run/read HTTP routes exist under `/api/market-data/participation-assessments`, plus
 a monitored 15-minute worker (`participation_assessment_publication`, informational) with an
-abortable, drainable scheduler (`docs/development/participation-v1-phase3a.md`,
-`participation-v1-phase3b.md`). It has no trading authority.
+abortable, drainable scheduler (`docs/production/participation-v1.md`). It has no trading authority.
 `research:participation` compares prior 20/40
 full-session median volume across SPY/QQQ/DIA/IWM/RSP using a local Massive evidence
 cache and the reviewed research calendar, with no DB access. Early closes are
@@ -263,36 +262,36 @@ from provider request failures. Research has no publication or trading authority
 The shared production daily acquisition panel is SPY/QQQ/DIA/IWM/RSP; TrendSymbol
 remains SPY/RSP. Strict split evidence rejects duplicate IDs/dates before deduplication.
 Production calculation requires exactly 20 named full-session baseline dates.
-See `docs/development/participation-v1-phase1.md`.
-See `docs/development/participation-v1-research.md`.
+See `docs/production/participation-v1.md`.
+See `docs/development/research/participation/research.md`.
 The manually launched Alpaca IEX Phase A harness under `src/dev/alpaca-iex/` is
 research-only. It uses dedicated `ALPACA_MARKET_DATA_*` config, native Node 24
 WebSocket, append-only ignored journals and offline replay. Never import application
 env, Prisma, account/broker services or publishers into it, or wire it into startup.
 SPY/RSP IEX capture does not accept IEX or change Intraday Stress authority. See
-`docs/development/intraday-stress-alpaca-iex-phase-a.md` for operator-only capture.
+`docs/development/archive/provider-experiments/intraday-stress-alpaca-iex-phase-a.md` for operator-only capture.
 
 Phase B adds explicit manual historical ALPACA/IEX and MASSIVE reference fetches,
 immutable disk snapshots, a shared Massive daily ATR baseline and offline source
 comparison. Historical references may label sparse minutes but never replace live
 captured prices. Preserve strict 15/15 diagnostics and original capture journals.
 No provider calls run automatically or in tests. See
-`docs/development/intraday-stress-alpaca-iex-phase-b.md`; no IEX authority is granted.
+`docs/development/archive/provider-experiments/intraday-stress-alpaca-iex-phase-b.md`; no IEX authority is granted.
 
 The manual three-provider experiment under `src/dev/intraday-providers/` launches
 independent Alpaca/IEX, Tiingo consolidated reference-price and Twelve Data REST
 captures. Preserve derived-price provenance, null Tiingo stream volume, append-only
 versions, shared frozen ATR/calendar evidence, strict 15/15 and failure isolation.
 Only explicit Node env-file research commands load `.env.iex`; no startup wiring.
-See `docs/development/intraday-stress-provider-comparison.md`. Automated tests must never call providers.
-Tiingo consolidated is the candidate for the next market-state-observation design
-phase following provider evaluation and REST revision forensics. No Tiingo or Twelve
-Data provider production authority is granted.
+See `docs/development/archive/provider-experiments/intraday-stress-provider-comparison.md`. Automated tests must never call providers.
+The provider experiment predates the later explicit Tiingo Intraday Stress cutover.
+It grants no authority by itself and does not authorize Alpaca, Twelve Data, or provider fallback.
 
-INTRADAY_STRESS_V1 publishes immutable production assessments from stored Massive
-daily and 15-minute SPY/RSP evidence with zero trading authority. Its monitored
+INTRADAY_STRESS_V1 publishes immutable production assessments from canonical daily
+and 15-minute SPY/RSP evidence selected by explicit provider session boundaries, with
+zero trading authority and no fallback. Its monitored
 market-minute-data and assessment workers remain account-independent. See
-`docs/development/intraday-stress-v1-production.md`.
+`docs/production/intraday-stress-v1.md`.
 `research:intraday-stress` caches unadjusted Massive bars locally and reads the
 database under a read-only transaction; it must never publish assessments or enter
 trading pipelines. Research reuses pure daily
@@ -301,10 +300,11 @@ regular-session continuity, and excludes the closing bar from actionable targets
 The final research clarification recommends freezing Candidate B with current-close
 acute collapse and fixed absolute HIGH safeguards (1% closing downside / 2.5% session
 drawdown). The original low-excursion evidence and comparison remain preserved. See
-`docs/development/intraday-stress-calibration.md`. Research tooling has no production authority.
+`docs/development/research/intraday-stress/calibration.md`. Research tooling has no production authority.
 
 Market data, Trend calibration, and authoritative TREND_V1 publication are account-independent.
-MarketBar is immutable, unadjusted Massive evidence; never use Alpaca fallback or
+MarketBar is immutable, unadjusted evidence selected through explicit Massive/Tiingo
+session-authority boundaries; never use Alpaca or implicit provider fallback, and never
 rewrite stored OHLCV. Calendar exceptions are mutable operator configuration.
 TIGHT/MIDDLE/LOOSE are research-only profiles; Trend Lab must never insert into
 MarketRegimeDimensionAssessment or affect evaluation/trading. Production TREND_V1
@@ -328,14 +328,14 @@ continuation; it has no trading consumer. Historical replay requires every expec
 session using persisted calendar exceptions. `npm run calendar:bootstrap -- --apply`
 explicitly inserts the verified 2021–2026 closures and early closes, skips equivalent rows, and refuses
 all writes on conflicts. Workers never seed calendars. The research CLI remains
-read-only. See `docs/development/volatility-v1-acceptance.md`.
+read-only. See `docs/production/volatility-v1.md`.
 
 The original BREADTH calibration CLI remains research-only: `npm run research:breadth`
 uses a resumable, gitignored disk cache and never publishes assessments. Production
 BREADTH_V1 now publishes immutable Massive-backed assessments, while the separate
 BREADTH_V2_TERTILE_V1 chain consumes immutable Tiingo measurement sets under a
 disabled-by-default shadow worker. Neither version has trading authority. See
-`docs/development/breadth-calibration.md`, `docs/development/breadth-v1-production.md`,
+`docs/development/research/breadth/breadth-v1-calibration.md`, `docs/production/breadth-v1.md`,
 and `docs/production/breadth-v2-assessment-phase6b.md`.
 
 `MARKET_REGIME_COMPOSITION_V1` is an immutable, account-independent composition of the

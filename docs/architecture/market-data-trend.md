@@ -132,7 +132,7 @@ requires SYSTEM_OWNER. Routes under `/api/market-data`:
 | POST | `/trend-assessments/run` | Run/catch up, empty body; counts, suppression and blocked reason |
 
 There are no update/delete routes or profile/date overrides. No migration is needed.
-See [local acceptance](../development/trend-v1-acceptance.md).
+See [local acceptance](../production/trend-v1.md).
 
 ## Authoritative daily VOLATILITY_V1
 
@@ -194,7 +194,7 @@ is still no Strategy, SignalEvaluation, composition, entry or exit consumer.
 Deploy the additive constraint migration
 `20260917120000_volatility_v1_assessment_constraints`, then explicitly bootstrap
 the calendar before starting the new worker. No historical evidence is rewritten.
-See [Volatility acceptance and recorded local results](../development/volatility-v1-acceptance.md).
+See [Volatility acceptance and recorded local results](../production/volatility-v1.md).
 
 ## Research inputs and evidence
 
@@ -377,4 +377,4 @@ operational warning, not a total invocation deadline; slow provider/backlog work
 can exceed it. Acceptance must observe five-symbol provider latency/entitlement.
 The strict split path is `fetchStrictSplitEvidence`; legacy split callers retain
 identical-ID deduplication. The account-independent Participation publisher is
-documented in `docs/development/participation-v1-phase2.md` and has no trading consumer.
+documented in `docs/production/participation-v1.md` and has no trading consumer.
