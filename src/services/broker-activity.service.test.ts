@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   createSystemEvent: vi.fn(),
   resolveDefaultTradingAccountId: vi.fn(),
   tradingAccountFindUniqueOrThrow: vi.fn(),
+  withTradingAccountWorkflowLock: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -72,6 +73,13 @@ vi.mock('./trading-account.service.js', () => ({
   },
 }));
 
+vi.mock('./trading-account-workflow-lock.service.js', () => ({
+  ACCOUNT_WORKFLOW_LOCK_FAMILIES: {
+    LIFECYCLE_MUTATION: 'lifecycle-mutation',
+  },
+  withTradingAccountWorkflowLock: mocks.withTradingAccountWorkflowLock,
+}));
+
 import {
   attributeCloseFillsForTrackedPosition,
   isAuthoritativeFullFill,
@@ -104,6 +112,12 @@ describe('broker activity tracked-position attribution', () => {
   beforeEach(() => {
     vi.resetAllMocks();
 
+    mocks.withTradingAccountWorkflowLock.mockImplementation(async (args) => ({
+      outcome: 'ACQUIRED_AND_COMPLETED',
+      value: await args.execute(),
+      scope: `ai-trader:${args.workflowKey}:${args.tradingAccountId}`,
+    }));
+
     mocks.brokerActivityFindFirst.mockResolvedValue(null);
     mocks.brokerActivityFindFirst.mockResolvedValue(null);
     mocks.brokerOrderFindFirst.mockResolvedValue(null);
@@ -122,6 +136,26 @@ describe('broker activity tracked-position attribution', () => {
         brokerActivity: { updateMany: mocks.brokerActivityUpdateMany },
       })
     );
+  });
+
+  it('reports lifecycle contention when the public sync lock is not acquired', async () => {
+    mocks.withTradingAccountWorkflowLock.mockResolvedValue({
+      outcome: 'NOT_ACQUIRED',
+      scope: 'ai-trader:lifecycle-mutation:1',
+    });
+
+    await expect(syncBrokerActivitiesForAccount(1)).rejects.toMatchObject({
+      statusCode: 409,
+      message: 'Lifecycle mutation is already in progress.',
+    });
+    expect(mocks.withTradingAccountWorkflowLock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tradingAccountId: 1,
+        workflowKey: 'lifecycle-mutation',
+        execute: expect.any(Function),
+      }),
+    );
+    expect(mocks.getAlpacaAccountActivities).not.toHaveBeenCalled();
   });
 
   it('links observer-discovered close fills when one local cycle is eligible', async () => {

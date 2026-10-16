@@ -4,6 +4,7 @@ import {
   processPendingOrdersForAccount,
   recoverStaleSubmittingIntentsForAccount,
   syncSubmittedOrders,
+  syncSubmittedOrdersForAccount,
   syncSubmittedOrdersAcrossAccounts,
   brokerOrderStatusSeverity,
   recoveryDeferredSeverity,
@@ -57,6 +58,7 @@ const mocks = vi.hoisted(() => ({
   trackedPositionUpdateMany: vi.fn(),
   acceptanceRunUpdateMany: vi.fn(),
   appendBrokerOpportunityEvent: vi.fn(),
+  withTradingAccountWorkflowLock: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -139,6 +141,13 @@ vi.mock('../services/lifecycle-account-eligibility.service.js', () => ({
   enumerateLifecycleAccounts: mocks.enumerateLifecycleAccounts,
 }));
 
+vi.mock('../services/trading-account-workflow-lock.service.js', () => ({
+  ACCOUNT_WORKFLOW_LOCK_FAMILIES: {
+    LIFECYCLE_MUTATION: 'lifecycle-mutation',
+  },
+  withTradingAccountWorkflowLock: mocks.withTradingAccountWorkflowLock,
+}));
+
 vi.mock('../integrations/alpaca/orders.adapter.js', () => ({
   getAlpacaOrderByClientOrderId: mocks.getAlpacaOrderByClientOrderId,
 }));
@@ -175,6 +184,15 @@ const baseIntent = {
   tradingAccount: { environment: 'PAPER' as const },
   tradingAccountSubscriptionId: 44,
 };
+
+beforeEach(() => {
+  mocks.withTradingAccountWorkflowLock.mockReset();
+  mocks.withTradingAccountWorkflowLock.mockImplementation(async (args) => ({
+    outcome: 'ACQUIRED_AND_COMPLETED',
+    value: await args.execute(),
+    scope: `ai-trader:${args.workflowKey}:${args.tradingAccountId}`,
+  }));
+});
 
 describe('order worker entry-session recheck', () => {
   beforeEach(() => {
@@ -404,6 +422,25 @@ describe('submitted order sync adaptive polling', () => {
     mocks.orderIntentUpdate.mockResolvedValue({});
     mocks.createSystemEvent.mockResolvedValue({});
     mocks.syncTrailingStopOrderStatus.mockResolvedValue({ count: 1 });
+  });
+
+  it('reports lifecycle contention when the public account sync lock is not acquired', async () => {
+    mocks.withTradingAccountWorkflowLock.mockResolvedValue({
+      outcome: 'NOT_ACQUIRED',
+      scope: 'ai-trader:lifecycle-mutation:1',
+    });
+
+    await expect(syncSubmittedOrdersForAccount(1)).rejects.toThrow(
+      'Lifecycle mutation is already in progress.',
+    );
+    expect(mocks.withTradingAccountWorkflowLock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tradingAccountId: 1,
+        workflowKey: 'lifecycle-mutation',
+        execute: expect.any(Function),
+      }),
+    );
+    expect(mocks.orderIntentFindMany).not.toHaveBeenCalled();
   });
 
   it('returns healthy idle without an Alpaca request when no submitted intents exist', async () => {
