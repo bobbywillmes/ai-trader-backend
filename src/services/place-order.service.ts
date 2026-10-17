@@ -37,6 +37,7 @@ import { bestEffortAppendBrokerOpportunityEvent, bestEffortCaptureOrderIntentBro
 import {
   acquireEntryExposureClaim,
   requireEntryExposureClaim,
+  requireExecutableEntryExposureClaim,
   releaseUnsubmittedEntryExposureClaim,
 } from './entry-exposure-claim.service.js';
 
@@ -261,6 +262,7 @@ export async function submitOrder(
     };
   }
 
+  try {
   if (options.entryDecisionKey) {
     await linkEntryDecisionToOrderIntent({
       decisionKey: options.entryDecisionKey,
@@ -314,6 +316,23 @@ export async function submitOrder(
     status: 'pending',
     entryDecisionKey: options.entryDecisionKey ?? null,
   };
+  } catch (error) {
+    await prisma.$transaction(async (tx) => {
+      await tx.orderIntent.updateMany({
+        where: { id: intent.id, status: { in: ['received', 'pending'] } },
+        data: {
+          status: 'failed',
+          blockReason: error instanceof Error ? error.message : 'Entry admission failed after claim acquisition.',
+        },
+      });
+      await releaseUnsubmittedEntryExposureClaim({
+        orderIntentId: intent.id,
+        reason: 'ADMISSION_FAILED_BEFORE_BROKER_SUBMISSION',
+        db: tx,
+      });
+    }).catch(() => undefined);
+    throw error;
+  }
 }
 
 export type BrokerOrderSubmissionInput = ResolvedPlaceOrderInput & {
@@ -336,7 +355,12 @@ export async function submitOrderToBroker(
   if (input.side !== 'buy' || (input.signalType ?? 'entry') !== 'entry') {
     throw new HttpError(400, 'The entry broker boundary accepts BUY entry orders only.');
   }
-  await requireEntryExposureClaim(options.orderIntentId);
+  await requireExecutableEntryExposureClaim({
+    orderIntentId: options.orderIntentId,
+    tradingAccountId: options.tradingAccountId,
+    symbol: input.symbol,
+    clientOrderId,
+  });
 
   const existing = await getAlpacaOrderByClientOrderId(
     options.tradingAccountId,

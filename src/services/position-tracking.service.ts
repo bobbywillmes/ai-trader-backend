@@ -1,4 +1,4 @@
-import { SystemEventSeverity, type ExitManagementMode, type Prisma } from "@prisma/client";
+import { OperationalAttentionResolutionPolicy, SystemEventSeverity, type ExitManagementMode, type Prisma } from "@prisma/client";
 import { logger } from "../config/logger.js";
 import { env } from "../config/env.js";
 
@@ -41,6 +41,7 @@ import {
   attachEntryExposureClaimToPosition,
   releaseEntryExposureClaimForClosedPosition,
 } from "./entry-exposure-claim.service.js";
+import { openOrObserveOperationalAttention } from './operational-attention.service.js';
 
 export type TrackedPositionSyncResult = {
   polled: boolean;
@@ -453,6 +454,7 @@ export async function syncTrackedPositionsForAccountUnlocked(
             reason: "origin_resolution_failed_at_position_creation", evidence: {} };
         }
         let positionCreated = false;
+        let attachedClaim: { id: number; status: string; trackedPositionId: number | null; orderIntentId: number | null } | null = null;
         const created = await prisma.$transaction(async (tx) => {
           const rechecked = await tx.trackedPosition.findFirst({
             where: {
@@ -485,7 +487,7 @@ export async function syncTrackedPositionsForAccountUnlocked(
               securityId: security.id,
             },
           });
-          await attachEntryExposureClaimToPosition({
+          attachedClaim = await attachEntryExposureClaimToPosition({
             tx,
             tradingAccountId,
             securityId: security.id,
@@ -604,6 +606,32 @@ export async function syncTrackedPositionsForAccountUnlocked(
               deploymentRole: env.LIVE_WRITE_DEPLOYMENT_ROLE,
             } as Prisma.InputJsonValue,
           });
+
+          if (attachedClaim && (attachedClaim as { status: string }).status === 'UNRESOLVED') {
+            const claim = attachedClaim as { id: number; trackedPositionId: number | null; orderIntentId: number | null };
+            await openOrObserveOperationalAttention({
+              tradingAccountId,
+              code: 'HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE',
+              source: 'RECONCILIATION',
+              severity: SystemEventSeverity.CRITICAL,
+              title: `${created.symbol} entry ownership conflict`,
+              message: 'Broker exposure was tracked, but its durable entry claim could not be safely attached.',
+              details: {
+                claimId: claim.id,
+                claimedTrackedPositionId: claim.trackedPositionId,
+                observedTrackedPositionId: created.id,
+                orderIntentId: claim.orderIntentId,
+                securityId: created.securityId,
+                symbol: created.symbol,
+              },
+              fingerprint: `entry-claim-position-conflict:${claim.id}:${created.id}`,
+              materialFingerprint: `entry-claim-position-conflict:${claim.id}:${claim.trackedPositionId}:${created.id}`,
+              resolutionPolicy: OperationalAttentionResolutionPolicy.AUTHORITATIVE_ONLY,
+              trackedPositionId: created.id,
+              orderIntentId: claim.orderIntentId,
+              orderIntentIsObservationContext: true,
+            }).catch((error) => logger.error({ error, claimId: claim.id, trackedPositionId: created.id }, 'Failed to persist entry-claim conflict attention.'));
+          }
 
           continue;
         }

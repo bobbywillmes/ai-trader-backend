@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   acquireEntryExposureClaim: vi.fn(),
   requireEntryExposureClaim: vi.fn(),
+  requireExecutableEntryExposureClaim: vi.fn(),
   releaseUnsubmittedEntryExposureClaim: vi.fn(),
 }));
 
@@ -35,6 +36,7 @@ vi.mock('../db/prisma.js', () => ({
 vi.mock('./entry-exposure-claim.service.js', () => ({
   acquireEntryExposureClaim: mocks.acquireEntryExposureClaim,
   requireEntryExposureClaim: mocks.requireEntryExposureClaim,
+  requireExecutableEntryExposureClaim: mocks.requireExecutableEntryExposureClaim,
   releaseUnsubmittedEntryExposureClaim: mocks.releaseUnsubmittedEntryExposureClaim,
 }));
 
@@ -182,6 +184,7 @@ describe('place order service entry decision attribution', () => {
       intent: await args.createIntent(), duplicate: false, claimId: 1,
     }));
     mocks.requireEntryExposureClaim.mockResolvedValue({ id: 1 });
+    mocks.requireExecutableEntryExposureClaim.mockResolvedValue({ claim: { id: 1 }, intent: { id: 55 } });
     mocks.releaseUnsubmittedEntryExposureClaim.mockResolvedValue({ id: 1 });
     mocks.evaluateOrderRisk.mockResolvedValue({
       allowed: true,

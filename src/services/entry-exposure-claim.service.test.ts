@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { acquireEntryExposureClaim } from './entry-exposure-claim.service.js';
+import { acquireEntryExposureClaim, attachEntryExposureClaimToPosition, transitionEntryExposureClaim } from './entry-exposure-claim.service.js';
 
 function tx(overrides: Record<string, unknown> = {}) {
   return {
@@ -13,6 +13,8 @@ function tx(overrides: Record<string, unknown> = {}) {
     },
     trackedPosition: { findFirst: vi.fn().mockResolvedValue(null) },
     orderIntent: { findFirst: vi.fn().mockResolvedValue(null) },
+    brokerOrder: { findFirst: vi.fn().mockResolvedValue(null) },
+    entryExposureClaimEvent: { findFirst: vi.fn().mockResolvedValue(null) },
     ...overrides,
   } as never;
 }
@@ -69,5 +71,52 @@ describe('entry exposure admission claim', () => {
     await expect(acquireEntryExposureClaim({
       tx: db, tradingAccountId: 1, symbol: 'SPY', ownerKey: 'entry:1:new', createIntent: vi.fn(),
     })).rejects.toMatchObject({ statusCode: 409, details: expect.objectContaining({ code: 'ENTRY_EXPOSURE_UNRESOLVED' }) });
+  });
+
+  it.each(['received', 'accepted', 'pending_new', 'accepted_for_bidding', 'held', 'pending_cancel', 'pending_replace', 'partially_filled'])(
+    'fails closed on a claimless broker-active BUY in %s', async (status) => {
+      const db = tx({
+        brokerOrder: { findFirst: vi.fn().mockResolvedValue({ id: 7, orderIntentId: 44, brokerOrderId: 'legacy-buy', status }) },
+      });
+      await expect(acquireEntryExposureClaim({
+        tx: db, tradingAccountId: 1, symbol: 'SPY', ownerKey: `entry:1:${status}`, createIntent: vi.fn(),
+      })).rejects.toMatchObject({ statusCode: 409, details: expect.objectContaining({ code: 'ENTRY_EXPOSURE_UNRESOLVED' }) });
+    },
+  );
+
+  it('retains a conflicting old claim as unresolved without throwing position creation away', async () => {
+    const update = vi.fn().mockResolvedValue({ id: 91, status: 'UNRESOLVED', trackedPositionId: 70 });
+    const db = tx({
+      entryExposureClaim: {
+        findFirst: vi.fn().mockResolvedValue({ id: 91, status: 'POSITION_OPEN', trackedPositionId: 70 }),
+        update,
+      },
+      entryExposureClaimEvent: { findFirst: vi.fn().mockResolvedValue(null) },
+    });
+    await expect(attachEntryExposureClaimToPosition({
+      tx: db, tradingAccountId: 1, securityId: 11, trackedPositionId: 71, symbol: 'SPY',
+    })).resolves.toMatchObject({ status: 'UNRESOLVED', trackedPositionId: 70 });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 91 },
+      data: expect.objectContaining({ status: 'UNRESOLVED' }),
+    }));
+  });
+
+  it('does not permit ordinary recovery out of unresolved or append unchanged transitions', async () => {
+    const update = vi.fn();
+    const db = {
+      entryExposureClaim: {
+        findUnique: vi.fn().mockResolvedValue({ id: 91, orderIntentId: 51, status: 'UNRESOLVED', releasedAt: null }),
+        update,
+      },
+      entryExposureClaimEvent: { findFirst: vi.fn().mockResolvedValue({ evidenceJson: {} }) },
+    } as never;
+    await expect(transitionEntryExposureClaim({
+      orderIntentId: 51, status: 'ENTRY_PENDING', eventType: 'UNSAFE_RECOVERY', db,
+    })).rejects.toMatchObject({ statusCode: 409, details: expect.objectContaining({ code: 'INVALID_ENTRY_EXPOSURE_TRANSITION' }) });
+    await expect(transitionEntryExposureClaim({
+      orderIntentId: 51, status: 'UNRESOLVED', eventType: 'REPEATED_OBSERVATION', db,
+    })).resolves.toMatchObject({ id: 91 });
+    expect(update).not.toHaveBeenCalled();
   });
 });

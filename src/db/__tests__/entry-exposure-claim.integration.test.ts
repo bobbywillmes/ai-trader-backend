@@ -7,6 +7,7 @@ import { Client } from 'pg';
 const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.DATABASE_URL;
 const describeDatabase = enabled ? describe : describe.skip;
 const migrationPath = 'prisma/migrations/20261017120000_add_entry_exposure_claims/migration.sql';
+const stateGuardMigrationPath = 'prisma/migrations/20261017130000_guard_entry_exposure_claim_states/migration.sql';
 
 describeDatabase('entry exposure claim database integrity', () => {
   const schema = `entry_claim_${randomUUID().replaceAll('-', '')}`;
@@ -33,6 +34,7 @@ describeDatabase('entry exposure claim database integrity', () => {
     spy = Number((await admin.query(`INSERT INTO "Security" (symbol) VALUES ('SPY') RETURNING id`)).rows[0].id);
     qqq = Number((await admin.query(`INSERT INTO "Security" (symbol) VALUES ('QQQ') RETURNING id`)).rows[0].id);
     await admin.query(await readFile(migrationPath, 'utf8'));
+    await admin.query(await readFile(stateGuardMigrationPath, 'utf8'));
   });
 
   afterAll(async () => {
@@ -108,6 +110,22 @@ describeDatabase('entry exposure claim database integrity', () => {
       const rows = await db.query(`SELECT id FROM "EntryExposureClaim" WHERE "ownerKey"='rolled-back'`);
       expect(rows.rowCount).toBe(0);
       await claim(db, { accountId: accountB, securityId: qqq, intentId: await intent(db), ownerKey: 'after-rollback' });
+    } finally {
+      await db.end();
+    }
+  });
+
+  it('rejects unknown states and inconsistent release markers at the database boundary', async () => {
+    const db = await client();
+    try {
+      const guardAccount = Number((await db.query('INSERT INTO "TradingAccount" DEFAULT VALUES RETURNING id')).rows[0].id);
+      const claimId = Number((await claim(db, {
+        accountId: guardAccount, securityId: spy, intentId: await intent(db), ownerKey: 'state-guard',
+      })).rows[0].id);
+      await expect(db.query(`UPDATE "EntryExposureClaim" SET status='FUTURE_UNSAFE', "updatedAt"=CURRENT_TIMESTAMP WHERE id=$1`, [claimId]))
+        .rejects.toThrow(/EntryExposureClaim_status_check/);
+      await expect(db.query(`UPDATE "EntryExposureClaim" SET "releasedAt"=CURRENT_TIMESTAMP, "releaseReason"='unsafe', "updatedAt"=CURRENT_TIMESTAMP WHERE id=$1`, [claimId]))
+        .rejects.toThrow(/EntryExposureClaim_released_status_check/);
     } finally {
       await db.end();
     }

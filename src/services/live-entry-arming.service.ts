@@ -31,6 +31,7 @@ import {
   ACCOUNT_WORKFLOW_LOCK_FAMILIES,
   withTradingAccountWorkflowLock,
 } from './trading-account-workflow-lock.service.js';
+import { releaseUnsubmittedEntryExposureClaim, transitionEntryExposureClaim } from './entry-exposure-claim.service.js';
 
 const ENTRY_INTENT_STATUSES = ['received', 'pending'] as const;
 const NONTERMINAL_INTENT_STATUSES = ['received', 'pending', 'submitting', 'submitted'] as const;
@@ -126,6 +127,10 @@ async function closeEntryAuthority(
     where: { tradingAccountId, entriesEnabled: true },
     data: { entriesEnabled: false },
   });
+  const blockableIntents = await tx.orderIntent.findMany({
+    where: { tradingAccountId, side: 'buy', status: { in: [...ENTRY_INTENT_STATUSES] } },
+    select: { id: true },
+  });
   const intents = await tx.orderIntent.updateMany({
     where: {
       tradingAccountId,
@@ -134,6 +139,23 @@ async function closeEntryAuthority(
     },
     data: { status: 'blocked', blockReason: args.reason },
   });
+  for (const intent of blockableIntents) {
+    try {
+      await releaseUnsubmittedEntryExposureClaim({
+        orderIntentId: intent.id,
+        reason: 'ENTRY_AUTHORITY_TERMINATED_BEFORE_SUBMISSION',
+        db: tx,
+      });
+    } catch {
+      await transitionEntryExposureClaim({
+        orderIntentId: intent.id,
+        status: 'UNRESOLVED',
+        eventType: 'ENTRY_AUTHORITY_TERMINATED_WITH_EXPOSURE_EVIDENCE',
+        evidence: { reason: args.reason },
+        db: tx,
+      });
+    }
+  }
   if (account.activeLiveEntryArmingId) {
     await terminateArming(tx, {
       armingId: account.activeLiveEntryArmingId,

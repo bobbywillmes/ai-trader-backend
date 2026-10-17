@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => ({
   securityFindUniqueOrThrow: vi.fn(),
   prismaTransaction: vi.fn(),
   getAlpacaOrderByClientOrderId: vi.fn(),
+  getAlpacaOrderById: vi.fn(),
   submitOrderToBroker: vi.fn(),
   getNormalizedOpenOrders: vi.fn(),
   getRuntimeTradingConfig: vi.fn(),
@@ -161,6 +162,7 @@ vi.mock('../services/trading-account-workflow-lock.service.js', () => ({
 
 vi.mock('../integrations/alpaca/orders.adapter.js', () => ({
   getAlpacaOrderByClientOrderId: mocks.getAlpacaOrderByClientOrderId,
+  getAlpacaOrderById: mocks.getAlpacaOrderById,
 }));
 
 const baseIntent = {
@@ -433,6 +435,7 @@ describe('submitted order sync adaptive polling', () => {
       reason: 'startup_due',
     });
     mocks.getNormalizedOpenOrders.mockResolvedValue([]);
+    mocks.getAlpacaOrderById.mockResolvedValue(null);
     mocks.brokerOrderUpdateMany.mockResolvedValue({ count: 1 });
     mocks.orderIntentUpdate.mockResolvedValue({});
     mocks.createSystemEvent.mockResolvedValue({});
@@ -1010,7 +1013,7 @@ describe('stale submitting intent recovery', () => {
     expect(mocks.appendBrokerOpportunityEvent).toHaveBeenCalledWith(expect.objectContaining({orderIntentId:101,eventType:'BROKER_ORDER_MATERIALIZED'}),undefined,expect.anything());
   });
 
-  it('requeues an entry only after account-specific broker lookup confirms absence', async () => {
+  it('does not requeue an entry after account-specific broker lookup confirms absence', async () => {
     mocks.orderIntentFindMany.mockResolvedValue([
       {
         ...baseIntent,
@@ -1029,19 +1032,19 @@ describe('stale submitting intent recovery', () => {
     expect(mocks.orderIntentUpdateMany).toHaveBeenCalledWith({
       where: { id: 101, status: 'submitting' },
       data: {
-        status: 'pending',
+        status: 'failed',
         blockReason:
-          'Recovered stale submitting intent after broker lookup found no order.',
+          'Recovery confirmed no broker order; entry requires a new admission decision and was not requeued.',
       },
     });
     expect(result).toMatchObject({ linked: 0, retryable: 1 });
-    expect(mocks.createSystemEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'order.submission_retry_scheduled', severity: 'WARNING' })
-    );
+    expect(mocks.releaseUnsubmittedEntryExposureClaim).toHaveBeenCalledWith(expect.objectContaining({
+      orderIntentId: 101, reason: 'RECOVERY_CONFIRMED_NEVER_SUBMITTED',
+    }));
     expect(mocks.appendBrokerOpportunityEvent).toHaveBeenCalledWith(expect.objectContaining({orderIntentId:101,eventType:'RECOVERY_ABSENCE_CONFIRMED'}),undefined,expect.anything());
   });
 
-  it('records an inconclusive lookup without changing the recovery error',async()=>{const error=new Error('broker lookup unavailable');mocks.orderIntentFindMany.mockResolvedValue([{...baseIntent,status:'submitting',brokerOrders:[],updatedAt:new Date('2026-06-22T13:00:00.000Z')}]);mocks.getAlpacaOrderByClientOrderId.mockRejectedValue(error);await expect(recoverStaleSubmittingIntentsForAccount(1,new Date('2026-06-22T14:00:00.000Z'))).rejects.toBe(error);expect(mocks.appendBrokerOpportunityEvent).toHaveBeenCalledWith(expect.objectContaining({orderIntentId:101,eventType:'RECOVERY_INCONCLUSIVE'}),undefined,expect.anything());expect(mocks.orderIntentUpdateMany).not.toHaveBeenCalled();});
+  it('isolates an inconclusive lookup and retains the intent',async()=>{const error=new Error('broker lookup unavailable');mocks.orderIntentFindMany.mockResolvedValue([{...baseIntent,status:'submitting',brokerOrders:[],updatedAt:new Date('2026-06-22T13:00:00.000Z')}]);mocks.getAlpacaOrderByClientOrderId.mockRejectedValue(error);await expect(recoverStaleSubmittingIntentsForAccount(1,new Date('2026-06-22T14:00:00.000Z'))).resolves.toMatchObject({retained:1,failures:[{orderIntentId:101,error:'broker lookup unavailable'}]});expect(mocks.appendBrokerOpportunityEvent).toHaveBeenCalledWith(expect.objectContaining({orderIntentId:101,eventType:'RECOVERY_INCONCLUSIVE'}),undefined,expect.anything());expect(mocks.orderIntentUpdateMany).not.toHaveBeenCalled();});
 
   it('never requeues an acceptance entry after broker submission may have begun', async () => {
     mocks.orderIntentFindMany.mockResolvedValue([{
@@ -1079,6 +1082,7 @@ describe('stale submitting intent recovery', () => {
     mocks.orderIntentFindMany.mockResolvedValue([
       {
         ...baseIntent,
+        side: 'sell',
         status: 'submitting',
         trackedPositionId: 77,
         rawRequestJson: { signalType: 'exit' },
@@ -1111,6 +1115,7 @@ describe('stale submitting intent recovery', () => {
       .mockResolvedValueOnce([
         {
           ...baseIntent,
+          side: 'sell',
           status: 'submitting',
           rawRequestJson: { signalType: 'exit' },
           blockReason: 'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:timeout',
@@ -1122,6 +1127,7 @@ describe('stale submitting intent recovery', () => {
       .mockResolvedValueOnce([
         {
           ...baseIntent,
+          side: 'sell',
           status: 'submitting',
           rawRequestJson: { signalType: 'exit' },
           blockReason:
@@ -1146,5 +1152,37 @@ describe('stale submitting intent recovery', () => {
     expect(mocks.createSystemEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'order.submission_recovery_deferred', severity: 'CRITICAL' })
     );
+  });
+
+  it('isolates a claimless legacy BUY while recovering corrective and normal SELL intents', async () => {
+    mocks.orderIntentFindMany.mockResolvedValue([
+      {
+        ...baseIntent, id: 201, side: 'sell', source: 'remaining-exposure-close',
+        clientOrderId: 'corrective-201', status: 'submitting', trackedPositionId: 71,
+        blockReason: 'BROKER_WRITE_DELIVERY:NOT_SENT_RETRYABLE:deferred', brokerOrders: [],
+        updatedAt: new Date('2026-06-22T13:00:00.000Z'), rawRequestJson: { source: 'remaining-exposure-close' },
+      },
+      {
+        ...baseIntent, id: 202, clientOrderId: 'legacy-buy-202', status: 'submitting', brokerOrders: [],
+        updatedAt: new Date('2026-06-22T13:01:00.000Z'),
+      },
+      {
+        ...baseIntent, id: 203, side: 'sell', source: 'close-position',
+        clientOrderId: 'close-203', status: 'submitting', trackedPositionId: 72,
+        blockReason: 'BROKER_WRITE_DELIVERY:NOT_SENT_BLOCKED:blocked', brokerOrders: [],
+        updatedAt: new Date('2026-06-22T13:02:00.000Z'), rawRequestJson: { signalType: 'exit' },
+      },
+    ]);
+    mocks.requireEntryExposureClaim.mockRejectedValueOnce(new Error('claim missing'));
+    mocks.getAlpacaOrderByClientOrderId.mockResolvedValue(null);
+    mocks.trackedPositionUpdateMany.mockResolvedValue({ count: 1 });
+
+    const result = await recoverStaleSubmittingIntentsForAccount(1, new Date('2026-06-22T14:00:00.000Z'));
+
+    expect(result).toMatchObject({ found: 3, retryable: 2, retained: 1, failures: [{ orderIntentId: 202, error: 'claim missing' }] });
+    expect(mocks.requireEntryExposureClaim).toHaveBeenCalledTimes(1);
+    expect(mocks.getAlpacaOrderByClientOrderId).toHaveBeenCalledTimes(2);
+    expect(mocks.orderIntentUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 201, status: 'submitting' } }));
+    expect(mocks.orderIntentUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 203, status: 'submitting' } }));
   });
 });

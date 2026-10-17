@@ -26,6 +26,7 @@ import {
   resolveClearedExitReservationAttention,
 } from './reconciliation-operational-attention.service.js';
 import { recoverDeterministicallyAbsentStaleCloseIntents } from './stale-close-intent-recovery.service.js';
+import { BROKER_ACTIVE_ENTRY_STATUSES, UNRESOLVED_ORDER_INTENT_STATUSES } from './entry-lifecycle-status.service.js';
 
 export type ReconciliationSeverity = 'info' | 'warn' | 'critical';
 
@@ -692,7 +693,7 @@ export async function reconcileTradingAccount(
     select: { id: true, displayName: true, environment: true },
   });
   const runIdentifier = randomUUID();
-  const [trackedPositions, localOrders, staleIntents, activeClaims, uncoveredEntryIntents] = await Promise.all([
+  const [trackedPositions, localOrders, staleIntents, activeClaims, uncoveredEntryIntents, uncoveredBrokerBuys] = await Promise.all([
     prisma.trackedPosition.findMany({
       where: {
         tradingAccountId,
@@ -736,12 +737,22 @@ export async function reconcileTradingAccount(
         tradingAccountId,
         side: 'buy',
         OR: [
-          { status: { in: ['received', 'pending', 'submitting', 'submitted'] } },
+          { status: { in: [...UNRESOLVED_ORDER_INTENT_STATUSES] } },
           { status: 'filled', trackedPositionId: null },
         ],
         entryExposureClaim: null,
       },
       select: { id: true, symbol: true, status: true, clientOrderId: true },
+      orderBy: { id: 'asc' },
+    }),
+    prisma.brokerOrder.findMany({
+      where: {
+        tradingAccountId,
+        side: { equals: 'buy', mode: 'insensitive' },
+        status: { in: [...BROKER_ACTIVE_ENTRY_STATUSES] },
+        orderIntent: { entryExposureClaim: null },
+      },
+      select: { id: true, orderIntentId: true, brokerOrderId: true, symbol: true, status: true },
       orderBy: { id: 'asc' },
     }),
   ]);
@@ -854,6 +865,23 @@ export async function reconcileTradingAccount(
       symbol: normalizeSymbol(intent.symbol),
       message: `${intent.symbol} entry lifecycle predates durable exposure ownership and cannot execute until reviewed.`,
       details: { orderIntentStatus: intent.status, clientOrderId: intent.clientOrderId, rolloutCompatibility: 'PRE_CLAIM_ENTRY_INTENT' },
+    });
+  }
+  for (const order of uncoveredBrokerBuys) {
+    findings.push({
+      tradingAccountId,
+      code: 'entry_exposure_claim_missing',
+      severity: 'critical',
+      entityType: 'brokerOrder',
+      entityId: String(order.id),
+      symbol: normalizeSymbol(order.symbol),
+      message: `${order.symbol} broker-active BUY predates durable exposure ownership and blocks new admission.`,
+      details: {
+        brokerOrderId: order.brokerOrderId,
+        brokerOrderStatus: order.status,
+        orderIntentId: order.orderIntentId,
+        rolloutCompatibility: 'PRE_CLAIM_ACTIVE_BROKER_BUY',
+      },
     });
   }
   const historicalDiagnostic = await diagnoseHistoricalOrderLifecycle({

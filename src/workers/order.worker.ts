@@ -31,7 +31,7 @@ import {
 import { getSizingEstimatedNotional } from '../services/trading-account-entry-risk-usage.service.js';
 import { recordOrderIntentRiskEvaluation } from '../services/order-audit.service.js';
 import { resolveSubscriptionOrderInput } from '../services/subscription.service.js';
-import { getAlpacaOrderByClientOrderId } from '../integrations/alpaca/orders.adapter.js';
+import { getAlpacaOrderByClientOrderId, getAlpacaOrderById } from '../integrations/alpaca/orders.adapter.js';
 import { getBrokerWriteDeliveryClassification } from '../errors/broker-write-delivery-error.js';
 import { bestEffortAppendBrokerOpportunityEvent, createBrokerObservationBudget } from '../services/order-intent-broker-opportunity.service.js';
 import {
@@ -40,6 +40,7 @@ import {
   releaseUnsubmittedEntryExposureClaim,
   transitionEntryExposureClaim,
 } from '../services/entry-exposure-claim.service.js';
+import { isSellIntent } from '../services/entry-lifecycle-status.service.js';
 
 export type SubmittedOrderSyncResult = {
   found: number;
@@ -88,14 +89,8 @@ function sanitizeError(error: unknown) {
   return error instanceof Error ? error.message : 'Unknown worker error.';
 }
 
-function isExitIntent(intent: { rawRequestJson: Prisma.JsonValue }) {
-  const raw = intent.rawRequestJson;
-  return (
-    typeof raw === 'object' &&
-    raw !== null &&
-    !Array.isArray(raw) &&
-    raw.signalType === 'exit'
-  );
+function isExitIntent(intent: { side: string; rawRequestJson: Prisma.JsonValue }) {
+  return isSellIntent(intent);
 }
 
 function getRecordedDeliveryClassification(blockReason: string | null) {
@@ -155,13 +150,15 @@ export async function recoverStaleSubmittingIntentsForAccount(
       tradingAccount: { select: { environment: true } },
     },
     orderBy: { updatedAt: 'asc' },
-    take: 5,
+    take: 25,
   });
   let linked = 0;
   let retryable = 0;
   let retained = 0;
+  const failures: Array<{ orderIntentId: number; error: string }> = [];
 
   for (const intent of intents) {
+    try {
     if (!intent.clientOrderId) {
       retained += 1;
       continue;
@@ -365,33 +362,40 @@ export async function recoverStaleSubmittingIntentsForAccount(
       continue;
     }
 
-    const reset = await prisma.orderIntent.updateMany({
+    await prisma.orderIntent.updateMany({
       where: { id: intent.id, status: 'submitting' },
       data: {
-        status: 'pending',
-        blockReason: 'Recovered stale submitting intent after broker lookup found no order.',
+        status: 'failed',
+        blockReason: 'Recovery confirmed no broker order; entry requires a new admission decision and was not requeued.',
       },
     });
-    if (reset.count === 1) {
-      await transitionEntryExposureClaim({
-        orderIntentId: intent.id, status: 'ENTRY_PENDING', eventType: 'RECOVERY_REQUEUED_AFTER_CONFIRMED_ABSENCE',
-      });
+    await releaseUnsubmittedEntryExposureClaim({
+      orderIntentId: intent.id,
+      reason: 'RECOVERY_CONFIRMED_NEVER_SUBMITTED',
+    });
+    retryable += 1;
+    } catch (error) {
+      retained += 1;
+      failures.push({ orderIntentId: intent.id, error: sanitizeError(error) });
       await createSystemEvent({
-        type: 'order.submission_retry_scheduled',
+        type: 'order.submission_recovery_action_required',
         entityType: 'orderIntent',
         entityId: intent.id,
         tradingAccountId,
-        severity: SystemEventSeverity.WARNING,
+        severity: recoveryDeferredSeverity(
+          intent.tradingAccount?.environment === 'LIVE' ? 'LIVE' : 'PAPER'
+        ),
         payloadJson: {
           clientOrderId: intent.clientOrderId,
-          recovery: 'broker_order_absent_entry_requeued',
+          side: intent.side,
+          recovery: 'intent_isolated',
+          error: sanitizeError(error),
         } as Prisma.InputJsonValue,
-      });
-      retryable += 1;
+      }).catch(() => undefined);
     }
   }
 
-  return { found: intents.length, linked, retryable, retained };
+  return { found: intents.length, linked, retryable, retained, failures };
 }
 
 export async function recoverStaleSubmittingIntents() {
@@ -963,11 +967,10 @@ export async function syncSubmittedOrdersForAccountUnlocked(tradingAccountId: nu
         continue;
       }
 
-      const alpacaOrder = openOrdersByBrokerOrderId.get(brokerOrder.brokerOrderId);
+      const alpacaOrder = openOrdersByBrokerOrderId.get(brokerOrder.brokerOrderId) ??
+        await getAlpacaOrderById(tradingAccountId, brokerOrder.brokerOrderId, 'submitted_order_sync');
 
-      if (!alpacaOrder) {
-        continue;
-      }
+      if (!alpacaOrder) continue;
 
       const previousStatus = brokerOrder.status;
       const nextStatus = alpacaOrder.status;
