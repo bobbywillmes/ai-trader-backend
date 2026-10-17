@@ -29,15 +29,28 @@ subscription, signal source, or request receives a 409 with a machine code such
 as `ENTRY_ALREADY_PENDING`, `ALREADY_IN_POSITION`, `POSITION_CLOSING`, or
 `ENTRY_EXPOSURE_UNRESOLVED`.
 
-The claim advances through pending, submitting, broker-active, filled-awaiting-
-position, position-open, and unresolved states. Broker timeouts retain ownership.
-Position observation attaches the claim transactionally. Confirmed disappearance
-from the authoritative broker position snapshot closes the tracked position and
-then releases ownership. Admission- or worker-risk blocks may release only before
-broker/position evidence exists. A rejected, canceled, or expired broker order may
-release only after zero fills and zero active position are established.
+The claim advances monotonically through pending, submitting, broker-active,
+filled-awaiting-position, position-open/closing, unresolved, and released states.
+`UNRESOLVED` cannot return to an executable state through ordinary observation;
+`RELEASED` is terminal. Repeated unchanged observations do not append events.
+Broker timeouts retain ownership.
 
-The broker BUY adapter boundary independently requires an active claim. This
+Position observation never fails merely because claim evidence conflicts. The
+real broker exposure is persisted as a backend-managed `TrackedPosition`; the old
+claim remains active and becomes `UNRESOLVED`, with both position identities in
+its event and Operational Attention evidence. It is not attached to the unrelated
+position, and its active uniqueness continues to block additional buying.
+
+Release requires fresh exact broker-order and position-by-symbol observations
+outside the transaction, followed by an account/Security advisory lock and local
+revalidation. The order must be terminal (or submission authoritatively impossible),
+delivery must be certain, cumulative broker fills must be locally accounted, no
+broker position may remain, and no local active position or nonterminal order may
+have appeared. A failed lookup or disagreement retains `UNRESOLVED` ownership.
+
+The broker BUY adapter boundary independently verifies intent ID, account,
+canonical Security/symbol, BUY side, stable client-order ID, submitting intent,
+`ENTRY_SUBMITTING` claim, and account environment. This
 prevents legacy or future callers from bypassing admission.
 
 ## Producers
@@ -58,10 +71,12 @@ npm run entry-exposure:readiness
 npm run entry-exposure:readiness -- --apply
 ```
 
-Dry-run is mandatory. Apply adopts only a single unambiguous active position, or
-a single unresolved entry lifecycle, for an account/security pair. Ambiguous
-groups and missing Securities exit nonzero and require operator review. Pending
-legacy intents without a claim fail closed at the worker and broker boundary.
+Dry-run is mandatory. Apply records even single-candidate adoption as
+`UNRESOLVED`; adoption is not trusted attribution. Active broker BUYs, unresolved
+and stranded claims, ambiguous groups, missing Securities, and unclaimed active
+positions/intents all keep readiness false. Pending legacy intents without a
+claim fail closed at the worker and broker boundary and are never made executable
+by absence lookup alone.
 Reconciliation reports missing, unresolved, or stranded claims through
 `SystemEvent` and Operational Attention. It never clears them automatically.
 
