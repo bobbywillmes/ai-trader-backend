@@ -34,6 +34,11 @@ import { evaluateAssignmentEntry } from './assignment-entry-evaluation.service.j
 import { validateActiveLiveEntryArming } from './live-entry-arming.service.js';
 import { getBrokerWriteDeliveryClassification } from '../errors/broker-write-delivery-error.js';
 import { bestEffortAppendBrokerOpportunityEvent, bestEffortCaptureOrderIntentBrokerPostOpportunity, createBrokerObservationBudget } from './order-intent-broker-opportunity.service.js';
+import {
+  acquireEntryExposureClaim,
+  requireEntryExposureClaim,
+  releaseUnsubmittedEntryExposureClaim,
+} from './entry-exposure-claim.service.js';
 
 type SubmitOrderOptions = {
   entryDecisionKey?: string;
@@ -157,6 +162,7 @@ export async function submitOrder(
       }
     : {};
   let duplicateAcceptanceExecution = false;
+  const claimOwnerKey = `entry:${tradingAccountId}:${clientOrderId}`;
   const intent = options.liveEntryAcceptanceExecution
     ? await prisma.$transaction(async (tx) => {
         const execution = options.liveEntryAcceptanceExecution!;
@@ -224,25 +230,26 @@ export async function submitOrder(
             executionRequestKey: execution.requestKey,
           },
         });
-        return createOrderIntent(
-          resolvedInput,
-          'live_entry_acceptance',
-          clientOrderId,
-          tradingAccountId,
-          {
-            ...intentOptions,
-            liveEntryAcceptanceRunId: run.id,
-          },
-          tx,
-        );
+        const acquired = await acquireEntryExposureClaim({
+          tx, tradingAccountId, symbol: resolvedInput.symbol, ownerKey: claimOwnerKey,
+          createIntent: () => createOrderIntent(
+            resolvedInput, 'live_entry_acceptance', clientOrderId, tradingAccountId,
+            { ...intentOptions, liveEntryAcceptanceRunId: run.id }, tx,
+          ),
+        });
+        duplicateAcceptanceExecution = acquired.duplicate;
+        return acquired.intent;
       })
-    : await createOrderIntent(
-        resolvedInput,
-        'api',
-        clientOrderId,
-        tradingAccountId,
-        intentOptions,
-      );
+    : await prisma.$transaction(async (tx) => {
+        const acquired = await acquireEntryExposureClaim({
+          tx, tradingAccountId, symbol: resolvedInput.symbol, ownerKey: claimOwnerKey,
+          createIntent: () => createOrderIntent(
+            resolvedInput, 'api', clientOrderId, tradingAccountId, intentOptions, tx,
+          ),
+        });
+        duplicateAcceptanceExecution = acquired.duplicate;
+        return acquired.intent;
+      });
 
   if (duplicateAcceptanceExecution) {
     return {
@@ -280,6 +287,10 @@ export async function submitOrder(
 
   if (!riskResult.allowed) {
     await updateOrderIntentStatus(intent.id, 'blocked', riskResult.reason);
+    await releaseUnsubmittedEntryExposureClaim({
+      orderIntentId: intent.id,
+      reason: 'ADMISSION_RISK_BLOCKED',
+    });
 
     await logRiskGateBlockedOrder({
       orderIntentId: intent.id,
@@ -325,6 +336,7 @@ export async function submitOrderToBroker(
   if (input.side !== 'buy' || (input.signalType ?? 'entry') !== 'entry') {
     throw new HttpError(400, 'The entry broker boundary accepts BUY entry orders only.');
   }
+  await requireEntryExposureClaim(options.orderIntentId);
 
   const existing = await getAlpacaOrderByClientOrderId(
     options.tradingAccountId,

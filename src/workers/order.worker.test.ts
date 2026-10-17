@@ -59,6 +59,10 @@ const mocks = vi.hoisted(() => ({
   acceptanceRunUpdateMany: vi.fn(),
   appendBrokerOpportunityEvent: vi.fn(),
   withTradingAccountWorkflowLock: vi.fn(),
+  requireEntryExposureClaim: vi.fn(),
+  releaseUnsubmittedEntryExposureClaim: vi.fn(),
+  releaseConfirmedTerminalEntryClaim: vi.fn(),
+  transitionEntryExposureClaim: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -80,6 +84,13 @@ vi.mock('../db/prisma.js', () => ({
 
 vi.mock('../services/place-order.service.js', () => ({
   submitOrderToBroker: mocks.submitOrderToBroker,
+}));
+
+vi.mock('../services/entry-exposure-claim.service.js', () => ({
+  requireEntryExposureClaim: mocks.requireEntryExposureClaim,
+  releaseUnsubmittedEntryExposureClaim: mocks.releaseUnsubmittedEntryExposureClaim,
+  releaseConfirmedTerminalEntryClaim: mocks.releaseConfirmedTerminalEntryClaim,
+  transitionEntryExposureClaim: mocks.transitionEntryExposureClaim,
 }));
 
 vi.mock('../services/order-intent-broker-opportunity.service.js',()=>({bestEffortAppendBrokerOpportunityEvent:mocks.appendBrokerOpportunityEvent,createBrokerObservationBudget:()=>({startedAtMs:0,deadlineAtMs:250})}));
@@ -197,6 +208,10 @@ beforeEach(() => {
 describe('order worker entry-session recheck', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  mocks.requireEntryExposureClaim.mockResolvedValue({ id: 1 });
+  mocks.releaseUnsubmittedEntryExposureClaim.mockResolvedValue({ id: 1 });
+  mocks.releaseConfirmedTerminalEntryClaim.mockResolvedValue(null);
+  mocks.transitionEntryExposureClaim.mockResolvedValue({ id: 1 });
     mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.enumerateLifecycleAccounts.mockResolvedValue([]);
     mocks.resolveSubscriptionOrderInput.mockResolvedValue({

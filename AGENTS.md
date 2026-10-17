@@ -413,6 +413,13 @@ exact environment and database identity guards, pre-route write denial, inert br
 transport, and explicit Compose project teardown. The harness must never import
 `src/app/server.ts`, start workers, or gain trading authority.
 
+Phase 3C.0 enforces durable account/security entry exclusivity with an
+append-preserving `EntryExposureClaim`. The claim is acquired atomically with the
+entry OrderIntent, remains active through broker uncertainty and the entire
+TrackedPosition lifecycle, and is released only on authoritative no-exposure
+evidence. Pre-claim lifecycle evidence fails closed and is handled by the
+operator readiness workflow. See `docs/architecture/entry-exposure-exclusivity.md`.
+
 The intended lifecycle is:
 
 ```text

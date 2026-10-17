@@ -31,10 +31,17 @@ const mocks = vi.hoisted(() => ({
   adaptiveRecordRateLimitDeferred: vi.fn(),
   resolveDefaultTradingAccountId: vi.fn(),
   enumerateLifecycleAccounts: vi.fn(),
+  attachEntryExposureClaimToPosition: vi.fn(),
+  releaseEntryExposureClaimForClosedPosition: vi.fn(),
 }));
 
 vi.mock('./positions.service.js', () => ({
   getNormalizedPositions: mocks.getNormalizedPositions,
+}));
+
+vi.mock('./entry-exposure-claim.service.js', () => ({
+  attachEntryExposureClaimToPosition: mocks.attachEntryExposureClaimToPosition,
+  releaseEntryExposureClaimForClosedPosition: mocks.releaseEntryExposureClaimForClosedPosition,
 }));
 
 // These unit tests exercise position persistence, not PostgreSQL advisory locks.
@@ -275,7 +282,7 @@ describe('position tracking subscription recovery', () => {
     expect(mocks.ensurePositionExitState).toHaveBeenCalledWith(101);
     expect(mocks.positionExitStateCreate).not.toHaveBeenCalled();
     expect(mocks.linkLocalEntryOwnershipInTransaction).not.toHaveBeenCalled();
-    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
   });
 
   it('records adaptive polling failure when a symbol cannot be processed', async () => {

@@ -37,6 +37,10 @@ import { HttpError } from "../errors/http-error.js";
 import { enumerateLifecycleAccounts } from "./lifecycle-account-eligibility.service.js";
 import { observeUnexpectedShortExposure } from "./unexpected-short-exposure.service.js";
 import { reconcileRemainingExposureCloseAfterPositionClosure } from "./remaining-exposure-close.service.js";
+import {
+  attachEntryExposureClaimToPosition,
+  releaseEntryExposureClaimForClosedPosition,
+} from "./entry-exposure-claim.service.js";
 
 export type TrackedPositionSyncResult = {
   polled: boolean;
@@ -481,6 +485,13 @@ export async function syncTrackedPositionsForAccountUnlocked(
               securityId: security.id,
             },
           });
+          await attachEntryExposureClaimToPosition({
+            tx,
+            tradingAccountId,
+            securityId: security.id,
+            trackedPositionId: createdPosition.id,
+            symbol: position.symbol,
+          });
 
           // EXTERNAL_SIGNAL ownership may only be frozen once originating
           // ownership is verified/committed in THIS transaction. A local-order
@@ -614,6 +625,14 @@ export async function syncTrackedPositionsForAccountUnlocked(
           rawPositionJson: position as unknown as Prisma.InputJsonValue,
         },
       });
+
+      await prisma.$transaction((tx) => attachEntryExposureClaimToPosition({
+        tx,
+        tradingAccountId,
+        securityId: security.id,
+        trackedPositionId: updated.id,
+        symbol: updated.symbol,
+      }));
 
       updatedCount += 1;
       await ensurePositionExitState(updated.id);
@@ -786,6 +805,10 @@ export async function syncTrackedPositionsForAccountUnlocked(
 
     await reconcileRemainingExposureCloseAfterPositionClosure({
       tradingAccountId,
+      trackedPositionId: closed.id,
+    });
+
+    await releaseEntryExposureClaimForClosedPosition({
       trackedPositionId: closed.id,
     });
 

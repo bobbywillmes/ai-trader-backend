@@ -55,6 +55,8 @@ export type ReconciliationFindingCode =
   | 'historical_filled_entry_position_link_missing'
   | 'broker_order_untracked'
   | 'stale_submitting_intent'
+  | 'entry_exposure_claim_unresolved'
+  | 'entry_exposure_claim_missing'
   | 'position_attribution_missing';
 
 export type ReconciliationFinding = {
@@ -65,7 +67,8 @@ export type ReconciliationFinding = {
     | 'trackedPosition'
     | 'brokerPosition'
     | 'brokerOrder'
-    | 'orderIntent';
+    | 'orderIntent'
+    | 'entryExposureClaim';
   entityId: string;
   symbol: string;
   message: string;
@@ -689,7 +692,7 @@ export async function reconcileTradingAccount(
     select: { id: true, displayName: true, environment: true },
   });
   const runIdentifier = randomUUID();
-  const [trackedPositions, localOrders, staleIntents] = await Promise.all([
+  const [trackedPositions, localOrders, staleIntents, activeClaims, uncoveredEntryIntents] = await Promise.all([
     prisma.trackedPosition.findMany({
       where: {
         tradingAccountId,
@@ -717,6 +720,28 @@ export async function reconcileTradingAccount(
         status: 'submitting',
         updatedAt: { lte: new Date(Date.now() - 5 * 60_000) },
       },
+      orderBy: { id: 'asc' },
+    }),
+    prisma.entryExposureClaim.findMany({
+      where: { tradingAccountId, releasedAt: null },
+      include: {
+        security: { select: { symbol: true } },
+        orderIntent: { select: { id: true, status: true } },
+        trackedPosition: { select: { id: true, status: true } },
+      },
+      orderBy: { id: 'asc' },
+    }),
+    prisma.orderIntent.findMany({
+      where: {
+        tradingAccountId,
+        side: 'buy',
+        OR: [
+          { status: { in: ['received', 'pending', 'submitting', 'submitted'] } },
+          { status: 'filled', trackedPositionId: null },
+        ],
+        entryExposureClaim: null,
+      },
+      select: { id: true, symbol: true, status: true, clientOrderId: true },
       orderBy: { id: 'asc' },
     }),
   ]);
@@ -783,6 +808,54 @@ export async function reconcileTradingAccount(
     })),
     defaultBroker: 'alpaca',
   });
+  for (const claim of activeClaims) {
+    const stranded = claim.status === 'UNRESOLVED' ||
+      claim.trackedPosition?.status === 'closed' ||
+      (!claim.trackedPosition && claim.orderIntent && ['blocked', 'failed', 'canceled', 'cancelled', 'expired', 'rejected'].includes(claim.orderIntent.status));
+    if (!stranded) continue;
+    findings.push({
+      tradingAccountId,
+      code: 'entry_exposure_claim_unresolved',
+      severity: 'critical',
+      entityType: 'entryExposureClaim',
+      entityId: String(claim.id),
+      symbol: claim.security.symbol,
+      message: `${claim.security.symbol} entry exposure claim requires operator review before another entry can be admitted.`,
+      details: {
+        claimStatus: claim.status,
+        orderIntentId: claim.orderIntentId,
+        orderIntentStatus: claim.orderIntent?.status ?? null,
+        trackedPositionId: claim.trackedPositionId,
+        trackedPositionStatus: claim.trackedPosition?.status ?? null,
+      },
+    });
+  }
+  const claimedPositionIds = new Set(activeClaims.map((claim) => claim.trackedPositionId).filter((id): id is number => id !== null));
+  for (const position of trackedPositions) {
+    if (claimedPositionIds.has(position.id)) continue;
+    findings.push({
+      tradingAccountId,
+      code: 'entry_exposure_claim_missing',
+      severity: 'critical',
+      entityType: 'trackedPosition',
+      entityId: String(position.id),
+      symbol: normalizeSymbol(position.symbol),
+      message: `${position.symbol} active position predates durable entry-exposure ownership and requires adoption review.`,
+      details: { trackedPositionStatus: position.status, rolloutCompatibility: 'PRE_CLAIM_ACTIVE_POSITION' },
+    });
+  }
+  for (const intent of uncoveredEntryIntents) {
+    findings.push({
+      tradingAccountId,
+      code: 'entry_exposure_claim_missing',
+      severity: 'critical',
+      entityType: 'orderIntent',
+      entityId: String(intent.id),
+      symbol: normalizeSymbol(intent.symbol),
+      message: `${intent.symbol} entry lifecycle predates durable exposure ownership and cannot execute until reviewed.`,
+      details: { orderIntentStatus: intent.status, clientOrderId: intent.clientOrderId, rolloutCompatibility: 'PRE_CLAIM_ENTRY_INTENT' },
+    });
+  }
   const historicalDiagnostic = await diagnoseHistoricalOrderLifecycle({
     tradingAccountId,
     openOrders: brokerOrders,

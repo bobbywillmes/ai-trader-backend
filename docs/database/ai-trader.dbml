@@ -336,6 +336,7 @@ Table TradingAccount {
   marketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration [not null]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
   brokerPostOpportunities OrderIntentBrokerPostOpportunity [not null]
+  entryExposureClaims EntryExposureClaim [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 
@@ -828,6 +829,7 @@ Table Security {
   momentumCandidates MomentumCandidate [not null]
   liveEntryArmings LiveEntryArming [not null]
   liveEntryAcceptanceRuns LiveEntryAcceptanceRun [not null]
+  entryExposureClaims EntryExposureClaim [not null]
 }
 
 Table MomentumUniverseMember {
@@ -882,6 +884,7 @@ Table OrderIntent {
   marketPolicyCoverage OrderIntentMarketPolicyCoverage
   brokerPostOpportunities OrderIntentBrokerPostOpportunity [not null]
   brokerOpportunityEvents OrderIntentBrokerOpportunityEvent [not null]
+  entryExposureClaim EntryExposureClaim
 }
 
 Table BrokerOrder {
@@ -906,6 +909,36 @@ Table BrokerOrder {
   brokerActivities BrokerActivity [not null]
   entryDecision EntryDecision
   operationalAttentions OperationalAttention [not null]
+}
+
+Table EntryExposureClaim {
+  id Int [pk, increment]
+  tradingAccountId Int [not null]
+  securityId Int [not null]
+  orderIntentId Int [unique]
+  trackedPositionId Int [unique]
+  ownerKey String [unique, not null]
+  status String [not null, default: 'ENTRY_PENDING']
+  acquiredAt DateTime [default: `now()`, not null]
+  releasedAt DateTime
+  releaseReason String
+  lastDiagnosedAt DateTime
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  tradingAccount TradingAccount [not null]
+  security Security [not null]
+  orderIntent OrderIntent
+  trackedPosition TrackedPosition
+  events EntryExposureClaimEvent [not null]
+}
+
+Table EntryExposureClaimEvent {
+  id Int [pk, increment]
+  claimId Int [not null]
+  eventType String [not null]
+  evidenceJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  claim EntryExposureClaim [not null]
 }
 
 Table SystemEvent {
@@ -1678,6 +1711,7 @@ Table TrackedPosition {
   brokerActivities BrokerActivity [not null]
   operationalAttentions OperationalAttention [not null]
   entryDecision EntryDecision
+  entryExposureClaim EntryExposureClaim
   exitState PositionExitState
   configSnapshotJson Json
   configSnapshotCapturedAt DateTime
@@ -3014,6 +3048,16 @@ Ref: BrokerOrder.orderIntentId > OrderIntent.id
 Ref: BrokerOrder.trackedPositionId > TrackedPosition.id [delete: Set Null]
 
 Ref: BrokerOrder.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: EntryExposureClaim.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: EntryExposureClaim.securityId > Security.id [delete: Restrict]
+
+Ref: EntryExposureClaim.orderIntentId - OrderIntent.id [delete: Restrict]
+
+Ref: EntryExposureClaim.trackedPositionId - TrackedPosition.id [delete: Restrict]
+
+Ref: EntryExposureClaimEvent.claimId > EntryExposureClaim.id [delete: Restrict]
 
 Ref: SystemEvent.tradingAccountId > TradingAccount.id [delete: Set Null]
 

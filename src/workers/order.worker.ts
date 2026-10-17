@@ -34,6 +34,12 @@ import { resolveSubscriptionOrderInput } from '../services/subscription.service.
 import { getAlpacaOrderByClientOrderId } from '../integrations/alpaca/orders.adapter.js';
 import { getBrokerWriteDeliveryClassification } from '../errors/broker-write-delivery-error.js';
 import { bestEffortAppendBrokerOpportunityEvent, createBrokerObservationBudget } from '../services/order-intent-broker-opportunity.service.js';
+import {
+  requireEntryExposureClaim,
+  releaseConfirmedTerminalEntryClaim,
+  releaseUnsubmittedEntryExposureClaim,
+  transitionEntryExposureClaim,
+} from '../services/entry-exposure-claim.service.js';
 
 export type SubmittedOrderSyncResult = {
   found: number;
@@ -160,6 +166,9 @@ export async function recoverStaleSubmittingIntentsForAccount(
       retained += 1;
       continue;
     }
+    if (!isExitIntent(intent)) {
+      await requireEntryExposureClaim(intent.id, prisma, { allowUnresolved: true });
+    }
 
     const persisted = intent.brokerOrders[0];
     if (persisted) {
@@ -171,6 +180,9 @@ export async function recoverStaleSubmittingIntentsForAccount(
         data: { status: 'submitted', blockReason: null },
       });
       linked += 1;
+      if (!isExitIntent(intent)) {
+        await transitionEntryExposureClaim({ orderIntentId: intent.id, status: 'BROKER_ORDER_ACTIVE', eventType: 'RECOVERY_LINKED_LOCAL_BROKER_ORDER' });
+      }
       continue;
     }
 
@@ -240,6 +252,12 @@ export async function recoverStaleSubmittingIntentsForAccount(
           reason: 'Stable client-order ID matched an existing broker order.',
         } as Prisma.InputJsonValue,
       });
+      if (!isExitIntent(intent)) {
+        await transitionEntryExposureClaim({
+          orderIntentId: intent.id, status: 'BROKER_ORDER_ACTIVE', eventType: 'RECOVERY_FOUND_BROKER_ORDER',
+          evidence: { brokerOrderId: brokerOrder.id, brokerStatus: brokerOrder.status },
+        });
+      }
       linked += 1;
       continue;
     }
@@ -355,6 +373,9 @@ export async function recoverStaleSubmittingIntentsForAccount(
       },
     });
     if (reset.count === 1) {
+      await transitionEntryExposureClaim({
+        orderIntentId: intent.id, status: 'ENTRY_PENDING', eventType: 'RECOVERY_REQUEUED_AFTER_CONFIRMED_ABSENCE',
+      });
       await createSystemEvent({
         type: 'order.submission_retry_scheduled',
         entityType: 'orderIntent',
@@ -443,6 +464,7 @@ export async function processPendingOrdersForAccount(
     logger.trace({ orderIntentId: intent.id }, 'Order worker processing intent.');
 
     try {
+      await requireEntryExposureClaim(intent.id);
       const claimResult = await prisma.orderIntent.updateMany({
         where: {
           id: intent.id,
@@ -459,6 +481,11 @@ export async function processPendingOrdersForAccount(
       }
 
       claimed += 1;
+      await transitionEntryExposureClaim({
+        orderIntentId: intent.id,
+        status: 'ENTRY_SUBMITTING',
+        eventType: 'WORKER_CLAIMED_FOR_SUBMISSION',
+      });
 
       if (!intent.clientOrderId) {
         throw new Error(
@@ -547,6 +574,10 @@ export async function processPendingOrdersForAccount(
             input: resolvedInput,
             result: riskResult,
           });
+          await releaseUnsubmittedEntryExposureClaim({
+            orderIntentId: intent.id,
+            reason: 'WORKER_RISK_RECHECK_BLOCKED',
+          });
 
           logger.trace({ orderIntentId: intent.id, reason: riskResult.reason },
             'Order intent blocked by worker-time risk recheck.');
@@ -561,6 +592,12 @@ export async function processPendingOrdersForAccount(
         orderIntentId: intent.id,
       });
       const brokerOrder = result.order;
+      await transitionEntryExposureClaim({
+        orderIntentId: intent.id,
+        status: 'BROKER_ORDER_ACTIVE',
+        eventType: result.duplicate ? 'BROKER_ORDER_RECOVERED' : 'BROKER_ORDER_ACCEPTED',
+        evidence: { brokerOrderId: brokerOrder.id, brokerStatus: brokerOrder.status },
+      }).catch(() => undefined);
 
       const existingBrokerOrderRecord = await prisma.brokerOrder.findFirst({
         where: {
@@ -582,6 +619,10 @@ export async function processPendingOrdersForAccount(
           data: {
             status: 'submitted',
           },
+        });
+        await releaseConfirmedTerminalEntryClaim({
+          orderIntentId: intent.id,
+          brokerStatus: brokerOrder.status,
         });
 
         logger.trace({ orderIntentId: intent.id, brokerOrderId: brokerOrder.id },
@@ -641,6 +682,10 @@ export async function processPendingOrdersForAccount(
           tradingAccountId: intent.tradingAccountId,
         });
       }
+      await releaseConfirmedTerminalEntryClaim({
+        orderIntentId: intent.id,
+        brokerStatus: brokerOrder.status,
+      });
 
       logger.trace({ orderIntentId: intent.id }, 'Order intent submitted.');
       submitted += 1;
@@ -650,6 +695,23 @@ export async function processPendingOrdersForAccount(
       const blockReason = classification
         ? `BROKER_WRITE_DELIVERY:${classification}:${message}`
         : message;
+      if (classification === 'DELIVERY_UNCERTAIN') {
+        await transitionEntryExposureClaim({
+          orderIntentId: intent.id,
+          status: 'UNRESOLVED',
+          eventType: 'BROKER_DELIVERY_UNCERTAIN',
+          evidence: { classification, message },
+        }).catch(() => undefined);
+      } else if (
+        classification === 'BROKER_REJECTED' ||
+        classification === 'NOT_SENT_BLOCKED' ||
+        classification === 'NOT_SENT_RETRYABLE'
+      ) {
+        await releaseUnsubmittedEntryExposureClaim({
+          orderIntentId: intent.id,
+          reason: classification,
+        }).catch(() => undefined);
+      }
       if (intent.liveEntryAcceptanceRunId != null) {
         await prisma.$transaction(async (tx) => {
           await tx.orderIntent.update({
@@ -949,6 +1011,12 @@ export async function syncSubmittedOrdersForAccountUnlocked(tradingAccountId: nu
             status: nextStatus,
           },
         });
+        if (brokerOrder.side.toLowerCase() === 'buy') {
+          await releaseConfirmedTerminalEntryClaim({
+            orderIntentId: brokerOrder.orderIntentId,
+            brokerStatus: nextStatus,
+          });
+        }
 
         await createSystemEvent({
           type: `order.${nextStatus}`,

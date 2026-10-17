@@ -553,6 +553,7 @@ model TradingAccount {
   marketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration[]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[]
   brokerPostOpportunities OrderIntentBrokerPostOpportunity[]
+  entryExposureClaims      EntryExposureClaim[]
 
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
@@ -1265,6 +1266,7 @@ model Security {
   momentumCandidates     MomentumCandidate[] @relation("SecurityMomentumCandidates")
   liveEntryArmings       LiveEntryArming[]
   liveEntryAcceptanceRuns LiveEntryAcceptanceRun[]
+  entryExposureClaims     EntryExposureClaim[]
 
   @@index([enabled])
   @@index([assetType])
@@ -1345,6 +1347,7 @@ model OrderIntent {
   marketPolicyCoverage     OrderIntentMarketPolicyCoverage?
   brokerPostOpportunities  OrderIntentBrokerPostOpportunity[]
   brokerOpportunityEvents  OrderIntentBrokerOpportunityEvent[]
+  entryExposureClaim       EntryExposureClaim?
 
   @@index([trackedPositionId])
   @@index([tradingAccountId])
@@ -1390,6 +1393,44 @@ model BrokerOrder {
   @@index([tradingAccountId])
   @@index([tradingAccountId, status])
   @@index([tradingAccountId, symbol])
+}
+
+model EntryExposureClaim {
+  id               Int      @id @default(autoincrement())
+  tradingAccountId Int
+  securityId       Int
+  orderIntentId    Int?     @unique
+  trackedPositionId Int?    @unique
+  ownerKey         String   @unique
+  status           String   @default("ENTRY_PENDING")
+  acquiredAt       DateTime @default(now())
+  releasedAt       DateTime?
+  releaseReason    String?
+  lastDiagnosedAt  DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tradingAccount TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  security       Security       @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  orderIntent    OrderIntent?   @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  trackedPosition TrackedPosition? @relation(fields: [trackedPositionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  events         EntryExposureClaimEvent[]
+
+  // One unreleased claim per account/security is enforced by partial unique SQL.
+  @@index([tradingAccountId, securityId])
+  @@index([status, releasedAt])
+}
+
+model EntryExposureClaimEvent {
+  id        Int      @id @default(autoincrement())
+  claimId   Int
+  eventType String
+  evidenceJson Json
+  createdAt DateTime @default(now())
+
+  claim EntryExposureClaim @relation(fields: [claimId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([claimId, createdAt])
 }
 
 enum SystemEventSeverity {
@@ -2520,6 +2561,7 @@ model TrackedPosition {
   brokerActivities BrokerActivity[]
   operationalAttentions OperationalAttention[]
   entryDecision    EntryDecision?
+  entryExposureClaim EntryExposureClaim?
 
   exitState PositionExitState?
 

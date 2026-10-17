@@ -17,14 +17,25 @@ const mocks = vi.hoisted(() => ({
   submitAlpacaEntryOrder: vi.fn(),
   captureBrokerOpportunity: vi.fn(),
   appendBrokerEvent: vi.fn(),
+  transaction: vi.fn(),
+  acquireEntryExposureClaim: vi.fn(),
+  requireEntryExposureClaim: vi.fn(),
+  releaseUnsubmittedEntryExposureClaim: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
   prisma: {
+    $transaction: mocks.transaction,
     tradingAccount: {
       findUniqueOrThrow: mocks.tradingAccountFindUniqueOrThrow,
     },
   },
+}));
+
+vi.mock('./entry-exposure-claim.service.js', () => ({
+  acquireEntryExposureClaim: mocks.acquireEntryExposureClaim,
+  requireEntryExposureClaim: mocks.requireEntryExposureClaim,
+  releaseUnsubmittedEntryExposureClaim: mocks.releaseUnsubmittedEntryExposureClaim,
 }));
 
 vi.mock('../integrations/alpaca/orders.adapter.js', () => ({
@@ -166,6 +177,12 @@ describe('place order service entry decision attribution', () => {
     mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.buildClientOrderId.mockReturnValue('client-101');
     mocks.createOrderIntent.mockResolvedValue({ id: 55 });
+    mocks.transaction.mockImplementation((callback) => callback({}));
+    mocks.acquireEntryExposureClaim.mockImplementation(async (args) => ({
+      intent: await args.createIntent(), duplicate: false, claimId: 1,
+    }));
+    mocks.requireEntryExposureClaim.mockResolvedValue({ id: 1 });
+    mocks.releaseUnsubmittedEntryExposureClaim.mockResolvedValue({ id: 1 });
     mocks.evaluateOrderRisk.mockResolvedValue({
       allowed: true,
       details: {},
@@ -210,7 +227,8 @@ describe('place order service entry decision attribution', () => {
           sizingType: 'MAX_NOTIONAL',
           calculatedQty: 3,
         },
-      }
+      },
+      expect.anything()
     );
     expect(mocks.evaluateOrderRisk).toHaveBeenCalledWith(runtimeSizedInput, {
       tradingAccountId: 1,
@@ -380,7 +398,8 @@ describe('place order service entry decision attribution', () => {
           sizingType: 'MAX_NOTIONAL',
           calculatedQty: 3,
         },
-      }
+      },
+      expect.anything()
     );
     expect(mocks.evaluateOrderRisk).toHaveBeenCalledWith(runtimeSizedInput, {
       tradingAccountId: 1,
