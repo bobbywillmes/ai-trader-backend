@@ -63,6 +63,14 @@ export async function getCompleteOpenAlpacaBuyOrdersForSymbol(
 ): Promise<AlpacaOrder[]> {
   const canonicalSymbol = symbol.trim().toUpperCase();
   if (!canonicalSymbol) throw new Error('A canonical symbol is required for complete open-order evidence.');
+  return getCompleteOpenAlpacaBuyOrders(tradingAccountId, operation, canonicalSymbol);
+}
+
+export async function getCompleteOpenAlpacaBuyOrders(
+  tradingAccountId: number,
+  operation: AlpacaApiOperation = 'reconciliation_check',
+  canonicalSymbol?: string,
+): Promise<AlpacaOrder[]> {
 
   const orders: AlpacaOrder[] = [];
   const seenIds = new Set<string>();
@@ -73,9 +81,9 @@ export async function getCompleteOpenAlpacaBuyOrdersForSymbol(
       status: 'open',
       direction: 'desc',
       limit: String(COMPLETE_OPEN_ORDER_PAGE_SIZE),
-      symbols: canonicalSymbol,
       side: 'buy',
     });
+    if (canonicalSymbol) query.set('symbols', canonicalSymbol);
     if (beforeOrderId) query.set('before_order_id', beforeOrderId);
     const page = await alpacaRequestForAccount<AlpacaOrder[]>(
       tradingAccountId,
@@ -97,7 +105,7 @@ export async function getCompleteOpenAlpacaBuyOrdersForSymbol(
         throw new Error('Alpaca returned an incomplete open-order record.');
       }
       if (seenIds.has(order.id)) throw new Error('Alpaca open-order pagination repeated an order identity.');
-      if (order.symbol.trim().toUpperCase() !== canonicalSymbol || order.side.toLowerCase() !== 'buy') {
+      if ((canonicalSymbol && order.symbol.trim().toUpperCase() !== canonicalSymbol) || order.side.toLowerCase() !== 'buy') {
         throw new Error('Alpaca open-order filtering returned a conflicting order identity.');
       }
       seenIds.add(order.id);

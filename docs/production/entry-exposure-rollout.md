@@ -10,7 +10,10 @@ It grants no new LIVE authority.
    reconciliation workers may continue.
 2. Deploy the additive migration. It creates claim and event tables and does not
    backfill historical rows.
-3. Run `npm run entry-exposure:readiness` and retain its JSON report.
+3. Run `npm run entry-exposure:readiness` and retain its JSON report. This is a
+   provider-read operation: it enumerates every local trading account and requires
+   a fresh Alpaca position snapshot plus a complete, bounded executable BUY-order
+   snapshot for each account. PAPER and LIVE credentials are never mixed.
 4. Treat `ambiguous`, `missingSecurity`,
    `unclaimedUnresolvedBuyIntents`, `unclaimedActiveBrokerBuys`,
    and `strandedClaims` as unsafe rollout blockers. Review
@@ -24,7 +27,10 @@ It grants no new LIVE authority.
    historical attribution remains visible for investigation, but protection of
    that symbol is the rollout safety boundary. A legacy BUY is never
    requeued merely because a stable-client-ID lookup returns no order.
-6. Run the dry-run again. `ready` may become true only when every active exposure
+6. Run the dry-run again. `ready` may become true only when both
+   `databaseReady` and `brokerVerifiedReady` are true. `assessment` distinguishes
+   `BROKER_EVIDENCE_UNAVAILABLE`, `BLOCKED`, and `BROKER_VERIFIED_READY`; a local
+   adoption pass is never represented as final broker readiness. Every active exposure
    is durably protected and no claimless executable BUY, ambiguous account/Security
    group, missing Security, or stranded lifecycle remains. A protected legacy open
    position may retain unresolved historical attribution without permitting a new
@@ -91,3 +97,32 @@ position for the canonical symbol, and the complete broker open-order observatio
 contains no executable BUY for the symbol. Final locked revalidation repeats the
 local position/order checks. This position-only exception is not available to a
 claim that has an originating OrderIntent.
+
+## Legacy disposition matrix
+
+| Condition | Detection and required evidence | Safe disposition | Entry effect and approval | Acceptance proof |
+| --- | --- | --- | --- | --- |
+| Verified existing open position | Local open/closing `TrackedPosition` matches a fresh broker position for the same account and canonical Security; the complete broker BUY snapshot is available. | `--apply` may create one `POSITION_OPEN` claim with `OPERATOR_ROLLOUT_ADOPTION`. The event states unknown provenance and `executionAuthority=NONE`. Position and protective exits remain usable. | Blocks another entry for the symbol. No liquidation or exit-authority invention. Operator retains the apply report. | `entry-exposure-lifecycle.prisma.integration.test.ts`, case 11. |
+| Never-submitted `received`/`pending` intent | No delivery-uncertain marker, local `BrokerOrder`, `BrokerActivity`, broker position, or executable broker BUY for that account/symbol, using complete fresh snapshots. | Atomically block only an intent still in the expected state, create immutable evidence, then release as `ROLLOUT_VERIFIED_NEVER_SUBMITTED`. | Never requeues and does not block after verified release. Operator apply required. One 404 never qualifies uncertain delivery. | Case 12. |
+| Adopted `submitting` or delivery-uncertain intent | Local active/uncertain status plus exact client/broker identity and subsequent broker order/fill evidence. | Preserve the claim. Reconciliation may advance it only from authoritative identity evidence; release uses the full normal protocol. | Hard blocker. Automatic retry is safe; operator investigates identity gaps. | Cases 6 and 9. |
+| Claimless broker-active BUY | Complete account order snapshot contains an executable BUY with no matching local broker identity/claim. | Readiness reports `brokerOnlyOpenBuys`. Resolve it through authorized broker operations or exact lifecycle repair, then rerun readiness. Readiness never creates or cancels an order. | Hard blocker; operator action required. No force release. | Cases 5 and 13. |
+| Historical filled-but-unlinked order | Terminal history lacks claim/position attribution; compare cumulative broker fills with immutable local fills and current position/order snapshots. | Report as `historicalTerminalEvidence`. Repair only from exact evidence through existing lifecycle and Operational Attention patterns; never invent ownership. | History alone grants no execution authority; current ambiguity remains blocked. Operator review required. | Cases 3 and 8 plus remediation tests. |
+| Existing open position with unknown entry provenance | Verified broker/local position match without a trustworthy historical strategy link. | Protect with a position-only claim. Keep existing/default exit ownership; never infer external exit authority. | Symbol remains blocked while open. Deployment-compatible without forced sale. | Case 11. |
+| Claimed position already closed | Closed local position, absent broker position, complete open BUY snapshot, exact origin/replacement evidence when present, and fill reconciliation. | Existing reconciliation retries the release protocol. Transient errors append retry diagnostics and preserve status. | Blocks until verified release. No second lifecycle controller. | Cases 3 and 6. |
+| Ambiguous/conflicting identity, unknown status, incomplete pagination, or broker-only position | Any identity mismatch, malformed/partial response, unknown state, conflicting fill/position evidence, or broker position without a local tracked position. | Report a precise blocker and use lifecycle repair/Operational Attention. Genuine contradiction may become `UNRESOLVED`; there is no force-release escape hatch. | Hard blocker; operator review required. | Cases 7, 8, and 13 plus adapter pagination tests. |
+| Stale/terminal local lifecycle record | Compare local terminal state with exact order identity, replacement chain, fills, current position, and complete open BUY snapshot. | Reconciliation/remediation releases only through the standard evidence protocol; otherwise retain ownership or historical diagnostics. | Never becomes executable from terminal history. Operator approval is required for manual remediation. | Cases 6 and 9. |
+
+## Broker-verified rehearsal
+
+The disposable PostgreSQL acceptance suite is the rollout rehearsal. It seeds an
+open legacy position and a separate never-submitted intent, obtains stubbed fresh
+account broker snapshots, proves dry-run is blocked, applies only the supported
+dispositions, and proves the next assessment is `BROKER_VERIFIED_READY` while the
+position remains open. Separate cases prove executable BUY evidence and incomplete
+pagination keep readiness false. The stub prohibits broker POSTs.
+
+In production, retain both JSON reports and compare their account lists. A
+legitimate open position is compatible with readiness only when present in both
+broker and local snapshots and protected by exactly one unreleased position claim.
+A timeout, rate limit, credential failure, malformed response, or possible
+pagination truncation yields `BROKER_EVIDENCE_UNAVAILABLE`, never readiness.

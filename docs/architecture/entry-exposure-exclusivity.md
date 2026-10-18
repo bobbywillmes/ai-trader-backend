@@ -88,6 +88,14 @@ npm run entry-exposure:readiness
 npm run entry-exposure:readiness -- --apply
 ```
 
+Readiness has two explicit layers. `databaseReady` covers local ownership and
+lifecycle integrity. `brokerVerifiedReady` requires fresh account-scoped Alpaca
+positions and a complete bounded open-BUY view, and rejects broker-only exposure,
+local-only active positions, or unavailable/incomplete evidence. `ready` is true
+only when both layers are true and `assessment` is `BROKER_VERIFIED_READY`.
+Apply may add protection or dispose of a provably-never-submitted intent, but it
+cannot make broker evidence optional and never grants execution authority.
+
 Dry-run is mandatory. Apply records even single-candidate adoption as
 `UNRESOLVED`; adoption is not trusted attribution. Active broker BUYs, unresolved
 and stranded claims, ambiguous groups, missing Securities, and unclaimed active
