@@ -6,28 +6,33 @@ It grants no new LIVE authority.
 
 ## Deploy
 
-1. Keep new entry production disabled. Position, exit, broker-activity, and
-   reconciliation workers may continue.
-2. Deploy the additive migration. It creates claim and event tables and does not
-   backfill historical rows.
-3. Run `npm run entry-exposure:readiness` and retain its JSON report. This is a
+1. Keep new entry production disabled for every PAPER and LIVE account.
+2. Deploy all Phase 3C.0 additive migrations. Do not backfill or clear claims.
+3. Start the corrected runtime while entries remain disabled. Allow submitted-order
+   synchronization, broker-activity ingestion, tracked-position synchronization,
+   and reconciliation to refresh stale local `new`, `accepted`, and
+   `partially_filled` records. This recovery stage is required before readiness;
+   absence from one open-order response is not terminal proof.
+4. Run `npm run entry-exposure:readiness` and retain its JSON report. This is a
    provider-read operation: it enumerates every local trading account and requires
    a fresh Alpaca position snapshot plus a complete, bounded executable BUY-order
    snapshot for each account. PAPER and LIVE credentials are never mixed.
-4. Treat `ambiguous`, `missingSecurity`,
+5. Treat `missingSecurity`,
    `unclaimedUnresolvedBuyIntents`, `unclaimedActiveBrokerBuys`,
-   and `strandedClaims` as unsafe rollout blockers. Review
+   `brokerOpenBuysWithoutActiveClaim`, `staleLocalActiveBrokerBuys`,
+   `unresolvedClaims`, and `strandedClaims` as unsafe rollout blockers. Review
    `historicalTerminalEvidence` separately; terminal history is not proof of
    present exposure and is never made executable by adoption.
-5. Run `npm run entry-exposure:readiness -- --apply`. This adopts only a single
-   active position or a single entry lifecycle for an account/security pair.
+6. Run `npm run entry-exposure:readiness -- --apply`. This adopts a verified open
+   position or disposes a separately verified never-submitted intent; it does not
+   adopt a pending intent as executable ownership.
    Adoption records blocking ownership; it does not establish execution authority.
    A verified open position is protected by a durable account/Security claim so
    ordinary position management can continue without forced liquidation. Unknown
    historical attribution remains visible for investigation, but protection of
    that symbol is the rollout safety boundary. A legacy BUY is never
    requeued merely because a stable-client-ID lookup returns no order.
-6. Run the dry-run again. `ready` may become true only when both
+7. Run account reconciliation, then run the dry-run again. `ready` may become true only when both
    `databaseReady` and `brokerVerifiedReady` are true. `assessment` distinguishes
    `BROKER_EVIDENCE_UNAVAILABLE`, `BLOCKED`, and `BROKER_VERIFIED_READY`; a local
    adoption pass is never represented as final broker readiness. Every active exposure
@@ -35,16 +40,24 @@ It grants no new LIVE authority.
    group, missing Security, or stranded lifecycle remains. A protected legacy open
    position may retain unresolved historical attribution without permitting a new
    entry for its symbol. Do not clear claims directly in SQL.
-7. Restart the application on the new version, run account reconciliation, and
-   verify no `entry_exposure_claim_missing` or
-   `entry_exposure_claim_unresolved` findings/attention remain.
-8. Preserve the existing LIVE arming, write approval, deployment-role, kill
+8. Review the retained reports, claim events, and Operational Attention. Verify no
+   `entry_exposure_claim_missing` or `entry_exposure_claim_unresolved` finding remains.
+9. Only after `BROKER_VERIFIED_READY` and explicit operator review, restore entry
+   eligibility through the existing controls. Preserve the existing LIVE arming, write approval, deployment-role, kill
    switch, and trading-enabled controls. This rollout does not satisfy or bypass
    any of them.
 
 ## Verification
 
-For each enabled account, verify that active broker positions and local open or
+Readiness enumerates every local TradingAccount, not only enabled accounts. Archived,
+disabled, and credential-less accounts remain mandatory when any local position,
+BUY order, unresolved intent, activity, or unreleased claim indicates possible
+exposure. A missing or unusable credential yields `BROKER_EVIDENCE_UNAVAILABLE`; it
+is not silently treated as no exposure. An account may be retired from mandatory
+provider verification only after retained authoritative closure or transfer evidence
+and local lifecycle repair establish that it has no relevant exposure.
+
+For each account, verify that active broker positions and local open or
 closing tracked positions have exactly one unreleased claim. Confirm pending,
 submitting, submitted, partially filled, and filled-without-position BUY entries
 also have one claim. A claim in `UNRESOLVED` is a blocker, not permission to
@@ -64,7 +77,7 @@ restore entry eligibility through existing controls.
 
 There is no force-release endpoint. Reconciliation must first obtain fresh exact
 Alpaca order identity/status and position-by-symbol evidence. Release is refused
-when delivery is uncertain, an order remains executable, broker cumulative fills
+when exact identity remains unknown, an order remains executable, broker cumulative fills
 are not represented by attributed local fill evidence, a broker position remains,
 or database state changes during final lock/revalidation. The claim event history
 and Operational Attention episode provide the exact account, Security, intent,
@@ -88,6 +101,11 @@ after reviewing that exact output, repeat with `--apply --confirm <fingerprint>`
 Apply performs fresh broker lookups again and locked database revalidation; any
 change or uncertainty refuses release. The command appends operator authorization
 and release events. It cannot submit or requeue an order and grants no LIVE authority.
+An old `DELIVERY_UNCERTAIN` marker is retained as history but is not itself a
+permanent blocker after the exact order is subsequently found and fresh evidence
+proves terminal status, complete attributed fills, no broker position, and no
+executable BUY. A filled claim without a position uses the same bounded proof;
+contradictory identity or incomplete fills preserve the claim.
 `--actor-user-id` is audit attribution only, not authentication. Run this command
 only from an access-controlled operational host/session after independently
 authenticating the SYSTEM_OWNER and retaining the preview/fingerprint record.
@@ -104,9 +122,9 @@ claim that has an originating OrderIntent.
 | --- | --- | --- | --- | --- |
 | Verified existing open position | Local open/closing `TrackedPosition` matches a fresh broker position for the same account and canonical Security; the complete broker BUY snapshot is available. | `--apply` may create one `POSITION_OPEN` claim with `OPERATOR_ROLLOUT_ADOPTION`. The event states unknown provenance and `executionAuthority=NONE`. Position and protective exits remain usable. | Blocks another entry for the symbol. No liquidation or exit-authority invention. Operator retains the apply report. | `entry-exposure-lifecycle.prisma.integration.test.ts`, case 11. |
 | Never-submitted `received`/`pending` intent | No delivery-uncertain marker, local `BrokerOrder`, `BrokerActivity`, broker position, or executable broker BUY for that account/symbol, using complete fresh snapshots. | Atomically block only an intent still in the expected state, create immutable evidence, then release as `ROLLOUT_VERIFIED_NEVER_SUBMITTED`. | Never requeues and does not block after verified release. Operator apply required. One 404 never qualifies uncertain delivery. | Case 12. |
-| Adopted `submitting` or delivery-uncertain intent | Local active/uncertain status plus exact client/broker identity and subsequent broker order/fill evidence. | Preserve the claim. Reconciliation may advance it only from authoritative identity evidence; release uses the full normal protocol. | Hard blocker. Automatic retry is safe; operator investigates identity gaps. | Cases 6 and 9. |
+| `submitting` or delivery-uncertain intent | Local active/uncertain status plus exact client/broker identity and subsequent broker order/fill evidence. | Preserve the claim until authoritative reconciliation. If later exact terminal order, complete fills, and absence of exposure are proven, fingerprinted owner remediation may release it. | Hard blocker until verified. It is never treated as never-submitted from a failed lookup. | Cases 6, 9, and 17 plus remediation tests. |
 | Claimless broker-active BUY | Complete account order snapshot contains an executable BUY with no matching local broker identity/claim. | Readiness reports `brokerOnlyOpenBuys`. Resolve it through authorized broker operations or exact lifecycle repair, then rerun readiness. Readiness never creates or cancels an order. | Hard blocker; operator action required. No force release. | Cases 5 and 13. |
-| Historical filled-but-unlinked order | Terminal history lacks claim/position attribution; compare cumulative broker fills with immutable local fills and current position/order snapshots. | Report as `historicalTerminalEvidence`. Repair only from exact evidence through existing lifecycle and Operational Attention patterns; never invent ownership. | History alone grants no execution authority; current ambiguity remains blocked. Operator review required. | Cases 3 and 8 plus remediation tests. |
+| Historical filled-but-unlinked order | Terminal history lacks position attribution; compare exact order and cumulative fills with immutable local fills and current position/order snapshots. | Closed-position history and a filled intent with verified no current exposure remain investigation evidence, not an executable blocker. Current position/order evidence remains blocked. | History alone grants no execution authority. Owner remediation is available only with the bounded proof above. | Cases 3, 15, 17, and remediation tests. |
 | Existing open position with unknown entry provenance | Verified broker/local position match without a trustworthy historical strategy link. | Protect with a position-only claim. Keep existing/default exit ownership; never infer external exit authority. | Symbol remains blocked while open. Deployment-compatible without forced sale. | Case 11. |
 | Claimed position already closed | Closed local position, absent broker position, complete open BUY snapshot, exact origin/replacement evidence when present, and fill reconciliation. | Existing reconciliation retries the release protocol. Transient errors append retry diagnostics and preserve status. | Blocks until verified release. No second lifecycle controller. | Cases 3 and 6. |
 | Ambiguous/conflicting identity, unknown status, incomplete pagination, or broker-only position | Any identity mismatch, malformed/partial response, unknown state, conflicting fill/position evidence, or broker position without a local tracked position. | Report a precise blocker and use lifecycle repair/Operational Attention. Genuine contradiction may become `UNRESOLVED`; there is no force-release escape hatch. | Hard blocker; operator review required. | Cases 7, 8, and 13 plus adapter pagination tests. |
@@ -126,3 +144,17 @@ legitimate open position is compatible with readiness only when present in both
 broker and local snapshots and protected by exactly one unreleased position claim.
 A timeout, rate limit, credential failure, malformed response, or possible
 pagination truncation yields `BROKER_EVIDENCE_UNAVAILABLE`, never readiness.
+
+## Remaining external-order race and provider verification
+
+Readiness is a point-in-time proof. An external or manual BUY placed after the
+complete order snapshot can race the report. During rollout, operators must
+coordinate a broker-side change freeze (or independently recheck the broker
+immediately before reactivation) and confirm no manual automation can create BUYs
+in the interval.
+
+Before production rollout, perform one narrowly scoped read-only verification for
+each relevant PAPER and LIVE credential: account-scoped positions, complete open
+BUY pagination, and exact client/broker-order lookup used by reconciliation. Do not
+submit, replace, or cancel an order for this check. This repository task
+intentionally does not perform live Alpaca credential checks.

@@ -467,6 +467,7 @@ export async function processPendingOrdersForAccount(
   for (const intent of pending) {
     logger.trace({ orderIntentId: intent.id }, 'Order worker processing intent.');
 
+    let brokerBoundaryStarted = false;
     try {
       await requireEntryExposureClaim(intent.id);
       const claimResult = await prisma.orderIntent.updateMany({
@@ -591,6 +592,7 @@ export async function processPendingOrdersForAccount(
         }
       }
 
+      brokerBoundaryStarted = true;
       const result = await submitOrderToBroker(resolvedInput, {
         tradingAccountId: intent.tradingAccountId,
         orderIntentId: intent.id,
@@ -698,13 +700,20 @@ export async function processPendingOrdersForAccount(
       const message = error instanceof Error ? error.message : 'Unknown worker error.';
       const blockReason = classification
         ? `BROKER_WRITE_DELIVERY:${classification}:${message}`
-        : message;
-      if (classification === 'DELIVERY_UNCERTAIN') {
+        : brokerBoundaryStarted
+          ? `BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:${message}`
+          : `LOCAL_PRE_DISPATCH_FAILURE:${message}`;
+      if (!brokerBoundaryStarted) {
+        await releaseUnsubmittedEntryExposureClaim({
+          orderIntentId: intent.id,
+          reason: 'WORKER_PROVEN_PRE_DISPATCH_LOCAL_FAILURE',
+        }).catch(() => undefined);
+      } else if (classification === 'DELIVERY_UNCERTAIN' || classification === null) {
         await transitionEntryExposureClaim({
           orderIntentId: intent.id,
           status: 'UNRESOLVED',
           eventType: 'BROKER_DELIVERY_UNCERTAIN',
-          evidence: { classification, message },
+          evidence: { classification: classification ?? 'UNCLASSIFIED_AFTER_BROKER_BOUNDARY', message },
         }).catch(() => undefined);
       } else if (
         classification === 'BROKER_REJECTED' ||
@@ -721,7 +730,7 @@ export async function processPendingOrdersForAccount(
           await tx.orderIntent.update({
             where: { id: intent.id },
             data: {
-              status: classification === 'DELIVERY_UNCERTAIN' ? 'submitting' :
+              status: brokerBoundaryStarted && (classification === 'DELIVERY_UNCERTAIN' || classification === null) ? 'submitting' :
                 classification === 'NOT_SENT_BLOCKED' ? 'blocked' : 'failed',
               blockReason,
             },
@@ -729,11 +738,11 @@ export async function processPendingOrdersForAccount(
           await tx.liveEntryAcceptanceRun.updateMany({
             where: { id: intent.liveEntryAcceptanceRunId!, terminalAt: null },
             data: {
-              ...(classification === 'DELIVERY_UNCERTAIN'
+              ...(brokerBoundaryStarted && (classification === 'DELIVERY_UNCERTAIN' || classification === null)
                 ? { executionUncertainAt: new Date() }
                 : {}),
               executionFailureJson: {
-                classification: classification ?? 'LOCAL_FAILURE',
+                classification: classification ?? (brokerBoundaryStarted ? 'DELIVERY_UNCERTAIN' : 'LOCAL_FAILURE'),
                 source: 'pending_order_submission',
                 orderIntentId: intent.id,
                 clientOrderId: intent.clientOrderId,
@@ -864,11 +873,12 @@ export async function syncSubmittedOrdersForAccountUnlocked(tradingAccountId: nu
       ] },
       tradingAccountId,
     },
-    include: {
-      brokerOrders: true
-    },
+    include: { brokerOrders: true },
     take: SUBMITTED_ORDER_BATCH_LIMIT_PER_ACCOUNT,
-    orderBy: { createdAt: 'asc' },
+    orderBy: [
+      { lastSubmittedOrderSyncAt: { sort: 'asc', nulls: 'first' } },
+      { createdAt: 'asc' },
+    ],
   });
 
   if (submittedIntents.length === 0) {
@@ -965,11 +975,14 @@ export async function syncSubmittedOrdersForAccountUnlocked(tradingAccountId: nu
   for (const intent of submittedIntents) {
     try {
       const brokerOrder = intent.brokerOrders[0];
+      if (!brokerOrder) continue;
 
-      if (!brokerOrder) {
-        continue;
-      }
-
+      // Persist progress before provider lookup so 404s and retryable item failures
+      // cannot permanently occupy every bounded batch slot.
+      await prisma.orderIntent.update({
+        where: { id: intent.id },
+        data: { lastSubmittedOrderSyncAt: new Date() },
+      });
       const alpacaOrder = openOrdersByBrokerOrderId.get(brokerOrder.brokerOrderId) ??
         await getAlpacaOrderById(tradingAccountId, brokerOrder.brokerOrderId, 'submitted_order_sync');
 

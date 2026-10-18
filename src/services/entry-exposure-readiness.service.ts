@@ -28,7 +28,7 @@ export async function assessEntryExposureReadiness(args: {
   const now = args.now ?? new Date();
   const accountWhere = args.tradingAccountIds?.length ? { id: { in: args.tradingAccountIds } } : {};
   const exposureAccountWhere = args.tradingAccountIds?.length ? { tradingAccountId: { in: args.tradingAccountIds } } : {};
-  const [accounts, securities, positions, intents, localBrokerOrders, activeClaims] = await Promise.all([
+  const [accounts, securities, positions, intents, localBrokerOrders, allClaims] = await Promise.all([
     db.tradingAccount.findMany({ where: accountWhere, select: { id: true, environment: true, displayName: true }, orderBy: { id: 'asc' } }),
     db.security.findMany({ select: { id: true, symbol: true } }),
     db.trackedPosition.findMany({
@@ -38,7 +38,8 @@ export async function assessEntryExposureReadiness(args: {
     db.orderIntent.findMany({
       where: { side: 'buy', tradingAccountId: { not: null }, ...exposureAccountWhere },
       select: {
-        id: true, tradingAccountId: true, symbol: true, status: true, blockReason: true,
+        id: true, tradingAccountId: true, symbol: true, status: true, blockReason: true, trackedPositionId: true,
+        trackedPosition: { select: { id: true, status: true } },
         entryExposureClaim: { select: { id: true } },
         brokerOrders: { select: { id: true } },
         brokerActivities: { select: { id: true } },
@@ -47,17 +48,18 @@ export async function assessEntryExposureReadiness(args: {
     db.brokerOrder.findMany({
       where: { side: { equals: 'buy', mode: 'insensitive' }, tradingAccountId: { not: null }, ...exposureAccountWhere },
       select: { id: true, orderIntentId: true, tradingAccountId: true, securityId: true, symbol: true, status: true, brokerOrderId: true,
-        orderIntent: { select: { entryExposureClaim: { select: { id: true } } } } },
+        orderIntent: { select: { entryExposureClaim: { select: { id: true, tradingAccountId: true, securityId: true, orderIntentId: true, releasedAt: true } } } } },
     }),
     db.entryExposureClaim.findMany({
-      where: { releasedAt: null, ...(args.tradingAccountIds?.length ? { tradingAccountId: { in: args.tradingAccountIds } } : {}) },
+      where: { ...(args.tradingAccountIds?.length ? { tradingAccountId: { in: args.tradingAccountIds } } : {}) },
       select: {
         id: true, tradingAccountId: true, securityId: true, orderIntentId: true, trackedPositionId: true,
-        status: true, updatedAt: true, trackedPosition: { select: { status: true } },
+        status: true, releasedAt: true, updatedAt: true, trackedPosition: { select: { status: true } },
       },
       orderBy: { id: 'asc' },
     }),
   ]);
+  const activeClaims = allClaims.filter((claim) => claim.releasedAt === null);
 
   const securityBySymbol = new Map(securities.map((security) => [canonical(security.symbol), security]));
   const brokerEvidenceUnavailable: Array<{ tradingAccountId: number; environment: string; error: string }> = [];
@@ -100,13 +102,38 @@ export async function assessEntryExposureReadiness(args: {
   const localOnlyPositions = localActivePositions.filter((position) => !brokerPositionKeys.has(key(position.tradingAccountId!, position.securityId)));
 
   const activeClaimIntentIds = new Set(activeClaims.map((claim) => claim.orderIntentId).filter((id): id is number => id != null));
+  const hasOutstandingBrokerExposure = (tradingAccountId: number, symbol: string) =>
+    brokerPositions.some((position) => position.tradingAccountId === tradingAccountId && position.symbol === canonical(symbol)) ||
+    brokerOpenBuys.some((order) => order.tradingAccountId === tradingAccountId && order.symbol === canonical(symbol));
+  const historicalFilledIntents = intents.filter((intent) => intent.status.toLowerCase() === 'filled' && (
+    intent.trackedPosition?.status === 'closed' ||
+    (intent.trackedPosition == null && !hasOutstandingBrokerExposure(intent.tradingAccountId!, intent.symbol)) ||
+    (intent.trackedPosition != null && ['open', 'closing'].includes(intent.trackedPosition.status) && activeClaimIntentIds.has(intent.id))
+  ));
+  const historicalFilledIntentIds = new Set(historicalFilledIntents.map((intent) => intent.id));
   const unclaimedUnresolvedBuyIntents = intents.filter((intent) =>
-    !activeClaimIntentIds.has(intent.id) &&
-    ((UNRESOLVED_ORDER_INTENT_STATUSES as readonly string[]).includes(intent.status) || (intent.status === 'filled')));
-  const unclaimedActiveBrokerBuys = localBrokerOrders.filter((order) =>
-    !order.orderIntent.entryExposureClaim && (BROKER_ACTIVE_ENTRY_STATUSES as readonly string[]).includes(order.status.toLowerCase()));
+    !activeClaimIntentIds.has(intent.id) && !historicalFilledIntentIds.has(intent.id) &&
+    ((UNRESOLVED_ORDER_INTENT_STATUSES as readonly string[]).includes(intent.status) || intent.status.toLowerCase() === 'filled'));
+  const localExecutableBrokerBuys = localBrokerOrders.filter((order) =>
+    (BROKER_ACTIVE_ENTRY_STATUSES as readonly string[]).includes(order.status.toLowerCase()));
+  const unclaimedActiveBrokerBuys = localExecutableBrokerBuys.filter((order) => {
+    const claim = order.orderIntent.entryExposureClaim;
+    return !claim || claim.releasedAt !== null || claim.tradingAccountId !== order.tradingAccountId ||
+      claim.securityId !== order.securityId || claim.orderIntentId !== order.orderIntentId;
+  });
   const brokerOnlyOpenBuys = brokerOpenBuys.filter((brokerOrder) => !localBrokerOrders.some((local) =>
     local.tradingAccountId === brokerOrder.tradingAccountId && local.brokerOrderId === brokerOrder.id));
+  const brokerOpenBuysWithoutActiveClaim = brokerOpenBuys.filter((brokerOrder) => {
+    const local = localBrokerOrders.find((order) => order.tradingAccountId === brokerOrder.tradingAccountId && order.brokerOrderId === brokerOrder.id);
+    if (!local) return true;
+    const claim = local.orderIntent.entryExposureClaim;
+    const security = securityBySymbol.get(brokerOrder.symbol);
+    return !claim || claim.releasedAt !== null || !security || claim.tradingAccountId !== brokerOrder.tradingAccountId ||
+      claim.securityId !== security.id || claim.orderIntentId !== local.orderIntentId;
+  });
+  const staleLocalActiveBrokerBuys = localExecutableBrokerBuys.filter((local) =>
+    !brokerOpenBuys.some((brokerOrder) =>
+      brokerOrder.tradingAccountId === local.tradingAccountId && brokerOrder.id === local.brokerOrderId));
   const historicalTerminalEvidence = localBrokerOrders.filter((order) =>
     !order.orderIntent.entryExposureClaim && (TERMINAL_ENTRY_ORDER_STATUSES as readonly string[]).includes(order.status.toLowerCase()));
   const protectedLegacyOpenPositions = activeClaims.filter((claim) =>
@@ -188,7 +215,7 @@ export async function assessEntryExposureReadiness(args: {
     unresolvedClaims,
     strandedClaims,
   };
-  const brokerBlockers = { brokerEvidenceUnavailable, brokerOnlyPositions, localOnlyPositions, brokerOnlyOpenBuys };
+  const brokerBlockers = { brokerEvidenceUnavailable, brokerOnlyPositions, localOnlyPositions, brokerOnlyOpenBuys, brokerOpenBuysWithoutActiveClaim, staleLocalActiveBrokerBuys };
   const databaseReady = Object.values(databaseBlockers).every((items) => items.length === 0);
   const brokerVerifiedReady = Object.values(brokerBlockers).every((items) => items.length === 0);
   return {
@@ -202,6 +229,7 @@ export async function assessEntryExposureReadiness(args: {
     ...brokerBlockers,
     protectedLegacyOpenPositions,
     historicalTerminalEvidence,
+    historicalFilledIntents,
     adoptablePositions,
     neverSubmittedIntents,
     brokerPositions,

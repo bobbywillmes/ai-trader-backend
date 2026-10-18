@@ -10,12 +10,16 @@ const broker = vi.hoisted(() => ({
   openBuysByAccount: new Map<number, Array<Record<string, unknown>>>(),
   positionsByAccount: new Map<number, Array<Record<string, unknown>>>(),
   failCompleteOrdersForAccount: new Set<number>(),
+  failClientOrderLookupForAccount: new Set<number>(),
   submitCalls: [] as unknown[],
 }));
 
 vi.mock('../../integrations/alpaca/orders.adapter.js', () => ({
   getAlpacaOrderById: vi.fn(async (_accountId: number, id: string) => broker.ordersById.get(id) ?? null),
-  getAlpacaOrderByClientOrderId: vi.fn(async (_accountId: number, id: string) => broker.ordersByClientId.get(id) ?? null),
+  getAlpacaOrderByClientOrderId: vi.fn(async (accountId: number, id: string) => {
+    if (broker.failClientOrderLookupForAccount.has(accountId)) throw new Error('broker lookup unavailable');
+    return broker.ordersByClientId.get(id) ?? null;
+  }),
   getCompleteOpenAlpacaBuyOrders: vi.fn(async (accountId: number) => {
     if (broker.failCompleteOrdersForAccount.has(accountId)) throw new Error('incomplete broker pagination');
     return broker.openBuysByAccount.get(accountId) ?? [];
@@ -60,6 +64,7 @@ import { prisma } from '../prisma.js';
 import {
   acquireEntryExposureClaim,
   attachEntryExposureClaimToPosition,
+  previewEntryExposureClaimRemediation,
   releaseConfirmedTerminalEntryClaim,
   releaseEntryExposureClaimForClosedPosition,
   transitionEntryExposureClaim,
@@ -67,6 +72,7 @@ import {
 import { assessEntryExposureReadiness } from '../../services/entry-exposure-readiness.service.js';
 import { reconcileTradingAccount } from '../../services/reconciliation.service.js';
 import { syncSubmittedOrdersForAccountUnlocked } from '../../workers/order.worker.js';
+import { processPendingOrdersForAccount } from '../../workers/order.worker.js';
 import { adaptivePollingCoordinator, type AdaptivePollingDecision } from '../../services/adaptive-polling.service.js';
 import { disarmLiveEntries } from '../../services/live-entry-arming.service.js';
 import { submitOrder } from '../../services/place-order.service.js';
@@ -154,6 +160,7 @@ async function createPosition(account: Account, security: Awaited<ReturnType<typ
 describePrisma('entry exposure lifecycle with real Prisma services', () => {
   beforeEach(() => {
     broker.failCompleteOrdersForAccount.clear();
+    broker.failClientOrderLookupForAccount.clear();
     broker.submitCalls.length = 0;
     vi.spyOn(adaptivePollingCoordinator, 'getDecision').mockResolvedValue({
       due: true,
@@ -326,5 +333,103 @@ describePrisma('entry exposure lifecycle with real Prisma services', () => {
       { tradingAccountId: paper.id, securityId: spy.id }, { tradingAccountId: live.id, securityId: spy.id }, { tradingAccountId: paper.id, securityId: qqq.id },
     ] } })).toBe(3);
     expect(broker.submitCalls).toHaveLength(0);
+  });
+
+  it('15. treats closed fills and protected open fills as history while preserving unattributed current exposure', async () => {
+    const account = await createAccount();
+    const closedSecurity = await createSecurity('P'); const openSecurity = await createSecurity('Q'); const ambiguousSecurity = await createSecurity('R');
+    const closedIntent = await prisma.orderIntent.create({ data: { source: 'legacy', symbol: closedSecurity.symbol, side: 'buy', orderType: 'market', timeInForce: 'day', status: 'filled', rawRequestJson: {}, tradingAccountId: account.id } });
+    const closedPosition = await createPosition(account, closedSecurity, 'closed');
+    await prisma.orderIntent.update({ where: { id: closedIntent.id }, data: { trackedPositionId: closedPosition.id } });
+    const protectedOwned = await acquire(account, openSecurity); const openPosition = await createPosition(account, openSecurity);
+    await prisma.orderIntent.update({ where: { id: protectedOwned.intent.id }, data: { status: 'filled', trackedPositionId: openPosition.id } });
+    await prisma.entryExposureClaim.update({ where: { id: protectedOwned.claimId }, data: { status: 'POSITION_OPEN', trackedPositionId: openPosition.id } });
+    await prisma.orderIntent.create({ data: { source: 'legacy', symbol: ambiguousSecurity.symbol, side: 'buy', orderType: 'market', timeInForce: 'day', status: 'filled', rawRequestJson: {}, tradingAccountId: account.id } });
+    broker.positionsByAccount.set(account.id, [alpacaPosition(openSecurity.symbol), alpacaPosition(ambiguousSecurity.symbol)]); broker.openBuysByAccount.set(account.id, []);
+    const report = await assessEntryExposureReadiness({ tradingAccountIds: [account.id] });
+    expect(report.historicalFilledIntents.map((intent) => intent.id)).toContain(closedIntent.id);
+    expect(report.unclaimedUnresolvedBuyIntents.map((intent) => intent.symbol)).toContain(ambiguousSecurity.symbol);
+    expect(report.unclaimedUnresolvedBuyIntents.map((intent) => intent.symbol)).not.toContain(openSecurity.symbol);
+  });
+
+  it('16. releases a provably pre-dispatch disabled-assignment failure with zero broker POSTs', async () => {
+    const account = await createAccount(); const security = await createSecurity('S');
+    await prisma.tradingAccount.update({ where: { id: account.id }, data: { tradingEnabled: true, killSwitchEnabled: false } });
+    await prisma.tradingAccountCredential.create({ data: { tradingAccountId: account.id, status: 'ACTIVE', apiKeyCiphertext: 'fixture', apiSecretCiphertext: 'fixture', verifiedAt: new Date() } });
+    const assignment = await createAssignment(account, security, 'worker-disable');
+    const admitted = await submitOrder({ tradingAccountSubscriptionId: assignment.id, extendedHours: false }, { clientOrderId: `disabled-${randomUUID()}` });
+    await prisma.tradingAccountSubscription.update({ where: { id: assignment.id }, data: { enabled: false } });
+    await processPendingOrdersForAccount(account.id);
+    const intent = await prisma.orderIntent.findUniqueOrThrow({ where: { id: admitted.intentId } });
+    const claim = await prisma.entryExposureClaim.findUniqueOrThrow({ where: { orderIntentId: intent.id } });
+    expect(intent.status).toBe('failed'); expect(claim.status).toBe('RELEASED'); expect(claim.releasedAt).not.toBeNull(); expect(broker.submitCalls).toHaveLength(0);
+  });
+
+  it('17. preserves ownership when the broker idempotency lookup fails', async () => {
+    const account = await createAccount(); const security = await createSecurity('U');
+    await prisma.tradingAccount.update({ where: { id: account.id }, data: { tradingEnabled: true, killSwitchEnabled: false } });
+    await prisma.tradingAccountCredential.create({ data: { tradingAccountId: account.id, status: 'ACTIVE', apiKeyCiphertext: 'fixture', apiSecretCiphertext: 'fixture', verifiedAt: new Date() } });
+    const assignment = await createAssignment(account, security, 'lookup-failure');
+    const admitted = await submitOrder({ tradingAccountSubscriptionId: assignment.id, extendedHours: false }, { clientOrderId: `lookup-${randomUUID()}` });
+    broker.failClientOrderLookupForAccount.add(account.id);
+    await processPendingOrdersForAccount(account.id);
+    const claim = await prisma.entryExposureClaim.findUniqueOrThrow({ where: { orderIntentId: admitted.intentId } });
+    expect(claim.releasedAt).toBeNull(); expect(claim.status).toBe('UNRESOLVED'); expect(broker.submitCalls).toHaveLength(0);
+  });
+
+  it('18. blocks readiness for executable BUYs backed only by released or absent claims', async () => {
+    const account = await createAccount(); const security = await createSecurity('V'); const owned = await acquire(account, security);
+    await prisma.entryExposureClaim.update({ where: { id: owned.claimId }, data: { status: 'RELEASED', releasedAt: new Date(), releaseReason: 'fixture' } });
+    const active = alpacaOrder({ id: `active-${randomUUID()}`, clientOrderId: owned.intent.clientOrderId!, symbol: security.symbol, status: 'accepted' });
+    await createLocalBrokerOrder(account, security, owned.intent.id, active); broker.openBuysByAccount.set(account.id, [active]);
+    const brokerOnlySecurity = await createSecurity('W');
+    broker.openBuysByAccount.set(account.id, [active, alpacaOrder({ id: `manual-${randomUUID()}`, clientOrderId: `manual-${randomUUID()}`, symbol: brokerOnlySecurity.symbol, status: 'new' })]);
+    const report = await assessEntryExposureReadiness({ tradingAccountIds: [account.id] });
+    expect(report.assessment).toBe('BLOCKED'); expect(report.unclaimedActiveBrokerBuys).toHaveLength(1); expect(report.brokerOnlyOpenBuys).toHaveLength(1);
+  });
+
+  it('19. rotates synchronization beyond an older full batch and releases a newer expired BUY', async () => {
+    const account = await createAccount();
+    for (let index = 0; index < 11; index += 1) {
+      const security = await createSecurity('X'); const owned = await acquire(account, security, `old-${index}-${randomUUID()}`);
+      await prisma.orderIntent.update({ where: { id: owned.intent.id }, data: { status: 'submitted' } });
+      await prisma.entryExposureClaim.update({ where: { id: owned.claimId }, data: { status: 'BROKER_ORDER_ACTIVE' } });
+      await createLocalBrokerOrder(account, security, owned.intent.id, alpacaOrder({ id: `old-${index}-${randomUUID()}`, clientOrderId: owned.intent.clientOrderId!, symbol: security.symbol, status: 'new' }));
+    }
+    const newerSecurity = await createSecurity('Y'); const newer = await acquire(account, newerSecurity, `new-${randomUUID()}`);
+    await prisma.orderIntent.update({ where: { id: newer.intent.id }, data: { status: 'submitted' } });
+    await prisma.entryExposureClaim.update({ where: { id: newer.claimId }, data: { status: 'BROKER_ORDER_ACTIVE' } });
+    const activeNewer = alpacaOrder({ id: `expired-${randomUUID()}`, clientOrderId: newer.intent.clientOrderId!, symbol: newerSecurity.symbol, status: 'new' });
+    await createLocalBrokerOrder(account, newerSecurity, newer.intent.id, activeNewer);
+    broker.ordersById.set(activeNewer.id, { ...activeNewer, status: 'expired' });
+    await syncSubmittedOrdersForAccountUnlocked(account.id); await syncSubmittedOrdersForAccountUnlocked(account.id);
+    expect((await prisma.entryExposureClaim.findUniqueOrThrow({ where: { id: newer.claimId } })).status).toBe('RELEASED');
+  });
+
+  it('20. remediates historical delivery uncertainty only after exact terminal fill proof', async () => {
+    const account = await createAccount(); const security = await createSecurity('Z'); const owned = await acquire(account, security);
+    await prisma.orderIntent.update({ where: { id: owned.intent.id }, data: { status: 'filled', blockReason: 'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:timeout' } });
+    await prisma.entryExposureClaim.update({ where: { id: owned.claimId }, data: { status: 'UNRESOLVED' } });
+    const filled = alpacaOrder({ id: `filled-${randomUUID()}`, clientOrderId: owned.intent.clientOrderId!, symbol: security.symbol, status: 'filled', filledQty: '10' });
+    const local = await createLocalBrokerOrder(account, security, owned.intent.id, filled);
+    await prisma.brokerActivity.create({ data: { broker: 'alpaca', mode: 'paper', activityId: `fill-${randomUUID()}`, activityType: 'FILL', symbol: security.symbol, side: 'buy', qty: 10, orderId: filled.id, orderIntentId: owned.intent.id, brokerOrderRecordId: local.id, rawBrokerJson: {}, tradingAccountId: account.id } });
+    broker.positionsByAccount.set(account.id, []); broker.openBuysByAccount.set(account.id, []);
+    const preview = await previewEntryExposureClaimRemediation(owned.claimId);
+    expect(preview.eligible).toBe(true); expect(preview.blockers).not.toContain('DELIVERY_UNCERTAIN');
+    const released = await releaseConfirmedTerminalEntryClaim({ orderIntentId: owned.intent.id, brokerStatus: 'filled', allowUnresolved: true });
+    expect(released?.status).toBe('RELEASED'); expect(released?.releasedAt).not.toBeNull();
+  });
+
+  it('21. synchronizes a stale locally active BUY to broker-canceled before readiness', async () => {
+    const account = await createAccount(); const security = await createSecurity('C'); const owned = await acquire(account, security);
+    await prisma.orderIntent.update({ where: { id: owned.intent.id }, data: { status: 'accepted' } });
+    await prisma.entryExposureClaim.update({ where: { id: owned.claimId }, data: { status: 'BROKER_ORDER_ACTIVE' } });
+    const stale = alpacaOrder({ id: `stale-${randomUUID()}`, clientOrderId: owned.intent.clientOrderId!, symbol: security.symbol, status: 'accepted' });
+    await createLocalBrokerOrder(account, security, owned.intent.id, stale);
+    broker.ordersById.set(stale.id, { ...stale, status: 'canceled' }); broker.openBuysByAccount.set(account.id, []);
+    expect((await assessEntryExposureReadiness({ tradingAccountIds: [account.id] })).staleLocalActiveBrokerBuys).toHaveLength(1);
+    await syncSubmittedOrdersForAccountUnlocked(account.id);
+    const report = await assessEntryExposureReadiness({ tradingAccountIds: [account.id] });
+    expect(report.staleLocalActiveBrokerBuys).toHaveLength(0); expect(report.assessment).toBe('BROKER_VERIFIED_READY');
   });
 });

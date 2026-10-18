@@ -74,7 +74,6 @@ export async function previewEntryExposureClaimRemediation(claimId: number) {
     ...(brokerOrder && !isTerminalBrokerOrderStatus(brokerOrder.status) ? ['BROKER_ORDER_NONTERMINAL'] : []),
     ...(brokerPosition ? ['BROKER_POSITION_PRESENT'] : []),
     ...(relevantOpenOrders.length ? ['BROKER_BUY_ORDER_PRESENT'] : []),
-    ...(claim.orderIntent?.blockReason?.includes('DELIVERY_UNCERTAIN') ? ['DELIVERY_UNCERTAIN'] : []),
     ...(!Number.isFinite(brokerFilled) || locallyAccounted + 1e-9 < brokerFilled ? ['BROKER_FILLS_UNACCOUNTED'] : []),
   ];
   const evidence = {
@@ -378,16 +377,22 @@ export async function releaseUnsubmittedEntryExposureClaim(args: {
       orderIntentId: args.orderIntentId, claimId: claim.id, claimStatus: claim.status,
     });
   }
-  const [brokerOrders, brokerActivities, position] = await Promise.all([
+  const [brokerOrders, brokerActivities, brokerDispatchEvidence, position] = await Promise.all([
     db.brokerOrder.count({ where: { orderIntentId: args.orderIntentId } }),
     db.brokerActivity.count({ where: { orderIntentId: args.orderIntentId } }),
+    db.orderIntentBrokerOpportunityEvent.count({
+      where: {
+        orderIntentId: args.orderIntentId,
+        eventType: { in: ['ADAPTER_DISPATCH_REACHED', 'BROKER_RESPONSE_CONFIRMED', 'BROKER_REJECTED', 'DELIVERY_UNCERTAIN', 'RECOVERY_FOUND'] },
+      },
+    }),
     claim.trackedPositionId
       ? db.trackedPosition.findUnique({ where: { id: claim.trackedPositionId }, select: { status: true } })
       : null,
   ]);
-  if (brokerOrders > 0 || brokerActivities > 0 || (position && position.status !== 'closed')) {
+  if (brokerOrders > 0 || brokerActivities > 0 || brokerDispatchEvidence > 0 || (position && position.status !== 'closed')) {
     throw conflict('ENTRY_EXPOSURE_UNRESOLVED', 'Claim has broker or position evidence and cannot be released as unsubmitted.', {
-      orderIntentId: args.orderIntentId, claimId: claim.id, brokerOrders, brokerActivities,
+      orderIntentId: args.orderIntentId, claimId: claim.id, brokerOrders, brokerActivities, brokerDispatchEvidence,
       trackedPositionStatus: position?.status ?? null,
     });
   }
@@ -467,13 +472,21 @@ export async function attachEntryExposureClaimToPosition(args: {
         },
       });
     }
-    return args.tx.entryExposureClaim.update({
-      where: { id: active.id },
+    const attached = await args.tx.entryExposureClaim.updateMany({
+      where: { id: active.id, status: active.status, trackedPositionId: active.trackedPositionId, releasedAt: null },
       data: {
         trackedPositionId: args.trackedPositionId, status: 'POSITION_OPEN',
-        events: { create: { eventType: 'POSITION_ATTACHED', evidenceJson: { trackedPositionId: args.trackedPositionId } } },
       },
     });
+    if (attached.count !== 1) {
+      throw conflict('ENTRY_EXPOSURE_STALE_TRANSITION', 'Entry exposure changed before position attachment completed.', {
+        claimId: active.id, observedStatus: active.status, observedTrackedPositionId: active.trackedPositionId,
+      });
+    }
+    await args.tx.entryExposureClaimEvent.create({
+      data: { claimId: active.id, eventType: 'POSITION_ATTACHED', evidenceJson: { trackedPositionId: args.trackedPositionId } },
+    });
+    return args.tx.entryExposureClaim.findUnique({ where: { id: active.id } });
   }
   return args.tx.entryExposureClaim.create({
     data: {
@@ -505,7 +518,7 @@ export async function releaseConfirmedTerminalEntryClaim(args: {
   });
   if (!claim || claim.releasedAt) return claim;
   if (claim.status === 'UNRESOLVED' && !args.allowUnresolved) return claim;
-  if (normalized === 'filled' && !claim.trackedPositionId) {
+  if (normalized === 'filled' && !claim.trackedPositionId && !args.allowUnresolved) {
     if (claim.status === 'UNRESOLVED') return claim;
     return transitionEntryExposureClaim({
       orderIntentId: args.orderIntentId,

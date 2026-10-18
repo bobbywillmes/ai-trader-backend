@@ -1323,6 +1323,7 @@ model OrderIntent {
   rawRequestJson Json
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+  lastSubmittedOrderSyncAt DateTime?
 
   subscriptionId  Int?
   subscriptionKey String?
@@ -1352,6 +1353,7 @@ model OrderIntent {
   @@index([trackedPositionId])
   @@index([tradingAccountId])
   @@index([tradingAccountId, status])
+  @@index([tradingAccountId, lastSubmittedOrderSyncAt, id])
   @@index([tradingAccountId, createdAt])
   @@index([tradingAccountSubscriptionId])
   @@index([tradingAccountId, tradingAccountSubscriptionId])
