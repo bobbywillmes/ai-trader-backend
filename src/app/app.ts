@@ -17,6 +17,7 @@ import configRoutes from '../routes/config.routes.js';
 import systemEventsRoutes from '../routes/system-events.routes.js';
 import trackedPositionsRoutes from '../routes/tracked-positions.routes.js';
 import strategiesRoutes from '../routes/strategies.routes.js';
+import marketPolicyEnforcementRoutes from '../routes/market-policy-enforcement.routes.js';
 import exitProfilesRoutes from '../routes/exit-profiles.routes.js';
 import subscriptionsRoutes from '../routes/subscriptions.routes.js';
 import signalsRoutes from '../routes/signals.routes.js';
@@ -122,6 +123,7 @@ export function createApp(options: { beforeBusinessRoutes?: RequestHandler[] } =
   app.use('/api/users', usersRoutes);
   app.use('/api/config', requireAdminAccess, configRoutes);
   app.use('/api/strategies', requireAdminAccess, strategiesRoutes);
+  app.use('/api/market-policy-enforcement', requireAdminAccess, marketPolicyEnforcementRoutes);
   app.use('/api/exit-profiles', requireAdminAccess, exitProfilesRoutes);
   app.use('/api/subscriptions', requireAdminAccess, subscriptionsRoutes);
   app.use('/api/securities', requireAdminAccess, securitiesRoutes);

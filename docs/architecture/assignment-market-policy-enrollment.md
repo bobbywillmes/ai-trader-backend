@@ -56,7 +56,13 @@ applicable OrderIntent. It does not add authorization obligations, synchronous
 eligibility evaluation, broker-stage decisions, or trading-path enforcement. See
 `docs/architecture/order-intent-market-policy-coverage.md`.
 
-A future enforcement milestone must preserve this contract:
+Phase 3C.2 implements the pre-intent part of this contract for explicitly
+authorized PAPER assignments under the default-disabled runtime rollout (see
+`docs/architecture/market-policy-pre-intent-enforcement.md`). Enrollment itself remains
+`CONFIGURATION_ONLY`; disabling an authorized enrollment automatically invalidates its
+grant, which fails new entries closed until reauthorization or an explicit owner opt-out.
+
+The contract:
 
 - Unenrolled requests retain existing behavior.
 - A policy-blocked pre-intent request records immutable authorization-attempt

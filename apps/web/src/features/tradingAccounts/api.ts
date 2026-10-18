@@ -477,3 +477,6 @@ export function grantMarketPolicyEnforcementAuthorization(id: number, assignment
 export function revokeMarketPolicyEnforcementAuthorization(id: number, assignmentId: number, input: { authorizationId: number; reason: string }, token: string) {
   return apiRequest<{ authorization: MarketPolicyEnforcementAuthorization }>(`${enforcementAuthorizationPath(id, assignmentId)}/revoke`, { method: 'POST', token, body: input });
 }
+export function resolveMarketPolicyEnforcementLapse(id: number, assignmentId: number, input: { authorizationId: number; reason: string; confirmNonEnforced: true }, token: string) {
+  return apiRequest<{ lapseResolution: { id: number; authorizationId: number; resolution: 'RESTORE_NON_ENFORCED'; resolvedAt: string } }>(`${enforcementAuthorizationPath(id, assignmentId)}/resolve-lapse`, { method: 'POST', token, body: input });
+}

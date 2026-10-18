@@ -44,8 +44,9 @@ export function serializeAssignmentMarketPolicyEnrollmentGeneration<T extends { 
 export function serializeAssignmentMarketPolicyEnrollmentGeneration<T extends { enforcementAuthorityVersion: string | null; enforcementAuthorizedAt: Date | null }>(generation: T, viewerRole: PlatformRole): any;
 export function serializeAssignmentMarketPolicyEnrollmentGeneration<T extends { enforcementAuthorityVersion: string | null; enforcementAuthorizedAt: Date | null }>(generation: T, viewerRole: PlatformRole = PlatformRole.SYSTEM_OWNER) {
   const row = generation as T & Record<string, any>;
-  // Generation enforcement fields are permanently null; explicit authorization is a separate record and
-  // runtime enforcement is not active in Phase 3C.1.
+  // Generation enforcement fields are permanently null and enrollment stays configuration-only. Explicit
+  // authorization is a separate record; Phase 3C.2 enforcement is gated by that record plus the PAPER
+  // runtime rollout, never by this generation.
   const base = { ...row, authority: ASSIGNMENT_MARKET_POLICY_ENROLLMENT_AUTHORITY, enforcementEnabled: ASSIGNMENT_MARKET_POLICY_ENFORCEMENT_ENABLED };
   if (viewerRole === PlatformRole.SYSTEM_OWNER) return base;
   const policyRevision = row.policyRevision ? {

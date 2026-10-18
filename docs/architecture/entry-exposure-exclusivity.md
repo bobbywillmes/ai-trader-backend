@@ -112,3 +112,14 @@ Rollback may revert application code while retaining the additive tables. Do not
 drop claim data during rollback. Re-enabling old code weakens the exclusivity
 guarantee, so disable new entries first and retain position-management workers.
 See `docs/production/entry-exposure-rollout.md` for the deployment checklist.
+
+## Market-policy admission (Phase 3C.2)
+
+Claim acquisition is now invoked only through `admitEntryOrderIntent`, the shared
+pre-intent admission boundary used by `submitOrder`. While the PAPER market-policy
+runtime rollout is inactive, or for an assignment that is not enforced, admission is
+exactly the claim admission described above. For an enforced PAPER assignment, the
+market-policy decision is made under row locks before the claim. Only an ALLOWED
+decision acquires the claim, and it freezes its obligation in the same transaction.
+A rejected decision acquires no claim. See
+`docs/architecture/market-policy-pre-intent-enforcement.md`.

@@ -179,7 +179,8 @@ describe('place order service entry decision attribution', () => {
     mocks.resolveDefaultTradingAccountId.mockResolvedValue(1);
     mocks.buildClientOrderId.mockReturnValue('client-101');
     mocks.createOrderIntent.mockResolvedValue({ id: 55 });
-    mocks.transaction.mockImplementation((callback) => callback({}));
+    // No rollout row is visible, so market-policy enforcement is inactive (Phase 3C.0 admission).
+    mocks.transaction.mockImplementation((callback) => callback({ $queryRaw: vi.fn(async () => []) }));
     mocks.acquireEntryExposureClaim.mockImplementation(async (args) => ({
       intent: await args.createIntent(), duplicate: false, claimId: 1,
     }));

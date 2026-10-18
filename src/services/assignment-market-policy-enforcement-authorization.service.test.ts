@@ -117,19 +117,77 @@ describe('enforcement authorization server-side owner requirement', () => {
     expect(mocks.db.assignmentMarketPolicyEnforcementAuthorization.update).not.toHaveBeenCalled();
   });
 
-  it('reports runtime enforcement as inactive', () => {
-    expect(service.MARKET_POLICY_RUNTIME_ENFORCEMENT).toEqual({ active: false, status: 'NOT_ACTIVATED', tradingEffect: 'NONE' });
+  it('binds new grants to the Security-aware V2 authority version', () => {
+    expect(service.MARKET_POLICY_ENFORCEMENT_AUTHORITY_VERSION).toBe('PAPER_MARKET_POLICY_ENFORCEMENT_V2');
+    expect(service.LEGACY_MARKET_POLICY_ENFORCEMENT_AUTHORITY_VERSION).toBe('PAPER_MARKET_POLICY_ENFORCEMENT_V1');
   });
 });
 
-describe('Phase 3C.1 trading non-interference', () => {
-  // Authorization records must not be consumed by any trading path until Phase 3C.2.
-  it('is not referenced by order, risk, worker, broker, exit or signal code', async () => {
+describe('Security binding (Hermes M1)', () => {
+  const security = { subscriptionId: 30, subscriptionSymbol: 'spy', subscriptionSecurityId: 8, subscriptionStrategyId: 4, routingSecurityId: 8, securityId: 8, securitySymbol: 'SPY' };
+  it('accepts a consistent Subscription, routing Security, and canonical Security', () => {
+    expect(service.securityIdentityConsistent(security, 4)).toBe(true);
+    expect(codes({ ...context(), security } as any)).toEqual([]);
+  });
+  it.each([
+    ['a diverged routing Security', { routingSecurityId: 9 }],
+    ['a diverged canonical Security', { securityId: 9 }],
+    ['a diverged Subscription symbol', { subscriptionSymbol: 'QQQ' }],
+    ['a diverged Subscription Strategy', { subscriptionStrategyId: 5 }],
+  ])('rejects %s', (_label, overrides) => {
+    expect(codes({ ...context(), security: { ...security, ...overrides } } as any)).toContain('SECURITY_IDENTITY_INCONSISTENT');
+  });
+  it('changes the authorization fingerprint whenever the bound Security changes', () => {
+    const input = { accountId: 7, assignmentId: 9, subscriptionId: 30, securityId: 8, securitySymbol: 'SPY', strategyId: 4, policyRevisionId: 5, enrollmentId: 3, enrollmentGenerationId: 11, generation: 2, configurationFingerprint: 'a'.repeat(64), accountHolderUserId: 20, authorizationSequence: 1 };
+    const original = service.enforcementAuthorizationFingerprint(input);
+    expect(original).toMatch(/^[a-f0-9]{64}$/);
+    for (const change of [{ securityId: 9 }, { securitySymbol: 'QQQ' }, { subscriptionId: 31 }]) {
+      expect(service.enforcementAuthorizationFingerprint({ ...input, ...change })).not.toBe(original);
+    }
+  });
+});
+
+describe('enforcement lapse semantics (Hermes M3)', () => {
+  const derive = (latest: { status: string; lapseResolution: unknown } | null, ineffectiveReasons: string[] = [], accountEnvironment = 'PAPER') =>
+    service.deriveMarketPolicyEnforcementDisposition({ accountEnvironment, latest, ineffectiveReasons });
+  it('keeps never-authorized assignments on existing behavior', () => {
+    expect(derive(null)).toBe('NEVER_AUTHORIZED');
+    expect(service.marketPolicyEntryBehavior('NEVER_AUTHORIZED', true)).toBe('EXISTING_ENTRY_BEHAVIOR');
+  });
+  it('enforces an effective grant and fails closed when it no longer validates', () => {
+    expect(derive({ status: 'AUTHORIZED', lapseResolution: null })).toBe('ENFORCED');
+    expect(service.marketPolicyEntryBehavior('ENFORCED', true)).toBe('MARKET_POLICY_ENFORCED');
+    expect(derive({ status: 'AUTHORIZED', lapseResolution: null }, ['AUTHORIZATION_SECURITY_MISMATCH'])).toBe('AUTHORIZATION_INEFFECTIVE');
+    expect(service.marketPolicyEntryBehavior('AUTHORIZATION_INEFFECTIVE', true)).toBe('FAIL_CLOSED');
+  });
+  it('fails closed after automatic invalidation until an explicit owner opt-out', () => {
+    expect(derive({ status: 'INVALIDATED', lapseResolution: null })).toBe('LAPSED');
+    expect(service.marketPolicyEntryBehavior('LAPSED', true)).toBe('FAIL_CLOSED');
+    expect(derive({ status: 'INVALIDATED', lapseResolution: { id: 1 } })).toBe('OWNER_OPTED_OUT');
+    expect(service.marketPolicyEntryBehavior('OWNER_OPTED_OUT', true)).toBe('EXPLICITLY_NON_ENFORCED');
+  });
+  it('treats explicit owner revocation as an explicit return to non-enforced behavior', () => {
+    expect(derive({ status: 'REVOKED', lapseResolution: null })).toBe('OWNER_REVOKED');
+    expect(service.marketPolicyEntryBehavior('OWNER_REVOKED', true)).toBe('EXPLICITLY_NON_ENFORCED');
+  });
+  it('never grants LIVE authority and keeps existing behavior while the runtime rollout is inactive', () => {
+    expect(derive({ status: 'AUTHORIZED', lapseResolution: null }, [], 'LIVE')).toBe('NOT_APPLICABLE_LIVE');
+    for (const disposition of ['ENFORCED', 'LAPSED', 'AUTHORIZATION_INEFFECTIVE', 'OWNER_REVOKED'] as const) {
+      expect(service.marketPolicyEntryBehavior(disposition, false)).toBe('EXISTING_ENTRY_BEHAVIOR');
+    }
+  });
+});
+
+describe('Phase 3C.2 single admission boundary', () => {
+  // Authorization records are consumed only by the shared pre-intent admission boundary. Risk,
+  // worker, broker, exit, protective-order and signal code never read them directly.
+  it('is referenced only by the authorization service and the shared entry admission boundary', async () => {
     const roots = ['src/services', 'src/workers', 'src/integrations', 'src/routes', 'src/controllers'];
     const allowed = new Set([
       'src/services/assignment-market-policy-enforcement-authorization.service.ts',
       'src/services/assignment-market-policy-enforcement-authorization.service.test.ts',
       'src/controllers/trading-accounts.controller.ts',
+      'src/services/market-policy-entry-admission.service.ts',
     ]);
     const offenders: string[] = [];
     for (const root of roots) {
@@ -142,5 +200,26 @@ describe('Phase 3C.1 trading non-interference', () => {
       }
     }
     expect(offenders.filter(path => !path.endsWith('.routes.ts') && !path.endsWith('.routes.test.ts'))).toEqual([]);
+  }, 60_000);
+});
+
+describe('Phase 3C.2 BUY intent producers', () => {
+  // Every BUY entry OrderIntent is created through admitEntryOrderIntent; no producer may acquire an
+  // entry claim or create an entry intent around it.
+  it('routes claim acquisition and entry intent creation through the shared admission boundary', async () => {
+    const offenders: string[] = [];
+    for (const root of ['src/services', 'src/workers', 'src/controllers', 'src/routes']) {
+      for (const entry of await readdir(root, { recursive: true, withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith('.ts') || entry.name.endsWith('.test.ts')) continue;
+        const path = `${entry.parentPath ?? (entry as any).path}/${entry.name}`.replaceAll('\\', '/');
+        const source = await readFile(path, 'utf8');
+        if (/acquireEntryExposureClaim\(/.test(source) && !['src/services/entry-exposure-claim.service.ts', 'src/services/market-policy-entry-admission.service.ts'].includes(path)) offenders.push(path);
+        if (/createOrderIntent\(/.test(source) && !['src/services/order-audit.service.ts', 'src/services/place-order.service.ts'].includes(path)) offenders.push(path);
+      }
+    }
+    expect(offenders).toEqual([]);
+    const placeOrder = await readFile('src/services/place-order.service.ts', 'utf8');
+    expect(placeOrder.match(/admitEntryOrderIntent\(/g)).toHaveLength(2);
+    expect(placeOrder).not.toContain('acquireEntryExposureClaim(');
   }, 60_000);
 });

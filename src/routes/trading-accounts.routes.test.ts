@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
   grantAssignmentMarketPolicyEnforcementAuthorizationController: vi.fn((_req: Request, res: Response) => res.status(201).json({ ok: true })),
   revokeAssignmentMarketPolicyEnforcementAuthorizationController: vi.fn((_req: Request, res: Response) => res.status(200).json({ ok: true })),
   listAssignmentMarketPolicyEnforcementAuthorizationHistoryController: vi.fn((_req: Request, res: Response) => res.status(200).json({ ok: true })),
+  resolveAssignmentMarketPolicyEnforcementLapseController: vi.fn((_req: Request, res: Response) => res.status(201).json({ ok: true })),
+  listAssignmentMarketPolicyEnforcementAdmissionAttemptsController: vi.fn((_req: Request, res: Response) => res.status(200).json({ ok: true })),
 }));
 
 vi.mock('../controllers/trading-accounts.controller.js', () => ({
@@ -75,6 +77,8 @@ vi.mock('../controllers/trading-accounts.controller.js', () => ({
   listAssignmentMarketPolicyEnforcementAuthorizationHistoryController: mocks.listAssignmentMarketPolicyEnforcementAuthorizationHistoryController,
   grantAssignmentMarketPolicyEnforcementAuthorizationController: mocks.grantAssignmentMarketPolicyEnforcementAuthorizationController,
   revokeAssignmentMarketPolicyEnforcementAuthorizationController: mocks.revokeAssignmentMarketPolicyEnforcementAuthorizationController,
+  resolveAssignmentMarketPolicyEnforcementLapseController: mocks.resolveAssignmentMarketPolicyEnforcementLapseController,
+  listAssignmentMarketPolicyEnforcementAdmissionAttemptsController: mocks.listAssignmentMarketPolicyEnforcementAdmissionAttemptsController,
 }));
 
 vi.mock('../controllers/reconciliation.controller.js', () => ({
@@ -116,6 +120,8 @@ describe('market-policy enforcement authorization RBAC', () => {
     ['grant', 'POST', 201, mocks.grantAssignmentMarketPolicyEnforcementAuthorizationController],
     ['revoke', 'POST', 200, mocks.revokeAssignmentMarketPolicyEnforcementAuthorizationController],
     ['history', 'GET', 200, mocks.listAssignmentMarketPolicyEnforcementAuthorizationHistoryController],
+    ['resolve-lapse', 'POST', 201, mocks.resolveAssignmentMarketPolicyEnforcementLapseController],
+    ['admission-attempts', 'GET', 200, mocks.listAssignmentMarketPolicyEnforcementAdmissionAttemptsController],
   ] as const)('permits only SYSTEM_OWNER to reach %s', async (operation, method, status, controller) => {
     const path = `${base}/${operation}`;
     expect((await requestAs(PlatformRole.SYSTEM_OWNER, method, path)).status).toBe(status);

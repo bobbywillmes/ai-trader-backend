@@ -425,9 +425,31 @@ enforcement authority for one exact ACTIVE enrollment generation. Authority live
 a separate, append-preserving `AssignmentMarketPolicyEnforcementAuthorization` row
 with trigger-written immutable events, never in the permanently null generation
 fields. PostgreSQL invalidates a grant when its generation is disabled, its revision
-is superseded, its holder changes, or its assignment identity changes. No trading
-path consumes these records yet, and runtime enforcement is not active. See
+is superseded, its holder changes, or its assignment identity changes. See
 `docs/architecture/market-policy-enforcement-authorization.md`.
+
+Phase 3C.2 adds authoritative, fail-closed pre-intent enforcement for explicitly
+authorized PAPER assignments behind a default-disabled, PAPER-only, versioned runtime
+rollout (`MarketPolicyEnforcementRuntimeRollout`). Never infer activation from grants
+or enrollments, and never enable it outside isolated test fixtures. Grants are
+`PAPER_MARKET_POLICY_ENFORCEMENT_V2` and bind the exact Subscription and canonical
+Security. Row-level triggers invalidate on direct, BEFORE-trigger-derived and
+FK-cascaded identity changes. V1 grants were invalidated for reapproval, never
+reinterpreted. PostgreSQL computes fingerprints and timestamps. Lapse semantics:
+never-authorized keeps existing behavior; automatic INVALIDATED fails closed until
+reauthorization or an audited owner `resolve-lapse`; owner REVOKED is explicitly
+non-enforced. Every BUY entry intent is created only through
+`admitEntryOrderIntent` (via `submitOrder`). It locks rollout, account, assignment,
+Subscription, Security and the latest authorization in that order before the
+entry-exposure advisory lock. It evaluates the exact bound revision synchronously on
+the current committed composition (no provider calls, no shadow-decision reuse).
+Rejections commit immutable `MarketPolicyEnforcementAdmissionAttempt` evidence before
+raising stable `MARKET_POLICY_*` codes. ALLOWED freezes an immutable
+`OrderIntentMarketPolicyEnforcementObligation` atomically with the claim and intent.
+A deferred PostgreSQL backstop rejects enforced BUY intents without one. Risk gates
+still apply; SELL, protective and lifecycle orders are never gated; there is no LIVE
+authority and no broker-time enforcement (Phase 3C.3). See
+`docs/architecture/market-policy-pre-intent-enforcement.md`.
 
 The intended lifecycle is:
 

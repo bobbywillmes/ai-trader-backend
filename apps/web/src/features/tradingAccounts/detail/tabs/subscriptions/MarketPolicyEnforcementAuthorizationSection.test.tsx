@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   history: vi.fn(),
   grant: vi.fn(),
   revoke: vi.fn(),
+  resolveLapse: vi.fn(),
 }));
 vi.mock('../../../../auth/useAuth', () => ({ useIsSystemOwner: () => mocks.owner }));
 vi.mock('../../../api', () => ({
@@ -19,13 +20,16 @@ vi.mock('../../../api', () => ({
   getMarketPolicyEnforcementAuthorizationHistory: mocks.history,
   grantMarketPolicyEnforcementAuthorization: mocks.grant,
   revokeMarketPolicyEnforcementAuthorization: mocks.revoke,
+  resolveMarketPolicyEnforcementLapse: mocks.resolveLapse,
 }));
 import { MarketPolicyEnforcementAuthorizationSection } from './MarketPolicyEnforcementAuthorizationSection';
 
 const fingerprint = 'a'.repeat(64);
-const runtimeEnforcement = { active: false, status: 'NOT_ACTIVATED', tradingEffect: 'NONE' } as const;
+const runtimeEnforcement = { environment: 'PAPER', active: false, status: 'NOT_ACTIVATED', version: 0, changedAt: null, changedBy: null, changeReason: null, tradingEffect: 'NONE', liveAuthority: 'NONE', brokerTimeEnforcement: 'NOT_IMPLEMENTED' } as const;
+const activeRuntime = { ...runtimeEnforcement, active: true, status: 'ACTIVE', version: 1, tradingEffect: 'PAPER_PRE_INTENT_ENFORCEMENT' } as const;
+const neverAuthorized = { disposition: 'NEVER_AUTHORIZED', behaviorWhenRuntimeActive: 'EXISTING_ENTRY_BEHAVIOR', currentEntryBehavior: 'EXISTING_ENTRY_BEHAVIOR', ownerResolutionAvailable: false, latestAuthorizationId: null } as const;
 function state(overrides: Partial<MarketPolicyEnforcementAuthorizationStateResponse> = {}): MarketPolicyEnforcementAuthorizationStateResponse {
-  return { authorizationScope: 'PAPER_ONLY', authorityVersion: 'PAPER_MARKET_POLICY_ENFORCEMENT_V1', runtimeEnforcement, enrollmentGeneration: { id: 11, generation: 2, status: 'ACTIVE' }, state: 'NOT_AUTHORIZED', effective: false, ineffectiveReasons: [], authorization: null, ...overrides };
+  return { authorizationScope: 'PAPER_ONLY', authorityVersion: 'PAPER_MARKET_POLICY_ENFORCEMENT_V1', runtimeEnforcement, enrollmentGeneration: { id: 11, generation: 2, status: 'ACTIVE' }, state: 'NOT_AUTHORIZED', effective: false, ineffectiveReasons: [], enforcement: neverAuthorized, authorization: null, ...overrides };
 }
 function preview(overrides: Partial<MarketPolicyEnforcementAuthorizationPreview> = {}): MarketPolicyEnforcementAuthorizationPreview {
   return {
@@ -43,7 +47,7 @@ function preview(overrides: Partial<MarketPolicyEnforcementAuthorizationPreview>
     ...overrides,
   };
 }
-const authorized = { id: 40, enrollmentGenerationId: 11, authorizationSequence: 1, authorityVersion: 'PAPER_MARKET_POLICY_ENFORCEMENT_V1', status: 'AUTHORIZED' as const, environment: 'PAPER' as const, policyRevisionId: 5, authorizedAt: '2026-10-18T12:00:00Z', revokedAt: null, invalidatedAt: null, invalidationReasonCode: null };
+const authorized = { id: 40, enrollmentGenerationId: 11, authorizationSequence: 1, authorityVersion: 'PAPER_MARKET_POLICY_ENFORCEMENT_V1', status: 'AUTHORIZED' as const, environment: 'PAPER' as const, policyRevisionId: 5, authorizedAt: '2026-10-18T12:00:00Z', revokedAt: null, invalidatedAt: null, invalidationReasonCode: null, securityId: 1, securitySymbol: 'SPY', invalidationSource: null, lapseResolution: null };
 
 function renderSection() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -66,7 +70,8 @@ describe('MarketPolicyEnforcementAuthorizationSection', () => {
     renderSection();
     expect(await screen.findByText('NOT AUTHORIZED')).toBeTruthy();
     expect(screen.getByText('RUNTIME ENFORCEMENT NOT ACTIVE')).toBeTruthy();
-    expect(screen.getByText(/orders are not evaluated, blocked, or allowed/)).toBeTruthy();
+    expect(screen.getByText('EXISTING ENTRY BEHAVIOR')).toBeTruthy();
+    expect(screen.getByText(/PAPER runtime enforcement is not active, so entries keep their existing behavior/)).toBeTruthy();
     expect(screen.getByText('Market observation: BLOCKED (informational)')).toBeTruthy();
     expect(screen.getByText('Eligible to authorize')).toBeTruthy();
   });
@@ -103,9 +108,36 @@ describe('MarketPolicyEnforcementAuthorizationSection', () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Revoke authorization…' }));
     const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/deliberate return to non-enforced entry behavior/)).toBeTruthy();
     await user.type(within(dialog).getByLabelText('Revocation reason'), 'Pause eligibility');
     await user.click(within(dialog).getByRole('button', { name: 'Revoke authorization' }));
     await waitFor(() => expect(mocks.revoke).toHaveBeenCalledWith(7, 9, { authorizationId: 40, reason: 'Pause eligibility' }, 'token'));
+  });
+
+  it('shows active PAPER runtime enforcement and the enforced entry behavior', async () => {
+    mocks.preview.mockResolvedValue({ preview: preview({ runtimeEnforcement: activeRuntime, eligibleToAuthorize: false, currentAuthorization: state({ runtimeEnforcement: activeRuntime, state: 'AUTHORIZED', effective: true, authorization: authorized, enforcement: { disposition: 'ENFORCED', behaviorWhenRuntimeActive: 'MARKET_POLICY_ENFORCED', currentEntryBehavior: 'MARKET_POLICY_ENFORCED', ownerResolutionAvailable: false, latestAuthorizationId: 40 } }) }) });
+    renderSection();
+    expect(await screen.findByText('PAPER RUNTIME ENFORCEMENT ACTIVE (v1)')).toBeTruthy();
+    expect(screen.getByText('MARKET POLICY ENFORCED')).toBeTruthy();
+    expect(screen.getByText(/SELL, protective, and lifecycle orders are never gated/)).toBeTruthy();
+  });
+
+  it('surfaces an automatic invalidation as fail-closed and offers an explicit, confirmed owner opt-out', async () => {
+    const invalidated = { ...authorized, status: 'INVALIDATED' as const, invalidatedAt: '2026-10-18T13:00:00Z', invalidationReasonCode: 'POLICY_REVISION_SUPERSEDED', invalidationSource: 'POLICY_REVISION_TRIGGER' };
+    mocks.preview.mockResolvedValue({ preview: preview({ runtimeEnforcement: activeRuntime, currentAuthorization: state({ runtimeEnforcement: activeRuntime, state: 'INVALIDATED', authorization: invalidated, enforcement: { disposition: 'LAPSED', behaviorWhenRuntimeActive: 'FAIL_CLOSED', currentEntryBehavior: 'FAIL_CLOSED', ownerResolutionAvailable: true, latestAuthorizationId: 40 } }) }) });
+    mocks.resolveLapse.mockResolvedValue({ lapseResolution: { id: 1, authorizationId: 40, resolution: 'RESTORE_NON_ENFORCED', resolvedAt: '2026-10-18T14:00:00Z' } });
+    renderSection();
+    expect(await screen.findByText('NEW ENTRIES FAIL CLOSED')).toBeTruthy();
+    expect(screen.getByText('Authorization automatically invalidated')).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Restore non-enforced behavior…' }));
+    const dialog = await screen.findByRole('dialog');
+    const submit = within(dialog).getByRole('button', { name: 'Restore non-enforced behavior' });
+    await user.type(within(dialog).getByLabelText('Reason'), 'Intentionally opt out');
+    expect(submit.hasAttribute('disabled')).toBe(true);
+    await user.click(within(dialog).getByLabelText(/return to non-enforced entry behavior/));
+    await user.click(submit);
+    await waitFor(() => expect(mocks.resolveLapse).toHaveBeenCalledWith(7, 9, { authorizationId: 40, reason: 'Intentionally opt out', confirmNonEnforced: true }, 'token'));
   });
 
   it('keeps non-owner views read-only without history requests', async () => {
@@ -115,6 +147,7 @@ describe('MarketPolicyEnforcementAuthorizationSection', () => {
     expect(await screen.findByText('AUTHORIZED')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Authorize enforcement…' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Revoke authorization…' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Restore non-enforced behavior…' })).toBeNull();
     expect(mocks.history).not.toHaveBeenCalled();
   });
 });

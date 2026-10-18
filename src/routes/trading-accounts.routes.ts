@@ -47,6 +47,8 @@ import {
   listAssignmentMarketPolicyEnforcementAuthorizationHistoryController,
   grantAssignmentMarketPolicyEnforcementAuthorizationController,
   revokeAssignmentMarketPolicyEnforcementAuthorizationController,
+  resolveAssignmentMarketPolicyEnforcementLapseController,
+  listAssignmentMarketPolicyEnforcementAdmissionAttemptsController,
 } from '../controllers/trading-accounts.controller.js';
 import {
   requirePermission,
@@ -304,6 +306,16 @@ router.post(
   '/:id/account-subscriptions/:accountSubscriptionId/market-policy-enrollment/enforcement-authorization/revoke',
   requireSystemOwnerAccess,
   revokeAssignmentMarketPolicyEnforcementAuthorizationController,
+);
+router.post(
+  '/:id/account-subscriptions/:accountSubscriptionId/market-policy-enrollment/enforcement-authorization/resolve-lapse',
+  requireSystemOwnerAccess,
+  resolveAssignmentMarketPolicyEnforcementLapseController,
+);
+router.get(
+  '/:id/account-subscriptions/:accountSubscriptionId/market-policy-enrollment/enforcement-authorization/admission-attempts',
+  requireSystemOwnerAccess,
+  listAssignmentMarketPolicyEnforcementAdmissionAttemptsController,
 );
 router.post(
   '/:id/account-subscriptions',

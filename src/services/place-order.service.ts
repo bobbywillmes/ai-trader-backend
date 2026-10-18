@@ -35,11 +35,11 @@ import { validateActiveLiveEntryArming } from './live-entry-arming.service.js';
 import { getBrokerWriteDeliveryClassification } from '../errors/broker-write-delivery-error.js';
 import { bestEffortAppendBrokerOpportunityEvent, bestEffortCaptureOrderIntentBrokerPostOpportunity, createBrokerObservationBudget } from './order-intent-broker-opportunity.service.js';
 import {
-  acquireEntryExposureClaim,
   requireEntryExposureClaim,
   requireExecutableEntryExposureClaim,
   releaseUnsubmittedEntryExposureClaim,
 } from './entry-exposure-claim.service.js';
+import { admitEntryOrderIntent } from './market-policy-entry-admission.service.js';
 
 type SubmitOrderOptions = {
   entryDecisionKey?: string;
@@ -162,10 +162,22 @@ export async function submitOrder(
         accountSubscriptionSizing: runtimeSizing.sizing.snapshot,
       }
     : {};
-  let duplicateAcceptanceExecution = false;
   const claimOwnerKey = `entry:${tradingAccountId}:${clientOrderId}`;
-  const intent = options.liveEntryAcceptanceExecution
-    ? await prisma.$transaction(async (tx) => {
+  // Every BUY entry OrderIntent is admitted through the shared market-policy admission boundary,
+  // which preserves the Phase 3C.0 claim admission unless an explicitly authorized PAPER assignment
+  // is enforced under the active runtime rollout.
+  const admissionBase = {
+    tradingAccountId,
+    tradingAccountSubscriptionId: runtimeSizing.sizing?.tradingAccountSubscriptionId ?? null,
+    symbol: resolvedInput.symbol,
+    clientOrderId,
+    ownerKey: claimOwnerKey,
+  };
+  const admission = options.liveEntryAcceptanceExecution
+    ? await admitEntryOrderIntent({
+      ...admissionBase,
+      requestSource: 'live_entry_acceptance',
+      prepare: async (tx) => {
         const execution = options.liveEntryAcceptanceExecution!;
         await tx.$queryRaw`SELECT id FROM "LiveEntryAcceptanceRun" WHERE id = ${execution.runId} FOR UPDATE`;
         const run = await tx.liveEntryAcceptanceRun.findFirst({
@@ -180,7 +192,6 @@ export async function submitOrder(
           if (run.executionRequestKey !== execution.requestKey) {
             throw new HttpError(409, 'Acceptance execution was already claimed by another request.');
           }
-          duplicateAcceptanceExecution = true;
           return run.orderIntent;
         }
         if (run.terminalAt || run.executionClaimedAt || run.executionUncertainAt) {
@@ -231,28 +242,26 @@ export async function submitOrder(
             executionRequestKey: execution.requestKey,
           },
         });
-        const acquired = await acquireEntryExposureClaim({
-          tx, tradingAccountId, symbol: resolvedInput.symbol, ownerKey: claimOwnerKey,
-          createIntent: () => createOrderIntent(
-            resolvedInput, 'live_entry_acceptance', clientOrderId, tradingAccountId,
-            { ...intentOptions, liveEntryAcceptanceRunId: run.id }, tx,
-          ),
-        });
-        duplicateAcceptanceExecution = acquired.duplicate;
-        return acquired.intent;
-      })
-    : await prisma.$transaction(async (tx) => {
-        const acquired = await acquireEntryExposureClaim({
-          tx, tradingAccountId, symbol: resolvedInput.symbol, ownerKey: claimOwnerKey,
-          createIntent: () => createOrderIntent(
-            resolvedInput, 'api', clientOrderId, tradingAccountId, intentOptions, tx,
-          ),
-        });
-        duplicateAcceptanceExecution = acquired.duplicate;
-        return acquired.intent;
-      });
+        return null;
+      },
+      createIntent: (tx) => createOrderIntent(
+        resolvedInput, 'live_entry_acceptance', clientOrderId, tradingAccountId,
+        { ...intentOptions, liveEntryAcceptanceRunId: options.liveEntryAcceptanceExecution!.runId }, tx,
+      ),
+    })
+    : await admitEntryOrderIntent({
+      ...admissionBase,
+      requestSource: 'api',
+      createIntent: (tx) => createOrderIntent(
+        resolvedInput, 'api', clientOrderId, tradingAccountId, intentOptions, tx,
+      ),
+    });
+  const intent = admission.intent;
+  const marketPolicyEnforcement = admission.marketPolicy.enforced
+    ? { attemptId: admission.marketPolicy.attemptId, obligationId: admission.marketPolicy.obligationId, disposition: admission.marketPolicy.disposition }
+    : null;
 
-  if (duplicateAcceptanceExecution) {
+  if (admission.duplicate) {
     return {
       ok: true,
       intentId: intent.id,
@@ -315,6 +324,7 @@ export async function submitOrder(
     intentId: intent.id,
     status: 'pending',
     entryDecisionKey: options.entryDecisionKey ?? null,
+    ...(marketPolicyEnforcement ? { marketPolicyEnforcement } : {}),
   };
   } catch (error) {
     await prisma.$transaction(async (tx) => {

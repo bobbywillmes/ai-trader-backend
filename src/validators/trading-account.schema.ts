@@ -300,6 +300,17 @@ export const revokeAssignmentMarketPolicyEnforcementAuthorizationSchema = z.stri
   reason: z.string().trim().min(1).max(500),
 });
 
+export const resolveAssignmentMarketPolicyEnforcementLapseSchema = z.strictObject({
+  authorizationId: z.coerce.number().int().positive(),
+  reason: z.string().trim().min(1).max(500),
+  // Explicit acknowledgement that this restores non-enforced entry behavior for the assignment.
+  confirmNonEnforced: z.literal(true),
+});
+
+export const listMarketPolicyEnforcementAdmissionAttemptsQuerySchema = z.strictObject({
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+
 export const previewAssignmentMarketPolicyEnforcementAuthorizationQuerySchema = z.strictObject({
   generationId: z.coerce.number().int().positive().optional(),
 });

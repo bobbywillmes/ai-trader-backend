@@ -1,9 +1,17 @@
-# Market-Policy Enforcement Authorization (Phase 3C.1)
+# Market-Policy Enforcement Authorization (Phase 3C.1, amended by 3C.2)
 
 Phase 3C.1 lets a SYSTEM_OWNER explicitly grant and revoke PAPER market-policy
-enforcement authority for one exact ACTIVE assignment enrollment generation. It is
-authorization infrastructure only. No order, risk, worker, broker, exit, or signal
-path reads these records, and actual trading outcomes are unchanged.
+enforcement authority for one exact ACTIVE assignment enrollment generation.
+
+Phase 3C.2 makes that authority consumable. Grants now bind the exact Subscription
+and canonical Security (`PAPER_MARKET_POLICY_ENFORCEMENT_V2`). Entry admission reads
+authority under row locks and enforces it only while the separate, default-disabled
+PAPER runtime rollout is active. Owner revocation and automatic invalidation have
+explicit, distinct consequences. See
+`docs/architecture/market-policy-pre-intent-enforcement.md` for the Security
+binding, lapse semantics, rollout, admission lifecycle, frozen obligations, and lock
+ordering. The sections below describe the original 3C.1 record model, with 3C.2
+amendments noted inline.
 
 ## Decision: a separate append-preserving record
 
@@ -51,6 +59,11 @@ identity.
   - its policy revision leaves ACTIVE (`POLICY_REVISION_SUPERSEDED`)
   - the account holder changes (`ACCOUNT_HOLDER_CHANGED`)
   - the assignment account or routing Strategy changes (`ASSIGNMENT_IDENTITY_CHANGED`)
+  - 3C.2: the assignment Subscription or routing Security changes, including
+    BEFORE-trigger derivation and FK cascades (`ASSIGNMENT_SUBSCRIPTION_CHANGED`);
+    the Subscription identity changes (`SUBSCRIPTION_IDENTITY_CHANGED`); the
+    canonical Security symbol changes (`SECURITY_IDENTITY_CHANGED`); or an effective
+    V1 grant is migrated (`AUTHORITY_BINDING_REAPPROVAL_REQUIRED`)
 - Moving an account away from PAPER is rejected while it has an effective grant.
   The Phase 3A trigger independently rejects PAPER-to-LIVE while a PREPARED or
   ACTIVE generation exists.
@@ -63,6 +76,11 @@ The migration creates no authorization rows, so existing ACTIVE generations rema
 are not altered.
 
 ## When authorization is effective
+
+3C.2: entry admission uses the transactional, row-locked
+`resolveLockedAssignmentMarketPolicyEnforcement(tx, accountSubscriptionId)`, which
+also validates the Security binding and recomputes the V2 fingerprint. The unlocked
+resolver below remains for informational reads only.
 
 `resolveAssignmentMarketPolicyEnforcementAuthority(accountSubscriptionId)` is the
 read boundary for Phase 3C.2. It returns `authorized: true` only when all of these
@@ -142,7 +160,8 @@ and fingerprints. Operators and Account Users receive status, sequence, revision
 and timestamps only.
 
 Grant and revoke also write `MARKET_POLICY_ENFORCEMENT_AUTHORIZATION_GRANTED` and
-`..._REVOKED` System Events with `runtimeEnforcementActive: false` and
+`..._REVOKED` System Events. Since 3C.2 their `runtimeEnforcementActive` reflects the
+actual rollout (3C.1 always reported `false`) and
 `tradingEffect: NONE`.
 
 ## Web UI
@@ -163,7 +182,7 @@ SYSTEM_OWNERs get:
 Conflicts show the coded error, and the preview is refetched. Non-owners see a
 read-only view with no history request.
 
-## Future-phase contract (not implemented)
+## Future-phase contract (3C.2 implemented the pre-intent items; see the 3C.2 document)
 
 - Unenrolled or unauthorized assignments retain existing behavior.
 - Phase 3C.2 will require synchronous market-policy evaluation only when

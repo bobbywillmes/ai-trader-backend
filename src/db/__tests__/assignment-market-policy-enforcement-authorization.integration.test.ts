@@ -62,6 +62,8 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
       if (id === assignmentId) { generationId = active.id; fingerprint = active.configurationFingerprint; } else { secondGenerationId = active.id; secondFingerprint = active.configurationFingerprint; }
     }
     await db.query(await readFile(`prisma/migrations/${AUTHORIZATION_MIGRATION}/migration.sql`, 'utf8'));
+    // Later migrations (Phase 3C.2 Security binding and runtime rollout) apply before the current services run.
+    for (const migration of migrations.filter(name => name > AUTHORIZATION_MIGRATION)) await db.query(await readFile(`prisma/migrations/${migration}/migration.sql`, 'utf8'));
   }, 120_000);
 
   afterAll(async () => {
@@ -83,7 +85,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     for (const id of [assignmentId, secondAssignmentId]) {
       expect(await svc.resolveAssignmentMarketPolicyEnforcementAuthority(id)).toMatchObject({ authorized: false, reasons: ['NOT_AUTHORIZED'] });
     }
-    expect(await svc.getAssignmentMarketPolicyEnforcementAuthorization(paperAccountId, assignmentId, 'SYSTEM_OWNER')).toMatchObject({ state: 'NOT_AUTHORIZED', effective: false, runtimeEnforcement: { active: false } });
+    expect(await svc.getAssignmentMarketPolicyEnforcementAuthorization(paperAccountId, assignmentId, 'SYSTEM_OWNER')).toMatchObject({ state: 'NOT_AUTHORIZED', effective: false, runtimeEnforcement: { active: false, status: 'NOT_ACTIVATED' }, enforcement: { disposition: 'NEVER_AUTHORIZED', currentEntryBehavior: 'EXISTING_ENTRY_BEHAVIOR' } });
   });
 
   it('previews without evaluator, decision, audit, authorization, or SystemEvent writes and ignores unfavorable market outcomes', async () => {
@@ -122,7 +124,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(await count(`"AssignmentMarketPolicyEnforcementAuthorizationEvent" WHERE action='GRANT'`)).toBe(1);
     expect(await count(`"SystemEvent" WHERE type='MARKET_POLICY_ENFORCEMENT_AUTHORIZATION_GRANTED'`)).toBe(1);
     const granted = (fulfilled[0] as PromiseFulfilledResult<any>).value;
-    expect(granted).toMatchObject({ status: 'AUTHORIZED', authorizationSequence: 1, environment: 'PAPER', authorityVersion: 'PAPER_MARKET_POLICY_ENFORCEMENT_V1', tradingAccountId: paperAccountId, accountSubscriptionId: assignmentId, strategyId, policyRevisionId: revisionId, enrollmentGenerationId: generationId, configurationFingerprint: fingerprint, accountHolderUserId: ownerId, authorizedBy: { id: ownerId } });
+    expect(granted).toMatchObject({ status: 'AUTHORIZED', authorizationSequence: 1, environment: 'PAPER', authorityVersion: 'PAPER_MARKET_POLICY_ENFORCEMENT_V2', securitySymbol: 'P3C', tradingAccountId: paperAccountId, accountSubscriptionId: assignmentId, strategyId, policyRevisionId: revisionId, enrollmentGenerationId: generationId, configurationFingerprint: fingerprint, accountHolderUserId: ownerId, authorizedBy: { id: ownerId } });
     expect(await svc.resolveAssignmentMarketPolicyEnforcementAuthority(assignmentId)).toMatchObject({ authorized: true, reasons: [], authorization: { id: granted.id } });
     // An authorization for one assignment never applies to another assignment of the same Strategy and Security.
     expect(await svc.resolveAssignmentMarketPolicyEnforcementAuthority(secondAssignmentId)).toMatchObject({ authorized: false });
@@ -135,14 +137,16 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const row = (await db.query(`SELECT * FROM "AssignmentMarketPolicyEnforcementAuthorization" WHERE status='AUTHORIZED'`)).rows[0];
     const insert = (overrides: Record<string, unknown>) => {
       const values = { ...row, authorizationSequence: 2, authorizationFingerprint: 'c'.repeat(64), ...overrides };
-      return db.query(`INSERT INTO "AssignmentMarketPolicyEnforcementAuthorization" ("enrollmentId","enrollmentGenerationId","authorizationSequence","authorityVersion",status,environment,"tradingAccountId","accountSubscriptionId","strategyId","policyRevisionId","accountHolderUserId","configurationFingerprint","authorizationFingerprint","authorizedByUserId","grantReason") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-        [values.enrollmentId, values.enrollmentGenerationId, values.authorizationSequence, values.authorityVersion, values.status, values.environment, values.tradingAccountId, values.accountSubscriptionId, values.strategyId, values.policyRevisionId, values.accountHolderUserId, values.configurationFingerprint, values.authorizationFingerprint, values.authorizedByUserId, 'direct sql']);
+      return db.query(`INSERT INTO "AssignmentMarketPolicyEnforcementAuthorization" ("enrollmentId","enrollmentGenerationId","authorizationSequence","authorityVersion",status,environment,"tradingAccountId","accountSubscriptionId","strategyId","policyRevisionId","accountHolderUserId","configurationFingerprint","authorizationFingerprint","authorizedByUserId","grantReason","subscriptionId","securityId","securitySymbol") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+        [values.enrollmentId, values.enrollmentGenerationId, values.authorizationSequence, values.authorityVersion, values.status, values.environment, values.tradingAccountId, values.accountSubscriptionId, values.strategyId, values.policyRevisionId, values.accountHolderUserId, values.configurationFingerprint, values.authorizationFingerprint, values.authorizedByUserId, 'direct sql', values.subscriptionId, values.securityId, values.securitySymbol]);
     };
-    await expect(insert({})).rejects.toThrow(/one_authorized|duplicate key/);
+    // PostgreSQL rejects the forged fingerprint before the one-AUTHORIZED index is even reached.
+    await expect(insert({})).rejects.toThrow(/one_authorized|duplicate key|canonical PostgreSQL-computed/);
     await expect(insert({ enrollmentGenerationId: secondGenerationId })).rejects.toThrow(/exact enrollment generation/);
     await expect(insert({ enrollmentGenerationId: secondGenerationId, enrollmentId: (await db.query(`SELECT "enrollmentId" FROM "AssignmentMarketPolicyEnrollmentGeneration" WHERE id=$1`, [secondGenerationId])).rows[0].enrollmentId, tradingAccountId: secondAccountId, accountSubscriptionId: secondAssignmentId, configurationFingerprint: secondFingerprint, accountHolderUserId: otherOwnerId, authorizationSequence: 1, authorizedByUserId: operatorId })).rejects.toThrow(/enabled SYSTEM_OWNER/);
     await expect(insert({ environment: 'LIVE' })).rejects.toThrow(/paper_only|PAPER-only/);
-    await expect(insert({ authorityVersion: 'V2' })).rejects.toThrow(/version_check/);
+    await expect(insert({ authorityVersion: 'V2' })).rejects.toThrow(/version_check|PAPER_MARKET_POLICY_ENFORCEMENT_V2/);
+    await expect(insert({ authorityVersion: 'PAPER_MARKET_POLICY_ENFORCEMENT_V1', subscriptionId: null, securityId: null, securitySymbol: null })).rejects.toThrow(/PAPER_MARKET_POLICY_ENFORCEMENT_V2/);
     await expect(insert({ status: 'REVOKED' })).rejects.toThrow(/lifecycle_check|inserted as AUTHORIZED/);
     await expect(db.query(`UPDATE "AssignmentMarketPolicyEnforcementAuthorization" SET "grantReason"='rewrite' WHERE id=$1`, [row.id])).rejects.toThrow(/Illegal|immutable/);
     await expect(db.query(`UPDATE "AssignmentMarketPolicyEnforcementAuthorization" SET status='REVOKED',"revokedByUserId"=$2,"revokedAt"=now(),"revocationReason"='x',"policyRevisionId"="policyRevisionId"+1 WHERE id=$1`, [row.id, ownerId])).rejects.toThrow(/immutable/);
@@ -155,7 +159,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect((await db.query(`SELECT environment FROM "TradingAccount" WHERE id=$1`, [paperAccountId])).rows[0].environment).toBe('PAPER');
   });
 
-  it('keeps actual trading behavior and compare-only coverage identical for authorized and unauthorized assignments', async () => {
+  it('keeps trading behavior and compare-only coverage identical for authorized and unauthorized assignments while the runtime rollout is inactive', async () => {
     await db.query(`UPDATE "OrderIntentMarketPolicyCaptureRollout" SET enabled=true WHERE id=1`);
     const intents = [];
     for (const [accountId, id, key] of [[paperAccountId, assignmentId, 'authorized'], [secondAccountId, secondAssignmentId, 'unauthorized']] as const) {
@@ -167,9 +171,12 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
       { provenance: 'ACTIVE_EXACT', comparisonMode: 'COMPARE_ONLY', tradingEffect: 'NONE', compositionCapture: 'NONE_VISIBLE' },
       { provenance: 'ACTIVE_EXACT', comparisonMode: 'COMPARE_ONLY', tradingEffect: 'NONE', compositionCapture: 'NONE_VISIBLE' },
     ]);
-    // Only authorization/enrollment/account/policy tables carry triggers that read authorization rows.
+    // Authorization rows are read by invalidation triggers on the bound identity tables, by the Phase 3C.2
+    // admission evidence tables, and by the deferred OrderIntent backstop, which is a no-op while the
+    // PAPER runtime rollout is inactive (default after migration).
     const triggerTables = (await db.query(`SELECT DISTINCT c.relname FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_proc p ON p.oid=t.tgfoid WHERE p.prosrc LIKE '%EnforcementAuthorization%' ORDER BY 1`)).rows.map(row => row.relname);
-    expect(triggerTables).toEqual(['AssignmentMarketPolicyEnforcementAuthorization', 'AssignmentMarketPolicyEnforcementAuthorizationEvent', 'AssignmentMarketPolicyEnrollmentGeneration', 'StrategyMarketPolicyRevision', 'TradingAccount', 'TradingAccountSubscription']);
+    expect(triggerTables).toEqual(['AssignmentMarketPolicyEnforcementAuthorization', 'AssignmentMarketPolicyEnforcementAuthorizationEvent', 'AssignmentMarketPolicyEnforcementLapseResolution', 'AssignmentMarketPolicyEnrollmentGeneration', 'MarketPolicyEnforcementAdmissionAttempt', 'OrderIntent', 'Security', 'StrategyMarketPolicyRevision', 'Subscription', 'TradingAccount', 'TradingAccountSubscription']);
+    expect((await db.query(`SELECT enabled FROM "MarketPolicyEnforcementRuntimeRollout" WHERE id=1`)).rows[0].enabled).toBe(false);
     expect(await count(`"OrderIntentMarketPolicyCoverage" WHERE "comparisonMode"<>'COMPARE_ONLY' OR "tradingEffect"<>'NONE'`)).toBe(0);
   });
 
