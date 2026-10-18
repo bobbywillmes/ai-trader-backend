@@ -493,6 +493,13 @@ export async function syncTrackedPositionsForAccountUnlocked(
             securityId: security.id,
             trackedPositionId: createdPosition.id,
             symbol: position.symbol,
+            expectedOrderIntentId: initialResolution.status === 'resolved' &&
+              initialResolution.source === 'local_order_intent' &&
+              typeof initialResolution.evidence === 'object' && initialResolution.evidence !== null &&
+              !Array.isArray(initialResolution.evidence) &&
+              typeof (initialResolution.evidence as Record<string, unknown>).orderIntentId === 'number'
+              ? (initialResolution.evidence as Record<string, number>).orderIntentId
+              : null,
           });
 
           // EXTERNAL_SIGNAL ownership may only be frozen once originating

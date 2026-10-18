@@ -468,10 +468,10 @@ describe('submitted order sync adaptive polling', () => {
 
     expect(mocks.orderIntentFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: {
-          status: 'submitted',
+        where: expect.objectContaining({
+          status: expect.objectContaining({ in: expect.arrayContaining(['submitted', 'new', 'accepted', 'partially_filled']) }),
           tradingAccountId: 1,
-        },
+        }),
       })
     );
     expect(result).toMatchObject({

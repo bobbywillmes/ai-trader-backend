@@ -27,6 +27,7 @@ import {
 } from './reconciliation-operational-attention.service.js';
 import { recoverDeterministicallyAbsentStaleCloseIntents } from './stale-close-intent-recovery.service.js';
 import { BROKER_ACTIVE_ENTRY_STATUSES, UNRESOLVED_ORDER_INTENT_STATUSES } from './entry-lifecycle-status.service.js';
+import { releaseEntryExposureClaimForClosedPosition } from './entry-exposure-claim.service.js';
 
 export type ReconciliationSeverity = 'info' | 'warn' | 'critical';
 
@@ -692,6 +693,26 @@ export async function reconcileTradingAccount(
     where: { id: tradingAccountId },
     select: { id: true, displayName: true, environment: true },
   });
+  const closedClaimCandidates = await prisma.entryExposureClaim.findMany({
+    where: {
+      tradingAccountId,
+      releasedAt: null,
+      status: { not: 'UNRESOLVED' },
+      trackedPosition: { status: 'closed' },
+    },
+    select: { trackedPositionId: true },
+    orderBy: { updatedAt: 'asc' },
+    take: 25,
+  });
+  for (const candidate of closedClaimCandidates) {
+    if (!candidate.trackedPositionId) continue;
+    try {
+      await releaseEntryExposureClaimForClosedPosition({ trackedPositionId: candidate.trackedPositionId });
+    } catch (error) {
+      logger.warn({ error, tradingAccountId, trackedPositionId: candidate.trackedPositionId },
+        'Closed-position entry claim release will be retried by reconciliation.');
+    }
+  }
   const runIdentifier = randomUUID();
   const [trackedPositions, localOrders, staleIntents, activeClaims, uncoveredEntryIntents, uncoveredBrokerBuys] = await Promise.all([
     prisma.trackedPosition.findMany({

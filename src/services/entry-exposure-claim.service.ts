@@ -3,7 +3,8 @@ import crypto from 'node:crypto';
 
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
-import { getAlpacaOrderByClientOrderId, getAlpacaOrderById, getOpenAlpacaOrders } from '../integrations/alpaca/orders.adapter.js';
+import type { AlpacaOrder } from '../integrations/alpaca/alpaca.types.js';
+import { getAlpacaOrderByClientOrderId, getAlpacaOrderById, getCompleteOpenAlpacaBuyOrdersForSymbol } from '../integrations/alpaca/orders.adapter.js';
 import { getAlpacaPositionBySymbol } from '../integrations/alpaca/positions.adapter.js';
 import { isTerminalBrokerOrderStatus } from './broker-order-lifecycle-status.service.js';
 import {
@@ -41,7 +42,7 @@ export async function previewEntryExposureClaimRemediation(claimId: number) {
   }) : null;
   let brokerOrder = null;
   let brokerPosition = null;
-  let openOrders: Awaited<ReturnType<typeof getOpenAlpacaOrders>> = [];
+  let openOrders: Awaited<ReturnType<typeof getCompleteOpenAlpacaBuyOrdersForSymbol>> = [];
   let lookupError: string | null = null;
   try {
     brokerOrder = localOrder
@@ -51,7 +52,7 @@ export async function previewEntryExposureClaimRemediation(claimId: number) {
         : null;
     [brokerPosition, openOrders] = await Promise.all([
       getAlpacaPositionBySymbol(claim.tradingAccountId, claim.security.symbol, 'manual_admin_action'),
-      getOpenAlpacaOrders(claim.tradingAccountId, 'manual_admin_action'),
+      getCompleteOpenAlpacaBuyOrdersForSymbol(claim.tradingAccountId, claim.security.symbol, 'manual_admin_action'),
     ]);
   } catch (error) {
     lookupError = error instanceof Error ? error.message : 'Broker lookup failed.';
@@ -107,7 +108,7 @@ export async function releaseClosedAdoptedPositionClaim(args: { claimId: number;
   }
   const [brokerPosition, openOrders] = await Promise.all([
     getAlpacaPositionBySymbol(claim.tradingAccountId, claim.security.symbol, 'manual_admin_action'),
-    getOpenAlpacaOrders(claim.tradingAccountId, 'manual_admin_action'),
+    getCompleteOpenAlpacaBuyOrdersForSymbol(claim.tradingAccountId, claim.security.symbol, 'manual_admin_action'),
   ]);
   const relevantOpenOrders = openOrders.filter((order) =>
     order.symbol.toUpperCase() === claim.security.symbol.toUpperCase() && order.side.toLowerCase() === 'buy' && !isTerminalBrokerOrderStatus(order.status));
@@ -119,25 +120,25 @@ export async function releaseClosedAdoptedPositionClaim(args: { claimId: number;
     return null;
   }
   return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`entry-exposure:${claim.tradingAccountId}:${claim.securityId}`}, 0))`;
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`entry-exposure:${claim.tradingAccountId}:${claim.securityId}`}, 0))::text`;
     const current = await tx.entryExposureClaim.findUnique({ where: { id: claim.id }, include: { trackedPosition: { select: { status: true } } } });
     if (!current || current.releasedAt) return current;
     const [activePosition, activeBuyOrder] = await Promise.all([
       tx.trackedPosition.count({ where: { tradingAccountId: claim.tradingAccountId, securityId: claim.securityId, status: { in: [...ACTIVE_POSITION_STATUSES] } } }),
-      tx.brokerOrder.count({ where: { tradingAccountId: claim.tradingAccountId, securityId: claim.securityId, side: { equals: 'buy', mode: 'insensitive' }, status: { notIn: ['filled', 'canceled', 'cancelled', 'expired', 'rejected', 'replaced', 'done_for_day', 'calculated'] } } }),
+      tx.brokerOrder.count({ where: { tradingAccountId: claim.tradingAccountId, securityId: claim.securityId, side: { equals: 'buy', mode: 'insensitive' }, status: { notIn: ['filled', 'canceled', 'cancelled', 'expired', 'rejected'] } } }),
     ]);
     if (current.trackedPosition?.status !== 'closed' || activePosition || activeBuyOrder) return null;
     const now = new Date();
-    return tx.entryExposureClaim.update({
-      where: { id: claim.id },
-      data: {
-        status: 'RELEASED', releasedAt: now, releaseReason: 'OPERATOR_VERIFIED_CLOSED_ADOPTED_POSITION_NO_BROKER_EXPOSURE',
-        events: { create: { eventType: 'RELEASED_OPERATOR_VERIFIED_POSITION_ONLY', evidenceJson: {
-          actorUserId: args.actorUserId, trackedPositionId: claim.trackedPositionId,
-          brokerPosition: null, openBrokerBuyOrders: [],
-        } } },
-      },
+    const released = await tx.entryExposureClaim.updateMany({
+      where: { id: claim.id, status: current.status, releasedAt: null },
+      data: { status: 'RELEASED', releasedAt: now, releaseReason: 'OPERATOR_VERIFIED_CLOSED_ADOPTED_POSITION_NO_BROKER_EXPOSURE' },
     });
+    if (released.count !== 1) return tx.entryExposureClaim.findUnique({ where: { id: claim.id } });
+    await tx.entryExposureClaimEvent.create({ data: { claimId: claim.id, eventType: 'RELEASED_OPERATOR_VERIFIED_POSITION_ONLY', evidenceJson: {
+      actorUserId: args.actorUserId, trackedPositionId: claim.trackedPositionId,
+      brokerPosition: null, openBrokerBuyOrders: [],
+    } } });
+    return tx.entryExposureClaim.findUnique({ where: { id: claim.id } });
   });
 }
 
@@ -154,7 +155,7 @@ export async function acquireEntryExposureClaim(args: {
     throw conflict('SECURITY_NOT_FOUND', `Security ${symbol} is not registered.`, { symbol });
   }
 
-  await args.tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`entry-exposure:${args.tradingAccountId}:${security.id}`}, 0))`;
+  await args.tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`entry-exposure:${args.tradingAccountId}:${security.id}`}, 0))::text`;
 
   const priorOwner = await args.tx.entryExposureClaim.findUnique({
     where: { ownerKey: args.ownerKey },
@@ -347,13 +348,21 @@ export async function transitionEntryExposureClaim(args: {
       recoveryRequired: claim.status === 'UNRESOLVED',
     });
   }
-  return db.entryExposureClaim.update({
-    where: { id: claim.id },
-    data: {
-      status: args.status,
-      events: { create: { eventType: args.eventType, evidenceJson: args.evidence ?? {} } },
-    },
+  const changed = await db.entryExposureClaim.updateMany({
+    where: { id: claim.id, status: claim.status, releasedAt: null },
+    data: { status: args.status },
   });
+  if (changed.count !== 1) {
+    const current = await db.entryExposureClaim.findUnique({ where: { id: claim.id } });
+    if (!current || current.releasedAt || current.status === 'UNRESOLVED') return current;
+    throw conflict('ENTRY_EXPOSURE_STALE_TRANSITION', 'Entry exposure changed before this observation could be applied.', {
+      claimId: claim.id, observedStatus: claim.status, currentStatus: current.status, requestedStatus: args.status,
+    });
+  }
+  await db.entryExposureClaimEvent.create({
+    data: { claimId: claim.id, eventType: args.eventType, evidenceJson: args.evidence ?? {} },
+  });
+  return db.entryExposureClaim.findUnique({ where: { id: claim.id } });
 }
 
 export async function releaseUnsubmittedEntryExposureClaim(args: {
@@ -383,13 +392,15 @@ export async function releaseUnsubmittedEntryExposureClaim(args: {
     });
   }
   const now = new Date();
-  return db.entryExposureClaim.update({
-    where: { id: claim.id },
-    data: {
-      status: 'RELEASED', releasedAt: now, releaseReason: args.reason,
-      events: { create: { eventType: 'RELEASED_NO_BROKER_EXPOSURE', evidenceJson: { reason: args.reason } } },
-    },
+  const released = await db.entryExposureClaim.updateMany({
+    where: { id: claim.id, status: claim.status, releasedAt: null },
+    data: { status: 'RELEASED', releasedAt: now, releaseReason: args.reason },
   });
+  if (released.count !== 1) return db.entryExposureClaim.findUnique({ where: { id: claim.id } });
+  await db.entryExposureClaimEvent.create({
+    data: { claimId: claim.id, eventType: 'RELEASED_NO_BROKER_EXPOSURE', evidenceJson: { reason: args.reason } },
+  });
+  return db.entryExposureClaim.findUnique({ where: { id: claim.id } });
 }
 
 export async function attachEntryExposureClaimToPosition(args: {
@@ -398,12 +409,23 @@ export async function attachEntryExposureClaimToPosition(args: {
   securityId: number;
   trackedPositionId: number;
   symbol: string;
+  expectedOrderIntentId?: number | null | undefined;
 }) {
-  await args.tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`entry-exposure:${args.tradingAccountId}:${args.securityId}`}, 0))`;
+  await args.tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`entry-exposure:${args.tradingAccountId}:${args.securityId}`}, 0))::text`;
   const active = await args.tx.entryExposureClaim.findFirst({
     where: { tradingAccountId: args.tradingAccountId, securityId: args.securityId, releasedAt: null },
   });
   if (active) {
+    if (args.expectedOrderIntentId != null && active.orderIntentId !== args.expectedOrderIntentId) {
+      return markClaimUnresolved(active.id, 'POSITION_ATTACHMENT_ORDER_INTENT_CONFLICT', {
+        claimedOrderIntentId: active.orderIntentId,
+        observedOrderIntentId: args.expectedOrderIntentId,
+        observedTrackedPositionId: args.trackedPositionId,
+        tradingAccountId: args.tradingAccountId,
+        securityId: args.securityId,
+        symbol: args.symbol,
+      }, args.tx);
+    }
     if (active.status === 'UNRESOLVED') {
       const evidence = {
         claimedTrackedPositionId: active.trackedPositionId,
@@ -467,6 +489,7 @@ export async function attachEntryExposureClaimToPosition(args: {
 export async function releaseConfirmedTerminalEntryClaim(args: {
   orderIntentId: number;
   brokerStatus: string;
+  allowUnresolved?: boolean;
   db?: Db;
 }) {
   const db = args.db ?? prisma;
@@ -477,72 +500,143 @@ export async function releaseConfirmedTerminalEntryClaim(args: {
     include: {
       security: { select: { symbol: true } },
       orderIntent: { select: { clientOrderId: true, blockReason: true } },
+      trackedPosition: { select: { status: true } },
     },
   });
   if (!claim || claim.releasedAt) return claim;
+  if (claim.status === 'UNRESOLVED' && !args.allowUnresolved) return claim;
+  if (normalized === 'filled' && !claim.trackedPositionId) {
+    if (claim.status === 'UNRESOLVED') return claim;
+    return transitionEntryExposureClaim({
+      orderIntentId: args.orderIntentId,
+      status: 'FILLED_AWAITING_POSITION',
+      eventType: 'BROKER_ORDER_FILLED_AWAITING_POSITION',
+      evidence: { brokerStatus: normalized },
+      db,
+    });
+  }
+  if (claim.trackedPosition?.status === 'open' || claim.trackedPosition?.status === 'closing') {
+    return claim;
+  }
   const localOrder = await db.brokerOrder.findFirst({
     where: { orderIntentId: args.orderIntentId }, orderBy: { createdAt: 'desc' },
   });
   let brokerOrder;
   let brokerPosition;
+  let openOrders;
+  const orderChain: AlpacaOrder[] = [];
   try {
     brokerOrder = localOrder
       ? await getAlpacaOrderById(claim.tradingAccountId, localOrder.brokerOrderId, 'reconciliation_check')
       : claim.orderIntent?.clientOrderId
         ? await getAlpacaOrderByClientOrderId(claim.tradingAccountId, claim.orderIntent.clientOrderId, 'pending_order_idempotency_check')
         : null;
-    brokerPosition = await getAlpacaPositionBySymbol(claim.tradingAccountId, claim.security.symbol, 'reconciliation_check');
-  } catch {
-    await markClaimUnresolved(claim.id, 'AUTHORITATIVE_RELEASE_LOOKUP_FAILED', { brokerStatus: normalized }, db);
-    return null;
-  }
-  if (!brokerOrder || !isTerminalBrokerOrderStatus(brokerOrder.status) || brokerPosition) {
-    await markClaimUnresolved(claim.id, 'AUTHORITATIVE_RELEASE_INCONCLUSIVE', {
-      observedBrokerOrderStatus: brokerOrder?.status ?? null,
-      brokerPositionQuantity: brokerPosition?.qty ?? null,
+    if (brokerOrder) {
+      orderChain.push(brokerOrder);
+      for (let depth = 0; brokerOrder.replaced_by && depth < 10; depth += 1) {
+        const replacement = await getAlpacaOrderById(claim.tradingAccountId, brokerOrder.replaced_by, 'reconciliation_check');
+        if (!replacement || orderChain.some((order) => order.id === replacement.id)) {
+          throw new Error('Replacement order chain is incomplete or cyclic.');
+        }
+        orderChain.push(replacement);
+        brokerOrder = replacement;
+      }
+      if (brokerOrder.replaced_by) throw new Error('Replacement order chain exceeded its bounded depth.');
+    }
+    [brokerPosition, openOrders] = await Promise.all([
+      getAlpacaPositionBySymbol(claim.tradingAccountId, claim.security.symbol, 'reconciliation_check'),
+      getCompleteOpenAlpacaBuyOrdersForSymbol(claim.tradingAccountId, claim.security.symbol, 'reconciliation_check'),
+    ]);
+  } catch (error) {
+    await appendClaimDiagnostic(claim.id, 'AUTHORITATIVE_RELEASE_RETRYABLE', {
+      brokerStatus: normalized,
+      error: error instanceof Error ? error.message : 'Broker evidence acquisition failed.',
     }, db);
     return null;
   }
-  const brokerFilled = Number(brokerOrder.filled_qty ?? 0);
+  const identityConflict = orderChain.some((order) =>
+    order.symbol.trim().toUpperCase() !== claim.security.symbol.trim().toUpperCase() ||
+    order.side.toLowerCase() !== 'buy');
+  if (identityConflict) {
+    await markClaimUnresolved(claim.id, 'AUTHORITATIVE_RELEASE_IDENTITY_CONFLICT', {
+      orderIds: orderChain.map((order) => order.id), symbol: claim.security.symbol,
+    }, db);
+    return null;
+  }
+  const finalStatus = brokerOrder?.status.trim().toLowerCase();
+  const conclusivelyNonExecutable = finalStatus != null && ['filled', 'canceled', 'cancelled', 'expired', 'rejected'].includes(finalStatus);
+  if (!brokerOrder || !conclusivelyNonExecutable || brokerPosition || openOrders.length > 0) {
+    await appendClaimDiagnostic(claim.id, 'AUTHORITATIVE_RELEASE_BLOCKED', {
+      observedBrokerOrderStatus: finalStatus ?? null,
+      brokerPositionQuantity: brokerPosition?.qty ?? null,
+      executableBrokerBuyOrderIds: openOrders.map((order) => order.id),
+    }, db);
+    return null;
+  }
+  const brokerFilled = orderChain.reduce((sum, order) => sum + Number(order.filled_qty ?? 0), 0);
   const activities = await db.brokerActivity.findMany({
     where: { orderIntentId: args.orderIntentId, activityType: 'FILL', side: 'buy' },
     select: { qty: true },
   });
   const locallyAccounted = activities.reduce((sum, activity) => sum + Number(activity.qty ?? 0), 0);
-  if (!Number.isFinite(brokerFilled) || brokerFilled < 0 || locallyAccounted + 1e-9 < brokerFilled ||
-      claim.orderIntent?.blockReason?.includes('DELIVERY_UNCERTAIN')) {
-    await markClaimUnresolved(claim.id, 'AUTHORITATIVE_RELEASE_EXPOSURE_UNACCOUNTED', {
+  if (!Number.isFinite(brokerFilled) || brokerFilled < 0 || locallyAccounted + 1e-9 < brokerFilled) {
+    await appendClaimDiagnostic(claim.id, 'AUTHORITATIVE_RELEASE_FILLS_INCOMPLETE', {
       brokerOrderId: brokerOrder.id, brokerOrderStatus: brokerOrder.status,
       brokerFilledQuantity: brokerOrder.filled_qty ?? null, locallyAccountedQuantity: locallyAccounted,
-      deliveryUncertain: claim.orderIntent?.blockReason?.includes('DELIVERY_UNCERTAIN') ?? false,
     }, db);
     return null;
   }
   return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`entry-exposure:${claim.tradingAccountId}:${claim.securityId}`}, 0))`;
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`entry-exposure:${claim.tradingAccountId}:${claim.securityId}`}, 0))::text`;
     const current = await tx.entryExposureClaim.findUnique({ where: { id: claim.id } });
     if (!current || current.releasedAt) return current;
-    const [activePosition, nonterminalOrder] = await Promise.all([
+    const [activePosition, nonterminalOrder, currentActivities] = await Promise.all([
       tx.trackedPosition.count({ where: { tradingAccountId: claim.tradingAccountId, securityId: claim.securityId, status: { in: [...ACTIVE_POSITION_STATUSES] } } }),
-      tx.brokerOrder.count({ where: { orderIntentId: args.orderIntentId, status: { notIn: ['filled', 'canceled', 'cancelled', 'expired', 'rejected', 'replaced', 'done_for_day', 'calculated'] } } }),
+      tx.brokerOrder.count({ where: {
+        tradingAccountId: claim.tradingAccountId,
+        securityId: claim.securityId,
+        side: { equals: 'buy', mode: 'insensitive' },
+        brokerOrderId: { notIn: orderChain.map((order) => order.id) },
+        status: { notIn: ['filled', 'canceled', 'cancelled', 'expired', 'rejected'] },
+      } }),
+      tx.brokerActivity.findMany({ where: { orderIntentId: args.orderIntentId, activityType: 'FILL', side: 'buy' }, select: { qty: true } }),
     ]);
-    if (activePosition || nonterminalOrder) {
-      await markClaimUnresolved(claim.id, 'AUTHORITATIVE_RELEASE_REVALIDATION_FAILED', { activePosition, nonterminalOrder }, tx);
+    const currentAccounted = currentActivities.reduce((sum, activity) => sum + Number(activity.qty ?? 0), 0);
+    if (activePosition || nonterminalOrder || currentAccounted + 1e-9 < brokerFilled) {
+      await appendClaimDiagnostic(claim.id, 'AUTHORITATIVE_RELEASE_REVALIDATION_BLOCKED', { activePosition, nonterminalOrder, currentAccounted, brokerFilled }, tx);
       return null;
     }
     const now = new Date();
-    return tx.entryExposureClaim.update({
-      where: { id: claim.id },
+    const released = await tx.entryExposureClaim.updateMany({
+      where: { id: claim.id, status: current.status, releasedAt: null },
       data: {
         status: 'RELEASED', releasedAt: now, releaseReason: `BROKER_${String(brokerOrder.status).toUpperCase()}_NO_EXPOSURE`,
-        events: { create: { eventType: 'RELEASED_AUTHORITATIVE_NO_EXPOSURE', evidenceJson: {
-          brokerOrderId: brokerOrder.id, brokerOrderStatus: brokerOrder.status,
-          brokerFilledQuantity: brokerOrder.filled_qty ?? null, locallyAccountedQuantity: locallyAccounted,
-          brokerPosition: null,
-        } } },
       },
     });
+    if (released.count !== 1) return tx.entryExposureClaim.findUnique({ where: { id: claim.id } });
+    await tx.entryExposureClaimEvent.create({ data: { claimId: claim.id, eventType: 'RELEASED_AUTHORITATIVE_NO_EXPOSURE', evidenceJson: {
+      brokerOrderIds: orderChain.map((order) => order.id), brokerOrderStatus: brokerOrder.status,
+      brokerFilledQuantity: brokerFilled, locallyAccountedQuantity: locallyAccounted,
+      brokerPosition: null, executableBrokerBuyOrders: [],
+    } } });
+    return tx.entryExposureClaim.findUnique({ where: { id: claim.id } });
   });
+}
+
+async function appendClaimDiagnostic(claimId: number, eventType: string, evidence: Prisma.InputJsonValue, db: Db) {
+  const current = await db.entryExposureClaim.findUnique({ where: { id: claimId } });
+  if (!current || current.releasedAt) return current;
+  const duplicate = await db.entryExposureClaimEvent.findFirst({
+    where: { claimId, eventType }, orderBy: { createdAt: 'desc' }, select: { evidenceJson: true },
+  });
+  if (!duplicate || !sameEvidence(duplicate.evidenceJson, evidence)) {
+    await db.entryExposureClaimEvent.create({ data: { claimId, eventType, evidenceJson: evidence } });
+  }
+  await db.entryExposureClaim.updateMany({
+    where: { id: claimId, status: current.status, releasedAt: null },
+    data: { lastDiagnosedAt: new Date() },
+  });
+  return current;
 }
 
 async function markClaimUnresolved(
@@ -556,13 +650,15 @@ async function markClaimUnresolved(
   const duplicate = await db.entryExposureClaimEvent.findFirst({
     where: { claimId, eventType }, orderBy: { createdAt: 'desc' }, select: { evidenceJson: true },
   });
-  return db.entryExposureClaim.update({
-    where: { id: claimId },
-    data: {
-      status: 'UNRESOLVED', lastDiagnosedAt: new Date(),
-      ...(duplicate && sameEvidence(duplicate.evidenceJson, evidence) ? {} : { events: { create: { eventType, evidenceJson: evidence } } }),
-    },
+  const changed = await db.entryExposureClaim.updateMany({
+    where: { id: claimId, status: current.status, releasedAt: null },
+    data: { status: 'UNRESOLVED', lastDiagnosedAt: new Date() },
   });
+  if (changed.count !== 1) return db.entryExposureClaim.findUnique({ where: { id: claimId } });
+  if (!duplicate || !sameEvidence(duplicate.evidenceJson, evidence)) {
+    await db.entryExposureClaimEvent.create({ data: { claimId, eventType, evidenceJson: evidence } });
+  }
+  return db.entryExposureClaim.findUnique({ where: { id: claimId } });
 }
 
 export async function releaseEntryExposureClaimForClosedPosition(args: {

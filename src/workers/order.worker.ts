@@ -40,7 +40,7 @@ import {
   releaseUnsubmittedEntryExposureClaim,
   transitionEntryExposureClaim,
 } from '../services/entry-exposure-claim.service.js';
-import { isSellIntent } from '../services/entry-lifecycle-status.service.js';
+import { BROKER_ACTIVE_ENTRY_STATUSES, TERMINAL_ENTRY_ORDER_STATUSES, isSellIntent } from '../services/entry-lifecycle-status.service.js';
 
 export type SubmittedOrderSyncResult = {
   found: number;
@@ -858,7 +858,10 @@ export async function processPendingOrders() {
 export async function syncSubmittedOrdersForAccountUnlocked(tradingAccountId: number) {
   const submittedIntents = await prisma.orderIntent.findMany({
     where: {
-      status: 'submitted',
+      status: { in: [
+        ...BROKER_ACTIVE_ENTRY_STATUSES.filter((status) => !['received', 'pending', 'submitting'].includes(status)),
+        ...TERMINAL_ENTRY_ORDER_STATUSES.filter((status) => ['done_for_day', 'calculated', 'replaced'].includes(status)),
+      ] },
       tradingAccountId,
     },
     include: {
@@ -1015,6 +1018,17 @@ export async function syncSubmittedOrdersForAccountUnlocked(tradingAccountId: nu
           },
         });
         if (brokerOrder.side.toLowerCase() === 'buy') {
+          const claimStatus = nextStatus === 'partially_filled'
+            ? 'PARTIALLY_FILLED'
+            : nextStatus === 'filled'
+              ? 'FILLED_AWAITING_POSITION'
+              : 'BROKER_ORDER_ACTIVE';
+          await transitionEntryExposureClaim({
+            orderIntentId: brokerOrder.orderIntentId,
+            status: claimStatus,
+            eventType: 'BROKER_ORDER_STATUS_OBSERVED',
+            evidence: { brokerOrderId: brokerOrder.brokerOrderId, previousStatus, nextStatus },
+          }).catch(() => undefined);
           await releaseConfirmedTerminalEntryClaim({
             orderIntentId: brokerOrder.orderIntentId,
             brokerStatus: nextStatus,
