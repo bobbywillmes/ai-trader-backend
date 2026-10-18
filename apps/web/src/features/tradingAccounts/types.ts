@@ -855,3 +855,49 @@ export type AssignmentMarketPolicyEnrollmentPreview = {
   currentMarketEligibility: { outcome: 'ALLOWED' | 'BLOCKED' | 'INSUFFICIENT_EVIDENCE' | null; reasonCode: string; evaluatorTechnicalStatus: 'AVAILABLE' | 'NOT_EVALUATED'; requiredForActivation: false };
   operationalPosture: { strategyEnabled: boolean; assignmentEnabled: boolean; entriesEnabled: boolean; accountStatus: string; accountTradingEnabled: boolean; killSwitchEnabled: boolean; affectsEnrollmentValidity: false };
 };
+
+export type MarketPolicyEnforcementAuthorizationStatus = 'AUTHORIZED' | 'REVOKED' | 'INVALIDATED';
+export type MarketPolicyEnforcementAuthorizationState = 'NOT_AUTHORIZED' | MarketPolicyEnforcementAuthorizationStatus;
+export type MarketPolicyRuntimeEnforcement = { active: false; status: 'NOT_ACTIVATED'; tradingEffect: 'NONE' };
+type AuthorizationActor = { id: number; email: string; name: string | null };
+export type MarketPolicyEnforcementAuthorization = {
+  id: number; enrollmentGenerationId: number; authorizationSequence: number; authorityVersion: string;
+  status: MarketPolicyEnforcementAuthorizationStatus; environment: 'PAPER'; policyRevisionId: number;
+  authorizedAt: string; revokedAt: string | null; invalidatedAt: string | null; invalidationReasonCode: string | null;
+  // SYSTEM_OWNER projection only.
+  configurationFingerprint?: string; authorizationFingerprint?: string; grantReason?: string; revocationReason?: string | null;
+  authorizedBy?: AuthorizationActor; revokedBy?: AuthorizationActor | null; invalidatedBy?: AuthorizationActor | null;
+};
+export type MarketPolicyEnforcementAuthorizationStateResponse = {
+  authorizationScope: 'PAPER_ONLY'; authorityVersion: string; runtimeEnforcement: MarketPolicyRuntimeEnforcement;
+  enrollmentGeneration: { id: number; generation: number; status: AssignmentMarketPolicyEnrollmentStatus } | null;
+  state: MarketPolicyEnforcementAuthorizationState; effective: boolean; ineffectiveReasons: string[];
+  authorization: MarketPolicyEnforcementAuthorization | null;
+};
+export type MarketPolicyEnforcementAuthorizationPreview = {
+  authorizationScope: 'PAPER_ONLY'; authorityVersion: string; runtimeEnforcement: MarketPolicyRuntimeEnforcement;
+  identity: {
+    tradingAccount: { id: number; displayName: string; environment: 'PAPER' | 'LIVE' };
+    assignment: { id: number };
+    subscription: { id: number; key: string; name: string };
+    security: { id: number; symbol: string } | null;
+    strategy: { id: number; key: string; name: string };
+    enrollmentGeneration: { id: number; enrollmentId: number; generation: number; status: AssignmentMarketPolicyEnrollmentStatus } | null;
+    boundPolicyRevision: { id: number; revision: number; status: string } | null;
+    activePolicyRevision: { id: number; revision: number } | null;
+    accountHolderUserId?: number; boundAccountHolderUserId?: number | null;
+    configurationFingerprint?: string | null; expectedConfigurationFingerprint?: string | null;
+  };
+  configurationValidity: { valid: boolean; errors: Array<{ code: string; message: string }> };
+  eligibleToAuthorize: boolean; blockingReasons: Array<{ code: string; message: string }>; viewerCanAuthorize: boolean;
+  currentAuthorization: MarketPolicyEnforcementAuthorizationStateResponse;
+  currentMarketEligibility: { outcome: 'ALLOWED' | 'BLOCKED' | 'INSUFFICIENT_EVIDENCE' | null; reasonCode: string; evaluatorTechnicalStatus: 'AVAILABLE' | 'NOT_EVALUATED'; requiredForAuthorization: false };
+  operationalPosture: { strategyEnabled: boolean; assignmentEnabled: boolean; entriesEnabled: boolean; accountStatus: string; accountTradingEnabled: boolean; killSwitchEnabled: boolean; affectsAuthorizationValidity: false };
+};
+export type MarketPolicyEnforcementAuthorizationHistory = {
+  authorizationScope: 'PAPER_ONLY'; runtimeEnforcement: MarketPolicyRuntimeEnforcement;
+  authorizations: Array<MarketPolicyEnforcementAuthorization & {
+    generation: number; policyRevision: number;
+    events: Array<{ id: number; sequence: number; action: 'GRANT' | 'REVOKE' | 'INVALIDATE'; fromStatus: MarketPolicyEnforcementAuthorizationStatus | null; toStatus: MarketPolicyEnforcementAuthorizationStatus; reason: string; actor: AuthorizationActor | null; occurredAt: string }>;
+  }>;
+};

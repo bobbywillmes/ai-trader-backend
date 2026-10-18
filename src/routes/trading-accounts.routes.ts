@@ -42,6 +42,11 @@ import {
   prepareAssignmentMarketPolicyEnrollmentController,
   activateAssignmentMarketPolicyEnrollmentController,
   disableAssignmentMarketPolicyEnrollmentController,
+  getAssignmentMarketPolicyEnforcementAuthorizationController,
+  previewAssignmentMarketPolicyEnforcementAuthorizationController,
+  listAssignmentMarketPolicyEnforcementAuthorizationHistoryController,
+  grantAssignmentMarketPolicyEnforcementAuthorizationController,
+  revokeAssignmentMarketPolicyEnforcementAuthorizationController,
 } from '../controllers/trading-accounts.controller.js';
 import {
   requirePermission,
@@ -272,6 +277,33 @@ router.post(
   '/:id/account-subscriptions/:accountSubscriptionId/market-policy-enrollment/disable',
   requireSystemOwnerAccess,
   disableAssignmentMarketPolicyEnrollmentController,
+);
+router.get(
+  '/:id/account-subscriptions/:accountSubscriptionId/market-policy-enrollment/enforcement-authorization',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.SUBSCRIPTION_READ),
+  getAssignmentMarketPolicyEnforcementAuthorizationController,
+);
+router.get(
+  '/:id/account-subscriptions/:accountSubscriptionId/market-policy-enrollment/enforcement-authorization/preview',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.SUBSCRIPTION_READ),
+  previewAssignmentMarketPolicyEnforcementAuthorizationController,
+);
+router.get(
+  '/:id/account-subscriptions/:accountSubscriptionId/market-policy-enrollment/enforcement-authorization/history',
+  requireSystemOwnerAccess,
+  listAssignmentMarketPolicyEnforcementAuthorizationHistoryController,
+);
+router.post(
+  '/:id/account-subscriptions/:accountSubscriptionId/market-policy-enrollment/enforcement-authorization/grant',
+  requireSystemOwnerAccess,
+  grantAssignmentMarketPolicyEnforcementAuthorizationController,
+);
+router.post(
+  '/:id/account-subscriptions/:accountSubscriptionId/market-policy-enrollment/enforcement-authorization/revoke',
+  requireSystemOwnerAccess,
+  revokeAssignmentMarketPolicyEnforcementAuthorizationController,
 );
 router.post(
   '/:id/account-subscriptions',

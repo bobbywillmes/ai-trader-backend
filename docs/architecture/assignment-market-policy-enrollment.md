@@ -10,11 +10,13 @@ Every API projection reports `authority: CONFIGURATION_ONLY` and
 lifecycle only. They do not authorize order evaluation or execution.
 
 Each generation has nullable `enforcementAuthorityVersion` and
-`enforcementAuthorizedAt` fields. PostgreSQL requires both to remain null in
-Phase 3A. A later enforcement phase must remove that constraint deliberately
-and add a separate, explicit owner authorization workflow. It must never infer
-enforcement authority from an existing `ACTIVE` configuration. There is no
-default-on enforcement flag.
+`enforcementAuthorizedAt` fields. PostgreSQL requires both to remain null, and
+Phase 3C.1 deliberately keeps that constraint. Explicit owner authorization is a
+separate, append-preserving `AssignmentMarketPolicyEnforcementAuthorization`
+record, so revocation and reauthorization never rewrite a generation. Authority
+is never inferred from an existing `ACTIVE` configuration, and there is no
+default-on enforcement flag. See
+`docs/architecture/market-policy-enforcement-authorization.md`.
 
 ## Identity and lifecycle
 

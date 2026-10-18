@@ -420,6 +420,15 @@ TrackedPosition lifecycle, and is released only on authoritative no-exposure
 evidence. Pre-claim lifecycle evidence fails closed and is handled by the
 operator readiness workflow. See `docs/architecture/entry-exposure-exclusivity.md`.
 
+Phase 3C.1 adds explicit SYSTEM_OWNER grant and revoke of PAPER market-policy
+enforcement authority for one exact ACTIVE enrollment generation. Authority lives in
+a separate, append-preserving `AssignmentMarketPolicyEnforcementAuthorization` row
+with trigger-written immutable events, never in the permanently null generation
+fields. PostgreSQL invalidates a grant when its generation is disabled, its revision
+is superseded, its holder changes, or its assignment identity changes. No trading
+path consumes these records yet, and runtime enforcement is not active. See
+`docs/architecture/market-policy-enforcement-authorization.md`.
+
 The intended lifecycle is:
 
 ```text

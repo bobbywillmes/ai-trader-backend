@@ -24,6 +24,13 @@ const assignmentSelect = {
 
 function fingerprint(input: object) { return createHash('sha256').update(JSON.stringify(input)).digest('hex'); }
 
+export type AssignmentEnrollmentConfigurationIdentity = { accountId: number; assignmentId: number; strategyId: number; policyRevisionId: number; policyConfigurationFingerprint: string; accountHolderUserId: number; environment: string; generation: number };
+// Key order is part of the persisted fingerprint contract; do not reorder.
+export function assignmentEnrollmentConfigurationFingerprint(identity: AssignmentEnrollmentConfigurationIdentity) {
+  const { accountId, assignmentId, strategyId, policyRevisionId, policyConfigurationFingerprint, accountHolderUserId, environment, generation } = identity;
+  return fingerprint({ accountId, assignmentId, strategyId, policyRevisionId, policyConfigurationFingerprint, accountHolderUserId, environment, generation });
+}
+
 async function assertOwner(actorUserId: number, db: Prisma.TransactionClient) {
   const actor = await db.user.findUnique({ where: { id: actorUserId }, select: { platformRole: true, enabled: true } });
   if (!actor || !actor.enabled || actor.platformRole !== 'SYSTEM_OWNER') throw new HttpError(403, 'SYSTEM_OWNER authorization is required.');
@@ -37,7 +44,9 @@ export function serializeAssignmentMarketPolicyEnrollmentGeneration<T extends { 
 export function serializeAssignmentMarketPolicyEnrollmentGeneration<T extends { enforcementAuthorityVersion: string | null; enforcementAuthorizedAt: Date | null }>(generation: T, viewerRole: PlatformRole): any;
 export function serializeAssignmentMarketPolicyEnrollmentGeneration<T extends { enforcementAuthorityVersion: string | null; enforcementAuthorizedAt: Date | null }>(generation: T, viewerRole: PlatformRole = PlatformRole.SYSTEM_OWNER) {
   const row = generation as T & Record<string, any>;
-  const base = { ...row, authority: ASSIGNMENT_MARKET_POLICY_ENROLLMENT_AUTHORITY, enforcementEnabled: generation.enforcementAuthorityVersion !== null && generation.enforcementAuthorizedAt !== null };
+  // Generation enforcement fields are permanently null; explicit authorization is a separate record and
+  // runtime enforcement is not active in Phase 3C.1.
+  const base = { ...row, authority: ASSIGNMENT_MARKET_POLICY_ENROLLMENT_AUTHORITY, enforcementEnabled: ASSIGNMENT_MARKET_POLICY_ENFORCEMENT_ENABLED };
   if (viewerRole === PlatformRole.SYSTEM_OWNER) return base;
   const policyRevision = row.policyRevision ? {
     id: row.policyRevision.id,
@@ -175,7 +184,7 @@ export async function prepareAssignmentMarketPolicyEnrollment(accountId: number,
     if (await db.assignmentMarketPolicyEnrollmentGeneration.findFirst({ where: { enrollmentId: enrollment.id, status: { in: ['PREPARED', 'ACTIVE'] } } })) throw new HttpError(409, 'Disable the current enrollment generation before re-enrolling.');
     const latest = await db.assignmentMarketPolicyEnrollmentGeneration.findFirst({ where: { enrollmentId: enrollment.id }, orderBy: { generation: 'desc' }, select: { generation: true } });
     const generation = (latest?.generation ?? 0) + 1;
-    const configurationFingerprint = fingerprint({ accountId, assignmentId, strategyId: assignment.routingStrategyId, policyRevisionId: revision.id, policyConfigurationFingerprint: strategyMarketPolicyConfigurationFingerprint(revision.dimensionRules), accountHolderUserId: assignment.tradingAccount.accountHolderUserId, environment: assignment.tradingAccount.environment, generation });
+    const configurationFingerprint = assignmentEnrollmentConfigurationFingerprint({ accountId, assignmentId, strategyId: assignment.routingStrategyId, policyRevisionId: revision.id, policyConfigurationFingerprint: strategyMarketPolicyConfigurationFingerprint(revision.dimensionRules), accountHolderUserId: assignment.tradingAccount.accountHolderUserId, environment: assignment.tradingAccount.environment, generation });
     const row = await db.assignmentMarketPolicyEnrollmentGeneration.create({ data: { enrollmentId: enrollment.id, generation, status: 'PREPARED', tradingAccountId: accountId, accountSubscriptionId: assignmentId, strategyId: assignment.routingStrategyId, policyRevisionId: revision.id, accountHolderUserId: assignment.tradingAccount.accountHolderUserId, configurationFingerprint, preparedByUserId: actorUserId, transitions: { create: { sequence: 1, action: 'PREPARE', fromStatus: null, toStatus: 'PREPARED', actorUserId, accountHolderUserId: assignment.tradingAccount.accountHolderUserId, configurationFingerprint } } }, include: generationInclude });
     return publicGeneration(row);
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });

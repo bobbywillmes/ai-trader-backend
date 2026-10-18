@@ -21,6 +21,9 @@ const mocks = vi.hoisted(() => ({
     res.status(200).json({ ok: true }),
   ),
   prepareAssignmentMarketPolicyEnrollmentController: vi.fn((_req: Request, res: Response) => res.status(201).json({ ok: true })),
+  grantAssignmentMarketPolicyEnforcementAuthorizationController: vi.fn((_req: Request, res: Response) => res.status(201).json({ ok: true })),
+  revokeAssignmentMarketPolicyEnforcementAuthorizationController: vi.fn((_req: Request, res: Response) => res.status(200).json({ ok: true })),
+  listAssignmentMarketPolicyEnforcementAuthorizationHistoryController: vi.fn((_req: Request, res: Response) => res.status(200).json({ ok: true })),
 }));
 
 vi.mock('../controllers/trading-accounts.controller.js', () => ({
@@ -67,6 +70,11 @@ vi.mock('../controllers/trading-accounts.controller.js', () => ({
   prepareAssignmentMarketPolicyEnrollmentController: mocks.prepareAssignmentMarketPolicyEnrollmentController,
   activateAssignmentMarketPolicyEnrollmentController: vi.fn(),
   disableAssignmentMarketPolicyEnrollmentController: vi.fn(),
+  getAssignmentMarketPolicyEnforcementAuthorizationController: vi.fn(),
+  previewAssignmentMarketPolicyEnforcementAuthorizationController: vi.fn(),
+  listAssignmentMarketPolicyEnforcementAuthorizationHistoryController: mocks.listAssignmentMarketPolicyEnforcementAuthorizationHistoryController,
+  grantAssignmentMarketPolicyEnforcementAuthorizationController: mocks.grantAssignmentMarketPolicyEnforcementAuthorizationController,
+  revokeAssignmentMarketPolicyEnforcementAuthorizationController: mocks.revokeAssignmentMarketPolicyEnforcementAuthorizationController,
 }));
 
 vi.mock('../controllers/reconciliation.controller.js', () => ({
@@ -95,6 +103,45 @@ describe('assignment market-policy enrollment mutation RBAC', () => {
     expect((await postAs(PlatformRole.ACCOUNT_USER, path, {})).status).toBe(403);
   });
 });
+
+describe('market-policy enforcement authorization RBAC', () => {
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server?.close(() => resolve()));
+    server = undefined;
+    vi.clearAllMocks();
+  });
+
+  const base = '/api/trading-accounts/1/account-subscriptions/2/market-policy-enrollment/enforcement-authorization';
+  it.each([
+    ['grant', 'POST', 201, mocks.grantAssignmentMarketPolicyEnforcementAuthorizationController],
+    ['revoke', 'POST', 200, mocks.revokeAssignmentMarketPolicyEnforcementAuthorizationController],
+    ['history', 'GET', 200, mocks.listAssignmentMarketPolicyEnforcementAuthorizationHistoryController],
+  ] as const)('permits only SYSTEM_OWNER to reach %s', async (operation, method, status, controller) => {
+    const path = `${base}/${operation}`;
+    expect((await requestAs(PlatformRole.SYSTEM_OWNER, method, path)).status).toBe(status);
+    expect(controller).toHaveBeenCalledOnce();
+    for (const role of [PlatformRole.OPERATOR, PlatformRole.ACCOUNT_USER]) {
+      await new Promise<void>((resolve) => server?.close(() => resolve())); server = undefined;
+      expect((await requestAs(role, method, path)).status).toBe(403);
+    }
+    expect(controller).toHaveBeenCalledOnce();
+  });
+});
+
+async function requestAs(platformRole: PlatformRole, method: 'GET' | 'POST', path: string) {
+  if (method === 'POST') return postAs(platformRole, path, {});
+  const app = express();
+  app.use((_req, res, next) => { res.locals.user = { id: 1, email: 'owner@example.com', platformRole, enabled: true, createdAt: new Date('2026-07-18T00:00:00.000Z'), updatedAt: new Date('2026-07-18T00:00:00.000Z') }; next(); });
+  app.use('/api/trading-accounts', tradingAccountsRouter);
+  app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    res.status(error instanceof HttpError ? error.statusCode : 500).json({});
+  });
+  server = app.listen(0);
+  await new Promise<void>((resolve) => server?.once('listening', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Missing test address');
+  return fetch(`http://127.0.0.1:${address.port}${path}`);
+}
 
 async function postAs(
   platformRole: PlatformRole,

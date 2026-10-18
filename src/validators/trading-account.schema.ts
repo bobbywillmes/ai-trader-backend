@@ -287,3 +287,19 @@ export const disableAssignmentMarketPolicyEnrollmentSchema = z.strictObject({
   generationId: z.coerce.number().int().positive(),
   reason: z.string().trim().min(1).max(500),
 });
+
+export const grantAssignmentMarketPolicyEnforcementAuthorizationSchema = z.strictObject({
+  generationId: z.coerce.number().int().positive(),
+  expectedConfigurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  expectedPolicyRevisionId: z.coerce.number().int().positive(),
+  reason: z.string().trim().min(1).max(500),
+});
+
+export const revokeAssignmentMarketPolicyEnforcementAuthorizationSchema = z.strictObject({
+  authorizationId: z.coerce.number().int().positive(),
+  reason: z.string().trim().min(1).max(500),
+});
+
+export const previewAssignmentMarketPolicyEnforcementAuthorizationQuerySchema = z.strictObject({
+  generationId: z.coerce.number().int().positive().optional(),
+});
