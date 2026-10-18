@@ -36,6 +36,7 @@ import { getBrokerWriteDeliveryClassification } from '../errors/broker-write-del
 import { bestEffortAppendBrokerOpportunityEvent, createBrokerObservationBudget } from '../services/order-intent-broker-opportunity.service.js';
 import {
   requireEntryExposureClaim,
+  recordMissingLocalBrokerOrderDiagnostic,
   releaseConfirmedTerminalEntryClaim,
   releaseUnsubmittedEntryExposureClaim,
   transitionEntryExposureClaim,
@@ -974,15 +975,22 @@ export async function syncSubmittedOrdersForAccountUnlocked(tradingAccountId: nu
 
   for (const intent of submittedIntents) {
     try {
-      const brokerOrder = intent.brokerOrders[0];
-      if (!brokerOrder) continue;
-
-      // Persist progress before provider lookup so 404s and retryable item failures
-      // cannot permanently occupy every bounded batch slot.
+      // Persist progress before inspecting local or provider order evidence so a
+      // missing relation, 404, or retryable failure cannot monopolize the batch.
       await prisma.orderIntent.update({
         where: { id: intent.id },
         data: { lastSubmittedOrderSyncAt: new Date() },
       });
+      const brokerOrder = intent.brokerOrders[0];
+      if (!brokerOrder) {
+        await recordMissingLocalBrokerOrderDiagnostic({
+          orderIntentId: intent.id,
+          clientOrderId: intent.clientOrderId,
+          intentStatus: intent.status,
+        }).catch(() => undefined);
+        continue;
+      }
+
       const alpacaOrder = openOrdersByBrokerOrderId.get(brokerOrder.brokerOrderId) ??
         await getAlpacaOrderById(tradingAccountId, brokerOrder.brokerOrderId, 'submitted_order_sync');
 

@@ -1,5 +1,6 @@
 import type { OrderIntent, Prisma, PrismaClient } from '@prisma/client';
 import crypto from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
@@ -23,7 +24,7 @@ function conflict(code: string, message: string, details: Record<string, unknown
 }
 
 function sameEvidence(left: unknown, right: unknown) {
-  return JSON.stringify(left ?? {}) === JSON.stringify(right ?? {});
+  return isDeepStrictEqual(left ?? {}, right ?? {});
 }
 
 export async function previewEntryExposureClaimRemediation(claimId: number) {
@@ -362,6 +363,24 @@ export async function transitionEntryExposureClaim(args: {
     data: { claimId: claim.id, eventType: args.eventType, evidenceJson: args.evidence ?? {} },
   });
   return db.entryExposureClaim.findUnique({ where: { id: claim.id } });
+}
+
+export async function recordMissingLocalBrokerOrderDiagnostic(args: {
+  orderIntentId: number;
+  clientOrderId: string | null;
+  intentStatus: string;
+  db?: Db;
+}) {
+  const db = args.db ?? prisma;
+  const claim = await db.entryExposureClaim.findUnique({ where: { orderIntentId: args.orderIntentId } });
+  if (!claim || claim.releasedAt) return claim;
+  return appendClaimDiagnostic(claim.id, 'SUBMITTED_ORDER_LOCAL_BROKER_ORDER_MISSING', {
+    orderIntentId: args.orderIntentId,
+    clientOrderId: args.clientOrderId,
+    intentStatus: args.intentStatus,
+    reconciliationRequired: true,
+    executionAuthority: 'NONE',
+  }, db);
 }
 
 export async function releaseUnsubmittedEntryExposureClaim(args: {

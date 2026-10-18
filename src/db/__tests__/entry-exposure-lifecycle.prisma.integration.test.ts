@@ -432,4 +432,39 @@ describePrisma('entry exposure lifecycle with real Prisma services', () => {
     const report = await assessEntryExposureReadiness({ tradingAccountIds: [account.id] });
     expect(report.staleLocalActiveBrokerBuys).toHaveLength(0); expect(report.assessment).toBe('BROKER_VERIFIED_READY');
   });
+
+  it('22. rotates past missing local broker-order records without requeueing or broker POSTs', async () => {
+    const account = await createAccount();
+    const missing: Array<{ intentId: number; claimId: number }> = [];
+    for (let index = 0; index < 10; index += 1) {
+      const security = await createSecurity('D'); const owned = await acquire(account, security, `missing-${index}-${randomUUID()}`);
+      await prisma.orderIntent.update({ where: { id: owned.intent.id }, data: { status: 'submitted' } });
+      await prisma.entryExposureClaim.update({ where: { id: owned.claimId }, data: { status: 'BROKER_ORDER_ACTIVE' } });
+      missing.push({ intentId: owned.intent.id, claimId: owned.claimId });
+    }
+    const newerSecurity = await createSecurity('E'); const newer = await acquire(account, newerSecurity, `newer-${randomUUID()}`);
+    await prisma.orderIntent.update({ where: { id: newer.intent.id }, data: { status: 'submitted' } });
+    await prisma.entryExposureClaim.update({ where: { id: newer.claimId }, data: { status: 'BROKER_ORDER_ACTIVE' } });
+    const local = alpacaOrder({ id: `newer-${randomUUID()}`, clientOrderId: newer.intent.clientOrderId!, symbol: newerSecurity.symbol, status: 'new' });
+    await createLocalBrokerOrder(account, newerSecurity, newer.intent.id, local);
+    broker.ordersById.set(local.id, { ...local, status: 'expired' }); broker.openBuysByAccount.set(account.id, []);
+
+    await syncSubmittedOrdersForAccountUnlocked(account.id);
+    await syncSubmittedOrdersForAccountUnlocked(account.id);
+
+    expect((await prisma.entryExposureClaim.findUniqueOrThrow({ where: { id: newer.claimId } })).status).toBe('RELEASED');
+    const olderIntents = await prisma.orderIntent.findMany({ where: { id: { in: missing.map((item) => item.intentId) } }, orderBy: { id: 'asc' } });
+    expect(olderIntents.every((intent) => intent.status === 'submitted' && intent.lastSubmittedOrderSyncAt !== null)).toBe(true);
+    const olderClaims = await prisma.entryExposureClaim.findMany({ where: { id: { in: missing.map((item) => item.claimId) } }, orderBy: { id: 'asc' } });
+    expect(olderClaims.every((claim) => claim.status === 'BROKER_ORDER_ACTIVE' && claim.releasedAt === null)).toBe(true);
+    const diagnostics = await prisma.entryExposureClaimEvent.findMany({ where: {
+      claimId: { in: missing.map((item) => item.claimId) }, eventType: 'SUBMITTED_ORDER_LOCAL_BROKER_ORDER_MISSING',
+    } });
+    expect(diagnostics).toHaveLength(10);
+    await syncSubmittedOrdersForAccountUnlocked(account.id);
+    expect(await prisma.entryExposureClaimEvent.count({ where: {
+      claimId: { in: missing.map((item) => item.claimId) }, eventType: 'SUBMITTED_ORDER_LOCAL_BROKER_ORDER_MISSING',
+    } })).toBe(10);
+    expect(broker.submitCalls).toHaveLength(0);
+  });
 });
