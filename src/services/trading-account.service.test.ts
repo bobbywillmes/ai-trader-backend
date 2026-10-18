@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   tradingAccountMembershipFindMany: vi.fn(),
   trackedPositionFindMany: vi.fn(),
   orderIntentUpdateMany: vi.fn(),
+  orderIntentFindMany: vi.fn(),
   accountSubscriptionUpdateMany: vi.fn(),
   queryRaw: vi.fn(),
   readinessAssessmentFindFirst: vi.fn(),
@@ -26,6 +27,9 @@ const mocks = vi.hoisted(() => ({
   computeReadinessFingerprints: vi.fn(),
   getLiveWriteApprovalState: vi.fn(),
   systemEventCreate: vi.fn(),
+}));
+vi.mock('./entry-exposure-claim.service.js', () => ({
+  releaseUnsubmittedEntryExposureClaim: vi.fn().mockResolvedValue({ id: 1 }),
 }));
 
 vi.mock('../config/env.js', () => ({
@@ -70,6 +74,7 @@ vi.mock('../db/prisma.js', () => ({
       findMany: mocks.trackedPositionFindMany,
     },
     orderIntent: {
+      findMany: mocks.orderIntentFindMany,
       updateMany: mocks.orderIntentUpdateMany,
     },
     systemEvent: {
@@ -87,6 +92,7 @@ vi.mock('./trading-account-risk-configuration.service.js', () => ({
         update: mocks.tradingAccountUpdate,
       },
       orderIntent: {
+        findMany: mocks.orderIntentFindMany,
         updateMany: mocks.orderIntentUpdateMany,
         count: mocks.count,
       },
@@ -169,6 +175,7 @@ describe('trading account service', () => {
     mocks.queryRaw.mockResolvedValue([]);
     mocks.count.mockResolvedValue(0);
     mocks.orderIntentUpdateMany.mockResolvedValue({ count: 0 });
+    mocks.orderIntentFindMany.mockResolvedValue([]);
     mocks.systemEventCreate.mockResolvedValue({ id: 100 });
     mocks.userFindUnique.mockResolvedValue({ id: 1, enabled: true });
     mocks.tradingAccountCreate.mockResolvedValue({ id: 10 });
@@ -628,7 +635,8 @@ describe('trading account service', () => {
         tradingEnabled: true,
         killSwitchEnabled: false,
       });
-      mocks.orderIntentUpdateMany.mockResolvedValue({ count: 2 });
+      mocks.orderIntentUpdateMany.mockResolvedValue({ count: 1 });
+      mocks.orderIntentFindMany.mockResolvedValue([{ id: 11 }, { id: 12 }]);
       mocks.accountSubscriptionUpdateMany.mockResolvedValue({ count: 3 });
 
       await expect(
@@ -658,6 +666,7 @@ describe('trading account service', () => {
       });
       expect(mocks.orderIntentUpdateMany).toHaveBeenCalledWith({
         where: {
+          id: 11,
           tradingAccountId: 1,
           status: 'pending',
           side: 'buy',
@@ -691,6 +700,7 @@ describe('trading account service', () => {
         tradingEnabled: false,
         killSwitchEnabled: true,
       });
+      mocks.orderIntentFindMany.mockResolvedValue([]);
 
       const result = await deactivateTradingAccountForAdmin(
         1,
@@ -713,6 +723,7 @@ describe('trading account service', () => {
       mocks.systemEventCreate.mockRejectedValue(
         new Error('audit insert failed'),
       );
+      mocks.orderIntentFindMany.mockResolvedValue([]);
 
       await expect(
         deactivateTradingAccountForAdmin(1, { reason: 'Pause' }, 7),

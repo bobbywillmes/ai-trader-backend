@@ -30,7 +30,11 @@ as `ENTRY_ALREADY_PENDING`, `ALREADY_IN_POSITION`, `POSITION_CLOSING`, or
 `ENTRY_EXPOSURE_UNRESOLVED`.
 
 The claim advances monotonically through pending, submitting, broker-active,
-filled-awaiting-position, position-open/closing, unresolved, and released states.
+partially-filled, filled-awaiting-position, position-open/closing, unresolved,
+and released states. A terminal order observation is not itself a release event.
+`filled` preserves ownership as `FILLED_AWAITING_POSITION` until position
+materialization attaches the claim; delayed order observations cannot downgrade
+`POSITION_OPEN`. Partial fills retain ownership while any remaining BUY can execute.
 `UNRESOLVED` cannot return to an executable state through ordinary observation;
 `RELEASED` is terminal. Repeated unchanged observations do not append events.
 Broker timeouts retain ownership.
@@ -41,12 +45,25 @@ claim remains active and becomes `UNRESOLVED`, with both position identities in
 its event and Operational Attention evidence. It is not attached to the unrelated
 position, and its active uniqueness continues to block additional buying.
 
-Release requires fresh exact broker-order and position-by-symbol observations
-outside the transaction, followed by an account/Security advisory lock and local
-revalidation. The order must be terminal (or submission authoritatively impossible),
-delivery must be certain, cumulative broker fills must be locally accounted, no
-broker position may remain, and no local active position or nonterminal order may
-have appeared. A failed lookup or disagreement retains `UNRESOLVED` ownership.
+Release requires fresh exact originating-order and bounded replacement-chain
+observations, a complete paginated open BUY-order view filtered by canonical
+symbol, and position-by-symbol evidence outside the transaction, followed by an
+account/Security advisory lock and local revalidation. The final order must be
+conclusively non-executable (`filled`, `canceled`, `expired`, or `rejected`),
+cumulative fills across the chain must be locally accounted, no broker position
+or executable symbol BUY may remain, and no local active position or executable
+BUY may have appeared. `done_for_day`, `calculated`, and an unverified `replaced`
+order do not establish release eligibility. Provider failure, rate limiting,
+malformed data, incomplete pagination, or incomplete fills append retryable
+diagnostics and retain the current ownership state; identity contradictions use
+`UNRESOLVED` and require explicit remediation.
+
+The broker snapshot and final database lock cannot serialize a manual order
+created directly in Alpaca between those two moments. This residual external race
+is explicit: AI Trader serializes all of its own admissions, fails closed on every
+known broker order, and reconciliation will detect later external exposure, but
+operators must prohibit/manual-coordinate direct Alpaca BUY creation during claim
+release and rollout operations.
 
 The broker BUY adapter boundary independently verifies intent ID, account,
 canonical Security/symbol, BUY side, stable client-order ID, submitting intent,
@@ -77,8 +94,11 @@ and stranded claims, ambiguous groups, missing Securities, and unclaimed active
 positions/intents all keep readiness false. Pending legacy intents without a
 claim fail closed at the worker and broker boundary and are never made executable
 by absence lookup alone.
-Reconciliation reports missing, unresolved, or stranded claims through
-`SystemEvent` and Operational Attention. It never clears them automatically.
+Reconciliation reports missing or unresolved claims through `SystemEvent` and
+Operational Attention. Its existing lifecycle pass also retries non-UNRESOLVED
+claims attached to closed positions in bounded oldest-first batches; failures are
+rotated so one bad claim cannot starve later claims. `UNRESOLVED` is never
+automatically released by a later observation.
 
 Rollback may revert application code while retaining the additive tables. Do not
 drop claim data during rollback. Re-enabling old code weakens the exclusivity

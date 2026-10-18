@@ -11,20 +11,24 @@ It grants no new LIVE authority.
 2. Deploy the additive migration. It creates claim and event tables and does not
    backfill historical rows.
 3. Run `npm run entry-exposure:readiness` and retain its JSON report.
-4. Treat `ambiguous`, `missingSecurity`, `unclaimedActivePositions`,
+4. Treat `ambiguous`, `missingSecurity`,
    `unclaimedUnresolvedBuyIntents`, `unclaimedActiveBrokerBuys`,
-   `unresolvedClaims`, and `strandedClaims` as rollout blockers. Review
+   and `strandedClaims` as unsafe rollout blockers. Review
    `historicalTerminalEvidence` separately; terminal history is not proof of
    present exposure and is never made executable by adoption.
 5. Run `npm run entry-exposure:readiness -- --apply`. This adopts only a single
    active position or a single entry lifecycle for an account/security pair.
-   Every adoption remains `UNRESOLVED`. Adoption records blocking ownership; it
-   does not establish attribution or authorize execution. A legacy BUY is never
+   Adoption records blocking ownership; it does not establish execution authority.
+   A verified open position is protected by a durable account/Security claim so
+   ordinary position management can continue without forced liquidation. Unknown
+   historical attribution remains visible for investigation, but protection of
+   that symbol is the rollout safety boundary. A legacy BUY is never
    requeued merely because a stable-client-ID lookup returns no order.
-6. Run the dry-run again. `ready` must be `true`. The command exits nonzero while
-   any unresolved or stranded claim remains, including claims created by apply.
-   Those claims require authoritative reconciliation/operator review; do not
-   clear them directly in SQL.
+6. Run the dry-run again. `ready` may become true only when every active exposure
+   is durably protected and no claimless executable BUY, ambiguous account/Security
+   group, missing Security, or stranded lifecycle remains. A protected legacy open
+   position may retain unresolved historical attribution without permitting a new
+   entry for its symbol. Do not clear claims directly in SQL.
 7. Restart the application on the new version, run account reconciliation, and
    verify no `entry_exposure_claim_missing` or
    `entry_exposure_claim_unresolved` findings/attention remain.
@@ -78,6 +82,9 @@ after reviewing that exact output, repeat with `--apply --confirm <fingerprint>`
 Apply performs fresh broker lookups again and locked database revalidation; any
 change or uncertainty refuses release. The command appends operator authorization
 and release events. It cannot submit or requeue an order and grants no LIVE authority.
+`--actor-user-id` is audit attribution only, not authentication. Run this command
+only from an access-controlled operational host/session after independently
+authenticating the SYSTEM_OWNER and retaining the preview/fingerprint record.
 For a rollout-adopted position with no attributable entry order, remediation is
 eligible only after that exact tracked position is closed, the broker reports no
 position for the canonical symbol, and the complete broker open-order observation

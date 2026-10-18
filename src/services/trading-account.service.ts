@@ -37,6 +37,7 @@ import {
   ACCOUNT_WORKFLOW_LOCK_FAMILIES,
   withTradingAccountWorkflowLock,
 } from './trading-account-workflow-lock.service.js';
+import { releaseUnsubmittedEntryExposureClaim } from './entry-exposure-claim.service.js';
 
 const LEGACY_DEFAULT_TRADING_ACCOUNT = {
   broker: TradingBroker.ALPACA,
@@ -532,17 +533,28 @@ export async function deactivateTradingAccountForAdmin(
               })
             : { count: 0 };
 
-        const blockedEntries = await tx.orderIntent.updateMany({
+        const blockableEntries = await tx.orderIntent.findMany({
           where: {
             tradingAccountId: id,
             status: 'pending',
             side: 'buy',
           },
-          data: {
-            status: 'blocked',
-            blockReason: `Trading account deactivated: ${input.reason}`,
-          },
+          select: { id: true },
         });
+        let blockedEntryCount = 0;
+        for (const entry of blockableEntries) {
+          const transitioned = await tx.orderIntent.updateMany({
+            where: { id: entry.id, tradingAccountId: id, status: 'pending', side: 'buy' },
+            data: { status: 'blocked', blockReason: `Trading account deactivated: ${input.reason}` },
+          });
+          if (transitioned.count !== 1) continue;
+          blockedEntryCount += 1;
+          await releaseUnsubmittedEntryExposureClaim({
+            orderIntentId: entry.id,
+            reason: 'ACCOUNT_DEACTIVATED_BEFORE_SUBMISSION',
+            db: tx,
+          });
+        }
         await invalidateLiveWriteApprovals(
           tx,
           id,
@@ -567,7 +579,7 @@ export async function deactivateTradingAccountForAdmin(
               before,
               after,
               changedFields: changedOperationalFields(before, after),
-              affectedPendingEntryIntentCount: blockedEntries.count,
+              affectedPendingEntryIntentCount: blockedEntryCount,
               affectedEntryEnabledAssignmentCount: disabledAssignments.count,
             },
         }, tx);
@@ -575,7 +587,7 @@ export async function deactivateTradingAccountForAdmin(
         return {
           before,
           after,
-          affectedPendingEntryIntentCount: blockedEntries.count,
+          affectedPendingEntryIntentCount: blockedEntryCount,
           affectedEntryEnabledAssignmentCount: disabledAssignments.count,
         };
       }),

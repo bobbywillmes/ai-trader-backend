@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import 'dotenv/config';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from 'pg';
+import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
 
 const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.DATABASE_URL;
 const describeDatabase = enabled ? describe : describe.skip;
@@ -47,6 +49,10 @@ describeDatabase('entry exposure claim database integrity', () => {
     await value.connect();
     await value.query(`SET search_path TO ${quotedSchema}`);
     return value;
+  }
+
+  function prismaClient() {
+    return new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
   }
 
   async function intent(db: Client) {
@@ -128,6 +134,69 @@ describeDatabase('entry exposure claim database integrity', () => {
         .rejects.toThrow(/EntryExposureClaim_released_status_check/);
     } finally {
       await db.end();
+    }
+  });
+
+  it('prevents a stale compare-and-set observation from overwriting UNRESOLVED', async () => {
+    const observer = await client();
+    const resolver = await client();
+    try {
+      const casAccount = Number((await observer.query('INSERT INTO "TradingAccount" DEFAULT VALUES RETURNING id')).rows[0].id);
+      const claimId = Number((await claim(observer, {
+        accountId: casAccount, securityId: spy, intentId: await intent(observer), ownerKey: 'cas-stale-observation',
+      })).rows[0].id);
+      const observed = String((await observer.query('SELECT status FROM "EntryExposureClaim" WHERE id=$1', [claimId])).rows[0].status);
+      await resolver.query(`UPDATE "EntryExposureClaim" SET status='UNRESOLVED', "updatedAt"=CURRENT_TIMESTAMP WHERE id=$1`, [claimId]);
+      const stale = await observer.query(`
+        UPDATE "EntryExposureClaim"
+        SET status='BROKER_ORDER_ACTIVE', "updatedAt"=CURRENT_TIMESTAMP
+        WHERE id=$1 AND status=$2 AND "releasedAt" IS NULL
+      `, [claimId, observed]);
+      expect(stale.rowCount).toBe(0);
+      expect((await observer.query('SELECT status FROM "EntryExposureClaim" WHERE id=$1', [claimId])).rows[0].status).toBe('UNRESOLVED');
+    } finally {
+      await observer.end();
+      await resolver.end();
+    }
+  });
+
+  const itPrisma = process.env.RUN_ENTRY_EXPOSURE_PRISMA_TESTS === '1' ? it : it.skip;
+  itPrisma('enforces ownership and stale-transition CAS through real Prisma transactions', async () => {
+    const first = prismaClient();
+    const second = prismaClient();
+    const suffix = randomUUID();
+    try {
+      const user = await first.user.create({ data: { email: `entry-claim-${suffix}@example.invalid` } });
+      const account = await first.tradingAccount.create({ data: { accountHolderUserId: user.id, displayName: `Entry Claim ${suffix}` } });
+      const security = await first.security.create({ data: { symbol: `T${suffix.replaceAll('-', '').slice(0, 8)}`, name: 'Disposable claim test', assetType: 'STOCK' } });
+      const intentData = (clientOrderId: string) => ({
+        source: 'integration_test', symbol: security.symbol, side: 'buy', orderType: 'market', timeInForce: 'day',
+        clientOrderId, rawRequestJson: {}, tradingAccountId: account.id,
+      });
+      const firstIntent = await first.orderIntent.create({ data: intentData(`first-${suffix}`) });
+      const secondIntent = await first.orderIntent.create({ data: intentData(`second-${suffix}`) });
+      const create = (db: PrismaClient, intentId: number, ownerKey: string) => db.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`entry-exposure:${account.id}:${security.id}`}, 0))::text`;
+        return tx.entryExposureClaim.create({ data: {
+          tradingAccountId: account.id, securityId: security.id, orderIntentId: intentId, ownerKey,
+        } });
+      });
+      const results = await Promise.allSettled([
+        create(first, firstIntent.id, `prisma-owner:first:${suffix}`),
+        create(second, secondIntent.id, `prisma-owner:second:${suffix}`),
+      ]);
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      const winner = results.find((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof create>>> => result.status === 'fulfilled')!.value;
+      await first.entryExposureClaim.update({ where: { id: winner.id }, data: { status: 'UNRESOLVED' } });
+      const stale = await second.entryExposureClaim.updateMany({
+        where: { id: winner.id, status: 'ENTRY_PENDING', releasedAt: null },
+        data: { status: 'BROKER_ORDER_ACTIVE' },
+      });
+      expect(stale.count).toBe(0);
+      expect((await first.entryExposureClaim.findUniqueOrThrow({ where: { id: winner.id } })).status).toBe('UNRESOLVED');
+    } finally {
+      await first.$disconnect();
+      await second.$disconnect();
     }
   });
 });

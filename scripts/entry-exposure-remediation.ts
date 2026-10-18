@@ -43,6 +43,7 @@ async function main() {
     ? await releaseConfirmedTerminalEntryClaim({
         orderIntentId: preview.claim.orderIntentId,
         brokerStatus: preview.brokerOrder.status,
+      allowUnresolved: true,
       })
     : await releaseClosedAdoptedPositionClaim({ claimId, actorUserId: actor.id });
   if (!released?.releasedAt) throw new Error('Release refused during final fresh broker lookup or locked database revalidation.');

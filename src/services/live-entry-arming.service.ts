@@ -131,30 +131,19 @@ async function closeEntryAuthority(
     where: { tradingAccountId, side: 'buy', status: { in: [...ENTRY_INTENT_STATUSES] } },
     select: { id: true },
   });
-  const intents = await tx.orderIntent.updateMany({
-    where: {
-      tradingAccountId,
-      side: 'buy',
-      status: { in: [...ENTRY_INTENT_STATUSES] },
-    },
-    data: { status: 'blocked', blockReason: args.reason },
-  });
+  let blockedIntentCount = 0;
   for (const intent of blockableIntents) {
-    try {
-      await releaseUnsubmittedEntryExposureClaim({
-        orderIntentId: intent.id,
-        reason: 'ENTRY_AUTHORITY_TERMINATED_BEFORE_SUBMISSION',
-        db: tx,
-      });
-    } catch {
-      await transitionEntryExposureClaim({
-        orderIntentId: intent.id,
-        status: 'UNRESOLVED',
-        eventType: 'ENTRY_AUTHORITY_TERMINATED_WITH_EXPOSURE_EVIDENCE',
-        evidence: { reason: args.reason },
-        db: tx,
-      });
-    }
+    const transitioned = await tx.orderIntent.updateMany({
+      where: { id: intent.id, tradingAccountId, side: 'buy', status: { in: [...ENTRY_INTENT_STATUSES] } },
+      data: { status: 'blocked', blockReason: args.reason },
+    });
+    if (transitioned.count !== 1) continue;
+    blockedIntentCount += 1;
+    await releaseUnsubmittedEntryExposureClaim({
+      orderIntentId: intent.id,
+      reason: 'ENTRY_AUTHORITY_TERMINATED_BEFORE_SUBMISSION',
+      db: tx,
+    });
   }
   if (account.activeLiveEntryArmingId) {
     await terminateArming(tx, {
@@ -162,10 +151,10 @@ async function closeEntryAuthority(
       type: args.type,
       reason: args.reason,
       ...(args.actorUserId !== undefined ? { actorUserId: args.actorUserId } : {}),
-      evidence: { assignmentsDisabled: assignments.count, entryIntentsBlocked: intents.count },
+      evidence: { assignmentsDisabled: assignments.count, entryIntentsBlocked: blockedIntentCount },
     });
   }
-  return { armingId: account.activeLiveEntryArmingId, assignmentsDisabled: assignments.count, entryIntentsBlocked: intents.count };
+  return { armingId: account.activeLiveEntryArmingId, assignmentsDisabled: assignments.count, entryIntentsBlocked: blockedIntentCount };
 }
 
 export async function stageLiveEntryCanary(args: {
