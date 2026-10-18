@@ -1054,6 +1054,16 @@ export async function syncSubmittedOrdersForAccountUnlocked(tradingAccountId: nu
         logger.trace({ brokerOrderId: brokerOrder.id, previousStatus, nextStatus },
           'Broker order status changed.');
         synced += 1;
+      } else if (
+        brokerOrder.side.toLowerCase() === 'buy' &&
+        ['replaced', 'done_for_day', 'calculated'].includes(nextStatus.toLowerCase())
+      ) {
+        // These statuses are not sufficient release evidence by themselves.
+        // Re-evaluate the replacement/open-order chain on later polling ticks.
+        await releaseConfirmedTerminalEntryClaim({
+          orderIntentId: brokerOrder.orderIntentId,
+          brokerStatus: nextStatus,
+        });
       }
     } catch (error) {
       const brokerOrder = intent.brokerOrders[0];
