@@ -116,6 +116,47 @@ contains no executable BUY for the symbol. Final locked revalidation repeats the
 local position/order checks. This position-only exception is not available to a
 claim that has an originating OrderIntent.
 
+The preview reports a `disposition`: `TERMINAL_BROKER_ORDER_NO_EXPOSURE` (an exact broker
+order was found), `CLOSED_ADOPTED_POSITION`, `DISPATCHED_ENTRY_VERIFIED_NO_EXPOSURE`, or
+`UNSUPPORTED`. A terminal broker order whose client order ID, symbol or side contradicts
+the claim is refused with `BROKER_ORDER_IDENTITY_CONFLICT`.
+
+### Consumed or recorded dispatch with no broker order
+
+A failed or blocked entry whose dispatch already started (a broker-time consumption, a
+final un-enforced dispatch authorization, or dispatch telemetry) is never released as
+never-submitted. The order worker records the delivery outcome on the claim and holds it
+as `UNRESOLVED`. The terminal-claim sweep releases it automatically only under the
+evidence standard in `docs/architecture/market-policy-broker-time-enforcement.md`
+(section 5b). Otherwise it appears in readiness as `terminalIntentsWithUnreleasedClaims`
+with its remediation eligibility.
+
+For such a claim the preview uses the `DISPATCHED_ENTRY_VERIFIED_NO_EXPOSURE` disposition
+instead of the old `BROKER_ORDER_NOT_ESTABLISHED` blocker. It shows the intent, claim,
+consumption, dispatch decision and un-enforced record identities; the recorded
+classification; fresh broker and local evidence; and a conclusiveness value:
+
+- `CONCLUSIVE`: a definite local non-send (adapter guard before the network request, or
+  a dispatch record whose acknowledgement was lost) or a definitive, settled HTTP
+  rejection, with no exposure anywhere. `--apply --confirm <fingerprint>` releases it
+  as `VERIFIED_DISPATCH_NO_EXPOSURE:<basis>`.
+- `PENDING`: the rejection settle window has not passed, or a broker read failed
+  (including incomplete open-order pagination). Preview again later.
+- `CONTRADICTED`: a broker order, position, executable BUY, local fill, unattributed
+  BUY fill, or identity mismatch exists. Resolve that exposure first.
+- `AMBIGUOUS_ABSENCE`: delivery may have reached Alpaca (5xx, network, crash between
+  the record and the adapter, or a non-definitive 4xx). The claim stays held. Follow
+  the printed investigation guidance: review the Alpaca order history and account
+  activities for the client order ID. If an order appears, the
+  `TERMINAL_BROKER_ORDER_NO_EXPOSURE` disposition recovers it once terminal. A lookup
+  miss never releases this claim, and there is no forced or time-based release.
+
+Apply always repeats fresh broker verification, requires the exact fingerprint, and
+revalidates under the account/Security lock. It appends immutable operator-authorization
+and release events, keeps the consumption and dispatch records unchanged, and never
+resends, requeues or cancels anything. A later entry for the Security needs a new
+admission with a new client order ID.
+
 ## Legacy disposition matrix
 
 | Condition | Detection and required evidence | Safe disposition | Entry effect and approval | Acceptance proof |

@@ -562,6 +562,7 @@ model TradingAccount {
   marketPolicyEnforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization[]
   marketPolicyEnforcementAdmissionAttempts MarketPolicyEnforcementAdmissionAttempt[]
   marketPolicyBrokerDispatchDecisions      MarketPolicyBrokerDispatchDecision[]
+  marketPolicyBrokerUnenforcedDispatches   MarketPolicyBrokerUnenforcedDispatch[]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[]
   brokerPostOpportunities OrderIntentBrokerPostOpportunity[]
   entryExposureClaims      EntryExposureClaim[]
@@ -1104,6 +1105,7 @@ model TradingAccountSubscription {
   brokerPostOpportunities OrderIntentBrokerPostOpportunity[]
   marketPolicyEnforcementAdmissionAttempts MarketPolicyEnforcementAdmissionAttempt[]
   marketPolicyBrokerDispatchDecisions      MarketPolicyBrokerDispatchDecision[]
+  marketPolicyBrokerUnenforcedDispatches   MarketPolicyBrokerUnenforcedDispatch[]
 
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -1284,6 +1286,7 @@ model Security {
   marketPolicyEnforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization[]
   marketPolicyEnforcementAdmissionAttempts MarketPolicyEnforcementAdmissionAttempt[]
   marketPolicyBrokerDispatchDecisions      MarketPolicyBrokerDispatchDecision[]
+  marketPolicyBrokerUnenforcedDispatches   MarketPolicyBrokerUnenforcedDispatch[]
 
   @@index([enabled])
   @@index([assetType])
@@ -1370,6 +1373,7 @@ model OrderIntent {
   marketPolicyEnforcementObligation       OrderIntentMarketPolicyEnforcementObligation?
   marketPolicyBrokerDispatchDecisions     MarketPolicyBrokerDispatchDecision[]
   marketPolicyBrokerDispatchConsumption   MarketPolicyBrokerDispatchConsumption?
+  marketPolicyBrokerUnenforcedDispatch    MarketPolicyBrokerUnenforcedDispatch?
 
   @@index([trackedPositionId])
   @@index([tradingAccountId])
@@ -3190,6 +3194,7 @@ model OrderIntentBrokerPostOpportunity {
   comparisonDelivery OrderIntentBrokerComparisonDelivery?
   events OrderIntentBrokerOpportunityEvent[]
   marketPolicyBrokerDispatchConsumptions MarketPolicyBrokerDispatchConsumption[]
+  marketPolicyBrokerUnenforcedDispatches MarketPolicyBrokerUnenforcedDispatch[]
 
   @@unique([orderIntentId, opportunitySequence], map: "OrderIntentBrokerPostOpportunity_intent_sequence_key")
   @@index([accountSubscriptionId, opportunityAt], map: "OrderIntentBrokerPostOpportunity_assignment_time_idx")
@@ -3365,6 +3370,7 @@ model AssignmentMarketPolicyEnforcementAuthorization {
   admissionAttempts   MarketPolicyEnforcementAdmissionAttempt[]
   obligations         OrderIntentMarketPolicyEnforcementObligation[]
   brokerDispatchDecisions MarketPolicyBrokerDispatchDecision[]
+  brokerUnenforcedDispatches MarketPolicyBrokerUnenforcedDispatch[]
 
   @@unique([enrollmentGenerationId, authorizationSequence], map: "AssignmentEnforcementAuthorization_sequence_key")
   @@index([accountSubscriptionId, id], map: "AssignmentEnforcementAuthorization_assignment_idx")
@@ -3715,6 +3721,39 @@ model MarketPolicyBrokerDispatchConsumption {
   decision              MarketPolicyBrokerDispatchDecision @relation(fields: [decisionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchConsumption_decision_fkey")
   orderIntent           OrderIntent                        @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchConsumption_orderIntent_fkey")
   brokerPostOpportunity OrderIntentBrokerPostOpportunity?  @relation(fields: [brokerPostOpportunityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchConsumption_opportunity_fkey")
+}
+
+// The final serialized broker-time authorization of an un-obligated PAPER entry BUY, inserted
+// immediately before the adapter. PostgreSQL refuses it when the assignment now requires
+// enforcement under the active rollout (the entry is quarantined instead). Like a consumption it is
+// durable evidence that a POST may have started, never proof of broker receipt; one per intent.
+model MarketPolicyBrokerUnenforcedDispatch {
+  id                        Int                       @id @default(autoincrement())
+  orderIntentId             Int                       @unique(map: "UnenforcedDispatch_orderIntent_key")
+  clientOrderId             String
+  environment               TradingAccountEnvironment
+  tradingAccountId          Int
+  accountSubscriptionId     Int?
+  securityId                Int
+  securitySymbol            String
+  basis                     String
+  latestAuthorizationId     Int?
+  latestAuthorizationStatus String?
+  rolloutEnabled            Boolean
+  rolloutVersion            Int
+  brokerPostOpportunityId   Int?
+  authorizedAt              DateTime                  @default(now()) @db.Timestamptz(3)
+  evidenceJson              Json
+
+  orderIntent           OrderIntent                                     @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "UnenforcedDispatch_orderIntent_fkey")
+  tradingAccount        TradingAccount                                  @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "UnenforcedDispatch_account_fkey")
+  accountSubscription   TradingAccountSubscription?                     @relation(fields: [accountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "UnenforcedDispatch_assignment_fkey")
+  security              Security                                        @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "UnenforcedDispatch_security_fkey")
+  latestAuthorization   AssignmentMarketPolicyEnforcementAuthorization? @relation(fields: [latestAuthorizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "UnenforcedDispatch_authorization_fkey")
+  brokerPostOpportunity OrderIntentBrokerPostOpportunity?               @relation(fields: [brokerPostOpportunityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "UnenforcedDispatch_opportunity_fkey")
+
+  @@index([tradingAccountId, authorizedAt], map: "UnenforcedDispatch_account_idx")
+  @@index([accountSubscriptionId], map: "UnenforcedDispatch_assignment_idx")
 }
 
 // Immutable, informational evaluation of one Strategy-owned policy revision against

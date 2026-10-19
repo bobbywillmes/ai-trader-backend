@@ -3,6 +3,7 @@ import { prisma } from '../db/prisma.js';
 import { deriveMarketPolicyEnforcementDisposition, type MarketPolicyEnforcementDisposition } from './assignment-market-policy-enforcement-authorization.service.js';
 import { BROKER_ACTIVE_ENTRY_STATUSES } from './entry-lifecycle-status.service.js';
 import { getMarketPolicyEnforcementRuntimeStatus } from './market-policy-enforcement-rollout.service.js';
+import { TERMINAL_ENTRY_INTENT_STATUSES } from './entry-dispatch-recovery.service.js';
 
 // Phase 3C.3 read-only pre-activation inventory. It never mutates state, calls a broker, or grants
 // authority. Operators run it before activating PAPER enforcement (and before granting enforcement
@@ -22,7 +23,7 @@ export type BrokerTimeTreatment =
 type Db = PrismaClient;
 
 function classifyDelivery(intent: { status: string; blockReason: string | null; brokerOrders: number; claimStatus: string | null; dispatchStarted: boolean }): BrokerDeliveryClassification {
-  if (intent.brokerOrders > 0 || !['received', 'pending', 'submitting', 'failed'].includes(intent.status)) return 'BROKER_ORDER_DELIVERED';
+  if (intent.brokerOrders > 0 || !['received', 'pending', 'submitting', 'failed', 'blocked'].includes(intent.status)) return 'BROKER_ORDER_DELIVERED';
   if (intent.blockReason?.includes('DELIVERY_UNCERTAIN') || intent.claimStatus === 'UNRESOLVED') return 'DELIVERY_UNCERTAIN';
   if (intent.status === 'submitting' || intent.dispatchStarted) return 'DISPATCH_IN_PROGRESS_OR_UNCERTAIN';
   return 'NOT_DISPATCHED';
@@ -42,13 +43,16 @@ export async function assessMarketPolicyBrokerEnforcementReadiness(options: { db
         { status: { in: [...BROKER_ACTIVE_ENTRY_STATUSES] } },
         { status: 'failed', blockReason: { contains: 'DELIVERY_UNCERTAIN' } },
         { status: 'failed', entryExposureClaim: { status: 'UNRESOLVED', releasedAt: null } },
+        // Terminal intents whose claims are still held, including consumed or recorded dispatches.
+        { status: { in: [...TERMINAL_ENTRY_INTENT_STATUSES] }, entryExposureClaim: { releasedAt: null } },
       ],
     },
     orderBy: { id: 'asc' },
     select: {
       id: true, tradingAccountId: true, tradingAccountSubscriptionId: true, clientOrderId: true, symbol: true, status: true, blockReason: true, createdAt: true,
       marketPolicyEnforcementObligation: { select: { id: true, authorizationId: true, policyRevisionId: true } },
-      marketPolicyBrokerDispatchConsumption: { select: { id: true } },
+      marketPolicyBrokerDispatchConsumption: { select: { id: true, decisionId: true } },
+      marketPolicyBrokerUnenforcedDispatch: { select: { id: true, basis: true } },
       entryExposureClaim: { select: { id: true, status: true, releasedAt: true } },
       _count: { select: { brokerOrders: true } },
     },
@@ -79,10 +83,11 @@ export async function assessMarketPolicyBrokerEnforcementReadiness(options: { db
     const delivery = classifyDelivery({
       status: intent.status, blockReason: intent.blockReason, brokerOrders: intent._count.brokerOrders,
       claimStatus: intent.entryExposureClaim?.releasedAt ? null : intent.entryExposureClaim?.status ?? null,
-      dispatchStarted: Boolean(intent.marketPolicyBrokerDispatchConsumption),
+      dispatchStarted: Boolean(intent.marketPolicyBrokerDispatchConsumption || intent.marketPolicyBrokerUnenforcedDispatch),
     });
     const obligationPresent = Boolean(intent.marketPolicyEnforcementObligation);
-    const treatment: BrokerTimeTreatment = delivery !== 'NOT_DISPATCHED'
+    const terminal = (TERMINAL_ENTRY_INTENT_STATUSES as readonly string[]).includes(intent.status);
+    const treatment: BrokerTimeTreatment = delivery !== 'NOT_DISPATCHED' || terminal
       ? 'EXISTING_RECOVERY_PATHWAY'
       : obligationPresent
         ? 'FROZEN_OBLIGATION_REVALIDATED_BEFORE_POST'
@@ -94,8 +99,14 @@ export async function assessMarketPolicyBrokerEnforcementReadiness(options: { db
       clientOrderId: intent.clientOrderId, symbol: intent.symbol, status: intent.status, createdAt: intent.createdAt,
       obligationPresent, obligationId: intent.marketPolicyEnforcementObligation?.id ?? null,
       assignmentDisposition: disposition, brokerDeliveryClassification: delivery, brokerTimeTreatment: treatment,
+      claimId: intent.entryExposureClaim?.id ?? null,
       claimStatus: intent.entryExposureClaim ? (intent.entryExposureClaim.releasedAt ? 'RELEASED' : intent.entryExposureClaim.status) : null,
+      dispatchConsumptionId: intent.marketPolicyBrokerDispatchConsumption?.id ?? null,
+      dispatchDecisionId: intent.marketPolicyBrokerDispatchConsumption?.decisionId ?? null,
+      unenforcedDispatchId: intent.marketPolicyBrokerUnenforcedDispatch?.id ?? null,
+      unenforcedDispatchBasis: intent.marketPolicyBrokerUnenforcedDispatch?.basis ?? null,
       notDispatchedQueued: NOT_DISPATCHED_STATUSES.has(intent.status) && delivery === 'NOT_DISPATCHED',
+      terminalWithUnreleasedClaim: terminal && Boolean(intent.entryExposureClaim && !intent.entryExposureClaim.releasedAt),
     };
   });
 
@@ -124,16 +135,18 @@ export async function assessMarketPolicyBrokerEnforcementReadiness(options: { db
       queuedExistingBehavior: inventory.filter(item => item.brokerTimeTreatment === 'EXISTING_ENTRY_BEHAVIOR').length,
       deliveryUncertainOrInProgress: recovering.length,
       brokerOrderDelivered: inventory.filter(item => item.brokerDeliveryClassification === 'BROKER_ORDER_DELIVERED').length,
+      terminalWithUnreleasedClaim: inventory.filter(item => item.terminalWithUnreleasedClaim).length,
       unresolvedLapses: unresolvedLapses.length,
     },
     // Operator guard: activation is safe for queued entries either way (they are quarantined), but
     // the owner should review and resolve these before activating so nothing is silently discarded.
     activationGuard: {
-      reviewRequired: atRisk.length > 0 || recovering.length > 0 || unresolvedLapses.length > 0,
+      reviewRequired: atRisk.length > 0 || recovering.length > 0 || unresolvedLapses.length > 0 || inventory.some(item => item.terminalWithUnreleasedClaim),
       reasons: [
         ...(atRisk.length ? ['QUEUED_UNOBLIGATED_ENTRIES_WILL_BE_QUARANTINED'] : []),
         ...(recovering.length ? ['DELIVERY_UNCERTAIN_ENTRIES_IN_RECOVERY'] : []),
         ...(unresolvedLapses.length ? ['UNRESOLVED_AUTHORIZATION_LAPSES_FAIL_CLOSED'] : []),
+        ...(inventory.some(item => item.terminalWithUnreleasedClaim) ? ['TERMINAL_ENTRIES_WITH_UNRELEASED_CLAIMS'] : []),
       ],
       liquidationRequired: false,
     },

@@ -359,7 +359,9 @@ export type BrokerOrderSubmissionInput = ResolvedPlaceOrderInput & {
  *   adapter has not been invoked. A failure here (including a broker-time market-policy refusal) is a
  *   definite non-send.
  * - EXISTING_ORDER_FOUND: an exact broker order already exists; it is recovered, never re-sent.
- * - DISPATCH_STARTED: the dispatch authorization was consumed and the adapter may have reached Alpaca.
+ * - DISPATCH_STARTED: the final dispatch authorization committed (a consumption, or an un-enforced
+ *   dispatch record) and the adapter may have reached Alpaca. That record permanently prohibits
+ *   another POST for the intent; a failure here goes to evidence-based claim recovery.
  * - BROKER_RESPONDED: Alpaca confirmed the order.
  */
 export type EntryBrokerSubmissionPhase = 'UNCLASSIFIED' | 'NOT_DISPATCHED' | 'EXISTING_ORDER_FOUND' | 'DISPATCH_STARTED' | 'BROKER_RESPONDED';
@@ -384,17 +386,18 @@ function assertExistingEntryOrderIdentity(order: AlpacaOrder, expected: { client
 }
 
 async function assertNoLocalEntryDispatchEvidence(orderIntentId: number) {
-  const [consumptions, dispatchEvents, brokerOrders] = await Promise.all([
+  const [consumptions, unenforcedDispatches, dispatchEvents, brokerOrders] = await Promise.all([
     prisma.marketPolicyBrokerDispatchConsumption.count({ where: { orderIntentId } }),
+    prisma.marketPolicyBrokerUnenforcedDispatch.count({ where: { orderIntentId } }),
     prisma.orderIntentBrokerOpportunityEvent.count({
       where: { orderIntentId, eventType: { in: ['ADAPTER_DISPATCH_REACHED', 'BROKER_RESPONSE_CONFIRMED', 'BROKER_REJECTED', 'DELIVERY_UNCERTAIN'] } },
     }),
     prisma.brokerOrder.count({ where: { orderIntentId } }),
   ]);
-  if (consumptions || dispatchEvents || brokerOrders) {
+  if (consumptions || unenforcedDispatches || dispatchEvents || brokerOrders) {
     // A lookup miss is not proof that an earlier dispatch never reached Alpaca.
     throw new HttpError(409, 'Entry has prior dispatch evidence; a missing broker lookup result is not proof of non-delivery.', {
-      code: 'PRIOR_ENTRY_DISPATCH_EVIDENCE', orderIntentId, consumptions, dispatchEvents, brokerOrders,
+      code: 'PRIOR_ENTRY_DISPATCH_EVIDENCE', orderIntentId, consumptions, unenforcedDispatches, dispatchEvents, brokerOrders,
     });
   }
 }
@@ -476,8 +479,9 @@ export async function submitOrderToBroker(
 
   const prePostObservationBudget=createBrokerObservationBudget();
   const opportunity=await bestEffortCaptureOrderIntentBrokerPostOpportunity(options.orderIntentId,undefined,prePostObservationBudget);
-  // Final pre-dispatch boundary: consumes the single-use broker-time authorization with a fresh
-  // PostgreSQL clock. A refusal throws here, still NOT_DISPATCHED.
+  // Final pre-dispatch boundary: consumes the single-use broker-time authorization (or records the
+  // final un-enforced authorization) with a fresh PostgreSQL clock. A refusal, or a committed record
+  // whose acknowledgement was lost, throws here, still NOT_DISPATCHED: this attempt sends nothing.
   await dispatch.authorizeDispatch(opportunity?.id ?? null);
   boundary.phase = 'DISPATCH_STARTED';
   await bestEffortAppendBrokerOpportunityEvent({opportunityId:opportunity?.id??null,eventType:'ADAPTER_DISPATCH_REACHED',evidence:{adapter:'alpaca',operation:'pending_order_submission'}},undefined,prePostObservationBudget);

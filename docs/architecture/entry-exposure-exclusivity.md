@@ -128,8 +128,19 @@ A rejected decision acquires no claim. See
 
 A broker-time market-policy refusal happens after the confirmed-absence lookup and
 before any dispatch, so it is a definite non-send. The claim is released only through
-`releaseUnsubmittedEntryExposureClaim`, which now also treats a consumed broker dispatch
-authorization (`MarketPolicyBrokerDispatchConsumption`) as broker evidence. Failures
-before the lookup completes, or after dispatch starts, keep the existing uncertainty
-handling and leave the claim active. See
+`releaseUnsubmittedEntryExposureClaim`, which also treats a consumed broker dispatch
+authorization (`MarketPolicyBrokerDispatchConsumption`) and a final un-enforced dispatch
+authorization (`MarketPolicyBrokerUnenforcedDispatch`) as broker evidence. If it refuses,
+the claim becomes `UNRESOLVED` with an `UNSUBMITTED_RELEASE_REFUSED` event; a refusal is
+never swallowed. Failures before the lookup completes keep the existing uncertainty
+handling.
+
+A failure after a dispatch record committed (a rejection, a local adapter guard, a lost
+record acknowledgement, uncertain delivery, or a crash before the adapter) records an
+immutable `DISPATCH_OUTCOME_RECORDED` event and holds the claim as `UNRESOLVED`. Only the
+evidence-based recovery in `entry-dispatch-recovery.service.ts`, automatically or through
+fingerprinted SYSTEM_OWNER remediation, can release it, and never on a lookup miss after
+uncertain delivery. Claim events are append-only at the database boundary. Terminal
+intents with held claims are reported by readiness as
+`terminalIntentsWithUnreleasedClaims`. See section 5b of
 `docs/architecture/market-policy-broker-time-enforcement.md`.

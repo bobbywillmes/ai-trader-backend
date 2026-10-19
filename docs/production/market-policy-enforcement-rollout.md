@@ -14,12 +14,27 @@ Architecture: `docs/architecture/market-policy-pre-intent-enforcement.md` and
 - Migration `20261018170000_market_policy_broker_time_enforcement` is additive. It
   adds broker-time decisions, gates and consumptions, plus the corrected 3C.2
   functions (L1–L3). It creates no decisions and no grants.
+- Migration `20261019120000_market_policy_dispatch_recovery` (Hermes HIGH-1 and
+  MEDIUM-1) is additive. It adds the immutable `MarketPolicyBrokerUnenforcedDispatch`
+  final authorization for un-obligated PAPER entries and makes
+  `EntryExposureClaimEvent` append-only. It creates no authorizations, releases no
+  claims, and changes no consumption. Apply it together with the corrected runtime:
+  the runtime requires the new table.
 - With the rollout **inactive** (default), no intent has an obligation unless one was
   admitted during an earlier active period. Un-obligated entries keep existing broker
   behavior.
 - Every new entry BUY POST now passes the broker-time guard. A guard failure fails
   closed with a definite non-send (`MARKET_POLICY_BROKER_TIME:...`) and never claims
   broker delivery.
+- Every un-obligated PAPER entry, with the rollout active or inactive, gets a final
+  serialized authorization immediately before the POST. While the rollout is inactive
+  it records `RUNTIME_INACTIVE` and behaves as before. While active, it quarantines an
+  entry whose assignment requires enforcement by then.
+- A failure after a consumption or un-enforced dispatch record never releases the claim
+  as unsubmitted. The outcome is recorded and the claim becomes `UNRESOLVED`. A definite
+  local non-send, or a definitive and settled HTTP rejection, is released automatically
+  after fresh broker verification. Delivery uncertainty stays held for operator
+  investigation.
 
 ## Ordering
 
@@ -49,17 +64,31 @@ Architecture: `docs/architecture/market-policy-pre-intent-enforcement.md` and
    (including V1 grants marked `securityBindingReapprovalRequired`), either
    reauthorize the current enrollment generation or record an explicit owner
    `resolve-lapse`. Unresolved lapses fail closed while the rollout is active.
+   - `terminalWithUnreleasedClaim` (activation reason
+     `TERMINAL_ENTRIES_WITH_UNRELEASED_CLAIMS`): failed or blocked entries whose claims
+     are still held, including consumed dispatches. Review them with
+     `npm run entry-exposure:readiness` (`terminalIntentsWithUnreleasedClaims`) and the
+     remediation preview.
 7. **Confirm the broker-time guard and monitoring are operational.** Watch
    `SystemEvent` types `MARKET_POLICY_BROKER_DISPATCH_REFUSED` (WARNING),
-   `MARKET_POLICY_LEGACY_ENTRY_QUARANTINED` (WARNING) and
-   `MARKET_POLICY_BROKER_DISPATCH_TECHNICAL_FAILURE` (ERROR), plus account health for
-   `PENDING_ORDER_ITEM_FAILURE`.
+   `MARKET_POLICY_LEGACY_ENTRY_QUARANTINED` (WARNING),
+   `MARKET_POLICY_BROKER_DISPATCH_TECHNICAL_FAILURE` (ERROR),
+   `entry_exposure.dispatch_outcome_recorded` (WARNING for a definite local non-send,
+   ERROR otherwise), `entry_exposure.unsubmitted_release_refused` (ERROR) and
+   `entry_exposure.dispatch_claim_released` (INFO), plus account health for
+   `PENDING_ORDER_ITEM_FAILURE` and the `entry_exposure_claim_unresolved`
+   reconciliation finding.
 8. **Perform an isolated PAPER enforcement rehearsal** on a dedicated PAPER account and
    assignment:
    - grant, activate, then admit under an ALLOWED composition and confirm a single
      ALLOWED decision with one consumption and one POST;
    - with a BLOCKED composition, confirm a refusal with no POST and a released claim;
-   - revoke after admission and confirm `AUTHORIZATION_REVOKED` and no POST.
+   - revoke after admission and confirm `AUTHORIZATION_REVOKED` and no POST;
+   - queue an un-obligated entry on a never-authorized assignment, grant before it
+     dispatches, and confirm a `LEGACY_UNOBLIGATED_QUARANTINED` decision with reason
+     `..._AT_FINAL_AUTHORIZATION` and no POST;
+   - dispatch an un-obligated entry and confirm one `MarketPolicyBrokerUnenforcedDispatch`
+     record with the expected `basis`.
 9. **Activate enforcement only after owner approval and successful readiness**, via
    `POST /api/market-policy-enforcement/runtime-rollout/activate`.
 
@@ -69,14 +98,32 @@ Architecture: `docs/architecture/market-policy-pre-intent-enforcement.md` and
   bypasses frozen obligations: pending obligated intents are still revalidated before
   any new POST.
 - Code rollback to a pre-3C.3 build would dispatch obligated intents without broker-time
-  revalidation. Before rolling back, ensure no obligated intent is `pending`: run the
-  readiness report and let pending obligated intents dispatch or be refused first.
-  Never drop the decision tables.
+  revalidation. That rollback remains prohibited while any obligated intent is
+  `pending`. Before any rollback, run the readiness report and let pending obligated
+  intents dispatch or be refused first. Never drop the decision tables.
+- Rolling back from this correction to the earlier 3C.3 build is also unsafe in
+  practice. The earlier build performs no final authorization for un-obligated entries
+  (the MEDIUM-1 race returns). Its worker also strands claims after a post-consumption
+  failure (HIGH-1) and does not read `MarketPolicyBrokerUnenforcedDispatch` as prior
+  dispatch evidence. Prefer a forward fix. If a rollback is unavoidable, disable new
+  entry submission first, let no un-obligated PAPER entry dispatch under the older
+  build, and keep the new table and its records. Never drop
+  `MarketPolicyBrokerUnenforcedDispatch`, the consumptions, or claim events, and never
+  remove the append-only trigger on claim events.
 - The kill switch, LIVE write approvals, protective management and broker recovery
   are unchanged.
 
 ## Residual risk
 
-The consumption commit is the linearization point. A revocation committed after it
-cannot recall an in-flight Alpaca request. The resulting order is recovered and
-managed normally, including fills, positions and protective exits.
+The consumption commit is the linearization point for obligated entries. A revocation
+committed after it cannot recall an in-flight Alpaca request. The final un-enforced
+authorization commit is the linearization point for un-obligated entries. A grant or
+activation committed after it cannot recall the subsequent POST. In both cases the
+resulting order is recovered and managed normally, including fills, positions and
+protective exits.
+
+Neither record is proof of broker receipt. After uncertain delivery (5xx, network, a
+crash between the record and the adapter, or a non-definitive 4xx), the claim stays
+`UNRESOLVED` until a broker order is discovered or the evidence becomes conclusive. The
+Security is blocked for new entries on that account until then. That is the intended
+fail-closed trade-off; there is no time-based release.

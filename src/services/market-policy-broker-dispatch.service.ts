@@ -31,14 +31,20 @@ import { createSystemEvent } from './system-event.service.js';
 //   evaluation of the frozen revision on the current committed composition must be ALLOWED.
 // - An intent without an obligation keeps existing behavior, except that under the active rollout
 //   an assignment whose authorization now requires enforcement quarantines it (never a fresh POST).
+//   The disposition is re-decided in a final serialized authorization immediately before the
+//   adapter (MarketPolicyBrokerUnenforcedDispatch); a grant or activation that commits first
+//   quarantines the entry.
 // - LIVE accounts, SELL orders, protective exits, close-position and recovery never reach here.
 //
 // An ALLOWED decision is a bounded, single-use dispatch authorization. It is consumed in a separate
 // short transaction immediately before the adapter call; that consumption is the linearization point.
+// A consumption or un-enforced dispatch authorization is durable evidence that a POST may have
+// started, never proof of broker receipt: it permanently prohibits another POST for that intent.
 export const MARKET_POLICY_BROKER_TIME_ENFORCEMENT_VERSION = 'MARKET_POLICY_BROKER_TIME_ENFORCEMENT_V1' as const;
 export const MARKET_POLICY_BROKER_DISPATCH_WINDOW_MS = 30_000;
 const PREPARATION_TRANSACTION = { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 15_000, maxWait: 10_000 } as const;
 const NON_ENFORCED_DISPOSITIONS = new Set<MarketPolicyEnforcementDisposition>(['NEVER_AUTHORIZED', 'OWNER_REVOKED', 'OWNER_OPTED_OUT', 'NOT_APPLICABLE_LIVE']);
+const UNENFORCED_DISPATCH_BASES = new Set<string>(['NEVER_AUTHORIZED', 'OWNER_REVOKED', 'OWNER_OPTED_OUT']);
 
 const json = (value: unknown): Prisma.InputJsonValue => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 
@@ -88,14 +94,40 @@ export function getMarketPolicyBrokerDispatchRefusal(error: unknown) {
   return error instanceof MarketPolicyBrokerDispatchRefusedError ? error : null;
 }
 
+/**
+ * The dispatch record (consumption or un-enforced dispatch authorization) committed but its
+ * acknowledgement was lost, so this attempt never invoked the adapter. The committed record still
+ * prohibits any further POST for the intent; its claim is routed to evidence-based recovery.
+ */
+export class EntryDispatchRecordedNotSentError extends Error {
+  readonly deliveryClassification = 'NOT_SENT_DISPATCH_RECORD_ACK_LOST' as const;
+  readonly code = 'ENTRY_DISPATCH_RECORD_EXISTS' as const;
+
+  constructor(readonly record: 'CONSUMPTION' | 'UNENFORCED_DISPATCH', readonly recordId: number) {
+    super(`A ${record} for this entry already committed; no further POST is permitted and this attempt did not invoke the adapter.`);
+    this.name = 'EntryDispatchRecordedNotSentError';
+  }
+
+  get blockReason() {
+    return `ENTRY_DISPATCH_RECORDED_NOT_SENT:${this.record}:${this.recordId}`;
+  }
+}
+
+export function getEntryDispatchRecordedNotSent(error: unknown) {
+  return error instanceof EntryDispatchRecordedNotSentError ? error : null;
+}
+
 export type PreparedEntryBrokerDispatch = {
-  enforcement: 'FROZEN_OBLIGATION' | 'NOT_APPLICABLE';
+  enforcement: 'FROZEN_OBLIGATION' | 'UNOBLIGATED_FINAL_AUTHORIZATION' | 'NOT_APPLICABLE';
   applicability: string;
   decisionId: number | null;
   dispatchExpiresAt: Date | null;
   /**
-   * Consumes the ALLOWED decision immediately before the adapter call. Resolves only when a new POST
-   * is authorized; otherwise throws MarketPolicyBrokerDispatchRefusedError and nothing is sent.
+   * The final serialized authorization, called as the last step before the adapter. A frozen
+   * obligation consumes its ALLOWED decision; an un-obligated PAPER entry records its un-enforced
+   * dispatch authorization or is quarantined. Resolves only when a new POST is authorized; otherwise
+   * throws MarketPolicyBrokerDispatchRefusedError (nothing sent) or, when the record committed but
+   * its acknowledgement was lost, EntryDispatchRecordedNotSentError (nothing sent by this attempt).
    */
   authorizeDispatch: (brokerPostOpportunityId: number | null) => Promise<void>;
 };
@@ -290,10 +322,55 @@ async function prepareObligatedDecision(db: PrismaClient, request: EntryBrokerDi
   }, PREPARATION_TRANSACTION);
 }
 
+type LockedRollout = Awaited<ReturnType<typeof lockMarketPolicyEnforcementRollout>>;
+
+function lockEntryExposure(tx: Prisma.TransactionClient, tradingAccountId: number, securityId: number) {
+  return tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`entry-exposure:${tradingAccountId}:${securityId}`}, 0))::text`;
+}
+
+async function recordQuarantineDecision(
+  tx: Prisma.TransactionClient,
+  request: EntryBrokerDispatchRequest,
+  intent: DispatchIntent,
+  rollout: LockedRollout,
+  resolution: LockedMarketPolicyEnforcementResolution,
+  stage: 'PREPARATION' | 'FINAL_DISPATCH_AUTHORIZATION',
+): Promise<DecisionResult> {
+  const authorization = resolution.authorization!;
+  const dispatchSequence = await nextDispatchSequence(tx, request.orderIntentId);
+  const evaluatedAt = await decisionClock(tx);
+  const reasonCode = `UNOBLIGATED_ENTRY_UNDER_${resolution.disposition}${stage === 'FINAL_DISPATCH_AUTHORIZATION' ? '_AT_FINAL_AUTHORIZATION' : ''}`;
+  try {
+    const decision = await tx.marketPolicyBrokerDispatchDecision.create({
+      data: {
+        decisionKey: randomUUID(), decisionVersion: MARKET_POLICY_BROKER_TIME_ENFORCEMENT_VERSION, orderIntentId: request.orderIntentId, obligationId: null,
+        dispatchSequence, clientOrderId: intent.clientOrderId ?? request.clientOrderId, environment: 'PAPER',
+        tradingAccountId: intent.tradingAccountId!, accountSubscriptionId: intent.tradingAccountSubscriptionId!, subscriptionId: resolution.identity.subscriptionId,
+        securityId: resolution.identity.securityId, securitySymbol: resolution.identity.securitySymbol, strategyId: resolution.identity.strategyId,
+        policyRevisionId: authorization.policyRevisionId, enrollmentGenerationId: authorization.enrollmentGenerationId, authorizationId: authorization.id,
+        authorizationFingerprint: authorization.authorizationFingerprint, authorityVersion: authorization.authorityVersion, authorizationStatus: authorization.status,
+        rolloutEnabled: rollout.enabled, rolloutVersion: rollout.version, evaluatedAt,
+        outcome: 'LEGACY_UNOBLIGATED_QUARANTINED', reasonCode, dispatchDisposition: 'DEFINITELY_NOT_SENT',
+        evidenceJson: json({
+          decisionVersion: MARKET_POLICY_BROKER_TIME_ENFORCEMENT_VERSION, semantics: 'LEGACY_QUEUED_ENTRY_QUARANTINE; NO_ALLOWED_ADMISSION_INVENTED',
+          stage, disposition: resolution.disposition, dispositionReasons: resolution.reasons, latestAuthorization: authorizationEvidence(authorization),
+          identity: resolution.identity, rollout: { enabled: rollout.enabled, version: rollout.version },
+          boundaries: { liveAuthority: 'NONE', providerCalls: 'NONE' },
+        }),
+      },
+    });
+    return { decisionId: decision.id, outcome: decision.outcome, reasonCode, dispatchExpiresAt: null, clientOrderId: decision.clientOrderId };
+  } catch (error) {
+    throw new BrokerDispatchTechnicalError('DECISION_PERSISTENCE', error);
+  }
+}
+
 /**
  * Un-obligated PAPER entries: existing behavior unless the active rollout and the assignment's
  * current authorization require enforcement, in which case the queued intent is quarantined (it was
  * never gated, so it can never become a fresh POST, and no ALLOWED admission is invented for it).
+ * This early read only avoids opportunity capture for an entry that is already quarantinable; the
+ * authoritative decision is the final dispatch authorization below.
  */
 async function prepareUnobligatedDecision(db: PrismaClient, request: EntryBrokerDispatchRequest, intent: DispatchIntent): Promise<DecisionResult | { applicability: string }> {
   return db.$transaction(async tx => {
@@ -306,35 +383,126 @@ async function prepareUnobligatedDecision(db: PrismaClient, request: EntryBroker
       throw new BrokerDispatchTechnicalError('AUTHORIZATION_RESOLUTION', error);
     }
     if (NON_ENFORCED_DISPOSITIONS.has(resolution.disposition)) return { applicability: resolution.disposition };
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`entry-exposure:${resolution.identity.tradingAccountId}:${resolution.identity.securityId}`}, 0))::text`;
-    const authorization = resolution.authorization!;
-    const dispatchSequence = await nextDispatchSequence(tx, request.orderIntentId);
-    const evaluatedAt = await decisionClock(tx);
-    const reasonCode = `UNOBLIGATED_ENTRY_UNDER_${resolution.disposition}`;
+    await lockEntryExposure(tx, resolution.identity.tradingAccountId, resolution.identity.securityId);
+    return recordQuarantineDecision(tx, request, intent, rollout, resolution, 'PREPARATION');
+  }, PREPARATION_TRANSACTION);
+}
+
+type FinalUnobligatedAuthorization = { kind: 'AUTHORIZED'; id: number; basis: string } | { kind: 'QUARANTINED'; decision: DecisionResult };
+
+/**
+ * Hermes MEDIUM-1: the final serialized authorization of an un-obligated PAPER entry, after
+ * compare-only opportunity capture and immediately before the adapter. One short READ COMMITTED
+ * transaction in the established lock order (rollout FOR SHARE, account, assignment, Subscription,
+ * Security, latest authorization FOR SHARE, entry-exposure advisory lock) re-decides the disposition
+ * and revalidates the exact executable identity, and PostgreSQL re-checks both on insert. Its commit
+ * is the linearization point: a grant, re-grant or activation committed before it quarantines the
+ * entry; one committed after it cannot recall the in-flight POST. No transaction spans broker I/O.
+ */
+async function authorizeUnobligatedDispatchInTransaction(
+  db: PrismaClient,
+  request: EntryBrokerDispatchRequest,
+  intent: DispatchIntent,
+  brokerPostOpportunityId: number | null,
+): Promise<FinalUnobligatedAuthorization> {
+  return db.$transaction(async tx => {
+    const rollout = await lockMarketPolicyEnforcementRollout(tx);
+    const symbol = request.symbol.trim().toUpperCase();
+    let resolution: LockedMarketPolicyEnforcementResolution | null = null;
+    let security: { id: number; symbol: string } | undefined;
+    if (intent.tradingAccountSubscriptionId !== null) {
+      try {
+        resolution = await resolveLockedAssignmentMarketPolicyEnforcement(tx, intent.tradingAccountSubscriptionId);
+      } catch (error) {
+        throw new BrokerDispatchTechnicalError('AUTHORIZATION_RESOLUTION', error);
+      }
+      security = { id: resolution.identity.securityId, symbol: resolution.identity.securitySymbol };
+    } else {
+      [security] = await tx.$queryRaw<Array<{ id: number; symbol: string }>>`SELECT id, symbol FROM "Security" WHERE symbol = ${symbol} FOR KEY SHARE`;
+    }
+    if (!security) throw new BrokerDispatchTechnicalError('FINAL_AUTHORIZATION_IDENTITY', new Error('SECURITY_NOT_FOUND'));
+    await lockEntryExposure(tx, request.tradingAccountId, security.id);
+
+    const current = await tx.orderIntent.findUniqueOrThrow({
+      where: { id: request.orderIntentId },
+      select: {
+        tradingAccountId: true, tradingAccountSubscriptionId: true, clientOrderId: true, symbol: true, side: true, status: true,
+        tradingAccount: { select: { environment: true } },
+        entryExposureClaim: { select: { status: true, releasedAt: true, tradingAccountId: true, securityId: true } },
+        marketPolicyEnforcementObligation: { select: { id: true } },
+        marketPolicyBrokerDispatchConsumption: { select: { id: true } },
+        marketPolicyBrokerUnenforcedDispatch: { select: { id: true } },
+      },
+    });
+    const claim = current.entryExposureClaim;
+    const mismatches = [
+      ...(current.tradingAccount?.environment !== 'PAPER' || (resolution && resolution.identity.environment !== 'PAPER') ? ['ENVIRONMENT'] : []),
+      ...(current.tradingAccountId !== request.tradingAccountId || (resolution && resolution.identity.tradingAccountId !== request.tradingAccountId) ? ['ACCOUNT'] : []),
+      ...(current.tradingAccountSubscriptionId !== intent.tradingAccountSubscriptionId ? ['ASSIGNMENT'] : []),
+      ...(current.symbol.trim().toUpperCase() !== symbol || security.symbol !== symbol ? ['SYMBOL'] : []),
+      ...(current.side.trim().toLowerCase() !== 'buy' ? ['SIDE'] : []),
+      ...(current.clientOrderId !== request.clientOrderId ? ['CLIENT_ORDER_ID'] : []),
+      ...(current.status !== 'submitting' ? ['INTENT_NOT_SUBMITTING'] : []),
+      ...(current.marketPolicyEnforcementObligation ? ['OBLIGATION_PRESENT'] : []),
+      ...(current.marketPolicyBrokerDispatchConsumption || current.marketPolicyBrokerUnenforcedDispatch ? ['PRIOR_DISPATCH_RECORD'] : []),
+      ...(!claim || claim.releasedAt || claim.status !== 'ENTRY_SUBMITTING' || claim.tradingAccountId !== request.tradingAccountId || claim.securityId !== security.id ? ['ENTRY_EXPOSURE_CLAIM'] : []),
+    ];
+    if (mismatches.length) throw new BrokerDispatchTechnicalError('FINAL_AUTHORIZATION_REVALIDATION', new Error(`ENTRY_NOT_EXECUTABLE_${mismatches.join('_')}`));
+
+    // A grant, re-grant or activation committed before this point requires enforcement now.
+    if (rollout.enabled && resolution && !NON_ENFORCED_DISPOSITIONS.has(resolution.disposition)) {
+      return { kind: 'QUARANTINED' as const, decision: await recordQuarantineDecision(tx, request, intent, rollout, resolution, 'FINAL_DISPATCH_AUTHORIZATION') };
+    }
+    const basis = !rollout.enabled ? 'RUNTIME_INACTIVE' : resolution ? resolution.disposition : 'NO_ASSIGNMENT';
+    if (rollout.enabled && resolution && !UNENFORCED_DISPATCH_BASES.has(basis)) {
+      throw new BrokerDispatchTechnicalError('FINAL_AUTHORIZATION_DISPOSITION', new Error(`UNEXPECTED_DISPOSITION_${basis}`));
+    }
+    const latest = resolution?.authorization ?? null;
     try {
-      const decision = await tx.marketPolicyBrokerDispatchDecision.create({
+      const row = await tx.marketPolicyBrokerUnenforcedDispatch.create({
         data: {
-          decisionKey: randomUUID(), decisionVersion: MARKET_POLICY_BROKER_TIME_ENFORCEMENT_VERSION, orderIntentId: request.orderIntentId, obligationId: null,
-          dispatchSequence, clientOrderId: intent.clientOrderId ?? request.clientOrderId, environment: 'PAPER',
-          tradingAccountId: intent.tradingAccountId!, accountSubscriptionId: intent.tradingAccountSubscriptionId!, subscriptionId: resolution.identity.subscriptionId,
-          securityId: resolution.identity.securityId, securitySymbol: resolution.identity.securitySymbol, strategyId: resolution.identity.strategyId,
-          policyRevisionId: authorization.policyRevisionId, enrollmentGenerationId: authorization.enrollmentGenerationId, authorizationId: authorization.id,
-          authorizationFingerprint: authorization.authorizationFingerprint, authorityVersion: authorization.authorityVersion, authorizationStatus: authorization.status,
-          rolloutEnabled: rollout.enabled, rolloutVersion: rollout.version, evaluatedAt,
-          outcome: 'LEGACY_UNOBLIGATED_QUARANTINED', reasonCode, dispatchDisposition: 'DEFINITELY_NOT_SENT',
+          orderIntentId: request.orderIntentId, clientOrderId: request.clientOrderId, environment: 'PAPER',
+          tradingAccountId: request.tradingAccountId, accountSubscriptionId: intent.tradingAccountSubscriptionId,
+          securityId: security.id, securitySymbol: security.symbol, basis,
+          latestAuthorizationId: latest?.id ?? null, latestAuthorizationStatus: latest?.status ?? null,
+          rolloutEnabled: rollout.enabled, rolloutVersion: rollout.version, brokerPostOpportunityId,
           evidenceJson: json({
-            decisionVersion: MARKET_POLICY_BROKER_TIME_ENFORCEMENT_VERSION, semantics: 'LEGACY_QUEUED_ENTRY_QUARANTINE; NO_ALLOWED_ADMISSION_INVENTED',
-            disposition: resolution.disposition, dispositionReasons: resolution.reasons, latestAuthorization: authorizationEvidence(authorization),
-            identity: resolution.identity, rollout: { enabled: rollout.enabled, version: rollout.version },
+            semantics: 'FINAL_NON_ENFORCED_DISPATCH_AUTHORIZATION; DISPATCH_MAY_START_AFTER_COMMIT; NOT_PROOF_OF_BROKER_RECEIPT',
+            disposition: resolution?.disposition ?? 'NO_ASSIGNMENT', dispositionReasons: resolution?.reasons ?? [],
+            latestAuthorization: authorizationEvidence(latest), rollout: { enabled: rollout.enabled, version: rollout.version },
+            residualRace: 'AUTHORITY_COMMITTED_AFTER_THIS_RECORD_CANNOT_RECALL_THE_IN_FLIGHT_POST',
             boundaries: { liveAuthority: 'NONE', providerCalls: 'NONE' },
           }),
         },
       });
-      return { decisionId: decision.id, outcome: decision.outcome, reasonCode, dispatchExpiresAt: null, clientOrderId: decision.clientOrderId };
+      return { kind: 'AUTHORIZED' as const, id: row.id, basis };
     } catch (error) {
-      throw new BrokerDispatchTechnicalError('DECISION_PERSISTENCE', error);
+      throw new BrokerDispatchTechnicalError('FINAL_AUTHORIZATION_PERSISTENCE', error);
     }
   }, PREPARATION_TRANSACTION);
+}
+
+/** A dispatch record that committed although its caller saw an error: nothing more may be sent. */
+async function throwIfDispatchRecorded(db: PrismaClient, orderIntentId: number) {
+  const [consumption, unenforced] = await Promise.all([
+    db.marketPolicyBrokerDispatchConsumption.findUnique({ where: { orderIntentId }, select: { id: true } }),
+    db.marketPolicyBrokerUnenforcedDispatch.findUnique({ where: { orderIntentId }, select: { id: true } }),
+  ]).catch(() => [null, null] as const);
+  // An unreadable record stays unknown: the caller still refuses the POST, and the claim's
+  // never-submitted release re-checks durable records before any release.
+  if (consumption) throw new EntryDispatchRecordedNotSentError('CONSUMPTION', consumption.id);
+  if (unenforced) throw new EntryDispatchRecordedNotSentError('UNENFORCED_DISPATCH', unenforced.id);
+}
+
+async function authorizeUnobligatedDispatch(db: PrismaClient, request: EntryBrokerDispatchRequest, intent: DispatchIntent, brokerPostOpportunityId: number | null) {
+  let result: FinalUnobligatedAuthorization;
+  try {
+    result = await authorizeUnobligatedDispatchInTransaction(db, request, intent, brokerPostOpportunityId);
+  } catch (error) {
+    await throwIfDispatchRecorded(db, request.orderIntentId);
+    throw await technicalRefusal(db, request, intent, error instanceof BrokerDispatchTechnicalError ? error : new BrokerDispatchTechnicalError('FINAL_AUTHORIZATION_COMMIT', error));
+  }
+  if (result.kind === 'QUARANTINED') throw await denialRefusal(request, result.decision);
 }
 
 async function recordTechnicalFailure(db: PrismaClient, request: EntryBrokerDispatchRequest, intent: DispatchIntent | null, stage: string, diagnostic: string) {
@@ -434,15 +602,22 @@ export async function prepareEntryBrokerDispatch(request: EntryBrokerDispatchReq
   if (intent.environment !== 'PAPER') return notApplicable('NOT_APPLICABLE_LIVE');
 
   if (intent.obligationId === null) {
-    if (intent.tradingAccountSubscriptionId === null) return notApplicable('NO_ASSIGNMENT');
-    let prepared: DecisionResult | { applicability: string };
-    try {
-      prepared = await prepareUnobligatedDecision(db, request, intent);
-    } catch (error) {
-      throw await technicalRefusal(db, request, intent, error);
+    let applicability = 'NO_ASSIGNMENT';
+    if (intent.tradingAccountSubscriptionId !== null) {
+      let prepared: DecisionResult | { applicability: string };
+      try {
+        prepared = await prepareUnobligatedDecision(db, request, intent);
+      } catch (error) {
+        throw await technicalRefusal(db, request, intent, error);
+      }
+      if (!('applicability' in prepared)) throw await denialRefusal(request, prepared);
+      applicability = prepared.applicability;
     }
-    if ('applicability' in prepared) return notApplicable(prepared.applicability);
-    throw await denialRefusal(request, prepared);
+    // The early read is advisory; the final serialized authorization is authoritative.
+    return {
+      enforcement: 'UNOBLIGATED_FINAL_AUTHORIZATION', applicability, decisionId: null, dispatchExpiresAt: null,
+      authorizeDispatch: (brokerPostOpportunityId) => authorizeUnobligatedDispatch(db, request, intent, brokerPostOpportunityId),
+    };
   }
 
   // Frozen obligation: enforced at broker time regardless of the runtime rollout state.
@@ -457,6 +632,8 @@ export async function prepareEntryBrokerDispatch(request: EntryBrokerDispatchReq
         await consumeDecision(db, first, request, brokerPostOpportunityId);
         return;
       } catch (error) {
+        // A consumption that committed with a lost acknowledgement prohibits any further POST.
+        await throwIfDispatchRecorded(db, request.orderIntentId);
         // Not consumed, so nothing was sent. The refused decision is closed by the fresh decision
         // appended below (a superseded decision can never be consumed). Re-evaluate exactly once.
         logger.warn({ orderIntentId: request.orderIntentId, decisionId: first.decisionId, refusal: consumptionRefusalCode(error) }, 'Broker dispatch consumption was refused; re-evaluating with fresh evidence before any POST.');
@@ -465,6 +642,7 @@ export async function prepareEntryBrokerDispatch(request: EntryBrokerDispatchReq
       try {
         await consumeDecision(db, fresh, request, brokerPostOpportunityId);
       } catch (error) {
+        await throwIfDispatchRecorded(db, request.orderIntentId);
         throw await technicalRefusal(db, request, intent, new BrokerDispatchTechnicalError('DISPATCH_CONSUMPTION', new Error(consumptionRefusalCode(error))));
       }
     },

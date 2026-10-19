@@ -68,10 +68,15 @@ export async function previewEntryExposureClaimRemediation(claimId: number) {
     order.symbol.toUpperCase() === claim.security.symbol.toUpperCase() &&
     order.side.toLowerCase() === 'buy' && !isTerminalBrokerOrderStatus(order.status));
   const positionOnlyRecovery = !claim.orderIntentId && claim.trackedPosition?.status === 'closed';
+  const brokerOrderIdentityConflict = brokerOrder !== null && (
+    (claim.orderIntent?.clientOrderId != null && brokerOrder.client_order_id !== claim.orderIntent.clientOrderId) ||
+    brokerOrder.symbol?.trim().toUpperCase() !== claim.security.symbol.trim().toUpperCase() ||
+    brokerOrder.side?.trim().toLowerCase() !== 'buy');
   const blockers = [
     ...(claim.releasedAt ? ['CLAIM_ALREADY_RELEASED'] : []),
     ...(lookupError ? ['BROKER_LOOKUP_FAILED'] : []),
     ...(!brokerOrder && !positionOnlyRecovery ? ['BROKER_ORDER_NOT_ESTABLISHED'] : []),
+    ...(brokerOrderIdentityConflict ? ['BROKER_ORDER_IDENTITY_CONFLICT'] : []),
     ...(brokerOrder && !isTerminalBrokerOrderStatus(brokerOrder.status) ? ['BROKER_ORDER_NONTERMINAL'] : []),
     ...(brokerPosition ? ['BROKER_POSITION_PRESENT'] : []),
     ...(relevantOpenOrders.length ? ['BROKER_BUY_ORDER_PRESENT'] : []),
@@ -82,8 +87,8 @@ export async function previewEntryExposureClaimRemediation(claimId: number) {
       symbol: claim.security.symbol, orderIntentId: claim.orderIntentId, trackedPositionId: claim.trackedPositionId,
       trackedPositionStatus: claim.trackedPosition?.status ?? null },
     localOrder,
-    brokerOrder: brokerOrder ? { id: brokerOrder.id, clientOrderId: brokerOrder.client_order_id, status: brokerOrder.status,
-      qty: brokerOrder.qty, filledQty: brokerOrder.filled_qty ?? null } : null,
+    brokerOrder: brokerOrder ? { id: brokerOrder.id, clientOrderId: brokerOrder.client_order_id, symbol: brokerOrder.symbol ?? null,
+      side: brokerOrder.side ?? null, status: brokerOrder.status, qty: brokerOrder.qty, filledQty: brokerOrder.filled_qty ?? null } : null,
     brokerPosition: brokerPosition ? { symbol: brokerPosition.symbol, side: brokerPosition.side, qty: brokerPosition.qty } : null,
     relevantOpenOrders: relevantOpenOrders.map((order) => ({ id: order.id, clientOrderId: order.client_order_id, status: order.status, qty: order.qty, filledQty: order.filled_qty ?? null })),
     fills,
@@ -396,7 +401,7 @@ export async function releaseUnsubmittedEntryExposureClaim(args: {
       orderIntentId: args.orderIntentId, claimId: claim.id, claimStatus: claim.status,
     });
   }
-  const [brokerOrders, brokerActivities, brokerDispatchEvidence, dispatchConsumptions, position] = await Promise.all([
+  const [brokerOrders, brokerActivities, brokerDispatchEvidence, dispatchConsumptions, unenforcedDispatches, position] = await Promise.all([
     db.brokerOrder.count({ where: { orderIntentId: args.orderIntentId } }),
     db.brokerActivity.count({ where: { orderIntentId: args.orderIntentId } }),
     db.orderIntentBrokerOpportunityEvent.count({
@@ -405,15 +410,18 @@ export async function releaseUnsubmittedEntryExposureClaim(args: {
         eventType: { in: ['ADAPTER_DISPATCH_REACHED', 'BROKER_RESPONSE_CONFIRMED', 'BROKER_REJECTED', 'DELIVERY_UNCERTAIN', 'RECOVERY_FOUND'] },
       },
     }),
-    // A consumed broker-time dispatch authorization means the adapter may have been invoked.
+    // A consumed broker-time authorization or a final un-enforced dispatch authorization means the
+    // adapter may have been invoked. Such a claim is released only by evidence-based recovery
+    // (entry-dispatch-recovery.service), never as unsubmitted.
     db.marketPolicyBrokerDispatchConsumption.count({ where: { orderIntentId: args.orderIntentId } }),
+    db.marketPolicyBrokerUnenforcedDispatch.count({ where: { orderIntentId: args.orderIntentId } }),
     claim.trackedPositionId
       ? db.trackedPosition.findUnique({ where: { id: claim.trackedPositionId }, select: { status: true } })
       : null,
   ]);
-  if (brokerOrders > 0 || brokerActivities > 0 || brokerDispatchEvidence > 0 || dispatchConsumptions > 0 || (position && position.status !== 'closed')) {
+  if (brokerOrders > 0 || brokerActivities > 0 || brokerDispatchEvidence > 0 || dispatchConsumptions > 0 || unenforcedDispatches > 0 || (position && position.status !== 'closed')) {
     throw conflict('ENTRY_EXPOSURE_UNRESOLVED', 'Claim has broker or position evidence and cannot be released as unsubmitted.', {
-      orderIntentId: args.orderIntentId, claimId: claim.id, brokerOrders, brokerActivities, brokerDispatchEvidence, dispatchConsumptions,
+      orderIntentId: args.orderIntentId, claimId: claim.id, brokerOrders, brokerActivities, brokerDispatchEvidence, dispatchConsumptions, unenforcedDispatches,
       trackedPositionStatus: position?.status ?? null,
     });
   }
@@ -655,6 +663,11 @@ export async function releaseConfirmedTerminalEntryClaim(args: {
     } } });
     return tx.entryExposureClaim.findUnique({ where: { id: claim.id } });
   });
+}
+
+/** Appends a diagnostic only when its evidence changed, and always marks the claim as diagnosed. */
+export async function appendEntryExposureClaimDiagnostic(claimId: number, eventType: string, evidence: Prisma.InputJsonValue, db: Db = prisma) {
+  return appendClaimDiagnostic(claimId, eventType, evidence, db);
 }
 
 async function appendClaimDiagnostic(claimId: number, eventType: string, evidence: Prisma.InputJsonValue, db: Db) {

@@ -462,8 +462,24 @@ is consumed (`MarketPolicyBrokerDispatchConsumption`, at most one per intent) as
 linearization point just before the adapter. Refusals happen in the `NOT_DISPATCHED`
 phase and are definite non-sends; never treat an unclassified exception that way.
 Under the active rollout, un-obligated queued BUYs for assignments that require
-enforcement are quarantined. Run `npm run market-policy:broker-readiness` before
-activation. See `docs/architecture/market-policy-broker-time-enforcement.md` and
+enforcement are quarantined. Every un-obligated PAPER entry gets a final serialized
+authorization immediately before the adapter: an immutable
+`MarketPolicyBrokerUnenforcedDispatch` record (one per intent, PostgreSQL-verified) or
+an `..._AT_FINAL_AUTHORIZATION` quarantine. Its commit is the linearization point; a
+grant or activation committed after it cannot recall the POST.
+
+A consumption or un-enforced dispatch record is evidence that a POST may have started,
+never proof of receipt. It is never deleted, relaxed or reused, and it permanently
+prohibits another POST for that intent. Such a claim is never released by
+`releaseUnsubmittedEntryExposureClaim`. Failures after the record are recorded on the
+claim (`DISPATCH_OUTCOME_RECORDED`, claim `UNRESOLVED`) and released only by
+`entry-dispatch-recovery.service.ts`. Release requires a definite local non-send, or a
+definitive and settled HTTP rejection, plus fresh exact broker verification and a locked
+local revalidation. Delivery uncertainty is never released on absence, and there is no
+force or time-based release. `EntryExposureClaimEvent` is append-only. Operator release
+uses the fingerprinted `entry-exposure-remediation.service.ts`. Run
+`npm run market-policy:broker-readiness` before activation. See
+`docs/architecture/market-policy-broker-time-enforcement.md` and
 `docs/production/market-policy-enforcement-rollout.md`.
 
 The intended lifecycle is:

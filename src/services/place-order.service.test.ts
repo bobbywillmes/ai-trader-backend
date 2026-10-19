@@ -34,6 +34,7 @@ vi.mock('../db/prisma.js', () => ({
       findUniqueOrThrow: mocks.tradingAccountFindUniqueOrThrow,
     },
     marketPolicyBrokerDispatchConsumption: { count: mocks.localDispatchEvidenceCount },
+    marketPolicyBrokerUnenforcedDispatch: { count: mocks.localDispatchEvidenceCount },
     orderIntentBrokerOpportunityEvent: { count: mocks.localDispatchEvidenceCount },
     brokerOrder: { count: mocks.localDispatchEvidenceCount },
   },

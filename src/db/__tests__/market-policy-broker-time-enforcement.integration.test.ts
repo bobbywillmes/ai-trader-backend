@@ -9,6 +9,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 // order worker drives submitOrderToBroker; Alpaca is stubbed only at the adapter boundary.
 const PRE_INTENT_MIGRATION = '20261018150000_market_policy_pre_intent_enforcement';
 const BROKER_TIME_MIGRATION = '20261018170000_market_policy_broker_time_enforcement';
+const DISPATCH_RECOVERY_MIGRATION = '20261019120000_market_policy_dispatch_recovery';
 const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.DATABASE_URL;
 
 type BrokerOrder = { id: string; client_order_id: string; symbol: string; side: string; status: string; qty: string; filled_qty: string };
@@ -18,6 +19,11 @@ const harness = vi.hoisted(() => ({
   lookupFailures: new Set<string>(),
   submitCalls: [] as Array<{ accountId: number; payload: { client_order_id: string; symbol: string } }>,
   submitError: null as null | (() => Promise<Error>),
+  // An adapter-local guard failure before any network request (it never reaches submitCalls).
+  adapterLocalError: null as null | (() => Promise<Error>),
+  openBuys: new Map<string, BrokerOrder[]>(),
+  openBuyFailures: new Set<string>(),
+  positions: new Map<string, { symbol: string; side: string; qty: string }>(),
   onSubmit: null as null | (() => Promise<void>),
   beforeConsume: null as null | (() => Promise<void>),
   evaluatorMode: 'real' as 'real' | 'throw' | 'forge',
@@ -31,10 +37,14 @@ vi.mock('../../integrations/alpaca/orders.adapter.js', () => ({
     return harness.orders.get(clientOrderId) ?? null;
   }),
   getAlpacaOrderById: vi.fn(async (_accountId: number, id: string) => [...harness.orders.values()].find(order => order.id === id) ?? null),
-  getCompleteOpenAlpacaBuyOrders: vi.fn(async () => []),
-  getCompleteOpenAlpacaBuyOrdersForSymbol: vi.fn(async () => []),
+  getCompleteOpenAlpacaBuyOrders: vi.fn(async () => [...harness.openBuys.values()].flat()),
+  getCompleteOpenAlpacaBuyOrdersForSymbol: vi.fn(async (_accountId: number, symbol: string) => {
+    if (harness.openBuyFailures.has(symbol)) throw new Error('Alpaca open-order pagination did not advance.');
+    return harness.openBuys.get(symbol) ?? [];
+  }),
   getOpenAlpacaOrders: vi.fn(async () => []),
   submitAlpacaEntryOrder: vi.fn(async (accountId: number, payload: { client_order_id: string; symbol: string; qty?: string }) => {
+    if (harness.adapterLocalError) throw await harness.adapterLocalError();
     harness.submitCalls.push({ accountId, payload });
     if (harness.onSubmit) await harness.onSubmit();
     if (harness.submitError) throw await harness.submitError();
@@ -45,7 +55,10 @@ vi.mock('../../integrations/alpaca/orders.adapter.js', () => ({
   submitVerifiedAlpacaExitOrder: vi.fn(async () => { throw new Error('Exit submissions are outside these tests.'); }),
   cancelAlpacaOrder: vi.fn(), cancelAllAlpacaOrders: vi.fn(),
 }));
-vi.mock('../../integrations/alpaca/positions.adapter.js', () => ({ getAlpacaPositions: vi.fn(async () => []), getAlpacaPositionBySymbol: vi.fn(async () => null) }));
+vi.mock('../../integrations/alpaca/positions.adapter.js', () => ({
+  getAlpacaPositions: vi.fn(async () => [...harness.positions.values()]),
+  getAlpacaPositionBySymbol: vi.fn(async (_accountId: number, symbol: string) => harness.positions.get(symbol) ?? null),
+}));
 // Compare-only telemetry is unavailable here; its loss must never change broker behavior. The capture
 // call is also the natural seam between broker-time preparation and dispatch consumption.
 vi.mock('../../services/order-intent-broker-opportunity.service.js', () => ({
@@ -128,6 +141,9 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
     signals: await import('../../services/signal-entry.service.js'),
     worker: await import('../../workers/order.worker.js'),
     errors: await import('../../errors/broker-write-delivery-error.js'),
+    recovery: await import('../../services/entry-dispatch-recovery.service.js'),
+    remediation: await import('../../services/entry-exposure-remediation.service.js'),
+    entryReadiness: await import('../../services/entry-exposure-readiness.service.js'),
   });
   const count = async (sql: string, params: unknown[] = []) => (await db.query(`SELECT count(*)::int AS count FROM ${sql}`, params)).rows[0].count as number;
   const one = async (sql: string, params: unknown[] = []) => (await db.query(sql, params)).rows[0];
@@ -250,7 +266,8 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
     const url = new URL(process.env.DATABASE_URL!); url.pathname = `/${database}`; url.searchParams.delete('schema'); databaseUrl = url.toString();
     db = new Client({ connectionString: databaseUrl }); await db.connect();
     const migrations = (await readdir('prisma/migrations', { withFileTypes: true })).filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
-    expect(migrations.at(-1)).toBe(BROKER_TIME_MIGRATION);
+    expect(migrations).toContain(BROKER_TIME_MIGRATION);
+    expect(migrations.at(-1)).toBe(DISPATCH_RECOVERY_MIGRATION);
     // Replay up to Phase 3C.1 so a Security-unbound V1 grant exists when Phase 3C.2 invalidates it (L5).
     for (const migration of migrations.filter(name => name < PRE_INTENT_MIGRATION)) await db.query(await readFile(`prisma/migrations/${migration}/migration.sql`, 'utf8'));
     ownerId = await user('owner@phase3c3.test', 'SYSTEM_OWNER');
@@ -279,6 +296,7 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
 
   beforeEach(() => {
     harness.submitError = null; harness.onSubmit = null; harness.beforeConsume = null; harness.evaluatorMode = 'real';
+    harness.adapterLocalError = null; harness.openBuys.clear(); harness.openBuyFailures.clear(); harness.positions.clear();
   });
 
   it('replays the complete migration chain without Prisma schema drift', () => {
@@ -722,7 +740,8 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
     await db.query('COMMIT');
     // A consumption for another intent's decision, and a second consumption per intent, are rejected.
     await prepared.authorizeDispatch(null);
-    await expect(prepared.authorizeDispatch(null)).rejects.toMatchObject({ outcome: 'TECHNICAL_FAILURE' });
+    // The committed consumption is detected (as after a lost acknowledgement): nothing more is sent.
+    await expect(prepared.authorizeDispatch(null)).rejects.toMatchObject({ code: 'ENTRY_DISPATCH_RECORD_EXISTS', record: 'CONSUMPTION' });
     expect(await count(`"MarketPolicyBrokerDispatchConsumption" WHERE "orderIntentId"=$1`, [intentId])).toBe(1);
     expect(posts('dbc-1')).toBe(0);
   });
@@ -891,6 +910,400 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
       await dispatch();
       expect(posts('lcmp-3')).toBe(0);
       expect((await decisionsFor(intentId))[0]).toMatchObject({ outcome: 'BLOCKED' });
+    });
+  });
+
+  describe('Phase 3C.3 corrections (Hermes MEDIUM-1 final un-obligated authorization, HIGH-1 dispatched claim recovery)', () => {
+    const later = (ms: number) => new Date(Date.now() + ms);
+    // One PAPER account per holder: each scenario gets its own holder, so account-scoped sweeps are isolated.
+    const freshAccount = async (name: string) => account(`Recovery ${name}`, 'PAPER', await user(`holder-${name.toLowerCase()}-${randomUUID()}@phase3c3.test`, 'SYSTEM_OWNER'));
+    const claimIdOf = async (orderIntentId: number) => (await one(`SELECT id FROM "EntryExposureClaim" WHERE "orderIntentId"=$1`, [orderIntentId])).id as number;
+    const claimEvents = async (orderIntentId: number, eventType: string) => (await db.query(`SELECT e."evidenceJson", e."createdAt" FROM "EntryExposureClaimEvent" e JOIN "EntryExposureClaim" c ON c.id=e."claimId" WHERE c."orderIntentId"=$1 AND e."eventType"=$2 ORDER BY e.id`, [orderIntentId, eventType])).rows;
+    const unenforcedFor = async (orderIntentId: number) => (await db.query(`SELECT * FROM "MarketPolicyBrokerUnenforcedDispatch" WHERE "orderIntentId"=$1`, [orderIntentId])).rows;
+    async function regrant(fixture: Fixture) {
+      const { authz } = await services();
+      const authorization = await authz.grantAssignmentMarketPolicyEnforcementAuthorization(fixture.accountId, fixture.assignmentId, { generationId: fixture.generation!.id, expectedConfigurationFingerprint: fixture.generation!.configurationFingerprint, expectedPolicyRevisionId: fixture.generation!.policyRevisionId, reason: 'Re-grant during dispatch' }, ownerId);
+      fixture.authorizationId = authorization!.id;
+      return fixture;
+    }
+    async function localBlocked(symbol: string, clientOrderId: string, acct: number, verifyAtWorkerTime = true) {
+      const { errors } = await services();
+      const fixture = await enforced(symbol, mainStrategyId, acct);
+      const intentId = await admitted(fixture, clientOrderId);
+      harness.adapterLocalError = async () => new errors.BrokerWriteDeliveryError({ classification: 'NOT_SENT_BLOCKED', message: `Broker write blocked because TradingAccount ${acct} credentials are unavailable.` });
+      if (!verifyAtWorkerTime) harness.openBuyFailures.add(symbol);
+      await dispatch(acct);
+      harness.adapterLocalError = null;
+      harness.openBuyFailures.delete(symbol);
+      return { fixture, intentId };
+    }
+
+    // MEDIUM-1 (1): a grant committed before the final authorization quarantines the queued entry.
+    it('quarantines a NEVER_AUTHORIZED queued entry when the owner grants authority before final dispatch authorization', async () => {
+      const acct = await freshAccount('M1');
+      const fixture = await instrument('MNA', mainStrategyId, acct);
+      await composition({ trend: 'DOWN' });
+      const queued = await submit(fixture.assignmentId, 'mna-1');
+      expect(queued).not.toHaveProperty('marketPolicyEnforcement');
+      harness.beforeConsume = async () => { await grant(fixture); };
+      expect(await dispatch(acct)).toMatchObject({ blocked: 1, submitted: 0 });
+      expect(posts('mna-1')).toBe(0);
+      const decisions = await decisionsFor(queued.intentId);
+      expect(decisions).toHaveLength(1);
+      expect(decisions[0]).toMatchObject({ outcome: 'LEGACY_UNOBLIGATED_QUARANTINED', reasonCode: 'UNOBLIGATED_ENTRY_UNDER_ENFORCED_AT_FINAL_AUTHORIZATION', authorizationId: fixture.authorizationId, dispatchDisposition: 'DEFINITELY_NOT_SENT', consumed: 0 });
+      expect(decisions[0].evidenceJson).toMatchObject({ stage: 'FINAL_DISPATCH_AUTHORIZATION' });
+      expect(await unenforcedFor(queued.intentId)).toHaveLength(0);
+      expect(await intentState(queued.intentId)).toMatchObject({ status: 'blocked', claimReleased: true, brokerOrders: 0 });
+    });
+
+    // MEDIUM-1 (2): activation with an effective authorization committed before final authorization.
+    it('quarantines an entry queued under an inactive rollout when the rollout activates before final dispatch authorization', async () => {
+      const acct = await freshAccount('M2');
+      const fixture = await enforced('MNB', mainStrategyId, acct);
+      await setRollout(false, 'Pause enforcement for M2');
+      try {
+        await composition({ trend: 'DOWN' });
+        const queued = await submit(fixture.assignmentId, 'mnb-1');
+        expect(queued).not.toHaveProperty('marketPolicyEnforcement');
+        harness.beforeConsume = async () => { await setRollout(true, 'Activate during M2 dispatch'); };
+        await dispatch(acct);
+        expect(posts('mnb-1')).toBe(0);
+        expect(await decisionsFor(queued.intentId)).toEqual([expect.objectContaining({ outcome: 'LEGACY_UNOBLIGATED_QUARANTINED', reasonCode: 'UNOBLIGATED_ENTRY_UNDER_ENFORCED_AT_FINAL_AUTHORIZATION', rolloutEnabled: true })]);
+        expect(await unenforcedFor(queued.intentId)).toHaveLength(0);
+        expect(await intentState(queued.intentId)).toMatchObject({ status: 'blocked', claimReleased: true });
+      } finally {
+        if (!(await one(`SELECT enabled FROM "MarketPolicyEnforcementRuntimeRollout" WHERE id=1`)).enabled) await setRollout(true, 'Restore enforcement after M2');
+      }
+    });
+
+    // MEDIUM-1 (3): a new grant after deliberate owner revocation or opt-out.
+    it.each(['OWNER_REVOKED', 'OWNER_OPTED_OUT'] as const)('quarantines a %s queued entry when a new grant commits before final dispatch authorization', async (disposition) => {
+      const acct = await freshAccount(`M3-${disposition}`);
+      const symbol = disposition === 'OWNER_REVOKED' ? 'MNC' : 'MNO';
+      const fixture = await enforced(symbol, mainStrategyId, acct);
+      const { enrollment, authz } = await services();
+      if (disposition === 'OWNER_REVOKED') {
+        await revoke(fixture, 'Deliberate return to non-enforced behavior');
+      } else {
+        await enrollment.disableAssignmentMarketPolicyEnrollment(acct, fixture.assignmentId, fixture.generation!.id, ownerId, 'Disable before opt-out');
+        await authz.resolveAssignmentMarketPolicyEnforcementLapse(acct, fixture.assignmentId, { authorizationId: fixture.authorizationId!, reason: 'Opt out for future entries', confirmNonEnforced: true }, ownerId);
+      }
+      await composition({ trend: 'DOWN' });
+      const queued = await submit(fixture.assignmentId, `${symbol.toLowerCase()}-1`);
+      expect(queued).not.toHaveProperty('marketPolicyEnforcement');
+      harness.beforeConsume = async () => { if (disposition === 'OWNER_REVOKED') await regrant(fixture); else await grant(fixture); };
+      await dispatch(acct);
+      expect(posts(`${symbol.toLowerCase()}-1`)).toBe(0);
+      expect(await decisionsFor(queued.intentId)).toEqual([expect.objectContaining({ outcome: 'LEGACY_UNOBLIGATED_QUARANTINED', reasonCode: 'UNOBLIGATED_ENTRY_UNDER_ENFORCED_AT_FINAL_AUTHORIZATION', authorizationId: fixture.authorizationId })]);
+      expect(await intentState(queued.intentId)).toMatchObject({ status: 'blocked', claimReleased: true });
+    });
+
+    // MEDIUM-1 (4): the documented residual boundary. Authority committed after the final
+    // authorization cannot recall the in-flight POST; it serializes behind it instead.
+    it('serializes a grant behind the final non-enforced authorization and cannot recall the subsequent POST', async () => {
+      const acct = await freshAccount('M4');
+      const fixture = await instrument('MND', mainStrategyId, acct);
+      const generation = await enroll(acct, fixture.assignmentId);
+      await composition({ trend: 'DOWN' });
+      const queued = await submit(fixture.assignmentId, 'mnd-1');
+      const holder = await client();
+      await holder.query(`SELECT pg_advisory_lock(hashtextextended($1, 0))`, [`entry-exposure:${acct}:${fixture.securityId}`]);
+      const worker = dispatch(acct);
+      // The final authorization holds the rollout, assignment (KEY SHARE) and authorization locks and waits at the advisory lock.
+      await waitForLockWaiters(1);
+      const { authz } = await services();
+      let granted = false;
+      const grantAttempt = authz.grantAssignmentMarketPolicyEnforcementAuthorization(acct, fixture.assignmentId, { generationId: generation.id, expectedConfigurationFingerprint: generation.configurationFingerprint, expectedPolicyRevisionId: generation.policyRevisionId, reason: 'Grant racing the final authorization' }, ownerId).then((row) => { granted = true; return row; });
+      await waitForLockWaiters(2);
+      await sleep(200);
+      expect(granted).toBe(false);
+      await holder.query(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`, [`entry-exposure:${acct}:${fixture.securityId}`]);
+      await worker;
+      const authorization = await grantAttempt;
+      expect(posts('mnd-1')).toBe(1);
+      const [record] = await unenforcedFor(queued.intentId);
+      expect(record).toMatchObject({ basis: 'NEVER_AUTHORIZED', latestAuthorizationId: null, rolloutEnabled: true, clientOrderId: 'mnd-1', environment: 'PAPER' });
+      const committed = await one(`SELECT "authorizedAt" FROM "AssignmentMarketPolicyEnforcementAuthorization" WHERE id=$1`, [authorization!.id]);
+      expect(committed.authorizedAt.getTime()).toBeGreaterThanOrEqual(record.authorizedAt.getTime());
+      expect(await decisionsFor(queued.intentId)).toHaveLength(0);
+      expect(await intentState(queued.intentId)).toMatchObject({ status: 'submitted', claimStatus: 'BROKER_ORDER_ACTIVE', brokerOrders: 1 });
+      // A grant inside the in-flight POST (after the final commit) is the same residual race.
+      const second = await instrument('MNE', mainStrategyId, acct);
+      const queuedSecond = await submit(second.assignmentId, 'mne-1');
+      harness.onSubmit = async () => { await grant(second); };
+      await dispatch(acct);
+      expect(posts('mne-1')).toBe(1);
+      expect(await unenforcedFor(queuedSecond.intentId)).toEqual([expect.objectContaining({ basis: 'NEVER_AUTHORIZED' })]);
+    });
+
+    it('records one immutable final non-enforced authorization per un-obligated PAPER entry, never for LIVE, and PostgreSQL refuses it when enforcement applies', async () => {
+      const acct = await freshAccount('MREC');
+      await composition({ trend: 'DOWN' });
+      const never = await instrument('MRN', mainStrategyId, acct);
+      const revoked = await enforced('MRR', mainStrategyId, acct);
+      await revoke(revoked);
+      const live = await instrument('MRL', mainStrategyId, liveId);
+      const neverIntent = await submit(never.assignmentId, 'mrn-1');
+      const revokedIntent = await submit(revoked.assignmentId, 'mrr-1');
+      const liveIntent = await submit(live.assignmentId, 'mrl-1');
+      await dispatch(acct);
+      await dispatch(liveId);
+      expect([posts('mrn-1'), posts('mrr-1'), posts('mrl-1')]).toEqual([1, 1, 1]);
+      expect(await unenforcedFor(neverIntent.intentId)).toEqual([expect.objectContaining({ basis: 'NEVER_AUTHORIZED', latestAuthorizationId: null })]);
+      expect(await unenforcedFor(revokedIntent.intentId)).toEqual([expect.objectContaining({ basis: 'OWNER_REVOKED', latestAuthorizationId: revoked.authorizationId, latestAuthorizationStatus: 'REVOKED' })]);
+      expect(await unenforcedFor(liveIntent.intentId)).toHaveLength(0);
+      const [record] = await unenforcedFor(neverIntent.intentId);
+      await expect(db.query(`UPDATE "MarketPolicyBrokerUnenforcedDispatch" SET basis='OWNER_REVOKED' WHERE id=$1`, [record.id])).rejects.toThrow(/immutable/);
+      await expect(db.query(`DELETE FROM "MarketPolicyBrokerUnenforcedDispatch" WHERE id=$1`, [record.id])).rejects.toThrow(/immutable/);
+      // A forged non-enforced authorization for an assignment that now requires enforcement.
+      const forged = await enforced('MRF', mainStrategyId, acct);
+      await setRollout(false, 'Queue MRF without an obligation');
+      let forgedIntentId: number;
+      try {
+        forgedIntentId = (await submit(forged.assignmentId, 'mrf-1')).intentId;
+      } finally {
+        await setRollout(true, 'Resume enforcement after MRF');
+      }
+      await emulateWorkerClaim(forgedIntentId);
+      const rollout = await one(`SELECT enabled, version FROM "MarketPolicyEnforcementRuntimeRollout" WHERE id=1`);
+      await expect(db.query(`INSERT INTO "MarketPolicyBrokerUnenforcedDispatch" ("orderIntentId","clientOrderId",environment,"tradingAccountId","accountSubscriptionId","securityId","securitySymbol",basis,"latestAuthorizationId","latestAuthorizationStatus","rolloutEnabled","rolloutVersion","evidenceJson") VALUES ($1,'mrf-1','PAPER',$2,$3,$4,'MRF','NEVER_AUTHORIZED',$5,'AUTHORIZED',true,$6,'{}')`,
+        [forgedIntentId, acct, forged.assignmentId, forged.securityId, forged.authorizationId, rollout.version])).rejects.toThrow(/UNENFORCED_DISPATCH_ENFORCEMENT_REQUIRED|UnenforcedDispatch_basis_check/);
+      await expect(db.query(`INSERT INTO "MarketPolicyBrokerUnenforcedDispatch" ("orderIntentId","clientOrderId",environment,"tradingAccountId","accountSubscriptionId","securityId","securitySymbol",basis,"latestAuthorizationId","latestAuthorizationStatus","rolloutEnabled","rolloutVersion","evidenceJson") VALUES ($1,'mrf-1','PAPER',$2,$3,$4,'MRF','OWNER_REVOKED',$5,'REVOKED',true,$6,'{}')`,
+        [forgedIntentId, acct, forged.assignmentId, forged.securityId, forged.authorizationId, rollout.version])).rejects.toThrow(/UNENFORCED_DISPATCH_AUTHORIZATION_CHANGED/);
+      await db.query(`UPDATE "OrderIntent" SET status='blocked', "blockReason"='TEST_HOLD' WHERE id=$1 AND status='submitting'`, [forgedIntentId]);
+      expect(posts('mrf-1')).toBe(0);
+      expect(rollout.enabled).toBe(true);
+    });
+
+    // HIGH-1 (5): a definitive 4xx after consumption.
+    it('records a definitive 4xx after consumption, never resends, and releases only after the settle window and fresh broker verification', async () => {
+      const acct = await freshAccount('H5');
+      const { errors, recovery } = await services();
+      const fixture = await enforced('REJ', mainStrategyId, acct);
+      const intentId = await admitted(fixture, 'rej-1');
+      harness.submitError = async () => new errors.BrokerWriteDeliveryError({ classification: 'BROKER_REJECTED', message: 'Alpaca explicitly rejected broker write with status 422.', statusCode: 422 });
+      expect(await dispatch(acct)).toMatchObject({ failed: 1, submitted: 0 });
+      harness.submitError = null;
+      expect(posts('rej-1')).toBe(1);
+      expect((await decisionsFor(intentId)).map(row => [row.outcome, row.consumed])).toEqual([['ALLOWED', 1]]);
+      expect(await intentState(intentId)).toMatchObject({ status: 'failed', blockReason: expect.stringContaining('BROKER_WRITE_DELIVERY:BROKER_REJECTED'), claimStatus: 'UNRESOLVED', claimReleased: false, consumptions: 1 });
+      const [recorded] = await claimEvents(intentId, 'DISPATCH_OUTCOME_RECORDED');
+      expect(recorded.evidenceJson).toMatchObject({ classification: 'BROKER_REJECTED', statusCode: 422, source: 'WORKER', consumptionId: expect.any(Number), dispatchDecisionId: expect.any(Number), deliveryProof: 'HTTP_REJECTION_RESPONSE_REQUIRES_BROKER_VERIFICATION', originalIntentResubmission: 'PROHIBITED' });
+      // Inside the settle window a lookup miss never releases ownership.
+      expect(await recovery.recoverDispatchedEntryClaimsForAccount(acct)).toMatchObject({ examined: 1, released: 0 });
+      expect((await claimEvents(intentId, 'DISPATCH_RECOVERY_RELEASE_BLOCKED')).at(-1)!.evidenceJson).toMatchObject({ blockers: ['BROKER_REJECTION_SETTLING'] });
+      expect(await intentState(intentId)).toMatchObject({ claimReleased: false });
+      // After settling, fresh exact lookup, complete open-BUY inventory and position verification release it.
+      expect(await recovery.recoverDispatchedEntryClaimsForAccount(acct, later(120_000))).toMatchObject({ examined: 1, released: 1 });
+      expect(await intentState(intentId)).toMatchObject({ status: 'failed', claimStatus: 'RELEASED', claimReleased: true, releaseReason: 'VERIFIED_DISPATCH_NO_EXPOSURE:CONFIRMED_BROKER_REJECTION', consumptions: 1 });
+      const [release] = await claimEvents(intentId, 'RELEASED_VERIFIED_DISPATCH_NO_EXPOSURE');
+      expect(release.evidenceJson).toMatchObject({ mode: 'SYSTEM', basis: 'CONFIRMED_BROKER_REJECTION', executionAuthority: 'NONE', dispatchRecord: 'RETAINED_IMMUTABLE', evidence: { conclusiveness: 'CONCLUSIVE', broker: { order: null, openBuyOrders: [], position: null } } });
+      expect(await count(`"SystemEvent" WHERE type='entry_exposure.dispatch_claim_released' AND "entityId"=$1`, [String(await claimIdOf(intentId))])).toBe(1);
+      // Never resent, even if an operator requeues the intent; claim history is append-only.
+      await db.query(`UPDATE "OrderIntent" SET status='pending' WHERE id=$1`, [intentId]);
+      await dispatch(acct);
+      expect(posts('rej-1')).toBe(1);
+      expect(await count(`"MarketPolicyBrokerDispatchConsumption" WHERE "orderIntentId"=$1`, [intentId])).toBe(1);
+      await expect(db.query(`UPDATE "EntryExposureClaimEvent" SET "eventType"='REWRITE' WHERE "claimId"=$1`, [await claimIdOf(intentId)])).rejects.toThrow(/immutable/);
+      await expect(db.query(`DELETE FROM "EntryExposureClaimEvent" WHERE "claimId"=$1`, [await claimIdOf(intentId)])).rejects.toThrow(/immutable/);
+    });
+
+    // HIGH-1 (6): a local adapter guard after consumption (no network request).
+    it('releases a consumed claim after a local NOT_SENT_BLOCKED only through recorded evidence and fresh verification, with zero POSTs', async () => {
+      const acct = await freshAccount('H6');
+      const { intentId } = await localBlocked('NSB', 'nsb-1', acct);
+      expect(posts('nsb-1')).toBe(0);
+      expect((await decisionsFor(intentId)).map(row => [row.outcome, row.consumed])).toEqual([['ALLOWED', 1]]);
+      expect(await intentState(intentId)).toMatchObject({ status: 'failed', blockReason: expect.stringContaining('BROKER_WRITE_DELIVERY:NOT_SENT_BLOCKED'), claimReleased: true, releaseReason: 'VERIFIED_DISPATCH_NO_EXPOSURE:DEFINITE_LOCAL_NON_SEND', consumptions: 1 });
+      expect((await claimEvents(intentId, 'DISPATCH_OUTCOME_RECORDED'))[0].evidenceJson).toMatchObject({ classification: 'NOT_SENT_LOCAL_BLOCKED', deliveryProof: 'ADAPTER_FAILED_BEFORE_NETWORK_REQUEST' });
+      expect((await claimEvents(intentId, 'RELEASED_VERIFIED_DISPATCH_NO_EXPOSURE'))[0].evidenceJson).toMatchObject({ mode: 'SYSTEM', basis: 'DEFINITE_LOCAL_NON_SEND' });
+      // Never released as "unsubmitted".
+      expect(await claimEvents(intentId, 'RELEASED_NO_BROKER_EXPOSURE')).toHaveLength(0);
+    });
+
+    // HIGH-1 (7): delivery uncertainty after consumption.
+    it('retains a claim after uncertain delivery, refuses release on lookup absence, and still recovers a later-discovered broker order', async () => {
+      const acct = await freshAccount('H7');
+      const { errors, recovery, remediation } = await services();
+      const fixture = await enforced('UNC', mainStrategyId, acct);
+      const intentId = await admitted(fixture, 'unc-1');
+      harness.submitError = async () => new errors.BrokerWriteDeliveryError({ classification: 'DELIVERY_UNCERTAIN', message: 'Broker write delivery is uncertain after a network or response failure.' });
+      await dispatch(acct);
+      harness.submitError = null;
+      expect(posts('unc-1')).toBe(1);
+      expect(await intentState(intentId)).toMatchObject({ status: 'failed', claimStatus: 'UNRESOLVED', claimReleased: false, consumptions: 1 });
+      expect(await recovery.recoverDispatchedEntryClaimsForAccount(acct, later(3_600_000))).toMatchObject({ examined: 1, released: 0 });
+      const claimId = await claimIdOf(intentId);
+      const preview = await remediation.previewEntryExposureRemediation(claimId);
+      expect(preview).toMatchObject({ disposition: 'DISPATCHED_ENTRY_VERIFIED_NO_EXPOSURE', eligible: false, blockers: ['DELIVERY_OUTCOME_UNCERTAIN'], investigation: { conclusiveness: 'AMBIGUOUS_ABSENCE', claimRetained: true } });
+      expect(await remediation.applyEntryExposureRemediation({ claimId, actorUserId: ownerId, confirmationFingerprint: preview.confirmationFingerprint })).toMatchObject({ released: false, reason: expect.stringContaining('DELIVERY_OUTCOME_UNCERTAIN') });
+      await db.query(`UPDATE "OrderIntent" SET status='pending' WHERE id=$1`, [intentId]);
+      await dispatch(acct);
+      expect(posts('unc-1')).toBe(1);
+      expect(await intentState(intentId)).toMatchObject({ claimStatus: 'UNRESOLVED', claimReleased: false });
+      // The order surfaces later as broker-rejected: the existing terminal broker-order remediation recovers it.
+      harness.orders.set('unc-1', { id: 'alpaca-late-unc', client_order_id: 'unc-1', symbol: 'UNC', side: 'buy', status: 'rejected', qty: '1', filled_qty: '0' });
+      const terminal = await remediation.previewEntryExposureRemediation(claimId);
+      expect(terminal).toMatchObject({ disposition: 'TERMINAL_BROKER_ORDER_NO_EXPOSURE', eligible: true });
+      expect(await remediation.applyEntryExposureRemediation({ claimId, actorUserId: ownerId, confirmationFingerprint: terminal.confirmationFingerprint })).toMatchObject({ released: true, releaseReason: 'BROKER_REJECTED_NO_EXPOSURE' });
+      expect(posts('unc-1')).toBe(1);
+    });
+
+    it('treats a non-definitive 4xx after consumption as delivery-uncertain', async () => {
+      const acct = await freshAccount('H7B');
+      const { errors, recovery } = await services();
+      const fixture = await enforced('NDF', mainStrategyId, acct);
+      const intentId = await admitted(fixture, 'ndf-1');
+      harness.submitError = async () => new errors.BrokerWriteDeliveryError({ classification: 'BROKER_REJECTED', message: 'Alpaca explicitly rejected broker write with status 408.', statusCode: 408 });
+      await dispatch(acct);
+      harness.submitError = null;
+      expect(await recovery.recoverDispatchedEntryClaimsForAccount(acct, later(3_600_000))).toMatchObject({ released: 0 });
+      expect((await claimEvents(intentId, 'DISPATCH_RECOVERY_RELEASE_BLOCKED')).at(-1)!.evidenceJson).toMatchObject({ blockers: ['BROKER_REJECTION_NOT_DEFINITIVE'], conclusiveness: 'AMBIGUOUS_ABSENCE' });
+      expect(await intentState(intentId)).toMatchObject({ claimStatus: 'UNRESOLVED', claimReleased: false });
+    });
+
+    // HIGH-1 (8, 10): crash between consumption and the adapter call.
+    it('identifies a consumption stranded by a crash before the adapter, retains the claim, and exposes it to readiness and remediation', async () => {
+      const acct = await freshAccount('H8');
+      const { guard, worker, recovery, remediation, readiness, entryReadiness } = await services();
+      const fixture = await enforced('CRC', mainStrategyId, acct);
+      const intentId = await admitted(fixture, 'crc-1');
+      await emulateWorkerClaim(intentId);
+      const prepared = await guard.prepareEntryBrokerDispatch({ orderIntentId: intentId, tradingAccountId: acct, symbol: 'CRC', clientOrderId: 'crc-1' });
+      await prepared.authorizeDispatch(null);
+      // The process crashes here: consumption committed, adapter never invoked, no outcome recorded.
+      await db.query(`UPDATE "OrderIntent" SET "updatedAt" = now() - interval '10 minutes' WHERE id=$1`, [intentId]);
+      expect(await worker.recoverStaleSubmittingIntentsForAccount(acct)).toMatchObject({ found: 1, retained: 1, retryable: 0 });
+      expect(posts('crc-1')).toBe(0);
+      expect(await intentState(intentId)).toMatchObject({ status: 'failed', blockReason: expect.stringMatching(/^DISPATCH_STARTED_OUTCOME_UNKNOWN/), claimStatus: 'UNRESOLVED', claimReleased: false, consumptions: 1 });
+      expect((await claimEvents(intentId, 'DISPATCH_OUTCOME_RECORDED'))[0].evidenceJson).toMatchObject({ classification: 'DISPATCH_OUTCOME_UNKNOWN', source: 'STALE_RECOVERY', deliveryProof: 'NONE_DELIVERY_UNCERTAIN' });
+      // The terminal intent stays visible although stale recovery only selects 'submitting'.
+      const report = await entryReadiness.assessEntryExposureReadiness({ tradingAccountIds: [acct] });
+      expect(report.databaseReady).toBe(false);
+      const consumption = await one(`SELECT id, "decisionId" FROM "MarketPolicyBrokerDispatchConsumption" WHERE "orderIntentId"=$1`, [intentId]);
+      expect(report.terminalIntentsWithUnreleasedClaims).toEqual([expect.objectContaining({
+        tradingAccountId: acct, securityId: fixture.securityId, symbol: 'CRC', orderIntentId: intentId, intentStatus: 'failed', clientOrderId: 'crc-1',
+        claimId: await claimIdOf(intentId), claimStatus: 'UNRESOLVED', consumptionId: consumption.id, dispatchDecisionId: consumption.decisionId, dispatchDecisionOutcome: 'ALLOWED',
+        recordedDeliveryClassification: 'DISPATCH_OUTCOME_UNKNOWN', evidenceConclusiveness: 'AMBIGUOUS_ABSENCE', operatorRemediation: 'BLOCKED', blockerReason: 'DELIVERY_OUTCOME_UNCERTAIN',
+        lastRecoveryResult: expect.objectContaining({ eventType: 'DISPATCH_RECOVERY_RELEASE_BLOCKED' }),
+      })]);
+      const brokerReport = await readiness.assessMarketPolicyBrokerEnforcementReadiness({ tradingAccountIds: [acct] });
+      expect(brokerReport.inventory).toEqual([expect.objectContaining({ orderIntentId: intentId, claimStatus: 'UNRESOLVED', dispatchConsumptionId: consumption.id, dispatchDecisionId: consumption.decisionId, terminalWithUnreleasedClaim: true, brokerTimeTreatment: 'EXISTING_RECOVERY_PATHWAY' })]);
+      expect(brokerReport.activationGuard.reasons).toContain('TERMINAL_ENTRIES_WITH_UNRELEASED_CLAIMS');
+      const preview = await remediation.previewEntryExposureRemediation(await claimIdOf(intentId));
+      expect(preview).toMatchObject({ disposition: 'DISPATCHED_ENTRY_VERIFIED_NO_EXPOSURE', eligible: false, blockers: ['DELIVERY_OUTCOME_UNCERTAIN'], evidence: { dispatch: { consumptionId: consumption.id, dispatchDecisionId: consumption.decisionId }, orderIntent: { clientOrderId: 'crc-1' } } });
+      // Repeated sweeps with unchanged evidence append no duplicate events.
+      await recovery.recoverDispatchedEntryClaimsForAccount(acct, later(120_000));
+      await recovery.recoverDispatchedEntryClaimsForAccount(acct, later(240_000));
+      expect(await claimEvents(intentId, 'DISPATCH_RECOVERY_RELEASE_BLOCKED')).toHaveLength(1);
+      expect(await claimEvents(intentId, 'DISPATCH_OUTCOME_RECORDED')).toHaveLength(1);
+      expect(await count(`"SystemEvent" WHERE type='entry_exposure.dispatch_outcome_recorded' AND "entityId"=$1`, [String(await claimIdOf(intentId))])).toBe(1);
+      expect(posts('crc-1')).toBe(0);
+    });
+
+    // HIGH-1 (9): the consumption committed but its acknowledgement was lost.
+    it('never sends after a consumption whose acknowledgement was lost, and recovers the claim from evidence', async () => {
+      const acct = await freshAccount('H9');
+      const fixture = await enforced('ACK', mainStrategyId, acct);
+      const intentId = await admitted(fixture, 'ack-1');
+      // Fault injection: the consumption commits on another connection just before the worker's own
+      // insert, which therefore fails exactly as a commit whose acknowledgement never arrived.
+      harness.beforeConsume = async () => {
+        const decision = await one(`SELECT id, "clientOrderId" FROM "MarketPolicyBrokerDispatchDecision" WHERE "orderIntentId"=$1 ORDER BY "dispatchSequence" DESC LIMIT 1`, [intentId]);
+        await db.query(`INSERT INTO "MarketPolicyBrokerDispatchConsumption" ("decisionId","orderIntentId","clientOrderId","evidenceJson") VALUES ($1,$2,$3,'{}')`, [decision.id, intentId, decision.clientOrderId]);
+      };
+      expect(await dispatch(acct)).toMatchObject({ failed: 1, submitted: 0 });
+      harness.beforeConsume = null;
+      expect(posts('ack-1')).toBe(0);
+      const consumption = await one(`SELECT id FROM "MarketPolicyBrokerDispatchConsumption" WHERE "orderIntentId"=$1`, [intentId]);
+      expect(await intentState(intentId)).toMatchObject({ status: 'failed', blockReason: `ENTRY_DISPATCH_RECORDED_NOT_SENT:CONSUMPTION:${consumption.id}`, consumptions: 1, claimReleased: true, releaseReason: 'VERIFIED_DISPATCH_NO_EXPOSURE:DEFINITE_LOCAL_NON_SEND' });
+      expect((await claimEvents(intentId, 'DISPATCH_OUTCOME_RECORDED'))[0].evidenceJson).toMatchObject({ classification: 'NOT_SENT_DISPATCH_RECORD_ACK_LOST', consumptionId: consumption.id, deliveryProof: 'ADAPTER_NOT_INVOKED_BY_THIS_ATTEMPT' });
+      // A retry never authorizes another POST.
+      await db.query(`UPDATE "OrderIntent" SET status='pending' WHERE id=$1`, [intentId]);
+      await dispatch(acct);
+      expect(posts('ack-1')).toBe(0);
+      expect((await decisionsFor(intentId)).filter(row => row.consumed)).toHaveLength(1);
+    });
+
+    // HIGH-1 (11): fingerprinted owner remediation of a conclusively verified claim.
+    it('lets a SYSTEM_OWNER release a conclusively verified consumed claim with the exact evidence fingerprint', async () => {
+      const acct = await freshAccount('H11');
+      const { remediation } = await services();
+      const { intentId } = await localBlocked('OPR', 'opr-1', acct, false);
+      // The worker could not complete verification (incomplete open-order evidence): ownership retained.
+      expect(await intentState(intentId)).toMatchObject({ status: 'failed', claimStatus: 'UNRESOLVED', claimReleased: false, consumptions: 1 });
+      expect((await claimEvents(intentId, 'DISPATCH_RECOVERY_RELEASE_BLOCKED'))[0].evidenceJson).toMatchObject({ blockers: ['BROKER_LOOKUP_FAILED'], lookupFailed: true });
+      const claimId = await claimIdOf(intentId);
+      const preview = await remediation.previewEntryExposureRemediation(claimId);
+      expect(preview).toMatchObject({ disposition: 'DISPATCHED_ENTRY_VERIFIED_NO_EXPOSURE', eligible: true, blockers: [], investigation: null,
+        evidence: { basis: 'DEFINITE_LOCAL_NON_SEND', conclusiveness: 'CONCLUSIVE', orderIntent: { id: intentId, clientOrderId: 'opr-1' }, dispatch: { consumptionId: expect.any(Number), dispatchDecisionId: expect.any(Number), dispatchDecisionOutcome: 'ALLOWED' } } });
+      const accountUser = await user(`account-user-${randomUUID()}@phase3c3.test`, 'ACCOUNT_USER');
+      await expect(remediation.applyEntryExposureRemediation({ claimId, actorUserId: accountUser, confirmationFingerprint: preview.confirmationFingerprint })).rejects.toMatchObject({ statusCode: 403 });
+      expect(await remediation.applyEntryExposureRemediation({ claimId, actorUserId: ownerId, confirmationFingerprint: 'f'.repeat(64) })).toMatchObject({ released: false, reason: 'CONFIRMATION_FINGERPRINT_MISMATCH' });
+      const applied = await remediation.applyEntryExposureRemediation({ claimId, actorUserId: ownerId, confirmationFingerprint: preview.confirmationFingerprint });
+      expect(applied).toMatchObject({ released: true, releaseReason: 'VERIFIED_DISPATCH_NO_EXPOSURE:DEFINITE_LOCAL_NON_SEND' });
+      expect((await claimEvents(intentId, 'OPERATOR_REMEDIATION_AUTHORIZED'))[0].evidenceJson).toMatchObject({ actorUserId: ownerId, confirmationFingerprint: preview.confirmationFingerprint, disposition: 'DISPATCHED_ENTRY_VERIFIED_NO_EXPOSURE' });
+      expect((await claimEvents(intentId, 'RELEASED_VERIFIED_DISPATCH_NO_EXPOSURE'))[0].evidenceJson).toMatchObject({ mode: 'OPERATOR', actorUserId: ownerId, basis: 'DEFINITE_LOCAL_NON_SEND' });
+      // Remediation never places, cancels or requeues anything.
+      expect(posts('opr-1')).toBe(0);
+      expect(await intentState(intentId)).toMatchObject({ status: 'failed', consumptions: 1 });
+    });
+
+    // HIGH-1 (12): remediation refuses every contradiction and every ambiguity.
+    it('refuses remediation on broker position, executable BUY, unaccounted fill, incomplete pagination or mismatched identity', async () => {
+      const acct = await freshAccount('H12');
+      const { remediation } = await services();
+      const { intentId } = await localBlocked('RFS', 'rfs-1', acct, false);
+      const claimId = await claimIdOf(intentId);
+      const refused = async (blocker: string) => {
+        const preview = await remediation.previewEntryExposureRemediation(claimId);
+        expect(preview.eligible).toBe(false);
+        expect(preview.blockers).toContain(blocker);
+        expect(await remediation.applyEntryExposureRemediation({ claimId, actorUserId: ownerId, confirmationFingerprint: preview.confirmationFingerprint })).toMatchObject({ released: false });
+        expect(await intentState(intentId)).toMatchObject({ claimStatus: 'UNRESOLVED', claimReleased: false });
+        return preview;
+      };
+      harness.positions.set('RFS', { symbol: 'RFS', side: 'long', qty: '1' });
+      expect((await refused('BROKER_POSITION_PRESENT')).evidence).toMatchObject({ conclusiveness: 'CONTRADICTED' });
+      harness.positions.clear();
+      harness.openBuys.set('RFS', [{ id: 'alpaca-foreign-rfs', client_order_id: 'foreign-rfs', symbol: 'RFS', side: 'buy', status: 'new', qty: '1', filled_qty: '0' }]);
+      await refused('BROKER_BUY_ORDER_PRESENT');
+      harness.openBuys.clear();
+      const fill = await one(`INSERT INTO "BrokerActivity" (broker,mode,"activityId","activityType",symbol,side,qty,"orderId","rawBrokerJson","tradingAccountId","transactionTime","createdAt","updatedAt") VALUES ('alpaca','paper',$1,'FILL','RFS','buy',1,'alpaca-unknown-rfs','{}',$2,now(),now(),now()) RETURNING id`, [`fill-${randomUUID()}`, acct]);
+      await refused('UNATTRIBUTED_BUY_FILL_PRESENT');
+      await db.query(`DELETE FROM "BrokerActivity" WHERE id=$1`, [fill.id]);
+      harness.openBuyFailures.add('RFS');
+      expect((await refused('BROKER_LOOKUP_FAILED')).evidence).toMatchObject({ conclusiveness: 'PENDING' });
+      harness.openBuyFailures.clear();
+      harness.orders.set('rfs-1', { id: 'alpaca-wrong-rfs', client_order_id: 'rfs-1', symbol: 'OTHER', side: 'buy', status: 'rejected', qty: '1', filled_qty: '0' });
+      await refused('BROKER_ORDER_IDENTITY_CONFLICT');
+      harness.orders.delete('rfs-1');
+      // A stale fingerprint is refused even once the evidence is conclusive.
+      const stale = await remediation.previewEntryExposureRemediation(claimId);
+      expect(stale.eligible).toBe(true);
+      harness.positions.set('RFS', { symbol: 'RFS', side: 'long', qty: '1' });
+      expect(await remediation.applyEntryExposureRemediation({ claimId, actorUserId: ownerId, confirmationFingerprint: stale.confirmationFingerprint })).toMatchObject({ released: false, reason: 'CONFIRMATION_FINGERPRINT_MISMATCH' });
+      harness.positions.clear();
+      expect(posts('rfs-1')).toBe(0);
+    });
+
+    // HIGH-1 (13): a released claim admits only a genuinely new entry; the consumed intent never returns.
+    it('admits a genuinely new entry with a new client-order ID after a verified release, while the consumed intent is never resubmitted', async () => {
+      const acct = await freshAccount('H13');
+      const { fixture, intentId } = await localBlocked('NEW', 'new-1', acct);
+      expect(await intentState(intentId)).toMatchObject({ claimReleased: true });
+      // The stable key recovers the consumed lifecycle; it is never re-admitted or resent.
+      expect(await submit(fixture.assignmentId, 'new-1')).toMatchObject({ intentId, duplicate: true });
+      await db.query(`UPDATE "OrderIntent" SET status='pending' WHERE id=$1`, [intentId]);
+      await dispatch(acct);
+      expect(posts('new-1')).toBe(0);
+      const fresh = await admitted(fixture, 'new-2');
+      expect(fresh).not.toBe(intentId);
+      await dispatch(acct);
+      expect(posts('new-2')).toBe(1);
+      expect(posts('new-1')).toBe(0);
+      expect(await intentState(fresh)).toMatchObject({ status: 'submitted', claimStatus: 'BROKER_ORDER_ACTIVE', consumptions: 1 });
+      expect(await count(`"MarketPolicyBrokerDispatchConsumption" WHERE "orderIntentId"=$1`, [intentId])).toBe(1);
     });
   });
 });

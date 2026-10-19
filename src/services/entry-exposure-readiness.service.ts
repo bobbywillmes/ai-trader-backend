@@ -4,6 +4,7 @@ import { prisma } from '../db/prisma.js';
 import { getCompleteOpenAlpacaBuyOrders } from '../integrations/alpaca/orders.adapter.js';
 import { getAlpacaPositions } from '../integrations/alpaca/positions.adapter.js';
 import { BROKER_ACTIVE_ENTRY_STATUSES, TERMINAL_ENTRY_ORDER_STATUSES, UNRESOLVED_ORDER_INTENT_STATUSES } from './entry-lifecycle-status.service.js';
+import { describeUnreleasedTerminalEntryClaims } from './entry-dispatch-recovery.service.js';
 
 type Db = PrismaClient;
 
@@ -105,6 +106,11 @@ export async function assessEntryExposureReadiness(args: {
   const hasOutstandingBrokerExposure = (tradingAccountId: number, symbol: string) =>
     brokerPositions.some((position) => position.tradingAccountId === tradingAccountId && position.symbol === canonical(symbol)) ||
     brokerOpenBuys.some((order) => order.tradingAccountId === tradingAccountId && order.symbol === canonical(symbol));
+  // Terminal (failed, blocked, ...) entries whose claims are still held, including consumed or recorded
+  // dispatches, stay visible here even though stale recovery only selects 'submitting' intents.
+  const terminalIntentsWithUnreleasedClaims = await describeUnreleasedTerminalEntryClaims({
+    db, tradingAccountIds: args.tradingAccountIds, now, brokerExposure: hasOutstandingBrokerExposure,
+  });
   const historicalFilledIntents = intents.filter((intent) => intent.status.toLowerCase() === 'filled' && (
     intent.trackedPosition?.status === 'closed' ||
     (intent.trackedPosition == null && !hasOutstandingBrokerExposure(intent.tradingAccountId!, intent.symbol)) ||
@@ -214,6 +220,7 @@ export async function assessEntryExposureReadiness(args: {
     unclaimedActiveBrokerBuys,
     unresolvedClaims,
     strandedClaims,
+    terminalIntentsWithUnreleasedClaims,
   };
   const brokerBlockers = { brokerEvidenceUnavailable, brokerOnlyPositions, localOnlyPositions, brokerOnlyOpenBuys, brokerOpenBuysWithoutActiveClaim, staleLocalActiveBrokerBuys };
   const databaseReady = Object.values(databaseBlockers).every((items) => items.length === 0);
