@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from 'pg';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { createDisposablePostgresDatabase, type DisposablePostgresDatabase } from './disposable-postgres.js';
 
 const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.DATABASE_URL;
 const describeDatabase = enabled ? describe : describe.skip;
@@ -14,6 +15,7 @@ const stateGuardMigrationPath = 'prisma/migrations/20261017130000_guard_entry_ex
 describeDatabase('entry exposure claim database integrity', () => {
   const schema = `entry_claim_${randomUUID().replaceAll('-', '')}`;
   const quotedSchema = `"${schema}"`;
+  let disposable: DisposablePostgresDatabase;
   let admin: Client;
   let accountA: number;
   let accountB: number;
@@ -21,7 +23,10 @@ describeDatabase('entry exposure claim database integrity', () => {
   let qqq: number;
 
   beforeAll(async () => {
-    admin = new Client({ connectionString: process.env.DATABASE_URL });
+    disposable = await createDisposablePostgresDatabase(process.env.DATABASE_URL!, 'entry_claim');
+    await disposable.migrate();
+    await disposable.verify();
+    admin = new Client({ connectionString: disposable.url });
     await admin.connect();
     await admin.query(`CREATE SCHEMA ${quotedSchema}`);
     await admin.query(`SET search_path TO ${quotedSchema}`);
@@ -42,17 +47,18 @@ describeDatabase('entry exposure claim database integrity', () => {
   afterAll(async () => {
     await admin?.query(`DROP SCHEMA IF EXISTS ${quotedSchema} CASCADE`);
     await admin?.end();
+    await disposable?.drop();
   });
 
   async function client() {
-    const value = new Client({ connectionString: process.env.DATABASE_URL });
+    const value = new Client({ connectionString: disposable.url });
     await value.connect();
     await value.query(`SET search_path TO ${quotedSchema}`);
     return value;
   }
 
   function prismaClient() {
-    return new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
+    return new PrismaClient({ adapter: new PrismaPg({ connectionString: disposable.url }) });
   }
 
   async function intent(db: Client) {

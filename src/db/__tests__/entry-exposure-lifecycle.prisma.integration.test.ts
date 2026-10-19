@@ -1,8 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import 'dotenv/config';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AdaptivePollingDecision } from '../../services/adaptive-polling.service.js';
+import { createDisposablePostgresDatabase, type DisposablePostgresDatabase } from './disposable-postgres.js';
 
 const enabled = process.env.RUN_ENTRY_EXPOSURE_PRISMA_TESTS === '1' && process.env.DATABASE_URL;
 const describePrisma = enabled ? describe : describe.skip;
+const originalDatabaseUrl = process.env.DATABASE_URL;
 
 const broker = vi.hoisted(() => ({
   ordersById: new Map<string, Record<string, unknown>>(),
@@ -60,22 +64,21 @@ vi.mock('../../services/trading-reference-price.service.js', () => ({
   })),
 }));
 
-import { prisma } from '../prisma.js';
-import {
-  acquireEntryExposureClaim,
-  attachEntryExposureClaimToPosition,
-  previewEntryExposureClaimRemediation,
-  releaseConfirmedTerminalEntryClaim,
-  releaseEntryExposureClaimForClosedPosition,
-  transitionEntryExposureClaim,
-} from '../../services/entry-exposure-claim.service.js';
-import { assessEntryExposureReadiness } from '../../services/entry-exposure-readiness.service.js';
-import { reconcileTradingAccount } from '../../services/reconciliation.service.js';
-import { syncSubmittedOrdersForAccountUnlocked } from '../../workers/order.worker.js';
-import { processPendingOrdersForAccount } from '../../workers/order.worker.js';
-import { adaptivePollingCoordinator, type AdaptivePollingDecision } from '../../services/adaptive-polling.service.js';
-import { disarmLiveEntries } from '../../services/live-entry-arming.service.js';
-import { submitOrder } from '../../services/place-order.service.js';
+let disposable: DisposablePostgresDatabase;
+let prisma: typeof import('../prisma.js').prisma;
+let acquireEntryExposureClaim: typeof import('../../services/entry-exposure-claim.service.js').acquireEntryExposureClaim;
+let attachEntryExposureClaimToPosition: typeof import('../../services/entry-exposure-claim.service.js').attachEntryExposureClaimToPosition;
+let previewEntryExposureClaimRemediation: typeof import('../../services/entry-exposure-claim.service.js').previewEntryExposureClaimRemediation;
+let releaseConfirmedTerminalEntryClaim: typeof import('../../services/entry-exposure-claim.service.js').releaseConfirmedTerminalEntryClaim;
+let releaseEntryExposureClaimForClosedPosition: typeof import('../../services/entry-exposure-claim.service.js').releaseEntryExposureClaimForClosedPosition;
+let transitionEntryExposureClaim: typeof import('../../services/entry-exposure-claim.service.js').transitionEntryExposureClaim;
+let assessEntryExposureReadiness: typeof import('../../services/entry-exposure-readiness.service.js').assessEntryExposureReadiness;
+let reconcileTradingAccount: typeof import('../../services/reconciliation.service.js').reconcileTradingAccount;
+let syncSubmittedOrdersForAccountUnlocked: typeof import('../../workers/order.worker.js').syncSubmittedOrdersForAccountUnlocked;
+let processPendingOrdersForAccount: typeof import('../../workers/order.worker.js').processPendingOrdersForAccount;
+let adaptivePollingCoordinator: typeof import('../../services/adaptive-polling.service.js').adaptivePollingCoordinator;
+let disarmLiveEntries: typeof import('../../services/live-entry-arming.service.js').disarmLiveEntries;
+let submitOrder: typeof import('../../services/place-order.service.js').submitOrder;
 
 type Account = Awaited<ReturnType<typeof createAccount>>;
 
@@ -158,6 +161,39 @@ async function createPosition(account: Account, security: Awaited<ReturnType<typ
 }
 
 describePrisma('entry exposure lifecycle with real Prisma services', () => {
+  beforeAll(async () => {
+    disposable = await createDisposablePostgresDatabase(process.env.DATABASE_URL!, 'entry_lifecycle');
+    await disposable.migrate();
+    await disposable.verify();
+    process.env.DATABASE_URL = disposable.url;
+
+    ({ prisma } = await import('../prisma.js'));
+    ({
+      acquireEntryExposureClaim,
+      attachEntryExposureClaimToPosition,
+      previewEntryExposureClaimRemediation,
+      releaseConfirmedTerminalEntryClaim,
+      releaseEntryExposureClaimForClosedPosition,
+      transitionEntryExposureClaim,
+    } = await import('../../services/entry-exposure-claim.service.js'));
+    ({ assessEntryExposureReadiness } = await import('../../services/entry-exposure-readiness.service.js'));
+    ({ reconcileTradingAccount } = await import('../../services/reconciliation.service.js'));
+    ({ syncSubmittedOrdersForAccountUnlocked, processPendingOrdersForAccount } = await import('../../workers/order.worker.js'));
+    ({ adaptivePollingCoordinator } = await import('../../services/adaptive-polling.service.js'));
+    ({ disarmLiveEntries } = await import('../../services/live-entry-arming.service.js'));
+    ({ submitOrder } = await import('../../services/place-order.service.js'));
+  }, 180_000);
+
+  afterAll(async () => {
+    const { closeBrokerObservationPrisma } = await import('../broker-observation-prisma.js');
+    const { closeTradingAccountWorkflowLockPool } = await import('../../services/trading-account-workflow-lock.service.js');
+    await closeBrokerObservationPrisma();
+    await closeTradingAccountWorkflowLockPool();
+    await prisma?.$disconnect();
+    await disposable?.drop();
+    process.env.DATABASE_URL = originalDatabaseUrl;
+  });
+
   beforeEach(() => {
     broker.failCompleteOrdersForAccount.clear();
     broker.failClientOrderLookupForAccount.clear();
