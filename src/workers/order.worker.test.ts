@@ -85,6 +85,7 @@ vi.mock('../db/prisma.js', () => ({
 
 vi.mock('../services/place-order.service.js', () => ({
   submitOrderToBroker: mocks.submitOrderToBroker,
+  createEntryBrokerSubmissionBoundary: () => ({ phase: 'UNCLASSIFIED' }),
 }));
 
 vi.mock('../services/entry-exposure-claim.service.js', () => ({
@@ -1184,5 +1185,66 @@ describe('stale submitting intent recovery', () => {
     expect(mocks.getAlpacaOrderByClientOrderId).toHaveBeenCalledTimes(2);
     expect(mocks.orderIntentUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 201, status: 'submitting' } }));
     expect(mocks.orderIntentUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 203, status: 'submitting' } }));
+  });
+});
+
+describe('entry broker submission delivery classification (Phase 3C.3)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.requireEntryExposureClaim.mockResolvedValue({ id: 1 });
+    mocks.releaseUnsubmittedEntryExposureClaim.mockResolvedValue({ id: 1 });
+    mocks.transitionEntryExposureClaim.mockResolvedValue({ id: 1 });
+    mocks.resolveSubscriptionOrderInput.mockResolvedValue({ tradingAccountId: 1, tradingAccountSubscriptionId: 44 });
+    mocks.orderIntentUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.evaluateOrderRisk.mockResolvedValue({ allowed: true, details: {} });
+    mocks.orderIntentFindMany.mockResolvedValue([baseIntent]);
+  });
+
+  async function failAt(phase: string, error: unknown) {
+    mocks.submitOrderToBroker.mockImplementation(async (_input: unknown, options: { boundary: { phase: string } }) => {
+      options.boundary.phase = phase;
+      throw error;
+    });
+    return processPendingOrdersForAccount(1);
+  }
+
+  it('records a broker-time market-policy denial as a definite non-send, blocks the intent, and releases through never-submitted checks', async () => {
+    const { MarketPolicyBrokerDispatchRefusedError } = await import('../services/market-policy-broker-dispatch.service.js');
+    const refusal = new MarketPolicyBrokerDispatchRefusedError({ outcome: 'BLOCKED', reasonCode: 'REQUIRED_STATE_BLOCKED', decisionId: 9 });
+    await expect(failAt('NOT_DISPATCHED', refusal)).resolves.toMatchObject({ blocked: 1, failed: 0 });
+    expect(mocks.orderIntentUpdate).toHaveBeenCalledWith({ where: { id: 101 }, data: { status: 'blocked', blockReason: 'MARKET_POLICY_BROKER_TIME:BLOCKED:DEFINITELY_NOT_SENT:REQUIRED_STATE_BLOCKED:decision=9' } });
+    expect(mocks.releaseUnsubmittedEntryExposureClaim).toHaveBeenCalledWith({ orderIntentId: 101, reason: 'BROKER_TIME_MARKET_POLICY_BLOCKED_NOT_SENT' });
+    expect(mocks.transitionEntryExposureClaim).not.toHaveBeenCalledWith(expect.objectContaining({ status: 'UNRESOLVED' }));
+  });
+
+  it('fails a technical guard failure closed without claiming delivery and counts it as a failure', async () => {
+    const { MarketPolicyBrokerDispatchRefusedError } = await import('../services/market-policy-broker-dispatch.service.js');
+    const refusal = new MarketPolicyBrokerDispatchRefusedError({ outcome: 'TECHNICAL_FAILURE', reasonCode: 'TECHNICAL_FAILURE_MARKET_EVALUATION', decisionId: null });
+    await expect(failAt('NOT_DISPATCHED', refusal)).resolves.toMatchObject({ blocked: 0, failed: 1 });
+    expect(mocks.orderIntentUpdate).toHaveBeenCalledWith({ where: { id: 101 }, data: { status: 'failed', blockReason: expect.stringMatching(/^MARKET_POLICY_BROKER_TIME:TECHNICAL_FAILURE:DEFINITELY_NOT_SENT:/) } });
+    expect(mocks.releaseUnsubmittedEntryExposureClaim).toHaveBeenCalledWith({ orderIntentId: 101, reason: 'BROKER_TIME_MARKET_POLICY_TECHNICAL_FAILURE_NOT_SENT' });
+    expect(mocks.transitionEntryExposureClaim).not.toHaveBeenCalledWith(expect.objectContaining({ status: 'UNRESOLVED' }));
+  });
+
+  it('treats any failure after confirmed absence and before dispatch as a local pre-dispatch failure', async () => {
+    await failAt('NOT_DISPATCHED', new Error('database unavailable'));
+    expect(mocks.orderIntentUpdate).toHaveBeenCalledWith({ where: { id: 101 }, data: { status: 'failed', blockReason: 'LOCAL_PRE_DISPATCH_FAILURE:database unavailable' } });
+    expect(mocks.releaseUnsubmittedEntryExposureClaim).toHaveBeenCalledWith({ orderIntentId: 101, reason: 'WORKER_PROVEN_PRE_DISPATCH_LOCAL_FAILURE' });
+  });
+
+  it.each(['UNCLASSIFIED', 'DISPATCH_STARTED', 'EXISTING_ORDER_FOUND'])('keeps an unclassified %s failure delivery-uncertain, even for a refusal-shaped error', async (phase) => {
+    const { MarketPolicyBrokerDispatchRefusedError } = await import('../services/market-policy-broker-dispatch.service.js');
+    await failAt(phase, phase === 'DISPATCH_STARTED' ? new MarketPolicyBrokerDispatchRefusedError({ outcome: 'BLOCKED', reasonCode: 'X', decisionId: 1 }) : new Error('lookup or response unavailable'));
+    expect(mocks.orderIntentUpdate).toHaveBeenCalledWith({ where: { id: 101 }, data: { status: 'failed', blockReason: expect.stringMatching(/^BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:/) } });
+    expect(mocks.transitionEntryExposureClaim).toHaveBeenCalledWith(expect.objectContaining({ orderIntentId: 101, status: 'UNRESOLVED', eventType: 'BROKER_DELIVERY_UNCERTAIN' }));
+    expect(mocks.releaseUnsubmittedEntryExposureClaim).not.toHaveBeenCalled();
+  });
+
+  it('isolates a recovered broker order whose identity does not match the stale intent', async () => {
+    mocks.orderIntentFindMany.mockResolvedValue([{ ...baseIntent, status: 'submitting', brokerOrders: [], updatedAt: new Date('2026-06-22T13:00:00.000Z') }]);
+    mocks.getAlpacaOrderByClientOrderId.mockResolvedValue({ id: 'broker-other', client_order_id: 'client-101', symbol: 'QQQ', side: 'buy', status: 'accepted' });
+    await expect(recoverStaleSubmittingIntentsForAccount(1, new Date('2026-06-22T14:00:00.000Z'))).resolves.toMatchObject({ linked: 0, retained: 1 });
+    expect(mocks.brokerOrderCreate).not.toHaveBeenCalled();
+    expect(mocks.createSystemEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'order.submission_recovery_action_required' }));
   });
 });

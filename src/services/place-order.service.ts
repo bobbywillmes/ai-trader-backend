@@ -40,6 +40,8 @@ import {
   releaseUnsubmittedEntryExposureClaim,
 } from './entry-exposure-claim.service.js';
 import { admitEntryOrderIntent } from './market-policy-entry-admission.service.js';
+import { prepareEntryBrokerDispatch } from './market-policy-broker-dispatch.service.js';
+import type { AlpacaOrder } from '../integrations/alpaca/alpaca.types.js';
 
 type SubmitOrderOptions = {
   entryDecisionKey?: string;
@@ -350,10 +352,59 @@ export type BrokerOrderSubmissionInput = ResolvedPlaceOrderInput & {
   clientOrderId: string;
 };
 
+/**
+ * Delivery classification of one entry submission attempt, advanced by submitOrderToBroker:
+ * - UNCLASSIFIED: no positive proof either way; callers must treat a failure as possibly delivered.
+ * - NOT_DISPATCHED: the stable-ID lookup confirmed absence, no local dispatch evidence exists, and the
+ *   adapter has not been invoked. A failure here (including a broker-time market-policy refusal) is a
+ *   definite non-send.
+ * - EXISTING_ORDER_FOUND: an exact broker order already exists; it is recovered, never re-sent.
+ * - DISPATCH_STARTED: the dispatch authorization was consumed and the adapter may have reached Alpaca.
+ * - BROKER_RESPONDED: Alpaca confirmed the order.
+ */
+export type EntryBrokerSubmissionPhase = 'UNCLASSIFIED' | 'NOT_DISPATCHED' | 'EXISTING_ORDER_FOUND' | 'DISPATCH_STARTED' | 'BROKER_RESPONDED';
+export type EntryBrokerSubmissionBoundary = { phase: EntryBrokerSubmissionPhase };
+
+export function createEntryBrokerSubmissionBoundary(): EntryBrokerSubmissionBoundary {
+  return { phase: 'UNCLASSIFIED' };
+}
+
+function assertExistingEntryOrderIdentity(order: AlpacaOrder, expected: { clientOrderId: string; symbol: string }) {
+  const mismatches = [
+    ...(order.client_order_id !== expected.clientOrderId ? ['clientOrderId'] : []),
+    ...(order.symbol?.trim().toUpperCase() !== expected.symbol.trim().toUpperCase() ? ['symbol'] : []),
+    ...(order.side?.trim().toLowerCase() !== 'buy' ? ['side'] : []),
+  ];
+  if (mismatches.length) {
+    // Never guess attribution: the order stays unresolved for recovery and is never re-sent.
+    throw new HttpError(409, 'Broker order found by stable client order ID does not match the entry identity.', {
+      code: 'EXISTING_BROKER_ORDER_IDENTITY_MISMATCH', mismatches, brokerOrderId: order.id,
+    });
+  }
+}
+
+async function assertNoLocalEntryDispatchEvidence(orderIntentId: number) {
+  const [consumptions, dispatchEvents, brokerOrders] = await Promise.all([
+    prisma.marketPolicyBrokerDispatchConsumption.count({ where: { orderIntentId } }),
+    prisma.orderIntentBrokerOpportunityEvent.count({
+      where: { orderIntentId, eventType: { in: ['ADAPTER_DISPATCH_REACHED', 'BROKER_RESPONSE_CONFIRMED', 'BROKER_REJECTED', 'DELIVERY_UNCERTAIN'] } },
+    }),
+    prisma.brokerOrder.count({ where: { orderIntentId } }),
+  ]);
+  if (consumptions || dispatchEvents || brokerOrders) {
+    // A lookup miss is not proof that an earlier dispatch never reached Alpaca.
+    throw new HttpError(409, 'Entry has prior dispatch evidence; a missing broker lookup result is not proof of non-delivery.', {
+      code: 'PRIOR_ENTRY_DISPATCH_EVIDENCE', orderIntentId, consumptions, dispatchEvents, brokerOrders,
+    });
+  }
+}
+
 export async function submitOrderToBroker(
   input: BrokerOrderSubmissionInput,
-  options: { tradingAccountId: number; orderIntentId: number }
+  options: { tradingAccountId: number; orderIntentId: number; boundary?: EntryBrokerSubmissionBoundary }
 ) {
+  const boundary = options.boundary ?? createEntryBrokerSubmissionBoundary();
+  boundary.phase = 'UNCLASSIFIED';
   const clientOrderId = input.clientOrderId;
 
   if (!clientOrderId) {
@@ -379,12 +430,26 @@ export async function submitOrderToBroker(
   );
 
   if (existing) {
+    // An already-delivered order is recovered as-is: no market-policy re-gating and no second POST.
+    boundary.phase = 'EXISTING_ORDER_FOUND';
+    assertExistingEntryOrderIdentity(existing, { clientOrderId, symbol: input.symbol });
     await bestEffortAppendBrokerOpportunityEvent({orderIntentId:options.orderIntentId,eventType:'BROKER_ORDER_MATERIALIZED',evidence:{source:'pre_post_idempotency_lookup',brokerOrderId:existing.id}},undefined,createBrokerObservationBudget());
     return {
       duplicate: true,
       order: existing,
     };
   }
+
+  // Confirmed absence and no local dispatch evidence: a genuinely new dispatch opportunity. Until the
+  // dispatch authorization is consumed below, nothing can have been written to Alpaca.
+  await assertNoLocalEntryDispatchEvidence(options.orderIntentId);
+  boundary.phase = 'NOT_DISPATCHED';
+  const dispatch = await prepareEntryBrokerDispatch({
+    orderIntentId: options.orderIntentId,
+    tradingAccountId: options.tradingAccountId,
+    symbol: input.symbol,
+    clientOrderId,
+  });
 
   const payload: {
     symbol: string;
@@ -411,6 +476,10 @@ export async function submitOrderToBroker(
 
   const prePostObservationBudget=createBrokerObservationBudget();
   const opportunity=await bestEffortCaptureOrderIntentBrokerPostOpportunity(options.orderIntentId,undefined,prePostObservationBudget);
+  // Final pre-dispatch boundary: consumes the single-use broker-time authorization with a fresh
+  // PostgreSQL clock. A refusal throws here, still NOT_DISPATCHED.
+  await dispatch.authorizeDispatch(opportunity?.id ?? null);
+  boundary.phase = 'DISPATCH_STARTED';
   await bestEffortAppendBrokerOpportunityEvent({opportunityId:opportunity?.id??null,eventType:'ADAPTER_DISPATCH_REACHED',evidence:{adapter:'alpaca',operation:'pending_order_submission'}},undefined,prePostObservationBudget);
   let created;
   try {
@@ -436,6 +505,7 @@ export async function submitOrderToBroker(
     await bestEffortAppendBrokerOpportunityEvent({opportunityId:opportunity?.id??null,eventType,evidence:{classification:classification??'UNCLASSIFIED',statusCode}},undefined,createBrokerObservationBudget());
     throw error;
   }
+  boundary.phase = 'BROKER_RESPONDED';
   const postResponseObservationBudget=createBrokerObservationBudget();
   await bestEffortAppendBrokerOpportunityEvent({opportunityId:opportunity?.id??null,eventType:'BROKER_RESPONSE_CONFIRMED',evidence:{brokerOrderId:created.id,status:created.status}},undefined,postResponseObservationBudget);
   await bestEffortAppendBrokerOpportunityEvent({opportunityId:opportunity?.id??null,eventType:'BROKER_ORDER_MATERIALIZED',evidence:{source:'post_response',brokerOrderId:created.id,status:created.status}},undefined,postResponseObservationBudget);

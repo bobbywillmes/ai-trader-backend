@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => {
   const ok = (status: number) => vi.fn((_req: Request, res: Response) => res.status(status).json({ ok: true }));
   return {
     getMarketPolicyEnforcementRuntimeRolloutController: ok(200),
+    getMarketPolicyBrokerEnforcementReadinessController: ok(200),
     listMarketPolicyEnforcementRuntimeRolloutEventsController: ok(200),
     activateMarketPolicyEnforcementRuntimeRolloutController: ok(200),
     deactivateMarketPolicyEnforcementRuntimeRolloutController: ok(200),
@@ -50,6 +51,7 @@ describe('market-policy enforcement runtime rollout RBAC', () => {
     ['GET', '/runtime-rollout/events', mocks.listMarketPolicyEnforcementRuntimeRolloutEventsController],
     ['POST', '/runtime-rollout/activate', mocks.activateMarketPolicyEnforcementRuntimeRolloutController],
     ['POST', '/runtime-rollout/deactivate', mocks.deactivateMarketPolicyEnforcementRuntimeRolloutController],
+    ['GET', '/broker-time-readiness', mocks.getMarketPolicyBrokerEnforcementReadinessController],
   ] as const)('permits only SYSTEM_OWNER to reach %s %s', async (method, path, controller) => {
     for (const role of [PlatformRole.OPERATOR, PlatformRole.ACCOUNT_USER]) {
       expect((await requestAs(role, method, path)).status).toBe(403);

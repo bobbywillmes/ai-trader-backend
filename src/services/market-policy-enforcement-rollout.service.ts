@@ -5,8 +5,9 @@ import { createSystemEvent } from './system-event.service.js';
 
 // Phase 3C.2 runtime switch for authoritative PAPER pre-intent market-policy enforcement. It is
 // created disabled by migration, is separate from per-assignment authorization, and is never
-// inferred from ACTIVE enrollments or AUTHORIZED grants. It confers no LIVE authority and does not
-// implement broker-time enforcement (Phase 3C.3).
+// inferred from ACTIVE enrollments or AUTHORIZED grants. It confers no LIVE authority. It governs only
+// whether new admissions are enforced: Phase 3C.3 revalidates every frozen obligation at broker time
+// regardless of this switch, so deactivation never erases or bypasses an earlier obligation.
 export const MARKET_POLICY_ENFORCEMENT_ROLLOUT_ID = 1;
 
 type Db = typeof prisma | Prisma.TransactionClient;
@@ -23,12 +24,12 @@ export type MarketPolicyEnforcementRuntimeStatus = {
   changeReason: string | null;
   tradingEffect: 'PAPER_PRE_INTENT_ENFORCEMENT' | 'NONE';
   liveAuthority: 'NONE';
-  brokerTimeEnforcement: 'NOT_IMPLEMENTED';
+  brokerTimeEnforcement: 'FROZEN_OBLIGATIONS_ALWAYS_REVALIDATED';
 };
 
 export async function getMarketPolicyEnforcementRuntimeStatus(db: Db = prisma): Promise<MarketPolicyEnforcementRuntimeStatus> {
   const row = await db.marketPolicyEnforcementRuntimeRollout.findUnique({ where: { id: MARKET_POLICY_ENFORCEMENT_ROLLOUT_ID }, include: { changedBy: changedBySelect } });
-  const base = { environment: 'PAPER' as const, liveAuthority: 'NONE' as const, brokerTimeEnforcement: 'NOT_IMPLEMENTED' as const };
+  const base = { environment: 'PAPER' as const, liveAuthority: 'NONE' as const, brokerTimeEnforcement: 'FROZEN_OBLIGATIONS_ALWAYS_REVALIDATED' as const };
   if (!row) return { ...base, active: false, status: 'UNAVAILABLE', version: 0, changedAt: null, changedBy: null, changeReason: null, tradingEffect: 'NONE' };
   return {
     ...base,
@@ -83,8 +84,8 @@ export async function setMarketPolicyEnforcementRuntimeRollout(enabled: boolean,
         entityType: 'MarketPolicyEnforcementRuntimeRollout', entityId: MARKET_POLICY_ENFORCEMENT_ROLLOUT_ID, actorUserId, severity: 'WARNING',
         message: enabled
           ? 'PAPER market-policy pre-intent enforcement activated; explicitly authorized PAPER assignments are now market-policy gated.'
-          : 'PAPER market-policy pre-intent enforcement deactivated; entries return to existing behavior. Frozen OrderIntent obligations are unchanged.',
-        payloadJson: { version: status.version, enabled, environment: 'PAPER', reason: input.reason, liveAuthority: 'NONE', brokerTimeEnforcement: 'NOT_IMPLEMENTED', frozenObligationsAltered: false },
+          : 'PAPER market-policy pre-intent enforcement deactivated; new entries return to existing behavior. Frozen OrderIntent obligations are unchanged and are still revalidated before any new broker POST.',
+        payloadJson: { version: status.version, enabled, environment: 'PAPER', reason: input.reason, liveAuthority: 'NONE', brokerTimeEnforcement: 'FROZEN_OBLIGATIONS_ALWAYS_REVALIDATED', frozenObligationsAltered: false },
       }, tx);
       return status;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 15_000 });

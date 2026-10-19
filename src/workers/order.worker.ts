@@ -7,9 +7,11 @@ import { getNormalizedOpenOrders } from '../services/orders.service.js';
 import { placeOrderSchema } from '../validators/place-order.schema.js';
 import type { ResolvedPlaceOrderInput } from '../validators/place-order.schema.js';
 import {
+  createEntryBrokerSubmissionBoundary,
   submitOrderToBroker,
   type BrokerOrderSubmissionInput,
 } from '../services/place-order.service.js';
+import { getMarketPolicyBrokerDispatchRefusal } from '../services/market-policy-broker-dispatch.service.js';
 import { createSystemEvent } from '../services/system-event.service.js';
 import { syncTrailingStopOrderStatus } from '../services/position-exit-state.service.js';
 import {
@@ -197,6 +199,14 @@ export async function recoverStaleSubmittingIntentsForAccount(
     }
 
     if (brokerOrder) {
+      if (
+        brokerOrder.client_order_id !== intent.clientOrderId ||
+        brokerOrder.symbol?.trim().toUpperCase() !== intent.symbol.trim().toUpperCase() ||
+        brokerOrder.side?.trim().toLowerCase() !== intent.side.trim().toLowerCase()
+      ) {
+        // Ambiguous attribution stays unresolved; the intent is isolated for operator recovery.
+        throw new Error(`Broker order ${brokerOrder.id} found by stable client order ID does not match OrderIntent ${intent.id} identity.`);
+      }
       const observationBudget=createBrokerObservationBudget();
       await bestEffortAppendBrokerOpportunityEvent({orderIntentId:intent.id,eventType:'RECOVERY_FOUND',evidence:{source:'broker_lookup',brokerOrderId:brokerOrder.id}},undefined,observationBudget);
       await bestEffortAppendBrokerOpportunityEvent({orderIntentId:intent.id,eventType:'BROKER_ORDER_MATERIALIZED',evidence:{source:'broker_lookup',brokerOrderId:brokerOrder.id,status:brokerOrder.status}},undefined,observationBudget);
@@ -469,6 +479,7 @@ export async function processPendingOrdersForAccount(
     logger.trace({ orderIntentId: intent.id }, 'Order worker processing intent.');
 
     let brokerBoundaryStarted = false;
+    const boundary = createEntryBrokerSubmissionBoundary();
     try {
       await requireEntryExposureClaim(intent.id);
       const claimResult = await prisma.orderIntent.updateMany({
@@ -597,6 +608,7 @@ export async function processPendingOrdersForAccount(
       const result = await submitOrderToBroker(resolvedInput, {
         tradingAccountId: intent.tradingAccountId,
         orderIntentId: intent.id,
+        boundary,
       });
       const brokerOrder = result.order;
       await transitionEntryExposureClaim({
@@ -697,17 +709,26 @@ export async function processPendingOrdersForAccount(
       logger.trace({ orderIntentId: intent.id }, 'Order intent submitted.');
       submitted += 1;
     } catch (error) {
-      const classification = getBrokerWriteDeliveryClassification(error);
+      // Definitely not dispatched: before the broker boundary, or inside it after the stable-ID lookup
+      // confirmed absence and before the dispatch authorization was consumed. Every other failure
+      // keeps the existing conservative classification; an unclassified exception is never treated
+      // as a definite non-send.
+      const definitelyNotDispatched = !brokerBoundaryStarted || boundary.phase === 'NOT_DISPATCHED';
+      const refusal = definitelyNotDispatched ? getMarketPolicyBrokerDispatchRefusal(error) : null;
+      const classification = refusal ? null : getBrokerWriteDeliveryClassification(error);
       const message = error instanceof Error ? error.message : 'Unknown worker error.';
-      const blockReason = classification
-        ? `BROKER_WRITE_DELIVERY:${classification}:${message}`
-        : brokerBoundaryStarted
-          ? `BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:${message}`
-          : `LOCAL_PRE_DISPATCH_FAILURE:${message}`;
-      if (!brokerBoundaryStarted) {
+      const blockReason = refusal
+        ? refusal.blockReason
+        : classification && !definitelyNotDispatched
+          ? `BROKER_WRITE_DELIVERY:${classification}:${message}`
+          : !definitelyNotDispatched
+            ? `BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:${message}`
+            : `LOCAL_PRE_DISPATCH_FAILURE:${message}`;
+      if (definitelyNotDispatched) {
+        // The never-submitted checks still decide whether the claim can be released.
         await releaseUnsubmittedEntryExposureClaim({
           orderIntentId: intent.id,
-          reason: 'WORKER_PROVEN_PRE_DISPATCH_LOCAL_FAILURE',
+          reason: refusal?.claimReleaseReason ?? 'WORKER_PROVEN_PRE_DISPATCH_LOCAL_FAILURE',
         }).catch(() => undefined);
       } else if (classification === 'DELIVERY_UNCERTAIN' || classification === null) {
         await transitionEntryExposureClaim({
@@ -726,24 +747,28 @@ export async function processPendingOrdersForAccount(
           reason: classification,
         }).catch(() => undefined);
       }
+      const deliveryUncertain = !definitelyNotDispatched && (classification === 'DELIVERY_UNCERTAIN' || classification === null);
+      // An authoritative market-policy denial is a durable domain outcome; a technical guard failure
+      // stays a failure so account health shows it.
+      const policyDenied = refusal !== null && !refusal.technical;
       if (intent.liveEntryAcceptanceRunId != null) {
         await prisma.$transaction(async (tx) => {
           await tx.orderIntent.update({
             where: { id: intent.id },
             data: {
-              status: brokerBoundaryStarted && (classification === 'DELIVERY_UNCERTAIN' || classification === null) ? 'submitting' :
-                classification === 'NOT_SENT_BLOCKED' ? 'blocked' : 'failed',
+              status: deliveryUncertain ? 'submitting' :
+                classification === 'NOT_SENT_BLOCKED' || policyDenied ? 'blocked' : 'failed',
               blockReason,
             },
           });
           await tx.liveEntryAcceptanceRun.updateMany({
             where: { id: intent.liveEntryAcceptanceRunId!, terminalAt: null },
             data: {
-              ...(brokerBoundaryStarted && (classification === 'DELIVERY_UNCERTAIN' || classification === null)
+              ...(deliveryUncertain
                 ? { executionUncertainAt: new Date() }
                 : {}),
               executionFailureJson: {
-                classification: classification ?? (brokerBoundaryStarted ? 'DELIVERY_UNCERTAIN' : 'LOCAL_FAILURE'),
+                classification: refusal ? refusal.deliveryClassification : classification ?? (definitelyNotDispatched ? 'LOCAL_FAILURE' : 'DELIVERY_UNCERTAIN'),
                 source: 'pending_order_submission',
                 orderIntentId: intent.id,
                 clientOrderId: intent.clientOrderId,
@@ -755,13 +780,14 @@ export async function processPendingOrdersForAccount(
       } else {
         await prisma.orderIntent.update({
           where: { id: intent.id },
-          data: { status: 'failed', blockReason },
+          data: { status: policyDenied ? 'blocked' : 'failed', blockReason },
         });
       }
 
       logger.trace({ orderIntentId: intent.id, error },
         'Order intent broker submission failed before account health persistence.');
-      failed += 1;
+      if (policyDenied) blocked += 1;
+      else failed += 1;
     }
   }
 

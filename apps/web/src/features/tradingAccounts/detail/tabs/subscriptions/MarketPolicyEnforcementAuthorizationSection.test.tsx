@@ -25,7 +25,7 @@ vi.mock('../../../api', () => ({
 import { MarketPolicyEnforcementAuthorizationSection } from './MarketPolicyEnforcementAuthorizationSection';
 
 const fingerprint = 'a'.repeat(64);
-const runtimeEnforcement = { environment: 'PAPER', active: false, status: 'NOT_ACTIVATED', version: 0, changedAt: null, changedBy: null, changeReason: null, tradingEffect: 'NONE', liveAuthority: 'NONE', brokerTimeEnforcement: 'NOT_IMPLEMENTED' } as const;
+const runtimeEnforcement = { environment: 'PAPER', active: false, status: 'NOT_ACTIVATED', version: 0, changedAt: null, changedBy: null, changeReason: null, tradingEffect: 'NONE', liveAuthority: 'NONE', brokerTimeEnforcement: 'FROZEN_OBLIGATIONS_ALWAYS_REVALIDATED' } as const;
 const activeRuntime = { ...runtimeEnforcement, active: true, status: 'ACTIVE', version: 1, tradingEffect: 'PAPER_PRE_INTENT_ENFORCEMENT' } as const;
 const neverAuthorized = { disposition: 'NEVER_AUTHORIZED', behaviorWhenRuntimeActive: 'EXISTING_ENTRY_BEHAVIOR', currentEntryBehavior: 'EXISTING_ENTRY_BEHAVIOR', ownerResolutionAvailable: false, latestAuthorizationId: null } as const;
 function state(overrides: Partial<MarketPolicyEnforcementAuthorizationStateResponse> = {}): MarketPolicyEnforcementAuthorizationStateResponse {

@@ -192,5 +192,6 @@ read-only view with no history request.
 - Accepted entries will atomically freeze the exact `authorizationId` and
   `authorizationFingerprint` with their OrderIntent. Later revocation or
   invalidation must not erase or bypass an already-frozen obligation.
-- Broker-time reauthorization happens only in Phase 3C.3, before a genuinely new BUY
-  POST. Stable client-order-ID recovery remains authoritative.
+- Broker-time reauthorization happens in Phase 3C.3, before a genuinely new BUY
+  POST (`docs/architecture/market-policy-broker-time-enforcement.md`). Stable
+  client-order-ID recovery remains authoritative.

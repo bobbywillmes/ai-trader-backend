@@ -163,7 +163,7 @@ type Generation = { id: number; configurationFingerprint: string; policyRevision
     const url = new URL(process.env.DATABASE_URL!); url.pathname = `/${database}`; url.searchParams.delete('schema'); databaseUrl = url.toString();
     db = new Client({ connectionString: databaseUrl }); await db.connect();
     const migrations = (await readdir('prisma/migrations', { withFileTypes: true })).filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
-    expect(migrations.at(-1)).toBe(ENFORCEMENT_MIGRATION);
+    expect(migrations).toContain(ENFORCEMENT_MIGRATION);
     // Replay everything before Phase 3C.2 so a pre-existing V1 grant exists when the migration runs.
     for (const migration of migrations.filter(name => name < ENFORCEMENT_MIGRATION)) await db.query(await readFile(`prisma/migrations/${migration}/migration.sql`, 'utf8'));
     ownerId = await user('owner@phase3c2.test', 'SYSTEM_OWNER');
@@ -183,7 +183,8 @@ type Generation = { id: number; configurationFingerprint: string; policyRevision
     legacyAuthorizationId = (await db.query(`INSERT INTO "AssignmentMarketPolicyEnforcementAuthorization" ("enrollmentId","enrollmentGenerationId","authorizationSequence","authorityVersion",status,environment,"tradingAccountId","accountSubscriptionId","strategyId","policyRevisionId","accountHolderUserId","configurationFingerprint","authorizationFingerprint","authorizedByUserId","grantReason")
       SELECT g."enrollmentId", g.id, 1, 'PAPER_MARKET_POLICY_ENFORCEMENT_V1', 'AUTHORIZED', 'PAPER', g."tradingAccountId", g."accountSubscriptionId", g."strategyId", g."policyRevisionId", g."accountHolderUserId", g."configurationFingerprint", $2, $3, 'Phase 3C.1 grant'
       FROM "AssignmentMarketPolicyEnrollmentGeneration" g WHERE g.id=$1 RETURNING id`, [generation.id, 'e'.repeat(64), ownerId])).rows[0].id;
-    await db.query(await readFile(`prisma/migrations/${ENFORCEMENT_MIGRATION}/migration.sql`, 'utf8'));
+    // Apply Phase 3C.2 and every later migration (Phase 3C.3 broker-time enforcement).
+    for (const migration of migrations.filter(name => name >= ENFORCEMENT_MIGRATION)) await db.query(await readFile(`prisma/migrations/${migration}/migration.sql`, 'utf8'));
   }, 180_000);
 
   afterAll(async () => {
@@ -238,7 +239,7 @@ type Generation = { id: number; configurationFingerprint: string; policyRevision
     await expect(db.query(`UPDATE "MarketPolicyEnforcementRuntimeRollout" SET enabled=true, version=1, "changedByUserId"=$1, "changeReason"='direct operator' WHERE id=1`, [operatorId])).rejects.toThrow(/enabled SYSTEM_OWNER/);
     await expect(db.query(`UPDATE "MarketPolicyEnforcementRuntimeRollout" SET enabled=true, version=5, "changedByUserId"=$1, "changeReason"='skip' WHERE id=1`, [ownerId])).rejects.toThrow(/advance the version by one/);
     const status = await rollout.setMarketPolicyEnforcementRuntimeRollout(true, { expectedVersion: 0, reason: 'Begin PAPER enforcement' }, ownerId);
-    expect(status).toMatchObject({ active: true, status: 'ACTIVE', version: 1, environment: 'PAPER', liveAuthority: 'NONE', brokerTimeEnforcement: 'NOT_IMPLEMENTED', changedBy: { id: ownerId } });
+    expect(status).toMatchObject({ active: true, status: 'ACTIVE', version: 1, environment: 'PAPER', liveAuthority: 'NONE', brokerTimeEnforcement: 'FROZEN_OBLIGATIONS_ALWAYS_REVALIDATED', changedBy: { id: ownerId } });
     expect(await one(`SELECT version, action::text, enabled, "actorUserId", reason FROM "MarketPolicyEnforcementRuntimeRolloutEvent"`)).toEqual({ version: 1, action: 'ACTIVATE', enabled: true, actorUserId: ownerId, reason: 'Begin PAPER enforcement' });
     await expect(db.query(`DELETE FROM "MarketPolicyEnforcementRuntimeRollout"`)).rejects.toThrow(/cannot be deleted/);
     await expect(db.query(`UPDATE "MarketPolicyEnforcementRuntimeRolloutEvent" SET reason='rewrite'`)).rejects.toThrow(/immutable/);

@@ -3,9 +3,10 @@
 Phase 3C.2 makes the first authoritative Market Intelligence decision before a new
 BUY `OrderIntent` is created. It applies only to an explicitly authorized PAPER
 assignment, and only while a separate, default-disabled PAPER runtime rollout is
-active. It does not implement broker-time enforcement (Phase 3C.3), executable
-TradingView entry routing (4A), or exit execution (4B), and it grants no LIVE
-authority.
+active. Its frozen obligation is consumed by the Phase 3C.3 broker-time guard
+(`docs/architecture/market-policy-broker-time-enforcement.md`). It does not implement
+executable TradingView entry routing (4A) or exit execution (4B), and it grants no
+LIVE authority.
 
 Acceptance contract: an explicitly authorized PAPER assignment, under an explicitly
 activated runtime rollout, cannot create a new BUY OrderIntent unless its exact bound
@@ -234,8 +235,11 @@ intent whose assignment is enforced and that lacks an obligation for the current
 authorization, and any PAPER BUY intent for a lapsed assignment. Never-authorized,
 revoked, owner-resolved, LIVE, SELL, and rollout-inactive intents are unaffected.
 Later revocation or invalidation never erases or weakens an obligation. Phase 3C.3
-will consume it before genuinely new BUY broker submissions. The pending-order
-worker, idempotency lookup, and broker POST boundary are unchanged in 3C.2.
+consumes it before every genuinely new BUY broker submission, regardless of the
+runtime rollout state; see `docs/architecture/market-policy-broker-time-enforcement.md`.
+The backstop's entry classifier (`order_intent_is_entry_buy`) exempts a protective BUY
+bound to a tracked position (Hermes L3), and an admitted ALLOWED attempt must still be
+unexpired at commit (L1).
 
 ## 7. Transaction and lock ordering
 

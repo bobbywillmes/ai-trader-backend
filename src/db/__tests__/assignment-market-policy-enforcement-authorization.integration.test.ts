@@ -172,10 +172,11 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
       { provenance: 'ACTIVE_EXACT', comparisonMode: 'COMPARE_ONLY', tradingEffect: 'NONE', compositionCapture: 'NONE_VISIBLE' },
     ]);
     // Authorization rows are read by invalidation triggers on the bound identity tables, by the Phase 3C.2
-    // admission evidence tables, and by the deferred OrderIntent backstop, which is a no-op while the
-    // PAPER runtime rollout is inactive (default after migration).
+    // admission evidence tables, by the Phase 3C.3 broker-time decision and consumption tables (which act
+    // only on frozen obligations or, under the active rollout, un-obligated queued entries), and by the
+    // deferred OrderIntent backstop, which is a no-op while the PAPER runtime rollout is inactive.
     const triggerTables = (await db.query(`SELECT DISTINCT c.relname FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_proc p ON p.oid=t.tgfoid WHERE p.prosrc LIKE '%EnforcementAuthorization%' ORDER BY 1`)).rows.map(row => row.relname);
-    expect(triggerTables).toEqual(['AssignmentMarketPolicyEnforcementAuthorization', 'AssignmentMarketPolicyEnforcementAuthorizationEvent', 'AssignmentMarketPolicyEnforcementLapseResolution', 'AssignmentMarketPolicyEnrollmentGeneration', 'MarketPolicyEnforcementAdmissionAttempt', 'OrderIntent', 'Security', 'StrategyMarketPolicyRevision', 'Subscription', 'TradingAccount', 'TradingAccountSubscription']);
+    expect(triggerTables).toEqual(['AssignmentMarketPolicyEnforcementAuthorization', 'AssignmentMarketPolicyEnforcementAuthorizationEvent', 'AssignmentMarketPolicyEnforcementLapseResolution', 'AssignmentMarketPolicyEnrollmentGeneration', 'MarketPolicyBrokerDispatchConsumption', 'MarketPolicyBrokerDispatchDecision', 'MarketPolicyEnforcementAdmissionAttempt', 'OrderIntent', 'Security', 'StrategyMarketPolicyRevision', 'Subscription', 'TradingAccount', 'TradingAccountSubscription']);
     expect((await db.query(`SELECT enabled FROM "MarketPolicyEnforcementRuntimeRollout" WHERE id=1`)).rows[0].enabled).toBe(false);
     expect(await count(`"OrderIntentMarketPolicyCoverage" WHERE "comparisonMode"<>'COMPARE_ONLY' OR "tradingEffect"<>'NONE'`)).toBe(0);
   });

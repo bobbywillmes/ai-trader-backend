@@ -188,6 +188,9 @@ describe('Phase 3C.2 single admission boundary', () => {
       'src/services/assignment-market-policy-enforcement-authorization.service.test.ts',
       'src/controllers/trading-accounts.controller.ts',
       'src/services/market-policy-entry-admission.service.ts',
+      // Phase 3C.3: the second authoritative boundary (broker-time guard) and its read-only inventory.
+      'src/services/market-policy-broker-dispatch.service.ts',
+      'src/services/market-policy-broker-readiness.service.ts',
     ]);
     const offenders: string[] = [];
     for (const root of roots) {

@@ -123,3 +123,13 @@ market-policy decision is made under row locks before the claim. Only an ALLOWED
 decision acquires the claim, and it freezes its obligation in the same transaction.
 A rejected decision acquires no claim. See
 `docs/architecture/market-policy-pre-intent-enforcement.md`.
+
+## Broker-time enforcement (Phase 3C.3)
+
+A broker-time market-policy refusal happens after the confirmed-absence lookup and
+before any dispatch, so it is a definite non-send. The claim is released only through
+`releaseUnsubmittedEntryExposureClaim`, which now also treats a consumed broker dispatch
+authorization (`MarketPolicyBrokerDispatchConsumption`) as broker evidence. Failures
+before the lookup completes, or after dispatch starts, keep the existing uncertainty
+handling and leave the claim active. See
+`docs/architecture/market-policy-broker-time-enforcement.md`.

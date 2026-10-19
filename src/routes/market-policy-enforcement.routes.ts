@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   activateMarketPolicyEnforcementRuntimeRolloutController,
   deactivateMarketPolicyEnforcementRuntimeRolloutController,
+  getMarketPolicyBrokerEnforcementReadinessController,
   getMarketPolicyEnforcementRuntimeRolloutController,
   listMarketPolicyEnforcementRuntimeRolloutEventsController,
 } from '../controllers/market-policy-enforcement.controller.js';
@@ -16,5 +17,6 @@ router.get('/runtime-rollout', getMarketPolicyEnforcementRuntimeRolloutControlle
 router.get('/runtime-rollout/events', requireSystemOwnerAccess, listMarketPolicyEnforcementRuntimeRolloutEventsController);
 router.post('/runtime-rollout/activate', requireSystemOwnerAccess, activateMarketPolicyEnforcementRuntimeRolloutController);
 router.post('/runtime-rollout/deactivate', requireSystemOwnerAccess, deactivateMarketPolicyEnforcementRuntimeRolloutController);
+router.get('/broker-time-readiness', requireSystemOwnerAccess, getMarketPolicyBrokerEnforcementReadinessController);
 
 export default router;

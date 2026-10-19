@@ -8,6 +8,7 @@ import {
   setMarketPolicyEnforcementRuntimeRollout,
 } from '../services/market-policy-enforcement-rollout.service.js';
 import { setMarketPolicyEnforcementRolloutSchema } from '../validators/market-policy-enforcement.schema.js';
+import { assessMarketPolicyBrokerEnforcementReadiness } from '../services/market-policy-broker-readiness.service.js';
 
 function requireActorUserId(res: Response) {
   const user = res.locals.user;
@@ -26,6 +27,13 @@ export async function getMarketPolicyEnforcementRuntimeRolloutController(_req: R
 export async function listMarketPolicyEnforcementRuntimeRolloutEventsController(_req: Request, res: Response, next: NextFunction) {
   try {
     res.status(200).json({ events: await listMarketPolicyEnforcementRuntimeRolloutEvents() });
+  } catch (error) { next(error); }
+}
+
+// Read-only Phase 3C.3 pre-activation inventory of queued PAPER BUY intents and unresolved lapses.
+export async function getMarketPolicyBrokerEnforcementReadinessController(_req: Request, res: Response, next: NextFunction) {
+  try {
+    res.status(200).json(await assessMarketPolicyBrokerEnforcementReadiness());
   } catch (error) { next(error); }
 }
 

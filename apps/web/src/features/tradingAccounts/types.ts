@@ -862,7 +862,7 @@ export type MarketPolicyRuntimeEnforcement = {
   environment: 'PAPER'; active: boolean; status: 'ACTIVE' | 'NOT_ACTIVATED' | 'DEACTIVATED' | 'UNAVAILABLE'; version: number;
   // changedBy and changeReason are SYSTEM_OWNER projection only.
   changedAt: string | null; changedBy?: { id: number; email: string; name: string | null } | null; changeReason?: string | null;
-  tradingEffect: 'PAPER_PRE_INTENT_ENFORCEMENT' | 'NONE'; liveAuthority: 'NONE'; brokerTimeEnforcement: 'NOT_IMPLEMENTED';
+  tradingEffect: 'PAPER_PRE_INTENT_ENFORCEMENT' | 'NONE'; liveAuthority: 'NONE'; brokerTimeEnforcement: 'FROZEN_OBLIGATIONS_ALWAYS_REVALIDATED';
 };
 export type MarketPolicyEnforcementDisposition = 'NEVER_AUTHORIZED' | 'ENFORCED' | 'AUTHORIZATION_INEFFECTIVE' | 'LAPSED' | 'OWNER_REVOKED' | 'OWNER_OPTED_OUT' | 'NOT_APPLICABLE_LIVE';
 export type MarketPolicyEntryBehavior = 'EXISTING_ENTRY_BEHAVIOR' | 'MARKET_POLICY_ENFORCED' | 'FAIL_CLOSED' | 'EXPLICITLY_NON_ENFORCED';

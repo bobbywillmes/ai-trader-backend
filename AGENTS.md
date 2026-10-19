@@ -448,8 +448,23 @@ raising stable `MARKET_POLICY_*` codes. ALLOWED freezes an immutable
 `OrderIntentMarketPolicyEnforcementObligation` atomically with the claim and intent.
 A deferred PostgreSQL backstop rejects enforced BUY intents without one. Risk gates
 still apply; SELL, protective and lifecycle orders are never gated; there is no LIVE
-authority and no broker-time enforcement (Phase 3C.3). See
-`docs/architecture/market-policy-pre-intent-enforcement.md`.
+authority. See `docs/architecture/market-policy-pre-intent-enforcement.md`.
+
+Phase 3C.3 consumes frozen obligations at broker time, regardless of the rollout. The
+only guard is `prepareEntryBrokerDispatch`, called by `submitOrderToBroker` after the
+stable-ID lookup confirmed absence (an existing exact order is recovered, never
+re-gated or re-sent). It re-locks in the 3C.2 order and requires the exact frozen
+authorization to be AUTHORIZED, latest and fingerprint-equal, with its generation and
+revision ACTIVE, and freshly evaluates the frozen revision. Owner revoke or opt-out
+never un-gates a frozen intent. Immutable `MarketPolicyBrokerDispatchDecision` rows
+are authoritative; an ALLOWED decision is single-use, expires within 30 seconds, and
+is consumed (`MarketPolicyBrokerDispatchConsumption`, at most one per intent) as the
+linearization point just before the adapter. Refusals happen in the `NOT_DISPATCHED`
+phase and are definite non-sends; never treat an unclassified exception that way.
+Under the active rollout, un-obligated queued BUYs for assignments that require
+enforcement are quarantined. Run `npm run market-policy:broker-readiness` before
+activation. See `docs/architecture/market-policy-broker-time-enforcement.md` and
+`docs/production/market-policy-enforcement-rollout.md`.
 
 The intended lifecycle is:
 

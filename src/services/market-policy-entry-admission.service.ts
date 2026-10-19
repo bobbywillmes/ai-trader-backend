@@ -23,15 +23,18 @@ import { createSystemEvent } from './system-event.service.js';
 // Phase 3C.2 authoritative pre-intent market-policy admission. This is the single shared boundary
 // through which every BUY entry OrderIntent is created. While the PAPER runtime rollout is inactive,
 // or for an assignment that is not enforced, it is exactly the Phase 3C.0 claim admission. It never
-// gates SELL orders, protective exits, or lifecycle reconciliation, never calls market-data
-// providers, and does not implement broker-time enforcement (Phase 3C.3).
+// gates SELL orders, protective exits, or lifecycle reconciliation and never calls market-data
+// providers. The obligation it freezes is revalidated before any new broker BUY POST by the Phase
+// 3C.3 broker-time guard (market-policy-broker-dispatch.service.ts), which shares this evaluation.
 export const MARKET_POLICY_PRE_INTENT_ENFORCEMENT_VERSION = 'MARKET_POLICY_PRE_INTENT_ENFORCEMENT_V1' as const;
 export const MARKET_POLICY_ENTRY_OBLIGATION_VERSION = 'MARKET_POLICY_ENTRY_OBLIGATION_V1' as const;
 const COMPOSITION_VERSION = 'MARKET_REGIME_COMPOSITION_V1';
 const ADMISSION_TRANSACTION = { timeout: 15_000, maxWait: 10_000 } as const;
 
-type Evaluator = typeof evaluateStrategyMarketEligibility;
-type EvaluatorRule = Parameters<Evaluator>[0][number];
+export type MarketPolicyEvaluator = typeof evaluateStrategyMarketEligibility;
+type Evaluator = MarketPolicyEvaluator;
+export type MarketPolicyEvaluatorRule = Parameters<Evaluator>[0][number];
+type EvaluatorRule = MarketPolicyEvaluatorRule;
 type EvaluatorGate = ReturnType<Evaluator>['gates'][number];
 type EvaluatedOutcome = 'ALLOWED' | 'BLOCKED' | 'INSUFFICIENT_EVIDENCE';
 
@@ -81,13 +84,14 @@ class MarketPolicyEnforcementTechnicalError extends Error {
 const json = (value: unknown): Prisma.InputJsonValue => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 
 type EvaluatedComposition = Prisma.MarketRegimeAssessmentGetPayload<{ include: { sources: true } }>;
-type Evaluation = {
+export type MarketPolicyEvaluation = {
   outcome: EvaluatedOutcome;
   reasonCode: string;
   validUntil: Date | null;
   composition: EvaluatedComposition | null;
   gates: Prisma.MarketPolicyEnforcementAdmissionGateUncheckedCreateWithoutAttemptInput[];
 };
+type Evaluation = MarketPolicyEvaluation;
 
 type AdmissionState = {
   rolloutVersion?: number;
@@ -112,7 +116,7 @@ function attemptDisposition(disposition: MarketPolicyEnforcementDisposition | un
   return 'UNKNOWN';
 }
 
-function compositionEvidence(composition: EvaluatedComposition | null) {
+export function compositionEvidence(composition: EvaluatedComposition | null) {
   return composition ? {
     id: composition.id, compositionVersion: composition.compositionVersion, targetAt: composition.targetAt, observedAt: composition.observedAt,
     validUntil: composition.validUntil, evidenceHealth: composition.evidenceHealth, sourceSetFingerprint: composition.sourceSetFingerprint,
@@ -148,7 +152,7 @@ function attemptEvidence(request: EntryAdmissionRequest, resolution: LockedMarke
     rollout: { version: rolloutVersion, environment: 'PAPER' },
     composition: compositionEvidence(evaluation?.composition ?? null),
     evaluation: evaluation ? { evaluatorVersion: STRATEGY_MARKET_ELIGIBILITY_VERSION, outcome: evaluation.outcome, reasonCode: evaluation.reasonCode, validUntil: evaluation.validUntil } : null,
-    boundaries: { liveAuthority: 'NONE', brokerTimeEnforcement: 'NOT_IMPLEMENTED_PHASE_3C_3', shadowDecisionReused: false },
+    boundaries: { liveAuthority: 'NONE', brokerTimeEnforcement: 'OBLIGATION_REVALIDATED_BEFORE_NEW_BUY_POST', shadowDecisionReused: false },
     ...extra,
   });
 }
@@ -182,6 +186,14 @@ function gateData(gate: EvaluatorGate, sources: MarketRegimeAssessmentSource[]):
 async function evaluateEnforcedEntry(tx: Prisma.TransactionClient, resolution: LockedMarketPolicyEnforcementResolution, evaluatedAt: Date, evaluator: Evaluator): Promise<Evaluation> {
   const revision = resolution.boundRevision;
   if (!revision) throw new Error('BOUND_POLICY_REVISION_MISSING');
+  return evaluateMarketPolicyRevisionOnCurrentComposition(tx, revision.dimensionRules as EvaluatorRule[], evaluatedAt, evaluator);
+}
+
+/**
+ * Shared by pre-intent admission (3C.2) and the broker-time guard (3C.3): evaluates exactly the given
+ * revision rules against the current committed composition at a PostgreSQL-derived evaluation time.
+ */
+export async function evaluateMarketPolicyRevisionOnCurrentComposition(tx: Prisma.TransactionClient, dimensionRules: EvaluatorRule[], evaluatedAt: Date, evaluator: Evaluator = evaluateStrategyMarketEligibility): Promise<Evaluation> {
   // Compositions and their five sources are immutable and inserted atomically, so this read is a
   // consistent committed snapshot. Selection matches the Phase 3B coverage capture ordering.
   const composition = await tx.marketRegimeAssessment.findFirst({
@@ -190,7 +202,7 @@ async function evaluateEnforcedEntry(tx: Prisma.TransactionClient, resolution: L
     include: { sources: { orderBy: { ordinal: 'asc' } } },
   });
   if (!composition) return { outcome: 'INSUFFICIENT_EVIDENCE', reasonCode: 'NO_COMPOSITION', validUntil: null, composition: null, gates: [] };
-  const result = evaluator(revision.dimensionRules as EvaluatorRule[], composition.sources, evaluatedAt);
+  const result = evaluator(dimensionRules, composition.sources, evaluatedAt);
   if (result.gates.length !== 5) throw new Error('EVALUATOR_GATES_INCOMPLETE');
   if (!['ALLOWED', 'BLOCKED', 'INSUFFICIENT_EVIDENCE'].includes(result.outcome)) throw new Error('EVALUATOR_OUTCOME_INVALID');
   let outcome = result.outcome as EvaluatedOutcome;
@@ -240,7 +252,9 @@ async function admitInTransaction(tx: Prisma.TransactionClient, request: EntryAd
   state.engaged = { resolution };
   const marketPolicy: MarketPolicyAdmissionSummary = { runtimeActive: true, disposition: resolution.disposition, enforced: true, attemptId: null, obligationId: null };
   if (request.tradingAccountId !== resolution.identity.tradingAccountId) throw new MarketPolicyEnforcementTechnicalError('REQUEST_ACCOUNT_MISMATCH', new Error('Admission account does not own the assignment.'));
-  if (request.symbol.trim().toUpperCase() !== resolution.identity.securitySymbol) {
+  // A lapsed or ineffective authorization is rejected below with durable evidence and is never evaluated,
+  // so an identity drift there must not be reported as a technical failure instead (Hermes L6).
+  if (resolution.disposition === 'ENFORCED' && request.symbol.trim().toUpperCase() !== resolution.identity.securitySymbol) {
     throw new MarketPolicyEnforcementTechnicalError('REQUEST_SECURITY_MISMATCH', new Error(`Requested ${request.symbol} does not equal the assignment Security ${resolution.identity.securitySymbol}.`));
   }
 

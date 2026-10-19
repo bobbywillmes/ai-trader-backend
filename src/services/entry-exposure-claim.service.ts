@@ -396,7 +396,7 @@ export async function releaseUnsubmittedEntryExposureClaim(args: {
       orderIntentId: args.orderIntentId, claimId: claim.id, claimStatus: claim.status,
     });
   }
-  const [brokerOrders, brokerActivities, brokerDispatchEvidence, position] = await Promise.all([
+  const [brokerOrders, brokerActivities, brokerDispatchEvidence, dispatchConsumptions, position] = await Promise.all([
     db.brokerOrder.count({ where: { orderIntentId: args.orderIntentId } }),
     db.brokerActivity.count({ where: { orderIntentId: args.orderIntentId } }),
     db.orderIntentBrokerOpportunityEvent.count({
@@ -405,13 +405,15 @@ export async function releaseUnsubmittedEntryExposureClaim(args: {
         eventType: { in: ['ADAPTER_DISPATCH_REACHED', 'BROKER_RESPONSE_CONFIRMED', 'BROKER_REJECTED', 'DELIVERY_UNCERTAIN', 'RECOVERY_FOUND'] },
       },
     }),
+    // A consumed broker-time dispatch authorization means the adapter may have been invoked.
+    db.marketPolicyBrokerDispatchConsumption.count({ where: { orderIntentId: args.orderIntentId } }),
     claim.trackedPositionId
       ? db.trackedPosition.findUnique({ where: { id: claim.trackedPositionId }, select: { status: true } })
       : null,
   ]);
-  if (brokerOrders > 0 || brokerActivities > 0 || brokerDispatchEvidence > 0 || (position && position.status !== 'closed')) {
+  if (brokerOrders > 0 || brokerActivities > 0 || brokerDispatchEvidence > 0 || dispatchConsumptions > 0 || (position && position.status !== 'closed')) {
     throw conflict('ENTRY_EXPOSURE_UNRESOLVED', 'Claim has broker or position evidence and cannot be released as unsubmitted.', {
-      orderIntentId: args.orderIntentId, claimId: claim.id, brokerOrders, brokerActivities, brokerDispatchEvidence,
+      orderIntentId: args.orderIntentId, claimId: claim.id, brokerOrders, brokerActivities, brokerDispatchEvidence, dispatchConsumptions,
       trackedPositionStatus: position?.status ?? null,
     });
   }
