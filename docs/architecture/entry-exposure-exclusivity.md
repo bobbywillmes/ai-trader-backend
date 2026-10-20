@@ -138,6 +138,20 @@ status and missing rows are not proof of non-delivery. Transient database failur
 the prior recoverable state for a bounded scheduler retry. Failures before the lookup
 completes keep the existing uncertainty handling.
 
+The account/Security exclusivity invariant lives in the shared release, not in any one
+caller. `releaseUnsubmittedEntryExposureClaim` decides and compare-and-sets under the
+`entry-exposure:<account>:<security>` advisory lock. It releases an `ENTRY_SUBMITTING`
+claim only with a recorded `NOT_SENT_EVIDENCE_RECORDED` event, and an
+`ENTRY_PENDING`/`ADMISSION_BLOCKED` claim only because such a claim cannot cross the
+broker boundary. It refuses a consumed one-shot LIVE arming, any recorded rejection
+(including every 4xx), uncertain or unknown outcome, and an unclosed
+`ADAPTER_INVOCATION_STARTED` marker. Every caller (admission, worker, stale recovery,
+terminal sweep, deactivation and disarm) persists the delivery classification before it
+asks for a release. A failed persistence leaves the claim held, so a second
+same-account/Security BUY is refused (`ENTRY_ALREADY_PENDING` or
+`ENTRY_EXPOSURE_UNRESOLVED`) for as long as broker exposure is possible. See section 5c
+of `docs/architecture/market-policy-broker-time-enforcement.md`.
+
 A failure after a dispatch record committed (a rejection, a local adapter guard, a lost
 record acknowledgement, uncertain delivery, or a crash before the adapter) records an
 immutable `DISPATCH_OUTCOME_RECORDED` event and holds the claim as `UNRESOLVED`. Only the

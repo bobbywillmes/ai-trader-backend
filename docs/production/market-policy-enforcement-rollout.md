@@ -71,9 +71,18 @@ Architecture: `docs/architecture/market-policy-pre-intent-enforcement.md` and
      are still held, including consumed dispatches. Review them with
      `npm run entry-exposure:readiness` (`terminalIntentsWithUnreleasedClaims`) and the
      remediation preview.
-     `systemRecovery=PROCESSED` means recovery evidence was actually recorded;
-     `ELIGIBLE_OR_WAITING` means the claim is due or waiting for its bounded retry, not
-     that a sweep completed.
+     Read each item's `recoveryState` and `systemRecovery`:
+     `AWAITING_FIRST_ATTEMPT` and `RETRY_SCHEDULED` (with `nextAttemptDueAt`) are
+     automatic recovery that has not yet completed. `TECHNICAL_FAILURE_RETRY_SCHEDULED`
+     means the last attempt hit an infrastructure failure and the claim stays held.
+     `OPERATOR_INVESTIGATION_REQUIRED` means delivery is uncertain or unknown: no
+     automatic or absence-based release exists, and only positive broker order evidence
+     (the exact client order ID terminal at Alpaca) releases it.
+     `PROTECTED_BY_EXPOSURE_WORKFLOW` is owned by order sync. No state means "processed";
+     `recoveryAttempted` and `lastRecoveryResult.result` report what actually happened.
+     Watch the CRITICAL system event `entry_exposure.delivery_evidence_unpersisted`: an
+     entry failure whose classification could not be stored keeps its claim held until
+     stale recovery reviews it.
 7. **Confirm the broker-time guard and monitoring are operational.** Watch
    `SystemEvent` types `MARKET_POLICY_BROKER_DISPATCH_REFUSED` (WARNING),
    `MARKET_POLICY_LEGACY_ENTRY_QUARANTINED` (WARNING),

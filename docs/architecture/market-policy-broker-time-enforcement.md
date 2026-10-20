@@ -68,17 +68,22 @@ A market-policy refusal (`MarketPolicyBrokerDispatchRefusedError`) can only occu
 `NOT_DISPATCHED`, so it is always a definite non-send. Authoritative denials set the
 intent to `blocked` with `MARKET_POLICY_BROKER_TIME:<OUTCOME>:DEFINITELY_NOT_SENT:<reason>:decision=<id>`
 and count as healthy domain outcomes. Technical guard failures set `failed` with the
-same prefix and count as failures for account health. In both cases the existing
-`releaseUnsubmittedEntryExposureClaim` checks decide whether the claim is released,
-and those checks also treat a dispatch consumption or an un-enforced dispatch record as
-broker evidence. The shared boundary also reads the intent delivery classification and
-claim outcome events: `BROKER_REJECTED`, `DELIVERY_UNCERTAIN`, or an unknown outcome
-cannot be released merely because no durable dispatch row exists. If a genuine domain
-evidence conflict refuses release, the claim moves to `UNRESOLVED` with an
+same prefix and count as failures for account health. In both cases the worker first
+commits the terminal intent state together with a structured
+`NOT_SENT_EVIDENCE_RECORDED` claim event (section 5c), and only then do the shared
+`releaseUnsubmittedEntryExposureClaim` checks decide whether the claim is released.
+Those checks treat a dispatch consumption, an un-enforced dispatch record, a consumed
+one-shot LIVE arming or dispatch telemetry as broker evidence. They also refuse any
+recorded `BROKER_REJECTED`, `DELIVERY_UNCERTAIN` or unknown outcome, an unclosed
+adapter-invocation marker, and an `ENTRY_SUBMITTING` claim without recorded not-sent
+evidence, whether or not a durable dispatch row exists. If a genuine domain evidence
+conflict refuses release, the claim moves to `UNRESOLVED` with an
 `UNSUBMITTED_RELEASE_REFUSED` event and a system event; the refusal is never
 swallowed. A transient database/pool failure or unknown infrastructure failure keeps
-the prior recoverable claim state for retry. A refusal-shaped error in any other phase,
-or any unclassified exception, is never treated as a definite non-send.
+the prior recoverable claim state and its recorded evidence, and records a
+deduplicated `RECOVERY_ATTEMPT_FAILED` diagnostic that schedules the next attempt. A
+refusal-shaped error in any other phase, or any unclassified exception, is never
+treated as a definite non-send.
 
 `EntryDispatchRecordedNotSentError` is the one `NOT_DISPATCHED` failure that leaves a
 dispatch record behind: the consumption or un-enforced authorization committed, but its
@@ -278,31 +283,47 @@ behavior. Protective exits remain outside the guard.
 Like a consumption, the un-enforced record is durable dispatch-start evidence. It is
 never proof of receipt, and it permanently prohibits another POST for the intent.
 
-## 5b. Claim recovery after a dispatch record (Hermes HIGH-1)
+## 5b. Claim recovery after a possible dispatch (Hermes HIGH-1)
 
 `src/services/entry-dispatch-recovery.service.ts` owns recovery of EntryExposureClaim
-ownership once a dispatch record exists. Dispatch records are a consumption, an
-un-enforced dispatch authorization, or best-effort dispatch telemetry. Ordinary
-`releaseUnsubmittedEntryExposureClaim` still refuses any such claim.
+ownership once the adapter may have been reached. Dispatch records are a consumption,
+an un-enforced dispatch authorization, a consumed one-shot LIVE arming
+(`LiveEntryArmingTermination` of type `CONSUMED` for the intent), or best-effort
+dispatch telemetry. An OBSERVED post-boundary outcome (section 5c) is treated the same
+way even when no dispatch record exists, which is the normal case for LIVE.
+`releaseUnsubmittedEntryExposureClaim` refuses every such claim.
 
 ### Outcome recording
 
-Every failure after a dispatch record is recorded as an immutable
-`DISPATCH_OUTCOME_RECORDED` claim event, and the claim moves to `UNRESOLVED`, which is
-non-executable and visible. A terminal `failed` intent never hides a stuck
-`ENTRY_SUBMITTING` claim. The event carries the classification, HTTP status, source,
-client order ID, consumption, decision and un-enforced record IDs, and a
-`deliveryProof`. Claim events are append-only at the database boundary. Repeated
-observations with unchanged evidence append nothing.
+Every failure after the adapter may have been reached is recorded as an immutable
+`DISPATCH_OUTCOME_RECORDED` claim event in the same transaction as the intent's terminal
+state, and the claim moves to `UNRESOLVED`, which is non-executable and visible. A
+terminal `failed` intent never hides a stuck `ENTRY_SUBMITTING` claim. The event carries
+the classification, HTTP status, source, `observation` (`OBSERVED` by the worker or
+`INFERRED` by recovery), `adapterInvocation`, `dispatchRecordPresent`, client order ID,
+consumption, decision, un-enforced and LIVE arming record IDs, and a `deliveryProof`.
+Claim events are append-only at the database boundary. Repeated observations with
+unchanged evidence append nothing. The system event describes the evidence actually
+present; it never claims that a dispatch record committed when none exists.
 
 | Case | Classification | Intent | Claim | Release |
 |---|---|---|---|---|
-| A. Adapter-local guard before `fetch` (`NOT_SENT_BLOCKED`, `NOT_SENT_RETRYABLE`) | `NOT_SENT_LOCAL_*` | `failed` | `UNRESOLVED`, then a verified release is attempted immediately | Automatic after fresh verification |
-| B. HTTP rejection with a definitive status (400, 401, 403, 404, 422, 429) | `BROKER_REJECTED` with status | `failed` | `UNRESOLVED` | Automatic, only after a 60 s settle window and fresh verification |
-| B'. Any other 4xx (for example 408, 409) | `BROKER_REJECTED` with status | `failed` | `UNRESOLVED` | Never; treated as delivery-uncertain |
-| C. 5xx, network, timeout, or unclassified after dispatch | `DELIVERY_UNCERTAIN` | `failed` | `UNRESOLVED` | Never on absence; operator investigation |
-| D. Crash between the record and the adapter (stale recovery) | `DISPATCH_OUTCOME_UNKNOWN` | `failed` (`DISPATCH_STARTED_OUTCOME_UNKNOWN`) | `UNRESOLVED` | Never on absence; operator investigation |
+| A. Adapter-local guard before `fetch` (`NOT_SENT_BLOCKED`, `NOT_SENT_RETRYABLE`) with a dispatch record | `NOT_SENT_LOCAL_*` | `failed` | `UNRESOLVED`, then a verified release is attempted immediately | Automatic after fresh verification |
+| A'. Same, with no dispatch record | `NOT_SENT_EVIDENCE_RECORDED` (`ADAPTER_LOCAL_GUARD`) | `failed` | Never-submitted release after the evidence commits | Automatic |
+| B. HTTP rejection with a definitive status (400, 401, 403, 404, 422, 429), with or without a record | `BROKER_REJECTED` with status | `failed` | `UNRESOLVED` | Automatic, only after a 60 s settle window and fresh verification |
+| B'. Any other 4xx (for example 408, 409), with or without a record | `BROKER_REJECTED` with status | `failed` | `UNRESOLVED` | Never on absence; operator investigation |
+| C. 5xx, network, timeout, or unclassified after the boundary | `DELIVERY_UNCERTAIN` | `failed` | `UNRESOLVED` | Never on absence; operator investigation |
+| D. Crash after the adapter-invocation marker or after a dispatch record (stale recovery) | `DISPATCH_OUTCOME_UNKNOWN` (`INFERRED`) | `failed` (`DISPATCH_STARTED_OUTCOME_UNKNOWN` or `STALE_SUBMISSION_OUTCOME_UNKNOWN`) | `UNRESOLVED` | Never on absence; operator investigation |
 | E. Record committed, acknowledgement lost | `NOT_SENT_DISPATCH_RECORD_ACK_LOST` | `failed` (`ENTRY_DISPATCH_RECORDED_NOT_SENT`) | `UNRESOLVED`, then a verified release is attempted immediately | Automatic after fresh verification |
+
+Every HTTP response means the request reached Alpaca. No 4xx status, by itself, proves
+non-delivery, so a rejection never uses the never-submitted path. The definitive codes
+only qualify the rejection for evidence-based release: 400 (malformed request), 401
+(authentication), 403 (buying power, permissions, restricted account), 404 (unknown
+route or asset), 422 (validation) and 429 (rate limit) are responses Alpaca returns
+without accepting an order. 408 (the request may have been processed after the
+timeout) and 409 (a conflict that can mean the client order ID already exists) are
+delivery-uncertain, as is every other 4xx.
 
 In every case the consumed or recorded intent is never retried as a new POST.
 `assertNoLocalEntryDispatchEvidence` and the unique records block it even if an
@@ -320,14 +341,17 @@ never a timeout after which ownership disappears.
 
 ### Evidence standard for release
 
-`releaseDispatchedEntryExposureClaim` releases only when all of the following hold:
+`releaseVerifiedEntryExposureClaim` (formerly `releaseDispatchedEntryExposureClaim`,
+which remains an alias) releases only when all of the following hold:
 
 - **Identity:** the claim, OrderIntent, account, canonical Security and stable client
-  order ID match each other, the consumption and its decision, and the un-enforced
-  record.
-- **Recorded basis:** every recorded outcome is a definite local non-send or a
-  definitive, settled rejection. Any uncertain outcome makes absence ambiguous,
-  whatever a later lookup returns.
+  order ID match each other, the consumption and its decision, the un-enforced record
+  and the LIVE arming record.
+- **Recorded basis:** every recorded outcome and not-sent record is a definite local
+  non-send or a definitive, settled rejection, and every adapter-invocation marker is
+  closed by one of them. Any uncertain or inferred-unknown outcome makes absence
+  ambiguous, whatever a later lookup returns. A claim with no delivery evidence at all
+  (`NO_DELIVERY_EVIDENCE`) is never released.
 - **Fresh broker verification:** the exact stable client-order-ID lookup finds no order,
   the complete paginated open-BUY inventory for the account and Security is empty
   (incomplete or inconsistent pagination fails), and there is no broker position. An
@@ -339,46 +363,103 @@ never a timeout after which ownership disappears.
   executable BUY for the account and Security, and no unattributed BUY fill for the
   Security since dispatch started.
 - **Final revalidation** under the `entry-exposure:<account>:<security>` advisory lock:
-  claim status, intent status, local exposure and the recorded outcomes are unchanged.
-  The release is then a compare-and-set to `RELEASED` with reason
-  `VERIFIED_DISPATCH_NO_EXPOSURE:<basis>`, plus an immutable
-  `RELEASED_VERIFIED_DISPATCH_NO_EXPOSURE` event carrying the full evidence and its
-  fingerprint.
+  claim status, intent status, local exposure, the dispatch records and the recorded
+  delivery evidence are unchanged. The release is then a compare-and-set from the
+  assessed claim status to `RELEASED` with reason
+  `VERIFIED_DISPATCH_NO_EXPOSURE:<basis>` (or
+  `VERIFIED_NO_DISPATCH_RECORD_NO_EXPOSURE:<basis>` when no dispatch record exists),
+  plus an immutable `RELEASED_VERIFIED_DISPATCH_NO_EXPOSURE` event carrying the full
+  evidence and its fingerprint.
 
-The consumption and the un-enforced record are retained unchanged. A release only lets a
-later, genuinely new admission with a new client order ID pass normal entry controls.
-The original OrderIntent is never reactivated or resent.
+Dispatch records are retained unchanged. A release only lets a later, genuinely new
+admission with a new client order ID pass normal entry controls. The original
+OrderIntent is never reactivated or resent.
 
 Where the APIs cannot conclusively establish absence after a possibly delivered order
-(cases B', C and D), the claim is retained. Remediation reports `AMBIGUOUS_ABSENCE` with
-investigation guidance. There is no force release, no direct-SQL workaround, and no
-time-based expiry of ownership.
+(cases B', C and D), the claim is retained and absence never authorizes a release.
+The only positive evidence that does is the exact order itself. Once the stable client
+order ID resolves at Alpaca to a terminal order whose fills are fully accounted, with no
+position or executable BUY, the terminal broker-order disposition releases it. A live
+order is managed as exposure. Remediation reports `AMBIGUOUS_ABSENCE` with
+`releaseRequires: POSITIVE_BROKER_ORDER_EVIDENCE` and investigation guidance. There is
+no force release, no direct-SQL workaround, and no time-based expiry of ownership.
 
-### Recovery sweep
+### Recovery sweep and its single recovery-state definition
 
-`recoverDispatchedEntryClaimsForAccount` runs inside stale-submission recovery under the
-account lifecycle-mutation lock. Each tick it takes at most three claims of terminal
-intents (oldest `lastDiagnosedAt` first), each at most once per 60 seconds:
+`classifyTerminalEntryClaim` is the one definition of terminal-claim recovery work. The
+sweep (`recoverTerminalEntryClaimsForAccount`), account enumeration
+(`summarizeTerminalClaimRecoveryByAccount`) and readiness
+(`describeUnreleasedTerminalEntryClaims`) all use it, over unreleased claims of terminal
+intents:
 
-- `ENTRY_PENDING` or `ENTRY_SUBMITTING` claims without a dispatch record go through the
-  never-submitted release only when recorded evidence explicitly proves a local
-  pre-dispatch non-send. Missing rows, terminal status, lookup 404s and elapsed time are
-  never proof by themselves.
-- Claims with a dispatch record but no recorded outcome (claims from before this
-  correction) get an outcome inferred from the intent's recorded block reason.
-- `UNRESOLVED` claims with a dispatch record get an evidence-based release attempt.
+| State | When | Action |
+|---|---|---|
+| `AUTOMATIC_NEVER_SUBMITTED_RELEASE` | No dispatch record or outcome, and non-dispatch is proven by recorded not-sent evidence or by a claim that never reached `ENTRY_SUBMITTING` | Retry the never-submitted release |
+| `AUTOMATIC_NOT_SENT_EVIDENCE_RECORDING` | Legacy claim proven not sent by the adapter-marker protocol, a code-written local classification (`LOCAL_PRE_DISPATCH_FAILURE`, `MARKET_POLICY_BROKER_TIME:…:DEFINITELY_NOT_SENT`, `BROKER_WRITE_DELIVERY:NOT_SENT_*`) or the structured worker risk evaluation | Record `NOT_SENT_EVIDENCE_RECORDED` under the lock, then release |
+| `AUTOMATIC_OUTCOME_RECORDING` | A dispatch record without a recorded outcome, or no evidence either way | Record the outcome (`INFERRED`; unknown when nothing proves it) and move to `UNRESOLVED` |
+| `AUTOMATIC_VERIFIED_RELEASE` | `UNRESOLVED` with a conclusive or settling basis | Evidence-verified release |
+| `OPERATOR_INVESTIGATION` | Uncertain, non-definitive, inferred-unknown or no evidence | None; operator-only |
+| `PROTECTED_EXPOSURE` | A local broker order or attached position | Order sync and terminal broker-order remediation own it |
 
-Every attempt marks the claim diagnosed, so blocked claims rotate instead of starving
-others. A blocked attempt appends a `DISPATCH_RECOVERY_RELEASE_BLOCKED` diagnostic only
-when the evidence changed. Stale recovery itself recognizes a dispatch record before it
-fails a `submitting` intent: a single lookup miss records `DISPATCH_OUTCOME_UNKNOWN` and
-retains the claim instead of releasing it as never submitted.
+Free text is never inferred either way: an unrecognized block reason without
+structured evidence becomes an explicit, retained unknown outcome. A missing dispatch
+record is never treated as proof that no POST occurred.
 
-The `submitted_orders` account enumerator independently counts due terminal claims, so
-an otherwise idle account remains eligible. Credential checks, the lifecycle-mutation
-lock, the three-claim batch, 60-second retry interval and oldest-first ordering remain
-unchanged. Readiness reports `systemRecovery=PROCESSED` only after recovery evidence
-exists; an unprocessed due or waiting claim is `ELIGIBLE_OR_WAITING`, not `SWEPT`.
+Each tick the sweep takes at most three actionable, due claims (`lastDiagnosedAt` null
+or at least 60 seconds old), oldest attempt first. It leases each claim by advancing
+`lastDiagnosedAt` with a compare-and-set before attempting it, so every attempt,
+whatever its result, waits at least 60 seconds for the next one, and persistently
+failing claims rotate instead of starving others. A claim whose lease cannot be written
+(for example, during a database outage) is not attempted and is not reported as
+attempted. Diagnostics are deduplicated by stable evidence (`failureClass`,
+`errorCode`, source; no raw message or clock), so a persistent failure appends one
+event, not one per tick.
+
+Stale recovery never releases on one lookup miss. A `submitting` entry whose claim never
+reached `ENTRY_SUBMITTING`, or whose marker-protocol claim has no adapter-invocation
+marker, is proven not sent and recorded as such before the release. Anything else (a
+dispatch record, an entered adapter, or no evidence) records `DISPATCH_OUTCOME_UNKNOWN`
+and retains the claim. A stronger existing delivery classification in the block reason
+is never replaced by weaker later text.
+
+Account enumeration schedules `submitted_orders` work only for actionable, due claims
+(`terminalEntryClaimsDue`). Operator-only, waiting and protected claims do not schedule
+the sweep, but they count as held exposure (`terminalEntryClaimsHeld`), so an account
+without usable credentials still reports `credentials_unavailable_with_exposure`.
+
+### 5c. Delivery-evidence ordering invariant (Phase 3C.3 final closure)
+
+No claim-release decision runs before the delivery classification it depends on is
+durable, and no broker-exposed or delivery-uncertain claim uses the never-submitted path.
+
+- **Worker failures.** The worker classifies the failure, then commits in one transaction
+  the intent's terminal status and block reason (and any LIVE acceptance-run update)
+  together with either `NOT_SENT_EVIDENCE_RECORDED` (proven not sent) or
+  `DISPATCH_OUTCOME_RECORDED` (`OBSERVED`, claim `UNRESOLVED`). Only after that commit
+  does it decide on release. If the transaction fails, nothing is released: the claim
+  keeps ownership, a CRITICAL `entry_exposure.delivery_evidence_unpersisted` system event
+  is attempted, and stale recovery reviews the intent later.
+- **Risk rejection.** The worker-time risk block commits `blocked` together with
+  `NOT_SENT_EVIDENCE_RECORDED` (`WORKER_RISK_RECHECK`) before its release.
+- **Adapter-marker protocol.** The worker claims an entry with
+  `WORKER_CLAIMED_FOR_SUBMISSION {markerProtocol: ADAPTER_MARKER_V1}`.
+  `submitOrderToBroker` appends `ADAPTER_INVOCATION_STARTED` after the final dispatch
+  authorization and immediately before the adapter call. If that write fails, the phase
+  is still `NOT_DISPATCHED` and nothing is sent. A marker-protocol claim without a marker
+  never invoked the adapter. A marker without a later outcome or not-sent record is an
+  unknown outcome.
+- **Shared release.** `releaseUnsubmittedEntryExposureClaim` decides and
+  compare-and-sets under the `entry-exposure:<account>:<security>` advisory lock (inside
+  the caller's transaction or its own). It releases an `ENTRY_SUBMITTING` claim only with
+  recorded not-sent evidence, and an `ENTRY_PENDING`/`ADMISSION_BLOCKED` claim only
+  because such a claim can never cross the broker boundary. Release results report what
+  actually committed: a compare-and-set miss or a release by another path is
+  `ALREADY_RELEASED`/`NOT_RELEASED`, never `released: true`.
+
+Known non-dispatch producers are structured: `WORKER_RISK_RECHECK`,
+`WORKER_PRE_BOUNDARY_FAILURE`, `BROKER_BOUNDARY_NOT_DISPATCHED`,
+`BROKER_TIME_MARKET_POLICY_REFUSAL`, `ADAPTER_LOCAL_GUARD`,
+`STALE_RECOVERY_ADAPTER_NOT_INVOKED`, and the sweep's legacy producers.
 
 ## 6. Lock ordering
 
@@ -427,18 +508,33 @@ The entry-exposure readiness report (`assessEntryExposureReadiness`,
 `npm run entry-exposure:readiness`) carries the fail-closed database blocker
 `terminalIntentsWithUnreleasedClaims`. Each item lists the account and canonical
 Security; the intent and claim IDs and statuses; the consumption ID and dispatch
-decision; the stable client order ID; the recorded delivery classification; the release
-basis and conclusiveness; the last recovery result; and operator remediation
-eligibility (`ELIGIBLE_AFTER_FRESH_VERIFICATION`, `PENDING` or `BLOCKED`) with the
-blocker reason. A terminal intent with a held claim never drops out of operator
-attention just because stale recovery selects only `submitting` intents.
+decision; the stable client order ID; the recorded delivery classification and
+`deliveryEvidence` (`DISPATCH_RECORD`, `STRUCTURED_NOT_SENT`,
+`OUTCOME_WITHOUT_DISPATCH_RECORD` or `NONE`); the release basis and conclusiveness; and
+the claim's `recoveryState` with `automaticRecoveryPossible`. It also reports whether the
+workflow has actually attempted the claim (`recoveryAttempted`, `lastAttemptAt`), the
+last attempt's real result (`BLOCKED_BY_EVIDENCE`, `TECHNICAL_FAILURE` or `REFUSED`),
+`nextAttemptDueAt` for automatic states, and `systemRecovery`:
+`AWAITING_FIRST_ATTEMPT`, `RETRY_SCHEDULED`, `TECHNICAL_FAILURE_RETRY_SCHEDULED`,
+`OPERATOR_INVESTIGATION_REQUIRED` or `PROTECTED_BY_EXPOSURE_WORKFLOW`. Nothing is ever
+reported as processed on the strength of a diagnostic-error event. Operator remediation
+eligibility is `ELIGIBLE_AFTER_FRESH_VERIFICATION`, `PENDING` (automatic recovery
+first), `INVESTIGATION_REQUIRED` (release only on positive broker order evidence) or
+`BLOCKED`, with the blocker reason. A terminal intent with a held claim, including one
+attached to a position, never drops out of operator attention.
 
 ## 7a. Operator remediation of a dispatched entry
 
 `npm run entry-exposure:remediate -- --claim <id> --actor-user-id <owner>` uses
 `src/services/entry-exposure-remediation.service.ts`. A claim whose intent has a dispatch
 record and no broker order gets the disposition `DISPATCHED_ENTRY_VERIFIED_NO_EXPOSURE`
-instead of the old `BROKER_ORDER_NOT_ESTABLISHED` blocker. The preview shows the exact
+instead of the old `BROKER_ORDER_NOT_ESTABLISHED` blocker. A claim with recorded
+delivery evidence but no dispatch record, including any no-record `UNRESOLVED` claim,
+gets `NO_DISPATCH_RECORD_VERIFIED_NO_EXPOSURE` instead of `UNSUPPORTED`. It is eligible
+only with a basis from structured evidence: recorded not-sent evidence, or an OBSERVED
+definitive rejection after its settle window. An inferred unknown or an uncertain
+outcome stays `AMBIGUOUS_ABSENCE`, and the missing dispatch record never counts as
+proof. The preview shows the exact
 intent, claim, consumption, decision and un-enforced record identities; the recorded
 classification; the local and broker evidence; the conclusiveness (`CONCLUSIVE`,
 `PENDING`, `AMBIGUOUS_ABSENCE` or `CONTRADICTED`); every blocker; and investigation
@@ -485,7 +581,20 @@ authorization races (grant, activation, re-grant after revocation or opt-out, an
 post-commit residual race under real lock contention) and post-consumption outcomes
 (definitive and non-definitive 4xx, local non-send, uncertain delivery, crash before the
 adapter, lost consumption acknowledgement, readiness, fingerprinted remediation and its
-refusals, and a new admission after release). Unit coverage lives in
-`place-order.service.test.ts` (phase ordering and refusal), `order.worker.test.ts`
-(classification and recovery routing), and
+refusals, and a new admission after release). The final-closure block exercises the
+real LIVE worker path with no dispatch record: 408 and 409 independently (one POST, claim
+retained, accurate classification, second entry refused, no second POST); the same with
+the classification persistence failing (PostgreSQL trigger injection); every definitive
+4xx through settle and fresh verification; an unknown adapter error released only on
+positive broker evidence; and genuine pre-dispatch failures. It also covers MEDIUM-1:
+risk rejection, admission and stale-recovery producers with injected transient failures;
+legacy free text versus structured risk evidence; and no-record `UNRESOLVED` operator
+remediation. LOW-2 is a controlled-clock test (three persistently failing claims and a
+fourth). LOW-3/LOW-4 cover enumeration, sweep and readiness parity. The suite verifies
+its disposable database identity, binds Prisma to it, and fails if any real network
+request is attempted. Unit coverage lives in `place-order.service.test.ts` (phase
+ordering, marker and refusal), `order.worker.test.ts` (classification, persistence
+ordering and recovery routing), `entry-exposure-claim.service.test.ts` (the shared
+release invariant), `entry-delivery-evidence.service.test.ts` (evidence model and
+recovery classification), `lifecycle-account-eligibility.service.test.ts`, and
 `market-policy-broker-dispatch.architecture.test.ts`.

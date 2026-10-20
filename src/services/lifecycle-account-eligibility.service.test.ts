@@ -6,6 +6,11 @@ const mocks = vi.hoisted(() => ({
   accountFindMany: vi.fn(),
   intentGroupBy: vi.fn(),
   positionGroupBy: vi.fn(),
+  terminalClaimRecovery: vi.fn(),
+}));
+
+vi.mock('./entry-dispatch-recovery.service.js', () => ({
+  summarizeTerminalClaimRecoveryByAccount: mocks.terminalClaimRecovery,
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -29,7 +34,6 @@ function account(overrides: Record<string, unknown> = {}) {
       brokerOrders: 0,
       trackedPositions: 0,
       brokerActivities: 0,
-      entryExposureClaims: 0,
     },
     ...overrides,
   };
@@ -40,6 +44,7 @@ describe('lifecycle account eligibility', () => {
     vi.clearAllMocks();
     mocks.intentGroupBy.mockResolvedValue([]);
     mocks.positionGroupBy.mockResolvedValue([]);
+    mocks.terminalClaimRecovery.mockResolvedValue(new Map());
   });
 
   it('returns accounts in stable ID order with workflow-specific reasons', async () => {
@@ -198,23 +203,29 @@ describe('lifecycle account eligibility', () => {
     });
   });
 
-  it('enumerates submitted-order recovery when the only work is a due terminal entry claim', async () => {
-    mocks.accountFindMany.mockResolvedValue([account({
-      _count: {
-        orderIntents: 0,
-        brokerOrders: 0,
-        trackedPositions: 0,
-        brokerActivities: 0,
-        entryExposureClaims: 1,
-      },
-    })]);
+  it('enumerates submitted-order recovery when the only work is a due, actionable terminal entry claim', async () => {
+    mocks.accountFindMany.mockResolvedValue([account()]);
+    mocks.terminalClaimRecovery.mockResolvedValue(new Map([[1, { actionableDue: 1, actionableWaiting: 0, operatorInvestigation: 0, protectedExposure: 0, held: 1 }]]));
 
     const result = await enumerateLifecycleAccounts('submitted_orders');
 
     expect(result[0]).toMatchObject({
       eligible: true,
       reason: 'usable_credentials_with_work',
-      exposureSummary: { terminalEntryClaimsDue: 1, hasLifecycleWork: true },
+      exposureSummary: { terminalEntryClaimsDue: 1, terminalEntryClaimsHeld: 1, hasLifecycleWork: true },
     });
+  });
+
+  it('does not schedule the sweep for operator-only or waiting claims, yet keeps them visible as credential exposure', async () => {
+    mocks.terminalClaimRecovery.mockResolvedValue(new Map([
+      [1, { actionableDue: 0, actionableWaiting: 1, operatorInvestigation: 2, protectedExposure: 0, held: 3 }],
+      [2, { actionableDue: 0, actionableWaiting: 0, operatorInvestigation: 1, protectedExposure: 0, held: 1 }],
+    ]));
+    mocks.accountFindMany.mockResolvedValue([account(), account({ id: 2, displayName: 'Bobby Live', environment: 'LIVE', credential: null })]);
+
+    const [credentialed, credentialless] = await enumerateLifecycleAccounts('submitted_orders');
+
+    expect(credentialed).toMatchObject({ eligible: false, reason: 'no_work_for_workflow', exposureSummary: { terminalEntryClaimsDue: 0, terminalEntryClaimsHeld: 3, hasLifecycleWork: false } });
+    expect(credentialless).toMatchObject({ eligible: false, reason: 'credentials_unavailable_with_exposure', exposureSummary: { terminalEntryClaimsHeld: 1 } });
   });
 });

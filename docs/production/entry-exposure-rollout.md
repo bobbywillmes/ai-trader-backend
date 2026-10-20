@@ -117,8 +117,8 @@ local position/order checks. This position-only exception is not available to a
 claim that has an originating OrderIntent.
 
 The preview reports a `disposition`: `TERMINAL_BROKER_ORDER_NO_EXPOSURE` (an exact broker
-order was found), `CLOSED_ADOPTED_POSITION`, `DISPATCHED_ENTRY_VERIFIED_NO_EXPOSURE`, or
-`UNSUPPORTED`. A terminal broker order whose client order ID, symbol or side contradicts
+order was found), `CLOSED_ADOPTED_POSITION`, `DISPATCHED_ENTRY_VERIFIED_NO_EXPOSURE`,
+`NO_DISPATCH_RECORD_VERIFIED_NO_EXPOSURE`, or `UNSUPPORTED`. A terminal broker order whose client order ID, symbol or side contradicts
 the claim is refused with `BROKER_ORDER_IDENTITY_CONFLICT`.
 
 ### Consumed or recorded dispatch with no broker order
@@ -157,6 +157,38 @@ and release events, keeps the consumption and dispatch records unchanged, and ne
 resends, requeues or cancels anything. A later entry for the Security needs a new
 admission with a new client order ID.
 
+### No-record `UNRESOLVED` claims
+
+A held claim with recorded delivery evidence but no dispatch record previously
+previewed as `UNSUPPORTED`; it now uses `NO_DISPATCH_RECORD_VERIFIED_NO_EXPOSURE`. This
+covers LIVE entries and any claim that a prior release path moved to `UNRESOLVED`. The
+same evidence standard, fingerprint and SYSTEM_OWNER requirement apply. The release
+basis must come from structured evidence:
+
+- **Proven pre-dispatch (resolvable).** A `NOT_SENT_EVIDENCE_RECORDED` event (worker risk
+  rejection, pre-boundary failure, broker-time refusal, adapter guard before fetch, or
+  stale recovery that proved the adapter was never invoked). The sweep retries these
+  automatically after a transient failure. If automatic recovery stays blocked (for
+  example, by a failing broker read), the preview becomes `CONCLUSIVE` once a fresh exact
+  client-order-ID lookup, complete open-BUY inventory, position check, fill/activity
+  checks and the locked local revalidation all pass. Apply then releases it as
+  `VERIFIED_NO_DISPATCH_RECORD_NO_EXPOSURE:DEFINITE_LOCAL_NON_SEND`.
+- **Observed definitive rejection.** An `OBSERVED` 400/401/403/404/422/429 after its
+  60-second settle window, with the same fresh verification, releases as
+  `...:CONFIRMED_BROKER_REJECTION`.
+- **Genuine uncertainty (investigation only).** HTTP 408, 409 or another 4xx, 5xx,
+  network or unknown adapter errors, a crash after `ADAPTER_INVOCATION_STARTED`, or an
+  inferred unknown outcome. The preview is `AMBIGUOUS_ABSENCE` with
+  `releaseRequires: POSITIVE_BROKER_ORDER_EVIDENCE`. Absence, lookup 404s and elapsed time
+  never authorize a release. Investigate the Alpaca order history and account activities
+  for the client order ID. Once the exact order appears and is terminal with fills fully
+  accounted and no position or executable BUY, the `TERMINAL_BROKER_ORDER_NO_EXPOSURE`
+  disposition releases it. A live order is managed as exposure.
+
+Remediation never fabricates provenance: it records no dispatch or outcome on the
+claim's behalf, does not resubmit or requeue the old intent, and leaves LIVE arming and
+write approvals untouched.
+
 ## Legacy disposition matrix
 
 | Condition | Detection and required evidence | Safe disposition | Entry effect and approval | Acceptance proof |
@@ -164,7 +196,7 @@ admission with a new client order ID.
 | Verified existing open position | Local open/closing `TrackedPosition` matches a fresh broker position for the same account and canonical Security; the complete broker BUY snapshot is available. | `--apply` may create one `POSITION_OPEN` claim with `OPERATOR_ROLLOUT_ADOPTION`. The event states unknown provenance and `executionAuthority=NONE`. Position and protective exits remain usable. | Blocks another entry for the symbol. No liquidation or exit-authority invention. Operator retains the apply report. | `entry-exposure-lifecycle.prisma.integration.test.ts`, case 11. |
 | Never-submitted `received`/`pending` intent | No delivery-uncertain marker, local `BrokerOrder`, `BrokerActivity`, broker position, or executable broker BUY for that account/symbol, using complete fresh snapshots. | Atomically block only an intent still in the expected state, create immutable evidence, then release as `ROLLOUT_VERIFIED_NEVER_SUBMITTED`. | Never requeues and does not block after verified release. Operator apply required. One 404 never qualifies uncertain delivery. | Case 12. |
 | `submitting` or delivery-uncertain intent | Local active/uncertain status plus exact client/broker identity and subsequent broker order/fill evidence. | Preserve the claim until authoritative reconciliation. If later exact terminal order, complete fills, and absence of exposure are proven, fingerprinted owner remediation may release it. | Hard blocker until verified. It is never treated as never-submitted from a failed lookup. | Cases 6, 9, and 17 plus remediation tests. |
-| Terminal claim without a durable dispatch row | Inspect the explicit intent delivery classification and immutable claim outcomes. Missing rows, terminal status, repeated 404s, elapsed time, and HTTP 408/409 do not prove non-delivery. | Release automatically only for explicit local pre-dispatch non-send evidence. Preserve uncertain/unknown evidence with Operational Attention; a transient database failure retains the prior recoverable state for the bounded scheduler retry. | Blocks duplicate account/Security entry until conclusive evidence permits the standard release. | Phase 3C.3 recovery scheduling and shared-boundary regressions. |
+| Terminal claim without a durable dispatch row | Inspect the structured claim evidence (`NOT_SENT_EVIDENCE_RECORDED`, OBSERVED/INFERRED `DISPATCH_OUTCOME_RECORDED`, `ADAPTER_INVOCATION_STARTED`) and the claim state. Missing rows, unrecognized free text, terminal status, repeated 404s, elapsed time, and every 4xx (HTTP 408/409 especially) do not prove non-delivery. | Release automatically only with structured not-sent evidence (or an observed definitive rejection after fresh verification). Preserve uncertain/unknown evidence as operator investigation. A transient database failure retains the recoverable state and schedules a leased retry at least 60 s later. | Blocks duplicate account/Security entry until conclusive evidence permits the standard release. | Phase 3C.3 final-closure regressions (broker-time suite). |
 | Claimless broker-active BUY | Complete account order snapshot contains an executable BUY with no matching local broker identity/claim. | Readiness reports `brokerOnlyOpenBuys`. Resolve it through authorized broker operations or exact lifecycle repair, then rerun readiness. Readiness never creates or cancels an order. | Hard blocker; operator action required. No force release. | Cases 5 and 13. |
 | Historical filled-but-unlinked order | Terminal history lacks position attribution; compare exact order and cumulative fills with immutable local fills and current position/order snapshots. | Closed-position history and a filled intent with verified no current exposure remain investigation evidence, not an executable blocker. Current position/order evidence remains blocked. | History alone grants no execution authority. Owner remediation is available only with the bounded proof above. | Cases 3, 15, 17, and remediation tests. |
 | Existing open position with unknown entry provenance | Verified broker/local position match without a trustworthy historical strategy link. | Protect with a position-only claim. Keep existing/default exit ownership; never infer external exit authority. | Symbol remains blocked while open. Deployment-compatible without forced sale. | Case 11. |

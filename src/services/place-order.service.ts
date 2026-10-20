@@ -41,6 +41,7 @@ import {
 } from './entry-exposure-claim.service.js';
 import { admitEntryOrderIntent } from './market-policy-entry-admission.service.js';
 import { prepareEntryBrokerDispatch } from './market-policy-broker-dispatch.service.js';
+import { recordAdapterInvocationStarted } from './entry-delivery-evidence.service.js';
 import type { AlpacaOrder } from '../integrations/alpaca/alpaca.types.js';
 
 type SubmitOrderOptions = {
@@ -419,7 +420,7 @@ export async function submitOrderToBroker(
   if (input.side !== 'buy' || (input.signalType ?? 'entry') !== 'entry') {
     throw new HttpError(400, 'The entry broker boundary accepts BUY entry orders only.');
   }
-  await requireExecutableEntryExposureClaim({
+  const executable = await requireExecutableEntryExposureClaim({
     orderIntentId: options.orderIntentId,
     tradingAccountId: options.tradingAccountId,
     symbol: input.symbol,
@@ -483,6 +484,10 @@ export async function submitOrderToBroker(
   // final un-enforced authorization) with a fresh PostgreSQL clock. A refusal, or a committed record
   // whose acknowledgement was lost, throws here, still NOT_DISPATCHED: this attempt sends nothing.
   await dispatch.authorizeDispatch(opportunity?.id ?? null);
+  // The adapter-invocation marker, durable before the adapter is invoked. If this write fails the
+  // phase is still NOT_DISPATCHED and nothing is sent; a committed record from the authorization above
+  // still prohibits any further POST and goes to evidence-based recovery.
+  await recordAdapterInvocationStarted(prisma, { claimId: executable.claim.id, orderIntentId: options.orderIntentId, clientOrderId });
   boundary.phase = 'DISPATCH_STARTED';
   await bestEffortAppendBrokerOpportunityEvent({opportunityId:opportunity?.id??null,eventType:'ADAPTER_DISPATCH_REACHED',evidence:{adapter:'alpaca',operation:'pending_order_submission'}},undefined,prePostObservationBudget);
   let created;

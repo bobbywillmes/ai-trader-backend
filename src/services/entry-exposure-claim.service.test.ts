@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { acquireEntryExposureClaim, attachEntryExposureClaimToPosition, releaseUnsubmittedEntryExposureClaim, transitionEntryExposureClaim } from './entry-exposure-claim.service.js';
+import { acquireEntryExposureClaim, attachEntryExposureClaimToPosition, releasedByThisCall, releaseUnsubmittedEntryExposureClaim, transitionEntryExposureClaim } from './entry-exposure-claim.service.js';
 
 function tx(overrides: Record<string, unknown> = {}) {
   return {
@@ -20,32 +20,67 @@ function tx(overrides: Record<string, unknown> = {}) {
 }
 
 describe('entry exposure admission claim', () => {
-  it.each([
-    'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:timeout after fetch',
-    'BROKER_WRITE_DELIVERY:BROKER_REJECTED:Alpaca status 408',
-    'BROKER_WRITE_DELIVERY:BROKER_REJECTED:Alpaca status 409',
-  ])('shared unsubmitted release boundary rejects ambiguous delivery evidence: %s', async (blockReason) => {
-    const updateMany = vi.fn();
+  function releaseDb(claim: Record<string, unknown>, events: Array<{ id: number; eventType: string; evidenceJson: unknown }> = [], counts: Record<string, number> = {}) {
+    const calls: string[] = [];
+    const updateMany = vi.fn(async () => { calls.push('compare-and-set'); return { count: counts.casCount ?? 1 }; });
     const db = {
+      $queryRaw: vi.fn(async () => { calls.push('entry-exposure-lock'); return [{}]; }),
       entryExposureClaim: {
-        findUnique: vi.fn().mockResolvedValue({
-          id: 91, orderIntentId: 51, trackedPositionId: null, status: 'ENTRY_SUBMITTING', releasedAt: null,
-          orderIntent: { blockReason },
-        }),
+        findUnique: vi.fn().mockResolvedValue({ id: 91, orderIntentId: 51, tradingAccountId: 7, securityId: 8, trackedPositionId: null, releasedAt: null, orderIntent: { blockReason: null }, ...claim }),
         updateMany,
       },
-      brokerOrder: { count: vi.fn().mockResolvedValue(0) },
+      brokerOrder: { count: vi.fn().mockResolvedValue(counts.brokerOrders ?? 0) },
       brokerActivity: { count: vi.fn().mockResolvedValue(0) },
       orderIntentBrokerOpportunityEvent: { count: vi.fn().mockResolvedValue(0) },
-      marketPolicyBrokerDispatchConsumption: { count: vi.fn().mockResolvedValue(0) },
+      marketPolicyBrokerDispatchConsumption: { count: vi.fn().mockResolvedValue(counts.consumptions ?? 0) },
       marketPolicyBrokerUnenforcedDispatch: { count: vi.fn().mockResolvedValue(0) },
+      liveEntryArmingTermination: { count: vi.fn().mockResolvedValue(counts.liveArming ?? 0) },
       trackedPosition: { findUnique: vi.fn() },
-      entryExposureClaimEvent: { findMany: vi.fn().mockResolvedValue([]), create: vi.fn() },
-    } as never;
+      entryExposureClaimEvent: { findMany: vi.fn().mockResolvedValue(events.map((event) => ({ createdAt: new Date(), ...event }))), create: vi.fn() },
+    };
+    return { db: db as never, updateMany, calls };
+  }
+  const notSent = (id: number, classification = 'NOT_SENT_PRE_DISPATCH') => ({ id, eventType: 'NOT_SENT_EVIDENCE_RECORDED', evidenceJson: { classification } });
+  const outcome = (id: number, classification: string, statusCode: number | null = null) => ({ id, eventType: 'DISPATCH_OUTCOME_RECORDED', evidenceJson: { classification, statusCode, source: 'WORKER' } });
+  const marker = (id: number) => ({ id, eventType: 'ADAPTER_INVOCATION_STARTED', evidenceJson: {} });
 
+  it.each([
+    ['a DELIVERY_UNCERTAIN block reason', { orderIntent: { blockReason: 'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:timeout after fetch' } }, [notSent(1)], {}],
+    ['a BROKER_REJECTED 408 block reason', { orderIntent: { blockReason: 'BROKER_WRITE_DELIVERY:BROKER_REJECTED:Alpaca status 408' } }, [notSent(1)], {}],
+    ['a recorded 409 rejection', {}, [notSent(1), outcome(2, 'BROKER_REJECTED', 409)], {}],
+    ['a recorded definitive 422 rejection', {}, [notSent(1), outcome(2, 'BROKER_REJECTED', 422)], {}],
+    ['a recorded delivery-uncertain outcome', {}, [outcome(1, 'DELIVERY_UNCERTAIN')], {}],
+    ['an inferred unknown outcome', {}, [{ id: 1, eventType: 'DISPATCH_OUTCOME_RECORDED', evidenceJson: { classification: 'DISPATCH_OUTCOME_UNKNOWN', source: 'TERMINAL_CLAIM_SWEEP' } }], {}],
+    ['an entered boundary without a closing record (crash)', {}, [marker(1)], {}],
+    ['an ENTRY_SUBMITTING claim without recorded not-sent evidence', {}, [], {}],
+    ['a consumed LIVE one-shot arming', {}, [notSent(1)], { liveArming: 1 }],
+    ['a dispatch consumption', {}, [notSent(1)], { consumptions: 1 }],
+  ] as const)('shared never-submitted release refuses %s under the entry-exposure lock', async (_label, claim, events, counts) => {
+    const { db, updateMany, calls } = releaseDb({ status: 'ENTRY_SUBMITTING', ...claim }, [...events], counts);
     await expect(releaseUnsubmittedEntryExposureClaim({ orderIntentId: 51, reason: 'UNSAFE', db }))
       .rejects.toMatchObject({ statusCode: 409, details: expect.objectContaining({ code: 'ENTRY_EXPOSURE_UNRESOLVED' }) });
     expect(updateMany).not.toHaveBeenCalled();
+    expect(calls).toEqual(['entry-exposure-lock']);
+  });
+
+  it.each([
+    ['recorded structured not-sent evidence', 'ENTRY_SUBMITTING', [notSent(1)]],
+    ['an adapter guard closing its boundary entry', 'ENTRY_SUBMITTING', [marker(1), notSent(2, 'NOT_SENT_LOCAL_BLOCKED')]],
+    ['a claim that never reached ENTRY_SUBMITTING', 'ENTRY_PENDING', []],
+  ] as const)('shared never-submitted release accepts %s and releases by compare-and-set under the lock', async (_label, status, events) => {
+    const { db, calls } = releaseDb({ status }, [...events]);
+    await releaseUnsubmittedEntryExposureClaim({ orderIntentId: 51, reason: 'PROVEN', db });
+    expect(calls).toEqual(['entry-exposure-lock', 'compare-and-set']);
+  });
+
+  it('reports a compare-and-set miss as not released by this call', async () => {
+    const { db } = releaseDb({ status: 'ENTRY_PENDING' }, [], { casCount: 0 });
+    (db as unknown as { entryExposureClaim: { findUnique: ReturnType<typeof vi.fn> } }).entryExposureClaim.findUnique
+      .mockResolvedValueOnce({ tradingAccountId: 7, securityId: 8 })
+      .mockResolvedValueOnce({ id: 91, status: 'ENTRY_PENDING', releasedAt: null, trackedPositionId: null, orderIntent: { blockReason: null } })
+      .mockResolvedValueOnce({ id: 91, status: 'RELEASED', releasedAt: new Date(), releaseReason: 'SOMEONE_ELSE' });
+    const result = await releaseUnsubmittedEntryExposureClaim({ orderIntentId: 51, reason: 'MINE', db });
+    expect(releasedByThisCall(result, 'MINE')).toBe(false);
   });
 
   it('creates the intent and claim under the same transaction owner', async () => {

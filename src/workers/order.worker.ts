@@ -13,15 +13,25 @@ import {
 } from '../services/place-order.service.js';
 import { getEntryDispatchRecordedNotSent, getMarketPolicyBrokerDispatchRefusal } from '../services/market-policy-broker-dispatch.service.js';
 import {
+  attemptReleaseAfterRecordedOutcome,
+  emitDispatchOutcomeRecorded,
   entryDispatchOutcomeFor,
   loadEntryDispatchRecords,
   recordEntryDispatchOutcome,
-  recoverDispatchedEntryClaimsForAccount,
+  recoverTerminalEntryClaimsForAccount,
   releaseUnsubmittedOrRouteToRecovery,
-  routeEntryDispatchFailure,
   type EntryDispatchOutcomeClassification,
   type EntryDispatchRecords,
 } from '../services/entry-dispatch-recovery.service.js';
+import {
+  appendNotSentEvidence,
+  ADAPTER_MARKER_PROTOCOL,
+  loadDeliveryEvidenceEvents,
+  preserveBlockReason,
+  summarizeDeliveryEvidence,
+  type NotSentClassification,
+  type NotSentProducer,
+} from '../services/entry-delivery-evidence.service.js';
 import { createSystemEvent } from '../services/system-event.service.js';
 import { syncTrailingStopOrderStatus } from '../services/position-exit-state.service.js';
 import {
@@ -50,7 +60,6 @@ import {
   requireEntryExposureClaim,
   recordMissingLocalBrokerOrderDiagnostic,
   releaseConfirmedTerminalEntryClaim,
-  releaseUnsubmittedEntryExposureClaim,
   transitionEntryExposureClaim,
 } from '../services/entry-exposure-claim.service.js';
 import { BROKER_ACTIVE_ENTRY_STATUSES, TERMINAL_ENTRY_ORDER_STATUSES, isSellIntent } from '../services/entry-lifecycle-status.service.js';
@@ -383,38 +392,57 @@ export async function recoverStaleSubmittingIntentsForAccount(
       continue;
     }
 
+    // One stable-ID lookup miss is never release evidence by itself. The release decision below
+    // depends only on durable evidence recorded atomically with the intent's terminal state.
     const dispatchRecords = await loadEntryDispatchRecords(intent.id);
-    if (dispatchRecords.present) {
-      // A committed dispatch record means a POST may have started (for example, a crash between
-      // consumption and the adapter call). One lookup miss never overrides that: the claim is
-      // retained as UNRESOLVED with the outcome recorded, and the intent is never requeued or resent.
-      await recordEntryDispatchOutcome({
-        orderIntentId: intent.id, classification: 'DISPATCH_OUTCOME_UNKNOWN', source: 'STALE_RECOVERY', records: dispatchRecords,
-        message: 'Stale submission with a durable dispatch record; the stable client-order-ID lookup found no broker order.',
-      });
-      await prisma.orderIntent.updateMany({
+    const staleDisposition = await prisma.$transaction(async (tx) => {
+      const claim = await tx.entryExposureClaim.findUnique({ where: { orderIntentId: intent.id } });
+      const summary = claim ? summarizeDeliveryEvidence(await loadDeliveryEvidenceEvents(claim.id, tx)) : null;
+      // Proven never sent: the claim never reached ENTRY_SUBMITTING (the broker boundary requires
+      // it), or a marker-protocol worker claimed it and the adapter-invocation marker was never written.
+      const provenNotSent = !dispatchRecords.present && claim !== null && !claim.releasedAt && summary !== null && summary.outcomes.length === 0 && (
+        ['ENTRY_PENDING', 'ADMISSION_BLOCKED'].includes(claim.status) ||
+        (claim.status === 'ENTRY_SUBMITTING' && summary.markerProtocol && summary.adapterMarkers === 0));
+      const transitioned = await tx.orderIntent.updateMany({
         where: { id: intent.id, status: 'submitting' },
         data: {
           status: 'failed',
-          blockReason: 'DISPATCH_STARTED_OUTCOME_UNKNOWN: a dispatch record exists and no broker order was found; claim retained for evidence-based recovery and never resent.',
+          blockReason: preserveBlockReason(intent.blockReason, provenNotSent
+            ? 'Recovery confirmed no broker order and the broker adapter was never invoked; entry requires a new admission decision and was not requeued.'
+            : dispatchRecords.present
+              ? 'DISPATCH_STARTED_OUTCOME_UNKNOWN: a dispatch record exists and no broker order was found; claim retained for evidence-based recovery and never resent.'
+              : 'STALE_SUBMISSION_OUTCOME_UNKNOWN: no durable dispatch record and no proof the request was not issued; claim retained for investigation and never resent.'),
         },
       });
-      retained += 1;
+      if (transitioned.count !== 1 || !claim || claim.releasedAt) return { kind: 'NONE' as const };
+      if (provenNotSent) {
+        if (claim.status === 'ENTRY_SUBMITTING') {
+          await appendNotSentEvidence(tx, {
+            claimId: claim.id, orderIntentId: intent.id, classification: 'NOT_SENT_PRE_DISPATCH', producer: 'STALE_RECOVERY_ADAPTER_NOT_INVOKED',
+            source: 'STALE_RECOVERY', reason: 'RECOVERY_CONFIRMED_NEVER_SUBMITTED', message: intent.blockReason,
+          });
+        }
+        return { kind: 'NOT_SENT' as const };
+      }
+      // A committed dispatch record (for example, a crash between consumption and the adapter call),
+      // an entered boundary, or no evidence either way: an explicit unknown outcome retains the claim.
+      const outcome = await recordEntryDispatchOutcome({
+        orderIntentId: intent.id, classification: 'DISPATCH_OUTCOME_UNKNOWN', source: 'STALE_RECOVERY', observation: 'INFERRED', records: dispatchRecords, db: tx,
+        message: dispatchRecords.present
+          ? 'Stale submission with a durable dispatch record; the stable client-order-ID lookup found no broker order.'
+          : 'Stale submission without a durable dispatch record or proof of non-dispatch; the stable client-order-ID lookup found no broker order.',
+      });
+      return { kind: 'OUTCOME' as const, outcome };
+    });
+    if (staleDisposition.kind === 'OUTCOME') await emitDispatchOutcomeRecorded(staleDisposition.outcome, 'DISPATCH_OUTCOME_UNKNOWN');
+    if (staleDisposition.kind === 'NOT_SENT') {
+      const release = await releaseUnsubmittedOrRouteToRecovery({
+        orderIntentId: intent.id, reason: 'RECOVERY_CONFIRMED_NEVER_SUBMITTED', source: 'STALE_RECOVERY', dispatchAttempted: false,
+      });
+      if (release.released) retryable += 1; else retained += 1;
       continue;
     }
-
-    await prisma.orderIntent.updateMany({
-      where: { id: intent.id, status: 'submitting' },
-      data: {
-        status: 'failed',
-        blockReason: 'Recovery confirmed no broker order; entry requires a new admission decision and was not requeued.',
-      },
-    });
-    await releaseUnsubmittedEntryExposureClaim({
-      orderIntentId: intent.id,
-      reason: 'RECOVERY_CONFIRMED_NEVER_SUBMITTED',
-    });
-    retryable += 1;
+    retained += 1;
     } catch (error) {
       retained += 1;
       failures.push({ orderIntentId: intent.id, error: sanitizeError(error) });
@@ -438,9 +466,9 @@ export async function recoverStaleSubmittingIntentsForAccount(
 
   // Terminal intents whose claims are still held (including consumed dispatches that a lookup can
   // no longer reach through the 'submitting' selection) get a bounded, evidence-based sweep.
-  let dispatchRecovery: Awaited<ReturnType<typeof recoverDispatchedEntryClaimsForAccount>> | { error: string } | null = null;
+  let dispatchRecovery: Awaited<ReturnType<typeof recoverTerminalEntryClaimsForAccount>> | { error: string } | null = null;
   try {
-    dispatchRecovery = await recoverDispatchedEntryClaimsForAccount(tradingAccountId, now);
+    dispatchRecovery = await recoverTerminalEntryClaimsForAccount(tradingAccountId, now);
   } catch (error) {
     dispatchRecovery = { error: sanitizeError(error) };
     logger.warn({ tradingAccountId, error }, 'Dispatched entry claim recovery sweep failed; it is retried on the next tick.');
@@ -493,6 +521,10 @@ export async function recoverStaleSubmittingIntents() {
   return { workflow: 'stale_submitting_recovery' as const, results };
 }
 
+type WorkerFailureEvidencePlan =
+  | { kind: 'NOT_SENT'; classification: NotSentClassification; producer: NotSentProducer; releaseReason: string; dispatchAttempted: boolean }
+  | { kind: 'OUTCOME'; classification: EntryDispatchOutcomeClassification };
+
 function isEntryOrder(input: BrokerOrderSubmissionInput): boolean {
   return input.side === 'buy' && (input.signalType ?? 'entry') === 'entry';
 }
@@ -521,7 +553,7 @@ export async function processPendingOrdersForAccount(
     let brokerBoundaryStarted = false;
     const boundary = createEntryBrokerSubmissionBoundary();
     try {
-      await requireEntryExposureClaim(intent.id);
+      const entryClaim = await requireEntryExposureClaim(intent.id);
       const claimResult = await prisma.orderIntent.updateMany({
         where: {
           id: intent.id,
@@ -538,10 +570,13 @@ export async function processPendingOrdersForAccount(
       }
 
       claimed += 1;
+      // The adapter-marker protocol: submitOrderToBroker appends ADAPTER_INVOCATION_STARTED immediately
+      // before invoking the adapter, so a claim held under it without a marker never reached the adapter.
       await transitionEntryExposureClaim({
         orderIntentId: intent.id,
         status: 'ENTRY_SUBMITTING',
         eventType: 'WORKER_CLAIMED_FOR_SUBMISSION',
+        evidence: { markerProtocol: ADAPTER_MARKER_PROTOCOL },
       });
 
       if (!intent.clientOrderId) {
@@ -617,12 +652,19 @@ export async function processPendingOrdersForAccount(
         });
 
         if (!riskResult.allowed) {
-          await prisma.orderIntent.update({
-            where: { id: intent.id },
-            data: {
-              status: 'blocked',
-              blockReason: riskResult.reason,
-            },
+          // The refusal and its structured not-sent evidence commit together, before any release.
+          await prisma.$transaction(async (tx) => {
+            await tx.orderIntent.update({
+              where: { id: intent.id },
+              data: {
+                status: 'blocked',
+                blockReason: riskResult.reason,
+              },
+            });
+            await appendNotSentEvidence(tx, {
+              claimId: entryClaim.id, orderIntentId: intent.id, classification: 'NOT_SENT_PRE_DISPATCH', producer: 'WORKER_RISK_RECHECK',
+              source: 'WORKER', reason: 'WORKER_RISK_RECHECK_BLOCKED', message: riskResult.reason,
+            });
           });
 
           await logRiskGateBlockedOrder({
@@ -631,9 +673,11 @@ export async function processPendingOrdersForAccount(
             input: resolvedInput,
             result: riskResult,
           });
-          await releaseUnsubmittedEntryExposureClaim({
+          await releaseUnsubmittedOrRouteToRecovery({
             orderIntentId: intent.id,
             reason: 'WORKER_RISK_RECHECK_BLOCKED',
+            source: 'WORKER',
+            dispatchAttempted: false,
           });
 
           logger.trace({ orderIntentId: intent.id, reason: riskResult.reason },
@@ -761,7 +805,8 @@ export async function processPendingOrdersForAccount(
       const classification = refusal || recordedNotSent ? null : getBrokerWriteDeliveryClassification(error);
       const statusCode = error instanceof BrokerWriteDeliveryError ? error.statusCode : null;
       const message = error instanceof Error ? error.message : 'Unknown worker error.';
-      const blockReason = recordedNotSent
+      // A requeued intent's earlier delivery uncertainty is never replaced by weaker later text.
+      const blockReason = preserveBlockReason(intent.blockReason, recordedNotSent
         ? recordedNotSent.blockReason
         : refusal
           ? refusal.blockReason
@@ -769,89 +814,112 @@ export async function processPendingOrdersForAccount(
             ? `BROKER_WRITE_DELIVERY:${classification}:${message}`
             : !definitelyNotDispatched
               ? `BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:${message}`
-              : `LOCAL_PRE_DISPATCH_FAILURE:${message}`;
-      // Claim handling after a dispatch record committed runs once the intent is terminal (below).
-      let afterDispatch: { classification: EntryDispatchOutcomeClassification; records?: EntryDispatchRecords } | null = null;
-      if (recordedNotSent) {
-        afterDispatch = { classification: recordedNotSent.deliveryClassification };
-      } else if (definitelyNotDispatched) {
-        // The never-submitted checks still decide whether the claim can be released; a refusal is
-        // recorded on the claim (UNRESOLVED) rather than swallowed.
-        await releaseUnsubmittedOrRouteToRecovery({
-          orderIntentId: intent.id,
-          reason: refusal?.claimReleaseReason ?? 'WORKER_PROVEN_PRE_DISPATCH_LOCAL_FAILURE',
-          source: 'WORKER',
-          // Only after the boundary confirmed no prior dispatch record can a record be this attempt's.
-          dispatchAttempted: brokerBoundaryStarted && boundary.phase === 'NOT_DISPATCHED',
-          message,
-        });
-      } else if (classification === 'DELIVERY_UNCERTAIN' || classification === null) {
-        await transitionEntryExposureClaim({
-          orderIntentId: intent.id,
-          status: 'UNRESOLVED',
-          eventType: 'BROKER_DELIVERY_UNCERTAIN',
-          evidence: { classification: classification ?? 'UNCLASSIFIED_AFTER_BROKER_BOUNDARY', message },
-        }).catch((claimError) => logger.warn({ orderIntentId: intent.id, error: claimError },
-          'Delivery-uncertain claim transition failed; the terminal-claim recovery sweep retains and reviews it.'));
-      } else if (
-        classification === 'BROKER_REJECTED' ||
-        classification === 'NOT_SENT_BLOCKED' ||
-        classification === 'NOT_SENT_RETRYABLE'
-      ) {
-        // With a dispatch record (consumption, un-enforced authorization or dispatch telemetry), an
-        // HTTP rejection or a local adapter guard is not a never-submitted release: it is recorded and
-        // released only by evidence-based recovery. Without one, the existing release applies.
-        const records = await loadEntryDispatchRecords(intent.id).catch(() => undefined);
-        if (records && !records.present) {
-          await releaseUnsubmittedOrRouteToRecovery({ orderIntentId: intent.id, reason: classification, source: 'WORKER', dispatchAttempted: true, message });
-        } else {
-          afterDispatch = { classification: entryDispatchOutcomeFor(classification), ...(records ? { records } : {}) };
-        }
-      }
+              : `LOCAL_PRE_DISPATCH_FAILURE:${message}`);
       const deliveryUncertain = !definitelyNotDispatched && (classification === 'DELIVERY_UNCERTAIN' || classification === null);
       // An authoritative market-policy denial is a durable domain outcome; a technical guard failure
       // stays a failure so account health shows it.
       const policyDenied = refusal !== null && !refusal.technical;
-      if (intent.liveEntryAcceptanceRunId != null) {
-        await prisma.$transaction(async (tx) => {
-          await tx.orderIntent.update({
-            where: { id: intent.id },
-            data: {
-              status: deliveryUncertain ? 'submitting' :
-                classification === 'NOT_SENT_BLOCKED' || policyDenied ? 'blocked' : 'failed',
-              blockReason,
-            },
-          });
-          await tx.liveEntryAcceptanceRun.updateMany({
-            where: { id: intent.liveEntryAcceptanceRunId!, terminalAt: null },
-            data: {
-              ...(deliveryUncertain
-                ? { executionUncertainAt: new Date() }
-                : {}),
-              executionFailureJson: {
-                classification: refusal ? refusal.deliveryClassification : classification ?? (definitelyNotDispatched ? 'LOCAL_FAILURE' : 'DELIVERY_UNCERTAIN'),
-                source: 'pending_order_submission',
-                orderIntentId: intent.id,
-                clientOrderId: intent.clientOrderId,
-                message,
+
+      // 1. Classify delivery. Only a failure before the boundary dispatched (phase NOT_DISPATCHED), or
+      //    an adapter guard before fetch with no dispatch record, is proven not sent. Any HTTP response
+      //    (every 4xx, including 408 and 409) means the request reached Alpaca: it is never a
+      //    never-submitted release and goes to evidence-based recovery.
+      const records = !definitelyNotDispatched || recordedNotSent
+        ? await loadEntryDispatchRecords(intent.id).catch(() => null)
+        : null;
+      const plan: WorkerFailureEvidencePlan = recordedNotSent
+        ? { kind: 'OUTCOME', classification: recordedNotSent.deliveryClassification }
+        : definitelyNotDispatched
+          ? {
+              kind: 'NOT_SENT', classification: 'NOT_SENT_PRE_DISPATCH',
+              producer: refusal ? 'BROKER_TIME_MARKET_POLICY_REFUSAL' : brokerBoundaryStarted ? 'BROKER_BOUNDARY_NOT_DISPATCHED' : 'WORKER_PRE_BOUNDARY_FAILURE',
+              releaseReason: refusal?.claimReleaseReason ?? 'WORKER_PROVEN_PRE_DISPATCH_LOCAL_FAILURE',
+              // Only after the boundary confirmed no prior dispatch record can a record be this attempt's.
+              dispatchAttempted: brokerBoundaryStarted && boundary.phase === 'NOT_DISPATCHED',
+            }
+          : (classification === 'NOT_SENT_BLOCKED' || classification === 'NOT_SENT_RETRYABLE') && records && !records.present
+            ? {
+                kind: 'NOT_SENT', classification: classification === 'NOT_SENT_BLOCKED' ? 'NOT_SENT_LOCAL_BLOCKED' : 'NOT_SENT_LOCAL_RETRYABLE',
+                producer: 'ADAPTER_LOCAL_GUARD', releaseReason: classification, dispatchAttempted: false,
+              }
+            : { kind: 'OUTCOME', classification: entryDispatchOutcomeFor(classification) };
+
+      // 2. Persist the terminal intent state and the delivery classification atomically. If this
+      //    fails, nothing is released: the claim keeps ownership and stale recovery reviews it.
+      let recordedOutcome: Awaited<ReturnType<typeof recordEntryDispatchOutcome>> | null = null;
+      try {
+        recordedOutcome = await prisma.$transaction(async (tx) => {
+          if (intent.liveEntryAcceptanceRunId != null) {
+            await tx.orderIntent.update({
+              where: { id: intent.id },
+              data: {
+                status: deliveryUncertain ? 'submitting' :
+                  classification === 'NOT_SENT_BLOCKED' || policyDenied ? 'blocked' : 'failed',
+                blockReason,
               },
-            },
-          });
+            });
+            await tx.liveEntryAcceptanceRun.updateMany({
+              where: { id: intent.liveEntryAcceptanceRunId!, terminalAt: null },
+              data: {
+                ...(deliveryUncertain
+                  ? { executionUncertainAt: new Date() }
+                  : {}),
+                executionFailureJson: {
+                  classification: refusal ? refusal.deliveryClassification : classification ?? (definitelyNotDispatched ? 'LOCAL_FAILURE' : 'DELIVERY_UNCERTAIN'),
+                  source: 'pending_order_submission',
+                  orderIntentId: intent.id,
+                  clientOrderId: intent.clientOrderId,
+                  message,
+                },
+              },
+            });
+          } else {
+            await tx.orderIntent.update({
+              where: { id: intent.id },
+              data: { status: policyDenied ? 'blocked' : 'failed', blockReason },
+            });
+          }
+          if (plan.kind === 'OUTCOME') {
+            return recordEntryDispatchOutcome({
+              orderIntentId: intent.id, classification: plan.classification, source: 'WORKER', observation: 'OBSERVED', statusCode, message,
+              ...(records ? { records } : {}), db: tx,
+            });
+          }
+          const claim = await tx.entryExposureClaim.findUnique({ where: { orderIntentId: intent.id }, select: { id: true, status: true, releasedAt: true } });
+          if (claim && !claim.releasedAt && ['ENTRY_PENDING', 'ENTRY_SUBMITTING', 'ADMISSION_BLOCKED'].includes(claim.status)) {
+            await appendNotSentEvidence(tx, {
+              claimId: claim.id, orderIntentId: intent.id, classification: plan.classification, producer: plan.producer,
+              source: 'WORKER', reason: plan.releaseReason, message,
+            });
+          }
+          return null;
+        });
+      } catch (persistenceError) {
+        logger.error({ orderIntentId: intent.id, error: persistenceError, classification: plan.classification },
+          'Entry failure classification could not be persisted; claim ownership is retained and nothing is released.');
+        await createSystemEvent({
+          type: 'entry_exposure.delivery_evidence_unpersisted', entityType: 'orderIntent', entityId: intent.id,
+          tradingAccountId: intent.tradingAccountId, severity: SystemEventSeverity.CRITICAL,
+          message: 'An entry failure could not record its delivery classification; its exposure claim is retained and stale recovery reviews it.',
+          payloadJson: { classification: plan.classification, statusCode, clientOrderId: intent.clientOrderId } as Prisma.InputJsonValue,
+        }).catch(() => undefined);
+        failed += 1;
+        continue;
+      }
+
+      // 3. Only now decide on release, from the durable evidence.
+      if (plan.kind === 'NOT_SENT') {
+        // The never-submitted checks still decide; a refusal is recorded (UNRESOLVED), not swallowed.
+        await releaseUnsubmittedOrRouteToRecovery({
+          orderIntentId: intent.id, reason: plan.releaseReason, source: 'WORKER', dispatchAttempted: plan.dispatchAttempted, message,
         });
       } else {
-        await prisma.orderIntent.update({
-          where: { id: intent.id },
-          data: { status: policyDenied ? 'blocked' : 'failed', blockReason },
-        });
-      }
-      if (afterDispatch) {
+        if (recordedOutcome) await emitDispatchOutcomeRecorded(recordedOutcome, plan.classification);
         // The intent is terminal and never resent. A definite local non-send is verified and
         // released immediately when provable; anything else waits for the recovery sweep.
-        await routeEntryDispatchFailure({
-          orderIntentId: intent.id, classification: afterDispatch.classification, source: 'WORKER', statusCode, message,
-          ...(afterDispatch.records ? { records: afterDispatch.records } : {}),
-        }).catch((recoveryError) => logger.warn({ orderIntentId: intent.id, error: recoveryError },
-          'Dispatched entry outcome could not be recorded; the terminal-claim recovery sweep records and reviews it.'));
+        await attemptReleaseAfterRecordedOutcome({ orderIntentId: intent.id, classification: plan.classification, source: 'WORKER' })
+          .catch((recoveryError) => logger.warn({ orderIntentId: intent.id, error: recoveryError },
+            'Entry claim release after a recorded outcome failed; the terminal-claim recovery sweep retries it.'));
       }
 
       logger.trace({ orderIntentId: intent.id, error },

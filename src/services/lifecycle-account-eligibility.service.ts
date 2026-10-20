@@ -11,10 +11,7 @@ import { env } from '../config/env.js';
 import { accountWorkflowProcessInstanceId } from './trading-account-workflow-runner.service.js';
 import { recordTradingAccountWorkerAttempt } from './trading-account-worker-health.service.js';
 import type { WorkerKey } from '../workers/worker-health.definitions.js';
-import {
-  ENTRY_DISPATCH_RECOVERY_RETRY_MS,
-  TERMINAL_ENTRY_INTENT_STATUSES,
-} from './entry-dispatch-recovery.service.js';
+import { summarizeTerminalClaimRecoveryByAccount } from './entry-dispatch-recovery.service.js';
 
 export type LifecycleWorkflow =
   | 'pending_submissions'
@@ -49,7 +46,10 @@ export type LifecycleAccountEligibility = {
     activePositions: number;
     unresolvedActivities: number;
     unresolvedExitPositions: number;
+    /** Terminal-entry claims the recovery sweep will actually attempt now (shared classification). */
     terminalEntryClaimsDue: number;
+    /** Unreleased terminal-entry claims of any recovery state, including operator-only and protected. */
+    terminalEntryClaimsHeld: number;
     hasLifecycleWork: boolean;
   };
 };
@@ -58,7 +58,6 @@ export async function enumerateLifecycleAccounts(
   workflow: LifecycleWorkflow,
   options: { persistWorkerHealth?: boolean } = {}
 ): Promise<LifecycleAccountEligibility[]> {
-  const terminalClaimDue = new Date(Date.now() - ENTRY_DISPATCH_RECOVERY_RETRY_MS);
   const accounts = await prisma.tradingAccount.findMany({
     orderBy: { id: 'asc' },
     select: {
@@ -91,20 +90,12 @@ export async function enumerateLifecycleAccounts(
               ],
             },
           },
-          entryExposureClaims: {
-            where: {
-              releasedAt: null,
-              trackedPositionId: null,
-              orderIntent: { status: { in: [...TERMINAL_ENTRY_INTENT_STATUSES] } },
-              OR: [{ lastDiagnosedAt: null }, { lastDiagnosedAt: { lte: terminalClaimDue } }],
-            },
-          },
         },
       },
     },
   });
 
-  const [intentCounts, unresolvedExitCounts] = await Promise.all([
+  const [intentCounts, unresolvedExitCounts, terminalClaimRecovery] = await Promise.all([
     prisma.orderIntent.groupBy({
       by: ['tradingAccountId', 'status'],
       where: {
@@ -136,6 +127,8 @@ export async function enumerateLifecycleAccounts(
       },
       _count: { _all: true },
     }),
+    // The sweep's own classification, so scheduling matches the work it will actually select.
+    summarizeTerminalClaimRecoveryByAccount(),
   ]);
 
   const countsByAccount = new Map<number, Record<string, number>>();
@@ -164,13 +157,14 @@ export async function enumerateLifecycleAccounts(
       unresolvedActivities: account._count.brokerActivities,
       unresolvedExitPositions:
         unresolvedExitCountByAccount.get(account.id) ?? 0,
-      terminalEntryClaimsDue: account._count.entryExposureClaims ?? 0,
+      terminalEntryClaimsDue: terminalClaimRecovery.get(account.id)?.actionableDue ?? 0,
+      terminalEntryClaimsHeld: terminalClaimRecovery.get(account.id)?.held ?? 0,
       hasLifecycleWork: account._count.orderIntents > 0 ||
         account._count.brokerOrders > 0 ||
         account._count.trackedPositions > 0 ||
         account._count.brokerActivities > 0 ||
         (unresolvedExitCountByAccount.get(account.id) ?? 0) > 0 ||
-        (account._count.entryExposureClaims ?? 0) > 0,
+        (terminalClaimRecovery.get(account.id)?.actionableDue ?? 0) > 0,
     };
     const usableCredentials =
       account.credential?.status === BrokerCredentialStatus.ACTIVE;
@@ -205,7 +199,8 @@ export async function enumerateLifecycleAccounts(
     let eligible = false;
     let reason: LifecycleAccountEligibility['reason'];
     if (!usableCredentials) {
-      reason = exposureSummary.hasLifecycleWork
+      // Held entry claims (including operator-only ones) are exposure even when not yet schedulable.
+      reason = exposureSummary.hasLifecycleWork || exposureSummary.terminalEntryClaimsHeld > 0
         ? 'credentials_unavailable_with_exposure'
         : 'credentials_unavailable_dormant';
     } else if (!workflowHasWork) {

@@ -477,7 +477,21 @@ claim (`DISPATCH_OUTCOME_RECORDED`, claim `UNRESOLVED`) and released only by
 definitive and settled HTTP rejection, plus fresh exact broker verification and a locked
 local revalidation. Delivery uncertainty is never released on absence, and there is no
 force or time-based release. `EntryExposureClaimEvent` is append-only. Operator release
-uses the fingerprinted `entry-exposure-remediation.service.ts`. Run
+uses the fingerprinted `entry-exposure-remediation.service.ts`.
+
+Ordering invariant: no claim-release decision may run before its delivery
+classification is durable. On any entry failure the worker commits the terminal intent
+state together with `NOT_SENT_EVIDENCE_RECORDED` (proven not sent) or
+`DISPATCH_OUTCOME_RECORDED` (`OBSERVED`, claim `UNRESOLVED`) and only then decides. If
+that transaction fails, nothing is released. Every HTTP response, including every 4xx
+(408 and 409 especially), means the request reached Alpaca, so it is never a
+never-submitted release, even with no dispatch record (the LIVE case).
+`submitOrderToBroker` writes `ADAPTER_INVOCATION_STARTED` just before the adapter. A
+marker-protocol claim without it never invoked the adapter; an unclosed marker is an
+unknown outcome. Never infer non-dispatch from a missing dispatch record or from free
+text. `classifyTerminalEntryClaim` is the single recovery-state definition shared by
+the sweep, account enumeration and readiness. Sweep attempts are leased (60 s minimum,
+three per tick, oldest first). Run
 `npm run market-policy:broker-readiness` before activation. See
 `docs/architecture/market-policy-broker-time-enforcement.md` and
 `docs/production/market-policy-enforcement-rollout.md`.

@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { readFile, readdir } from 'node:fs/promises';
 import { Client } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { assertDisposableDatabaseUrl } from './disposable-postgres.js';
 
 // Phase 3C.3 authoritative broker-time market-policy enforcement against real PostgreSQL. The real
 // order worker drives submitOrderToBroker; Alpaca is stubbed only at the adapter boundary.
@@ -119,7 +120,9 @@ type Generation = { id: number; configurationFingerprint: string; policyRevision
 type Fixture = { securityId: number; subscriptionId: number; assignmentId: number; symbol: string; accountId: number; generation?: Generation; authorizationId?: number };
 
 (enabled ? describe : describe.skip)('Phase 3C.3 broker-time market-policy enforcement PostgreSQL integration', () => {
-  const database = `broker_time_enforcement_${randomUUID().replaceAll('-', '')}`;
+  const database = `ai_trader_test_broker_time_${randomUUID().replaceAll('-', '')}`;
+  // Any real network request would mean an adapter escaped its mock; broker I/O must stay mocked.
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => { throw new Error(`Unexpected network request in a PostgreSQL integration test: ${String(input)}`); });
   let admin: Client, db: Client, databaseUrl: string;
   let ownerId: number, otherOwnerId: number, paperId: number, secondPaperId: number, liveId: number, exitProfileId: number;
   let mainStrategyId: number, legacyAuthorizationId: number;
@@ -144,6 +147,7 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
     recovery: await import('../../services/entry-dispatch-recovery.service.js'),
     remediation: await import('../../services/entry-exposure-remediation.service.js'),
     entryReadiness: await import('../../services/entry-exposure-readiness.service.js'),
+    eligibility: await import('../../services/lifecycle-account-eligibility.service.js'),
   });
   const count = async (sql: string, params: unknown[] = []) => (await db.query(`SELECT count(*)::int AS count FROM ${sql}`, params)).rows[0].count as number;
   const one = async (sql: string, params: unknown[] = []) => (await db.query(sql, params)).rows[0];
@@ -257,14 +261,17 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
   async function emulateWorkerClaim(orderIntentId: number) {
     const { claims } = await services();
     await db.query(`UPDATE "OrderIntent" SET status='submitting' WHERE id=$1 AND status='pending'`, [orderIntentId]);
-    await claims.transitionEntryExposureClaim({ orderIntentId, status: 'ENTRY_SUBMITTING', eventType: 'WORKER_CLAIMED_FOR_SUBMISSION' });
+    // The current worker claims under the adapter-marker protocol.
+    await claims.transitionEntryExposureClaim({ orderIntentId, status: 'ENTRY_SUBMITTING', eventType: 'WORKER_CLAIMED_FOR_SUBMISSION', evidence: { markerProtocol: 'ADAPTER_MARKER_V1' } });
   }
 
   beforeAll(async () => {
     admin = new Client({ connectionString: process.env.DATABASE_URL }); await admin.connect();
     await admin.query(`CREATE DATABASE "${database}"`);
     const url = new URL(process.env.DATABASE_URL!); url.pathname = `/${database}`; url.searchParams.delete('schema'); databaseUrl = url.toString();
+    assertDisposableDatabaseUrl(databaseUrl, database);
     db = new Client({ connectionString: databaseUrl }); await db.connect();
+    expect((await db.query('SELECT current_database() AS name')).rows[0].name).toBe(database);
     const migrations = (await readdir('prisma/migrations', { withFileTypes: true })).filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
     expect(migrations).toContain(BROKER_TIME_MIGRATION);
     expect(migrations.at(-1)).toBe(DISPATCH_RECOVERY_MIGRATION);
@@ -277,6 +284,9 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
     liveId = await account('Live', 'LIVE', ownerId);
     exitProfileId = (await db.query(`INSERT INTO "ExitProfile" (key,name,"exitMode","takeProfitBehavior",enabled,"createdAt","updatedAt") VALUES ('phase3c3','Phase 3C.3','fixed','limit',true,now(),now()) RETURNING id`)).rows[0].id;
     process.env.DATABASE_URL = databaseUrl;
+    // The shared Prisma client must bind to the verified disposable database, never the normal one.
+    const { prisma } = await import('../prisma.js');
+    expect((await prisma.$queryRaw<Array<{ name: string }>>`SELECT current_database() AS name`)[0]!.name).toBe(database);
     mainStrategyId = await strategy('phase3c3-main');
     const legacy = await instrument('LGCY');
     const generation = await enroll(paperId, legacy.assignmentId);
@@ -288,10 +298,17 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
   }, 180_000);
 
   afterAll(async () => {
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
     const { prisma } = await import('../prisma.js'); await prisma.$disconnect();
+    // Dedicated pools bound to the disposable database close before it is force-dropped.
+    const { closeBrokerObservationPrisma } = await import('../broker-observation-prisma.js');
+    const { closeTradingAccountWorkflowLockPool } = await import('../../services/trading-account-workflow-lock.service.js');
+    await closeBrokerObservationPrisma().catch(() => undefined);
+    await closeTradingAccountWorkflowLockPool().catch(() => undefined);
     for (const value of extraClients) await value.end().catch(() => undefined);
     if (db) await db.end();
-    if (admin) { await admin.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`); await admin.end(); }
+    if (admin) { assertDisposableDatabaseUrl(databaseUrl, database); await admin.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`); await admin.end(); }
   });
 
   beforeEach(() => {
@@ -649,7 +666,8 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
     // A second process prepares again: the first decision is superseded and can never be consumed.
     const second = await guard.prepareEntryBrokerDispatch({ orderIntentId: intentId, tradingAccountId: paperId, symbol: 'CRSH', clientOrderId: 'crsh-1' });
     await expect(db.query(`INSERT INTO "MarketPolicyBrokerDispatchConsumption" ("decisionId","orderIntentId","clientOrderId","evidenceJson") VALUES ($1,$2,'crsh-1','{}')`, [crashed.decisionId, intentId])).rejects.toThrow(/BROKER_DISPATCH_DECISION_SUPERSEDED/);
-    // Stale-submission recovery confirms absence and fails the entry without requeueing it.
+    // Stale-submission recovery confirms absence and, because the adapter-invocation marker was never
+    // written (the crash preceded the final authorization), proves non-dispatch and releases.
     await db.query(`UPDATE "OrderIntent" SET "updatedAt" = now() - interval '10 minutes' WHERE id=$1`, [intentId]);
     await worker.recoverStaleSubmittingIntentsForAccount(paperId);
     expect(await intentState(intentId)).toMatchObject({ status: 'failed', claimReleased: true, releaseReason: 'RECOVERY_CONFIRMED_NEVER_SUBMITTED' });
@@ -1132,10 +1150,11 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
       harness.submitError = null;
       expect(posts('unc-1')).toBe(1);
       expect(await intentState(intentId)).toMatchObject({ status: 'failed', claimStatus: 'UNRESOLVED', claimReleased: false, consumptions: 1 });
-      expect(await recovery.recoverDispatchedEntryClaimsForAccount(acct, later(3_600_000))).toMatchObject({ examined: 1, released: 0 });
+      // Uncertain delivery is operator-only: the sweep never selects or retries it.
+      expect(await recovery.recoverDispatchedEntryClaimsForAccount(acct, later(3_600_000))).toMatchObject({ examined: 0, released: 0 });
       const claimId = await claimIdOf(intentId);
       const preview = await remediation.previewEntryExposureRemediation(claimId);
-      expect(preview).toMatchObject({ disposition: 'DISPATCHED_ENTRY_VERIFIED_NO_EXPOSURE', eligible: false, blockers: ['DELIVERY_OUTCOME_UNCERTAIN'], investigation: { conclusiveness: 'AMBIGUOUS_ABSENCE', claimRetained: true } });
+      expect(preview).toMatchObject({ disposition: 'DISPATCHED_ENTRY_VERIFIED_NO_EXPOSURE', eligible: false, blockers: ['DELIVERY_OUTCOME_UNCERTAIN'], investigation: { conclusiveness: 'AMBIGUOUS_ABSENCE', claimRetained: true, releaseRequires: 'POSITIVE_BROKER_ORDER_EVIDENCE' } });
       expect(await remediation.applyEntryExposureRemediation({ claimId, actorUserId: ownerId, confirmationFingerprint: preview.confirmationFingerprint })).toMatchObject({ released: false, reason: expect.stringContaining('DELIVERY_OUTCOME_UNCERTAIN') });
       await db.query(`UPDATE "OrderIntent" SET status='pending' WHERE id=$1`, [intentId]);
       await dispatch(acct);
@@ -1159,35 +1178,44 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
       harness.submitError = async () => new errors.BrokerWriteDeliveryError({ classification: 'BROKER_REJECTED', message: `Alpaca explicitly rejected broker write with status ${statusCode}.`, statusCode });
       await dispatch(acct);
       harness.submitError = null;
-      expect(await recovery.recoverDispatchedEntryClaimsForAccount(acct, later(3_600_000))).toMatchObject({ released: 0 });
-      expect((await claimEvents(intentId, 'DISPATCH_RECOVERY_RELEASE_BLOCKED')).at(-1)!.evidenceJson).toMatchObject({ blockers: ['BROKER_REJECTION_NOT_DEFINITIVE'], conclusiveness: 'AMBIGUOUS_ABSENCE' });
+      expect(await recovery.recoverDispatchedEntryClaimsForAccount(acct, later(3_600_000))).toMatchObject({ examined: 0, released: 0 });
+      const { remediation } = await services();
+      expect(await remediation.previewEntryExposureRemediation(await claimIdOf(intentId))).toMatchObject({ eligible: false, blockers: ['BROKER_REJECTION_NOT_DEFINITIVE'], evidence: { conclusiveness: 'AMBIGUOUS_ABSENCE' } });
       expect(await intentState(intentId)).toMatchObject({ claimStatus: 'UNRESOLVED', claimReleased: false });
+      expect(posts(clientOrderId)).toBe(1);
     });
 
-    it('enumerates an idle account for terminal-claim recovery and retries a transient release failure', async () => {
+    it('enumerates an idle account for terminal-claim recovery and retries a PostgreSQL-injected transient release failure after its bounded interval', async () => {
       const acct = await freshAccount('IDLE');
       await db.query(`INSERT INTO "TradingAccountCredential" ("tradingAccountId","authType",status,"createdAt","updatedAt") VALUES ($1,'API_KEY','ACTIVE',now(),now())`, [acct]);
       const fixture = await enforced('IDL', mainStrategyId, acct);
       const intentId = await admitted(fixture, 'idle-recovery-1');
       await db.query(`UPDATE "OrderIntent" SET status='failed', "blockReason"='BROKER_WRITE_DELIVERY:NOT_SENT_BLOCKED:adapter rejected before fetch' WHERE id=$1`, [intentId]);
-      const { prisma } = await import('../prisma.js');
-      const originalUpdateMany = prisma.entryExposureClaim.updateMany.bind(prisma.entryExposureClaim);
-      const updateSpy = vi.spyOn(prisma.entryExposureClaim, 'updateMany').mockRejectedValueOnce(new Error('injected transient pool timeout'));
+      const claimId = await claimIdOf(intentId);
+      await db.query(`CREATE FUNCTION test_fail_idle_release() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.status = 'RELEASED' AND NEW.id = ${claimId} THEN RAISE EXCEPTION 'injected transient pool timeout'; END IF; RETURN NEW; END $$`);
+      await db.query(`CREATE TRIGGER test_fail_idle_release BEFORE UPDATE ON "EntryExposureClaim" FOR EACH ROW EXECUTE FUNCTION test_fail_idle_release()`);
       const { worker } = await services();
-
-      const first = await worker.recoverStaleSubmittingIntents();
-      expect(first.results).toEqual(expect.arrayContaining([expect.objectContaining({
-        account: expect.objectContaining({ tradingAccountId: acct, exposureSummary: expect.objectContaining({ terminalEntryClaimsDue: 1 }) }),
-        outcome: 'PROCESSED',
-      })]));
-      expect(await intentState(intentId)).toMatchObject({ claimStatus: 'ENTRY_PENDING', claimReleased: false });
-
-      updateSpy.mockRestore();
-      // Keep the explicit binding alive so this test catches accidental replacement with a mock.
-      expect(typeof originalUpdateMany).toBe('function');
+      try {
+        const first = await worker.recoverStaleSubmittingIntents();
+        expect(first.results).toEqual(expect.arrayContaining([expect.objectContaining({
+          account: expect.objectContaining({ tradingAccountId: acct, exposureSummary: expect.objectContaining({ terminalEntryClaimsDue: 1 }) }),
+          outcome: 'PROCESSED',
+        })]));
+        expect(await intentState(intentId)).toMatchObject({ claimStatus: 'ENTRY_PENDING', claimReleased: false });
+        expect((await claimEvents(intentId, 'RECOVERY_ATTEMPT_FAILED'))[0].evidenceJson).toMatchObject({ source: 'TERMINAL_CLAIM_SWEEP', failureClass: 'TECHNICAL', automaticRetry: 'SCHEDULED' });
+      } finally {
+        await db.query(`DROP TRIGGER test_fail_idle_release ON "EntryExposureClaim"`);
+        await db.query(`DROP FUNCTION test_fail_idle_release()`);
+      }
+      // The attempt was recorded, so an immediate tick neither enumerates nor retries it.
       const second = await worker.recoverStaleSubmittingIntents();
-      expect(second.results).toEqual(expect.arrayContaining([expect.objectContaining({ account: expect.objectContaining({ tradingAccountId: acct }), outcome: 'PROCESSED' })]));
-      expect(await intentState(intentId)).toMatchObject({ claimStatus: 'RELEASED', claimReleased: true });
+      expect(second.results.find((item) => item.account.tradingAccountId === acct)).toMatchObject({ outcome: 'SKIPPED', account: { exposureSummary: { terminalEntryClaimsDue: 0, terminalEntryClaimsHeld: 1 } } });
+      expect(await intentState(intentId)).toMatchObject({ claimStatus: 'ENTRY_PENDING', claimReleased: false });
+      // Once the retry interval has elapsed, the proven never-submitted claim recovers.
+      await db.query(`UPDATE "EntryExposureClaim" SET "lastDiagnosedAt" = now() - interval '2 minutes' WHERE id=$1`, [claimId]);
+      const third = await worker.recoverStaleSubmittingIntents();
+      expect(third.results).toEqual(expect.arrayContaining([expect.objectContaining({ account: expect.objectContaining({ tradingAccountId: acct }), outcome: 'PROCESSED' })]));
+      expect(await intentState(intentId)).toMatchObject({ claimStatus: 'RELEASED', claimReleased: true, releaseReason: 'TERMINAL_INTENT_VERIFIED_NEVER_SUBMITTED' });
       expect(posts('idle-recovery-1')).toBe(0);
     });
 
@@ -1213,18 +1241,19 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
       expect(report.terminalIntentsWithUnreleasedClaims).toEqual([expect.objectContaining({
         tradingAccountId: acct, securityId: fixture.securityId, symbol: 'CRC', orderIntentId: intentId, intentStatus: 'failed', clientOrderId: 'crc-1',
         claimId: await claimIdOf(intentId), claimStatus: 'UNRESOLVED', consumptionId: consumption.id, dispatchDecisionId: consumption.decisionId, dispatchDecisionOutcome: 'ALLOWED',
-        recordedDeliveryClassification: 'DISPATCH_OUTCOME_UNKNOWN', evidenceConclusiveness: 'AMBIGUOUS_ABSENCE', operatorRemediation: 'BLOCKED', blockerReason: 'DELIVERY_OUTCOME_UNCERTAIN',
-        lastRecoveryResult: expect.objectContaining({ eventType: 'DISPATCH_RECOVERY_RELEASE_BLOCKED' }),
+        recordedDeliveryClassification: 'DISPATCH_OUTCOME_UNKNOWN', evidenceConclusiveness: 'AMBIGUOUS_ABSENCE', operatorRemediation: 'INVESTIGATION_REQUIRED', blockerReason: 'DELIVERY_OUTCOME_UNCERTAIN',
+        recoveryState: 'OPERATOR_INVESTIGATION', automaticRecoveryPossible: false, systemRecovery: 'OPERATOR_INVESTIGATION_REQUIRED', nextAttemptDueAt: null,
+        lastRecoveryResult: null,
       })]);
       const brokerReport = await readiness.assessMarketPolicyBrokerEnforcementReadiness({ tradingAccountIds: [acct] });
       expect(brokerReport.inventory).toEqual([expect.objectContaining({ orderIntentId: intentId, claimStatus: 'UNRESOLVED', dispatchConsumptionId: consumption.id, dispatchDecisionId: consumption.decisionId, terminalWithUnreleasedClaim: true, brokerTimeTreatment: 'EXISTING_RECOVERY_PATHWAY' })]);
       expect(brokerReport.activationGuard.reasons).toContain('TERMINAL_ENTRIES_WITH_UNRELEASED_CLAIMS');
       const preview = await remediation.previewEntryExposureRemediation(await claimIdOf(intentId));
       expect(preview).toMatchObject({ disposition: 'DISPATCHED_ENTRY_VERIFIED_NO_EXPOSURE', eligible: false, blockers: ['DELIVERY_OUTCOME_UNCERTAIN'], evidence: { dispatch: { consumptionId: consumption.id, dispatchDecisionId: consumption.decisionId }, orderIntent: { clientOrderId: 'crc-1' } } });
-      // Repeated sweeps with unchanged evidence append no duplicate events.
-      await recovery.recoverDispatchedEntryClaimsForAccount(acct, later(120_000));
-      await recovery.recoverDispatchedEntryClaimsForAccount(acct, later(240_000));
-      expect(await claimEvents(intentId, 'DISPATCH_RECOVERY_RELEASE_BLOCKED')).toHaveLength(1);
+      // Repeated sweeps never select an operator-only claim, so they append nothing.
+      expect(await recovery.recoverDispatchedEntryClaimsForAccount(acct, later(120_000))).toMatchObject({ examined: 0 });
+      expect(await recovery.recoverDispatchedEntryClaimsForAccount(acct, later(240_000))).toMatchObject({ examined: 0 });
+      expect(await claimEvents(intentId, 'DISPATCH_RECOVERY_RELEASE_BLOCKED')).toHaveLength(0);
       expect(await claimEvents(intentId, 'DISPATCH_OUTCOME_RECORDED')).toHaveLength(1);
       expect(await count(`"SystemEvent" WHERE type='entry_exposure.dispatch_outcome_recorded' AND "entityId"=$1`, [String(await claimIdOf(intentId))])).toBe(1);
       expect(posts('crc-1')).toBe(0);
@@ -1333,6 +1362,420 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
       expect(posts('new-1')).toBe(0);
       expect(await intentState(fresh)).toMatchObject({ status: 'submitted', claimStatus: 'BROKER_ORDER_ACTIVE', consumptions: 1 });
       expect(await count(`"MarketPolicyBrokerDispatchConsumption" WHERE "orderIntentId"=$1`, [intentId])).toBe(1);
+    });
+  });
+
+  describe('Phase 3C.3 final safety and recovery closure (Hermes HIGH-1, MEDIUM-1, LOW-2 to LOW-5)', () => {
+    const later = (ms: number) => new Date(Date.now() + ms);
+    const holder = (name: string) => user(`closure-${name.toLowerCase()}-${randomUUID()}@phase3c3.test`, 'SYSTEM_OWNER');
+    const liveAccount = async (name: string) => account(`Closure LIVE ${name}`, 'LIVE', await holder(name));
+    const paperAccount = async (name: string) => account(`Closure PAPER ${name}`, 'PAPER', await holder(name));
+    const credential = (acct: number) => db.query(`INSERT INTO "TradingAccountCredential" ("tradingAccountId","authType",status,"createdAt","updatedAt") VALUES ($1,'API_KEY','ACTIVE',now(),now())`, [acct]);
+    const claimIdOf = async (orderIntentId: number) => (await one(`SELECT id FROM "EntryExposureClaim" WHERE "orderIntentId"=$1`, [orderIntentId])).id as number;
+    const events = async (orderIntentId: number, eventType: string) => (await db.query(`SELECT e."evidenceJson" FROM "EntryExposureClaimEvent" e JOIN "EntryExposureClaim" c ON c.id=e."claimId" WHERE c."orderIntentId"=$1 AND e."eventType"=$2 ORDER BY e.id`, [orderIntentId, eventType])).rows as Array<{ evidenceJson: Record<string, unknown> }>;
+    const eventTypes = async (orderIntentId: number) => (await db.query(`SELECT e."eventType" FROM "EntryExposureClaimEvent" e JOIN "EntryExposureClaim" c ON c.id=e."claimId" WHERE c."orderIntentId"=$1 ORDER BY e.id`, [orderIntentId])).rows.map((row) => row.eventType as string);
+    const postsForSymbol = (symbol: string) => harness.submitCalls.filter((call) => call.payload.symbol === symbol).length;
+    const rejection = async (statusCode: number) => {
+      const { errors } = await services();
+      return new errors.BrokerWriteDeliveryError({ classification: 'BROKER_REJECTED', message: `Alpaca explicitly rejected broker write with status ${statusCode}.`, statusCode });
+    };
+    async function entry(symbol: string, clientOrderId: string, acct: number) {
+      const fixture = await instrument(symbol, mainStrategyId, acct);
+      const { intentId } = await submit(fixture.assignmentId, clientOrderId);
+      return { fixture, intentId };
+    }
+    let triggerSeq = 0;
+    /** Real PostgreSQL fault injection: refuses the RELEASED compare-and-set for the given claims. */
+    async function failReleaseOf(where: string) {
+      const name = `test_fail_release_${++triggerSeq}`;
+      await db.query(`CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.status = 'RELEASED' AND (${where}) THEN RAISE EXCEPTION 'injected transient connection failure'; END IF; RETURN NEW; END $$`);
+      await db.query(`CREATE TRIGGER ${name} BEFORE UPDATE ON "EntryExposureClaim" FOR EACH ROW EXECUTE FUNCTION ${name}()`);
+      return async () => {
+        await db.query(`DROP TRIGGER IF EXISTS ${name} ON "EntryExposureClaim"`);
+        await db.query(`DROP FUNCTION IF EXISTS ${name}()`);
+      };
+    }
+    async function readinessOf(acct: number, orderIntentId: number) {
+      const { entryReadiness } = await services();
+      const report = await entryReadiness.assessEntryExposureReadiness({ tradingAccountIds: [acct] });
+      return report.terminalIntentsWithUnreleasedClaims.find((item) => item.orderIntentId === orderIntentId);
+    }
+
+    // HIGH-1 (1-5): LIVE 408/409 through the real worker, with no durable dispatch record.
+    it.each([408, 409])('LIVE HTTP %i without a dispatch record: one POST, claim retained with an accurate classification, a second entry refused, no second POST', async (statusCode) => {
+      const acct = await liveAccount(`H1-${statusCode}`);
+      const { recovery } = await services();
+      const symbol = `LV${statusCode}`;
+      const clientOrderId = `live-${statusCode}-1`;
+      const { fixture, intentId } = await entry(symbol, clientOrderId, acct);
+      const error = await rejection(statusCode);
+      harness.submitError = async () => error;
+      expect(await dispatch(acct)).toMatchObject({ failed: 1, submitted: 0 });
+      harness.submitError = null;
+      expect(posts(clientOrderId)).toBe(1);
+      expect(await intentState(intentId)).toMatchObject({ status: 'failed', blockReason: `BROKER_WRITE_DELIVERY:BROKER_REJECTED:Alpaca explicitly rejected broker write with status ${statusCode}.`, claimStatus: 'UNRESOLVED', claimReleased: false, consumptions: 0 });
+      expect(await count(`"MarketPolicyBrokerUnenforcedDispatch" WHERE "orderIntentId"=$1`, [intentId])).toBe(0);
+      expect((await events(intentId, 'DISPATCH_OUTCOME_RECORDED'))[0]!.evidenceJson).toMatchObject({
+        classification: 'BROKER_REJECTED', statusCode, source: 'WORKER', observation: 'OBSERVED', adapterInvocation: 'HTTP_RESPONSE_RECEIVED',
+        dispatchRecordPresent: false, deliveryProof: 'HTTP_REJECTION_RESPONSE_REQUIRES_BROKER_VERIFICATION', originalIntentResubmission: 'PROHIBITED',
+      });
+      // The outcome closed the boundary entry; nothing ever claimed a non-send or released it as unsubmitted.
+      expect(await eventTypes(intentId)).toEqual(['ACQUIRED', 'WORKER_CLAIMED_FOR_SUBMISSION', 'ADAPTER_INVOCATION_STARTED', 'DISPATCH_OUTCOME_RECORDED']);
+      await expect(submit(fixture.assignmentId, `${clientOrderId}-second`)).rejects.toMatchObject({ statusCode: 409, details: expect.objectContaining({ code: 'ENTRY_EXPOSURE_UNRESOLVED' }) });
+      await dispatch(acct);
+      expect([posts(clientOrderId), posts(`${clientOrderId}-second`), postsForSymbol(symbol)]).toEqual([1, 0, 1]);
+      // Neither elapsed time nor lookup absence releases it; it is visible as operator-only.
+      expect(await recovery.recoverTerminalEntryClaimsForAccount(acct, later(86_400_000))).toMatchObject({ examined: 0, released: 0 });
+      expect(await readinessOf(acct, intentId)).toMatchObject({
+        recoveryState: 'OPERATOR_INVESTIGATION', automaticRecoveryPossible: false, systemRecovery: 'OPERATOR_INVESTIGATION_REQUIRED',
+        operatorRemediation: 'INVESTIGATION_REQUIRED', blockerReason: 'BROKER_REJECTION_NOT_DEFINITIVE', deliveryEvidence: 'OUTCOME_WITHOUT_DISPATCH_RECORD',
+        dispatchStarted: false, nextAttemptDueAt: null,
+      });
+      expect(await intentState(intentId)).toMatchObject({ claimStatus: 'UNRESOLVED', claimReleased: false });
+    });
+
+    // HIGH-1: a failed classification persistence fails closed.
+    it.each([408, 409])('LIVE HTTP %i whose classification cannot be persisted keeps ownership, refuses a second entry, and stale recovery never releases it', async (statusCode) => {
+      const acct = await liveAccount(`H1P-${statusCode}`);
+      const { worker } = await services();
+      const symbol = `LP${statusCode}`;
+      const clientOrderId = `live-persist-${statusCode}`;
+      const { fixture, intentId } = await entry(symbol, clientOrderId, acct);
+      const claimId = await claimIdOf(intentId);
+      const name = `test_fail_classification_${statusCode}`;
+      await db.query(`CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW."claimId" = ${claimId} AND NEW."eventType" IN ('DISPATCH_OUTCOME_RECORDED','NOT_SENT_EVIDENCE_RECORDED') THEN RAISE EXCEPTION 'injected classification persistence failure'; END IF; RETURN NEW; END $$`);
+      await db.query(`CREATE TRIGGER ${name} BEFORE INSERT ON "EntryExposureClaimEvent" FOR EACH ROW EXECUTE FUNCTION ${name}()`);
+      const error = await rejection(statusCode);
+      harness.submitError = async () => error;
+      try {
+        expect(await dispatch(acct)).toMatchObject({ failed: 1, submitted: 0 });
+      } finally {
+        harness.submitError = null;
+        await db.query(`DROP TRIGGER ${name} ON "EntryExposureClaimEvent"`);
+        await db.query(`DROP FUNCTION ${name}()`);
+      }
+      expect(posts(clientOrderId)).toBe(1);
+      // The terminal intent update rolled back with the classification: ownership is untouched.
+      expect(await intentState(intentId)).toMatchObject({ status: 'submitting', blockReason: null, claimStatus: 'ENTRY_SUBMITTING', claimReleased: false });
+      expect(await count(`"SystemEvent" WHERE type='entry_exposure.delivery_evidence_unpersisted' AND "tradingAccountId"=$1`, [acct])).toBe(1);
+      await expect(submit(fixture.assignmentId, `${clientOrderId}-second`)).rejects.toMatchObject({ statusCode: 409, details: expect.objectContaining({ code: 'ENTRY_ALREADY_PENDING' }) });
+      await dispatch(acct);
+      expect([posts(clientOrderId), posts(`${clientOrderId}-second`)]).toEqual([1, 0]);
+      // The entered boundary marker survived; a later lookup miss is not release evidence.
+      await db.query(`UPDATE "OrderIntent" SET "updatedAt" = now() - interval '10 minutes' WHERE id=$1`, [intentId]);
+      expect(await worker.recoverStaleSubmittingIntentsForAccount(acct)).toMatchObject({ found: 1, retained: 1, retryable: 0 });
+      expect(await intentState(intentId)).toMatchObject({ status: 'failed', blockReason: expect.stringMatching(/^STALE_SUBMISSION_OUTCOME_UNKNOWN/), claimStatus: 'UNRESOLVED', claimReleased: false });
+      expect((await events(intentId, 'DISPATCH_OUTCOME_RECORDED'))[0]!.evidenceJson).toMatchObject({ classification: 'DISPATCH_OUTCOME_UNKNOWN', source: 'STALE_RECOVERY', observation: 'INFERRED', dispatchRecordPresent: false });
+      const recorded = await one(`SELECT message FROM "SystemEvent" WHERE type='entry_exposure.dispatch_outcome_recorded' AND "tradingAccountId"=$1`, [acct]);
+      expect(recorded.message).toContain('no durable dispatch record');
+      expect(recorded.message).not.toContain('after its durable dispatch record committed');
+      expect(posts(clientOrderId)).toBe(1);
+    });
+
+    // HIGH-1: definitive 4xx after a POST go through evidence-based recovery, never status-code release.
+    it.each([400, 401, 403, 404, 422, 429])('LIVE definitive HTTP %i without a dispatch record is released only after the settle window and fresh verification', async (statusCode) => {
+      const acct = await liveAccount(`H1D-${statusCode}`);
+      const { recovery } = await services();
+      const symbol = `LD${statusCode}`;
+      const { fixture, intentId } = await entry(symbol, `live-def-${statusCode}`, acct);
+      const error = await rejection(statusCode);
+      harness.submitError = async () => error;
+      await dispatch(acct);
+      harness.submitError = null;
+      expect(await intentState(intentId)).toMatchObject({ claimStatus: 'UNRESOLVED', claimReleased: false });
+      // Inside the settle window the attempt is recorded and nothing is released.
+      expect(await recovery.recoverTerminalEntryClaimsForAccount(acct)).toMatchObject({ examined: 1, released: 0 });
+      expect((await events(intentId, 'DISPATCH_RECOVERY_RELEASE_BLOCKED')).at(-1)!.evidenceJson).toMatchObject({ blockers: ['BROKER_REJECTION_SETTLING'] });
+      // A broker position for the Security contradicts the rejection.
+      harness.positions.set(symbol, { symbol, side: 'long', qty: '1' });
+      expect(await recovery.recoverTerminalEntryClaimsForAccount(acct, later(120_000))).toMatchObject({ examined: 1, released: 0 });
+      expect((await events(intentId, 'DISPATCH_RECOVERY_RELEASE_BLOCKED')).at(-1)!.evidenceJson).toMatchObject({ blockers: ['BROKER_POSITION_PRESENT'] });
+      harness.positions.delete(symbol);
+      expect(await recovery.recoverTerminalEntryClaimsForAccount(acct, later(240_000))).toMatchObject({ examined: 1, released: 1 });
+      expect(await intentState(intentId)).toMatchObject({ status: 'failed', claimReleased: true, releaseReason: 'VERIFIED_NO_DISPATCH_RECORD_NO_EXPOSURE:CONFIRMED_BROKER_REJECTION' });
+      expect((await events(intentId, 'RELEASED_VERIFIED_DISPATCH_NO_EXPOSURE'))[0]!.evidenceJson).toMatchObject({ mode: 'SYSTEM', basis: 'CONFIRMED_BROKER_REJECTION', dispatchRecord: 'NONE', executionAuthority: 'NONE' });
+      // Only a genuinely new entry (new client order ID) follows; the rejected intent is never resent.
+      const fresh = await submit(fixture.assignmentId, `live-def-${statusCode}-2`);
+      await dispatch(acct);
+      expect([posts(`live-def-${statusCode}`), posts(`live-def-${statusCode}-2`)]).toEqual([1, 1]);
+      expect(await intentState(fresh.intentId)).toMatchObject({ status: 'submitted', claimStatus: 'BROKER_ORDER_ACTIVE' });
+    });
+
+    // HIGH-1: an unknown adapter error is delivery-uncertain and only positive broker evidence releases it.
+    it('keeps a LIVE unknown adapter error without a dispatch record protected, and releases it only on positive broker order evidence', async () => {
+      const acct = await liveAccount('H1U');
+      const { recovery, remediation } = await services();
+      const { intentId } = await entry('LUNK', 'live-unknown-1', acct);
+      harness.submitError = async () => new Error('socket hang up after the request body was written');
+      await dispatch(acct);
+      harness.submitError = null;
+      expect(posts('live-unknown-1')).toBe(1);
+      expect(await intentState(intentId)).toMatchObject({ status: 'failed', blockReason: expect.stringMatching(/^BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:/), claimStatus: 'UNRESOLVED', claimReleased: false });
+      expect((await events(intentId, 'DISPATCH_OUTCOME_RECORDED'))[0]!.evidenceJson).toMatchObject({ classification: 'DELIVERY_UNCERTAIN', observation: 'OBSERVED', adapterInvocation: 'UNKNOWN', dispatchRecordPresent: false });
+      expect(await recovery.recoverTerminalEntryClaimsForAccount(acct, later(86_400_000))).toMatchObject({ examined: 0 });
+      const claimId = await claimIdOf(intentId);
+      const preview = await remediation.previewEntryExposureRemediation(claimId);
+      expect(preview).toMatchObject({ disposition: 'NO_DISPATCH_RECORD_VERIFIED_NO_EXPOSURE', eligible: false, blockers: ['DELIVERY_OUTCOME_UNCERTAIN'],
+        investigation: { conclusiveness: 'AMBIGUOUS_ABSENCE', claimRetained: true, releaseRequires: 'POSITIVE_BROKER_ORDER_EVIDENCE' } });
+      expect(await remediation.applyEntryExposureRemediation({ claimId, actorUserId: ownerId, confirmationFingerprint: preview.confirmationFingerprint })).toMatchObject({ released: false });
+      expect(await intentState(intentId)).toMatchObject({ claimStatus: 'UNRESOLVED', claimReleased: false });
+      harness.orders.set('live-unknown-1', { id: 'alpaca-late-lunk', client_order_id: 'live-unknown-1', symbol: 'LUNK', side: 'buy', status: 'rejected', qty: '1', filled_qty: '0' });
+      const terminal = await remediation.previewEntryExposureRemediation(claimId);
+      expect(terminal).toMatchObject({ disposition: 'TERMINAL_BROKER_ORDER_NO_EXPOSURE', eligible: true });
+      expect(await remediation.applyEntryExposureRemediation({ claimId, actorUserId: ownerId, confirmationFingerprint: terminal.confirmationFingerprint })).toMatchObject({ released: true, releaseReason: 'BROKER_REJECTED_NO_EXPOSURE' });
+      expect(posts('live-unknown-1')).toBe(1);
+    });
+
+    // HIGH-1: genuine pre-dispatch failures still release, but only after their evidence is durable.
+    it('releases genuine LIVE pre-dispatch failures only after structured not-sent evidence is durable, with zero POSTs', async () => {
+      const acct = await liveAccount('H1N');
+      const { errors } = await services();
+      const guard = await entry('LGRD', 'live-guard-1', acct);
+      harness.adapterLocalError = async () => new errors.BrokerWriteDeliveryError({ classification: 'NOT_SENT_BLOCKED', message: 'LIVE NEW_POSITION_ENTRY blocked: arming is not valid.' });
+      await dispatch(acct);
+      harness.adapterLocalError = null;
+      expect(await intentState(guard.intentId)).toMatchObject({ status: 'failed', blockReason: expect.stringContaining('BROKER_WRITE_DELIVERY:NOT_SENT_BLOCKED'), claimReleased: true, releaseReason: 'NOT_SENT_BLOCKED' });
+      expect(await eventTypes(guard.intentId)).toEqual(['ACQUIRED', 'WORKER_CLAIMED_FOR_SUBMISSION', 'ADAPTER_INVOCATION_STARTED', 'NOT_SENT_EVIDENCE_RECORDED', 'RELEASED_NO_BROKER_EXPOSURE']);
+      expect((await events(guard.intentId, 'NOT_SENT_EVIDENCE_RECORDED'))[0]!.evidenceJson).toMatchObject({ classification: 'NOT_SENT_LOCAL_BLOCKED', producer: 'ADAPTER_LOCAL_GUARD', networkRequestIssued: false });
+      const risk = await entry('LRSK', 'live-risk-1', acct);
+      harness.workerRiskBlocked.add(risk.fixture.assignmentId);
+      await dispatch(acct);
+      harness.workerRiskBlocked.delete(risk.fixture.assignmentId);
+      expect(await intentState(risk.intentId)).toMatchObject({ status: 'blocked', blockReason: 'Daily entry order limit reached.', claimReleased: true, releaseReason: 'WORKER_RISK_RECHECK_BLOCKED' });
+      expect(await eventTypes(risk.intentId)).toEqual(['ACQUIRED', 'WORKER_CLAIMED_FOR_SUBMISSION', 'NOT_SENT_EVIDENCE_RECORDED', 'RELEASED_NO_BROKER_EXPOSURE']);
+      expect((await events(risk.intentId, 'NOT_SENT_EVIDENCE_RECORDED'))[0]!.evidenceJson).toMatchObject({ producer: 'WORKER_RISK_RECHECK', classification: 'NOT_SENT_PRE_DISPATCH' });
+      expect([posts('live-guard-1'), posts('live-risk-1')]).toEqual([0, 0]);
+    });
+
+    // MEDIUM-1 (A) + LOW-4: risk rejection with an injected transient failure stays recoverable and visible.
+    it('MEDIUM-1: a worker risk rejection whose release hits a transient PostgreSQL failure stays recoverable and is released on a bounded retry', async () => {
+      const acct = await paperAccount('M1R');
+      const { recovery } = await services();
+      const { fixture, intentId } = await entry('MRSK', 'm1-risk-1', acct);
+      const claimId = await claimIdOf(intentId);
+      const restore = await failReleaseOf(`NEW.id = ${claimId}`);
+      try {
+        harness.workerRiskBlocked.add(fixture.assignmentId);
+        await dispatch(acct);
+        harness.workerRiskBlocked.delete(fixture.assignmentId);
+        expect(await intentState(intentId)).toMatchObject({ status: 'blocked', claimStatus: 'ENTRY_SUBMITTING', claimReleased: false });
+        expect((await events(intentId, 'NOT_SENT_EVIDENCE_RECORDED'))[0]!.evidenceJson).toMatchObject({ producer: 'WORKER_RISK_RECHECK' });
+        expect((await events(intentId, 'RECOVERY_ATTEMPT_FAILED'))[0]!.evidenceJson).toMatchObject({ source: 'WORKER', failureClass: 'TECHNICAL', automaticRetry: 'SCHEDULED' });
+        // Never fabricated as an uncertain or dispatched outcome.
+        expect(await events(intentId, 'DISPATCH_OUTCOME_RECORDED')).toHaveLength(0);
+        const visible = await readinessOf(acct, intentId);
+        expect(visible).toMatchObject({ recoveryState: 'AUTOMATIC_NEVER_SUBMITTED_RELEASE', automaticRecoveryPossible: true, recoveryAttempted: true,
+          systemRecovery: 'TECHNICAL_FAILURE_RETRY_SCHEDULED', deliveryEvidence: 'STRUCTURED_NOT_SENT', operatorRemediation: 'PENDING',
+          lastRecoveryResult: expect.objectContaining({ eventType: 'RECOVERY_ATTEMPT_FAILED', result: 'TECHNICAL_FAILURE' }) });
+        expect(visible!.nextAttemptDueAt!.getTime()).toBeGreaterThan(Date.now());
+        // Not due yet; after the interval it is retried, still failing, without a diagnostic flood.
+        expect(await recovery.recoverTerminalEntryClaimsForAccount(acct)).toMatchObject({ examined: 0 });
+        expect(await recovery.recoverTerminalEntryClaimsForAccount(acct, later(120_000))).toMatchObject({ examined: 1, released: 0 });
+        expect(await recovery.recoverTerminalEntryClaimsForAccount(acct, later(240_000))).toMatchObject({ examined: 1, released: 0 });
+        expect(await events(intentId, 'RECOVERY_ATTEMPT_FAILED')).toHaveLength(2);
+      } finally {
+        await restore();
+      }
+      expect(await recovery.recoverTerminalEntryClaimsForAccount(acct, later(360_000))).toMatchObject({ examined: 1, released: 1 });
+      expect(await intentState(intentId)).toMatchObject({ status: 'blocked', claimReleased: true, releaseReason: 'TERMINAL_INTENT_VERIFIED_NEVER_SUBMITTED' });
+      expect(posts('m1-risk-1')).toBe(0);
+    });
+
+    // MEDIUM-1 (A): admission failure.
+    it('MEDIUM-1: an admission risk block whose release failed is proven pre-dispatch by its claim state and recovered', async () => {
+      const acct = await paperAccount('M1A');
+      const { recovery } = await services();
+      const fixture = await instrument('MADM', mainStrategyId, acct);
+      const restore = await failReleaseOf(`NEW."securityId" = ${fixture.securityId}`);
+      harness.admissionRiskBlocked.add(fixture.assignmentId);
+      try {
+        await expect(submit(fixture.assignmentId, 'm1-admission-1')).rejects.toThrow();
+      } finally {
+        harness.admissionRiskBlocked.delete(fixture.assignmentId);
+        await restore();
+      }
+      const intent = await one(`SELECT id FROM "OrderIntent" WHERE "clientOrderId"='m1-admission-1'`);
+      expect(await intentState(intent.id)).toMatchObject({ status: 'blocked', claimStatus: 'ENTRY_PENDING', claimReleased: false });
+      expect(await readinessOf(acct, intent.id)).toMatchObject({ recoveryState: 'AUTOMATIC_NEVER_SUBMITTED_RELEASE', systemRecovery: 'AWAITING_FIRST_ATTEMPT', recoveryAttempted: false });
+      expect(await recovery.recoverTerminalEntryClaimsForAccount(acct)).toMatchObject({ examined: 1, released: 1 });
+      expect(await intentState(intent.id)).toMatchObject({ claimReleased: true, releaseReason: 'TERMINAL_INTENT_VERIFIED_NEVER_SUBMITTED' });
+      expect(posts('m1-admission-1')).toBe(0);
+    });
+
+    // MEDIUM-1 (A): stale recovery after a crash before the broker boundary.
+    it('MEDIUM-1: stale recovery proves a crash before the adapter from the claim protocol and survives a transient release failure', async () => {
+      const acct = await paperAccount('M1S');
+      const { worker, claims, recovery } = await services();
+      const { intentId } = await entry('MSTL', 'm1-stale-1', acct);
+      // The worker claimed the intent under the adapter-marker protocol, then the process crashed.
+      await db.query(`UPDATE "OrderIntent" SET status='submitting' WHERE id=$1`, [intentId]);
+      await claims.transitionEntryExposureClaim({ orderIntentId: intentId, status: 'ENTRY_SUBMITTING', eventType: 'WORKER_CLAIMED_FOR_SUBMISSION', evidence: { markerProtocol: 'ADAPTER_MARKER_V1' } });
+      await db.query(`UPDATE "OrderIntent" SET "updatedAt" = now() - interval '10 minutes' WHERE id=$1`, [intentId]);
+      const restore = await failReleaseOf(`NEW.id = ${await claimIdOf(intentId)}`);
+      try {
+        expect(await worker.recoverStaleSubmittingIntentsForAccount(acct)).toMatchObject({ found: 1, retained: 1, retryable: 0 });
+      } finally {
+        await restore();
+      }
+      expect(await intentState(intentId)).toMatchObject({ status: 'failed', blockReason: expect.stringMatching(/broker adapter was never invoked/), claimStatus: 'ENTRY_SUBMITTING', claimReleased: false });
+      expect((await events(intentId, 'NOT_SENT_EVIDENCE_RECORDED'))[0]!.evidenceJson).toMatchObject({ producer: 'STALE_RECOVERY_ADAPTER_NOT_INVOKED', source: 'STALE_RECOVERY' });
+      expect(await events(intentId, 'DISPATCH_OUTCOME_RECORDED')).toHaveLength(0);
+      expect(await recovery.recoverTerminalEntryClaimsForAccount(acct, later(120_000))).toMatchObject({ examined: 1, released: 1 });
+      expect(await intentState(intentId)).toMatchObject({ claimReleased: true, releaseReason: 'TERMINAL_INTENT_VERIFIED_NEVER_SUBMITTED' });
+      expect(posts('m1-stale-1')).toBe(0);
+    });
+
+    // MEDIUM-1: legacy no-record claims. Structured risk evidence proves non-dispatch; free text never does.
+    it('MEDIUM-1: a legacy free-text block is never inferred either way, while the structured risk evaluation proves non-dispatch', async () => {
+      const acct = await paperAccount('M1L');
+      const { claims, orderAudit, recovery } = await services();
+      const legacy = async (symbol: string, clientOrderId: string, blockReason: string, riskReason: string | null) => {
+        const { intentId } = await entry(symbol, clientOrderId, acct);
+        await db.query(`UPDATE "OrderIntent" SET status='submitting' WHERE id=$1`, [intentId]);
+        await claims.transitionEntryExposureClaim({ orderIntentId: intentId, status: 'ENTRY_SUBMITTING', eventType: 'WORKER_CLAIMED_FOR_SUBMISSION' });
+        if (riskReason) await orderAudit.recordOrderIntentRiskEvaluation({ orderIntentId: intentId, allowed: false, reason: riskReason, details: {} });
+        await db.query(`UPDATE "OrderIntent" SET status='blocked', "blockReason"=$2 WHERE id=$1`, [intentId, blockReason]);
+        return intentId;
+      };
+      const proven = await legacy('MLRK', 'm1-legacy-risk', 'Daily entry order limit reached.', 'Daily entry order limit reached.');
+      const unknown = await legacy('MLUN', 'm1-legacy-unknown', 'connection reset by peer', null);
+      expect(await recovery.recoverTerminalEntryClaimsForAccount(acct)).toMatchObject({ examined: 2, released: 1, recorded: 2 });
+      expect(await intentState(proven)).toMatchObject({ claimReleased: true, releaseReason: 'TERMINAL_INTENT_VERIFIED_NEVER_SUBMITTED' });
+      expect((await events(proven, 'NOT_SENT_EVIDENCE_RECORDED'))[0]!.evidenceJson).toMatchObject({ producer: 'TERMINAL_SWEEP_RISK_EVALUATION_BLOCKED' });
+      expect(await intentState(unknown)).toMatchObject({ claimStatus: 'UNRESOLVED', claimReleased: false });
+      expect((await events(unknown, 'DISPATCH_OUTCOME_RECORDED'))[0]!.evidenceJson).toMatchObject({ classification: 'DISPATCH_OUTCOME_UNKNOWN', observation: 'INFERRED', source: 'TERMINAL_CLAIM_SWEEP', dispatchRecordPresent: false, deliveryProof: 'NONE_DELIVERY_UNCERTAIN' });
+      expect(await readinessOf(acct, unknown)).toMatchObject({ recoveryState: 'OPERATOR_INVESTIGATION', blockerReason: 'DELIVERY_OUTCOME_UNKNOWN_NO_DISPATCH_RECORD', operatorRemediation: 'INVESTIGATION_REQUIRED' });
+      const recorded = await one(`SELECT message FROM "SystemEvent" WHERE type='entry_exposure.dispatch_outcome_recorded' AND "tradingAccountId"=$1`, [acct]);
+      expect(recorded.message).not.toContain('after its durable dispatch record committed');
+      // Operator-only: never selected again by the sweep.
+      expect(await recovery.recoverTerminalEntryClaimsForAccount(acct, later(3_600_000))).toMatchObject({ examined: 0 });
+    });
+
+    // MEDIUM-1: a resolvable no-record UNRESOLVED claim has a working fingerprinted operator route.
+    it('MEDIUM-1: a no-record UNRESOLVED claim with structured not-sent evidence is remediable by a SYSTEM_OWNER after fresh verification', async () => {
+      const acct = await paperAccount('M1O');
+      const { claims, recovery, remediation } = await services();
+      const { fixture, intentId } = await entry('MNRU', 'm1-unresolved-1', acct);
+      const claimId = await claimIdOf(intentId);
+      const restore = await failReleaseOf(`NEW.id = ${claimId}`);
+      try {
+        harness.workerRiskBlocked.add(fixture.assignmentId);
+        await dispatch(acct);
+        harness.workerRiskBlocked.delete(fixture.assignmentId);
+      } finally {
+        await restore();
+      }
+      // A prior release path (before this closure) moved such a claim to UNRESOLVED without a record.
+      await claims.transitionEntryExposureClaim({ orderIntentId: intentId, status: 'UNRESOLVED', eventType: 'UNSUBMITTED_RELEASE_REFUSED', evidence: { reason: 'legacy refusal' } });
+      harness.openBuyFailures.add('MNRU');
+      expect(await recovery.recoverTerminalEntryClaimsForAccount(acct, later(120_000))).toMatchObject({ examined: 1, released: 0 });
+      expect((await events(intentId, 'DISPATCH_RECOVERY_RELEASE_BLOCKED')).at(-1)!.evidenceJson).toMatchObject({ blockers: ['BROKER_LOOKUP_FAILED'] });
+      const blocked = await remediation.previewEntryExposureRemediation(claimId);
+      expect(blocked).toMatchObject({ disposition: 'NO_DISPATCH_RECORD_VERIFIED_NO_EXPOSURE', eligible: false, blockers: ['BROKER_LOOKUP_FAILED'] });
+      harness.openBuyFailures.delete('MNRU');
+      const preview = await remediation.previewEntryExposureRemediation(claimId);
+      expect(preview).toMatchObject({ disposition: 'NO_DISPATCH_RECORD_VERIFIED_NO_EXPOSURE', eligible: true, blockers: [], investigation: null,
+        evidence: { basis: 'DEFINITE_LOCAL_NON_SEND', conclusiveness: 'CONCLUSIVE', dispatchRecordPresent: false, orderIntent: { id: intentId, clientOrderId: 'm1-unresolved-1' } } });
+      const accountUser = await user(`closure-account-user-${randomUUID()}@phase3c3.test`, 'ACCOUNT_USER');
+      await expect(remediation.applyEntryExposureRemediation({ claimId, actorUserId: accountUser, confirmationFingerprint: preview.confirmationFingerprint })).rejects.toMatchObject({ statusCode: 403 });
+      expect(await remediation.applyEntryExposureRemediation({ claimId, actorUserId: ownerId, confirmationFingerprint: 'f'.repeat(64) })).toMatchObject({ released: false, reason: 'CONFIRMATION_FINGERPRINT_MISMATCH' });
+      expect(await remediation.applyEntryExposureRemediation({ claimId, actorUserId: ownerId, confirmationFingerprint: preview.confirmationFingerprint }))
+        .toMatchObject({ released: true, releaseReason: 'VERIFIED_NO_DISPATCH_RECORD_NO_EXPOSURE:DEFINITE_LOCAL_NON_SEND' });
+      expect((await events(intentId, 'OPERATOR_REMEDIATION_AUTHORIZED'))[0]!.evidenceJson).toMatchObject({ actorUserId: ownerId, disposition: 'NO_DISPATCH_RECORD_VERIFIED_NO_EXPOSURE' });
+      // Remediation never fabricates provenance, places, requeues or resubmits anything.
+      expect(await events(intentId, 'DISPATCH_OUTCOME_RECORDED')).toHaveLength(0);
+      expect(await intentState(intentId)).toMatchObject({ status: 'blocked', brokerOrders: 0, consumptions: 0 });
+      expect(posts('m1-unresolved-1')).toBe(0);
+    });
+
+    // LOW-2: bounded retries and starvation resistance under a controlled clock.
+    it('LOW-2: immediate ticks never retry the same failing claims, and a fourth claim is served despite three persistent failures', async () => {
+      const acct = await paperAccount('L2');
+      await credential(acct);
+      const { worker } = await services();
+      const intentIds: number[] = [];
+      for (const index of [1, 2, 3, 4]) intentIds.push((await entry(`STV${index}`, `stv-${index}`, acct)).intentId);
+      await db.query(`UPDATE "OrderIntent" SET status='failed', "blockReason"='ADMISSION_FAILED_BEFORE_BROKER_SUBMISSION' WHERE id = ANY($1)`, [intentIds]);
+      const claimIds: number[] = [];
+      for (const intentId of intentIds) claimIds.push(await claimIdOf(intentId));
+      const restore = await failReleaseOf(`NEW.id IN (${claimIds.slice(0, 3).join(',')})`);
+      const base = Date.now();
+      type Tick = { outcome: string; account: { exposureSummary: Record<string, number> }; result?: { dispatchRecovery?: { attempted: number[]; released: number } } };
+      const tick = async (offsetMs: number) => {
+        vi.setSystemTime(base + offsetMs);
+        const run = await worker.recoverStaleSubmittingIntents();
+        return run.results.find((item) => item.account.tradingAccountId === acct) as unknown as Tick;
+      };
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        const first = await tick(0);
+        expect(first).toMatchObject({ outcome: 'PROCESSED', account: { exposureSummary: { terminalEntryClaimsDue: 4, terminalEntryClaimsHeld: 4 } } });
+        expect(first.result!.dispatchRecovery).toMatchObject({ attempted: claimIds.slice(0, 3), released: 0 });
+        const second = await tick(1_000);
+        expect(second).toMatchObject({ outcome: 'PROCESSED', account: { exposureSummary: { terminalEntryClaimsDue: 1 } } });
+        expect(second.result!.dispatchRecovery).toMatchObject({ attempted: [claimIds[3]], released: 1 });
+        const third = await tick(2_000);
+        expect(third).toMatchObject({ outcome: 'SKIPPED', account: { exposureSummary: { terminalEntryClaimsDue: 0, terminalEntryClaimsHeld: 3 } } });
+        const fourth = await tick(61_000);
+        expect(fourth.result!.dispatchRecovery).toMatchObject({ attempted: claimIds.slice(0, 3), released: 0 });
+      } finally {
+        vi.useRealTimers();
+        await restore();
+      }
+      for (const intentId of intentIds.slice(0, 3)) {
+        // One deduplicated diagnostic per persistently failing claim, never a flood.
+        expect(await events(intentId, 'RECOVERY_ATTEMPT_FAILED')).toHaveLength(1);
+        expect(await intentState(intentId)).toMatchObject({ claimStatus: 'ENTRY_PENDING', claimReleased: false });
+      }
+      // lastDiagnosedAt is a UTC timestamp without time zone; compare its epoch milliseconds.
+      const stamped = await db.query(`SELECT (extract(epoch FROM "lastDiagnosedAt") * 1000)::bigint AS ms FROM "EntryExposureClaim" WHERE id = ANY($1) ORDER BY id`, [claimIds.slice(0, 3)]);
+      expect(stamped.rows.map((row) => Number(row.ms))).toEqual([base + 61_000, base + 61_000, base + 61_000]);
+      expect(await intentState(intentIds[3]!)).toMatchObject({ claimReleased: true, releaseReason: 'TERMINAL_INTENT_VERIFIED_NEVER_SUBMITTED' });
+      expect(intentIds.map((_id, index) => posts(`stv-${index + 1}`))).toEqual([0, 0, 0, 0]);
+    });
+
+    // LOW-3 + LOW-4: one definition of actionable recovery work for enumeration, the sweep and readiness.
+    it('LOW-3: account enumeration, the sweep and readiness agree on actionable, operator-only and credential-unavailable claims', async () => {
+      const acct = await liveAccount('L3');
+      await credential(acct);
+      const credentialless = await liveAccount('L3N');
+      const { eligibility, recovery } = await services();
+      const operatorOnly = async (target: number, symbol: string) => {
+        const { intentId } = await entry(symbol, `${symbol.toLowerCase()}-1`, target);
+        const error = await rejection(409);
+        harness.submitError = async () => error;
+        await dispatch(target);
+        harness.submitError = null;
+        return intentId;
+      };
+      await operatorOnly(acct, 'L3A');
+      await operatorOnly(credentialless, 'L3B');
+      const enumerated = async () => {
+        const accounts = await eligibility.enumerateLifecycleAccounts('submitted_orders', { persistWorkerHealth: false });
+        return [accounts.find((item) => item.tradingAccountId === acct)!, accounts.find((item) => item.tradingAccountId === credentialless)!];
+      };
+      let [credentialed, missing] = await enumerated();
+      expect(credentialed).toMatchObject({ eligible: false, reason: 'no_work_for_workflow', exposureSummary: { terminalEntryClaimsDue: 0, terminalEntryClaimsHeld: 1 } });
+      expect(missing).toMatchObject({ eligible: false, reason: 'credentials_unavailable_with_exposure', exposureSummary: { terminalEntryClaimsHeld: 1 } });
+      expect(await recovery.recoverTerminalEntryClaimsForAccount(acct, later(3_600_000))).toMatchObject({ examined: 0 });
+      // An actionable claim (a definitive rejection awaiting verification) is counted and swept exactly.
+      const { intentId: actionable } = await entry('L3C', 'l3c-1', acct);
+      const error = await rejection(422);
+      harness.submitError = async () => error;
+      await dispatch(acct);
+      harness.submitError = null;
+      expect(await readinessOf(acct, actionable)).toMatchObject({ recoveryState: 'AUTOMATIC_VERIFIED_RELEASE', systemRecovery: 'AWAITING_FIRST_ATTEMPT', recoveryAttempted: false, lastRecoveryResult: null });
+      [credentialed] = await enumerated();
+      expect(credentialed).toMatchObject({ eligible: true, exposureSummary: { terminalEntryClaimsDue: 1, terminalEntryClaimsHeld: 2 } });
+      expect(await recovery.recoverTerminalEntryClaimsForAccount(acct)).toMatchObject({ examined: 1, attempted: [await claimIdOf(actionable)], released: 0 });
+      // Attempted: readiness says so (not "processed"), with its next due time and real result.
+      const attempted = await readinessOf(acct, actionable);
+      expect(attempted).toMatchObject({ systemRecovery: 'RETRY_SCHEDULED', recoveryAttempted: true, operatorRemediation: 'PENDING',
+        lastRecoveryResult: expect.objectContaining({ eventType: 'DISPATCH_RECOVERY_RELEASE_BLOCKED', result: 'BLOCKED_BY_EVIDENCE' }) });
+      expect(attempted!.nextAttemptDueAt!.getTime()).toBeGreaterThan(Date.now());
+      [credentialed] = await enumerated();
+      expect(credentialed).toMatchObject({ eligible: false, exposureSummary: { terminalEntryClaimsDue: 0, terminalEntryClaimsHeld: 2 } });
+      expect(await recovery.recoverTerminalEntryClaimsForAccount(acct)).toMatchObject({ examined: 0 });
     });
   });
 });

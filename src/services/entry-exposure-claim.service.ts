@@ -9,6 +9,12 @@ import { getAlpacaOrderByClientOrderId, getAlpacaOrderById, getCompleteOpenAlpac
 import { getAlpacaPositionBySymbol } from '../integrations/alpaca/positions.adapter.js';
 import { isTerminalBrokerOrderStatus } from './broker-order-lifecycle-status.service.js';
 import {
+  blockReasonDeliveryClassification,
+  evaluateNeverSubmittedRelease,
+  loadDeliveryEvidenceEvents,
+  summarizeDeliveryEvidence,
+} from './entry-delivery-evidence.service.js';
+import {
   BROKER_ACTIVE_ENTRY_STATUSES,
   UNRESOLVED_ORDER_INTENT_STATUSES,
   canTransitionEntryExposureClaim,
@@ -388,12 +394,32 @@ export async function recordMissingLocalBrokerOrderDiagnostic(args: {
   }, db);
 }
 
+/**
+ * The shared never-submitted release. Every caller (admission, worker, stale recovery, terminal
+ * sweep, deactivation and disarm) goes through it, so the account/Security exclusivity invariant and
+ * the delivery-evidence invariant live here: the decision and its compare-and-set run under the
+ * entry-exposure advisory lock, and an ENTRY_SUBMITTING claim is released only with recorded
+ * structured not-sent evidence (never because a dispatch record is missing).
+ */
 export async function releaseUnsubmittedEntryExposureClaim(args: {
   orderIntentId: number;
   reason: string;
   db?: Db;
 }) {
   const db = args.db ?? prisma;
+  if ('$transaction' in db) {
+    return db.$transaction((tx) => releaseUnsubmittedEntryExposureClaimLocked({ ...args, db: tx }));
+  }
+  return releaseUnsubmittedEntryExposureClaimLocked({ ...args, db });
+}
+
+async function releaseUnsubmittedEntryExposureClaimLocked(args: { orderIntentId: number; reason: string; db: Db }) {
+  const db = args.db;
+  const observed = await db.entryExposureClaim.findUnique({
+    where: { orderIntentId: args.orderIntentId }, select: { tradingAccountId: true, securityId: true },
+  });
+  if (!observed) return null;
+  await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`entry-exposure:${observed.tradingAccountId}:${observed.securityId}`}, 0))::text`;
   const claim = await db.entryExposureClaim.findUnique({
     where: { orderIntentId: args.orderIntentId },
     include: { orderIntent: { select: { blockReason: true } } },
@@ -404,7 +430,7 @@ export async function releaseUnsubmittedEntryExposureClaim(args: {
       orderIntentId: args.orderIntentId, claimId: claim.id, claimStatus: claim.status,
     });
   }
-  const [brokerOrders, brokerActivities, brokerDispatchEvidence, dispatchConsumptions, unenforcedDispatches, position, deliveryEvents] = await Promise.all([
+  const [brokerOrders, brokerActivities, brokerDispatchEvidence, dispatchConsumptions, unenforcedDispatches, liveArmingConsumptions, position, deliveryEvents] = await Promise.all([
     db.brokerOrder.count({ where: { orderIntentId: args.orderIntentId } }),
     db.brokerActivity.count({ where: { orderIntentId: args.orderIntentId } }),
     db.orderIntentBrokerOpportunityEvent.count({
@@ -418,35 +444,22 @@ export async function releaseUnsubmittedEntryExposureClaim(args: {
     // (entry-dispatch-recovery.service), never as unsubmitted.
     db.marketPolicyBrokerDispatchConsumption.count({ where: { orderIntentId: args.orderIntentId } }),
     db.marketPolicyBrokerUnenforcedDispatch.count({ where: { orderIntentId: args.orderIntentId } }),
+    // A consumed one-shot LIVE arming means the adapter passed its last gate before fetch.
+    db.liveEntryArmingTermination.count({ where: { orderIntentId: args.orderIntentId, type: 'CONSUMED' } }),
     claim.trackedPositionId
       ? db.trackedPosition.findUnique({ where: { id: claim.trackedPositionId }, select: { status: true } })
       : null,
-    db.entryExposureClaimEvent.findMany({
-      where: { claimId: claim.id, eventType: { in: ['DISPATCH_OUTCOME_RECORDED', 'BROKER_DELIVERY_UNCERTAIN'] } },
-      select: { eventType: true, evidenceJson: true },
-      orderBy: { id: 'asc' },
-    }),
+    loadDeliveryEvidenceEvents(claim.id, db),
   ]);
-  const blockReasonClassification = claim.orderIntent?.blockReason?.match(
-    /BROKER_WRITE_DELIVERY:(NOT_SENT_RETRYABLE|NOT_SENT_BLOCKED|BROKER_REJECTED|DELIVERY_UNCERTAIN)/
-  )?.[1] ?? null;
-  const recordedClassifications = deliveryEvents.map((event) => {
-    if (event.eventType === 'BROKER_DELIVERY_UNCERTAIN') return 'DELIVERY_UNCERTAIN';
-    const evidence = (event.evidenceJson ?? {}) as Record<string, unknown>;
-    return typeof evidence.classification === 'string' ? evidence.classification : 'DISPATCH_OUTCOME_UNKNOWN';
-  });
-  const ambiguousDeliveryEvidence =
-    blockReasonClassification === 'BROKER_REJECTED' ||
-    blockReasonClassification === 'DELIVERY_UNCERTAIN' ||
-    recordedClassifications.some((classification) => ![
-      'NOT_SENT_LOCAL_BLOCKED',
-      'NOT_SENT_LOCAL_RETRYABLE',
-      'NOT_SENT_DISPATCH_RECORD_ACK_LOST',
-    ].includes(classification));
-  if (brokerOrders > 0 || brokerActivities > 0 || brokerDispatchEvidence > 0 || dispatchConsumptions > 0 || unenforcedDispatches > 0 || ambiguousDeliveryEvidence || (position && position.status !== 'closed')) {
-    throw conflict('ENTRY_EXPOSURE_UNRESOLVED', 'Claim has broker or position evidence and cannot be released as unsubmitted.', {
-      orderIntentId: args.orderIntentId, claimId: claim.id, brokerOrders, brokerActivities, brokerDispatchEvidence, dispatchConsumptions, unenforcedDispatches,
-      trackedPositionStatus: position?.status ?? null, blockReasonClassification, recordedClassifications,
+  const summary = summarizeDeliveryEvidence(deliveryEvents);
+  const evidence = evaluateNeverSubmittedRelease({ claimStatus: claim.status, summary, blockReason: claim.orderIntent?.blockReason });
+  if (brokerOrders > 0 || brokerActivities > 0 || brokerDispatchEvidence > 0 || dispatchConsumptions > 0 || unenforcedDispatches > 0 || liveArmingConsumptions > 0 || !evidence.proven || (position && position.status !== 'closed')) {
+    throw conflict('ENTRY_EXPOSURE_UNRESOLVED', 'Claim has broker, position or uncertain delivery evidence, or lacks recorded not-sent evidence, and cannot be released as unsubmitted.', {
+      orderIntentId: args.orderIntentId, claimId: claim.id, claimStatus: claim.status, brokerOrders, brokerActivities, brokerDispatchEvidence, dispatchConsumptions, unenforcedDispatches,
+      liveArmingConsumptions, trackedPositionStatus: position?.status ?? null,
+      blockReasonClassification: blockReasonDeliveryClassification(claim.orderIntent?.blockReason),
+      recordedClassifications: summary.outcomes.map((outcome) => outcome.classification),
+      notSentEvidenceBlocker: evidence.blocker,
     });
   }
   const now = new Date();
@@ -456,9 +469,14 @@ export async function releaseUnsubmittedEntryExposureClaim(args: {
   });
   if (released.count !== 1) return db.entryExposureClaim.findUnique({ where: { id: claim.id } });
   await db.entryExposureClaimEvent.create({
-    data: { claimId: claim.id, eventType: 'RELEASED_NO_BROKER_EXPOSURE', evidenceJson: { reason: args.reason } },
+    data: { claimId: claim.id, eventType: 'RELEASED_NO_BROKER_EXPOSURE', evidenceJson: { reason: args.reason, notSentBasis: evidence.basis } },
   });
   return db.entryExposureClaim.findUnique({ where: { id: claim.id } });
+}
+
+/** Whether a never-submitted release call actually committed the release it asked for. */
+export function releasedByThisCall(claim: { releasedAt: Date | null; releaseReason: string | null } | null | undefined, reason: string) {
+  return Boolean(claim?.releasedAt) && claim?.releaseReason === reason;
 }
 
 export async function attachEntryExposureClaimToPosition(args: {

@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   prepareEntryBrokerDispatch: vi.fn(),
   authorizeDispatch: vi.fn(),
   localDispatchEvidenceCount: vi.fn(),
+  claimEventCreate: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -37,6 +38,7 @@ vi.mock('../db/prisma.js', () => ({
     marketPolicyBrokerUnenforcedDispatch: { count: mocks.localDispatchEvidenceCount },
     orderIntentBrokerOpportunityEvent: { count: mocks.localDispatchEvidenceCount },
     brokerOrder: { count: mocks.localDispatchEvidenceCount },
+    entryExposureClaimEvent: { create: mocks.claimEventCreate },
   },
 }));
 
@@ -198,6 +200,7 @@ describe('place order service entry decision attribution', () => {
     mocks.requireEntryExposureClaim.mockResolvedValue({ id: 1 });
     mocks.requireExecutableEntryExposureClaim.mockResolvedValue({ claim: { id: 1 }, intent: { id: 55 } });
     mocks.releaseUnsubmittedEntryExposureClaim.mockResolvedValue({ id: 1 });
+    mocks.claimEventCreate.mockResolvedValue({ id: 1 });
     mocks.evaluateOrderRisk.mockResolvedValue({
       allowed: true,
       details: {},
@@ -526,9 +529,11 @@ describe('broker-time enforcement boundary (Phase 3C.3)', () => {
     mocks.captureBrokerOpportunity.mockImplementation(async () => { order.push('CAPTURE'); return { id: 91 }; });
     mocks.appendBrokerEvent.mockImplementation(async ({ eventType }: { eventType: string }) => { order.push(eventType); return true; });
     mocks.submitAlpacaEntryOrder.mockImplementation(async () => { order.push('POST'); return brokerOrder; });
+    mocks.claimEventCreate.mockImplementation(async ({ data }: { data: { eventType: string } }) => { order.push(data.eventType); return { id: 1 }; });
     const boundary = { phase: 'UNCLASSIFIED' };
     await call(boundary);
-    expect(order).toEqual(['LOOKUP', 'PREPARE', 'CAPTURE', 'CONSUME:91', 'ADAPTER_DISPATCH_REACHED', 'POST', 'BROKER_RESPONSE_CONFIRMED', 'BROKER_ORDER_MATERIALIZED']);
+    expect(order).toEqual(['LOOKUP', 'PREPARE', 'CAPTURE', 'CONSUME:91', 'ADAPTER_INVOCATION_STARTED', 'ADAPTER_DISPATCH_REACHED', 'POST', 'BROKER_RESPONSE_CONFIRMED', 'BROKER_ORDER_MATERIALIZED']);
+    expect(mocks.claimEventCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ claimId: 1, eventType: 'ADAPTER_INVOCATION_STARTED', evidenceJson: expect.objectContaining({ protocol: 'ADAPTER_MARKER_V1', orderIntentId: 55, clientOrderId: 'stable-client-101' }) }) });
     expect(mocks.prepareEntryBrokerDispatch).toHaveBeenCalledWith({ orderIntentId: 55, tradingAccountId: 1, symbol: 'SPY', clientOrderId: 'stable-client-101' });
     expect(boundary.phase).toBe('BROKER_RESPONDED');
   });
@@ -572,6 +577,14 @@ describe('broker-time enforcement boundary (Phase 3C.3)', () => {
     await expect(call(lookup)).rejects.toThrow('transient lookup failure');
     expect(lookup.phase).toBe('UNCLASSIFIED');
     expect(mocks.prepareEntryBrokerDispatch).not.toHaveBeenCalled();
+    expect(mocks.submitAlpacaEntryOrder).not.toHaveBeenCalled();
+  });
+
+  it('never invokes the adapter when the adapter-invocation marker cannot be written', async () => {
+    mocks.claimEventCreate.mockRejectedValueOnce(new Error('injected connection loss'));
+    const boundary = { phase: 'UNCLASSIFIED' };
+    await expect(call(boundary)).rejects.toThrow('injected connection loss');
+    expect(boundary.phase).toBe('NOT_DISPATCHED');
     expect(mocks.submitAlpacaEntryOrder).not.toHaveBeenCalled();
   });
 
