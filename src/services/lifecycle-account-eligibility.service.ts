@@ -11,6 +11,10 @@ import { env } from '../config/env.js';
 import { accountWorkflowProcessInstanceId } from './trading-account-workflow-runner.service.js';
 import { recordTradingAccountWorkerAttempt } from './trading-account-worker-health.service.js';
 import type { WorkerKey } from '../workers/worker-health.definitions.js';
+import {
+  ENTRY_DISPATCH_RECOVERY_RETRY_MS,
+  TERMINAL_ENTRY_INTENT_STATUSES,
+} from './entry-dispatch-recovery.service.js';
 
 export type LifecycleWorkflow =
   | 'pending_submissions'
@@ -45,6 +49,7 @@ export type LifecycleAccountEligibility = {
     activePositions: number;
     unresolvedActivities: number;
     unresolvedExitPositions: number;
+    terminalEntryClaimsDue: number;
     hasLifecycleWork: boolean;
   };
 };
@@ -53,6 +58,7 @@ export async function enumerateLifecycleAccounts(
   workflow: LifecycleWorkflow,
   options: { persistWorkerHealth?: boolean } = {}
 ): Promise<LifecycleAccountEligibility[]> {
+  const terminalClaimDue = new Date(Date.now() - ENTRY_DISPATCH_RECOVERY_RETRY_MS);
   const accounts = await prisma.tradingAccount.findMany({
     orderBy: { id: 'asc' },
     select: {
@@ -83,6 +89,14 @@ export async function enumerateLifecycleAccounts(
                 { trackedPositionId: null },
                 { brokerOrderRecordId: null },
               ],
+            },
+          },
+          entryExposureClaims: {
+            where: {
+              releasedAt: null,
+              trackedPositionId: null,
+              orderIntent: { status: { in: [...TERMINAL_ENTRY_INTENT_STATUSES] } },
+              OR: [{ lastDiagnosedAt: null }, { lastDiagnosedAt: { lte: terminalClaimDue } }],
             },
           },
         },
@@ -150,11 +164,13 @@ export async function enumerateLifecycleAccounts(
       unresolvedActivities: account._count.brokerActivities,
       unresolvedExitPositions:
         unresolvedExitCountByAccount.get(account.id) ?? 0,
+      terminalEntryClaimsDue: account._count.entryExposureClaims ?? 0,
       hasLifecycleWork: account._count.orderIntents > 0 ||
         account._count.brokerOrders > 0 ||
         account._count.trackedPositions > 0 ||
         account._count.brokerActivities > 0 ||
-        (unresolvedExitCountByAccount.get(account.id) ?? 0) > 0,
+        (unresolvedExitCountByAccount.get(account.id) ?? 0) > 0 ||
+        (account._count.entryExposureClaims ?? 0) > 0,
     };
     const usableCredentials =
       account.credential?.status === BrokerCredentialStatus.ACTIVE;
@@ -167,7 +183,8 @@ export async function enumerateLifecycleAccounts(
         : workflow === 'submitted_orders'
         ? exposureSummary.submittingIntents > 0 ||
           exposureSummary.submittedIntents > 0 ||
-          exposureSummary.nonterminalOrders > 0
+          exposureSummary.nonterminalOrders > 0 ||
+          exposureSummary.terminalEntryClaimsDue > 0
         : workflow === 'positions'
           ? exposureSummary.activePositions > 0 ||
             exposureSummary.nonterminalOrders > 0 ||

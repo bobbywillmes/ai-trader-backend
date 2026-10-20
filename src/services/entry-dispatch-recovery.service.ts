@@ -476,9 +476,22 @@ export async function releaseUnsubmittedOrRouteToRecovery(args: {
       }
       return { released: false as const, routed: false as const };
     }
+    const details = error instanceof HttpError && error.details && typeof error.details === 'object'
+      ? error.details as Record<string, unknown>
+      : null;
+    const domainEvidenceConflict = error instanceof HttpError && error.statusCode === 409 && [
+      'ENTRY_EXPOSURE_UNRESOLVED',
+      'INVALID_ENTRY_EXPOSURE_TRANSITION',
+      'ENTRY_EXPOSURE_STALE_TRANSITION',
+    ].includes(String(details?.code ?? ''));
+    if (!domainEvidenceConflict) {
+      // Infrastructure and unknown failures do not prove an ownership contradiction. Preserve the
+      // recoverable state so account enumeration can retry after the bounded interval.
+      logger.warn({ orderIntentId: args.orderIntentId, error }, 'Unsubmitted entry claim release failed without a domain evidence conflict; prior claim state retained for retry.');
+      return { released: false as const, routed: false as const, retryable: true as const };
+    }
     const claim = await prisma.entryExposureClaim.findUnique({ where: { orderIntentId: args.orderIntentId } }).catch(() => null);
     if (claim && !claim.releasedAt) {
-      const details = error instanceof HttpError ? error.details : null;
       await transitionEntryExposureClaim({
         orderIntentId: args.orderIntentId, status: 'UNRESOLVED', eventType: 'UNSUBMITTED_RELEASE_REFUSED',
         evidence: json({ reason: args.reason, source: args.source, refusal: message(error), details, executionAuthority: 'NONE' }),
@@ -549,6 +562,18 @@ export async function recoverDispatchedEntryClaimsForAccount(tradingAccountId: n
       const records = await loadEntryDispatchRecords(orderIntentId);
       if (claim.status !== 'UNRESOLVED') {
         if (!records.present) {
+          const inferred = inferEntryDispatchOutcome(claim.orderIntent?.blockReason ?? null);
+          if (!LOCAL_NON_SEND.has(inferred.classification)) {
+            // No record is not proof that a LIVE/legacy adapter call never started. Preserve the
+            // claim and record a durable, explicit uncertain outcome for remediation/readiness.
+            await recordEntryDispatchOutcome({
+              orderIntentId, classification: inferred.classification, statusCode: inferred.statusCode,
+              source: 'TERMINAL_CLAIM_SWEEP', message: claim.orderIntent?.blockReason ?? 'Terminal intent has no conclusive local non-send evidence.', records,
+            });
+            recorded += 1;
+            retained += 1;
+            continue;
+          }
           const result = await releaseUnsubmittedOrRouteToRecovery({ orderIntentId, reason: 'TERMINAL_INTENT_VERIFIED_NEVER_SUBMITTED', source: 'TERMINAL_CLAIM_SWEEP', dispatchAttempted: false });
           if (result.released) released += 1; else retained += 1;
           continue;
@@ -633,7 +658,11 @@ export async function describeUnreleasedTerminalEntryClaims(args: {
       evidenceConclusiveness: dispatched ? basis.conclusiveness : null,
       lastRecoveryResult: last ? { eventType: last.eventType, at: last.createdAt, blockers: ((last.evidenceJson ?? {}) as Record<string, unknown>).blockers ?? null } : null,
       lastDiagnosedAt: claim.lastDiagnosedAt,
-      systemRecovery: dispatched || PRE_DISPATCH_CLAIM_STATUSES.includes(claim.status) ? 'SWEPT' : 'NOT_APPLICABLE',
+      systemRecovery: last
+        ? 'PROCESSED'
+        : dispatched || PRE_DISPATCH_CLAIM_STATUSES.includes(claim.status) || claim.status === 'UNRESOLVED'
+          ? 'ELIGIBLE_OR_WAITING'
+          : 'NOT_APPLICABLE',
       operatorRemediation,
       blockerReason,
     };

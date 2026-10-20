@@ -394,14 +394,17 @@ export async function releaseUnsubmittedEntryExposureClaim(args: {
   db?: Db;
 }) {
   const db = args.db ?? prisma;
-  const claim = await db.entryExposureClaim.findUnique({ where: { orderIntentId: args.orderIntentId } });
+  const claim = await db.entryExposureClaim.findUnique({
+    where: { orderIntentId: args.orderIntentId },
+    include: { orderIntent: { select: { blockReason: true } } },
+  });
   if (!claim || claim.releasedAt) return claim;
   if (!['ENTRY_PENDING', 'ENTRY_SUBMITTING', 'ADMISSION_BLOCKED'].includes(claim.status)) {
     throw conflict('ENTRY_EXPOSURE_UNRESOLVED', 'A broker-exposed claim cannot be released by the admission path.', {
       orderIntentId: args.orderIntentId, claimId: claim.id, claimStatus: claim.status,
     });
   }
-  const [brokerOrders, brokerActivities, brokerDispatchEvidence, dispatchConsumptions, unenforcedDispatches, position] = await Promise.all([
+  const [brokerOrders, brokerActivities, brokerDispatchEvidence, dispatchConsumptions, unenforcedDispatches, position, deliveryEvents] = await Promise.all([
     db.brokerOrder.count({ where: { orderIntentId: args.orderIntentId } }),
     db.brokerActivity.count({ where: { orderIntentId: args.orderIntentId } }),
     db.orderIntentBrokerOpportunityEvent.count({
@@ -418,11 +421,32 @@ export async function releaseUnsubmittedEntryExposureClaim(args: {
     claim.trackedPositionId
       ? db.trackedPosition.findUnique({ where: { id: claim.trackedPositionId }, select: { status: true } })
       : null,
+    db.entryExposureClaimEvent.findMany({
+      where: { claimId: claim.id, eventType: { in: ['DISPATCH_OUTCOME_RECORDED', 'BROKER_DELIVERY_UNCERTAIN'] } },
+      select: { eventType: true, evidenceJson: true },
+      orderBy: { id: 'asc' },
+    }),
   ]);
-  if (brokerOrders > 0 || brokerActivities > 0 || brokerDispatchEvidence > 0 || dispatchConsumptions > 0 || unenforcedDispatches > 0 || (position && position.status !== 'closed')) {
+  const blockReasonClassification = claim.orderIntent?.blockReason?.match(
+    /BROKER_WRITE_DELIVERY:(NOT_SENT_RETRYABLE|NOT_SENT_BLOCKED|BROKER_REJECTED|DELIVERY_UNCERTAIN)/
+  )?.[1] ?? null;
+  const recordedClassifications = deliveryEvents.map((event) => {
+    if (event.eventType === 'BROKER_DELIVERY_UNCERTAIN') return 'DELIVERY_UNCERTAIN';
+    const evidence = (event.evidenceJson ?? {}) as Record<string, unknown>;
+    return typeof evidence.classification === 'string' ? evidence.classification : 'DISPATCH_OUTCOME_UNKNOWN';
+  });
+  const ambiguousDeliveryEvidence =
+    blockReasonClassification === 'BROKER_REJECTED' ||
+    blockReasonClassification === 'DELIVERY_UNCERTAIN' ||
+    recordedClassifications.some((classification) => ![
+      'NOT_SENT_LOCAL_BLOCKED',
+      'NOT_SENT_LOCAL_RETRYABLE',
+      'NOT_SENT_DISPATCH_RECORD_ACK_LOST',
+    ].includes(classification));
+  if (brokerOrders > 0 || brokerActivities > 0 || brokerDispatchEvidence > 0 || dispatchConsumptions > 0 || unenforcedDispatches > 0 || ambiguousDeliveryEvidence || (position && position.status !== 'closed')) {
     throw conflict('ENTRY_EXPOSURE_UNRESOLVED', 'Claim has broker or position evidence and cannot be released as unsubmitted.', {
       orderIntentId: args.orderIntentId, claimId: claim.id, brokerOrders, brokerActivities, brokerDispatchEvidence, dispatchConsumptions, unenforcedDispatches,
-      trackedPositionStatus: position?.status ?? null,
+      trackedPositionStatus: position?.status ?? null, blockReasonClassification, recordedClassifications,
     });
   }
   const now = new Date();

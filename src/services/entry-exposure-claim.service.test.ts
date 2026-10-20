@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { acquireEntryExposureClaim, attachEntryExposureClaimToPosition, transitionEntryExposureClaim } from './entry-exposure-claim.service.js';
+import { acquireEntryExposureClaim, attachEntryExposureClaimToPosition, releaseUnsubmittedEntryExposureClaim, transitionEntryExposureClaim } from './entry-exposure-claim.service.js';
 
 function tx(overrides: Record<string, unknown> = {}) {
   return {
@@ -20,6 +20,34 @@ function tx(overrides: Record<string, unknown> = {}) {
 }
 
 describe('entry exposure admission claim', () => {
+  it.each([
+    'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:timeout after fetch',
+    'BROKER_WRITE_DELIVERY:BROKER_REJECTED:Alpaca status 408',
+    'BROKER_WRITE_DELIVERY:BROKER_REJECTED:Alpaca status 409',
+  ])('shared unsubmitted release boundary rejects ambiguous delivery evidence: %s', async (blockReason) => {
+    const updateMany = vi.fn();
+    const db = {
+      entryExposureClaim: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 91, orderIntentId: 51, trackedPositionId: null, status: 'ENTRY_SUBMITTING', releasedAt: null,
+          orderIntent: { blockReason },
+        }),
+        updateMany,
+      },
+      brokerOrder: { count: vi.fn().mockResolvedValue(0) },
+      brokerActivity: { count: vi.fn().mockResolvedValue(0) },
+      orderIntentBrokerOpportunityEvent: { count: vi.fn().mockResolvedValue(0) },
+      marketPolicyBrokerDispatchConsumption: { count: vi.fn().mockResolvedValue(0) },
+      marketPolicyBrokerUnenforcedDispatch: { count: vi.fn().mockResolvedValue(0) },
+      trackedPosition: { findUnique: vi.fn() },
+      entryExposureClaimEvent: { findMany: vi.fn().mockResolvedValue([]), create: vi.fn() },
+    } as never;
+
+    await expect(releaseUnsubmittedEntryExposureClaim({ orderIntentId: 51, reason: 'UNSAFE', db }))
+      .rejects.toMatchObject({ statusCode: 409, details: expect.objectContaining({ code: 'ENTRY_EXPOSURE_UNRESOLVED' }) });
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
   it('creates the intent and claim under the same transaction owner', async () => {
     const db = tx();
     const createIntent = vi.fn().mockResolvedValue({ id: 51 });

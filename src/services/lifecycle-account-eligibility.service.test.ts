@@ -29,6 +29,7 @@ function account(overrides: Record<string, unknown> = {}) {
       brokerOrders: 0,
       trackedPositions: 0,
       brokerActivities: 0,
+      entryExposureClaims: 0,
     },
     ...overrides,
   };
@@ -194,6 +195,26 @@ describe('lifecycle account eligibility', () => {
       eligible: false,
       reason: 'credentials_unavailable_with_exposure',
       exposureSummary: { pendingIntents: 1 },
+    });
+  });
+
+  it('enumerates submitted-order recovery when the only work is a due terminal entry claim', async () => {
+    mocks.accountFindMany.mockResolvedValue([account({
+      _count: {
+        orderIntents: 0,
+        brokerOrders: 0,
+        trackedPositions: 0,
+        brokerActivities: 0,
+        entryExposureClaims: 1,
+      },
+    })]);
+
+    const result = await enumerateLifecycleAccounts('submitted_orders');
+
+    expect(result[0]).toMatchObject({
+      eligible: true,
+      reason: 'usable_credentials_with_work',
+      exposureSummary: { terminalEntryClaimsDue: 1, hasLifecycleWork: true },
     });
   });
 });

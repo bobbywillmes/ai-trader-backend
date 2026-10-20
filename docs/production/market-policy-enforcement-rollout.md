@@ -58,6 +58,8 @@ Architecture: `docs/architecture/market-policy-pre-intent-enforcement.md` and
    - `DELIVERY_UNCERTAIN` / `DISPATCH_IN_PROGRESS_OR_UNCERTAIN`: these stay in the
      existing recovery pathway. Resolve them through stable-ID recovery or the claim
      remediation workflow, never by deleting intents or claims.
+     This includes LIVE and legacy intents with no durable dispatch row: missing rows,
+     repeated lookup absence, HTTP 408/409 and elapsed time never authorize release.
    - `BROKER_ORDER_DELIVERED`: managed normally. No action is needed, and positions
      never need to be liquidated to activate enforcement.
 6. **Complete authorization and lapse review:** for every `unresolvedLapses` entry
@@ -69,6 +71,9 @@ Architecture: `docs/architecture/market-policy-pre-intent-enforcement.md` and
      are still held, including consumed dispatches. Review them with
      `npm run entry-exposure:readiness` (`terminalIntentsWithUnreleasedClaims`) and the
      remediation preview.
+     `systemRecovery=PROCESSED` means recovery evidence was actually recorded;
+     `ELIGIBLE_OR_WAITING` means the claim is due or waiting for its bounded retry, not
+     that a sweep completed.
 7. **Confirm the broker-time guard and monitoring are operational.** Watch
    `SystemEvent` types `MARKET_POLICY_BROKER_DISPATCH_REFUSED` (WARNING),
    `MARKET_POLICY_LEGACY_ENTRY_QUARANTINED` (WARNING),

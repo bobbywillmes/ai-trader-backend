@@ -1149,17 +1149,46 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
       expect(posts('unc-1')).toBe(1);
     });
 
-    it('treats a non-definitive 4xx after consumption as delivery-uncertain', async () => {
+    it.each([408, 409])('treats HTTP %i after consumption as delivery-uncertain', async (statusCode) => {
       const acct = await freshAccount('H7B');
       const { errors, recovery } = await services();
-      const fixture = await enforced('NDF', mainStrategyId, acct);
-      const intentId = await admitted(fixture, 'ndf-1');
-      harness.submitError = async () => new errors.BrokerWriteDeliveryError({ classification: 'BROKER_REJECTED', message: 'Alpaca explicitly rejected broker write with status 408.', statusCode: 408 });
+      const symbol = statusCode === 408 ? 'N48' : 'N49';
+      const clientOrderId = `ndf-${statusCode}`;
+      const fixture = await enforced(symbol, mainStrategyId, acct);
+      const intentId = await admitted(fixture, clientOrderId);
+      harness.submitError = async () => new errors.BrokerWriteDeliveryError({ classification: 'BROKER_REJECTED', message: `Alpaca explicitly rejected broker write with status ${statusCode}.`, statusCode });
       await dispatch(acct);
       harness.submitError = null;
       expect(await recovery.recoverDispatchedEntryClaimsForAccount(acct, later(3_600_000))).toMatchObject({ released: 0 });
       expect((await claimEvents(intentId, 'DISPATCH_RECOVERY_RELEASE_BLOCKED')).at(-1)!.evidenceJson).toMatchObject({ blockers: ['BROKER_REJECTION_NOT_DEFINITIVE'], conclusiveness: 'AMBIGUOUS_ABSENCE' });
       expect(await intentState(intentId)).toMatchObject({ claimStatus: 'UNRESOLVED', claimReleased: false });
+    });
+
+    it('enumerates an idle account for terminal-claim recovery and retries a transient release failure', async () => {
+      const acct = await freshAccount('IDLE');
+      await db.query(`INSERT INTO "TradingAccountCredential" ("tradingAccountId","authType",status,"createdAt","updatedAt") VALUES ($1,'API_KEY','ACTIVE',now(),now())`, [acct]);
+      const fixture = await enforced('IDL', mainStrategyId, acct);
+      const intentId = await admitted(fixture, 'idle-recovery-1');
+      await db.query(`UPDATE "OrderIntent" SET status='failed', "blockReason"='BROKER_WRITE_DELIVERY:NOT_SENT_BLOCKED:adapter rejected before fetch' WHERE id=$1`, [intentId]);
+      const { prisma } = await import('../prisma.js');
+      const originalUpdateMany = prisma.entryExposureClaim.updateMany.bind(prisma.entryExposureClaim);
+      const updateSpy = vi.spyOn(prisma.entryExposureClaim, 'updateMany').mockRejectedValueOnce(new Error('injected transient pool timeout'));
+      const { worker } = await services();
+
+      const first = await worker.recoverStaleSubmittingIntents();
+      expect(first.results).toEqual(expect.arrayContaining([expect.objectContaining({
+        account: expect.objectContaining({ tradingAccountId: acct, exposureSummary: expect.objectContaining({ terminalEntryClaimsDue: 1 }) }),
+        outcome: 'PROCESSED',
+      })]));
+      expect(await intentState(intentId)).toMatchObject({ claimStatus: 'ENTRY_PENDING', claimReleased: false });
+
+      updateSpy.mockRestore();
+      // Keep the explicit binding alive so this test catches accidental replacement with a mock.
+      expect(typeof originalUpdateMany).toBe('function');
+      const second = await worker.recoverStaleSubmittingIntents();
+      expect(second.results).toEqual(expect.arrayContaining([expect.objectContaining({ account: expect.objectContaining({ tradingAccountId: acct }), outcome: 'PROCESSED' })]));
+      expect(await intentState(intentId)).toMatchObject({ claimStatus: 'RELEASED', claimReleased: true });
+      expect(posts('idle-recovery-1')).toBe(0);
     });
 
     // HIGH-1 (8, 10): crash between consumption and the adapter call.

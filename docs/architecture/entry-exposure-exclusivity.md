@@ -132,8 +132,11 @@ before any dispatch, so it is a definite non-send. The claim is released only th
 authorization (`MarketPolicyBrokerDispatchConsumption`) and a final un-enforced dispatch
 authorization (`MarketPolicyBrokerUnenforcedDispatch`) as broker evidence. If it refuses,
 the claim becomes `UNRESOLVED` with an `UNSUBMITTED_RELEASE_REFUSED` event; a refusal is
-never swallowed. Failures before the lookup completes keep the existing uncertainty
-handling.
+never swallowed. The shared boundary also rejects uncertain, broker-rejected, unknown
+or contradictory delivery evidence when no durable dispatch row exists; terminal
+status and missing rows are not proof of non-delivery. Transient database failures keep
+the prior recoverable state for a bounded scheduler retry. Failures before the lookup
+completes keep the existing uncertainty handling.
 
 A failure after a dispatch record committed (a rejection, a local adapter guard, a lost
 record acknowledgement, uncertain delivery, or a crash before the adapter) records an

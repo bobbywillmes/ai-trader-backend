@@ -71,10 +71,14 @@ and count as healthy domain outcomes. Technical guard failures set `failed` with
 same prefix and count as failures for account health. In both cases the existing
 `releaseUnsubmittedEntryExposureClaim` checks decide whether the claim is released,
 and those checks also treat a dispatch consumption or an un-enforced dispatch record as
-broker evidence. If they refuse, the claim moves to `UNRESOLVED` with an
+broker evidence. The shared boundary also reads the intent delivery classification and
+claim outcome events: `BROKER_REJECTED`, `DELIVERY_UNCERTAIN`, or an unknown outcome
+cannot be released merely because no durable dispatch row exists. If a genuine domain
+evidence conflict refuses release, the claim moves to `UNRESOLVED` with an
 `UNSUBMITTED_RELEASE_REFUSED` event and a system event; the refusal is never
-swallowed. A refusal-shaped error in any other phase, or any unclassified exception,
-is never treated as a definite non-send.
+swallowed. A transient database/pool failure or unknown infrastructure failure keeps
+the prior recoverable claim state for retry. A refusal-shaped error in any other phase,
+or any unclassified exception, is never treated as a definite non-send.
 
 `EntryDispatchRecordedNotSentError` is the one `NOT_DISPATCHED` failure that leaves a
 dispatch record behind: the consumption or un-enforced authorization committed, but its
@@ -356,8 +360,10 @@ time-based expiry of ownership.
 account lifecycle-mutation lock. Each tick it takes at most three claims of terminal
 intents (oldest `lastDiagnosedAt` first), each at most once per 60 seconds:
 
-- `ENTRY_PENDING` or `ENTRY_SUBMITTING` claims without any dispatch record go through
-  the never-submitted release.
+- `ENTRY_PENDING` or `ENTRY_SUBMITTING` claims without a dispatch record go through the
+  never-submitted release only when recorded evidence explicitly proves a local
+  pre-dispatch non-send. Missing rows, terminal status, lookup 404s and elapsed time are
+  never proof by themselves.
 - Claims with a dispatch record but no recorded outcome (claims from before this
   correction) get an outcome inferred from the intent's recorded block reason.
 - `UNRESOLVED` claims with a dispatch record get an evidence-based release attempt.
@@ -367,6 +373,12 @@ others. A blocked attempt appends a `DISPATCH_RECOVERY_RELEASE_BLOCKED` diagnost
 when the evidence changed. Stale recovery itself recognizes a dispatch record before it
 fails a `submitting` intent: a single lookup miss records `DISPATCH_OUTCOME_UNKNOWN` and
 retains the claim instead of releasing it as never submitted.
+
+The `submitted_orders` account enumerator independently counts due terminal claims, so
+an otherwise idle account remains eligible. Credential checks, the lifecycle-mutation
+lock, the three-claim batch, 60-second retry interval and oldest-first ordering remain
+unchanged. Readiness reports `systemRecovery=PROCESSED` only after recovery evidence
+exists; an unprocessed due or waiting claim is `ELIGIBLE_OR_WAITING`, not `SWEPT`.
 
 ## 6. Lock ordering
 
