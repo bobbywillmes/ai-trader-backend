@@ -5,8 +5,7 @@ import { getRuntimeTradingConfig } from './config.service.js';
 import { allowedCorsOrigins } from '../config/cors.js';
 import { isIsolatedManualAcceptanceEnvironment } from './manual-acceptance-environment.js';
 import { assessPaperBrokerWriteAuthority } from './paper-broker-write-authority.service.js';
-import { OPERATIONAL_ATTENTION_CODES, OPERATIONAL_ATTENTION_SOURCES, openOrObserveOperationalAttention } from './operational-attention.service.js';
-import { OperationalAttentionResolutionPolicy, SystemEventSeverity } from '@prisma/client';
+import { reconcilePaperBrokerWriteAuthorityAttention } from './paper-broker-write-authority-attention.service.js';
 
 type StartupCheckStatus = 'pass' | 'warn' | 'fail';
 
@@ -166,25 +165,16 @@ export async function runStartupChecks(): Promise<StartupCheckReport> {
     );
   }
 
-  if (env.NODE_ENV === 'production' && env.PAPER_BROKER_WRITE_DEPLOYMENT_ROLE === 'PAPER_EXECUTOR') {
+  if (env.NODE_ENV === 'production') {
     try {
       const authority = await assessPaperBrokerWriteAuthority();
-      const blocked = authority.accounts.filter(item => item.openLifecycleExposure && item.outcome !== 'AUTHORIZED');
-      checks.push(blocked.length === 0
+      const blocked = authority.accounts.filter(item => (item.intendedExecutor === true || item.openLifecycleExposure !== false)
+        && item.outcome !== 'AUTHORIZED' && item.outcome !== 'INTENTIONAL_OBSERVATION_ONLY');
+      checks.push(authority.ready && blocked.length === 0
         ? pass('paper_executor_coverage', 'All exposed production PAPER accounts have verified executor authority.')
-        : warn('paper_executor_coverage', `${blocked.length} exposed PAPER account(s) lack verified executor authority. Reads remain available.`, { affectedTradingAccountIds: blocked.map(item => item.tradingAccountId) }));
-      for (const item of blocked) await openOrObserveOperationalAttention({
-        tradingAccountId: item.tradingAccountId,
-        code: OPERATIONAL_ATTENTION_CODES.PAPER_EXECUTOR_AUTHORITY_MISMATCH,
-        source: OPERATIONAL_ATTENTION_SOURCES.SYSTEM,
-        severity: SystemEventSeverity.ERROR,
-        title: 'PAPER executor authority mismatch',
-        message: 'An exposed PAPER account lacks verified deployment write authority.',
-        details: { outcome: item.outcome, reason: item.reason, openLifecycleExposure: true },
-        fingerprint: `paper-executor-authority:${item.tradingAccountId}`,
-        materialFingerprint: `paper-executor-authority:${item.tradingAccountId}:${item.outcome}`,
-        resolutionPolicy: OperationalAttentionResolutionPolicy.AUTHORITATIVE_ONLY,
-      });
+        : warn('paper_executor_coverage', 'Production PAPER executor readiness is NOT_READY; reads remain available.', {
+          affectedTradingAccountIds: blocked.map(item => item.tradingAccountId), unresolved: authority.unresolved }));
+      for (const item of authority.accounts) await reconcilePaperBrokerWriteAuthorityAttention(item);
     } catch (error) {
       checks.push(warn('paper_executor_coverage', 'PAPER executor coverage could not be verified; reads remain available.', {
         error: error instanceof Error ? error.message : 'Unknown authority lookup error.',

@@ -6,9 +6,10 @@ afterEach(() => {
   vi.resetModules();
 });
 
-async function loadWith(role: string, authorizations: string) {
+async function loadWith(role: string, authorizations: string, ownership = '[]') {
   vi.stubEnv('PAPER_BROKER_WRITE_DEPLOYMENT_ROLE', role);
   vi.stubEnv('PAPER_BROKER_WRITE_AUTHORIZATIONS', authorizations);
+  vi.stubEnv('PAPER_BROKER_WRITE_OWNERSHIP', ownership);
   return import('./paper-broker-write-authority.service.js');
 }
 
@@ -37,5 +38,15 @@ describe('PAPER broker-write deployment authority', () => {
     expect(() => policy.authorizePaperBrokerWrite(config('bobby-paper', fingerprintA))).toThrow('not authorized');
     expect(() => policy.authorizePaperBrokerWrite(config('validation-paper', fingerprintB))).toThrow('does not match its stored fingerprint');
     expect(() => policy.authorizePaperBrokerWrite(config(null, fingerprintA))).toThrow('incomplete');
+  });
+
+  it('denies a stored fingerprint that is internally consistent but differs from the allowlist', async () => {
+    const otherKey = 'internally-consistent-rotated-key';
+    const otherFingerprint = `sha256:${crypto.createHash('sha256').update(otherKey).digest('hex')}`;
+    const policy = await loadWith('PAPER_EXECUTOR', JSON.stringify([
+      { brokerAccountId: 'validation-paper', keyFingerprint: fingerprintA },
+    ]));
+    expect(() => policy.authorizePaperBrokerWrite({ ...config('validation-paper', otherFingerprint), apiKey: otherKey }))
+      .toThrow('not authorized');
   });
 });

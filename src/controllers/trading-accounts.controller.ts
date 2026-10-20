@@ -104,7 +104,11 @@ import {
 
 export async function getPaperBrokerWriteAuthorityReadinessController(req: Request, res: Response, next: NextFunction) {
   try { res.json(await assessPaperBrokerWriteAuthorityForAccount(Number(req.params.id))); }
-  catch (error) { next(error); }
+  catch (error) {
+    if (error instanceof Error && error.message === 'PAPER trading account was not found.') return next(new HttpError(404, error.message));
+    if (error instanceof Error && error.message === 'Trading account is not a PAPER account.') return next(new HttpError(400, error.message));
+    next(error);
+  }
 }
 import {
   getLiveWriteApprovalState,

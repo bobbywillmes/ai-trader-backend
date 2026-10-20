@@ -1,5 +1,5 @@
 import { prisma } from '../db/prisma.js';
-import { assessPaperBrokerWriteAuthority } from './paper-broker-write-authority.service.js';
+import { getPaperBrokerWriteAuthorityStatus } from './paper-broker-write-authority.service.js';
 
 export type HealthStatus = {
   ok: boolean;
@@ -36,13 +36,10 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       ok: databaseOk,
       message: databaseMessage,
     },
-    paperBrokerWriteAuthority: await (async () => {
-      try {
-        const result = await assessPaperBrokerWriteAuthority();
-        const required = result.accounts.filter(item => item.intendedExecutor || (process.env.NODE_ENV === 'production' && item.openLifecycleExposure));
-        return { configurationValid: result.configuration.ready, verifiedExecutorCoverage: result.ready ? 'READY' as const : 'NOT_READY' as const,
-          requiredExecutorCount: required.length, authorizedExecutorCount: required.filter(item => item.outcome === 'AUTHORIZED').length };
-      } catch { return { configurationValid: false, verifiedExecutorCoverage: 'UNKNOWN' as const, requiredExecutorCount: 0, authorizedExecutorCount: 0 }; }
+    paperBrokerWriteAuthority: (() => {
+      const configuration = getPaperBrokerWriteAuthorityStatus();
+      return { configurationValid: configuration.configurationValid, verifiedExecutorCoverage: 'UNKNOWN' as const,
+        requiredExecutorCount: configuration.expectedExecutorCount, authorizedExecutorCount: 0 };
     })(),
     timestamp: new Date().toISOString(),
   };

@@ -19,7 +19,7 @@ import { getLiveWriteApprovalState } from "./live-write-approval.service.js";
 import { createSystemEvent } from "./system-event.service.js";
 import { resolveOperationalAttentionAuthoritatively } from "./operational-attention.service.js";
 import { assessPaperBrokerWriteAuthorityForAccount } from "./paper-broker-write-authority.service.js";
-import { submitVerifiedCorrectiveExitWithinAccountLock } from "./verified-exit-submission.service.js";
+import { submitVerifiedCorrectiveExitWithinAccountLock, VerifiedExitPreSubmissionError } from "./verified-exit-submission.service.js";
 import {
   ACCOUNT_WORKFLOW_LOCK_FAMILIES,
   withTradingAccountWorkflowLock,
@@ -35,7 +35,8 @@ const ACTIVE_CODES = new Set([
 const PREVIEW_TTL_MS = 30_000;
 
 export function correctiveCloseFailureDisposition(error: unknown) {
-  const classification = error instanceof BrokerWriteDeliveryError ? error.classification : "DELIVERY_UNCERTAIN" as const;
+  const classification = error instanceof BrokerWriteDeliveryError ? error.classification
+    : error instanceof VerifiedExitPreSubmissionError ? error.deliveryClassification : "DELIVERY_UNCERTAIN" as const;
   const definitelyNotSent = classification === "NOT_SENT_BLOCKED" || classification === "NOT_SENT_RETRYABLE";
   return {
     classification,

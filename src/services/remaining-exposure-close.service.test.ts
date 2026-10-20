@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { correctiveCloseFailureDisposition, evaluateCorrectiveRemainderEquation, summarizeAttributedFillQuantities } from "./remaining-exposure-close.service.js";
 import { BrokerWriteDeliveryError } from "../errors/broker-write-delivery-error.js";
+import { HttpError } from "../errors/http-error.js";
+import { VerifiedExitPreSubmissionError } from "./verified-exit-submission.service.js";
 
 describe("corrective remainder delivery classification", () => {
   it.each([
@@ -12,6 +14,13 @@ describe("corrective remainder delivery classification", () => {
     expect(correctiveCloseFailureDisposition(new BrokerWriteDeliveryError({ classification, message: "test" }))).toMatchObject({
       classification, intentStatus, eventType, definitelyNotSent,
     });
+  });
+
+  it("recognizes positive pre-submission proof but leaves generic HTTP errors uncertain", () => {
+    expect(correctiveCloseFailureDisposition(new VerifiedExitPreSubmissionError(409, "blocked", {}, "NOT_SENT_BLOCKED")))
+      .toMatchObject({ classification: "NOT_SENT_BLOCKED", definitelyNotSent: true, intentStatus: "blocked" });
+    expect(correctiveCloseFailureDisposition(new HttpError(409, "generic")))
+      .toMatchObject({ classification: "DELIVERY_UNCERTAIN", definitelyNotSent: false, intentStatus: "submitting" });
   });
 });
 

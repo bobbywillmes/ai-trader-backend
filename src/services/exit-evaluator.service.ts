@@ -20,6 +20,7 @@ import { syncProtectiveOrdersForAccount } from './protective-order-sync.service.
 import { runTradingAccountWorkflow } from './trading-account-workflow-runner.service.js';
 import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from './trading-account-workflow-lock.service.js';
 import { assessPaperBrokerWriteAuthorityForAccount } from './paper-broker-write-authority.service.js';
+import { reconcilePaperBrokerWriteAuthorityAttention } from './paper-broker-write-authority-attention.service.js';
 
 export type ExitEvaluationCounts = {
   positionsEvaluated: number;
@@ -151,6 +152,7 @@ export async function evaluateExitsForAccount(
       return { counts, failures };
     }
     if (authority.outcome !== 'AUTHORIZED') {
+      await reconcilePaperBrokerWriteAuthorityAttention(authority);
       throw new Error(`PAPER exit executor authority is ${authority.outcome}: ${authority.reason}`);
     }
   }

@@ -47,4 +47,13 @@ describe('PAPER broker-write environment validation', () => {
       { brokerAccountId: 'one', keyFingerprint: fingerprint }, { brokerAccountId: 'two', keyFingerprint: fingerprint },
     ]) }).success).toBe(false);
   });
+
+  it('requires exact, unique ownership declarations for expected executors', () => {
+    const executor = JSON.stringify([{ tradingAccountId: 7, role: 'EXECUTOR', expectedBrokerAccountId: 'paper-7' }]);
+    expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_DEPLOYMENT_ROLE: 'PAPER_EXECUTOR', PAPER_BROKER_WRITE_AUTHORIZATIONS: authorization, PAPER_BROKER_WRITE_OWNERSHIP: executor }).success).toBe(true);
+    expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_OWNERSHIP: JSON.stringify([{ tradingAccountId: 7, role: 'EXECUTOR' }]) }).success).toBe(false);
+    expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_OWNERSHIP: JSON.stringify([
+      { tradingAccountId: 7, role: 'OBSERVER' }, { tradingAccountId: 7, role: 'EXECUTOR', expectedBrokerAccountId: 'paper-7' },
+    ]) }).success).toBe(false);
+  });
 });

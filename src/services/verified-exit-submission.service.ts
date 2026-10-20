@@ -8,6 +8,16 @@ import { env } from "../config/env.js";
 import { prisma } from "../db/prisma.js";
 import { HttpError } from "../errors/http-error.js";
 import { BrokerWriteDeliveryError } from "../errors/broker-write-delivery-error.js";
+
+export class VerifiedExitPreSubmissionError extends HttpError {
+  readonly deliveryClassification: "NOT_SENT_BLOCKED" | "NOT_SENT_RETRYABLE";
+  constructor(statusCode: 409 | 503, message: string, details: unknown,
+    deliveryClassification: "NOT_SENT_BLOCKED" | "NOT_SENT_RETRYABLE") {
+    super(statusCode, message, details);
+    this.name = "VerifiedExitPreSubmissionError";
+    this.deliveryClassification = deliveryClassification;
+  }
+}
 import type { AlpacaOrder } from "../integrations/alpaca/alpaca.types.js";
 import {
   getAlpacaOrderByClientOrderId,
@@ -253,13 +263,14 @@ async function block(args: {
     } catch {
       // The primary pre-submit block remains authoritative even if diagnostic persistence also fails.
     }
-    throw new HttpError(
+    throw new VerifiedExitPreSubmissionError(
       503,
       `${args.context.symbol.toUpperCase()} close was safely blocked before broker submission, but operational attention could not be refreshed. Retry after the internal issue is corrected. No sell was submitted.`,
       { ...evidence, attentionPersistenceFailed: true },
+      "NOT_SENT_RETRYABLE",
     );
   }
-  throw new HttpError(409, args.message, evidence);
+  throw new VerifiedExitPreSubmissionError(409, args.message, evidence, "NOT_SENT_BLOCKED");
 }
 
 async function executeVerifiedExit(
