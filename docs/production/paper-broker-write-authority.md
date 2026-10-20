@@ -56,7 +56,7 @@ npm run paper-broker-write:preflight -- --mode production --expected-trading-acc
 
 Use `development-validation` only for the validation executor. The default is
 `INFORMATIONAL_ONLY` and never substitutes for GO. The CLI compares the embedded
-the embedded image revision, `current_database()`, `host(inet_server_addr())`,
+image revision, `current_database()`, `host(inet_server_addr())`,
 `inet_server_port()`, and `current_user`; mismatch errors name only the field.
 Unix-socket connections can return null address/port and cannot satisfy a TCP
 assertion. These properties do not cryptographically attest the database host.
@@ -83,9 +83,40 @@ the next. The migration inventory and compatibility analysis are in
 `docs/production/phase-3c4-release-readiness.md`.
 
 1. **Read-only preparation.** Capture the running backend's container ID and immutable
-   image ID as `PREV_IMAGE_ID`. Capture `REVIEWED_SHA` and the exact reviewed
-   `IMAGE_ID`; require its OCI revision label and `/app/.image-revision` to match.
-   Using `IMAGE_ID`, run only `prisma migrate status` against production and inspect
+   image ID as `PREV_IMAGE_ID`. Check out the reviewed commit, set `REVIEWED_SHA` to
+   its full Git SHA, and require `test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"`.
+   Build once, capture the immutable image ID, and verify both forms of revision
+   evidence before any command uses `IMAGE_ID`:
+
+   ```text
+   docker build --build-arg IMAGE_REVISION="$REVIEWED_SHA" -t "ai-trader-backend:review-$REVIEWED_SHA" .
+   IMAGE_ID=$(docker image inspect "ai-trader-backend:review-$REVIEWED_SHA" --format '{{.Id}}')
+   test -n "$IMAGE_ID"
+   test "$(docker image inspect "$IMAGE_ID" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$REVIEWED_SHA"
+   test "$(docker run --rm --entrypoint sh "$IMAGE_ID" -c 'cat /app/.image-revision')" = "$REVIEWED_SHA"
+   ```
+
+   Record `REVIEWED_SHA`, `IMAGE_ID`, `PREV_IMAGE_ID`, and the running container ID
+   in the sanitized release record. All later gates must use this exact `IMAGE_ID`;
+   never rebuild or resolve the mutable review tag again. Create a mode-600 temporary
+   migration-status env file outside the Git worktree, containing only the approved
+   production `DATABASE_URL`:
+
+   ```text
+   umask 077
+   MIGRATION_STATUS_ENV=$(mktemp /tmp/ai-trader-migration-status.XXXXXX)
+   read -rsp 'DATABASE_URL: ' MIGRATION_STATUS_DATABASE_URL
+   printf 'DATABASE_URL=%s\n' "$MIGRATION_STATUS_DATABASE_URL" > "$MIGRATION_STATUS_ENV"
+   unset MIGRATION_STATUS_DATABASE_URL
+   test "$(stat -c %a "$MIGRATION_STATUS_ENV")" = 600
+   docker run --rm --network <production-compose-network> --env-file "$MIGRATION_STATUS_ENV" --entrypoint npx "$IMAGE_ID" prisma migrate status
+   rm -f -- "$MIGRATION_STATUS_ENV"
+   test ! -e "$MIGRATION_STATUS_ENV"
+   unset MIGRATION_STATUS_ENV
+   ```
+
+   Use the Compose-equivalent URL targeting host `postgres`; do not print the env file
+   or `DATABASE_URL`. Run only `prisma migrate status` against production and inspect
    the asserted database identity. Do not run `migrate deploy`. Save a restricted
    rollback copy of the current `.env`, its checksum, mode, and association with
    `PREV_IMAGE_ID`. Run `umask 077`, copy `.env` to `.env.next`, keep
@@ -93,25 +124,45 @@ the next. The migration inventory and compatibility analysis are in
    cardinality, and permissions. Remove any `IMAGE_REVISION` assignment from both
    files; it is not operator configuration. Do not commit either restricted file.
 
-2. **Schema compatibility acceptance.** Check out the reviewed commit and require
-   `test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"`. Then:
+   Require status exit zero, verify removal of the temporary file, and confirm that
+   the production backend container and image did not change.
 
-   ```text
-   docker build --build-arg IMAGE_REVISION="$REVIEWED_SHA" -t "ai-trader-backend:review-$REVIEWED_SHA" .
-   IMAGE_ID=$(docker image inspect "ai-trader-backend:review-$REVIEWED_SHA" --format '{{.Id}}')
-   docker image inspect "$IMAGE_ID" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
-   ```
-
-   Require the full label and `/app/.image-revision` to match. Record the immutable ID
-   (or a registry manifest digest verified after pull). A mutable tag is not evidence.
-   Execute the isolated migration and old-code compatibility procedure in the release-
-   readiness document. Production is untouched in this gate.
+2. **Schema compatibility acceptance.** Reverify the recorded `IMAGE_ID` revision
+   label and `/app/.image-revision`, without rebuilding. Execute the isolated migration
+   and old-code compatibility procedure in the release-readiness document with this
+   exact image. Its database, credentials, environment file, and network must be
+   isolated from production and must have no route to a broker. Production is
+   untouched in this gate.
 
 3. **Migration approval.** Require the backup, quiet-window, lock, rollback, operator-
    approval, exact-image execution, and post-migration evidence specified in the
    release-readiness document. Run migration status/deploy from `IMAGE_ID`, never a
-   mutable tag or host checkout. This gate changes only schema; it does not deploy the
-   application or grant PAPER execution. Stop on any nonzero or partial result.
+   mutable tag or host checkout, using the separately prepared restricted production
+   migration env file and production Compose network. This is the only gate that may
+   run production `prisma migrate deploy`; preparation and preflight must not. This
+   gate changes only schema; it does not deploy the application or grant PAPER
+   execution. Stop on any nonzero or partial result.
+
+   Prepare the restricted input, run the approved migration, and remove the input:
+
+   ```text
+   umask 077
+   MIGRATION_ENV=$(mktemp /tmp/ai-trader-migration.XXXXXX)
+   read -rsp 'DATABASE_URL: ' MIGRATION_DATABASE_URL
+   printf 'DATABASE_URL=%s\n' "$MIGRATION_DATABASE_URL" > "$MIGRATION_ENV"
+   unset MIGRATION_DATABASE_URL
+   test "$(stat -c %a "$MIGRATION_ENV")" = 600
+   docker run --rm --network <production-compose-network> --env-file "$MIGRATION_ENV" --entrypoint npx "$IMAGE_ID" prisma migrate status
+   docker run --rm --network <production-compose-network> --env-file "$MIGRATION_ENV" --entrypoint npx "$IMAGE_ID" prisma migrate deploy
+   docker run --rm --network <production-compose-network> --env-file "$MIGRATION_ENV" --entrypoint npx "$IMAGE_ID" prisma migrate status
+   rm -f -- "$MIGRATION_ENV"
+   test ! -e "$MIGRATION_ENV"
+   unset MIGRATION_ENV
+   ```
+
+   Enter the approved Compose-equivalent production URL targeting host `postgres`.
+   Do not print it or add unrelated credentials. Secured retention requires an
+   explicit exception; otherwise deletion is mandatory.
 
 4. **Final PAPER authority preflight.** Begin only after the seven migrations are
    confirmed present on the actual production schema. Compose supplies `DATABASE_URL` under
@@ -146,17 +197,36 @@ the next. The migration inventory and compatibility analysis are in
 5. **Application deployment.** Requires a separate owner approval after GO. Confirm
    the restricted rollback env copy and `PREV_IMAGE_ID` are still available, then
    atomically replace `.env` with reviewed `.env.next`. Set
-   `AI_TRADER_BACKEND_IMAGE` to the exact preflight-passing `IMAGE_ID`. First save and
-   review the fully resolved Compose output; it must contain that image ID, no backend
-   build, expected network/database settings, and no unexpected service changes:
+   `AI_TRADER_BACKEND_IMAGE` to the exact preflight-passing `IMAGE_ID`. Resolve Compose
+   only into a mode-600 temporary file outside the Git worktree. The resolved file is
+   secret-bearing: never print it, redirect it into the repository, attach it to a
+   ticket, or retain it as an ordinary review artifact.
 
    ```text
-   docker compose -f docker-compose.prod.yml -f docker-compose.prod.image.yml config > compose.reviewed.yml
+   umask 077
+   COMPOSE_REVIEW=$(mktemp /tmp/ai-trader-compose.XXXXXX)
+   docker compose -f docker-compose.prod.yml -f docker-compose.prod.image.yml config --format json > "$COMPOSE_REVIEW"
+   test "$(stat -c %a "$COMPOSE_REVIEW")" = 600
+   test "${COMPOSE_REVIEW#/tmp/}" != "$COMPOSE_REVIEW"
+   # Inspect the restricted file locally without copying or printing its contents.
+   # Verify backend.image == IMAGE_ID, backend.build is absent, the expected database
+   # target/network is selected, and backend dependency behavior is unchanged.
+   # Record only those assertions and non-secret IDs in a sanitized record.
+   rm -f -- "$COMPOSE_REVIEW"
+   test ! -e "$COMPOSE_REVIEW"
+   unset COMPOSE_REVIEW
    docker compose -f docker-compose.prod.yml -f docker-compose.prod.image.yml up -d --no-build --no-deps backend
    docker inspect ai-trader-prod-backend --format '{{.Image}}'
    ```
 
-   The inspected image ID must equal the preflighted `IMAGE_ID`. The override pins
+   `/tmp` must be outside the Git worktree; stop if it is not. If
+   policy requires retention, move the file to an approved encrypted secret store
+   with restricted access and retention instead of keeping it locally. The sanitized
+   record may state the effective backend image ID, absence of `backend.build`,
+   database target, network, dependency result, reviewer, and time, but must contain
+   no environment values, credential-derived checksums, or credentials.
+
+   The inspected running image ID must equal the preflighted `IMAGE_ID`. The override pins
    `backend.image` and removes `build`; `--no-build --no-deps` prevents a silent build
    or dependency recreation during this backend-only deployment. Verify account
    readiness plus Alpaca account, positions, and open orders with GETs. `/health`

@@ -134,6 +134,24 @@ operationally free.
 
 ## Compatibility acceptance
 
+### Reported independent evidence
+
+Hermes independently reported the following results against the reviewed feature
+branch; these were not rerun as part of this documentation correction:
+
+- All seven migrations applied successfully to a populated synthetic main-era
+  database, and existing fixture row counts remained unchanged.
+- Market-policy enforcement remained disabled.
+- Representative lifecycle writes from the old backend succeeded after migration.
+- The old backend's behavioral tests passed. Nine schema-drift tests failed because
+  its intentionally older Prisma schema does not contain the new database objects.
+- The new backend database suite passed: 463 tests passed and 23 were skipped.
+
+This is useful compatibility evidence, but it is not evidence from an actual sanitized
+production-sized database. A production-sized migration rehearsal remains required to
+measure lock acquisition, migration duration, and contention under representative
+table sizes and transactions.
+
 Before production approval, restore a recent sanitized production backup (or create an
 equivalent main-schema fixture) into an isolated PostgreSQL instance with no route to a
 broker. Record the source backup identity and row counts. Using the exact reviewed
@@ -154,6 +172,9 @@ evidence.
 - A tested backup and restore procedure, backup identifier, retention location, and
   restoration owner are recorded before migration.
 - The exact reviewed immutable `IMAGE_ID` contains the seven reviewed migration files.
+- `IMAGE_ID` was built, captured, and revision-verified during the separately approved
+  read-only preparation gate before production migration status was run; every later
+  gate reuses it without rebuilding from a tag.
 - The operator records database identity, migration status, table sizes, active long
   transactions, available capacity, and a bounded quiet maintenance window.
 - The owner separately approves the schema migration. This is not PAPER execution or
@@ -190,9 +211,11 @@ network, or production container.
    against the correctly migrated disposable database and synthetic authorized
    configuration; retain sanitized output.
 4. Set `AI_TRADER_BACKEND_IMAGE` to the immutable ID. Render the throwaway base and
-   image override with `docker compose ... config`; review that `backend.image` is the
-   exact ID, `backend.build` is absent, the database/network/volumes are disposable,
-   and no production resources resolve.
+   image override with `docker compose ... config` into a mode-600 temporary file
+   outside the worktree, following the restricted review and deletion procedure in
+   the production runbook. Review that `backend.image` is the exact ID,
+   `backend.build` is absent, the database/network/volumes are disposable, and no
+   production resources resolve. Retain only sanitized assertions.
 5. Run `docker compose -p <unique-throwaway-name> ... up -d --no-build --no-deps backend`.
    Confirm no build occurs and no dependency is created or changed by that command.
    Inspect the resulting container image ID and compare it byte-for-byte with
