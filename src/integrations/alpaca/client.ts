@@ -90,7 +90,7 @@ export async function alpacaRequestForAccount<T>(
   }
   if (isWrite && config.environment === TradingAccountEnvironment.PAPER) {
     try {
-      authorizePaperBrokerWrite(config);
+      await authorizePaperBrokerWrite(config);
     } catch (error) {
       throw new BrokerWriteDeliveryError({
         classification: 'NOT_SENT_BLOCKED',

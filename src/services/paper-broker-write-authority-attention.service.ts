@@ -53,7 +53,7 @@ export async function reconcilePaperBrokerWriteAuthorityAttention(item: PaperAcc
 }
 
 export async function reconcileAllPaperBrokerWriteAuthorityAttention(
-  assess: () => Promise<{ accounts: PaperAccountAuthorityAssessment[] }> = async () => {
+  assess: () => Promise<{ accounts: PaperAccountAuthorityAssessment[]; unresolved?: string[] }> = async () => {
     const { assessPaperBrokerWriteAuthority } = await import('./paper-broker-write-authority.service.js');
     return assessPaperBrokerWriteAuthority();
   },
@@ -64,5 +64,5 @@ export async function reconcileAllPaperBrokerWriteAuthorityAttention(
     try { await reconcilePaperBrokerWriteAuthorityAttention(item); }
     catch (error) { failures.push({ tradingAccountId: item.tradingAccountId, error: error instanceof Error ? error.message : 'Unknown reconciliation error.' }); }
   }
-  return { assessed: assessment.accounts.length, failures };
+  return { assessed: assessment.accounts.length, failures, assessmentUnresolved: assessment.unresolved ?? [] };
 }

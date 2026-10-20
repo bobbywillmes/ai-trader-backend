@@ -43,6 +43,10 @@ const paperBrokerWriteOwnership = z.object({
     context.addIssue({ code: 'custom', path: ['expectedBrokerAccountId'],
       message: 'An EXECUTOR ownership declaration requires the expected Alpaca account_number.' });
   }
+  if (value.role === 'OBSERVER' && value.expectedBrokerAccountId === undefined) {
+    context.addIssue({ code: 'custom', path: ['expectedBrokerAccountId'],
+      message: 'An OBSERVER ownership declaration requires the expected Alpaca account_number.' });
+  }
 });
 
 const paperBrokerWriteOwnerships = z.preprocess(value => {
@@ -249,6 +253,16 @@ export const envSchema = z.object({
   if (new Set(executorBrokerIds).size !== executorBrokerIds.length) {
     context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_OWNERSHIP'],
       message: 'An Alpaca PAPER account_number may have only one expected executor.' });
+  }
+  const observerBrokerIds = value.PAPER_BROKER_WRITE_OWNERSHIP
+    .filter(item => item.role === 'OBSERVER').map(item => item.expectedBrokerAccountId!);
+  if (new Set(observerBrokerIds).size !== observerBrokerIds.length) {
+    context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_OWNERSHIP'],
+      message: 'An Alpaca PAPER account_number may have only one explicit observer.' });
+  }
+  if (observerBrokerIds.some(id => executorBrokerIds.includes(id))) {
+    context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_OWNERSHIP'],
+      message: 'An Alpaca PAPER account_number cannot be declared as both OBSERVER and EXECUTOR.' });
   }
   const authorizationBrokerIds = value.PAPER_BROKER_WRITE_AUTHORIZATIONS.map(item => item.brokerAccountId);
   const executorBrokerIdSet = new Set(executorBrokerIds);

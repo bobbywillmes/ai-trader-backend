@@ -23,15 +23,29 @@ export function getPaperBrokerWriteAuthorityStatus(): PaperBrokerWriteAuthorityS
       : `${expectedExecutorCount} expected executor(s) and ${configuredIdentityCount} exact authorization(s) configured.` };
 }
 
-export function authorizePaperBrokerWrite(config: AlpacaResolvedConfig): void {
+export async function authorizePaperBrokerWrite(config: AlpacaResolvedConfig): Promise<void> {
   if (env.PAPER_BROKER_WRITE_DEPLOYMENT_ROLE !== 'PAPER_EXECUTOR') throw new Error('PAPER broker writes are blocked because this deployment is OBSERVATION_ONLY.');
   if (!config.brokerAccountId || !config.keyFingerprint) throw new Error('PAPER broker write blocked because verified brokerage identity evidence is incomplete.');
-  const declaration = env.PAPER_BROKER_WRITE_OWNERSHIP.find(item => item.tradingAccountId === config.tradingAccountId);
-  if (!declaration || declaration.role !== 'EXECUTOR') throw new Error('PAPER broker write blocked because the TradingAccount is not declared as an EXECUTOR on this deployment.');
+  const declarations = env.PAPER_BROKER_WRITE_OWNERSHIP.filter(item => item.tradingAccountId === config.tradingAccountId && item.role === 'EXECUTOR');
+  if (declarations.length !== 1) throw new Error('PAPER broker write blocked because the TradingAccount does not have exactly one matching EXECUTOR declaration on this deployment.');
+  const declaration = declarations[0]!;
   if (declaration.expectedBrokerAccountId !== config.brokerAccountId) throw new Error('PAPER broker write blocked because the verified brokerage account does not match the EXECUTOR ownership declaration.');
+  if (env.PAPER_BROKER_WRITE_OWNERSHIP.some(item => item.role === 'OBSERVER' && item.expectedBrokerAccountId === config.brokerAccountId)) {
+    throw new Error('PAPER broker write blocked because the verified brokerage account is explicitly owned by an OBSERVER on this deployment.');
+  }
   if (fingerprintSecret(config.apiKey) !== config.keyFingerprint) throw new Error('PAPER broker write blocked because the decrypted credential does not match its stored fingerprint.');
-  if (!env.PAPER_BROKER_WRITE_AUTHORIZATIONS.some(item => item.brokerAccountId === config.brokerAccountId && item.keyFingerprint === config.keyFingerprint)) {
+  const authorizations = env.PAPER_BROKER_WRITE_AUTHORIZATIONS.filter(item => item.brokerAccountId === config.brokerAccountId && item.keyFingerprint === config.keyFingerprint);
+  if (authorizations.length !== 1) {
     throw new Error('PAPER broker write blocked because the brokerage account and credential identity are not authorized for this deployment.');
+  }
+  let matchingAccounts: Array<{ id: number }>;
+  try {
+    matchingAccounts = await prisma.tradingAccount.findMany({ where: { environment: 'PAPER', brokerAccountId: config.brokerAccountId }, select: { id: true } });
+  } catch {
+    throw new Error('PAPER broker write blocked because duplicate brokerage identity could not be checked.');
+  }
+  if (matchingAccounts.length !== 1 || matchingAccounts[0]?.id !== config.tradingAccountId) {
+    throw new Error('PAPER broker write blocked because the brokerage account identity is duplicated or assigned to another local PAPER account.');
   }
 }
 
@@ -103,8 +117,8 @@ export async function assessPaperBrokerWriteAuthorityForAccount(tradingAccountId
 export type PaperBrokerWriteAuthorityAssessment = { configuration: PaperBrokerWriteAuthorityStatus; ready: boolean; unresolved: string[]; accounts: PaperAccountAuthorityAssessment[] };
 
 export async function assessPaperBrokerWriteAuthority(): Promise<PaperBrokerWriteAuthorityAssessment> {
-  let accounts: Array<{ id: number }>;
-  try { accounts = await prisma.tradingAccount.findMany({ where: { environment: 'PAPER' }, select: { id: true }, orderBy: { id: 'asc' } }); }
+  let accounts: Array<{ id: number; brokerAccountId: string | null }>;
+  try { accounts = await prisma.tradingAccount.findMany({ where: { environment: 'PAPER' }, select: { id: true, brokerAccountId: true }, orderBy: { id: 'asc' } }); }
   catch { return { configuration: getPaperBrokerWriteAuthorityStatus(), ready: false, unresolved: ['PAPER account enumeration failed.'], accounts: [] }; }
   const results: PaperAccountAuthorityAssessment[] = []; const unresolved: string[] = [];
   for (const account of accounts) {
@@ -115,6 +129,17 @@ export async function assessPaperBrokerWriteAuthority(): Promise<PaperBrokerWrit
       unresolved.push(`TradingAccount ${account.id} could not be inspected.`); }
   }
   const configuration = getPaperBrokerWriteAuthorityStatus();
+  const brokerageOwners = new Map<string, number[]>();
+  for (const account of accounts) if (account.brokerAccountId) brokerageOwners.set(account.brokerAccountId,
+    [...(brokerageOwners.get(account.brokerAccountId) ?? []), account.id]);
+  for (const [brokerAccountId, ids] of brokerageOwners) if (ids.length !== 1) {
+    unresolved.push(`Alpaca account_number ${brokerAccountId} is verified on ${ids.length} local PAPER accounts.`);
+  }
+  for (const observer of env.PAPER_BROKER_WRITE_OWNERSHIP.filter(item => item.role === 'OBSERVER' && item.expectedBrokerAccountId)) {
+    if (env.PAPER_BROKER_WRITE_OWNERSHIP.some(item => item.role === 'EXECUTOR' && item.expectedBrokerAccountId === observer.expectedBrokerAccountId)) {
+      unresolved.push(`Alpaca account_number ${observer.expectedBrokerAccountId} is declared for both OBSERVER and EXECUTOR ownership.`);
+    }
+  }
   for (const authorization of env.PAPER_BROKER_WRITE_AUTHORIZATIONS) {
     const matches = results.filter(item => item.expectedBrokerAccountId === authorization.brokerAccountId && item.ownershipRole === 'EXECUTOR');
     if (matches.length !== 1) unresolved.push(`Authorization for Alpaca account_number ${authorization.brokerAccountId} resolves to ${matches.length} expected executors.`);

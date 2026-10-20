@@ -31,6 +31,7 @@ export const ORDER_INTENT_MARKET_POLICY_COMPARISON_WORKER_INTERVAL_MS = 30_000;
 export const ORDER_INTENT_BROKER_COMPARISON_WORKER_INTERVAL_MS = 30_000;
 export const MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS = 30_000;
 export const MARKET_SPLIT_COVERAGE_WORKER_INTERVAL_MS = 15 * 60_000;
+export const PAPER_BROKER_WRITE_ATTENTION_INTERVAL_MS = 5 * 60_000;
 
 function thresholds(
   expectedIntervalMs: number,
@@ -173,6 +174,15 @@ export const workerDefinitions = [
     expectedIntervalMs: INTRADAY_STRESS_ASSESSMENT_WORKER_INTERVAL_MS,
     enabledByDefault: true,
     ...thresholds(INTRADAY_STRESS_ASSESSMENT_WORKER_INTERVAL_MS, 240_000),
+  },
+  {
+    key: 'paper_broker_write_attention_reconciliation',
+    displayName: 'PAPER broker-write authority attention',
+    description: 'Reconciles PAPER ownership and executor-authority attention from fresh account evidence.',
+    criticality: 'important',
+    expectedIntervalMs: PAPER_BROKER_WRITE_ATTENTION_INTERVAL_MS,
+    enabledByDefault: true,
+    ...thresholds(PAPER_BROKER_WRITE_ATTENTION_INTERVAL_MS, 120_000),
   },
   {
     key: 'pending_order_processing',

@@ -49,7 +49,7 @@ describe('PAPER authority attention reconciliation', () => {
     mocks.findFirst.mockResolvedValue(null);
     mocks.open.mockRejectedValueOnce(new Error('first failed')).mockResolvedValueOnce({ attention: { id: 2 } });
     const result = await reconcileAllPaperBrokerWriteAuthorityAttention(async () => ({ accounts: [assessment(1), assessment(2)] }));
-    expect(result).toEqual({ assessed: 2, failures: [{ tradingAccountId: 1, error: 'first failed' }] });
+    expect(result).toEqual({ assessed: 2, failures: [{ tradingAccountId: 1, error: 'first failed' }], assessmentUnresolved: [] });
     expect(mocks.open).toHaveBeenCalledTimes(2);
   });
 });

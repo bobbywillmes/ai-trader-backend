@@ -1,5 +1,9 @@
 FROM node:24-bookworm-slim
 
+ARG IMAGE_REVISION
+LABEL org.opencontainers.image.revision=$IMAGE_REVISION
+ENV IMAGE_REVISION=$IMAGE_REVISION
+
 WORKDIR /app
 
 RUN apt-get update \

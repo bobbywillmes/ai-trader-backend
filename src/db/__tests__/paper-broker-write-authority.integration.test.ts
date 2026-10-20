@@ -80,6 +80,31 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(resolved).toMatchObject({ status: 'RESOLVED' });
   });
 
+  it('repeats full attention reconciliation safely against PostgreSQL', async () => {
+    const attention = await import('../../services/paper-broker-write-authority-attention.service.js');
+    const first = await attention.reconcileAllPaperBrokerWriteAuthorityAttention();
+    const second = await attention.reconcileAllPaperBrokerWriteAuthorityAttention();
+    expect(first).toMatchObject({ assessed: 1, failures: [], assessmentUnresolved: [] });
+    expect(second).toMatchObject({ assessed: 1, failures: [], assessmentUnresolved: [] });
+  });
+
+  it('uses PostgreSQL plain host representation for strict preflight comparison', async () => {
+    const { assertPaperBrokerWritePreflightContext } = await import('../../services/paper-broker-write-preflight.js');
+    const identity = (await db.query<{ database: string; host: string | null; port: number | null; user: string }>(
+      `SELECT current_database() AS database, host(inet_server_addr()) AS host, inet_server_port() AS port, current_user AS user`,
+    )).rows[0]!;
+    expect(identity.host).not.toContain('/');
+    expect(() => assertPaperBrokerWritePreflightContext({ mode: 'production', expectedTradingAccountId: accountId,
+      expectedBrokerAccountId: brokerAccountId, expectedImageRevision: 'reviewed-sha', expectedDatabase: identity.database,
+      expectedDatabaseHost: identity.host, expectedDatabasePort: identity.port, expectedDatabaseUser: identity.user },
+    'production', 'reviewed-sha', identity)).not.toThrow();
+  });
+
+  it('enforces the database brokerage-identity uniqueness backstop', async () => {
+    await expect(db.query(`INSERT INTO "TradingAccount" ("accountHolderUserId","displayName",environment,status,"tradingEnabled","killSwitchEnabled","brokerAccountId","createdAt","updatedAt") SELECT "accountHolderUserId",'Duplicate Paper','PAPER','PAUSED',false,true,"brokerAccountId",now(),now() FROM "TradingAccount" WHERE id=$1`, [accountId]))
+      .rejects.toMatchObject({ code: '23505', constraint: 'TradingAccount_broker_environment_brokerAccountId_key' });
+  });
+
   it('counts every canonical lifecycle exposure kind and excludes released or terminal evidence', async () => {
     const authority = await import('../../services/paper-broker-write-authority.service.js');
     const { encryptSecret, fingerprintSecret } = await import('../../services/trading-credential-crypto.service.js');
@@ -99,6 +124,9 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const filled = await insertIntent('filled');
     await assertCounts({ activeOrderIntents: 1 });
     await db.query(`DELETE FROM "OrderIntent" WHERE id=$1`, [filled]);
+    const filledSell = await insertIntent('filled', 'sell');
+    await expect(authority.assessPaperBrokerWriteAuthorityForAccount(accountId)).resolves.toMatchObject({ openLifecycleExposure: false, exposure: { activeOrderIntents: 0 } });
+    await db.query(`DELETE FROM "OrderIntent" WHERE id=$1`, [filledSell]);
 
     const claimIntent = await insertIntent('blocked');
     const claimId = Number((await db.query(`INSERT INTO "EntryExposureClaim" ("tradingAccountId","securityId","orderIntentId","ownerKey",status,"acquiredAt","createdAt","updatedAt") VALUES ($1,$2,$3,'authority-claim','UNRESOLVED',now(),now(),now()) RETURNING id`, [accountId, securityId, claimIntent])).rows[0].id);
@@ -118,6 +146,10 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
 
     const positionId = Number((await db.query(`INSERT INTO "TrackedPosition" (broker,symbol,side,qty,"avgEntryPrice","currentPrice","marketValue","costBasis","unrealizedPnL","unrealizedPnLPct",status,"openedAt","lastSyncedAt","rawPositionJson","securityId","tradingAccountId","createdAt","updatedAt") VALUES ('alpaca','P3C4','long',1,1,1,1,1,0,0,'closing',now(),now(),'{}',$1,$2,now(),now()) RETURNING id`, [securityId, accountId])).rows[0].id);
     await assertCounts({ activePositions: 1 });
+    const linkedFilled = await insertIntent('filled');
+    await db.query(`UPDATE "OrderIntent" SET "trackedPositionId"=$2 WHERE id=$1`, [linkedFilled, positionId]);
+    await expect(authority.assessPaperBrokerWriteAuthorityForAccount(accountId)).resolves.toMatchObject({ exposure: { activePositions: 1, activeOrderIntents: 0 } });
+    await db.query(`DELETE FROM "OrderIntent" WHERE id=$1`, [linkedFilled]);
     await db.query(`UPDATE "TrackedPosition" SET status='closed',"closedAt"=now() WHERE id=$1`, [positionId]);
     await expect(authority.assessPaperBrokerWriteAuthorityForAccount(accountId)).resolves.toMatchObject({ openLifecycleExposure: false, exposure: { activePositions: 0 } });
   });

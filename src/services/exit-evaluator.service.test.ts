@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   loggerTrace: vi.fn(),
   loggerError: vi.fn(),
   assessPaperAuthority: vi.fn(),
+  reconcilePaperAuthorityAttention: vi.fn(),
   systemEventFindFirst: vi.fn(),
 }));
 
@@ -32,6 +33,9 @@ vi.mock('../db/prisma.js', () => ({
 }));
 vi.mock('./paper-broker-write-authority.service.js', () => ({
   assessPaperBrokerWriteAuthorityForAccount: mocks.assessPaperAuthority,
+}));
+vi.mock('./paper-broker-write-authority-attention.service.js', () => ({
+  reconcilePaperBrokerWriteAuthorityAttention: mocks.reconcilePaperAuthorityAttention,
 }));
 vi.mock('./close-position.service.js', () => ({
   closePosition: mocks.closePosition,
@@ -173,6 +177,7 @@ describe('account-scoped exit evaluation', () => {
     vi.clearAllMocks();
     mocks.createSystemEvent.mockResolvedValue({});
     mocks.assessPaperAuthority.mockResolvedValue({ outcome: 'AUTHORIZED', reason: 'authorized' });
+    mocks.reconcilePaperAuthorityAttention.mockResolvedValue({});
     mocks.systemEventFindFirst.mockResolvedValue(null);
     mocks.syncProtectiveOrdersForAccount.mockResolvedValue({
       found: 0,
@@ -390,6 +395,16 @@ describe('exit evaluation coordinator', () => {
       'FAILED',
       'PROCESSED',
     ]);
+  });
+
+  it.each(['DENIED', 'UNKNOWN'] as const)('reports %s PAPER exit authority as a visible failure and attention', async (outcome) => {
+    mocks.enumerateLifecycleAccounts.mockResolvedValue([account(1)]);
+    mocks.trackedPositionFindMany.mockResolvedValue([position()]);
+    mocks.assessPaperAuthority.mockResolvedValue({ outcome, reason: 'authority fixture', tradingAccountId: 1 });
+    const result = await evaluateExitsForEligibleAccounts();
+    expect(result).toMatchObject({ failedAccounts: 1, results: [{ outcome: 'FAILED' }] });
+    expect(mocks.reconcilePaperAuthorityAttention).toHaveBeenCalledWith(expect.objectContaining({ outcome }));
+    expect(mocks.closePosition).not.toHaveBeenCalled();
   });
 
   it('reports credentialless exposure without making a broker-facing evaluation', async () => {

@@ -54,14 +54,19 @@ describe('PAPER broker-write environment validation', () => {
     expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_DEPLOYMENT_ROLE: 'PAPER_EXECUTOR', PAPER_BROKER_WRITE_AUTHORIZATIONS: authorization, PAPER_BROKER_WRITE_OWNERSHIP: executor }).success).toBe(true);
     expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_OWNERSHIP: JSON.stringify([{ tradingAccountId: 7, role: 'EXECUTOR' }]) }).success).toBe(false);
     expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_OWNERSHIP: JSON.stringify([
-      { tradingAccountId: 7, role: 'OBSERVER' }, { tradingAccountId: 7, role: 'EXECUTOR', expectedBrokerAccountId: 'paper-7' },
+      { tradingAccountId: 7, role: 'OBSERVER', expectedBrokerAccountId: 'paper-7' }, { tradingAccountId: 7, role: 'EXECUTOR', expectedBrokerAccountId: 'paper-7' },
     ]) }).success).toBe(false);
   });
 
   it('requires one-to-one authorization and executor ownership', () => {
     expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_DEPLOYMENT_ROLE: 'PAPER_EXECUTOR', PAPER_BROKER_WRITE_AUTHORIZATIONS: authorization,
-      PAPER_BROKER_WRITE_OWNERSHIP: JSON.stringify([{ tradingAccountId: 7, role: 'OBSERVER' }]) }).success).toBe(false);
+      PAPER_BROKER_WRITE_OWNERSHIP: JSON.stringify([{ tradingAccountId: 7, role: 'OBSERVER', expectedBrokerAccountId: 'paper-account' }]) }).success).toBe(false);
     expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_DEPLOYMENT_ROLE: 'PAPER_EXECUTOR', PAPER_BROKER_WRITE_AUTHORIZATIONS: '[]',
       PAPER_BROKER_WRITE_OWNERSHIP: JSON.stringify([{ tradingAccountId: 7, role: 'EXECUTOR', expectedBrokerAccountId: 'paper-account' }]) }).success).toBe(false);
+    expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_DEPLOYMENT_ROLE: 'PAPER_EXECUTOR', PAPER_BROKER_WRITE_AUTHORIZATIONS: authorization,
+      PAPER_BROKER_WRITE_OWNERSHIP: JSON.stringify([
+        { tradingAccountId: 6, role: 'OBSERVER', expectedBrokerAccountId: 'paper-account' },
+        { tradingAccountId: 7, role: 'EXECUTOR', expectedBrokerAccountId: 'paper-account' },
+      ]) }).success).toBe(false);
   });
 });

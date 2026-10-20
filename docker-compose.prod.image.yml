@@ -1,0 +1,4 @@
+services:
+  backend:
+    image: ${AI_TRADER_BACKEND_IMAGE:?Set AI_TRADER_BACKEND_IMAGE to the preflight-approved immutable image ID or digest}
+    build: !reset null
