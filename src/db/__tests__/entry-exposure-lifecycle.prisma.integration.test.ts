@@ -401,7 +401,9 @@ describePrisma('entry exposure lifecycle with real Prisma services', () => {
     expect(intent.status).toBe('failed'); expect(claim.status).toBe('RELEASED'); expect(claim.releasedAt).not.toBeNull(); expect(broker.submitCalls).toHaveLength(0);
   });
 
-  it('17. preserves ownership when the broker idempotency lookup fails', async () => {
+  // Phase 3C.3 final correction: a failed lookup is still never proof of absence and never sends, but a
+  // failure before the adapter-invocation marker of a marker-protocol claim is proven never sent.
+  it('17. never sends when the broker idempotency lookup fails, releasing ownership only from structured pre-dispatch evidence', async () => {
     const account = await createAccount(); const security = await createSecurity('U');
     await prisma.tradingAccount.update({ where: { id: account.id }, data: { tradingEnabled: true, killSwitchEnabled: false } });
     await prisma.tradingAccountCredential.create({ data: { tradingAccountId: account.id, status: 'ACTIVE', apiKeyCiphertext: 'fixture', apiSecretCiphertext: 'fixture', verifiedAt: new Date() } });
@@ -409,8 +411,13 @@ describePrisma('entry exposure lifecycle with real Prisma services', () => {
     const admitted = await submitOrder({ tradingAccountSubscriptionId: assignment.id, extendedHours: false }, { clientOrderId: `lookup-${randomUUID()}` });
     broker.failClientOrderLookupForAccount.add(account.id);
     await processPendingOrdersForAccount(account.id);
-    const claim = await prisma.entryExposureClaim.findUniqueOrThrow({ where: { orderIntentId: admitted.intentId } });
-    expect(claim.releasedAt).toBeNull(); expect(claim.status).toBe('UNRESOLVED'); expect(broker.submitCalls).toHaveLength(0);
+    broker.failClientOrderLookupForAccount.delete(account.id);
+    const claim = await prisma.entryExposureClaim.findUniqueOrThrow({ where: { orderIntentId: admitted.intentId }, include: { events: { orderBy: { id: 'asc' } } } });
+    expect(broker.submitCalls).toHaveLength(0);
+    expect(claim.events.map((event) => event.eventType)).toEqual(['ACQUIRED', 'WORKER_CLAIMED_FOR_SUBMISSION', 'NOT_SENT_EVIDENCE_RECORDED', 'RELEASED_NO_BROKER_EXPOSURE']);
+    expect(claim.events[2]!.evidenceJson).toMatchObject({ classification: 'NOT_SENT_PRE_DISPATCH', producer: 'WORKER_PRE_BOUNDARY_FAILURE', proof: { basis: 'ADAPTER_MARKER_V1_NO_INVOCATION_MARKER' } });
+    expect(claim).toMatchObject({ status: 'RELEASED', releaseReason: 'WORKER_PROVEN_PRE_DISPATCH_BOUNDARY_FAILURE' });
+    expect(await prisma.orderIntent.findUniqueOrThrow({ where: { id: admitted.intentId } })).toMatchObject({ status: 'failed', blockReason: 'LOCAL_PRE_DISPATCH_FAILURE:broker lookup unavailable' });
   });
 
   it('18. blocks readiness for executable BUYs backed only by released or absent claims', async () => {

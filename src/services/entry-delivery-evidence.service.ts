@@ -29,6 +29,17 @@ export const DELIVERY_EVIDENCE_EVENT_TYPES = [
   ...DISPATCH_OUTCOME_EVENT_TYPES, NOT_SENT_EVIDENCE_EVENT, ADAPTER_INVOCATION_STARTED_EVENT, WORKER_CLAIMED_EVENT,
 ] as const;
 
+/**
+ * Claim diagnostics that each describe the result of one recovery attempt. They are deduplicated
+ * consecutively across all of these types (an attempt appends unless the newest attempt result is the
+ * identical event), so the newest one always describes the newest attempt, even when results
+ * alternate, while a persistently repeated result appends once.
+ */
+export const RECOVERY_ATTEMPT_RESULT_EVENT_TYPES = [
+  'DISPATCH_RECOVERY_RELEASE_BLOCKED', 'DISPATCH_RECOVERY_REVALIDATION_BLOCKED', 'DISPATCH_RECOVERY_ERROR', 'RECOVERY_ATTEMPT_FAILED',
+  'UNSUBMITTED_RELEASE_REFUSED', 'PRE_BOUNDARY_FAILURE_WITH_PRIOR_DISPATCH_RECORD', 'DISPATCH_RECOVERY_ATTEMPT_RESULT',
+] as const;
+
 /** Classifications that prove no network request was issued for the claim's intent. */
 export const LOCAL_NON_SEND_CLASSIFICATIONS: ReadonlySet<string> = new Set([
   'NOT_SENT_PRE_DISPATCH',
@@ -46,6 +57,7 @@ export type NotSentProducer =
   | 'BROKER_TIME_MARKET_POLICY_REFUSAL'
   | 'ADAPTER_LOCAL_GUARD'
   | 'STALE_RECOVERY_ADAPTER_NOT_INVOKED'
+  | 'STALE_ADMISSION_NEVER_EXECUTABLE'
   | 'TERMINAL_SWEEP_ADAPTER_NOT_INVOKED'
   | 'TERMINAL_SWEEP_RISK_EVALUATION_BLOCKED'
   | 'TERMINAL_SWEEP_LEGACY_LOCAL_CLASSIFICATION';
@@ -187,11 +199,13 @@ export async function appendNotSentEvidence(db: Db, args: {
   source: string;
   reason: string;
   message?: string | null;
+  /** The durable facts the producer relied on, recorded with the classification. */
+  proof?: Record<string, unknown>;
 }) {
   return db.entryExposureClaimEvent.create({ data: { claimId: args.claimId, eventType: NOT_SENT_EVIDENCE_EVENT, evidenceJson: json({
     classification: args.classification, producer: args.producer, source: args.source, orderIntentId: args.orderIntentId,
     adapterInvocation: args.classification === 'NOT_SENT_PRE_DISPATCH' ? 'NOT_INVOKED' : 'LOCAL_GUARD_BEFORE_REQUEST',
     networkRequestIssued: false, reason: args.reason, message: args.message ? args.message.slice(0, 300) : null,
-    executionAuthority: 'NONE',
+    executionAuthority: 'NONE', ...(args.proof ? { proof: args.proof } : {}),
   }) } });
 }

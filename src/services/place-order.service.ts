@@ -9,7 +9,7 @@ import {
 import {
   createOrderIntent,
   recordOrderIntentRiskEvaluation,
-  updateOrderIntentStatus,
+  transitionOrderIntentStatusFrom,
 } from './order-audit.service.js';
 import {
   evaluateOrderRisk,
@@ -300,7 +300,7 @@ export async function submitOrder(
   });
 
   if (!riskResult.allowed) {
-    await updateOrderIntentStatus(intent.id, 'blocked', riskResult.reason);
+    requireAdmissionStillReceived(await transitionOrderIntentStatusFrom(intent.id, 'received', 'blocked', riskResult.reason), intent.id);
     await releaseUnsubmittedEntryExposureClaim({
       orderIntentId: intent.id,
       reason: 'ADMISSION_RISK_BLOCKED',
@@ -320,7 +320,9 @@ export async function submitOrder(
     );
   }
 
-  await updateOrderIntentStatus(intent.id, 'pending');
+  // Compare-and-set: an admission that outlived the stale-admission threshold may already have been
+  // failed and its claim released by recovery; it must never become executable afterwards.
+  requireAdmissionStillReceived(await transitionOrderIntentStatusFrom(intent.id, 'received', 'pending'), intent.id);
 
   return {
     ok: true,
@@ -345,6 +347,14 @@ export async function submitOrder(
       });
     }).catch(() => undefined);
     throw error;
+  }
+}
+
+function requireAdmissionStillReceived(transitioned: boolean, orderIntentId: number) {
+  if (!transitioned) {
+    throw new HttpError(409, 'Entry admission no longer owns its intent; it was not made executable.', {
+      code: 'ENTRY_ADMISSION_ABANDONED', orderIntentId,
+    });
   }
 }
 

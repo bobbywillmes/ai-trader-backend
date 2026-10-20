@@ -4,12 +4,14 @@ import { SystemEventSeverity, type Prisma, type PrismaClient } from '@prisma/cli
 import { logger } from '../config/logger.js';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
-import type { BrokerWriteDeliveryClassification } from '../errors/broker-write-delivery-error.js';
+import { BrokerWriteDeliveryError, type BrokerWriteDeliveryClassification } from '../errors/broker-write-delivery-error.js';
 import { getAlpacaOrderByClientOrderId, getCompleteOpenAlpacaBuyOrdersForSymbol } from '../integrations/alpaca/orders.adapter.js';
 import { getAlpacaPositionBySymbol } from '../integrations/alpaca/positions.adapter.js';
 import type { AlpacaApiOperation } from '../integrations/alpaca/request-metadata.js';
 import {
+  ADAPTER_MARKER_PROTOCOL,
   appendNotSentEvidence,
+  RECOVERY_ATTEMPT_RESULT_EVENT_TYPES,
   blockReasonDeliveryClassification,
   DELIVERY_EVIDENCE_EVENT_TYPES,
   evaluateNeverSubmittedRelease,
@@ -21,6 +23,7 @@ import {
   type NotSentClassification,
   type NotSentProducer,
   type OutcomeObservation,
+  WORKER_CLAIMED_EVENT,
 } from './entry-delivery-evidence.service.js';
 import {
   appendEntryExposureClaimDiagnostic,
@@ -75,14 +78,24 @@ export const TERMINAL_ENTRY_INTENT_STATUSES = ['failed', 'blocked', 'rejected', 
 
 const DISPATCH_OPPORTUNITY_EVENT_TYPES = ['ADAPTER_DISPATCH_REACHED', 'BROKER_RESPONSE_CONFIRMED', 'BROKER_REJECTED', 'DELIVERY_UNCERTAIN'] as const;
 /** Recovery attempt results, newest first wins in readiness. */
-const ATTEMPT_RESULT_EVENTS: Record<string, 'BLOCKED_BY_EVIDENCE' | 'TECHNICAL_FAILURE' | 'REFUSED'> = {
+type AttemptResult = 'BLOCKED_BY_EVIDENCE' | 'TECHNICAL_FAILURE' | 'REFUSED' | 'RETAINED';
+const ATTEMPT_RESULT_EVENTS: Record<(typeof RECOVERY_ATTEMPT_RESULT_EVENT_TYPES)[number], AttemptResult | null> = {
   DISPATCH_RECOVERY_RELEASE_BLOCKED: 'BLOCKED_BY_EVIDENCE',
   DISPATCH_RECOVERY_REVALIDATION_BLOCKED: 'BLOCKED_BY_EVIDENCE',
   DISPATCH_RECOVERY_ERROR: 'TECHNICAL_FAILURE',
   RECOVERY_ATTEMPT_FAILED: 'TECHNICAL_FAILURE',
   UNSUBMITTED_RELEASE_REFUSED: 'REFUSED',
   PRE_BOUNDARY_FAILURE_WITH_PRIOR_DISPATCH_RECORD: 'REFUSED',
+  /** Written by the sweep only when no other attempt result describes the attempt; carries its result. */
+  DISPATCH_RECOVERY_ATTEMPT_RESULT: null,
 };
+function attemptResultOf(event: { eventType: string; evidenceJson: Prisma.JsonValue }): AttemptResult | null {
+  if (!(event.eventType in ATTEMPT_RESULT_EVENTS)) return null;
+  const mapped = ATTEMPT_RESULT_EVENTS[event.eventType as keyof typeof ATTEMPT_RESULT_EVENTS];
+  if (mapped) return mapped;
+  const result = (event.evidenceJson && typeof event.evidenceJson === 'object' && !Array.isArray(event.evidenceJson) ? event.evidenceJson as Record<string, unknown> : {}).result;
+  return result === 'BLOCKED_BY_EVIDENCE' || result === 'TECHNICAL_FAILURE' || result === 'REFUSED' || result === 'RETAINED' ? result : 'RETAINED';
+}
 const TERMINAL_BROKER_ORDER_STATUSES = ['filled', 'canceled', 'cancelled', 'expired', 'rejected'];
 const PRE_DISPATCH_CLAIM_STATUSES = ['ENTRY_PENDING', 'ENTRY_SUBMITTING', 'ADMISSION_BLOCKED'];
 const RECOVERABLE_CLAIM_STATUSES = [...PRE_DISPATCH_CLAIM_STATUSES, 'UNRESOLVED'];
@@ -94,7 +107,7 @@ export type EntryDispatchOutcomeClassification =
   | 'BROKER_REJECTED'
   | 'DELIVERY_UNCERTAIN'
   | 'DISPATCH_OUTCOME_UNKNOWN';
-export type EntryDispatchRecoverySource = 'WORKER' | 'STALE_RECOVERY' | 'TERMINAL_CLAIM_SWEEP';
+export type EntryDispatchRecoverySource = 'WORKER' | 'STALE_RECOVERY' | 'TERMINAL_CLAIM_SWEEP' | 'STALE_ADMISSION_RECOVERY';
 export type DispatchReleaseBasis = 'DEFINITE_LOCAL_NON_SEND' | 'CONFIRMED_BROKER_REJECTION';
 export type DispatchEvidenceConclusiveness = 'CONCLUSIVE' | 'PENDING' | 'AMBIGUOUS_ABSENCE' | 'CONTRADICTED';
 
@@ -498,6 +511,92 @@ export async function attemptReleaseAfterRecordedOutcome(args: {
   }
 }
 
+/**
+ * Errors that are themselves evidence about broker delivery or ownership. A failure carrying one is
+ * never proven pre-dispatch, whatever phase the boundary reports: a broker-write classification
+ * (only the adapter raises those), an identity mismatch on an existing broker order, prior dispatch
+ * evidence, or a claim/intent identity or state conflict.
+ */
+const PRE_DISPATCH_PROOF_EXCLUDED_ERROR_CODES = new Set([
+  'EXISTING_BROKER_ORDER_IDENTITY_MISMATCH', 'PRIOR_ENTRY_DISPATCH_EVIDENCE', 'ENTRY_EXPOSURE_IDENTITY_MISMATCH',
+  'ENTRY_EXPOSURE_UNRESOLVED', 'INVALID_ENTRY_EXPOSURE_TRANSITION', 'ENTRY_EXPOSURE_STALE_TRANSITION',
+]);
+
+export function isPreDispatchProofCandidateError(error: unknown) {
+  if (error instanceof BrokerWriteDeliveryError) return false;
+  const details = error instanceof HttpError && error.details && typeof error.details === 'object' ? error.details as Record<string, unknown> : null;
+  return !PRE_DISPATCH_PROOF_EXCLUDED_ERROR_CODES.has(String(details?.code ?? ''));
+}
+
+export type WorkerPreDispatchProof = {
+  proven: boolean;
+  claimId: number | null;
+  blockers: string[];
+  proof: Record<string, unknown>;
+};
+
+/**
+ * Proof, inside the caller's transaction, that a worker failure inside submitOrderToBroker before its
+ * stable-ID lookup and local dispatch checks completed (an idempotency GET 429/5xx or network failure,
+ * or a database failure verifying the claim or dispatch evidence) issued no broker POST.
+ *
+ * The in-memory submission phase only nominates the failure; the release depends on durable evidence:
+ * this attempt's claim was taken under ADAPTER_MARKER_V1 (exactly one protocol-marked worker claim and
+ * no other delivery evidence), no ADAPTER_INVOCATION_STARTED marker or recorded outcome exists, no
+ * dispatch record, dispatch telemetry, consumed LIVE arming, broker order or broker activity exists,
+ * and the intent is still this attempt's untouched 'submitting' intent. Because the marker commits
+ * before the adapter is invoked, its absence under this protocol proves the adapter was never reached.
+ * A legacy claim (no protocol), a second attempt, or any contradictory record is never proven.
+ */
+export async function proveWorkerPreDispatchNonDelivery(db: Db, args: { orderIntentId: number; tradingAccountId: number }): Promise<WorkerPreDispatchProof> {
+  const claim = await db.entryExposureClaim.findUnique({
+    where: { orderIntentId: args.orderIntentId },
+    select: { id: true, status: true, releasedAt: true, tradingAccountId: true, trackedPositionId: true },
+  });
+  if (!claim) return { proven: false, claimId: null, blockers: ['CLAIM_MISSING'], proof: {} };
+  const [intent, events, records, brokerOrders, brokerActivities] = await Promise.all([
+    db.orderIntent.findUnique({ where: { id: args.orderIntentId }, select: { status: true, blockReason: true, tradingAccountId: true } }),
+    db.entryExposureClaimEvent.findMany({
+      where: { claimId: claim.id, eventType: { in: [...DELIVERY_EVIDENCE_EVENT_TYPES] } },
+      select: { id: true, eventType: true, evidenceJson: true, createdAt: true }, orderBy: { id: 'asc' },
+    }),
+    loadEntryDispatchRecords(args.orderIntentId, db),
+    db.brokerOrder.count({ where: { orderIntentId: args.orderIntentId } }),
+    db.brokerActivity.count({ where: { orderIntentId: args.orderIntentId } }),
+  ]);
+  const summary = summarizeDeliveryEvidence(events);
+  const workerClaims = events.filter((event) => event.eventType === WORKER_CLAIMED_EVENT);
+  const protocolClaims = workerClaims.filter((event) => {
+    const evidence = event.evidenceJson && typeof event.evidenceJson === 'object' && !Array.isArray(event.evidenceJson) ? event.evidenceJson as Record<string, unknown> : {};
+    return evidence.markerProtocol === ADAPTER_MARKER_PROTOCOL;
+  });
+  const blockers = [
+    ...(claim.releasedAt ? ['CLAIM_RELEASED'] : []),
+    ...(claim.status !== 'ENTRY_SUBMITTING' ? ['CLAIM_NOT_SUBMITTING'] : []),
+    ...(claim.tradingAccountId !== args.tradingAccountId || intent?.tradingAccountId !== args.tradingAccountId ? ['ACCOUNT_MISMATCH'] : []),
+    ...(claim.trackedPositionId !== null ? ['POSITION_ATTACHED'] : []),
+    ...(!intent || intent.status !== 'submitting' ? ['INTENT_NOT_SUBMITTING'] : []),
+    // A fresh admission clears the block reason; any text here is an earlier attempt's outcome.
+    ...(intent?.blockReason ? ['INTENT_PRIOR_OUTCOME_RECORDED'] : []),
+    ...(protocolClaims.length === 0 ? ['MARKER_PROTOCOL_NOT_ESTABLISHED'] : []),
+    ...(workerClaims.length > 1 ? ['MULTIPLE_SUBMISSION_CLAIMS'] : []),
+    ...(summary.adapterMarkers > 0 ? ['ADAPTER_INVOCATION_MARKER_PRESENT'] : []),
+    ...(summary.outcomes.length > 0 ? ['PRIOR_DELIVERY_OUTCOME_RECORDED'] : []),
+    ...(records.present ? ['DISPATCH_RECORD_PRESENT'] : []),
+    ...(brokerOrders > 0 ? ['LOCAL_BROKER_ORDER_PRESENT'] : []),
+    ...(brokerActivities > 0 ? ['LOCAL_BROKER_ACTIVITY_PRESENT'] : []),
+  ];
+  return {
+    proven: blockers.length === 0,
+    claimId: claim.id,
+    blockers,
+    proof: {
+      basis: 'ADAPTER_MARKER_V1_NO_INVOCATION_MARKER', submissionPhase: 'UNCLASSIFIED', workerClaimEventId: protocolClaims[0]?.id ?? null,
+      adapterMarkers: summary.adapterMarkers, recordedOutcomes: summary.outcomes.length, ...recordIdentity(records), brokerOrders, brokerActivities,
+    },
+  };
+}
+
 /** Records an outcome and then attempts the release it allows (outside any caller transaction). */
 export async function routeEntryDispatchFailure(args: RecordEntryDispatchOutcomeArgs & { now?: Date }): Promise<DispatchedEntryReleaseResult> {
   const standalone: RecordEntryDispatchOutcomeArgs = { ...args };
@@ -749,7 +848,7 @@ export async function loadTerminalClaimCandidates(args: { db?: PrismaClient; tra
         _count: { select: { brokerOrders: true, brokerOpportunityEvents: { where: { eventType: { in: [...DISPATCH_OPPORTUNITY_EVENT_TYPES] } } } } },
       } },
       events: {
-        where: { eventType: { in: [...DELIVERY_EVIDENCE_EVENT_TYPES, ...(args.attemptEvents ? [...Object.keys(ATTEMPT_RESULT_EVENTS), 'DISPATCH_OUTCOME_NOT_APPLIED'] : [])] } },
+        where: { eventType: { in: [...DELIVERY_EVIDENCE_EVENT_TYPES, ...(args.attemptEvents ? [...RECOVERY_ATTEMPT_RESULT_EVENT_TYPES, 'DISPATCH_OUTCOME_NOT_APPLIED'] : [])] } },
         orderBy: { id: 'asc' }, select: { id: true, eventType: true, evidenceJson: true, createdAt: true },
       },
     },
@@ -791,10 +890,23 @@ function isDue(candidate: { lastDiagnosedAt: Date | null }, now: Date) {
  */
 export async function summarizeTerminalClaimRecoveryByAccount(args: { now?: Date; tradingAccountIds?: number[] | undefined; db?: PrismaClient } = {}) {
   const now = args.now ?? new Date();
-  const candidates = await loadTerminalClaimCandidates({ ...(args.db ? { db: args.db } : {}), tradingAccountIds: args.tradingAccountIds });
-  const byAccount = new Map<number, { actionableDue: number; actionableWaiting: number; operatorInvestigation: number; protectedExposure: number; held: number }>();
+  const db = args.db ?? prisma;
+  const [candidates, staleAdmissions] = await Promise.all([
+    loadTerminalClaimCandidates({ db, tradingAccountIds: args.tradingAccountIds }),
+    // Abandoned admissions are not terminal, but they are held exposure and stale-admission work.
+    db.entryExposureClaim.findMany({ where: staleAdmissionClaimWhere(now, args.tradingAccountIds), select: { tradingAccountId: true, lastDiagnosedAt: true } }),
+  ]);
+  type Entry = { actionableDue: number; actionableWaiting: number; operatorInvestigation: number; protectedExposure: number; held: number; staleAdmissionHeld: number; staleAdmissionDue: number };
+  const empty = (): Entry => ({ actionableDue: 0, actionableWaiting: 0, operatorInvestigation: 0, protectedExposure: 0, held: 0, staleAdmissionHeld: 0, staleAdmissionDue: 0 });
+  const byAccount = new Map<number, Entry>();
+  for (const claim of staleAdmissions) {
+    const entry = byAccount.get(claim.tradingAccountId) ?? empty();
+    entry.staleAdmissionHeld += 1;
+    if (isDue(claim, now)) entry.staleAdmissionDue += 1;
+    byAccount.set(claim.tradingAccountId, entry);
+  }
   for (const candidate of candidates) {
-    const entry = byAccount.get(candidate.tradingAccountId) ?? { actionableDue: 0, actionableWaiting: 0, operatorInvestigation: 0, protectedExposure: 0, held: 0 };
+    const entry = byAccount.get(candidate.tradingAccountId) ?? empty();
     const { state, automatic } = classifyTerminalEntryClaim(candidate, now);
     entry.held += 1;
     if (automatic) {
@@ -804,6 +916,191 @@ export async function summarizeTerminalClaimRecoveryByAccount(args: { now?: Date
     byAccount.set(candidate.tradingAccountId, entry);
   }
   return byAccount;
+}
+
+function latestAttemptResultEvent(claimId: number) {
+  return prisma.entryExposureClaimEvent.findFirst({
+    where: { claimId, eventType: { in: [...RECOVERY_ATTEMPT_RESULT_EVENT_TYPES] } }, orderBy: { id: 'desc' },
+    select: { id: true, eventType: true, evidenceJson: true },
+  });
+}
+
+/**
+ * Keeps the newest attempt result truthful without an event per attempt. When the attempt appended
+ * an attempt result itself, or the newest one already has this attempt's result (a deduplicated
+ * repeat), nothing is written; otherwise one result event records it. A repeated result therefore
+ * appends once, and only a change of result appends again.
+ */
+async function recordAttemptResultIfStale(claimId: number, priorResultEventId: number, attempt: { result: AttemptResult; reason: string }, state: TerminalClaimRecoveryState) {
+  const latest = await latestAttemptResultEvent(claimId);
+  if (latest && (latest.id > priorResultEventId || attemptResultOf(latest) === attempt.result)) return;
+  await appendEntryExposureClaimDiagnostic(claimId, 'DISPATCH_RECOVERY_ATTEMPT_RESULT', json({ source: 'TERMINAL_CLAIM_SWEEP', result: attempt.result, reason: attempt.reason, recoveryState: state }));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Stale admissions: an admission that created its intent and claim, then failed, and whose cleanup
+// transaction also failed, leaves a 'received' intent with an ENTRY_PENDING claim that nothing else
+// selects (the worker takes only 'pending' intents; the terminal sweep only terminal ones).
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * An admission runs inside one request and completes in seconds; an intent still 'received' this long
+ * after its last update is abandoned. Matches the readiness stranded-claim threshold.
+ */
+export const STALE_ADMISSION_THRESHOLD_MS = 15 * 60_000;
+export const STALE_ADMISSION_BATCH_LIMIT = 3;
+
+function staleAdmissionClaimWhere(now: Date, tradingAccountIds?: number[] | undefined): Prisma.EntryExposureClaimWhereInput {
+  return {
+    releasedAt: null, status: 'ENTRY_PENDING', trackedPositionId: null,
+    ...(tradingAccountIds?.length ? { tradingAccountId: { in: tradingAccountIds } } : {}),
+    orderIntent: { is: { status: 'received', updatedAt: { lte: new Date(now.getTime() - STALE_ADMISSION_THRESHOLD_MS) } } },
+  };
+}
+
+/**
+ * Bounded recovery of abandoned admissions. Caller holds the account lifecycle-mutation lock. Each
+ * claim is leased (one attempt per ENTRY_DISPATCH_RECOVERY_RETRY_MS), then, under the account/Security
+ * entry-exposure lock, re-verified: the intent is still this claim's 'received' BUY, unchanged for
+ * STALE_ADMISSION_THRESHOLD_MS and not a LIVE acceptance execution; the claim is still ENTRY_PENDING
+ * and was never claimed by a worker; and no adapter marker, recorded outcome, dispatch record,
+ * dispatch telemetry, consumed LIVE arming, broker order or broker activity exists. A 'received'
+ * intent can never cross the broker boundary (the worker selects only 'pending' intents and the
+ * boundary requires an ENTRY_SUBMITTING claim), so these facts prove nothing was or can be dispatched.
+ *
+ * The intent is then failed by compare-and-set together with structured not-sent evidence, and only
+ * after that commits does the shared never-submitted release run. Incomplete evidence retains the
+ * claim with a deduplicated diagnostic and readiness keeps it visible as a stranded claim. Nothing is
+ * requeued, resubmitted or placed; a pending intent is never touched.
+ */
+export async function recoverStaleAdmissionClaimsForAccount(tradingAccountId: number, now = new Date()) {
+  const cutoff = new Date(now.getTime() - STALE_ADMISSION_THRESHOLD_MS);
+  const candidates = await prisma.entryExposureClaim.findMany({
+    where: { ...staleAdmissionClaimWhere(now, [tradingAccountId]), tradingAccountId,
+      OR: [{ lastDiagnosedAt: null }, { lastDiagnosedAt: { lte: new Date(now.getTime() - ENTRY_DISPATCH_RECOVERY_RETRY_MS) } }] },
+    select: { id: true, orderIntentId: true, securityId: true },
+    orderBy: { id: 'asc' }, take: STALE_ADMISSION_BATCH_LIMIT,
+  });
+  let released = 0;
+  let retained = 0;
+  const attempted: number[] = [];
+  const failures: Array<{ claimId: number; error: string }> = [];
+  for (const candidate of candidates) {
+    const orderIntentId = candidate.orderIntentId!;
+    try {
+      if (!await leaseRecoveryAttempt(candidate.id, now)) continue;
+    } catch (error) {
+      failures.push({ claimId: candidate.id, error: message(error) });
+      continue;
+    }
+    attempted.push(candidate.id);
+    try {
+      const verdict = await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`entry-exposure:${tradingAccountId}:${candidate.securityId}`}, 0))::text`;
+        const claim = await tx.entryExposureClaim.findUnique({
+          where: { id: candidate.id },
+          select: { id: true, status: true, releasedAt: true, tradingAccountId: true, trackedPositionId: true, orderIntentId: true,
+            orderIntent: { select: { id: true, status: true, side: true, updatedAt: true, tradingAccountId: true, liveEntryAcceptanceRunId: true } } },
+        });
+        if (!claim || claim.releasedAt) return { kind: 'GONE' as const };
+        const intent = claim.orderIntent;
+        const [events, records, brokerOrders, brokerActivities] = await Promise.all([
+          tx.entryExposureClaimEvent.findMany({
+            where: { claimId: claim.id, eventType: { in: [...DELIVERY_EVIDENCE_EVENT_TYPES] } },
+            select: { id: true, eventType: true, evidenceJson: true, createdAt: true }, orderBy: { id: 'asc' },
+          }),
+          loadEntryDispatchRecords(orderIntentId, tx),
+          tx.brokerOrder.count({ where: { orderIntentId } }),
+          tx.brokerActivity.count({ where: { orderIntentId } }),
+        ]);
+        const summary = summarizeDeliveryEvidence(events);
+        const blockers = [
+          ...(claim.status !== 'ENTRY_PENDING' ? ['CLAIM_NOT_PENDING'] : []),
+          ...(claim.trackedPositionId !== null ? ['POSITION_ATTACHED'] : []),
+          ...(!intent || claim.orderIntentId !== intent.id ? ['INTENT_MISSING'] : []),
+          ...(intent && intent.status !== 'received' ? ['INTENT_NOT_RECEIVED'] : []),
+          ...(intent && intent.updatedAt > cutoff ? ['ADMISSION_RECENTLY_ACTIVE'] : []),
+          ...(intent && intent.side.trim().toLowerCase() !== 'buy' ? ['INTENT_NOT_BUY'] : []),
+          ...(intent && (intent.tradingAccountId !== tradingAccountId || claim.tradingAccountId !== tradingAccountId) ? ['ACCOUNT_MISMATCH'] : []),
+          // A LIVE acceptance execution is claimed on its run; only an operator may close it.
+          ...(intent?.liveEntryAcceptanceRunId != null ? ['LIVE_ENTRY_ACCEPTANCE_EXECUTION'] : []),
+          ...(events.some((event) => event.eventType === WORKER_CLAIMED_EVENT) ? ['WORKER_CLAIM_RECORDED'] : []),
+          ...(summary.adapterMarkers > 0 ? ['ADAPTER_INVOCATION_MARKER_PRESENT'] : []),
+          ...(summary.outcomes.length > 0 ? ['DELIVERY_OUTCOME_RECORDED'] : []),
+          ...(records.present ? ['DISPATCH_RECORD_PRESENT'] : []),
+          ...(brokerOrders > 0 ? ['LOCAL_BROKER_ORDER_PRESENT'] : []),
+          ...(brokerActivities > 0 ? ['LOCAL_BROKER_ACTIVITY_PRESENT'] : []),
+        ];
+        if (blockers.length) {
+          await appendEntryExposureClaimDiagnostic(claim.id, 'STALE_ADMISSION_RECOVERY_BLOCKED', json({ orderIntentId, blockers, executionAuthority: 'NONE' }), tx);
+          return { kind: 'BLOCKED' as const, blockers };
+        }
+        const failed = await tx.orderIntent.updateMany({
+          where: { id: orderIntentId, status: 'received', updatedAt: { lte: cutoff } },
+          data: { status: 'failed', blockReason: 'STALE_ADMISSION_NEVER_DISPATCHED: the admission did not complete and its intent never became executable; it was not requeued and a new entry requires a new admission decision.' },
+        });
+        if (failed.count !== 1) return { kind: 'BLOCKED' as const, blockers: ['INTENT_CHANGED'] };
+        await appendNotSentEvidence(tx, {
+          claimId: claim.id, orderIntentId, classification: 'NOT_SENT_PRE_DISPATCH', producer: 'STALE_ADMISSION_NEVER_EXECUTABLE',
+          source: 'STALE_ADMISSION_RECOVERY', reason: 'STALE_ADMISSION_NEVER_SUBMITTED',
+          proof: { basis: 'CLAIM_NEVER_LEFT_ENTRY_PENDING', intentStatus: 'received', thresholdMs: STALE_ADMISSION_THRESHOLD_MS, ...recordIdentity(records), brokerOrders, brokerActivities },
+        });
+        return { kind: 'RECORDED' as const };
+      });
+      if (verdict.kind === 'RECORDED') {
+        const release = await releaseUnsubmittedOrRouteToRecovery({ orderIntentId, reason: 'STALE_ADMISSION_NEVER_SUBMITTED', source: 'STALE_ADMISSION_RECOVERY', dispatchAttempted: false });
+        if (release.released) released += 1; else retained += 1;
+        if (release.outcome === 'RETRYABLE_FAILURE') failures.push({ claimId: candidate.id, error: 'RETRYABLE_RELEASE_FAILURE' });
+        await createSystemEvent({
+          type: 'entry_exposure.stale_admission_recovered', entityType: 'entryExposureClaim', entityId: candidate.id, tradingAccountId,
+          severity: release.released ? SystemEventSeverity.WARNING : SystemEventSeverity.ERROR,
+          message: release.released
+            ? 'An abandoned entry admission was failed and its never-dispatched claim released. Nothing was requeued or resubmitted.'
+            : 'An abandoned entry admission was failed with structured not-sent evidence; its claim release is retried by the terminal-claim sweep.',
+          payloadJson: json({ orderIntentId, releaseOutcome: release.outcome }),
+        }).catch(() => undefined);
+      } else if (verdict.kind === 'BLOCKED') {
+        retained += 1;
+      }
+    } catch (error) {
+      retained += 1;
+      failures.push({ claimId: candidate.id, error: message(error) });
+      await recordRecoveryError(orderIntentId, 'STALE_ADMISSION_RECOVERY', error);
+    }
+  }
+  return { examined: candidates.length, attempted, released, retained, failures };
+}
+
+/**
+ * Read-only description of abandoned admissions for readiness, by the intent's own age (claim
+ * diagnostics refresh the claim's updatedAt, so a retained claim would otherwise stop looking stale).
+ */
+export async function describeStaleAdmissionClaims(args: { db?: PrismaClient; tradingAccountIds?: number[] | undefined; now?: Date } = {}) {
+  const db = args.db ?? prisma;
+  const now = args.now ?? new Date();
+  const claims = await db.entryExposureClaim.findMany({
+    where: staleAdmissionClaimWhere(now, args.tradingAccountIds),
+    select: {
+      id: true, tradingAccountId: true, securityId: true, orderIntentId: true, status: true, lastDiagnosedAt: true,
+      security: { select: { symbol: true } },
+      orderIntent: { select: { status: true, clientOrderId: true, updatedAt: true, liveEntryAcceptanceRunId: true } },
+      events: { where: { eventType: 'STALE_ADMISSION_RECOVERY_BLOCKED' }, orderBy: { id: 'desc' }, take: 1, select: { evidenceJson: true, createdAt: true } },
+    },
+    orderBy: { id: 'asc' },
+  });
+  return claims.map((claim) => {
+    const blocked = claim.events[0] ?? null;
+    const blockers = blocked && blocked.evidenceJson && typeof blocked.evidenceJson === 'object' && !Array.isArray(blocked.evidenceJson)
+      ? (blocked.evidenceJson as Record<string, unknown>).blockers ?? null : null;
+    return {
+      claimId: claim.id, tradingAccountId: claim.tradingAccountId, securityId: claim.securityId, symbol: claim.security.symbol,
+      orderIntentId: claim.orderIntentId, clientOrderId: claim.orderIntent?.clientOrderId ?? null, claimStatus: claim.status,
+      intentStatus: claim.orderIntent?.status ?? null, intentLastUpdatedAt: claim.orderIntent?.updatedAt ?? null,
+      liveEntryAcceptanceExecution: claim.orderIntent?.liveEntryAcceptanceRunId != null,
+      recoveryState: blocked ? 'OPERATOR_INVESTIGATION' as const : 'AUTOMATIC_STALE_ADMISSION_RECOVERY' as const,
+      blockers, lastAttemptAt: claim.lastDiagnosedAt,
+    };
+  });
 }
 
 /** Leases a claim for one attempt: advances lastDiagnosedAt only if it is still due and held. */
@@ -864,16 +1161,25 @@ export async function recoverTerminalEntryClaimsForAccount(tradingAccountId: num
       continue;
     }
     attempted.push(candidate.id);
+    const priorResultEventId = await latestAttemptResultEvent(candidate.id).then((event) => event?.id ?? 0).catch(() => null);
+    // What this attempt concluded, for readiness; null once the claim is released.
+    let result: { result: AttemptResult; reason: string } | null = null;
+    const verified = (release: DispatchedEntryReleaseResult) => release.released ? null
+      : { result: release.assessment && !release.assessment.eligible ? 'BLOCKED_BY_EVIDENCE' as const : 'RETAINED' as const, reason: release.reason };
+    const unsubmitted = (release: UnsubmittedReleaseResult) => release.released ? null
+      : { result: release.outcome === 'RETRYABLE_FAILURE' ? 'TECHNICAL_FAILURE' as const : release.outcome === 'REFUSED_RETAINED' ? 'REFUSED' as const : 'RETAINED' as const, reason: release.outcome };
     try {
       if (classification.state === 'AUTOMATIC_NEVER_SUBMITTED_RELEASE') {
-        const result = await releaseUnsubmittedOrRouteToRecovery({ orderIntentId, reason: 'TERMINAL_INTENT_VERIFIED_NEVER_SUBMITTED', source: 'TERMINAL_CLAIM_SWEEP', dispatchAttempted: false });
-        if (result.released) released += 1; else retained += 1;
-        if (result.outcome === 'RETRYABLE_FAILURE') failures.push({ claimId: candidate.id, error: 'RETRYABLE_RELEASE_FAILURE' });
+        const release = await releaseUnsubmittedOrRouteToRecovery({ orderIntentId, reason: 'TERMINAL_INTENT_VERIFIED_NEVER_SUBMITTED', source: 'TERMINAL_CLAIM_SWEEP', dispatchAttempted: false });
+        if (release.released) released += 1; else retained += 1;
+        if (release.outcome === 'RETRYABLE_FAILURE') failures.push({ claimId: candidate.id, error: 'RETRYABLE_RELEASE_FAILURE' });
+        result = unsubmitted(release);
       } else if (classification.state === 'AUTOMATIC_NOT_SENT_EVIDENCE_RECORDING') {
-        const result = await recordNotSentEvidenceAndRelease(candidate, classification.notSent!, 'TERMINAL_CLAIM_SWEEP');
+        const release = await recordNotSentEvidenceAndRelease(candidate, classification.notSent!, 'TERMINAL_CLAIM_SWEEP');
         recorded += 1;
-        if (result.released) released += 1; else retained += 1;
-        if (result.outcome === 'RETRYABLE_FAILURE') failures.push({ claimId: candidate.id, error: 'RETRYABLE_RELEASE_FAILURE' });
+        if (release.released) released += 1; else retained += 1;
+        if (release.outcome === 'RETRYABLE_FAILURE') failures.push({ claimId: candidate.id, error: 'RETRYABLE_RELEASE_FAILURE' });
+        result = unsubmitted(release);
       } else if (classification.state === 'AUTOMATIC_OUTCOME_RECORDING') {
         // An outcome already recorded (whose claim transition did not complete) is kept as is; a
         // dispatch record is classified from the worker's block reason; otherwise the outcome is unknown.
@@ -888,17 +1194,26 @@ export async function recoverTerminalEntryClaimsForAccount(tradingAccountId: num
             : `No durable dispatch record and no structured not-sent evidence; delivery is unknown. Block reason: ${candidate.orderIntent.blockReason ?? 'none'}`,
         });
         recorded += 1;
-        const result = classification.recordsPresent ? await releaseVerifiedEntryExposureClaim({ orderIntentId, mode: 'SYSTEM', now }) : { released: false };
-        if (result.released) released += 1; else retained += 1;
+        if (classification.recordsPresent) {
+          const release = await releaseVerifiedEntryExposureClaim({ orderIntentId, mode: 'SYSTEM', now });
+          if (release.released) released += 1; else retained += 1;
+          result = verified(release);
+        } else {
+          retained += 1;
+          result = { result: 'RETAINED', reason: 'OUTCOME_RECORDED_OPERATOR_INVESTIGATION' };
+        }
       } else {
-        const result = await releaseVerifiedEntryExposureClaim({ orderIntentId, mode: 'SYSTEM', now });
-        if (result.released) released += 1; else retained += 1;
+        const release = await releaseVerifiedEntryExposureClaim({ orderIntentId, mode: 'SYSTEM', now });
+        if (release.released) released += 1; else retained += 1;
+        result = verified(release);
       }
     } catch (error) {
       retained += 1;
       failures.push({ claimId: candidate.id, error: message(error) });
       await recordRecoveryError(orderIntentId, 'TERMINAL_CLAIM_SWEEP', error);
+      result = { result: 'TECHNICAL_FAILURE', reason: errorCode(error) };
     }
+    if (result && priorResultEventId !== null) await recordAttemptResultIfStale(candidate.id, priorResultEventId, result, classification.state).catch(() => undefined);
     // Diagnostics use the wall clock; the attempt time stays the sweep's clock (never regressed).
     await prisma.entryExposureClaim.updateMany({ where: { id: candidate.id, releasedAt: null, lastDiagnosedAt: { lt: now } }, data: { lastDiagnosedAt: now } }).catch(() => undefined);
   }
@@ -924,8 +1239,11 @@ export async function describeUnreleasedTerminalEntryClaims(args: {
     const classification = classifyTerminalEntryClaim(candidate, now);
     const { summary, basis, recordsPresent } = classification;
     const brokerExposure = args.brokerExposure?.(candidate.tradingAccountId, candidate.symbol) ?? false;
-    const lastAttemptEvent = [...candidate.attemptEvents].reverse().find((event) => ATTEMPT_RESULT_EVENTS[event.eventType]) ?? null;
-    const lastAttemptResult = lastAttemptEvent ? ATTEMPT_RESULT_EVENTS[lastAttemptEvent.eventType]! : null;
+    // The newest attempt result describes the newest attempt: results are deduplicated only against
+    // an identical newest result, and the sweep records one whenever an attempt would otherwise leave
+    // an older, different result as the newest. `at` is when that result was first observed.
+    const lastAttemptEvent = [...candidate.attemptEvents].reverse().find((event) => attemptResultOf(event) !== null) ?? null;
+    const lastAttemptResult = lastAttemptEvent ? attemptResultOf(lastAttemptEvent) : null;
     const attempted = candidate.lastDiagnosedAt !== null || lastAttemptEvent !== null;
     const nextAttemptDueAt = classification.automatic
       ? new Date(Math.max(now.getTime(), (candidate.lastDiagnosedAt?.getTime() ?? 0) + ENTRY_DISPATCH_RECOVERY_RETRY_MS))
@@ -959,7 +1277,7 @@ export async function describeUnreleasedTerminalEntryClaims(args: {
       recoveryAttempted: attempted,
       lastAttemptAt: candidate.lastDiagnosedAt,
       lastRecoveryResult: lastAttemptEvent ? {
-        eventType: lastAttemptEvent.eventType, result: lastAttemptResult, at: lastAttemptEvent.createdAt,
+        eventType: lastAttemptEvent.eventType, result: lastAttemptResult, at: lastAttemptEvent.createdAt, firstObservedAt: lastAttemptEvent.createdAt,
         blockers: ((lastAttemptEvent.evidenceJson ?? {}) as Record<string, unknown>).blockers ?? null,
       } : null,
       nextAttemptDueAt,

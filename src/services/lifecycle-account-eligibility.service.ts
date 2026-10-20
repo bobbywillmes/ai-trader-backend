@@ -50,6 +50,10 @@ export type LifecycleAccountEligibility = {
     terminalEntryClaimsDue: number;
     /** Unreleased terminal-entry claims of any recovery state, including operator-only and protected. */
     terminalEntryClaimsHeld: number;
+    /** Claims of abandoned admissions ('received' past the stale threshold) that recovery will attempt now. */
+    staleAdmissionClaimsDue: number;
+    /** Claims of abandoned admissions, attempted or not; held exposure even without usable credentials. */
+    staleAdmissionClaimsHeld: number;
     hasLifecycleWork: boolean;
   };
 };
@@ -159,12 +163,15 @@ export async function enumerateLifecycleAccounts(
         unresolvedExitCountByAccount.get(account.id) ?? 0,
       terminalEntryClaimsDue: terminalClaimRecovery.get(account.id)?.actionableDue ?? 0,
       terminalEntryClaimsHeld: terminalClaimRecovery.get(account.id)?.held ?? 0,
+      staleAdmissionClaimsDue: terminalClaimRecovery.get(account.id)?.staleAdmissionDue ?? 0,
+      staleAdmissionClaimsHeld: terminalClaimRecovery.get(account.id)?.staleAdmissionHeld ?? 0,
       hasLifecycleWork: account._count.orderIntents > 0 ||
         account._count.brokerOrders > 0 ||
         account._count.trackedPositions > 0 ||
         account._count.brokerActivities > 0 ||
         (unresolvedExitCountByAccount.get(account.id) ?? 0) > 0 ||
-        (terminalClaimRecovery.get(account.id)?.actionableDue ?? 0) > 0,
+        (terminalClaimRecovery.get(account.id)?.actionableDue ?? 0) > 0 ||
+        (terminalClaimRecovery.get(account.id)?.staleAdmissionDue ?? 0) > 0,
     };
     const usableCredentials =
       account.credential?.status === BrokerCredentialStatus.ACTIVE;
@@ -178,7 +185,8 @@ export async function enumerateLifecycleAccounts(
         ? exposureSummary.submittingIntents > 0 ||
           exposureSummary.submittedIntents > 0 ||
           exposureSummary.nonterminalOrders > 0 ||
-          exposureSummary.terminalEntryClaimsDue > 0
+          exposureSummary.terminalEntryClaimsDue > 0 ||
+          exposureSummary.staleAdmissionClaimsDue > 0
         : workflow === 'positions'
           ? exposureSummary.activePositions > 0 ||
             exposureSummary.nonterminalOrders > 0 ||
@@ -200,7 +208,7 @@ export async function enumerateLifecycleAccounts(
     let reason: LifecycleAccountEligibility['reason'];
     if (!usableCredentials) {
       // Held entry claims (including operator-only ones) are exposure even when not yet schedulable.
-      reason = exposureSummary.hasLifecycleWork || exposureSummary.terminalEntryClaimsHeld > 0
+      reason = exposureSummary.hasLifecycleWork || exposureSummary.terminalEntryClaimsHeld > 0 || exposureSummary.staleAdmissionClaimsHeld > 0
         ? 'credentials_unavailable_with_exposure'
         : 'credentials_unavailable_dormant';
     } else if (!workflowHasWork) {

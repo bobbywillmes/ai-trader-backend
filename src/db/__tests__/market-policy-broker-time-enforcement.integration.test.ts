@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { readFile, readdir } from 'node:fs/promises';
 import { Client } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { assertDisposableDatabaseUrl } from './disposable-postgres.js';
+import { assertDisposableDatabaseUrl, connectMaintenanceClient } from './disposable-postgres.js';
 
 // Phase 3C.3 authoritative broker-time market-policy enforcement against real PostgreSQL. The real
 // order worker drives submitOrderToBroker; Alpaca is stubbed only at the adapter boundary.
@@ -18,6 +18,10 @@ type BrokerOrder = { id: string; client_order_id: string; symbol: string; side: 
 const harness = vi.hoisted(() => ({
   orders: new Map<string, BrokerOrder>(),
   lookupFailures: new Set<string>(),
+  // An idempotency-GET failure shape per client order ID (AlpacaApiError 429/5xx, network TypeError).
+  lookupErrors: new Map<string, () => Error>(),
+  // One-shot transient database failure while verifying the executable claim, before any marker.
+  executableClaimFailures: new Set<number>(),
   submitCalls: [] as Array<{ accountId: number; payload: { client_order_id: string; symbol: string } }>,
   submitError: null as null | (() => Promise<Error>),
   // An adapter-local guard failure before any network request (it never reaches submitCalls).
@@ -35,6 +39,8 @@ const harness = vi.hoisted(() => ({
 vi.mock('../../integrations/alpaca/orders.adapter.js', () => ({
   getAlpacaOrderByClientOrderId: vi.fn(async (_accountId: number, clientOrderId: string) => {
     if (harness.lookupFailures.has(clientOrderId)) throw new Error('Alpaca client-order lookup unavailable');
+    const lookupError = harness.lookupErrors.get(clientOrderId);
+    if (lookupError) throw lookupError();
     return harness.orders.get(clientOrderId) ?? null;
   }),
   getAlpacaOrderById: vi.fn(async (_accountId: number, id: string) => [...harness.orders.values()].find(order => order.id === id) ?? null),
@@ -56,6 +62,16 @@ vi.mock('../../integrations/alpaca/orders.adapter.js', () => ({
   submitVerifiedAlpacaExitOrder: vi.fn(async () => { throw new Error('Exit submissions are outside these tests.'); }),
   cancelAlpacaOrder: vi.fn(), cancelAllAlpacaOrders: vi.fn(),
 }));
+vi.mock('../../services/entry-exposure-claim.service.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/entry-exposure-claim.service.js')>();
+  return {
+    ...actual,
+    requireExecutableEntryExposureClaim: vi.fn(async (args: Parameters<typeof actual.requireExecutableEntryExposureClaim>[0]) => {
+      if (harness.executableClaimFailures.delete(args.orderIntentId)) throw new Error('injected transient database failure: connection terminated unexpectedly');
+      return actual.requireExecutableEntryExposureClaim(args);
+    }),
+  };
+});
 vi.mock('../../integrations/alpaca/positions.adapter.js', () => ({
   getAlpacaPositions: vi.fn(async () => [...harness.positions.values()]),
   getAlpacaPositionBySymbol: vi.fn(async (_accountId: number, symbol: string) => harness.positions.get(symbol) ?? null),
@@ -266,7 +282,8 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
   }
 
   beforeAll(async () => {
-    admin = new Client({ connectionString: process.env.DATABASE_URL }); await admin.connect();
+    // CREATE/DROP DATABASE run from the maintenance database, never inside the application database.
+    admin = (await connectMaintenanceClient(process.env.DATABASE_URL!)).client;
     await admin.query(`CREATE DATABASE "${database}"`);
     const url = new URL(process.env.DATABASE_URL!); url.pathname = `/${database}`; url.searchParams.delete('schema'); databaseUrl = url.toString();
     assertDisposableDatabaseUrl(databaseUrl, database);
@@ -455,8 +472,9 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
     expect(await one(`SELECT "brokerOrderId" FROM "BrokerOrder" WHERE "orderIntentId"=$1`, [intentId])).toEqual({ brokerOrderId: 'alpaca-earlier-rcvr' });
   });
 
-  // 10: an inconclusive lookup is never proof of absence.
-  it('keeps delivery uncertainty and sends no POST when the stable client-order-ID lookup is inconclusive', async () => {
+  // 10: an inconclusive lookup is never proof of absence and never authorizes a POST, but a failure
+  // before the adapter-invocation marker under the marker protocol is proven never sent.
+  it('sends no POST and records proven pre-dispatch non-delivery when the stable client-order-ID lookup is inconclusive', async () => {
     const fixture = await enforced('AMBG');
     const intentId = await admitted(fixture, 'ambg-1');
     harness.lookupFailures.add('ambg-1');
@@ -464,7 +482,7 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
     harness.lookupFailures.delete('ambg-1');
     expect(posts('ambg-1')).toBe(0);
     expect(await decisionsFor(intentId)).toHaveLength(0);
-    expect(await intentState(intentId)).toMatchObject({ status: 'failed', blockReason: expect.stringContaining('BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN'), claimStatus: 'UNRESOLVED', claimReleased: false });
+    expect(await intentState(intentId)).toMatchObject({ status: 'failed', blockReason: 'LOCAL_PRE_DISPATCH_FAILURE:Alpaca client-order lookup unavailable', claimReleased: true, releaseReason: 'WORKER_PROVEN_PRE_DISPATCH_BOUNDARY_FAILURE', consumptions: 0 });
   });
 
   // 11, 12: legacy queued intents and activation inventory.
@@ -1776,6 +1794,348 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
       [credentialed] = await enumerated();
       expect(credentialed).toMatchObject({ eligible: false, exposureSummary: { terminalEntryClaimsDue: 0, terminalEntryClaimsHeld: 2 } });
       expect(await recovery.recoverTerminalEntryClaimsForAccount(acct)).toMatchObject({ examined: 0 });
+    });
+
+    // Hermes Phase 3C.3 final pre-dispatch recovery correction (MEDIUM) and LOW follow-ups.
+    describe('Phase 3C.3 final pre-dispatch recovery correction (Hermes MEDIUM, LOW-1 stale admission, LOW-2 diagnostics)', () => {
+      const alpacaError = async (statusCode: number) => {
+        const { AlpacaApiError } = await import('../../errors/alpaca-api-error.js');
+        return new AlpacaApiError(statusCode, statusCode === 429 ? 'rate limit exceeded' : 'service unavailable');
+      };
+      const secondEntryRefused = async (assignmentId: number, clientOrderId: string, code: string) =>
+        expect(submit(assignmentId, clientOrderId)).rejects.toMatchObject({ statusCode: 409, details: expect.objectContaining({ code }) });
+      async function failInsertOf(claimId: number, eventTypes: string[]) {
+        const name = `test_fail_event_${++triggerSeq}`;
+        await db.query(`CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW."claimId" = ${claimId} AND NEW."eventType" IN (${eventTypes.map((type) => `'${type}'`).join(',')}) THEN RAISE EXCEPTION 'injected transient evidence persistence failure'; END IF; RETURN NEW; END $$`);
+        await db.query(`CREATE TRIGGER ${name} BEFORE INSERT ON "EntryExposureClaimEvent" FOR EACH ROW EXECUTE FUNCTION ${name}()`);
+        return async () => {
+          await db.query(`DROP TRIGGER IF EXISTS ${name} ON "EntryExposureClaimEvent"`);
+          await db.query(`DROP FUNCTION IF EXISTS ${name}()`);
+        };
+      }
+      const ageIntent = (orderIntentId: number, minutes: number) => db.query(`UPDATE "OrderIntent" SET "updatedAt" = now() - make_interval(mins => $2) WHERE id=$1`, [orderIntentId, minutes]);
+
+      // MEDIUM: idempotency GET 429 / 5xx / network failure through the real worker, PAPER and LIVE.
+      it.each([
+        ['PAPER', 'GET 429', () => alpacaError(429)],
+        ['PAPER', 'GET 503', () => alpacaError(503)],
+        ['PAPER', 'network failure', async () => new TypeError('fetch failed')],
+        ['LIVE', 'GET 503', () => alpacaError(503)],
+      ] as const)('%s %s before the broker POST commits structured pre-dispatch evidence and releases the claim, with zero POSTs', async (environment, label, makeError) => {
+        const tag = `PD${environment[0]}${label.replace(/[^0-9A-Z]/gi, '').slice(0, 4).toUpperCase()}`;
+        const acct = environment === 'LIVE' ? await liveAccount(tag) : await paperAccount(tag);
+        const clientOrderId = `${tag.toLowerCase()}-1`;
+        const { fixture, intentId } = await entry(tag, clientOrderId, acct);
+        const error = await makeError();
+        harness.lookupErrors.set(clientOrderId, () => error);
+        try {
+          expect(await dispatch(acct)).toMatchObject({ failed: 1, submitted: 0, blocked: 0 });
+        } finally {
+          harness.lookupErrors.delete(clientOrderId);
+        }
+        expect(posts(clientOrderId)).toBe(0);
+        expect(await intentState(intentId)).toMatchObject({ status: 'failed', blockReason: `LOCAL_PRE_DISPATCH_FAILURE:${error.message}`, claimReleased: true,
+          releaseReason: 'WORKER_PROVEN_PRE_DISPATCH_BOUNDARY_FAILURE', brokerOrders: 0, consumptions: 0 });
+        // Evidence commits before the release; no uncertain outcome, marker or dispatch record exists.
+        expect(await eventTypes(intentId)).toEqual(['ACQUIRED', 'WORKER_CLAIMED_FOR_SUBMISSION', 'NOT_SENT_EVIDENCE_RECORDED', 'RELEASED_NO_BROKER_EXPOSURE']);
+        expect((await events(intentId, 'NOT_SENT_EVIDENCE_RECORDED'))[0]!.evidenceJson).toMatchObject({
+          classification: 'NOT_SENT_PRE_DISPATCH', producer: 'WORKER_PRE_BOUNDARY_FAILURE', source: 'WORKER', adapterInvocation: 'NOT_INVOKED', networkRequestIssued: false,
+          proof: { basis: 'ADAPTER_MARKER_V1_NO_INVOCATION_MARKER', submissionPhase: 'UNCLASSIFIED', adapterMarkers: 0, recordedOutcomes: 0, unenforcedDispatchId: null, consumptionId: null, brokerOrders: 0 },
+        });
+        expect((await events(intentId, 'RELEASED_NO_BROKER_EXPOSURE'))[0]!.evidenceJson).toMatchObject({ notSentBasis: 'RECORDED_NOT_SENT_EVIDENCE' });
+        expect(await count(`"MarketPolicyBrokerUnenforcedDispatch" WHERE "orderIntentId"=$1`, [intentId])).toBe(0);
+        // The failed intent is never requeued; only a genuinely new entry dispatches.
+        const fresh = await submit(fixture.assignmentId, `${clientOrderId}-new`);
+        await dispatch(acct);
+        expect([posts(clientOrderId), posts(`${clientOrderId}-new`)]).toEqual([0, 1]);
+        expect(await intentState(fresh.intentId)).toMatchObject({ status: 'submitted', claimStatus: 'BROKER_ORDER_ACTIVE' });
+        expect(await intentState(intentId)).toMatchObject({ status: 'failed' });
+      });
+
+      it('proven pre-dispatch evidence survives a transient release failure and is released by the bounded sweep', async () => {
+        const acct = await paperAccount('PDREL');
+        const { recovery } = await services();
+        const { fixture, intentId } = await entry('PDREL', 'pdrel-1', acct);
+        const restore = await failReleaseOf(`NEW.id = ${await claimIdOf(intentId)}`);
+        harness.lookupErrors.set('pdrel-1', () => new TypeError('fetch failed'));
+        try {
+          await dispatch(acct);
+        } finally {
+          harness.lookupErrors.delete('pdrel-1');
+          await restore();
+        }
+        expect(await intentState(intentId)).toMatchObject({ status: 'failed', claimStatus: 'ENTRY_SUBMITTING', claimReleased: false });
+        expect((await events(intentId, 'NOT_SENT_EVIDENCE_RECORDED'))[0]!.evidenceJson).toMatchObject({ producer: 'WORKER_PRE_BOUNDARY_FAILURE' });
+        expect((await events(intentId, 'RECOVERY_ATTEMPT_FAILED'))[0]!.evidenceJson).toMatchObject({ source: 'WORKER', failureClass: 'TECHNICAL' });
+        expect(await events(intentId, 'DISPATCH_OUTCOME_RECORDED')).toHaveLength(0);
+        // Ownership is held until the release commits: a second same-account/Security BUY is refused.
+        await secondEntryRefused(fixture.assignmentId, 'pdrel-2', 'ENTRY_ALREADY_PENDING');
+        expect(await readinessOf(acct, intentId)).toMatchObject({ recoveryState: 'AUTOMATIC_NEVER_SUBMITTED_RELEASE', deliveryEvidence: 'STRUCTURED_NOT_SENT', systemRecovery: 'TECHNICAL_FAILURE_RETRY_SCHEDULED' });
+        expect(await recovery.recoverTerminalEntryClaimsForAccount(acct, later(120_000))).toMatchObject({ examined: 1, released: 1 });
+        expect(await intentState(intentId)).toMatchObject({ claimReleased: true, releaseReason: 'TERMINAL_INTENT_VERIFIED_NEVER_SUBMITTED' });
+        expect(posts('pdrel-1')).toBe(0);
+      });
+
+      it('a transient database failure verifying the executable claim, before the marker, is proven pre-dispatch once the database recovers', async () => {
+        const acct = await paperAccount('PDDB');
+        const { intentId } = await entry('PDDB', 'pddb-1', acct);
+        harness.executableClaimFailures.add(intentId);
+        await dispatch(acct);
+        expect(harness.executableClaimFailures.has(intentId)).toBe(false);
+        expect(posts('pddb-1')).toBe(0);
+        expect(await intentState(intentId)).toMatchObject({ status: 'failed', blockReason: expect.stringMatching(/^LOCAL_PRE_DISPATCH_FAILURE:.*injected transient database failure/), claimReleased: true, releaseReason: 'WORKER_PROVEN_PRE_DISPATCH_BOUNDARY_FAILURE' });
+        expect(await eventTypes(intentId)).toEqual(['ACQUIRED', 'WORKER_CLAIMED_FOR_SUBMISSION', 'NOT_SENT_EVIDENCE_RECORDED', 'RELEASED_NO_BROKER_EXPOSURE']);
+      });
+
+      it('a database failure that also defeats the evidence inspection retains ownership and defers to stale recovery', async () => {
+        const acct = await paperAccount('PDINS');
+        const { worker } = await services();
+        const { fixture, intentId } = await entry('PDINS', 'pdins-1', acct);
+        // Real PostgreSQL fault: the dispatch-record relation is unavailable to the local dispatch check
+        // and to the evidence inspection alike.
+        await db.query(`ALTER TABLE "MarketPolicyBrokerUnenforcedDispatch" RENAME TO "MarketPolicyBrokerUnenforcedDispatch_unavailable"`);
+        try {
+          expect(await dispatch(acct)).toMatchObject({ failed: 1 });
+        } finally {
+          await db.query(`ALTER TABLE "MarketPolicyBrokerUnenforcedDispatch_unavailable" RENAME TO "MarketPolicyBrokerUnenforcedDispatch"`);
+        }
+        expect(posts('pdins-1')).toBe(0);
+        expect(await intentState(intentId)).toMatchObject({ status: 'submitting', blockReason: null, claimStatus: 'ENTRY_SUBMITTING', claimReleased: false });
+        expect(await eventTypes(intentId)).toEqual(['ACQUIRED', 'WORKER_CLAIMED_FOR_SUBMISSION']);
+        expect(await one(`SELECT "payloadJson" FROM "SystemEvent" WHERE type='entry_exposure.delivery_evidence_unpersisted' AND "tradingAccountId"=$1`, [acct])).toMatchObject({ payloadJson: expect.objectContaining({ preDispatchProofCandidate: true }) });
+        await secondEntryRefused(fixture.assignmentId, 'pdins-2', 'ENTRY_ALREADY_PENDING');
+        await ageIntent(intentId, 10);
+        expect(await worker.recoverStaleSubmittingIntentsForAccount(acct)).toMatchObject({ found: 1, retryable: 1 });
+        expect(await intentState(intentId)).toMatchObject({ status: 'failed', claimReleased: true, releaseReason: 'RECOVERY_CONFIRMED_NEVER_SUBMITTED' });
+        expect((await events(intentId, 'NOT_SENT_EVIDENCE_RECORDED'))[0]!.evidenceJson).toMatchObject({ producer: 'STALE_RECOVERY_ADAPTER_NOT_INVOKED' });
+        expect(posts('pdins-1')).toBe(0);
+      });
+
+      it('a failed persistence of the corrective not-sent classification retains ownership; stale recovery later proves it', async () => {
+        const acct = await paperAccount('PDPER');
+        const { worker } = await services();
+        const { fixture, intentId } = await entry('PDPER', 'pdper-1', acct);
+        const restore = await failInsertOf(await claimIdOf(intentId), ['NOT_SENT_EVIDENCE_RECORDED']);
+        harness.lookupErrors.set('pdper-1', () => new TypeError('fetch failed'));
+        try {
+          expect(await dispatch(acct)).toMatchObject({ failed: 1 });
+        } finally {
+          harness.lookupErrors.delete('pdper-1');
+          await restore();
+        }
+        // The terminal state rolled back with the evidence: nothing released, nothing classified.
+        expect(await intentState(intentId)).toMatchObject({ status: 'submitting', blockReason: null, claimStatus: 'ENTRY_SUBMITTING', claimReleased: false });
+        expect(await eventTypes(intentId)).toEqual(['ACQUIRED', 'WORKER_CLAIMED_FOR_SUBMISSION']);
+        await secondEntryRefused(fixture.assignmentId, 'pdper-2', 'ENTRY_ALREADY_PENDING');
+        await dispatch(acct);
+        expect([posts('pdper-1'), posts('pdper-2')]).toEqual([0, 0]);
+        await ageIntent(intentId, 10);
+        expect(await worker.recoverStaleSubmittingIntentsForAccount(acct)).toMatchObject({ found: 1, retryable: 1 });
+        expect(await intentState(intentId)).toMatchObject({ claimReleased: true, releaseReason: 'RECOVERY_CONFIRMED_NEVER_SUBMITTED' });
+      });
+
+      it('a committed dispatch authorization without an adapter marker never takes the never-submitted path, in either phase', async () => {
+        const acct = await paperAccount('PDAUT');
+        const { guard, claims } = await services();
+        // (a) This attempt's final authorization commits, then the marker write fails (NOT_DISPATCHED).
+        const first = await entry('PDAUA', 'pdaua-1', acct);
+        const restore = await failInsertOf(await claimIdOf(first.intentId), ['ADAPTER_INVOCATION_STARTED']);
+        harness.positions.set('PDAUA', { symbol: 'PDAUA', side: 'long', qty: '1' });
+        try {
+          await dispatch(acct);
+        } finally {
+          await restore();
+        }
+        expect(posts('pdaua-1')).toBe(0);
+        expect(await count(`"MarketPolicyBrokerUnenforcedDispatch" WHERE "orderIntentId"=$1`, [first.intentId])).toBe(1);
+        expect(await intentState(first.intentId)).toMatchObject({ status: 'failed', claimStatus: 'UNRESOLVED', claimReleased: false });
+        expect((await events(first.intentId, 'DISPATCH_OUTCOME_RECORDED'))[0]!.evidenceJson).toMatchObject({ classification: 'NOT_SENT_DISPATCH_RECORD_ACK_LOST', dispatchRecordPresent: true });
+        expect((await events(first.intentId, 'NOT_SENT_EVIDENCE_RECORDED')).map((event) => event.evidenceJson.producer)).not.toContain('WORKER_PRE_BOUNDARY_FAILURE');
+        // The broker position contradicts release; ownership stays held.
+        await secondEntryRefused(first.fixture.assignmentId, 'pdaua-2', 'ENTRY_EXPOSURE_UNRESOLVED');
+        harness.positions.delete('PDAUA');
+
+        // (b) An earlier attempt's committed authorization, then an UNCLASSIFIED lookup failure.
+        const second = await entry('PDAUB', 'pdaub-1', acct);
+        await emulateWorkerClaim(second.intentId);
+        const prepared = await guard.prepareEntryBrokerDispatch({ orderIntentId: second.intentId, tradingAccountId: acct, symbol: 'PDAUB', clientOrderId: 'pdaub-1' });
+        await prepared.authorizeDispatch(null);
+        await db.query(`UPDATE "OrderIntent" SET status='pending' WHERE id=$1`, [second.intentId]);
+        expect((await claims.requireEntryExposureClaim(second.intentId)).status).toBe('ENTRY_SUBMITTING');
+        harness.lookupErrors.set('pdaub-1', () => new TypeError('fetch failed'));
+        try {
+          await dispatch(acct);
+        } finally {
+          harness.lookupErrors.delete('pdaub-1');
+        }
+        expect(posts('pdaub-1')).toBe(0);
+        expect(await intentState(second.intentId)).toMatchObject({ status: 'failed', blockReason: 'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:fetch failed', claimStatus: 'UNRESOLVED', claimReleased: false });
+        expect((await events(second.intentId, 'DISPATCH_OUTCOME_RECORDED'))[0]!.evidenceJson).toMatchObject({ classification: 'DELIVERY_UNCERTAIN', observation: 'OBSERVED', dispatchRecordPresent: true,
+          message: expect.stringContaining('DISPATCH_RECORD_PRESENT') });
+        expect(await events(second.intentId, 'NOT_SENT_EVIDENCE_RECORDED')).toHaveLength(0);
+        await secondEntryRefused(second.fixture.assignmentId, 'pdaub-2', 'ENTRY_EXPOSURE_UNRESOLVED');
+      });
+
+      it('an existing broker order with mismatched identity keeps ownership held and sends nothing', async () => {
+        const acct = await paperAccount('PDIDM');
+        const { fixture, intentId } = await entry('PDIDM', 'pdidm-1', acct);
+        harness.orders.set('pdidm-1', { id: 'alpaca-foreign-pdidm', client_order_id: 'pdidm-1', symbol: 'OTHER', side: 'buy', status: 'accepted', qty: '1', filled_qty: '0' });
+        try {
+          await dispatch(acct);
+        } finally {
+          harness.orders.delete('pdidm-1');
+        }
+        expect(posts('pdidm-1')).toBe(0);
+        expect(await intentState(intentId)).toMatchObject({ status: 'failed', blockReason: expect.stringMatching(/^BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:Broker order found by stable client order ID does not match/), claimStatus: 'UNRESOLVED', claimReleased: false, brokerOrders: 0 });
+        expect(await events(intentId, 'NOT_SENT_EVIDENCE_RECORDED')).toHaveLength(0);
+        await secondEntryRefused(fixture.assignmentId, 'pdidm-2', 'ENTRY_EXPOSURE_UNRESOLVED');
+      });
+
+      it('a previously recorded ambiguous outcome keeps a later lookup failure delivery-uncertain', async () => {
+        const acct = await paperAccount('PDAMB');
+        const { fixture, intentId } = await entry('PDAMB', 'pdamb-1', acct);
+        // An earlier attempt's observed uncertain outcome on the still-pending lifecycle.
+        await db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'DISPATCH_OUTCOME_RECORDED',$2)`,
+          [await claimIdOf(intentId), JSON.stringify({ classification: 'DELIVERY_UNCERTAIN', source: 'WORKER', observation: 'OBSERVED', adapterInvocation: 'UNKNOWN' })]);
+        harness.lookupErrors.set('pdamb-1', () => new TypeError('fetch failed'));
+        try {
+          await dispatch(acct);
+        } finally {
+          harness.lookupErrors.delete('pdamb-1');
+        }
+        expect(posts('pdamb-1')).toBe(0);
+        expect(await intentState(intentId)).toMatchObject({ status: 'failed', blockReason: 'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:fetch failed', claimStatus: 'UNRESOLVED', claimReleased: false });
+        expect((await events(intentId, 'DISPATCH_OUTCOME_RECORDED')).at(-1)!.evidenceJson).toMatchObject({ message: expect.stringContaining('PRIOR_DELIVERY_OUTCOME_RECORDED') });
+        expect(await events(intentId, 'NOT_SENT_EVIDENCE_RECORDED')).toHaveLength(0);
+        await secondEntryRefused(fixture.assignmentId, 'pdamb-2', 'ENTRY_EXPOSURE_UNRESOLVED');
+      });
+
+      it('a legacy claim without marker-protocol evidence is never inferred non-delivered from a missing marker', async () => {
+        const acct = await paperAccount('PDLEG');
+        const { claims, recovery } = await services();
+        const { prisma } = await import('../prisma.js');
+        const { fixture, intentId } = await entry('PDLEG', 'pdleg-1', acct);
+        // A pre-protocol worker claimed the intent (no markerProtocol) before it returned to the queue.
+        await claims.transitionEntryExposureClaim({ orderIntentId: intentId, status: 'ENTRY_SUBMITTING', eventType: 'WORKER_CLAIMED_FOR_SUBMISSION', evidence: { worker: 'legacy' } });
+        await db.query(`UPDATE "OrderIntent" SET status='submitting' WHERE id=$1`, [intentId]);
+        expect(await recovery.proveWorkerPreDispatchNonDelivery(prisma, { orderIntentId: intentId, tradingAccountId: acct })).toMatchObject({ proven: false, blockers: ['MARKER_PROTOCOL_NOT_ESTABLISHED'] });
+        await db.query(`UPDATE "OrderIntent" SET status='pending' WHERE id=$1`, [intentId]);
+        harness.lookupErrors.set('pdleg-1', () => new TypeError('fetch failed'));
+        try {
+          await dispatch(acct);
+        } finally {
+          harness.lookupErrors.delete('pdleg-1');
+        }
+        expect(posts('pdleg-1')).toBe(0);
+        expect(await intentState(intentId)).toMatchObject({ status: 'failed', blockReason: 'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:fetch failed', claimStatus: 'UNRESOLVED', claimReleased: false });
+        expect((await events(intentId, 'DISPATCH_OUTCOME_RECORDED'))[0]!.evidenceJson).toMatchObject({ message: expect.stringContaining('MULTIPLE_SUBMISSION_CLAIMS') });
+        expect(await events(intentId, 'NOT_SENT_EVIDENCE_RECORDED')).toHaveLength(0);
+        await secondEntryRefused(fixture.assignmentId, 'pdleg-2', 'ENTRY_EXPOSURE_UNRESOLVED');
+      });
+
+      // LOW-1: abandoned admissions.
+      it('LOW-1: recovers an abandoned admission whose cleanup also failed, only after the stale threshold and only from proof', async () => {
+        const acct = await paperAccount('SADM');
+        await credential(acct);
+        const { worker, eligibility, orderAudit } = await services();
+        const fixture = await instrument('SADM', mainStrategyId, acct);
+        // Real PostgreSQL faults: the admission's pending transition and its cleanup both fail.
+        const name = `test_fail_admission_${++triggerSeq}`;
+        await db.query(`CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW."clientOrderId" = 'sadm-1' AND NEW.status IS DISTINCT FROM OLD.status THEN RAISE EXCEPTION 'injected transient connection failure'; END IF; RETURN NEW; END $$`);
+        await db.query(`CREATE TRIGGER ${name} BEFORE UPDATE ON "OrderIntent" FOR EACH ROW EXECUTE FUNCTION ${name}()`);
+        try {
+          await expect(submit(fixture.assignmentId, 'sadm-1')).rejects.toThrow(/injected transient connection failure/);
+        } finally {
+          await db.query(`DROP TRIGGER ${name} ON "OrderIntent"`);
+          await db.query(`DROP FUNCTION ${name}()`);
+        }
+        const intentId = (await one(`SELECT id FROM "OrderIntent" WHERE "clientOrderId"='sadm-1'`)).id as number;
+        expect(await intentState(intentId)).toMatchObject({ status: 'received', claimStatus: 'ENTRY_PENDING', claimReleased: false });
+        await secondEntryRefused(fixture.assignmentId, 'sadm-2', 'ENTRY_ALREADY_PENDING');
+        // Before the threshold nothing selects it.
+        expect((await worker.recoverStaleSubmittingIntentsForAccount(acct)).admissionRecovery).toMatchObject({ examined: 0 });
+        expect(await intentState(intentId)).toMatchObject({ status: 'received', claimReleased: false });
+        await ageIntent(intentId, 20);
+        const [enumerated] = (await eligibility.enumerateLifecycleAccounts('submitted_orders', { persistWorkerHealth: false })).filter((item) => item.tradingAccountId === acct);
+        expect(enumerated).toMatchObject({ eligible: true, exposureSummary: { staleAdmissionClaimsDue: 1, staleAdmissionClaimsHeld: 1 } });
+        expect((await worker.recoverStaleSubmittingIntentsForAccount(acct)).admissionRecovery).toMatchObject({ examined: 1, released: 1, retained: 0 });
+        expect(await intentState(intentId)).toMatchObject({ status: 'failed', blockReason: expect.stringMatching(/^STALE_ADMISSION_NEVER_DISPATCHED/), claimReleased: true, releaseReason: 'STALE_ADMISSION_NEVER_SUBMITTED', brokerOrders: 0 });
+        expect((await events(intentId, 'NOT_SENT_EVIDENCE_RECORDED'))[0]!.evidenceJson).toMatchObject({ producer: 'STALE_ADMISSION_NEVER_EXECUTABLE', source: 'STALE_ADMISSION_RECOVERY', proof: { basis: 'CLAIM_NEVER_LEFT_ENTRY_PENDING' } });
+        expect(await count(`"SystemEvent" WHERE type='entry_exposure.stale_admission_recovered' AND "tradingAccountId"=$1`, [acct])).toBe(1);
+        // A hung admission resuming afterwards can never make the failed intent executable.
+        expect(await orderAudit.transitionOrderIntentStatusFrom(intentId, 'received', 'pending')).toBe(false);
+        expect(await intentState(intentId)).toMatchObject({ status: 'failed' });
+        const fresh = await submit(fixture.assignmentId, 'sadm-3');
+        await dispatch(acct);
+        expect([posts('sadm-1'), posts('sadm-3')]).toEqual([0, 1]);
+        expect(await intentState(fresh.intentId)).toMatchObject({ status: 'submitted' });
+      });
+
+      it('LOW-1: never touches an old pending submission, and retains an abandoned admission with contradictory evidence for investigation', async () => {
+        const acct = await paperAccount('SADN');
+        await credential(acct);
+        const { worker, entryReadiness } = await services();
+        const pending = await entry('SADP', 'sadp-1', acct);
+        await ageIntent(pending.intentId, 60);
+        const contradicted = await entry('SADC', 'sadc-1', acct);
+        await db.query(`UPDATE "OrderIntent" SET status='received' WHERE id=$1`, [contradicted.intentId]);
+        // Contradictory evidence: an adapter-invocation marker on a claim that never left ENTRY_PENDING.
+        await db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'ADAPTER_INVOCATION_STARTED','{"protocol":"ADAPTER_MARKER_V1"}')`, [await claimIdOf(contradicted.intentId)]);
+        await ageIntent(contradicted.intentId, 20);
+        expect((await worker.recoverStaleSubmittingIntentsForAccount(acct)).admissionRecovery).toMatchObject({ examined: 1, released: 0, retained: 1 });
+        expect(await intentState(pending.intentId)).toMatchObject({ status: 'pending', claimStatus: 'ENTRY_PENDING', claimReleased: false });
+        expect(await intentState(contradicted.intentId)).toMatchObject({ status: 'received', claimStatus: 'ENTRY_PENDING', claimReleased: false });
+        expect((await events(contradicted.intentId, 'STALE_ADMISSION_RECOVERY_BLOCKED'))[0]!.evidenceJson).toMatchObject({ blockers: expect.arrayContaining(['ADAPTER_INVOCATION_MARKER_PRESENT']) });
+        const report = await entryReadiness.assessEntryExposureReadiness({ tradingAccountIds: [acct] });
+        expect(report.databaseReady).toBe(false);
+        expect(report.staleAdmissionClaims).toEqual([expect.objectContaining({ orderIntentId: contradicted.intentId, clientOrderId: 'sadc-1', intentStatus: 'received',
+          claimStatus: 'ENTRY_PENDING', recoveryState: 'OPERATOR_INVESTIGATION', blockers: expect.arrayContaining(['ADAPTER_INVOCATION_MARKER_PRESENT']) })]);
+        // Leased: an immediate repeat attempts nothing and appends nothing.
+        expect((await worker.recoverStaleSubmittingIntentsForAccount(acct)).admissionRecovery).toMatchObject({ examined: 0 });
+        expect(await events(contradicted.intentId, 'STALE_ADMISSION_RECOVERY_BLOCKED')).toHaveLength(1);
+        await secondEntryRefused(contradicted.fixture.assignmentId, 'sadc-2', 'ENTRY_ALREADY_PENDING');
+        await dispatch(acct);
+        expect([posts('sadp-1'), posts('sadc-1')]).toEqual([1, 0]);
+      });
+
+      // LOW-2: readiness reflects the newest attempt, including a repeat separated by another result.
+      it('LOW-2: TECHNICAL_FAILURE -> EVIDENCE_BLOCKED -> TECHNICAL_FAILURE is reported as it happened, without an event per attempt', async () => {
+        const acct = await liveAccount('L2SEQ');
+        const { recovery } = await services();
+        const { intentId } = await entry('LSEQ', 'lseq-1', acct);
+        const error = await rejection(422);
+        harness.submitError = async () => error;
+        await dispatch(acct);
+        harness.submitError = null;
+        const claimId = await claimIdOf(intentId);
+        harness.positions.set('LSEQ', { symbol: 'LSEQ', side: 'long', qty: '1' });
+        // Real PostgreSQL fault: the local exposure verification cannot read broker activities.
+        const attempt = async (offsetMs: number, technicalFailure: boolean) => {
+          if (technicalFailure) await db.query(`ALTER TABLE "BrokerActivity" RENAME TO "BrokerActivity_unavailable"`);
+          try {
+            expect(await recovery.recoverTerminalEntryClaimsForAccount(acct, later(offsetMs))).toMatchObject({ examined: 1, attempted: [claimId], released: 0 });
+          } finally {
+            if (technicalFailure) await db.query(`ALTER TABLE "BrokerActivity_unavailable" RENAME TO "BrokerActivity"`);
+          }
+          return readinessOf(acct, intentId);
+        };
+        try {
+          expect(await attempt(120_000, true)).toMatchObject({ systemRecovery: 'TECHNICAL_FAILURE_RETRY_SCHEDULED', lastRecoveryResult: expect.objectContaining({ eventType: 'DISPATCH_RECOVERY_ERROR', result: 'TECHNICAL_FAILURE' }) });
+          expect(await attempt(240_000, false)).toMatchObject({ systemRecovery: 'RETRY_SCHEDULED', lastRecoveryResult: expect.objectContaining({ eventType: 'DISPATCH_RECOVERY_RELEASE_BLOCKED', result: 'BLOCKED_BY_EVIDENCE', blockers: ['BROKER_POSITION_PRESENT'] }) });
+          const third = await attempt(360_000, true);
+          expect(third).toMatchObject({ systemRecovery: 'TECHNICAL_FAILURE_RETRY_SCHEDULED', lastRecoveryResult: expect.objectContaining({ eventType: 'DISPATCH_RECOVERY_ERROR', result: 'TECHNICAL_FAILURE' }) });
+          expect(third!.lastAttemptAt!.getTime()).toBeGreaterThanOrEqual(later(360_000).getTime() - 5_000);
+          // A persistent repeat of the newest result appends nothing further.
+          await attempt(480_000, true);
+          expect(await events(intentId, 'DISPATCH_RECOVERY_ERROR')).toHaveLength(2);
+          expect(await events(intentId, 'DISPATCH_RECOVERY_RELEASE_BLOCKED')).toHaveLength(1);
+          expect(await events(intentId, 'DISPATCH_RECOVERY_ATTEMPT_RESULT')).toHaveLength(0);
+        } finally {
+          harness.positions.delete('LSEQ');
+        }
+        expect(posts('lseq-1')).toBe(1);
+        expect(await intentState(intentId)).toMatchObject({ claimStatus: 'UNRESOLVED', claimReleased: false });
+      });
     });
   });
 });

@@ -12,6 +12,7 @@ import {
   blockReasonDeliveryClassification,
   evaluateNeverSubmittedRelease,
   loadDeliveryEvidenceEvents,
+  RECOVERY_ATTEMPT_RESULT_EVENT_TYPES,
   summarizeDeliveryEvidence,
 } from './entry-delivery-evidence.service.js';
 import {
@@ -715,10 +716,14 @@ export async function appendEntryExposureClaimDiagnostic(claimId: number, eventT
 async function appendClaimDiagnostic(claimId: number, eventType: string, evidence: Prisma.InputJsonValue, db: Db) {
   const current = await db.entryExposureClaim.findUnique({ where: { id: claimId } });
   if (!current || current.releasedAt) return current;
+  // A recovery-attempt result is compared with the newest attempt result of any type, so a repeated
+  // result separated by a different one is recorded again; other diagnostics dedupe per type.
+  const attemptResult = (RECOVERY_ATTEMPT_RESULT_EVENT_TYPES as readonly string[]).includes(eventType);
   const duplicate = await db.entryExposureClaimEvent.findFirst({
-    where: { claimId, eventType }, orderBy: { createdAt: 'desc' }, select: { evidenceJson: true },
+    where: { claimId, eventType: attemptResult ? { in: [...RECOVERY_ATTEMPT_RESULT_EVENT_TYPES] } : eventType },
+    orderBy: { id: 'desc' }, select: { eventType: true, evidenceJson: true },
   });
-  if (!duplicate || !sameEvidence(duplicate.evidenceJson, evidence)) {
+  if (!duplicate || duplicate.eventType !== eventType || !sameEvidence(duplicate.evidenceJson, evidence)) {
     await db.entryExposureClaimEvent.create({ data: { claimId, eventType, evidenceJson: evidence } });
   }
   await db.entryExposureClaim.updateMany({

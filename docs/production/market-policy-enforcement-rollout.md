@@ -80,9 +80,23 @@ Architecture: `docs/architecture/market-policy-pre-intent-enforcement.md` and
      (the exact client order ID terminal at Alpaca) releases it.
      `PROTECTED_BY_EXPOSURE_WORKFLOW` is owned by order sync. No state means "processed";
      `recoveryAttempted` and `lastRecoveryResult.result` report what actually happened.
+     `lastRecoveryResult` describes the newest attempt (a repeated result separated by a
+     different one is recorded again); `lastRecoveryResult.at` is when that result was
+     first observed and `lastAttemptAt` is the newest attempt.
      Watch the CRITICAL system event `entry_exposure.delivery_evidence_unpersisted`: an
      entry failure whose classification could not be stored keeps its claim held until
-     stale recovery reviews it.
+     stale recovery reviews it. `preDispatchProofCandidate: true` means the failure came
+     before the stable-ID lookup completed (for example an idempotency GET 429/5xx or
+     network failure) and stale recovery will prove it from the claim's adapter-marker
+     evidence; no action is needed unless it persists past the 5-minute stale threshold.
+     A pre-dispatch lookup or database failure that the worker proved never sent is
+     released automatically (`WORKER_PROVEN_PRE_DISPATCH_BOUNDARY_FAILURE`); it is not an
+     operator item.
+   - `staleAdmissionClaims`: abandoned admissions (`received` for more than 15 minutes
+     with an `ENTRY_PENDING` claim). `AUTOMATIC_STALE_ADMISSION_RECOVERY` is released by
+     the next stale-recovery tick. `OPERATOR_INVESTIGATION` lists the `blockers` that kept
+     the claim (for example a LIVE acceptance execution or an adapter marker); investigate
+     those exactly as for a terminal claim. Never delete the intent or the claim.
 7. **Confirm the broker-time guard and monitoring are operational.** Watch
    `SystemEvent` types `MARKET_POLICY_BROKER_DISPATCH_REFUSED` (WARNING),
    `MARKET_POLICY_LEGACY_ENTRY_QUARANTINED` (WARNING),

@@ -74,6 +74,23 @@ export async function updateOrderIntentStatus(
   });
 }
 
+/**
+ * Compare-and-set status change from an expected status. Returns false when the intent already left
+ * that status (for example, stale-admission recovery failed an abandoned admission).
+ */
+export async function transitionOrderIntentStatusFrom(
+  id: number,
+  from: IntentStatus,
+  status: IntentStatus,
+  blockReason?: string
+) {
+  const updated = await prisma.orderIntent.updateMany({
+    where: { id, status: from },
+    data: { status, blockReason: blockReason ?? null },
+  });
+  return updated.count === 1;
+}
+
 export async function recordOrderIntentRiskEvaluation(args: {
   orderIntentId: number;
   allowed: boolean;

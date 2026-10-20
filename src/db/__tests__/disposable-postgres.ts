@@ -17,6 +17,42 @@ export function assertDisposableDatabaseUrl(url: string, expectedDatabase: strin
   }
 }
 
+export const MAINTENANCE_DATABASE = 'postgres';
+
+/** The same server and credentials, bound to the maintenance database that issues CREATE/DROP DATABASE. */
+export function maintenanceDatabaseUrl(sourceUrl: string) {
+  const url = new URL(sourceUrl);
+  url.pathname = `/${MAINTENANCE_DATABASE}`;
+  url.searchParams.delete('schema');
+  return url.toString();
+}
+
+/**
+ * Connects the administrative client for disposable databases to the maintenance database, verified
+ * by identity, so no test fixture or scratch statement ever runs in the application database. Falls
+ * back to the source database only where the server has no usable maintenance database; CREATE and
+ * DROP DATABASE write nothing into the connected database either way.
+ */
+export async function connectMaintenanceClient(sourceUrl: string) {
+  const maintenance = new Client({ connectionString: maintenanceDatabaseUrl(sourceUrl) });
+  try {
+    await maintenance.connect();
+    const identity = await maintenance.query<{ database: string }>('SELECT current_database() AS database');
+    if (identity.rows[0]?.database !== MAINTENANCE_DATABASE) throw new Error('Maintenance database identity mismatch.');
+    return { client: maintenance, database: MAINTENANCE_DATABASE };
+  } catch {
+    await maintenance.end().catch(() => undefined);
+    const fallback = new Client({ connectionString: sourceUrl });
+    await fallback.connect();
+    const identity = await fallback.query<{ database: string }>('SELECT current_database() AS database');
+    if (identity.rows[0]?.database !== databaseName(sourceUrl)) {
+      await fallback.end().catch(() => undefined);
+      throw new Error('DATABASE_URL identity does not match the connected PostgreSQL database.');
+    }
+    return { client: fallback, database: databaseName(sourceUrl) };
+  }
+}
+
 export type DisposablePostgresDatabase = Awaited<ReturnType<typeof createDisposablePostgresDatabase>>;
 
 export async function createDisposablePostgresDatabase(sourceUrl: string, label: string) {
@@ -26,15 +62,9 @@ export async function createDisposablePostgresDatabase(sourceUrl: string, label:
     throw new Error('Refusing to create a disposable test database from an invalid or already-targeted DATABASE_URL.');
   }
 
-  const admin = new Client({ connectionString: sourceUrl });
+  const { client: admin } = await connectMaintenanceClient(sourceUrl);
   let created = false;
   try {
-    await admin.connect();
-    const sourceIdentity = await admin.query<{ database: string }>('SELECT current_database() AS database');
-    if (sourceIdentity.rows[0]?.database !== sourceDatabase) {
-      throw new Error('DATABASE_URL identity does not match the connected PostgreSQL database.');
-    }
-
     await admin.query(`CREATE DATABASE "${database}"`);
     created = true;
     const target = new URL(sourceUrl);

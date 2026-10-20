@@ -58,11 +58,48 @@ passes in, replacing the old blanket `brokerBoundaryStarted` flag:
 
 | Phase | Meaning | Worker treatment of a failure |
 |---|---|---|
-| `UNCLASSIFIED` | Claim check, lookup in flight or failed, or prior dispatch evidence | Existing conservative path: `DELIVERY_UNCERTAIN`, claim `UNRESOLVED` |
+| `UNCLASSIFIED` | Claim check, lookup in flight or failed, or prior dispatch evidence | Proven pre-dispatch non-delivery only from durable evidence (below); otherwise the conservative path: `DELIVERY_UNCERTAIN`, claim `UNRESOLVED` |
 | `NOT_DISPATCHED` | Absence confirmed, no local dispatch evidence, final authorization not committed | **Definite non-send**: never-submitted checks release the claim; a refusal is recorded, never swallowed |
 | `EXISTING_ORDER_FOUND` | An exact broker order exists | Delivered; recovery, never re-sent |
 | `DISPATCH_STARTED` | Dispatch record committed (consumption or un-enforced authorization); the adapter may have reached Alpaca | Outcome recorded on the claim, which moves to `UNRESOLVED`; release only by evidence-based recovery (section 5b) |
 | `BROKER_RESPONDED` | Alpaca confirmed the order | Existing materialization |
+
+**Pre-dispatch failures in `UNCLASSIFIED`.** The adapter is invoked only after
+`DISPATCH_STARTED`, so a failure before the stable-ID lookup and local dispatch checks
+complete (an idempotency GET 429/5xx or network failure, or a database failure verifying
+the executable claim or dispatch evidence) sent nothing in this attempt. The in-memory
+phase only nominates such a failure. Inside the same transaction that persists the
+failure, before any write, `proveWorkerPreDispatchNonDelivery` inspects the durable
+evidence and proves non-delivery only when all of these hold:
+
+- the claim is unreleased, `ENTRY_SUBMITTING`, unattached to a position and owned by the
+  intent's account, and the intent is still `submitting` with no block reason from an
+  earlier attempt;
+- its delivery evidence is exactly one `WORKER_CLAIMED_FOR_SUBMISSION` carrying
+  `ADAPTER_MARKER_V1` (this attempt's claim): no `ADAPTER_INVOCATION_STARTED` marker, no
+  recorded outcome or not-sent record, and no second (legacy or repeated) worker claim;
+- no consumption, un-enforced dispatch record, consumed LIVE arming, dispatch telemetry,
+  broker order or broker activity exists for the intent;
+- the error is not itself delivery or ownership evidence: never a
+  `BrokerWriteDeliveryError` (only the adapter raises one, so a failed POST is never
+  reinterpreted as a failed GET), an `EXISTING_BROKER_ORDER_IDENTITY_MISMATCH`, a
+  `PRIOR_ENTRY_DISPATCH_EVIDENCE` refusal, or a claim identity/state conflict.
+
+When proven, the transaction commits the intent as `failed` with
+`LOCAL_PRE_DISPATCH_FAILURE:<message>` together with `NOT_SENT_EVIDENCE_RECORDED`
+(`NOT_SENT_PRE_DISPATCH`, producer `WORKER_PRE_BOUNDARY_FAILURE`, with the inspected
+facts under `proof`). Only after the commit does the shared never-submitted release run
+(reason `WORKER_PROVEN_PRE_DISPATCH_BOUNDARY_FAILURE`). If that release fails
+transiently, the claim stays held and the terminal-claim sweep retries it
+(`AUTOMATIC_NEVER_SUBMITTED_RELEASE`). When any condition fails, the existing
+conservative `DELIVERY_UNCERTAIN` outcome is recorded, and its message names the
+blockers (for example `MARKER_PROTOCOL_NOT_ESTABLISHED`, `DISPATCH_RECORD_PRESENT`,
+`PRIOR_DELIVERY_OUTCOME_RECORDED`). If the inspection or persistence itself fails,
+nothing is written or released: the intent stays `submitting`, the claim keeps ownership,
+the CRITICAL `entry_exposure.delivery_evidence_unpersisted` event carries
+`preDispatchProofCandidate: true`, and stale recovery decides later from the same
+marker-protocol evidence. A missing marker on a claim not taken under the marker protocol
+is never treated as non-delivery.
 
 A market-policy refusal (`MarketPolicyBrokerDispatchRefusedError`) can only occur in
 `NOT_DISPATCHED`, so it is always a definite non-send. Authoritative denials set the
@@ -413,7 +450,19 @@ failing claims rotate instead of starving others. A claim whose lease cannot be 
 (for example, during a database outage) is not attempted and is not reported as
 attempted. Diagnostics are deduplicated by stable evidence (`failureClass`,
 `errorCode`, source; no raw message or clock), so a persistent failure appends one
-event, not one per tick.
+event, not one per tick. Recovery-attempt results (`DISPATCH_RECOVERY_RELEASE_BLOCKED`,
+`DISPATCH_RECOVERY_REVALIDATION_BLOCKED`, `DISPATCH_RECOVERY_ERROR`,
+`RECOVERY_ATTEMPT_FAILED`, `UNSUBMITTED_RELEASE_REFUSED`,
+`PRE_BOUNDARY_FAILURE_WITH_PRIOR_DISPATCH_RECORD`, `DISPATCH_RECOVERY_ATTEMPT_RESULT`)
+are deduplicated consecutively across all of these types: a result is skipped only when
+the newest attempt result is the identical event. A repeated result separated by a
+different one (for example `TECHNICAL_FAILURE`, then `BLOCKED_BY_EVIDENCE`, then the same
+`TECHNICAL_FAILURE`) is recorded again. When an attempt writes no result of its own and
+the newest one describes a different result, the sweep appends one
+`DISPATCH_RECOVERY_ATTEMPT_RESULT {result, reason, recoveryState}`. Readiness therefore
+reports the newest attempt's result in `lastRecoveryResult` (`at`/`firstObservedAt` is
+when that result was first observed; `lastAttemptAt` is the newest attempt). A result
+appends only when it changes, at most once per 60-second lease per claim.
 
 Stale recovery never releases on one lookup miss. A `submitting` entry whose claim never
 reached `ENTRY_SUBMITTING`, or whose marker-protocol claim has no adapter-invocation
@@ -426,6 +475,37 @@ Account enumeration schedules `submitted_orders` work only for actionable, due c
 (`terminalEntryClaimsDue`). Operator-only, waiting and protected claims do not schedule
 the sweep, but they count as held exposure (`terminalEntryClaimsHeld`), so an account
 without usable credentials still reports `credentials_unavailable_with_exposure`.
+
+Every lifecycle workflow's enumeration loads the unreleased terminal claims with their
+delivery-evidence events (and one small query for abandoned admissions) to classify
+them. This is one indexed read per enumeration, proportional to held claims (single
+digits in practice), not to claim history. Narrowing it to the `submitted_orders`
+workflow would change `hasLifecycleWork` (and therefore reconciliation and broker-activity
+eligibility for non-operational accounts), so it is deferred as a follow-up to be
+revisited if held-claim volume grows.
+
+**Abandoned admissions.** An admission that created its intent and claim, failed, and
+whose cleanup transaction also failed leaves a `received` intent with an `ENTRY_PENDING`
+claim that neither the worker (`pending` only) nor the terminal sweep (terminal intents
+only) selects. `recoverStaleAdmissionClaimsForAccount` runs on the same stale-recovery
+tick under the account lifecycle-mutation lock. It selects only claims whose intent has
+been `received` and unchanged for 15 minutes (`STALE_ADMISSION_THRESHOLD_MS`), at most
+three per tick, leased like the sweep. Under the entry-exposure lock it re-verifies the
+claim (`ENTRY_PENDING`, never worker-claimed), the intent (`received`, BUY, same
+account, not a LIVE acceptance execution) and the absence of any adapter marker,
+recorded outcome, dispatch record, dispatch telemetry, consumed LIVE arming, broker order
+or broker activity. Only then does it fail the intent by compare-and-set
+(`STALE_ADMISSION_NEVER_DISPATCHED`) together with `NOT_SENT_EVIDENCE_RECORDED`
+(producer `STALE_ADMISSION_NEVER_EXECUTABLE`), and after commit runs the shared
+never-submitted release (`STALE_ADMISSION_NEVER_SUBMITTED`). Incomplete or
+contradictory evidence retains the claim with a deduplicated
+`STALE_ADMISSION_RECOVERY_BLOCKED {blockers}` diagnostic, and readiness lists it under
+`staleAdmissionClaims` (by the intent's own age) as `OPERATOR_INVESTIGATION`. A `pending`
+intent is never selected, however old. Admission's own `received` to `pending`/`blocked`
+transitions are compare-and-set, so an admission that resumes after recovery can never
+make the failed intent executable (`ENTRY_ADMISSION_ABANDONED`). Enumeration reports
+`staleAdmissionClaimsDue` (schedules `submitted_orders`) and `staleAdmissionClaimsHeld`
+(held exposure, including for credential-unavailable accounts).
 
 ### 5c. Delivery-evidence ordering invariant (Phase 3C.3 final closure)
 
@@ -457,7 +537,9 @@ durable, and no broker-exposed or delivery-uncertain claim uses the never-submit
   `ALREADY_RELEASED`/`NOT_RELEASED`, never `released: true`.
 
 Known non-dispatch producers are structured: `WORKER_RISK_RECHECK`,
-`WORKER_PRE_BOUNDARY_FAILURE`, `BROKER_BOUNDARY_NOT_DISPATCHED`,
+`WORKER_PRE_BOUNDARY_FAILURE` (before the boundary, or inside it in `UNCLASSIFIED` with
+the marker-protocol proof above), `STALE_ADMISSION_NEVER_EXECUTABLE`,
+`BROKER_BOUNDARY_NOT_DISPATCHED`,
 `BROKER_TIME_MARKET_POLICY_REFUSAL`, `ADAPTER_LOCAL_GUARD`,
 `STALE_RECOVERY_ADAPTER_NOT_INVOKED`, and the sweep's legacy producers.
 

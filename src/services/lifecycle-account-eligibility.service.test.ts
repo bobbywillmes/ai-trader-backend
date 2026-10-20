@@ -228,4 +228,16 @@ describe('lifecycle account eligibility', () => {
     expect(credentialed).toMatchObject({ eligible: false, reason: 'no_work_for_workflow', exposureSummary: { terminalEntryClaimsDue: 0, terminalEntryClaimsHeld: 3, hasLifecycleWork: false } });
     expect(credentialless).toMatchObject({ eligible: false, reason: 'credentials_unavailable_with_exposure', exposureSummary: { terminalEntryClaimsHeld: 1 } });
   });
+
+  it('schedules stale-admission recovery only when due, and keeps abandoned admissions visible as credential exposure', async () => {
+    const entry = (staleAdmissionDue: number, staleAdmissionHeld: number) => ({ actionableDue: 0, actionableWaiting: 0, operatorInvestigation: 0, protectedExposure: 0, held: 0, staleAdmissionDue, staleAdmissionHeld });
+    mocks.terminalClaimRecovery.mockResolvedValue(new Map([[1, entry(1, 1)], [2, entry(0, 1)], [3, entry(0, 1)]]));
+    mocks.accountFindMany.mockResolvedValue([account(), account({ id: 2 }), account({ id: 3, credential: null })]);
+
+    const [due, waiting, credentialless] = await enumerateLifecycleAccounts('submitted_orders');
+
+    expect(due).toMatchObject({ eligible: true, exposureSummary: { staleAdmissionClaimsDue: 1, staleAdmissionClaimsHeld: 1, hasLifecycleWork: true } });
+    expect(waiting).toMatchObject({ eligible: false, reason: 'no_work_for_workflow', exposureSummary: { staleAdmissionClaimsDue: 0, staleAdmissionClaimsHeld: 1 } });
+    expect(credentialless).toMatchObject({ eligible: false, reason: 'credentials_unavailable_with_exposure', exposureSummary: { staleAdmissionClaimsHeld: 1 } });
+  });
 });

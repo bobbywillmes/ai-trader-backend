@@ -4,7 +4,7 @@ import { prisma } from '../db/prisma.js';
 import { getCompleteOpenAlpacaBuyOrders } from '../integrations/alpaca/orders.adapter.js';
 import { getAlpacaPositions } from '../integrations/alpaca/positions.adapter.js';
 import { BROKER_ACTIVE_ENTRY_STATUSES, TERMINAL_ENTRY_ORDER_STATUSES, UNRESOLVED_ORDER_INTENT_STATUSES } from './entry-lifecycle-status.service.js';
-import { describeUnreleasedTerminalEntryClaims } from './entry-dispatch-recovery.service.js';
+import { describeStaleAdmissionClaims, describeUnreleasedTerminalEntryClaims } from './entry-dispatch-recovery.service.js';
 
 type Db = PrismaClient;
 
@@ -111,6 +111,8 @@ export async function assessEntryExposureReadiness(args: {
   const terminalIntentsWithUnreleasedClaims = await describeUnreleasedTerminalEntryClaims({
     db, tradingAccountIds: args.tradingAccountIds, now, brokerExposure: hasOutstandingBrokerExposure,
   });
+  // Abandoned admissions ('received' intents past the stale threshold) still holding ENTRY_PENDING claims.
+  const staleAdmissionClaims = await describeStaleAdmissionClaims({ db, tradingAccountIds: args.tradingAccountIds, now });
   const historicalFilledIntents = intents.filter((intent) => intent.status.toLowerCase() === 'filled' && (
     intent.trackedPosition?.status === 'closed' ||
     (intent.trackedPosition == null && !hasOutstandingBrokerExposure(intent.tradingAccountId!, intent.symbol)) ||
@@ -221,6 +223,7 @@ export async function assessEntryExposureReadiness(args: {
     unresolvedClaims,
     strandedClaims,
     terminalIntentsWithUnreleasedClaims,
+    staleAdmissionClaims,
   };
   const brokerBlockers = { brokerEvidenceUnavailable, brokerOnlyPositions, localOnlyPositions, brokerOnlyOpenBuys, brokerOpenBuysWithoutActiveClaim, staleLocalActiveBrokerBuys };
   const databaseReady = Object.values(databaseBlockers).every((items) => items.length === 0);

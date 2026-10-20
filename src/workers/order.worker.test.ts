@@ -74,6 +74,8 @@ const mocks = vi.hoisted(() => ({
   claimFindUnique: vi.fn(),
   claimEventCreate: vi.fn(),
   claimEventFindMany: vi.fn(),
+  proveWorkerPreDispatchNonDelivery: vi.fn(),
+  recoverStaleAdmissionClaims: vi.fn(),
 }));
 
 // Claim reads and append-only claim events, shared by the root client and transaction clients.
@@ -117,7 +119,10 @@ vi.mock('../services/entry-exposure-claim.service.js', () => ({
 
 // The recovery service is exercised against PostgreSQL in the broker-time integration suite. Here its
 // never-submitted path delegates to the claim-service mock, mirroring the production delegation.
-vi.mock('../services/entry-dispatch-recovery.service.js', () => ({
+vi.mock('../services/entry-dispatch-recovery.service.js', async (importOriginal) => ({
+  isPreDispatchProofCandidateError: (await importOriginal<typeof import('../services/entry-dispatch-recovery.service.js')>()).isPreDispatchProofCandidateError,
+  proveWorkerPreDispatchNonDelivery: mocks.proveWorkerPreDispatchNonDelivery,
+  recoverStaleAdmissionClaimsForAccount: mocks.recoverStaleAdmissionClaims,
   entryDispatchOutcomeFor: (classification: string | null) => ({ NOT_SENT_BLOCKED: 'NOT_SENT_LOCAL_BLOCKED', NOT_SENT_RETRYABLE: 'NOT_SENT_LOCAL_RETRYABLE', BROKER_REJECTED: 'BROKER_REJECTED' } as Record<string, string>)[classification ?? ''] ?? 'DELIVERY_UNCERTAIN',
   loadEntryDispatchRecords: mocks.loadEntryDispatchRecords,
   recordEntryDispatchOutcome: mocks.recordEntryDispatchOutcome,
@@ -1305,7 +1310,65 @@ describe('entry broker submission delivery classification (Phase 3C.3)', () => {
     expect(mocks.releaseUnsubmittedEntryExposureClaim).toHaveBeenCalledWith({ orderIntentId: 101, reason: 'WORKER_PROVEN_PRE_DISPATCH_LOCAL_FAILURE' });
   });
 
+  // Hermes Phase 3C.3 final MEDIUM: an UNCLASSIFIED failure is proven pre-dispatch only from durable
+  // evidence inspected in the same transaction that persists the classification.
+  it('records structured not-sent evidence for an UNCLASSIFIED failure proven pre-dispatch, then releases after commit', async () => {
+    const order: string[] = [];
+    mocks.prismaTransaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) => {
+      order.push('tx-begin');
+      const result = await callback({ orderIntent: { update: mocks.orderIntentUpdate }, liveEntryAcceptanceRun: { updateMany: mocks.acceptanceRunUpdateMany }, ...claimTx() });
+      order.push('tx-commit');
+      return result;
+    });
+    mocks.proveWorkerPreDispatchNonDelivery.mockImplementation(async () => { order.push('inspect'); return { proven: true, claimId: 1, blockers: [], proof: { basis: 'ADAPTER_MARKER_V1_NO_INVOCATION_MARKER' } }; });
+    mocks.orderIntentUpdate.mockImplementation(async () => { order.push('terminal-status'); });
+    mocks.claimFindUnique.mockResolvedValue({ id: 1, status: 'ENTRY_SUBMITTING', releasedAt: null });
+    mocks.claimEventCreate.mockImplementation(async (args: { data: { eventType: string } }) => { order.push(args.data.eventType); return { id: 1 }; });
+    mocks.releaseUnsubmittedOrRouteToRecovery.mockImplementation(async () => { order.push('release-decision'); return { released: true, outcome: 'RELEASED' }; });
+    const { AlpacaApiError } = await import('../errors/alpaca-api-error.js');
+    await expect(failAt('UNCLASSIFIED', new AlpacaApiError(503, 'service unavailable'))).resolves.toMatchObject({ failed: 1, blocked: 0 });
+    expect(mocks.orderIntentUpdate).toHaveBeenCalledWith({ where: { id: 101 }, data: { status: 'failed', blockReason: 'LOCAL_PRE_DISPATCH_FAILURE:Alpaca request failed (503): service unavailable' } });
+    expect(mocks.claimEventCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ eventType: 'NOT_SENT_EVIDENCE_RECORDED', evidenceJson: expect.objectContaining({
+      classification: 'NOT_SENT_PRE_DISPATCH', producer: 'WORKER_PRE_BOUNDARY_FAILURE', adapterInvocation: 'NOT_INVOKED', networkRequestIssued: false,
+      proof: { basis: 'ADAPTER_MARKER_V1_NO_INVOCATION_MARKER' },
+    }) }) });
+    expect(mocks.releaseUnsubmittedOrRouteToRecovery).toHaveBeenCalledWith(expect.objectContaining({ orderIntentId: 101, reason: 'WORKER_PROVEN_PRE_DISPATCH_BOUNDARY_FAILURE', dispatchAttempted: false }));
+    expect(mocks.recordEntryDispatchOutcome).not.toHaveBeenCalled();
+    expect(order).toEqual(['tx-begin', 'inspect', 'terminal-status', 'NOT_SENT_EVIDENCE_RECORDED', 'tx-commit', 'release-decision']);
+  });
+
+  it('keeps an UNCLASSIFIED failure delivery-uncertain when the durable evidence does not prove non-delivery, naming the blockers', async () => {
+    mocks.proveWorkerPreDispatchNonDelivery.mockResolvedValue({ proven: false, claimId: 1, blockers: ['MARKER_PROTOCOL_NOT_ESTABLISHED'], proof: {} });
+    await failAt('UNCLASSIFIED', new TypeError('fetch failed'));
+    expect(mocks.orderIntentUpdate).toHaveBeenCalledWith({ where: { id: 101 }, data: { status: 'failed', blockReason: 'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:fetch failed' } });
+    expect(mocks.recordEntryDispatchOutcome).toHaveBeenCalledWith(expect.objectContaining({ classification: 'DELIVERY_UNCERTAIN', observation: 'OBSERVED',
+      message: 'fetch failed [pre-dispatch non-delivery not proven: MARKER_PROTOCOL_NOT_ESTABLISHED]' }));
+    expect(mocks.releaseUnsubmittedOrRouteToRecovery).not.toHaveBeenCalled();
+  });
+
+  it('retains ownership and decides nothing when the pre-dispatch evidence inspection fails', async () => {
+    mocks.proveWorkerPreDispatchNonDelivery.mockRejectedValue(new Error('connection terminated'));
+    await expect(failAt('UNCLASSIFIED', new TypeError('fetch failed'))).resolves.toMatchObject({ failed: 1 });
+    expect(mocks.orderIntentUpdate).not.toHaveBeenCalled();
+    expect(mocks.recordEntryDispatchOutcome).not.toHaveBeenCalled();
+    expect(mocks.releaseUnsubmittedOrRouteToRecovery).not.toHaveBeenCalled();
+    expect(mocks.attemptReleaseAfterRecordedOutcome).not.toHaveBeenCalled();
+    expect(mocks.createSystemEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'entry_exposure.delivery_evidence_unpersisted', payloadJson: expect.objectContaining({ preDispatchProofCandidate: true }) }));
+  });
+
+  it.each([
+    ['a broker-write classification', async () => new BrokerWriteDeliveryError({ classification: 'BROKER_REJECTED', message: 'status 409', statusCode: 409 })],
+    ['an existing-order identity mismatch', async () => { const { HttpError } = await import('../errors/http-error.js'); return new HttpError(409, 'mismatch', { code: 'EXISTING_BROKER_ORDER_IDENTITY_MISMATCH' }); }],
+    ['prior dispatch evidence', async () => { const { HttpError } = await import('../errors/http-error.js'); return new HttpError(409, 'prior', { code: 'PRIOR_ENTRY_DISPATCH_EVIDENCE' }); }],
+  ] as const)('never inspects an UNCLASSIFIED failure carrying %s for pre-dispatch proof', async (_label, make) => {
+    await failAt('UNCLASSIFIED', await make());
+    expect(mocks.proveWorkerPreDispatchNonDelivery).not.toHaveBeenCalled();
+    expect(mocks.recordEntryDispatchOutcome).toHaveBeenCalledWith(expect.objectContaining({ observation: 'OBSERVED' }));
+    expect(mocks.releaseUnsubmittedOrRouteToRecovery).not.toHaveBeenCalled();
+  });
+
   it.each(['UNCLASSIFIED', 'DISPATCH_STARTED', 'EXISTING_ORDER_FOUND'])('keeps an unclassified %s failure delivery-uncertain, even for a refusal-shaped error', async (phase) => {
+    mocks.proveWorkerPreDispatchNonDelivery.mockResolvedValue({ proven: false, claimId: 1, blockers: ['PRIOR_DELIVERY_OUTCOME_RECORDED'], proof: {} });
     const { MarketPolicyBrokerDispatchRefusedError } = await import('../services/market-policy-broker-dispatch.service.js');
     await failAt(phase, phase === 'DISPATCH_STARTED' ? new MarketPolicyBrokerDispatchRefusedError({ outcome: 'BLOCKED', reasonCode: 'X', decisionId: 1 }) : new Error('lookup or response unavailable'));
     expect(mocks.orderIntentUpdate).toHaveBeenCalledWith({ where: { id: 101 }, data: { status: 'failed', blockReason: expect.stringMatching(/^BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:/) } });

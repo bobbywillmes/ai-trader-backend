@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   resolveRuntimeAccountSubscriptionSizing: vi.fn(),
   resolveSubscriptionOrderInput: vi.fn(),
   resolveDefaultTradingAccountId: vi.fn(),
-  updateOrderIntentStatus: vi.fn(),
+  transitionOrderIntentStatusFrom: vi.fn(),
   recordOrderIntentRiskEvaluation: vi.fn(),
   tradingAccountFindUniqueOrThrow: vi.fn(),
   getAlpacaOrderByClientOrderId: vi.fn(),
@@ -81,7 +81,7 @@ vi.mock('./entry-decision.service.js', () => ({
 
 vi.mock('./order-audit.service.js', () => ({
   createOrderIntent: mocks.createOrderIntent,
-  updateOrderIntentStatus: mocks.updateOrderIntentStatus,
+  transitionOrderIntentStatusFrom: mocks.transitionOrderIntentStatusFrom,
   recordOrderIntentRiskEvaluation: mocks.recordOrderIntentRiskEvaluation,
 }));
 
@@ -175,6 +175,7 @@ const runtimeSizedInput = {
 describe('place order service entry decision attribution', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.transitionOrderIntentStatusFrom.mockResolvedValue(true);
     mocks.tradingAccountFindUniqueOrThrow.mockResolvedValue({
       environment: 'PAPER',
     });
@@ -258,7 +259,7 @@ describe('place order service entry decision attribution', () => {
       tradingAccountId: 1,
       tradingAccountSubscriptionId: 44,
     });
-    expect(mocks.updateOrderIntentStatus).toHaveBeenCalledWith(55, 'pending');
+    expect(mocks.transitionOrderIntentStatusFrom).toHaveBeenCalledWith(55, 'received', 'pending');
     expect(result).toEqual({
       ok: true,
       intentId: 55,
@@ -335,8 +336,8 @@ describe('place order service entry decision attribution', () => {
       tradingAccountId: 1,
       tradingAccountSubscriptionId: 44,
     });
-    expect(mocks.updateOrderIntentStatus).toHaveBeenCalledWith(
-      55,
+    expect(mocks.transitionOrderIntentStatusFrom).toHaveBeenCalledWith(
+      55, 'received',
       'blocked',
       'Daily entry order limit reached.'
     );
