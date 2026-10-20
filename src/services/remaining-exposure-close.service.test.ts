@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { evaluateCorrectiveRemainderEquation, summarizeAttributedFillQuantities } from "./remaining-exposure-close.service.js";
+import { correctiveCloseFailureDisposition, evaluateCorrectiveRemainderEquation, summarizeAttributedFillQuantities } from "./remaining-exposure-close.service.js";
+import { BrokerWriteDeliveryError } from "../errors/broker-write-delivery-error.js";
+
+describe("corrective remainder delivery classification", () => {
+  it.each([
+    ["NOT_SENT_BLOCKED", "blocked", "corrective_close.not_sent", true],
+    ["NOT_SENT_RETRYABLE", "failed", "corrective_close.not_sent", true],
+    ["BROKER_REJECTED", "failed", "corrective_close.order_rejected", false],
+    ["DELIVERY_UNCERTAIN", "submitting", "corrective_close.delivery_uncertain", false],
+  ] as const)("classifies %s", (classification, intentStatus, eventType, definitelyNotSent) => {
+    expect(correctiveCloseFailureDisposition(new BrokerWriteDeliveryError({ classification, message: "test" }))).toMatchObject({
+      classification, intentStatus, eventType, definitelyNotSent,
+    });
+  });
+});
 
 describe("corrective remainder lifecycle equation", () => {
   it("accepts the canonical 4 / 2 / 2 lifecycle", () => {

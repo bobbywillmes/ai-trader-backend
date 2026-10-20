@@ -55,6 +55,7 @@
     "entry-exposure:readiness": "tsx scripts/entry-exposure-readiness.ts",
     "entry-exposure:remediate": "tsx scripts/entry-exposure-remediation.ts",
     "market-policy:broker-readiness": "tsx scripts/market-policy-broker-readiness.ts",
+    "paper-broker-write:preflight": "tsx scripts/paper-broker-write-preflight.ts",
     "demo:operational-attention": "tsx scripts/demo-operational-attention.ts",
     "test": "vitest run",
     "test:watch": "vitest",

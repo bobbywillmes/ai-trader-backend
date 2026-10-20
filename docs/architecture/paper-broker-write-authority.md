@@ -12,7 +12,8 @@ Market Intelligence.
 - LIVE writes retain their existing deployment role, environment flags, approval,
   arming and risk controls.
 - PAPER writes require this deployment to be a `PAPER_EXECUTOR` and require an
-  exact environment allowlist match on both the verified Alpaca account identifier
+  exact environment allowlist match on both the verified Alpaca `account_number`
+  (not the account UUID)
   and the active API-key fingerprint.
 - A `TradingAccount.id`, account activation, credential availability, or a mutable
   application setting never grants PAPER broker-write authority.

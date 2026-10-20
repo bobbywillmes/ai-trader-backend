@@ -1,5 +1,5 @@
 import { prisma } from '../db/prisma.js';
-import { getPaperBrokerWriteAuthorityStatus } from './paper-broker-write-authority.service.js';
+import { assessPaperBrokerWriteAuthority } from './paper-broker-write-authority.service.js';
 
 export type HealthStatus = {
   ok: boolean;
@@ -10,7 +10,7 @@ export type HealthStatus = {
     ok: boolean;
     message: string;
   };
-  paperBrokerWriteAuthority: ReturnType<typeof getPaperBrokerWriteAuthorityStatus>;
+  paperBrokerWriteAuthority: { configurationValid: boolean; verifiedExecutorCoverage: 'READY' | 'NOT_READY' | 'UNKNOWN'; requiredExecutorCount: number; authorizedExecutorCount: number };
   timestamp: string;
 };
 
@@ -36,7 +36,14 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       ok: databaseOk,
       message: databaseMessage,
     },
-    paperBrokerWriteAuthority: getPaperBrokerWriteAuthorityStatus(),
+    paperBrokerWriteAuthority: await (async () => {
+      try {
+        const result = await assessPaperBrokerWriteAuthority();
+        const required = result.accounts.filter(item => item.intendedExecutor || (process.env.NODE_ENV === 'production' && item.openLifecycleExposure));
+        return { configurationValid: result.configuration.ready, verifiedExecutorCoverage: result.ready ? 'READY' as const : 'NOT_READY' as const,
+          requiredExecutorCount: required.length, authorizedExecutorCount: required.filter(item => item.outcome === 'AUTHORIZED').length };
+      } catch { return { configurationValid: false, verifiedExecutorCoverage: 'UNKNOWN' as const, requiredExecutorCount: 0, authorizedExecutorCount: 0 }; }
+    })(),
     timestamp: new Date().toISOString(),
   };
 }

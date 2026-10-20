@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   loggerInfo: vi.fn(),
   loggerTrace: vi.fn(),
   loggerError: vi.fn(),
+  assessPaperAuthority: vi.fn(),
+  systemEventFindFirst: vi.fn(),
 }));
 
 vi.mock('../config/logger.js', () => ({
@@ -25,7 +27,11 @@ vi.mock('../config/logger.js', () => ({
 vi.mock('../db/prisma.js', () => ({
   prisma: {
     trackedPosition: { findMany: mocks.trackedPositionFindMany },
+    systemEvent: { findFirst: mocks.systemEventFindFirst },
   },
+}));
+vi.mock('./paper-broker-write-authority.service.js', () => ({
+  assessPaperBrokerWriteAuthorityForAccount: mocks.assessPaperAuthority,
 }));
 vi.mock('./close-position.service.js', () => ({
   closePosition: mocks.closePosition,
@@ -166,6 +172,8 @@ describe('account-scoped exit evaluation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.createSystemEvent.mockResolvedValue({});
+    mocks.assessPaperAuthority.mockResolvedValue({ outcome: 'AUTHORIZED', reason: 'authorized' });
+    mocks.systemEventFindFirst.mockResolvedValue(null);
     mocks.syncProtectiveOrdersForAccount.mockResolvedValue({
       found: 0,
       synchronized: 0,
@@ -323,12 +331,25 @@ describe('account-scoped exit evaluation', () => {
       query.where.tradingAccountId
     )).toEqual([1, 2]);
   });
+
+  it('bounds repeated observation-only exit ticks without creating close intents', async () => {
+    mocks.assessPaperAuthority.mockResolvedValue({ outcome: 'INTENTIONAL_OBSERVATION_ONLY', reason: 'not assigned here' });
+    mocks.trackedPositionFindMany.mockResolvedValue([position({ unrealizedPnLPct: 0.1 })]);
+    mocks.systemEventFindFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'existing' });
+    await evaluateExitsForAccount(1);
+    await evaluateExitsForAccount(1);
+    expect(mocks.closePosition).not.toHaveBeenCalled();
+    expect(mocks.submitTrailingStopExitOrder).not.toHaveBeenCalled();
+    expect(mocks.createSystemEvent).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('exit evaluation coordinator', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.createSystemEvent.mockResolvedValue({});
+    mocks.assessPaperAuthority.mockResolvedValue({ outcome: 'AUTHORIZED', reason: 'authorized' });
+    mocks.systemEventFindFirst.mockResolvedValue(null);
     mocks.syncProtectiveOrdersForAccount.mockResolvedValue({
       found: 0,
       synchronized: 0,

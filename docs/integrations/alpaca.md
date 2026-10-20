@@ -261,7 +261,7 @@ If request counts are unexpectedly high, compare top operations with worker heal
 
 Every PAPER POST, PATCH or DELETE is finally gated by the deployment-level
 broker-write authority in `alpacaRequestForAccount`. `PAPER_EXECUTOR` permits only
-exact verified Alpaca account ID plus active credential fingerprint pairs from
+exact verified Alpaca `account_number` (not the account UUID) plus active credential fingerprint pairs from
 `PAPER_BROKER_WRITE_AUTHORIZATIONS`; `OBSERVATION_ONLY` permits reads and denies all
 writes. See `docs/architecture/paper-broker-write-authority.md` and
 `docs/production/paper-broker-write-authority.md`.

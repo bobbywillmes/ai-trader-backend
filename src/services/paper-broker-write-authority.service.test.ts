@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import crypto from 'node:crypto';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -11,7 +12,7 @@ async function loadWith(role: string, authorizations: string) {
   return import('./paper-broker-write-authority.service.js');
 }
 
-const fingerprintA = `sha256:${'a'.repeat(64)}`;
+const fingerprintA = `sha256:${crypto.createHash('sha256').update('not-logged').digest('hex')}`;
 const fingerprintB = `sha256:${'b'.repeat(64)}`;
 const config = (brokerAccountId: string | null, keyFingerprint: string | null) => ({
   tradingAccountId: 999,
@@ -34,7 +35,7 @@ describe('PAPER broker-write deployment authority', () => {
     ]));
     expect(() => policy.authorizePaperBrokerWrite(config('validation-paper', fingerprintA))).not.toThrow();
     expect(() => policy.authorizePaperBrokerWrite(config('bobby-paper', fingerprintA))).toThrow('not authorized');
-    expect(() => policy.authorizePaperBrokerWrite(config('validation-paper', fingerprintB))).toThrow('not authorized');
+    expect(() => policy.authorizePaperBrokerWrite(config('validation-paper', fingerprintB))).toThrow('does not match its stored fingerprint');
     expect(() => policy.authorizePaperBrokerWrite(config(null, fingerprintA))).toThrow('incomplete');
   });
 });

@@ -94,12 +94,18 @@ import {
 import { previewTradingAccountEntryRisk } from '../services/trading-account-entry-risk-preview.service.js';
 import { getTradingAccountRiskHealth } from '../services/trading-account-risk-health.service.js';
 import { listTradingAccountWorkerHealth } from '../services/trading-account-worker-health.service.js';
+import { assessPaperBrokerWriteAuthorityForAccount } from '../services/paper-broker-write-authority.service.js';
 import {
   getLatestTradingAccountReadinessAssessment,
   getTradingAccountReadinessAssessment,
   listTradingAccountReadinessAssessments,
   runTradingAccountReadinessAssessment,
 } from '../services/trading-account-readiness.service.js';
+
+export async function getPaperBrokerWriteAuthorityReadinessController(req: Request, res: Response, next: NextFunction) {
+  try { res.json(await assessPaperBrokerWriteAuthorityForAccount(Number(req.params.id))); }
+  catch (error) { next(error); }
+}
 import {
   getLiveWriteApprovalState,
   grantLiveWriteApproval,

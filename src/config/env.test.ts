@@ -37,4 +37,14 @@ describe('PAPER broker-write environment validation', () => {
   ])('rejects contradictory or malformed authority (%s)', (role, authorizations) => {
     expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_DEPLOYMENT_ROLE: role, PAPER_BROKER_WRITE_AUTHORIZATIONS: authorizations }).success).toBe(false);
   });
+
+  it('rejects contradictory account and fingerprint cardinality', () => {
+    const fingerprint2 = `sha256:${'b'.repeat(64)}`;
+    expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_DEPLOYMENT_ROLE: 'PAPER_EXECUTOR', PAPER_BROKER_WRITE_AUTHORIZATIONS: JSON.stringify([
+      { brokerAccountId: 'one', keyFingerprint: fingerprint }, { brokerAccountId: 'one', keyFingerprint: fingerprint2 },
+    ]) }).success).toBe(false);
+    expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_DEPLOYMENT_ROLE: 'PAPER_EXECUTOR', PAPER_BROKER_WRITE_AUTHORIZATIONS: JSON.stringify([
+      { brokerAccountId: 'one', keyFingerprint: fingerprint }, { brokerAccountId: 'two', keyFingerprint: fingerprint },
+    ]) }).success).toBe(false);
+  });
 });

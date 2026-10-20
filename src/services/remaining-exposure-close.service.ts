@@ -18,6 +18,7 @@ import { isNonterminalBrokerOrderStatus } from "./broker-order-lifecycle-status.
 import { getLiveWriteApprovalState } from "./live-write-approval.service.js";
 import { createSystemEvent } from "./system-event.service.js";
 import { resolveOperationalAttentionAuthoritatively } from "./operational-attention.service.js";
+import { assessPaperBrokerWriteAuthorityForAccount } from "./paper-broker-write-authority.service.js";
 import { submitVerifiedCorrectiveExitWithinAccountLock } from "./verified-exit-submission.service.js";
 import {
   ACCOUNT_WORKFLOW_LOCK_FAMILIES,
@@ -32,6 +33,19 @@ const ACTIVE_CODES = new Set([
   "CONFLICTING_EXIT_RESERVATION",
 ]);
 const PREVIEW_TTL_MS = 30_000;
+
+export function correctiveCloseFailureDisposition(error: unknown) {
+  const classification = error instanceof BrokerWriteDeliveryError ? error.classification : "DELIVERY_UNCERTAIN" as const;
+  const definitelyNotSent = classification === "NOT_SENT_BLOCKED" || classification === "NOT_SENT_RETRYABLE";
+  return {
+    classification,
+    definitelyNotSent,
+    intentStatus: classification === "NOT_SENT_BLOCKED" ? "blocked" as const
+      : classification === "NOT_SENT_RETRYABLE" || classification === "BROKER_REJECTED" ? "failed" as const : "submitting" as const,
+    eventType: classification === "BROKER_REJECTED" ? "corrective_close.order_rejected" as const
+      : definitelyNotSent ? "corrective_close.not_sent" as const : "corrective_close.delivery_uncertain" as const,
+  };
+}
 
 function exact(value: unknown): Exact | null {
   const text =
@@ -414,13 +428,18 @@ async function evidence(
   const risk = authority.capabilities.find(
     (item) => item.capability === "RISK_REDUCING",
   );
-  const observationOnly =
-    attention.tradingAccount.environment === "LIVE" &&
-    !authority.deploymentCanWrite;
+  const paperAuthority = attention.tradingAccount.environment === "PAPER"
+    ? await assessPaperBrokerWriteAuthorityForAccount(attention.tradingAccountId)
+    : null;
+  const observationOnly = attention.tradingAccount.environment === "LIVE"
+    ? !authority.deploymentCanWrite
+    : paperAuthority?.outcome !== "AUTHORIZED";
   if (observationOnly)
     blockers.push({
       code: "OBSERVATION_ONLY",
-      message: "This environment cannot execute corrective Live actions.",
+      message: attention.tradingAccount.environment === "LIVE"
+        ? "This environment cannot execute corrective Live actions."
+        : paperAuthority?.reason ?? "This environment cannot execute corrective PAPER actions.",
       nextAction: "Verify from the authoritative executor.",
     });
   if (attention.tradingAccount.environment === "LIVE" && !risk?.effective)
@@ -524,9 +543,7 @@ export async function getRemainingExposureClosePreview(
     marketSession: state.market,
     deploymentAuthority: {
       role: state.authority.deploymentRole,
-      canWrite:
-        state.attention.tradingAccount.environment === "PAPER" ||
-        state.authority.deploymentCanWrite,
+      canWrite: !state.blockers.some(item => item.code === "OBSERVATION_ONLY"),
     },
     liveRiskReducingAuthorization: state.authority.capabilities.find(
       (item) => item.capability === "RISK_REDUCING",
@@ -806,22 +823,16 @@ export async function executeRemainingExposureClose(
         clientOrderId,
       };
     } catch (error) {
-      const classification =
-        error instanceof BrokerWriteDeliveryError
-          ? error.classification
-          : "DELIVERY_UNCERTAIN";
+      const { classification, definitelyNotSent, intentStatus, eventType } = correctiveCloseFailureDisposition(error);
       await prisma.orderIntent.updateMany({
         where: { id: intent.id },
         data: {
-          status: classification === "BROKER_REJECTED" ? "failed" : "submitting",
+          status: intentStatus,
           blockReason: `BROKER_WRITE_DELIVERY:${classification}`,
         },
       });
       await createSystemEvent({
-        type:
-          classification === "BROKER_REJECTED"
-            ? "corrective_close.order_rejected"
-            : "corrective_close.delivery_uncertain",
+        type: eventType,
         entityType: "trackedPosition",
         entityId: state.position.id,
         tradingAccountId: state.attention.tradingAccountId,
@@ -833,6 +844,8 @@ export async function executeRemainingExposureClose(
         message:
           classification === "BROKER_REJECTED"
             ? `${state.position.symbol} corrective remainder order was explicitly rejected.`
+            : definitelyNotSent
+              ? `${state.position.symbol} corrective remainder order was definitively not sent.`
             : `${state.position.symbol} corrective remainder order delivery is uncertain; deterministic recovery is required.`,
         payloadJson: {
           attentionId,
@@ -842,7 +855,7 @@ export async function executeRemainingExposureClose(
           deliveryClassification: classification,
         },
       });
-      if (classification === "BROKER_REJECTED") {
+      if (classification === "BROKER_REJECTED" || definitelyNotSent) {
         await prisma.operationalAttention.updateMany({
           where: {
             id: state.attention.id,

@@ -203,6 +203,16 @@ export const envSchema = z.object({
     context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_AUTHORIZATIONS'],
       message: 'PAPER broker-write authorizations must be unique brokerage identity pairs.' });
   }
+  const paperAccounts = value.PAPER_BROKER_WRITE_AUTHORIZATIONS.map(item => item.brokerAccountId);
+  const paperFingerprints = value.PAPER_BROKER_WRITE_AUTHORIZATIONS.map(item => item.keyFingerprint);
+  if (new Set(paperAccounts).size !== paperAccounts.length) {
+    context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_AUTHORIZATIONS'],
+      message: 'A PAPER brokerage account may have only one authorized credential fingerprint.' });
+  }
+  if (new Set(paperFingerprints).size !== paperFingerprints.length) {
+    context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_AUTHORIZATIONS'],
+      message: 'A PAPER credential fingerprint may authorize only one brokerage account.' });
+  }
   if (value.PAPER_BROKER_WRITE_DEPLOYMENT_ROLE === 'OBSERVATION_ONLY' && paperIdentities.length > 0) {
     context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_AUTHORIZATIONS'],
       message: 'OBSERVATION_ONLY cannot declare PAPER broker-write authorizations.' });

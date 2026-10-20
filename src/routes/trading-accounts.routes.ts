@@ -49,6 +49,7 @@ import {
   revokeAssignmentMarketPolicyEnforcementAuthorizationController,
   resolveAssignmentMarketPolicyEnforcementLapseController,
   listAssignmentMarketPolicyEnforcementAdmissionAttemptsController,
+  getPaperBrokerWriteAuthorityReadinessController,
 } from '../controllers/trading-accounts.controller.js';
 import {
   requirePermission,
@@ -82,6 +83,12 @@ router.get(
   requireTradingAccountAccess('id'),
   requirePermission(PlatformPermission.TRADING_ACCOUNT_READ),
   getTradingAccountController,
+);
+router.get(
+  '/:id/paper-broker-write-authority',
+  requireTradingAccountAccess('id'),
+  requirePermission(PlatformPermission.TRADING_ACCOUNT_READ),
+  getPaperBrokerWriteAuthorityReadinessController,
 );
 router.get(
   '/:id/dashboard',

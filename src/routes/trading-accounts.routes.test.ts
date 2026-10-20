@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../controllers/trading-accounts.controller.js', () => ({
+  getPaperBrokerWriteAuthorityReadinessController: vi.fn(),
   getTradingAccountWorkerHealthController: vi.fn(),
   createTradingAccountController: mocks.createTradingAccountController,
   activateTradingAccountController: mocks.activateTradingAccountController,
