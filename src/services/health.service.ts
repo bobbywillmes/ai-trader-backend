@@ -1,4 +1,5 @@
 import { prisma } from '../db/prisma.js';
+import { getPaperBrokerWriteAuthorityStatus } from './paper-broker-write-authority.service.js';
 
 export type HealthStatus = {
   ok: boolean;
@@ -9,6 +10,7 @@ export type HealthStatus = {
     ok: boolean;
     message: string;
   };
+  paperBrokerWriteAuthority: ReturnType<typeof getPaperBrokerWriteAuthorityStatus>;
   timestamp: string;
 };
 
@@ -34,6 +36,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       ok: databaseOk,
       message: databaseMessage,
     },
+    paperBrokerWriteAuthority: getPaperBrokerWriteAuthorityStatus(),
     timestamp: new Date().toISOString(),
   };
 }

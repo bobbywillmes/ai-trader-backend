@@ -479,6 +479,15 @@ local revalidation. Delivery uncertainty is never released on absence, and there
 force or time-based release. `EntryExposureClaimEvent` is append-only. Operator release
 uses the fingerprinted `entry-exposure-remediation.service.ts`.
 
+Phase 3C.4 adds a final deployment-owned boundary for every Alpaca PAPER mutation.
+Development is observation-only for Bobby Paper; production owns that brokerage
+account. A PAPER executor must allowlist the exact verified Alpaca account identifier
+and active credential key fingerprint. Local account IDs, account state and global
+entry controls never grant this authority. Mutations denied at the shared request
+boundary are `NOT_SENT_BLOCKED` before `fetch`; LIVE semantics are unchanged. See
+`docs/architecture/paper-broker-write-authority.md` and
+`docs/production/paper-broker-write-authority.md`.
+
 Ordering invariant: no claim-release decision may run before its delivery
 classification is durable. On any entry failure the worker commits the terminal intent
 state together with `NOT_SENT_EVIDENCE_RECORDED` (proven not sent) or

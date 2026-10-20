@@ -134,6 +134,8 @@ killSwitchEnabled=true                  -> account-level entry pause while lifec
 ALLOW_LIVE_RISK_REDUCING_WRITES=false  -> blocks Live close/protective writes
 ALLOW_LIVE_TRADING=false                -> blocks Live entry writes
 LIVE_WRITE_DEPLOYMENT_ROLE=OBSERVATION_ONLY -> blocks every Live broker write
+PAPER_BROKER_WRITE_DEPLOYMENT_ROLE=OBSERVATION_ONLY -> blocks every PAPER broker write
+PAPER_BROKER_WRITE_AUTHORIZATIONS=[] -> exact broker-account and credential-fingerprint pairs for a PAPER_EXECUTOR
 ```
 
 `TradingAccount.status=ACTIVE` means the service operationally manages the

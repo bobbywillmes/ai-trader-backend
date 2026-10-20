@@ -101,6 +101,7 @@ describe('Alpaca config resolver', () => {
       source: 'trading_account_credential',
       credentialId: 11,
       keyFingerprint: 'sha256:fingerprint',
+      brokerAccountId: null,
     });
     expect(mocks.resolveDefaultTradingAccountId).not.toHaveBeenCalled();
   });

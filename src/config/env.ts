@@ -23,6 +23,17 @@ const optionalSessionDate = z.preprocess(value => value === '' ? undefined : val
   z.string().refine(value => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value))
     && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value, 'Expected a valid YYYY-MM-DD session date.').optional());
 
+const paperBrokerWriteAuthorization = z.object({
+  brokerAccountId: z.string().trim().min(1),
+  keyFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+}).strict();
+
+const paperBrokerWriteAuthorizations = z.preprocess(value => {
+  if (value === undefined || value === '') return [];
+  if (typeof value !== 'string') return value;
+  try { return JSON.parse(value); } catch { return value; }
+}, z.array(paperBrokerWriteAuthorization));
+
 export const envSchema = z.object({
   NODE_ENV: z
     .enum(['development', 'test', 'production'])
@@ -164,6 +175,10 @@ export const envSchema = z.object({
   LIVE_WRITE_DEPLOYMENT_ROLE: z
     .enum(['OBSERVATION_ONLY', 'PRODUCTION_EXECUTOR'])
     .default('OBSERVATION_ONLY'),
+  PAPER_BROKER_WRITE_DEPLOYMENT_ROLE: z
+    .enum(['OBSERVATION_ONLY', 'PAPER_EXECUTOR'])
+    .default('OBSERVATION_ONLY'),
+  PAPER_BROKER_WRITE_AUTHORIZATIONS: paperBrokerWriteAuthorizations.default([]),
   ALLOW_TRADING_ENABLED_ON_START: envBoolean.default(false),
 }).superRefine((value, context) => {
   if (value.MARKET_DAILY_MASSIVE_RESUME_SESSION !== undefined && value.MARKET_DAILY_TIINGO_CUTOVER_SESSION === undefined) {
@@ -180,6 +195,21 @@ export const envSchema = z.object({
       path: ['LIVE_WRITE_DEPLOYMENT_ROLE'],
       message: 'PRODUCTION_EXECUTOR is only valid when NODE_ENV=production.',
     });
+  }
+  const paperIdentities = value.PAPER_BROKER_WRITE_AUTHORIZATIONS.map(
+    item => `${item.brokerAccountId}\u0000${item.keyFingerprint}`,
+  );
+  if (new Set(paperIdentities).size !== paperIdentities.length) {
+    context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_AUTHORIZATIONS'],
+      message: 'PAPER broker-write authorizations must be unique brokerage identity pairs.' });
+  }
+  if (value.PAPER_BROKER_WRITE_DEPLOYMENT_ROLE === 'OBSERVATION_ONLY' && paperIdentities.length > 0) {
+    context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_AUTHORIZATIONS'],
+      message: 'OBSERVATION_ONLY cannot declare PAPER broker-write authorizations.' });
+  }
+  if (value.PAPER_BROKER_WRITE_DEPLOYMENT_ROLE === 'PAPER_EXECUTOR' && paperIdentities.length === 0) {
+    context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_AUTHORIZATIONS'],
+      message: 'PAPER_EXECUTOR requires at least one exact brokerage identity authorization.' });
   }
 });
 

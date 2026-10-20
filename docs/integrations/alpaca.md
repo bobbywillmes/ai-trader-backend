@@ -256,3 +256,12 @@ top operations and endpoints match expected worker activity
 ```
 
 If request counts are unexpectedly high, compare top operations with worker health and backend logs before changing polling cadences.
+
+## PAPER deployment ownership
+
+Every PAPER POST, PATCH or DELETE is finally gated by the deployment-level
+broker-write authority in `alpacaRequestForAccount`. `PAPER_EXECUTOR` permits only
+exact verified Alpaca account ID plus active credential fingerprint pairs from
+`PAPER_BROKER_WRITE_AUTHORIZATIONS`; `OBSERVATION_ONLY` permits reads and denies all
+writes. See `docs/architecture/paper-broker-write-authority.md` and
+`docs/production/paper-broker-write-authority.md`.
