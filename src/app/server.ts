@@ -35,6 +35,7 @@ import { runMassiveNewsWorkerOnce } from '../workers/massive-news.worker.js';
 import { assertAccountCoordinatorHealthy } from '../services/worker-coordinator-result.service.js';
 import { closeTradingAccountWorkflowLockPool } from '../services/trading-account-workflow-lock.service.js';
 import { monitorLiveEntryArmings } from '../services/live-entry-arming.service.js';
+import { reconcileAllPaperBrokerWriteAuthorityAttention } from '../services/paper-broker-write-authority-attention.service.js';
 import { runMarketDataWorker } from '../workers/market-data.worker.js';
 import { runTrendAssessmentWorker } from '../workers/trend-assessment.worker.js';
 import { runVolatilityAssessmentWorker } from '../workers/volatility-assessment.worker.js';
@@ -230,6 +231,14 @@ function startWorkers() {
       logger.error({ error }, 'Live entry arming validity monitor failed.');
     });
   }, TRADING_WORKER_INTERVAL_MS);
+
+  // Authority attention is reconciled at startup and then conservatively every five
+  // minutes. This is read-mostly and writes only deduplicated attention transitions.
+  setInterval(() => {
+    void reconcileAllPaperBrokerWriteAuthorityAttention().then((result) => {
+      if (result.failures.length > 0) logger.error({ failures: result.failures }, 'PAPER authority attention reconciliation was partially unsuccessful.');
+    }).catch((error) => logger.error({ error }, 'PAPER authority attention reconciliation failed.'));
+  }, 5 * 60_000);
 
   // Account snapshot checkpoints do not need the high-frequency trading loop.
   // This checks once per minute and records only scheduled checkpoint snapshots.

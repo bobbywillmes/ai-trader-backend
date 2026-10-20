@@ -25,7 +25,8 @@ describe('PAPER broker-write environment validation', () => {
 
   it('accepts observation-only with no identities and an executor with exact identities', () => {
     expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_DEPLOYMENT_ROLE: 'OBSERVATION_ONLY', PAPER_BROKER_WRITE_AUTHORIZATIONS: '[]' }).success).toBe(true);
-    expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_DEPLOYMENT_ROLE: 'PAPER_EXECUTOR', PAPER_BROKER_WRITE_AUTHORIZATIONS: authorization }).success).toBe(true);
+    expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_DEPLOYMENT_ROLE: 'PAPER_EXECUTOR', PAPER_BROKER_WRITE_AUTHORIZATIONS: authorization,
+      PAPER_BROKER_WRITE_OWNERSHIP: JSON.stringify([{ tradingAccountId: 7, role: 'EXECUTOR', expectedBrokerAccountId: 'paper-account' }]) }).success).toBe(true);
   });
 
   it.each([
@@ -49,11 +50,18 @@ describe('PAPER broker-write environment validation', () => {
   });
 
   it('requires exact, unique ownership declarations for expected executors', () => {
-    const executor = JSON.stringify([{ tradingAccountId: 7, role: 'EXECUTOR', expectedBrokerAccountId: 'paper-7' }]);
+    const executor = JSON.stringify([{ tradingAccountId: 7, role: 'EXECUTOR', expectedBrokerAccountId: 'paper-account' }]);
     expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_DEPLOYMENT_ROLE: 'PAPER_EXECUTOR', PAPER_BROKER_WRITE_AUTHORIZATIONS: authorization, PAPER_BROKER_WRITE_OWNERSHIP: executor }).success).toBe(true);
     expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_OWNERSHIP: JSON.stringify([{ tradingAccountId: 7, role: 'EXECUTOR' }]) }).success).toBe(false);
     expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_OWNERSHIP: JSON.stringify([
       { tradingAccountId: 7, role: 'OBSERVER' }, { tradingAccountId: 7, role: 'EXECUTOR', expectedBrokerAccountId: 'paper-7' },
     ]) }).success).toBe(false);
+  });
+
+  it('requires one-to-one authorization and executor ownership', () => {
+    expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_DEPLOYMENT_ROLE: 'PAPER_EXECUTOR', PAPER_BROKER_WRITE_AUTHORIZATIONS: authorization,
+      PAPER_BROKER_WRITE_OWNERSHIP: JSON.stringify([{ tradingAccountId: 7, role: 'OBSERVER' }]) }).success).toBe(false);
+    expect(envSchema.safeParse({ ...base, PAPER_BROKER_WRITE_DEPLOYMENT_ROLE: 'PAPER_EXECUTOR', PAPER_BROKER_WRITE_AUTHORIZATIONS: '[]',
+      PAPER_BROKER_WRITE_OWNERSHIP: JSON.stringify([{ tradingAccountId: 7, role: 'EXECUTOR', expectedBrokerAccountId: 'paper-account' }]) }).success).toBe(false);
   });
 });

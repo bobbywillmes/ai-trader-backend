@@ -32,11 +32,13 @@ PAPER_BROKER_WRITE_OWNERSHIP=[{"tradingAccountId":<Bobby Paper local id>,"role":
 ```
 
 Never include Bobby Paper in the development validation allowlist. Ownership and
-authorization are deliberately separate. `PAPER_BROKER_WRITE_OWNERSHIP` declares
+authorization are deliberately separate and both are required by the final guard. `PAPER_BROKER_WRITE_OWNERSHIP` declares
 which local application account is expected to execute or observe; its local ID
 is readiness evidence only and never grants a broker write. The unchanged final
-write guard authorizes only the decrypted credential's exact Alpaca
-`account_number` plus recomputed API-key fingerprint.
+write guard first requires the resolved local account's matching `EXECUTOR`
+declaration, then authorizes only the decrypted credential's exact Alpaca
+`account_number` plus recomputed API-key fingerprint. An OBSERVER or undeclared
+account is denied even if an identity was accidentally allowlisted.
 
 `TradingAccount.brokerAccountId` is the Alpaca `account_number`; it is not the
 Alpaca account UUID. A null value is missing identity evidence and cannot be
@@ -53,38 +55,54 @@ executor coverage as `UNKNOWN`; HTTP 200 is never GO evidence. Authenticated
 account-specific evidence. Neither response exposes identity pairs or secrets.
 
 Run preflight from the staged executor host against the intended database and
-environment. Production GO requires all three assertions:
+environment. Production GO requires explicit account and PostgreSQL target assertions:
 
 ```text
-npm run paper-broker-write:preflight -- --mode production --expected-trading-account-id <id> --expected-broker-account-number <Alpaca account_number> --expected-database <database_name>
+npm run paper-broker-write:preflight -- --mode production --expected-trading-account-id <id> --expected-broker-account-number <Alpaca account_number> --expected-database <database_name> --expected-database-host <inet_server_addr> --expected-database-port <port> --expected-database-user <role>
 ```
 
 Use `--mode development-validation` with the same assertions for a dedicated
 development validation executor. The default `--mode inspect` is explicitly
 `INFORMATIONAL_ONLY` and can never print GO. Production mode refuses to run unless
-`NODE_ENV=production`; both execution modes verify `current_database()` and require
+`NODE_ENV=production`; both execution modes verify `current_database()`, the server
+address and port reported by PostgreSQL, and `current_user`, and require
 the asserted account to return `AUTHORIZED`. The command is read-only: it neither
 verifies credentials nor calls broker
-write endpoints. Credential verification is a separate operator decision. The
+write endpoints; `brokerApiBehavior=NOT_INVOKED_BY_PREFLIGHT_CODE_PATH` describes
+the implementation rather than claiming a measured broker-call count. These checks
+substantially strengthen target identity but do not cryptographically attest the
+server; operators must obtain the expected values from the deployment's reviewed
+database configuration. Credential verification is a separate operator decision. The
 supported verification workflow calls Alpaca GET account evidence and deliberately
 places the local account in `PAUSED`, disables trading, and enables the kill switch;
 credential create/replace similarly moves it to `NEEDS_CREDENTIALS`. Do not use
 verification merely to fill a missing `brokerAccountId`; review those operational
 side effects and obtain owner authorization first.
 
-## Safe production sequence
+## Safe staged-image preflight and production sequence
 
-1. Read existing verified production identity evidence without changing it.
-2. Validate the exact Alpaca `account_number` and recomputed API-key fingerprint.
-3. Stage the new environment configuration; keep development observation-only.
-4. Run the exact production preflight above. Require verdict `GO`, the asserted
-   per-account result `AUTHORIZED`, the asserted Alpaca `account_number`, and
-   `brokerCallsMade: 0`.
-5. Independently review the planned deployment and obtain owner authorization.
-6. Deploy only after that authorization; do not change global trading or accounts.
-7. Verify running account-specific readiness plus broker GET observations. A
+1. Check out the reviewed commit and build without changing the active Compose project:
+   `docker build --label org.opencontainers.image.revision=e01e25a -t ai-trader-preflight:e01e25a .`.
+2. Record the immutable local image ID with
+   `docker image inspect ai-trader-preflight:e01e25a --format '{{.Id}}'`; use that
+   exact ID (or a registry digest after a separately authorized push) below.
+3. Read existing verified production identity evidence without changing it and
+   validate the exact Alpaca `account_number`, recomputed API-key fingerprint,
+   explicit `EXECUTOR` ownership, and reviewed database target values.
+4. Run a disposable one-off container, never `docker compose up`:
+   `docker run --rm --network <production-compose-network> --env-file <reviewed-production-env-file> --entrypoint npm <immutable-image-id> run paper-broker-write:preflight -- --mode production --expected-trading-account-id <id> --expected-broker-account-number <account_number> --expected-database <database> --expected-database-host <server-address> --expected-database-port <port> --expected-database-user <role>`.
+   This launches only the CLI entrypoint, does not start the server or workers, has
+   no published ports or Docker socket, and cannot replace/recreate the running container.
+5. Capture sanitized stdout plus exit status. Require per-account `AUTHORIZED`,
+   explicit `EXECUTOR`, exact account_number/fingerprint agreement, aggregate `GO`,
+   and an empty `unresolved` array. `INFORMATIONAL_ONLY`, warnings, or STOP are not GO.
+6. Verify the one-off container was removed and the active Compose container/image
+   IDs are unchanged. Leave production otherwise untouched.
+7. Independently review the planned deployment and obtain owner authorization.
+8. Deploy the immutable reviewed image only after authorization; do not change global trading or accounts.
+9. Verify running account-specific readiness plus broker GET observations. A
    syntactically valid `/health` configuration alone is not production readiness.
-8. Watch the first subsequent normal protective-exit lifecycle. Do not initiate a
+10. Watch the first subsequent normal protective-exit lifecycle. Do not initiate a
    test order.
 
 STOP if ownership is undeclared/contradictory; an authorization resolves to zero
@@ -95,13 +113,19 @@ required exposed account is DENIED/UNKNOWN, the database is unreadable, or the
 preflight reports STOP. Do not broaden the allowlist or reverify automatically.
 
 Production startup remains live and preserves reads/reconciliation when readiness
-is missing, but records a failing `paper_executor_coverage` check and opens or
+is missing, but records a `paper_executor_coverage` warning and opens or
 observes one deduplicated ERROR `PAPER_EXECUTOR_AUTHORITY_MISMATCH` attention per
 affected account. Exit evaluation also fails visibly instead of reporting a
 successful skip. Only a fresh account-aware `AUTHORIZED` verification resolves
 that attention authoritatively; editing the allowlist alone does not resolve it.
-Repeated startup and worker checks preserve the history without creating duplicate
-attention rows.
+Repeated startup and five-minute reconciliation checks preserve the history without
+creating duplicate attention rows. Fresh AUTHORIZED evidence resolves a mismatch
+without restart. Changing an exposed account to OBSERVER never resolves the incident.
+After canonical lifecycle queries prove no exposure remains, an explicit OBSERVER
+declaration provides auditable transfer/retirement evidence and permits authoritative
+resolution. If exposure remains, restore valid executor authority or complete the
+normal broker/lifecycle transfer under independent operator review; do not manually
+dismiss the AUTHORITATIVE_ONLY attention.
 
 An exact identity mismatch returns `NOT_SENT_BLOCKED` before network dispatch.
 Reads continue, but every PAPER POST/PATCH/DELETE remains blocked. Treat this as a

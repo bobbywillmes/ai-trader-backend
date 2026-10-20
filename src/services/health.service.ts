@@ -10,7 +10,7 @@ export type HealthStatus = {
     ok: boolean;
     message: string;
   };
-  paperBrokerWriteAuthority: { configurationValid: boolean; verifiedExecutorCoverage: 'READY' | 'NOT_READY' | 'UNKNOWN'; requiredExecutorCount: number; authorizedExecutorCount: number };
+  paperBrokerWriteAuthority: { configurationValid: boolean; verifiedExecutorCoverage: 'READY' | 'NOT_READY' | 'UNKNOWN'; requiredExecutorCount: number; authorizedExecutorCount: number | null };
   timestamp: string;
 };
 
@@ -39,7 +39,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     paperBrokerWriteAuthority: (() => {
       const configuration = getPaperBrokerWriteAuthorityStatus();
       return { configurationValid: configuration.configurationValid, verifiedExecutorCoverage: 'UNKNOWN' as const,
-        requiredExecutorCount: configuration.expectedExecutorCount, authorizedExecutorCount: 0 };
+        requiredExecutorCount: configuration.expectedExecutorCount, authorizedExecutorCount: null };
     })(),
     timestamp: new Date().toISOString(),
   };

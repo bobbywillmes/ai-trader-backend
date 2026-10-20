@@ -3,6 +3,8 @@ import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
 import { resolveAlpacaConfigForTradingAccount } from './alpaca-config-resolver.service.js';
 import { fingerprintSecret } from './trading-credential-crypto.service.js';
+import { UNRESOLVED_ORDER_INTENT_STATUSES } from './entry-lifecycle-status.service.js';
+import { NONTERMINAL_BROKER_ORDER_PRISMA_FILTER } from './broker-order-lifecycle-status.service.js';
 
 export type PaperBrokerWriteAuthorityStatus = {
   deploymentRole: 'OBSERVATION_ONLY' | 'PAPER_EXECUTOR'; configuredIdentityCount: number;
@@ -24,6 +26,9 @@ export function getPaperBrokerWriteAuthorityStatus(): PaperBrokerWriteAuthorityS
 export function authorizePaperBrokerWrite(config: AlpacaResolvedConfig): void {
   if (env.PAPER_BROKER_WRITE_DEPLOYMENT_ROLE !== 'PAPER_EXECUTOR') throw new Error('PAPER broker writes are blocked because this deployment is OBSERVATION_ONLY.');
   if (!config.brokerAccountId || !config.keyFingerprint) throw new Error('PAPER broker write blocked because verified brokerage identity evidence is incomplete.');
+  const declaration = env.PAPER_BROKER_WRITE_OWNERSHIP.find(item => item.tradingAccountId === config.tradingAccountId);
+  if (!declaration || declaration.role !== 'EXECUTOR') throw new Error('PAPER broker write blocked because the TradingAccount is not declared as an EXECUTOR on this deployment.');
+  if (declaration.expectedBrokerAccountId !== config.brokerAccountId) throw new Error('PAPER broker write blocked because the verified brokerage account does not match the EXECUTOR ownership declaration.');
   if (fingerprintSecret(config.apiKey) !== config.keyFingerprint) throw new Error('PAPER broker write blocked because the decrypted credential does not match its stored fingerprint.');
   if (!env.PAPER_BROKER_WRITE_AUTHORIZATIONS.some(item => item.brokerAccountId === config.brokerAccountId && item.keyFingerprint === config.keyFingerprint)) {
     throw new Error('PAPER broker write blocked because the brokerage account and credential identity are not authorized for this deployment.');
@@ -43,8 +48,13 @@ export async function assessPaperBrokerWriteAuthorityForAccount(tradingAccountId
     id: true, displayName: true, environment: true, brokerAccountId: true,
     credential: { select: { status: true, verifiedAt: true, keyFingerprint: true } },
     _count: { select: {
-      trackedPositions: { where: { status: { in: ['open', 'closing'] } } }, brokerOrders: { where: { status: { notIn: ['filled', 'canceled', 'cancelled', 'expired', 'rejected', 'replaced', 'done_for_day', 'calculated'] } } },
-      orderIntents: { where: { status: { in: ['pending', 'submitting', 'submitted'] } } }, entryExposureClaims: { where: { status: 'ACTIVE' } },
+      trackedPositions: { where: { status: { in: ['open', 'closing'] } } },
+      brokerOrders: { where: { status: NONTERMINAL_BROKER_ORDER_PRISMA_FILTER } },
+      orderIntents: { where: { OR: [
+        { status: { in: [...UNRESOLVED_ORDER_INTENT_STATUSES] } },
+        { side: { equals: 'buy', mode: 'insensitive' }, status: 'filled', trackedPositionId: null },
+      ] } },
+      entryExposureClaims: { where: { releasedAt: null } },
     } },
   } });
   if (!account) throw new Error('PAPER trading account was not found.');

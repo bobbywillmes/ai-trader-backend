@@ -11,12 +11,15 @@ Market Intelligence.
   protective, close or cancellation writes.
 - LIVE writes retain their existing deployment role, environment flags, approval,
   arming and risk controls.
-- PAPER writes require this deployment to be a `PAPER_EXECUTOR` and require an
-  exact environment allowlist match on both the verified Alpaca `account_number`
+- PAPER writes require this deployment to be a `PAPER_EXECUTOR`, require the
+  resolved local TradingAccount to have an `EXECUTOR` ownership declaration whose
+  expected broker account matches, and require an exact environment allowlist match
+  on both the verified Alpaca `account_number`
   (not the account UUID)
   and the active API-key fingerprint.
 - A `TradingAccount.id`, account activation, credential availability, or a mutable
-  application setting never grants PAPER broker-write authority.
+  application setting never grants PAPER broker-write authority. Ownership and the
+  identity allowlist are independent deny-only requirements; neither grants authority alone.
 
 The check runs in `alpacaRequestForAccount` after account-scoped credentials are
 resolved and before request preparation, usage accounting or `fetch`. It covers

@@ -250,6 +250,21 @@ export const envSchema = z.object({
     context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_OWNERSHIP'],
       message: 'An Alpaca PAPER account_number may have only one expected executor.' });
   }
+  const authorizationBrokerIds = value.PAPER_BROKER_WRITE_AUTHORIZATIONS.map(item => item.brokerAccountId);
+  const executorBrokerIdSet = new Set(executorBrokerIds);
+  const authorizationBrokerIdSet = new Set(authorizationBrokerIds);
+  for (const brokerAccountId of executorBrokerIdSet) {
+    if (!authorizationBrokerIdSet.has(brokerAccountId)) {
+      context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_AUTHORIZATIONS'],
+        message: `EXECUTOR ownership for ${brokerAccountId} requires one matching broker-write authorization.` });
+    }
+  }
+  for (const brokerAccountId of authorizationBrokerIdSet) {
+    if (!executorBrokerIdSet.has(brokerAccountId)) {
+      context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_AUTHORIZATIONS'],
+        message: `PAPER broker-write authorization for ${brokerAccountId} requires one matching EXECUTOR ownership declaration.` });
+    }
+  }
 });
 
 const parsed = envSchema.safeParse(process.env);

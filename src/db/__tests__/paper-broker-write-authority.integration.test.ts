@@ -10,6 +10,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   let disposable: DisposablePostgresDatabase;
   let db: Client;
   let accountId: number;
+  let securityId: number;
   const apiKey = 'paper-authority-integration-key';
   const brokerAccountId = 'PA3C4TEST';
 
@@ -21,6 +22,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await db.connect();
     const userId = (await db.query(`INSERT INTO "User" (email,"platformRole",enabled,"createdAt","updatedAt") VALUES ('paper-authority@test.invalid','SYSTEM_OWNER',true,now(),now()) RETURNING id`)).rows[0].id;
     accountId = (await db.query(`INSERT INTO "TradingAccount" ("accountHolderUserId","displayName",environment,status,"tradingEnabled","killSwitchEnabled","brokerAccountId","createdAt","updatedAt") VALUES ($1,'Authority Paper','PAPER','PAUSED',false,true,$2,now(),now()) RETURNING id`, [userId, brokerAccountId])).rows[0].id;
+    securityId = (await db.query(`INSERT INTO "Security" (symbol,name,enabled,"assetType","createdAt","updatedAt") VALUES ('P3C4','Authority fixture',false,'STOCK',now(),now()) RETURNING id`)).rows[0].id;
     process.env.DATABASE_URL = disposable.url;
     process.env.NODE_ENV = 'production';
     process.env.TRADING_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString('base64');
@@ -76,5 +78,47 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(authorized.outcome).toBe('AUTHORIZED');
     const resolved = await attention.reconcilePaperBrokerWriteAuthorityAttention(authorized);
     expect(resolved).toMatchObject({ status: 'RESOLVED' });
+  });
+
+  it('counts every canonical lifecycle exposure kind and excludes released or terminal evidence', async () => {
+    const authority = await import('../../services/paper-broker-write-authority.service.js');
+    const { encryptSecret, fingerprintSecret } = await import('../../services/trading-credential-crypto.service.js');
+    await db.query(`UPDATE "TradingAccountCredential" SET "apiKeyCiphertext"=$2,"keyFingerprint"=$3 WHERE "tradingAccountId"=$1`, [accountId, encryptSecret(apiKey), fingerprintSecret(apiKey)]);
+    const insertIntent = async (status: string, side = 'buy') => Number((await db.query(
+      `INSERT INTO "OrderIntent" (source,symbol,side,"orderType","timeInForce",status,"rawRequestJson","tradingAccountId","createdAt","updatedAt") VALUES ('test','P3C4',$2,'market','day',$3,'{}',$1,now(),now()) RETURNING id`,
+      [accountId, side, status])).rows[0].id);
+    const assertCounts = async (expected: Partial<{ activePositions: number; nonterminalBrokerOrders: number; activeOrderIntents: number; activeEntryClaims: number }>) => {
+      await expect(authority.assessPaperBrokerWriteAuthorityForAccount(accountId)).resolves.toMatchObject({ openLifecycleExposure: true, exposure: expected });
+    };
+
+    for (const status of ['received', 'pending', 'submitting', 'submitted']) {
+      const id = await insertIntent(status);
+      await assertCounts({ activeOrderIntents: 1 });
+      await db.query(`DELETE FROM "OrderIntent" WHERE id=$1`, [id]);
+    }
+    const filled = await insertIntent('filled');
+    await assertCounts({ activeOrderIntents: 1 });
+    await db.query(`DELETE FROM "OrderIntent" WHERE id=$1`, [filled]);
+
+    const claimIntent = await insertIntent('blocked');
+    const claimId = Number((await db.query(`INSERT INTO "EntryExposureClaim" ("tradingAccountId","securityId","orderIntentId","ownerKey",status,"acquiredAt","createdAt","updatedAt") VALUES ($1,$2,$3,'authority-claim','UNRESOLVED',now(),now(),now()) RETURNING id`, [accountId, securityId, claimIntent])).rows[0].id);
+    await assertCounts({ activeEntryClaims: 1 });
+    await db.query(`UPDATE "EntryExposureClaim" SET status='RELEASED',"releasedAt"=now(),"releaseReason"='TEST' WHERE id=$1`, [claimId]);
+    await expect(authority.assessPaperBrokerWriteAuthorityForAccount(accountId)).resolves.toMatchObject({ openLifecycleExposure: false, exposure: { activeEntryClaims: 0 } });
+    await db.query(`DELETE FROM "EntryExposureClaim" WHERE id=$1`, [claimId]);
+    await db.query(`DELETE FROM "OrderIntent" WHERE id=$1`, [claimIntent]);
+
+    const brokerIntent = await insertIntent('failed');
+    const brokerOrderId = Number((await db.query(`INSERT INTO "BrokerOrder" ("orderIntentId",broker,"brokerOrderId","clientOrderId",symbol,side,status,"rawBrokerJson","securityId","tradingAccountId","createdAt","updatedAt") VALUES ($1,'alpaca','p3c4-order','p3c4-client','P3C4','buy','new','{}',$2,$3,now(),now()) RETURNING id`, [brokerIntent, securityId, accountId])).rows[0].id);
+    await assertCounts({ nonterminalBrokerOrders: 1 });
+    await db.query(`UPDATE "BrokerOrder" SET status='filled' WHERE id=$1`, [brokerOrderId]);
+    await expect(authority.assessPaperBrokerWriteAuthorityForAccount(accountId)).resolves.toMatchObject({ openLifecycleExposure: false, exposure: { nonterminalBrokerOrders: 0 } });
+    await db.query(`DELETE FROM "BrokerOrder" WHERE id=$1`, [brokerOrderId]);
+    await db.query(`DELETE FROM "OrderIntent" WHERE id=$1`, [brokerIntent]);
+
+    const positionId = Number((await db.query(`INSERT INTO "TrackedPosition" (broker,symbol,side,qty,"avgEntryPrice","currentPrice","marketValue","costBasis","unrealizedPnL","unrealizedPnLPct",status,"openedAt","lastSyncedAt","rawPositionJson","securityId","tradingAccountId","createdAt","updatedAt") VALUES ('alpaca','P3C4','long',1,1,1,1,1,0,0,'closing',now(),now(),'{}',$1,$2,now(),now()) RETURNING id`, [securityId, accountId])).rows[0].id);
+    await assertCounts({ activePositions: 1 });
+    await db.query(`UPDATE "TrackedPosition" SET status='closed',"closedAt"=now() WHERE id=$1`, [positionId]);
+    await expect(authority.assessPaperBrokerWriteAuthorityForAccount(accountId)).resolves.toMatchObject({ openLifecycleExposure: false, exposure: { activePositions: 0 } });
   });
 });
