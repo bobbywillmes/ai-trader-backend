@@ -46,7 +46,9 @@ keeps reads available, warns, opens attention, and blocks PAPER mutations.
 
 ## Strict preflight
 
-The CLI is read-only, worker-free, and broker-call-free. Production GO requires:
+The CLI is read-only, worker-free, and broker-call-free. It reads the build-owned
+`/app/.image-revision` file; `IMAGE_REVISION` from an env file is never image evidence.
+Production GO requires:
 
 ```text
 npm run paper-broker-write:preflight -- --mode production --expected-trading-account-id <id> --expected-broker-account-number <account_number> --expected-image-revision <full reviewed SHA> --expected-database <database> --expected-database-host <plain address> --expected-database-port <port> --expected-database-user <role>
@@ -54,7 +56,7 @@ npm run paper-broker-write:preflight -- --mode production --expected-trading-acc
 
 Use `development-validation` only for the validation executor. The default is
 `INFORMATIONAL_ONLY` and never substitutes for GO. The CLI compares the embedded
-`IMAGE_REVISION`, `current_database()`, `host(inet_server_addr())`,
+the embedded image revision, `current_database()`, `host(inet_server_addr())`,
 `inet_server_port()`, and `current_user`; mismatch errors name only the field.
 Unix-socket connections can return null address/port and cannot satisfy a TCP
 assertion. These properties do not cryptographically attest the database host.
@@ -62,15 +64,36 @@ assertion. These properties do not cryptographically attest the database host.
 Credential verification is a separate operator action with account-state side
 effects. Do not create, verify, replace, or rotate credentials to pass preflight.
 
-## Immutable staging and deployment
+The expected database host is PostgreSQL's server address as observed from the
+backend connection, not the Compose service name. Obtain it without credentials:
 
-Each phase requires separate approval.
+```text
+docker compose -f docker-compose.prod.yml exec postgres sh -lc 'hostname -i'
+```
 
-1. **Prepare configuration.** Run `umask 077`, copy `.env` to `.env.next`, keep
+Confirm the selected address equals a read-only `host(inet_server_addr())` result.
+A recreated PostgreSQL container may receive a different Compose-network address, so
+recompute and reapprove it immediately before final preflight. Never print
+`DATABASE_URL`, passwords, or env-file contents to discover the address.
+
+## Approved release gates
+
+Each gate requires separate recorded owner approval. Passing one gate does not approve
+the next. The migration inventory and compatibility analysis are in
+`docs/production/phase-3c4-release-readiness.md`.
+
+1. **Read-only preparation.** Capture the running backend's container ID and immutable
+   image ID as `PREV_IMAGE_ID`. Capture `REVIEWED_SHA` and the exact reviewed
+   `IMAGE_ID`; require its OCI revision label and `/app/.image-revision` to match.
+   Using `IMAGE_ID`, run only `prisma migrate status` against production and inspect
+   the asserted database identity. Do not run `migrate deploy`. Save a restricted
+   rollback copy of the current `.env`, its checksum, mode, and association with
+   `PREV_IMAGE_ID`. Run `umask 077`, copy `.env` to `.env.next`, keep
    mode 600, edit all three PAPER values together, and validate JSON, identities,
-   cardinality, and permissions. Do not commit `.env.next`.
+   cardinality, and permissions. Remove any `IMAGE_REVISION` assignment from both
+   files; it is not operator configuration. Do not commit either restricted file.
 
-2. **Build exact code.** Check out the reviewed commit and require
+2. **Schema compatibility acceptance.** Check out the reviewed commit and require
    `test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"`. Then:
 
    ```text
@@ -79,10 +102,19 @@ Each phase requires separate approval.
    docker image inspect "$IMAGE_ID" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
    ```
 
-   Require the full label to match. Record the immutable ID (or a registry manifest
-   digest verified after pull). A mutable tag is not evidence.
+   Require the full label and `/app/.image-revision` to match. Record the immutable ID
+   (or a registry manifest digest verified after pull). A mutable tag is not evidence.
+   Execute the isolated migration and old-code compatibility procedure in the release-
+   readiness document. Production is untouched in this gate.
 
-3. **Preflight the staged image.** Compose supplies `DATABASE_URL` under
+3. **Migration approval.** Require the backup, quiet-window, lock, rollback, operator-
+   approval, exact-image execution, and post-migration evidence specified in the
+   release-readiness document. Run migration status/deploy from `IMAGE_ID`, never a
+   mutable tag or host checkout. This gate changes only schema; it does not deploy the
+   application or grant PAPER execution. Stop on any nonzero or partial result.
+
+4. **Final PAPER authority preflight.** Begin only after the seven migrations are
+   confirmed present on the actual production schema. Compose supplies `DATABASE_URL` under
    `environment`, not the backend `env_file`. Create a restricted temporary file
    without putting the secret in history:
 
@@ -90,6 +122,7 @@ Each phase requires separate approval.
    umask 077
    PREFLIGHT_ENV=$(mktemp)
    cp .env.next "$PREFLIGHT_ENV"
+   sed -i '/^[[:space:]]*IMAGE_REVISION=/d' "$PREFLIGHT_ENV"
    read -rsp 'DATABASE_URL: ' PREFLIGHT_DATABASE_URL
    printf '\nDATABASE_URL=%s\n' "$PREFLIGHT_DATABASE_URL" >> "$PREFLIGHT_ENV"
    unset PREFLIGHT_DATABASE_URL
@@ -110,20 +143,24 @@ Each phase requires separate approval.
    output and the image ID. Remove the file with `rm -f -- "$PREFLIGHT_ENV"`, unset
    the variable, verify absence, and confirm the active container/image did not change.
 
-4. **Deploy only after separate approval.** Preserve the prior compatible `.env`
-   as a restricted rollback artifact, then atomically replace it with reviewed
-   `.env.next`. Set `AI_TRADER_BACKEND_IMAGE` to the preflight-passing ID/digest.
-   Review and deploy:
+5. **Application deployment.** Requires a separate owner approval after GO. Confirm
+   the restricted rollback env copy and `PREV_IMAGE_ID` are still available, then
+   atomically replace `.env` with reviewed `.env.next`. Set
+   `AI_TRADER_BACKEND_IMAGE` to the exact preflight-passing `IMAGE_ID`. First save and
+   review the fully resolved Compose output; it must contain that image ID, no backend
+   build, expected network/database settings, and no unexpected service changes:
 
    ```text
-   docker compose -f docker-compose.prod.yml -f docker-compose.prod.image.yml config
-   docker compose -f docker-compose.prod.yml -f docker-compose.prod.image.yml up -d --no-build backend
+   docker compose -f docker-compose.prod.yml -f docker-compose.prod.image.yml config > compose.reviewed.yml
+   docker compose -f docker-compose.prod.yml -f docker-compose.prod.image.yml up -d --no-build --no-deps backend
+   docker inspect ai-trader-prod-backend --format '{{.Image}}'
    ```
 
-   The override pins `backend.image` and removes `build`; `--no-build` prevents a
-   silent rebuild while retaining the existing service, network, dependencies, and
-   environment. Verify account readiness plus Alpaca account, positions, and open
-   orders with GETs. `/health` alone is not GO. Do not create a test order.
+   The inspected image ID must equal the preflighted `IMAGE_ID`. The override pins
+   `backend.image` and removes `build`; `--no-build --no-deps` prevents a silent build
+   or dependency recreation during this backend-only deployment. Verify account
+   readiness plus Alpaca account, positions, and open orders with GETs. `/health`
+   alone is not GO. Do not create a test order.
 
 STOP on unreadable exposure, identity/fingerprint mismatch, DENIED/UNKNOWN exposed
 accounts, database mismatch, duplicate identity, or any non-GO result. Locally absent
@@ -138,6 +175,13 @@ UNKNOWN PAPER exit authority fails visibly and opens/observes attention. Fresh
 AUTHORIZED evidence, or an explicit OBSERVER after canonical proof of no local
 exposure, resolves it authoritatively. Repetition does not duplicate attention rows.
 
+An OBSERVER identity mismatch means the local account does not resolve to the exact
+expected brokerage `account_number`, is duplicated, or cannot be enumerated. Diagnose
+the configured local ID, stored broker identity, and read-only enumeration evidence;
+do not change the role to EXECUTOR, add an allowlist entry, or treat observation as
+execution authority. Correcting observer metadata remains a separately reviewed
+configuration change.
+
 Filled SELL and position-linked filled BUY intents are excluded from unlinked-intent
 exposure; the open position still counts once. An undeclared locally exposure-free
 account can be resolved with a reviewed OBSERVER declaration only after broker GETs
@@ -148,12 +192,22 @@ address synchronization risk.
 Preserve positions, intents, broker orders, entry claims, and delivery-uncertain
 evidence in both paths.
 
-**Restore execution:** restore the previously known-good immutable image together
-with its compatible three-value configuration. Bobby remains EXECUTOR with the exact
-account_number/authorization. Review merged Compose config, deploy through the pinned
-override with `--no-build`, then verify broker account, positions, and open orders via
-GET before confirming protective-exit authority. Never mix an old image with an
-unreviewed new configuration.
+**Restore execution:** set `AI_TRADER_BACKEND_IMAGE="$PREV_IMAGE_ID"`, restore the
+restricted rollback environment copy only after verifying its checksum and schema
+compatibility, and review the resolved Compose file. Deploy backend only with
+`--no-build --no-deps`, inspect the running container's `.Image`, and require it to
+equal `PREV_IMAGE_ID`. Verify broker account, positions, and open orders via GET before
+confirming protective-exit authority. Never mix an old image with unreviewed new
+configuration.
+
+Application rollback does not reverse Prisma migrations. Restoring a previous image
+is unsafe when that image cannot tolerate the migrated schema, when newer code has
+written claims/consumptions/un-enforced-dispatch evidence whose safety meaning it does
+not preserve, or when its configuration parser cannot accept the rollback environment.
+In those cases keep writes suspended and perform a reviewed forward repair. Database
+rollback means restoring a pre-migration backup; it can discard post-backup broker and
+lifecycle evidence and requires a separate incident decision and reconciliation. Never
+drop the seven migrations or delete their evidence as part of an image rollback.
 
 **Emergency observation-only:** explicitly approve write suspension and use a valid
 unit: `OBSERVATION_ONLY`, `[]` authorizations, and OBSERVER declarations with expected

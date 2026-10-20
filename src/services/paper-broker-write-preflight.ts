@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 export type PaperBrokerWritePreflightMode = 'inspect' | 'development-validation' | 'production';
 
 export type PaperBrokerWritePreflightArgs = {
@@ -47,6 +49,12 @@ export function parsePaperBrokerWritePreflightArgs(argv: string[]): PaperBrokerW
 }
 
 export type PaperBrokerWriteDatabaseTarget = { database: string; host: string | null; port: number | null; user: string };
+
+export function readEmbeddedImageRevision(path = '/app/.image-revision') {
+  const revision = readFileSync(path, 'utf8').trim();
+  if (!revision) throw new Error('Embedded image revision evidence is missing or empty.');
+  return revision;
+}
 
 export function assertPaperBrokerWritePreflightContext(args: PaperBrokerWritePreflightArgs, nodeEnv: string,
   imageRevision: string | undefined, target: PaperBrokerWriteDatabaseTarget) {

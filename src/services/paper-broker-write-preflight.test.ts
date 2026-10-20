@@ -1,5 +1,9 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { assertPaperBrokerWritePreflightContext, parsePaperBrokerWritePreflightArgs } from './paper-broker-write-preflight.js';
+import { assertPaperBrokerWritePreflightContext, parsePaperBrokerWritePreflightArgs,
+  readEmbeddedImageRevision } from './paper-broker-write-preflight.js';
 
 describe('PAPER broker-write preflight', () => {
   it('keeps empty invocation explicitly informational', () => {
@@ -23,5 +27,18 @@ describe('PAPER broker-write preflight', () => {
     expect(() => assertPaperBrokerWritePreflightContext(args, 'production', 'abc123', { ...target, host: '10.0.0.9' })).toThrow('server host');
     expect(() => assertPaperBrokerWritePreflightContext(args, 'production', 'other', target)).toThrow('image revision');
     expect(() => assertPaperBrokerWritePreflightContext(args, 'production', 'abc123', target)).not.toThrow();
+  });
+
+  it('reads revision evidence from the build-owned file rather than runtime environment', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'paper-preflight-'));
+    const path = join(directory, '.image-revision');
+    try {
+      writeFileSync(path, 'reviewed-sha\n');
+      process.env.IMAGE_REVISION = 'env-file-override';
+      expect(readEmbeddedImageRevision(path)).toBe('reviewed-sha');
+    } finally {
+      delete process.env.IMAGE_REVISION;
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
