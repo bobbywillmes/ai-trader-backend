@@ -11,6 +11,10 @@ import { getAlpacaApiUsagePersistenceSnapshot } from './alpaca-api-usage-persist
 import { adaptivePollingCoordinator } from './adaptive-polling.service.js';
 import { resolveDefaultTradingAccountId } from './trading-account.service.js';
 import {
+  getMarketPolicyEnforcementRuntimeStatus,
+  redactMarketPolicyEnforcementRuntimeStatus,
+} from './market-policy-enforcement-rollout.service.js';
+import {
   ACCOUNT_SNAPSHOT_WORKER_INTERVAL_MS,
   BROKER_ACTIVITY_WORKER_INTERVAL_MS,
   TRADING_WORKER_INTERVAL_MS,
@@ -60,6 +64,10 @@ export async function getSystemStatus() {
     }),
 
   ]);
+  // Informational: a status read failure must not fail System Status or imply enforcement.
+  const marketPolicyEnforcement = await getMarketPolicyEnforcementRuntimeStatus()
+    .then(redactMarketPolicyEnforcementRuntimeStatus)
+    .catch(() => null);
   const workerHealth = workerHealthRegistry.getSnapshot();
   const alpacaApiUsage = alpacaApiUsageRegistry.getSnapshot();
   const alpacaApiUsagePersistence = getAlpacaApiUsagePersistenceSnapshot();
@@ -107,6 +115,7 @@ export async function getSystemStatus() {
     trading: {
       config: runtimeConfig,
       risk,
+      marketPolicyEnforcement,
     },
     workers: {
       health: workerHealth,

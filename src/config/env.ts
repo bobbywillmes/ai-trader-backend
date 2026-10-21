@@ -23,6 +23,38 @@ const optionalSessionDate = z.preprocess(value => value === '' ? undefined : val
   z.string().refine(value => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value))
     && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value, 'Expected a valid YYYY-MM-DD session date.').optional());
 
+const paperBrokerWriteAuthorization = z.object({
+  brokerAccountId: z.string().trim().min(1),
+  keyFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+}).strict();
+
+const paperBrokerWriteAuthorizations = z.preprocess(value => {
+  if (value === undefined || value === '') return [];
+  if (typeof value !== 'string') return value;
+  try { return JSON.parse(value); } catch { return value; }
+}, z.array(paperBrokerWriteAuthorization));
+
+const paperBrokerWriteOwnership = z.object({
+  tradingAccountId: z.number().int().positive(),
+  role: z.enum(['OBSERVER', 'EXECUTOR']),
+  expectedBrokerAccountId: z.string().trim().min(1).optional(),
+}).strict().superRefine((value, context) => {
+  if (value.role === 'EXECUTOR' && value.expectedBrokerAccountId === undefined) {
+    context.addIssue({ code: 'custom', path: ['expectedBrokerAccountId'],
+      message: 'An EXECUTOR ownership declaration requires the expected Alpaca account_number.' });
+  }
+  if (value.role === 'OBSERVER' && value.expectedBrokerAccountId === undefined) {
+    context.addIssue({ code: 'custom', path: ['expectedBrokerAccountId'],
+      message: 'An OBSERVER ownership declaration requires the expected Alpaca account_number.' });
+  }
+});
+
+const paperBrokerWriteOwnerships = z.preprocess(value => {
+  if (value === undefined || value === '') return [];
+  if (typeof value !== 'string') return value;
+  try { return JSON.parse(value); } catch { return value; }
+}, z.array(paperBrokerWriteOwnership));
+
 export const envSchema = z.object({
   NODE_ENV: z
     .enum(['development', 'test', 'production'])
@@ -164,6 +196,11 @@ export const envSchema = z.object({
   LIVE_WRITE_DEPLOYMENT_ROLE: z
     .enum(['OBSERVATION_ONLY', 'PRODUCTION_EXECUTOR'])
     .default('OBSERVATION_ONLY'),
+  PAPER_BROKER_WRITE_DEPLOYMENT_ROLE: z
+    .enum(['OBSERVATION_ONLY', 'PAPER_EXECUTOR'])
+    .default('OBSERVATION_ONLY'),
+  PAPER_BROKER_WRITE_AUTHORIZATIONS: paperBrokerWriteAuthorizations.default([]),
+  PAPER_BROKER_WRITE_OWNERSHIP: paperBrokerWriteOwnerships.default([]),
   ALLOW_TRADING_ENABLED_ON_START: envBoolean.default(false),
 }).superRefine((value, context) => {
   if (value.MARKET_DAILY_MASSIVE_RESUME_SESSION !== undefined && value.MARKET_DAILY_TIINGO_CUTOVER_SESSION === undefined) {
@@ -180,6 +217,67 @@ export const envSchema = z.object({
       path: ['LIVE_WRITE_DEPLOYMENT_ROLE'],
       message: 'PRODUCTION_EXECUTOR is only valid when NODE_ENV=production.',
     });
+  }
+  const paperIdentities = value.PAPER_BROKER_WRITE_AUTHORIZATIONS.map(
+    item => `${item.brokerAccountId}\u0000${item.keyFingerprint}`,
+  );
+  if (new Set(paperIdentities).size !== paperIdentities.length) {
+    context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_AUTHORIZATIONS'],
+      message: 'PAPER broker-write authorizations must be unique brokerage identity pairs.' });
+  }
+  const paperAccounts = value.PAPER_BROKER_WRITE_AUTHORIZATIONS.map(item => item.brokerAccountId);
+  const paperFingerprints = value.PAPER_BROKER_WRITE_AUTHORIZATIONS.map(item => item.keyFingerprint);
+  if (new Set(paperAccounts).size !== paperAccounts.length) {
+    context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_AUTHORIZATIONS'],
+      message: 'A PAPER brokerage account may have only one authorized credential fingerprint.' });
+  }
+  if (new Set(paperFingerprints).size !== paperFingerprints.length) {
+    context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_AUTHORIZATIONS'],
+      message: 'A PAPER credential fingerprint may authorize only one brokerage account.' });
+  }
+  if (value.PAPER_BROKER_WRITE_DEPLOYMENT_ROLE === 'OBSERVATION_ONLY' && paperIdentities.length > 0) {
+    context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_AUTHORIZATIONS'],
+      message: 'OBSERVATION_ONLY cannot declare PAPER broker-write authorizations.' });
+  }
+  if (value.PAPER_BROKER_WRITE_DEPLOYMENT_ROLE === 'PAPER_EXECUTOR' && paperIdentities.length === 0) {
+    context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_AUTHORIZATIONS'],
+      message: 'PAPER_EXECUTOR requires at least one exact brokerage identity authorization.' });
+  }
+  const ownershipAccountIds = value.PAPER_BROKER_WRITE_OWNERSHIP.map(item => item.tradingAccountId);
+  if (new Set(ownershipAccountIds).size !== ownershipAccountIds.length) {
+    context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_OWNERSHIP'],
+      message: 'A TradingAccount may have only one PAPER ownership declaration.' });
+  }
+  const executorBrokerIds = value.PAPER_BROKER_WRITE_OWNERSHIP
+    .filter(item => item.role === 'EXECUTOR').map(item => item.expectedBrokerAccountId!);
+  if (new Set(executorBrokerIds).size !== executorBrokerIds.length) {
+    context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_OWNERSHIP'],
+      message: 'An Alpaca PAPER account_number may have only one expected executor.' });
+  }
+  const observerBrokerIds = value.PAPER_BROKER_WRITE_OWNERSHIP
+    .filter(item => item.role === 'OBSERVER').map(item => item.expectedBrokerAccountId!);
+  if (new Set(observerBrokerIds).size !== observerBrokerIds.length) {
+    context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_OWNERSHIP'],
+      message: 'An Alpaca PAPER account_number may have only one explicit observer.' });
+  }
+  if (observerBrokerIds.some(id => executorBrokerIds.includes(id))) {
+    context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_OWNERSHIP'],
+      message: 'An Alpaca PAPER account_number cannot be declared as both OBSERVER and EXECUTOR.' });
+  }
+  const authorizationBrokerIds = value.PAPER_BROKER_WRITE_AUTHORIZATIONS.map(item => item.brokerAccountId);
+  const executorBrokerIdSet = new Set(executorBrokerIds);
+  const authorizationBrokerIdSet = new Set(authorizationBrokerIds);
+  for (const brokerAccountId of executorBrokerIdSet) {
+    if (!authorizationBrokerIdSet.has(brokerAccountId)) {
+      context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_AUTHORIZATIONS'],
+        message: `EXECUTOR ownership for ${brokerAccountId} requires one matching broker-write authorization.` });
+    }
+  }
+  for (const brokerAccountId of authorizationBrokerIdSet) {
+    if (!executorBrokerIdSet.has(brokerAccountId)) {
+      context.addIssue({ code: 'custom', path: ['PAPER_BROKER_WRITE_AUTHORIZATIONS'],
+        message: `PAPER broker-write authorization for ${brokerAccountId} requires one matching EXECUTOR ownership declaration.` });
+    }
   }
 });
 

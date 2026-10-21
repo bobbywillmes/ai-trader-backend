@@ -6,6 +6,11 @@ const mocks = vi.hoisted(() => ({
   accountFindMany: vi.fn(),
   intentGroupBy: vi.fn(),
   positionGroupBy: vi.fn(),
+  terminalClaimRecovery: vi.fn(),
+}));
+
+vi.mock('./entry-dispatch-recovery.service.js', () => ({
+  summarizeTerminalClaimRecoveryByAccount: mocks.terminalClaimRecovery,
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -39,6 +44,7 @@ describe('lifecycle account eligibility', () => {
     vi.clearAllMocks();
     mocks.intentGroupBy.mockResolvedValue([]);
     mocks.positionGroupBy.mockResolvedValue([]);
+    mocks.terminalClaimRecovery.mockResolvedValue(new Map());
   });
 
   it('returns accounts in stable ID order with workflow-specific reasons', async () => {
@@ -195,5 +201,43 @@ describe('lifecycle account eligibility', () => {
       reason: 'credentials_unavailable_with_exposure',
       exposureSummary: { pendingIntents: 1 },
     });
+  });
+
+  it('enumerates submitted-order recovery when the only work is a due, actionable terminal entry claim', async () => {
+    mocks.accountFindMany.mockResolvedValue([account()]);
+    mocks.terminalClaimRecovery.mockResolvedValue(new Map([[1, { actionableDue: 1, actionableWaiting: 0, operatorInvestigation: 0, protectedExposure: 0, held: 1 }]]));
+
+    const result = await enumerateLifecycleAccounts('submitted_orders');
+
+    expect(result[0]).toMatchObject({
+      eligible: true,
+      reason: 'usable_credentials_with_work',
+      exposureSummary: { terminalEntryClaimsDue: 1, terminalEntryClaimsHeld: 1, hasLifecycleWork: true },
+    });
+  });
+
+  it('does not schedule the sweep for operator-only or waiting claims, yet keeps them visible as credential exposure', async () => {
+    mocks.terminalClaimRecovery.mockResolvedValue(new Map([
+      [1, { actionableDue: 0, actionableWaiting: 1, operatorInvestigation: 2, protectedExposure: 0, held: 3 }],
+      [2, { actionableDue: 0, actionableWaiting: 0, operatorInvestigation: 1, protectedExposure: 0, held: 1 }],
+    ]));
+    mocks.accountFindMany.mockResolvedValue([account(), account({ id: 2, displayName: 'Bobby Live', environment: 'LIVE', credential: null })]);
+
+    const [credentialed, credentialless] = await enumerateLifecycleAccounts('submitted_orders');
+
+    expect(credentialed).toMatchObject({ eligible: false, reason: 'no_work_for_workflow', exposureSummary: { terminalEntryClaimsDue: 0, terminalEntryClaimsHeld: 3, hasLifecycleWork: false } });
+    expect(credentialless).toMatchObject({ eligible: false, reason: 'credentials_unavailable_with_exposure', exposureSummary: { terminalEntryClaimsHeld: 1 } });
+  });
+
+  it('schedules stale-admission recovery only when due, and keeps abandoned admissions visible as credential exposure', async () => {
+    const entry = (staleAdmissionDue: number, staleAdmissionHeld: number) => ({ actionableDue: 0, actionableWaiting: 0, operatorInvestigation: 0, protectedExposure: 0, held: 0, staleAdmissionDue, staleAdmissionHeld });
+    mocks.terminalClaimRecovery.mockResolvedValue(new Map([[1, entry(1, 1)], [2, entry(0, 1)], [3, entry(0, 1)]]));
+    mocks.accountFindMany.mockResolvedValue([account(), account({ id: 2 }), account({ id: 3, credential: null })]);
+
+    const [due, waiting, credentialless] = await enumerateLifecycleAccounts('submitted_orders');
+
+    expect(due).toMatchObject({ eligible: true, exposureSummary: { staleAdmissionClaimsDue: 1, staleAdmissionClaimsHeld: 1, hasLifecycleWork: true } });
+    expect(waiting).toMatchObject({ eligible: false, reason: 'no_work_for_workflow', exposureSummary: { staleAdmissionClaimsDue: 0, staleAdmissionClaimsHeld: 1 } });
+    expect(credentialless).toMatchObject({ eligible: false, reason: 'credentials_unavailable_with_exposure', exposureSummary: { staleAdmissionClaimsHeld: 1 } });
   });
 });

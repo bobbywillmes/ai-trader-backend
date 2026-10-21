@@ -12,6 +12,7 @@ import {
   resolveDefaultTradingAccountId,
   TRADING_ACCOUNT_SUMMARY_SELECT,
 } from './trading-account.service.js';
+import { transitionEntryExposureClaim } from './entry-exposure-claim.service.js';
 
 type SyncBrokerActivitiesInput = {
   activityType?: string;
@@ -100,6 +101,15 @@ async function terminalizeImportedFullFill(args: {
         }),
       },
     });
+    if (args.linkedBrokerOrder!.side?.toLowerCase() === 'buy') {
+      await transitionEntryExposureClaim({
+        orderIntentId: args.linkedBrokerOrder!.orderIntentId,
+        status: args.trackedPositionId === null ? 'FILLED_AWAITING_POSITION' : 'POSITION_OPEN',
+        eventType: args.trackedPositionId === null ? 'FULL_FILL_IMPORTED_AWAITING_POSITION' : 'FULL_FILL_LINKED_TO_POSITION',
+        evidence: { brokerOrderId: args.linkedBrokerOrder!.brokerOrderId, trackedPositionId: args.trackedPositionId },
+        db: tx,
+      }).catch(() => undefined);
+    }
     if (args.trackedPositionId !== null) {
       await tx.brokerActivity.updateMany({
         where: {
@@ -272,6 +282,22 @@ async function upsertBrokerActivity(args: {
     trackedPositionLink.trackedPositionId !== null
       ? existing?.trackedPositionLinkedAt ?? new Date()
       : existing?.trackedPositionLinkedAt ?? null;
+
+  if (
+    linkedBrokerOrder?.side?.toLowerCase() === 'buy' &&
+    (activity.activity_type ?? activity.type)?.toUpperCase() === 'FILL'
+  ) {
+    await transitionEntryExposureClaim({
+      orderIntentId: linkedBrokerOrder.orderIntentId,
+      status: 'PARTIALLY_FILLED',
+      eventType: 'BROKER_FILL_IMPORTED',
+      evidence: {
+        brokerOrderId: linkedBrokerOrder.brokerOrderId,
+        cumulativeQty: activity.cum_qty ?? null,
+        leavesQty: activity.leaves_qty ?? null,
+      },
+    }).catch(() => undefined);
+  }
 
   const data = {
     broker: 'alpaca',

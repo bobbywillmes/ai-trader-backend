@@ -19,6 +19,8 @@ import {
 import { syncProtectiveOrdersForAccount } from './protective-order-sync.service.js';
 import { runTradingAccountWorkflow } from './trading-account-workflow-runner.service.js';
 import { ACCOUNT_WORKFLOW_LOCK_FAMILIES } from './trading-account-workflow-lock.service.js';
+import { assessPaperBrokerWriteAuthorityForAccount } from './paper-broker-write-authority.service.js';
+import { reconcilePaperBrokerWriteAuthorityAttention } from './paper-broker-write-authority-attention.service.js';
 
 export type ExitEvaluationCounts = {
   positionsEvaluated: number;
@@ -127,6 +129,33 @@ export async function evaluateExitsForAccount(
       error: failure.error,
     }))
   );
+
+  // Keep broker-owned protection synchronization above this boundary. Only new
+  // automatic write-oriented exit work is suppressed for intentionally observed
+  // PAPER accounts.
+  if (environment === 'PAPER') {
+    const authority = await assessPaperBrokerWriteAuthorityForAccount(tradingAccountId);
+    if (authority.outcome === 'INTENTIONAL_OBSERVATION_ONLY') {
+      for (const position of positions) {
+        counts.positionsSkipped += 1;
+        const existing = await prisma.systemEvent.findFirst({
+          where: { type: 'exit.observation_only', entityType: 'trackedPosition', entityId: String(position.id), tradingAccountId },
+          select: { id: true },
+        });
+        if (!existing) await createSystemEvent({
+          type: 'exit.observation_only', entityType: 'trackedPosition', entityId: position.id,
+          tradingAccountId, severity: SystemEventSeverity.INFO,
+          message: `${position.symbol} automatic exit submission is intentionally observation-only on this deployment.`,
+          payloadJson: { authorityOutcome: authority.outcome } as Prisma.InputJsonValue,
+        });
+      }
+      return { counts, failures };
+    }
+    if (authority.outcome !== 'AUTHORIZED') {
+      await reconcilePaperBrokerWriteAuthorityAttention(authority);
+      throw new Error(`PAPER exit executor authority is ${authority.outcome}: ${authority.reason}`);
+    }
+  }
 
   for (const position of positions) {
     try {

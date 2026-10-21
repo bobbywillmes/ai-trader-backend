@@ -100,6 +100,7 @@ describe('WorkerHealthRegistry', () => {
       'tiingo_daily_market_data_sync',
       'market_minute_evidence_sync',
       'intraday_stress_assessment_publication',
+      'paper_broker_write_attention_reconciliation',
       'pending_order_processing',
       'submitted_order_sync',
       'tracked_position_sync',

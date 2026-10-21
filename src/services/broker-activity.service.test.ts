@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   resolveDefaultTradingAccountId: vi.fn(),
   tradingAccountFindUniqueOrThrow: vi.fn(),
   withTradingAccountWorkflowLock: vi.fn(),
+  transitionEntryExposureClaim: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -60,6 +61,10 @@ vi.mock('../integrations/alpaca/activities.adapter.js', () => ({
 
 vi.mock('./system-event.service.js', () => ({
   createSystemEvent: mocks.createSystemEvent,
+}));
+
+vi.mock('./entry-exposure-claim.service.js', () => ({
+  transitionEntryExposureClaim: mocks.transitionEntryExposureClaim,
 }));
 
 vi.mock('./trading-account.service.js', () => ({

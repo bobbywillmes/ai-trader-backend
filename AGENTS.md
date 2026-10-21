@@ -413,6 +413,98 @@ exact environment and database identity guards, pre-route write denial, inert br
 transport, and explicit Compose project teardown. The harness must never import
 `src/app/server.ts`, start workers, or gain trading authority.
 
+Phase 3C.0 enforces durable account/security entry exclusivity with an
+append-preserving `EntryExposureClaim`. The claim is acquired atomically with the
+entry OrderIntent, remains active through broker uncertainty and the entire
+TrackedPosition lifecycle, and is released only on authoritative no-exposure
+evidence. Pre-claim lifecycle evidence fails closed and is handled by the
+operator readiness workflow. See `docs/architecture/entry-exposure-exclusivity.md`.
+
+Phase 3C.1 adds explicit SYSTEM_OWNER grant and revoke of PAPER market-policy
+enforcement authority for one exact ACTIVE enrollment generation. Authority lives in
+a separate, append-preserving `AssignmentMarketPolicyEnforcementAuthorization` row
+with trigger-written immutable events, never in the permanently null generation
+fields. PostgreSQL invalidates a grant when its generation is disabled, its revision
+is superseded, its holder changes, or its assignment identity changes. See
+`docs/architecture/market-policy-enforcement-authorization.md`.
+
+Phase 3C.2 adds authoritative, fail-closed pre-intent enforcement for explicitly
+authorized PAPER assignments behind a default-disabled, PAPER-only, versioned runtime
+rollout (`MarketPolicyEnforcementRuntimeRollout`). Never infer activation from grants
+or enrollments, and never enable it outside isolated test fixtures. Grants are
+`PAPER_MARKET_POLICY_ENFORCEMENT_V2` and bind the exact Subscription and canonical
+Security. Row-level triggers invalidate on direct, BEFORE-trigger-derived and
+FK-cascaded identity changes. V1 grants were invalidated for reapproval, never
+reinterpreted. PostgreSQL computes fingerprints and timestamps. Lapse semantics:
+never-authorized keeps existing behavior; automatic INVALIDATED fails closed until
+reauthorization or an audited owner `resolve-lapse`; owner REVOKED is explicitly
+non-enforced. Every BUY entry intent is created only through
+`admitEntryOrderIntent` (via `submitOrder`). It locks rollout, account, assignment,
+Subscription, Security and the latest authorization in that order before the
+entry-exposure advisory lock. It evaluates the exact bound revision synchronously on
+the current committed composition (no provider calls, no shadow-decision reuse).
+Rejections commit immutable `MarketPolicyEnforcementAdmissionAttempt` evidence before
+raising stable `MARKET_POLICY_*` codes. ALLOWED freezes an immutable
+`OrderIntentMarketPolicyEnforcementObligation` atomically with the claim and intent.
+A deferred PostgreSQL backstop rejects enforced BUY intents without one. Risk gates
+still apply; SELL, protective and lifecycle orders are never gated; there is no LIVE
+authority. See `docs/architecture/market-policy-pre-intent-enforcement.md`.
+
+Phase 3C.3 consumes frozen obligations at broker time, regardless of the rollout. The
+only guard is `prepareEntryBrokerDispatch`, called by `submitOrderToBroker` after the
+stable-ID lookup confirmed absence (an existing exact order is recovered, never
+re-gated or re-sent). It re-locks in the 3C.2 order and requires the exact frozen
+authorization to be AUTHORIZED, latest and fingerprint-equal, with its generation and
+revision ACTIVE, and freshly evaluates the frozen revision. Owner revoke or opt-out
+never un-gates a frozen intent. Immutable `MarketPolicyBrokerDispatchDecision` rows
+are authoritative; an ALLOWED decision is single-use, expires within 30 seconds, and
+is consumed (`MarketPolicyBrokerDispatchConsumption`, at most one per intent) as the
+linearization point just before the adapter. Refusals happen in the `NOT_DISPATCHED`
+phase and are definite non-sends; never treat an unclassified exception that way.
+Under the active rollout, un-obligated queued BUYs for assignments that require
+enforcement are quarantined. Every un-obligated PAPER entry gets a final serialized
+authorization immediately before the adapter: an immutable
+`MarketPolicyBrokerUnenforcedDispatch` record (one per intent, PostgreSQL-verified) or
+an `..._AT_FINAL_AUTHORIZATION` quarantine. Its commit is the linearization point; a
+grant or activation committed after it cannot recall the POST.
+
+A consumption or un-enforced dispatch record is evidence that a POST may have started,
+never proof of receipt. It is never deleted, relaxed or reused, and it permanently
+prohibits another POST for that intent. Such a claim is never released by
+`releaseUnsubmittedEntryExposureClaim`. Failures after the record are recorded on the
+claim (`DISPATCH_OUTCOME_RECORDED`, claim `UNRESOLVED`) and released only by
+`entry-dispatch-recovery.service.ts`. Release requires a definite local non-send, or a
+definitive and settled HTTP rejection, plus fresh exact broker verification and a locked
+local revalidation. Delivery uncertainty is never released on absence, and there is no
+force or time-based release. `EntryExposureClaimEvent` is append-only. Operator release
+uses the fingerprinted `entry-exposure-remediation.service.ts`.
+
+Phase 3C.4 adds a final deployment-owned boundary for every Alpaca PAPER mutation.
+Development is observation-only for Bobby Paper; production owns that brokerage
+account. A PAPER executor must allowlist the exact verified Alpaca account identifier
+and active credential key fingerprint. Local account IDs, account state and global
+entry controls never grant this authority. Mutations denied at the shared request
+boundary are `NOT_SENT_BLOCKED` before `fetch`; LIVE semantics are unchanged. See
+`docs/architecture/paper-broker-write-authority.md` and
+`docs/production/paper-broker-write-authority.md`.
+
+Ordering invariant: no claim-release decision may run before its delivery
+classification is durable. On any entry failure the worker commits the terminal intent
+state together with `NOT_SENT_EVIDENCE_RECORDED` (proven not sent) or
+`DISPATCH_OUTCOME_RECORDED` (`OBSERVED`, claim `UNRESOLVED`) and only then decides. If
+that transaction fails, nothing is released. Every HTTP response, including every 4xx
+(408 and 409 especially), means the request reached Alpaca, so it is never a
+never-submitted release, even with no dispatch record (the LIVE case).
+`submitOrderToBroker` writes `ADAPTER_INVOCATION_STARTED` just before the adapter. A
+marker-protocol claim without it never invoked the adapter; an unclosed marker is an
+unknown outcome. Never infer non-dispatch from a missing dispatch record or from free
+text. `classifyTerminalEntryClaim` is the single recovery-state definition shared by
+the sweep, account enumeration and readiness. Sweep attempts are leased (60 s minimum,
+three per tick, oldest first). Run
+`npm run market-policy:broker-readiness` before activation. See
+`docs/architecture/market-policy-broker-time-enforcement.md` and
+`docs/production/market-policy-enforcement-rollout.md`.
+
 The intended lifecycle is:
 
 ```text

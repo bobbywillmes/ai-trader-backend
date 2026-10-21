@@ -9,7 +9,7 @@ import {
 import {
   createOrderIntent,
   recordOrderIntentRiskEvaluation,
-  updateOrderIntentStatus,
+  transitionOrderIntentStatusFrom,
 } from './order-audit.service.js';
 import {
   evaluateOrderRisk,
@@ -34,6 +34,15 @@ import { evaluateAssignmentEntry } from './assignment-entry-evaluation.service.j
 import { validateActiveLiveEntryArming } from './live-entry-arming.service.js';
 import { getBrokerWriteDeliveryClassification } from '../errors/broker-write-delivery-error.js';
 import { bestEffortAppendBrokerOpportunityEvent, bestEffortCaptureOrderIntentBrokerPostOpportunity, createBrokerObservationBudget } from './order-intent-broker-opportunity.service.js';
+import {
+  requireEntryExposureClaim,
+  requireExecutableEntryExposureClaim,
+  releaseUnsubmittedEntryExposureClaim,
+} from './entry-exposure-claim.service.js';
+import { admitEntryOrderIntent } from './market-policy-entry-admission.service.js';
+import { prepareEntryBrokerDispatch } from './market-policy-broker-dispatch.service.js';
+import { recordAdapterInvocationStarted } from './entry-delivery-evidence.service.js';
+import type { AlpacaOrder } from '../integrations/alpaca/alpaca.types.js';
 
 type SubmitOrderOptions = {
   entryDecisionKey?: string;
@@ -156,9 +165,22 @@ export async function submitOrder(
         accountSubscriptionSizing: runtimeSizing.sizing.snapshot,
       }
     : {};
-  let duplicateAcceptanceExecution = false;
-  const intent = options.liveEntryAcceptanceExecution
-    ? await prisma.$transaction(async (tx) => {
+  const claimOwnerKey = `entry:${tradingAccountId}:${clientOrderId}`;
+  // Every BUY entry OrderIntent is admitted through the shared market-policy admission boundary,
+  // which preserves the Phase 3C.0 claim admission unless an explicitly authorized PAPER assignment
+  // is enforced under the active runtime rollout.
+  const admissionBase = {
+    tradingAccountId,
+    tradingAccountSubscriptionId: runtimeSizing.sizing?.tradingAccountSubscriptionId ?? null,
+    symbol: resolvedInput.symbol,
+    clientOrderId,
+    ownerKey: claimOwnerKey,
+  };
+  const admission = options.liveEntryAcceptanceExecution
+    ? await admitEntryOrderIntent({
+      ...admissionBase,
+      requestSource: 'live_entry_acceptance',
+      prepare: async (tx) => {
         const execution = options.liveEntryAcceptanceExecution!;
         await tx.$queryRaw`SELECT id FROM "LiveEntryAcceptanceRun" WHERE id = ${execution.runId} FOR UPDATE`;
         const run = await tx.liveEntryAcceptanceRun.findFirst({
@@ -173,7 +195,6 @@ export async function submitOrder(
           if (run.executionRequestKey !== execution.requestKey) {
             throw new HttpError(409, 'Acceptance execution was already claimed by another request.');
           }
-          duplicateAcceptanceExecution = true;
           return run.orderIntent;
         }
         if (run.terminalAt || run.executionClaimedAt || run.executionUncertainAt) {
@@ -224,27 +245,26 @@ export async function submitOrder(
             executionRequestKey: execution.requestKey,
           },
         });
-        return createOrderIntent(
-          resolvedInput,
-          'live_entry_acceptance',
-          clientOrderId,
-          tradingAccountId,
-          {
-            ...intentOptions,
-            liveEntryAcceptanceRunId: run.id,
-          },
-          tx,
-        );
-      })
-    : await createOrderIntent(
-        resolvedInput,
-        'api',
-        clientOrderId,
-        tradingAccountId,
-        intentOptions,
-      );
+        return null;
+      },
+      createIntent: (tx) => createOrderIntent(
+        resolvedInput, 'live_entry_acceptance', clientOrderId, tradingAccountId,
+        { ...intentOptions, liveEntryAcceptanceRunId: options.liveEntryAcceptanceExecution!.runId }, tx,
+      ),
+    })
+    : await admitEntryOrderIntent({
+      ...admissionBase,
+      requestSource: 'api',
+      createIntent: (tx) => createOrderIntent(
+        resolvedInput, 'api', clientOrderId, tradingAccountId, intentOptions, tx,
+      ),
+    });
+  const intent = admission.intent;
+  const marketPolicyEnforcement = admission.marketPolicy.enforced
+    ? { attemptId: admission.marketPolicy.attemptId, obligationId: admission.marketPolicy.obligationId, disposition: admission.marketPolicy.disposition }
+    : null;
 
-  if (duplicateAcceptanceExecution) {
+  if (admission.duplicate) {
     return {
       ok: true,
       intentId: intent.id,
@@ -254,6 +274,7 @@ export async function submitOrder(
     };
   }
 
+  try {
   if (options.entryDecisionKey) {
     await linkEntryDecisionToOrderIntent({
       decisionKey: options.entryDecisionKey,
@@ -279,7 +300,11 @@ export async function submitOrder(
   });
 
   if (!riskResult.allowed) {
-    await updateOrderIntentStatus(intent.id, 'blocked', riskResult.reason);
+    requireAdmissionStillReceived(await transitionOrderIntentStatusFrom(intent.id, 'received', 'blocked', riskResult.reason), intent.id);
+    await releaseUnsubmittedEntryExposureClaim({
+      orderIntentId: intent.id,
+      reason: 'ADMISSION_RISK_BLOCKED',
+    });
 
     await logRiskGateBlockedOrder({
       orderIntentId: intent.id,
@@ -295,14 +320,42 @@ export async function submitOrder(
     );
   }
 
-  await updateOrderIntentStatus(intent.id, 'pending');
+  // Compare-and-set: an admission that outlived the stale-admission threshold may already have been
+  // failed and its claim released by recovery; it must never become executable afterwards.
+  requireAdmissionStillReceived(await transitionOrderIntentStatusFrom(intent.id, 'received', 'pending'), intent.id);
 
   return {
     ok: true,
     intentId: intent.id,
     status: 'pending',
     entryDecisionKey: options.entryDecisionKey ?? null,
+    ...(marketPolicyEnforcement ? { marketPolicyEnforcement } : {}),
   };
+  } catch (error) {
+    await prisma.$transaction(async (tx) => {
+      await tx.orderIntent.updateMany({
+        where: { id: intent.id, status: { in: ['received', 'pending'] } },
+        data: {
+          status: 'failed',
+          blockReason: error instanceof Error ? error.message : 'Entry admission failed after claim acquisition.',
+        },
+      });
+      await releaseUnsubmittedEntryExposureClaim({
+        orderIntentId: intent.id,
+        reason: 'ADMISSION_FAILED_BEFORE_BROKER_SUBMISSION',
+        db: tx,
+      });
+    }).catch(() => undefined);
+    throw error;
+  }
+}
+
+function requireAdmissionStillReceived(transitioned: boolean, orderIntentId: number) {
+  if (!transitioned) {
+    throw new HttpError(409, 'Entry admission no longer owns its intent; it was not made executable.', {
+      code: 'ENTRY_ADMISSION_ABANDONED', orderIntentId,
+    });
+  }
 }
 
 export type BrokerOrderSubmissionInput = ResolvedPlaceOrderInput & {
@@ -310,10 +363,62 @@ export type BrokerOrderSubmissionInput = ResolvedPlaceOrderInput & {
   clientOrderId: string;
 };
 
+/**
+ * Delivery classification of one entry submission attempt, advanced by submitOrderToBroker:
+ * - UNCLASSIFIED: no positive proof either way; callers must treat a failure as possibly delivered.
+ * - NOT_DISPATCHED: the stable-ID lookup confirmed absence, no local dispatch evidence exists, and the
+ *   adapter has not been invoked. A failure here (including a broker-time market-policy refusal) is a
+ *   definite non-send.
+ * - EXISTING_ORDER_FOUND: an exact broker order already exists; it is recovered, never re-sent.
+ * - DISPATCH_STARTED: the final dispatch authorization committed (a consumption, or an un-enforced
+ *   dispatch record) and the adapter may have reached Alpaca. That record permanently prohibits
+ *   another POST for the intent; a failure here goes to evidence-based claim recovery.
+ * - BROKER_RESPONDED: Alpaca confirmed the order.
+ */
+export type EntryBrokerSubmissionPhase = 'UNCLASSIFIED' | 'NOT_DISPATCHED' | 'EXISTING_ORDER_FOUND' | 'DISPATCH_STARTED' | 'BROKER_RESPONDED';
+export type EntryBrokerSubmissionBoundary = { phase: EntryBrokerSubmissionPhase };
+
+export function createEntryBrokerSubmissionBoundary(): EntryBrokerSubmissionBoundary {
+  return { phase: 'UNCLASSIFIED' };
+}
+
+function assertExistingEntryOrderIdentity(order: AlpacaOrder, expected: { clientOrderId: string; symbol: string }) {
+  const mismatches = [
+    ...(order.client_order_id !== expected.clientOrderId ? ['clientOrderId'] : []),
+    ...(order.symbol?.trim().toUpperCase() !== expected.symbol.trim().toUpperCase() ? ['symbol'] : []),
+    ...(order.side?.trim().toLowerCase() !== 'buy' ? ['side'] : []),
+  ];
+  if (mismatches.length) {
+    // Never guess attribution: the order stays unresolved for recovery and is never re-sent.
+    throw new HttpError(409, 'Broker order found by stable client order ID does not match the entry identity.', {
+      code: 'EXISTING_BROKER_ORDER_IDENTITY_MISMATCH', mismatches, brokerOrderId: order.id,
+    });
+  }
+}
+
+async function assertNoLocalEntryDispatchEvidence(orderIntentId: number) {
+  const [consumptions, unenforcedDispatches, dispatchEvents, brokerOrders] = await Promise.all([
+    prisma.marketPolicyBrokerDispatchConsumption.count({ where: { orderIntentId } }),
+    prisma.marketPolicyBrokerUnenforcedDispatch.count({ where: { orderIntentId } }),
+    prisma.orderIntentBrokerOpportunityEvent.count({
+      where: { orderIntentId, eventType: { in: ['ADAPTER_DISPATCH_REACHED', 'BROKER_RESPONSE_CONFIRMED', 'BROKER_REJECTED', 'DELIVERY_UNCERTAIN'] } },
+    }),
+    prisma.brokerOrder.count({ where: { orderIntentId } }),
+  ]);
+  if (consumptions || unenforcedDispatches || dispatchEvents || brokerOrders) {
+    // A lookup miss is not proof that an earlier dispatch never reached Alpaca.
+    throw new HttpError(409, 'Entry has prior dispatch evidence; a missing broker lookup result is not proof of non-delivery.', {
+      code: 'PRIOR_ENTRY_DISPATCH_EVIDENCE', orderIntentId, consumptions, unenforcedDispatches, dispatchEvents, brokerOrders,
+    });
+  }
+}
+
 export async function submitOrderToBroker(
   input: BrokerOrderSubmissionInput,
-  options: { tradingAccountId: number; orderIntentId: number }
+  options: { tradingAccountId: number; orderIntentId: number; boundary?: EntryBrokerSubmissionBoundary }
 ) {
+  const boundary = options.boundary ?? createEntryBrokerSubmissionBoundary();
+  boundary.phase = 'UNCLASSIFIED';
   const clientOrderId = input.clientOrderId;
 
   if (!clientOrderId) {
@@ -325,6 +430,12 @@ export async function submitOrderToBroker(
   if (input.side !== 'buy' || (input.signalType ?? 'entry') !== 'entry') {
     throw new HttpError(400, 'The entry broker boundary accepts BUY entry orders only.');
   }
+  const executable = await requireExecutableEntryExposureClaim({
+    orderIntentId: options.orderIntentId,
+    tradingAccountId: options.tradingAccountId,
+    symbol: input.symbol,
+    clientOrderId,
+  });
 
   const existing = await getAlpacaOrderByClientOrderId(
     options.tradingAccountId,
@@ -333,12 +444,26 @@ export async function submitOrderToBroker(
   );
 
   if (existing) {
+    // An already-delivered order is recovered as-is: no market-policy re-gating and no second POST.
+    boundary.phase = 'EXISTING_ORDER_FOUND';
+    assertExistingEntryOrderIdentity(existing, { clientOrderId, symbol: input.symbol });
     await bestEffortAppendBrokerOpportunityEvent({orderIntentId:options.orderIntentId,eventType:'BROKER_ORDER_MATERIALIZED',evidence:{source:'pre_post_idempotency_lookup',brokerOrderId:existing.id}},undefined,createBrokerObservationBudget());
     return {
       duplicate: true,
       order: existing,
     };
   }
+
+  // Confirmed absence and no local dispatch evidence: a genuinely new dispatch opportunity. Until the
+  // dispatch authorization is consumed below, nothing can have been written to Alpaca.
+  await assertNoLocalEntryDispatchEvidence(options.orderIntentId);
+  boundary.phase = 'NOT_DISPATCHED';
+  const dispatch = await prepareEntryBrokerDispatch({
+    orderIntentId: options.orderIntentId,
+    tradingAccountId: options.tradingAccountId,
+    symbol: input.symbol,
+    clientOrderId,
+  });
 
   const payload: {
     symbol: string;
@@ -365,6 +490,15 @@ export async function submitOrderToBroker(
 
   const prePostObservationBudget=createBrokerObservationBudget();
   const opportunity=await bestEffortCaptureOrderIntentBrokerPostOpportunity(options.orderIntentId,undefined,prePostObservationBudget);
+  // Final pre-dispatch boundary: consumes the single-use broker-time authorization (or records the
+  // final un-enforced authorization) with a fresh PostgreSQL clock. A refusal, or a committed record
+  // whose acknowledgement was lost, throws here, still NOT_DISPATCHED: this attempt sends nothing.
+  await dispatch.authorizeDispatch(opportunity?.id ?? null);
+  // The adapter-invocation marker, durable before the adapter is invoked. If this write fails the
+  // phase is still NOT_DISPATCHED and nothing is sent; a committed record from the authorization above
+  // still prohibits any further POST and goes to evidence-based recovery.
+  await recordAdapterInvocationStarted(prisma, { claimId: executable.claim.id, orderIntentId: options.orderIntentId, clientOrderId });
+  boundary.phase = 'DISPATCH_STARTED';
   await bestEffortAppendBrokerOpportunityEvent({opportunityId:opportunity?.id??null,eventType:'ADAPTER_DISPATCH_REACHED',evidence:{adapter:'alpaca',operation:'pending_order_submission'}},undefined,prePostObservationBudget);
   let created;
   try {
@@ -390,6 +524,7 @@ export async function submitOrderToBroker(
     await bestEffortAppendBrokerOpportunityEvent({opportunityId:opportunity?.id??null,eventType,evidence:{classification:classification??'UNCLASSIFIED',statusCode}},undefined,createBrokerObservationBudget());
     throw error;
   }
+  boundary.phase = 'BROKER_RESPONDED';
   const postResponseObservationBudget=createBrokerObservationBudget();
   await bestEffortAppendBrokerOpportunityEvent({opportunityId:opportunity?.id??null,eventType:'BROKER_RESPONSE_CONFIRMED',evidence:{brokerOrderId:created.id,status:created.status}},undefined,postResponseObservationBudget);
   await bestEffortAppendBrokerOpportunityEvent({opportunityId:opportunity?.id??null,eventType:'BROKER_ORDER_MATERIALIZED',evidence:{source:'post_response',brokerOrderId:created.id,status:created.status}},undefined,postResponseObservationBudget);

@@ -23,6 +23,7 @@ export type AlpacaResolvedConfig = {
   source: AlpacaCredentialSource;
   credentialId: number | null;
   keyFingerprint: string | null;
+  brokerAccountId: string | null;
 };
 
 export type AlpacaConfigResolverOptions = {
@@ -80,6 +81,7 @@ export async function resolveAlpacaConfigForTradingAccount(
       source: 'trading_account_credential',
       credentialId: credential.credentialId,
       keyFingerprint: credential.keyFingerprint,
+      brokerAccountId: account.brokerAccountId,
     };
   }
 

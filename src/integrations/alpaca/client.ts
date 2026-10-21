@@ -8,6 +8,7 @@ import { alpacaApiUsageRegistry } from '../../services/alpaca-api-usage.service.
 import { resolveAlpacaConfigForTradingAccount } from '../../services/alpaca-config-resolver.service.js';
 import { authorizeLiveBrokerWrite } from '../../services/live-write-approval.service.js';
 import { authorizeAndConsumeNewPositionEntry } from '../../services/live-entry-arming.service.js';
+import { authorizePaperBrokerWrite } from '../../services/paper-broker-write-authority.service.js';
 import {
   assertKnownAlpacaEndpoint,
   assertKnownAlpacaOperation,
@@ -27,15 +28,24 @@ export async function alpacaRequestForAccount<T>(
   path: string,
   options: AccountRequestOptions
 ): Promise<T> {
-  const isWrite = options.metadata.requestClass === 'critical_write';
+  const method = options.method ?? 'GET';
+  const isWrite = method !== 'GET';
   try {
     assertKnownAlpacaOperation(options.metadata.operation);
     assertKnownAlpacaEndpoint(options.metadata.endpoint);
-    const method = options.method ?? 'GET';
     if (options.metadata.method !== method) {
       throw new Error(
         `Alpaca request metadata method ${options.metadata.method} does not match request method ${method}.`
       );
+    }
+    if (!options.metadata.endpoint.startsWith(`${method} `)) {
+      throw new Error(`Alpaca endpoint metadata ${options.metadata.endpoint} does not match request method ${method}.`);
+    }
+    if (isWrite && (options.metadata.requestClass !== 'critical_write' || options.metadata.operationClass === 'LIFECYCLE_READ')) {
+      throw new Error('Mutating Alpaca requests must be classified as critical writes with a write operation class.');
+    }
+    if (!isWrite && options.metadata.requestClass === 'critical_write') {
+      throw new Error('Read-only Alpaca requests cannot be classified as critical writes.');
     }
   } catch (error) {
     if (isWrite) {
@@ -78,6 +88,17 @@ export async function alpacaRequestForAccount<T>(
     }
     throw error;
   }
+  if (isWrite && config.environment === TradingAccountEnvironment.PAPER) {
+    try {
+      await authorizePaperBrokerWrite(config);
+    } catch (error) {
+      throw new BrokerWriteDeliveryError({
+        classification: 'NOT_SENT_BLOCKED',
+        message: error instanceof Error ? error.message : 'PAPER broker write blocked by deployment authority.',
+        cause: error,
+      });
+    }
+  }
   if (options.metadata.requestClass === 'critical_write' &&
       config.environment === TradingAccountEnvironment.LIVE) {
     const operationClass = options.metadata.operationClass ?? 'ENTRY_WRITE';
@@ -111,8 +132,6 @@ export async function alpacaRequestForAccount<T>(
     }
   }
   const url = `${config.baseUrl}${path}`;
-  const method = options.method ?? 'GET';
-
   const requestInit: RequestInit = {
     method,
     headers: {

@@ -11,6 +11,7 @@ import { env } from '../config/env.js';
 import { accountWorkflowProcessInstanceId } from './trading-account-workflow-runner.service.js';
 import { recordTradingAccountWorkerAttempt } from './trading-account-worker-health.service.js';
 import type { WorkerKey } from '../workers/worker-health.definitions.js';
+import { summarizeTerminalClaimRecoveryByAccount } from './entry-dispatch-recovery.service.js';
 
 export type LifecycleWorkflow =
   | 'pending_submissions'
@@ -45,6 +46,14 @@ export type LifecycleAccountEligibility = {
     activePositions: number;
     unresolvedActivities: number;
     unresolvedExitPositions: number;
+    /** Terminal-entry claims the recovery sweep will actually attempt now (shared classification). */
+    terminalEntryClaimsDue: number;
+    /** Unreleased terminal-entry claims of any recovery state, including operator-only and protected. */
+    terminalEntryClaimsHeld: number;
+    /** Claims of abandoned admissions ('received' past the stale threshold) that recovery will attempt now. */
+    staleAdmissionClaimsDue: number;
+    /** Claims of abandoned admissions, attempted or not; held exposure even without usable credentials. */
+    staleAdmissionClaimsHeld: number;
     hasLifecycleWork: boolean;
   };
 };
@@ -90,7 +99,7 @@ export async function enumerateLifecycleAccounts(
     },
   });
 
-  const [intentCounts, unresolvedExitCounts] = await Promise.all([
+  const [intentCounts, unresolvedExitCounts, terminalClaimRecovery] = await Promise.all([
     prisma.orderIntent.groupBy({
       by: ['tradingAccountId', 'status'],
       where: {
@@ -122,6 +131,8 @@ export async function enumerateLifecycleAccounts(
       },
       _count: { _all: true },
     }),
+    // The sweep's own classification, so scheduling matches the work it will actually select.
+    summarizeTerminalClaimRecoveryByAccount(),
   ]);
 
   const countsByAccount = new Map<number, Record<string, number>>();
@@ -150,11 +161,17 @@ export async function enumerateLifecycleAccounts(
       unresolvedActivities: account._count.brokerActivities,
       unresolvedExitPositions:
         unresolvedExitCountByAccount.get(account.id) ?? 0,
+      terminalEntryClaimsDue: terminalClaimRecovery.get(account.id)?.actionableDue ?? 0,
+      terminalEntryClaimsHeld: terminalClaimRecovery.get(account.id)?.held ?? 0,
+      staleAdmissionClaimsDue: terminalClaimRecovery.get(account.id)?.staleAdmissionDue ?? 0,
+      staleAdmissionClaimsHeld: terminalClaimRecovery.get(account.id)?.staleAdmissionHeld ?? 0,
       hasLifecycleWork: account._count.orderIntents > 0 ||
         account._count.brokerOrders > 0 ||
         account._count.trackedPositions > 0 ||
         account._count.brokerActivities > 0 ||
-        (unresolvedExitCountByAccount.get(account.id) ?? 0) > 0,
+        (unresolvedExitCountByAccount.get(account.id) ?? 0) > 0 ||
+        (terminalClaimRecovery.get(account.id)?.actionableDue ?? 0) > 0 ||
+        (terminalClaimRecovery.get(account.id)?.staleAdmissionDue ?? 0) > 0,
     };
     const usableCredentials =
       account.credential?.status === BrokerCredentialStatus.ACTIVE;
@@ -167,7 +184,9 @@ export async function enumerateLifecycleAccounts(
         : workflow === 'submitted_orders'
         ? exposureSummary.submittingIntents > 0 ||
           exposureSummary.submittedIntents > 0 ||
-          exposureSummary.nonterminalOrders > 0
+          exposureSummary.nonterminalOrders > 0 ||
+          exposureSummary.terminalEntryClaimsDue > 0 ||
+          exposureSummary.staleAdmissionClaimsDue > 0
         : workflow === 'positions'
           ? exposureSummary.activePositions > 0 ||
             exposureSummary.nonterminalOrders > 0 ||
@@ -188,7 +207,8 @@ export async function enumerateLifecycleAccounts(
     let eligible = false;
     let reason: LifecycleAccountEligibility['reason'];
     if (!usableCredentials) {
-      reason = exposureSummary.hasLifecycleWork
+      // Held entry claims (including operator-only ones) are exposure even when not yet schedulable.
+      reason = exposureSummary.hasLifecycleWork || exposureSummary.terminalEntryClaimsHeld > 0 || exposureSummary.staleAdmissionClaimsHeld > 0
         ? 'credentials_unavailable_with_exposure'
         : 'credentials_unavailable_dormant';
     } else if (!workflowHasWork) {

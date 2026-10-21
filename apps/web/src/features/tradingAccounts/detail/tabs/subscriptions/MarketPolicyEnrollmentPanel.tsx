@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { useIsSystemOwner } from '../../../../auth/useAuth';
 import { activateAssignmentMarketPolicyEnrollment, disableAssignmentMarketPolicyEnrollment, getAssignmentMarketPolicyEnrollment, prepareAssignmentMarketPolicyEnrollment, previewAssignmentMarketPolicyEnrollment } from '../../../api';
 import { formatDateTime } from '../../utils/formatters';
+import { MarketPolicyEnforcementAuthorizationSection } from './MarketPolicyEnforcementAuthorizationSection';
 
 export function MarketPolicyEnrollmentPanel({ accountId, assignmentId, token }: { accountId: number; assignmentId: number; token: string | null }) {
   const owner = useIsSystemOwner(); const queryClient = useQueryClient(); const [reason, setReason] = useState('Owner disabled configuration');
@@ -22,11 +23,12 @@ export function MarketPolicyEnrollmentPanel({ accountId, assignmentId, token }: 
   const p = preview.data?.preview; const generations = state.data?.enrollment?.generations ?? [];
   return <Stack gap="sm">
     <Group justify="space-between"><Title order={5}>Market-policy enrollment</Title><Group gap="xs"><Badge color="orange">CONFIGURATION ONLY</Badge><Badge color="gray">NOT ENFORCING</Badge></Group></Group>
-    <Text size="sm" c="dimmed">This PAPER enrollment records configuration and authorization evidence only. It cannot initiate, block, retry, or modify an order.</Text>
+    <Text size="sm" c="dimmed">This PAPER enrollment records configuration evidence only. ACTIVE configuration is not enforcement authority, and neither enrollment nor authorization can initiate, block, retry, or modify an order.</Text>
     {p && <Group gap="xs"><Badge color={p.paperEligible ? 'teal' : 'red'}>{p.paperEligible ? 'PAPER eligible' : 'Not PAPER'}</Badge><Badge color={p.configurationValid ? 'teal' : 'red'}>{p.configurationValid ? 'Configuration valid' : 'Configuration invalid'}</Badge><Badge color={p.readyToActivate ? 'teal' : 'gray'}>{p.readyToActivate ? 'Ready to activate' : 'Not ready'}</Badge><Badge color={p.currentMarketEligibility.outcome === 'ALLOWED' ? 'teal' : p.currentMarketEligibility.outcome ? 'yellow' : 'gray'}>Market: {p.currentMarketEligibility.outcome ?? p.currentMarketEligibility.evaluatorTechnicalStatus}</Badge></Group>}
     {p?.notReadyReasons.length ? <Alert color="yellow">{p.notReadyReasons.join(' · ')}</Alert> : null}
     {owner && <Group align="end"><Button size="xs" disabled={Boolean(current)} loading={prepare.isPending} onClick={() => run(() => prepare.mutateAsync(), 'Enrollment generation prepared.')}>Prepare</Button><Button size="xs" disabled={current?.status !== 'PREPARED' || !p?.readyToActivate} loading={activate.isPending} onClick={() => run(() => activate.mutateAsync(), 'Enrollment configuration activated.')}>Activate configuration</Button>{current && <><TextInput size="xs" label="Disable reason" value={reason} onChange={event => setReason(event.currentTarget.value)} /><Button size="xs" color="red" variant="light" disabled={!reason.trim()} loading={disable.isPending} onClick={() => run(() => disable.mutateAsync(), 'Enrollment generation disabled.')}>Disable</Button></>}</Group>}
     {generations.length > 0 && <Table withTableBorder striped><Table.Thead><Table.Tr><Table.Th>Generation</Table.Th><Table.Th>Status</Table.Th><Table.Th>Policy revision</Table.Th><Table.Th>Prepared</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{generations.map(g => <Table.Tr key={g.id}><Table.Td>{g.generation}</Table.Td><Table.Td>{g.status}</Table.Td><Table.Td>{g.policyRevision.revision}</Table.Td><Table.Td>{formatDateTime(g.preparedAt)}</Table.Td></Table.Tr>)}</Table.Tbody></Table>}
     {generations.flatMap(g => g.transitions).length > 0 && <Stack gap="xs"><Text fw={700} size="sm">Immutable transition history</Text>{generations.flatMap(g => g.transitions.map(t => <Text key={t.id} size="xs">{formatDateTime(t.occurredAt)} · generation {g.generation} · {t.action} · {t.actor.email}{t.reason ? ` · ${t.reason}` : ''}</Text>))}</Stack>}
+    {generations.length > 0 && <MarketPolicyEnforcementAuthorizationSection accountId={accountId} assignmentId={assignmentId} token={token} enrollmentQueryKey={key} />}
   </Stack>;
 }

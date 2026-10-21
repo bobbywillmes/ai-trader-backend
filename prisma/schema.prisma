@@ -379,6 +379,14 @@ model User {
   assignmentEnrollmentsDisabled AssignmentMarketPolicyEnrollmentGeneration[] @relation("AssignmentEnrollmentDisabledBy")
   assignmentEnrollmentTransitions AssignmentMarketPolicyEnrollmentTransition[] @relation("AssignmentEnrollmentTransitionActor")
   assignmentEnrollmentTransitionOwnership AssignmentMarketPolicyEnrollmentTransition[] @relation("AssignmentEnrollmentTransitionAccountHolder")
+  enforcementAuthorizationsHeld AssignmentMarketPolicyEnforcementAuthorization[] @relation("EnforcementAuthorizationAccountHolder")
+  enforcementAuthorizationsGranted AssignmentMarketPolicyEnforcementAuthorization[] @relation("EnforcementAuthorizationGrantedBy")
+  enforcementAuthorizationsRevoked AssignmentMarketPolicyEnforcementAuthorization[] @relation("EnforcementAuthorizationRevokedBy")
+  enforcementAuthorizationsInvalidated AssignmentMarketPolicyEnforcementAuthorization[] @relation("EnforcementAuthorizationInvalidatedBy")
+  enforcementAuthorizationEvents AssignmentMarketPolicyEnforcementAuthorizationEvent[] @relation("EnforcementAuthorizationEventActor")
+  enforcementLapseResolutions AssignmentMarketPolicyEnforcementLapseResolution[] @relation("EnforcementLapseResolutionResolvedBy")
+  enforcementRolloutChanges MarketPolicyEnforcementRuntimeRollout[] @relation("MarketPolicyEnforcementRolloutChangedBy")
+  enforcementRolloutEvents MarketPolicyEnforcementRuntimeRolloutEvent[] @relation("MarketPolicyEnforcementRolloutEventActor")
 }
 
 model UserSetupToken {
@@ -551,8 +559,13 @@ model TradingAccount {
   lifecycleExerciseTargets  TradingLifecycleExerciseTarget[]
   lifecycleRepairCases      LifecycleRepairCase[]
   marketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration[]
+  marketPolicyEnforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization[]
+  marketPolicyEnforcementAdmissionAttempts MarketPolicyEnforcementAdmissionAttempt[]
+  marketPolicyBrokerDispatchDecisions      MarketPolicyBrokerDispatchDecision[]
+  marketPolicyBrokerUnenforcedDispatches   MarketPolicyBrokerUnenforcedDispatch[]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[]
   brokerPostOpportunities OrderIntentBrokerPostOpportunity[]
+  entryExposureClaims      EntryExposureClaim[]
 
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
@@ -1087,8 +1100,12 @@ model TradingAccountSubscription {
   liveEntryAcceptanceRuns LiveEntryAcceptanceRun[]
   marketPolicyEnrollment AssignmentMarketPolicyEnrollment?
   marketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration[]
+  marketPolicyEnforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization[]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[]
   brokerPostOpportunities OrderIntentBrokerPostOpportunity[]
+  marketPolicyEnforcementAdmissionAttempts MarketPolicyEnforcementAdmissionAttempt[]
+  marketPolicyBrokerDispatchDecisions      MarketPolicyBrokerDispatchDecision[]
+  marketPolicyBrokerUnenforcedDispatches   MarketPolicyBrokerUnenforcedDispatch[]
 
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -1265,6 +1282,11 @@ model Security {
   momentumCandidates     MomentumCandidate[] @relation("SecurityMomentumCandidates")
   liveEntryArmings       LiveEntryArming[]
   liveEntryAcceptanceRuns LiveEntryAcceptanceRun[]
+  entryExposureClaims     EntryExposureClaim[]
+  marketPolicyEnforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization[]
+  marketPolicyEnforcementAdmissionAttempts MarketPolicyEnforcementAdmissionAttempt[]
+  marketPolicyBrokerDispatchDecisions      MarketPolicyBrokerDispatchDecision[]
+  marketPolicyBrokerUnenforcedDispatches   MarketPolicyBrokerUnenforcedDispatch[]
 
   @@index([enabled])
   @@index([assetType])
@@ -1321,6 +1343,7 @@ model OrderIntent {
   rawRequestJson Json
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+  lastSubmittedOrderSyncAt DateTime?
 
   subscriptionId  Int?
   subscriptionKey String?
@@ -1345,10 +1368,17 @@ model OrderIntent {
   marketPolicyCoverage     OrderIntentMarketPolicyCoverage?
   brokerPostOpportunities  OrderIntentBrokerPostOpportunity[]
   brokerOpportunityEvents  OrderIntentBrokerOpportunityEvent[]
+  entryExposureClaim       EntryExposureClaim?
+  marketPolicyEnforcementAdmissionAttempt MarketPolicyEnforcementAdmissionAttempt?
+  marketPolicyEnforcementObligation       OrderIntentMarketPolicyEnforcementObligation?
+  marketPolicyBrokerDispatchDecisions     MarketPolicyBrokerDispatchDecision[]
+  marketPolicyBrokerDispatchConsumption   MarketPolicyBrokerDispatchConsumption?
+  marketPolicyBrokerUnenforcedDispatch    MarketPolicyBrokerUnenforcedDispatch?
 
   @@index([trackedPositionId])
   @@index([tradingAccountId])
   @@index([tradingAccountId, status])
+  @@index([tradingAccountId, lastSubmittedOrderSyncAt, id])
   @@index([tradingAccountId, createdAt])
   @@index([tradingAccountSubscriptionId])
   @@index([tradingAccountId, tradingAccountSubscriptionId])
@@ -1390,6 +1420,44 @@ model BrokerOrder {
   @@index([tradingAccountId])
   @@index([tradingAccountId, status])
   @@index([tradingAccountId, symbol])
+}
+
+model EntryExposureClaim {
+  id               Int      @id @default(autoincrement())
+  tradingAccountId Int
+  securityId       Int
+  orderIntentId    Int?     @unique
+  trackedPositionId Int?    @unique
+  ownerKey         String   @unique
+  status           String   @default("ENTRY_PENDING")
+  acquiredAt       DateTime @default(now())
+  releasedAt       DateTime?
+  releaseReason    String?
+  lastDiagnosedAt  DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tradingAccount TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  security       Security       @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  orderIntent    OrderIntent?   @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  trackedPosition TrackedPosition? @relation(fields: [trackedPositionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  events         EntryExposureClaimEvent[]
+
+  // One unreleased claim per account/security is enforced by partial unique SQL.
+  @@index([tradingAccountId, securityId])
+  @@index([status, releasedAt])
+}
+
+model EntryExposureClaimEvent {
+  id        Int      @id @default(autoincrement())
+  claimId   Int
+  eventType String
+  evidenceJson Json
+  createdAt DateTime @default(now())
+
+  claim EntryExposureClaim @relation(fields: [claimId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([claimId, createdAt])
 }
 
 enum SystemEventSeverity {
@@ -1807,6 +1875,8 @@ model MarketRegimeDimensionAssessment {
   strategyEligibilityGates StrategyMarketEligibilityDecisionGate[]
   orderIntentComparisonGates OrderIntentMarketPolicyComparisonGate[]
   brokerComparisonGates OrderIntentBrokerComparisonGate[]
+  enforcementAdmissionGates MarketPolicyEnforcementAdmissionGate[]
+  brokerDispatchGates       MarketPolicyBrokerDispatchGate[]
 
   @@unique([dimension, algorithmVersion, targetAt, attempt], map: "RegimeDimension_attempt_key")
   @@unique([id, dimension, algorithmVersion], map: "RegimeDimension_identity_key")
@@ -1862,6 +1932,8 @@ model MarketRegimeAssessment {
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[]
   orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt[]
   brokerPostOpportunities OrderIntentBrokerPostOpportunity[]
+  enforcementAdmissionAttempts MarketPolicyEnforcementAdmissionAttempt[]
+  brokerDispatchDecisions      MarketPolicyBrokerDispatchDecision[]
 
   @@unique([compositionVersion, sourceSetFingerprint], map: "MarketRegimeAssessment_version_source_key")
   @@unique([id, compositionVersion], map: "MarketRegimeAssessment_identity_key")
@@ -2520,6 +2592,7 @@ model TrackedPosition {
   brokerActivities BrokerActivity[]
   operationalAttentions OperationalAttention[]
   entryDecision    EntryDecision?
+  entryExposureClaim EntryExposureClaim?
 
   exitState PositionExitState?
 
@@ -2727,6 +2800,7 @@ model Strategy {
   marketEligibilityDecisions StrategyMarketEligibilityDecision[]
   signalRouteMarketEligibilityAttempts SignalRouteMarketEligibilityAttempt[]
   assignmentMarketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration[]
+  assignmentMarketPolicyEnforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization[]
   orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt[]
 }
 
@@ -2771,10 +2845,13 @@ model StrategyMarketPolicyRevision {
   dimensionRules StrategyMarketPolicyDimensionRule[]
   eligibilityDecisions StrategyMarketEligibilityDecision[]
   assignmentEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration[]
+  enforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization[]
   boundOrderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[] @relation("OrderIntentCoverageBoundPolicyRevision")
   activeOrderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[] @relation("OrderIntentCoverageActivePolicyRevision")
   orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt[]
   brokerPostOpportunities OrderIntentBrokerPostOpportunity[]
+  enforcementAdmissionAttempts MarketPolicyEnforcementAdmissionAttempt[]
+  brokerDispatchDecisions      MarketPolicyBrokerDispatchDecision[]
 
   @@unique([policyId, revision], map: "StrategyMarketPolicyRevision_policy_revision_key")
   @@index([policyId, status], map: "StrategyMarketPolicyRevision_policy_status_idx")
@@ -2831,6 +2908,18 @@ enum AssignmentMarketPolicyEnrollmentTransitionAction {
   DISABLE
 }
 
+enum AssignmentMarketPolicyEnforcementAuthorizationStatus {
+  AUTHORIZED
+  REVOKED
+  INVALIDATED
+}
+
+enum AssignmentMarketPolicyEnforcementAuthorizationAction {
+  GRANT
+  REVOKE
+  INVALIDATE
+}
+
 enum OrderIntentMarketPolicyCoverageProvenance {
   ACTIVE_EXACT
   SUPERSEDED_COMPARE_ONLY
@@ -2854,6 +2943,7 @@ model AssignmentMarketPolicyEnrollment {
 
   accountSubscription TradingAccountSubscription                    @relation(fields: [accountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   generations         AssignmentMarketPolicyEnrollmentGeneration[]
+  enforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization[]
 }
 
 model AssignmentMarketPolicyEnrollmentGeneration {
@@ -2874,7 +2964,8 @@ model AssignmentMarketPolicyEnrollmentGeneration {
   disabledByUserId         Int?
   disabledAt               DateTime?                                @db.Timestamptz(3)
   disableReason            String?
-  // Intentionally unset in Phase 3A. Future enforcement requires a distinct explicit authorization.
+  // Permanently null (Phase 3A constraint retained). Phase 3C.1 authority lives only in
+  // AssignmentMarketPolicyEnforcementAuthorization so revocation never rewrites a generation.
   enforcementAuthorityVersion String?
   enforcementAuthorizedAt     DateTime?                             @db.Timestamptz(3)
   createdAt                DateTime                                 @default(now()) @db.Timestamptz(3)
@@ -2892,6 +2983,9 @@ model AssignmentMarketPolicyEnrollmentGeneration {
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[]
   orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt[]
   brokerPostOpportunities OrderIntentBrokerPostOpportunity[]
+  enforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization[]
+  enforcementAdmissionAttempts MarketPolicyEnforcementAdmissionAttempt[]
+  brokerDispatchDecisions      MarketPolicyBrokerDispatchDecision[]
 
   @@unique([enrollmentId, generation], map: "AssignmentEnrollmentGeneration_number_key")
   @@index([accountSubscriptionId], map: "AssignmentMarketPolicyEnrollmentGeneration_assignment_idx")
@@ -3099,6 +3193,8 @@ model OrderIntentBrokerPostOpportunity {
   comparisonAttempts OrderIntentBrokerComparisonAttempt[]
   comparisonDelivery OrderIntentBrokerComparisonDelivery?
   events OrderIntentBrokerOpportunityEvent[]
+  marketPolicyBrokerDispatchConsumptions MarketPolicyBrokerDispatchConsumption[]
+  marketPolicyBrokerUnenforcedDispatches MarketPolicyBrokerUnenforcedDispatch[]
 
   @@unique([orderIntentId, opportunitySequence], map: "OrderIntentBrokerPostOpportunity_intent_sequence_key")
   @@index([accountSubscriptionId, opportunityAt], map: "OrderIntentBrokerPostOpportunity_assignment_time_idx")
@@ -3221,6 +3317,445 @@ model AssignmentMarketPolicyEnrollmentTransition {
   @@index([occurredAt], map: "AssignmentMarketPolicyEnrollmentTransition_occurred_idx")
 }
 
+// Explicit, PAPER-only owner authorization for one exact ACTIVE enrollment generation.
+// Grant evidence is immutable; AUTHORIZED may move once to REVOKED or INVALIDATED.
+// Phase 3C.1 records authority only: no trading path consumes it yet.
+model AssignmentMarketPolicyEnforcementAuthorization {
+  id                       Int                                                  @id @default(autoincrement())
+  enrollmentId             Int
+  enrollmentGenerationId   Int
+  authorizationSequence    Int
+  authorityVersion         String
+  status                   AssignmentMarketPolicyEnforcementAuthorizationStatus @default(AUTHORIZED)
+  environment              TradingAccountEnvironment
+  tradingAccountId         Int
+  accountSubscriptionId    Int
+  strategyId               Int
+  policyRevisionId         Int
+  accountHolderUserId      Int
+  configurationFingerprint String
+  authorizationFingerprint String                                               @unique(map: "AssignmentEnforcementAuthorization_fingerprint_key")
+  authorizedByUserId       Int
+  authorizedAt             DateTime                                             @default(now()) @db.Timestamptz(3)
+  grantReason              String
+  revokedByUserId          Int?
+  revokedAt                DateTime?                                            @db.Timestamptz(3)
+  revocationReason         String?
+  invalidatedByUserId      Int?
+  invalidatedAt            DateTime?                                            @db.Timestamptz(3)
+  invalidationReasonCode   String?
+  createdAt                DateTime                                             @default(now()) @db.Timestamptz(3)
+  // Phase 3C.2 (PAPER_MARKET_POLICY_ENFORCEMENT_V2): the exact tradable Subscription and canonical
+  // Security. Null only on historical V1 grants, which never gain inferred Security-bound authority.
+  subscriptionId           Int?
+  securityId               Int?
+  securitySymbol           String?
+  invalidationSource       String?
+  invalidationEvidenceJson Json?
+
+  enrollment          AssignmentMarketPolicyEnrollment           @relation(fields: [enrollmentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AssignmentEnforcementAuthorization_enrollmentId_fkey")
+  enrollmentGeneration AssignmentMarketPolicyEnrollmentGeneration @relation(fields: [enrollmentGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AssignmentEnforcementAuthorization_generation_fkey")
+  tradingAccount      TradingAccount                             @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AssignmentEnforcementAuthorization_account_fkey")
+  accountSubscription TradingAccountSubscription                 @relation(fields: [accountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AssignmentEnforcementAuthorization_assignment_fkey")
+  strategy            Strategy                                   @relation(fields: [strategyId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AssignmentEnforcementAuthorization_strategyId_fkey")
+  policyRevision      StrategyMarketPolicyRevision               @relation(fields: [policyRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AssignmentEnforcementAuthorization_revision_fkey")
+  accountHolder       User                                       @relation("EnforcementAuthorizationAccountHolder", fields: [accountHolderUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AssignmentEnforcementAuthorization_holder_fkey")
+  authorizedBy        User                                       @relation("EnforcementAuthorizationGrantedBy", fields: [authorizedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AssignmentEnforcementAuthorization_authorizer_fkey")
+  revokedBy           User?                                      @relation("EnforcementAuthorizationRevokedBy", fields: [revokedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AssignmentEnforcementAuthorization_revoker_fkey")
+  invalidatedBy       User?                                      @relation("EnforcementAuthorizationInvalidatedBy", fields: [invalidatedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AssignmentEnforcementAuthorization_invalidator_fkey")
+  subscription        Subscription?                              @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AssignmentEnforcementAuthorization_subscription_fkey")
+  security            Security?                                  @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AssignmentEnforcementAuthorization_security_fkey")
+  events              AssignmentMarketPolicyEnforcementAuthorizationEvent[]
+  lapseResolution     AssignmentMarketPolicyEnforcementLapseResolution?
+  admissionAttempts   MarketPolicyEnforcementAdmissionAttempt[]
+  obligations         OrderIntentMarketPolicyEnforcementObligation[]
+  brokerDispatchDecisions MarketPolicyBrokerDispatchDecision[]
+  brokerUnenforcedDispatches MarketPolicyBrokerUnenforcedDispatch[]
+
+  @@unique([enrollmentGenerationId, authorizationSequence], map: "AssignmentEnforcementAuthorization_sequence_key")
+  @@index([accountSubscriptionId, id], map: "AssignmentEnforcementAuthorization_assignment_idx")
+  @@index([tradingAccountId], map: "AssignmentEnforcementAuthorization_account_idx")
+  @@index([policyRevisionId], map: "AssignmentEnforcementAuthorization_revision_idx")
+  @@index([subscriptionId], map: "AssignmentEnforcementAuthorization_subscription_idx")
+  @@index([securityId], map: "AssignmentEnforcementAuthorization_security_idx")
+}
+
+// Immutable audit event written by PostgreSQL for every grant, revocation, and invalidation.
+model AssignmentMarketPolicyEnforcementAuthorizationEvent {
+  id                       Int                                                   @id @default(autoincrement())
+  authorizationId          Int
+  sequence                 Int
+  action                   AssignmentMarketPolicyEnforcementAuthorizationAction
+  fromStatus               AssignmentMarketPolicyEnforcementAuthorizationStatus?
+  toStatus                 AssignmentMarketPolicyEnforcementAuthorizationStatus
+  actorUserId              Int?
+  reason                   String
+  authorityVersion         String
+  enrollmentGenerationId   Int
+  tradingAccountId         Int
+  accountSubscriptionId    Int
+  strategyId               Int
+  policyRevisionId         Int
+  accountHolderUserId      Int
+  configurationFingerprint String
+  authorizationFingerprint String
+  occurredAt               DateTime                                              @default(now()) @db.Timestamptz(3)
+  subscriptionId           Int?
+  securityId               Int?
+  securitySymbol           String?
+  provenanceJson           Json?
+
+  authorization AssignmentMarketPolicyEnforcementAuthorization @relation(fields: [authorizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AssignmentEnforcementAuthorizationEvent_authorization_fkey")
+  actor         User?                                          @relation("EnforcementAuthorizationEventActor", fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "AssignmentEnforcementAuthorizationEvent_actorUserId_fkey")
+
+  @@unique([authorizationId, sequence], map: "AssignmentEnforcementAuthorizationEvent_sequence_key")
+  @@index([accountSubscriptionId, occurredAt], map: "AssignmentEnforcementAuthorizationEvent_assignment_idx")
+}
+
+// Immutable, explicit SYSTEM_OWNER decision to restore non-enforced behavior after an automatic
+// invalidation. Without it, an INVALIDATED latest grant fails closed while runtime enforcement is active.
+model AssignmentMarketPolicyEnforcementLapseResolution {
+  id                       Int      @id @default(autoincrement())
+  authorizationId          Int      @unique(map: "EnforcementLapseResolution_authorization_key")
+  tradingAccountId         Int
+  accountSubscriptionId    Int
+  authorizationFingerprint String
+  invalidationReasonCode   String
+  resolution               String
+  resolvedByUserId         Int
+  resolvedAt               DateTime @default(now()) @db.Timestamptz(3)
+  reason                   String
+
+  authorization AssignmentMarketPolicyEnforcementAuthorization @relation(fields: [authorizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "EnforcementLapseResolution_authorization_fkey")
+  resolvedBy    User                                           @relation("EnforcementLapseResolutionResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "EnforcementLapseResolution_resolver_fkey")
+
+  @@index([accountSubscriptionId], map: "EnforcementLapseResolution_assignment_idx")
+}
+
+enum MarketPolicyEnforcementRolloutAction {
+  ACTIVATE
+  DEACTIVATE
+}
+
+// PAPER-only runtime enforcement switch. Created disabled; activation is a separate explicit
+// SYSTEM_OWNER action and is never inferred from ACTIVE enrollments or AUTHORIZED grants.
+model MarketPolicyEnforcementRuntimeRollout {
+  id              Int                       @id
+  environment     TradingAccountEnvironment @default(PAPER)
+  enabled         Boolean                   @default(false)
+  version         Int                       @default(0)
+  changedByUserId Int?
+  changedAt       DateTime?                 @db.Timestamptz(3)
+  changeReason    String?
+  deployedAt      DateTime                  @default(now()) @db.Timestamptz(3)
+
+  changedBy User?                                        @relation("MarketPolicyEnforcementRolloutChangedBy", fields: [changedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "MarketPolicyEnforcementRuntimeRollout_changedBy_fkey")
+  events    MarketPolicyEnforcementRuntimeRolloutEvent[]
+}
+
+model MarketPolicyEnforcementRuntimeRolloutEvent {
+  id          Int                                  @id @default(autoincrement())
+  rolloutId   Int
+  version     Int                                  @unique(map: "MarketPolicyEnforcementRolloutEvent_version_key")
+  action      MarketPolicyEnforcementRolloutAction
+  enabled     Boolean
+  environment TradingAccountEnvironment
+  actorUserId Int
+  reason      String
+  occurredAt  DateTime                             @default(now()) @db.Timestamptz(3)
+
+  rollout           MarketPolicyEnforcementRuntimeRollout     @relation(fields: [rolloutId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "MarketPolicyEnforcementRolloutEvent_rollout_fkey")
+  actor             User                                      @relation("MarketPolicyEnforcementRolloutEventActor", fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "MarketPolicyEnforcementRolloutEvent_actor_fkey")
+  admissionAttempts MarketPolicyEnforcementAdmissionAttempt[]
+}
+
+enum MarketPolicyEnforcementAdmissionOutcome {
+  ALLOWED
+  BLOCKED
+  INSUFFICIENT_EVIDENCE
+  AUTHORIZATION_LAPSED
+  AUTHORIZATION_INEFFECTIVE
+  TECHNICAL_FAILURE
+}
+
+// Immutable, authoritative pre-intent admission evidence, separate from COMPARE_ONLY shadow
+// records. Rejected attempts persist even though no OrderIntent exists.
+model MarketPolicyEnforcementAdmissionAttempt {
+  id                              Int                                     @id @default(autoincrement())
+  attemptKey                      String                                  @unique(map: "EnforcementAdmissionAttempt_attemptKey_key")
+  admissionVersion                String
+  authority                       String                                  @default("AUTHORITATIVE")
+  requestSource                   String
+  ownerKey                        String
+  clientOrderId                   String
+  environment                     TradingAccountEnvironment
+  tradingAccountId                Int
+  accountSubscriptionId           Int
+  subscriptionId                  Int?
+  securityId                      Int?
+  securitySymbol                  String?
+  strategyId                      Int?
+  policyRevisionId                Int?
+  enrollmentGenerationId          Int?
+  authorizationId                 Int?
+  authorizationFingerprint        String?
+  authorityVersion                String?
+  enforcementDisposition          String
+  marketRegimeAssessmentId        Int?
+  compositionVersion              String?
+  compositionSourceSetFingerprint String?
+  compositionEvidenceHealth       MarketRegimeCompositionEvidenceHealth?
+  evaluatorVersion                String?
+  evaluatedAt                     DateTime                                @db.Timestamptz(3)
+  validUntil                      DateTime?                               @db.Timestamptz(3)
+  outcome                         MarketPolicyEnforcementAdmissionOutcome
+  reasonCode                      String
+  rolloutVersion                  Int
+  orderIntentId                   Int?                                    @unique(map: "EnforcementAdmissionAttempt_orderIntentId_key")
+  orderIntentCreated              Boolean
+  admissionResultCode             String
+  technicalDiagnostic             String?
+  evidenceJson                    Json
+  createdAt                       DateTime                                @default(now()) @db.Timestamptz(3)
+
+  tradingAccount         TradingAccount                                  @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "EnforcementAdmissionAttempt_account_fkey")
+  accountSubscription    TradingAccountSubscription                      @relation(fields: [accountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "EnforcementAdmissionAttempt_assignment_fkey")
+  security               Security?                                       @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "EnforcementAdmissionAttempt_security_fkey")
+  policyRevision         StrategyMarketPolicyRevision?                   @relation(fields: [policyRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "EnforcementAdmissionAttempt_revision_fkey")
+  enrollmentGeneration   AssignmentMarketPolicyEnrollmentGeneration?     @relation(fields: [enrollmentGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "EnforcementAdmissionAttempt_generation_fkey")
+  authorization          AssignmentMarketPolicyEnforcementAuthorization? @relation(fields: [authorizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "EnforcementAdmissionAttempt_authorization_fkey")
+  marketRegimeAssessment MarketRegimeAssessment?                         @relation(fields: [marketRegimeAssessmentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "EnforcementAdmissionAttempt_composition_fkey")
+  orderIntent            OrderIntent?                                    @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "EnforcementAdmissionAttempt_orderIntent_fkey")
+  rolloutEvent           MarketPolicyEnforcementRuntimeRolloutEvent      @relation(fields: [rolloutVersion], references: [version], onDelete: Restrict, onUpdate: Restrict, map: "EnforcementAdmissionAttempt_rollout_fkey")
+  gates                  MarketPolicyEnforcementAdmissionGate[]
+  obligation             OrderIntentMarketPolicyEnforcementObligation?
+
+  @@index([accountSubscriptionId, id], map: "EnforcementAdmissionAttempt_assignment_idx")
+  @@index([tradingAccountId, createdAt], map: "EnforcementAdmissionAttempt_account_idx")
+  @@index([authorizationId], map: "EnforcementAdmissionAttempt_authorization_idx")
+  @@index([ownerKey], map: "EnforcementAdmissionAttempt_owner_idx")
+}
+
+model MarketPolicyEnforcementAdmissionGate {
+  id                 Int                                      @id @default(autoincrement())
+  attemptId          Int
+  ordinal            Int
+  dimension          MarketRegimeDimension
+  algorithmVersion   String
+  requirement        StrategyMarketPolicyDimensionRequirement
+  outcome            StrategyMarketEligibilityGateOutcome
+  observedState      String?
+  sourceHealth       MarketRegimeCompositionSourceHealth?
+  sourceAssessmentId Int?
+  sourceValidUntil   DateTime?                                @db.Timestamptz(3)
+  allowedStatesJson  Json
+  reasonCode         String
+  evidenceJson       Json
+  createdAt          DateTime                                 @default(now()) @db.Timestamptz(3)
+
+  attempt          MarketPolicyEnforcementAdmissionAttempt @relation(fields: [attemptId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "EnforcementAdmissionGate_attempt_fkey")
+  sourceAssessment MarketRegimeDimensionAssessment?        @relation(fields: [sourceAssessmentId, dimension, algorithmVersion], references: [id, dimension, algorithmVersion], onDelete: Restrict, onUpdate: Restrict, map: "EnforcementAdmissionGate_source_identity_fk")
+
+  @@unique([attemptId, dimension], map: "EnforcementAdmissionGate_attempt_dimension_key")
+  @@unique([attemptId, ordinal], map: "EnforcementAdmissionGate_attempt_ordinal_key")
+  @@index([sourceAssessmentId, dimension, algorithmVersion], map: "EnforcementAdmissionGate_source_idx")
+}
+
+// Durable per-intent obligation frozen atomically with an ALLOWED admission and its
+// EntryExposureClaim. Later revocation or invalidation never rewrites it (consumed by Phase 3C.3).
+model OrderIntentMarketPolicyEnforcementObligation {
+  id                              Int                       @id @default(autoincrement())
+  orderIntentId                   Int                       @unique(map: "EnforcementObligation_orderIntentId_key")
+  admissionAttemptId              Int                       @unique(map: "EnforcementObligation_admissionAttemptId_key")
+  obligationVersion               String
+  environment                     TradingAccountEnvironment
+  tradingAccountId                Int
+  accountSubscriptionId           Int
+  subscriptionId                  Int
+  securityId                      Int
+  securitySymbol                  String
+  strategyId                      Int
+  policyRevisionId                Int
+  enrollmentGenerationId          Int
+  authorizationId                 Int
+  authorizationFingerprint        String
+  authorityVersion                String
+  admissionVersion                String
+  evaluatorVersion                String
+  marketRegimeAssessmentId        Int
+  compositionSourceSetFingerprint String
+  evaluatedAt                     DateTime                  @db.Timestamptz(3)
+  validUntil                      DateTime                  @db.Timestamptz(3)
+  rolloutVersion                  Int
+  frozenContextJson               Json
+  frozenAt                        DateTime                  @default(now()) @db.Timestamptz(3)
+
+  orderIntent      OrderIntent                                    @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "EnforcementObligation_orderIntent_fkey")
+  admissionAttempt MarketPolicyEnforcementAdmissionAttempt        @relation(fields: [admissionAttemptId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "EnforcementObligation_attempt_fkey")
+  authorization    AssignmentMarketPolicyEnforcementAuthorization @relation(fields: [authorizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "EnforcementObligation_authorization_fkey")
+  brokerDispatchDecisions MarketPolicyBrokerDispatchDecision[]
+
+  @@index([authorizationId], map: "EnforcementObligation_authorization_idx")
+}
+
+enum MarketPolicyBrokerDispatchOutcome {
+  ALLOWED
+  BLOCKED
+  INSUFFICIENT_EVIDENCE
+  AUTHORIZATION_REVOKED
+  AUTHORIZATION_INVALIDATED
+  AUTHORIZATION_SUPERSEDED
+  AUTHORIZATION_INEFFECTIVE
+  POLICY_REVISION_SUPERSEDED
+  ENROLLMENT_GENERATION_INACTIVE
+  ENTRY_IDENTITY_MISMATCH
+  LEGACY_UNOBLIGATED_QUARANTINED
+  TECHNICAL_FAILURE
+}
+
+enum MarketPolicyBrokerDispatchDisposition {
+  DISPATCH_AUTHORIZED
+  DEFINITELY_NOT_SENT
+  NOT_SENT_TECHNICAL_FAILURE
+}
+
+// Phase 3C.3 authoritative broker-time decision taken after the stable client-order-ID lookup
+// confirmed absence and before any new Alpaca BUY POST. Append-preserving and immutable; an
+// ALLOWED decision is a bounded, single-use dispatch authorization, never a reusable permit.
+model MarketPolicyBrokerDispatchDecision {
+  id                              Int                                    @id @default(autoincrement())
+  decisionKey                     String                                 @unique(map: "BrokerDispatchDecision_decisionKey_key")
+  decisionVersion                 String
+  authority                       String                                 @default("AUTHORITATIVE")
+  orderIntentId                   Int
+  obligationId                    Int?
+  dispatchSequence                Int
+  clientOrderId                   String
+  environment                     TradingAccountEnvironment
+  tradingAccountId                Int
+  accountSubscriptionId           Int
+  subscriptionId                  Int?
+  securityId                      Int?
+  securitySymbol                  String?
+  strategyId                      Int?
+  policyRevisionId                Int?
+  enrollmentGenerationId          Int?
+  authorizationId                 Int?
+  authorizationFingerprint        String?
+  authorityVersion                String?
+  authorizationStatus             String?
+  rolloutEnabled                  Boolean
+  rolloutVersion                  Int
+  evaluatorVersion                String?
+  evaluatedAt                     DateTime                               @db.Timestamptz(3)
+  validUntil                      DateTime?                              @db.Timestamptz(3)
+  dispatchExpiresAt               DateTime?                              @db.Timestamptz(3)
+  marketRegimeAssessmentId        Int?
+  compositionVersion              String?
+  compositionSourceSetFingerprint String?
+  compositionEvidenceHealth       MarketRegimeCompositionEvidenceHealth?
+  outcome                         MarketPolicyBrokerDispatchOutcome
+  reasonCode                      String
+  dispatchDisposition             MarketPolicyBrokerDispatchDisposition
+  technicalDiagnostic             String?
+  evidenceJson                    Json
+  createdAt                       DateTime                               @default(now()) @db.Timestamptz(3)
+
+  orderIntent            OrderIntent                                     @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_orderIntent_fkey")
+  obligation             OrderIntentMarketPolicyEnforcementObligation?   @relation(fields: [obligationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_obligation_fkey")
+  tradingAccount         TradingAccount                                  @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_account_fkey")
+  accountSubscription    TradingAccountSubscription                      @relation(fields: [accountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_assignment_fkey")
+  security               Security?                                       @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_security_fkey")
+  policyRevision         StrategyMarketPolicyRevision?                   @relation(fields: [policyRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_revision_fkey")
+  enrollmentGeneration   AssignmentMarketPolicyEnrollmentGeneration?     @relation(fields: [enrollmentGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_generation_fkey")
+  authorization          AssignmentMarketPolicyEnforcementAuthorization? @relation(fields: [authorizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_authorization_fkey")
+  marketRegimeAssessment MarketRegimeAssessment?                         @relation(fields: [marketRegimeAssessmentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_composition_fkey")
+  gates                  MarketPolicyBrokerDispatchGate[]
+  consumption            MarketPolicyBrokerDispatchConsumption?
+
+  @@unique([orderIntentId, dispatchSequence], map: "BrokerDispatchDecision_intent_sequence_key")
+  @@index([accountSubscriptionId, id], map: "BrokerDispatchDecision_assignment_idx")
+  @@index([tradingAccountId, createdAt], map: "BrokerDispatchDecision_account_idx")
+  @@index([authorizationId], map: "BrokerDispatchDecision_authorization_idx")
+  @@index([obligationId], map: "BrokerDispatchDecision_obligation_idx")
+}
+
+model MarketPolicyBrokerDispatchGate {
+  id                 Int                                      @id @default(autoincrement())
+  decisionId         Int
+  ordinal            Int
+  dimension          MarketRegimeDimension
+  algorithmVersion   String
+  requirement        StrategyMarketPolicyDimensionRequirement
+  outcome            StrategyMarketEligibilityGateOutcome
+  observedState      String?
+  sourceHealth       MarketRegimeCompositionSourceHealth?
+  sourceAssessmentId Int?
+  sourceValidUntil   DateTime?                                @db.Timestamptz(3)
+  allowedStatesJson  Json
+  reasonCode         String
+  evidenceJson       Json
+  createdAt          DateTime                                 @default(now()) @db.Timestamptz(3)
+
+  decision         MarketPolicyBrokerDispatchDecision @relation(fields: [decisionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchGate_decision_fkey")
+  sourceAssessment MarketRegimeDimensionAssessment?   @relation(fields: [sourceAssessmentId, dimension, algorithmVersion], references: [id, dimension, algorithmVersion], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchGate_source_identity_fk")
+
+  @@unique([decisionId, dimension], map: "BrokerDispatchGate_decision_dimension_key")
+  @@unique([decisionId, ordinal], map: "BrokerDispatchGate_decision_ordinal_key")
+  @@index([sourceAssessmentId, dimension, algorithmVersion], map: "BrokerDispatchGate_source_idx")
+}
+
+// The single-use linearization point of an ALLOWED broker-time decision. PostgreSQL inserts it
+// only while the decision is still within its dispatch window and its exact authorization is still
+// effective. At most one exists per OrderIntent: once dispatch has started, delivery uncertainty is
+// handled by recovery, never by another POST.
+model MarketPolicyBrokerDispatchConsumption {
+  id                      Int      @id @default(autoincrement())
+  decisionId              Int      @unique(map: "BrokerDispatchConsumption_decision_key")
+  orderIntentId           Int      @unique(map: "BrokerDispatchConsumption_orderIntent_key")
+  clientOrderId           String
+  brokerPostOpportunityId Int?
+  consumedAt              DateTime @default(now()) @db.Timestamptz(3)
+  evidenceJson            Json
+
+  decision              MarketPolicyBrokerDispatchDecision @relation(fields: [decisionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchConsumption_decision_fkey")
+  orderIntent           OrderIntent                        @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchConsumption_orderIntent_fkey")
+  brokerPostOpportunity OrderIntentBrokerPostOpportunity?  @relation(fields: [brokerPostOpportunityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchConsumption_opportunity_fkey")
+}
+
+// The final serialized broker-time authorization of an un-obligated PAPER entry BUY, inserted
+// immediately before the adapter. PostgreSQL refuses it when the assignment now requires
+// enforcement under the active rollout (the entry is quarantined instead). Like a consumption it is
+// durable evidence that a POST may have started, never proof of broker receipt; one per intent.
+model MarketPolicyBrokerUnenforcedDispatch {
+  id                        Int                       @id @default(autoincrement())
+  orderIntentId             Int                       @unique(map: "UnenforcedDispatch_orderIntent_key")
+  clientOrderId             String
+  environment               TradingAccountEnvironment
+  tradingAccountId          Int
+  accountSubscriptionId     Int?
+  securityId                Int
+  securitySymbol            String
+  basis                     String
+  latestAuthorizationId     Int?
+  latestAuthorizationStatus String?
+  rolloutEnabled            Boolean
+  rolloutVersion            Int
+  brokerPostOpportunityId   Int?
+  authorizedAt              DateTime                  @default(now()) @db.Timestamptz(3)
+  evidenceJson              Json
+
+  orderIntent           OrderIntent                                     @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "UnenforcedDispatch_orderIntent_fkey")
+  tradingAccount        TradingAccount                                  @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "UnenforcedDispatch_account_fkey")
+  accountSubscription   TradingAccountSubscription?                     @relation(fields: [accountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "UnenforcedDispatch_assignment_fkey")
+  security              Security                                        @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "UnenforcedDispatch_security_fkey")
+  latestAuthorization   AssignmentMarketPolicyEnforcementAuthorization? @relation(fields: [latestAuthorizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "UnenforcedDispatch_authorization_fkey")
+  brokerPostOpportunity OrderIntentBrokerPostOpportunity?               @relation(fields: [brokerPostOpportunityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "UnenforcedDispatch_opportunity_fkey")
+
+  @@index([tradingAccountId, authorizedAt], map: "UnenforcedDispatch_account_idx")
+  @@index([accountSubscriptionId], map: "UnenforcedDispatch_assignment_idx")
+}
+
 // Immutable, informational evaluation of one Strategy-owned policy revision against
 // one persisted market-regime composition. It never grants execution authority.
 model StrategyMarketEligibilityDecision {
@@ -3321,6 +3856,7 @@ model Subscription {
   lifecycleExercises      TradingLifecycleExercise[]
   liveEntryArmings        LiveEntryArming[]
   liveEntryAcceptanceRuns LiveEntryAcceptanceRun[]
+  marketPolicyEnforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization[]
 
   @@index([symbol])
   @@unique([id, strategyId, securityId])

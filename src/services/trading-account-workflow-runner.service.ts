@@ -26,6 +26,7 @@ const BACKOFF_CAP_MS: Record<WorkerKey, number> = {
   tiingo_daily_market_data_sync: 3_600_000, // Global, account-independent observation worker.
   market_minute_evidence_sync: 3_600_000, // Global worker; does not use account coordination.
   intraday_stress_assessment_publication: 900_000, // Global worker; does not use account coordination.
+  paper_broker_write_attention_reconciliation: 300_000, // Global authority/attention worker; has its own overlap guard.
   pending_order_processing: 30_000,
   submitted_order_sync: 60_000,
   tracked_position_sync: 30_000,

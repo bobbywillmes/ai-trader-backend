@@ -64,6 +64,11 @@ import {
   disarmLiveEntriesSchema,
   activateAssignmentMarketPolicyEnrollmentSchema,
   disableAssignmentMarketPolicyEnrollmentSchema,
+  grantAssignmentMarketPolicyEnforcementAuthorizationSchema,
+  previewAssignmentMarketPolicyEnforcementAuthorizationQuerySchema,
+  revokeAssignmentMarketPolicyEnforcementAuthorizationSchema,
+  resolveAssignmentMarketPolicyEnforcementLapseSchema,
+  listMarketPolicyEnforcementAdmissionAttemptsQuerySchema,
 } from '../validators/trading-account.schema.js';
 import {
   activateAssignmentMarketPolicyEnrollment,
@@ -72,6 +77,15 @@ import {
   prepareAssignmentMarketPolicyEnrollment,
   previewAssignmentMarketPolicyEnrollment,
 } from '../services/assignment-market-policy-enrollment.service.js';
+import {
+  getAssignmentMarketPolicyEnforcementAuthorization,
+  grantAssignmentMarketPolicyEnforcementAuthorization,
+  listAssignmentMarketPolicyEnforcementAuthorizationHistory,
+  previewAssignmentMarketPolicyEnforcementAuthorization,
+  resolveAssignmentMarketPolicyEnforcementLapse,
+  revokeAssignmentMarketPolicyEnforcementAuthorization,
+} from '../services/assignment-market-policy-enforcement-authorization.service.js';
+import { listAssignmentMarketPolicyEnforcementAdmissionAttempts } from '../services/market-policy-entry-admission.service.js';
 import { verifyTradingAccountCredential } from '../services/trading-account-credential-verification.service.js';
 import {
   getTradingAccountRiskSettingsForAdmin,
@@ -80,12 +94,22 @@ import {
 import { previewTradingAccountEntryRisk } from '../services/trading-account-entry-risk-preview.service.js';
 import { getTradingAccountRiskHealth } from '../services/trading-account-risk-health.service.js';
 import { listTradingAccountWorkerHealth } from '../services/trading-account-worker-health.service.js';
+import { assessPaperBrokerWriteAuthorityForAccount } from '../services/paper-broker-write-authority.service.js';
 import {
   getLatestTradingAccountReadinessAssessment,
   getTradingAccountReadinessAssessment,
   listTradingAccountReadinessAssessments,
   runTradingAccountReadinessAssessment,
 } from '../services/trading-account-readiness.service.js';
+
+export async function getPaperBrokerWriteAuthorityReadinessController(req: Request, res: Response, next: NextFunction) {
+  try { res.json(await assessPaperBrokerWriteAuthorityForAccount(Number(req.params.id))); }
+  catch (error) {
+    if (error instanceof Error && error.message === 'PAPER trading account was not found.') return next(new HttpError(404, error.message));
+    if (error instanceof Error && error.message === 'Trading account is not a PAPER account.') return next(new HttpError(400, error.message));
+    next(error);
+  }
+}
 import {
   getLiveWriteApprovalState,
   grantLiveWriteApproval,
@@ -249,6 +273,66 @@ export async function disableAssignmentMarketPolicyEnrollmentController(req: Req
     const input = disableAssignmentMarketPolicyEnrollmentSchema.parse(req.body);
     const generation = await disableAssignmentMarketPolicyEnrollment(parseTradingAccountId(req.params.id), parseAccountSubscriptionId(req.params.accountSubscriptionId), input.generationId, requireActorUserId(res), input.reason);
     res.status(200).json({ generation });
+  } catch (error) { next(error); }
+}
+
+export async function getAssignmentMarketPolicyEnforcementAuthorizationController(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!res.locals.user) throw new HttpError(401, 'Authentication required.');
+    const result = await getAssignmentMarketPolicyEnforcementAuthorization(parseTradingAccountId(req.params.id), parseAccountSubscriptionId(req.params.accountSubscriptionId), res.locals.user.platformRole);
+    if (!result) throw new HttpError(404, 'Trading account subscription not found.');
+    res.status(200).json(result);
+  } catch (error) { next(error); }
+}
+
+export async function previewAssignmentMarketPolicyEnforcementAuthorizationController(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!res.locals.user) throw new HttpError(401, 'Authentication required.');
+    const query = previewAssignmentMarketPolicyEnforcementAuthorizationQuerySchema.parse(req.query);
+    const preview = await previewAssignmentMarketPolicyEnforcementAuthorization(parseTradingAccountId(req.params.id), parseAccountSubscriptionId(req.params.accountSubscriptionId), query.generationId ?? null, res.locals.user.platformRole);
+    if (!preview) throw new HttpError(404, 'Trading account subscription not found.');
+    res.status(200).json({ preview });
+  } catch (error) { next(error); }
+}
+
+export async function listAssignmentMarketPolicyEnforcementAuthorizationHistoryController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const history = await listAssignmentMarketPolicyEnforcementAuthorizationHistory(parseTradingAccountId(req.params.id), parseAccountSubscriptionId(req.params.accountSubscriptionId));
+    if (!history) throw new HttpError(404, 'Trading account subscription not found.');
+    res.status(200).json(history);
+  } catch (error) { next(error); }
+}
+
+export async function grantAssignmentMarketPolicyEnforcementAuthorizationController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const input = grantAssignmentMarketPolicyEnforcementAuthorizationSchema.parse(req.body);
+    const authorization = await grantAssignmentMarketPolicyEnforcementAuthorization(parseTradingAccountId(req.params.id), parseAccountSubscriptionId(req.params.accountSubscriptionId), input, requireActorUserId(res));
+    res.status(201).json({ authorization });
+  } catch (error) { next(error); }
+}
+
+export async function revokeAssignmentMarketPolicyEnforcementAuthorizationController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const input = revokeAssignmentMarketPolicyEnforcementAuthorizationSchema.parse(req.body);
+    const authorization = await revokeAssignmentMarketPolicyEnforcementAuthorization(parseTradingAccountId(req.params.id), parseAccountSubscriptionId(req.params.accountSubscriptionId), input, requireActorUserId(res));
+    res.status(200).json({ authorization });
+  } catch (error) { next(error); }
+}
+
+export async function resolveAssignmentMarketPolicyEnforcementLapseController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const input = resolveAssignmentMarketPolicyEnforcementLapseSchema.parse(req.body);
+    const lapseResolution = await resolveAssignmentMarketPolicyEnforcementLapse(parseTradingAccountId(req.params.id), parseAccountSubscriptionId(req.params.accountSubscriptionId), input, requireActorUserId(res));
+    res.status(201).json({ lapseResolution });
+  } catch (error) { next(error); }
+}
+
+export async function listAssignmentMarketPolicyEnforcementAdmissionAttemptsController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const query = listMarketPolicyEnforcementAdmissionAttemptsQuerySchema.parse(req.query);
+    const result = await listAssignmentMarketPolicyEnforcementAdmissionAttempts(parseTradingAccountId(req.params.id), parseAccountSubscriptionId(req.params.accountSubscriptionId), query.limit ?? 25);
+    if (!result) throw new HttpError(404, 'Trading account subscription not found.');
+    res.status(200).json(result);
   } catch (error) { next(error); }
 }
 

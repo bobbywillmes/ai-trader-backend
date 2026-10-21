@@ -4,6 +4,8 @@ import { logger } from '../config/logger.js';
 import { getRuntimeTradingConfig } from './config.service.js';
 import { allowedCorsOrigins } from '../config/cors.js';
 import { isIsolatedManualAcceptanceEnvironment } from './manual-acceptance-environment.js';
+import { assessPaperBrokerWriteAuthority } from './paper-broker-write-authority.service.js';
+import { reconcileAllPaperBrokerWriteAuthorityAttention } from './paper-broker-write-authority-attention.service.js';
 
 type StartupCheckStatus = 'pass' | 'warn' | 'fail';
 
@@ -161,6 +163,26 @@ export async function runStartupChecks(): Promise<StartupCheckReport> {
         error: error instanceof Error ? error.message : 'Unknown database error',
       })
     );
+  }
+
+  if (env.NODE_ENV === 'production') {
+    try {
+      const authority = await assessPaperBrokerWriteAuthority();
+      const blocked = authority.accounts.filter(item => (item.intendedExecutor === true || item.openLifecycleExposure !== false)
+        && item.outcome !== 'AUTHORIZED' && item.outcome !== 'INTENTIONAL_OBSERVATION_ONLY');
+      checks.push(authority.ready && blocked.length === 0
+        ? pass('paper_executor_coverage', 'All exposed production PAPER accounts have verified executor authority.')
+        : warn('paper_executor_coverage', 'Production PAPER executor readiness is NOT_READY; reads remain available.', {
+          affectedTradingAccountIds: blocked.map(item => item.tradingAccountId), unresolved: authority.unresolved }));
+      const reconciliation = await reconcileAllPaperBrokerWriteAuthorityAttention(async () => authority);
+      if (reconciliation.failures.length > 0) checks.push(warn('paper_executor_attention_reconciliation',
+        'Some PAPER authority attention could not be reconciled; account assessment continued.',
+        { failedTradingAccountIds: reconciliation.failures.map(item => item.tradingAccountId) }));
+    } catch (error) {
+      checks.push(warn('paper_executor_coverage', 'PAPER executor coverage could not be verified; reads remain available.', {
+        error: error instanceof Error ? error.message : 'Unknown authority lookup error.',
+      }));
+    }
   }
 
   try {

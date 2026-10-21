@@ -257,6 +257,14 @@ Table User {
   assignmentEnrollmentsDisabled AssignmentMarketPolicyEnrollmentGeneration [not null]
   assignmentEnrollmentTransitions AssignmentMarketPolicyEnrollmentTransition [not null]
   assignmentEnrollmentTransitionOwnership AssignmentMarketPolicyEnrollmentTransition [not null]
+  enforcementAuthorizationsHeld AssignmentMarketPolicyEnforcementAuthorization [not null]
+  enforcementAuthorizationsGranted AssignmentMarketPolicyEnforcementAuthorization [not null]
+  enforcementAuthorizationsRevoked AssignmentMarketPolicyEnforcementAuthorization [not null]
+  enforcementAuthorizationsInvalidated AssignmentMarketPolicyEnforcementAuthorization [not null]
+  enforcementAuthorizationEvents AssignmentMarketPolicyEnforcementAuthorizationEvent [not null]
+  enforcementLapseResolutions AssignmentMarketPolicyEnforcementLapseResolution [not null]
+  enforcementRolloutChanges MarketPolicyEnforcementRuntimeRollout [not null]
+  enforcementRolloutEvents MarketPolicyEnforcementRuntimeRolloutEvent [not null]
 }
 
 Table UserSetupToken {
@@ -334,8 +342,13 @@ Table TradingAccount {
   lifecycleExerciseTargets TradingLifecycleExerciseTarget [not null]
   lifecycleRepairCases LifecycleRepairCase [not null]
   marketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration [not null]
+  marketPolicyEnforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization [not null]
+  marketPolicyEnforcementAdmissionAttempts MarketPolicyEnforcementAdmissionAttempt [not null]
+  marketPolicyBrokerDispatchDecisions MarketPolicyBrokerDispatchDecision [not null]
+  marketPolicyBrokerUnenforcedDispatches MarketPolicyBrokerUnenforcedDispatch [not null]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
   brokerPostOpportunities OrderIntentBrokerPostOpportunity [not null]
+  entryExposureClaims EntryExposureClaim [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 
@@ -723,8 +736,12 @@ Table TradingAccountSubscription {
   liveEntryAcceptanceRuns LiveEntryAcceptanceRun [not null]
   marketPolicyEnrollment AssignmentMarketPolicyEnrollment
   marketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration [not null]
+  marketPolicyEnforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization [not null]
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
   brokerPostOpportunities OrderIntentBrokerPostOpportunity [not null]
+  marketPolicyEnforcementAdmissionAttempts MarketPolicyEnforcementAdmissionAttempt [not null]
+  marketPolicyBrokerDispatchDecisions MarketPolicyBrokerDispatchDecision [not null]
+  marketPolicyBrokerUnenforcedDispatches MarketPolicyBrokerUnenforcedDispatch [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 
@@ -828,6 +845,11 @@ Table Security {
   momentumCandidates MomentumCandidate [not null]
   liveEntryArmings LiveEntryArming [not null]
   liveEntryAcceptanceRuns LiveEntryAcceptanceRun [not null]
+  entryExposureClaims EntryExposureClaim [not null]
+  marketPolicyEnforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization [not null]
+  marketPolicyEnforcementAdmissionAttempts MarketPolicyEnforcementAdmissionAttempt [not null]
+  marketPolicyBrokerDispatchDecisions MarketPolicyBrokerDispatchDecision [not null]
+  marketPolicyBrokerUnenforcedDispatches MarketPolicyBrokerUnenforcedDispatch [not null]
 }
 
 Table MomentumUniverseMember {
@@ -863,6 +885,7 @@ Table OrderIntent {
   rawRequestJson Json [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
+  lastSubmittedOrderSyncAt DateTime
   subscriptionId Int
   subscriptionKey String
   subscription Subscription
@@ -882,6 +905,12 @@ Table OrderIntent {
   marketPolicyCoverage OrderIntentMarketPolicyCoverage
   brokerPostOpportunities OrderIntentBrokerPostOpportunity [not null]
   brokerOpportunityEvents OrderIntentBrokerOpportunityEvent [not null]
+  entryExposureClaim EntryExposureClaim
+  marketPolicyEnforcementAdmissionAttempt MarketPolicyEnforcementAdmissionAttempt
+  marketPolicyEnforcementObligation OrderIntentMarketPolicyEnforcementObligation
+  marketPolicyBrokerDispatchDecisions MarketPolicyBrokerDispatchDecision [not null]
+  marketPolicyBrokerDispatchConsumption MarketPolicyBrokerDispatchConsumption
+  marketPolicyBrokerUnenforcedDispatch MarketPolicyBrokerUnenforcedDispatch
 }
 
 Table BrokerOrder {
@@ -906,6 +935,36 @@ Table BrokerOrder {
   brokerActivities BrokerActivity [not null]
   entryDecision EntryDecision
   operationalAttentions OperationalAttention [not null]
+}
+
+Table EntryExposureClaim {
+  id Int [pk, increment]
+  tradingAccountId Int [not null]
+  securityId Int [not null]
+  orderIntentId Int [unique]
+  trackedPositionId Int [unique]
+  ownerKey String [unique, not null]
+  status String [not null, default: 'ENTRY_PENDING']
+  acquiredAt DateTime [default: `now()`, not null]
+  releasedAt DateTime
+  releaseReason String
+  lastDiagnosedAt DateTime
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  tradingAccount TradingAccount [not null]
+  security Security [not null]
+  orderIntent OrderIntent
+  trackedPosition TrackedPosition
+  events EntryExposureClaimEvent [not null]
+}
+
+Table EntryExposureClaimEvent {
+  id Int [pk, increment]
+  claimId Int [not null]
+  eventType String [not null]
+  evidenceJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  claim EntryExposureClaim [not null]
 }
 
 Table SystemEvent {
@@ -1220,6 +1279,8 @@ Table MarketRegimeDimensionAssessment {
   strategyEligibilityGates StrategyMarketEligibilityDecisionGate [not null]
   orderIntentComparisonGates OrderIntentMarketPolicyComparisonGate [not null]
   brokerComparisonGates OrderIntentBrokerComparisonGate [not null]
+  enforcementAdmissionGates MarketPolicyEnforcementAdmissionGate [not null]
+  brokerDispatchGates MarketPolicyBrokerDispatchGate [not null]
 
   indexes {
     (dimension, algorithmVersion, targetAt, attempt) [unique]
@@ -1252,6 +1313,8 @@ Table MarketRegimeAssessment {
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
   orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt [not null]
   brokerPostOpportunities OrderIntentBrokerPostOpportunity [not null]
+  enforcementAdmissionAttempts MarketPolicyEnforcementAdmissionAttempt [not null]
+  brokerDispatchDecisions MarketPolicyBrokerDispatchDecision [not null]
 
   indexes {
     (compositionVersion, sourceSetFingerprint) [unique]
@@ -1678,6 +1741,7 @@ Table TrackedPosition {
   brokerActivities BrokerActivity [not null]
   operationalAttentions OperationalAttention [not null]
   entryDecision EntryDecision
+  entryExposureClaim EntryExposureClaim
   exitState PositionExitState
   configSnapshotJson Json
   configSnapshotCapturedAt DateTime
@@ -1808,6 +1872,7 @@ Table Strategy {
   marketEligibilityDecisions StrategyMarketEligibilityDecision [not null]
   signalRouteMarketEligibilityAttempts SignalRouteMarketEligibilityAttempt [not null]
   assignmentMarketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration [not null]
+  assignmentMarketPolicyEnforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization [not null]
   orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt [not null]
 }
 
@@ -1834,10 +1899,13 @@ Table StrategyMarketPolicyRevision {
   dimensionRules StrategyMarketPolicyDimensionRule [not null]
   eligibilityDecisions StrategyMarketEligibilityDecision [not null]
   assignmentEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration [not null]
+  enforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization [not null]
   boundOrderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
   activeOrderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
   orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt [not null]
   brokerPostOpportunities OrderIntentBrokerPostOpportunity [not null]
+  enforcementAdmissionAttempts MarketPolicyEnforcementAdmissionAttempt [not null]
+  brokerDispatchDecisions MarketPolicyBrokerDispatchDecision [not null]
 
   indexes {
     (policyId, revision) [unique]
@@ -1879,6 +1947,7 @@ Table AssignmentMarketPolicyEnrollment {
   updatedAt DateTime [not null]
   accountSubscription TradingAccountSubscription [not null]
   generations AssignmentMarketPolicyEnrollmentGeneration [not null]
+  enforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization [not null]
 }
 
 Table AssignmentMarketPolicyEnrollmentGeneration {
@@ -1915,6 +1984,9 @@ Table AssignmentMarketPolicyEnrollmentGeneration {
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
   orderIntentMarketPolicyComparisons OrderIntentMarketPolicyComparisonAttempt [not null]
   brokerPostOpportunities OrderIntentBrokerPostOpportunity [not null]
+  enforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization [not null]
+  enforcementAdmissionAttempts MarketPolicyEnforcementAdmissionAttempt [not null]
+  brokerDispatchDecisions MarketPolicyBrokerDispatchDecision [not null]
 
   indexes {
     (enrollmentId, generation) [unique]
@@ -2068,6 +2140,8 @@ Table OrderIntentBrokerPostOpportunity {
   comparisonAttempts OrderIntentBrokerComparisonAttempt [not null]
   comparisonDelivery OrderIntentBrokerComparisonDelivery
   events OrderIntentBrokerOpportunityEvent [not null]
+  marketPolicyBrokerDispatchConsumptions MarketPolicyBrokerDispatchConsumption [not null]
+  marketPolicyBrokerUnenforcedDispatches MarketPolicyBrokerUnenforcedDispatch [not null]
 
   indexes {
     (orderIntentId, opportunitySequence) [unique]
@@ -2193,6 +2267,359 @@ Table AssignmentMarketPolicyEnrollmentTransition {
   }
 }
 
+Table AssignmentMarketPolicyEnforcementAuthorization {
+  id Int [pk, increment]
+  enrollmentId Int [not null]
+  enrollmentGenerationId Int [not null]
+  authorizationSequence Int [not null]
+  authorityVersion String [not null]
+  status AssignmentMarketPolicyEnforcementAuthorizationStatus [not null, default: 'AUTHORIZED']
+  environment TradingAccountEnvironment [not null]
+  tradingAccountId Int [not null]
+  accountSubscriptionId Int [not null]
+  strategyId Int [not null]
+  policyRevisionId Int [not null]
+  accountHolderUserId Int [not null]
+  configurationFingerprint String [not null]
+  authorizationFingerprint String [unique, not null]
+  authorizedByUserId Int [not null]
+  authorizedAt DateTime [default: `now()`, not null]
+  grantReason String [not null]
+  revokedByUserId Int
+  revokedAt DateTime
+  revocationReason String
+  invalidatedByUserId Int
+  invalidatedAt DateTime
+  invalidationReasonCode String
+  createdAt DateTime [default: `now()`, not null]
+  subscriptionId Int
+  securityId Int
+  securitySymbol String
+  invalidationSource String
+  invalidationEvidenceJson Json
+  enrollment AssignmentMarketPolicyEnrollment [not null]
+  enrollmentGeneration AssignmentMarketPolicyEnrollmentGeneration [not null]
+  tradingAccount TradingAccount [not null]
+  accountSubscription TradingAccountSubscription [not null]
+  strategy Strategy [not null]
+  policyRevision StrategyMarketPolicyRevision [not null]
+  accountHolder User [not null]
+  authorizedBy User [not null]
+  revokedBy User
+  invalidatedBy User
+  subscription Subscription
+  security Security
+  events AssignmentMarketPolicyEnforcementAuthorizationEvent [not null]
+  lapseResolution AssignmentMarketPolicyEnforcementLapseResolution
+  admissionAttempts MarketPolicyEnforcementAdmissionAttempt [not null]
+  obligations OrderIntentMarketPolicyEnforcementObligation [not null]
+  brokerDispatchDecisions MarketPolicyBrokerDispatchDecision [not null]
+  brokerUnenforcedDispatches MarketPolicyBrokerUnenforcedDispatch [not null]
+
+  indexes {
+    (enrollmentGenerationId, authorizationSequence) [unique]
+  }
+}
+
+Table AssignmentMarketPolicyEnforcementAuthorizationEvent {
+  id Int [pk, increment]
+  authorizationId Int [not null]
+  sequence Int [not null]
+  action AssignmentMarketPolicyEnforcementAuthorizationAction [not null]
+  fromStatus AssignmentMarketPolicyEnforcementAuthorizationStatus
+  toStatus AssignmentMarketPolicyEnforcementAuthorizationStatus [not null]
+  actorUserId Int
+  reason String [not null]
+  authorityVersion String [not null]
+  enrollmentGenerationId Int [not null]
+  tradingAccountId Int [not null]
+  accountSubscriptionId Int [not null]
+  strategyId Int [not null]
+  policyRevisionId Int [not null]
+  accountHolderUserId Int [not null]
+  configurationFingerprint String [not null]
+  authorizationFingerprint String [not null]
+  occurredAt DateTime [default: `now()`, not null]
+  subscriptionId Int
+  securityId Int
+  securitySymbol String
+  provenanceJson Json
+  authorization AssignmentMarketPolicyEnforcementAuthorization [not null]
+  actor User
+
+  indexes {
+    (authorizationId, sequence) [unique]
+  }
+}
+
+Table AssignmentMarketPolicyEnforcementLapseResolution {
+  id Int [pk, increment]
+  authorizationId Int [unique, not null]
+  tradingAccountId Int [not null]
+  accountSubscriptionId Int [not null]
+  authorizationFingerprint String [not null]
+  invalidationReasonCode String [not null]
+  resolution String [not null]
+  resolvedByUserId Int [not null]
+  resolvedAt DateTime [default: `now()`, not null]
+  reason String [not null]
+  authorization AssignmentMarketPolicyEnforcementAuthorization [not null]
+  resolvedBy User [not null]
+}
+
+Table MarketPolicyEnforcementRuntimeRollout {
+  id Int [pk]
+  environment TradingAccountEnvironment [not null, default: 'PAPER']
+  enabled Boolean [not null, default: false]
+  version Int [not null, default: 0]
+  changedByUserId Int
+  changedAt DateTime
+  changeReason String
+  deployedAt DateTime [default: `now()`, not null]
+  changedBy User
+  events MarketPolicyEnforcementRuntimeRolloutEvent [not null]
+}
+
+Table MarketPolicyEnforcementRuntimeRolloutEvent {
+  id Int [pk, increment]
+  rolloutId Int [not null]
+  version Int [unique, not null]
+  action MarketPolicyEnforcementRolloutAction [not null]
+  enabled Boolean [not null]
+  environment TradingAccountEnvironment [not null]
+  actorUserId Int [not null]
+  reason String [not null]
+  occurredAt DateTime [default: `now()`, not null]
+  rollout MarketPolicyEnforcementRuntimeRollout [not null]
+  actor User [not null]
+  admissionAttempts MarketPolicyEnforcementAdmissionAttempt [not null]
+}
+
+Table MarketPolicyEnforcementAdmissionAttempt {
+  id Int [pk, increment]
+  attemptKey String [unique, not null]
+  admissionVersion String [not null]
+  authority String [not null, default: 'AUTHORITATIVE']
+  requestSource String [not null]
+  ownerKey String [not null]
+  clientOrderId String [not null]
+  environment TradingAccountEnvironment [not null]
+  tradingAccountId Int [not null]
+  accountSubscriptionId Int [not null]
+  subscriptionId Int
+  securityId Int
+  securitySymbol String
+  strategyId Int
+  policyRevisionId Int
+  enrollmentGenerationId Int
+  authorizationId Int
+  authorizationFingerprint String
+  authorityVersion String
+  enforcementDisposition String [not null]
+  marketRegimeAssessmentId Int
+  compositionVersion String
+  compositionSourceSetFingerprint String
+  compositionEvidenceHealth MarketRegimeCompositionEvidenceHealth
+  evaluatorVersion String
+  evaluatedAt DateTime [not null]
+  validUntil DateTime
+  outcome MarketPolicyEnforcementAdmissionOutcome [not null]
+  reasonCode String [not null]
+  rolloutVersion Int [not null]
+  orderIntentId Int [unique]
+  orderIntentCreated Boolean [not null]
+  admissionResultCode String [not null]
+  technicalDiagnostic String
+  evidenceJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  tradingAccount TradingAccount [not null]
+  accountSubscription TradingAccountSubscription [not null]
+  security Security
+  policyRevision StrategyMarketPolicyRevision
+  enrollmentGeneration AssignmentMarketPolicyEnrollmentGeneration
+  authorization AssignmentMarketPolicyEnforcementAuthorization
+  marketRegimeAssessment MarketRegimeAssessment
+  orderIntent OrderIntent
+  rolloutEvent MarketPolicyEnforcementRuntimeRolloutEvent [not null]
+  gates MarketPolicyEnforcementAdmissionGate [not null]
+  obligation OrderIntentMarketPolicyEnforcementObligation
+}
+
+Table MarketPolicyEnforcementAdmissionGate {
+  id Int [pk, increment]
+  attemptId Int [not null]
+  ordinal Int [not null]
+  dimension MarketRegimeDimension [not null]
+  algorithmVersion String [not null]
+  requirement StrategyMarketPolicyDimensionRequirement [not null]
+  outcome StrategyMarketEligibilityGateOutcome [not null]
+  observedState String
+  sourceHealth MarketRegimeCompositionSourceHealth
+  sourceAssessmentId Int
+  sourceValidUntil DateTime
+  allowedStatesJson Json [not null]
+  reasonCode String [not null]
+  evidenceJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  attempt MarketPolicyEnforcementAdmissionAttempt [not null]
+  sourceAssessment MarketRegimeDimensionAssessment
+
+  indexes {
+    (attemptId, dimension) [unique]
+    (attemptId, ordinal) [unique]
+  }
+}
+
+Table OrderIntentMarketPolicyEnforcementObligation {
+  id Int [pk, increment]
+  orderIntentId Int [unique, not null]
+  admissionAttemptId Int [unique, not null]
+  obligationVersion String [not null]
+  environment TradingAccountEnvironment [not null]
+  tradingAccountId Int [not null]
+  accountSubscriptionId Int [not null]
+  subscriptionId Int [not null]
+  securityId Int [not null]
+  securitySymbol String [not null]
+  strategyId Int [not null]
+  policyRevisionId Int [not null]
+  enrollmentGenerationId Int [not null]
+  authorizationId Int [not null]
+  authorizationFingerprint String [not null]
+  authorityVersion String [not null]
+  admissionVersion String [not null]
+  evaluatorVersion String [not null]
+  marketRegimeAssessmentId Int [not null]
+  compositionSourceSetFingerprint String [not null]
+  evaluatedAt DateTime [not null]
+  validUntil DateTime [not null]
+  rolloutVersion Int [not null]
+  frozenContextJson Json [not null]
+  frozenAt DateTime [default: `now()`, not null]
+  orderIntent OrderIntent [not null]
+  admissionAttempt MarketPolicyEnforcementAdmissionAttempt [not null]
+  authorization AssignmentMarketPolicyEnforcementAuthorization [not null]
+  brokerDispatchDecisions MarketPolicyBrokerDispatchDecision [not null]
+}
+
+Table MarketPolicyBrokerDispatchDecision {
+  id Int [pk, increment]
+  decisionKey String [unique, not null]
+  decisionVersion String [not null]
+  authority String [not null, default: 'AUTHORITATIVE']
+  orderIntentId Int [not null]
+  obligationId Int
+  dispatchSequence Int [not null]
+  clientOrderId String [not null]
+  environment TradingAccountEnvironment [not null]
+  tradingAccountId Int [not null]
+  accountSubscriptionId Int [not null]
+  subscriptionId Int
+  securityId Int
+  securitySymbol String
+  strategyId Int
+  policyRevisionId Int
+  enrollmentGenerationId Int
+  authorizationId Int
+  authorizationFingerprint String
+  authorityVersion String
+  authorizationStatus String
+  rolloutEnabled Boolean [not null]
+  rolloutVersion Int [not null]
+  evaluatorVersion String
+  evaluatedAt DateTime [not null]
+  validUntil DateTime
+  dispatchExpiresAt DateTime
+  marketRegimeAssessmentId Int
+  compositionVersion String
+  compositionSourceSetFingerprint String
+  compositionEvidenceHealth MarketRegimeCompositionEvidenceHealth
+  outcome MarketPolicyBrokerDispatchOutcome [not null]
+  reasonCode String [not null]
+  dispatchDisposition MarketPolicyBrokerDispatchDisposition [not null]
+  technicalDiagnostic String
+  evidenceJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  orderIntent OrderIntent [not null]
+  obligation OrderIntentMarketPolicyEnforcementObligation
+  tradingAccount TradingAccount [not null]
+  accountSubscription TradingAccountSubscription [not null]
+  security Security
+  policyRevision StrategyMarketPolicyRevision
+  enrollmentGeneration AssignmentMarketPolicyEnrollmentGeneration
+  authorization AssignmentMarketPolicyEnforcementAuthorization
+  marketRegimeAssessment MarketRegimeAssessment
+  gates MarketPolicyBrokerDispatchGate [not null]
+  consumption MarketPolicyBrokerDispatchConsumption
+
+  indexes {
+    (orderIntentId, dispatchSequence) [unique]
+  }
+}
+
+Table MarketPolicyBrokerDispatchGate {
+  id Int [pk, increment]
+  decisionId Int [not null]
+  ordinal Int [not null]
+  dimension MarketRegimeDimension [not null]
+  algorithmVersion String [not null]
+  requirement StrategyMarketPolicyDimensionRequirement [not null]
+  outcome StrategyMarketEligibilityGateOutcome [not null]
+  observedState String
+  sourceHealth MarketRegimeCompositionSourceHealth
+  sourceAssessmentId Int
+  sourceValidUntil DateTime
+  allowedStatesJson Json [not null]
+  reasonCode String [not null]
+  evidenceJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  decision MarketPolicyBrokerDispatchDecision [not null]
+  sourceAssessment MarketRegimeDimensionAssessment
+
+  indexes {
+    (decisionId, dimension) [unique]
+    (decisionId, ordinal) [unique]
+  }
+}
+
+Table MarketPolicyBrokerDispatchConsumption {
+  id Int [pk, increment]
+  decisionId Int [unique, not null]
+  orderIntentId Int [unique, not null]
+  clientOrderId String [not null]
+  brokerPostOpportunityId Int
+  consumedAt DateTime [default: `now()`, not null]
+  evidenceJson Json [not null]
+  decision MarketPolicyBrokerDispatchDecision [not null]
+  orderIntent OrderIntent [not null]
+  brokerPostOpportunity OrderIntentBrokerPostOpportunity
+}
+
+Table MarketPolicyBrokerUnenforcedDispatch {
+  id Int [pk, increment]
+  orderIntentId Int [unique, not null]
+  clientOrderId String [not null]
+  environment TradingAccountEnvironment [not null]
+  tradingAccountId Int [not null]
+  accountSubscriptionId Int
+  securityId Int [not null]
+  securitySymbol String [not null]
+  basis String [not null]
+  latestAuthorizationId Int
+  latestAuthorizationStatus String
+  rolloutEnabled Boolean [not null]
+  rolloutVersion Int [not null]
+  brokerPostOpportunityId Int
+  authorizedAt DateTime [default: `now()`, not null]
+  evidenceJson Json [not null]
+  orderIntent OrderIntent [not null]
+  tradingAccount TradingAccount [not null]
+  accountSubscription TradingAccountSubscription
+  security Security [not null]
+  latestAuthorization AssignmentMarketPolicyEnforcementAuthorization
+  brokerPostOpportunity OrderIntentBrokerPostOpportunity
+}
+
 Table StrategyMarketEligibilityDecision {
   id Int [pk, increment]
   strategyId Int [not null]
@@ -2281,6 +2708,7 @@ Table Subscription {
   lifecycleExercises TradingLifecycleExercise [not null]
   liveEntryArmings LiveEntryArming [not null]
   liveEntryAcceptanceRuns LiveEntryAcceptanceRun [not null]
+  marketPolicyEnforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization [not null]
 
   indexes {
     (id, strategyId, securityId) [unique]
@@ -2791,6 +3219,18 @@ Enum AssignmentMarketPolicyEnrollmentTransitionAction {
   DISABLE
 }
 
+Enum AssignmentMarketPolicyEnforcementAuthorizationStatus {
+  AUTHORIZED
+  REVOKED
+  INVALIDATED
+}
+
+Enum AssignmentMarketPolicyEnforcementAuthorizationAction {
+  GRANT
+  REVOKE
+  INVALIDATE
+}
+
 Enum OrderIntentMarketPolicyCoverageProvenance {
   ACTIVE_EXACT
   SUPERSEDED_COMPARE_ONLY
@@ -2841,6 +3281,41 @@ Enum OrderIntentBrokerOpportunityEventType {
   RECOVERY_ABSENCE_CONFIRMED
   RECOVERY_INCONCLUSIVE
   MISSING_OBSERVATION
+}
+
+Enum MarketPolicyEnforcementRolloutAction {
+  ACTIVATE
+  DEACTIVATE
+}
+
+Enum MarketPolicyEnforcementAdmissionOutcome {
+  ALLOWED
+  BLOCKED
+  INSUFFICIENT_EVIDENCE
+  AUTHORIZATION_LAPSED
+  AUTHORIZATION_INEFFECTIVE
+  TECHNICAL_FAILURE
+}
+
+Enum MarketPolicyBrokerDispatchOutcome {
+  ALLOWED
+  BLOCKED
+  INSUFFICIENT_EVIDENCE
+  AUTHORIZATION_REVOKED
+  AUTHORIZATION_INVALIDATED
+  AUTHORIZATION_SUPERSEDED
+  AUTHORIZATION_INEFFECTIVE
+  POLICY_REVISION_SUPERSEDED
+  ENROLLMENT_GENERATION_INACTIVE
+  ENTRY_IDENTITY_MISMATCH
+  LEGACY_UNOBLIGATED_QUARANTINED
+  TECHNICAL_FAILURE
+}
+
+Enum MarketPolicyBrokerDispatchDisposition {
+  DISPATCH_AUTHORIZED
+  DEFINITELY_NOT_SENT
+  NOT_SENT_TECHNICAL_FAILURE
 }
 
 Ref: StrategySignalRevision.strategySignalBindingId > StrategySignalBinding.id [delete: Restrict]
@@ -3014,6 +3489,16 @@ Ref: BrokerOrder.orderIntentId > OrderIntent.id
 Ref: BrokerOrder.trackedPositionId > TrackedPosition.id [delete: Set Null]
 
 Ref: BrokerOrder.tradingAccountId > TradingAccount.id [delete: Set Null]
+
+Ref: EntryExposureClaim.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: EntryExposureClaim.securityId > Security.id [delete: Restrict]
+
+Ref: EntryExposureClaim.orderIntentId - OrderIntent.id [delete: Restrict]
+
+Ref: EntryExposureClaim.trackedPositionId - TrackedPosition.id [delete: Restrict]
+
+Ref: EntryExposureClaimEvent.claimId > EntryExposureClaim.id [delete: Restrict]
 
 Ref: SystemEvent.tradingAccountId > TradingAccount.id [delete: Set Null]
 
@@ -3210,6 +3695,112 @@ Ref: AssignmentMarketPolicyEnrollmentTransition.generationId > AssignmentMarketP
 Ref: AssignmentMarketPolicyEnrollmentTransition.actorUserId > User.id [delete: Restrict]
 
 Ref: AssignmentMarketPolicyEnrollmentTransition.accountHolderUserId > User.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnforcementAuthorization.enrollmentId > AssignmentMarketPolicyEnrollment.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnforcementAuthorization.enrollmentGenerationId > AssignmentMarketPolicyEnrollmentGeneration.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnforcementAuthorization.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnforcementAuthorization.accountSubscriptionId > TradingAccountSubscription.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnforcementAuthorization.strategyId > Strategy.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnforcementAuthorization.policyRevisionId > StrategyMarketPolicyRevision.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnforcementAuthorization.accountHolderUserId > User.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnforcementAuthorization.authorizedByUserId > User.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnforcementAuthorization.revokedByUserId > User.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnforcementAuthorization.invalidatedByUserId > User.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnforcementAuthorization.subscriptionId > Subscription.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnforcementAuthorization.securityId > Security.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnforcementAuthorizationEvent.authorizationId > AssignmentMarketPolicyEnforcementAuthorization.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnforcementAuthorizationEvent.actorUserId > User.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnforcementLapseResolution.authorizationId - AssignmentMarketPolicyEnforcementAuthorization.id [delete: Restrict]
+
+Ref: AssignmentMarketPolicyEnforcementLapseResolution.resolvedByUserId > User.id [delete: Restrict]
+
+Ref: MarketPolicyEnforcementRuntimeRollout.changedByUserId > User.id [delete: Restrict]
+
+Ref: MarketPolicyEnforcementRuntimeRolloutEvent.rolloutId > MarketPolicyEnforcementRuntimeRollout.id [delete: Restrict]
+
+Ref: MarketPolicyEnforcementRuntimeRolloutEvent.actorUserId > User.id [delete: Restrict]
+
+Ref: MarketPolicyEnforcementAdmissionAttempt.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: MarketPolicyEnforcementAdmissionAttempt.accountSubscriptionId > TradingAccountSubscription.id [delete: Restrict]
+
+Ref: MarketPolicyEnforcementAdmissionAttempt.securityId > Security.id [delete: Restrict]
+
+Ref: MarketPolicyEnforcementAdmissionAttempt.policyRevisionId > StrategyMarketPolicyRevision.id [delete: Restrict]
+
+Ref: MarketPolicyEnforcementAdmissionAttempt.enrollmentGenerationId > AssignmentMarketPolicyEnrollmentGeneration.id [delete: Restrict]
+
+Ref: MarketPolicyEnforcementAdmissionAttempt.authorizationId > AssignmentMarketPolicyEnforcementAuthorization.id [delete: Restrict]
+
+Ref: MarketPolicyEnforcementAdmissionAttempt.marketRegimeAssessmentId > MarketRegimeAssessment.id [delete: Restrict]
+
+Ref: MarketPolicyEnforcementAdmissionAttempt.orderIntentId - OrderIntent.id [delete: Restrict]
+
+Ref: MarketPolicyEnforcementAdmissionAttempt.rolloutVersion > MarketPolicyEnforcementRuntimeRolloutEvent.version [delete: Restrict]
+
+Ref: MarketPolicyEnforcementAdmissionGate.attemptId > MarketPolicyEnforcementAdmissionAttempt.id [delete: Restrict]
+
+Ref: MarketPolicyEnforcementAdmissionGate.(sourceAssessmentId, dimension, algorithmVersion) > MarketRegimeDimensionAssessment.(id, dimension, algorithmVersion) [delete: Restrict]
+
+Ref: OrderIntentMarketPolicyEnforcementObligation.orderIntentId - OrderIntent.id [delete: Restrict]
+
+Ref: OrderIntentMarketPolicyEnforcementObligation.admissionAttemptId - MarketPolicyEnforcementAdmissionAttempt.id [delete: Restrict]
+
+Ref: OrderIntentMarketPolicyEnforcementObligation.authorizationId > AssignmentMarketPolicyEnforcementAuthorization.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerDispatchDecision.orderIntentId > OrderIntent.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerDispatchDecision.obligationId > OrderIntentMarketPolicyEnforcementObligation.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerDispatchDecision.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerDispatchDecision.accountSubscriptionId > TradingAccountSubscription.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerDispatchDecision.securityId > Security.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerDispatchDecision.policyRevisionId > StrategyMarketPolicyRevision.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerDispatchDecision.enrollmentGenerationId > AssignmentMarketPolicyEnrollmentGeneration.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerDispatchDecision.authorizationId > AssignmentMarketPolicyEnforcementAuthorization.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerDispatchDecision.marketRegimeAssessmentId > MarketRegimeAssessment.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerDispatchGate.decisionId > MarketPolicyBrokerDispatchDecision.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerDispatchGate.(sourceAssessmentId, dimension, algorithmVersion) > MarketRegimeDimensionAssessment.(id, dimension, algorithmVersion) [delete: Restrict]
+
+Ref: MarketPolicyBrokerDispatchConsumption.decisionId - MarketPolicyBrokerDispatchDecision.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerDispatchConsumption.orderIntentId - OrderIntent.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerDispatchConsumption.brokerPostOpportunityId > OrderIntentBrokerPostOpportunity.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerUnenforcedDispatch.orderIntentId - OrderIntent.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerUnenforcedDispatch.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerUnenforcedDispatch.accountSubscriptionId > TradingAccountSubscription.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerUnenforcedDispatch.securityId > Security.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerUnenforcedDispatch.latestAuthorizationId > AssignmentMarketPolicyEnforcementAuthorization.id [delete: Restrict]
+
+Ref: MarketPolicyBrokerUnenforcedDispatch.brokerPostOpportunityId > OrderIntentBrokerPostOpportunity.id [delete: Restrict]
 
 Ref: StrategyMarketEligibilityDecision.strategyId > Strategy.id [delete: Restrict]
 

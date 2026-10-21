@@ -35,6 +35,10 @@ import type {
   AssignmentMarketPolicyEnrollmentResponse,
   AssignmentMarketPolicyEnrollmentPreview,
   AssignmentMarketPolicyEnrollmentGeneration,
+  MarketPolicyEnforcementAuthorization,
+  MarketPolicyEnforcementAuthorizationHistory,
+  MarketPolicyEnforcementAuthorizationPreview,
+  MarketPolicyEnforcementAuthorizationStateResponse,
 } from './types';
 
 type ListMarketContextOptions = {
@@ -455,4 +459,24 @@ export function previewTradingAccountEntryRisk(
       body: payload,
     },
   );
+}
+
+const enforcementAuthorizationPath = (id: number, assignmentId: number) => `/api/trading-accounts/${id}/account-subscriptions/${assignmentId}/market-policy-enrollment/enforcement-authorization`;
+export function getMarketPolicyEnforcementAuthorization(id: number, assignmentId: number, token: string) {
+  return apiRequest<MarketPolicyEnforcementAuthorizationStateResponse>(enforcementAuthorizationPath(id, assignmentId), { token });
+}
+export function previewMarketPolicyEnforcementAuthorization(id: number, assignmentId: number, token: string) {
+  return apiRequest<{ preview: MarketPolicyEnforcementAuthorizationPreview }>(`${enforcementAuthorizationPath(id, assignmentId)}/preview`, { token });
+}
+export function getMarketPolicyEnforcementAuthorizationHistory(id: number, assignmentId: number, token: string) {
+  return apiRequest<MarketPolicyEnforcementAuthorizationHistory>(`${enforcementAuthorizationPath(id, assignmentId)}/history`, { token });
+}
+export function grantMarketPolicyEnforcementAuthorization(id: number, assignmentId: number, input: { generationId: number; expectedConfigurationFingerprint: string; expectedPolicyRevisionId: number; reason: string }, token: string) {
+  return apiRequest<{ authorization: MarketPolicyEnforcementAuthorization }>(`${enforcementAuthorizationPath(id, assignmentId)}/grant`, { method: 'POST', token, body: input });
+}
+export function revokeMarketPolicyEnforcementAuthorization(id: number, assignmentId: number, input: { authorizationId: number; reason: string }, token: string) {
+  return apiRequest<{ authorization: MarketPolicyEnforcementAuthorization }>(`${enforcementAuthorizationPath(id, assignmentId)}/revoke`, { method: 'POST', token, body: input });
+}
+export function resolveMarketPolicyEnforcementLapse(id: number, assignmentId: number, input: { authorizationId: number; reason: string; confirmNonEnforced: true }, token: string) {
+  return apiRequest<{ lapseResolution: { id: number; authorizationId: number; resolution: 'RESTORE_NON_ENFORCED'; resolvedAt: string } }>(`${enforcementAuthorizationPath(id, assignmentId)}/resolve-lapse`, { method: 'POST', token, body: input });
 }

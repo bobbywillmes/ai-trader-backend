@@ -62,6 +62,10 @@ function codeForError(error: HttpError) {
     if (detailCode === 'live_entry_policy_blocked') {
       return 'LIVE_ENTRY_POLICY_BLOCKED';
     }
+    // Stable, machine-readable market-policy admission codes are preserved verbatim.
+    if (typeof detailCode === 'string' && detailCode.startsWith('MARKET_POLICY_')) {
+      return detailCode;
+    }
   }
 
   const message = error.message.toLowerCase();
@@ -207,9 +211,11 @@ export async function processEntryForAccountSubscription(args: {
     );
     const result: SignalEntryResult = {
       ...base,
-      outcome: 'INTENT_CREATED',
-      code: 'INTENT_CREATED',
-      message: 'Order intent created for the account assignment.',
+      outcome: order.duplicate ? 'DUPLICATE' : 'INTENT_CREATED',
+      code: order.duplicate ? 'DUPLICATE_SIGNAL_ASSIGNMENT' : 'INTENT_CREATED',
+      message: order.duplicate
+        ? 'This signal was already processed for the account assignment.'
+        : 'Order intent created for the account assignment.',
       orderIntentId: order.intentId,
     };
     await recordOutcomeBestEffort(result, args.signal, args.source, identity);

@@ -1,4 +1,5 @@
 import { prisma } from '../db/prisma.js';
+import { getPaperBrokerWriteAuthorityStatus } from './paper-broker-write-authority.service.js';
 
 export type HealthStatus = {
   ok: boolean;
@@ -9,6 +10,7 @@ export type HealthStatus = {
     ok: boolean;
     message: string;
   };
+  paperBrokerWriteAuthority: { configurationValid: boolean; verifiedExecutorCoverage: 'READY' | 'NOT_READY' | 'UNKNOWN'; requiredExecutorCount: number; authorizedExecutorCount: number | null };
   timestamp: string;
 };
 
@@ -34,6 +36,11 @@ export async function getHealthStatus(): Promise<HealthStatus> {
       ok: databaseOk,
       message: databaseMessage,
     },
+    paperBrokerWriteAuthority: (() => {
+      const configuration = getPaperBrokerWriteAuthorityStatus();
+      return { configurationValid: configuration.configurationValid, verifiedExecutorCoverage: 'UNKNOWN' as const,
+        requiredExecutorCount: configuration.expectedExecutorCount, authorizedExecutorCount: null };
+    })(),
     timestamp: new Date().toISOString(),
   };
 }

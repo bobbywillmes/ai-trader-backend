@@ -41,6 +41,16 @@ UPDATE "OrderIntentBrokerComparisonRollout" SET enabled=true WHERE id=1;
 
 The comparison scheduler additionally requires `ORDER_INTENT_BROKER_COMPARISON_WORKER_ENABLED=true` and a process restart. Capture can be enabled independently for observation-first rollout. Disable either database row with `SET enabled=false`; PostgreSQL records the interval endpoint. No setting grants enforcement authority.
 
+## Phase 3C.3 authoritative boundary
+
+This compare-only evidence remains `COMPARE_ONLY` / `tradingEffect=NONE` and is never
+consulted for a broker decision. The separate authoritative broker-time guard
+(`docs/architecture/market-policy-broker-time-enforcement.md`) prepares its decision
+after the confirmed-absence lookup and before this capture, and consumes its single-use
+dispatch authorization after the capture and before `ADAPTER_DISPATCH_REACHED`. A
+consumption may cite the captured opportunity. Loss of this telemetry never changes the
+authoritative outcome.
+
 ## Phase 3B.4A read boundary
 
 `GET /api/order-intents/history` provides SQL-paginated summaries under explicit

@@ -48,6 +48,77 @@ export async function getOpenAlpacaOrders(
   });
 }
 
+const COMPLETE_OPEN_ORDER_PAGE_SIZE = 500;
+const COMPLETE_OPEN_ORDER_MAX_PAGES = 20;
+
+/**
+ * Returns a complete, bounded snapshot of open BUY orders for one canonical
+ * symbol. The extra empty page when a page is full is intentional: without it,
+ * a caller cannot distinguish an exact page boundary from truncation.
+ */
+export async function getCompleteOpenAlpacaBuyOrdersForSymbol(
+  tradingAccountId: number,
+  symbol: string,
+  operation: AlpacaApiOperation = 'reconciliation_check',
+): Promise<AlpacaOrder[]> {
+  const canonicalSymbol = symbol.trim().toUpperCase();
+  if (!canonicalSymbol) throw new Error('A canonical symbol is required for complete open-order evidence.');
+  return getCompleteOpenAlpacaBuyOrders(tradingAccountId, operation, canonicalSymbol);
+}
+
+export async function getCompleteOpenAlpacaBuyOrders(
+  tradingAccountId: number,
+  operation: AlpacaApiOperation = 'reconciliation_check',
+  canonicalSymbol?: string,
+): Promise<AlpacaOrder[]> {
+
+  const orders: AlpacaOrder[] = [];
+  const seenIds = new Set<string>();
+  let beforeOrderId: string | null = null;
+
+  for (let pageNumber = 0; pageNumber < COMPLETE_OPEN_ORDER_MAX_PAGES; pageNumber += 1) {
+    const query = new URLSearchParams({
+      status: 'open',
+      direction: 'desc',
+      limit: String(COMPLETE_OPEN_ORDER_PAGE_SIZE),
+      side: 'buy',
+    });
+    if (canonicalSymbol) query.set('symbols', canonicalSymbol);
+    if (beforeOrderId) query.set('before_order_id', beforeOrderId);
+    const page = await alpacaRequestForAccount<AlpacaOrder[]>(
+      tradingAccountId,
+      `/v2/orders?${query.toString()}`,
+      {
+        metadata: {
+          operation,
+          endpoint: 'GET /v2/orders',
+          method: 'GET',
+          requestClass: operation === 'manual_admin_action' ? 'informational_read' : 'synchronization_read',
+          operationClass: 'LIFECYCLE_READ',
+          deferDuringRateLimit: operation !== 'manual_admin_action',
+        },
+      },
+    );
+    if (!Array.isArray(page)) throw new Error('Alpaca returned malformed open-order evidence.');
+    for (const order of page) {
+      if (!order?.id || !order.symbol || !order.side || !order.status) {
+        throw new Error('Alpaca returned an incomplete open-order record.');
+      }
+      if (seenIds.has(order.id)) throw new Error('Alpaca open-order pagination repeated an order identity.');
+      if ((canonicalSymbol && order.symbol.trim().toUpperCase() !== canonicalSymbol) || order.side.toLowerCase() !== 'buy') {
+        throw new Error('Alpaca open-order filtering returned a conflicting order identity.');
+      }
+      seenIds.add(order.id);
+      orders.push(order);
+    }
+    if (page.length < COMPLETE_OPEN_ORDER_PAGE_SIZE) return orders;
+    const nextCursor = page.at(-1)?.id;
+    if (!nextCursor || nextCursor === beforeOrderId) throw new Error('Alpaca open-order pagination did not advance.');
+    beforeOrderId = nextCursor;
+  }
+  throw new Error('Alpaca open-order evidence exceeded the bounded pagination limit.');
+}
+
 export async function getAlpacaOrderById(
   tradingAccountId: number,
   orderId: string,

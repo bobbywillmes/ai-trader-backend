@@ -42,6 +42,8 @@ export type AlpacaOrder = {
   submitted_at: string;
   filled_qty?: string;
   filled_avg_price?: string | null;
+  replaced_by?: string | null;
+  replaces?: string | null;
 
   // Trailing-stop order fields
   trail_price?: string | null;

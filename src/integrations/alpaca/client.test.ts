@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   completeRequest: vi.fn(),
   resolveAlpacaConfigForTradingAccount: vi.fn(),
   authorizeLiveBrokerWrite: vi.fn(),
+  authorizePaperBrokerWrite: vi.fn(),
 }));
 
 vi.mock('../../services/alpaca-config-resolver.service.js', () => ({
@@ -26,6 +27,10 @@ vi.mock('../../services/alpaca-api-usage.service.js', () => ({
 
 vi.mock('../../services/live-write-approval.service.js', () => ({
   authorizeLiveBrokerWrite: mocks.authorizeLiveBrokerWrite,
+}));
+
+vi.mock('../../services/paper-broker-write-authority.service.js', () => ({
+  authorizePaperBrokerWrite: mocks.authorizePaperBrokerWrite,
 }));
 
 import { AlpacaApiError } from '../../errors/alpaca-api-error.js';
@@ -80,6 +85,7 @@ describe('alpacaRequestForAccount', () => {
       source: 'legacy_env',
       credentialId: null,
       keyFingerprint: null,
+      brokerAccountId: 'paper-account-1',
     });
   });
 
@@ -129,6 +135,7 @@ describe('alpacaRequestForAccount', () => {
       source: 'trading_account_credential',
       credentialId: 7,
       keyFingerprint: 'fingerprint-1',
+      brokerAccountId: 'live-account-42',
     });
     mocks.fetch.mockResolvedValueOnce(jsonResponse({ id: 'account-42' }));
 
@@ -163,6 +170,7 @@ describe('alpacaRequestForAccount', () => {
       source: 'trading_account_credential',
       credentialId: 7,
       keyFingerprint: 'fingerprint-1',
+      brokerAccountId: 'live-account-42',
     });
     mocks.fetch.mockResolvedValueOnce(jsonResponse({ id: 'account-42' }));
 
@@ -192,6 +200,7 @@ describe('alpacaRequestForAccount', () => {
       source: 'trading_account_credential',
       credentialId: 7,
       keyFingerprint: 'fingerprint-1',
+      brokerAccountId: 'live-account-42',
     });
 
     await expect(
@@ -314,6 +323,58 @@ describe('alpacaRequestForAccount', () => {
 
     expect(mocks.fetch).not.toHaveBeenCalled();
     expect(mocks.beginRequest).not.toHaveBeenCalled();
+  });
+
+  it('cannot disguise a mutating request as a read', async () => {
+    await expect(
+      alpacaRequestForAccount(1, '/v2/orders/order-123', {
+        method: 'DELETE',
+        metadata: {
+          operation: 'order_cancel',
+          endpoint: 'DELETE /v2/orders/:orderId',
+          method: 'DELETE',
+          requestClass: 'informational_read',
+          operationClass: 'LIFECYCLE_READ',
+          deferDuringRateLimit: false,
+        },
+      })
+    ).rejects.toMatchObject({
+      name: 'BrokerWriteDeliveryError',
+      classification: 'NOT_SENT_BLOCKED',
+    });
+    expect(mocks.resolveAlpacaConfigForTradingAccount).not.toHaveBeenCalled();
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
+  it('blocks PAPER writes at deployment authority before request preparation or fetch', async () => {
+    mocks.authorizePaperBrokerWrite.mockImplementationOnce(() => {
+      throw new Error('PAPER broker writes are blocked because this deployment is OBSERVATION_ONLY.');
+    });
+    await expect(
+      alpacaRequestForAccount(1, '/v2/orders', {
+        method: 'POST', body: { symbol: 'SPY' }, metadata: orderWriteMetadata,
+      })
+    ).rejects.toMatchObject({
+      name: 'BrokerWriteDeliveryError',
+      classification: 'NOT_SENT_BLOCKED',
+    });
+    expect(mocks.beginRequest).not.toHaveBeenCalled();
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['entry POST', '/v2/orders', 'POST', orderWriteMetadata],
+    ['protective POST', '/v2/orders', 'POST', { ...orderWriteMetadata, operation: 'protective_order_submission', operationClass: 'RISK_REDUCING_WRITE' }],
+    ['verified close POST', '/v2/orders', 'POST', { ...orderWriteMetadata, operation: 'position_close', operationClass: 'RISK_REDUCING_WRITE' }],
+    ['single cancellation DELETE', '/v2/orders/order-1', 'DELETE', { ...orderWriteMetadata, operation: 'order_cancel', endpoint: 'DELETE /v2/orders/:orderId', method: 'DELETE' }],
+    ['cancel-all DELETE', '/v2/orders', 'DELETE', { ...orderWriteMetadata, operation: 'order_cancel_all', endpoint: 'DELETE /v2/orders', method: 'DELETE' }],
+  ] as const)('applies PAPER deployment authority to %s', async (_label, path, method, metadata) => {
+    mocks.fetch.mockResolvedValueOnce(method === 'DELETE'
+      ? new Response(null, { status: 204 })
+      : jsonResponse({ id: 'broker-order-1' }));
+    await alpacaRequestForAccount(1, path, { method, body: method === 'POST' ? { symbol: 'SPY' } : undefined, metadata });
+    expect(mocks.authorizePaperBrokerWrite).toHaveBeenCalledTimes(1);
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
   });
 
   it('measures 429 responses separately', async () => {

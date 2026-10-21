@@ -7,9 +7,34 @@ import { getNormalizedOpenOrders } from '../services/orders.service.js';
 import { placeOrderSchema } from '../validators/place-order.schema.js';
 import type { ResolvedPlaceOrderInput } from '../validators/place-order.schema.js';
 import {
+  createEntryBrokerSubmissionBoundary,
   submitOrderToBroker,
   type BrokerOrderSubmissionInput,
 } from '../services/place-order.service.js';
+import { getEntryDispatchRecordedNotSent, getMarketPolicyBrokerDispatchRefusal } from '../services/market-policy-broker-dispatch.service.js';
+import {
+  attemptReleaseAfterRecordedOutcome,
+  emitDispatchOutcomeRecorded,
+  entryDispatchOutcomeFor,
+  isPreDispatchProofCandidateError,
+  loadEntryDispatchRecords,
+  proveWorkerPreDispatchNonDelivery,
+  recordEntryDispatchOutcome,
+  recoverStaleAdmissionClaimsForAccount,
+  recoverTerminalEntryClaimsForAccount,
+  releaseUnsubmittedOrRouteToRecovery,
+  type EntryDispatchOutcomeClassification,
+  type EntryDispatchRecords,
+} from '../services/entry-dispatch-recovery.service.js';
+import {
+  appendNotSentEvidence,
+  ADAPTER_MARKER_PROTOCOL,
+  loadDeliveryEvidenceEvents,
+  preserveBlockReason,
+  summarizeDeliveryEvidence,
+  type NotSentClassification,
+  type NotSentProducer,
+} from '../services/entry-delivery-evidence.service.js';
 import { createSystemEvent } from '../services/system-event.service.js';
 import { syncTrailingStopOrderStatus } from '../services/position-exit-state.service.js';
 import {
@@ -31,9 +56,16 @@ import {
 import { getSizingEstimatedNotional } from '../services/trading-account-entry-risk-usage.service.js';
 import { recordOrderIntentRiskEvaluation } from '../services/order-audit.service.js';
 import { resolveSubscriptionOrderInput } from '../services/subscription.service.js';
-import { getAlpacaOrderByClientOrderId } from '../integrations/alpaca/orders.adapter.js';
-import { getBrokerWriteDeliveryClassification } from '../errors/broker-write-delivery-error.js';
+import { getAlpacaOrderByClientOrderId, getAlpacaOrderById } from '../integrations/alpaca/orders.adapter.js';
+import { BrokerWriteDeliveryError, getBrokerWriteDeliveryClassification } from '../errors/broker-write-delivery-error.js';
 import { bestEffortAppendBrokerOpportunityEvent, createBrokerObservationBudget } from '../services/order-intent-broker-opportunity.service.js';
+import {
+  requireEntryExposureClaim,
+  recordMissingLocalBrokerOrderDiagnostic,
+  releaseConfirmedTerminalEntryClaim,
+  transitionEntryExposureClaim,
+} from '../services/entry-exposure-claim.service.js';
+import { BROKER_ACTIVE_ENTRY_STATUSES, TERMINAL_ENTRY_ORDER_STATUSES, isSellIntent } from '../services/entry-lifecycle-status.service.js';
 
 export type SubmittedOrderSyncResult = {
   found: number;
@@ -82,14 +114,8 @@ function sanitizeError(error: unknown) {
   return error instanceof Error ? error.message : 'Unknown worker error.';
 }
 
-function isExitIntent(intent: { rawRequestJson: Prisma.JsonValue }) {
-  const raw = intent.rawRequestJson;
-  return (
-    typeof raw === 'object' &&
-    raw !== null &&
-    !Array.isArray(raw) &&
-    raw.signalType === 'exit'
-  );
+function isExitIntent(intent: { side: string; rawRequestJson: Prisma.JsonValue }) {
+  return isSellIntent(intent);
 }
 
 function getRecordedDeliveryClassification(blockReason: string | null) {
@@ -149,16 +175,21 @@ export async function recoverStaleSubmittingIntentsForAccount(
       tradingAccount: { select: { environment: true } },
     },
     orderBy: { updatedAt: 'asc' },
-    take: 5,
+    take: 25,
   });
   let linked = 0;
   let retryable = 0;
   let retained = 0;
+  const failures: Array<{ orderIntentId: number; error: string }> = [];
 
   for (const intent of intents) {
+    try {
     if (!intent.clientOrderId) {
       retained += 1;
       continue;
+    }
+    if (!isExitIntent(intent)) {
+      await requireEntryExposureClaim(intent.id, prisma, { allowUnresolved: true });
     }
 
     const persisted = intent.brokerOrders[0];
@@ -171,6 +202,9 @@ export async function recoverStaleSubmittingIntentsForAccount(
         data: { status: 'submitted', blockReason: null },
       });
       linked += 1;
+      if (!isExitIntent(intent)) {
+        await transitionEntryExposureClaim({ orderIntentId: intent.id, status: 'BROKER_ORDER_ACTIVE', eventType: 'RECOVERY_LINKED_LOCAL_BROKER_ORDER' });
+      }
       continue;
     }
 
@@ -187,6 +221,14 @@ export async function recoverStaleSubmittingIntentsForAccount(
     }
 
     if (brokerOrder) {
+      if (
+        brokerOrder.client_order_id !== intent.clientOrderId ||
+        brokerOrder.symbol?.trim().toUpperCase() !== intent.symbol.trim().toUpperCase() ||
+        brokerOrder.side?.trim().toLowerCase() !== intent.side.trim().toLowerCase()
+      ) {
+        // Ambiguous attribution stays unresolved; the intent is isolated for operator recovery.
+        throw new Error(`Broker order ${brokerOrder.id} found by stable client order ID does not match OrderIntent ${intent.id} identity.`);
+      }
       const observationBudget=createBrokerObservationBudget();
       await bestEffortAppendBrokerOpportunityEvent({orderIntentId:intent.id,eventType:'RECOVERY_FOUND',evidence:{source:'broker_lookup',brokerOrderId:brokerOrder.id}},undefined,observationBudget);
       await bestEffortAppendBrokerOpportunityEvent({orderIntentId:intent.id,eventType:'BROKER_ORDER_MATERIALIZED',evidence:{source:'broker_lookup',brokerOrderId:brokerOrder.id,status:brokerOrder.status}},undefined,observationBudget);
@@ -240,6 +282,12 @@ export async function recoverStaleSubmittingIntentsForAccount(
           reason: 'Stable client-order ID matched an existing broker order.',
         } as Prisma.InputJsonValue,
       });
+      if (!isExitIntent(intent)) {
+        await transitionEntryExposureClaim({
+          orderIntentId: intent.id, status: 'BROKER_ORDER_ACTIVE', eventType: 'RECOVERY_FOUND_BROKER_ORDER',
+          evidence: { brokerOrderId: brokerOrder.id, brokerStatus: brokerOrder.status },
+        });
+      }
       linked += 1;
       continue;
     }
@@ -347,30 +395,97 @@ export async function recoverStaleSubmittingIntentsForAccount(
       continue;
     }
 
-    const reset = await prisma.orderIntent.updateMany({
-      where: { id: intent.id, status: 'submitting' },
-      data: {
-        status: 'pending',
-        blockReason: 'Recovered stale submitting intent after broker lookup found no order.',
-      },
+    // One stable-ID lookup miss is never release evidence by itself. The release decision below
+    // depends only on durable evidence recorded atomically with the intent's terminal state.
+    const dispatchRecords = await loadEntryDispatchRecords(intent.id);
+    const staleDisposition = await prisma.$transaction(async (tx) => {
+      const claim = await tx.entryExposureClaim.findUnique({ where: { orderIntentId: intent.id } });
+      const summary = claim ? summarizeDeliveryEvidence(await loadDeliveryEvidenceEvents(claim.id, tx)) : null;
+      // Proven never sent: the claim never reached ENTRY_SUBMITTING (the broker boundary requires
+      // it), or a marker-protocol worker claimed it and the adapter-invocation marker was never written.
+      const provenNotSent = !dispatchRecords.present && claim !== null && !claim.releasedAt && summary !== null && summary.outcomes.length === 0 && (
+        ['ENTRY_PENDING', 'ADMISSION_BLOCKED'].includes(claim.status) ||
+        (claim.status === 'ENTRY_SUBMITTING' && summary.markerProtocol && summary.adapterMarkers === 0));
+      const transitioned = await tx.orderIntent.updateMany({
+        where: { id: intent.id, status: 'submitting' },
+        data: {
+          status: 'failed',
+          blockReason: preserveBlockReason(intent.blockReason, provenNotSent
+            ? 'Recovery confirmed no broker order and the broker adapter was never invoked; entry requires a new admission decision and was not requeued.'
+            : dispatchRecords.present
+              ? 'DISPATCH_STARTED_OUTCOME_UNKNOWN: a dispatch record exists and no broker order was found; claim retained for evidence-based recovery and never resent.'
+              : 'STALE_SUBMISSION_OUTCOME_UNKNOWN: no durable dispatch record and no proof the request was not issued; claim retained for investigation and never resent.'),
+        },
+      });
+      if (transitioned.count !== 1 || !claim || claim.releasedAt) return { kind: 'NONE' as const };
+      if (provenNotSent) {
+        if (claim.status === 'ENTRY_SUBMITTING') {
+          await appendNotSentEvidence(tx, {
+            claimId: claim.id, orderIntentId: intent.id, classification: 'NOT_SENT_PRE_DISPATCH', producer: 'STALE_RECOVERY_ADAPTER_NOT_INVOKED',
+            source: 'STALE_RECOVERY', reason: 'RECOVERY_CONFIRMED_NEVER_SUBMITTED', message: intent.blockReason,
+          });
+        }
+        return { kind: 'NOT_SENT' as const };
+      }
+      // A committed dispatch record (for example, a crash between consumption and the adapter call),
+      // an entered boundary, or no evidence either way: an explicit unknown outcome retains the claim.
+      const outcome = await recordEntryDispatchOutcome({
+        orderIntentId: intent.id, classification: 'DISPATCH_OUTCOME_UNKNOWN', source: 'STALE_RECOVERY', observation: 'INFERRED', records: dispatchRecords, db: tx,
+        message: dispatchRecords.present
+          ? 'Stale submission with a durable dispatch record; the stable client-order-ID lookup found no broker order.'
+          : 'Stale submission without a durable dispatch record or proof of non-dispatch; the stable client-order-ID lookup found no broker order.',
+      });
+      return { kind: 'OUTCOME' as const, outcome };
     });
-    if (reset.count === 1) {
+    if (staleDisposition.kind === 'OUTCOME') await emitDispatchOutcomeRecorded(staleDisposition.outcome, 'DISPATCH_OUTCOME_UNKNOWN');
+    if (staleDisposition.kind === 'NOT_SENT') {
+      const release = await releaseUnsubmittedOrRouteToRecovery({
+        orderIntentId: intent.id, reason: 'RECOVERY_CONFIRMED_NEVER_SUBMITTED', source: 'STALE_RECOVERY', dispatchAttempted: false,
+      });
+      if (release.released) retryable += 1; else retained += 1;
+      continue;
+    }
+    retained += 1;
+    } catch (error) {
+      retained += 1;
+      failures.push({ orderIntentId: intent.id, error: sanitizeError(error) });
       await createSystemEvent({
-        type: 'order.submission_retry_scheduled',
+        type: 'order.submission_recovery_action_required',
         entityType: 'orderIntent',
         entityId: intent.id,
         tradingAccountId,
-        severity: SystemEventSeverity.WARNING,
+        severity: recoveryDeferredSeverity(
+          intent.tradingAccount?.environment === 'LIVE' ? 'LIVE' : 'PAPER'
+        ),
         payloadJson: {
           clientOrderId: intent.clientOrderId,
-          recovery: 'broker_order_absent_entry_requeued',
+          side: intent.side,
+          recovery: 'intent_isolated',
+          error: sanitizeError(error),
         } as Prisma.InputJsonValue,
-      });
-      retryable += 1;
+      }).catch(() => undefined);
     }
   }
 
-  return { found: intents.length, linked, retryable, retained };
+  // Terminal intents whose claims are still held (including consumed dispatches that a lookup can
+  // no longer reach through the 'submitting' selection) get a bounded, evidence-based sweep.
+  let dispatchRecovery: Awaited<ReturnType<typeof recoverTerminalEntryClaimsForAccount>> | { error: string } | null = null;
+  try {
+    dispatchRecovery = await recoverTerminalEntryClaimsForAccount(tradingAccountId, now);
+  } catch (error) {
+    dispatchRecovery = { error: sanitizeError(error) };
+    logger.warn({ tradingAccountId, error }, 'Dispatched entry claim recovery sweep failed; it is retried on the next tick.');
+  }
+  // Abandoned admissions ('received' intents with ENTRY_PENDING claims) that no other path selects.
+  let admissionRecovery: Awaited<ReturnType<typeof recoverStaleAdmissionClaimsForAccount>> | { error: string } | null = null;
+  try {
+    admissionRecovery = await recoverStaleAdmissionClaimsForAccount(tradingAccountId, now);
+  } catch (error) {
+    admissionRecovery = { error: sanitizeError(error) };
+    logger.warn({ tradingAccountId, error }, 'Stale entry admission recovery failed; it is retried on the next tick.');
+  }
+
+  return { found: intents.length, linked, retryable, retained, failures, dispatchRecovery, admissionRecovery };
 }
 
 export async function recoverStaleSubmittingIntents() {
@@ -417,6 +532,10 @@ export async function recoverStaleSubmittingIntents() {
   return { workflow: 'stale_submitting_recovery' as const, results };
 }
 
+type WorkerFailureEvidencePlan =
+  | { kind: 'NOT_SENT'; classification: NotSentClassification; producer: NotSentProducer; releaseReason: string; dispatchAttempted: boolean }
+  | { kind: 'OUTCOME'; classification: EntryDispatchOutcomeClassification };
+
 function isEntryOrder(input: BrokerOrderSubmissionInput): boolean {
   return input.side === 'buy' && (input.signalType ?? 'entry') === 'entry';
 }
@@ -442,7 +561,10 @@ export async function processPendingOrdersForAccount(
   for (const intent of pending) {
     logger.trace({ orderIntentId: intent.id }, 'Order worker processing intent.');
 
+    let brokerBoundaryStarted = false;
+    const boundary = createEntryBrokerSubmissionBoundary();
     try {
+      const entryClaim = await requireEntryExposureClaim(intent.id);
       const claimResult = await prisma.orderIntent.updateMany({
         where: {
           id: intent.id,
@@ -459,6 +581,14 @@ export async function processPendingOrdersForAccount(
       }
 
       claimed += 1;
+      // The adapter-marker protocol: submitOrderToBroker appends ADAPTER_INVOCATION_STARTED immediately
+      // before invoking the adapter, so a claim held under it without a marker never reached the adapter.
+      await transitionEntryExposureClaim({
+        orderIntentId: intent.id,
+        status: 'ENTRY_SUBMITTING',
+        eventType: 'WORKER_CLAIMED_FOR_SUBMISSION',
+        evidence: { markerProtocol: ADAPTER_MARKER_PROTOCOL },
+      });
 
       if (!intent.clientOrderId) {
         throw new Error(
@@ -533,12 +663,19 @@ export async function processPendingOrdersForAccount(
         });
 
         if (!riskResult.allowed) {
-          await prisma.orderIntent.update({
-            where: { id: intent.id },
-            data: {
-              status: 'blocked',
-              blockReason: riskResult.reason,
-            },
+          // The refusal and its structured not-sent evidence commit together, before any release.
+          await prisma.$transaction(async (tx) => {
+            await tx.orderIntent.update({
+              where: { id: intent.id },
+              data: {
+                status: 'blocked',
+                blockReason: riskResult.reason,
+              },
+            });
+            await appendNotSentEvidence(tx, {
+              claimId: entryClaim.id, orderIntentId: intent.id, classification: 'NOT_SENT_PRE_DISPATCH', producer: 'WORKER_RISK_RECHECK',
+              source: 'WORKER', reason: 'WORKER_RISK_RECHECK_BLOCKED', message: riskResult.reason,
+            });
           });
 
           await logRiskGateBlockedOrder({
@@ -546,6 +683,12 @@ export async function processPendingOrdersForAccount(
             tradingAccountId: intent.tradingAccountId,
             input: resolvedInput,
             result: riskResult,
+          });
+          await releaseUnsubmittedOrRouteToRecovery({
+            orderIntentId: intent.id,
+            reason: 'WORKER_RISK_RECHECK_BLOCKED',
+            source: 'WORKER',
+            dispatchAttempted: false,
           });
 
           logger.trace({ orderIntentId: intent.id, reason: riskResult.reason },
@@ -556,11 +699,19 @@ export async function processPendingOrdersForAccount(
         }
       }
 
+      brokerBoundaryStarted = true;
       const result = await submitOrderToBroker(resolvedInput, {
         tradingAccountId: intent.tradingAccountId,
         orderIntentId: intent.id,
+        boundary,
       });
       const brokerOrder = result.order;
+      await transitionEntryExposureClaim({
+        orderIntentId: intent.id,
+        status: 'BROKER_ORDER_ACTIVE',
+        eventType: result.duplicate ? 'BROKER_ORDER_RECOVERED' : 'BROKER_ORDER_ACCEPTED',
+        evidence: { brokerOrderId: brokerOrder.id, brokerStatus: brokerOrder.status },
+      }).catch(() => undefined);
 
       const existingBrokerOrderRecord = await prisma.brokerOrder.findFirst({
         where: {
@@ -582,6 +733,10 @@ export async function processPendingOrdersForAccount(
           data: {
             status: 'submitted',
           },
+        });
+        await releaseConfirmedTerminalEntryClaim({
+          orderIntentId: intent.id,
+          brokerStatus: brokerOrder.status,
         });
 
         logger.trace({ orderIntentId: intent.id, brokerOrderId: brokerOrder.id },
@@ -641,51 +796,176 @@ export async function processPendingOrdersForAccount(
           tradingAccountId: intent.tradingAccountId,
         });
       }
+      await releaseConfirmedTerminalEntryClaim({
+        orderIntentId: intent.id,
+        brokerStatus: brokerOrder.status,
+      });
 
       logger.trace({ orderIntentId: intent.id }, 'Order intent submitted.');
       submitted += 1;
     } catch (error) {
-      const classification = getBrokerWriteDeliveryClassification(error);
+      // Definitely not dispatched: before the broker boundary, or inside it after the stable-ID lookup
+      // confirmed absence and before the dispatch authorization was consumed. Every other failure
+      // keeps the existing conservative classification; an unclassified exception is never treated
+      // as a definite non-send.
+      const definitelyNotDispatched = !brokerBoundaryStarted || boundary.phase === 'NOT_DISPATCHED';
+      // Inside the boundary before its stable-ID lookup and local dispatch checks completed (an
+      // idempotency GET 429/5xx or network failure, or a database failure verifying the claim or
+      // dispatch evidence). The adapter is invoked only after DISPATCH_STARTED, so this attempt sent
+      // nothing, but the in-memory phase only nominates the failure: it is proven pre-dispatch solely
+      // from durable evidence inspected in the persistence transaction below, and otherwise keeps the
+      // conservative delivery-uncertain classification.
+      const preDispatchCandidate = brokerBoundaryStarted && boundary.phase === 'UNCLASSIFIED' && isPreDispatchProofCandidateError(error);
+      // A dispatch record that committed with a lost acknowledgement: this attempt invoked nothing,
+      // yet the record permanently prohibits another POST and the claim needs evidence-based recovery.
+      const recordedNotSent = definitelyNotDispatched ? getEntryDispatchRecordedNotSent(error) : null;
+      const refusal = definitelyNotDispatched && !recordedNotSent ? getMarketPolicyBrokerDispatchRefusal(error) : null;
+      const classification = refusal || recordedNotSent ? null : getBrokerWriteDeliveryClassification(error);
+      const statusCode = error instanceof BrokerWriteDeliveryError ? error.statusCode : null;
       const message = error instanceof Error ? error.message : 'Unknown worker error.';
-      const blockReason = classification
-        ? `BROKER_WRITE_DELIVERY:${classification}:${message}`
-        : message;
-      if (intent.liveEntryAcceptanceRunId != null) {
-        await prisma.$transaction(async (tx) => {
-          await tx.orderIntent.update({
-            where: { id: intent.id },
-            data: {
-              status: classification === 'DELIVERY_UNCERTAIN' ? 'submitting' :
-                classification === 'NOT_SENT_BLOCKED' ? 'blocked' : 'failed',
-              blockReason,
-            },
-          });
-          await tx.liveEntryAcceptanceRun.updateMany({
-            where: { id: intent.liveEntryAcceptanceRunId!, terminalAt: null },
-            data: {
-              ...(classification === 'DELIVERY_UNCERTAIN'
-                ? { executionUncertainAt: new Date() }
-                : {}),
-              executionFailureJson: {
-                classification: classification ?? 'LOCAL_FAILURE',
-                source: 'pending_order_submission',
-                orderIntentId: intent.id,
-                clientOrderId: intent.clientOrderId,
-                message,
+      // A requeued intent's earlier delivery uncertainty is never replaced by weaker later text.
+      const blockReason = preserveBlockReason(intent.blockReason, recordedNotSent
+        ? recordedNotSent.blockReason
+        : refusal
+          ? refusal.blockReason
+          : classification && !definitelyNotDispatched
+            ? `BROKER_WRITE_DELIVERY:${classification}:${message}`
+            : !definitelyNotDispatched
+              ? `BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:${message}`
+              : `LOCAL_PRE_DISPATCH_FAILURE:${message}`);
+      const deliveryUncertain = !definitelyNotDispatched && (classification === 'DELIVERY_UNCERTAIN' || classification === null);
+      // An authoritative market-policy denial is a durable domain outcome; a technical guard failure
+      // stays a failure so account health shows it.
+      const policyDenied = refusal !== null && !refusal.technical;
+
+      // 1. Classify delivery. Only a failure before the boundary dispatched (phase NOT_DISPATCHED), or
+      //    an adapter guard before fetch with no dispatch record, is proven not sent. Any HTTP response
+      //    (every 4xx, including 408 and 409) means the request reached Alpaca: it is never a
+      //    never-submitted release and goes to evidence-based recovery.
+      const records = !definitelyNotDispatched || recordedNotSent
+        ? await loadEntryDispatchRecords(intent.id).catch(() => null)
+        : null;
+      const conservativePlan: WorkerFailureEvidencePlan = recordedNotSent
+        ? { kind: 'OUTCOME', classification: recordedNotSent.deliveryClassification }
+        : definitelyNotDispatched
+          ? {
+              kind: 'NOT_SENT', classification: 'NOT_SENT_PRE_DISPATCH',
+              producer: refusal ? 'BROKER_TIME_MARKET_POLICY_REFUSAL' : brokerBoundaryStarted ? 'BROKER_BOUNDARY_NOT_DISPATCHED' : 'WORKER_PRE_BOUNDARY_FAILURE',
+              releaseReason: refusal?.claimReleaseReason ?? 'WORKER_PROVEN_PRE_DISPATCH_LOCAL_FAILURE',
+              // Only after the boundary confirmed no prior dispatch record can a record be this attempt's.
+              dispatchAttempted: brokerBoundaryStarted && boundary.phase === 'NOT_DISPATCHED',
+            }
+          : (classification === 'NOT_SENT_BLOCKED' || classification === 'NOT_SENT_RETRYABLE') && records && !records.present
+            ? {
+                kind: 'NOT_SENT', classification: classification === 'NOT_SENT_BLOCKED' ? 'NOT_SENT_LOCAL_BLOCKED' : 'NOT_SENT_LOCAL_RETRYABLE',
+                producer: 'ADAPTER_LOCAL_GUARD', releaseReason: classification, dispatchAttempted: false,
+              }
+            : { kind: 'OUTCOME', classification: entryDispatchOutcomeFor(classification) };
+
+      // 2. Persist the terminal intent state and the delivery classification atomically. If this
+      //    fails (including the evidence inspection of a pre-dispatch candidate), nothing is released:
+      //    the claim keeps ownership and stale recovery reviews it.
+      let plan: WorkerFailureEvidencePlan = conservativePlan;
+      let recordedOutcome: Awaited<ReturnType<typeof recordEntryDispatchOutcome>> | null = null;
+      try {
+        ({ plan, recordedOutcome } = await prisma.$transaction(async (tx) => {
+          // Inspected before any write in this transaction, so the classification is chosen against
+          // exactly the evidence that commits with it.
+          const preDispatch = preDispatchCandidate && intent.tradingAccountId !== null
+            ? await proveWorkerPreDispatchNonDelivery(tx, { orderIntentId: intent.id, tradingAccountId: intent.tradingAccountId })
+            : null;
+          const proven = preDispatch?.proven === true;
+          const attemptPlan: WorkerFailureEvidencePlan = proven
+            ? {
+                kind: 'NOT_SENT', classification: 'NOT_SENT_PRE_DISPATCH', producer: 'WORKER_PRE_BOUNDARY_FAILURE',
+                releaseReason: 'WORKER_PROVEN_PRE_DISPATCH_BOUNDARY_FAILURE', dispatchAttempted: false,
+              }
+            : conservativePlan;
+          const attemptBlockReason = proven ? `LOCAL_PRE_DISPATCH_FAILURE:${message}` : blockReason;
+          const attemptUncertain = !proven && deliveryUncertain;
+          if (intent.liveEntryAcceptanceRunId != null) {
+            await tx.orderIntent.update({
+              where: { id: intent.id },
+              data: {
+                status: attemptUncertain ? 'submitting' :
+                  classification === 'NOT_SENT_BLOCKED' || policyDenied ? 'blocked' : 'failed',
+                blockReason: attemptBlockReason,
               },
-            },
-          });
+            });
+            await tx.liveEntryAcceptanceRun.updateMany({
+              where: { id: intent.liveEntryAcceptanceRunId!, terminalAt: null },
+              data: {
+                ...(attemptUncertain
+                  ? { executionUncertainAt: new Date() }
+                  : {}),
+                executionFailureJson: {
+                  classification: refusal ? refusal.deliveryClassification : proven ? 'LOCAL_FAILURE' : classification ?? (definitelyNotDispatched ? 'LOCAL_FAILURE' : 'DELIVERY_UNCERTAIN'),
+                  source: 'pending_order_submission',
+                  orderIntentId: intent.id,
+                  clientOrderId: intent.clientOrderId,
+                  message,
+                },
+              },
+            });
+          } else {
+            await tx.orderIntent.update({
+              where: { id: intent.id },
+              data: { status: policyDenied ? 'blocked' : 'failed', blockReason: attemptBlockReason },
+            });
+          }
+          if (attemptPlan.kind === 'OUTCOME') {
+            return {
+              plan: attemptPlan,
+              recordedOutcome: await recordEntryDispatchOutcome({
+                orderIntentId: intent.id, classification: attemptPlan.classification, source: 'WORKER', observation: 'OBSERVED', statusCode,
+                // A refused pre-dispatch proof names the evidence that kept the conservative outcome.
+                message: preDispatch ? `${message} [pre-dispatch non-delivery not proven: ${preDispatch.blockers.join(',')}]` : message,
+                ...(records ? { records } : {}), db: tx,
+              }),
+            };
+          }
+          const claim = await tx.entryExposureClaim.findUnique({ where: { orderIntentId: intent.id }, select: { id: true, status: true, releasedAt: true } });
+          if (claim && !claim.releasedAt && ['ENTRY_PENDING', 'ENTRY_SUBMITTING', 'ADMISSION_BLOCKED'].includes(claim.status)) {
+            await appendNotSentEvidence(tx, {
+              claimId: claim.id, orderIntentId: intent.id, classification: attemptPlan.classification, producer: attemptPlan.producer,
+              source: 'WORKER', reason: attemptPlan.releaseReason, message,
+              ...(proven ? { proof: preDispatch!.proof } : {}),
+            });
+          }
+          return { plan: attemptPlan, recordedOutcome: null };
+        }));
+      } catch (persistenceError) {
+        logger.error({ orderIntentId: intent.id, error: persistenceError, classification: plan.classification },
+          'Entry failure classification could not be persisted; claim ownership is retained and nothing is released.');
+        await createSystemEvent({
+          type: 'entry_exposure.delivery_evidence_unpersisted', entityType: 'orderIntent', entityId: intent.id,
+          tradingAccountId: intent.tradingAccountId, severity: SystemEventSeverity.CRITICAL,
+          message: 'An entry failure could not record its delivery classification; its exposure claim is retained and stale recovery reviews it.',
+          payloadJson: { classification: plan.classification, statusCode, clientOrderId: intent.clientOrderId, preDispatchProofCandidate: preDispatchCandidate } as Prisma.InputJsonValue,
+        }).catch(() => undefined);
+        failed += 1;
+        continue;
+      }
+
+      // 3. Only now decide on release, from the durable evidence.
+      if (plan.kind === 'NOT_SENT') {
+        // The never-submitted checks still decide; a refusal is recorded (UNRESOLVED), not swallowed.
+        await releaseUnsubmittedOrRouteToRecovery({
+          orderIntentId: intent.id, reason: plan.releaseReason, source: 'WORKER', dispatchAttempted: plan.dispatchAttempted, message,
         });
       } else {
-        await prisma.orderIntent.update({
-          where: { id: intent.id },
-          data: { status: 'failed', blockReason },
-        });
+        if (recordedOutcome) await emitDispatchOutcomeRecorded(recordedOutcome, plan.classification);
+        // The intent is terminal and never resent. A definite local non-send is verified and
+        // released immediately when provable; anything else waits for the recovery sweep.
+        await attemptReleaseAfterRecordedOutcome({ orderIntentId: intent.id, classification: plan.classification, source: 'WORKER' })
+          .catch((recoveryError) => logger.warn({ orderIntentId: intent.id, error: recoveryError },
+            'Entry claim release after a recorded outcome failed; the terminal-claim recovery sweep retries it.'));
       }
 
       logger.trace({ orderIntentId: intent.id, error },
         'Order intent broker submission failed before account health persistence.');
-      failed += 1;
+      if (policyDenied) blocked += 1;
+      else failed += 1;
     }
   }
 
@@ -792,14 +1072,18 @@ export async function processPendingOrders() {
 export async function syncSubmittedOrdersForAccountUnlocked(tradingAccountId: number) {
   const submittedIntents = await prisma.orderIntent.findMany({
     where: {
-      status: 'submitted',
+      status: { in: [
+        ...BROKER_ACTIVE_ENTRY_STATUSES.filter((status) => !['received', 'pending', 'submitting'].includes(status)),
+        ...TERMINAL_ENTRY_ORDER_STATUSES.filter((status) => ['done_for_day', 'calculated', 'replaced'].includes(status)),
+      ] },
       tradingAccountId,
     },
-    include: {
-      brokerOrders: true
-    },
+    include: { brokerOrders: true },
     take: SUBMITTED_ORDER_BATCH_LIMIT_PER_ACCOUNT,
-    orderBy: { createdAt: 'asc' },
+    orderBy: [
+      { lastSubmittedOrderSyncAt: { sort: 'asc', nulls: 'first' } },
+      { createdAt: 'asc' },
+    ],
   });
 
   if (submittedIntents.length === 0) {
@@ -895,17 +1179,26 @@ export async function syncSubmittedOrdersForAccountUnlocked(tradingAccountId: nu
 
   for (const intent of submittedIntents) {
     try {
+      // Persist progress before inspecting local or provider order evidence so a
+      // missing relation, 404, or retryable failure cannot monopolize the batch.
+      await prisma.orderIntent.update({
+        where: { id: intent.id },
+        data: { lastSubmittedOrderSyncAt: new Date() },
+      });
       const brokerOrder = intent.brokerOrders[0];
-
       if (!brokerOrder) {
+        await recordMissingLocalBrokerOrderDiagnostic({
+          orderIntentId: intent.id,
+          clientOrderId: intent.clientOrderId,
+          intentStatus: intent.status,
+        }).catch(() => undefined);
         continue;
       }
 
-      const alpacaOrder = openOrdersByBrokerOrderId.get(brokerOrder.brokerOrderId);
+      const alpacaOrder = openOrdersByBrokerOrderId.get(brokerOrder.brokerOrderId) ??
+        await getAlpacaOrderById(tradingAccountId, brokerOrder.brokerOrderId, 'submitted_order_sync');
 
-      if (!alpacaOrder) {
-        continue;
-      }
+      if (!alpacaOrder) continue;
 
       const previousStatus = brokerOrder.status;
       const nextStatus = alpacaOrder.status;
@@ -949,6 +1242,23 @@ export async function syncSubmittedOrdersForAccountUnlocked(tradingAccountId: nu
             status: nextStatus,
           },
         });
+        if (brokerOrder.side.toLowerCase() === 'buy') {
+          const claimStatus = nextStatus === 'partially_filled'
+            ? 'PARTIALLY_FILLED'
+            : nextStatus === 'filled'
+              ? 'FILLED_AWAITING_POSITION'
+              : 'BROKER_ORDER_ACTIVE';
+          await transitionEntryExposureClaim({
+            orderIntentId: brokerOrder.orderIntentId,
+            status: claimStatus,
+            eventType: 'BROKER_ORDER_STATUS_OBSERVED',
+            evidence: { brokerOrderId: brokerOrder.brokerOrderId, previousStatus, nextStatus },
+          }).catch(() => undefined);
+          await releaseConfirmedTerminalEntryClaim({
+            orderIntentId: brokerOrder.orderIntentId,
+            brokerStatus: nextStatus,
+          });
+        }
 
         await createSystemEvent({
           type: `order.${nextStatus}`,
@@ -969,6 +1279,16 @@ export async function syncSubmittedOrdersForAccountUnlocked(tradingAccountId: nu
         logger.trace({ brokerOrderId: brokerOrder.id, previousStatus, nextStatus },
           'Broker order status changed.');
         synced += 1;
+      } else if (
+        brokerOrder.side.toLowerCase() === 'buy' &&
+        ['replaced', 'done_for_day', 'calculated'].includes(nextStatus.toLowerCase())
+      ) {
+        // These statuses are not sufficient release evidence by themselves.
+        // Re-evaluate the replacement/open-order chain on later polling ticks.
+        await releaseConfirmedTerminalEntryClaim({
+          orderIntentId: brokerOrder.orderIntentId,
+          brokerStatus: nextStatus,
+        });
       }
     } catch (error) {
       const brokerOrder = intent.brokerOrders[0];

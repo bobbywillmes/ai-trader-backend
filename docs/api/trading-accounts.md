@@ -1120,6 +1120,32 @@ The ordinary account settings form displays operational state read-only.
 Activation and emergency deactivation are dedicated safety operations; no
 activation operation is available in this phase.
 
+## Market-Policy Enforcement (Phase 3C.2)
+
+Enforcement authorization routes live below
+`/api/trading-accounts/:id/account-subscriptions/:accountSubscriptionId/market-policy-enrollment/enforcement-authorization`:
+
+| Operation | Method and path | Access |
+|---|---|---|
+| Current state, including `enforcement.disposition` and `runtimeEnforcement` | `GET` base | Account members with `SUBSCRIPTION_READ` |
+| Preview | `GET` base`/preview` | Account members with `SUBSCRIPTION_READ` |
+| History | `GET` base`/history` | SYSTEM_OWNER |
+| Grant (binds the exact Subscription and Security) | `POST` base`/grant` | SYSTEM_OWNER |
+| Revoke (explicit return to non-enforced behavior) | `POST` base`/revoke` | SYSTEM_OWNER |
+| Restore non-enforced behavior after automatic invalidation | `POST` base`/resolve-lapse` `{ authorizationId, reason, confirmNonEnforced: true }` | SYSTEM_OWNER |
+| Authoritative admission attempts and frozen obligations | `GET` base`/admission-attempts?limit=` | SYSTEM_OWNER |
+
+The PAPER runtime rollout lives at `/api/market-policy-enforcement/runtime-rollout`
+(`GET`; owner-only `/events`, `/activate`, `/deactivate` with
+`{ expectedVersion, reason, confirmPaperOnlyTradingEffect: true }`). It is created
+disabled.
+
+When it is active, entry requests for enforced assignments may be rejected with 403
+and `details.code` `MARKET_POLICY_BLOCKED`, `MARKET_POLICY_INSUFFICIENT_EVIDENCE`,
+`MARKET_POLICY_ENFORCEMENT_LAPSED`, or `MARKET_POLICY_AUTHORIZATION_INEFFECTIVE`, or
+with 503 `MARKET_POLICY_ENFORCEMENT_TECHNICAL_FAILURE`. See
+`docs/architecture/market-policy-pre-intent-enforcement.md`.
+
 ## Safety Notes
 
 Run reconciliation for one explicit account:

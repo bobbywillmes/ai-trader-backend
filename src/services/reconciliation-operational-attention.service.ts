@@ -37,6 +37,8 @@ const RULES: Partial<Record<ReconciliationFindingCode, Rule>> = {
   unexpected_short_position: { code: OPERATIONAL_ATTENTION_CODES.UNEXPECTED_SHORT_POSITION, title: (finding) => `Unexpected short exposure: ${finding.symbol}` },
   local_order_status_stale_terminal_broker_order: { code: OPERATIONAL_ATTENTION_CODES.HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE, title: (finding) => `${finding.symbol} historical entry lifecycle is incomplete` },
   historical_filled_entry_position_link_missing: { code: OPERATIONAL_ATTENTION_CODES.HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE, title: (finding) => `${finding.symbol} historical entry lifecycle is incomplete` },
+  entry_exposure_claim_unresolved: { code: OPERATIONAL_ATTENTION_CODES.LIFECYCLE_REVIEW_REQUIRED, title: (finding) => `${finding.symbol} entry exposure ownership requires review` },
+  entry_exposure_claim_missing: { code: OPERATIONAL_ATTENTION_CODES.LIFECYCLE_REVIEW_REQUIRED, title: (finding) => `${finding.symbol} durable entry exposure ownership is missing` },
 };
 
 function stableMaterial(value: unknown): string {

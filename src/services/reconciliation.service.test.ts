@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   brokerActivityFindMany: vi.fn(),
   orderIntentFindMany: vi.fn(),
   positionExitStateFindMany: vi.fn(),
+  entryExposureClaimFindMany: vi.fn(),
   projectReconciliationOperationalAttention: vi.fn(),
   resolveClearedExitReservationAttention: vi.fn(async () => 0),
   recoverDeterministicallyAbsentStaleCloseIntents: vi.fn(async () => new Set<number>()),
@@ -47,6 +48,9 @@ vi.mock('../db/prisma.js', () => ({
     },
     positionExitState: {
       findMany: mocks.positionExitStateFindMany,
+    },
+    entryExposureClaim: {
+      findMany: mocks.entryExposureClaimFindMany,
     },
   },
 }));
@@ -414,6 +418,11 @@ describe('runReconciliationCheck', () => {
     mocks.brokerActivityFindMany.mockResolvedValue([]);
     mocks.orderIntentFindMany.mockResolvedValue([]);
     mocks.positionExitStateFindMany.mockResolvedValue([]);
+    mocks.entryExposureClaimFindMany.mockResolvedValue([{
+      id: 900, status: 'POSITION_OPEN', orderIntentId: 55, trackedPositionId: 101,
+      security: { symbol: 'SPY' }, orderIntent: { id: 55, status: 'filled' },
+      trackedPosition: { id: 101, status: 'open' },
+    }]);
     mocks.projectReconciliationOperationalAttention.mockResolvedValue({ updated: 0, resolved: 0 });
   });
 
@@ -765,6 +774,7 @@ describe('reconcileEligibleTradingAccounts', () => {
     mocks.brokerActivityFindMany.mockResolvedValue([]);
     mocks.orderIntentFindMany.mockResolvedValue([]);
     mocks.positionExitStateFindMany.mockResolvedValue([]);
+    mocks.entryExposureClaimFindMany.mockResolvedValue([]);
     mocks.getNormalizedPositions.mockResolvedValue([]);
     mocks.getOpenAlpacaOrders.mockResolvedValue([]);
     mocks.tradingAccountFindUniqueOrThrow.mockImplementation(

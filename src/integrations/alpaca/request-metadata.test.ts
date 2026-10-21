@@ -11,6 +11,7 @@ vi.mock('./client.js', () => ({
 import {
   getAlpacaOrderByClientOrderId,
   getAlpacaOrderById,
+  getCompleteOpenAlpacaBuyOrdersForSymbol,
   getOpenAlpacaOrders,
   submitAlpacaEntryOrder,
   submitVerifiedAlpacaExitOrder,
@@ -190,5 +191,42 @@ describe('Alpaca adapter request metadata', () => {
         }),
       })
     );
+  });
+
+  it('paginates the complete symbol-scoped BUY view so an older resting order is not hidden', async () => {
+    const page = Array.from({ length: 500 }, (_, index) => ({
+      id: `order-${500 - index}`,
+      client_order_id: `client-${index}`,
+      symbol: 'SPY',
+      side: 'buy',
+      type: 'limit',
+      time_in_force: 'gtc',
+      status: 'new',
+      submitted_at: '2026-10-17T00:00:00Z',
+    }));
+    const older = { ...page[0], id: 'older-resting-buy', client_order_id: 'older-client' };
+    mocks.alpacaRequestForAccount.mockResolvedValueOnce(page).mockResolvedValueOnce([older]);
+
+    const result = await getCompleteOpenAlpacaBuyOrdersForSymbol(7, 'spy', 'reconciliation_check');
+
+    expect(result).toHaveLength(501);
+    expect(result.at(-1)?.id).toBe('older-resting-buy');
+    expect(mocks.alpacaRequestForAccount).toHaveBeenNthCalledWith(
+      2,
+      7,
+      expect.stringContaining('before_order_id=order-1'),
+      expect.any(Object),
+    );
+  });
+
+  it('fails closed when pagination repeats an order identity', async () => {
+    const page = Array.from({ length: 500 }, (_, index) => ({
+      id: `order-${index}`,
+      client_order_id: `client-${index}`,
+      symbol: 'SPY', side: 'buy', type: 'limit', time_in_force: 'gtc', status: 'new',
+      submitted_at: '2026-10-17T00:00:00Z',
+    }));
+    mocks.alpacaRequestForAccount.mockResolvedValueOnce(page).mockResolvedValueOnce([page[0]]);
+    await expect(getCompleteOpenAlpacaBuyOrdersForSymbol(7, 'SPY')).rejects.toThrow('repeated an order identity');
   });
 });
