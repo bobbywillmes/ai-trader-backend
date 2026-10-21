@@ -109,7 +109,12 @@ the next. The migration inventory and compatibility analysis are in
    printf 'DATABASE_URL=%s\n' "$MIGRATION_STATUS_DATABASE_URL" > "$MIGRATION_STATUS_ENV"
    unset MIGRATION_STATUS_DATABASE_URL
    test "$(stat -c %a "$MIGRATION_STATUS_ENV")" = 600
-   docker run --rm --network <production-compose-network> --env-file "$MIGRATION_STATUS_ENV" --entrypoint npx "$IMAGE_ID" prisma migrate status
+   MIGRATION_STATUS_OUTPUT=$(mktemp /tmp/ai-trader-migration-status-output.XXXXXX)
+   set +e
+   docker run --rm --network <production-compose-network> --env-file "$MIGRATION_STATUS_ENV" --entrypoint npx "$IMAGE_ID" prisma migrate status >"$MIGRATION_STATUS_OUTPUT" 2>&1
+   MIGRATION_STATUS_EXIT=$?
+   set -e
+   cat "$MIGRATION_STATUS_OUTPUT"
    rm -f -- "$MIGRATION_STATUS_ENV"
    test ! -e "$MIGRATION_STATUS_ENV"
    unset MIGRATION_STATUS_ENV
@@ -124,8 +129,24 @@ the next. The migration inventory and compatibility analysis are in
    cardinality, and permissions. Remove any `IMAGE_REVISION` assignment from both
    files; it is not operator configuration. Do not commit either restricted file.
 
-   Require status exit zero, verify removal of the temporary file, and confirm that
-   the production backend container and image did not change.
+   Record `MIGRATION_STATUS_EXIT` and the sanitized status output before deleting
+   `MIGRATION_STATUS_OUTPUT`. Classify the result explicitly:
+
+   - Exit zero is acceptable only when the output says the database schema is already
+     up to date. Record that no feature-branch migration is pending.
+   - A nonzero exit is acceptable for preparation only when the output identifies
+     exactly the seven migrations in the reviewed release-readiness manifest as
+     pending, in manifest order, and shows no failed, divergent, missing-local, or
+     otherwise inconsistent migration state. Record the exact pending list.
+   - Any other nonzero result is STOP. This includes a different pending list, a
+     failed or divergent migration, database connectivity failure, Docker failure,
+     or Prisma CLI failure. Diagnose it; do not reinterpret or suppress it.
+
+   Do not use `|| true`. The temporary `set +e` exists only to capture and classify
+   Prisma's documented nonzero pending-migration result. After classification, remove
+   `MIGRATION_STATUS_OUTPUT`, verify both temporary files are absent, unset
+   `MIGRATION_STATUS_OUTPUT` and `MIGRATION_STATUS_EXIT`, and confirm that the
+   production backend container and image did not change. This gate remains read-only.
 
 2. **Schema compatibility acceptance.** Reverify the recorded `IMAGE_ID` revision
    label and `/app/.image-revision`, without rebuilding. Execute the isolated migration
@@ -141,7 +162,9 @@ the next. The migration inventory and compatibility analysis are in
    migration env file and production Compose network. This is the only gate that may
    run production `prisma migrate deploy`; preparation and preflight must not. This
    gate changes only schema; it does not deploy the application or grant PAPER
-   execution. Stop on any nonzero or partial result.
+   execution. The pre-deploy status may return nonzero only for the exact reviewed
+   seven-migration pending state. Stop on every other nonzero result and on any partial
+   deployment.
 
    Prepare the restricted input, run the approved migration, and remove the input:
 
@@ -152,7 +175,15 @@ the next. The migration inventory and compatibility analysis are in
    printf 'DATABASE_URL=%s\n' "$MIGRATION_DATABASE_URL" > "$MIGRATION_ENV"
    unset MIGRATION_DATABASE_URL
    test "$(stat -c %a "$MIGRATION_ENV")" = 600
-   docker run --rm --network <production-compose-network> --env-file "$MIGRATION_ENV" --entrypoint npx "$IMAGE_ID" prisma migrate status
+   PREDEPLOY_STATUS_OUTPUT=$(mktemp /tmp/ai-trader-predeploy-status.XXXXXX)
+   set +e
+   docker run --rm --network <production-compose-network> --env-file "$MIGRATION_ENV" --entrypoint npx "$IMAGE_ID" prisma migrate status >"$PREDEPLOY_STATUS_OUTPUT" 2>&1
+   PREDEPLOY_STATUS_EXIT=$?
+   set -e
+   cat "$PREDEPLOY_STATUS_OUTPUT"
+   # Classify and record PREDEPLOY_STATUS_EXIT and output before continuing.
+   # Run the next command only with separate migration approval and an exact
+   # seven-item pending list matching the reviewed manifest.
    docker run --rm --network <production-compose-network> --env-file "$MIGRATION_ENV" --entrypoint npx "$IMAGE_ID" prisma migrate deploy
    docker run --rm --network <production-compose-network> --env-file "$MIGRATION_ENV" --entrypoint npx "$IMAGE_ID" prisma migrate status
    rm -f -- "$MIGRATION_ENV"
@@ -162,7 +193,20 @@ the next. The migration inventory and compatibility analysis are in
 
    Enter the approved Compose-equivalent production URL targeting host `postgres`.
    Do not print it or add unrelated credentials. Secured retention requires an
-   explicit exception; otherwise deletion is mandatory.
+   explicit exception; otherwise deletion is mandatory. Before `migrate deploy`, apply
+   the same four-way classification as gate 1: an already-current schema must have
+   exit zero; the only acceptable nonzero result is exactly the seven reviewed pending
+   migrations with no failed, divergent, missing-local, or inconsistent state; every
+   other migration, connectivity, container, or CLI result is STOP. If the schema is
+   already current, record that fact and do not claim that this gate applied the seven
+   migrations. If exactly seven are pending, record the list and then run the separately
+   approved deploy. Delete `PREDEPLOY_STATUS_OUTPUT` after retaining sanitized evidence.
+
+   After deployment, `prisma migrate status` must exit zero and report the schema up to
+   date. Verify in `_prisma_migrations` that all seven manifest migrations exist and
+   completed successfully, with no failed or partial row. Remove both temporary files,
+   verify their removal, and unset their path and exit-code variables. A deploy or
+   post-deploy status failure is STOP; never edit `_prisma_migrations` manually.
 
 4. **Final PAPER authority preflight.** Begin only after the seven migrations are
    confirmed present on the actual production schema. Compose supplies `DATABASE_URL` under

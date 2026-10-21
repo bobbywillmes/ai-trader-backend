@@ -157,7 +157,13 @@ equivalent main-schema fixture) into an isolated PostgreSQL instance with no rou
 broker. Record the source backup identity and row counts. Using the exact reviewed
 image, run `prisma migrate status`, then `prisma migrate deploy`; record exit codes,
 durations, notices, V1 invalidation count, and lock observations. Run `migrate status`
-again and verify all seven migrations in `_prisma_migrations`.
+again and verify all seven migrations in `_prisma_migrations`. The initial status is
+expected to exit nonzero when it reports exactly the seven migrations in this manifest
+as pending. Capture and classify that exit; do not suppress it with `|| true`. Exit zero
+is acceptable only for an already-current schema. Any different pending list, failed or
+divergent state, database connectivity error, or CLI failure is STOP and must not reach
+`migrate deploy`. After deploy, require exit zero, an up-to-date schema, and seven
+successfully completed manifest rows with no failed or partial migration.
 
 Start the currently deployed main-branch backend against a second copy of the migrated
 database in observation-only mode, workers disabled where supported, and all trading
@@ -175,13 +181,20 @@ evidence.
 - `IMAGE_ID` was built, captured, and revision-verified during the separately approved
   read-only preparation gate before production migration status was run; every later
   gate reuses it without rebuilding from a tag.
-- The operator records database identity, migration status, table sizes, active long
-  transactions, available capacity, and a bounded quiet maintenance window.
+- The operator records database identity, the migration-status exit code and sanitized
+  output, table sizes, active long transactions, available capacity, and a bounded
+  quiet maintenance window. Before deployment, exit zero must mean already current;
+  otherwise the only acceptable nonzero state is exactly the seven manifest migrations
+  pending in order, with no failed, divergent, missing-local, or inconsistent state.
+  Connectivity, container, and Prisma CLI failures are STOP, not pending migrations.
 - The owner separately approves the schema migration. This is not PAPER execution or
   application-deployment approval.
-- Run migration status and deploy from the reviewed image on the Compose network. Do
-  not start the backend service and do not use a mutable tag or host checkout.
-- Verify command exit code zero, all seven `_prisma_migrations` rows completed, expected
+- Run migration status from the reviewed image on the Compose network. Only the
+  separately approved migration gate may run `migrate deploy`, and only after the
+  pre-deploy status is classified as exactly the reviewed seven pending migrations.
+  Do not start the backend service and do not use a mutable tag or host checkout.
+- After deploy, verify migration-status exit code zero and an up-to-date schema, all
+  seven `_prisma_migrations` rows completed successfully, expected
   columns/tables/indexes/triggers exist, V1 authorization invalidation is understood,
   rollout id 1 remains disabled/version 0, and existing lifecycle row counts are
   unchanged. A failed or partial migration is STOP and requires diagnosis; do not edit
