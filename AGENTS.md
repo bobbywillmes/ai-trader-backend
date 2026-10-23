@@ -492,8 +492,14 @@ Observer lifecycle authority Phase 0 defines account operation authority and dur
 position provenance as independent requirements. Broker reads never establish local
 trade ownership, executor role alone never proves origin, and observer-created
 positions cannot be promoted by a later role change. The Phase 0 writer inventory is
-an explicit known-debt allowlist, not runtime enforcement. No schema change has yet
-been applied. See `docs/architecture/paper-position-lifecycle-observer-authority.md`.
+an explicit known-debt allowlist, not runtime enforcement. See
+`docs/architecture/paper-position-lifecycle-observer-authority.md`.
+
+Phase 1A adds only the nullable immutable `TrackedPosition` creation-role snapshot and
+the append-only `PositionLifecycleProvenanceDecision` chain. It has no current pointer,
+no legacy backfill and no runtime caller. `LEGACY_EXIT_CONTINUITY` is a reviewed
+permission flag, never an origin. PostgreSQL owns decision timestamps, enforces linear
+supersession and rejects decision update/delete; existing exits remain unchanged.
 
 Ordering invariant: no claim-release decision may run before its delivery
 classification is durable. On any entry failure the worker commits the terminal intent

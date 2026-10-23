@@ -265,6 +265,7 @@ Table User {
   enforcementLapseResolutions AssignmentMarketPolicyEnforcementLapseResolution [not null]
   enforcementRolloutChanges MarketPolicyEnforcementRuntimeRollout [not null]
   enforcementRolloutEvents MarketPolicyEnforcementRuntimeRolloutEvent [not null]
+  positionLifecycleProvenanceDecisions PositionLifecycleProvenanceDecision [not null]
 }
 
 Table UserSetupToken {
@@ -349,6 +350,7 @@ Table TradingAccount {
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage [not null]
   brokerPostOpportunities OrderIntentBrokerPostOpportunity [not null]
   entryExposureClaims EntryExposureClaim [not null]
+  positionLifecycleProvenanceDecisions PositionLifecycleProvenanceDecision [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
 
@@ -1732,6 +1734,7 @@ Table TrackedPosition {
   rawPositionJson Json [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
+  lifecycleAuthorityAtCreation PositionLifecycleCreationAuthority
   securityId Int [not null]
   security Security [not null]
   subscriptionId Int
@@ -1742,6 +1745,7 @@ Table TrackedPosition {
   operationalAttentions OperationalAttention [not null]
   entryDecision EntryDecision
   entryExposureClaim EntryExposureClaim
+  lifecycleProvenanceDecisions PositionLifecycleProvenanceDecision [not null]
   exitState PositionExitState
   configSnapshotJson Json
   configSnapshotCapturedAt DateTime
@@ -1760,6 +1764,31 @@ Table TrackedPosition {
   trailingStopHwm Float
   trailingStopStopPrice Float
   trailingStopLastSyncedAt DateTime
+
+  indexes {
+    (id, tradingAccountId) [unique]
+  }
+}
+
+Table PositionLifecycleProvenanceDecision {
+  id Int [pk, increment]
+  trackedPositionId Int [not null]
+  tradingAccountId Int [not null]
+  origin PositionLifecycleOrigin [not null]
+  ownership PositionLifecycleOwnership [not null]
+  legacyExitContinuityAuthorized Boolean [not null, default: false]
+  classifierVersion String [not null]
+  evidenceFingerprint String [not null]
+  evidenceJson Json [not null]
+  actorType PositionLifecycleDecisionActorType [not null]
+  actorUserId Int
+  supersedesDecisionId Int [unique]
+  decidedAt DateTime [default: `now()`, not null]
+  trackedPosition TrackedPosition [not null]
+  tradingAccount TradingAccount [not null]
+  actorUser User
+  supersedes PositionLifecycleProvenanceDecision
+  supersededBy PositionLifecycleProvenanceDecision
 }
 
 Table PositionExitState {
@@ -3179,6 +3208,28 @@ Enum MomentumPipelineStage {
   HANDOFF_DELIVERY
 }
 
+Enum PositionLifecycleCreationAuthority {
+  EXECUTOR
+  OBSERVER
+}
+
+Enum PositionLifecycleOrigin {
+  LOCAL_ORDER_CHAIN
+  BROKER_EXTERNAL
+  UNKNOWN
+}
+
+Enum PositionLifecycleOwnership {
+  LOCAL_LIFECYCLE_OWNED
+  NOT_LOCALLY_OWNED
+  UNKNOWN
+}
+
+Enum PositionLifecycleDecisionActorType {
+  SYSTEM
+  USER
+}
+
 Enum StrategyMarketPolicyAuthority {
   SHADOW_ONLY
 }
@@ -3593,6 +3644,14 @@ Ref: TrackedPosition.subscriptionId > Subscription.id
 Ref: TrackedPosition.tradingAccountId > TradingAccount.id [delete: Set Null]
 
 Ref: TrackedPosition.tradingAccountSubscriptionId > TradingAccountSubscription.id [delete: Set Null]
+
+Ref: PositionLifecycleProvenanceDecision.(trackedPositionId, tradingAccountId) > TrackedPosition.(id, tradingAccountId) [delete: Restrict]
+
+Ref: PositionLifecycleProvenanceDecision.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: PositionLifecycleProvenanceDecision.actorUserId > User.id [delete: Restrict]
+
+Ref: PositionLifecycleProvenanceDecision.supersedesDecisionId - PositionLifecycleProvenanceDecision.id [delete: Restrict]
 
 Ref: PositionExitState.trackedPositionId - TrackedPosition.id [delete: Cascade]
 
