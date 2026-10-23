@@ -488,6 +488,13 @@ boundary are `NOT_SENT_BLOCKED` before `fetch`; LIVE semantics are unchanged. Se
 `docs/architecture/paper-broker-write-authority.md` and
 `docs/production/paper-broker-write-authority.md`.
 
+Observer lifecycle authority Phase 0 defines account operation authority and durable
+position provenance as independent requirements. Broker reads never establish local
+trade ownership, executor role alone never proves origin, and observer-created
+positions cannot be promoted by a later role change. The Phase 0 writer inventory is
+an explicit known-debt allowlist, not runtime enforcement. No schema change has yet
+been applied. See `docs/architecture/paper-position-lifecycle-observer-authority.md`.
+
 Ordering invariant: no claim-release decision may run before its delivery
 classification is durable. On any entry failure the worker commits the terminal intent
 state together with `NOT_SENT_EVIDENCE_RECORDED` (proven not sent) or
