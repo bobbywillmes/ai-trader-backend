@@ -1,13 +1,14 @@
 # PAPER Position Lifecycle Observer Authority
 
 Status: Phase 0 contract and inventory, Phase 1A additive provenance schema, and
-Phase 1B verified account-scoped lifecycle authority with shadow diagnostics.
+Phase 1B verified account-scoped lifecycle authority with Phase 1B.1 grant hardening
+and shadow diagnostics.
 No runtime enforcement, position synchronization change, historical repair, or exit
 behavior change is implemented.
 
 ## Phase 1B verified lifecycle authority
 
-`src/services/lifecycle-authority.service.ts` is the disconnected Phase 1B authority
+`src/services/lifecycle-authority.service.ts` is the disconnected Phase 1B/1B.1 authority
 module. It is not imported by a lifecycle worker, order path, reconciliation path, or
 broker mutation boundary. It assesses one account as `EXECUTOR`, `OBSERVER`, `UNKNOWN`,
 or `DENIED`, projects operation-scoped shadow permissions, and may issue an opaque
@@ -21,6 +22,11 @@ decrypted key matches its stored fingerprint, and one non-contradictory local ac
 mapping. Executor verification additionally requires the existing exact PAPER
 broker-write account/fingerprint authorization. The final broker-write boundary is
 unchanged and must independently authorize every PAPER mutation.
+
+`PAPER_EXECUTOR` deployments may contain explicitly declared executor and observer
+accounts. An observer remains limited to observer operations and cannot inherit the
+deployment's executor capability. `OBSERVATION_ONLY` deployments may contain only
+observer declarations; an executor declaration there is denied.
 
 LIVE accounts return `LIVE_POLICY_INDEPENDENT`. They are not passed through a
 PAPER-only throwing authorization path and receive no lifecycle grant from this
@@ -36,22 +42,44 @@ all families, but durable position provenance remains an independent prerequisit
 for future strategy-owned mutations and the PAPER write boundary remains an
 independent prerequisite for a broker write.
 
-Assessments and grants live only in process memory and expire after at most five
-minutes. Grant validation rereads account identity, credential status, verification,
+Internal verdicts, assessments, grants, caches, and revocation generations live only
+in process memory. Internal verdicts are immutable; every returned diagnostic is a
+deeply frozen detached copy and is never consulted as authorization state. Grant
+issuance and validation independently apply the role/operation policy.
+
+Grant time comes only from the process clock. Callers cannot provide an issuance or
+validation time. A caller may request a shorter positive finite TTL, but grants expire
+after at most five minutes. Grants store issuance and expiration time, validation
+checks both the absolute expiration and maximum duration, and once an expiration or
+backward-clock condition is observed that grant can never become valid again.
+
+Each grant captures account-scoped and process-global monotonic revocation
+generations. Account or global invalidation increments a generation as well as
+clearing cached verdicts, so previously issued grants are revoked immediately within
+that process. A failed or contradictory forced broker verification, or a negative
+reassessment replacing verified state, increments the account generation. Each
+asynchronous assessment captures its starting generations; an older successful
+assessment cannot cache or issue authority after a newer invalidation.
+
+Grant validation rereads account identity, supported broker/environment, credential status, verification,
 fingerprint, update revision, local mapping uniqueness, and the startup-loaded
 ownership/authorization configuration immediately before the intended protected
-transaction. This detects database credential rotation, revocation, identity change,
-and mapping conflict without another nested Alpaca GET. The fresh broker GET occurs
-when an assessment cache is minted or refreshed. A failed refresh is fail-closed and
-is not cached. Callers that change credentials or account configuration should also
-call `invalidateLifecycleAuthorityCache`; the transaction-time revision check still
-rejects already-issued grants if they do not.
+transaction. It also rechecks the exact declaration role, deployment compatibility,
+operation policy, and captured revocation generations. The configuration revision
+includes broker and environment. These checks detect database credential rotation,
+revocation, identity change, and mapping conflict without another nested Alpaca GET.
+The fresh broker GET occurs when an assessment is minted or forced to refresh.
 
 Environment ownership and authorization declarations are parsed once at process
 startup. Changing environment variables outside the process cannot be detected by a
 running process; restart is required and inherently destroys all cached assessments
 and grants. Therefore Phase 1B does not claim immediate invalidation for external
 environment changes.
+
+Revocation generations are process-local. In a multi-process deployment, invalidating
+one process does not notify another process; each process retains its own TTL and
+database/configuration validation. Distributed revocation or persistent capabilities
+are intentionally outside Phase 1B.1.
 
 Future enforcement integration must acquire the existing account-scoped
 `LIFECYCLE_MUTATION` lock, resolve one operation grant, and validate it immediately
