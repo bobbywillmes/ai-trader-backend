@@ -2,7 +2,8 @@
 
 Status: Phase 0 contract and inventory, Phase 1A additive provenance schema, and
 Phase 1B verified account-scoped lifecycle authority with Phase 1B.1 grant hardening
-and shadow diagnostics.
+and shadow diagnostics. Phase 1C.0 adds a disconnected, transaction-enforced read-only
+historical evidence inventory; see `docs/production/position-lifecycle-evidence-inventory.md`.
 No runtime enforcement, position synchronization change, historical repair, or exit
 behavior change is implemented.
 
