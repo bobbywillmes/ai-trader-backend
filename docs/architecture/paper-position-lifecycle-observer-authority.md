@@ -1,8 +1,64 @@
 # PAPER Position Lifecycle Observer Authority
 
-Status: Phase 0 contract and inventory plus Phase 1A additive provenance schema.
+Status: Phase 0 contract and inventory, Phase 1A additive provenance schema, and
+Phase 1B verified account-scoped lifecycle authority with shadow diagnostics.
 No runtime enforcement, position synchronization change, historical repair, or exit
 behavior change is implemented.
+
+## Phase 1B verified lifecycle authority
+
+`src/services/lifecycle-authority.service.ts` is the disconnected Phase 1B authority
+module. It is not imported by a lifecycle worker, order path, reconciliation path, or
+broker mutation boundary. It assesses one account as `EXECUTOR`, `OBSERVER`, `UNKNOWN`,
+or `DENIED`, projects operation-scoped shadow permissions, and may issue an opaque
+process-local grant for future guarded-service integration. A shadow permission is a
+diagnostic statement only; it is not trading authority in Phase 1B.
+
+PAPER verification requires one explicit account ownership declaration, a deployment
+role consistent with that declaration, exact agreement among declared, stored, and
+fresh broker-returned Alpaca account identities, an active verified credential whose
+decrypted key matches its stored fingerprint, and one non-contradictory local account
+mapping. Executor verification additionally requires the existing exact PAPER
+broker-write account/fingerprint authorization. The final broker-write boundary is
+unchanged and must independently authorize every PAPER mutation.
+
+LIVE accounts return `LIVE_POLICY_INDEPENDENT`. They are not passed through a
+PAPER-only throwing authorization path and receive no lifecycle grant from this
+module. Existing LIVE approval, arming, protective/risk-reducing, and final-write
+controls remain authoritative.
+
+The operation families are `OBSERVE`, `POSITION_CREATE`,
+`POSITION_MARKET_REFRESH`, `POSITION_LIFECYCLE_TRANSITION`, `LOCAL_ORDER_ADOPT`,
+`SUBSCRIPTION_ATTRIBUTION`, `EXIT_STATE_MUTATION`, `ENTRY_CLAIM_MUTATION`,
+`RECONCILIATION_REPAIR`, and `BROKER_EXIT_WRITE`. Verified observers are projected
+only the first three observation-safe operations. Verified executors are projected
+all families, but durable position provenance remains an independent prerequisite
+for future strategy-owned mutations and the PAPER write boundary remains an
+independent prerequisite for a broker write.
+
+Assessments and grants live only in process memory and expire after at most five
+minutes. Grant validation rereads account identity, credential status, verification,
+fingerprint, update revision, local mapping uniqueness, and the startup-loaded
+ownership/authorization configuration immediately before the intended protected
+transaction. This detects database credential rotation, revocation, identity change,
+and mapping conflict without another nested Alpaca GET. The fresh broker GET occurs
+when an assessment cache is minted or refreshed. A failed refresh is fail-closed and
+is not cached. Callers that change credentials or account configuration should also
+call `invalidateLifecycleAuthorityCache`; the transaction-time revision check still
+rejects already-issued grants if they do not.
+
+Environment ownership and authorization declarations are parsed once at process
+startup. Changing environment variables outside the process cannot be detected by a
+running process; restart is required and inherently destroys all cached assessments
+and grants. Therefore Phase 1B does not claim immediate invalidation for external
+environment changes.
+
+Future enforcement integration must acquire the existing account-scoped
+`LIFECYCLE_MUTATION` lock, resolve one operation grant, and validate it immediately
+before each protected transaction. Lock acquisition never grants authority, and the
+grant never replaces the lock. Nested services may reuse only the exact account and
+operation capability. Phase 1B deliberately does not wire this contract into those
+services.
 
 ## Contract
 
@@ -245,6 +301,33 @@ runtime lifecycle workflow in Phase 1A.
 - Measure legacy production evidence coverage before deciding whether a single
   append-only provenance decision table is sufficient or a narrowly scoped reviewed
   adoption action is also required.
+
+## Enforcement blockers retained after Phase 1B
+
+Phase 1B assessments must not treat the Phase 1A provenance table as trusted proof of
+local ownership. Independent review must resolve all of the following before any
+provenance-based enforcement cutover:
+
+- Remove PostgreSQL superuser, trigger-bypass, and other owner-equivalent privileges
+  from production application credentials; keep migration authority separate.
+- Prevent broadly privileged INSERT roles from fabricating provenance decisions,
+  preferably through a database-enforced restricted append boundary.
+- Strengthen evidence fingerprint canonicalization and add deterministic verification
+  of stored evidence, rather than trusting an application-produced hash alone.
+- Define strict reviewed-actor eligibility and explicit revocation semantics for
+  `LEGACY_EXIT_CONTINUITY`.
+- Define a durable, atomic capture-start boundary for new-position creation authority.
+- Inventory legacy active positions with missing account attribution before coverage
+  can be measured.
+- Expand database-bypass and concurrent append/mutation tests for the selected
+  enforcement backstop.
+
+Recommended Phase 1C scope is evidence collection, readiness reporting, and the
+database/security design needed to close these blockers. It should record creation
+authority only at a proven atomic creation boundary, measure legacy coverage without
+repairing records, define reviewed continuity/revocation, and prove application-role
+and concurrency backstops. It should remain shadow-only and stop for review before
+any lifecycle service consumes a grant as enforcement authority.
 
 ## Mixed-version and rollback assessment
 
