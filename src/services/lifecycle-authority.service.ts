@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { env } from '../config/env.js';
+import { logger } from '../config/logger.js';
 import { prisma } from '../db/prisma.js';
 import { getAlpacaAccount } from '../integrations/alpaca/account.adapter.js';
 import { resolveAlpacaConfigForTradingAccount } from './alpaca-config-resolver.service.js';
@@ -41,7 +42,8 @@ type OwnershipRole = 'OBSERVER' | 'EXECUTOR';
 type InternalVerdict = Readonly<{
   assessment: LifecycleAuthorityAssessment; role: OwnershipRole | null; brokerAccountId: string | null;
   credentialFingerprint: string | null; configurationRevision: string | null;
-  verifiedAtMs: number | null; expiresAtMs: number | null; accountGeneration: number; globalGeneration: number;
+  verificationStartedAtMs: number | null; verificationStartedElapsedMs: number | null; expiresAtMs: number | null;
+  attemptSequence: number | null; accountGeneration: number; globalGeneration: number;
 }>;
 declare const lifecycleGrantBrand: unique symbol;
 export type LifecycleAuthorityGrant = { readonly [lifecycleGrantBrand]: true };
@@ -55,6 +57,7 @@ type GrantState = {
 const grants = new WeakMap<object, GrantState>();
 const assessmentCache = new Map<number, InternalVerdict>();
 const accountGenerations = new Map<number, number>();
+const assessmentAttemptSequences = new Map<number, number>();
 let globalGeneration = 0;
 const accountSelect = { id: true, broker: true, environment: true, brokerAccountId: true,
   credential: { select: { id: true, status: true, verifiedAt: true, revokedAt: true, keyFingerprint: true, updatedAt: true } } } as const;
@@ -101,11 +104,13 @@ function detachedAssessment(assessment: LifecycleAuthorityAssessment): Lifecycle
     deniedOperations: Object.freeze(assessment.deniedOperations.map(item => Object.freeze({ ...item }))),
     provenanceRequiredForStrategyOperations: Object.freeze([...assessment.provenanceRequiredForStrategyOperations]) });
 }
-function verdict(assessment: LifecycleAuthorityAssessment, generation: { account: number; global: number }, role: OwnershipRole | null = null): InternalVerdict {
+function verdict(assessment: LifecycleAuthorityAssessment, generation: { account: number; global: number }, role: OwnershipRole | null = null,
+  timing: { startedAtMs: number; startedElapsedMs: number; attemptSequence: number } | null = null): InternalVerdict {
   return Object.freeze({ assessment, role, brokerAccountId: assessment.observedBrokerAccountId,
     credentialFingerprint: assessment.credentialFingerprint, configurationRevision: assessment.configurationRevision,
-    verifiedAtMs: assessment.verifiedAt ? Date.parse(assessment.verifiedAt) : null,
+    verificationStartedAtMs: timing?.startedAtMs ?? null, verificationStartedElapsedMs: timing?.startedElapsedMs ?? null,
     expiresAtMs: assessment.expiresAt ? Date.parse(assessment.expiresAt) : null,
+    attemptSequence: timing?.attemptSequence ?? null,
     accountGeneration: generation.account, globalGeneration: generation.global });
 }
 async function readAccountEvidence(tradingAccountId: number) {
@@ -128,12 +133,27 @@ function negativeVerdict(accountId: number, assessment: LifecycleAuthorityAssess
   if (forceRefresh || assessmentCache.get(accountId)?.role !== null) invalidateAccount(accountId);
   return verdict(assessment, { account: generationFor(accountId), global: globalGeneration });
 }
+function nextAssessmentAttempt(accountId: number) {
+  const sequence = (assessmentAttemptSequences.get(accountId) ?? 0) + 1;
+  assessmentAttemptSequences.set(accountId, sequence);
+  return sequence;
+}
+function assessmentTimingIsFresh(internal: InternalVerdict, nowMs = trustedNowMs(), nowElapsedMs = trustedElapsedMs()) {
+  if (internal.verificationStartedAtMs === null || internal.verificationStartedElapsedMs === null || internal.expiresAtMs === null) return false;
+  const elapsedAgeMs = nowElapsedMs - internal.verificationStartedElapsedMs;
+  return elapsedAgeMs >= 0 && elapsedAgeMs < MAX_GRANT_TTL_MS
+    && nowMs >= internal.verificationStartedAtMs && nowMs < internal.expiresAtMs;
+}
 
 async function assessInternal(tradingAccountId: number, forceRefresh = false): Promise<InternalVerdict> {
   const nowMs = trustedNowMs();
+  const nowElapsedMs = trustedElapsedMs();
   const cached = assessmentCache.get(tradingAccountId);
-  if (!forceRefresh && cached && cached.expiresAtMs !== null && cached.expiresAtMs > nowMs
+  if (!forceRefresh && cached && assessmentTimingIsFresh(cached, nowMs, nowElapsedMs)
     && cached.accountGeneration === generationFor(tradingAccountId) && cached.globalGeneration === globalGeneration) return cached;
+  const verificationStartedAtMs = nowMs;
+  const verificationStartedElapsedMs = nowElapsedMs;
+  const attemptSequence = nextAssessmentAttempt(tradingAccountId);
   const started = { account: generationFor(tradingAccountId), global: globalGeneration };
   const { account, mappings } = await readAccountEvidence(tradingAccountId);
   const fail = (assessment: LifecycleAuthorityAssessment) => negativeVerdict(tradingAccountId, assessment, forceRefresh);
@@ -171,15 +191,16 @@ async function assessInternal(tradingAccountId: number, forceRefresh = false): P
   catch { return fail(immutableAssessment({ ...declaredBase, outcome: 'UNKNOWN', reasonCode: 'BROKER_IDENTITY_UNAVAILABLE', reason: 'Fresh broker identity verification failed.' })); }
   if (observedBrokerAccountId !== expected || observedBrokerAccountId !== account.brokerAccountId)
     return fail(immutableAssessment({ ...declaredBase, observedBrokerAccountId, outcome: 'DENIED', reasonCode: 'BROKER_IDENTITY_MISMATCH', reason: 'Broker-returned identity does not exactly match expected and stored identities.' }));
-  const verifiedAtMs = trustedNowMs();
-  const expiresAtMs = verifiedAtMs + MAX_GRANT_TTL_MS;
+  const expiresAtMs = verificationStartedAtMs + MAX_GRANT_TTL_MS;
   const revision = configurationRevision(account, declaration);
   const assessment = immutableAssessment({ ...declaredBase, observedBrokerAccountId, credentialFingerprint: account.credential.keyFingerprint,
-    configurationRevision: revision, verifiedAt: new Date(verifiedAtMs).toISOString(), expiresAt: new Date(expiresAtMs).toISOString(),
+    configurationRevision: revision, verifiedAt: new Date(verificationStartedAtMs).toISOString(), expiresAt: new Date(expiresAtMs).toISOString(),
     outcome: declaration.role, reasonCode: declaration.role === 'EXECUTOR' ? 'VERIFIED_EXECUTOR' : 'VERIFIED_OBSERVER',
     reason: `Exact PAPER identity and credential state are verified for ${declaration.role.toLowerCase()} lifecycle assessment.` });
-  const internal = verdict(assessment, started, declaration.role);
-  if (generationFor(account.id) === started.account && globalGeneration === started.global) assessmentCache.set(account.id, internal);
+  const internal = verdict(assessment, started, declaration.role,
+    { startedAtMs: verificationStartedAtMs, startedElapsedMs: verificationStartedElapsedMs, attemptSequence });
+  if (generationFor(account.id) === started.account && globalGeneration === started.global
+    && assessmentAttemptSequences.get(account.id) === attemptSequence && assessmentTimingIsFresh(internal)) assessmentCache.set(account.id, internal);
   return internal;
 }
 
@@ -192,16 +213,24 @@ export async function issueLifecycleAuthorityGrant(args: { tradingAccountId: num
   const internal = await assessInternal(args.tradingAccountId);
   const issuedAtMs = trustedNowMs();
   const issuedElapsedMs = trustedElapsedMs();
+  const elapsedAssessmentAgeMs = internal.verificationStartedElapsedMs === null
+    ? Number.POSITIVE_INFINITY : issuedElapsedMs - internal.verificationStartedElapsedMs;
+  const remainingMonotonicMs = MAX_GRANT_TTL_MS - elapsedAssessmentAgeMs;
+  const remainingWallMs = internal.expiresAtMs === null ? Number.NEGATIVE_INFINITY : internal.expiresAtMs - issuedAtMs;
   if (!internal.role || !policyAllows(internal.role, args.operation) || !deploymentAllows(internal.role)
     || internal.accountGeneration !== generationFor(args.tradingAccountId) || internal.globalGeneration !== globalGeneration
-    || internal.expiresAtMs === null || internal.expiresAtMs <= issuedAtMs || !internal.brokerAccountId
+    || internal.attemptSequence !== assessmentAttemptSequences.get(args.tradingAccountId)
+    || !assessmentTimingIsFresh(internal, issuedAtMs, issuedElapsedMs) || remainingMonotonicMs <= 0 || remainingWallMs <= 0
+    || !internal.brokerAccountId
     || !internal.credentialFingerprint || !internal.configurationRevision) return null;
   const token = Object.freeze({}) as LifecycleAuthorityGrant;
-  const expiresAtMs = Math.min(issuedAtMs + ttlMs, internal.expiresAtMs);
+  const expiresAfterMs = Math.min(ttlMs, remainingMonotonicMs, remainingWallMs);
+  if (expiresAfterMs <= 0) return null;
+  const expiresAtMs = Math.min(issuedAtMs + expiresAfterMs, internal.expiresAtMs!);
   grants.set(token, { id: randomUUID(), tradingAccountId: args.tradingAccountId, operation: args.operation,
     role: internal.role, brokerAccountId: internal.brokerAccountId, credentialFingerprint: internal.credentialFingerprint,
     configurationRevision: internal.configurationRevision, issuedAtMs, expiresAtMs, issuedElapsedMs,
-    expiresAfterMs: expiresAtMs - issuedAtMs, lastObservedWallMs: issuedAtMs,
+    expiresAfterMs, lastObservedWallMs: issuedAtMs,
     accountGeneration: internal.accountGeneration, globalGeneration: internal.globalGeneration, permanentlyExpired: false });
   return token;
 }
@@ -221,7 +250,13 @@ export async function validateLifecycleAuthorityGrant(args: { grant: LifecycleAu
   if (!state || state.permanentlyExpired || state.tradingAccountId !== args.tradingAccountId || state.operation !== args.operation) return false;
   if (!grantTimeIsValid(state)) return false;
   if (state.accountGeneration !== generationFor(args.tradingAccountId) || state.globalGeneration !== globalGeneration) return false;
-  const { account, mappings } = await readAccountEvidence(args.tradingAccountId);
+  let evidence: AccountEvidence;
+  try { evidence = await readAccountEvidence(args.tradingAccountId); }
+  catch {
+    logger.warn({ tradingAccountId: args.tradingAccountId }, 'Lifecycle authority grant validation evidence read failed closed.');
+    return false;
+  }
+  const { account, mappings } = evidence;
   if (!account || account.broker !== 'ALPACA' || account.environment !== 'PAPER' || account.brokerAccountId !== state.brokerAccountId
     || mappings.length !== 1 || mappings[0]?.id !== account.id) return false;
   const declarations = env.PAPER_BROKER_WRITE_OWNERSHIP.filter(item => item.tradingAccountId === account.id);

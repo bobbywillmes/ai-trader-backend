@@ -13,9 +13,11 @@ const state = vi.hoisted(() => ({
   },
   account: null as TestAccount,
   mappings: [] as TestMappings, observedBrokerAccountId: 'PA-BOBBY', brokerFailure: false,
+  brokerCallCount: 0,
   brokerImplementation: null as null | (() => Promise<{ account_number: string }>),
   accountReadImplementation: null as null | (() => Promise<TestAccount>),
   mappingReadImplementation: null as null | (() => Promise<TestMappings>),
+  resolverImplementation: null as null | (() => Promise<{ apiKey: string; keyFingerprint: string | null }>),
   apiKey: 'key-one', resolvedFingerprint: 'fp:key-one' as string | null,
 }));
 vi.mock('../config/env.js', () => ({ env: state.env }));
@@ -24,11 +26,13 @@ vi.mock('../db/prisma.js', () => ({ prisma: { tradingAccount: {
   findMany: vi.fn(async () => state.mappingReadImplementation ? state.mappingReadImplementation() : state.mappings),
 } } }));
 vi.mock('../integrations/alpaca/account.adapter.js', () => ({ getAlpacaAccount: vi.fn(async () => {
+  state.brokerCallCount += 1;
   if (state.brokerImplementation) return state.brokerImplementation();
   if (state.brokerFailure) throw new Error('offline');
   return { account_number: state.observedBrokerAccountId };
 }) }));
-vi.mock('./alpaca-config-resolver.service.js', () => ({ resolveAlpacaConfigForTradingAccount: vi.fn(async () => ({ apiKey: state.apiKey, keyFingerprint: state.resolvedFingerprint })) }));
+vi.mock('./alpaca-config-resolver.service.js', () => ({ resolveAlpacaConfigForTradingAccount: vi.fn(async () =>
+  state.resolverImplementation ? state.resolverImplementation() : { apiKey: state.apiKey, keyFingerprint: state.resolvedFingerprint }) }));
 vi.mock('./trading-credential-crypto.service.js', () => ({ fingerprintSecret: vi.fn((value: string) => `fp:${value}`) }));
 
 import { LIFECYCLE_AUTHORITY_GRANT_MAX_TTL_MS, assessLifecycleAuthority, invalidateLifecycleAuthorityCache,
@@ -45,8 +49,9 @@ function configure(role: 'OBSERVER' | 'EXECUTOR' = 'OBSERVER', environment: 'PAP
 }
 beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-24T12:00:00Z'));
-  configure(); state.observedBrokerAccountId = 'PA-BOBBY'; state.brokerFailure = false; state.brokerImplementation = null;
+  configure(); state.observedBrokerAccountId = 'PA-BOBBY'; state.brokerFailure = false; state.brokerCallCount = 0; state.brokerImplementation = null;
   state.accountReadImplementation = null; state.mappingReadImplementation = null;
+  state.resolverImplementation = null;
   state.apiKey = 'key-one'; state.resolvedFingerprint = 'fp:key-one'; invalidateLifecycleAuthorityCache();
 });
 
@@ -76,6 +81,50 @@ describe('immutable lifecycle authority decisions', () => {
 });
 
 describe('trusted grant lifetime', () => {
+  it('rejects rolled-back cached identity evidence and performs fresh broker verification', async () => {
+    await assessLifecycleAuthority(7);
+    expect(state.brokerCallCount).toBe(1);
+    vi.setSystemTime(new Date('2026-10-24T11:59:59Z'));
+    const grant = await issueLifecycleAuthorityGrant({ tradingAccountId: 7, operation: 'OBSERVE' });
+    expect(grant).not.toBeNull();
+    expect(state.brokerCallCount).toBe(2);
+  });
+
+  it.each([
+    ['observer', 'OBSERVER' as const, 'OBSERVE' as const],
+    ['executor', 'EXECUTOR' as const, 'BROKER_EXIT_WRITE' as const],
+  ])('does not issue a %s grant from identity evidence at the monotonic boundary', async (_name, role, operation) => {
+    configure(role);
+    await assessLifecycleAuthority(7);
+    vi.advanceTimersByTime(LIFECYCLE_AUTHORITY_GRANT_MAX_TTL_MS);
+    state.brokerFailure = true;
+    await expect(issueLifecycleAuthorityGrant({ tradingAccountId: 7, operation })).resolves.toBeNull();
+    expect(state.brokerCallCount).toBe(2);
+  });
+
+  it('charges slow broker verification against the five-minute evidence window', async () => {
+    let release!: (value: { account_number: string }) => void;
+    const broker = new Promise<{ account_number: string }>(resolve => { release = resolve; });
+    state.brokerImplementation = () => broker;
+    const pendingGrant = issueLifecycleAuthorityGrant({ tradingAccountId: 7, operation: 'OBSERVE' });
+    await Promise.resolve(); await Promise.resolve();
+    vi.advanceTimersByTime(2 * 60_000);
+    release({ account_number: 'PA-BOBBY' });
+    const grant = await pendingGrant;
+    expect(grant).not.toBeNull();
+    vi.advanceTimersByTime(3 * 60_000 - 1);
+    await expect(validateLifecycleAuthorityGrant({ grant: grant!, tradingAccountId: 7, operation: 'OBSERVE' })).resolves.toBe(true);
+    vi.advanceTimersByTime(1);
+    await expect(validateLifecycleAuthorityGrant({ grant: grant!, tradingAccountId: 7, operation: 'OBSERVE' })).resolves.toBe(false);
+  });
+
+  it('fails closed when broker refresh fails after stale-cache rejection', async () => {
+    await assessLifecycleAuthority(7);
+    vi.advanceTimersByTime(LIFECYCLE_AUTHORITY_GRANT_MAX_TTL_MS);
+    state.brokerFailure = true;
+    await expect(issueLifecycleAuthorityGrant({ tradingAccountId: 7, operation: 'OBSERVE' })).resolves.toBeNull();
+  });
+
   it('caps a late-issued grant to its broker-verification deadline and retains the five-minute maximum', async () => {
     await assessLifecycleAuthority(7);
     vi.advanceTimersByTime(LIFECYCLE_AUTHORITY_GRANT_MAX_TTL_MS - 1_000);
@@ -189,6 +238,57 @@ describe('revocation generations and concurrent assessments', () => {
     releaseSlow({ account_number: 'PA-BOBBY' });
     await expect(older).resolves.toMatchObject({ outcome: 'OBSERVER' });
     await expect(issueLifecycleAuthorityGrant({ tradingAccountId: 7, operation: 'OBSERVE' })).resolves.toBeNull();
+  });
+
+  it('keeps newer successful credential evidence when assessments complete in reverse order', async () => {
+    const firstAccount = structuredClone(state.account!);
+    const secondAccount = structuredClone(state.account!);
+    secondAccount.credential!.keyFingerprint = 'fp:key-two';
+    secondAccount.credential!.updatedAt = new Date('2026-10-24T11:30:00Z');
+    let accountCall = 0;
+    state.accountReadImplementation = async () => structuredClone(++accountCall === 1 ? firstAccount : secondAccount);
+    let resolverCall = 0;
+    state.resolverImplementation = async () => ++resolverCall === 1
+      ? { apiKey: 'key-one', keyFingerprint: 'fp:key-one' }
+      : { apiKey: 'key-two', keyFingerprint: 'fp:key-two' };
+    let releaseOlder!: (value: { account_number: string }) => void;
+    const olderBroker = new Promise<{ account_number: string }>(resolve => { releaseOlder = resolve; });
+    let brokerCall = 0;
+    state.brokerImplementation = async () => ++brokerCall === 1 ? olderBroker : { account_number: 'PA-BOBBY' };
+
+    const older = assessLifecycleAuthority(7, { forceRefresh: true });
+    await Promise.resolve(); await Promise.resolve();
+    const newer = await assessLifecycleAuthority(7, { forceRefresh: true });
+    expect(newer.credentialFingerprint).toBe('fp:key-two');
+    releaseOlder({ account_number: 'PA-BOBBY' });
+    await expect(older).resolves.toMatchObject({ credentialFingerprint: 'fp:key-one' });
+
+    state.account = secondAccount;
+    state.accountReadImplementation = null;
+    state.apiKey = 'key-two'; state.resolvedFingerprint = 'fp:key-two'; state.resolverImplementation = null;
+    const grant = await issueLifecycleAuthorityGrant({ tradingAccountId: 7, operation: 'OBSERVE' });
+    expect(grant).not.toBeNull();
+    expect(state.brokerCallCount).toBe(2);
+    await expect(validateLifecycleAuthorityGrant({ grant: grant!, tradingAccountId: 7, operation: 'OBSERVE' })).resolves.toBe(true);
+  });
+
+  it('does not let a superseded older assessment issue its own grant', async () => {
+    let releaseOlder!: (value: { account_number: string }) => void;
+    const olderBroker = new Promise<{ account_number: string }>(resolve => { releaseOlder = resolve; });
+    let brokerCall = 0;
+    state.brokerImplementation = async () => ++brokerCall === 1 ? olderBroker : { account_number: 'PA-BOBBY' };
+    const olderGrant = issueLifecycleAuthorityGrant({ tradingAccountId: 7, operation: 'OBSERVE' });
+    await Promise.resolve(); await Promise.resolve();
+    const newerGrant = await issueLifecycleAuthorityGrant({ tradingAccountId: 7, operation: 'OBSERVE' });
+    expect(newerGrant).not.toBeNull();
+    releaseOlder({ account_number: 'PA-BOBBY' });
+    await expect(olderGrant).resolves.toBeNull();
+  });
+
+  it('fails closed when database evidence cannot be read during grant validation', async () => {
+    const grant = await issueLifecycleAuthorityGrant({ tradingAccountId: 7, operation: 'OBSERVE' });
+    state.accountReadImplementation = async () => { throw new Error('database unavailable'); };
+    await expect(validateLifecycleAuthorityGrant({ grant: grant!, tradingAccountId: 7, operation: 'OBSERVE' })).resolves.toBe(false);
   });
 });
 
