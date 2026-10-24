@@ -1,21 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+type TestAccount = null | { id: number; broker: 'ALPACA' | 'OTHER'; environment: 'PAPER' | 'LIVE'; brokerAccountId: string | null;
+  credential: null | { id: number; status: 'ACTIVE' | 'REVOKED' | 'NEEDS_VERIFICATION'; verifiedAt: Date | null;
+    revokedAt: Date | null; keyFingerprint: string | null; updatedAt: Date } };
+type TestMappings = Array<{ id: number }>;
+
 const state = vi.hoisted(() => ({
   env: {
     PAPER_BROKER_WRITE_DEPLOYMENT_ROLE: 'OBSERVATION_ONLY' as 'OBSERVATION_ONLY' | 'PAPER_EXECUTOR',
     PAPER_BROKER_WRITE_OWNERSHIP: [] as Array<{ tradingAccountId: number; role: 'OBSERVER' | 'EXECUTOR'; expectedBrokerAccountId?: string }>,
     PAPER_BROKER_WRITE_AUTHORIZATIONS: [] as Array<{ brokerAccountId: string; keyFingerprint: string }>,
   },
-  account: null as null | { id: number; broker: 'ALPACA' | 'OTHER'; environment: 'PAPER' | 'LIVE'; brokerAccountId: string | null;
-    credential: null | { id: number; status: 'ACTIVE' | 'REVOKED' | 'NEEDS_VERIFICATION'; verifiedAt: Date | null;
-      revokedAt: Date | null; keyFingerprint: string | null; updatedAt: Date } },
-  mappings: [] as Array<{ id: number }>, observedBrokerAccountId: 'PA-BOBBY', brokerFailure: false,
+  account: null as TestAccount,
+  mappings: [] as TestMappings, observedBrokerAccountId: 'PA-BOBBY', brokerFailure: false,
   brokerImplementation: null as null | (() => Promise<{ account_number: string }>),
+  accountReadImplementation: null as null | (() => Promise<TestAccount>),
+  mappingReadImplementation: null as null | (() => Promise<TestMappings>),
   apiKey: 'key-one', resolvedFingerprint: 'fp:key-one' as string | null,
 }));
 vi.mock('../config/env.js', () => ({ env: state.env }));
 vi.mock('../db/prisma.js', () => ({ prisma: { tradingAccount: {
-  findUnique: vi.fn(async () => state.account), findMany: vi.fn(async () => state.mappings),
+  findUnique: vi.fn(async () => state.accountReadImplementation ? state.accountReadImplementation() : state.account),
+  findMany: vi.fn(async () => state.mappingReadImplementation ? state.mappingReadImplementation() : state.mappings),
 } } }));
 vi.mock('../integrations/alpaca/account.adapter.js', () => ({ getAlpacaAccount: vi.fn(async () => {
   if (state.brokerImplementation) return state.brokerImplementation();
@@ -40,6 +46,7 @@ function configure(role: 'OBSERVER' | 'EXECUTOR' = 'OBSERVER', environment: 'PAP
 beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-24T12:00:00Z'));
   configure(); state.observedBrokerAccountId = 'PA-BOBBY'; state.brokerFailure = false; state.brokerImplementation = null;
+  state.accountReadImplementation = null; state.mappingReadImplementation = null;
   state.apiKey = 'key-one'; state.resolvedFingerprint = 'fp:key-one'; invalidateLifecycleAuthorityCache();
 });
 
@@ -69,6 +76,21 @@ describe('immutable lifecycle authority decisions', () => {
 });
 
 describe('trusted grant lifetime', () => {
+  it('caps a late-issued grant to its broker-verification deadline and retains the five-minute maximum', async () => {
+    await assessLifecycleAuthority(7);
+    vi.advanceTimersByTime(LIFECYCLE_AUTHORITY_GRANT_MAX_TTL_MS - 1_000);
+    const lateGrant = await issueLifecycleAuthorityGrant({ tradingAccountId: 7, operation: 'OBSERVE' });
+    expect(lateGrant).not.toBeNull();
+    vi.advanceTimersByTime(999);
+    await expect(validateLifecycleAuthorityGrant({ grant: lateGrant!, tradingAccountId: 7, operation: 'OBSERVE' })).resolves.toBe(true);
+    vi.advanceTimersByTime(1);
+    await expect(validateLifecycleAuthorityGrant({ grant: lateGrant!, tradingAccountId: 7, operation: 'OBSERVE' })).resolves.toBe(false);
+
+    const freshGrant = await issueLifecycleAuthorityGrant({ tradingAccountId: 7, operation: 'OBSERVE', ttlMs: 99_000_000 });
+    vi.advanceTimersByTime(LIFECYCLE_AUTHORITY_GRANT_MAX_TTL_MS);
+    await expect(validateLifecycleAuthorityGrant({ grant: freshGrant!, tradingAccountId: 7, operation: 'OBSERVE' })).resolves.toBe(false);
+  });
+
   it('expires exactly at the boundary and cannot be revived by moving the clock backward', async () => {
     const grant = await issueLifecycleAuthorityGrant({ tradingAccountId: 7, operation: 'OBSERVE', ttlMs: 1_000 });
     vi.advanceTimersByTime(999);
@@ -98,9 +120,28 @@ describe('trusted grant lifetime', () => {
     await expect(validateLifecycleAuthorityGrant({ grant: grant!, tradingAccountId: 7, operation: 'OBSERVE',
       now: new Date('1900-01-01T00:00:00Z') } as Parameters<typeof validateLifecycleAuthorityGrant>[0])).resolves.toBe(false);
   });
+
+  it('permanently rejects a wall-clock rollback after a successful validation', async () => {
+    const grant = await issueLifecycleAuthorityGrant({ tradingAccountId: 7, operation: 'OBSERVE', ttlMs: 10_000 });
+    vi.advanceTimersByTime(2_000);
+    await expect(validateLifecycleAuthorityGrant({ grant: grant!, tradingAccountId: 7, operation: 'OBSERVE' })).resolves.toBe(true);
+    vi.setSystemTime(new Date('2026-10-24T12:00:01Z'));
+    await expect(validateLifecycleAuthorityGrant({ grant: grant!, tradingAccountId: 7, operation: 'OBSERVE' })).resolves.toBe(false);
+    vi.setSystemTime(new Date('2026-10-24T12:00:03Z'));
+    await expect(validateLifecycleAuthorityGrant({ grant: grant!, tradingAccountId: 7, operation: 'OBSERVE' })).resolves.toBe(false);
+  });
 });
 
 describe('revocation generations and concurrent assessments', () => {
+  async function validationBlockedOnAccountRead(grant: LifecycleAuthorityGrant) {
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    state.accountReadImplementation = async () => { await blocked; return state.account; };
+    const validation = validateLifecycleAuthorityGrant({ grant, tradingAccountId: 7, operation: 'OBSERVE' });
+    await Promise.resolve();
+    return { validation, release };
+  }
+
   it('revokes grants on account and global invalidation', async () => {
     const accountGrant = await issueLifecycleAuthorityGrant({ tradingAccountId: 7, operation: 'OBSERVE' });
     invalidateLifecycleAuthorityCache(7);
@@ -115,6 +156,25 @@ describe('revocation generations and concurrent assessments', () => {
     state.brokerFailure = true;
     await expect(assessLifecycleAuthority(7, { forceRefresh: true })).resolves.toMatchObject({ outcome: 'UNKNOWN', reasonCode: 'BROKER_IDENTITY_UNAVAILABLE' });
     await expect(validateLifecycleAuthorityGrant({ grant: grant!, tradingAccountId: 7, operation: 'OBSERVE' })).resolves.toBe(false);
+  });
+
+  it.each([
+    ['account', () => invalidateLifecycleAuthorityCache(7)],
+    ['global', () => invalidateLifecycleAuthorityCache()],
+  ])('rejects validation when %s invalidation occurs during database evidence reads', async (_name, invalidate) => {
+    const grant = await issueLifecycleAuthorityGrant({ tradingAccountId: 7, operation: 'OBSERVE' });
+    const pending = await validationBlockedOnAccountRead(grant!);
+    invalidate();
+    pending.release();
+    await expect(pending.validation).resolves.toBe(false);
+  });
+
+  it('rejects validation when the grant expires during a database evidence read', async () => {
+    const grant = await issueLifecycleAuthorityGrant({ tradingAccountId: 7, operation: 'OBSERVE', ttlMs: 1_000 });
+    const pending = await validationBlockedOnAccountRead(grant!);
+    vi.advanceTimersByTime(1_000);
+    pending.release();
+    await expect(pending.validation).resolves.toBe(false);
   });
 
   it('prevents a stale successful assessment from restoring authority after newer invalidation', async () => {

@@ -48,7 +48,8 @@ export type LifecycleAuthorityGrant = { readonly [lifecycleGrantBrand]: true };
 type GrantState = {
   id: string; tradingAccountId: number; operation: LifecycleAuthorityOperation; role: OwnershipRole;
   brokerAccountId: string; credentialFingerprint: string; configurationRevision: string;
-  issuedAtMs: number; expiresAtMs: number; accountGeneration: number; globalGeneration: number; permanentlyExpired: boolean;
+  issuedAtMs: number; expiresAtMs: number; issuedElapsedMs: number; expiresAfterMs: number; lastObservedWallMs: number;
+  accountGeneration: number; globalGeneration: number; permanentlyExpired: boolean;
 };
 
 const grants = new WeakMap<object, GrantState>();
@@ -61,6 +62,7 @@ type AccountEvidence = Awaited<ReturnType<typeof readAccountEvidence>>;
 type Declaration = { tradingAccountId: number; role: OwnershipRole; expectedBrokerAccountId?: string | undefined };
 
 function trustedNowMs() { return Date.now(); }
+function trustedElapsedMs() { return performance.now(); }
 function generationFor(accountId: number) { return accountGenerations.get(accountId) ?? 0; }
 function policyAllows(role: OwnershipRole, operation: LifecycleAuthorityOperation) {
   return role === 'EXECUTOR' ? EXECUTOR_OPERATIONS.has(operation) : OBSERVER_OPERATIONS.has(operation);
@@ -189,25 +191,35 @@ export async function issueLifecycleAuthorityGrant(args: { tradingAccountId: num
   const ttlMs = Math.min(args.ttlMs ?? MAX_GRANT_TTL_MS, MAX_GRANT_TTL_MS);
   const internal = await assessInternal(args.tradingAccountId);
   const issuedAtMs = trustedNowMs();
+  const issuedElapsedMs = trustedElapsedMs();
   if (!internal.role || !policyAllows(internal.role, args.operation) || !deploymentAllows(internal.role)
     || internal.accountGeneration !== generationFor(args.tradingAccountId) || internal.globalGeneration !== globalGeneration
     || internal.expiresAtMs === null || internal.expiresAtMs <= issuedAtMs || !internal.brokerAccountId
     || !internal.credentialFingerprint || !internal.configurationRevision) return null;
   const token = Object.freeze({}) as LifecycleAuthorityGrant;
+  const expiresAtMs = Math.min(issuedAtMs + ttlMs, internal.expiresAtMs);
   grants.set(token, { id: randomUUID(), tradingAccountId: args.tradingAccountId, operation: args.operation,
     role: internal.role, brokerAccountId: internal.brokerAccountId, credentialFingerprint: internal.credentialFingerprint,
-    configurationRevision: internal.configurationRevision, issuedAtMs, expiresAtMs: issuedAtMs + ttlMs,
+    configurationRevision: internal.configurationRevision, issuedAtMs, expiresAtMs, issuedElapsedMs,
+    expiresAfterMs: expiresAtMs - issuedAtMs, lastObservedWallMs: issuedAtMs,
     accountGeneration: internal.accountGeneration, globalGeneration: internal.globalGeneration, permanentlyExpired: false });
   return token;
 }
-export async function validateLifecycleAuthorityGrant(args: { grant: LifecycleAuthorityGrant; tradingAccountId: number; operation: LifecycleAuthorityOperation }): Promise<boolean> {
-  const state = grants.get(args.grant as object);
+function grantTimeIsValid(state: GrantState) {
   const nowMs = trustedNowMs();
-  if (!state || state.permanentlyExpired || state.tradingAccountId !== args.tradingAccountId || state.operation !== args.operation) return false;
-  if (nowMs < state.issuedAtMs || nowMs >= state.expiresAtMs || state.expiresAtMs - state.issuedAtMs > MAX_GRANT_TTL_MS) {
+  const elapsedMs = trustedElapsedMs() - state.issuedElapsedMs;
+  if (nowMs < state.issuedAtMs || nowMs < state.lastObservedWallMs || nowMs >= state.expiresAtMs
+    || elapsedMs < 0 || elapsedMs >= state.expiresAfterMs || state.expiresAfterMs > MAX_GRANT_TTL_MS) {
     state.permanentlyExpired = true;
     return false;
   }
+  state.lastObservedWallMs = nowMs;
+  return true;
+}
+export async function validateLifecycleAuthorityGrant(args: { grant: LifecycleAuthorityGrant; tradingAccountId: number; operation: LifecycleAuthorityOperation }): Promise<boolean> {
+  const state = grants.get(args.grant as object);
+  if (!state || state.permanentlyExpired || state.tradingAccountId !== args.tradingAccountId || state.operation !== args.operation) return false;
+  if (!grantTimeIsValid(state)) return false;
   if (state.accountGeneration !== generationFor(args.tradingAccountId) || state.globalGeneration !== globalGeneration) return false;
   const { account, mappings } = await readAccountEvidence(args.tradingAccountId);
   if (!account || account.broker !== 'ALPACA' || account.environment !== 'PAPER' || account.brokerAccountId !== state.brokerAccountId
@@ -220,7 +232,10 @@ export async function validateLifecycleAuthorityGrant(args: { grant: LifecycleAu
     || account.credential.status !== 'ACTIVE' || account.credential.revokedAt || !account.credential.verifiedAt
     || account.credential.keyFingerprint !== state.credentialFingerprint
     || !executorFingerprintAuthorized(declaration, state.credentialFingerprint)) return false;
-  return configurationRevision(account, declaration) === state.configurationRevision;
+  if (configurationRevision(account, declaration) !== state.configurationRevision) return false;
+  return grantTimeIsValid(state)
+    && state.accountGeneration === generationFor(args.tradingAccountId)
+    && state.globalGeneration === globalGeneration;
 }
 export function invalidateLifecycleAuthorityCache(tradingAccountId?: number) {
   if (tradingAccountId === undefined) { globalGeneration += 1; assessmentCache.clear(); }
