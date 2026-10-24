@@ -358,6 +358,14 @@ repairing records, define reviewed continuity/revocation, and prove application-
 and concurrency backstops. It should remain shadow-only and stop for review before
 any lifecycle service consumes a grant as enforcement authority.
 
+Phase 1C.0.1 keeps persistent inventory disabled because the repository has no
+independently managed positive development-database identity. Its corrected V1 reader
+separates verified closing SELL evidence from the entry BUY chain, fails closed on
+nonterminal or identity-inconsistent execution/claim evidence, treats repair-derived
+position links as insufficient origin proof, and never accepts an unverified recorded
+continuity decision as completed review. See the production inventory runbook for the
+reader-credential and future infrastructure identity contract.
+
 ## Mixed-version and rollback assessment
 
 The migration is expand-only: one nullable no-default column, new enum types, a new

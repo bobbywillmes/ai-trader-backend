@@ -6,10 +6,19 @@ position ownership, exit eligibility, repair permission, or broker-write capabil
 
 ## V1 classification contract
 
-- `COMPLETE_LOCAL_ORDER_CHAIN` requires one reconciled BUY intent; frozen Subscription
-  and assignment identity; position-consistent BrokerOrder and FILL links; unique
-  activity identity; exact executed quantity; stable order identity; exactly one final
-  dispatch record; and exactly one matching adapter-invocation marker.
+- `COMPLETE_LOCAL_ORDER_CHAIN` requires exactly one reconciled, terminal BUY intent and
+  one terminal broker order; consistent broker/mode/account/Security/symbol/side and
+  stable order identities; frozen Subscription and assignment identity; final
+  cumulative quantity with zero remaining quantity; exactly one durable dispatch and
+  matching adapter marker; and a consistent, terminal claim lifecycle. A link created
+  by `historical_order_lifecycle_repair` is reported as insufficient original-origin
+  proof. Multiple entries or retries that V1 cannot reconcile remain unknown.
+- SELL intents from `close-position`, `exit-evaluator`, and
+  `remaining-exposure-close` are exit evidence only when source, long-position
+  direction, chronology, and a direct evidence link all agree. They remain visible in
+  the report but do not invalidate the BUY chain. Unclassified or unrelated intents
+  are never silently accepted as exits, and exit fills are never counted as entry
+  fills.
 - `POSITIVE_EXTERNAL_ORIGIN` requires independently verified external-origin evidence.
   Existing provenance decisions are currently reported as `UNVERIFIED`, so an
   unsupported `BROKER_EXTERNAL` row remains unresolved.
@@ -31,28 +40,20 @@ Each bounded batch bulk-loads related intents, orders, fills, dispatch records, 
 attribution, provenance, and attention. The query layer receives only the transaction
 client and imports no lifecycle, repair, recovery, broker, or mutation service.
 
-The CLI refuses to run unless all of the following are true:
+Persistent execution is disabled. The repository has no independently managed,
+positive development-tier database marker; a process environment allowlist, database
+name, `NODE_ENV`, or PAPER/LIVE account contents cannot supply that proof. Development
+may legitimately contain both PAPER and LIVE account rows.
 
-1. `ALLOW_PERSISTENT_DEVELOPMENT_LIFECYCLE_INVENTORY=I_UNDERSTAND_READ_ONLY`.
-2. `LIFECYCLE_INVENTORY_APPROVED_DATABASE_IDENTITIES` is a non-empty JSON array of
-   exact `database`, `host`, `port`, and `user` values.
-3. The connected identity exactly matches an entry.
-4. The role is non-superuser, has no INSERT/UPDATE/DELETE privilege on protected
-   lifecycle tables, and has `default_transaction_read_only=on`.
-5. The transaction reports `transaction_read_only=on`.
-
-Example shape only; obtain and independently verify the real development reader
-identity before use:
-
-```powershell
-$env:ALLOW_PERSISTENT_DEVELOPMENT_LIFECYCLE_INVENTORY='I_UNDERSTAND_READ_ONLY'
-$env:LIFECYCLE_INVENTORY_APPROVED_DATABASE_IDENTITIES='[{"database":"approved_dev","host":"127.0.0.1","port":5432,"user":"approved_reader"}]'
-npm.cmd run lifecycle:evidence-inventory -- --page-size=250
-```
-
-Do not run the CLI with normal application, migration, owner, or superuser credentials.
-Phase 1C.0 does not create a reader role. Until a verified SELECT-only development role
-and exact identity allowlist exist, use only the disposable PostgreSQL tests.
+The disposable harness verifies exact connection identity and reports tier
+`DISPOSABLE_TEST`. Future persistent acceptance requires an infrastructure-managed
+development identity that production cannot self-assert, plus a dedicated credential
+whose session and effective role match, whose read-only default is set at role or
+database scope, and which cannot acquire write power. The verifier inventories all
+application-schema relations for INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES and
+TRIGGER; relation/schema/database ownership; schema CREATE; elevated role attributes;
+built-in write roles; and direct or NOINHERIT membership escalation. A read-only
+transaction and a non-escalatable credential are separate mandatory controls.
 
 ## Output and review
 
@@ -60,5 +61,8 @@ Every historical position is included, including closed and account-unattributed
 Aggregates are grouped by database tier, account environment, broker, and position
 status. Classification counts are exclusive; reason and readiness counts overlap.
 Open/closing positions with an exit state but without complete V1 local proof are
-marked `LEGACY_EXIT_CONTINUITY_REVIEW_REQUIRED`. Existing exit state or protective
-orders never establish entry ownership, and the inventory changes none of them.
+marked `LEGACY_EXIT_CONTINUITY_REVIEW_REQUIRED`. A recorded continuity assertion is
+currently untrusted and adds `LEGACY_EXIT_CONTINUITY_RECORDED_UNVERIFIED`; it neither
+emits `...REVIEWED` nor suppresses aggregate review counts. Existing exit state or
+protective orders never establish entry ownership, and the inventory changes none of
+them.

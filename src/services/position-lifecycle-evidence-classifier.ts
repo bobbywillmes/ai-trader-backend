@@ -1,97 +1,41 @@
-import type { InventoryEvidenceReference, LifecycleInventoryReasonCode, PositionLifecycleEvidenceResult, PositionLifecycleEvidenceSource } from './position-lifecycle-evidence-inventory.types.js';
+import type { InventoryEvidenceReference, InventoryIntentEvidence, LifecycleInventoryReasonCode, PositionLifecycleEvidenceResult, PositionLifecycleEvidenceSource } from './position-lifecycle-evidence-inventory.types.js';
 
-const active = (status: string) => status === 'open' || status === 'closing';
-const canonical = (value: string) => value.trim().toUpperCase();
+const canonical=(value:string)=>value.trim().toUpperCase();
+const filled=(status:string)=>['FILLED','EXECUTED','COMPLETED'].includes(canonical(status));
+const active=(status:string)=>status==='open'||status==='closing';
+const closeSources=new Set(['close-position','exit-evaluator','remaining-exposure-close']);
 
-export function classifyPositionLifecycleEvidence(source: PositionLifecycleEvidenceSource): PositionLifecycleEvidenceResult {
-  const reasons = new Set<LifecycleInventoryReasonCode>();
-  const evidence: InventoryEvidenceReference[] = [{ kind: 'TrackedPosition', id: String(source.identity.trackedPositionId), role: 'SUPPORTING' }];
-  const contradict = (code: LifecycleInventoryReasonCode, kind?: string, id?: string) => {
-    reasons.add(code);
-    if (kind && id) evidence.push({ kind, id, role: 'CONTRADICTING' });
-  };
-  if (source.identity.tradingAccountId === null) reasons.add('POSITION_ACCOUNT_MISSING');
-  if (source.creationAuthority === null) reasons.add('CREATION_AUTHORITY_HISTORICAL_NULL');
-  if (source.identity.accountBroker && canonical(source.identity.accountBroker) !== canonical(source.identity.positionBroker)) contradict('BROKER_MISMATCH');
-  if (canonical(source.identity.securitySymbol) !== canonical(source.identity.positionSymbol)) contradict('SECURITY_SYMBOL_MISMATCH');
+function role(intent:InventoryIntentEvidence,source:PositionLifecycleEvidenceSource):InventoryIntentEvidence['evidenceRole']{
+  const side=canonical(intent.side);const linked=intent.trackedPositionId===source.identity.trackedPositionId||intent.brokerOrders.some(x=>x.trackedPositionId===source.identity.trackedPositionId)||intent.fills.some(x=>x.trackedPositionId===source.identity.trackedPositionId);
+  if(canonical(source.identity.side)==='LONG'&&side==='BUY')return 'ENTRY';
+  if(canonical(source.identity.side)==='LONG'&&side==='SELL'&&closeSources.has(intent.source)&&linked&&new Date(intent.createdAt)>=new Date(source.currentState.openedAt))return 'EXIT';
+  return side==='BUY'||side==='SELL'?'CONTRADICTORY':'UNCLASSIFIED';
+}
 
-  const intents = source.intents.filter((intent) => intent.side.toLowerCase() === 'buy');
-  if (source.intents.some((intent) => intent.side.toLowerCase() !== 'buy')) contradict('ENTRY_INTENT_NOT_BUY');
-  if (intents.length === 0) reasons.add('ORDER_INTENT_LINK_MISSING');
-  if (intents.length > 1) reasons.add('MULTIPLE_ENTRY_INTENTS_UNRECONCILED');
-
-  let structural = intents.length === 1;
-  let execution = intents.length === 1;
-  const intent = intents[0];
-  if (intent) {
-    evidence.push({ kind: 'OrderIntent', id: String(intent.id), role: 'SUPPORTING' });
-    if (intent.tradingAccountId !== source.identity.tradingAccountId || (intent.trackedPositionId !== null && intent.trackedPositionId !== source.identity.trackedPositionId)) contradict('ACCOUNT_IDENTITY_MISMATCH', 'OrderIntent', String(intent.id));
-    if (intent.trackedPositionId === null) { reasons.add('HEURISTIC_OR_REPAIR_LINK_NOT_PROOF'); structural = false; }
-    if (intent.subscriptionId === null) { reasons.add('FROZEN_SUBSCRIPTION_MISSING'); structural = false; }
-    if (intent.tradingAccountSubscriptionId === null) { reasons.add('FROZEN_ASSIGNMENT_MISSING'); structural = false; }
-    const attrs = source.attribution.filter((row) => row.subscriptionId === intent.subscriptionId);
-    const attr = attrs.find((row) => row.assignmentId === intent.tradingAccountSubscriptionId);
-    if (!attr || attr.securityId !== source.identity.securityId || attr.assignmentAccountId !== source.identity.tradingAccountId || attr.assignmentSubscriptionId !== intent.subscriptionId) {
-      contradict('ATTRIBUTION_IDENTITY_CONFLICT'); structural = false;
-    }
-    if (source.currentState.subscriptionId !== null && source.currentState.subscriptionId !== intent.subscriptionId) contradict('ATTRIBUTION_IDENTITY_CONFLICT');
-    if (source.currentState.tradingAccountSubscriptionId !== null && source.currentState.tradingAccountSubscriptionId !== intent.tradingAccountSubscriptionId) contradict('ATTRIBUTION_IDENTITY_CONFLICT');
-
-    if (intent.brokerOrders.length === 0) { reasons.add('BROKER_ORDER_LINK_MISSING'); structural = false; }
-    for (const order of intent.brokerOrders) {
-      evidence.push({ kind: 'BrokerOrder', id: String(order.id), role: 'SUPPORTING' });
-      if (order.tradingAccountId !== source.identity.tradingAccountId || (order.trackedPositionId !== null && order.trackedPositionId !== source.identity.trackedPositionId) || canonical(order.broker) !== canonical(source.identity.positionBroker)) contradict('BROKER_ORDER_IDENTITY_CONFLICT', 'BrokerOrder', String(order.id));
-      if (order.trackedPositionId === null) { reasons.add('HEURISTIC_OR_REPAIR_LINK_NOT_PROOF'); structural = false; }
-      if (!order.clientOrderIdMatchesIntent) contradict('CLIENT_ORDER_ID_MISMATCH', 'BrokerOrder', String(order.id));
-    }
-    const duplicateFills = intent.fills.filter((fill) => fill.activityIdDuplicateCount > 1);
-    if (duplicateFills.length) {
-      reasons.add('DUPLICATE_BROKER_ACTIVITY_IDENTITY'); structural = false; execution = false;
-      duplicateFills.forEach((fill) => evidence.push({ kind: 'BrokerActivity', id: String(fill.id), role: 'CONTRADICTING' }));
-    }
-    if (intent.fills.length === 0) { reasons.add('CONFIRMED_ENTRY_FILL_MISSING'); structural = false; execution = false; }
-    let executed = 0;
-    for (const fill of intent.fills) {
-      evidence.push({ kind: 'BrokerActivity', id: String(fill.id), role: 'SUPPORTING' });
-      if (fill.tradingAccountId !== source.identity.tradingAccountId || (fill.trackedPositionId !== null && fill.trackedPositionId !== source.identity.trackedPositionId)) contradict('ACCOUNT_IDENTITY_MISMATCH', 'BrokerActivity', String(fill.id));
-      if (fill.trackedPositionId === null) { reasons.add('HEURISTIC_OR_REPAIR_LINK_NOT_PROOF'); structural = false; }
-      if (!fill.orderIdMatchesBrokerOrder) contradict('FILL_ORDER_ID_MISMATCH', 'BrokerActivity', String(fill.id));
-      if (fill.qty === null || !Number.isFinite(fill.qty) || fill.qty <= 0) reasons.add('EXECUTED_QUANTITY_AMBIGUOUS'); else executed += Math.abs(fill.qty);
-    }
-    if (intent.qty === null || reasons.has('EXECUTED_QUANTITY_AMBIGUOUS')) execution = false;
-    else if (Math.abs(executed - Math.abs(intent.qty)) > 0.000001) { reasons.add('ENTRY_FILL_PARTIAL_ONLY'); execution = false; }
-    const dispatchIds = [...intent.dispatch.consumptionIds, ...intent.dispatch.unenforcedDispatchIds];
-    if (dispatchIds.length !== 1) { reasons.add(dispatchIds.length ? 'DISPATCH_EVIDENCE_CONFLICT' : 'DISPATCH_EVIDENCE_MISSING'); execution = false; }
-    if (!intent.dispatch.clientIdentityConsistent) { contradict('DISPATCH_EVIDENCE_CONFLICT'); execution = false; }
-    if (intent.dispatch.adapterMarkerEventIds.length !== 1) { reasons.add('ADAPTER_INVOCATION_EVIDENCE_MISSING'); execution = false; }
-    dispatchIds.forEach((id) => evidence.push({ kind: 'BrokerDispatch', id: String(id), role: 'SUPPORTING' }));
-    intent.dispatch.adapterMarkerEventIds.forEach((id) => evidence.push({ kind: 'EntryExposureClaimEvent', id: String(id), role: 'SUPPORTING' }));
+export function classifyPositionLifecycleEvidence(source:PositionLifecycleEvidenceSource):PositionLifecycleEvidenceResult{
+  const reasons=new Set<LifecycleInventoryReasonCode>();const evidence:InventoryEvidenceReference[]=[{kind:'TrackedPosition',id:String(source.identity.trackedPositionId),role:'SUPPORTING'}];
+  const contradict=(code:LifecycleInventoryReasonCode,kind?:string,id?:number)=>{reasons.add(code);if(kind&&id!==undefined)evidence.push({kind,id:String(id),role:'CONTRADICTING'});};
+  if(source.identity.tradingAccountId===null)reasons.add('POSITION_ACCOUNT_MISSING');if(source.creationAuthority===null)reasons.add('CREATION_AUTHORITY_HISTORICAL_NULL');
+  for(const fill of source.unmatchedFills){reasons.add('POSITION_FILL_WITHOUT_INTENT');evidence.push({kind:'BrokerActivity',id:String(fill.id),role:'CORROBORATING'});}
+  if(source.identity.accountBroker&&canonical(source.identity.accountBroker)!==canonical(source.identity.positionBroker))contradict('BROKER_MISMATCH');if(canonical(source.identity.securitySymbol)!==canonical(source.identity.positionSymbol))contradict('SECURITY_SYMBOL_MISMATCH');
+  const intents=source.intents.map(x=>({...x,evidenceRole:role(x,source)}));const entries=intents.filter(x=>x.evidenceRole==='ENTRY');
+  intents.filter(x=>x.evidenceRole==='EXIT').forEach(x=>{reasons.add('EXIT_INTENT_RECORDED');evidence.push({kind:'ExitOrderIntent',id:String(x.id),role:'CORROBORATING'});});
+  intents.filter(x=>x.evidenceRole==='UNCLASSIFIED').forEach(x=>{reasons.add('RELATED_INTENT_CLASSIFICATION_INCOMPLETE');evidence.push({kind:'OrderIntent',id:String(x.id),role:'CORROBORATING'});});
+  intents.filter(x=>x.evidenceRole==='CONTRADICTORY').forEach(x=>contradict('CONTRADICTORY_RELATED_INTENT','OrderIntent',x.id));
+  if(!entries.length)reasons.add('ORDER_INTENT_LINK_MISSING');if(entries.length>1)reasons.add('MULTIPLE_ENTRY_INTENTS_UNRECONCILED');let structural=entries.length===1;let execution=entries.length===1;const intent=entries[0];
+  if(intent){
+    evidence.push({kind:'OrderIntent',id:String(intent.id),role:'SUPPORTING'});if(canonical(intent.side)!=='BUY'){contradict('ENTRY_SIDE_MISMATCH','OrderIntent',intent.id);structural=false;}if(canonical(intent.symbol)!==canonical(source.identity.securitySymbol))contradict('SECURITY_SYMBOL_MISMATCH','OrderIntent',intent.id);if(!filled(intent.status)){reasons.add('ENTRY_STATUS_NOT_FILLED');execution=false;}
+    if(intent.tradingAccountId!==source.identity.tradingAccountId||(intent.trackedPositionId!==null&&intent.trackedPositionId!==source.identity.trackedPositionId))contradict('ACCOUNT_IDENTITY_MISMATCH','OrderIntent',intent.id);if(intent.trackedPositionId===null){reasons.add('HEURISTIC_OR_REPAIR_LINK_NOT_PROOF');structural=false;}if(intent.subscriptionId===null){reasons.add('FROZEN_SUBSCRIPTION_MISSING');structural=false;}if(intent.tradingAccountSubscriptionId===null){reasons.add('FROZEN_ASSIGNMENT_MISSING');structural=false;}
+    const attr=source.attribution.find(x=>x.subscriptionId===intent.subscriptionId&&x.assignmentId===intent.tradingAccountSubscriptionId);if(intent.subscriptionId!==null&&intent.tradingAccountSubscriptionId!==null&&(!attr||attr.securityId!==source.identity.securityId||attr.assignmentAccountId!==source.identity.tradingAccountId||attr.assignmentSubscriptionId!==intent.subscriptionId)){contradict('ATTRIBUTION_IDENTITY_CONFLICT');structural=false;}if(source.currentState.subscriptionId!==null&&source.currentState.subscriptionId!==intent.subscriptionId)contradict('ATTRIBUTION_IDENTITY_CONFLICT');if(source.currentState.tradingAccountSubscriptionId!==null&&source.currentState.tradingAccountSubscriptionId!==intent.tradingAccountSubscriptionId)contradict('ATTRIBUTION_IDENTITY_CONFLICT');
+    if(!intent.brokerOrders.length){reasons.add('BROKER_ORDER_LINK_MISSING');structural=false;}if(intent.brokerOrders.length>1){reasons.add('MULTIPLE_ENTRY_INTENTS_UNRECONCILED');structural=false;execution=false;}
+    for(const order of intent.brokerOrders){evidence.push({kind:'BrokerOrder',id:String(order.id),role:'SUPPORTING'});if(order.tradingAccountId!==source.identity.tradingAccountId||(order.trackedPositionId!==null&&order.trackedPositionId!==source.identity.trackedPositionId)||canonical(order.broker)!==canonical(source.identity.positionBroker)||order.securityId!==source.identity.securityId||canonical(order.symbol)!==canonical(source.identity.securitySymbol))contradict('BROKER_ORDER_IDENTITY_CONFLICT','BrokerOrder',order.id);if(canonical(order.side)!=='BUY')contradict('ENTRY_SIDE_MISMATCH','BrokerOrder',order.id);if(!filled(order.status)){reasons.add('BROKER_ORDER_STATUS_NOT_FILLED');execution=false;}if(order.trackedPositionId===null){reasons.add('HEURISTIC_OR_REPAIR_LINK_NOT_PROOF');structural=false;}if(!order.clientOrderIdMatchesIntent)contradict('CLIENT_ORDER_ID_MISMATCH','BrokerOrder',order.id);}
+    if(!intent.fills.length){reasons.add('CONFIRMED_ENTRY_FILL_MISSING');structural=false;execution=false;}let executed=0;let finals=0;
+    for(const fill of intent.fills){evidence.push({kind:'BrokerActivity',id:String(fill.id),role:'SUPPORTING'});if(fill.activityIdDuplicateCount>1){reasons.add('DUPLICATE_BROKER_ACTIVITY_IDENTITY');structural=false;execution=false;}if(fill.trackedPositionLinkSource==='historical_order_lifecycle_repair'){reasons.add('REPAIR_DERIVED_POSITION_LINK_INSUFFICIENT');structural=false;}if(fill.tradingAccountId!==source.identity.tradingAccountId||(fill.trackedPositionId!==null&&fill.trackedPositionId!==source.identity.trackedPositionId)||canonical(fill.broker)!==canonical(source.identity.positionBroker)||canonical(fill.mode)!==canonical(source.identity.environment??'')||canonical(fill.symbol??'')!==canonical(source.identity.securitySymbol))contradict('ACCOUNT_IDENTITY_MISMATCH','BrokerActivity',fill.id);if(canonical(fill.side??'')!=='BUY')contradict('ENTRY_SIDE_MISMATCH','BrokerActivity',fill.id);if(fill.trackedPositionId===null){reasons.add('HEURISTIC_OR_REPAIR_LINK_NOT_PROOF');structural=false;}if(!fill.orderIdMatchesBrokerOrder)contradict('FILL_ORDER_ID_MISMATCH','BrokerActivity',fill.id);if(fill.qty===null||!Number.isFinite(fill.qty)||fill.qty<=0)reasons.add('EXECUTED_QUANTITY_AMBIGUOUS');else executed+=Math.abs(fill.qty);if(fill.cumQty!==null&&intent.qty!==null&&Math.abs(fill.cumQty-Math.abs(intent.qty))<1e-6&&fill.leavesQty===0)finals++;if(fill.leavesQty!==null&&fill.leavesQty<0)contradict('ENTRY_FILL_FINAL_STATE_INVALID','BrokerActivity',fill.id);}
+    if(intent.qty===null||reasons.has('EXECUTED_QUANTITY_AMBIGUOUS'))execution=false;else if(Math.abs(executed-Math.abs(intent.qty))>1e-6){reasons.add('ENTRY_FILL_PARTIAL_ONLY');execution=false;}if(intent.fills.length&&finals!==1){reasons.add('ENTRY_FILL_FINAL_STATE_INVALID');execution=false;}
+    const dispatch=[...intent.dispatch.consumptionIds,...intent.dispatch.unenforcedDispatchIds];if(dispatch.length!==1){reasons.add(dispatch.length?'DISPATCH_EVIDENCE_CONFLICT':'DISPATCH_EVIDENCE_MISSING');execution=false;}if(!intent.dispatch.clientIdentityConsistent){if(dispatch.length||intent.dispatch.adapterMarkerEventIds.length)contradict('DISPATCH_EVIDENCE_CONFLICT');execution=false;}if(intent.dispatch.adapterMarkerEventIds.length!==1){reasons.add('ADAPTER_INVOCATION_EVIDENCE_MISSING');execution=false;}dispatch.forEach(id=>evidence.push({kind:'BrokerDispatch',id:String(id),role:'SUPPORTING'}));intent.dispatch.adapterMarkerEventIds.forEach(id=>evidence.push({kind:'EntryExposureClaimEvent',id:String(id),role:'SUPPORTING'}));
   }
-
-  if (!source.claim) reasons.add('ENTRY_CLAIM_MISSING');
-  else {
-    evidence.push({ kind: 'EntryExposureClaim', id: String(source.claim.id), role: 'CORROBORATING' });
-    if (source.claim.status === 'UNRESOLVED') reasons.add('ENTRY_CLAIM_UNRESOLVED');
-    if (source.claim.tradingAccountId !== source.identity.tradingAccountId || source.claim.securityId !== source.identity.securityId || (source.claim.trackedPositionId !== null && source.claim.trackedPositionId !== source.identity.trackedPositionId)) contradict('ENTRY_CLAIM_IDENTITY_CONFLICT');
-  }
-  if (!source.provenance.chainValid) contradict('PROVENANCE_CHAIN_INVALID');
-  if (source.provenance.decisionIds.length === 0) reasons.add('NO_RECORDED_PROVENANCE_DECISION');
-  source.provenance.decisionIds.forEach((id) => evidence.push({ kind: 'PositionLifecycleProvenanceDecision', id: String(id), role: 'CORROBORATING' }));
-  const verifiedExternal = source.provenance.origin === 'BROKER_EXTERNAL' && source.provenance.ownership === 'NOT_LOCALLY_OWNED' && source.provenance.trust === 'VERIFIED';
-  if (source.provenance.origin === 'BROKER_EXTERNAL' && !verifiedExternal) reasons.add('RECORDED_EXTERNAL_PROVENANCE_UNVERIFIED');
-
-  const contradictionCodes: LifecycleInventoryReasonCode[] = ['ACCOUNT_IDENTITY_MISMATCH','BROKER_MISMATCH','SECURITY_SYMBOL_MISMATCH','ENTRY_INTENT_NOT_BUY','BROKER_ORDER_IDENTITY_CONFLICT','FILL_ORDER_ID_MISMATCH','CLIENT_ORDER_ID_MISMATCH','DISPATCH_EVIDENCE_CONFLICT','ATTRIBUTION_IDENTITY_CONFLICT','ENTRY_CLAIM_IDENTITY_CONFLICT','PROVENANCE_CHAIN_INVALID'];
-  let contradictory = contradictionCodes.some((code) => reasons.has(code));
-  const complete = structural && execution && intents.length === 1 && !contradictory;
-  if (complete && source.provenance.origin && source.provenance.origin !== 'LOCAL_ORDER_CHAIN') { reasons.add('RECORDED_PROVENANCE_DISAGREES'); contradictory = true; }
-  if (verifiedExternal && (complete || intents.length > 0)) { reasons.add('RECORDED_PROVENANCE_DISAGREES'); contradictory = true; }
-  if (complete) reasons.add('LOCAL_ENTRY_CHAIN_COMPLETE');
-  if (verifiedExternal) reasons.add('INDEPENDENT_EXTERNAL_ORIGIN_VERIFIED');
-  if (source.exitState && active(source.currentState.status)) reasons.add('OPEN_POSITION_HAS_EXIT_STATE');
-  const legacyReview = Boolean(source.exitState && active(source.currentState.status) && !complete && !source.provenance.legacyExitContinuityAuthorized);
-  if (legacyReview) reasons.add('LEGACY_EXIT_CONTINUITY_REVIEW_REQUIRED');
-  if (source.provenance.legacyExitContinuityAuthorized) reasons.add('LEGACY_EXIT_CONTINUITY_REVIEWED');
-
-  const shadowClassification = contradictory ? 'CONTRADICTORY_EVIDENCE' : complete ? 'COMPLETE_LOCAL_ORDER_CHAIN' : verifiedExternal ? 'POSITIVE_EXTERNAL_ORIGIN' : 'UNKNOWN_INCOMPLETE_LINEAGE';
-  return { ...source, shadowClassification, confidence: contradictory ? 'CONTRADICTORY' : complete ? 'DETERMINISTIC' : verifiedExternal ? 'VERIFIED' : 'INSUFFICIENT', reasonCodes: [...reasons].sort(), evidence: evidence.sort((a,b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id)), readiness: { structurallyCompleteLocalLineage: structural, independentlySupportedLocalExecution: execution, legacyExitContinuityReviewRequired: legacyReview } };
+  if(!source.claims.length)reasons.add('ENTRY_CLAIM_MISSING');if(source.claims.length>1){reasons.add('MULTIPLE_ENTRY_CLAIMS_UNRECONCILED');structural=false;}for(const claim of source.claims){evidence.push({kind:'EntryExposureClaim',id:String(claim.id),role:'CORROBORATING'});const claimConsistent=source.currentState.status==='closed'?claim.status==='RELEASED'&&claim.releasedAt!==null:['POSITION_OPEN','POSITION_CLOSING'].includes(claim.status)&&claim.releasedAt===null;if(claim.status==='UNRESOLVED'){reasons.add('ENTRY_CLAIM_UNRESOLVED');execution=false;}else if(!claimConsistent){reasons.add('ENTRY_CLAIM_LIFECYCLE_INCOMPLETE');execution=false;}if(claim.tradingAccountId!==source.identity.tradingAccountId||claim.securityId!==source.identity.securityId||(claim.trackedPositionId!==null&&claim.trackedPositionId!==source.identity.trackedPositionId)||(intent&&claim.orderIntentId!==intent.id))contradict('ENTRY_CLAIM_IDENTITY_CONFLICT','EntryExposureClaim',claim.id);}
+  if(!source.provenance.chainValid)contradict('PROVENANCE_CHAIN_INVALID');if(!source.provenance.decisionIds.length)reasons.add('NO_RECORDED_PROVENANCE_DECISION');source.provenance.decisionIds.forEach(id=>evidence.push({kind:'PositionLifecycleProvenanceDecision',id:String(id),role:'CORROBORATING'}));const verifiedExternal=source.provenance.origin==='BROKER_EXTERNAL'&&source.provenance.ownership==='NOT_LOCALLY_OWNED'&&source.provenance.trust==='VERIFIED';if(source.provenance.origin==='BROKER_EXTERNAL'&&!verifiedExternal)reasons.add('RECORDED_EXTERNAL_PROVENANCE_UNVERIFIED');
+  const contradictions:LifecycleInventoryReasonCode[]=['ACCOUNT_IDENTITY_MISMATCH','BROKER_MISMATCH','SECURITY_SYMBOL_MISMATCH','ENTRY_SIDE_MISMATCH','CONTRADICTORY_RELATED_INTENT','BROKER_ORDER_IDENTITY_CONFLICT','FILL_ORDER_ID_MISMATCH','CLIENT_ORDER_ID_MISMATCH','DISPATCH_EVIDENCE_CONFLICT','ATTRIBUTION_IDENTITY_CONFLICT','ENTRY_CLAIM_IDENTITY_CONFLICT','PROVENANCE_CHAIN_INVALID'];let contradictory=contradictions.some(x=>reasons.has(x));const complete=structural&&execution&&entries.length===1&&!contradictory;if(complete&&source.provenance.origin&&source.provenance.origin!=='LOCAL_ORDER_CHAIN'){reasons.add('RECORDED_PROVENANCE_DISAGREES');contradictory=true;}if(verifiedExternal&&(complete||entries.length)){reasons.add('RECORDED_PROVENANCE_DISAGREES');contradictory=true;}if(complete)reasons.add('LOCAL_ENTRY_CHAIN_COMPLETE');if(verifiedExternal)reasons.add('INDEPENDENT_EXTERNAL_ORIGIN_VERIFIED');if(source.exitState&&active(source.currentState.status))reasons.add('OPEN_POSITION_HAS_EXIT_STATE');
+  const continuityTrusted=source.provenance.legacyExitContinuityAuthorized&&source.provenance.trust==='VERIFIED'&&source.provenance.chainValid;if(source.provenance.legacyExitContinuityAuthorized&&!continuityTrusted)reasons.add('LEGACY_EXIT_CONTINUITY_RECORDED_UNVERIFIED');const legacyReview=Boolean(source.exitState&&active(source.currentState.status)&&!complete&&!continuityTrusted);if(legacyReview)reasons.add('LEGACY_EXIT_CONTINUITY_REVIEW_REQUIRED');if(continuityTrusted)reasons.add('LEGACY_EXIT_CONTINUITY_REVIEWED');const shadowClassification=contradictory?'CONTRADICTORY_EVIDENCE':complete?'COMPLETE_LOCAL_ORDER_CHAIN':verifiedExternal?'POSITIVE_EXTERNAL_ORIGIN':'UNKNOWN_INCOMPLETE_LINEAGE';return {...source,intents,shadowClassification,confidence:contradictory?'CONTRADICTORY':complete?'DETERMINISTIC':verifiedExternal?'VERIFIED':'INSUFFICIENT',reasonCodes:[...reasons].sort(),evidence:evidence.sort((a,b)=>a.kind.localeCompare(b.kind)||a.id.localeCompare(b.id)),readiness:{structurallyCompleteLocalLineage:structural,independentlySupportedLocalExecution:execution,legacyExitContinuityReviewRequired:legacyReview}};
 }
