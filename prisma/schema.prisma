@@ -2681,17 +2681,17 @@ model PositionLifecycleProvenanceDecision {
   actorType                      PositionLifecycleDecisionActorType
   actorUserId                    Int?
   supersedesDecisionId           Int?                               @unique
-  decidedAt                      DateTime                            @default(now())
+  decidedAt                      DateTime                            @default(now()) @db.Timestamptz(3)
 
-  trackedPosition TrackedPosition @relation(fields: [trackedPositionId, tradingAccountId], references: [id, tradingAccountId], onDelete: Restrict, onUpdate: Restrict)
-  tradingAccount TradingAccount   @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  actorUser      User?            @relation("PositionLifecycleProvenanceDecisionActor", fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  supersedes     PositionLifecycleProvenanceDecision?  @relation("PositionLifecycleProvenanceSupersession", fields: [supersedesDecisionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  trackedPosition TrackedPosition @relation(fields: [trackedPositionId, tradingAccountId], references: [id, tradingAccountId], onDelete: Restrict, onUpdate: Restrict, map: "PositionLifecycleProvenanceDecision_position_fkey")
+  tradingAccount TradingAccount   @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "PositionLifecycleProvenanceDecision_account_fkey")
+  actorUser      User?            @relation("PositionLifecycleProvenanceDecisionActor", fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "PositionLifecycleProvenanceDecision_actor_fkey")
+  supersedes     PositionLifecycleProvenanceDecision?  @relation("PositionLifecycleProvenanceSupersession", fields: [supersedesDecisionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "PositionLifecycleProvenanceDecision_supersedes_fkey")
   supersededBy   PositionLifecycleProvenanceDecision?  @relation("PositionLifecycleProvenanceSupersession")
 
-  @@index([trackedPositionId, decidedAt])
-  @@index([tradingAccountId, decidedAt])
-  @@index([actorUserId])
+  @@index([trackedPositionId, decidedAt], map: "PositionLifecycleProvenanceDecision_position_decided_idx")
+  @@index([tradingAccountId, decidedAt], map: "PositionLifecycleProvenanceDecision_account_decided_idx")
+  @@index([actorUserId], map: "PositionLifecycleProvenanceDecision_actor_idx")
 }
 
 model PositionExitState {

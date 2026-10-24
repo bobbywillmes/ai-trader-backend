@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import 'dotenv/config';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -139,6 +140,28 @@ describePostgres('position lifecycle provenance foundation', () => {
     await disposable?.drop();
     process.env.DATABASE_URL = originalDatabaseUrl;
   });
+
+  it('replays every migration into a schema with no Prisma drift', () => {
+    const output = execFileSync(
+      process.execPath,
+      [
+        'node_modules/prisma/build/index.js',
+        'migrate',
+        'diff',
+        '--from-config-datasource',
+        '--to-schema',
+        'prisma/schema.prisma',
+        '--exit-code',
+      ],
+      {
+        env: { ...process.env, DATABASE_URL: disposable.url },
+        encoding: 'utf8',
+        timeout: 60_000,
+        stdio: 'pipe',
+      },
+    );
+    expect(output).toContain('No difference detected');
+  }, 70_000);
 
   it('keeps legacy positions readable with null creation authority and no inferred provenance', async () => {
     const { position } = await fixture();
