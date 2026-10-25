@@ -8,9 +8,17 @@ position ownership, exit eligibility, repair permission, or broker-write capabil
 
 - `COMPLETE_LOCAL_ORDER_CHAIN` requires exactly one reconciled, terminal BUY intent and
   one terminal broker order; consistent broker/mode/account/Security/symbol/side and
-  stable order identities; frozen Subscription and assignment identity; final
-  cumulative quantity with zero remaining quantity; exactly one durable dispatch and
-  matching adapter marker; and a consistent, terminal claim lifecycle. A link created
+  stable order identities; frozen Subscription and assignment identity; and an
+  unambiguous transaction-time-ordered fill history. Every fill must have positive
+  incremental quantity, cumulative and remaining quantity, reconcile to intended
+  quantity, advance by its confirmed increment, and precede exactly one final fill
+  that occurs last. Comparisons use a conservative tolerance of the greater of
+  `1e-9` shares or one part per billion of intended quantity. Missing quantities or
+  chronology are incomplete; impossible arithmetic, negative remaining quantity,
+  overfill, duplicate execution identity, or a non-final-last history is contradictory.
+  COMPLETE also requires exactly one durable dispatch and one adapter marker whose
+  nonempty `orderIntentId` and `clientOrderId` agree with the intent, dispatch, and
+  broker order; and a consistent, terminal claim lifecycle. A link created
   by `historical_order_lifecycle_repair` is reported as insufficient original-origin
   proof. Multiple entries or retries that V1 cannot reconcile remain unknown.
 - SELL intents from `close-position`, `exit-evaluator`, and
@@ -26,6 +34,13 @@ position ownership, exit eligibility, repair permission, or broker-write capabil
   otherwise insufficient evidence. Symbol, timing, quantity, enabled Subscription,
   repair/adoption history, and current broker position quantity are not proof.
 - `CONTRADICTORY_EVIDENCE` takes precedence when explicit identities disagree.
+
+Missing frozen Subscription or assignment values on historical intents are reported
+as incomplete and are not compared to later position attribution. Only two present,
+incompatible identities contradict. Extra position-linked BUY fills without an intent,
+active entry ownership/execution/lifecycle attention, and nonterminal claims block
+COMPLETE. Position-linked SELL fills remain closing evidence rather than unexplained
+entries.
 
 The report includes local database IDs but hashes broker order, client order, activity,
 and fill order identities. Broker account identifiers are masked. Raw broker JSON,
@@ -48,11 +63,13 @@ may legitimately contain both PAPER and LIVE account rows.
 The disposable harness verifies exact connection identity and reports tier
 `DISPOSABLE_TEST`. Future persistent acceptance requires an infrastructure-managed
 development identity that production cannot self-assert, plus a dedicated credential
-whose session and effective role match, whose read-only default is set at role or
-database scope, and which cannot acquire write power. The verifier inventories all
-application-schema relations for INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES and
-TRIGGER; relation/schema/database ownership; schema CREATE; elevated role attributes;
-built-in write roles; and direct or NOINHERIT membership escalation. A read-only
+whose session and effective role match, whose effective PostgreSQL configuration makes
+`default_transaction_read_only=on` durable at role/database scope, and which cannot
+acquire write power. Session-only `SET` is insufficient. The verifier requires a LOGIN
+role with no explicit memberships at all and inventories every relation in the public
+application schema for table- and column-level INSERT, UPDATE, DELETE, TRUNCATE,
+REFERENCES and TRIGGER; relation/schema/database ownership; database/schema CREATE;
+elevated role attributes; and server-file/program capabilities. A read-only
 transaction and a non-escalatable credential are separate mandatory controls.
 
 ## Output and review

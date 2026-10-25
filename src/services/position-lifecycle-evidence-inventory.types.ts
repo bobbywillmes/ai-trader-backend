@@ -37,6 +37,8 @@ export type LifecycleInventoryReasonCode =
   | 'DISPATCH_EVIDENCE_MISSING'
   | 'DISPATCH_EVIDENCE_CONFLICT'
   | 'ADAPTER_INVOCATION_EVIDENCE_MISSING'
+  | 'ADAPTER_MARKER_IDENTITY_MISSING'
+  | 'ADAPTER_MARKER_IDENTITY_CONFLICT'
   | 'FROZEN_SUBSCRIPTION_MISSING'
   | 'FROZEN_ASSIGNMENT_MISSING'
   | 'ATTRIBUTION_IDENTITY_CONFLICT'
@@ -48,6 +50,7 @@ export type LifecycleInventoryReasonCode =
   | 'ENTRY_CLAIM_IDENTITY_CONFLICT'
   | 'MULTIPLE_ENTRY_CLAIMS_UNRECONCILED'
   | 'POSITION_FILL_WITHOUT_INTENT'
+  | 'ENTRY_LIFECYCLE_ATTENTION_ACTIVE'
   | 'NO_RECORDED_PROVENANCE_DECISION'
   | 'RECORDED_EXTERNAL_PROVENANCE_UNVERIFIED'
   | 'RECORDED_PROVENANCE_DISAGREES'
@@ -65,8 +68,8 @@ export type InventoryIntentEvidence = {
   symbol: string; qty: number | null; clientOrderIdHash: string | null; subscriptionId: number | null;
   tradingAccountSubscriptionId: number | null;
   brokerOrders: Array<{ id: number; tradingAccountId: number | null; trackedPositionId: number | null; broker: string; securityId: number; symbol: string; status: string; brokerOrderIdHash: string; clientOrderIdHash: string; clientOrderIdMatchesIntent: boolean; side: string }>;
-  fills: Array<{ id: number; activityIdHash: string; activityIdDuplicateCount: number; tradingAccountId: number | null; trackedPositionId: number | null; trackedPositionLinkSource: string | null; broker: string; mode: string; symbol: string | null; brokerOrderRecordId: number | null; orderIdHash: string | null; orderIdMatchesBrokerOrder: boolean; side: string | null; qty: number | null; cumQty: number | null; leavesQty: number | null }>;
-  dispatch: { consumptionIds: number[]; unenforcedDispatchIds: number[]; brokerOpportunityIds: number[]; adapterMarkerEventIds: number[]; clientIdentityConsistent: boolean };
+  fills: Array<{ id: number; activityIdHash: string; activityIdDuplicateCount: number; tradingAccountId: number | null; trackedPositionId: number | null; trackedPositionLinkSource: string | null; broker: string; mode: string; symbol: string | null; brokerOrderRecordId: number | null; orderIdHash: string | null; orderIdMatchesBrokerOrder: boolean; side: string | null; qty: number | null; cumQty: number | null; leavesQty: number | null; transactionTime: string | null }>;
+  dispatch: { consumptionIds: number[]; unenforcedDispatchIds: number[]; brokerOpportunityIds: number[]; adapterMarkers: Array<{eventId:number;orderIntentId:number|null;clientOrderIdHash:string|null;identityComplete:boolean;matchesIntent:boolean;matchesDurableDispatch:boolean;matchesBrokerOrder:boolean}>; durableClientIdentityConsistent: boolean };
   evidenceRole: 'ENTRY' | 'EXIT' | 'UNCLASSIFIED' | 'CONTRADICTORY';
 };
 
