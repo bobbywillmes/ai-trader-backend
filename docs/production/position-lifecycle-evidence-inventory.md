@@ -12,8 +12,9 @@ position ownership, exit eligibility, repair permission, or broker-write capabil
   unambiguous transaction-time-ordered fill history. Every fill must have positive
   incremental quantity, cumulative and remaining quantity, reconcile to intended
   quantity, advance by its confirmed increment, and precede exactly one final fill
-  that occurs last. Comparisons use a conservative tolerance of the greater of
-  `1e-9` shares or one part per billion of intended quantity. Missing quantities or
+  that occurs last. Comparisons use an absolute tolerance of `5e-10` shares, half of
+  Alpaca's persisted nine-decimal share unit; tolerance never scales with order size.
+  Missing quantities or
   chronology are incomplete; impossible arithmetic, negative remaining quantity,
   overfill, duplicate execution identity, or a non-final-last history is contradictory.
   COMPLETE also requires exactly one durable dispatch and one adapter marker whose
@@ -71,6 +72,14 @@ application schema for table- and column-level INSERT, UPDATE, DELETE, TRUNCATE,
 REFERENCES and TRIGGER; relation/schema/database ownership; database/schema CREATE;
 elevated role attributes; and server-file/program capabilities. A read-only
 transaction and a non-escalatable credential are separate mandatory controls.
+
+This disposable V1 verifier is not approval for persistent execution. Before any
+persistent reader is permitted, the security contract must additionally inventory and
+exclude MAINTAIN, ownership of functions/types and other application objects,
+executable SECURITY DEFINER functions, and server-side object or maintenance
+capabilities outside the current relation-focused check. Persistent execution remains
+unconditionally disabled until those requirements are implemented and independently
+accepted.
 
 ## Output and review
 
