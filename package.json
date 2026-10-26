@@ -57,7 +57,6 @@
     "market-policy:broker-readiness": "tsx scripts/market-policy-broker-readiness.ts",
     "lifecycle:evidence-inventory": "tsx scripts/position-lifecycle-evidence-inventory.ts",
     "lifecycle:evidence-inventory:offline": "tsx scripts/position-lifecycle-offline-snapshot.ts",
-    "lifecycle:snapshot-control": "tsx scripts/position-lifecycle-snapshot-control.ts",
     "paper-broker-write:preflight": "tsx scripts/paper-broker-write-preflight.ts",
     "demo:operational-attention": "tsx scripts/demo-operational-attention.ts",
     "test": "vitest run",

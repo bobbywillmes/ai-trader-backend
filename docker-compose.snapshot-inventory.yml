@@ -1,3 +1,5 @@
+name: ai-trader-snapshot-inventory
+
 services:
   postgres:
     image: postgres:16
@@ -5,30 +7,25 @@ services:
     environment:
       POSTGRES_USER: snapshot_admin
       POSTGRES_PASSWORD: snapshot_disposable_only
-      POSTGRES_DB: ai_trader_snapshot_${SNAPSHOT_RUN_ID:?SNAPSHOT_RUN_ID is required}
+      POSTGRES_DB: ai_trader_snapshot_inventory
     ports:
-      - "127.0.0.1:${SNAPSHOT_HOST_PORT:?SNAPSHOT_HOST_PORT is required}:5432"
+      - "127.0.0.1:55432:5432"
     volumes:
       - snapshot_inventory_data:/var/lib/postgresql/data
     networks:
       - snapshot_inventory
-    labels:
-      ai-trader-snapshot-run: ${SNAPSHOT_RUN_ID}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U snapshot_admin -d ai_trader_snapshot_${SNAPSHOT_RUN_ID}"]
+      test: ["CMD-SHELL", "pg_isready -U snapshot_admin -d ai_trader_snapshot_inventory"]
       interval: 2s
       timeout: 3s
       retries: 30
 
 networks:
   snapshot_inventory:
-    driver: bridge
-    driver_opts:
-      com.docker.network.bridge.enable_ip_masquerade: "false"
+    internal: true
 
 volumes:
   snapshot_inventory_data:
     labels:
       ai-trader-purpose: disposable-snapshot-inventory
       ai-trader-persistent-source: "false"
-      ai-trader-snapshot-run: ${SNAPSHOT_RUN_ID}
