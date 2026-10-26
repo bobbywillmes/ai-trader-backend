@@ -8,6 +8,5 @@ dist
 !.env.production.example
 !apps/web/.env.acceptance
 .acceptance/
-.snapshot-inventory/
 
 graphify-out/

@@ -43,8 +43,8 @@ active entry ownership/execution/lifecycle attention, and nonterminal claims blo
 COMPLETE. Position-linked SELL fills remain closing evidence rather than unexplained
 entries.
 
-The report includes local database IDs but HMACs broker order, client order, activity,
-fill order, and broker account identities with a fresh per-run key. Raw broker JSON,
+The report includes local database IDs but hashes broker order, client order, activity,
+and fill order identities. Broker account identifiers are masked. Raw broker JSON,
 credentials, connection strings, and decrypted secrets are never selected.
 
 ## Transaction and query boundary
