@@ -21,6 +21,7 @@ import {
   resolveOperationalAttentionAuthoritatively,
 } from './operational-attention.service.js';
 import { verifyAppliedHistoricalLifecycleActions } from './historical-entry-lifecycle-workbench.service.js';
+import { assessLifecycleAuthority, type LifecycleAuthorityAssessment } from './lifecycle-authority.service.js';
 
 type Rule = {
   code: typeof OPERATIONAL_ATTENTION_CODES[keyof typeof OPERATIONAL_ATTENTION_CODES];
@@ -40,6 +41,16 @@ const RULES: Partial<Record<ReconciliationFindingCode, Rule>> = {
   entry_exposure_claim_unresolved: { code: OPERATIONAL_ATTENTION_CODES.LIFECYCLE_REVIEW_REQUIRED, title: (finding) => `${finding.symbol} entry exposure ownership requires review` },
   entry_exposure_claim_missing: { code: OPERATIONAL_ATTENTION_CODES.LIFECYCLE_REVIEW_REQUIRED, title: (finding) => `${finding.symbol} durable entry exposure ownership is missing` },
 };
+
+const OBSERVER_INAPPLICABLE_FINDINGS = new Set<ReconciliationFindingCode>([
+  'position_attribution_missing',
+  'entry_exposure_claim_unresolved',
+  'entry_exposure_claim_missing',
+]);
+
+function isVerifiedObserver(assessment: LifecycleAuthorityAssessment | null): assessment is LifecycleAuthorityAssessment {
+  return assessment?.outcome === 'OBSERVER' && assessment.reasonCode === 'VERIFIED_OBSERVER';
+}
 
 function stableMaterial(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableMaterial).join(',')}]`;
@@ -76,12 +87,22 @@ export async function projectReconciliationOperationalAttention(args: {
   runIdentifier: string;
 }) {
   if (!isAuthoritativeReconciliationEnvironment(args.environment)) return { updated: 0, resolved: 0 };
+  let lifecycleAuthority: LifecycleAuthorityAssessment | null = null;
+  if (args.environment === 'PAPER') {
+    try { lifecycleAuthority = await assessLifecycleAuthority(args.tradingAccountId, { forceRefresh: true }); }
+    catch { lifecycleAuthority = null; }
+  }
   let updated = 0;
   const observedFingerprints = new Set<string>();
+  const observerInapplicableFingerprints = new Map<string, ReconciliationFinding>();
   for (const finding of args.findings) {
     const rule = RULES[finding.code];
     if (!rule) continue;
     const fingerprint = reconciliationAttentionFingerprint(args.tradingAccountId, finding);
+    if (isVerifiedObserver(lifecycleAuthority) && OBSERVER_INAPPLICABLE_FINDINGS.has(finding.code)) {
+      observerInapplicableFingerprints.set(fingerprint, finding);
+      continue;
+    }
     observedFingerprints.add(fingerprint);
     const observed = await openOrObserveOperationalAttention({
       tradingAccountId: args.tradingAccountId,
@@ -112,14 +133,25 @@ export async function projectReconciliationOperationalAttention(args: {
   let resolved = 0;
   for (const attention of active) {
     if (observedFingerprints.has(attention.fingerprint)) continue;
+    const observerInapplicableFinding = observerInapplicableFingerprints.get(attention.fingerprint);
     if (attention.code === OPERATIONAL_ATTENTION_CODES.HISTORICAL_ENTRY_LIFECYCLE_INCOMPLETE) {
       await verifyAppliedHistoricalLifecycleActions({ attentionId: attention.id, unresolvedComponents: [], runIdentifier: args.runIdentifier });
     }
     await resolveOperationalAttentionAuthoritatively({
       id: attention.id,
       expectedRevision: attention.revision,
-      reason: 'A complete authoritative reconciliation run no longer observed this condition.',
-      evidence: { runIdentifier: args.runIdentifier, conditionAbsent: true },
+      reason: observerInapplicableFinding
+        ? 'Fresh authority verification proved this lifecycle-ownership condition is observer-inapplicable; executor authority and lifecycle ownership were not restored.'
+        : 'A complete authoritative reconciliation run no longer observed this condition.',
+      evidence: observerInapplicableFinding && lifecycleAuthority
+        ? { runIdentifier: args.runIdentifier, conditionAbsent: false, conditionStillObserved: true,
+          findingCode: observerInapplicableFinding.code, applicability: 'OBSERVER_INAPPLICABLE',
+          lifecycleAuthorityOutcome: lifecycleAuthority.outcome, lifecycleAuthorityReasonCode: lifecycleAuthority.reasonCode,
+          authorityVerifiedAt: lifecycleAuthority.verifiedAt, authorityExpiresAt: lifecycleAuthority.expiresAt,
+          expectedBrokerAccountId: lifecycleAuthority.expectedBrokerAccountId,
+          observedBrokerAccountId: lifecycleAuthority.observedBrokerAccountId,
+          executorAuthorityRestored: false, lifecycleOwnershipRestored: false }
+        : { runIdentifier: args.runIdentifier, conditionAbsent: true },
     });
     resolved += 1;
   }

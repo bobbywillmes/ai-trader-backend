@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   findFirst: vi.fn(),
   open: vi.fn(),
   resolve: vi.fn(),
+  assessLifecycleAuthority: vi.fn(),
 }));
 
 vi.mock('../db/prisma.js', () => ({ prisma: { operationalAttention: { findFirst: mocks.findFirst } } }));
@@ -11,6 +12,7 @@ vi.mock('./operational-attention.service.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./operational-attention.service.js')>();
   return { ...actual, openOrObserveOperationalAttention: mocks.open, resolveOperationalAttentionAuthoritatively: mocks.resolve };
 });
+vi.mock('./lifecycle-authority.service.js', () => ({ assessLifecycleAuthority: mocks.assessLifecycleAuthority }));
 
 import {
   reconcileAllPaperBrokerWriteAuthorityAttention,
@@ -26,7 +28,12 @@ const assessment = (id: number, outcome: PaperAccountAuthorityAssessment['outcom
 });
 
 describe('PAPER authority attention reconciliation', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.assessLifecycleAuthority.mockResolvedValue({ outcome: 'OBSERVER', reasonCode: 'VERIFIED_OBSERVER',
+      verifiedAt: '2026-10-26T12:00:00.000Z', expiresAt: '2026-10-26T12:05:00.000Z',
+      expectedBrokerAccountId: 'PA1', observedBrokerAccountId: 'PA1' });
+  });
 
   it('retries a stale revision with freshly read state', async () => {
     mocks.findFirst.mockResolvedValueOnce({ id: 8, revision: 1 }).mockResolvedValueOnce({ id: 8, revision: 2 });
@@ -35,14 +42,33 @@ describe('PAPER authority attention reconciliation', () => {
     expect(mocks.resolve).toHaveBeenCalledTimes(2);
   });
 
-  it('preserves an exposed observer incident but resolves a non-exposed observer authoritatively', async () => {
+  it('resolves an exposed observer incident as inapplicable without claiming executor authority was restored', async () => {
     mocks.findFirst.mockResolvedValue({ id: 9, revision: 3 });
+    mocks.resolve.mockResolvedValue({ id: 9, status: 'RESOLVED' });
+    const observer = { ...assessment(1, 'INTENTIONAL_OBSERVATION_ONLY'), ownershipRole: 'OBSERVER' as const, intendedExecutor: false };
+    await expect(reconcilePaperBrokerWriteAuthorityAttention(observer)).resolves.toMatchObject({ status: 'RESOLVED' });
+    expect(mocks.resolve).toHaveBeenCalledWith(expect.objectContaining({
+      reason: expect.stringContaining('executor authority was not restored'),
+      evidence: expect.objectContaining({ executorAuthorityRestored: false, applicability: 'OBSERVER_INAPPLICABLE', openLifecycleExposure: true }),
+    }));
+  });
+
+  it('does not create an executor incident for an observer when no active episode exists', async () => {
+    mocks.findFirst.mockResolvedValue(null);
     const observer = { ...assessment(1, 'INTENTIONAL_OBSERVATION_ONLY'), ownershipRole: 'OBSERVER' as const, intendedExecutor: false };
     await expect(reconcilePaperBrokerWriteAuthorityAttention(observer)).resolves.toBeNull();
+    expect(mocks.open).not.toHaveBeenCalled();
     expect(mocks.resolve).not.toHaveBeenCalled();
-    mocks.resolve.mockResolvedValue({ id: 9, status: 'RESOLVED' });
-    await expect(reconcilePaperBrokerWriteAuthorityAttention({ ...observer, openLifecycleExposure: false,
-      exposure: { activePositions: 0, nonterminalBrokerOrders: 0, activeOrderIntents: 0, activeEntryClaims: 0 } })).resolves.toMatchObject({ status: 'RESOLVED' });
+  });
+
+  it('fails safe and opens attention when observer authority cannot be freshly verified', async () => {
+    mocks.findFirst.mockResolvedValue(null);
+    mocks.assessLifecycleAuthority.mockResolvedValue({ outcome: 'DENIED', reasonCode: 'BROKER_IDENTITY_MISMATCH' });
+    const observer = { ...assessment(1, 'INTENTIONAL_OBSERVATION_ONLY'), ownershipRole: 'OBSERVER' as const, intendedExecutor: false };
+    await reconcilePaperBrokerWriteAuthorityAttention(observer);
+    expect(mocks.open).toHaveBeenCalledWith(expect.objectContaining({
+      details: expect.objectContaining({ lifecycleAuthorityOutcome: 'DENIED', lifecycleAuthorityReasonCode: 'BROKER_IDENTITY_MISMATCH' }),
+    }));
   });
 
   it('isolates one failed account and continues later reconciliation', async () => {

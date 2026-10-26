@@ -5,11 +5,20 @@ import {
   openOrObserveOperationalAttention, resolveOperationalAttentionAuthoritatively,
 } from './operational-attention.service.js';
 import type { PaperAccountAuthorityAssessment } from './paper-broker-write-authority.service.js';
+import { assessLifecycleAuthority, type LifecycleAuthorityAssessment } from './lifecycle-authority.service.js';
 
 const fingerprintFor = (tradingAccountId: number) => `paper-executor-authority:${tradingAccountId}`;
 const MAX_REVISION_RETRIES = 3;
+const isVerifiedObserver = (assessment: LifecycleAuthorityAssessment | null): assessment is LifecycleAuthorityAssessment =>
+  assessment?.outcome === 'OBSERVER' && assessment.reasonCode === 'VERIFIED_OBSERVER';
 
 export async function reconcilePaperBrokerWriteAuthorityAttention(item: PaperAccountAuthorityAssessment) {
+  let observerAuthority: LifecycleAuthorityAssessment | null = null;
+  if (item.outcome === 'INTENTIONAL_OBSERVATION_ONLY') {
+    try { observerAuthority = await assessLifecycleAuthority(item.tradingAccountId, { forceRefresh: true }); }
+    catch { observerAuthority = null; }
+  }
+  const verifiedObserver = isVerifiedObserver(observerAuthority);
   const active = await prisma.operationalAttention.findFirst({ where: {
     tradingAccountId: item.tradingAccountId, code: OPERATIONAL_ATTENTION_CODES.PAPER_EXECUTOR_AUTHORITY_MISMATCH,
     fingerprint: fingerprintFor(item.tradingAccountId), status: { in: ['OPEN', 'ACKNOWLEDGED'] },
@@ -19,10 +28,15 @@ export async function reconcilePaperBrokerWriteAuthorityAttention(item: PaperAcc
       tradingAccountId: item.tradingAccountId, outcome: item.outcome, expectedBrokerAccountId: item.expectedBrokerAccountId,
       brokerAccountIdVerified: item.brokerAccountIdVerified, credentialUsable: item.credentialUsable,
       credentialFingerprintConsistent: item.credentialFingerprintConsistent } }
-    : item.outcome === 'INTENTIONAL_OBSERVATION_ONLY' && item.openLifecycleExposure === false
-      ? { reason: 'Fresh canonical lifecycle queries proved the explicitly observed PAPER account has no remaining local exposure.', evidence: {
+    : item.outcome === 'INTENTIONAL_OBSERVATION_ONLY' && isVerifiedObserver(observerAuthority)
+      ? { reason: 'Fresh account-aware verification proved this PAPER account is intentionally observation-only; executor authority was not restored and is not applicable on this deployment.', evidence: {
         tradingAccountId: item.tradingAccountId, outcome: item.outcome, ownershipRole: item.ownershipRole,
-        openLifecycleExposure: item.openLifecycleExposure, exposure: item.exposure } }
+        openLifecycleExposure: item.openLifecycleExposure, exposure: item.exposure,
+        lifecycleAuthorityOutcome: observerAuthority.outcome, lifecycleAuthorityReasonCode: observerAuthority.reasonCode,
+        authorityVerifiedAt: observerAuthority.verifiedAt, authorityExpiresAt: observerAuthority.expiresAt,
+        expectedBrokerAccountId: observerAuthority.expectedBrokerAccountId,
+        observedBrokerAccountId: observerAuthority.observedBrokerAccountId,
+        executorAuthorityRestored: false, applicability: 'OBSERVER_INAPPLICABLE' } }
       : null;
   if (authoritativeResolution) {
     if (!active) return null;
@@ -40,13 +54,16 @@ export async function reconcilePaperBrokerWriteAuthorityAttention(item: PaperAcc
       }
     }
   }
-  if (item.outcome === 'INTENTIONAL_OBSERVATION_ONLY' || (item.openLifecycleExposure === false && item.intendedExecutor !== true)) return null;
+  if ((item.outcome === 'INTENTIONAL_OBSERVATION_ONLY' && verifiedObserver)
+    || (item.openLifecycleExposure === false && item.intendedExecutor !== true)) return null;
   return openOrObserveOperationalAttention({ tradingAccountId: item.tradingAccountId,
     code: OPERATIONAL_ATTENTION_CODES.PAPER_EXECUTOR_AUTHORITY_MISMATCH, source: OPERATIONAL_ATTENTION_SOURCES.SYSTEM,
     severity: SystemEventSeverity.ERROR, title: 'PAPER executor authority mismatch',
     message: 'A PAPER account with lifecycle exposure lacks verified executor authority.',
     details: { outcome: item.outcome, reason: item.reason, ownershipRole: item.ownershipRole,
-      openLifecycleExposure: item.openLifecycleExposure, exposure: item.exposure },
+      openLifecycleExposure: item.openLifecycleExposure, exposure: item.exposure,
+      lifecycleAuthorityOutcome: observerAuthority?.outcome ?? null,
+      lifecycleAuthorityReasonCode: observerAuthority?.reasonCode ?? null },
     fingerprint: fingerprintFor(item.tradingAccountId),
     materialFingerprint: `${fingerprintFor(item.tradingAccountId)}:${item.outcome}:${item.ownershipRole}:${item.reason}`,
     resolutionPolicy: OperationalAttentionResolutionPolicy.AUTHORITATIVE_ONLY });

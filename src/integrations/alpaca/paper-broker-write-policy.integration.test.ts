@@ -22,14 +22,20 @@ describe('shared Alpaca client with real PAPER authority policy', () => {
 
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.resetModules(); });
 
-  it('blocks observation-only PAPER mutation before fetch', async () => {
+  it.each([
+    ['worker entry submission', '/v2/orders', 'POST', metadata],
+    ['protective exit submission', '/v2/orders', 'POST', { ...metadata, operation: 'protective_order_submission', operationClass: 'RISK_REDUCING_WRITE' }],
+    ['manual verified close', '/v2/orders', 'POST', { ...metadata, operation: 'position_close', operationClass: 'RISK_REDUCING_WRITE' }],
+    ['single-order cancellation', '/v2/orders/order-1', 'DELETE', { ...metadata, operation: 'order_cancel', endpoint: 'DELETE /v2/orders/:orderId', method: 'DELETE' }],
+    ['cancel-all recovery', '/v2/orders', 'DELETE', { ...metadata, operation: 'order_cancel_all', endpoint: 'DELETE /v2/orders', method: 'DELETE' }],
+  ] as const)('blocks observation-only PAPER %s before fetch', async (_label, path, method, requestMetadata) => {
     vi.stubEnv('PAPER_BROKER_WRITE_DEPLOYMENT_ROLE', 'OBSERVATION_ONLY');
     vi.stubEnv('PAPER_BROKER_WRITE_AUTHORIZATIONS', '[]');
     vi.stubEnv('PAPER_BROKER_WRITE_OWNERSHIP', JSON.stringify([
       { tradingAccountId: 7, role: 'OBSERVER', expectedBrokerAccountId: 'validation-paper' },
     ]));
     const { alpacaRequestForAccount } = await import('./client.js');
-    await expect(alpacaRequestForAccount(7, '/v2/orders', { method: 'POST', body: { symbol: 'SPY' }, metadata }))
+    await expect(alpacaRequestForAccount(7, path, { method, body: method === 'POST' ? { symbol: 'SPY' } : undefined, metadata: requestMetadata }))
       .rejects.toMatchObject({ classification: 'NOT_SENT_BLOCKED' });
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
@@ -44,6 +50,20 @@ describe('shared Alpaca client with real PAPER authority policy', () => {
     mocks.fetch.mockResolvedValue(new Response(JSON.stringify({ id: 'order-1' }), { status: 200, headers: { 'content-type': 'application/json' } }));
     const { alpacaRequestForAccount } = await import('./client.js');
     await expect(alpacaRequestForAccount(7, '/v2/orders', { method: 'POST', body: { symbol: 'SPY' }, metadata })).resolves.toEqual({ id: 'order-1' });
+    expect(mocks.fetch).toHaveBeenCalledOnce();
+  });
+
+  it('allows production executor protective exits through the same boundary', async () => {
+    vi.stubEnv('PAPER_BROKER_WRITE_DEPLOYMENT_ROLE', 'PAPER_EXECUTOR');
+    vi.stubEnv('PAPER_BROKER_WRITE_AUTHORIZATIONS', JSON.stringify([{ brokerAccountId: 'validation-paper', keyFingerprint: fingerprint }]));
+    vi.stubEnv('PAPER_BROKER_WRITE_OWNERSHIP', JSON.stringify([
+      { tradingAccountId: 7, role: 'EXECUTOR', expectedBrokerAccountId: 'validation-paper' },
+    ]));
+    mocks.fetch.mockResolvedValue(new Response(JSON.stringify({ id: 'protective-order-1' }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const { alpacaRequestForAccount } = await import('./client.js');
+    await expect(alpacaRequestForAccount(7, '/v2/orders', { method: 'POST', body: { symbol: 'SPY', side: 'sell' },
+      metadata: { ...metadata, operation: 'protective_order_submission', operationClass: 'RISK_REDUCING_WRITE' } }))
+      .resolves.toEqual({ id: 'protective-order-1' });
     expect(mocks.fetch).toHaveBeenCalledOnce();
   });
 });

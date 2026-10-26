@@ -366,6 +366,15 @@ position links as insufficient origin proof, and never accepts an unverified rec
 continuity decision as completed review. See the production inventory runbook for the
 reader-credential and future infrastructure identity contract.
 
+Operational Attention is deployment-authority-aware without changing underlying
+evidence. A fresh `VERIFIED_OBSERVER` assessment prevents new action-required episodes
+for missing position attribution or entry-claim ownership and resolves matching open
+episodes as observer-inapplicable. The resolution records that the condition remains
+observed and that neither executor authority nor lifecycle ownership was restored.
+System Events and diagnostic findings remain append-preserved. Any failed, UNKNOWN, or
+DENIED authority assessment fails safe, while unrelated reconciliation inconsistencies
+continue to project normally.
+
 ## Mixed-version and rollback assessment
 
 The migration is expand-only: one nullable no-default column, new enum types, a new
