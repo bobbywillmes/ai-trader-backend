@@ -22,6 +22,10 @@ import {
 } from './operational-attention.service.js';
 import { verifyAppliedHistoricalLifecycleActions } from './historical-entry-lifecycle-workbench.service.js';
 import { assessLifecycleAuthority, type LifecycleAuthorityAssessment } from './lifecycle-authority.service.js';
+import {
+  assessPaperBrokerWriteAuthorityForAccount,
+  type PaperAccountAuthorityAssessment,
+} from './paper-broker-write-authority.service.js';
 
 type Rule = {
   code: typeof OPERATIONAL_ATTENTION_CODES[keyof typeof OPERATIONAL_ATTENTION_CODES];
@@ -50,6 +54,14 @@ const OBSERVER_INAPPLICABLE_FINDINGS = new Set<ReconciliationFindingCode>([
 
 function isVerifiedObserver(assessment: LifecycleAuthorityAssessment | null): assessment is LifecycleAuthorityAssessment {
   return assessment?.outcome === 'OBSERVER' && assessment.reasonCode === 'VERIFIED_OBSERVER';
+}
+
+function hasConsistentObserverAuthority(
+  lifecycleAssessment: LifecycleAuthorityAssessment | null,
+  paperWriteAssessment: PaperAccountAuthorityAssessment | null,
+) {
+  return isVerifiedObserver(lifecycleAssessment)
+    && paperWriteAssessment?.outcome === 'INTENTIONAL_OBSERVATION_ONLY';
 }
 
 function stableMaterial(value: unknown): string {
@@ -88,10 +100,14 @@ export async function projectReconciliationOperationalAttention(args: {
 }) {
   if (!isAuthoritativeReconciliationEnvironment(args.environment)) return { updated: 0, resolved: 0 };
   let lifecycleAuthority: LifecycleAuthorityAssessment | null = null;
+  let paperWriteAuthority: PaperAccountAuthorityAssessment | null = null;
   if (args.environment === 'PAPER') {
     try { lifecycleAuthority = await assessLifecycleAuthority(args.tradingAccountId, { forceRefresh: true }); }
     catch { lifecycleAuthority = null; }
+    try { paperWriteAuthority = await assessPaperBrokerWriteAuthorityForAccount(args.tradingAccountId); }
+    catch { paperWriteAuthority = null; }
   }
+  const consistentObserverAuthority = hasConsistentObserverAuthority(lifecycleAuthority, paperWriteAuthority);
   let updated = 0;
   const observedFingerprints = new Set<string>();
   const observerInapplicableFingerprints = new Map<string, ReconciliationFinding>();
@@ -99,7 +115,7 @@ export async function projectReconciliationOperationalAttention(args: {
     const rule = RULES[finding.code];
     if (!rule) continue;
     const fingerprint = reconciliationAttentionFingerprint(args.tradingAccountId, finding);
-    if (isVerifiedObserver(lifecycleAuthority) && OBSERVER_INAPPLICABLE_FINDINGS.has(finding.code)) {
+    if (consistentObserverAuthority && OBSERVER_INAPPLICABLE_FINDINGS.has(finding.code)) {
       observerInapplicableFingerprints.set(fingerprint, finding);
       continue;
     }
@@ -143,13 +159,15 @@ export async function projectReconciliationOperationalAttention(args: {
       reason: observerInapplicableFinding
         ? 'Fresh authority verification proved this lifecycle-ownership condition is observer-inapplicable; executor authority and lifecycle ownership were not restored.'
         : 'A complete authoritative reconciliation run no longer observed this condition.',
-      evidence: observerInapplicableFinding && lifecycleAuthority
+      evidence: observerInapplicableFinding && lifecycleAuthority && paperWriteAuthority
         ? { runIdentifier: args.runIdentifier, conditionAbsent: false, conditionStillObserved: true,
           findingCode: observerInapplicableFinding.code, applicability: 'OBSERVER_INAPPLICABLE',
           lifecycleAuthorityOutcome: lifecycleAuthority.outcome, lifecycleAuthorityReasonCode: lifecycleAuthority.reasonCode,
           authorityVerifiedAt: lifecycleAuthority.verifiedAt, authorityExpiresAt: lifecycleAuthority.expiresAt,
           expectedBrokerAccountId: lifecycleAuthority.expectedBrokerAccountId,
           observedBrokerAccountId: lifecycleAuthority.observedBrokerAccountId,
+          paperBrokerWriteAuthorityOutcome: paperWriteAuthority.outcome,
+          paperBrokerWriteOwnershipRole: paperWriteAuthority.ownershipRole,
           executorAuthorityRestored: false, lifecycleOwnershipRestored: false }
         : { runIdentifier: args.runIdentifier, conditionAbsent: true },
     });
