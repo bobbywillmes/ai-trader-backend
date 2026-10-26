@@ -1,131 +1,162 @@
 # Offline Development Snapshot Inventory
 
-This runbook is the Phase 1C.1B boundary for applying the accepted Phase 1C.0
-classifier to a manually approved development backup. It does not authorize creating
-a backup, accessing the persistent development database, or running a real inventory.
+This Phase 1C.1B.1 workflow applies the accepted Phase 1C.0 classifier only to an
+approved PostgreSQL 16 custom archive restored by the controlled disposable procedure.
+It grants no permission to read or back up a persistent database.
 
-## Separation of duties
+## Trust model
 
-Source preparation and offline analysis are separate approvals. Source preparation is
-run from the repository root against the checked-in `docker-compose.yml`; it ends after
-creating a custom-format archive and provenance manifest outside Git. Offline analysis
-starts from those two files and has no reason to connect to the source container.
+Three categories are deliberately separate:
 
-The offline command does not load dotenv and refuses to run when `DATABASE_URL` or
-`NODE_ENV` is present. It receives a target URL only as an explicit CLI argument. The
-fixed Compose project is `ai-trader-snapshot-inventory`; its PostgreSQL 16 volume is
-new and labeled disposable, no application service exists, its network is internal,
-and PostgreSQL is exposed only on `127.0.0.1:55432` for the approved local operator.
-Never add application, worker, tunnel, broker, or provider credentials to this file.
+1. Code verifies archive bytes/checksum/header, PostgreSQL 16 archive catalog, file
+   security, signed bindings, live Docker metadata, PostgreSQL cluster identity,
+   reader posture, and deterministic inventory-table digests.
+2. Source container, volume, Docker context, absence of production containers, and
+   absence of tunnels are operator observations recorded in the manifest. They are not
+   represented as independently proven facts.
+3. A human approves an exact manifest/archive/catalog tuple. Approval is represented
+   by an HMAC file created with a random owner-only approval key stored beside neither
+   the archive nor report. An editable manifest is therefore not authorization.
 
-## Separately approved source preflight and backup
+The controlled restore verifies the approval, refuses a nonempty target, executes
+`pg_restore` itself, provisions one SELECT-only reader, computes table digests, and
+seals them with live container, volume, run, cluster, archive, and approval identities
+in the restore receipt. Inventory recomputes digests before and after classification.
 
-Do not perform these steps until the owner separately approves backup creation.
+## Source preparation — separate owner approval
 
-1. Stop every local backend, worker, tunnel, and research process. Confirm the Docker
-   context is exactly `default` with `docker context show`.
-2. Save `docker compose -f docker-compose.yml config` and SHA-256 hash that rendered
-   configuration. Confirm it defines only service `postgres`, container
-   `ai-trader-postgres`, image `postgres:16`, database `ai_trader`, user `trader`, and
-   the volume destination `/var/lib/postgresql/data`.
-3. Inspect the running container by Compose labels, not by name alone. Require
-   `com.docker.compose.project.working_dir` to equal this repository,
-   `com.docker.compose.service=postgres`, and the rendered Compose config hash to match
-   the reviewed file. Record the full container ID, image digest, and exact source
-   volume name. Inspect its mounts and require exactly that volume at the data path.
-4. Inside that exact container run read-only identity queries for
-   `current_database()`, `current_user`, `server_version_num`, and
-   `pg_control_system().system_identifier`. Require `ai_trader`, `trader`, and major
-   version 16. A filename, `DATABASE_URL`, database contents, or an environment value
-   is never source proof.
-5. List all running containers and processes. Stop if any production Compose label,
-   production database container, ngrok/cloudflared/SSH tunnel, or unreviewed database
-   proxy is present. Record affirmative `productionContainersAbsent` and
-   `tunnelsAbsent` checks.
-6. Only after a second owner confirmation, create a PostgreSQL custom archive with
-   `pg_dump` inside that verified container as described by
-   `docs/development/local-database-backup.md`. Write outside Git with owner-only ACLs.
-   Do not use a host PostgreSQL client and do not restore anything at this stage.
-7. Validate the archive with `pg_restore --list` using the same PostgreSQL 16 image.
-   Record UTC timestamp, exact byte count, SHA-256, archive basename, and all verified
-   source values in a manifest with `schemaVersion` set to
-   `AI_TRADER_DEVELOPMENT_BACKUP_V1`. Add approval fields `approvedBy`, `approvedAt`,
-   and purpose `POSITION_LIFECYCLE_EVIDENCE_INVENTORY`. Review and approve the archive
-   and manifest as one immutable pair.
+Only after approval to inspect the development source:
 
-The manifest shape is enforced by
-`src/services/position-lifecycle-offline-snapshot.service.ts`. Backups can contain
-encrypted credentials, tokens, configuration, and broker history. Store them only in
-the owner-approved encrypted location; do not commit, upload, email, or attach them.
+- require Docker context `default` and the exact checked-in development Compose file;
+- verify Compose labels and working directory, service `postgres`, container
+  `ai-trader-postgres`, exact image `postgres:16`, database/user `ai_trader`/`trader`,
+  full 64-character container ID, the development-specific `*_postgres_data` volume,
+  and PostgreSQL `system_identifier` and major version;
+- stop application writers, broker tunnels, and database tunnels before the common
+  snapshot point; record the two absence checks as operator observations;
+- create one custom-format archive with `pg_dump` inside that exact container;
+- inspect it with the exact `postgres:16` image using `pg_restore --list`, record the
+  normalized catalog SHA-256, archive SHA-256, size, timestamp, and observed source
+  facts in an `AI_TRADER_DEVELOPMENT_BACKUP_V2` manifest; and
+- place archive, manifest, key, approvals, credentials, receipts, and reports outside
+  Git and outside cloud-synchronized directories.
 
-## Offline restore and inventory (later approval)
+The archive begins with `PGDMP`. A filename, environment variable, database contents,
+or the manifest's own source claims are never sufficient proof.
 
-Use a clean shell with application and broker variables removed. Substitute only the
-owner-approved absolute archive, manifest, target-identity, and report paths.
+## Protected approval
+
+Generate a 32-byte random approval key once for the review, set an explicit owner-only
+ACL, and keep it separately. All sensitive input files must have non-inherited,
+non-broad ACLs on Windows or mode 0600 on POSIX. Then run:
 
 ```powershell
-docker compose -f docker-compose.snapshot-inventory.yml up -d --wait postgres
-docker compose -f docker-compose.snapshot-inventory.yml exec -T postgres dropdb -U snapshot_admin --if-exists ai_trader_snapshot_inventory
-docker compose -f docker-compose.snapshot-inventory.yml exec -T postgres createdb -U snapshot_admin ai_trader_snapshot_inventory
-docker compose -f docker-compose.snapshot-inventory.yml cp C:\approved\snapshot.dump postgres:/tmp/approved-snapshot.dump
-docker compose -f docker-compose.snapshot-inventory.yml exec -T postgres pg_restore -U snapshot_admin -d ai_trader_snapshot_inventory --no-owner --no-privileges --exit-on-error /tmp/approved-snapshot.dump
-docker compose -f docker-compose.snapshot-inventory.yml exec -T postgres rm /tmp/approved-snapshot.dump
+npm.cmd run lifecycle:snapshot-control -- approve `
+  --manifest=C:\secure\snapshot.manifest.json `
+  --dump=C:\secure\snapshot.dump `
+  --approval-key=C:\separate-secure\approval.key `
+  --approval-output=C:\secure\snapshot.approval.json `
+  --approved-by=bobby
 ```
 
-Verify `current_database`, server address/port, PostgreSQL major, database system
-identifier, Compose project/service labels, and disposable volume label. Create a
-small owner-only target identity JSON containing exactly `database`, `host`, `port`,
-and `sessionUser`. Create a dedicated LOGIN reader in the disposable database only,
-set role-level `default_transaction_read_only=on`, grant CONNECT/USAGE/SELECT only,
-and remove every other membership and privilege. The Phase 1C.0 verifier rejects the
-reader if it can escalate or mutate. The URL below uses that disposable reader.
+This uses a network-disabled `postgres:16` inspection container. It refuses a bad
+header, bad checksum, wrong archive, non-v16 tool, invalid custom catalog, stale
+chronology, or catalog mismatch.
+
+## Fresh disposable run
+
+Generate a cryptographically random lower-case 32-hex run ID, unused loopback port,
+reader name `snapshot_reader_<first-12-run-hex>`, database
+`ai_trader_snapshot_<run-id>`, and URL-safe random reader password. Put those fields
+in an owner-only `AI_TRADER_SNAPSHOT_READER_CREDENTIAL_V1` JSON file. The password
+never appears in argv, logs, manifest, receipt, or report.
+
+Before startup, require that no Compose project, container, network, or volume with the
+run identity exists. Set only non-secret `SNAPSHOT_RUN_ID` and `SNAPSHOT_HOST_PORT`, then:
 
 ```powershell
-Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
-Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue
+docker compose -p "ai-trader-snapshot-$env:SNAPSHOT_RUN_ID" `
+  -f docker-compose.snapshot-inventory.yml up -d --wait postgres
+```
+
+The topology has one PostgreSQL 16 service, a new run-labeled volume, a dedicated
+bridge with IP masquerading disabled, and one local ingress binding on `127.0.0.1`. It contains no app,
+worker, broker credentials, or persistent volume reference. The internal network
+blocks container egress while the explicit loopback mapping lets the approved host CLI
+connect. Disabling masquerading prevents ordinary container Internet egress while
+preserving Docker Desktop's host port publishing (Docker Desktop suppresses published
+ports on an `internal: true` network). Do not attach another service or network.
+
+Run the controlled restore:
+
+```powershell
+npm.cmd run lifecycle:snapshot-control -- restore `
+  --manifest=C:\secure\snapshot.manifest.json `
+  --dump=C:\secure\snapshot.dump `
+  --approval=C:\secure\snapshot.approval.json `
+  --approval-key=C:\separate-secure\approval.key `
+  --credential-file=C:\secure\reader-credential.json `
+  --receipt-output=C:\secure\restore-receipt.json
+```
+
+It rejects existing public objects, an existing reader, unexpected/multiple project
+containers, mismatched labels, image, loopback port, mount, volume, or run identity.
+It copies the approved archive into the exact container, restores with `--no-owner
+--no-privileges --exit-on-error`, removes the container copy, creates only the
+run-specific reader, and signs the receipt after digesting relevant tables.
+
+## Inventory and output
+
+Create an existing empty output directory outside the canonical Git repository and
+cloud-synchronized folders. On POSIX it must be mode 0700. On Windows remove ACL
+inheritance and broad Users/Everyone/Authenticated Users grants; execution refuses if
+the ACL cannot be verified. Then clear application discovery variables and run:
+
+```powershell
+Remove-Item Env:DATABASE_URL,Env:NODE_ENV -ErrorAction SilentlyContinue
 npm.cmd run lifecycle:evidence-inventory:offline -- `
-  --manifest=C:\approved\snapshot.manifest.json `
-  --dump=C:\approved\snapshot.dump `
-  --target-identity=C:\approved\target-identity.json `
-  --target-url=postgresql://snapshot_reader:<one-time-password>@127.0.0.1:55432/ai_trader_snapshot_inventory `
-  --output=C:\approved\reports\position-lifecycle-inventory.json `
-  --timeout-ms=30000 --max-positions=10000 --max-output-bytes=52428800
+  --manifest=C:\secure\snapshot.manifest.json `
+  --dump=C:\secure\snapshot.dump `
+  --approval=C:\secure\snapshot.approval.json `
+  --approval-key=C:\separate-secure\approval.key `
+  --restore-receipt=C:\secure\restore-receipt.json `
+  --credential-file=C:\secure\reader-credential.json `
+  --output-root=C:\local-not-synced\inventory-review `
+  --output-name=position-lifecycle.json
 ```
 
-The classifier runs in one `REPEATABLE READ READ ONLY` transaction with local
-statement and idle-transaction timeouts. It imports no mutation or broker service.
-External identifiers use a fresh per-run HMAC-SHA-256 key that is never persisted.
-The report keeps source provenance and target identity in separate objects. Output
-must be an absolute `.json` path outside Git, is created with exclusive owner-only
-permissions through an incomplete temporary file, and is atomically renamed only on
-success. Row or byte limits, cancellation, timeout, identity mismatch, or any error
-leave no incomplete report.
+The canonical repository root comes from Git, not the invocation directory. Realpath,
+link/junction, filename, directory ACL, and containment checks precede connection.
+Finalization creates a secured temporary file and uses an atomic same-directory hard
+link; an existing or concurrently created destination returns `EEXIST`, never an
+overwrite. Ordinary failures remove the incomplete file. Unsupported filesystems fail
+closed rather than falling back to rename.
 
-## Cleanup
+The report references archive, approval, receipt run, container, volume, cluster and
+table digests, but contains no password or approval key. External identifiers use a
+fresh unpersisted per-run HMAC. Classification remains read-only, bounded, and performs
+no network/provider calls.
 
-First copy the completed report to its approved encrypted retention location. Treat it
-as sensitive and delete it at the end of the approved review period. Then run the
-following fixed command from this repository; do not substitute a project name or
-derive a deletion target from an environment variable.
+## Verified cleanup
+
+After the retention decision, cleanup reads the signed receipt, re-verifies the exact
+live container, volume and project resource set, and refuses unexpected resources:
 
 ```powershell
-docker compose -p ai-trader-snapshot-inventory -f docker-compose.snapshot-inventory.yml down --volumes --remove-orphans
-docker volume ls --filter label=ai-trader-purpose=disposable-snapshot-inventory
+npm.cmd run lifecycle:snapshot-control -- cleanup `
+  --restore-receipt=C:\secure\restore-receipt.json `
+  --approval-key=C:\separate-secure\approval.key
 ```
 
-The second command must return no volume for this project. Cleanup deletes only the
-fixed disposable Compose project and its labeled volume. It never addresses
-`postgres_data`, `ai-trader-postgres`, or `ai_trader`.
+It removes only the receipt's container, volume, and project network. It never uses a
+generic environment variable, prune operation, development volume, or production
+resource. Verify no run-labeled resource remains before deleting retained local files.
 
-## Approval gates
+## Approval gates and limitations
 
-Separate owner approval is required for: (1) stopping writers and inspecting the
-persistent development container, (2) creating the source backup, (3) accepting its
-manifest/checksum for analysis, (4) starting the disposable restore, (5) running the
-real inventory, and (6) deleting the archive/report at the retention deadline. This
-checkpoint grants none of those approvals.
-
-Remaining limitations: Docker/host administrators can bypass container isolation;
-Windows ACL inheritance must be reviewed on the chosen output directory; a logical
-backup necessarily includes sensitive non-inventory tables; and this initial workflow
-uses a loopback TCP connection rather than a mutually authenticated local socket.
+Separate owner approval is required for source inspection, writer quiescence, backup
+creation, archive approval, disposable startup/restore, inventory execution, cleanup,
+and retained-file deletion. Docker/host administrators remain outside this model.
+The approval key is a minimal local review capability, not a general signing system.
+The Windows contract depends on `icacls` and hard-link support; unsupported ACL or
+filesystem behavior fails closed.

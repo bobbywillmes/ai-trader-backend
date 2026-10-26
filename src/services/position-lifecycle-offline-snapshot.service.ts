@@ -1,84 +1,57 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { chmod, lstat, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
-import { dirname, extname, isAbsolute, relative, resolve } from 'node:path';
+import { link, lstat, open, readFile, realpath, rm, unlink } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import { z } from 'zod';
+import { spawnSync } from 'node:child_process';
 import { Client } from 'pg';
-
+import { z } from 'zod';
 import { runPositionLifecycleEvidenceInventory } from './position-lifecycle-evidence-report.service.js';
 
-export const SNAPSHOT_MANIFEST_VERSION = 'AI_TRADER_DEVELOPMENT_BACKUP_V1' as const;
+export const SNAPSHOT_MANIFEST_VERSION='AI_TRADER_DEVELOPMENT_BACKUP_V2' as const;
+export const SNAPSHOT_APPROVAL_VERSION='AI_TRADER_SNAPSHOT_APPROVAL_V1' as const;
+export const RESTORE_RECEIPT_VERSION='AI_TRADER_SNAPSHOT_RESTORE_V1' as const;
+export const OFFLINE_REPORT_VERSION='POSITION_LIFECYCLE_OFFLINE_SNAPSHOT_INVENTORY_V2' as const;
+const hex64=z.string().regex(/^[a-f0-9]{64}$/);const utc=z.iso.datetime();const fullContainerId=z.string().regex(/^[a-f0-9]{64}$/);const runId=z.string().regex(/^[a-f0-9]{32}$/);
 
-const manifestSchema = z.object({
-  schemaVersion: z.literal(SNAPSHOT_MANIFEST_VERSION),
-  createdAt: z.iso.datetime(),
-  backup: z.object({ fileName: z.string().min(1), byteLength: z.number().int().positive(), sha256: z.string().regex(/^[a-f0-9]{64}$/), format: z.literal('POSTGRES_CUSTOM') }).strict(),
-  source: z.object({
-    dockerContext: z.literal('default'), composeProjectDirectory: z.string().min(1), composeConfigSha256: z.string().regex(/^[a-f0-9]{64}$/),
-    service: z.literal('postgres'), containerName: z.literal('ai-trader-postgres'), image: z.string().regex(/^postgres:16(?:\.|$)?/),
-    volumeName: z.string().regex(/_postgres_data$/), volumeDestination: z.literal('/var/lib/postgresql/data'),
-    database: z.literal('ai_trader'), databaseUser: z.literal('trader'), postgresMajor: z.literal(16),
-    containerId: z.string().min(12), databaseSystemIdentifier: z.string().regex(/^\d+$/),
-    productionContainersAbsent: z.boolean(), tunnelsAbsent: z.boolean(),
-  }).strict(),
-  approval: z.object({ approvedBy: z.string().min(1), approvedAt: z.iso.datetime(), purpose: z.literal('POSITION_LIFECYCLE_EVIDENCE_INVENTORY') }).strict(),
-}).strict();
+export const manifestSchema=z.object({schemaVersion:z.literal(SNAPSHOT_MANIFEST_VERSION),createdAt:utc,backup:z.object({fileName:z.string().regex(/^[^\\/]+\.dump$/),byteLength:z.number().int().positive(),sha256:hex64,format:z.literal('POSTGRES_CUSTOM'),pgRestoreMajor:z.literal(16),catalogSha256:hex64}).strict(),sourceObservation:z.object({sourceKind:z.enum(['DEVELOPMENT_LOCAL','SYNTHETIC_TEST']),observedAt:utc,dockerContext:z.literal('default'),composeProjectDirectory:z.string().min(1),composeConfigSha256:hex64,service:z.literal('postgres'),containerName:z.string().regex(/^(?:ai-trader-postgres|ai-trader-synthetic-source-[a-f0-9]{32})$/),image:z.literal('postgres:16'),volumeName:z.string().regex(/^(?:.+_postgres_data|ai-trader-synthetic-source-[a-f0-9]{32})$/),volumeDestination:z.literal('/var/lib/postgresql/data'),database:z.string().regex(/^(?:ai_trader|ai_trader_test_source)$/),databaseUser:z.string().regex(/^(?:trader|snapshot_admin)$/),postgresMajor:z.literal(16),containerId:fullContainerId,databaseSystemIdentifier:z.string().regex(/^\d+$/),productionContainerCheck:z.literal('OPERATOR_OBSERVED_ABSENT'),tunnelCheck:z.literal('OPERATOR_OBSERVED_ABSENT')}).strict()}).strict();
+export type SnapshotProvenanceManifest=z.infer<typeof manifestSchema>;
+export const approvalSchema=z.object({schemaVersion:z.literal(SNAPSHOT_APPROVAL_VERSION),manifestSha256:hex64,archiveSha256:hex64,catalogSha256:hex64,approvedBy:z.string().regex(/^[A-Za-z0-9._@-]{3,128}$/),approvedAt:utc,purpose:z.literal('POSITION_LIFECYCLE_EVIDENCE_INVENTORY'),approvalNonce:hex64,mac:hex64}).strict();
+export type SnapshotApproval=z.infer<typeof approvalSchema>;
+const digestSchema=z.object({table:z.string(),rowCount:z.number().int().nonnegative(),sha256:hex64}).strict();
+export const receiptSchema=z.object({schemaVersion:z.literal(RESTORE_RECEIPT_VERSION),runId,createdAt:utc,archiveSha256:hex64,catalogSha256:hex64,approvalSha256:hex64,restoreTool:z.literal('pg_restore 16'),restoreOptions:z.array(z.string()),container:z.object({id:fullContainerId,image:z.literal('postgres:16'),composeProject:z.string().regex(/^ai-trader-snapshot-[a-f0-9]{32}$/),composeService:z.literal('postgres'),runLabel:runId}).strict(),volume:z.object({name:z.string().min(1),runLabel:runId,purpose:z.literal('disposable-snapshot-inventory')}).strict(),target:z.object({database:z.string().regex(/^ai_trader_snapshot_[a-f0-9]{32}$/),systemIdentifier:z.string().regex(/^\d+$/),ingressHost:z.literal('127.0.0.1'),serverAddress:z.string().regex(/^(?:\d{1,3}\.){3}\d{1,3}$/),serverPort:z.literal(5432),port:z.number().int().min(1024).max(65535),reader:z.string().regex(/^snapshot_reader_[a-f0-9]{12}$/)}).strict(),tableDigests:z.array(digestSchema).min(1),mac:hex64}).strict();
+export type RestoreReceipt=z.infer<typeof receiptSchema>;
+const credentialSchema=z.object({schemaVersion:z.literal('AI_TRADER_SNAPSHOT_READER_CREDENTIAL_V1'),runId,database:z.string(),host:z.literal('127.0.0.1'),port:z.number().int(),user:z.string(),password:z.string().regex(/^[A-Za-z0-9_-]{24,128}$/)}).strict();
+export type SnapshotCredential=z.infer<typeof credentialSchema>;
 
-export type SnapshotProvenanceManifest = z.infer<typeof manifestSchema>;
+const TABLES=['TrackedPosition','PositionExitState','OrderIntent','BrokerOrder','BrokerActivity','EntryExposureClaim','EntryExposureClaimEvent','PositionLifecycleProvenanceDecision','OperationalAttention','TradingAccount','Security','Subscription','TradingAccountSubscription'] as const;
+const withoutMac=<T extends {mac:string}>(value:T)=>{const {mac:_mac,...rest}=value;return rest;};
+const sha256=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
+const mac=(key:Buffer,value:unknown)=>createHmac('sha256',key).update(JSON.stringify(value)).digest('hex');
+const safeEqual=(a:string,b:string)=>a.length===b.length&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
 
-async function sha256File(path:string) {
-  const hash=createHash('sha256');
-  await pipeline(createReadStream(path),hash);
-  return hash.digest('hex');
-}
+export async function sha256File(path:string){const hash=createHash('sha256');await pipeline(createReadStream(path),hash);return hash.digest('hex');}
+export function inspectCustomArchiveHeader(header:Buffer){if(header.length<5||header.subarray(0,5).toString('ascii')!=='PGDMP')throw new Error('Snapshot archive is not a PostgreSQL custom-format archive (PGDMP header missing).');}
+export function validatePgRestoreInspection(versionOutput:string,catalogOutput:string){if(!/pg_restore \(PostgreSQL\) 16(?:\.|\s|$)/.test(versionOutput))throw new Error('Archive inspection requires PostgreSQL 16 pg_restore.');if(!catalogOutput.includes('; Archive created at ')||!catalogOutput.includes(';     Format: CUSTOM'))throw new Error('PostgreSQL 16 pg_restore did not recognize a custom archive.');return sha256(catalogOutput.replaceAll('\r\n','\n'));}
 
-export async function verifySnapshotProvenance(manifestPath:string,dumpPath:string):Promise<SnapshotProvenanceManifest>{
-  const manifest=manifestSchema.parse(JSON.parse(await readFile(manifestPath,'utf8')));
-  const stat=await lstat(dumpPath);
-  if(!stat.isFile()||stat.isSymbolicLink())throw new Error('Snapshot archive must be a regular, non-symbolic-link file.');
-  if(manifest.backup.fileName!==dumpPath.replaceAll('\\','/').split('/').at(-1))throw new Error('Snapshot archive filename differs from verified provenance.');
-  if(stat.size!==manifest.backup.byteLength)throw new Error('Snapshot archive size differs from verified provenance.');
-  if(await sha256File(dumpPath)!==manifest.backup.sha256)throw new Error('Snapshot archive checksum differs from verified provenance.');
-  if(!manifest.source.productionContainersAbsent||!manifest.source.tunnelsAbsent)throw new Error('Snapshot provenance does not prove development-only source isolation.');
-  return manifest;
-}
+export function isOwnerOnlyWindowsAcl(output:string,principal:string){return !/everyone|authenticated users|builtin\\users|\(i\)/i.test(output)&&output.toLowerCase().includes(principal.toLowerCase())&&(output.match(/:\(/g)?.length??0)===1;}
+export async function assertPrivateFile(path:string,kind:string){const stat=await lstat(path);if(!stat.isFile()||stat.isSymbolicLink())throw new Error(`${kind} must be a regular non-link file.`);if(process.platform!=='win32'){if((stat.mode&0o077)!==0)throw new Error(`${kind} permissions must be owner-only.`);return;}const result=spawnSync('icacls.exe',[path],{encoding:'utf8',windowsHide:true});if(result.status!==0)throw new Error(`Unable to validate Windows ACL for ${kind}.`);if(!isOwnerOnlyWindowsAcl(result.stdout,currentWindowsPrincipal()))throw new Error(`${kind} Windows ACL is not explicit and owner-only.`);}
+function currentWindowsPrincipal(){const result=spawnSync('whoami.exe',[],{encoding:'utf8',windowsHide:true});if(result.status!==0||!result.stdout.trim())throw new Error('Unable to identify the Windows execution principal.');return result.stdout.trim();}
+function hardenWindowsAcl(path:string){const result=spawnSync('icacls.exe',[path,'/inheritance:r','/grant:r',`${currentWindowsPrincipal()}:F`],{encoding:'utf8',windowsHide:true});if(result.status!==0)throw new Error('Unable to apply owner-only Windows ACL.');}
+export async function verifySnapshotProvenance(manifestPath:string,dumpPath:string){await assertPrivateFile(manifestPath,'Snapshot manifest');await assertPrivateFile(dumpPath,'Snapshot archive');const raw=await readFile(manifestPath);const manifest=manifestSchema.parse(JSON.parse(raw.toString('utf8')));if(manifest.sourceObservation.sourceKind==='DEVELOPMENT_LOCAL'&&(manifest.sourceObservation.containerName!=='ai-trader-postgres'||manifest.sourceObservation.database!=='ai_trader'||manifest.sourceObservation.databaseUser!=='trader'||!manifest.sourceObservation.volumeName.endsWith('_postgres_data')))throw new Error('Development source observation does not match the exact local development identity.');if(manifest.sourceObservation.sourceKind==='SYNTHETIC_TEST'&&(!manifest.sourceObservation.containerName.startsWith('ai-trader-synthetic-source-')||manifest.sourceObservation.database!=='ai_trader_test_source'||manifest.sourceObservation.databaseUser!=='snapshot_admin'))throw new Error('Synthetic source observation is invalid.');const stat=await lstat(dumpPath);if(basename(dumpPath)!==manifest.backup.fileName)throw new Error('Snapshot archive filename differs from observed provenance.');if(stat.size!==manifest.backup.byteLength)throw new Error('Snapshot archive size differs from observed provenance.');const handle=await open(dumpPath,'r');const header=Buffer.alloc(5);try{await handle.read(header,0,5,0);}finally{await handle.close();}inspectCustomArchiveHeader(header);if(await sha256File(dumpPath)!==manifest.backup.sha256)throw new Error('Snapshot archive checksum differs from observed provenance.');return{manifest,manifestSha256:sha256(raw)};}
+export function signApproval(value:Omit<SnapshotApproval,'mac'>,key:Buffer):SnapshotApproval{return approvalSchema.parse({...value,mac:mac(key,value)});}
+export async function loadApproval(path:string,keyPath:string,manifestSha256:string,manifest:SnapshotProvenanceManifest){await assertPrivateFile(path,'Snapshot approval');await assertPrivateFile(keyPath,'Snapshot approval key');const approval=approvalSchema.parse(JSON.parse(await readFile(path,'utf8')));const key=await readFile(keyPath);if(key.length<32)throw new Error('Snapshot approval key must contain at least 32 bytes.');if(approval.manifestSha256!==manifestSha256||approval.archiveSha256!==manifest.backup.sha256)throw new Error('Snapshot approval does not bind the supplied manifest and archive.');if(Date.parse(approval.approvedAt)<Date.parse(manifest.createdAt))throw new Error('Snapshot approval predates the observed archive.');if(!safeEqual(approval.mac,mac(key,withoutMac(approval))))throw new Error('Snapshot approval MAC is invalid.');return{approval,key,approvalSha256:sha256(await readFile(path))};}
+export function signRestoreReceipt(value:Omit<RestoreReceipt,'mac'>,key:Buffer):RestoreReceipt{return receiptSchema.parse({...value,mac:mac(key,value)});}
+export async function loadRestoreReceipt(path:string,key:Buffer,approvalSha256:string,archiveSha256:string,approvedAt?:string){await assertPrivateFile(path,'Restore receipt');const receipt=receiptSchema.parse(JSON.parse(await readFile(path,'utf8')));if(receipt.approvalSha256!==approvalSha256||receipt.archiveSha256!==archiveSha256)throw new Error('Restore receipt does not bind the approved archive.');if(approvedAt!==undefined&&Date.parse(receipt.createdAt)<Date.parse(approvedAt))throw new Error('Restore receipt predates archive approval.');if(Date.parse(receipt.createdAt)>Date.now()+5*60_000)throw new Error('Restore receipt has an invalid future timestamp.');if(!safeEqual(receipt.mac,mac(key,withoutMac(receipt))))throw new Error('Restore receipt MAC is invalid.');return receipt;}
 
-function assertSafeOutputPath(outputPath:string,workspaceRoot:string){
-  if(!isAbsolute(outputPath))throw new Error('Inventory output path must be absolute.');
-  if(extname(outputPath).toLowerCase()!=='.json')throw new Error('Inventory output must be a JSON file.');
-  const relation=relative(resolve(workspaceRoot),resolve(outputPath));
-  if(relation===''||(!relation.startsWith('..')&&!isAbsolute(relation)))throw new Error('Inventory output must be outside the Git workspace.');
-}
+export async function computeInventoryTableDigests(db:Client){const out=[];for(const table of TABLES){const rows=(await db.query<{rowHash:string}>(`SELECT md5(row_to_json(t)::text) "rowHash" FROM "${table}" t ORDER BY md5(row_to_json(t)::text)`)).rows;out.push({table,rowCount:rows.length,sha256:sha256(rows.map(row=>row.rowHash).join('\n'))});}return out;}
+export function assertDigestMatch(expected:RestoreReceipt['tableDigests'],actual:RestoreReceipt['tableDigests']){if(JSON.stringify(expected)!==JSON.stringify(actual))throw new Error('Disposable target data differs from the approved restored state.');}
+export type DockerEvidence={containerId:string;image:string;running:boolean;project:string;service:string;runLabel:string;volumeName:string;volumeRunLabel:string;volumePurpose:string;hostIp:string;hostPort:number;mountDestination:string};
+export function assertDockerEvidence(receipt:RestoreReceipt,e:DockerEvidence){if(!e.running||e.containerId!==receipt.container.id||e.image!==receipt.container.image||e.project!==receipt.container.composeProject||e.service!=='postgres'||e.runLabel!==receipt.runId||e.volumeName!==receipt.volume.name||e.volumeRunLabel!==receipt.runId||e.volumePurpose!=='disposable-snapshot-inventory'||e.hostIp!=='127.0.0.1'||e.hostPort!==receipt.target.port||e.mountDestination!=='/var/lib/postgresql/data')throw new Error('Live Docker infrastructure differs from the approved restore receipt.');}
+export async function loadCredential(path:string,receipt:RestoreReceipt){await assertPrivateFile(path,'Disposable reader credential');const value=credentialSchema.parse(JSON.parse(await readFile(path,'utf8')));if(value.runId!==receipt.runId||value.database!==receipt.target.database||value.host!==receipt.target.ingressHost||value.port!==receipt.target.port||value.user!==receipt.target.reader)throw new Error('Disposable reader credential does not match the restore receipt.');return value;}
 
-async function writePrivateAtomic(path:string,value:unknown,maxBytes:number){
-  const body=`${JSON.stringify(value,null,2)}\n`;
-  if(Buffer.byteLength(body)>maxBytes)throw new Error(`Inventory report exceeds the ${maxBytes}-byte output limit.`);
-  await mkdir(dirname(path),{recursive:true});
-  await lstat(path).then(()=>{throw new Error('Inventory output path already exists; refusing to overwrite it.');},error=>{if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;});
-  const temporary=`${path}.incomplete-${process.pid}-${randomBytes(6).toString('hex')}`;
-  let handle;
-  try{
-    handle=await open(temporary,'wx',0o600);
-    await handle.writeFile(body,'utf8');
-    await handle.sync();
-    await handle.close();handle=undefined;
-    await chmod(temporary,0o600);
-    if(process.platform!=='win32'&&((await lstat(temporary)).mode&0o077)!==0)throw new Error('Inventory report permissions are not owner-only.');
-    await rename(temporary,path);
-  }catch(error){await handle?.close().catch(()=>undefined);await rm(temporary,{force:true}).catch(()=>undefined);throw error;}
-}
+async function assertPrivateDirectoryWindows(path:string){const result=spawnSync('icacls.exe',[path],{encoding:'utf8',windowsHide:true});if(result.status!==0||!isOwnerOnlyWindowsAcl(result.stdout,currentWindowsPrincipal()))throw new Error('Approved output directory Windows ACL is not explicit and owner-only.');}
+export async function resolveOutput(args:{outputRoot:string;outputName:string;repositoryRoot:string}){if(!isAbsolute(args.outputRoot)||!/^[-A-Za-z0-9_.]+\.json$/.test(args.outputName))throw new Error('Output requires an absolute approved root and a simple JSON filename.');const requested=await lstat(args.outputRoot);if(requested.isSymbolicLink())throw new Error('Approved output root must not be a symbolic link or junction.');const root=await realpath(args.outputRoot);if(/(?:^|[\\\\/])(onedrive|dropbox|google drive|icloud)(?:[\\\\/]|$)/i.test(root))throw new Error('Approved output root must not be cloud-synchronized.');const repo=await realpath(args.repositoryRoot);const rel=relative(repo,root);if(rel===''||(!rel.startsWith('..')&&!isAbsolute(rel)))throw new Error('Approved output root must be outside the canonical repository.');const stat=await lstat(root);if(!stat.isDirectory()||stat.isSymbolicLink())throw new Error('Approved output root must be a real directory.');if(process.platform!=='win32'&&(stat.mode&0o077)!==0)throw new Error('Approved output directory permissions must be owner-only.');if(process.platform==='win32')await assertPrivateDirectoryWindows(root);const output=resolve(root,args.outputName);if(dirname(output)!==root)throw new Error('Output filename escapes the approved root.');return output;}
+export async function writePrivateNoReplace(path:string,value:unknown,maxBytes:number){const body=Buffer.from(`${JSON.stringify(value,null,2)}\n`);if(body.length>maxBytes)throw new Error(`Inventory report exceeds the ${maxBytes}-byte output limit.`);const temporary=`${path}.incomplete-${process.pid}-${randomBytes(8).toString('hex')}`;let handle;try{handle=await open(temporary,'wx',0o600);await handle.write(body);await handle.sync();await handle.close();handle=undefined;if(process.platform==='win32')hardenWindowsAcl(temporary);else if(((await lstat(temporary)).mode&0o077)!==0)throw new Error('Inventory report permissions are not owner-only.');await link(temporary,path);await unlink(temporary);await assertPrivateFile(path,'Inventory report');}catch(error){await handle?.close().catch(()=>undefined);await rm(temporary,{force:true}).catch(()=>undefined);throw error;}}
 
-export async function runOfflineSnapshotInventory(args:{targetUrl:string;expectedTarget:{database:string;host:string|null;port:number|null;sessionUser:string};manifest:SnapshotProvenanceManifest;outputPath:string;workspaceRoot:string;pageSize?:number;maxPositions?:number;statementTimeoutMs?:number;maxOutputBytes?:number}){
-  if(!args.expectedTarget.database.startsWith('ai_trader_snapshot_'))throw new Error('Offline inventory target must use the ai_trader_snapshot_ disposable database prefix.');
-  if(new URL(args.targetUrl).pathname.slice(1)!==args.expectedTarget.database)throw new Error('Offline target URL database differs from the explicitly approved target.');
-  assertSafeOutputPath(args.outputPath,args.workspaceRoot);
-  const client=new Client({connectionString:args.targetUrl,connectionTimeoutMillis:5_000,query_timeout:(args.statementTimeoutMs??30_000)+5_000});
-  await client.connect();
-  try{
-    const report=await runPositionLifecycleEvidenceInventory(client,{approvedIdentities:[args.expectedTarget],reportHmacKey:randomBytes(32),...(args.pageSize===undefined?{}:{pageSize:args.pageSize}),...(args.maxPositions===undefined?{}:{maxPositions:args.maxPositions}),...(args.statementTimeoutMs===undefined?{}:{statementTimeoutMs:args.statementTimeoutMs})});
-    const artifact={contract:'POSITION_LIFECYCLE_OFFLINE_SNAPSHOT_INVENTORY_V1',sourceSnapshot:{createdAt:args.manifest.createdAt,archiveSha256:args.manifest.backup.sha256,sourceDatabase:args.manifest.source.database,sourceSystemIdentifier:args.manifest.source.databaseSystemIdentifier,sourceContainerId:args.manifest.source.containerId},analysisTarget:{database:report.databaseIdentity.database,host:report.databaseIdentity.host,port:report.databaseIdentity.port,sessionUser:report.databaseIdentity.sessionUser},report};
-    await writePrivateAtomic(args.outputPath,artifact,args.maxOutputBytes??50*1024*1024);
-    return artifact;
-  }finally{await client.end();}
-}
+export async function runOfflineSnapshotInventory(args:{credential:SnapshotCredential;receipt:RestoreReceipt;manifest:SnapshotProvenanceManifest;manifestSha256:string;approvalSha256:string;outputPath:string;dockerEvidence:DockerEvidence;pageSize?:number;maxPositions?:number;statementTimeoutMs?:number;maxOutputBytes?:number}){assertDockerEvidence(args.receipt,args.dockerEvidence);const client=new Client({host:args.credential.host,port:args.credential.port,database:args.credential.database,user:args.credential.user,password:args.credential.password,ssl:false,connectionTimeoutMillis:5_000,query_timeout:(args.statementTimeoutMs??30_000)+5_000});await client.connect();try{const target=(await client.query<{database:string;user:string;systemIdentifier:string;version:string;serverAddress:string}>(`SELECT current_database() database,current_user "user",(pg_control_system()).system_identifier::text "systemIdentifier",current_setting('server_version_num') version,host(inet_server_addr()) \"serverAddress\"`)).rows[0]!;if(target.database!==args.receipt.target.database||target.user!==args.receipt.target.reader||target.systemIdentifier!==args.receipt.target.systemIdentifier||target.serverAddress!==args.receipt.target.serverAddress||!target.version.startsWith('16'))throw new Error('Connected PostgreSQL target differs from the approved disposable restore.');const before=await computeInventoryTableDigests(client);assertDigestMatch(args.receipt.tableDigests,before);const expected={database:target.database,host:args.receipt.target.serverAddress,port:args.receipt.target.serverPort,sessionUser:target.user};const report=await runPositionLifecycleEvidenceInventory(client,{approvedIdentities:[expected],identityTier:'OFFLINE_SNAPSHOT',reportHmacKey:randomBytes(32),...(args.pageSize===undefined?{}:{pageSize:args.pageSize}),...(args.maxPositions===undefined?{}:{maxPositions:args.maxPositions}),...(args.statementTimeoutMs===undefined?{}:{statementTimeoutMs:args.statementTimeoutMs})});const after=await computeInventoryTableDigests(client);assertDigestMatch(before,after);const artifact={contract:OFFLINE_REPORT_VERSION,sourceArchive:{sha256:args.manifest.backup.sha256,catalogSha256:args.receipt.catalogSha256,manifestSha256:args.manifestSha256,approvalSha256:args.approvalSha256},targetRestore:{receiptVersion:args.receipt.schemaVersion,runId:args.receipt.runId,containerId:args.receipt.container.id,volumeName:args.receipt.volume.name,database:args.receipt.target.database,systemIdentifier:args.receipt.target.systemIdentifier,restoredAt:args.receipt.createdAt,tableDigests:after},report};await writePrivateNoReplace(args.outputPath,artifact,args.maxOutputBytes??50*1024*1024);return artifact;}finally{await client.end();}}
