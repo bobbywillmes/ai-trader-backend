@@ -286,8 +286,20 @@ Startup assesses authority and reconciles attention. A monitored worker runs at
 startup and every five minutes, prevents overlap, and records enumeration/per-account
 failure as worker-health failure rather than successful zero-account work. DENIED or
 UNKNOWN PAPER exit authority fails visibly and opens/observes attention. Fresh
-AUTHORIZED evidence, or an explicit OBSERVER after canonical proof of no local
-exposure, resolves it authoritatively. Repetition does not duplicate attention rows.
+AUTHORIZED evidence resolves an executor incident as restored. Fresh, exact OBSERVER
+evidence resolves an existing executor incident as observer-inapplicable even while
+production-owned exposure remains visible; the resolution evidence explicitly says
+that executor authority was not restored. Repetition does not duplicate attention rows.
+
+During PAPER reconciliation, fresh `VERIFIED_OBSERVER` evidence makes only lifecycle-
+ownership/provenance findings (`position_attribution_missing`,
+`entry_exposure_claim_unresolved`, and `entry_exposure_claim_missing`) inapplicable to
+Operational Attention on that observer deployment. Findings and historical System
+Events remain intact. Existing matching episodes resolve with explicit evidence that
+the condition remains observed and neither executor authority nor lifecycle ownership
+was restored. Quantity, side, broker-exposure, protective-exit, and every other
+inconsistency continue to project normally. UNKNOWN or DENIED authority suppresses
+nothing.
 
 An OBSERVER identity mismatch means the local account does not resolve to the exact
 expected brokerage `account_number`, is duplicated, or cannot be enumerated. Diagnose

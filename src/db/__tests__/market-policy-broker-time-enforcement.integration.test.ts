@@ -291,7 +291,7 @@ type Fixture = { securityId: number; subscriptionId: number; assignmentId: numbe
     expect((await db.query('SELECT current_database() AS name')).rows[0].name).toBe(database);
     const migrations = (await readdir('prisma/migrations', { withFileTypes: true })).filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
     expect(migrations).toContain(BROKER_TIME_MIGRATION);
-    expect(migrations.at(-1)).toBe(DISPATCH_RECOVERY_MIGRATION);
+    expect(migrations).toContain(DISPATCH_RECOVERY_MIGRATION);
     // Replay up to Phase 3C.1 so a Security-unbound V1 grant exists when Phase 3C.2 invalidates it (L5).
     for (const migration of migrations.filter(name => name < PRE_INTENT_MIGRATION)) await db.query(await readFile(`prisma/migrations/${migration}/migration.sql`, 'utf8'));
     ownerId = await user('owner@phase3c3.test', 'SYSTEM_OWNER');

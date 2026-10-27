@@ -387,6 +387,7 @@ model User {
   enforcementLapseResolutions AssignmentMarketPolicyEnforcementLapseResolution[] @relation("EnforcementLapseResolutionResolvedBy")
   enforcementRolloutChanges MarketPolicyEnforcementRuntimeRollout[] @relation("MarketPolicyEnforcementRolloutChangedBy")
   enforcementRolloutEvents MarketPolicyEnforcementRuntimeRolloutEvent[] @relation("MarketPolicyEnforcementRolloutEventActor")
+  positionLifecycleProvenanceDecisions PositionLifecycleProvenanceDecision[] @relation("PositionLifecycleProvenanceDecisionActor")
 }
 
 model UserSetupToken {
@@ -566,6 +567,7 @@ model TradingAccount {
   orderIntentMarketPolicyCoverages OrderIntentMarketPolicyCoverage[]
   brokerPostOpportunities OrderIntentBrokerPostOpportunity[]
   entryExposureClaims      EntryExposureClaim[]
+  positionLifecycleProvenanceDecisions PositionLifecycleProvenanceDecision[]
 
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
@@ -2561,6 +2563,28 @@ model EntryDecision {
   @@index([tradingAccountSubscriptionId, evaluatedAt])
 }
 
+enum PositionLifecycleCreationAuthority {
+  EXECUTOR
+  OBSERVER
+}
+
+enum PositionLifecycleOrigin {
+  LOCAL_ORDER_CHAIN
+  BROKER_EXTERNAL
+  UNKNOWN
+}
+
+enum PositionLifecycleOwnership {
+  LOCAL_LIFECYCLE_OWNED
+  NOT_LOCALLY_OWNED
+  UNKNOWN
+}
+
+enum PositionLifecycleDecisionActorType {
+  SYSTEM
+  USER
+}
+
 model TrackedPosition {
   id               Int       @id @default(autoincrement())
   broker           String
@@ -2581,6 +2605,10 @@ model TrackedPosition {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
+  // Immutable creation-time deployment role. Null means the historical record was
+  // created before this evidence existed; null is never inferred from current config.
+  lifecycleAuthorityAtCreation PositionLifecycleCreationAuthority?
+
   securityId Int
   security   Security @relation(fields: [securityId], references: [id])
 
@@ -2593,6 +2621,7 @@ model TrackedPosition {
   operationalAttentions OperationalAttention[]
   entryDecision    EntryDecision?
   entryExposureClaim EntryExposureClaim?
+  lifecycleProvenanceDecisions PositionLifecycleProvenanceDecision[]
 
   exitState PositionExitState?
 
@@ -2634,6 +2663,35 @@ model TrackedPosition {
   @@index([tradingAccountSubscriptionId])
   @@index([tradingAccountId, tradingAccountSubscriptionId])
   @@index([tradingAccountSubscriptionId, status])
+  @@unique([id, tradingAccountId])
+}
+
+// Append-only classification evidence. The effective decision is the single chain
+// head (the row not superseded by another row); it is never copied onto TrackedPosition.
+model PositionLifecycleProvenanceDecision {
+  id                             Int                                @id @default(autoincrement())
+  trackedPositionId              Int
+  tradingAccountId               Int
+  origin                         PositionLifecycleOrigin
+  ownership                      PositionLifecycleOwnership
+  legacyExitContinuityAuthorized Boolean                            @default(false)
+  classifierVersion              String
+  evidenceFingerprint            String
+  evidenceJson                   Json
+  actorType                      PositionLifecycleDecisionActorType
+  actorUserId                    Int?
+  supersedesDecisionId           Int?                               @unique
+  decidedAt                      DateTime                            @default(now()) @db.Timestamptz(3)
+
+  trackedPosition TrackedPosition @relation(fields: [trackedPositionId, tradingAccountId], references: [id, tradingAccountId], onDelete: Restrict, onUpdate: Restrict, map: "PositionLifecycleProvenanceDecision_position_fkey")
+  tradingAccount TradingAccount   @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "PositionLifecycleProvenanceDecision_account_fkey")
+  actorUser      User?            @relation("PositionLifecycleProvenanceDecisionActor", fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "PositionLifecycleProvenanceDecision_actor_fkey")
+  supersedes     PositionLifecycleProvenanceDecision?  @relation("PositionLifecycleProvenanceSupersession", fields: [supersedesDecisionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "PositionLifecycleProvenanceDecision_supersedes_fkey")
+  supersededBy   PositionLifecycleProvenanceDecision?  @relation("PositionLifecycleProvenanceSupersession")
+
+  @@index([trackedPositionId, decidedAt], map: "PositionLifecycleProvenanceDecision_position_decided_idx")
+  @@index([tradingAccountId, decidedAt], map: "PositionLifecycleProvenanceDecision_account_decided_idx")
+  @@index([actorUserId], map: "PositionLifecycleProvenanceDecision_actor_idx")
 }
 
 model PositionExitState {
