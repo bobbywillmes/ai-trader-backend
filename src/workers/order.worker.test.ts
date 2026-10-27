@@ -1267,6 +1267,7 @@ describe('stale submitting intent recovery', () => {
             AND: expect.arrayContaining([
               { blockReason: { not: null } },
               { blockReason: { contains: 'RECOVERY_DEFERRED_EVENT_RECORDED' } },
+              { lastSubmittedOrderSyncAt: { not: null } },
               { lastSubmittedOrderSyncAt: { gt: expect.any(Date) } },
             ]),
           }),

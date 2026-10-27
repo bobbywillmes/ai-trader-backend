@@ -734,4 +734,55 @@ describePrisma('entry exposure lifecycle with real Prisma services', () => {
     expect(await prisma.brokerOrder.count({ where: { orderIntentId: intent.id } })).toBe(0);
     expect(broker.submitCalls).toHaveLength(0);
   });
+
+  it('27. recovers a legacy deferred exit whose recovery-progress timestamp is NULL', async () => {
+    const account = await createAccount('PAPER');
+    const security = await createSecurity('NT');
+    const clientOrderId = `null-recovery-progress-${randomUUID()}`;
+    const startedAt = new Date();
+    const originalBlockReason =
+      'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:legacy timeout:RECOVERY_DEFERRED_EVENT_RECORDED';
+    const intent = await prisma.orderIntent.create({ data: {
+      source: 'null_recovery_progress_fixture', symbol: security.symbol, side: 'sell',
+      orderType: 'market', timeInForce: 'day', qty: 10, clientOrderId,
+      status: 'submitting', blockReason: originalBlockReason,
+      rawRequestJson: { signalType: 'exit' }, tradingAccountId: account.id,
+      updatedAt: new Date(startedAt.getTime() - 10 * 60_000),
+      lastSubmittedOrderSyncAt: null,
+    } });
+
+    const first = await recoverStaleSubmittingIntentsForAccount(account.id, startedAt);
+    expect(first).toMatchObject({ found: 1, linked: 0, retained: 1, failures: [] });
+    expect(broker.clientLookupCalls).toEqual([{ accountId: account.id, clientOrderId }]);
+    expect(await prisma.orderIntent.findUniqueOrThrow({ where: { id: intent.id } })).toMatchObject({
+      status: 'submitting', blockReason: originalBlockReason,
+      lastSubmittedOrderSyncAt: startedAt,
+    });
+
+    await recoverStaleSubmittingIntentsForAccount(
+      account.id,
+      new Date(startedAt.getTime() + 2_000)
+    );
+    expect(broker.clientLookupCalls).toHaveLength(1);
+
+    const found = alpacaOrder({
+      id: `null-progress-found-${randomUUID()}`, clientOrderId,
+      symbol: security.symbol, status: 'accepted', side: 'sell',
+    });
+    broker.ordersByClientId.set(clientOrderId, found);
+    const rechecked = await recoverStaleSubmittingIntentsForAccount(
+      account.id,
+      new Date(startedAt.getTime() + 5 * 60_000 + 10_000)
+    );
+    expect(rechecked).toMatchObject({ found: 1, linked: 1, failures: [] });
+    expect(broker.clientLookupCalls).toHaveLength(2);
+    expect(await prisma.orderIntent.findUniqueOrThrow({ where: { id: intent.id } })).toMatchObject({
+      status: 'submitted', blockReason: null,
+    });
+    expect(await prisma.brokerOrder.count({
+      where: { orderIntentId: intent.id, brokerOrderId: found.id },
+    })).toBe(1);
+    expect(await prisma.entryExposureClaim.count({ where: { orderIntentId: intent.id } })).toBe(0);
+    expect(broker.submitCalls).toHaveLength(0);
+  });
 });

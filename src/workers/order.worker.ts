@@ -179,6 +179,7 @@ export async function recoverStaleSubmittingIntentsForAccount(
           {
             blockReason: { contains: 'RECOVERY_DEFERRED_EVENT_RECORDED' },
           },
+          { lastSubmittedOrderSyncAt: { not: null } },
           { lastSubmittedOrderSyncAt: { gt: staleBefore } },
         ],
       },
