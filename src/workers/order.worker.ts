@@ -163,6 +163,9 @@ export async function recoverStaleSubmittingIntentsForAccount(
   tradingAccountId: number,
   now = new Date()
 ) {
+  const staleBefore = new Date(
+    now.getTime() - STALE_SUBMITTING_INTENT_THRESHOLD_MS
+  );
   const intents = await prisma.orderIntent.findMany({
     where: {
       tradingAccountId,
@@ -171,17 +174,16 @@ export async function recoverStaleSubmittingIntentsForAccount(
         AND: [
           { side: { equals: 'sell', mode: 'insensitive' } },
           {
-            blockReason: {
-              contains: 'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN',
-            },
+            blockReason: { not: null },
           },
           {
             blockReason: { contains: 'RECOVERY_DEFERRED_EVENT_RECORDED' },
           },
+          { lastSubmittedOrderSyncAt: { gt: staleBefore } },
         ],
       },
       updatedAt: {
-        lte: new Date(now.getTime() - STALE_SUBMITTING_INTENT_THRESHOLD_MS),
+        lte: staleBefore,
       },
     },
     include: {
@@ -198,14 +200,6 @@ export async function recoverStaleSubmittingIntentsForAccount(
 
   for (const intent of intents) {
     try {
-    if (
-      isExitIntent(intent) &&
-      intent.blockReason?.includes('BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN') &&
-      intent.blockReason.includes('RECOVERY_DEFERRED_EVENT_RECORDED')
-    ) {
-      retained += 1;
-      continue;
-    }
     if (!intent.clientOrderId) {
       retained += 1;
       continue;
@@ -232,6 +226,14 @@ export async function recoverStaleSubmittingIntentsForAccount(
 
     let brokerOrder;
     try {
+      const progress = await prisma.orderIntent.updateMany({
+        where: { id: intent.id, status: 'submitting' },
+        data: { lastSubmittedOrderSyncAt: now },
+      });
+      if (progress.count !== 1) {
+        retained += 1;
+        continue;
+      }
       brokerOrder = await getAlpacaOrderByClientOrderId(
         tradingAccountId,
         intent.clientOrderId,

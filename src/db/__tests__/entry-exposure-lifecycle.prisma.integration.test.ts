@@ -3,6 +3,7 @@ import 'dotenv/config';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AdaptivePollingDecision } from '../../services/adaptive-polling.service.js';
 import { createDisposablePostgresDatabase, type DisposablePostgresDatabase } from './disposable-postgres.js';
+import { AlpacaRateLimitDeferredError } from '../../errors/alpaca-rate-limit-deferred-error.js';
 
 const enabled = process.env.RUN_ENTRY_EXPOSURE_PRISMA_TESTS === '1' && process.env.DATABASE_URL;
 const describePrisma = enabled ? describe : describe.skip;
@@ -15,6 +16,8 @@ const broker = vi.hoisted(() => ({
   positionsByAccount: new Map<number, Array<Record<string, unknown>>>(),
   failCompleteOrdersForAccount: new Set<number>(),
   failClientOrderLookupForAccount: new Set<number>(),
+  clientLookupErrorsByAccount: new Map<number, Error[]>(),
+  clientLookupCalls: [] as Array<{ accountId: number; clientOrderId: string }>,
   submitCalls: [] as unknown[],
   openOrderCalls: [] as number[],
   orderByIdCalls: [] as Array<{ accountId: number; orderId: string }>,
@@ -26,6 +29,9 @@ vi.mock('../../integrations/alpaca/orders.adapter.js', () => ({
     return broker.ordersById.get(id) ?? null;
   }),
   getAlpacaOrderByClientOrderId: vi.fn(async (accountId: number, id: string) => {
+    broker.clientLookupCalls.push({ accountId, clientOrderId: id });
+    const queuedError = broker.clientLookupErrorsByAccount.get(accountId)?.shift();
+    if (queuedError) throw queuedError;
     if (broker.failClientOrderLookupForAccount.has(accountId)) throw new Error('broker lookup unavailable');
     return broker.ordersByClientId.get(id) ?? null;
   }),
@@ -84,15 +90,16 @@ let assessEntryExposureReadiness: typeof import('../../services/entry-exposure-r
 let reconcileTradingAccount: typeof import('../../services/reconciliation.service.js').reconcileTradingAccount;
 let syncSubmittedOrdersForAccountUnlocked: typeof import('../../workers/order.worker.js').syncSubmittedOrdersForAccountUnlocked;
 let processPendingOrdersForAccount: typeof import('../../workers/order.worker.js').processPendingOrdersForAccount;
+let recoverStaleSubmittingIntentsForAccount: typeof import('../../workers/order.worker.js').recoverStaleSubmittingIntentsForAccount;
 let adaptivePollingCoordinator: typeof import('../../services/adaptive-polling.service.js').adaptivePollingCoordinator;
 let disarmLiveEntries: typeof import('../../services/live-entry-arming.service.js').disarmLiveEntries;
 let submitOrder: typeof import('../../services/place-order.service.js').submitOrder;
 
 type Account = Awaited<ReturnType<typeof createAccount>>;
 
-function alpacaOrder(args: { id: string; clientOrderId: string; symbol: string; status: string; filledQty?: string }) {
+function alpacaOrder(args: { id: string; clientOrderId: string; symbol: string; status: string; filledQty?: string; side?: 'buy' | 'sell' }) {
   return {
-    id: args.id, client_order_id: args.clientOrderId, symbol: args.symbol, side: 'buy', type: 'limit',
+    id: args.id, client_order_id: args.clientOrderId, symbol: args.symbol, side: args.side ?? 'buy', type: 'limit',
     time_in_force: 'gtc', status: args.status, submitted_at: '2026-10-18T00:00:00Z',
     qty: '10', filled_qty: args.filledQty ?? '0',
   };
@@ -154,7 +161,7 @@ async function createLocalBrokerOrder(account: Account, security: Awaited<Return
   broker.ordersByClientId.set(order.client_order_id, order);
   return prisma.brokerOrder.create({ data: {
     orderIntentId: intentId, broker: 'alpaca', brokerOrderId: order.id, clientOrderId: order.client_order_id,
-    symbol: security.symbol, side: 'buy', status: order.status, rawBrokerJson: order,
+    symbol: security.symbol, side: order.side, status: order.status, rawBrokerJson: order,
     securityId: security.id, tradingAccountId: account.id,
   } });
 }
@@ -186,7 +193,7 @@ describePrisma('entry exposure lifecycle with real Prisma services', () => {
     } = await import('../../services/entry-exposure-claim.service.js'));
     ({ assessEntryExposureReadiness } = await import('../../services/entry-exposure-readiness.service.js'));
     ({ reconcileTradingAccount } = await import('../../services/reconciliation.service.js'));
-    ({ syncSubmittedOrdersForAccountUnlocked, processPendingOrdersForAccount } = await import('../../workers/order.worker.js'));
+    ({ syncSubmittedOrdersForAccountUnlocked, processPendingOrdersForAccount, recoverStaleSubmittingIntentsForAccount } = await import('../../workers/order.worker.js'));
     ({ adaptivePollingCoordinator } = await import('../../services/adaptive-polling.service.js'));
     ({ disarmLiveEntries } = await import('../../services/live-entry-arming.service.js'));
     ({ submitOrder } = await import('../../services/place-order.service.js'));
@@ -205,6 +212,8 @@ describePrisma('entry exposure lifecycle with real Prisma services', () => {
   beforeEach(() => {
     broker.failCompleteOrdersForAccount.clear();
     broker.failClientOrderLookupForAccount.clear();
+    broker.clientLookupErrorsByAccount.clear();
+    broker.clientLookupCalls.length = 0;
     broker.submitCalls.length = 0;
     broker.openOrderCalls.length = 0;
     broker.orderByIdCalls.length = 0;
@@ -528,13 +537,13 @@ describePrisma('entry exposure lifecycle with real Prisma services', () => {
       const security = await createSecurity('Z');
       const position = await createPosition(account, security, 'closed');
       const intent = await prisma.orderIntent.create({ data: {
-        source: 'historical_fixture', symbol: security.symbol, side: 'buy', orderType: 'market', timeInForce: 'day',
+        source: 'historical_exit_fixture', symbol: security.symbol, side: 'sell', orderType: 'market', timeInForce: 'day',
         qty: 10, clientOrderId: `terminal-${randomUUID()}`, status: 'submitted', rawRequestJson: {},
         tradingAccountId: account.id, trackedPositionId: position.id,
       } });
       await createLocalBrokerOrder(account, security, intent.id, alpacaOrder({
         id: `terminal-order-${randomUUID()}`, clientOrderId: intent.clientOrderId!, symbol: security.symbol,
-        status: 'filled', filledQty: '10',
+        status: 'filled', filledQty: '10', side: 'sell',
       }));
     }
 
@@ -600,5 +609,129 @@ describePrisma('entry exposure lifecycle with real Prisma services', () => {
     // open-order request plus ten per-order lookups on this first tick.
     expect(broker.openOrderCalls.length + broker.orderByIdCalls.length).toBe(5);
     expect(1 + 10).toBeGreaterThan((broker.openOrderCalls.length + broker.orderByIdCalls.length) * 2);
+  });
+
+  it.each(['PAPER', 'LIVE'] as const)('24. recovers a stale %s exit with a NULL block reason', async (environment) => {
+    const account = await createAccount(environment);
+    const security = await createSecurity(environment === 'PAPER' ? 'NP' : 'NL');
+    const clientOrderId = `null-block-${environment.toLowerCase()}-${randomUUID()}`;
+    const intent = await prisma.orderIntent.create({ data: {
+      source: 'null_block_exit_fixture', symbol: security.symbol, side: 'sell', orderType: 'market', timeInForce: 'day',
+      qty: 10, clientOrderId, status: 'submitting', blockReason: null, rawRequestJson: { signalType: 'exit' },
+      tradingAccountId: account.id, updatedAt: new Date(Date.now() - 10 * 60_000),
+    } });
+    const found = alpacaOrder({
+      id: `null-block-order-${randomUUID()}`, clientOrderId, symbol: security.symbol, status: 'accepted', side: 'sell',
+    });
+    broker.ordersByClientId.set(clientOrderId, found);
+
+    const result = await recoverStaleSubmittingIntentsForAccount(account.id, new Date());
+    const recovered = await prisma.orderIntent.findUniqueOrThrow({
+      where: { id: intent.id }, include: { brokerOrders: true },
+    });
+
+    expect(result).toMatchObject({ found: 1, linked: 1, retained: 0 });
+    expect(recovered).toMatchObject({ status: 'submitted', blockReason: null });
+    expect(recovered.brokerOrders).toHaveLength(1);
+    expect(recovered.brokerOrders[0]).toMatchObject({
+      brokerOrderId: found.id, clientOrderId, side: 'sell', status: 'accepted',
+    });
+    expect(broker.submitCalls).toHaveLength(0);
+  });
+
+  it('25. bounds deferred uncertain-exit rechecks and links a later broker order', async () => {
+    const account = await createAccount('PAPER');
+    const security = await createSecurity('DU');
+    const clientOrderId = `deferred-uncertain-${randomUUID()}`;
+    const startedAt = new Date();
+    const intent = await prisma.orderIntent.create({ data: {
+      source: 'deferred_exit_fixture', symbol: security.symbol, side: 'sell', orderType: 'market', timeInForce: 'day',
+      qty: 10, clientOrderId, status: 'submitting',
+      blockReason: 'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:timeout', rawRequestJson: { signalType: 'exit' },
+      tradingAccountId: account.id, updatedAt: new Date(startedAt.getTime() - 10 * 60_000),
+    } });
+
+    const first = await recoverStaleSubmittingIntentsForAccount(account.id, startedAt);
+    expect(first).toMatchObject({ found: 1, linked: 0, retained: 1 });
+    expect(broker.ordersByClientId.has(clientOrderId)).toBe(false);
+    const deferred = await prisma.orderIntent.findUniqueOrThrow({ where: { id: intent.id } });
+    expect(deferred).toMatchObject({
+      status: 'submitting',
+      blockReason: 'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:timeout:RECOVERY_DEFERRED_EVENT_RECORDED',
+      lastSubmittedOrderSyncAt: startedAt,
+    });
+
+    expect(broker.clientLookupCalls).toEqual([{ accountId: account.id, clientOrderId }]);
+    await recoverStaleSubmittingIntentsForAccount(account.id, new Date(startedAt.getTime() + 2_000));
+    expect(broker.clientLookupCalls).toHaveLength(1);
+
+    const found = alpacaOrder({
+      id: `deferred-found-${randomUUID()}`, clientOrderId, symbol: security.symbol, status: 'accepted', side: 'sell',
+    });
+    broker.ordersByClientId.set(clientOrderId, found);
+    const rechecked = await recoverStaleSubmittingIntentsForAccount(
+      account.id,
+      new Date(startedAt.getTime() + 5 * 60_000 + 10_000)
+    );
+    expect(rechecked).toMatchObject({ found: 1, linked: 1 });
+    expect(broker.clientLookupCalls).toHaveLength(2);
+    expect(await prisma.orderIntent.findUniqueOrThrow({ where: { id: intent.id } })).toMatchObject({
+      status: 'submitted', blockReason: null,
+    });
+    expect(broker.submitCalls).toHaveLength(0);
+  });
+
+  it('26. bounds legacy deferred-marker misses and rate-limit errors without weakening uncertainty', async () => {
+    const account = await createAccount('LIVE');
+    const security = await createSecurity('LD');
+    const clientOrderId = `legacy-deferred-${randomUUID()}`;
+    const startedAt = new Date();
+    const originalBlockReason = 'legacy unclassified timeout:RECOVERY_DEFERRED_EVENT_RECORDED';
+    const intent = await prisma.orderIntent.create({ data: {
+      source: 'legacy_deferred_exit_fixture', symbol: security.symbol, side: 'sell', orderType: 'market', timeInForce: 'day',
+      qty: 10, clientOrderId, status: 'submitting', blockReason: originalBlockReason,
+      rawRequestJson: { signalType: 'exit' }, tradingAccountId: account.id,
+      updatedAt: new Date(startedAt.getTime() - 10 * 60_000),
+      lastSubmittedOrderSyncAt: new Date(startedAt.getTime() - 10 * 60_000),
+    } });
+
+    await recoverStaleSubmittingIntentsForAccount(account.id, startedAt);
+    const afterMiss = await prisma.orderIntent.findUniqueOrThrow({ where: { id: intent.id } });
+    expect(afterMiss).toMatchObject({ status: 'submitting', blockReason: originalBlockReason, lastSubmittedOrderSyncAt: startedAt });
+
+    await recoverStaleSubmittingIntentsForAccount(account.id, new Date(startedAt.getTime() + 2_000));
+    expect(broker.clientLookupCalls).toHaveLength(1);
+    expect((await prisma.orderIntent.findUniqueOrThrow({ where: { id: intent.id } })).lastSubmittedOrderSyncAt).toEqual(startedAt);
+
+    const rateLimitedAt = new Date(startedAt.getTime() + 5 * 60_000 + 10_000);
+    broker.clientLookupErrorsByAccount.set(account.id, [new AlpacaRateLimitDeferredError({
+      metadata: {
+        operation: 'pending_order_idempotency_check', endpoint: 'GET /v2/orders:by_client_order_id', method: 'GET',
+        requestClass: 'synchronization_read', operationClass: 'LIFECYCLE_READ', deferDuringRateLimit: true,
+      },
+      backoffUntil: new Date(rateLimitedAt.getTime() + 60_000),
+    })]);
+    const rateLimited = await recoverStaleSubmittingIntentsForAccount(account.id, rateLimitedAt);
+    expect(rateLimited).toMatchObject({ retained: 1, failures: [{ orderIntentId: intent.id }] });
+    expect(broker.clientLookupCalls).toHaveLength(2);
+    expect(await prisma.orderIntent.findUniqueOrThrow({ where: { id: intent.id } })).toMatchObject({
+      status: 'submitting', blockReason: originalBlockReason, lastSubmittedOrderSyncAt: rateLimitedAt,
+    });
+
+    await recoverStaleSubmittingIntentsForAccount(account.id, new Date(rateLimitedAt.getTime() + 2_000));
+    expect(broker.clientLookupCalls).toHaveLength(2);
+
+    const repeatedMissAt = new Date(rateLimitedAt.getTime() + 5 * 60_000 + 10_000);
+    const repeatedMiss = await recoverStaleSubmittingIntentsForAccount(account.id, repeatedMissAt);
+    expect(repeatedMiss).toMatchObject({ found: 1, linked: 0, retained: 1, failures: [] });
+    expect(broker.clientLookupCalls).toHaveLength(3);
+    expect(await prisma.orderIntent.findUniqueOrThrow({ where: { id: intent.id } })).toMatchObject({
+      status: 'submitting', blockReason: originalBlockReason, lastSubmittedOrderSyncAt: repeatedMissAt,
+    });
+
+    await recoverStaleSubmittingIntentsForAccount(account.id, new Date(repeatedMissAt.getTime() + 2_000));
+    expect(broker.clientLookupCalls).toHaveLength(3);
+    expect(await prisma.brokerOrder.count({ where: { orderIntentId: intent.id } })).toBe(0);
+    expect(broker.submitCalls).toHaveLength(0);
   });
 });
