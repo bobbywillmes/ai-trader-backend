@@ -11,6 +11,7 @@ import {
   isNonterminalBrokerOrderStatus,
   NONTERMINAL_BROKER_ORDER_PRISMA_FILTER,
 } from './broker-order-lifecycle-status.service.js';
+import { submittedOrderSyncIntentWhere } from './submitted-order-sync-selection.service.js';
 
 export type AdaptiveWorkerKey =
   | 'submitted_order_sync'
@@ -291,7 +292,9 @@ async function readLocalActivity(
     activeExitCount,
     activeProtectiveOrderCount,
   ] = await Promise.all([
-    prisma.orderIntent.count({ where: { status: 'submitted', tradingAccountId } }),
+    prisma.orderIntent.count({
+      where: submittedOrderSyncIntentWhere(tradingAccountId),
+    }),
     prisma.orderIntent.count({ where: { status: 'submitting', tradingAccountId } }),
     prisma.brokerOrder.count({
       where: {
@@ -481,7 +484,10 @@ export class AdaptivePollingCoordinator {
     if (workerKey === 'submitted_order_sync' && !active) {
       due = false;
       reason = 'no_local_submitted_orders';
-    } else if (state.forced) {
+    } else if (
+      state.forced &&
+      (state.nextDueAt === null || now.getTime() >= state.nextDueAt.getTime())
+    ) {
       due = true;
       reason =
         state.forceReason === 'market_transition'

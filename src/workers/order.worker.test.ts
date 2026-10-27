@@ -11,6 +11,7 @@ import {
 } from './order.worker.js';
 import { assertAccountCoordinatorHealthy } from '../services/worker-coordinator-result.service.js';
 import { BrokerWriteDeliveryError } from '../errors/broker-write-delivery-error.js';
+import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
 
 describe('broker order event severity', () => {
   it.each(['accepted', 'new', 'partially_filled', 'filled', 'canceled', 'expired', 'replaced'])(
@@ -529,6 +530,7 @@ describe('submitted order sync adaptive polling', () => {
         where: expect.objectContaining({
           status: expect.objectContaining({ in: expect.arrayContaining(['submitted', 'new', 'accepted', 'partially_filled']) }),
           tradingAccountId: 1,
+          NOT: expect.objectContaining({ AND: expect.any(Array) }),
         }),
       })
     );
@@ -619,6 +621,44 @@ describe('submitted order sync adaptive polling', () => {
       })
     );
     expect(result).toMatchObject({ synced: 1, polled: true });
+  });
+
+  it('records rate-limit deferral without falling through to per-order lookups', async () => {
+    const backoffUntil = new Date('2026-06-22T14:02:00.000Z');
+    mocks.orderIntentFindMany.mockResolvedValue([{
+      ...baseIntent,
+      status: 'submitted',
+      brokerOrders: [{
+        id: 501, tradingAccountId: 1, brokerOrderId: 'broker-501',
+        clientOrderId: 'client-501', status: 'new', orderIntentId: 101,
+        symbol: 'SPY', side: 'buy',
+      }],
+    }]);
+    mocks.getNormalizedOpenOrders.mockRejectedValue(new AlpacaRateLimitDeferredError({
+      metadata: {
+        operation: 'submitted_order_sync',
+        method: 'GET',
+        endpoint: 'GET /v2/orders',
+        requestClass: 'synchronization_read',
+        operationClass: 'LIFECYCLE_READ',
+        deferDuringRateLimit: true,
+      },
+      backoffUntil,
+    }));
+
+    const result = await syncSubmittedOrders();
+
+    expect(result).toMatchObject({
+      found: 1,
+      polled: false,
+      deferred: true,
+      skipReason: 'rate_limited',
+      nextDueAt: backoffUntil.toISOString(),
+    });
+    expect(mocks.adaptiveRecordRateLimitDeferred).toHaveBeenCalledWith(
+      'submitted_order_sync', 1, backoffUntil, expect.any(Date)
+    );
+    expect(mocks.getAlpacaOrderById).not.toHaveBeenCalled();
   });
 });
 
@@ -1230,6 +1270,14 @@ describe('stale submitting intent recovery', () => {
     expect(mocks.createSystemEvent).toHaveBeenCalledTimes(1);
     expect(mocks.createSystemEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'order.submission_recovery_deferred', severity: 'CRITICAL' })
+    );
+    expect(mocks.getAlpacaOrderByClientOrderId).toHaveBeenCalledTimes(1);
+    expect(mocks.orderIntentFindMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          NOT: expect.objectContaining({ AND: expect.any(Array) }),
+        }),
+      })
     );
   });
 

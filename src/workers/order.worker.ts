@@ -65,7 +65,8 @@ import {
   releaseConfirmedTerminalEntryClaim,
   transitionEntryExposureClaim,
 } from '../services/entry-exposure-claim.service.js';
-import { BROKER_ACTIVE_ENTRY_STATUSES, TERMINAL_ENTRY_ORDER_STATUSES, isSellIntent } from '../services/entry-lifecycle-status.service.js';
+import { isSellIntent } from '../services/entry-lifecycle-status.service.js';
+import { submittedOrderSyncIntentWhere } from '../services/submitted-order-sync-selection.service.js';
 
 export type SubmittedOrderSyncResult = {
   found: number;
@@ -166,6 +167,19 @@ export async function recoverStaleSubmittingIntentsForAccount(
     where: {
       tradingAccountId,
       status: 'submitting',
+      NOT: {
+        AND: [
+          { side: { equals: 'sell', mode: 'insensitive' } },
+          {
+            blockReason: {
+              contains: 'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN',
+            },
+          },
+          {
+            blockReason: { contains: 'RECOVERY_DEFERRED_EVENT_RECORDED' },
+          },
+        ],
+      },
       updatedAt: {
         lte: new Date(now.getTime() - STALE_SUBMITTING_INTENT_THRESHOLD_MS),
       },
@@ -184,6 +198,14 @@ export async function recoverStaleSubmittingIntentsForAccount(
 
   for (const intent of intents) {
     try {
+    if (
+      isExitIntent(intent) &&
+      intent.blockReason?.includes('BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN') &&
+      intent.blockReason.includes('RECOVERY_DEFERRED_EVENT_RECORDED')
+    ) {
+      retained += 1;
+      continue;
+    }
     if (!intent.clientOrderId) {
       retained += 1;
       continue;
@@ -1071,13 +1093,7 @@ export async function processPendingOrders() {
 /** Internal operation: caller must hold the account lifecycle-mutation barrier. */
 export async function syncSubmittedOrdersForAccountUnlocked(tradingAccountId: number) {
   const submittedIntents = await prisma.orderIntent.findMany({
-    where: {
-      status: { in: [
-        ...BROKER_ACTIVE_ENTRY_STATUSES.filter((status) => !['received', 'pending', 'submitting'].includes(status)),
-        ...TERMINAL_ENTRY_ORDER_STATUSES.filter((status) => ['done_for_day', 'calculated', 'replaced'].includes(status)),
-      ] },
-      tradingAccountId,
-    },
+    where: submittedOrderSyncIntentWhere(tradingAccountId),
     include: { brokerOrders: true },
     take: SUBMITTED_ORDER_BATCH_LIMIT_PER_ACCOUNT,
     orderBy: [

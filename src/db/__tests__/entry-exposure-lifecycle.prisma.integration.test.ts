@@ -16,10 +16,15 @@ const broker = vi.hoisted(() => ({
   failCompleteOrdersForAccount: new Set<number>(),
   failClientOrderLookupForAccount: new Set<number>(),
   submitCalls: [] as unknown[],
+  openOrderCalls: [] as number[],
+  orderByIdCalls: [] as Array<{ accountId: number; orderId: string }>,
 }));
 
 vi.mock('../../integrations/alpaca/orders.adapter.js', () => ({
-  getAlpacaOrderById: vi.fn(async (_accountId: number, id: string) => broker.ordersById.get(id) ?? null),
+  getAlpacaOrderById: vi.fn(async (accountId: number, id: string) => {
+    broker.orderByIdCalls.push({ accountId, orderId: id });
+    return broker.ordersById.get(id) ?? null;
+  }),
   getAlpacaOrderByClientOrderId: vi.fn(async (accountId: number, id: string) => {
     if (broker.failClientOrderLookupForAccount.has(accountId)) throw new Error('broker lookup unavailable');
     return broker.ordersByClientId.get(id) ?? null;
@@ -32,7 +37,10 @@ vi.mock('../../integrations/alpaca/orders.adapter.js', () => ({
     if (broker.failCompleteOrdersForAccount.has(accountId)) throw new Error('incomplete broker pagination');
     return (broker.openBuysByAccount.get(accountId) ?? []).filter((order) => order.symbol === symbol);
   }),
-  getOpenAlpacaOrders: vi.fn(async (accountId: number) => broker.openBuysByAccount.get(accountId) ?? []),
+  getOpenAlpacaOrders: vi.fn(async (accountId: number) => {
+    broker.openOrderCalls.push(accountId);
+    return broker.openBuysByAccount.get(accountId) ?? [];
+  }),
   submitAlpacaEntryOrder: vi.fn(async (...args: unknown[]) => {
     broker.submitCalls.push(args);
     throw new Error('Broker POST is prohibited in lifecycle integration tests.');
@@ -198,6 +206,8 @@ describePrisma('entry exposure lifecycle with real Prisma services', () => {
     broker.failCompleteOrdersForAccount.clear();
     broker.failClientOrderLookupForAccount.clear();
     broker.submitCalls.length = 0;
+    broker.openOrderCalls.length = 0;
+    broker.orderByIdCalls.length = 0;
     vi.spyOn(adaptivePollingCoordinator, 'getDecision').mockResolvedValue({
       due: true,
       reason: 'startup_due',
@@ -509,5 +519,86 @@ describePrisma('entry exposure lifecycle with real Prisma services', () => {
       claimId: { in: missing.map((item) => item.claimId) }, eventType: 'SUBMITTED_ORDER_LOCAL_BROKER_ORDER_MISSING',
     } })).toBe(10);
     expect(broker.submitCalls).toHaveLength(0);
+  });
+
+  it('23. removes 21 coherent terminal orders from polling while retaining actionable and contradictory evidence', async () => {
+    const account = await createAccount();
+
+    for (let index = 0; index < 21; index += 1) {
+      const security = await createSecurity('Z');
+      const position = await createPosition(account, security, 'closed');
+      const intent = await prisma.orderIntent.create({ data: {
+        source: 'historical_fixture', symbol: security.symbol, side: 'buy', orderType: 'market', timeInForce: 'day',
+        qty: 10, clientOrderId: `terminal-${randomUUID()}`, status: 'submitted', rawRequestJson: {},
+        tradingAccountId: account.id, trackedPositionId: position.id,
+      } });
+      await createLocalBrokerOrder(account, security, intent.id, alpacaOrder({
+        id: `terminal-order-${randomUUID()}`, clientOrderId: intent.clientOrderId!, symbol: security.symbol,
+        status: 'filled', filledQty: '10',
+      }));
+    }
+
+    const activeSecurity = await createSecurity('U');
+    const activeIntent = await prisma.orderIntent.create({ data: {
+      source: 'active_fixture', symbol: activeSecurity.symbol, side: 'buy', orderType: 'market', timeInForce: 'day',
+      qty: 10, clientOrderId: `active-${randomUUID()}`, status: 'submitted', rawRequestJson: {}, tradingAccountId: account.id,
+    } });
+    const activeOrder = alpacaOrder({ id: `active-order-${randomUUID()}`, clientOrderId: activeIntent.clientOrderId!, symbol: activeSecurity.symbol, status: 'new' });
+    await createLocalBrokerOrder(account, activeSecurity, activeIntent.id, activeOrder);
+
+    const partialSecurity = await createSecurity('V');
+    const partialIntent = await prisma.orderIntent.create({ data: {
+      source: 'partial_fixture', symbol: partialSecurity.symbol, side: 'buy', orderType: 'market', timeInForce: 'day',
+      qty: 10, clientOrderId: `partial-${randomUUID()}`, status: 'submitted', rawRequestJson: {}, tradingAccountId: account.id,
+    } });
+    const partialOrder = alpacaOrder({ id: `partial-order-${randomUUID()}`, clientOrderId: partialIntent.clientOrderId!, symbol: partialSecurity.symbol, status: 'partially_filled', filledQty: '3' });
+    await createLocalBrokerOrder(account, partialSecurity, partialIntent.id, partialOrder);
+
+    const missingSecurity = await createSecurity('W');
+    await prisma.orderIntent.create({ data: {
+      source: 'missing_link_fixture', symbol: missingSecurity.symbol, side: 'buy', orderType: 'market', timeInForce: 'day',
+      qty: 10, clientOrderId: `missing-${randomUUID()}`, status: 'submitted', rawRequestJson: {}, tradingAccountId: account.id,
+    } });
+
+    const replacementSecurity = await createSecurity('X');
+    const replacementIntent = await prisma.orderIntent.create({ data: {
+      source: 'replacement_fixture', symbol: replacementSecurity.symbol, side: 'buy', orderType: 'market', timeInForce: 'day',
+      qty: 10, clientOrderId: `replacement-${randomUUID()}`, status: 'replaced', rawRequestJson: {}, tradingAccountId: account.id,
+    } });
+    const replacementOrder = alpacaOrder({ id: `replacement-order-${randomUUID()}`, clientOrderId: replacementIntent.clientOrderId!, symbol: replacementSecurity.symbol, status: 'replaced' });
+    await createLocalBrokerOrder(account, replacementSecurity, replacementIntent.id, replacementOrder);
+
+    const contradictorySecurity = await createSecurity('Y');
+    const contradictoryPosition = await createPosition(account, contradictorySecurity, 'closed');
+    const contradictoryIntent = await prisma.orderIntent.create({ data: {
+      source: 'contradictory_fixture', symbol: contradictorySecurity.symbol, side: 'sell', orderType: 'market', timeInForce: 'day',
+      qty: 10, clientOrderId: `contradictory-${randomUUID()}`, status: 'submitted', rawRequestJson: {},
+      tradingAccountId: account.id, trackedPositionId: contradictoryPosition.id,
+    } });
+    await createLocalBrokerOrder(account, contradictorySecurity, contradictoryIntent.id, alpacaOrder({
+      id: `contradictory-filled-${randomUUID()}`, clientOrderId: contradictoryIntent.clientOrderId!, symbol: contradictorySecurity.symbol,
+      status: 'filled', filledQty: '10',
+    }));
+    const contradictoryOrder = alpacaOrder({
+      id: `contradictory-rejected-${randomUUID()}`, clientOrderId: `contradictory-rejected-${randomUUID()}`,
+      symbol: contradictorySecurity.symbol, status: 'rejected',
+    });
+    await createLocalBrokerOrder(account, contradictorySecurity, contradictoryIntent.id, contradictoryOrder);
+
+    const result = await syncSubmittedOrdersForAccountUnlocked(account.id);
+
+    expect(result).toMatchObject({ found: 5, polled: true });
+    expect(broker.openOrderCalls).toEqual([account.id]);
+    expect(broker.orderByIdCalls).toHaveLength(4);
+    expect(broker.orderByIdCalls.map((call) => call.orderId)).toEqual(expect.arrayContaining([
+      activeOrder.id, partialOrder.id, replacementOrder.id,
+    ]));
+    expect(broker.orderByIdCalls.some((call) => call.orderId.startsWith('terminal-order-'))).toBe(false);
+    expect(broker.submitCalls).toHaveLength(0);
+
+    // Before the selection correction, the batch cap would have produced one
+    // open-order request plus ten per-order lookups on this first tick.
+    expect(broker.openOrderCalls.length + broker.orderByIdCalls.length).toBe(5);
+    expect(1 + 10).toBeGreaterThan((broker.openOrderCalls.length + broker.orderByIdCalls.length) * 2);
   });
 });

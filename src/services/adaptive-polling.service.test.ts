@@ -187,8 +187,8 @@ describe('AdaptivePollingCoordinator', () => {
     );
   });
 
-  it('uses bounded retry after failed reads and retains forced state', async () => {
-    const { coordinator, now } = createHarness({ active: true });
+  it('uses bounded retry after failed reads without letting forced state bypass nextDueAt', async () => {
+    const { coordinator, advance, now } = createHarness({ active: true });
 
     await coordinator.getDecision(1, 'tracked_position_sync');
     coordinator.recordAttempt('tracked_position_sync', 1, now());
@@ -200,6 +200,45 @@ describe('AdaptivePollingCoordinator', () => {
       '2026-06-22T14:00:05.000Z'
     );
     expect(snapshot.workers.trackedPositionSync.forced).toBe(true);
+
+    await expect(
+      coordinator.getDecision(1, 'tracked_position_sync')
+    ).resolves.toMatchObject({
+      due: false,
+      reason: 'adaptive_poll_not_due',
+      forced: true,
+    });
+
+    advance(ADAPTIVE_POLLING_INTERVALS_MS.retry.minimum);
+    await expect(
+      coordinator.getDecision(1, 'tracked_position_sync')
+    ).resolves.toMatchObject({
+      due: true,
+      reason: 'startup_due',
+      forced: true,
+    });
+  });
+
+  it('honors rate-limit backoff while retaining a legitimate pending force', async () => {
+    const { coordinator, advance, now } = createHarness({ active: true });
+
+    await coordinator.getDecision(1, 'submitted_order_sync');
+    coordinator.recordAttempt('submitted_order_sync', 1, now());
+    coordinator.recordRateLimitDeferred(
+      'submitted_order_sync',
+      1,
+      new Date(now().getTime() + 30_000),
+      now()
+    );
+
+    await expect(
+      coordinator.getDecision(1, 'submitted_order_sync')
+    ).resolves.toMatchObject({ due: false, reason: 'adaptive_poll_not_due' });
+
+    advance(30_000);
+    await expect(
+      coordinator.getDecision(1, 'submitted_order_sync')
+    ).resolves.toMatchObject({ due: true, reason: 'startup_due' });
   });
 
   it('coalesces multiple force requests and clears force after success', async () => {
