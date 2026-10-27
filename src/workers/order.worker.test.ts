@@ -11,6 +11,7 @@ import {
 } from './order.worker.js';
 import { assertAccountCoordinatorHealthy } from '../services/worker-coordinator-result.service.js';
 import { BrokerWriteDeliveryError } from '../errors/broker-write-delivery-error.js';
+import { AlpacaRateLimitDeferredError } from '../errors/alpaca-rate-limit-deferred-error.js';
 
 describe('broker order event severity', () => {
   it.each(['accepted', 'new', 'partially_filled', 'filled', 'canceled', 'expired', 'replaced'])(
@@ -529,6 +530,7 @@ describe('submitted order sync adaptive polling', () => {
         where: expect.objectContaining({
           status: expect.objectContaining({ in: expect.arrayContaining(['submitted', 'new', 'accepted', 'partially_filled']) }),
           tradingAccountId: 1,
+          NOT: expect.objectContaining({ AND: expect.any(Array) }),
         }),
       })
     );
@@ -619,6 +621,44 @@ describe('submitted order sync adaptive polling', () => {
       })
     );
     expect(result).toMatchObject({ synced: 1, polled: true });
+  });
+
+  it('records rate-limit deferral without falling through to per-order lookups', async () => {
+    const backoffUntil = new Date('2026-06-22T14:02:00.000Z');
+    mocks.orderIntentFindMany.mockResolvedValue([{
+      ...baseIntent,
+      status: 'submitted',
+      brokerOrders: [{
+        id: 501, tradingAccountId: 1, brokerOrderId: 'broker-501',
+        clientOrderId: 'client-501', status: 'new', orderIntentId: 101,
+        symbol: 'SPY', side: 'buy',
+      }],
+    }]);
+    mocks.getNormalizedOpenOrders.mockRejectedValue(new AlpacaRateLimitDeferredError({
+      metadata: {
+        operation: 'submitted_order_sync',
+        method: 'GET',
+        endpoint: 'GET /v2/orders',
+        requestClass: 'synchronization_read',
+        operationClass: 'LIFECYCLE_READ',
+        deferDuringRateLimit: true,
+      },
+      backoffUntil,
+    }));
+
+    const result = await syncSubmittedOrders();
+
+    expect(result).toMatchObject({
+      found: 1,
+      polled: false,
+      deferred: true,
+      skipReason: 'rate_limited',
+      nextDueAt: backoffUntil.toISOString(),
+    });
+    expect(mocks.adaptiveRecordRateLimitDeferred).toHaveBeenCalledWith(
+      'submitted_order_sync', 1, backoffUntil, expect.any(Date)
+    );
+    expect(mocks.getAlpacaOrderById).not.toHaveBeenCalled();
   });
 });
 
@@ -1123,7 +1163,7 @@ describe('stale submitting intent recovery', () => {
     expect(mocks.releaseUnsubmittedEntryExposureClaim).not.toHaveBeenCalled();
   });
 
-  it('isolates an inconclusive lookup and retains the intent',async()=>{const error=new Error('broker lookup unavailable');mocks.orderIntentFindMany.mockResolvedValue([{...baseIntent,status:'submitting',brokerOrders:[],updatedAt:new Date('2026-06-22T13:00:00.000Z')}]);mocks.getAlpacaOrderByClientOrderId.mockRejectedValue(error);await expect(recoverStaleSubmittingIntentsForAccount(1,new Date('2026-06-22T14:00:00.000Z'))).resolves.toMatchObject({retained:1,failures:[{orderIntentId:101,error:'broker lookup unavailable'}]});expect(mocks.appendBrokerOpportunityEvent).toHaveBeenCalledWith(expect.objectContaining({orderIntentId:101,eventType:'RECOVERY_INCONCLUSIVE'}),undefined,expect.anything());expect(mocks.orderIntentUpdateMany).not.toHaveBeenCalled();});
+  it('isolates an inconclusive lookup, records bounded progress, and retains the intent',async()=>{const error=new Error('broker lookup unavailable');const now=new Date('2026-06-22T14:00:00.000Z');mocks.orderIntentFindMany.mockResolvedValue([{...baseIntent,status:'submitting',brokerOrders:[],updatedAt:new Date('2026-06-22T13:00:00.000Z')}]);mocks.getAlpacaOrderByClientOrderId.mockRejectedValue(error);await expect(recoverStaleSubmittingIntentsForAccount(1,now)).resolves.toMatchObject({retained:1,failures:[{orderIntentId:101,error:'broker lookup unavailable'}]});expect(mocks.appendBrokerOpportunityEvent).toHaveBeenCalledWith(expect.objectContaining({orderIntentId:101,eventType:'RECOVERY_INCONCLUSIVE'}),undefined,expect.anything());expect(mocks.orderIntentUpdateMany).toHaveBeenCalledWith({where:{id:101,status:'submitting'},data:{lastSubmittedOrderSyncAt:now}});});
 
   it('never requeues an acceptance entry after broker submission may have begun', async () => {
     mocks.orderIntentFindMany.mockResolvedValue([{
@@ -1203,19 +1243,7 @@ describe('stale submitting intent recovery', () => {
           updatedAt: new Date('2026-06-22T13:00:00.000Z'),
         },
       ])
-      .mockResolvedValueOnce([
-        {
-          ...baseIntent,
-          side: 'sell',
-          status: 'submitting',
-          rawRequestJson: { signalType: 'exit' },
-          blockReason:
-            'BROKER_WRITE_DELIVERY:DELIVERY_UNCERTAIN:timeout:RECOVERY_DEFERRED_EVENT_RECORDED',
-          tradingAccount: { environment: 'LIVE' },
-          brokerOrders: [],
-          updatedAt: new Date('2026-06-22T13:00:00.000Z'),
-        },
-      ]);
+      .mockResolvedValueOnce([]);
     mocks.getAlpacaOrderByClientOrderId.mockResolvedValue(null);
 
     await recoverStaleSubmittingIntentsForAccount(
@@ -1230,6 +1258,21 @@ describe('stale submitting intent recovery', () => {
     expect(mocks.createSystemEvent).toHaveBeenCalledTimes(1);
     expect(mocks.createSystemEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'order.submission_recovery_deferred', severity: 'CRITICAL' })
+    );
+    expect(mocks.getAlpacaOrderByClientOrderId).toHaveBeenCalledTimes(1);
+    expect(mocks.orderIntentFindMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          NOT: expect.objectContaining({
+            AND: expect.arrayContaining([
+              { blockReason: { not: null } },
+              { blockReason: { contains: 'RECOVERY_DEFERRED_EVENT_RECORDED' } },
+              { lastSubmittedOrderSyncAt: { not: null } },
+              { lastSubmittedOrderSyncAt: { gt: expect.any(Date) } },
+            ]),
+          }),
+        }),
+      })
     );
   });
 

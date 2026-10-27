@@ -65,7 +65,8 @@ import {
   releaseConfirmedTerminalEntryClaim,
   transitionEntryExposureClaim,
 } from '../services/entry-exposure-claim.service.js';
-import { BROKER_ACTIVE_ENTRY_STATUSES, TERMINAL_ENTRY_ORDER_STATUSES, isSellIntent } from '../services/entry-lifecycle-status.service.js';
+import { isSellIntent } from '../services/entry-lifecycle-status.service.js';
+import { submittedOrderSyncIntentWhere } from '../services/submitted-order-sync-selection.service.js';
 
 export type SubmittedOrderSyncResult = {
   found: number;
@@ -162,12 +163,28 @@ export async function recoverStaleSubmittingIntentsForAccount(
   tradingAccountId: number,
   now = new Date()
 ) {
+  const staleBefore = new Date(
+    now.getTime() - STALE_SUBMITTING_INTENT_THRESHOLD_MS
+  );
   const intents = await prisma.orderIntent.findMany({
     where: {
       tradingAccountId,
       status: 'submitting',
+      NOT: {
+        AND: [
+          { side: { equals: 'sell', mode: 'insensitive' } },
+          {
+            blockReason: { not: null },
+          },
+          {
+            blockReason: { contains: 'RECOVERY_DEFERRED_EVENT_RECORDED' },
+          },
+          { lastSubmittedOrderSyncAt: { not: null } },
+          { lastSubmittedOrderSyncAt: { gt: staleBefore } },
+        ],
+      },
       updatedAt: {
-        lte: new Date(now.getTime() - STALE_SUBMITTING_INTENT_THRESHOLD_MS),
+        lte: staleBefore,
       },
     },
     include: {
@@ -210,6 +227,14 @@ export async function recoverStaleSubmittingIntentsForAccount(
 
     let brokerOrder;
     try {
+      const progress = await prisma.orderIntent.updateMany({
+        where: { id: intent.id, status: 'submitting' },
+        data: { lastSubmittedOrderSyncAt: now },
+      });
+      if (progress.count !== 1) {
+        retained += 1;
+        continue;
+      }
       brokerOrder = await getAlpacaOrderByClientOrderId(
         tradingAccountId,
         intent.clientOrderId,
@@ -1071,13 +1096,7 @@ export async function processPendingOrders() {
 /** Internal operation: caller must hold the account lifecycle-mutation barrier. */
 export async function syncSubmittedOrdersForAccountUnlocked(tradingAccountId: number) {
   const submittedIntents = await prisma.orderIntent.findMany({
-    where: {
-      status: { in: [
-        ...BROKER_ACTIVE_ENTRY_STATUSES.filter((status) => !['received', 'pending', 'submitting'].includes(status)),
-        ...TERMINAL_ENTRY_ORDER_STATUSES.filter((status) => ['done_for_day', 'calculated', 'replaced'].includes(status)),
-      ] },
-      tradingAccountId,
-    },
+    where: submittedOrderSyncIntentWhere(tradingAccountId),
     include: { brokerOrders: true },
     take: SUBMITTED_ORDER_BATCH_LIMIT_PER_ACCOUNT,
     orderBy: [
